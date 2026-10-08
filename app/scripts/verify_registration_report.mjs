@@ -23,7 +23,7 @@ import {
   formatRegistrationAr, REGISTRATION_MAX_BYTES, REGISTRATION_PATH,
 } from '../src/core/registration.ts'
 import {
-  sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, regKey,
+  sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, deleteRegistration, regKey,
   formatRegistrationAr as formatServerAr,
 } from '../../tools/devbot/src/registrations.js'
 
@@ -46,12 +46,17 @@ const panelSrc = src('../../tools/devbot/src/adminPanel.js')
 const serverSrc = src('../../tools/devbot/src/registrations.js')
 
 class MemoryKv {
-  constructor() { this.values = new Map() }
+  constructor() { this.values = new Map(); this.metas = new Map() }
   async get(key) { return this.values.get(key) ?? null }
-  async put(key, value) { this.values.set(key, String(value)) }
-  async delete(key) { this.values.delete(key) }
+  async put(key, value, opts) {
+    this.values.set(key, String(value))
+    /* metadata المفاتيح كما في KV الحقيقي — يُعاد من list() بلا get إضافي */
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 } = {}) {
-    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })), list_complete: true }
+    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })), list_complete: true }
   }
 }
 
@@ -143,10 +148,11 @@ await okAsync('القائمة ترتّب بالأحدث وتتجاوز السج�
   await kv.put(regKey('SHOP-AAA1-1111-1111'), JSON.stringify({ ...CUSTOMER, lastSeenAt: '2026-10-01T00:00:00Z' }))
   await kv.put(regKey('SHOP-BBB2-2222-2222'), JSON.stringify({ ...CUSTOMER, deviceId: 'SHOP-BBB2-2222-2222', shopName: 'الأحدث', lastSeenAt: '2026-10-08T00:00:00Z' }))
   await kv.put('reg:SHOP-TAMPERED-X', 'json تالف')
-  const list = await listRegistrations({ kv })
-  assert.equal(list.length, 2)
-  assert.equal(list[0].shopName, 'الأحدث')
-  assert.match(formatRegistrationsAr(list), /الأحدث/)
+  const { records, skipped } = await listRegistrations({ kv })
+  assert.equal(records.length, 2)
+  assert.equal(records[0].shopName, 'الأحدث')
+  assert.equal(skipped, 0)
+  assert.match(formatRegistrationsAr(records), /الأحدث/)
   assert.match(formatRegistrationsAr([]), /لا تسجيلات/)
 })
 
@@ -212,6 +218,58 @@ ok('الموافقة: خانة في المعالج + إفصاح في سياسة 
 ok('لا بيانات مالية في البلاغ (خصوصية: ما كتبه العميل في المعالج فقط)', () => {
   assert.ok(!/sales|invoices|items|balances|totals|journal/i.test(Object.keys(buildRegistrationReport(CUSTOMER)).join()))
   assert.ok(!/sales|invoices|journal/.test(clientSrc), 'الوحدة يجب ألا تعرف الفواتير أو القيود')
+})
+
+/* سياسة الخصوصية تعد العميل بحذف سجله خلال 30 يوماً — الوعد بلا أداة تنفيذ
+   وعد فارغ. الأداة: أمر البوت `/احذف` ودالة `deleteRegistration`. */
+await okAsync('حق الحذف منفَّذ لا موعود فقط (أمر /احذف + رفض المعرّف التالف)', async () => {
+  const regSrc = src('../../tools/devbot/src/registrations.js')
+  assert.match(regSrc, /export async function deleteRegistration/)
+  assert.match(regSrc, /DEVICE_RE\.test\(device\)/) // لا حذف بمعرّف غير صالح
+  assert.match(workerSrc, /case '\/احذف'/)
+  assert.match(workerSrc, /deleteRegistration\(cfg, arg\(0\)\)/)
+  assert.match(panelSrc, /\/احذف/) // اللوحة تذكر الأداة للمطوّر
+  assert.match(src('../src/core/legal.ts'), /يُستجاب خلال 30 يوماً/)
+
+  const kv = new MemoryKv()
+  await saveRegistration({ kv }, sanitizeRegistration(CUSTOMER))
+  assert.ok(await kv.get(regKey(CUSTOMER.deviceId)))
+  const bad = await deleteRegistration({ kv }, 'ليس-معرفاً')
+  assert.equal(bad.ok, false)
+  assert.ok(await kv.get(regKey(CUSTOMER.deviceId)), 'الرفض يجب ألا يحذف شيئاً')
+  const gone = await deleteRegistration({ kv }, CUSTOMER.deviceId)
+  assert.deepEqual({ ok: gone.ok, existed: gone.existed }, { ok: true, existed: true })
+  assert.equal(await kv.get(regKey(CUSTOMER.deviceId)), null)
+  assert.equal((await deleteRegistration({ kv }, CUSTOMER.deviceId)).existed, false)
+})
+
+/* خطط Cloudflare المجانية تحدّ النداءات الفرعية بـ50 للطلب الواحد: قائمة
+   التسجيلات كانت تقرأ كل سجل بـget ⇒ تنهار عند نحو 48 عميلاً. الفهرس في
+   metadata المفتاح يجعل القائمة من `list` وحده. */
+await okAsync('قائمة التسجيلات تُبنى من فهرس metadata (بلا get لكل سجل) وتُبلّغ عن المتروك', async () => {
+  const regSrc = src('../../tools/devbot/src/registrations.js')
+  assert.match(regSrc, /metadata: registrationMetadata\(record\)/)
+  assert.match(regSrc, /REG_META_VERSION = 1/)
+  assert.match(regSrc, /REG_MAX_READS = 40/)
+  assert.match(regSrc, /return \{ records: out, skipped \}/)
+  assert.match(workerSrc, /const \{ records, skipped \} = await listRegistrations\(cfg\)/)
+  assert.match(panelSrc, /const \{ records, skipped \} = await listRegistrations\(cfg\)/)
+
+  const kv = new MemoryKv()
+  await saveRegistration({ kv }, sanitizeRegistration(CUSTOMER))
+  await saveRegistration({ kv }, sanitizeRegistration({ ...CUSTOMER, deviceId: 'SHOP-BBB2-2222-2222', shopName: 'الثاني' }))
+  let gets = 0
+  const spy = {
+    get: async (k) => { gets++; return kv.get(k) },
+    put: (k, v, o) => kv.put(k, v, o),
+    delete: (k) => kv.delete(k),
+    list: (o) => kv.list(o),
+  }
+  const { records, skipped } = await listRegistrations({ kv: spy })
+  assert.equal(gets, 0, 'الفهرس يجب أن يكفي — صفر قراءات')
+  assert.equal(records.length, 2)
+  assert.equal(skipped, 0)
+  assert.match(formatRegistrationsAr(records), /بقالة النور/)
 })
 
 console.log(`\nالنتيجة: ${passed} فحوص ناجحة${process.exitCode ? ' — مع فشل أعلاه' : ' ✅'}`)

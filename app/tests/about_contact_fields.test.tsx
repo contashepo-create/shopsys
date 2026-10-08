@@ -32,12 +32,18 @@ const { useAppStore } = await import('../src/stores/app.store.ts')
 
 class MemoryKv {
   private values = new Map<string, string>()
+  /* metadata المفاتيح كما في KV الحقيقي: يُعاد من list() بلا نداء get إضافي */
+  private metas = new Map<string, Record<string, unknown>>()
   async get(key: string) { return this.values.get(key) ?? null }
-  async put(key: string, value: string) { this.values.set(key, String(value)) }
-  async delete(key: string) { this.values.delete(key) }
+  async put(key: string, value: string, opts?: { metadata?: Record<string, unknown> }) {
+    this.values.set(key, String(value))
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key: string) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 }: { prefix?: string; limit?: number } = {}) {
     return {
-      keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })),
+      keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })),
       list_complete: true,
     }
   }

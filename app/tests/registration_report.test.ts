@@ -24,18 +24,24 @@ const {
   formatRegistrationAr, REGISTRATION_MAX_BYTES,
 } = await import('../src/core/registration.ts')
 const {
-  sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, regKey,
+  sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, deleteRegistration, regKey,
   formatRegistrationAr: formatRegistrationArServer,
 } = await import('../../tools/devbot/src/registrations.js')
 
 class MemoryKv {
   private values = new Map<string, string>()
+  /* metadata المفاتيح كما في KV الحقيقي: يُعاد من list() بلا نداء get إضافي */
+  private metas = new Map<string, Record<string, unknown>>()
   async get(key: string) { return this.values.get(key) ?? null }
-  async put(key: string, value: string) { this.values.set(key, String(value)) }
-  async delete(key: string) { this.values.delete(key) }
+  async put(key: string, value: string, opts?: { metadata?: Record<string, unknown> }) {
+    this.values.set(key, String(value))
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key: string) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 }: { prefix?: string; limit?: number } = {}) {
     return {
-      keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })),
+      keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })),
       list_complete: true,
     }
   }
@@ -282,9 +288,42 @@ describe('⑥ الاستعراض من اللوحة والأمر', () => {
     await kv.put(regKey('SHOP-AAA1-1111-1111'), JSON.stringify({ ...CUSTOMER, lastSeenAt: '2026-10-01T00:00:00Z' }))
     await kv.put(regKey('SHOP-BBB2-2222-2222'), JSON.stringify({ ...CUSTOMER, deviceId: 'SHOP-BBB2-2222-2222', shopName: 'الأحدث', lastSeenAt: '2026-10-08T00:00:00Z' }))
     await kv.put('reg:SHOP-TAMPERED-X', 'json تالف')
-    const list = await listRegistrations({ kv })
-    expect(list).toHaveLength(2) // السجل التالف يُتجاوز ولا يُسقط القائمة
-    expect(list[0].shopName).toBe('الأحدث')
+    const { records, skipped } = await listRegistrations({ kv })
+    expect(records).toHaveLength(2) // السجل التالف يُتجاوز ولا يُسقط القائمة
+    expect(records[0].shopName).toBe('الأحدث')
+    expect(skipped).toBe(0)
+  })
+
+  it('القائمة تُبنى من فهرس metadata بلا قراءة كل سجل (حدّ النداءات الفرعية)', async () => {
+    /* الخطة المجانية تحدّ النداءات بـ50 للطلب: لو احتاج كل سجل get لانهار
+       الأمر/اللوحة عند نحو 48 عميلاً. saveRegistration يكتب الفهرس، فيكفي list. */
+    await saveRegistration({ kv } as never, sanitizeRegistration(CUSTOMER)!)
+    await saveRegistration({ kv } as never, sanitizeRegistration({ ...CUSTOMER, deviceId: 'SHOP-BBB2-2222-2222', shopName: 'الثاني' })!)
+    let gets = 0
+    const spyKv = {
+      get: async (k: string) => { gets++; return kv.get(k) },
+      put: (k: string, v: string, o?: unknown) => kv.put(k, v, o as never),
+      delete: (k: string) => kv.delete(k),
+      list: (o?: never) => kv.list(o),
+    }
+    const { records, skipped } = await listRegistrations({ kv: spyKv } as never)
+    expect(records).toHaveLength(2)
+    expect(gets).toBe(0) // صفر قراءات — الفهرس يكفي
+    expect(skipped).toBe(0)
+    expect(formatRegistrationsAr(records as never)).toContain('بقالة النور')
+  })
+
+  it('deleteRegistration يحذف سجل العميل (حق الحذف في سياسة الخصوصية)', async () => {
+    await saveRegistration({ kv } as never, sanitizeRegistration(CUSTOMER)!)
+    expect(await kv.get(regKey(CUSTOMER.deviceId))).toBeTruthy()
+    const bad = await deleteRegistration({ kv } as never, 'ليس-معرفاً')
+    expect(bad.ok).toBe(false)
+    expect(await kv.get(regKey(CUSTOMER.deviceId))).toBeTruthy() // رفض ⇒ لا حذف
+    const gone = await deleteRegistration({ kv } as never, CUSTOMER.deviceId)
+    expect(gone).toMatchObject({ ok: true, existed: true, deviceId: CUSTOMER.deviceId })
+    expect(await kv.get(regKey(CUSTOMER.deviceId))).toBeNull()
+    const again = await deleteRegistration({ kv } as never, CUSTOMER.deviceId)
+    expect(again).toMatchObject({ ok: true, existed: false })
   })
 
   it('formatRegistrationsAr يعرض الاسم والهاتف والبريد والجهاز', () => {

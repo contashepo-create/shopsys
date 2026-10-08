@@ -23,7 +23,7 @@ import { isInvoiceFirst } from '../../core/activities.ts'
 import { guardNavigation, useToast } from '../components/ui.tsx'
 
 export function Header({ title }: { title: string }) {
-  const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload, renewalDismissedDay } = useAppStore()
+  const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload } = useAppStore()
   const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
@@ -113,15 +113,13 @@ export function Header({ title }: { title: string }) {
          الموقّعة فيعمل أوفلاين. الإسكات يخصّ الشريط الظاهر، لا إدراج الجرس. */
       licenseReminder: reminderAsNotification(renewalReminder({
         expiresAt: activatedPayload?.expiresAt ?? null,
-        plan: activatedPayload?.plan ?? null,
         todayIso: new Date().toISOString(),
-        dismissedDay: renewalDismissedDay,
       })),
       fmt: (m) => formatMinor(m, cur, false),
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases, activatedPayload, renewalDismissedDay],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases, activatedPayload],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

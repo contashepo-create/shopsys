@@ -25,11 +25,11 @@
  */
 import { issueLicenseKey, keyFingerprint, decodeLicenseKey, expiresAfterDays, canonicalPayload, issueActivityChangeKey } from './licenseLib.js'
 import { acknowledgePanelCallback, getNotificationsForDevice, handlePanelButton, handlePanelText, panelHome, recordNoticeAck, noticeListReply } from './adminPanel.js'
-import { subscriptionDigest, formatDigestAr, formatStatsAr, hasDigestNews, digestMarkerKey, readSoonDays } from './subscriptions.js'
+import { subscriptionDigest, formatDigestAr, formatStatsAr, hasDigestNews, digestMarkerKey, readSoonDays, deviceMetadata } from './subscriptions.js'
 import { readAbout, setAboutField } from './aboutContent.js'
 import {
   REG_MAX_BYTES, sanitizeRegistration, saveRegistration, formatRegistrationAr,
-  listRegistrations, formatRegistrationsAr,
+  listRegistrations, formatRegistrationsAr, deleteRegistration,
 } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
 
@@ -175,7 +175,13 @@ export default {
       await sendTelegram(cfg, cfg.adminId, formatDigestAr(digest, { daily: true }))
       // 25 ساعة: تغطي فرق المنطقة الزمنية بين تشغيلين ولا تمنع تذكير الغد
       await cfg.kv.put(digestMarkerKey(day), new Date().toISOString(), { expirationTtl: 90_000 })
-    } catch { /* التذكير تحسين — لا يعطّل العامل */ }
+    } catch (err) {
+      /* لا فشل صامت: التذكير اليومي هو غاية بندي 3 و4، فلو انهار (حدّ النداءات
+         الفرعية في الخطة المجانية، عطل KV…) يجب أن يعرف المطوّر في يومه. */
+      try {
+        await sendTelegram(cfg, cfg.adminId, `⚠️ فشل تذكير الاشتراكات اليومي (${day}): ${(err && err.message) || err}`)
+      } catch { /* حتى الإبلاغ عن الفشل تحسين — لا يعطّل العامل */ }
+    }
   },
 }
 
@@ -210,7 +216,7 @@ async function appendDeviceLog(cfg, deviceId, text) {
  * أي فشل ⇒ رسالة عربية واضحة للمطوّر، ولا استثناء يوقف البوت. */
 const SUPPORT_DEVICE_RE = /^[A-Za-z0-9_-]{6,64}$/
 
-function formatSupportInboxAr(conversations, cfg) {
+function formatSupportInboxAr(conversations, truncated = 0) {
   if (!conversations?.length) return '💬 لا محادثات دعم بعد — يظهر هنا كل عميل راسلك من «الدعم الفني» داخل التطبيق.'
   const lines = ['💬 <b>محادثات الدعم</b>', '']
   for (const c of conversations.slice(0, 15)) {
@@ -219,6 +225,7 @@ function formatSupportInboxAr(conversations, cfg) {
     lines.push(`   ${String(c.lastText ?? '').slice(0, 120)}`)
   }
   if (conversations.length > 15) lines.push(`\n… و${conversations.length - 15} محادثات أخرى`)
+  if (Number(truncated) > 0) lines.push(`\n⚠️ ${truncated} محادثة قديمة بلا فهرس لم تُعرض في هذه الدورة (حدّ النداءات) — تُفهرس تلقائياً عند أول رسالة جديدة فيها.`)
   lines.push('')
   lines.push('💡 للرد: <code>/رد SHOP-XXXX-XXXX-XXXX نص الرد</code> — أو Reply على رسالة البلاغ نفسها.')
   return lines.join('\n')
@@ -312,7 +319,9 @@ async function handleUpdate(update, cfg) {
         if (!raw) return { chatId, text: `⚠️ الجهاز <code>${deviceId}</code> غير مشترك — أصدر له مفتاحاً أولاً` }
         const d = JSON.parse(raw)
         d.email = mail
-        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(d))
+        /* metadata = فهرس التذكير اليومي (انظر subscriptions.js) — تُكتب مع كل
+           تعديل على سجل الجهاز فلا يحتاج الـcron قراءة السجل كاملاً */
+        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(d), { metadata: deviceMetadata(d) })
         await cfg.kv.put(`email:${mail}`, deviceId)
         await appendDeviceLog(cfg, deviceId, `ربط البريد ${mail}`)
         return { chatId, text: `✅ رُبط <code>${deviceId}</code> (${d.customer ?? '؟'}) بالبريد ${mail}` }
@@ -384,9 +393,10 @@ async function handleUpdate(update, cfg) {
         const key = await issueLicenseKey(payload, cfg.priv)
         const fp = keyFingerprint(key)
         await cfg.kv.put(`lic:${fp}`, JSON.stringify({ payload, key, issuedAt: payload.issuedAt, revoked: false }))
-        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify({
+        const deviceRecord = {
           plan, expiresAt: payload.expiresAt, customer: payload.customer, message: '', fingerprint: fp,
-        }))
+        }
+        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(deviceRecord), { metadata: deviceMetadata(deviceRecord) })
         await appendDeviceLog(cfg, deviceId, `تفعيل ${plan} حتى ${payload.expiresAt ?? 'الحياة'} — ${payload.customer}${extraModules.length ? ` +وحدات ${extraModules.join(',')}` : ''}`)
         return {
           chatId,
@@ -447,7 +457,7 @@ async function handleUpdate(update, cfg) {
         if (!deviceId || !text) return { chatId, text: '⚠️ الصيغة: <code>/رسالة SHOP-... نص الرسالة</code> — تظهر للعميل في شاشة «حول»' }
         const state = JSON.parse((await cfg.kv.get(`dev:${deviceId}`)) ?? '{}')
         state.message = text
-        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(state))
+        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(state), { metadata: deviceMetadata(state) })
         return { chatId, text: `📨 سُجّلت رسالة لجهاز <code>${deviceId}</code>: «${text}»` }
       }
 
@@ -510,8 +520,21 @@ async function handleUpdate(update, cfg) {
 
       /* بند 2: كل بلاغات التسجيل الجديد (العملاء الذين أكملوا معالج أول التشغيل) */
       case '/تسجيلات': case '/registrations': {
-        const records = await listRegistrations(cfg)
-        return { chatId, text: formatRegistrationsAr(records) }
+        const { records, skipped } = await listRegistrations(cfg)
+        return { chatId, text: formatRegistrationsAr(records, { skipped }) }
+      }
+
+      /* حق الحذف في سياسة الخصوصية (وعد بالاستجابة خلال 30 يوماً) — هذه أداته:
+         تحذف سجل بلاغ التسجيل `reg:<deviceId>` من المركز نهائياً. */
+      case '/احذف': case '/حذف': case '/delete': {
+        const result = await deleteRegistration(cfg, arg(0))
+        if (!result.ok) return { chatId, text: `⚠️ ${result.reasonAr}` }
+        return {
+          chatId,
+          text: result.existed
+            ? `🗑️ حُذف سجل التسجيل للجهاز <code>${result.deviceId}</code> من المركز.\n(سجل الترخيص <code>dev:</code> لم يُمسّ — لحذفه استخدم <code>/حرق</code>.)`
+            : `ℹ️ لا سجل تسجيل للجهاز <code>${result.deviceId}</code> — لا شيء لحذفه.`,
+        }
       }
 
       /* بند 1: صندوق الدعم والمحادثة والرد — عبر الجسر إلى عامل قناة الدعم */
@@ -525,7 +548,7 @@ async function handleUpdate(update, cfg) {
         }
         const inbox = await supportBridge(cfg, 'inbox')
         if (!inbox.ok) return { chatId, text: `⚠️ ${inbox.error}` }
-        return { chatId, text: formatSupportInboxAr(inbox.conversations, cfg) }
+        return { chatId, text: formatSupportInboxAr(inbox.conversations, inbox.truncated) }
       }
 
       case '/رد': case '/reply': {
@@ -558,6 +581,7 @@ const HELP = [
   '<code>/حول نص</code> — النص التعريفي في «حول» (مسح للافتراضي) — بيانات التواصل من اللوحة',
   '<code>/اشتراكات</code> — كل الأجهزة المسجلة',
   '<code>/تسجيلات</code> — العملاء الجدد الذين أكملوا التسجيل (يصلك كل واحد تلقائياً)',
+  '<code>/احذف SHOP-…</code> — حذف سجل تسجيل عميل (طلب حذف بياناته)',
   '<code>/تنبيهات</code> — التنبيهات المرسلة وعدد إقرارات القراءة',
   '<code>/دعم</code> — محادثات الدعم (بانتظار ردك أولاً) · <code>/دعم SHOP-…</code> محادثة جهاز',
   '<code>/رد SHOP-… نص</code> — رد يصل العميل داخل التطبيق (أو Reply على بلاغ الدعم)',

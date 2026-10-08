@@ -586,7 +586,10 @@ async function supportInboxReply(cfg, chatId) {
   )])
   rows.push([button('🔄 تحديث', 'panel:support')], [button('🏠 القائمة الرئيسية', 'panel:home')])
   const waiting = conversations.filter((c) => c.awaitingReply).length
-  return menuReply(chatId, `💬 <b>محادثات الدعم</b> (${conversations.length})\n🔴 بانتظار ردك: ${waiting}\nاختر محادثة لقراءتها والرد عليها:`, rows)
+  const skippedNote = Number(inbox.truncated) > 0
+    ? `\n⚠️ ${inbox.truncated} محادثة قديمة لم تُعرض هذه الدورة (حدّ النداءات) — تُفهرس عند أول رسالة جديدة فيها.`
+    : ''
+  return menuReply(chatId, `💬 <b>محادثات الدعم</b> (${conversations.length})\n🔴 بانتظار ردك: ${waiting}${skippedNote}\nاختر محادثة لقراءتها والرد عليها:`, rows)
 }
 
 async function supportThreadReply(cfg, chatId, deviceId) {
@@ -637,8 +640,10 @@ export async function handlePanelButton(data, chatId, cfg) {
   if (data === 'panel:home') return panelHome(chatId)
   /* بند 2 (تدقيق 2026-10-08): بلاغات العملاء الجدد من اللوحة */
   if (data === 'panel:regs') {
-    const records = await listRegistrations(cfg)
-    return menuReply(chatId, formatRegistrationsAr(records), [[button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+    const { records, skipped } = await listRegistrations(cfg)
+    /* سياسة الخصوصية تعد بالحذف خلال 30 يوماً — والأداة هي أمر البوت `/احذف` */
+    const body = `${formatRegistrationsAr(records, { skipped })}\n\n🗑️ لحذف سجل عميل (طلب حذف بيانات): <code>/احذف SHOP-XXXX-XXXX-XXXX</code>`
+    return menuReply(chatId, body, [[button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
   }
   if (data === 'panel:clients') return clientsReply(cfg, chatId)
   if (data === 'panel:new') {

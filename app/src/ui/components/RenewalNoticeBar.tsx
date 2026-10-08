@@ -24,15 +24,10 @@ export function RenewalNoticeBar() {
 
   const todayIso = new Date().toISOString()
   const reminder = useMemo(
-    () => renewalReminder({
-      expiresAt: activatedPayload?.expiresAt ?? null,
-      plan: activatedPayload?.plan ?? null,
-      todayIso,
-      dismissedDay,
-    }),
+    () => renewalReminder({ expiresAt: activatedPayload?.expiresAt ?? null, todayIso }),
     // اليوم وحده يكفي لإعادة الحساب — لا حاجة لإعادة التقييم كل ثانية
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activatedPayload?.expiresAt, activatedPayload?.plan, dismissedDay, todayIso.slice(0, 10)],
+    [activatedPayload?.expiresAt, todayIso.slice(0, 10)],
   )
 
   if (!shouldShowReminderBar({ reminder, todayIso, dismissedDay })) return null
@@ -42,7 +37,12 @@ export function RenewalNoticeBar() {
     <div
       dir="rtl"
       role="status"
-      className={`flex items-center justify-center gap-2 px-4 py-1 text-[11px] font-bold sticky top-0 z-40 ${
+      /* **غير لاصق** عمداً (خلاف `LanStatusBar`): كلاهما `sticky top-0` بنفس
+         الطبقة، وشريطان لاصقان على الحافة نفسها يتراكبان عند التمرير فيختفي
+         مؤشر حالة الشبكة خلف شريط التذكير (وفي وضع الشريط العلوي يختفي خلف
+         `MenuBar`). التذكير رسالة تُقرأ مرة في اليوم لا مؤشر حالة دائم: يظهر في
+         أعلى كل صفحة وفي جرس التنبيهات، فالتضحية بالالتصاق تحمي شريط الشبكة. */
+      className={`flex items-center justify-center gap-2 px-4 py-1 text-[11px] font-bold relative z-30 ${
         urgent ? 'bg-amber-500/95 text-slate-900' : 'bg-sky-600/90 text-white'
       }`}
     >

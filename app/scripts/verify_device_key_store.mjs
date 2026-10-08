@@ -165,10 +165,40 @@ ok('مشفّر تالف/بلا بادئة/طول خاطئ ⇒ توليد جدي�
 
   const wrongLen = new FakeDisk()
   const stub = safeStorageStub()
-  wrongLen.write(DEVICE_KEY_ENC_FILE, Buffer.from(`shopsys-safekey:v1:${stub.encryptString(Buffer.from('قصير').toString('base64')).toString('utf8')}`, 'utf8'))
+  wrongLen.write(DEVICE_KEY_ENC_FILE, Buffer.from(`shopsys-safekey:v1:${stub.encryptString(Buffer.from('قصير').toString('base64')).toString('base64')}`, 'utf8'))
   const out3 = resolveDeviceKey(io(wrongLen, stub))
   assert.equal(out3.regenerated, true)
   assert.match(out3.warnings.join(' '), /طول غير متوقع/)
+})
+
+/* النص المشفّر من safeStorage بايتات ثنائية (DPAPI/Keychain/libsecret). حفظها
+   كنص utf8 يُتلف كل بايت غير صالح (U+FFFD) فلا يعود المفتاح قابلاً للفكّ ⇒
+   خسارة قاعدة بيانات العميل كلها. base64 هو الترميز الوحيد الآمن هنا. */
+ok('النص المشفّر يُخزَّن base64 لا utf8 — وبايتات ثنائية تنجو ذهاباً وإياباً', () => {
+  assert.match(moduleSrc, /encryptString\(b64\(key\)\)\.toString\('base64'\)/, 'التشفير لا يُخزَّن base64')
+  assert.match(moduleSrc, /decryptString\(Buffer\.from\(cipherB64, 'base64'\)\)/, 'الفكّ لا يقرأ base64')
+  assert.equal(/encryptString\(b64\(key\)\)\.toString\('utf8'\)/.test(moduleSrc), false, 'عاد الترميز الفاقد utf8')
+
+  const BINARY = Buffer.concat([Buffer.from('v10', 'utf8'), Buffer.from([0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0, 0x00, 0xed])])
+  let seen = null
+  const binarySafe = {
+    isEncryptionAvailable: () => true,
+    encryptString: () => BINARY,
+    decryptString: (encrypted) => {
+      seen = Buffer.from(encrypted)
+      if (!encrypted.equals(BINARY)) throw new Error('البايتات لا تطابق النص المشفّر الأصلي')
+      return KEY.toString('base64')
+    },
+  }
+  const disk = new FakeDisk()
+  const first = resolveDeviceKey(io(disk, binarySafe))
+  assert.equal(first.storage, 'safeStorage')
+  const second = resolveDeviceKey(io(disk, binarySafe))
+  assert.equal(second.regenerated, false, 'الإقلاع الثاني لم يفكّ المفتاح — الترميز فقد بايتات')
+  assert.equal(second.storage, 'safeStorage')
+  assert.equal(second.key.equals(KEY), true)
+  assert.deepEqual(second.warnings, [])
+  assert.equal(seen.equals(BINARY), true)
 })
 
 ok('صريح بطول غير 32 ⇒ يُستبدل مع تحذير (السلوك السابق محفوظ)', () => {

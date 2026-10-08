@@ -18,8 +18,10 @@
  *     فلا إزعاج متكرر للمطوّر عند كل إقلاع.
  *   • **لا بيانات مالية ولا مستندات**: بيانات التواصل والمنشأة التي كتبها
  *     العميل بنفسه في المعالج فقط، وبطول محدود. لا فواتير ولا أرصدة ولا أصناف.
- *   • **موافقة مسبقة**: المعالج لا يبدأ إلا بعد قبول اتفاقية الاستخدام وسياسة
- *     الخصوصية (legal)، والبيانات المرسلة هي نفسها المعروضة هناك.
+ *   • **موافقة صريحة سابقة**: خانة اختيار في معالج أول التشغيل (غير مفعّلة
+ *     افتراضياً ولا تمنع الإكمال) + إفصاح كامل في سياسة الخصوصية (الحقول،
+ *     الغرض، ما لا يُرسل أبداً، مكان التخزين، الحذف). بلا `registrationConsentAt`
+ *     لا يُرسل شيء إطلاقاً — انظر `shouldReportRegistration` و`LEGAL_VERSION`.
  */
 
 export const REGISTRATION_PATH = '/register'
@@ -147,21 +149,23 @@ export async function sendRegistrationReport(
   baseUrl: string,
   report: RegistrationReport,
 ): Promise<'sent' | 'duplicate' | 'failed'> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 12_000)
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 12_000)
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}${REGISTRATION_PATH}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(report),
       signal: controller.signal,
     })
-    clearTimeout(timer)
     if (!res.ok) return 'failed'
     const parsed = (await res.json().catch(() => null)) as { isNew?: boolean } | null
     return parsed?.isNew ? 'sent' : 'duplicate'
   } catch {
     return 'failed' // أوفلاين — حالة طبيعية تماماً
+  } finally {
+    /* في مسار الفشل أيضاً: وإلا يبقى مؤقّت 12 ثانية معلّقاً بعد كل محاولة أوفلاين */
+    clearTimeout(timer)
   }
 }
 

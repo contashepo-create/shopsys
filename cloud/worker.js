@@ -43,6 +43,9 @@ const DEVICE_RE = /^[A-Za-z0-9_-]{6,64}$/
 const TEXT_MAX = 1500
 const LOG_MAX = 60_000
 const CHAT_KEEP = 200 // آخر 200 رسالة لكل جهاز
+/* أقصى قراءات محادثة في صندوق الوارد الواحد — يبقى الطلب تحت حدّ النداءات
+   الفرعية (50 في خطة Cloudflare المجانية) حتى لو وُجدت محادثات قديمة بلا فهرس */
+const CHAT_INBOX_MAX_READS = 30
 const RATE_LIMIT = 10 // رسائل لكل جهاز في الساعة
 const SUPPORT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/ // 32 bytes base64url
 
@@ -250,12 +253,28 @@ async function readChat(env, deviceId) {
   } catch { return [] }
 }
 
+/* فهرس المحادثة في metadata المفتاح (بند 1): صندوق الوارد في لوحة المطوّر كان
+   يقرأ **كل** محادثة بـ`kv.get` مستقل — وخطط Cloudflare المجانية تحدّ النداءات
+   الفرعية بـ50 للطلب، أي أن الصندوق ينهار عند نحو 48 محادثة. من الآن يُبنى
+   الصندوق من `kv.list` وحده، والقراءة الكاملة تبقى لفتح محادثة واحدة فقط. */
+const CHAT_META_VERSION = 1
+function chatMetadata(chat) {
+  const last = chat.length ? chat[chat.length - 1] : {}
+  return {
+    v: CHAT_META_VERSION,
+    count: chat.length,
+    lastFrom: String(last.from ?? '').slice(0, 12),
+    lastAt: String(last.at ?? '').slice(0, 30),
+    lastText: clean(last.text, 120),
+  }
+}
+
 async function pushChat(env, deviceId, from, text) {
   const chat = await readChat(env, deviceId)
   const id = chat.length ? Math.max(...chat.map((m) => m.id || 0)) + 1 : 1
   chat.push({ id, from, text, at: new Date().toISOString() })
   const trimmed = chat.length > CHAT_KEEP ? chat.slice(chat.length - CHAT_KEEP) : chat
-  await env.SHOPSYS_KV.put(`chat:${deviceId}`, JSON.stringify(trimmed))
+  await env.SHOPSYS_KV.put(`chat:${deviceId}`, JSON.stringify(trimmed), { metadata: chatMetadata(trimmed) })
   return id
 }
 
@@ -383,12 +402,31 @@ export default {
       if (action === 'inbox') {
         const list = await env.SHOPSYS_KV.list({ prefix: 'chat:', limit: 200 })
         const rows = []
+        let reads = 0
+        let truncated = 0
         for (const key of list.keys) {
-          const chat = await readChat(env, key.name.slice('chat:'.length))
+          const deviceId = key.name.slice('chat:'.length)
+          const meta = key.metadata
+          if (meta && meta.v === CHAT_META_VERSION) {
+            rows.push({
+              deviceId,
+              messages: Number(meta.count) || 0,
+              awaitingReply: meta.lastFrom === 'client',
+              lastFrom: String(meta.lastFrom ?? ''),
+              lastText: clean(meta.lastText, 200),
+              lastAt: String(meta.lastAt ?? ''),
+            })
+            continue
+          }
+          /* محادثة قديمة (كُتبت قبل الفهرس) — تُقرأ بعدد محدود، وما زاد يُبلَّغ
+             عنه في `truncated` بدل فشل الطلب كله عند حدّ النداءات الفرعية. */
+          if (reads >= CHAT_INBOX_MAX_READS) { truncated++; continue }
+          reads++
+          const chat = await readChat(env, deviceId)
           if (!chat.length) continue
           const last = chat[chat.length - 1]
           rows.push({
-            deviceId: key.name.slice('chat:'.length),
+            deviceId,
             messages: chat.length,
             awaitingReply: last?.from === 'client',
             lastFrom: last?.from ?? '',
@@ -397,7 +435,7 @@ export default {
           })
         }
         rows.sort((a, b) => (b.awaitingReply - a.awaitingReply) || String(b.lastAt).localeCompare(String(a.lastAt)))
-        return json({ ok: true, conversations: rows.slice(0, 50) }, 200, request, env)
+        return json({ ok: true, conversations: rows.slice(0, 50), truncated }, 200, request, env)
       }
 
       if (action === 'thread') {

@@ -15,8 +15,6 @@
  *     بزر «تواصل للتجديد» · منتهي ⇒ شاشة القفل كما هي (لا تكرار).
  *   • مدى الحياة (expiresAt = null) ⇒ لا تذكير إطلاقاً.
  */
-import type { LicensePlan } from './license.ts'
-
 /** عتبات التذكير بالأيام — 10 هي المطلوبة صراحةً في طلب المالك */
 export const REMINDER_BELL_DAYS = 30
 export const REMINDER_BANNER_DAYS = 10
@@ -62,13 +60,15 @@ export function daysWordAr(days: number): string {
  * قرار التذكير — دالة خالصة قابلة للفحص:
  * @param expiresAt من الرخصة الموقّعة (null = مدى الحياة)
  * @param todayIso  اليوم (ISO أو YYYY-MM-DD)
- * @param dismissedDay آخر يوم أسكت فيه المستخدم الشريط (null = لم يُسكت)
+ *
+ * لا تأخذ `dismissedDay` ولا `plan` عمداً: الإسكات قرار **عرض** وليس قرار
+ * حساب (تختبره `shouldShowReminderBar` وحدها)، والاشتراك مدى الحياة يصل
+ * بـ`expiresAt = null` فلا حاجة للدرجة. معاملة «مدى الحياة» من الحقلين معاً
+ * كانت ستجعل مصدرين للحقيقة يمكن أن يتباعدا.
  */
 export function renewalReminder(args: {
   expiresAt: string | null
   todayIso: string
-  plan?: LicensePlan | null
-  dismissedDay?: string | null
 }): RenewalReminder {
   const today = args.todayIso.slice(0, 10)
   const none: RenewalReminder = {

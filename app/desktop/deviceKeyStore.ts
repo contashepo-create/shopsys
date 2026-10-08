@@ -26,7 +26,12 @@
 
 export const DEVICE_KEY_FILE = 'device.key'
 export const DEVICE_KEY_ENC_FILE = 'device.key.enc'
-/** بادئة تميّز الملف المشفّر عن أي بقايا قديمة — بلاها قد يُفكّ ملف خاطئ */
+/**
+ * بادئة تميّز الملف المشفّر عن أي بقايا قديمة — بلاها قد يُفكّ ملف خاطئ.
+ * ما بعد البادئة هو **base64** للنص المشفّر (لا utf8): `safeStorage.encryptString`
+ * يعيد بايتات ثنائية (DPAPI/Keychain/libsecret)، وتحويلها إلى نص utf8 **يُتلفها** —
+ * أي بايت غير صالح يصير U+FFFD فلا يعود المفتاح قابلاً للفكّ (ضياع بيانات العميل).
+ */
 const ENC_MAGIC = 'shopsys-safekey:v1:'
 const KEY_LENGTH = 32
 
@@ -81,9 +86,11 @@ function readEncryptedKey(io: DeviceKeyIo): { key: Buffer | null; reason: string
   if (!raw) return { key: null, reason: 'missing' }
   const text = raw.toString('utf8')
   if (!text.startsWith(ENC_MAGIC)) return { key: null, reason: 'bad-magic' }
+  const cipherB64 = text.slice(ENC_MAGIC.length).trim()
+  if (!cipherB64) return { key: null, reason: 'ملف المفتاح المشفّر فارغ' }
   if (!safeAvailable(io)) return { key: null, reason: 'safeStorage غير متاح لفك المفتاح المشفّر' }
   try {
-    const decrypted = io.safeStorage!.decryptString(Buffer.from(text.slice(ENC_MAGIC.length), 'utf8'))
+    const decrypted = io.safeStorage!.decryptString(Buffer.from(cipherB64, 'base64'))
     const key = Buffer.from(decrypted, 'base64')
     if (key.length !== KEY_LENGTH) return { key: null, reason: `مفتاح مشفّر بطول غير متوقع (${key.length})` }
     return { key, reason: '' }
@@ -99,8 +106,10 @@ function readEncryptedKey(io: DeviceKeyIo): { key: Buffer | null; reason: string
 function writeEncryptedKey(io: DeviceKeyIo, key: Buffer): { ok: boolean; reason: string } {
   if (!safeAvailable(io)) return { ok: false, reason: 'safeStorage غير متاح على هذا النظام' }
   try {
-    const payload = Buffer.from(ENC_MAGIC + io.safeStorage!.encryptString(b64(key)).toString('utf8'), 'utf8')
-    io.writeFile(DEVICE_KEY_ENC_FILE, payload)
+    /* base64 لا utf8: النص المشفّر بايتات ثنائية، وutf8 يُتلفها (انظر ENC_MAGIC) */
+    const cipher = io.safeStorage!.encryptString(b64(key)).toString('base64')
+    if (!cipher) return { ok: false, reason: 'التشفير أعاد نصاً فارغاً' }
+    io.writeFile(DEVICE_KEY_ENC_FILE, Buffer.from(ENC_MAGIC + cipher, 'utf8'))
   } catch (err) {
     return { ok: false, reason: `فشل التشفير: ${(err as Error).message}` }
   }
@@ -144,8 +153,15 @@ export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
     if (safeAvailable(io)) {
       const written = writeEncryptedKey(io, plain)
       if (written.ok) {
-        io.deleteFile(DEVICE_KEY_FILE) // القاعدة ①: بعد نجاح الفكّ والتحقق فقط
-        io.log('device-key', 'رُحّل مفتاح الجهاز من ملف صريح إلى safeStorage')
+        /* القاعدة ①: الحذف بعد نجاح الفكّ والتحقق فقط. وفشل الحذف نفسه لا يُسقط
+           الإقلاع (صلاحية/قفل ملف) — المفتاح معتمد من النسخة المشفّرة، والبقايا
+           الصريحة تُحذف في الإقلاع التالي عبر المسار ①. */
+        try {
+          io.deleteFile(DEVICE_KEY_FILE)
+          io.log('device-key', 'رُحّل مفتاح الجهاز من ملف صريح إلى safeStorage')
+        } catch (err) {
+          warnings.push(`رُحّل المفتاح لكن تعذّر حذف الملف الصريح: ${(err as Error).message}`)
+        }
         return { key: plain, storage: 'safeStorage', migrated: true, regenerated: false, warnings }
       }
       warnings.push(`بقي المفتاح في ملف صريح — ${written.reason}`)

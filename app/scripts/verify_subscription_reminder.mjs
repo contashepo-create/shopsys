@@ -32,6 +32,10 @@ const layoutSrc = src('../src/ui/layout/MainLayout.tsx')
 const headerSrc = src('../src/ui/layout/Header.tsx')
 const storeSrc = src('../src/stores/app.store.ts')
 const noticesSrc = src('../src/core/notifications.ts')
+/* التعليقات تُنزع قبل الفحوص النصية: شرح القاعدة بكلمة «sticky» داخل تعليق كان
+   يُسقط فحص منع الالتصاق (درس متكرر في بوابات هذا المشروع). */
+const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+const barCode = code(barSrc)
 
 const DAY = 86_400_000
 const TODAY = '2026-10-08T09:00:00Z'
@@ -120,12 +124,23 @@ ok('الشريط رفيع غير حاجب وفيه إسكات وتفاصيل و�
   assert.match(barSrc, /\/settings\/support/)
   assert.match(barSrc, /shouldShowReminderBar/)
   assert.ok(!/\bModal\b/.test(barSrc), 'لا نافذة حوارية — المالك طلب «غير مزعجة»')
+  /* لا `sticky top-0`: شريط حالة الشبكة (LanStatusBar) وشريط القوائم (MenuBar)
+     لاصقان على الحافة نفسها بالطبقة نفسها، وشريط ثالث لاصق يتراكب معهما عند
+     التمرير فيخفي مؤشر الشبكة. التذكير رسالة يومية لا مؤشر حالة دائم. */
+  assert.ok(!/sticky/.test(barCode), 'الشريط لاصق ⇒ يتراكب مع شريط حالة الشبكة عند التمرير')
 })
 
-ok('الجرس يمرر التذكير ويعتمد على حمولة الرخصة ويوم الإسكات', () => {
+/* العقد الصحيح (كانت البوابة تجزم عكسه): إدراج الجرس **لا** يتأثر بيوم الإسكات —
+   الإسكات حق يخصّ الشريط الظاهر فقط، فلو أسكت الشريط واختفى إدراج الجرس معه
+   لضاع الأثر الوحيد المتبقي للتذكير. ومرجعه حمولة الرخصة الموقّعة (أوفلاين). */
+ok('الجرس يمرر التذكير من حمولة الرخصة — ولا يسكته إسكات الشريط', () => {
   assert.match(headerSrc, /reminderAsNotification\(renewalReminder\(/)
   assert.match(headerSrc, /activatedPayload\?\.expiresAt/)
-  assert.match(headerSrc, /renewalDismissedDay/)
+  const call = headerSrc.slice(headerSrc.indexOf('reminderAsNotification(renewalReminder('))
+    .slice(0, 260)
+  assert.ok(!call.includes('dismissedDay'), 'إدراج الجرس صار يعتمد على يوم الإسكات')
+  assert.match(moduleSrc, /export function renewalReminder\(args: \{\s*expiresAt: string \| null\s*todayIso: string\s*\}\)/,
+    'التوقيع عاد يقبل plan/dismissedDay — مصدران للحقيقة في قرار التذكير')
 })
 
 ok('المتجر يحفظ يوم الإسكات (يبقى بعد الإقلاع)', () => {

@@ -22,7 +22,7 @@ import React from 'react'
 const { parseCloudNotices } = await import('../src/core/cloud.ts')
 const {
   pendingPopupNotice, isAckMandatory, isPopupNotice, shouldAnnounceToast,
-  noticeSeverity, osNotificationFor, countPendingAcks, sendNoticeAck,
+  noticeSeverity, osNotificationFor, sendNoticeAck,
   NOTICE_LEVEL_LABELS_AR,
 } = await import('../src/core/devNotice.ts')
 const devbotWorker = (await import('../../tools/devbot/src/worker.js')).default
@@ -32,11 +32,17 @@ const { DevNoticeHost } = await import('../src/ui/components/DevNoticeModal.tsx'
 
 class MemoryKv {
   private values = new Map<string, string>()
+  /* metadata المفاتيح كما في KV الحقيقي: يُعاد من list() بلا نداء get إضافي */
+  private metas = new Map<string, Record<string, unknown>>()
   async get(key: string) { return this.values.get(key) ?? null }
-  async put(key: string, value: string) { this.values.set(key, String(value)) }
-  async delete(key: string) { this.values.delete(key) }
+  async put(key: string, value: string, opts?: { metadata?: Record<string, unknown> }) {
+    this.values.set(key, String(value))
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key: string) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 }: { prefix?: string; limit?: number } = {}) {
-    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })), list_complete: true }
+    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })), list_complete: true }
   }
 }
 
@@ -127,12 +133,6 @@ describe('③ نافذة واحدة: الأعلى درجة ثم الأحدث', (
     expect(pendingPopupNotice(all as never, { ackedIds: ['a'], snoozedIds: ['b'] })).toBeNull()
     expect(pendingPopupNotice(parsed([notice('x')]) as never)).toBeNull()
     expect(pendingPopupNotice([])).toBeNull()
-  })
-
-  it('عدّاد ما لم يُقرأ بعد', () => {
-    const all = parsed([notice('a', 'critical'), notice('b', 'important'), notice('c')])
-    expect(countPendingAcks(all as never, [])).toBe(2) // info لا يطلب إقراراً
-    expect(countPendingAcks(all as never, ['a'])).toBe(1)
   })
 })
 

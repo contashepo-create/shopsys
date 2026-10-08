@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs'
 import { parseCloudNotices } from '../src/core/cloud.ts'
 import {
   pendingPopupNotice, isAckMandatory, isPopupNotice, shouldAnnounceToast,
-  noticeSeverity, osNotificationFor, countPendingAcks, sendNoticeAck,
+  noticeSeverity, osNotificationFor, sendNoticeAck,
   NOTICE_LEVEL_LABELS_AR, NOTICE_LEVEL_ICONS,
 } from '../src/core/devNotice.ts'
 import { recordNoticeAck, ackCountForNotice, normalizeNoticeLevel, NOTICE_LEVELS } from '../../tools/devbot/src/adminPanel.js'
@@ -50,12 +50,17 @@ const preloadSrc = src('../desktop/preload.ts')
 const mainSrc = src('../desktop/main.ts')
 
 class MemoryKv {
-  constructor() { this.values = new Map() }
+  constructor() { this.values = new Map(); this.metas = new Map() }
   async get(key) { return this.values.get(key) ?? null }
-  async put(key, value) { this.values.set(key, String(value)) }
-  async delete(key) { this.values.delete(key) }
+  async put(key, value, opts) {
+    this.values.set(key, String(value))
+    /* metadata المفاتيح كما في KV الحقيقي — يُعاد من list() بلا get إضافي */
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 } = {}) {
-    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })), list_complete: true }
+    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })), list_complete: true }
   }
 }
 
@@ -115,11 +120,20 @@ ok('نافذة واحدة: الأعلى درجة ثم الأحدث، والمُ�
   assert.equal(pendingPopupNotice([]), null)
 })
 
-ok('عدّاد ما لم يُقرأ بعد (info لا يطلب إقراراً)', () => {
-  const all = parsed([notice('a', 'critical'), notice('b', 'important'), notice('c')])
-  assert.equal(countPendingAcks(all, []), 2)
-  assert.equal(countPendingAcks(all, ['a']), 1)
-  assert.equal(countPendingAcks(all, ['a', 'b']), 0)
+/* التركيب لا المنطق وحده: `DevNoticeHost` يجب أن يُركَّب في **كل** مسار يُعرض
+   للعميل، وأهمها شاشة القفل — الاستطلاع يجلب التنبيهات والعميل مقفول أيضاً
+   (`setup.completed` فقط شرطه)، فبلا التركيب هناك تصل التنبيهات ولا يعرضها شيء،
+   والعميل المقفول أحوج ما يكون لتعليمات التجديد من المطوّر. */
+ok('النافذة مركّبة في المسار العام **وشاشة القفل** معاً', () => {
+  /* التعليقات تُنزع أولاً: الاعتماد على تعليق كمرساة يسقط عند أول إعادة صياغة */
+  const app = appSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const from = app.indexOf('if (setup.completed && lockReason)')
+  const to = app.indexOf('if (readOnlyTab)')
+  assert.ok(from > -1 && to > from, 'تغيّر ترتيب فروع App.tsx — حدّث هذا الفحص')
+  const lockBranch = app.slice(from, to)
+  assert.ok(lockBranch.includes('<LockScreen'), 'فرع القفل لم يعد يركّب LockScreen')
+  assert.ok(lockBranch.includes('<DevNoticeHost />'), 'شاشة القفل لا تركّب نافذة تنبيه المطوّر')
+  assert.equal(app.split('<DevNoticeHost />').length - 1, 2, 'يُتوقع تركيبان: المسار العام + شاشة القفل')
 })
 
 ok('إشعار نظام التشغيل للمهم/العاجل فقط — والعنوان يبدأ بالدرجة', () => {
@@ -195,7 +209,7 @@ ok('النافذة: overlay مستقل (لا Modal العام غير الحاج�
   assert.match(noticeSrc, /pendingPopupNotice/)
 })
 
-ok('النافذة معروضة فوق كل المسارات في App.tsx', () => {
+ok('النافذة مستوردة ومركّبة في المسار العام في App.tsx', () => {
   assert.match(appSrc, /<DevNoticeHost \/>/)
   assert.match(appSrc, /import \{ DevNoticeHost \} from '\.\/ui\/components\/DevNoticeModal\.tsx'/)
 })

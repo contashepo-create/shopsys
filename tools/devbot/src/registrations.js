@@ -74,6 +74,34 @@ export function sanitizeRegistration(raw) {
 
 export const regKey = (deviceId) => `${REG_PREFIX}${deviceId}`
 
+/* ── فهرس القائمة في metadata المفتاح ────────────────────────────────────────
+ * `kv.list` يعيد metadata كل مفتاح **بلا نداء إضافي**، بينما قراءة كل سجل
+ * `kv.get` على حدة. خطط Cloudflare المجانية تحدّ النداءات الفرعية بـ50 للطلب
+ * الواحد ⇒ قائمة من 60 تسجيلاً كانت تفشل كلها برسالة خطأ لا تفسير لها.
+ * الحل: نكتب ملخص السجل في metadata عند الحفظ، فتُبنى القائمة من `list` وحده.
+ * الحد 1024 بايت لكل مفتاح — والملخص أدناه أقصر من ذلك بكثير. */
+export const REG_META_VERSION = 1
+/** أقصى عدد قراءات `get` في الطلب الواحد (يبقى تحت حدّ الخطة المجانية) */
+export const REG_MAX_READS = 40
+
+export function registrationMetadata(record) {
+  const str = (v, max) => String(v ?? '').slice(0, max)
+  return {
+    v: REG_META_VERSION,
+    deviceId: str(record.deviceId, 24),
+    shopName: str(record.shopName, 120),
+    ownerName: str(record.ownerName, 120),
+    phone: str(record.phone, 24),
+    email: str(record.email, 128),
+    activityNameAr: str(record.activityNameAr, 60),
+    plan: str(record.plan, 12),
+    lastSeenAt: str(record.lastSeenAt, 30),
+  }
+}
+
+/** هل هذا metadata صالح وكافٍ لعرض القائمة بلا قراءة السجل؟ */
+const usableMeta = (meta) => Boolean(meta && meta.v === REG_META_VERSION && typeof meta.deviceId === 'string' && meta.deviceId)
+
 /**
  * حفظ البلاغ — يعيد {saved, isNew, record}.
  * `isNew` هي ما يقرّر التبليغ على التليجرام: أول بلاغ للجهاز ⇒ إبلاغ،
@@ -93,8 +121,11 @@ export async function saveRegistration(cfg, report) {
     lastSeenAt: now,
     reports: (existing?.reports ?? 0) + 1,
   }
-  await cfg.kv.put(regKey(report.deviceId), JSON.stringify(record))
+  await cfg.kv.put(regKey(report.deviceId), JSON.stringify(record), { metadata: registrationMetadata(record) })
   return { saved: true, isNew: !existing, record }
+
+/* حذف سجل تسجيل (حق الاعتراض/الحذف في سياسة الخصوصية): يُستجاب للطلب خلال
+   30 يوماً، وهذا هو الأداة التي تنفّذه — أمر `/احذف SHOP-…` في البوت. */
 }
 
 /** صياغة عربية للتليجرام — كل بيانات العميل في رسالة واحدة قابلة للنسخ */
@@ -123,14 +154,33 @@ export function formatRegistrationAr(record, { isNew = true } = {}) {
   return lines.filter((line) => line !== '').join('\n')
 }
 
+export async function deleteRegistration(cfg, deviceId) {
+  const device = cleanText(deviceId, 24).toUpperCase()
+  if (!DEVICE_RE.test(device)) return { ok: false, reasonAr: 'معرّف الجهاز غير صالح. الصيغة: <code>SHOP-XXXX-XXXX-XXXX</code>' }
+  const key = regKey(device)
+  const existed = (await cfg.kv.get(key)) !== null
+  await cfg.kv.delete(key)
+  return { ok: true, existed, deviceId: device }
+}
+
 /**
  * كل التسجيلات — للوحة (أمر /تسجيلات وزر «🆕 التسجيلات»).
- * تُقرأ من KV وتُرتَّب بالأحدث أولاً.
+ * تُبنى من metadata المفاتيح بلا قراءة كل سجل (انظر REG_META_VERSION)، وتُرتَّب
+ * بالأحدث أولاً. السجلات القديمة بلا metadata تُقرأ بـ`get` بعدد محدود
+ * (`REG_MAX_READS`)؛ وما زاد يُبلَّغ عنه في `skipped` بدل فشل الطلب كله.
  */
 export async function listRegistrations(cfg, limit = 100) {
   const list = await cfg.kv.list({ prefix: REG_PREFIX, limit })
   const out = []
-  for (const key of list.keys) {
+  let skipped = 0
+  let reads = 0
+  for (const key of list.keys ?? []) {
+    if (usableMeta(key.metadata)) {
+      out.push({ ...key.metadata })
+      continue
+    }
+    if (reads >= REG_MAX_READS) { skipped++; continue }
+    reads++
     const raw = await cfg.kv.get(key.name)
     try {
       const parsed = JSON.parse(raw ?? 'null')
@@ -138,10 +188,10 @@ export async function listRegistrations(cfg, limit = 100) {
     } catch { /* سجل تالف — يُتجاوز */ }
   }
   out.sort((a, b) => String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')))
-  return out
+  return { records: out, skipped }
 }
 
-export function formatRegistrationsAr(records) {
+export function formatRegistrationsAr(records, { skipped = 0 } = {}) {
   if (!records.length) return 'لا تسجيلات جديدة بعد — يظهر هنا كل عميل يكمل معالج أول التشغيل.'
   const lines = ['🆕 <b>آخر التسجيلات</b>', '']
   for (const r of records.slice(0, 20)) {
@@ -149,5 +199,8 @@ export function formatRegistrationsAr(records) {
     lines.push(`• ${r.shopName || 'بلا اسم'} — ${r.ownerName || '—'}${contact ? `\n   ${contact}` : ''}\n   <code>${r.deviceId}</code> · ${r.activityNameAr || r.activityId || '—'} · ${String(r.lastSeenAt ?? '').slice(0, 10)}`)
   }
   if (records.length > 20) lines.push(`\n… و${records.length - 20} آخرين`)
+  if (skipped > 0) {
+    lines.push(`\n⚠️ ${skipped} سجلاً قديماً بلا فهرس لم تُقرأ (حدّ النداءات ${REG_MAX_READS}) — تُفهرس تلقائياً عند أول بلاغ جديد لها.`)
+  }
   return lines.join('\n')
 }

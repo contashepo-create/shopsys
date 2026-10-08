@@ -44,12 +44,17 @@ const devWrangler = src('../../tools/devbot/wrangler.toml')
 const cloudWrangler = src('../../cloud/wrangler.toml')
 
 class MemoryKv {
-  constructor() { this.values = new Map() }
+  constructor() { this.values = new Map(); this.metas = new Map() }
   async get(key) { return this.values.get(key) ?? null }
-  async put(key, value) { this.values.set(key, String(value)) }
-  async delete(key) { this.values.delete(key) }
+  async put(key, value, opts) {
+    this.values.set(key, String(value))
+    /* metadata المفاتيح كما في KV الحقيقي — يُعاد من list() بلا get إضافي */
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 } = {}) {
-    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })), list_complete: true }
+    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })), list_complete: true }
   }
 }
 

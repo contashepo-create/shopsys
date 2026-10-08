@@ -47,12 +47,17 @@ const aboutPageSrc = src('../src/ui/pages/AboutPage.tsx')
 const lockSrc = src('../src/ui/LockScreen.tsx')
 
 class MemoryKv {
-  constructor() { this.values = new Map() }
+  constructor() { this.values = new Map(); this.metas = new Map() }
   async get(key) { return this.values.get(key) ?? null }
-  async put(key, value) { this.values.set(key, String(value)) }
-  async delete(key) { this.values.delete(key) }
+  async put(key, value, opts) {
+    this.values.set(key, String(value))
+    /* metadata المفاتيح كما في KV الحقيقي — يُعاد من list() بلا get إضافي */
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 } = {}) {
-    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })), list_complete: true }
+    return { keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })), list_complete: true }
   }
 }
 
@@ -88,6 +93,14 @@ ok('الهاتف/واتساب/تليجرام/البريد بأنماط صارم�
   assert.equal(sanitizeAboutEmail('support@tahakam.app'), 'support@tahakam.app')
   assert.equal(sanitizeAboutValue('whatsapp', '+20 100 123 4567'), '201001234567')
   assert.equal(sanitizeAboutValue('email', 'not-an-email'), '')
+  /* حارس تباعد: المدخلات نفسها تُمرّ على الطرفين — لو اختلف نمط أحدهما قبلت
+     اللوحة قيمةً يسقطها العميل عند العرض (يراها المطوّر محفوظة ولا يراها أحد). */
+  const phoneCases = ['abc', '+20 100 123 4567', '01001234567', '+201001234567']
+  const tgCases = ['@tahakam_support', 't.me/bad name', 'ab', 'tahakam_support']
+  const mailCases = ['not-an-email', 'support@tahakam.app', 'a@b']
+  for (const v of phoneCases) assert.equal(sanitizeAboutValue('phone', v), sanitizeAboutPhone(v), `هاتف: ${v}`)
+  for (const v of tgCases) assert.equal(sanitizeAboutValue('telegram', v), sanitizeAboutTelegram(v), `تليجرام: ${v}`)
+  for (const v of mailCases) assert.equal(sanitizeAboutValue('email', v), sanitizeAboutEmail(v), `بريد: ${v}`)
 })
 
 ok('parseAbout يُسقِط التالف ويُبقي الافتراضي ويقصّ القوائم', () => {

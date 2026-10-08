@@ -179,9 +179,39 @@ describe('⑤ حالات التلف وفقدان سلسلة المفاتيح', (
     expect(outcome.warnings.join(' ')).toMatch(/تعذّر فك المفتاح المشفّر/)
   })
 
+  /* ث2 — الخطأ الذي كان سيسقط على أجهزة العملاء الحقيقية: `safeStorage.encryptString`
+     يعيد **بايتات ثنائية** (DPAPI/Keychain/libsecret)، وحفظها كنص utf8 يُتلف كل
+     بايت غير صالح (يصير U+FFFD) فلا يعود المفتاح قابلاً للفكّ ⇒ قاعدة البيانات
+     كلها تُفقد. التخزين base64 يحفظ البايتات حرفياً. */
+  it('نص مشفّر ثنائي (بايتات غير صالحة utf8) ينجو ذهاباً وإياباً', () => {
+    /* مفتاح ثنائي حقيقي الشكل: يبدأ بـv10 وفيه بايتات 0x80-0xFF غير صالحة utf8 */
+    const BINARY = Buffer.concat([Buffer.from('v10', 'utf8'), Buffer.from([0xff, 0xfe, 0x80, 0xc3, 0x28, 0xa0, 0x00, 0xed])])
+    let seen: Buffer | null = null
+    const binarySafe = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain: string) => { Buffer.from(plain, 'base64'); return BINARY },
+      decryptString: (encrypted: Buffer) => {
+        seen = Buffer.from(encrypted)
+        /* أي فقد بايت واحد ⇒ فكّ خاطئ — وهذا بالضبط ما كان يفعله utf8 */
+        if (!encrypted.equals(BINARY)) throw new Error('البايتات لا تطابق النص المشفّر الأصلي')
+        return KEY.toString('base64')
+      },
+    }
+    const first = resolveDeviceKey(buildIo(disk, binarySafe))
+    expect(first.regenerated).toBe(true)
+    expect(first.storage).toBe('safeStorage')
+    /* الإقلاع التالي يقرأ الملف نفسه — يجب أن يفكّه ويعيد المفتاح ذاته */
+    const second = resolveDeviceKey(buildIo(disk, binarySafe))
+    expect(second.regenerated).toBe(false)
+    expect(second.storage).toBe('safeStorage')
+    expect(second.key.equals(KEY)).toBe(true)
+    expect(second.warnings).toHaveLength(0)
+    expect(seen!.equals(BINARY)).toBe(true) // البايتات وصلت كما كُتبت حرفياً
+  })
+
   it('مشفّر يفكّ لطول خاطئ ⇒ مرفوض', () => {
     const io = buildIo(disk, makeSafeStorage())
-    disk.write(DEVICE_KEY_ENC_FILE, Buffer.from('shopsys-safekey:v1:' + io.safeStorage!.encryptString(Buffer.from('قصير').toString('base64')).toString('utf8'), 'utf8'))
+    disk.write(DEVICE_KEY_ENC_FILE, Buffer.from('shopsys-safekey:v1:' + io.safeStorage!.encryptString(Buffer.from('قصير').toString('base64')).toString('base64'), 'utf8'))
     const outcome = resolveDeviceKey(io)
     expect(outcome.regenerated).toBe(true)
     expect(outcome.warnings.join(' ')).toMatch(/طول غير متوقع/)

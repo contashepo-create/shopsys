@@ -18,7 +18,7 @@ const devbotWorker = (await import('../../tools/devbot/src/worker.js')).default
 const { handlePanelButton, handlePanelText } = await import('../../tools/devbot/src/adminPanel.js')
 const {
   subscriptionDigest, formatDigestAr, formatStatsAr, hasDigestNews,
-  readSoonDays, writeSoonDays, digestMarkerKey, SOON_DAYS,
+  readSoonDays, writeSoonDays, digestMarkerKey, SOON_DAYS, deviceMetadata,
 } = await import('../../tools/devbot/src/subscriptions.js')
 
 const DAY = 86_400_000
@@ -27,12 +27,18 @@ const dayIso = (offsetDays: number) => new Date(NOW + offsetDays * DAY).toISOStr
 
 class MemoryKv {
   private values = new Map<string, string>()
+  /* metadata المفاتيح كما في KV الحقيقي: يُعاد من list() بلا نداء get إضافي */
+  private metas = new Map<string, Record<string, unknown>>()
   async get(key: string) { return this.values.get(key) ?? null }
-  async put(key: string, value: string) { this.values.set(key, String(value)) }
-  async delete(key: string) { this.values.delete(key) }
+  async put(key: string, value: string, opts?: { metadata?: Record<string, unknown> }) {
+    this.values.set(key, String(value))
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key: string) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 }: { prefix?: string; limit?: number } = {}) {
     return {
-      keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => ({ name })),
+      keys: [...this.values.keys()].filter((k) => k.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })),
       list_complete: true,
     }
   }
@@ -297,5 +303,102 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
     expect(await writeSoonDays({ kv } as never, 0)).toBe(SOON_DAYS)
     expect(await writeSoonDays({ kv } as never, 45)).toBe(45)
     expect(await readSoonDays({ kv } as never)).toBe(45)
+  })
+})
+
+describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ النداءات الفرعية', () => {
+  /** خطة Cloudflare المجانية: 50 نداءً فرعياً للطلب. بلا فهرس كان المسح يقرأ كل
+   *  سجل بـget ⇒ يفشل cron التذكير بصمت عند نحو 48 جهازاً (والبندان 3 و4 هما
+   *  التنبيه بالانتهاء نفسه). */
+  const seedIndexed = async (kv: MemoryKv, rows: { id: string; customer: string; plan: string; expiresAt: string | null }[]) => {
+    for (const r of rows) {
+      const record = { customer: r.customer, plan: r.plan, expiresAt: r.expiresAt, email: '', fingerprint: 'abcdef01' }
+      await kv.put(`dev:${r.id}`, JSON.stringify(record), { metadata: deviceMetadata(record) as never })
+    }
+  }
+  const withGetSpy = (kv: MemoryKv) => {
+    let gets = 0
+    return {
+      gets: () => gets,
+      kv: {
+        get: async (k: string) => { gets++; return kv.get(k) },
+        put: (k: string, v: string, o?: never) => kv.put(k, v, o),
+        delete: (k: string) => kv.delete(k),
+        list: (o?: never) => kv.list(o),
+      },
+    }
+  }
+
+  it('سجلات مفهرسة ⇒ تصنيف صحيح بصفر قراءات get', async () => {
+    const kv = new MemoryKv()
+    await seedIndexed(kv, [
+      { id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-5) },
+      { id: 'SHOP-AAA2-2222-2222', customer: 'موشك', plan: 'pro', expiresAt: dayIso(4) },
+      { id: 'SHOP-AAA3-3333-3333', customer: 'دائم', plan: 'lifetime', expiresAt: null },
+    ])
+    const spy = withGetSpy(kv)
+    const digest = await subscriptionDigest({ kv: spy.kv } as never, { now: NOW })
+    expect(spy.gets()).toBe(0)
+    expect(digest.total).toBe(3)
+    expect(digest.viaMetadata).toBe(3)
+    expect(digest.skipped).toBe(0)
+    expect(digest.expired.map((r) => r.customer)).toEqual(['منتهي'])
+    expect(digest.soon.map((r) => r.customer)).toEqual(['موشك'])
+    expect(digest.lifetime).toBe(1)
+  })
+
+  it('سجلات قديمة بلا فهرس ⇒ تُقرأ وتُفهرس في مكانها، فالدورة التالية صفر قراءات', async () => {
+    const kv = new MemoryKv()
+    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'قديم', plan: 'basic', expiresAt: dayIso(2) }])
+    const first = withGetSpy(kv)
+    const d1 = await subscriptionDigest({ kv: first.kv } as never, { now: NOW })
+    expect(first.gets()).toBe(1)
+    expect(d1.viaMetadata).toBe(0)
+    expect(d1.soon.map((r) => r.customer)).toEqual(['قديم'])
+
+    const second = withGetSpy(kv)
+    const d2 = await subscriptionDigest({ kv: second.kv } as never, { now: NOW })
+    expect(second.gets()).toBe(0) // فُهرس أثناء الدورة الأولى
+    expect(d2.viaMetadata).toBe(1)
+    expect(d2.soon.map((r) => r.customer)).toEqual(['قديم'])
+  })
+
+  it('تجاوز حدّ القراءات ⇒ skipped صريح في الملخّص، لا فشل صامت ولا «كل شيء سليم»', async () => {
+    const kv = new MemoryKv()
+    await seed(kv, Array.from({ length: 5 }, (_, i) => ({
+      id: `SHOP-AAA${i + 1}-1111-1111`, customer: `جهاز ${i + 1}`, plan: 'basic', expiresAt: dayIso(3),
+    })))
+    const digest = await subscriptionDigest({ kv } as never, { now: NOW, maxReads: 2 })
+    expect(digest.total).toBe(5)
+    expect(digest.skipped).toBe(3)
+    expect(formatDigestAr(digest)).toContain('لم يُفحص 3')
+    expect(formatStatsAr(digest)).toContain('لم يُفحص 3')
+
+    /* ولا حتى في يوم «لا جديد»: الخبر الناقص يُقال صراحة */
+    const quiet = await subscriptionDigest({ kv: new MemoryKv() } as never, { now: NOW, maxReads: 0 })
+    expect(hasDigestNews(quiet)).toBe(false)
+    const kv2 = new MemoryKv()
+    await seed(kv2, [{ id: 'SHOP-AAA1-1111-1111', customer: 'بعيد', plan: 'basic', expiresAt: dayIso(300) }])
+    const noNews = await subscriptionDigest({ kv: kv2 } as never, { now: NOW, maxReads: 0 })
+    expect(hasDigestNews(noNews)).toBe(false)
+    expect(noNews.skipped).toBe(1)
+    expect(formatDigestAr(noNews)).toContain('لم يُفحص 1')
+  })
+
+  it('فشل cron ⇒ يبلغ المطوّر بدل الصمت', async () => {
+    const kv = new MemoryKv()
+    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-2) }])
+    const calls = captureTelegram()
+    const broken = {
+      ...env_(kv),
+      SHOPSYS_CONTROL: {
+        get: (k: string) => kv.get(k),
+        put: (k: string, v: string, o?: never) => kv.put(k, v, o),
+        delete: (k: string) => kv.delete(k),
+        list: async () => { throw new Error('kv unavailable') },
+      },
+    }
+    await devbotWorker.scheduled!({} as never, broken as never)
+    expect(calls.some((c) => c.text.includes('فشل تذكير الاشتراكات اليومي'))).toBe(true)
   })
 })

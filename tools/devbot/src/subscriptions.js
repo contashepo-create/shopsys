@@ -39,23 +39,67 @@ export async function writeSoonDays(cfg, soonDays) {
   return value
 }
 
+/* ── فهرس الاشتراكات في metadata المفاتيح ───────────────────────────────────
+ * الـcron يمسح **كل** الأجهزة: `kv.list` نداء واحد لكل 1000 مفتاح، لكن قراءة كل
+ * سجل `kv.get` نداء مستقل — وخطط Cloudflare المجانية تحدّ النداءات الفرعية بـ50
+ * في الطلب الواحد، أي أن التذكير اليومي كان ينهار بصمت (`catch {}` في scheduled)
+ * عند نحو 48 جهازاً. الحل: نكتب ملخص الاشتراك في metadata المفتاح عند كل إصدار
+ * أو تجديد، فيُصنَّف المسح من `list` وحده. السجلات القديمة (بلا فهرس) تُقرأ
+ * بعدد محدود ثم **تُفهرس** أثناء المسح فتختفي الكلفة من أول دورة. */
+export const DEVICE_META_VERSION = 1
+/** أقصى قراءات `get` في المسح الواحد — يبقى تحت حدّ النداءات الفرعية */
+export const DIGEST_MAX_READS = 40
+
+export function deviceMetadata(record) {
+  const str = (v, max) => String(v ?? '').slice(0, max)
+  return {
+    v: DEVICE_META_VERSION,
+    expiresAt: record && record.expiresAt ? str(record.expiresAt, 20) : null,
+    customer: str(record && record.customer, 120),
+    plan: str(record && record.plan, 20),
+    email: str(record && record.email, 128),
+  }
+}
+
 /**
  * مسح كل أجهزة المركز وتصنيفها: منتهية · موشكة (≤ soonDays) · مدى الحياة.
  * `expiresAt` بصيغة YYYY-MM-DD كما يكتبها `expiresAfterDays` في licenseLib.
+ * يعيد أيضاً `skipped` (ما لم يُفحص لتجاوز حدّ القراءات) و`viaMetadata`
+ * (ما صُنّف من الفهرس بلا قراءة) — يظهر تحذير صريح للمطوّر لو تُرِك شيء.
  */
-export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date.now() } = {}) {
+export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date.now(), maxReads = DIGEST_MAX_READS } = {}) {
   const expired = []
   const soon = []
   let total = 0
   let lifetime = 0
   let malformed = 0
+  let skipped = 0
+  let viaMetadata = 0
+  let reads = 0
   let cursor
   for (let page = 0; page < 20; page++) {
     const listed = await cfg.kv.list({ prefix: 'dev:', limit: 1000, ...(cursor ? { cursor } : {}) })
     for (const key of listed.keys ?? []) {
       total++
       let device = null
-      try { device = JSON.parse((await cfg.kv.get(key.name)) ?? 'null') } catch { device = null }
+      const meta = key.metadata
+      if (meta && meta.v === DEVICE_META_VERSION && typeof meta.customer === 'string') {
+        device = meta
+        viaMetadata++
+      } else if (reads < maxReads) {
+        reads++
+        let raw = null
+        try { raw = await cfg.kv.get(key.name) } catch { raw = null }
+        try { device = JSON.parse(raw ?? 'null') } catch { device = null }
+        /* فهرسة السجل القديم وهو في مكانه: القيمة نفسها حرفياً + metadata.
+           من الدورة التالية يُصنَّف بلا قراءة (فشل الفهرسة لا يوقف المسح). */
+        if (raw && device && typeof device === 'object') {
+          try { await cfg.kv.put(key.name, raw, { metadata: deviceMetadata(device) }) } catch { /* تحسين */ }
+        }
+      } else {
+        skipped++
+        continue
+      }
       if (!device || typeof device !== 'object') { malformed++; continue }
       const deviceId = key.name.slice(4)
       if (!device.expiresAt) { lifetime++; continue } // دائم — لا تذكير
@@ -79,7 +123,7 @@ export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date
   // الأخطر أولاً: الأقدم انتهاءً فوق القائمة
   expired.sort((a, b) => a.days - b.days)
   soon.sort((a, b) => a.days - b.days)
-  return { total, lifetime, malformed, expired, soon, soonDays }
+  return { total, lifetime, malformed, expired, soon, soonDays, skipped, viaMetadata }
 }
 
 const PLAN_AR = { trial: 'تجريبي', basic: 'أساسي', pro: 'احترافي', lifetime: 'مدى الحياة' }
@@ -107,7 +151,9 @@ export const hasDigestNews = (digest) => digest.expired.length > 0 || digest.soo
 export function formatDigestAr(digest, { daily = false } = {}) {
   const head = daily ? '⏰ <b>تذكير الاشتراكات اليومي</b>' : '⏰ <b>تذكير الاشتراكات</b>'
   if (!hasDigestNews(digest)) {
-    return `${head}\n✅ لا اشتراكات منتهية ولا موشكة على الانتهاء (≤ ${digest.soonDays} أيام).\n📊 المسجل: ${digest.total} جهاز (منها ${digest.lifetime} مدى الحياة)`
+    /* لا «كل شيء سليم» صامتاً: لو تُركت أجهزة بلا فحص فالخبر ناقص ويُقال صراحةً */
+    const tail = digest.skipped ? `\n${scanWarningAr(digest.skipped)}` : ''
+    return `${head}\n✅ لا اشتراكات منتهية ولا موشكة على الانتهاء (≤ ${digest.soonDays} أيام).\n📊 المسجل: ${digest.total} جهاز (منها ${digest.lifetime} مدى الحياة)${tail}`
   }
   const lines = [head, '']
   if (digest.expired.length) {
@@ -123,6 +169,7 @@ export function formatDigestAr(digest, { daily = false } = {}) {
     lines.push('')
   }
   lines.push(`📊 المسجل: ${digest.total} جهاز · مدى الحياة: ${digest.lifetime}`)
+  if (digest.skipped) lines.push(scanWarningAr(digest.skipped))
   lines.push('💡 التجديد: افتح العميل من «👥 العملاء» ← «🔑 إصدار أو تجديد الرخصة»')
   return lines.join('\n')
 }
@@ -139,5 +186,11 @@ export function formatStatsAr(digest, extra = {}) {
     ...(extra.licenses != null ? [`🔑 مفاتيح صادرة: ${extra.licenses}`] : []),
     ...(extra.notices != null ? [`🔔 تنبيهات عامة نشطة: ${extra.notices}`] : []),
     ...(digest.malformed ? [`⚠️ سجلات تالفة تُجاوزت: ${digest.malformed}`] : []),
+    ...(digest.skipped ? [scanWarningAr(digest.skipped)] : []),
   ].join('\n')
+}
+
+/** تحذير صريح للمطوّر: جزء من الأجهزة لم يُفحص في هذه الدورة (لا صمت) */
+export function scanWarningAr(skipped) {
+  return `⚠️ لم يُفحص ${skipped} جهازاً في هذه الدورة (حدّ ${DIGEST_MAX_READS} قراءة للطلب — قيد الخطة المجانية). تُفهرس السجلات تلقائياً مع كل تجديد، فتنخفض الكلفة كل دورة؛ ولو بقي الرقم مرتفعاً ارفع خطة العامل.`
 }

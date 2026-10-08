@@ -63,15 +63,6 @@ export function pendingPopupNotice(
   })[0]
 }
 
-/** عدّاد ما لم يُقرأ بعد — يظهر في الجرس كي يعرف العميل أن عليه إقراراً */
-export function countPendingAcks(
-  notices: readonly CloudNotice[],
-  ackedIds: readonly string[],
-): number {
-  const acked = new Set(ackedIds)
-  return notices.filter((n) => n.requiresAck && !acked.has(n.id)).length
-}
-
 /**
  * التوست: لـinfo فقط — الدرجتان الأعلى لهما نافذة منبثقة، فالتوست معهما
  * تكرار وضجيج (قرار «غير مزعج» نفسه الذي حكم بند 5).
@@ -108,9 +99,9 @@ export async function sendNoticeAck(
   deviceId: string,
 ): Promise<'sent' | 'failed'> {
   if (!noticeId || !deviceId) return 'failed'
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 10_000)
     const res = await fetch(
       `${baseUrl.replace(/\/$/, '')}/notifications/${encodeURIComponent(noticeId)}/ack`,
       {
@@ -120,9 +111,12 @@ export async function sendNoticeAck(
         signal: controller.signal,
       },
     )
-    clearTimeout(timer)
     return res.ok ? 'sent' : 'failed'
   } catch {
     return 'failed'
+  } finally {
+    /* في مسار الفشل أيضاً لا النجاح فقط: وإلا يبقى مؤقّت معلّقاً 10 ثوانٍ بعد فشل
+       الشبكة (أوفلاين) — يؤخّر إغلاق بيئة الاختبار ويحبس مقبضاً بلا داعٍ. */
+    clearTimeout(timer)
   }
 }
