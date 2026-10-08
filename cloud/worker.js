@@ -118,6 +118,18 @@ async function authorizeSupport(request, env, deviceId, body = '') {
   return true
 }
 
+/**
+ * مصادقة جسر اللوحة (بند 1): سرّ مشترك في ترويسة `x-bridge-secret`، ومقارنة
+ * بزمن ثابت. بلا سرّ مضبوط في البيئة ⇒ الجسر مغلق كلياً (لا «وضع تطوير» مفتوح).
+ * كل أفعال الجسر كتابة/قراءة لمحادثة دعم، فلا تُقبل إلا من عامل اللوحة.
+ */
+function bridgeAuthorized(request, env) {
+  const expected = String(env.SUPPORT_BRIDGE_SECRET ?? '')
+  if (expected.length < 16) return false
+  const presented = request.headers.get('x-bridge-secret') ?? ''
+  return constantTimeEqual(presented, expected)
+}
+
 /* ─── إصدار المفاتيح من البوت (ترقية بوت المطوّر — سد فجوة التدقيق) ───
  * نفس صيغة license_tool.mjs حرفياً: canonicalPayload → Ed25519 → SHOPSYS1.<b64u>.<b64u>
  * يتطلب: wrangler secret put SHOPSYS_PRIVATE_KEY (pkcs8 بترميز base64url)
@@ -339,6 +351,71 @@ export default {
       }
 
       return json({ error: 'method' }, 405, request, env)
+    }
+
+    /* ─── بند 1 (تدقيق 2026-10-08): جسر لوحة المطوّر ─────────────────────────
+       قناة الدعم تعيش هنا (HMAC v2 + TOFU + تحديد المعدل)، بينما لوحة المطوّر
+       وبوت التليجرام يعيشان في عامل آخر (`tools/devbot`). وبوت تليجرام واحد لا
+       يقبل إلا ويبهوك واحداً ⇒ لو كان الويبهوك على مركز التحكم، فـ`/tg-webhook`
+       هنا ميت ولا يصل رد المطوّر للعميل أبداً، ولو كان على اللوحة فبلاغات الدعم
+       تُرسل للمطوّر لكن الرد عليها (Reply) يُعامل أمراً مجهولاً هناك.
+       الحل: جسر مصادَق عليه — مركز التحكم يحوّل الردود ويقرأ المحادثات من هنا
+       بلا نقل تخزين ولا تغيير في العميل. السرّ مشترك بين العاملين. */
+    if (path === '/support-bridge' && request.method === 'POST') {
+      if (!bridgeAuthorized(request, env)) return json({ error: 'forbidden' }, 403, request, env)
+      let body
+      try { body = await request.json() } catch { return json({ error: 'json only' }, 400, request, env) }
+      const action = String(body?.action ?? '')
+
+      /* رد المطوّر على تليجرام (Reply على بلاغ دعم) — يحلّ الربط هنا لأن
+         `tgmap:<messageId>` محفوظ في هذه المساحة لا في مساحة اللوحة. */
+      if (action === 'telegram-reply') {
+        const messageId = String(body?.messageId ?? '')
+        const text = clean(body?.text, TEXT_MAX)
+        if (!messageId || text.length < 1) return json({ error: 'empty' }, 400, request, env)
+        const deviceId = await env.SHOPSYS_KV.get(`tgmap:${messageId}`)
+        if (!deviceId || !DEVICE_RE.test(deviceId)) return json({ error: 'unknown message' }, 404, request, env)
+        await pushChat(env, deviceId, 'developer', text)
+        return json({ ok: true, deviceId }, 200, request, env)
+      }
+
+      /* صندوق الوارد: المحادثات التي آخر رسالة فيها من العميل (تنتظر رداً) أولاً */
+      if (action === 'inbox') {
+        const list = await env.SHOPSYS_KV.list({ prefix: 'chat:', limit: 200 })
+        const rows = []
+        for (const key of list.keys) {
+          const chat = await readChat(env, key.name.slice('chat:'.length))
+          if (!chat.length) continue
+          const last = chat[chat.length - 1]
+          rows.push({
+            deviceId: key.name.slice('chat:'.length),
+            messages: chat.length,
+            awaitingReply: last?.from === 'client',
+            lastFrom: last?.from ?? '',
+            lastText: clean(last?.text, 200),
+            lastAt: String(last?.at ?? ''),
+          })
+        }
+        rows.sort((a, b) => (b.awaitingReply - a.awaitingReply) || String(b.lastAt).localeCompare(String(a.lastAt)))
+        return json({ ok: true, conversations: rows.slice(0, 50) }, 200, request, env)
+      }
+
+      if (action === 'thread') {
+        const deviceId = clean(body?.deviceId, 64)
+        if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400, request, env)
+        return json({ ok: true, deviceId, messages: (await readChat(env, deviceId)).slice(-40) }, 200, request, env)
+      }
+
+      if (action === 'reply') {
+        const deviceId = clean(body?.deviceId, 64)
+        const text = clean(body?.text, TEXT_MAX)
+        if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400, request, env)
+        if (text.length < 1) return json({ error: 'empty' }, 400, request, env)
+        await pushChat(env, deviceId, 'developer', text)
+        return json({ ok: true, deviceId }, 200, request, env)
+      }
+
+      return json({ error: 'unknown action' }, 400, request, env)
     }
 
     /* ─── ويبهوك تليجرام: رد المطوّر (Reply) يدخل محادثة العميل ─── */

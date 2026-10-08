@@ -1,0 +1,153 @@
+/**
+ * بلاغات التسجيل الجديدة — بند 2 من تدقيق 2026-10-08 (جهة العامل).
+ * ───────────────────────────────────────────────────────────────────
+ * المطوّر لم يكن يعرف بوجود عميل جديد إطلاقاً: معالج أول التشغيل يجمع الاسم
+ * والهاتف والبريد والمنشأة والنشاط ثم **لا يُرسل شيئاً** — لا POST في الكود.
+ *
+ * الآن: `POST /register` يستقبل البلاغ، يعقّمه خادمياً (لا نثق بالعميل)، ويحفظه
+ * في `reg:<deviceId>`، ويبلّغ المطوّر على التليجرام **مرة واحدة لكل جهاز**.
+ *
+ * لماذا نقطة عامة بلا سرّ؟
+ *   التطبيق يُوزَّع على أجهزة العملاء وحزمة المُصيّر قابلة للقراءة، فأي سرّ
+ *   مضمّن هو سرّ مكشوف. البديل الآمن عملياً: نقطة كتابة محدودة الأثر —
+ *     • تُقبل فقط لمعرّف جهاز بصيغة SHOP-XXXX-XXXX-XXXX (لا مفاتيح عشوائية)،
+ *     • بلاغ واحد لكل جهاز (المرة الأولى تُبلّغ، وما بعدها تحديث صامت)،
+ *     • حد حجم وحقول معقّمة ⇒ لا يمكن استخدامها مخزن بيانات ولا ناقل XSS،
+ *     • لا تكشف شيئاً: القراءة محصورة بلوحة المطوّر (أوامر /عميل /بحث).
+ *   الأسوأ الذي يمكن لمهاجم فعله: تسجيل بلاغات وهمية بأرقام أجهزة مختلقة
+ *   (إزعاج لا اختراق) — ويُحدّ منه حدّ الحجم والتعقيم وعدم كشف أي بيانات.
+ */
+
+export const REG_PREFIX = 'reg:'
+export const REG_MAX_BYTES = 8_192
+const DEVICE_RE = /^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/
+
+/* ── تعقيم مطابق لمنطق العميل (دفاع مزدوج) ── */
+export function cleanText(value, max = 200) {
+  if (typeof value !== 'string') return ''
+  return value
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u200B\u2060\uFEFF]/g, '')
+    .trim()
+    .slice(0, max)
+}
+
+const cleanEmail = (v) => {
+  const s = cleanText(v, 128)
+  return /^[^\s@<>]{3,64}@[^\s@<>]{3,64}$/.test(s) ? s : ''
+}
+const cleanPhone = (v) => {
+  const s = cleanText(v, 24)
+  return /^\+?[0-9][0-9\s-]{5,23}$/.test(s) ? s : ''
+}
+
+/**
+ * تنقية بلاغ وارد — يعيد كائناً صالحاً أو null إن كان معرّف الجهاز غير صالح.
+ * لا يُرمى استثناء أبداً: أي مدخل غريب ⇒ رفض نظيف 400.
+ */
+export function sanitizeRegistration(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const deviceId = cleanText(raw.deviceId, 24).toUpperCase()
+  if (!DEVICE_RE.test(deviceId)) return null
+  const out = {
+    deviceId,
+    appVersion: cleanText(raw.appVersion, 20),
+    platform: cleanText(raw.platform, 16) === 'web' ? 'web' : 'desktop',
+    shopName: cleanText(raw.shopName, 120),
+    ownerName: cleanText(raw.ownerName, 120),
+    phone: cleanPhone(raw.phone),
+    email: cleanEmail(raw.email),
+    city: cleanText(raw.city, 80),
+    street: cleanText(raw.street, 160),
+    countryCode: cleanText(raw.countryCode, 4).toUpperCase(),
+    activityId: cleanText(raw.activityId, 40),
+    activityNameAr: cleanText(raw.activityNameAr, 60),
+    accountingMode: cleanText(raw.accountingMode, 10) === 'full' ? 'full' : 'simple',
+    plan: cleanText(raw.plan, 12) || 'trial',
+    registeredAt: cleanText(raw.registeredAt, 30) || new Date().toISOString(),
+  }
+  const specialty = cleanText(raw.doctorSpecialty, 60)
+  if (specialty) out.doctorSpecialty = specialty
+  return out
+}
+
+export const regKey = (deviceId) => `${REG_PREFIX}${deviceId}`
+
+/**
+ * حفظ البلاغ — يعيد {saved, isNew, record}.
+ * `isNew` هي ما يقرّر التبليغ على التليجرام: أول بلاغ للجهاز ⇒ إبلاغ،
+ * وما بعده تحديث صامت (لا إزعاج متكرر عند كل إقلاع/إعادة تثبيت).
+ */
+export async function saveRegistration(cfg, report) {
+  const existingRaw = await cfg.kv.get(regKey(report.deviceId))
+  let existing = null
+  try {
+    const parsed = JSON.parse(existingRaw ?? 'null')
+    if (parsed && typeof parsed === 'object') existing = parsed
+  } catch { existing = null }
+  const now = new Date().toISOString()
+  const record = {
+    ...report,
+    firstSeenAt: existing?.firstSeenAt ?? now,
+    lastSeenAt: now,
+    reports: (existing?.reports ?? 0) + 1,
+  }
+  await cfg.kv.put(regKey(report.deviceId), JSON.stringify(record))
+  return { saved: true, isNew: !existing, record }
+}
+
+/** صياغة عربية للتليجرام — كل بيانات العميل في رسالة واحدة قابلة للنسخ */
+export function formatRegistrationAr(record, { isNew = true } = {}) {
+  const head = isNew ? '🆕 <b>تسجيل عميل جديد</b>' : '🔁 <b>تحديث بيانات عميل مسجّل</b>'
+  const lines = [
+    head,
+    '',
+    `🏪 المنشأة: ${record.shopName || '—'}`,
+    `👤 المالك: ${record.ownerName || '—'}`,
+    record.phone ? `📞 الهاتف: <code>${record.phone}</code>` : '',
+    record.email ? `📧 البريد: <code>${record.email}</code>` : '',
+    record.city || record.street ? `📍 العنوان: ${[record.city, record.street].filter(Boolean).join(' — ')}` : '',
+    `🧭 النشاط: ${record.activityNameAr || record.activityId || '—'}${record.countryCode ? ` (${record.countryCode})` : ''}`,
+    record.doctorSpecialty ? `🩺 التخصص: ${record.doctorSpecialty}` : '',
+    `📦 الخطة: ${record.plan} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
+    `🖥️ الجهاز: <code>${record.deviceId}</code> · ${record.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
+    `🔖 الإصدار: ${record.appVersion || '—'}`,
+    `🕒 التسجيل: ${record.registeredAt}`,
+    isNew
+      ? ''
+      : `🔁 عدد البلاغات: ${record.reports} · أول ظهور: ${record.firstSeenAt}`,
+    '',
+    isNew ? '💡 لإصدار مفتاح لهذا الجهاز: <code>/اصدر</code> ثم اختر العميل والجهاز.' : '',
+  ]
+  return lines.filter((line) => line !== '').join('\n')
+}
+
+/**
+ * كل التسجيلات — للوحة (أمر /تسجيلات وزر «🆕 التسجيلات»).
+ * تُقرأ من KV وتُرتَّب بالأحدث أولاً.
+ */
+export async function listRegistrations(cfg, limit = 100) {
+  const list = await cfg.kv.list({ prefix: REG_PREFIX, limit })
+  const out = []
+  for (const key of list.keys) {
+    const raw = await cfg.kv.get(key.name)
+    try {
+      const parsed = JSON.parse(raw ?? 'null')
+      if (parsed && typeof parsed === 'object') out.push(parsed)
+    } catch { /* سجل تالف — يُتجاوز */ }
+  }
+  out.sort((a, b) => String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')))
+  return out
+}
+
+export function formatRegistrationsAr(records) {
+  if (!records.length) return 'لا تسجيلات جديدة بعد — يظهر هنا كل عميل يكمل معالج أول التشغيل.'
+  const lines = ['🆕 <b>آخر التسجيلات</b>', '']
+  for (const r of records.slice(0, 20)) {
+    const contact = [r.phone, r.email].filter(Boolean).join(' · ')
+    lines.push(`• ${r.shopName || 'بلا اسم'} — ${r.ownerName || '—'}${contact ? `\n   ${contact}` : ''}\n   <code>${r.deviceId}</code> · ${r.activityNameAr || r.activityId || '—'} · ${String(r.lastSeenAt ?? '').slice(0, 10)}`)
+  }
+  if (records.length > 20) lines.push(`\n… و${records.length - 20} آخرين`)
+  return lines.join('\n')
+}

@@ -13,6 +13,8 @@ import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { collectNotifications, visibleNotifications } from '../../core/notifications.ts'
+import { renewalReminder, reminderAsNotification } from '../../core/subscriptionReminder.ts'
+import { NOTICE_LEVEL_ICONS, noticeSeverity, shouldAnnounceToast } from '../../core/devNotice.ts'
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -21,7 +23,7 @@ import { isInvoiceFirst } from '../../core/activities.ts'
 import { guardNavigation, useToast } from '../components/ui.tsx'
 
 export function Header({ title }: { title: string }) {
-  const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications } = useAppStore()
+  const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload, renewalDismissedDay } = useAppStore()
   const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
@@ -68,12 +70,13 @@ export function Header({ title }: { title: string }) {
 
   const notifications = useMemo(
     () => [
+      /* بند 10: درجة التنبيه تنعكس على خطورته في الجرس (عاجل ⇒ أحمر) */
       ...cloudNotifications.map((notice) => ({
         id: `cloud:${notice.id}`,
-        icon: '📣',
+        icon: NOTICE_LEVEL_ICONS[notice.level],
         title: notice.title,
         body: notice.body,
-        severity: 'info' as const,
+        severity: noticeSeverity(notice),
         route: '/settings/about',
         perm: null,
       })),
@@ -106,19 +109,30 @@ export function Header({ title }: { title: string }) {
       openPinResets: currentUserId == null
         ? pinResetRequests.filter((r) => r.status === 'open').map((r) => ({ id: r.id, nameAr: r.nameAr }))
         : [],
+      /* بند 5 (تدقيق 2026-10-08): تذكير قرب انتهاء الاشتراك — محلي من الرخصة
+         الموقّعة فيعمل أوفلاين. الإسكات يخصّ الشريط الظاهر، لا إدراج الجرس. */
+      licenseReminder: reminderAsNotification(renewalReminder({
+        expiresAt: activatedPayload?.expiresAt ?? null,
+        plan: activatedPayload?.plan ?? null,
+        todayIso: new Date().toISOString(),
+        dismissedDay: renewalDismissedDay,
+      })),
       fmt: (m) => formatMinor(m, cur, false),
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases, activatedPayload, renewalDismissedDay],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)
   useEffect(() => {
     const fresh = cloudNotifications.filter((notice) => !announcedCloudNoticeIds.current.has(notice.id))
     for (const notice of cloudNotifications) announcedCloudNoticeIds.current.add(notice.id)
-    if (fresh.length && sawCloudNoticeSnapshot.current) {
-      const latest = fresh[fresh.length - 1]
+    /* بند 10: التوست لإعلانات info فقط — المهم/العاجل له نافذة منبثقة، فالتوست
+       معهما تكرار وضجيج (المبدأ نفسه الذي حكم بند 5: لا مقاطعة بلا سبب). */
+    const toastable = fresh.filter(shouldAnnounceToast)
+    if (toastable.length && sawCloudNoticeSnapshot.current) {
+      const latest = toastable[toastable.length - 1]
       showToast(`📣 ${latest.title}: ${latest.body.slice(0, 180)}`)
     }
     sawCloudNoticeSnapshot.current = true

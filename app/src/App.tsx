@@ -10,10 +10,15 @@ import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
 import { fetchAbout, fetchRevocationList, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
+/* بند 2 (تدقيق 2026-10-08): بلاغ التسجيل الجديد يصل المطوّر عبر مركز التحكم */
+import { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport } from './core/registration.ts'
+import { APP_VERSION } from './core/updates.ts'
+import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
+import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
@@ -24,6 +29,7 @@ import { labelFor } from './core/activityLabels.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
+import { LEGAL_VERSION } from './core/legal.ts'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
 import { Dashboard } from './ui/pages/Dashboard.tsx'
 import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
@@ -360,10 +366,17 @@ export default function App() {
   }, [storesHydrated])
 
   const {
-    theme, setup, touchLastSeen, appearance, legal,
+    theme, setup, touchLastSeen, appearance,
+    /* إصدار الوثيقة تغيّر (2026-10-08: إفصاح بلاغ التسجيل) ⇒ الموافقة القديمة لا
+       تكفي، فتُطلب من جديد — وهذا ما كان معلناً في المتجر («تطلب مجدداً عند
+       التحديث») ولم يكن منفذاً: كان الفحص `!legal` فقط. */
+    legal: legalCurrent,
     activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
-    setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt,
+    setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt, licenseAudit,
   } = useAppStore()
+  /* الموافقة سارية فقط على الإصدار الحالي من الوثيقة — فأي تغيير جوهري في
+     الاتفاقية/الخصوصية يعيد بوابة الموافقة مرة واحدة بعد التحديث. */
+  const legal = legalCurrent && legalCurrent.version === LEGAL_VERSION ? legalCurrent : null
   const seed = useDataStore((s) => s.seed)
 
   /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
@@ -391,6 +404,14 @@ export default function App() {
   }, [])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
+  /* ث1 (تدقيق 2026-10-08): إعادة التحقق من توقيع المفتاح المحفوظ في كل إقلاع.
+     الحمولة تُشتق من المفتاح الموقّع لا من التخزين — تعديل `activatedPayload`
+     في localStorage (نسخة الويب نص صريح) لم يعد يفتح `lifetime` بكل الميزات. */
+  useEffect(() => {
+    if (!storesHydrated) return
+    void useAppStore.getState().reverifyActivation()
+  }, [storesHydrated])
+
   const licenseState = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
     [activatedPayload, trialStartedAt, lastSeenAt],
@@ -500,6 +521,51 @@ export default function App() {
       window.removeEventListener('focus', syncNotices)
     }
   }, [setCloudData])
+
+  /* ─── بند 2 (تدقيق 2026-10-08): إبلاغ المطوّر بكل عميل جديد ───────────────
+     ما كان: المعالج يجمع الاسم والهاتف والبريد والمنشأة والنشاط ثم لا يُرسل
+     شيء إطلاقاً — لا POST في الكود كله. الآن بلاغ واحد لكل جهاز بعد اكتمال
+     الإعداد. القواعد: fire-and-forget (لا يعطّل الإقلاع ولا العمل)، مرة واحدة
+     (العلامة تُحفظ عند النجاح فقط)، ويصلح أوفلاين بالمحاولة في الإقلاع التالي.
+     لا يُرسل إلا بيانات التواصل والمنشأة التي كتبها العميل في المعالج نفسه. */
+  useEffect(() => {
+    if (!setup.completed) return
+    let cancelled = false
+    const report = async () => {
+      const app = useAppStore.getState()
+      /* الموافقة الصريحة شرط إرسال — بلاها لا يُرسل شيء إطلاقاً (سياسة الخصوصية:
+         البيانات محلية، وبلاغ التسجيل اختياري بخانة يفعّلها العميل بنفسه). */
+      if (!shouldReportRegistration({
+        setupCompleted: app.setup.completed,
+        deviceId: app.deviceId,
+        reportedAt: app.registrationReportedAt,
+        consentAt: app.registrationConsentAt,
+      })) return
+      const payload = buildRegistrationReport({
+        deviceId: app.deviceId,
+        appVersion: APP_VERSION,
+        platform: isElectronRuntime() ? 'desktop' : 'web',
+        shopName: app.setup.shopName,
+        ownerName: app.setup.ownerName,
+        phone: app.setup.phone,
+        email: app.setup.email,
+        city: app.setup.city,
+        street: app.setup.street,
+        countryCode: app.setup.countryCode,
+        activityId: app.setup.activityId,
+        activityNameAr: ACTIVITY_TEMPLATES.find((t) => t.id === app.setup.activityId)?.nameAr ?? '',
+        accountingMode: app.setup.accountingMode,
+        plan: app.activatedPayload?.plan ?? 'trial',
+        doctorSpecialty: app.setup.doctorSpecialty,
+      })
+      if (!payload) return
+      const result = await sendRegistrationReport(LICENSE_CLOUD_BASE_URL, payload)
+      // الفشل (أوفلاين) لا يُعلَّم ⇒ تُعاد المحاولة في الإقلاع التالي
+      if (!cancelled && result !== 'failed') app.markRegistrationReported()
+    }
+    void report()
+    return () => { cancelled = true }
+  }, [setup.completed])
 
   // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───
   useEffect(() => {
@@ -615,6 +681,22 @@ export default function App() {
     return () => clearInterval(t)
   }, [setup.completed])
 
+  /* ث1: لا حكم على الترخيص (ولا شاشة قفل) قبل انتهاء إعادة التحقق من التوقيع —
+     وإلا ومضت شاشة «انتهى اشتراكك» لعميل مفعّل في نافذة الفحص. */
+  if (setup.completed && licenseAudit.status === 'checking') {
+    return (
+      <>
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+          <div className="text-center space-y-3">
+            <div className="text-4xl animate-pulse">🔐</div>
+            <div className="text-[13px] font-black text-slate-400">جارٍ التحقق من سلامة الترخيص…</div>
+          </div>
+        </div>
+        <ToastHost />
+      </>
+    )
+  }
+
   // القفل (القرار 28): بعد اكتمال الإعداد، أي حالة غير سارية ⇒ الشاشة المقفلة فقط
   if (setup.completed && lockReason) {
     return (
@@ -662,6 +744,9 @@ export default function App() {
         <><LegalGate /></>
       ) : setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
+      {/* بند 10 (تدقيق 2026-10-08): نافذة تنبيه المطوّر المنبثقة — فوق كل المسارات.
+          تظهر فقط لدرجتَي important/critical؛ أما info فبقي جرساً وتوستاً بلا مقاطعة. */}
+      <DevNoticeHost />
       {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):
           تبقى حية أثناء فتح قسم إعدادات الطباعة وتتحدث فوراً مع كل تغيير */}
       <ThermalPreview />

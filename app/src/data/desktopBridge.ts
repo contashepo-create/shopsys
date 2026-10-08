@@ -88,10 +88,20 @@ export interface DesktopDatabaseStorageBridge {
   restoreFileBackup(path: string): Promise<{ ok: boolean; restarting?: boolean }>
 }
 
+/**
+ * بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل من العملية الرئيسية.
+ * اختياري — النسخة القديمة من الغلاف لا تكشفه، والمتصفح لا يملكه، وفي الحالتين
+ * يبقى التنبيه داخل التطبيق (الجرس + النافذة المنبثقة) هو القناة المعتمدة.
+ */
+export interface DesktopNotificationsBridge {
+  show(title: string, body: string): Promise<boolean>
+}
+
 export interface ShopsysDesktopBridge {
   runtime: 'electron'
   database: DesktopDatabaseBridge
   databaseStorage?: DesktopDatabaseStorageBridge
+  notifications?: DesktopNotificationsBridge
 }
 
 declare global {
@@ -126,4 +136,18 @@ export function requireDesktopDatabase(): DesktopDatabaseBridge {
   const bridge = desktopBridge()
   if (!bridge) throw new Error('قاعدة SQLite متاحة فقط داخل نسخة سطح المكتب')
   return bridge.database
+}
+
+/**
+ * إشعار نظام التشغيل (Electron) — يعيد true لو عُرض فعلاً.
+ * لا يرمي استثناء أبداً: الإشعار تحسين، وفشله (بلا إذن/بلا غلاف/متصفح) لا يهم.
+ */
+export async function showDesktopNotification(title: string, body: string): Promise<boolean> {
+  try {
+    const bridge = desktopBridge()?.notifications
+    if (!bridge) return false
+    return await bridge.show(String(title).slice(0, 120), String(body).slice(0, 300))
+  } catch {
+    return false
+  }
 }

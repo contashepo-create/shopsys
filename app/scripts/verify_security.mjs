@@ -90,8 +90,14 @@ ok(effectiveLimits({ ...activePayload, extraUsers: 3 }).maxUsers === 8, 'الز�
 ok(effectiveLimits(null).maxUsers === 1, 'بلا مفتاح = حدود التجربة')
 
 /* ═══ السحابة (Cloudflare) ═══ */
-const about = parseAbout({ title: 'نظامي', body: 'وصف', supportTelegram: '@dev', junk: 'x' })
-ok(about.title === 'نظامي' && about.supportTelegram === '@dev', 'parseAbout ينقي ويقبل الصحيح')
+/* معرّف تليجرام واقعي (≥ 4 محارف بعد نزع @) — القيمة القديمة '@dev' أقصر من
+   الحد الأدنى القانوني لمعرّف تليجرام فتُرفض الآن بالتعقيم الصارم. */
+const about = parseAbout({ title: 'نظامي', body: 'وصف', supportTelegram: '@dev_support', junk: 'x' })
+/* بند 9 (تدقيق 2026-10-08): معرّف تليجرام يُوحَّد بلا «@» — العامل والعميل يعقّمانه
+   بالعلاقة نفسها، والواجهة تضيف «@» للعرض فقط. فكان التوقع السابق '@dev' وهذا
+   هو الشكل القانوني الجديد. والحقل junk يُتجاهل كما كان. */
+ok(about.title === 'نظامي' && about.supportTelegram === 'dev_support', 'parseAbout ينقي ويقبل الصحيح (تليجرام بلا @)')
+ok(about.junk === undefined, 'parseAbout يتجاهل الحقول غير المعروفة')
 ok(parseAbout({ text: 'نص من بوت الترخيص' }).body === 'نص من بوت الترخيص', 'parseAbout يقبل نص «حول» من بوت الترخيص')
 ok(parseAbout(null).title === FALLBACK_ABOUT.title, 'استجابة فاسدة ⇒ الاحتياطي')
 ok(parseAbout({ title: 123 }).title === FALLBACK_ABOUT.title, 'نوع خاطئ ⇒ الاحتياطي')

@@ -1,4 +1,11 @@
 import { issueLicenseKey, keyFingerprint, expiresAfterDays } from './licenseLib.js'
+import { subscriptionDigest, formatDigestAr, formatStatsAr, readSoonDays, writeSoonDays } from './subscriptions.js'
+import {
+  ABOUT_FIELDS, readAbout, setAboutField, addAboutExtraField, removeAboutExtraField,
+  addAboutSocialLink, removeAboutSocialLink, previewAboutAr,
+} from './aboutContent.js'
+import { listRegistrations, formatRegistrationsAr } from './registrations.js'
+import { supportBridge } from './supportBridge.js'
 
 const PLANS = ['trial', 'basic', 'pro', 'lifetime']
 const PLAN_LABELS = { trial: 'تجريبي', basic: 'أساسي', pro: 'احترافي', lifetime: 'مدى الحياة' }
@@ -25,9 +32,12 @@ const button = (text, callback_data) => ({ text, callback_data })
 const markup = (rows) => ({ inline_keyboard: rows })
 const menuReply = (chatId, text, rows) => ({ chatId, text, opts: { reply_markup: markup(rows) } })
 const mainRows = () => [
-  [button('👥 العملاء', 'panel:clients'), button('➕ إضافة عميل', 'panel:new')],
+  [button('🆕 التسجيلات', 'panel:regs'), button('👥 العملاء', 'panel:clients')],
+  [button('➕ إضافة عميل', 'panel:new')],
+  [button('⏳ الاشتراكات', 'panel:digest'), button('📊 إحصائيات', 'panel:stats')],
   [button('⚙️ الإعداد العام', 'panel:global'), button('🔔 تنبيه للجميع', 'panel:notice:all')],
-  [button('📝 تعديل «حول»', 'panel:about')],
+  [button('📬 التنبيهات المرسلة', 'panel:noticelist'), button('💬 الدعم', 'panel:support')],
+  [button('📝 صفحة «حول» والتواصل', 'panel:about')],
 ]
 
 function parseObject(raw, fallback = {}) {
@@ -150,6 +160,28 @@ export function panelHome(chatId, text = 'لوحة التحكم — اختر م�
   return menuReply(chatId, text, mainRows())
 }
 
+/* ─── بند 10: إقرارات القراءة ──────────────────────────────────────────────
+ * العميل يضغط «تمّت القراءة» ⇒ POST /notifications/:id/ack ⇒ يُسجَّل معرف جهازه
+ * هنا (مرة واحدة لكل جهاز). المطوّر يرى كم جهازاً قرأ التنبيه، فيعرف إن وصل.
+ * السقف 1000 جهاز: قائمة لا مخزن — يكفي للإحصاء ولا ينمو للأبد. */
+export const ACK_PREFIX = 'notice-acks:'
+
+export async function recordNoticeAck(cfg, noticeId, deviceId) {
+  const id = cleanText(noticeId, 64)
+  const device = cleanText(deviceId, 24).toUpperCase()
+  if (!id || !/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(device)) return { ok: false, isNew: false }
+  const key = `${ACK_PREFIX}${id}`
+  const seen = parseList(await cfg.kv.get(key)).filter((v) => typeof v === 'string')
+  if (seen.includes(device)) return { ok: true, isNew: false, count: seen.length }
+  seen.push(device)
+  await cfg.kv.put(key, JSON.stringify(seen.slice(-1000)))
+  return { ok: true, isNew: true, count: seen.length }
+}
+
+export async function ackCountForNotice(cfg, noticeId) {
+  return parseList(await cfg.kv.get(`${ACK_PREFIX}${cleanText(noticeId, 64)}`)).filter((v) => typeof v === 'string').length
+}
+
 export async function getNotificationsForDevice(cfg, deviceId) {
   const deviceKey = `notices:${deviceId}`
   const all = [...parseList(await cfg.kv.get('notices:global')), ...parseList(await cfg.kv.get(deviceKey))]
@@ -161,12 +193,26 @@ export async function getNotificationsForDevice(cfg, deviceId) {
     .slice(-50)
 }
 
-async function appendNotice(cfg, key, body) {
+/* بند 10 (تدقيق 2026-10-08): درجات الإلزام —
+   info ⇒ جرس وتوست فقط · important ⇒ نافذة منبثقة قابلة للتأجيل · critical ⇒
+   نافذة بإقرار إلزامي. والافتراضي info ⇒ كل ما أُرسل قبل التحديث يعمل كما كان. */
+export const NOTICE_LEVELS = ['info', 'important', 'critical']
+const NOTICE_LEVEL_LABELS_AR = { info: '📣 إعلان (بلا مقاطعة)', important: '⚠️ مهم (نافذة منبثقة)', critical: '🚨 عاجل (إقرار إلزامي)' }
+const NOTICE_TITLES_AR = { info: 'رسالة من المطوّر', important: 'تنبيه مهم من المطوّر', critical: 'تنبيه عاجل من المطوّر' }
+
+export function normalizeNoticeLevel(value) {
+  return NOTICE_LEVELS.includes(value) ? value : 'info'
+}
+
+async function appendNotice(cfg, key, body, opts = {}) {
   const now = new Date()
+  const level = normalizeNoticeLevel(opts.level)
   const notice = {
     id: crypto.randomUUID(),
-    title: 'رسالة من المطوّر',
+    title: cleanText(opts.title, 120) || NOTICE_TITLES_AR[level],
     body,
+    level,
+    requiresAck: level !== 'info',
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString(),
   }
@@ -261,6 +307,10 @@ async function clientReply(cfg, chatId, deviceId) {
   const device = await getDevice(cfg, deviceId)
   if (!device) return panelHome(chatId, 'لم أجد هذا العميل.')
   const license = await currentLicense(cfg, device)
+  /* بطاقة العميل تُفتح من قائمة الأجهزة، وزر «إضافة جهاز» يستهدف مجموعة العميل
+     (customerHash) لا الجهاز — كان يشير لمتغير `hash` غير معرّف في هذا النطاق
+     فينهار فتح بطاقة العميل بالكامل (ReferenceError). */
+  const hash = await hashCustomerName(device.customer)
   const rows = [
     [button('🔑 إصدار أو تجديد الرخصة', `issue:${deviceId}`)],
     [button('⚙️ إعدادات خاصة لهذا العميل', `csettings:${deviceId}`)],
@@ -332,8 +382,8 @@ async function issueForDevice(cfg, deviceId, customerName) {
   return { payload, key, fingerprint }
 }
 
-async function saveNoticeForCustomer(cfg, group, body) {
-  for (const device of group.devices) await appendNotice(cfg, `notices:${device.deviceId}`, body)
+async function saveNoticeForCustomer(cfg, group, body, opts = {}) {
+  for (const device of group.devices) await appendNotice(cfg, `notices:${device.deviceId}`, body, opts)
   return group.devices.length
 }
 
@@ -398,21 +448,71 @@ export async function handlePanelText(text, chatId, cfg) {
   if (flow.kind === 'notice') {
     if (!value) return flowPrompt(chatId, 'اكتب نص التنبيه أولاً.')
     await cfg.kv.delete(`ui-flow:${chatId}`)
+    const level = normalizeNoticeLevel(flow.level)
+    const shapeAr = level === 'critical' ? '🚨 نافذة بإقرار إلزامي' : level === 'important' ? '⚠️ نافذة منبثقة' : '📣 جرس وتوست'
     if (flow.scope === 'global') {
-      await appendNotice(cfg, 'notices:global', value)
-      return panelHome(chatId, '✅ حُفظ التنبيه العام. سيظهر في التطبيق عند اتصاله بكلاودفلير.')
+      await appendNotice(cfg, 'notices:global', value, { level })
+      return panelHome(chatId, `✅ حُفظ التنبيه العام (${shapeAr}). يصل العملاء عند اتصالهم — الاستطلاع كل 60 ثانية وعند العودة للتطبيق.`)
     }
     const group = await findCustomer(cfg, flow.customerHash)
     if (!group) return panelHome(chatId, 'لم أجد العميل؛ لم يُرسل التنبيه.')
-    const count = await saveNoticeForCustomer(cfg, group, value)
-    return panelHome(chatId, `✅ حُفظ التنبيه للعميل ${group.name} (${count} جهاز).`)
+    const count = await saveNoticeForCustomer(cfg, group, value, { level })
+    return panelHome(chatId, `✅ حُفظ التنبيه للعميل ${group.name} (${count} جهاز) — ${shapeAr}.`)
   }
 
-  if (flow.kind === 'about') {
-    if (!value) return flowPrompt(chatId, 'اكتب نص صفحة «حول» أو أرسل كلمة «مسح».')
-    await cfg.kv.put('about', value === 'مسح' ? '' : value)
+  /* بند 1: رد الدعم — يُرسل عبر الجسر ولا يُحفظ محلياً */
+  if (flow.kind === 'supportreply') {
+    if (!value) return flowPrompt(chatId, 'اكتب نص الرد أولاً.')
     await cfg.kv.delete(`ui-flow:${chatId}`)
-    return panelHome(chatId, value === 'مسح' ? '🧹 مُسح نص صفحة «حول».' : '✅ حُدّث نص صفحة «حول».')
+    const result = await supportBridge(cfg, 'reply', { deviceId: flow.deviceId, text: value })
+    if (!result.ok) return panelHome(chatId, `⚠️ تعذّر إرسال الرد: ${result.error}`)
+    return panelHome(chatId, `✅ أُرسل الرد إلى <code>${flow.deviceId}</code>.`)
+  }
+
+  /* بند 9: تحرير حقل من مستند «حول» — يُدمج في المستند ولا يمسح بقية الحقول */
+  if (flow.kind === 'aboutfield' || flow.kind === 'about') {
+    if (!value) return flowPrompt(chatId, 'اكتب القيمة الجديدة، أو أرسل «مسح» للتفريغ، أو «رجوع» للقائمة.')
+    if (value === 'رجوع') {
+      await cfg.kv.delete(`ui-flow:${chatId}`)
+      return aboutMenuReply(cfg, chatId)
+    }
+    const key = flow.kind === 'aboutfield' ? flow.key : 'body'
+    const res = await setAboutField(cfg, key, value === 'مسح' ? '' : value)
+    if (!res.ok) return flowPrompt(chatId, `⚠️ ${res.reasonAr}\nأرسل قيمة صالحة أو «رجوع».`)
+    await cfg.kv.delete(`ui-flow:${chatId}`)
+    return aboutMenuReply(cfg, chatId, `✅ حُدّث الحقل وحُفظ في السحابة — يصل العملاء عند أول مزامنة (تلقائياً كل 6 ساعات أو عند فتح «حول»).`)
+  }
+
+  /* حقل حر: اسم ← قيمة ← رابط اختياري */
+  if (flow.kind === 'aboutextra') {
+    if (!value) return flowPrompt(chatId, 'أرسل القيمة المطلوبة.')
+    if (flow.step === 'label') {
+      await startFlow(cfg, chatId, { kind: 'aboutextra', step: 'value', label: value })
+      return flowPrompt(chatId, `👌 اسم الحقل: <b>${value}</b>\nأرسل الآن <b>القيمة</b> التي تظهر أمامه.`)
+    }
+    if (flow.step === 'value') {
+      await startFlow(cfg, chatId, { kind: 'aboutextra', step: 'url', label: flow.label, value })
+      return flowPrompt(chatId, `👌 القيمة: <b>${value}</b>\nأرسل <b>رابطاً</b> يُفتح عند الضغط عليها (https://…) أو «لا» لعرضها كنص.`)
+    }
+    const res = await addAboutExtraField(cfg, {
+      label: flow.label, value: flow.value, url: value === 'لا' ? '' : value,
+    })
+    if (!res.ok) return flowPrompt(chatId, `⚠️ ${res.reasonAr}\nأرسل رابطاً صحيحاً أو «لا».`)
+    await cfg.kv.delete(`ui-flow:${chatId}`)
+    return aboutMenuReply(cfg, chatId, `✅ أُضيف الحقل «${flow.label}» وصار ظاهراً في صفحة «حول» للعملاء.`)
+  }
+
+  /* قناة تواصل إضافية: اسم ← رابط */
+  if (flow.kind === 'aboutsocial') {
+    if (!value) return flowPrompt(chatId, 'أرسل القيمة المطلوبة.')
+    if (flow.step === 'label') {
+      await startFlow(cfg, chatId, { kind: 'aboutsocial', step: 'url', label: value })
+      return flowPrompt(chatId, `👌 القناة: <b>${value}</b>\nأرسل الآن <b>الرابط</b> (https://…).`)
+    }
+    const res = await addAboutSocialLink(cfg, { label: flow.label, url: value })
+    if (!res.ok) return flowPrompt(chatId, `⚠️ ${res.reasonAr}\nأرسل رابطاً صحيحاً.`)
+    await cfg.kv.delete(`ui-flow:${chatId}`)
+    return aboutMenuReply(cfg, chatId, `✅ أُضيفت قناة «${flow.label}» إلى صفحة «حول».`)
   }
 
   if (flow.kind === 'number') {
@@ -430,26 +530,194 @@ export async function handlePanelText(text, chatId, cfg) {
     return menuReply(chatId, '✅ حُفظ التخصيص. سيُستخدم عند إصدار مفتاح جديد.', [[button('إصدار مفتاح جديد', `issue:${flow.deviceId}`)], [button('رجوع للإعدادات', `csettings:${flow.deviceId}`)]])
   }
 
+  /* بند 3+4: نافذة «قرب الانتهاء» — يسري ضبطها على التذكير اليومي والأمر واللوحة */
+  if (flow.kind === 'digwindow') {
+    const days = Number(value)
+    if (!Number.isInteger(days) || days < 1 || days > 90) return flowPrompt(chatId, 'أرسل عدداً صحيحاً من 1 إلى 90 يوماً.')
+    await cfg.kv.delete(`ui-flow:${chatId}`)
+    const saved = await writeSoonDays(cfg, days)
+    const digest = await subscriptionDigest(cfg, { soonDays: saved })
+    return menuReply(chatId, `✅ صارت نافذة «قرب الانتهاء» ${saved} يوماً — تسري على التذكير اليومي والأمر واللوحة.\n\n${formatDigestAr(digest)}`, [
+      [button('👥 العملاء', 'panel:clients'), button('🏠 القائمة الرئيسية', 'panel:home')],
+    ])
+  }
+
   return null
+}
+
+/* ─── بند 9 (تدقيق 2026-10-08): صفحة «حول» وبيانات التواصل من اللوحة ────────
+ * كان «تعديل حول» حقلاً نصياً واحداً ⇒ الهاتف/واتساب/تليجرام/البريد/الموقع
+ * تبقى فارغة للأبد ولا تظهر في «حول» ولا في شاشة القفل. صارت قائمة حقول
+ * صريحة + معاينة لما سيراه العميل + حقول حرة يضيفها المطوّر. */
+async function aboutMenuReply(cfg, chatId, note = '') {
+  const doc = await readAbout(cfg)
+  const rows = []
+  for (const field of ABOUT_FIELDS) {
+    const current = doc[field.key] || ''
+    const shown = current.length > 28 ? `${current.slice(0, 28)}…` : current
+    rows.push([button(`${field.labelAr}${shown ? `: ${shown}` : ' —'}`, `panel:aboutfield:${field.key}`)])
+  }
+  rows.push([button('➕ إضافة حقل حر', 'panel:aboutextra'), button('🔗 قناة تواصل', 'panel:aboutsocial')])
+  const extras = doc.extraFields.map((f, i) => [button(`🗑️ ${i + 1}. ${f.label}`, `panel:aboutextradel:${i}`)])
+  const socials = doc.socialLinks.map((l, i) => [button(`🗑️ ${l.label}`, `panel:aboutsocialdel:${i}`)])
+  rows.push(...extras, ...socials)
+  rows.push([button('👁️ معاينة كما يراها العميل', 'panel:aboutpreview'), button('🏠 القائمة الرئيسية', 'panel:home')])
+  const missing = ABOUT_FIELDS.filter((f) => f.key.startsWith('support') && !doc[f.key]).map((f) => f.labelAr)
+  const warn = missing.length
+    ? `\n\n⚠️ <b>ناقص:</b> ${missing.join(' · ')} — العميل المقفول أوفلاين لن يجد طريقة تواصل.`
+    : ''
+  return menuReply(chatId, `${note ? note + '\n\n' : ''}📝 <b>صفحة «حول» وبيانات التواصل</b>\nاختر حقلاً لتحريره. آخر تحديث: <code>${doc.updatedAt || '—'}</code>${warn}`, rows)
+}
+
+/* ─── بند 1: صندوق الدعم في اللوحة ────────────────────────────────────────
+ * supportBridge مستورد من العامل (نفس عميل الجسر) — فلا منطق شبكة مكرر. */
+async function supportInboxReply(cfg, chatId) {
+  const inbox = await supportBridge(cfg, 'inbox')
+  if (!inbox.ok) {
+    return menuReply(chatId, `⚠️ ${inbox.error}`, [[button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
+  const conversations = Array.isArray(inbox.conversations) ? inbox.conversations : []
+  if (!conversations.length) {
+    return menuReply(chatId, '💬 لا محادثات دعم بعد.\nيظهر هنا كل عميل راسلك من «الدعم الفني» داخل التطبيق.', [[button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
+  const rows = conversations.slice(0, 12).map((c) => [button(
+    `${c.awaitingReply ? '🔴' : '⚪'} ${String(c.deviceId).slice(-13)} — ${cleanText(c.lastText, 30) || '…'}`,
+    `support-thread:${c.deviceId}`,
+  )])
+  rows.push([button('🔄 تحديث', 'panel:support')], [button('🏠 القائمة الرئيسية', 'panel:home')])
+  const waiting = conversations.filter((c) => c.awaitingReply).length
+  return menuReply(chatId, `💬 <b>محادثات الدعم</b> (${conversations.length})\n🔴 بانتظار ردك: ${waiting}\nاختر محادثة لقراءتها والرد عليها:`, rows)
+}
+
+async function supportThreadReply(cfg, chatId, deviceId) {
+  const thread = await supportBridge(cfg, 'thread', { deviceId })
+  if (!thread.ok) return menuReply(chatId, `⚠️ ${thread.error}`, [[button('⬅️ رجوع', 'panel:support')]])
+  const messages = Array.isArray(thread.messages) ? thread.messages : []
+  const lines = messages.slice(-12).map((m) => `${m.from === 'developer' ? '🧑‍💻' : '👤'} ${String(m.at ?? '').slice(0, 16).replace('T', ' ')}\n${cleanText(m.text, 500)}`)
+  const body = lines.length ? lines.join('\n\n') : 'لا رسائل في هذه المحادثة.'
+  return menuReply(chatId, `💬 <code>${deviceId}</code>\n\n${body}`, [
+    [button('✍️ الرد على العميل', `support-reply:${deviceId}`)],
+    [button('⬅️ كل المحادثات', 'panel:support')],
+  ])
+}
+
+/* بند 10: اختيار درجة التنبيه قبل كتابة النص */
+function noticeLevelReply(cfg, chatId, target) {
+  const suffix = target.scope === 'customer' ? `:customer:${target.customerHash}` : ':global'
+  const who = target.scope === 'customer' ? `للعميل <b>${target.customerName ?? ''}</b>` : '<b>لجميع العملاء</b>'
+  return menuReply(chatId, `🔔 تنبيه ${who} — اختر طريقة العرض عند العميل:`, [
+    ...NOTICE_LEVELS.map((level) => [button(NOTICE_LEVEL_LABELS_AR[level], `panel:noticelevel:${level}${suffix}`)]),
+    [button('📬 التنبيهات المرسلة والقراءات', 'panel:noticelist')],
+    [button('إلغاء', 'panel:cancel')],
+  ])
+}
+
+/* بند 10: ما أُرسل فعلاً + كم جهازاً أقرّ بالقراءة */
+export async function noticeListReply(cfg, chatId) {
+  const notices = parseList(await cfg.kv.get('notices:global')).filter((n) => n?.id && n?.body)
+  if (!notices.length) {
+    return menuReply(chatId, '📬 لا تنبيهات عامة محفوظة بعد.\n(التنبيهات المرسلة لعميل واحد تُخزَّن لكل جهاز على حدة.)', [[button('🔔 إرسال تنبيه', 'panel:notice:all')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
+  const recent = notices.slice(-10).reverse()
+  const lines = ['📬 <b>آخر التنبيهات العامة</b>', '']
+  for (const notice of recent) {
+    const acks = await ackCountForNotice(cfg, notice.id)
+    const level = normalizeNoticeLevel(notice.level)
+    const label = level === 'critical' ? '🚨 عاجل' : level === 'important' ? '⚠️ مهم' : '📣 إعلان'
+    const when = String(notice.createdAt ?? '').slice(0, 16).replace('T', ' ')
+    lines.push(`${label} · ${when} · ✅ قرأه ${acks} جهاز\n${cleanText(notice.body, 160)}`)
+    lines.push('')
+  }
+  return menuReply(chatId, lines.join('\n').trim(), [[button('🔔 إرسال تنبيه', 'panel:notice:all')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
 }
 
 export async function handlePanelButton(data, chatId, cfg) {
   const parts = String(data ?? '').split(':')
   const action = parts[0]
   if (data === 'panel:home') return panelHome(chatId)
+  /* بند 2 (تدقيق 2026-10-08): بلاغات العملاء الجدد من اللوحة */
+  if (data === 'panel:regs') {
+    const records = await listRegistrations(cfg)
+    return menuReply(chatId, formatRegistrationsAr(records), [[button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
   if (data === 'panel:clients') return clientsReply(cfg, chatId)
   if (data === 'panel:new') {
     await startFlow(cfg, chatId, { kind: 'new_customer', step: 'name' })
     return flowPrompt(chatId, 'أدخل اسم العميل الجديد مرة واحدة. بعد ذلك ستختاره من قائمة العملاء.')
   }
   if (data === 'panel:global') return globalSettingsReply(cfg, chatId)
-  if (data === 'panel:notice:all') {
-    await startFlow(cfg, chatId, { kind: 'notice', scope: 'global' })
-    return flowPrompt(chatId, 'اكتب التنبيه الذي تريد إرساله لجميع العملاء. سيظهر في جرس التطبيق، وتظهر نافذة عند استلامه أثناء تشغيل التطبيق.')
+  /* بند 3+4 (تدقيق 2026-10-08): منتهية/موشكة من اللوحة — نفس ملخص الـcron */
+  if (data === 'panel:digest') {
+    const digest = await subscriptionDigest(cfg, { soonDays: await readSoonDays(cfg) })
+    return menuReply(chatId, formatDigestAr(digest), [
+      [button('⏳ تغيير النافذة (10 أيام افتراضياً)', 'panel:digwindow'), button('👥 العملاء', 'panel:clients')],
+      [button('🏠 القائمة الرئيسية', 'panel:home')],
+    ])
   }
-  if (data === 'panel:about') {
-    await startFlow(cfg, chatId, { kind: 'about' })
-    return flowPrompt(chatId, 'أرسل النص الجديد لقسم «حول». لإفراغه أرسل كلمة «مسح».')
+  if (data === 'panel:digwindow') {
+    await startFlow(cfg, chatId, { kind: 'digwindow' })
+    return flowPrompt(chatId, 'أرسل عدد أيام نافذة «قرب الانتهاء» (1 إلى 90).')
+  }
+  if (data === 'panel:stats') {
+    const [digest, revokedRaw] = await Promise.all([subscriptionDigest(cfg, { soonDays: await readSoonDays(cfg) }), cfg.kv.get('revoked')])
+    let revoked = 0
+    try { const parsed = JSON.parse(revokedRaw ?? '[]'); revoked = Array.isArray(parsed) ? parsed.length : 0 } catch { revoked = 0 }
+    return menuReply(chatId, formatStatsAr(digest, { revoked }), [[button('⏳ تفاصيل المنتهية/الموشكة', 'panel:digest')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
+  if (data === 'panel:notice:all') return noticeLevelReply(cfg, chatId, { scope: 'global' })
+  /* بند 10: اختيار درجة الإلزام ثم كتابة النص — الدرجة تحدّد طريقة العرض عند العميل */
+  if (action === 'panel' && parts[1] === 'noticelevel' && parts[2] && parts[3]) {
+    const level = normalizeNoticeLevel(parts[2])
+    const scope = parts[3] === 'customer' ? 'customer' : 'global'
+    const customerHash = scope === 'customer' ? parts[4] : ''
+    if (scope === 'customer' && !/^[0-9a-f]{16}$/.test(customerHash)) return panelHome(chatId, '⚠️ العميل غير محدد.')
+    await startFlow(cfg, chatId, { kind: 'notice', scope, level, customerHash })
+    const where = scope === 'global' ? 'لجميع العملاء' : 'لهذا العميل (كل أجهزته)'
+    const hint = level === 'critical'
+      ? '🚨 ستظهر <b>نافذة منبثقة لا تُغلق</b> إلا بزر «تمّت القراءة»، ويصلك عدد من قرأها.'
+      : level === 'important'
+        ? '⚠️ ستظهر <b>نافذة منبثقة</b> مع خيار «لاحقاً»، ويصلك عدد من قرأها.'
+        : '📣 سيظهر في <b>جرس التنبيهات</b> وتوست عابر — بلا مقاطعة.'
+    return flowPrompt(chatId, `اكتب نص التنبيه ${where}.\n${hint}`)
+  }
+  /* بند 10: التنبيهات المرسلة وعدد إقرارات القراءة */
+  if (data === 'panel:noticelist') return noticeListReply(cfg, chatId)
+  /* بند 1 (تدقيق 2026-10-08): صندوق الدعم من اللوحة — عبر الجسر إلى عامل
+     قناة الدعم (cloud/worker.js) حيث التخزين وHMAC v2. */
+  if (data === 'panel:support') return supportInboxReply(cfg, chatId)
+  if (action === 'support-thread' && parts[1]) return supportThreadReply(cfg, chatId, parts.slice(1).join(':'))
+  if (action === 'support-reply' && parts[1]) {
+    const deviceId = parts.slice(1).join(':')
+    await startFlow(cfg, chatId, { kind: 'supportreply', deviceId })
+    return flowPrompt(chatId, `اكتب ردك للعميل <code>${deviceId}</code> — يصله داخل التطبيق خلال 30 ثانية.`)
+  }
+  if (data === 'panel:about') return aboutMenuReply(cfg, chatId)
+  if (action === 'panel' && parts[1] === 'aboutfield' && parts[2]) {
+    const field = ABOUT_FIELDS.find((f) => f.key === parts[2])
+    if (!field) return aboutMenuReply(cfg, chatId, '⚠️ حقل غير معروف.')
+    await startFlow(cfg, chatId, { kind: 'aboutfield', key: field.key })
+    const doc = await readAbout(cfg)
+    return flowPrompt(chatId, `✏️ <b>${field.labelAr}</b>\nأرسل القيمة الجديدة${field.kind ? ` (تُعقَّم: ${field.kind})` : ''}.\nالحالي: <code>${doc[field.key] || '—'}</code>\nأرسل «مسح» لتفريغه، أو «رجوع» للقائمة.`)
+  }
+  if (data === 'panel:aboutextra') {
+    await startFlow(cfg, chatId, { kind: 'aboutextra', step: 'label' })
+    return flowPrompt(chatId, '➕ حقل حر يظهر في «حول» (مثال: الرقم الضريبي، الفرع الثاني، ساعات الطوارئ).\nأرسل <b>اسم الحقل</b> أولاً.')
+  }
+  if (data === 'panel:aboutsocial') {
+    await startFlow(cfg, chatId, { kind: 'aboutsocial', step: 'label' })
+    return flowPrompt(chatId, '🔗 قناة تواصل إضافية (فيسبوك/إنستغرام/يوتيوب…).\nأرسل <b>اسم القناة</b> أولاً.')
+  }
+  if (action === 'panel' && parts[1] === 'aboutextradel') {
+    const res = await removeAboutExtraField(cfg, parts[2])
+    return aboutMenuReply(cfg, chatId, res.ok ? `🗑️ حُذف الحقل «${res.removed.label}».` : `⚠️ ${res.reasonAr}`)
+  }
+  if (action === 'panel' && parts[1] === 'aboutsocialdel') {
+    const res = await removeAboutSocialLink(cfg, parts[2])
+    return aboutMenuReply(cfg, chatId, res.ok ? `🗑️ حُذفت قناة «${res.removed.label}».` : `⚠️ ${res.reasonAr}`)
+  }
+  if (data === 'panel:aboutpreview') {
+    const doc = await readAbout(cfg)
+    return menuReply(chatId, previewAboutAr(doc), [[button('✏️ تحرير الحقول', 'panel:about')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
   }
   if (data === 'panel:cancel') {
     await cfg.kv.delete(`ui-flow:${chatId}`)
@@ -459,8 +727,7 @@ export async function handlePanelButton(data, chatId, cfg) {
   if (action === 'notice-group' && /^[0-9a-f]{16}$/.test(parts[1] ?? '')) {
     const group = await findCustomer(cfg, parts[1])
     if (!group) return clientsReply(cfg, chatId)
-    await startFlow(cfg, chatId, { kind: 'notice', scope: 'customer', customerHash: group.hash })
-    return flowPrompt(chatId, `اكتب نص التنبيه للعميل ${group.name}. سيصل لكل أجهزته المسجلة.`)
+    return noticeLevelReply(cfg, chatId, { scope: 'customer', customerHash: group.hash, customerName: group.name })
   }
   if (action === 'client') return clientReply(cfg, chatId, parts[1])
   if (action === 'adddevice') {
@@ -469,16 +736,13 @@ export async function handlePanelButton(data, chatId, cfg) {
     await startFlow(cfg, chatId, { kind: 'add_device', customer: group.name })
     return flowPrompt(chatId, `أرسل معرّف الجهاز الجديد للعميل ${group.name}.`)
   }
-  if (action === 'notice' && parts[1] === 'all') {
-    await startFlow(cfg, chatId, { kind: 'notice', scope: 'global' })
-    return flowPrompt(chatId, 'اكتب نص التنبيه لجميع العملاء.')
-  }
+  /* بند 10: كل مداخل التنبيه تمرّ عبر قائمة الدرجات — فلا تنبيه بلا درجة معلنة */
+  if (action === 'notice' && parts[1] === 'all') return noticeLevelReply(cfg, chatId, { scope: 'global' })
   if (action === 'notice' && DEVICE_RE.test(parts[1] ?? '')) {
     const device = await getDevice(cfg, parts[1])
     if (!device) return clientsReply(cfg, chatId)
     const hash = await hashCustomerName(device.customer)
-    await startFlow(cfg, chatId, { kind: 'notice', scope: 'customer', customerHash: hash })
-    return flowPrompt(chatId, `اكتب نص التنبيه للعميل ${device.customer}. سيصل لكل أجهزته المسجلة.`)
+    return noticeLevelReply(cfg, chatId, { scope: 'customer', customerHash: hash, customerName: device.customer })
   }
   if (action === 'renew' && DEVICE_RE.test(parts[1] ?? '')) {
     const device = await getDevice(cfg, parts[1])

@@ -7,11 +7,12 @@
  *   • النسخ الدوّارة: ساعي 24 · يومي 30 · أسبوعي 12 (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
+import { describeDeviceKeyOutcome, resolveDeviceKey } from './deviceKeyStore.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
 
@@ -120,16 +121,27 @@ function createMainWindow(): BrowserWindow {
    على هذا الجهاز فقط — نسخ shopsys.db إلى جهاز آخر يعطي بيانات غير قابلة
    للفك. اللقطات النصية القديمة تُقرأ كما هي وتُرحَّل مشفرة عند أول حفظ. */
 function ensureDeviceEncryptionKey(): Buffer {
-  const keyPath = join(app.getPath('userData'), 'device.key')
-  try {
-    const existing = readFileSync(keyPath)
-    if (existing.length === 32) return existing
-    logLine('device-key', `ملف مفتاح بحجم غير متوقع (${existing.length}) — يُستبدل`)
-  } catch { /* لا ملف بعد — أول تشغيل */ }
-  const key = randomBytes(32)
-  writeFileSync(keyPath, key, { mode: 0o600 })
-  logLine('device-key', `وُلّد مفتاح تشفير الجهاز (${keyPath})`)
-  return key
+  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
+     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
+     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
+     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+  const dir = app.getPath('userData')
+  const outcome = resolveDeviceKey({
+    readFile: (name) => {
+      try { return readFileSync(join(dir, name)) } catch { return null }
+    },
+    writeFile: (name, data) => {
+      /* 0o600 للملاذ الصريح: لو اضطررنا لملف مقروء فلا يكون لكل مستخدمي الجهاز */
+      writeFileSync(join(dir, name), data, { mode: 0o600 })
+    },
+    deleteFile: (name) => { if (existsSync(join(dir, name))) unlinkSync(join(dir, name)) },
+    generate: () => randomBytes(32),
+    safeStorage,
+    log: logLine,
+  })
+  for (const warning of outcome.warnings) logLine('device-key', `تحذير: ${warning}`)
+  logLine('device-key', describeDeviceKeyOutcome(outcome))
+  return outcome.key
 }
 
 /* ═══ v1.0.8 (طلب المالك): قاعدة بيانات قابلة للنقل + نسخ احتياطية مزدوجة ═══
@@ -494,6 +506,27 @@ function wireIpc(): void {
     return database
   }
   ipcMain.handle('device:getEncryptionKey', (): Uint8Array => new Uint8Array(deviceEncryptionKey))
+
+  /* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
+     يُعرض عبر Electron Notification (مركز الإشعارات في ويندوز/ماك) — ويعيد false
+     بصمت لو النظام لا يدعمه أو رفضه، فلا يعتمد المُصيّر على نجاحه أبداً.
+     الحدود هنا أيضاً (لا نثق بالمُصيّر): طول العنوان والجسم مقصوص. */
+  ipcMain.handle('notify:show', (_event, input: { title?: unknown; body?: unknown }): boolean => {
+    try {
+      const title = String(input?.title ?? '').replace(/[\u0000-\u001F]/g, '').slice(0, 120)
+      const body = String(input?.body ?? '').replace(/[\u0000-\u001F]/g, '').slice(0, 300)
+      if (!title && !body) return false
+      if (!Notification.isSupported()) return false
+      const notice = new Notification({ title: title || 'تَحَكَّم', body, silent: false })
+      notice.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus() } })
+      notice.show()
+      logLine('notify', `عُرض إشعار نظام: ${title}`)
+      return true
+    } catch (err) {
+      logLine('notify', `فشل إشعار النظام: ${(err as Error).message}`)
+      return false
+    }
+  })
   ipcMain.handle('database:getSnapshot', (_event, storeName: string): SnapshotDto => db().getSnapshot(storeName))
   ipcMain.handle('database:saveSnapshot', (_event, input: SaveSnapshotInput) => db().saveSnapshot(input))
   ipcMain.handle('database:deleteSnapshot', (_event, input: DeleteSnapshotInput) => db().deleteSnapshot(input))

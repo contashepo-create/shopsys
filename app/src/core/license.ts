@@ -299,6 +299,47 @@ export function hasFeature(state: LicenseState, feature: LicenseFeature): boolea
   return state.status === 'active' && state.payload.features.includes(feature)
 }
 
+/* ═══ نزاهة الترخيص عند الإقلاع (ث1 — تدقيق 2026-10-08) ═══════════════════
+ * الثغرة: التطبيق كان يقيّم الحالة من `activatedPayload` **المحفوظ في التخزين**
+ * ولا يعيد التحقق من التوقيع إلا عند إدخال مفتاح يدوياً. وفي نسخة الويب
+ * التخزين نص صريح (localStorage) ⇒ كتابة حمولة `{plan:'lifetime',expiresAt:null}`
+ * بيد المستخدم تفتح كل الميزات المدفوعة بلا أي مفتاح موقّع.
+ *
+ * القاعدة الجديدة: **المفتاح الموقّع هو المصدر الوحيد للحمولة.**
+ * التخزين يحمل `activatedKey` فقط، والحمولة تُشتق منه في كل إقلاع، وأي
+ * حمولة محفوظة لا يسندها مفتاح صالح تُعتبر تلاعباً وتُمسح. */
+
+export type StoredLicenseAudit =
+  /** لا مفتاح مخزّن ⇒ لا تفعيل (والحمولة المحفوظة — إن وُجدت — باطلة) */
+  | { kind: 'no_key'; hadStoredPayload: boolean }
+  /** المفتاح تحقّق ⇒ الحمولة الموثوقة هي الناتجة من التوقيع */
+  | { kind: 'verified'; payload: LicensePayload; storedPayloadDiffered: boolean }
+  /** مفتاح مخزّن لكنه فاسد/معدّل/لجهاز آخر ⇒ يُسقط التفعيل */
+  | { kind: 'tampered'; reason: string }
+
+/**
+ * قرار فحص الترخيص المحفوظ — دالة خالصة (بلا crypto):
+ * تستقبل نتيجة التحقق (`verifiedPayload` أو سبب الفشل) وتقرر ما يُعتمد.
+ * لا تُرجع الحمولة المحفوظة أبداً: إما حمولة التوقيع أو لا شيء.
+ */
+export function auditStoredLicense(args: {
+  activatedKey: string | null
+  storedPayload: LicensePayload | null
+  verifiedPayload: LicensePayload | null
+  verifyError?: string | null
+}): StoredLicenseAudit {
+  const key = typeof args.activatedKey === 'string' ? args.activatedKey.trim() : ''
+  if (!key) return { kind: 'no_key', hadStoredPayload: args.storedPayload != null }
+  if (args.verifiedPayload) {
+    return {
+      kind: 'verified',
+      payload: args.verifiedPayload,
+      storedPayloadDiffered: JSON.stringify(args.storedPayload ?? null) !== JSON.stringify(args.verifiedPayload),
+    }
+  }
+  return { kind: 'tampered', reason: args.verifyError?.trim() || 'مفتاح التفعيل المخزّن غير صالح' }
+}
+
 /** هل الاستخدام مسموح أصلاً؟ (تجربة سارية أو مفتاح سارٍ) */
 export function isUsable(state: LicenseState): boolean {
   return state.status === 'trial' || state.status === 'active'

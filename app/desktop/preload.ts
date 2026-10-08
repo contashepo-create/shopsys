@@ -31,7 +31,13 @@ const databaseStorage = {
   restoreFileBackup: (path: string) => ipcRenderer.invoke('database:restoreFileBackup', { path }),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage })
+/* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
+   يمر عبر IPC فقط — لا يُكشف Notification ولا أي API آخر للمُصيّر. */
+const notifications = {
+  show: (title: string, body: string): Promise<boolean> => ipcRenderer.invoke('notify:show', { title, body }),
+}
+
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))
