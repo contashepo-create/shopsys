@@ -10,9 +10,34 @@
 (نصوص فقط، اعتماد جهاز HMAC، حد معدل، CORS صريحة — التفاصيل الكاملة
 في ترويسة `worker.js` وتعليقات `wrangler.toml`).
 
-النشر: `cd cloud && npx wrangler deploy` ثم ضبط الأسرار الأربعة
-(DEV_BOT_TOKEN · DEV_CHAT_ID · TG_WEBHOOK_SECRET · SUPPORT_ALLOWED_ORIGINS)
+النشر: `cd cloud && npx wrangler deploy` ثم ضبط الأسرار
+(DEV_BOT_TOKEN · DEV_CHAT_ID · TG_WEBHOOK_SECRET · SUPPORT_ALLOWED_ORIGINS ·
+SHOPSYS_PRIVATE_KEY · **SUPPORT_BRIDGE_SECRET**)
 وتسجيل الويبهوك كما موثق في `wrangler.toml`.
+
+### جسر لوحة المطوّر `POST /support-bridge` (بند 1 من تدقيق 2026-10-08)
+
+نقطة مصادَقة تتيح لمركز التحكم في `tools/devbot` قراءة محادثات الدعم
+المخزّنة هنا (`chat:<deviceId>`) والرد عليها من اللوحة أو من البوت، بأربعة
+إجراءات: `inbox` (قائمة المحادثات) · `thread` (رسائل محادثة) · `reply`
+(ردّ من اللوحة) · `telegram-reply` (ردّ وصل من تليجرام).
+
+- **السرّ واحد في العاملين:** `wrangler secret put SUPPORT_BRIDGE_SECRET`
+  هنا وفي `tools/devbot` — **القيمة نفسها حرفياً**، ASCII فقط (العربية في
+  ترويسة HTTP ترمي استثناءً)، 32 محرفاً عشوائياً فأكثر.
+- وفي `tools/devbot` اضبط أيضاً `SUPPORT_BRIDGE_URL` = عنوان هذا العامل
+  (مثل `https://shopsys-control.<account>.workers.dev`).
+- بلا السرّ (أو بأقل من 16 محرفاً) تكون النقطة **مغلقة كلياً** ولا تنكسر
+  أي وظيفة أخرى — قناة الدعم المباشرة في التطبيق تعمل كالمعتاد.
+
+### تنبيه: ملخّص الاشتراكات موجود في العاملين
+
+هذا العامل يحمل `subscriptionDigest()` خاصة به تعمل على مفاتيح `sub:*`
+(تُكتب عند إصدار الترخيص) وتستجيب لأمر «تذكير» ولـ cron **معطّل** في
+`wrangler.toml`. الملخّص المعتمد في تدقيق 2026-10-08 (بنود 3 و4) هو
+الموجود في `tools/devbot` — cron يومي `0 7 * * *` على مفاتيح `lic:*` مع
+إزالة تكرار بمفتاح `digest-sent:<يوم>`. **لا تفعّل الـ cron هنا** حتى لا
+يصل المطوّر ملخّصان مختلفان في اليوم نفسه.
 
 ## ٢) نسخة الويب على Cloudflare Pages (جديد هذه الجولة — كود جاهز فقط)
 
