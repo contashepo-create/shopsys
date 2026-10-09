@@ -13,9 +13,8 @@ import { APP_SERVICES_CLOUD_BASE_URL } from '../../core/cloud.ts'
 import { buildSupportPayload, fetchConversation, sendSupportMessage, SUPPORT_POLL_MS, type SupportMessage } from '../../core/support.ts'
 import { getLogText, getLogLines, logEvent } from '../../core/applog.ts'
 import { getOrCreateSupportToken } from '../../data/supportAuth.ts'
+import { APP_VERSION } from '../../core/updates.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
-
-const APP_VERSION = '1.0'
 
 export function SupportPage() {
   const { setup, deviceId } = useAppStore()

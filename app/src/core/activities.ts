@@ -320,6 +320,26 @@ export function effectiveModules(activityId: string | null, licensedExtra: reado
   return base
 }
 
+/**
+ * قصّ الوحدات المحفوظة على الممنوحة فعلياً (ث1 — تدقيق 2026-10-08):
+ * `setup.modules` حالة محفوظة، فكتابتها يدوياً في التخزين كانت تفتح أقساماً
+ * ممنوحة بمفتاح موقّع فقط. هذه الدالة **تحذف** ما لا سند له من الرخصة،
+ * ولا تُعيد أبداً ما أطفأه المستخدم بنفسه (حقه في إخفاء قسم يحتفظ به).
+ *
+ * نشاط غير معروف (نسخة أقدم/أحدث من القالب) ⇒ لا قصّ: لا نخمّن على حساب
+ * أقسام العميل المشروعة.
+ */
+export function clampModulesToLicense(args: {
+  stored: readonly BusinessModule[]
+  activityId: string | null
+  licensedExtra: readonly string[] | undefined
+}): BusinessModule[] {
+  const known = ACTIVITY_TEMPLATES.some((a) => a.id === args.activityId)
+  if (!known) return [...args.stored]
+  const allowed = new Set<string>(effectiveModules(args.activityId, args.licensedExtra))
+  return args.stored.filter((m) => allowed.has(m))
+}
+
 export function toggleModuleList(current: BusinessModule[], m: BusinessModule): BusinessModule[] {
   if (current.includes(m)) {
     const next = current.filter((x) => x !== m)

@@ -50,7 +50,14 @@ const frame = read('ui/components/InvoicePOSFrame.tsx')
   assert.ok(/function warmInvoiceModules/.test(host) && /requestIdleCallback/.test(host),
     'وحدة الفاتورة لا تُسخَّن مسبقاً فيبطؤ أول فتح')
   assert.ok(/useEffect\(\(\) => \{ warmInvoiceModules\(\) \}, \[\]\)/.test(host), 'التسخين غير مستدعى عند الإقلاع')
-  R.ok('وحدتا الفاتورة تُحمَّلان في وقت الخمول — الفتح فوري')
+  /* درس 2026-10-08: التسخين «أطلق وانسَ» بلا catch ترك رفضاً غير معالَج حين
+     فُكِّكت بيئة jsdom قبل اكتمال التحميل ⇒ EnvironmentTeardownError تُخرج
+     التشغيل الكامل برمز 1 رغم نجاح كل الاختبارات. */
+  assert.ok(host.includes("void import('../pages/AdvancedSalesInvoicePage.tsx').catch("),
+    'تسخين فاتورة البيع بلا catch ⇒ رفض غير معالَج عند فشل التحميل')
+  assert.ok(host.includes("void import('../pages/AdvancedPurchaseInvoicePage.tsx').catch("),
+    'تسخين فاتورة الشراء بلا catch ⇒ رفض غير معالَج عند فشل التحميل')
+  R.ok('وحدتا الفاتورة تُحمَّلان في وقت الخمول — الفتح فوري، وفشل التسخين لا يُسقط التطبيق ولا الاختبارات')
 }
 {
   assert.ok(/\.invoice-doc \.invoice-doc-fields > \.form-field:nth-child\(even\)/.test(css), 'لا تدريج بصري لصفوف الحقول')

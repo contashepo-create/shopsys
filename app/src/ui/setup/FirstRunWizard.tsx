@@ -12,6 +12,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useState } from 'react'
 import { Check, ChevronLeft, Crown, Sparkles, CalendarRange, Globe2, Store, Building2, KeyRound } from 'lucide-react'
 import { ARAB_COUNTRIES, getCountry, type Country } from '../../core/countries.ts'
+import { normalizePhone } from '../../core/registration.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, type ActivityTemplate } from '../../core/activities.ts'
 import { citiesOf } from '../../core/cities.ts'
 import { suggestFiscalYear, validateFiscalYear } from '../../core/fiscal.ts'
@@ -43,11 +44,17 @@ const inputCls =
   'w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent text-sm text-slate-800 dark:text-white focus:border-brand-500 focus:outline-none transition-colors duration-200 placeholder:text-slate-300 dark:placeholder:text-slate-600'
 
 const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim())
-const isValidPhone = (v: string) => v.replace(/\D/g, '').length >= 7
+/* قاعدة الهاتف نفسها التي يطبّقها البلاغ (core/registration.ts): الأرقام الهندية مقبولة،
+   والحرف غير الرقمي يُرفض بدل أن يُسقَط الهاتف من البلاغ بصمت لاحقاً */
+const isValidPhone = (v: string) => normalizePhone(v) !== ''
 
 export function FirstRunWizard() {
   const completeSetup = useAppStore((s) => s.completeSetup)
+  const setRegistrationConsent = useAppStore((s) => s.setRegistrationConsent)
   const [step, setStep] = useState(1)
+  /* بند 2 (تدقيق 2026-10-08): موافقة صريحة على بلاغ التسجيل — **غير مفعّلة
+     افتراضياً** ولا تمنع إكمال المعالج، فالتطبيق يعمل كاملاً بدونها. */
+  const [sendRegistration, setSendRegistration] = useState(false)
   /* v1.0.8: اختيار مكان قاعدة البيانات عند أول تشغيل (سطح المكتب) */
   const storage = isElectronRuntime() ? desktopDatabaseStorage() : null
   const [chosenDbPath, setChosenDbPath] = useState<string | null>(null)
@@ -105,6 +112,8 @@ export function FirstRunWizard() {
       // هوية المالك تُستمد من بيانات التسجيل (طلب المالك): اسمه معرف دخوله +
       // هاتفه وبريده معرفات بديلة + كلمة سره تُعيَّن الآن فتُفعَّل شاشة الدخول فوراً
       const pinHash = await hashPin(ownerPin)
+      // الموافقة تُحفظ قبل completeSetup — فالإرسال يحدث في أثر App.tsx بعده مباشرة
+      if (sendRegistration) setRegistrationConsent()
       const data = useDataStore.getState()
       data.updateOwnerProfile({ nameAr: ownerName.trim(), phone: phone.trim(), email: email.trim() })
       data.setOwnerPin(pinHash)
@@ -440,6 +449,27 @@ export function FirstRunWizard() {
                   <div>• <b>ضياع النسخ الاحتياطية مسؤوليتك الكاملة</b>.</div>
                 </div>
               )}
+
+              {/* بند 2: إفصاح وموافقة — سياسة الخصوصية تقول إن البيانات محلية،
+                  فلا يُرسل شيء للمطوّر إلا بخانة يفعّلها العميل بنفسه. */}
+              <label className="flex items-start gap-3 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-800/40 p-4 cursor-pointer hover:border-brand-400/60 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={sendRegistration}
+                  onChange={(e) => setSendRegistration(e.target.checked)}
+                  className="mt-0.5 w-5 h-5 accent-violet-600 rounded shrink-0"
+                />
+                <span className="text-[12px] leading-relaxed text-slate-600 dark:text-slate-300">
+                  <b className="text-slate-800 dark:text-white">أوافق على إبلاغ المطوّر بتسجيلي</b> (اختياري)
+                  <br />
+                  يُرسل <b>مرة واحدة</b>: اسم المنشأة والمالك، الهاتف، البريد، المدينة والشارع، البلد،
+                  نوع النشاط، معرّف الجهاز وإصدار التطبيق — ليتمكن المطوّر من إصدار الترخيص وإبلاغك
+                  قبل انتهاء الاشتراك.
+                  <br />
+                  <span className="text-slate-400">لا تُرسل أي بيانات محاسبية (أصناف، فواتير، قيود، أرصدة، عملاء).
+                  وبدون هذه الموافقة يعمل التطبيق كاملاً ولا يُرسل شيء.</span>
+                </span>
+              </label>
             </div>
           )}
 

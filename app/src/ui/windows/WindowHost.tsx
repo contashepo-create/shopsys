@@ -17,9 +17,14 @@ let invoiceModulesWarmed = false
 function warmInvoiceModules() {
   if (invoiceModulesWarmed) return
   invoiceModulesWarmed = true
+  /* التسخين تحسين اختياري: فشله لا يجوز أن يظهر للمستخدم ولا أن يترك
+     رفضاً غير معالَج (بعد تحديث التطبيق قد يُطلب جزء قديم برمز مختلف،
+     وفي الاختبارات قد تُفكَّك البيئة قبل اكتمال التحميل). عند الفشل
+     تُحمَّل الوحدة عند أول فتح نافذة كالمعتاد. */
+  const ignoreWarmFailure = () => { /* لا شيء: التسخين غير حاسم */ }
   const warm = () => {
-    void import('../pages/AdvancedSalesInvoicePage.tsx')
-    void import('../pages/AdvancedPurchaseInvoicePage.tsx')
+    void import('../pages/AdvancedSalesInvoicePage.tsx').catch(ignoreWarmFailure)
+    void import('../pages/AdvancedPurchaseInvoicePage.tsx').catch(ignoreWarmFailure)
   }
   const idle = (globalThis as { requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number }).requestIdleCallback
   if (typeof idle === 'function') idle(warm, { timeout: 2500 })

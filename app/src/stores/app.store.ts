@@ -6,7 +6,7 @@ import { create } from 'zustand'
 import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
-import { toggleModuleList, effectiveModules, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
+import { toggleModuleList, effectiveModules, clampModulesToLicense, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
@@ -14,7 +14,7 @@ import { settingsAppStorage } from '../data/persistentStorage.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
-import { generateDeviceId, verifyActivityChangeKey, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, type LicensePayload } from '../core/license.ts'
+import { generateDeviceId, verifyActivityChangeKey, verifyLicenseKey, auditStoredLicense, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, isValidIsoDay, oldestValidDay, keyFingerprint, type LicensePayload } from '../core/license.ts'
 import { LEGAL_VERSION } from '../core/legal.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
@@ -65,6 +65,8 @@ interface SetupState {
   lastActivityChangeAt: string | null
   /** v1.0.7: الأنشطة المرخصة على الجهاز (الأصلي + كل تغيير موقّع) — مفتاح التفعيل القديم يظل صالحاً */
   activityKeyHistory: string[]
+  /** ح8 (مراجعة ③): بصمات مفاتيح تحويل النشاط المطبّقة — المفتاح الواحد لا يُعاد تطبيقه */
+  activityKeyFingerprints: string[]
 }
 
 /**
@@ -182,6 +184,42 @@ interface AppState {
   lastSeenAt: string // مرساة ضد إرجاع الساعة
   activatedKey: string | null // مفتاح التفعيل النصي كما أدخل
   activatedPayload: LicensePayload | null // حمولته الموثقة بعد التحقق
+  /**
+   * ث1 (تدقيق 2026-10-08): حالة فحص سلامة الترخيص عند الإقلاع.
+   * `checking` = جارٍ إعادة التحقق من توقيع المفتاح — لا يُحكم على الترخيص
+   * ولا تُعرض شاشة القفل قبل انتهائه (وإلا ومضت شاشة قفل لعميل مفعّل).
+   */
+  /**
+   * ث9: `unverifiable` = بيئة لا تتيح التحقق من التوقيع (لا WebCrypto — سياق
+   * غير آمن http:// مثلاً). المفتاح **يُحفظ** ولا يُحذف: حذفه يُفقد عميلاً
+   * مدفوعاً مفتاحه لسبب لا يد له فيه، ولا يستعيده إلا بإعادة إصدار من المطوّر.
+   */
+  licenseAudit: { status: 'checking' | 'verified' | 'no_key' | 'tampered' | 'unverifiable'; reason?: string; at?: string }
+  /** إعادة اشتقاق الحمولة من المفتاح الموقّع + قصّ الوحدات غير الممنوحة — تُنفَّذ في كل إقلاع */
+  reverifyActivation: () => Promise<void>
+  /**
+   * بند 5 (تدقيق 2026-10-08): اليوم الذي أسكت فيه المستخدم شريط «قرب انتهاء
+   * الاشتراك» — الشريط لا يعود قبل الغد (حق الإسكات = الرسالة غير مزعجة فعلاً).
+   * إدراج الجرس لا يتأثر بالإسكات.
+   */
+  renewalDismissedDay: string | null
+  dismissRenewalNotice: (day?: string) => void
+  /**
+   * بند 2 + سياسة الخصوصية (2026-10-08): موافقة العميل الصريحة على إرسال بلاغ
+   * التسجيل. سياسة الخصوصية المنشورة تقول إن البيانات محلية ولا تُرفع ⇒ إرسال
+   * بيانات المنشأة والتواصل بلا موافقة صريحة **مخالفة لوثيقتنا نفسها**. لذلك:
+   * خانة اختيار في معالج أول التشغيل (غير مفعّلة افتراضياً)، وبلا موافقة لا
+   * يُرسل شيء إطلاقاً — والتطبيق يعمل كاملاً دونها.
+   */
+  registrationConsentAt: string | null
+  setRegistrationConsent: (at?: string) => void
+  /**
+   * بند 2 (تدقيق 2026-10-08): متى أُبلغ المطوّر بهذا التسجيل — مرة واحدة لكل
+   * جهاز. تُحفظ عند **نجاح** الإرسال فقط، فيُعاد المحاولة في الإقلاع التالي لو
+   * كان العميل أوفلاين (بند 6: لا إجبار على الإنترنت ولا تعطيل للعمل).
+   */
+  registrationReportedAt: string | null
+  markRegistrationReported: (at?: string) => void
   setActivated: (key: string, payload: LicensePayload) => void
   /** v1.0.7: تطبيق مفتاح تغيير النشاط الموقّع (SHOPSYS2) — يعيد اسم النشاط الجديد */
   applyActivityChangeKey: (key: string, pubB64u?: string) => Promise<string>
@@ -193,6 +231,12 @@ interface AppState {
   cloudNotifications: CloudNotice[]
   cloudSyncedAt: string | null
   setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null; notifications?: CloudNotice[] }) => void
+  /**
+   * بند 10 (تدقيق 2026-10-08): التنبيهات التي أقرّ بها المستخدم — تُحفظ محلياً
+   * فلا تعود النافذة المنبثقة، ويُرسل إيصال قراءة للمطوّر (best-effort).
+   */
+  ackedNoticeIds: string[]
+  ackNotice: (id: string) => void
   /** أعلام الميزات عن بُعد (البند 5): المطفأ سحابياً من الميزات الممنوحة — kill-switch فقط */
   deviceFlags: DeviceFlags | null
   // ─── النسخ الاحتياطي التلقائي (القرار 28 + جدولة بطلب المالك) ───
@@ -317,6 +361,7 @@ export const useAppStore = create<AppState>()(
         doctorSpecialty: '',
         lastActivityChangeAt: null,
         activityKeyHistory: [],
+        activityKeyFingerprints: [],
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
@@ -346,6 +391,7 @@ export const useAppStore = create<AppState>()(
             doctorSpecialty: doctorSpecialty?.trim() ?? '',
             lastActivityChangeAt: null,
             activityKeyHistory: [],
+            activityKeyFingerprints: [],
           },
         })),
       addFiscalYear: (fy) =>
@@ -449,10 +495,123 @@ export const useAppStore = create<AppState>()(
       lastSeenAt: BOOT.now,
       activatedKey: null,
       activatedPayload: null,
+      licenseAudit: { status: 'no_key' },
+      /**
+       * ث1 (تدقيق 2026-10-08): **المفتاح الموقّع هو المصدر الوحيد للحمولة.**
+       * في كل إقلاع نعيد `verifyLicenseKey` على المفتاح المخزّن ونستبدل الحمولة
+       * بنتيجة التوقيع؛ مفتاح فاسد/معدّل/لجهاز آخر ⇒ إسقاط التفعيل (يعود
+       * المستخدم للتجربة أو شاشة القفل حسب حالته). حمولة محفوظة بلا مفتاح
+       * صالح تُرفض مهما كانت — هذا يسدّ تعديل `activatedPayload` في التخزين
+       * (نسخة الويب: localStorage نص صريح) لفتح `lifetime` بكل الميزات.
+       *
+       * ومعها قصّ الوحدات: `setup.modules` حالة محفوظة كذلك، فلا يبقى منها
+       * إلا ما تمنحه افتراضيات النشاط + `extraModules` الموقّعة (الحذف فقط —
+       * ما أطفأه المستخدم بنفسه يبقى مطفأً).
+       *
+       * لا تُحدَّث الحالة إلا عند تغيّر فعلي: تحديث بلا سبب يعيد رسم الصدفة
+       * ويستورد صفحاتها بعد انتهاء الاختبارات (EnvironmentTeardownError).
+       */
+      reverifyActivation: async () => {
+        const before = get()
+        /** الوحدات المسموح بظهورها لحمولة معيّنة (بلا إضافة — حذف فقط) */
+        const clamp = (payload: LicensePayload | null) => clampModulesToLicense({
+          stored: before.setup.modules,
+          activityId: before.setup.activityId,
+          licensedExtra: payload?.extraModules,
+        })
+        const commit = (next: {
+          activatedKey: string | null
+          activatedPayload: LicensePayload | null
+          licenseAudit: AppState['licenseAudit']
+          modules: BusinessModule[]
+        }) => {
+          const modulesChanged = before.setup.completed
+            && (next.modules.length !== before.setup.modules.length
+              || next.modules.some((m, i) => m !== before.setup.modules[i]))
+          const unchanged = before.activatedKey === next.activatedKey
+            && JSON.stringify(before.activatedPayload ?? null) === JSON.stringify(next.activatedPayload)
+            && before.licenseAudit.status === next.licenseAudit.status
+            && !modulesChanged
+          if (unchanged) return
+          set((s) => ({
+            activatedKey: next.activatedKey,
+            activatedPayload: next.activatedPayload,
+            licenseAudit: next.licenseAudit,
+            setup: s.setup.completed && modulesChanged ? { ...s.setup, modules: next.modules } : s.setup,
+          }))
+        }
+
+        if (!before.activatedKey) {
+          // لا مفتاح ⇒ لا تفعيل معتمد، مهما كانت الحمولة المحفوظة
+          commit({
+            activatedKey: null,
+            activatedPayload: null,
+            licenseAudit: { status: 'no_key', at: new Date().toISOString() },
+            modules: clamp(null),
+          })
+          return
+        }
+
+        /* لا نقلب الحالة إلى `checking` من هنا: الترطيب هو من يعلّمها عند الإقلاع
+           (فتظهر بوابة «جارٍ التحقق» بدل وميض شاشة القفل). قلبها في كل استدعاء
+           كان يعيد رسم الصدفة مرتين ويومض البوابة لو استُدعي الفحص لاحقاً. */
+        /* ث9: غياب WebCrypto ليس تلاعباً — لا نحكم ولا نحذف (انظر النوع أعلاه). */
+        if (typeof globalThis.crypto?.subtle?.verify !== 'function') {
+          commit({
+            activatedKey: before.activatedKey,
+            activatedPayload: null,
+            licenseAudit: {
+              status: 'unverifiable',
+              reason: 'بيئة التشغيل لا تتيح التحقق من التوقيع (WebCrypto غير متاح)',
+              at: new Date().toISOString(),
+            },
+            modules: clamp(null),
+          })
+          return
+        }
+
+        let verified: LicensePayload | null = null
+        let verifyError: string | null = null
+        try { verified = await verifyLicenseKey(before.activatedKey, before.deviceId) }
+        catch (e) { verifyError = (e as Error).message }
+
+        const audit = auditStoredLicense({
+          activatedKey: before.activatedKey,
+          storedPayload: before.activatedPayload,
+          verifiedPayload: verified,
+          verifyError,
+        })
+        if (audit.kind === 'verified') {
+          commit({
+            activatedKey: before.activatedKey,
+            activatedPayload: audit.payload,
+            licenseAudit: { status: 'verified', at: new Date().toISOString() },
+            modules: clamp(audit.payload),
+          })
+          return
+        }
+        // tampered ⇒ يُسقط المفتاح نفسه: لا يبقى شيء قابل لإعادة الاعتماد
+        commit({
+          activatedKey: null,
+          activatedPayload: null,
+          licenseAudit: { status: 'tampered', reason: audit.kind === 'tampered' ? audit.reason : undefined, at: new Date().toISOString() },
+          modules: clamp(null),
+        })
+      },
+      renewalDismissedDay: null,
+      dismissRenewalNotice: (day) => set({ renewalDismissedDay: day ?? new Date().toISOString().slice(0, 10) }),
+      registrationConsentAt: null,
+      setRegistrationConsent: (at) =>
+        set((s) => (s.registrationConsentAt ? s : { registrationConsentAt: at ?? new Date().toISOString() })),
+      registrationReportedAt: null,
+      /* حارس الفرق (درس ث1): لا set بلا تغيّر فعلي — لا تحديثات متكررة للمتجر */
+      markRegistrationReported: (at) =>
+        set((s) => (s.registrationReportedAt ? s : { registrationReportedAt: at ?? new Date().toISOString() })),
       setActivated: (key, payload) =>
         set((s) => ({
           activatedKey: key,
           activatedPayload: payload,
+          licenseAudit: { status: 'verified', at: new Date().toISOString() },
           // سياسة الأقسام: الوحدات = افتراضيات النشاط + ما فعّله المطوّر في المفتاح فقط
           setup: s.setup.completed
             ? {
@@ -466,7 +625,7 @@ export const useAppStore = create<AppState>()(
               }
             : s.setup,
         })),
-      clearActivation: () => set({ activatedKey: null, activatedPayload: null }),
+      clearActivation: () => set({ activatedKey: null, activatedPayload: null, licenseAudit: { status: 'no_key', at: new Date().toISOString() } }),
       /* ═══ v1.0.7 (موافقة المالك): تغيير النشاط بمفتاح الدعم الفني فقط ═══
          SHOPSYS2 موقّع من المطوّر لهذا الجهاز تحديداً، من النشاط الحالي إلى
          نشاط قالب معروف. التقييد: 30 يوماً بين تغييرين. القوالب (الخصائص
@@ -478,6 +637,13 @@ export const useAppStore = create<AppState>()(
         if (!state.setup.completed) throw new Error('أكمل الإعداد الأول أولاً')
         if (!state.setup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
         const payload = await verifyActivityChangeKey(key, state.deviceId, pubB64u)
+        /* ح8 (مراجعة ③): مفتاح التحويل يُطبَّق مرة واحدة. التحقق السابق يمنع المفتاح إن لم
+           يطابق النشاط الحالي فقط — فمفتاح A→B الموقّع يُعاد تطبيقه بعد عودة الجهاز إلى A
+           بمفتاح B→A دون طلب جديد من الدعم. */
+        const fingerprint = keyFingerprint(key)
+        if ((state.setup.activityKeyFingerprints ?? []).includes(fingerprint)) {
+          throw new Error('مفتاح تحويل النشاط هذا استُخدم من قبل — اطلب مفتاحاً جديداً من الدعم')
+        }
         if (payload.fromActivityId !== state.setup.activityId) {
           throw new Error(`المفتاح صادر للتحويل من نشاط «${payload.fromActivityId}» — نشاطك الحالي «${state.setup.activityId}». اطلب مفتاحاً محدّثاً من الدعم`)
         }
@@ -501,12 +667,16 @@ export const useAppStore = create<AppState>()(
             modules: template.modules,
             lastActivityChangeAt: now,
             activityKeyHistory: [...s.setup.activityKeyHistory, template.id],
+            activityKeyFingerprints: [...(s.setup.activityKeyFingerprints ?? []), fingerprint],
           },
         }))
         return template.nameAr
       },
       touchLastSeen: () =>
         set((s) => {
+          /* ح3 (مراجعة ③): مرساة تالفة لا تُستبدل بـ«الآن» — ذلك كان يمحو دليل إرجاع الساعة
+             (lastSeenAt = "" كان يُكتب فوراً بالوقت الحالي عند الإقلاع فيمر التلاعب) */
+          if (!isValidIsoDay(s.lastSeenAt)) return {}
           const now = new Date().toISOString()
           // لا نرجع المرساة للخلف أبداً — هي خط دفاع ضد إرجاع الساعة
           return now > s.lastSeenAt ? { lastSeenAt: now } : {}
@@ -514,6 +684,15 @@ export const useAppStore = create<AppState>()(
       cloudAbout: null,
       revokedKeys: [],
       cloudNotifications: [],
+      ackedNoticeIds: [],
+      /* حارس الفرق (درس ث1): لا set بلا تغيّر فعلي. ويُقتصر على آخر 200 معرّف
+         كي لا تنمو القائمة للأبد في التخزين المشفر. */
+      ackNotice: (id) =>
+        set((s) => (
+          !id || s.ackedNoticeIds.includes(id)
+            ? s
+            : { ackedNoticeIds: [...s.ackedNoticeIds, id].slice(-200) }
+        )),
       deviceFlags: null,
       cloudSyncedAt: null,
       setCloudData: (patch) =>
@@ -535,7 +714,25 @@ export const useAppStore = create<AppState>()(
       name: 'shopsys-app',
       /* §101 التنفيذية: SQLite داخل نسخة سطح المكتب — وlocalStorage الخام في الويب كما هو */
       storage: createJSONStorage(settingsAppStorage),
+      /**
+       * ث1 (تدقيق 2026-10-08): الحمولة لا تُخزَّن ولا تُقرأ من التخزين —
+       * تُشتق من المفتاح الموقّع في كل إقلاع (`reverifyActivation`). وحالة
+       * الفحص نفسها جلسة فقط. ما عدا ذلك يُحفظ كما هو حرفياً.
+       */
+      partialize: (state) => {
+        const { activatedPayload: _payload, licenseAudit: _audit, ...rest } = state
+        return rest
+      },
       onRehydrateStorage: () => (state) => {
+        /* ث1: أي حمولة محفوظة تُسقط فوراً — لا تُعتمد قبل إعادة التحقق من
+           التوقيع. تُعلَّم الحالة `checking` كي لا تُعرض شاشة القفل في نافذة
+           الفحص (وإلا ومضت لعميل مفعّل) — `App.tsx` ينتظرها قبل الحكم. */
+        if (state) {
+          state.activatedPayload = null
+          state.licenseAudit = state.activatedKey
+            ? { status: 'checking', at: new Date().toISOString() }
+            : { status: 'no_key' }
+        }
         // ترحيل: حسابات أُنشئت قبل خطوة السنة المالية تحصل على سنة ميلادية حالية تلقائياً
         if (state && state.setup.completed && state.fiscalYears.length === 0) {
           const y = new Date().getFullYear()
@@ -621,8 +818,12 @@ export const useAppStore = create<AppState>()(
         }
         // حماية: مرساة الجهاز (shopsys-i) هي المرجع — لو بداية التجربة المخزنة
         // أحدث من المرساة (مسح بيانات/تلاعب لإعادة العدّاد) نرجع للأقدم دائماً
-        if (state && state.trialStartedAt > BOOT.firstTrialAt) {
-          state.trialStartedAt = BOOT.firstTrialAt
+        if (state) state.trialStartedAt = oldestValidDay(state.trialStartedAt, BOOT.firstTrialAt) ?? state.trialStartedAt
+        // ح2 (مراجعة ③): القيمة التالفة ("" أو نص) تُستبدل بالأقدم **الصالح** بينها وبين
+        // المرساة — ولا تبقى لتعطي تجربة لا تنتهي (evaluateLicense يفشل مغلقاً عليها).
+        // ح4: مخطط الإعداد القديم لا يعرف بصمات تحويل النشاط
+        if (state && state.setup && !Array.isArray(state.setup.activityKeyFingerprints)) {
+          state.setup = { ...state.setup, activityKeyFingerprints: [] }
         }
       },
     },

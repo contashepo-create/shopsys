@@ -8,7 +8,7 @@
  * 3) منطق القفل: انتهاء التجربة/الباقة/إرجاع الساعة/مفتاح محروق ⇒
  *    التحويل لقسم مقفل وظيفته فقط: تواصل مع المطوّر، تفعيل، تصدير بيانات.
  */
-import type { LicenseState } from './license.ts'
+import { activityMatches, isRevoked, type LicensePayload, type LicenseState } from './license.ts'
 
 /* ═══ 1) التشفير AES-256-GCM ═══ */
 
@@ -97,23 +97,60 @@ export function pushSnapshot(ring: readonly HourlySnapshot[], snap: HourlySnapsh
 
 /* ═══ 3) منطق القفل (القسم الخاص عند انتهاء الباقة) ═══ */
 
-export type LockReason = 'trial_expired' | 'expired' | 'clock_tampered' | 'revoked' | 'activity_mismatch'
+export type LockReason = 'trial_expired' | 'expired' | 'clock_tampered' | 'revoked' | 'activity_mismatch' | 'license_unverifiable' | 'license_invalid'
 
 /**
  * هل يُحوَّل المستخدم لشاشة القفل؟
  * التجربة السارية والمفتاح الساري فقط يسمحان بالدخول — كل ما عدا ذلك قفل.
  */
-export function lockReasonFor(state: LicenseState, extra?: { revoked?: boolean; activityMismatch?: boolean }): LockReason | null {
+export function lockReasonFor(
+  state: LicenseState,
+  extra?: { revoked?: boolean; activityMismatch?: boolean; unverifiable?: boolean },
+): LockReason | null {
   if (extra?.revoked) return 'revoked'
+  /* ث9 (مراجعة المرحلة ②): تعذّر التحقق البيئي ليس «انتهت التجربة» — عميل
+     مدفوع له مفتاح محفوظ يجب أن يُقال له السبب الحقيقي لا حكم خاطئ. */
+  if (extra?.unverifiable) return 'license_unverifiable'
   if (extra?.activityMismatch) return 'activity_mismatch'
   if (state.status === 'trial' || state.status === 'active') return null
   if (state.status === 'trial_expired') return 'trial_expired'
   if (state.status === 'clock_tampered') return 'clock_tampered'
   if (state.status === 'expired') return 'expired'
+  /* ح2: قيمة زمنية تالفة في الترخيص ≠ «انتهى اشتراكك» — سبب صادق يطلب الدعم */
+  if (state.status === 'invalid') return 'license_invalid'
   return 'expired' // invalid وغيرها ⇒ قفل
 }
 
+/** الحد الأدنى من حالة المتجر التي يحتاجها قرار القفل (متوافق بنيوياً مع AppState) */
+export interface LockStoreSlice {
+  activatedKey: string | null
+  activatedPayload: LicensePayload | null
+  revokedKeys: readonly string[]
+  licenseAudit: { status: string }
+  setup: { completed: boolean; activityId: string | null; activityKeyHistory: readonly string[] }
+}
+
+/**
+ * القرار الموحّد للقفل (ح6 — مراجعة ③): الواجهة **والمهام الخلفية** (إرسال تليجرام
+ * المجدول، المزامنة السحابية، خادم الشبكة) تستعمل هذه الدالة نفسها. قبلها كانت المهام
+ * الخلفية تكتفي بـ hasFeature، فتستمر خلف شاشة القفل عند الإبطال أو عدم تطابق النشاط.
+ */
+export function currentLockReason(state: LicenseState, store: LockStoreSlice): LockReason | null {
+  const { activatedKey, activatedPayload, revokedKeys, setup } = store
+  return lockReasonFor(state, {
+    revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
+    unverifiable: store.licenseAudit.status === 'unverifiable',
+    activityMismatch: activatedPayload != null && setup.completed
+      && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
+  })
+}
+
 export const LOCK_REASON_LABELS: Record<LockReason, { title: string; desc: string; icon: string }> = {
+  license_invalid: {
+    title: 'بيانات الترخيص غير صالحة',
+    desc: 'مرساة الترخيص المحفوظة تالفة أو معدّلة يدوياً. تواصل مع المطوّر لإعادة ضبط الترخيص — بياناتك محفوظة بالكامل.',
+    icon: '⚠️',
+  },
   trial_expired: {
     title: 'انتهت الفترة التجريبية',
     desc: 'انتهت أيام التجربة الـ14. فعّل باقة للاستمرار — بياناتك محفوظة بالكامل ويمكنك تصديرها.',
@@ -133,6 +170,11 @@ export const LOCK_REASON_LABELS: Record<LockReason, { title: string; desc: strin
     title: 'مفتاح التفعيل محروق',
     desc: 'أُبطل هذا المفتاح من المطوّر (يُحرق عند تغيير النشاط أو مخالفة الشروط) ولا يُعاد استخدامه.',
     icon: '🔥',
+  },
+  license_unverifiable: {
+    title: 'تعذّر التحقق من مفتاح التفعيل',
+    desc: 'مفتاحك محفوظ كما هو ولم يُحذف، لكن بيئة التشغيل الحالية لا تتيح التحقق من التوقيع. افتح التطبيق من نسخة سطح المكتب أو عبر اتصال آمن https — ويعود العمل تلقائياً بلا فقدان للمفتاح.',
+    icon: '🛡️',
   },
   activity_mismatch: {
     title: 'المفتاح لنشاط آخر',

@@ -9,6 +9,8 @@
 import { useState } from 'react'
 import { Network, Server, MonitorSmartphone, Unplug, RefreshCw, Copy, Users } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
+import { evaluateLicense, hasFeature } from '../../core/license.ts'
+import { currentLockReason } from '../../core/security.ts'
 import { useLanStatusStore, startHostSession, stopHostSession } from '../../data/lan/hostSession.ts'
 import { connectRemoteSession, disconnectRemoteSession } from '../../data/lan/remoteSession.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
@@ -31,6 +33,12 @@ export function LanSettingsPage() {
   const [busy, setBusy] = useState(false)
 
   const startHost = async () => {
+    /* ح7 (مراجعة ③): المضيف خدمة مدفوعة بالمفتاح (multi_user_lan) ولا يعمل خلف القفل */
+    const app = useAppStore.getState()
+    const lic = evaluateLicense({ activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt, lastSeenAt: app.lastSeenAt, today: new Date().toISOString() })
+    if (currentLockReason(lic, app) !== null || !hasFeature(lic, 'multi_user_lan')) {
+      return toast.show('مضيف المحل خدمة مدفوعة (تعدد المستخدمين على الشبكة) — تتطلب مفتاح ترخيص يتضمنها', 'error')
+    }
     if (!/^\d{4}$/.test(hostCode)) return toast.show('رمز الاقتران أربع خانات رقمية', 'error')
     const port = Number(hostPort)
     if (!Number.isInteger(port) || port < 1024 || port > 65535) return toast.show('المنفذ بين 1024 و65535', 'error')
