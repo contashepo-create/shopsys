@@ -1,28 +1,33 @@
 /**
- * ملخص الاشتراكات — تنبيهات الانتهاء وقرب الانتهاء للمطوّر
- * (بند 3+4 من تدقيق 2026-10-08).
+ * ملخص الاشتراكات — تنبيهات المطوّر عن الاشتراكات القريبة من الانتهاء
+ * (بند 3+4 من تدقيق 2026-10-08، ومراجعة المرحلة ③).
  *
  * كان هذا المنطق موجوداً في `cloud/worker.js` فقط، وهو **عامل آخر** بمساحة KV
- * أخرى يقرأ مفاتيح `sub:*` — بينما مركز التحكم الفعلي (هذا المجلد) يكتب
- * `dev:*`. النتيجة: لا تذكير يعمل. هذا الملف يقرأ المصدر الحقيقي `dev:*`.
+ * أخرى يقرأ مفاتيح `sub:*` — بينما مركز التحكم الفعلي (هذا المجلد) يكتب `dev:*`.
+ * النتيجة: لا تذكير يعمل. هذا الملف يقرأ المصدر الحقيقي `dev:*`.
  *
  * يُستدعى من ثلاثة أماكن:
  *   ① `scheduled()` اليومي (cron في wrangler.toml) — بلا أمر من المطوّر.
  *   ② أمر `/تذكير` — عند الطلب.
- *   ③ زر «⏳ الاشتراكات» في لوحة الأزرار.
+ *   ③ زر «⏳ الاشتراكات» في لوحة الأزرار — عند الطلب.
  *
- * قاعدة الإزعاج: لا شيء منتهٍ ولا موشك ⇒ **لا رسالة إطلاقاً** (لا إشعار يومي فارغ).
+ * ما الذي يُنبَّه عنه؟ **القريبة من الانتهاء فقط**: من اليوم (0) حتى SOON_DAYS
+ * (افتراضياً 6 = «أقل من أسبوع»). المنتهية **لا تدخل التذكير**: كانت تُرسل كل يوم
+ * عن عميل انتهى منذ أيام، وهذا إزعاج بلا فعل؛ عددها يظهر في «📊 الإحصائيات».
+ *
+ * قاعدة الإزعاج: لا قريبة ⇒ **لا رسالة تلقائية إطلاقاً** (لا إشعار يومي فارغ).
+ * قاعدة التكرار: علامة `digest-sent:<اليوم>` ⇒ رسالة تلقائية واحدة في اليوم، وفيها
+ * سطر واحد لكل جهاز ⇒ لا يُذكر العميل أكثر من مرة في اليوم.
  */
-
-/** نافذة «قرب الانتهاء» بالأيام — طلب المالك: 10 أيام */
 import { tgEscape } from './tgHtml.js'
 
-export const SOON_DAYS = 10
+/** نافذة «قرب الانتهاء» بالأيام: 0..6 = «أقل من أسبوع» (طلب المالك) */
+export const SOON_DAYS = 6
 
 /** مفتاح منع التكرار اليومي للـcron (KV ليس ذرياً، لكنه كافٍ لمنظومة أحادية المطوّر) */
 export const digestMarkerKey = (dayIso) => `digest-sent:${dayIso}`
 
-/** نافذة «قرب الانتهاء» التي ضبطها المطوّر من اللوحة (وإلا الافتراضي 10 أيام) */
+/** نافذة «قرب الانتهاء» التي ضبطها المطوّر من اللوحة (وإلا الافتراضي) */
 export const DIGEST_SETTINGS_KEY = 'settings:digest'
 
 /** قراءة النافذة المضبوطة — أي قيمة تالفة/خارج المدى ترجع للافتراضي */
@@ -64,7 +69,7 @@ export function deviceMetadata(record) {
 }
 
 /**
- * مسح كل أجهزة المركز وتصنيفها: منتهية · موشكة (≤ soonDays) · مدى الحياة.
+ * مسح كل أجهزة المركز وتصنيفها: منتهية · قريبة (≤ soonDays) · مدى الحياة.
  * `expiresAt` بصيغة YYYY-MM-DD كما يكتبها `expiresAfterDays` في licenseLib.
  * يعيد أيضاً `skipped` (ما لم يُفحص لتجاوز حدّ القراءات) و`viaMetadata`
  * (ما صُنّف من الفهرس بلا قراءة) — يظهر تحذير صريح للمطوّر لو تُرِك شيء.
@@ -122,7 +127,7 @@ export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date
     if (listed.list_complete || !listed.cursor) break
     cursor = listed.cursor
   }
-  // الأخطر أولاً: الأقدم انتهاءً فوق القائمة
+  // الأخطر أولاً: الأقرب انتهاءً فوق القائمة (القريبة) والأقدم انتهاءً (المنتهية)
   expired.sort((a, b) => a.days - b.days)
   soon.sort((a, b) => a.days - b.days)
   return { total, lifetime, malformed, expired, soon, soonDays, skipped, viaMetadata }
@@ -139,51 +144,45 @@ const daysWordAr = (n, genitive = false) => {
   return `${n} يوماً`
 }
 
-const rowAr = (row, kind) => {
-  const when = kind === 'expired'
-    ? `انتهى منذ ${daysWordAr(-row.days, true)} (${row.expiresAt})`
-    : row.days === 0 ? 'ينتهي اليوم' : `يتبقى ${daysWordAr(row.days)} (${row.expiresAt})`
-  /* اسم العميل قد يحوي & — الرسالة HTML تُرفض كلها بلا تهريب (tgHtml.js) */
-  return `${kind === 'expired' ? '⛔' : '⏳'} <b>${tgEscape(row.customer)}</b> — ${tgEscape(planAr(row.plan))}\n   <code>${tgEscape(row.deviceId)}</code> · ${when}${row.email ? ` · ${tgEscape(row.email)}` : ''}`
+/** سطر جهاز قريب من الانتهاء — اسم العميل قد يحوي & فيُهرَّب (انظر tgHtml.js) */
+const rowAr = (row) => {
+  const when = row.days === 0 ? 'ينتهي اليوم' : `يتبقى ${daysWordAr(row.days)}`
+  return `⏳ <b>${tgEscape(row.customer)}</b> — ${tgEscape(planAr(row.plan))}\n   <code>${tgEscape(row.deviceId)}</code> · ${when} (${row.expiresAt})${row.email ? ` · ${tgEscape(row.email)}` : ''}`
 }
 
-/** هل يوجد ما يستحق رسالة؟ (لا إزعاج فارغ) */
-export const hasDigestNews = (digest) => digest.expired.length > 0 || digest.soon.length > 0
+/** هل يوجد ما يستحق رسالة؟ — القريبة وحدها (المنتهية لا تُرسل تلقائياً) */
+export const hasDigestNews = (digest) => digest.soon.length > 0
 
 /** نص رسالة التليجرام — HTML كما في باقي ردود المركز */
 export function formatDigestAr(digest, { daily = false } = {}) {
   const head = daily ? '⏰ <b>تذكير الاشتراكات اليومي</b>' : '⏰ <b>تذكير الاشتراكات</b>'
+  const window = daysWordAr(digest.soonDays, true)
   if (!hasDigestNews(digest)) {
-    /* لا «كل شيء سليم» صامتاً: لو تُركت أجهزة بلا فحص فالخبر ناقص ويُقال صراحةً */
+    /* لا «كل شيء سليم» صامتاً: لو تُركت أجهزة بلا فحص فالخبر ناقص ويُقال صراحةً.
+       والمنتهية تُذكر **عدداً** فقط — لا قائمة، فهي خارج التذكير اليومي. */
+    const expiredNote = digest.expired.length
+      ? `\n⛔ منتهية حالياً: ${digest.expired.length} — لا يُرسل عنها تنبيه يومي (التفاصيل في «📊 إحصائيات»)`
+      : ''
     const tail = digest.skipped ? `\n${scanWarningAr(digest.skipped)}` : ''
-    return `${head}\n✅ لا اشتراكات منتهية ولا موشكة على الانتهاء (≤ ${digest.soonDays} أيام).\n📊 المسجل: ${digest.total} جهاز (منها ${digest.lifetime} مدى الحياة)${tail}`
+    return `${head}\n✅ لا اشتراكات تنتهي خلال ${window}.\n📊 المسجل: ${digest.total} جهاز (منها ${digest.lifetime} مدى الحياة)${expiredNote}${tail}`
   }
-  const lines = [head, '']
-  if (digest.expired.length) {
-    lines.push(`⛔ <b>منتهية (${digest.expired.length})</b>`)
-    lines.push(...digest.expired.slice(0, 40).map((row) => rowAr(row, 'expired')))
-    if (digest.expired.length > 40) lines.push(`   … و${digest.expired.length - 40} غيرها`)
-    lines.push('')
-  }
-  if (digest.soon.length) {
-    lines.push(`⏳ <b>تنتهي خلال ${digest.soonDays} أيام (${digest.soon.length})</b>`)
-    lines.push(...digest.soon.slice(0, 40).map((row) => rowAr(row, 'soon')))
-    if (digest.soon.length > 40) lines.push(`   … و${digest.soon.length - 40} غيرها`)
-    lines.push('')
-  }
+  const lines = [head, '', `⏳ <b>تنتهي خلال ${window} (${digest.soon.length})</b>`]
+  lines.push(...digest.soon.slice(0, 40).map(rowAr))
+  if (digest.soon.length > 40) lines.push(`   … و${digest.soon.length - 40} غيرها`)
+  lines.push('')
   lines.push(`📊 المسجل: ${digest.total} جهاز · مدى الحياة: ${digest.lifetime}`)
   if (digest.skipped) lines.push(scanWarningAr(digest.skipped))
   lines.push('💡 التجديد: افتح العميل من «👥 العملاء» ← «🔑 إصدار أو تجديد الرخصة»')
   return lines.join('\n')
 }
 
-/** سطر الإحصائيات للوحة (بلا تفاصيل) */
+/** سطر الإحصائيات للوحة — هنا فقط يظهر عدد المنتهية */
 export function formatStatsAr(digest, extra = {}) {
   return [
     '📊 <b>إحصائيات المركز</b>',
     `👥 أجهزة مسجلة: ${digest.total}`,
     `♾️ مدى الحياة: ${digest.lifetime}`,
-    `⏳ تنتهي خلال ${digest.soonDays} أيام: ${digest.soon.length}`,
+    `⏳ تنتهي خلال ${daysWordAr(digest.soonDays, true)}: ${digest.soon.length}`,
     `⛔ منتهية: ${digest.expired.length}`,
     ...(extra.revoked != null ? [`🔥 مفاتيح محروقة: ${extra.revoked}`] : []),
     ...(extra.licenses != null ? [`🔑 مفاتيح صادرة: ${extra.licenses}`] : []),

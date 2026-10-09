@@ -27,6 +27,7 @@ const {
   sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, deleteRegistration, regKey,
   REG_TG_DAILY_CAP, regAlertKey,
   formatRegistrationAr: formatRegistrationArServer,
+  registrationButtons,
 } = await import('../../tools/devbot/src/registrations.js')
 
 class MemoryKv {
@@ -341,10 +342,13 @@ describe('⑥ الاستعراض من اللوحة والأمر', () => {
     const text = formatRegistrationAr(buildRegistrationReport(CUSTOMER)!)
     expect(text).toContain('تسجيل عميل جديد')
     expect(text).toContain('1.0.19')
-    // الصياغة التي تصل التليجرام فعلياً (من العامل) تحمل تلميح الإصدار
+    // الصياغة التي تصل التليجرام فعلياً (من العامل): البيانات كاملة، والتعليمة النصية حلّها زر
     const server = formatRegistrationArServer(sanitizeRegistration(CUSTOMER)!)
-    expect(server).toContain('/اصدر')
+    expect(server).not.toContain('/اصدر')
     expect(server).toContain('بقالة النور')
+    const buttons = registrationButtons(CUSTOMER.deviceId).reply_markup.inline_keyboard
+    expect(buttons[0][0].callback_data).toBe(`panel:issuereg:${CUSTOMER.deviceId}`)
+    expect(buttons[0][0].callback_data.length).toBeLessThanOrEqual(64)
   })
 
   it('زر «🆕 التسجيلات» في اللوحة + أمر /تسجيلات', async () => {

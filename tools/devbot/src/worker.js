@@ -29,11 +29,12 @@ import { subscriptionDigest, formatDigestAr, formatStatsAr, hasDigestNews, diges
 import { readAbout, setAboutField } from './aboutContent.js'
 import {
   REG_MAX_BYTES, sanitizeRegistration, saveRegistration, formatRegistrationAr,
-  listRegistrations, formatRegistrationsAr, deleteRegistration,
+  listRegistrations, formatRegistrationsAr, deleteRegistration, registrationButtons,
   consumeRegistrationAlert, REG_TG_DAILY_CAP,
 } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
 import { tgEscape } from './tgHtml.js'
+import { sendTelegram } from './tgSend.js'
 
 /* ═══════════ إعدادات البيئة (secrets + vars) ═══════════ */
 const env_ = env => ({
@@ -147,7 +148,7 @@ export default {
       if (isNew && cfg.token && cfg.adminId) {
         try {
           const alert = await consumeRegistrationAlert(cfg)
-          if (alert.allowed) await sendTelegram(cfg, cfg.adminId, formatRegistrationAr(record))
+          if (alert.allowed) await sendTelegram(cfg, cfg.adminId, formatRegistrationAr(record), registrationButtons(record.deviceId))
           if (alert.justCrossed) {
             await sendTelegram(cfg, cfg.adminId,
               `⚠️ بلغنا سقف تنبيهات التسجيل اليومي (${REG_TG_DAILY_CAP}). التسجيلات ما زالت تُحفظ وتُرى في <code>/تسجيلات</code> واللوحة.\nإن لم يكن هذا ضغطاً عادياً فراجع الأرقام — ولرفع السقف عدّل <code>REG_TG_DAILY_CAP</code>.`)
@@ -162,9 +163,21 @@ export default {
     if (hook) {
       if (!cfg.webhookSecret || hook[1] !== cfg.webhookSecret) return new Response('not found', { status: 404 })
       if (request.headers.get('x-telegram-bot-api-secret-token') !== cfg.webhookSecret) return new Response('forbidden', { status: 403 })
-      const update = await request.json()
-      const reply = await handleUpdate(update, cfg)
-      if (reply) await sendTelegram(cfg, reply.chatId, reply.text, reply.opts)
+      /* 200 دائماً (مراجعة المرحلة ③): تليجرام يعيد إرسال التحديث عند أي رد غير 200،
+         فخطأ عابر (KV، شبكة، رفض رسالة) كان يكرر الأمر ويكرر تنفيذه، ولا يصل المطوّر
+         خبر الفشل. الآن: الخطأ يُسجَّل ويُبلَّغ المطوّر إن أمكن، والرد يعود 200. */
+      let update = null
+      try { update = await request.json() } catch { return new Response('ok') }
+      let reply = null
+      try {
+        reply = await handleUpdate(update, cfg)
+      } catch (error) {
+        reply = { chatId: cfg.adminId, text: `⚠️ تعذّر تنفيذ آخر أمر: ${tgEscape((error && error.message) || error)}` }
+      }
+      if (reply && reply.chatId) {
+        try { await sendTelegram(cfg, reply.chatId, reply.text, reply.opts) }
+        catch (error) { console.error('telegram reply failed', (error && error.message) || error) }
+      }
       return new Response('ok')
     }
 
@@ -176,7 +189,7 @@ export default {
    * يصل المطوّر على التليجرام بلا أمر — يُفعَّل بـ[triggers] crons في wrangler.toml.
    *
    * قاعدتان ضد الإزعاج والتكرار:
-   *   • لا منتهية ولا موشكة ⇒ لا رسالة إطلاقاً (لا إشعار يومي فارغ).
+   *   • لا قريبة من الانتهاء ⇒ لا رسالة إطلاقاً (لا إشعار يومي فارغ). المنتهية لا تُرسل يومياً.
    *   • علامة `digest-sent:<اليوم>` في KV ⇒ لا تكرار لو أُطلق الـcron أكثر من مرة.
    */
   async scheduled(_event, env) {
@@ -194,7 +207,7 @@ export default {
       /* لا فشل صامت: التذكير اليومي هو غاية بندي 3 و4، فلو انهار (حدّ النداءات
          الفرعية في الخطة المجانية، عطل KV…) يجب أن يعرف المطوّر في يومه. */
       try {
-        await sendTelegram(cfg, cfg.adminId, `⚠️ فشل تذكير الاشتراكات اليومي (${day}): ${(err && err.message) || err}`)
+        await sendTelegram(cfg, cfg.adminId, `⚠️ فشل تذكير الاشتراكات اليومي (${day}): ${tgEscape((err && err.message) || err)}`)
       } catch { /* حتى الإبلاغ عن الفشل تحسين — لا يعطّل العامل */ }
     }
   },
@@ -206,13 +219,6 @@ const json = (body, headers = { 'content-type': 'application/json; charset=utf-8
 
 /* ═══════════ بوت تليجرام ═══════════ */
 
-async function sendTelegram(cfg, chatId, text, opts = {}) {
-  await fetch(`https://api.telegram.org/bot${cfg.token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', ...opts }),
-  })
-}
 
 /* v1.0.8 (طلب المالك): سجل لكل جهاز — التفعيل/التجديد/تغيير النشاط — append بحد 200 حدث */
 async function appendDeviceLog(cfg, deviceId, text) {
@@ -601,8 +607,8 @@ const HELP = [
   '<code>/تنبيهات</code> — التنبيهات المرسلة وعدد إقرارات القراءة',
   '<code>/دعم</code> — محادثات الدعم (بانتظار ردك أولاً) · <code>/دعم SHOP-…</code> محادثة جهاز',
   '<code>/رد SHOP-… نص</code> — رد يصل العميل داخل التطبيق (أو Reply على بلاغ الدعم)',
-  '<code>/تذكير [أيام]</code> — المنتهية والموشكة على الانتهاء (الافتراضي 10 أيام)',
+  '<code>/تذكير [أيام]</code> — القريبة من الانتهاء (الافتراضي 6 أيام = أقل من أسبوع)؛ المنتهية في /احصائيات',
   '<code>/احصائيات</code> — عدد الأجهزة والمنتهية والمحروق والتنبيهات',
   '',
-  '⏰ يصلك تذكير يومي تلقائي بلا أمر (cron) — ولا رسالة في يوم بلا منتهية ولا موشكة.',
+  '⏰ يصلك تذكير يومي تلقائي بلا أمر (cron) — ولا رسالة في يوم بلا اشتراكات قريبة من الانتهاء.',
 ].join('\n')

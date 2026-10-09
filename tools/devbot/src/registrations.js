@@ -16,6 +16,11 @@
  *     • لا تكشف شيئاً: القراءة محصورة بلوحة المطوّر (أوامر /عميل /بحث).
  *   الأسوأ الذي يمكن لمهاجم فعله: تسجيل بلاغات وهمية بأرقام أجهزة مختلقة
  *   (إزعاج لا اختراق) — ويُحدّ منه حدّ الحجم والتعقيم وعدم كشف أي بيانات.
+ *
+ * قاعدة الهاتف والبريد: **المعالج والخادم يطبّقان القاعدة نفسها** — كان المعالج
+ * يقبل «(010) 1234-5678» و«٠١٠١٢٣٤٥٦٧٨» بينما الخادم يرفضهما، فيسقط الهاتف من
+ * البلاغ بصمت. الآن: الأرقام الهندية تُحوَّل لاتينية، والفواصل الشائعة مقبولة،
+ * و7–15 رقماً. نسخة مطابقة في app/src/core/registration.ts (يختبرها التكامل).
  */
 
 import { tgEscape } from './tgHtml.js'
@@ -35,13 +40,27 @@ export function cleanText(value, max = 200) {
     .slice(0, max)
 }
 
-const cleanEmail = (v) => {
-  const s = cleanText(v, 128)
-  return /^[^\s@<>]{3,64}@[^\s@<>]{3,64}$/.test(s) ? s : ''
+/** أرقام الهند العربية (٠–٩) والفارسية (۰–۹) ⇒ لاتينية */
+const toAsciiDigits = (s) => s
+  .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+  .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+
+/**
+ * رقم الهاتف كما يُقبل في المعالج وفي البلاغ: «+» اختيارية في البداية، ثم أرقام
+ * وفواصل شائعة (مسافة، أقواس، شرطة، نقطة، شرطة مائلة)، و7–15 رقماً. يعيد النص
+ * بتنسيق العميل نفسه بعد تحويل الأرقام، أو '' إن لم يكن رقماً.
+ */
+export function normalizePhone(value) {
+  const v = toAsciiDigits(cleanText(value, 40))
+  if (!/^\+?[0-9 ()./-]+$/.test(v)) return ''
+  const digits = v.replace(/\D/g, '').length
+  return digits >= 7 && digits <= 15 ? v : ''
 }
-const cleanPhone = (v) => {
-  const s = cleanText(v, 24)
-  return /^\+?[0-9][0-9\s-]{5,23}$/.test(s) ? s : ''
+
+/** بريد بالقاعدة نفسها التي يفحصها المعالج: `\S+@\S+\.\S+` وبحد 254 حرفاً */
+const cleanEmail = (v) => {
+  const s = cleanText(v, 254)
+  return /^\S+@\S+\.\S+$/.test(s) ? s : ''
 }
 
 /**
@@ -58,7 +77,7 @@ export function sanitizeRegistration(raw) {
     platform: cleanText(raw.platform, 16) === 'web' ? 'web' : 'desktop',
     shopName: cleanText(raw.shopName, 120),
     ownerName: cleanText(raw.ownerName, 120),
-    phone: cleanPhone(raw.phone),
+    phone: normalizePhone(raw.phone),
     email: cleanEmail(raw.email),
     city: cleanText(raw.city, 80),
     street: cleanText(raw.street, 160),
@@ -112,6 +131,10 @@ export async function consumeRegistrationAlert(cfg, dayIso = new Date().toISOStr
 export const REG_META_VERSION = 1
 /** أقصى عدد قراءات `get` في الطلب الواحد (يبقى تحت حدّ الخطة المجانية) */
 export const REG_MAX_READS = 40
+/** أقصى عدد صفحات `list` (1000 مفتاح للصفحة) — سقف أمان لا يُبلغ عادةً */
+export const REG_LIST_PAGES = 10
+/** أقصى عدد يُعرض في قائمة التسجيلات (نصاً أو أزراراً) — الأحدث أولاً */
+export const REG_LIST_SHOWN = 50
 
 export function registrationMetadata(record) {
   const str = (v, max) => String(v ?? '').slice(0, max)
@@ -120,8 +143,8 @@ export function registrationMetadata(record) {
     deviceId: str(record.deviceId, 24),
     shopName: str(record.shopName, 120),
     ownerName: str(record.ownerName, 120),
-    phone: str(record.phone, 24),
-    email: str(record.email, 128),
+    phone: str(record.phone, 40),
+    email: str(record.email, 254),
     activityNameAr: str(record.activityNameAr, 60),
     plan: str(record.plan, 12),
     lastSeenAt: str(record.lastSeenAt, 30),
@@ -152,14 +175,31 @@ export async function saveRegistration(cfg, report) {
   }
   await cfg.kv.put(regKey(report.deviceId), JSON.stringify(record), { metadata: registrationMetadata(record) })
   return { saved: true, isNew: !existing, record }
+}
 
 /* حذف سجل تسجيل (حق الاعتراض/الحذف في سياسة الخصوصية): يُستجاب للطلب خلال
-   30 يوماً، وهذا هو الأداة التي تنفّذه — أمر `/احذف SHOP-…` في البوت. */
+   30 يوماً، وهذه هي الأدوات: أمر `/احذف SHOP-…` في البوت، وزر الحذف في اللوحة. */
+
+/**
+ * زر «إصدار مفتاح» المرفق بتنبيه التسجيل وببطاقة التفاصيل.
+ * callback_data ≤ 64 بايت (34 حرفاً هنا). المعرّف يُتحقق منه قبل بناء الزر.
+ */
+export function registrationButtons(deviceId) {
+  if (!DEVICE_RE.test(deviceId)) return {}
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🔑 إصدار مفتاح لهذا الجهاز', callback_data: `panel:issuereg:${deviceId}` }],
+        [{ text: '📋 البيانات الكاملة', callback_data: `panel:reg:${deviceId}` }],
+      ],
+    },
+  }
 }
 
 /** صياغة عربية للتليجرام — كل بيانات العميل في رسالة واحدة قابلة للنسخ.
  *  كل قيمة كتبها العميل تُهرَّب (tgEscape): الرسالة تُرسل بـparse_mode=HTML،
- *  و`&` غير مُهرَّبة تُفشل الرسالة كلها بصمت فلا يصلك البلاغ (انظر tgHtml.js). */
+ *  و`&` غير مُهرَّبة تُفشل الرسالة كلها بصمت فلا يصلك البلاغ (انظر tgHtml.js).
+ *  الحقل الناقص يظهر «—» لا يُحذف: الغياب نفسه معلومة للمطوّر. */
 export function formatRegistrationAr(record, { isNew = true } = {}) {
   const head = isNew ? '🆕 <b>تسجيل عميل جديد</b>' : '🔁 <b>تحديث بيانات عميل مسجّل</b>'
   const lines = [
@@ -167,9 +207,9 @@ export function formatRegistrationAr(record, { isNew = true } = {}) {
     '',
     `🏪 المنشأة: ${tgEscape(record.shopName) || '—'}`,
     `👤 المالك: ${tgEscape(record.ownerName) || '—'}`,
-    record.phone ? `📞 الهاتف: <code>${tgEscape(record.phone)}</code>` : '',
-    record.email ? `📧 البريد: <code>${tgEscape(record.email)}</code>` : '',
-    record.city || record.street ? `📍 العنوان: ${[record.city, record.street].filter(Boolean).map(tgEscape).join(' — ')}` : '',
+    `📞 الهاتف: ${record.phone ? `<code>${tgEscape(record.phone)}</code>` : '—'}`,
+    `📧 البريد: ${record.email ? `<code>${tgEscape(record.email)}</code>` : '—'}`,
+    `📍 العنوان: ${[record.city, record.street].filter(Boolean).map(tgEscape).join(' — ') || '—'}`,
     `🧭 النشاط: ${tgEscape(record.activityNameAr) || tgEscape(record.activityId) || '—'}${record.countryCode ? ` (${tgEscape(record.countryCode)})` : ''}`,
     record.doctorSpecialty ? `🩺 التخصص: ${tgEscape(record.doctorSpecialty)}` : '',
     `📦 الخطة: ${tgEscape(record.plan)} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
@@ -179,8 +219,35 @@ export function formatRegistrationAr(record, { isNew = true } = {}) {
     isNew
       ? ''
       : `🔁 عدد البلاغات: ${Number(record.reports) || 0} · أول ظهور: ${tgEscape(record.firstSeenAt)}`,
+  ]
+  return lines.filter((line) => line !== '').join('\n')
+}
+
+/**
+ * البطاقة الكاملة لتسجيل واحد في اللوحة — **كل** الحقول المحفوظة، وحالة الترخيص.
+ * الهدف من طلب المالك: أن يرى كل البيانات التي دخلها العميل، لا ملخصاً منها.
+ */
+export function formatRegistrationDetailAr(record, { licensed = false } = {}) {
+  const val = (v) => (v === undefined || v === null || v === '' ? '—' : tgEscape(String(v)))
+  const lines = [
+    '🆕 <b>بيانات التسجيل كاملة</b>',
+    `الحالة: ${licensed ? '✅ مرخّص (صدرت له رخصة)' : '🆕 بلا رخصة بعد'}`,
     '',
-    isNew ? '💡 لإصدار مفتاح لهذا الجهاز: <code>/اصدر</code> ثم اختر العميل والجهاز.' : '',
+    `🏪 المنشأة: ${val(record.shopName)}`,
+    `👤 المالك: ${val(record.ownerName)}`,
+    `📞 الهاتف: ${record.phone ? `<code>${tgEscape(record.phone)}</code>` : '—'}`,
+    `📧 البريد: ${record.email ? `<code>${tgEscape(record.email)}</code>` : '—'}`,
+    `📍 المدينة: ${val(record.city)}`,
+    `🛣️ الشارع: ${val(record.street)}`,
+    `🌍 الدولة: ${val(record.countryCode)}`,
+    `🧭 النشاط: ${val(record.activityNameAr)}${record.activityId ? ` (${tgEscape(record.activityId)})` : ''}`,
+    record.doctorSpecialty ? `🩺 التخصص: ${val(record.doctorSpecialty)}` : '',
+    `📦 الخطة: ${val(record.plan)} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
+    `🖥️ الجهاز: <code>${val(record.deviceId)}</code> · ${record.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
+    `🔖 الإصدار: ${val(record.appVersion)}`,
+    `🕒 التسجيل: ${val(record.registeredAt)}`,
+    `🗓️ أول بلاغ: ${val(record.firstSeenAt)}`,
+    `👁️ آخر بلاغ: ${val(record.lastSeenAt)} · عدد البلاغات: ${Number(record.reports) || 0}`,
   ]
   return lines.filter((line) => line !== '').join('\n')
 }
@@ -197,26 +264,32 @@ export async function deleteRegistration(cfg, deviceId) {
 /**
  * كل التسجيلات — للوحة (أمر /تسجيلات وزر «🆕 التسجيلات»).
  * تُبنى من metadata المفاتيح بلا قراءة كل سجل (انظر REG_META_VERSION)، وتُرتَّب
- * بالأحدث أولاً. السجلات القديمة بلا metadata تُقرأ بـ`get` بعدد محدود
- * (`REG_MAX_READS`)؛ وما زاد يُبلَّغ عنه في `skipped` بدل فشل الطلب كله.
+ * بالأحدث أولاً. تُقرأ كل الصفحات حتى REG_LIST_PAGES (لا قطع صامت عند 100 مفتاح
+ * كما كان). السجلات القديمة بلا metadata تُقرأ بـ`get` بعدد محدود (`REG_MAX_READS`)؛
+ * وما زاد يُبلَّغ عنه في `skipped` بدل فشل الطلب كله.
  */
-export async function listRegistrations(cfg, limit = 100) {
-  const list = await cfg.kv.list({ prefix: REG_PREFIX, limit })
+export async function listRegistrations(cfg) {
   const out = []
   let skipped = 0
   let reads = 0
-  for (const key of list.keys ?? []) {
-    if (usableMeta(key.metadata)) {
-      out.push({ ...key.metadata })
-      continue
+  let cursor
+  for (let pageNo = 0; pageNo < REG_LIST_PAGES; pageNo++) {
+    const page = await cfg.kv.list({ prefix: REG_PREFIX, limit: 1000, ...(cursor ? { cursor } : {}) })
+    for (const key of page.keys ?? []) {
+      if (usableMeta(key.metadata)) {
+        out.push({ ...key.metadata })
+        continue
+      }
+      if (reads >= REG_MAX_READS) { skipped++; continue }
+      reads++
+      const raw = await cfg.kv.get(key.name)
+      try {
+        const parsed = JSON.parse(raw ?? 'null')
+        if (parsed && typeof parsed === 'object') out.push(parsed)
+      } catch { /* سجل تالف — يُتجاوز */ }
     }
-    if (reads >= REG_MAX_READS) { skipped++; continue }
-    reads++
-    const raw = await cfg.kv.get(key.name)
-    try {
-      const parsed = JSON.parse(raw ?? 'null')
-      if (parsed && typeof parsed === 'object') out.push(parsed)
-    } catch { /* سجل تالف — يُتجاوز */ }
+    if (page.list_complete || !page.cursor) break
+    cursor = page.cursor
   }
   out.sort((a, b) => String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')))
   return { records: out, skipped }
@@ -224,12 +297,12 @@ export async function listRegistrations(cfg, limit = 100) {
 
 export function formatRegistrationsAr(records, { skipped = 0 } = {}) {
   if (!records.length) return 'لا تسجيلات جديدة بعد — يظهر هنا كل عميل يكمل معالج أول التشغيل.'
-  const lines = ['🆕 <b>آخر التسجيلات</b>', '']
-  for (const r of records.slice(0, 20)) {
+  const lines = [`🆕 <b>آخر التسجيلات</b> (${records.length})`, '']
+  for (const r of records.slice(0, REG_LIST_SHOWN)) {
     const contact = [r.phone, r.email].filter(Boolean).map(tgEscape).join(' · ')
     lines.push(`• ${tgEscape(r.shopName) || 'بلا اسم'} — ${tgEscape(r.ownerName) || '—'}${contact ? `\n   ${contact}` : ''}\n   <code>${tgEscape(r.deviceId)}</code> · ${tgEscape(r.activityNameAr) || tgEscape(r.activityId) || '—'} · ${tgEscape(String(r.lastSeenAt ?? '').slice(0, 10))}`)
   }
-  if (records.length > 20) lines.push(`\n… و${records.length - 20} آخرين`)
+  if (records.length > REG_LIST_SHOWN) lines.push(`\n… و${records.length - REG_LIST_SHOWN} أقدم غيرها (تُعرض الأحدث ${REG_LIST_SHOWN})`)
   if (skipped > 0) {
     lines.push(`\n⚠️ ${skipped} سجلاً قديماً بلا فهرس لم تُقرأ (حدّ النداءات ${REG_MAX_READS}) — تُفهرس تلقائياً عند أول بلاغ جديد لها.`)
   }

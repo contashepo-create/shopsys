@@ -24,7 +24,7 @@ import {
 } from '../src/core/registration.ts'
 import {
   sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, deleteRegistration, regKey,
-  consumeRegistrationAlert, REG_TG_DAILY_CAP, regAlertKey,
+  consumeRegistrationAlert, REG_TG_DAILY_CAP, regAlertKey, registrationButtons,
   formatRegistrationAr as formatServerAr,
 } from '../../tools/devbot/src/registrations.js'
 
@@ -157,12 +157,15 @@ await okAsync('القائمة ترتّب بالأحدث وتتجاوز السج�
   assert.match(formatRegistrationsAr([]), /لا تسجيلات/)
 })
 
-ok('الصياغة العربية تحمل كل البيانات + الخطوة التالية للمطوّر', () => {
+ok('الصياغة العربية تحمل كل البيانات، والخطوة التالية زر لا تعليمة معلّقة', () => {
   const client = formatRegistrationAr(buildRegistrationReport(CUSTOMER))
   for (const needle of ['بقالة النور', 'أحمد محمد', '+20 100 123 4567', 'ahmed@example.com', 'SHOP-AAA1-1111-1111', '1.0.19']) {
     assert.match(client, new RegExp(needle.replace(/[+.*?(){}[\]\\]/g, '\\$&')), needle)
   }
-  assert.match(formatServerAr(sanitizeRegistration(CUSTOMER)), /\/اصدر/)
+  /* تعليمة /اصدر المعلّقة على مسافة (اسم متعدد الكلمات يفشل التحليل) حلّها زر داخل الرسالة */
+  assert.doesNotMatch(formatServerAr(sanitizeRegistration(CUSTOMER)), /\/اصدر/)
+  const issueButton = registrationButtons(CUSTOMER.deviceId).reply_markup.inline_keyboard[0][0]
+  assert.equal(issueButton.callback_data, `panel:issuereg:${CUSTOMER.deviceId}`)
 })
 
 ok('العامل: مسار /register بحدَّي حجم ورفض ما بلا معرف صالح', () => {
@@ -195,7 +198,7 @@ ok('اللوحة والأمر: /تسجيلات + زر «🆕 التسجيلات�
   assert.match(workerSrc, /case '\/تسجيلات'/)
   assert.match(workerSrc, /listRegistrations\(cfg\)/)
   assert.match(panelSrc, /panel:regs/)
-  assert.match(panelSrc, /formatRegistrationsAr/)
+  assert.match(panelSrc, /registrationsReply/)
   assert.match(serverSrc, /export const REG_PREFIX = 'reg:'/)
 })
 
@@ -254,7 +257,8 @@ await okAsync('قائمة التسجيلات تُبنى من فهرس metadata (
   assert.match(regSrc, /REG_MAX_READS = 40/)
   assert.match(regSrc, /return \{ records: out, skipped \}/)
   assert.match(workerSrc, /const \{ records, skipped \} = await listRegistrations\(cfg\)/)
-  assert.match(panelSrc, /const \{ records, skipped \} = await listRegistrations\(cfg\)/)
+  assert.match(panelSrc, /const \{ rows, skipped \} = await registrationRows\(cfg\)/)
+  assert.match(panelSrc, /await Promise\.all\(\[listRegistrations\(cfg\), issuedDeviceIds\(cfg\)\]\)/)
 
   const kv = new MemoryKv()
   await saveRegistration({ kv }, sanitizeRegistration(CUSTOMER))

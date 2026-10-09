@@ -63,14 +63,30 @@ function clean(value: unknown, max: number): string {
     .slice(0, max)
 }
 
+/** بريد بالقاعدة نفسها التي يفحصها المعالج (`\S+@\S+\.\S+`) وبحد 254 حرفاً */
 function cleanEmail(value: unknown): string {
-  const v = clean(value, 128)
-  return /^[^\s@<>]{3,64}@[^\s@<>]{3,64}$/.test(v) ? v : ''
+  const v = clean(value, 254)
+  return /^\S+@\S+\.\S+$/.test(v) ? v : ''
 }
 
-function cleanPhone(value: unknown): string {
-  const v = clean(value, 24)
-  return /^\+?[0-9][0-9\s-]{5,23}$/.test(v) ? v : ''
+/** أرقام الهند العربية (٠–٩) والفارسية (۰–۹) ⇒ لاتينية */
+function toAsciiDigits(s: string): string {
+  return s
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+}
+
+/**
+ * رقم الهاتف: قاعدة واحدة للمعالج والبلاغ (مطابقة لـ tools/devbot/src/registrations.js).
+ * «+» اختيارية في البداية، ثم أرقام وفواصل شائعة، و7–15 رقماً. يعيد النص بتنسيق
+ * العميل بعد تحويل الأرقام، أو '' إن لم يكن رقماً. كان المعالج يقبل ما يرفضه الخادم
+ * فيسقط الهاتف من البلاغ بصمت.
+ */
+export function normalizePhone(value: unknown): string {
+  const v = toAsciiDigits(clean(value, 40))
+  if (!/^\+?[0-9 ()./-]+$/.test(v)) return ''
+  const digits = v.replace(/\D/g, '').length
+  return digits >= 7 && digits <= 15 ? v : ''
 }
 
 export function buildRegistrationReport(input: {
@@ -101,7 +117,7 @@ export function buildRegistrationReport(input: {
     platform: clean(input.platform, 16) === 'web' ? 'web' : 'desktop',
     shopName: clean(input.shopName, 120),
     ownerName: clean(input.ownerName, 120),
-    phone: cleanPhone(input.phone),
+    phone: normalizePhone(input.phone),
     email: cleanEmail(input.email),
     city: clean(input.city, 80),
     street: clean(input.street, 160),

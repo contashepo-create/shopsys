@@ -5,9 +5,10 @@
  *   ④ «هل يوجد تنبيه قبل أن ينتهي؟»
  *
  * ما تُثبته البوابة (السلوك + التركيب معاً):
- *   • التصنيف: منتهية (الأقدم أولاً) ثم موشكة داخل النافذة، ومدى الحياة لا يُذكَّر.
- *   • النافذة 10 أيام افتراضياً وتُضبط 1–90، وأي قيمة تالفة ⇒ الافتراضي.
- *   • لا إزعاج: يوم بلا منتهية ولا موشكة ⇒ لا رسالة إطلاقاً.
+ *   • التصنيف: منتهية (الأقدم أولاً) ثم قريبة داخل النافذة (0..6 أيام)، ومدى الحياة لا يُذكَّر.
+ *   • التذكير اليومي عن القريبة وحدها: المنتهية تُعدّ في الإحصائيات ولا تُرسل يومياً.
+ *   • النافذة 6 أيام افتراضياً («أقل من أسبوع») وتُضبط 1–90، وأي قيمة تالفة ⇒ الافتراضي.
+ *   • لا إزعاج: يوم بلا قريبة من الانتهاء ⇒ لا رسالة إطلاقاً.
  *   • لا تكرار: علامة `digest-sent:<اليوم>` تمنع رسالة ثانية في اليوم نفسه.
  *   • **لا ينهار مع النمو**: كل كتابة لسجل جهاز تحمل فهرساً في metadata المفتاح،
  *     فالمسح يُصنَّف من `kv.list` وحده. خطط Cloudflare المجانية تحدّ النداءات
@@ -104,30 +105,33 @@ const envOf = (kv) => ({
 
 console.log('بوابة بندي 3 و4 — تنبيهات انتهاء الاشتراك وقرب الانتهاء:')
 
-await okAsync('التصنيف: منتهية (الأقدم أولاً) ثم موشكة، ومدى الحياة لا يُذكَّر', async () => {
+await okAsync('التصنيف: منتهية (الأقدم أولاً) ثم قريبة، ومدى الحياة لا يُذكَّر', async () => {
   const kv = new MemoryKv()
   await putDevice(kv, { id: 'SHOP-AAA1-1111-1111', customer: 'منتهي قديماً', plan: 'basic', expiresAt: dayIso(-30) })
   await putDevice(kv, { id: 'SHOP-AAA2-2222-2222', customer: 'ينتهي اليوم', plan: 'pro', expiresAt: dayIso(0) })
-  await putDevice(kv, { id: 'SHOP-AAA3-3333-3333', customer: 'بعد 9 أيام', plan: 'basic', expiresAt: dayIso(9) })
+  await putDevice(kv, { id: 'SHOP-AAA3-3333-3333', customer: 'بعد 5 أيام', plan: 'basic', expiresAt: dayIso(5) })
   await putDevice(kv, { id: 'SHOP-AAA4-4444-4444', customer: 'بعد 11 يوماً', plan: 'pro', expiresAt: dayIso(11) })
   await putDevice(kv, { id: 'SHOP-AAA5-5555-5555', customer: 'دائم', plan: 'lifetime', expiresAt: null })
   const d = await subscriptionDigest({ kv }, { now: NOW })
   assert.equal(d.total, 5)
   assert.equal(d.lifetime, 1)
   assert.deepEqual(d.expired.map((r) => r.customer), ['منتهي قديماً'])
-  assert.deepEqual(d.soon.map((r) => r.customer), ['ينتهي اليوم', 'بعد 9 أيام'])
+  assert.deepEqual(d.soon.map((r) => r.customer), ['ينتهي اليوم', 'بعد 5 أيام'])
   assert.equal(d.soon[0].days, 0)
   assert.equal(hasDigestNews(d), true)
-  assert.match(formatDigestAr(d), /منتهية \(1\)/)
+  /* المنتهية لا تظهر في رسالة التذكير — تُعدّ في الإحصائيات فقط */
+  assert.doesNotMatch(formatDigestAr(d), /منتهية/)
   assert.match(formatStatsAr(d), /منتهية: 1/)
 })
 
-await okAsync('النافذة 10 أيام افتراضياً، تُضبط 1–90، والتالف ⇒ الافتراضي', async () => {
-  assert.equal(SOON_DAYS, 10)
+await okAsync('النافذة 6 أيام («أقل من أسبوع») افتراضياً، تُضبط 1–90، والتالف ⇒ الافتراضي', async () => {
+  assert.equal(SOON_DAYS, 6)
   const kv = new MemoryKv()
-  await putDevice(kv, { id: 'SHOP-AAA1-1111-1111', customer: 'بعد 20 يوماً', plan: 'basic', expiresAt: dayIso(20) })
-  assert.equal((await subscriptionDigest({ kv }, { now: NOW })).soon.length, 0)
-  assert.equal((await subscriptionDigest({ kv }, { now: NOW, soonDays: 30 })).soon.length, 1)
+  await putDevice(kv, { id: 'SHOP-AAA1-1111-1111', customer: 'بعد 7 أيام', plan: 'basic', expiresAt: dayIso(7) })
+  assert.equal((await subscriptionDigest({ kv }, { now: NOW })).soon.length, 0, 'اليوم السابع خارج «أقل من أسبوع»')
+  await putDevice(kv, { id: 'SHOP-AAA2-2222-2222', customer: 'بعد 6 أيام', plan: 'basic', expiresAt: dayIso(6) })
+  assert.equal((await subscriptionDigest({ kv }, { now: NOW })).soon.length, 1, 'اليوم السادس داخل النافذة')
+  assert.equal((await subscriptionDigest({ kv }, { now: NOW, soonDays: 30 })).soon.length, 2)
   assert.equal(await readSoonDays({ kv }), SOON_DAYS)
   await kv.put('settings:digest', '{ تالف')
   assert.equal(await readSoonDays({ kv }), SOON_DAYS)
@@ -141,13 +145,21 @@ await okAsync('لا إزعاج بلا خبر، ولا تكرار في اليوم
   await putDevice(kv, { id: 'SHOP-AAA1-1111-1111', customer: 'بعيد', plan: 'basic', expiresAt: dayIso(300) })
   const quiet = instrument(kv)
   await devbotWorker.scheduled({}, envOf(quiet.kv))
-  assert.equal(quiet.sent.length, 0, 'يوم بلا منتهية ولا موشكة يجب ألا يرسل شيئاً')
+  assert.equal(quiet.sent.length, 0, 'يوم بلا قريبة من الانتهاء يجب ألا يرسل شيئاً')
 
-  await putDevice(kv, { id: 'SHOP-AAA2-2222-2222', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-1) })
+  /* المنتهية وحدها لا تُرسل يومياً (تُعدّ في الإحصائيات) */
+  const expiredOnly = new MemoryKv()
+  await putDevice(expiredOnly, { id: 'SHOP-AAA9-9999-9999', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-1) })
+  const expiredRun = instrument(expiredOnly)
+  await devbotWorker.scheduled({}, envOf(expiredRun.kv))
+  assert.equal(expiredRun.sent.length, 0, 'المنتهية وحدها لا تُرسل تذكيراً يومياً')
+
+  await putDevice(kv, { id: 'SHOP-AAA2-2222-2222', customer: 'قريب', plan: 'basic', expiresAt: dayIso(2) })
   const first = instrument(kv)
   await devbotWorker.scheduled({}, envOf(first.kv))
   assert.equal(first.sent.length, 1)
   assert.match(first.sent[0], /تذكير الاشتراكات اليومي/)
+  assert.match(first.sent[0], /قريب/)
   assert.ok(await kv.get(digestMarkerKey(new Date().toISOString().slice(0, 10))), 'علامة اليوم تُحفظ')
 
   const again = instrument(kv)

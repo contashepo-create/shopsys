@@ -6,8 +6,9 @@
  * هناك معطّل بالتعليق. النتيجة العملية: لا تذكير يعمل إطلاقاً.
  *
  * يثبت هذا الاختبار أن المركز الفعلي:
- *   ① يصنّف الأجهزة: منتهية · موشكة (≤ 10 أيام) · مدى الحياة · لم تستحق بعد.
- *   ② ينبّه المطوّر يومياً بلا أمر (`scheduled`) — ولا يزعجه برسالة فارغة.
+ *   ① يصنّف الأجهزة: منتهية · قريبة (0..6 أيام = «أقل من أسبوع») · مدى الحياة · لم تستحق بعد.
+ *   ② ينبّه المطوّر يومياً بلا أمر (`scheduled`) عن القريبة وحدها — لا منتهية (تُعدّ في الإحصائيات)
+ *      ولا رسالة فارغة.
  *   ③ لا يكرر التذكير في اليوم نفسه (علامة `digest-sent:<اليوم>`).
  *   ④ يوفّر الأمر `/تذكير [أيام]` وزر «⏳ الاشتراكات» في اللوحة.
  *   ⑤ نافذة الأيام قابلة للضبط وتُحترم (1–90، وأي قيمة تالفة ⇒ الافتراضي).
@@ -80,7 +81,7 @@ describe('① التصنيف: منتهية · موشكة · مدى الحياة'
     await seed(kv, [
       { id: 'SHOP-AAA1-1111-1111', customer: 'منتهي قديماً', plan: 'basic', expiresAt: dayIso(-30) },
       { id: 'SHOP-AAA2-2222-2222', customer: 'ينتهي اليوم', plan: 'pro', expiresAt: dayIso(0), email: 'a@b.co' },
-      { id: 'SHOP-AAA3-3333-3333', customer: 'بعد 9 أيام', plan: 'basic', expiresAt: dayIso(9) },
+      { id: 'SHOP-AAA3-3333-3333', customer: 'بعد 5 أيام', plan: 'basic', expiresAt: dayIso(5) },
       { id: 'SHOP-AAA4-4444-4444', customer: 'بعد 11 يوماً', plan: 'pro', expiresAt: dayIso(11) },
       { id: 'SHOP-AAA5-5555-5555', customer: 'دائم', plan: 'lifetime', expiresAt: null },
       { id: 'SHOP-AAA6-6666-6666', customer: 'منتهي أمس', plan: 'basic', expiresAt: dayIso(-1) },
@@ -92,19 +93,23 @@ describe('① التصنيف: منتهية · موشكة · مدى الحياة'
     expect(digest.lifetime).toBe(1)
     expect(digest.expired.map((r) => r.customer)).toEqual(['منتهي قديماً', 'منتهي أمس']) // الأقدم أولاً
     expect(digest.expired[0].days).toBe(-30)
-    expect(digest.soon.map((r) => r.customer)).toEqual(['ينتهي اليوم', 'بعد 9 أيام'])
+    expect(digest.soon.map((r) => r.customer)).toEqual(['ينتهي اليوم', 'بعد 5 أيام'])
     expect(digest.soon[0].days).toBe(0)
     expect(digest.soon[0].email).toBe('a@b.co') // البريد يظهر للتواصل عند التجديد
     expect(hasDigestNews(digest)).toBe(true)
   })
 
-  it('النافذة الافتراضية 10 أيام (طلب المالك) وقابلة للضبط', async () => {
-    expect(SOON_DAYS).toBe(10)
+  it('النافذة الافتراضية 6 أيام («أقل من أسبوع») وقابلة للضبط', async () => {
+    expect(SOON_DAYS).toBe(6)
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-BBB1-1111-1111', customer: 'بعد 10 أيام', plan: 'basic', expiresAt: dayIso(10) }])
-    expect((await subscriptionDigest({ kv }, { now: NOW })).soon).toHaveLength(1)
+    await seed(kv, [
+      { id: 'SHOP-BBB1-1111-1111', customer: 'بعد 6 أيام', plan: 'basic', expiresAt: dayIso(6) },
+      { id: 'SHOP-BBB2-2222-2222', customer: 'بعد 7 أيام', plan: 'basic', expiresAt: dayIso(7) },
+    ])
+    /* اليوم السابع خارج النافذة: «أقل من أسبوع» تعني 0..6 لا 7 */
+    expect((await subscriptionDigest({ kv }, { now: NOW })).soon.map((r) => r.customer)).toEqual(['بعد 6 أيام'])
     expect((await subscriptionDigest({ kv }, { now: NOW, soonDays: 5 })).soon).toHaveLength(0)
-    expect((await subscriptionDigest({ kv }, { now: NOW, soonDays: 30 })).soon).toHaveLength(1)
+    expect((await subscriptionDigest({ kv }, { now: NOW, soonDays: 30 })).soon).toHaveLength(2)
   })
 
   it('سجل تالف أو تاريخ غير مقروء ⇒ يُتجاوز بلا انهيار', async () => {
@@ -125,7 +130,7 @@ describe('① التصنيف: منتهية · موشكة · مدى الحياة'
     const digest = await subscriptionDigest({ kv }, { now: NOW })
     expect(hasDigestNews(digest)).toBe(false)
     const text = formatDigestAr(digest)
-    expect(text).toContain('لا اشتراكات منتهية')
+    expect(text).toContain('لا اشتراكات تنتهي خلال 6 أيام')
     expect(text).toContain('1 جهاز')
   })
 
@@ -133,16 +138,18 @@ describe('① التصنيف: منتهية · موشكة · مدى الحياة'
     const kv = new MemoryKv()
     await seed(kv, [
       { id: 'SHOP-EEE1-1111-1111', customer: 'بقالة النور', plan: 'basic', expiresAt: dayIso(-2), email: 'nour@shop.eg' },
-      { id: 'SHOP-EEE2-2222-2222', customer: 'صيدلية الشفاء', plan: 'pro', expiresAt: dayIso(4) },
+      { id: 'SHOP-EEE2-2222-2222', customer: 'صيدلية الشفاء', plan: 'pro', expiresAt: dayIso(4), email: 'pharmacy@shifa.eg' },
     ])
     const digest = await subscriptionDigest({ kv }, { now: NOW })
     const text = formatDigestAr(digest, { daily: true })
     expect(text).toContain('تذكير الاشتراكات اليومي')
-    expect(text).toContain('بقالة النور')
-    expect(text).toContain('SHOP-EEE1-1111-1111')
-    expect(text).toContain('انتهى منذ يومين')
-    expect(text).toContain('nour@shop.eg')
+    /* المنتهية لا تدخل التذكير اليومي (تُعدّ في الإحصائيات فقط) */
+    expect(text).not.toContain('بقالة النور')
+    expect(text).not.toContain('SHOP-EEE1-1111-1111')
+    expect(text).not.toContain('انتهى منذ')
     expect(text).toContain('صيدلية الشفاء')
+    expect(text).toContain('SHOP-EEE2-2222-2222')
+    expect(text).toContain('pharmacy@shifa.eg')
     expect(text).toContain('يتبقى 4 أيام')
     expect(text).toContain('إصدار أو تجديد الرخصة')
     expect(formatStatsAr(digest, { revoked: 3, licenses: 9, notices: 1 })).toContain('مفاتيح محروقة: 3')
@@ -150,20 +157,31 @@ describe('① التصنيف: منتهية · موشكة · مدى الحياة'
 })
 
 describe('②③ التذكير اليومي التلقائي (scheduled)', () => {
-  it('ينبّه المطوّر بلا أمر عند وجود منتهية/موشكة', async () => {
+  it('ينبّه المطوّر بلا أمر عند وجود قريبة من الانتهاء', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-FFF1-1111-1111', customer: 'عميل منتهي', plan: 'basic', expiresAt: dayIso(-1) }])
+    await seed(kv, [{ id: 'SHOP-FFF1-1111-1111', customer: 'عميل قريب', plan: 'basic', expiresAt: dayIso(2) }])
     const sent = captureTelegram()
 
     await devbotWorker.scheduled!({} as never, env_(kv) as never)
 
     expect(sent).toHaveLength(1)
     expect(sent[0].chat_id).toBe('777')
-    expect(sent[0].text).toContain('عميل منتهي')
+    expect(sent[0].text).toContain('عميل قريب')
     expect(await kv.get(digestMarkerKey(new Date().toISOString().slice(0, 10)))).toBeTruthy()
   })
 
-  it('لا يرسل شيئاً في يوم بلا منتهية ولا موشكة', async () => {
+  it('المنتهية وحدها لا تُرسل يومياً ولا تُعلَّم اليوم (لا تكرار عن عميل انتهى)', async () => {
+    const kv = new MemoryKv()
+    await seed(kv, [{ id: 'SHOP-FFF2-2222-2222', customer: 'عميل منتهي', plan: 'basic', expiresAt: dayIso(-1) }])
+    const sent = captureTelegram()
+
+    await devbotWorker.scheduled!({} as never, env_(kv) as never)
+
+    expect(sent).toHaveLength(0)
+    expect(await kv.get(digestMarkerKey(new Date().toISOString().slice(0, 10)))).toBeNull()
+  })
+
+  it('لا يرسل شيئاً في يوم بلا قريبة من الانتهاء', async () => {
     const kv = new MemoryKv()
     await seed(kv, [{ id: 'SHOP-GGG1-1111-1111', customer: 'بعيد', plan: 'pro', expiresAt: dayIso(300) }])
     const sent = captureTelegram()
@@ -221,8 +239,9 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
     const res = await webhook(kv, '/تذكير')
     expect(res.status).toBe(200)
     expect(sent).toHaveLength(1)
-    expect(sent[0].text).toContain('منتهي')
     expect(sent[0].text).toContain('موشك')
+    /* المنتهية لا تُعرض في التذكير (تُعدّ في /احصائيات) */
+    expect(sent[0].text).not.toContain('SHOP-JJJ1-1111-1111')
   })
 
   it('الأمر /تذكير 30 يوسّع النافذة لهذه الاستعلام', async () => {
@@ -230,7 +249,7 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
     await seed(kv, [{ id: 'SHOP-KKK1-1111-1111', customer: 'بعد 20 يوماً', plan: 'basic', expiresAt: dayIso(20) }])
     const narrow = captureTelegram()
     await webhook(kv, '/تذكير')
-    expect(narrow[0].text).toContain('لا اشتراكات منتهية')
+    expect(narrow[0].text).toContain('لا اشتراكات تنتهي خلال 6 أيام')
 
     const wide = captureTelegram()
     await webhook(kv, '/تذكير 30')

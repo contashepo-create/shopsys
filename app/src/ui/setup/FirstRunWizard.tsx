@@ -12,6 +12,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useState } from 'react'
 import { Check, ChevronLeft, Crown, Sparkles, CalendarRange, Globe2, Store, Building2, KeyRound } from 'lucide-react'
 import { ARAB_COUNTRIES, getCountry, type Country } from '../../core/countries.ts'
+import { normalizePhone } from '../../core/registration.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, type ActivityTemplate } from '../../core/activities.ts'
 import { citiesOf } from '../../core/cities.ts'
 import { suggestFiscalYear, validateFiscalYear } from '../../core/fiscal.ts'
@@ -43,7 +44,9 @@ const inputCls =
   'w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent text-sm text-slate-800 dark:text-white focus:border-brand-500 focus:outline-none transition-colors duration-200 placeholder:text-slate-300 dark:placeholder:text-slate-600'
 
 const isValidEmail = (v: string) => /^\S+@\S+\.\S+$/.test(v.trim())
-const isValidPhone = (v: string) => v.replace(/\D/g, '').length >= 7
+/* قاعدة الهاتف نفسها التي يطبّقها البلاغ (core/registration.ts): الأرقام الهندية مقبولة،
+   والحرف غير الرقمي يُرفض بدل أن يُسقَط الهاتف من البلاغ بصمت لاحقاً */
+const isValidPhone = (v: string) => normalizePhone(v) !== ''
 
 export function FirstRunWizard() {
   const completeSetup = useAppStore((s) => s.completeSetup)

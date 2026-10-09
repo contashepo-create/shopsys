@@ -1,10 +1,10 @@
 import { issueLicenseKey, keyFingerprint, expiresAfterDays } from './licenseLib.js'
-import { subscriptionDigest, formatDigestAr, formatStatsAr, readSoonDays, writeSoonDays } from './subscriptions.js'
+import { subscriptionDigest, formatDigestAr, formatStatsAr, readSoonDays, writeSoonDays, deviceMetadata, DEVICE_META_VERSION, DIGEST_MAX_READS, SOON_DAYS } from './subscriptions.js'
 import {
   ABOUT_FIELDS, readAbout, setAboutField, addAboutExtraField, removeAboutExtraField,
   addAboutSocialLink, removeAboutSocialLink, previewAboutAr,
 } from './aboutContent.js'
-import { listRegistrations, formatRegistrationsAr } from './registrations.js'
+import { listRegistrations, formatRegistrationDetailAr, deleteRegistration, regKey, REG_LIST_SHOWN } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
 import { tgEscape } from './tgHtml.js'
 
@@ -103,27 +103,45 @@ async function writeCustomerSettings(cfg, name, patch) {
   return { hash, settings: next }
 }
 
+/* قائمة الأجهزة المرخّصة لتجميع العملاء. الفهرس (metadata) يكفي للاسم والخطة فلا
+ * تُقرأ السجلات كلها: كانت اللوحة تقرأ كل `dev:` بـ`get` فتتجاوز حدّ الـ50 نداءً
+ * الفرعي في الخطة المجانية عند نحو 48 جهازاً (الدرس نفسه في subscriptions.js).
+ * السجل بلا فهرس يُقرأ بعدد محدود ثم يُفهرس في مكانه. */
 async function listDevices(cfg) {
   const rows = []
+  let skipped = 0
+  let reads = 0
   let cursor
   for (let pageNo = 0; pageNo < 10; pageNo++) {
     const page = await cfg.kv.list({ prefix: 'dev:', limit: 1000, ...(cursor ? { cursor } : {}) })
     for (const key of page.keys ?? []) {
+      const deviceId = key.name.slice(4)
+      const meta = key.metadata
+      if (meta && meta.v === DEVICE_META_VERSION && typeof meta.customer === 'string') {
+        rows.push({ deviceId, customer: cleanText(meta.customer || 'عميل غير مسمى', 100), plan: meta.plan || null, expiresAt: meta.expiresAt ?? null })
+        continue
+      }
+      if (reads >= DIGEST_MAX_READS) { skipped++; continue }
+      reads++
       const raw = await cfg.kv.get(key.name)
       if (!raw) continue
       const value = parseObject(raw)
-      const deviceId = key.name.slice(4)
-      rows.push({ deviceId, customer: cleanText(value.customer || 'عميل غير مسمى', 100), ...value })
+      rows.push({ ...value, deviceId, customer: cleanText(value.customer || 'عميل غير مسمى', 100) })
+      /* فهرسة السجل وهو في مكانه (القيمة نفسها) — الدورة التالية تُقرأ من الفهرس */
+      if (Object.keys(value).length > 0) {
+        try { await cfg.kv.put(key.name, raw, { metadata: deviceMetadata(value) }) } catch { /* تحسين */ }
+      }
     }
     if (page.list_complete || !page.cursor) break
     cursor = page.cursor
   }
-  return rows
+  return { rows, skipped }
 }
 
 async function customerGroups(cfg) {
+  const { rows, skipped } = await listDevices(cfg)
   const groups = new Map()
-  for (const device of await listDevices(cfg)) {
+  for (const device of rows) {
     const normalized = normalizedName(device.customer)
     if (!normalized) continue
     const group = groups.get(normalized) ?? { name: device.customer, devices: [] }
@@ -132,11 +150,11 @@ async function customerGroups(cfg) {
   }
   const out = []
   for (const group of groups.values()) out.push({ ...group, hash: await hashCustomerName(group.name) })
-  return out.sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+  return { groups: out.sort((a, b) => a.name.localeCompare(b.name, 'ar')), skipped }
 }
 
 async function findCustomer(cfg, hash) {
-  return (await customerGroups(cfg)).find((group) => group.hash === hash) ?? null
+  return (await customerGroups(cfg)).groups.find((group) => group.hash === hash) ?? null
 }
 
 async function getDevice(cfg, deviceId) {
@@ -319,7 +337,7 @@ async function clientSettingsReply(cfg, chatId, deviceId) {
     [button('🔄 إعادة الإعدادات العامة', `creset:${deviceId}`)],
     [button('⬅️ رجوع للعميل', `client:${deviceId}`)],
   ]
-  return menuReply(chatId, `إعدادات ${device.customer}\nالتغييرات تحفظ كاستثناء للعميل ولا تغيّر الرخصة الحالية حتى تصدر مفتاحاً جديداً.`, rows)
+  return menuReply(chatId, `إعدادات ${tgEscape(device.customer)}\nالتغييرات تحفظ كاستثناء للعميل ولا تغيّر الرخصة الحالية حتى تصدر مفتاحاً جديداً.`, rows)
 }
 
 async function clientReply(cfg, chatId, deviceId) {
@@ -339,7 +357,7 @@ async function clientReply(cfg, chatId, deviceId) {
   ]
   const status = device.fingerprint && parseList(await cfg.kv.get('revoked')).includes(device.fingerprint) ? 'مبطلة' : 'سارية'
   const text = [
-    `👤 ${device.customer}`,
+    `👤 ${tgEscape(device.customer)}`,
     `الجهاز: ${deviceId}`,
     `الخطة: ${PLAN_LABELS[license?.plan] ?? device.plan ?? 'غير مسجلة'}`,
     `الانتهاء: ${license?.expiresAt ?? device.expiresAt ?? '—'}`,
@@ -349,16 +367,21 @@ async function clientReply(cfg, chatId, deviceId) {
 }
 
 async function clientsReply(cfg, chatId) {
-  const groups = await customerGroups(cfg)
+  const [{ groups, skipped }, { rows: regRows }] = await Promise.all([customerGroups(cfg), registrationRows(cfg)])
+  const unlicensed = regRows.filter((row) => !row.licensed).length
+  /* المسجّلون بلا رخصة لا يظهرون في قائمة العملاء (تُبنى من dev: وحده) ⇒ صف خاص لهم */
+  const top = unlicensed ? [[button(`🆕 مسجّلون بلا رخصة (${unlicensed})`, 'panel:regsnew')]] : []
+  const warn = skipped ? `\n⚠️ ${skipped} جهازاً بلا فهرس لم تُقرأ في هذه الدورة (حدّ الخطة المجانية).` : ''
   if (!groups.length) {
-    return menuReply(chatId, 'لا يوجد عملاء مسجلون بعد. أضف أول عميل، وبعدها سيظهر اسمه هنا للاختيار.', [
+    return menuReply(chatId, `لا يوجد عملاء مرخّصون بعد. أضف أول عميل، أو أصدر رخصة لأحد المسجّلين.${warn}`, [
+      ...top,
       [button('➕ إضافة أول عميل وإصدار رخصة', 'panel:new')],
       [button('⬅️ القائمة الرئيسية', 'panel:home')],
     ])
   }
-  const rows = groups.slice(0, 80).map((group) => [button(`👤 ${group.name} (${group.devices.length} جهاز)`, `group:${group.hash}`)])
+  const rows = [...top, ...groups.slice(0, 80).map((group) => [button(`👤 ${group.name} (${group.devices.length} جهاز)`, `group:${group.hash}`)])]
   rows.push([button('➕ إضافة عميل جديد', 'panel:new')], [button('⬅️ القائمة الرئيسية', 'panel:home')])
-  return menuReply(chatId, `اختر اسم العميل (${groups.length}):`, rows)
+  return menuReply(chatId, `اختر اسم العميل (${groups.length}):${warn}`, rows)
 }
 
 async function groupReply(cfg, chatId, hash) {
@@ -368,7 +391,7 @@ async function groupReply(cfg, chatId, hash) {
   rows.push([button('🔔 إرسال تنبيه لكل أجهزة العميل', `notice-group:${hash}`)])
   rows.push([button('➕ إضافة جهاز لهذا العميل', `adddevice:${hash}`)])
   rows.push([button('⬅️ رجوع للعملاء', 'panel:clients')])
-  return menuReply(chatId, `أجهزة العميل: ${group.name}`, rows)
+  return menuReply(chatId, `أجهزة العميل: ${tgEscape(group.name)}`, rows)
 }
 
 async function issueForDevice(cfg, deviceId, customerName) {
@@ -394,10 +417,12 @@ async function issueForDevice(cfg, deviceId, customerName) {
   const key = await issueLicenseKey(payload, cfg.priv)
   const fingerprint = keyFingerprint(key)
   await cfg.kv.put(`lic:${fingerprint}`, JSON.stringify({ payload, key, issuedAt: payload.issuedAt, revoked: false }))
-  await cfg.kv.put(`dev:${deviceId}`, JSON.stringify({
+  const deviceRecord = {
     ...(device ?? {}), customer: customerName, plan: payload.plan, expiresAt: payload.expiresAt,
     fingerprint, message: device?.message ?? '',
-  }))
+  }
+  /* metadata = الفهرس الذي تبني منه القوائم والتذكيرات بلا قراءة كل سجل */
+  await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(deviceRecord), { metadata: deviceMetadata(deviceRecord) })
   return { payload, key, fingerprint }
 }
 
@@ -443,7 +468,7 @@ export async function handlePanelText(text, chatId, cfg) {
       flow.customer = value.slice(0, 100)
       flow.step = 'device'
       await startFlow(cfg, chatId, flow)
-      return flowPrompt(chatId, `حُفظ اسم العميل «${flow.customer}». أرسل الآن معرّف الجهاز الظاهر في شاشة التفعيل.`)
+      return flowPrompt(chatId, `حُفظ اسم العميل «${tgEscape(flow.customer)}». أرسل الآن معرّف الجهاز الظاهر في شاشة التفعيل.`)
     }
     if (flow.step === 'device') {
       const deviceId = value.toUpperCase()
@@ -451,7 +476,7 @@ export async function handlePanelText(text, chatId, cfg) {
       if (await cfg.kv.get(`dev:${deviceId}`)) return flowPrompt(chatId, 'هذا الجهاز مسجل بالفعل. افتحه من قائمة العملاء بدلاً من إضافته مرة أخرى.')
       await cfg.kv.delete(`ui-flow:${chatId}`)
       const result = await issueForDevice(cfg, deviceId, flow.customer)
-      return panelHome(chatId, `✅ أُضيف ${flow.customer}\nأرسل هذا المفتاح للعميل ليدخله في التطبيق:\n<code>${result.key}</code>\n\nالخطة الافتراضية: ${PLAN_LABELS[result.payload.plan]} · الانتهاء: ${result.payload.expiresAt ?? 'مدى الحياة'}`)
+      return panelHome(chatId, `✅ أُضيف ${tgEscape(flow.customer)}\nأرسل هذا المفتاح للعميل ليدخله في التطبيق:\n<code>${result.key}</code>\n\nالخطة الافتراضية: ${PLAN_LABELS[result.payload.plan]} · الانتهاء: ${result.payload.expiresAt ?? 'مدى الحياة'}`)
     }
   }
 
@@ -461,7 +486,7 @@ export async function handlePanelText(text, chatId, cfg) {
     if (await cfg.kv.get(`dev:${deviceId}`)) return flowPrompt(chatId, 'هذا الجهاز مسجل بالفعل.')
     await cfg.kv.delete(`ui-flow:${chatId}`)
     const result = await issueForDevice(cfg, deviceId, flow.customer)
-    return panelHome(chatId, `✅ أُضيف جهاز للعميل ${flow.customer}\nأرسل المفتاح الجديد لهذا الجهاز:\n<code>${result.key}</code>`)
+    return panelHome(chatId, `✅ أُضيف جهاز للعميل ${tgEscape(flow.customer)}\nأرسل المفتاح الجديد لهذا الجهاز:\n<code>${result.key}</code>`)
   }
 
   if (flow.kind === 'notice') {
@@ -476,7 +501,7 @@ export async function handlePanelText(text, chatId, cfg) {
     const group = await findCustomer(cfg, flow.customerHash)
     if (!group) return panelHome(chatId, 'لم أجد العميل؛ لم يُرسل التنبيه.')
     const count = await saveNoticeForCustomer(cfg, group, value, { level })
-    return panelHome(chatId, `✅ حُفظ التنبيه للعميل ${group.name} (${count} جهاز) — ${shapeAr}.`)
+    return panelHome(chatId, `✅ حُفظ التنبيه للعميل ${tgEscape(group.name)} (${count} جهاز) — ${shapeAr}.`)
   }
 
   /* بند 1: رد الدعم — يُرسل عبر الجسر ولا يُحفظ محلياً */
@@ -626,7 +651,7 @@ async function supportThreadReply(cfg, chatId, deviceId) {
 /* بند 10: اختيار درجة التنبيه قبل كتابة النص */
 function noticeLevelReply(cfg, chatId, target) {
   const suffix = target.scope === 'customer' ? `:customer:${target.customerHash}` : ':global'
-  const who = target.scope === 'customer' ? `للعميل <b>${target.customerName ?? ''}</b>` : '<b>لجميع العملاء</b>'
+  const who = target.scope === 'customer' ? `للعميل <b>${tgEscape(target.customerName ?? '')}</b>` : '<b>لجميع العملاء</b>'
   return menuReply(chatId, `🔔 تنبيه ${who} — اختر طريقة العرض عند العميل:`, [
     ...NOTICE_LEVELS.map((level) => [button(NOTICE_LEVEL_LABELS_AR[level], `panel:noticelevel:${level}${suffix}`)]),
     [button('📬 التنبيهات المرسلة والقراءات', 'panel:noticelist')],
@@ -653,17 +678,118 @@ export async function noticeListReply(cfg, chatId) {
   return menuReply(chatId, lines.join('\n').trim(), [[button('🔔 إرسال تنبيه', 'panel:notice:all')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
 }
 
+/* ── بلاغات التسجيل في اللوحة (مراجعة المرحلة ③) ──────────────────────────────
+ * كان للتسجيلات عرض مختصر فقط: لا بيانات كاملة، ولا إصدار رخصة من مكانها، والعميل
+ * المسجَّل بلا رخصة **لا يظهر** في «👥 العملاء» لأن القائمة تُبنى من مفاتيح dev: وحدها.
+ * الآن: كل التسجيلات مع حالة الترخيص، وإصدار المفتاح بضغطة من البطاقة، وصف خاص
+ * للمسجّلين بلا رخصة في قائمة العملاء. الأسماء من الـlist بلا قراءة كل سجل. */
+
+/** معرّفات الأجهزة المرخّصة (`dev:`) بالـlist وحده — بلا قراءة سجل */
+async function issuedDeviceIds(cfg) {
+  const ids = new Set()
+  let cursor
+  for (let pageNo = 0; pageNo < 10; pageNo++) {
+    const page = await cfg.kv.list({ prefix: 'dev:', limit: 1000, ...(cursor ? { cursor } : {}) })
+    for (const key of page.keys ?? []) ids.add(key.name.slice(4))
+    if (page.list_complete || !page.cursor) break
+    cursor = page.cursor
+  }
+  return ids
+}
+
+/** كل التسجيلات مع حالة الترخيص لكل منها */
+async function registrationRows(cfg) {
+  const [{ records, skipped }, issued] = await Promise.all([listRegistrations(cfg), issuedDeviceIds(cfg)])
+  return { rows: records.map((record) => ({ record, licensed: issued.has(record.deviceId) })), skipped }
+}
+
+async function registrationsReply(cfg, chatId, { onlyUnlicensed = false } = {}) {
+  const { rows, skipped } = await registrationRows(cfg)
+  const shown = onlyUnlicensed ? rows.filter((row) => !row.licensed) : rows
+  const unlicensed = rows.filter((row) => !row.licensed).length
+  /* أسماء الأزرار نص عادي (لا HTML) فلا تُهرَّب */
+  const menuRows = shown.slice(0, REG_LIST_SHOWN).map(({ record, licensed }) => [
+    button(`${licensed ? '✅' : '🆕'} ${(record.shopName || record.ownerName || 'بلا اسم').slice(0, 40)} · ${String(record.deviceId ?? '').slice(-4)}`, `panel:reg:${record.deviceId}`),
+  ])
+  menuRows.push([onlyUnlicensed ? button('📋 كل التسجيلات', 'panel:regs') : button('🆕 بلا رخصة فقط', 'panel:regsnew')])
+  menuRows.push([button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')])
+  if (!shown.length) {
+    const none = onlyUnlicensed ? 'لا يوجد مسجّلون بلا رخصة الآن ✅' : 'لا تسجيلات بعد — يظهر هنا كل عميل يكمل معالج أول التشغيل.'
+    return menuReply(chatId, none, menuRows)
+  }
+  const head = onlyUnlicensed
+    ? `🆕 <b>مسجّلون بلا رخصة (${shown.length})</b>`
+    : `🆕 <b>التسجيلات (${rows.length})</b> · بلا رخصة: ${unlicensed}`
+  /* كل سجل في سطرين من النص (الاسم والمالك، ثم الاتصال والجهاز) — البيانات تُقرأ هنا
+     مباشرة، والزر يفتح البطاقة الكاملة. كل قيمة يكتبها العميل تُهرَّب. */
+  const lines = [head, '']
+  for (const { record, licensed } of shown.slice(0, REG_LIST_SHOWN)) {
+    const contact = [record.phone, record.email].filter(Boolean).map(tgEscape).join(' · ')
+    lines.push(`${licensed ? '✅' : '🆕'} <b>${tgEscape(record.shopName) || 'بلا اسم'}</b> — ${tgEscape(record.ownerName) || '—'}${contact ? `\n   ${contact}` : ''}\n   <code>${tgEscape(record.deviceId)}</code> · ${tgEscape(record.activityNameAr) || '—'}`)
+  }
+  if (shown.length > REG_LIST_SHOWN) lines.push(`… و${shown.length - REG_LIST_SHOWN} أقدم غيرها (تُعرض الأحدث ${REG_LIST_SHOWN})`)
+  if (skipped) lines.push(`⚠️ ${skipped} سجلاً قديماً بلا فهرس لم تُقرأ في هذه الدورة.`)
+  lines.push('', 'اختر تسجيلاً من الأزرار لعرض بياناته كاملة وإصدار رخصته.', '🗑️ الحذف من بطاقة التسجيل نفسها، أو بالأمر <code>/احذف SHOP-XXXX-XXXX-XXXX</code>')
+  return menuReply(chatId, lines.join('\n'), menuRows)
+}
+
+async function registrationDetailReply(cfg, chatId, deviceId) {
+  const id = String(deviceId ?? '').toUpperCase()
+  if (!DEVICE_RE.test(id)) return panelHome(chatId, '⚠️ معرّف الجهاز غير صالح.')
+  const record = parseObject(await cfg.kv.get(regKey(id)))
+  if (!record.deviceId) {
+    return menuReply(chatId, 'لا يوجد تسجيل بهذا المعرّف — ربما حُذف.', [[button('🆕 التسجيلات', 'panel:regs')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
+  const licensed = Boolean(await cfg.kv.get(`dev:${id}`))
+  const rows = []
+  if (!licensed) rows.push([button('🔑 إصدار مفتاح لهذا الجهاز', `panel:issuereg:${id}`)])
+  rows.push([button('🗑️ حذف بيانات هذا التسجيل', `panel:regdel:${id}`)])
+  rows.push([button('⬅️ رجوع للتسجيلات', 'panel:regs')], [button('🏠 القائمة الرئيسية', 'panel:home')])
+  return menuReply(chatId, formatRegistrationDetailAr(record, { licensed }), rows)
+}
+
+async function issueFromRegistrationReply(cfg, chatId, deviceId) {
+  const id = String(deviceId ?? '').toUpperCase()
+  if (!DEVICE_RE.test(id)) return panelHome(chatId, '⚠️ معرّف الجهاز غير صالح.')
+  if (await cfg.kv.get(`dev:${id}`)) {
+    return menuReply(chatId, 'هذا الجهاز مرخّص بالفعل — افتح العميل من قائمة العملاء لتجديده أو إصدار مفتاح جديد.', [[button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+  }
+  const record = parseObject(await cfg.kv.get(regKey(id)))
+  if (!record.deviceId) return panelHome(chatId, '⚠️ لا يوجد بلاغ تسجيل لهذا الجهاز، فلا اسم عميل يُستخدم.')
+  const customer = cleanText(record.shopName || record.ownerName || 'عميل جديد', 100)
+  const result = await issueForDevice(cfg, id, customer)
+  return panelHome(chatId, `✅ أُصدرت رخصة لـ ${tgEscape(customer)}\nأرسل هذا المفتاح للعميل ليدخله في التطبيق:\n<code>${result.key}</code>\n\nالخطة: ${PLAN_LABELS[result.payload.plan] ?? result.payload.plan} · الانتهاء: ${result.payload.expiresAt ?? 'مدى الحياة'}`)
+}
+
+function registrationDeleteConfirmReply(chatId, deviceId) {
+  const id = String(deviceId ?? '').toUpperCase()
+  if (!DEVICE_RE.test(id)) return panelHome(chatId, '⚠️ معرّف الجهاز غير صالح.')
+  return menuReply(chatId, `⚠️ سيُحذف سجل التسجيل لهذا الجهاز <code>${id}</code> (المنشأة والهاتف والبريد وبقية بياناته).\nلا يُلغي هذا الحذف أي رخصة صادرة. هل تؤكد؟`, [
+    [button('✅ نعم، احذف السجل', `panel:regdelok:${id}`)],
+    [button('↩️ إلغاء', `panel:reg:${id}`)],
+  ])
+}
+
+async function registrationDeleteReply(cfg, chatId, deviceId) {
+  const result = await deleteRegistration(cfg, deviceId)
+  if (!result.ok) return menuReply(chatId, result.reasonAr, [[button('🆕 التسجيلات', 'panel:regs')]])
+  const text = result.existed
+    ? `🗑️ حُذف سجل التسجيل للجهاز <code>${result.deviceId}</code>.`
+    : `لا سجل تسجيل بهذا المعرّف (<code>${result.deviceId}</code>).`
+  return menuReply(chatId, text, [[button('🆕 التسجيلات', 'panel:regs')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
+}
+
 export async function handlePanelButton(data, chatId, cfg) {
   const parts = String(data ?? '').split(':')
   const action = parts[0]
   if (data === 'panel:home') return panelHome(chatId)
   /* بند 2 (تدقيق 2026-10-08): بلاغات العملاء الجدد من اللوحة */
-  if (data === 'panel:regs') {
-    const { records, skipped } = await listRegistrations(cfg)
-    /* سياسة الخصوصية تعد بالحذف خلال 30 يوماً — والأداة هي أمر البوت `/احذف` */
-    const body = `${formatRegistrationsAr(records, { skipped })}\n\n🗑️ لحذف سجل عميل (طلب حذف بيانات): <code>/احذف SHOP-XXXX-XXXX-XXXX</code>`
-    return menuReply(chatId, body, [[button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
-  }
+  if (data === 'panel:regs') return registrationsReply(cfg, chatId)
+  if (data === 'panel:regsnew') return registrationsReply(cfg, chatId, { onlyUnlicensed: true })
+  if (action === 'panel' && parts[1] === 'reg' && parts[2] && !parts[3]) return registrationDetailReply(cfg, chatId, parts[2])
+  if (action === 'panel' && parts[1] === 'issuereg' && parts[2]) return issueFromRegistrationReply(cfg, chatId, parts[2])
+  if (action === 'panel' && parts[1] === 'regdel' && parts[2]) return registrationDeleteConfirmReply(chatId, parts[2])
+  if (action === 'panel' && parts[1] === 'regdelok' && parts[2]) return registrationDeleteReply(cfg, chatId, parts[2])
   if (data === 'panel:clients') return clientsReply(cfg, chatId)
   if (data === 'panel:new') {
     await startFlow(cfg, chatId, { kind: 'new_customer', step: 'name' })
@@ -674,7 +800,7 @@ export async function handlePanelButton(data, chatId, cfg) {
   if (data === 'panel:digest') {
     const digest = await subscriptionDigest(cfg, { soonDays: await readSoonDays(cfg) })
     return menuReply(chatId, formatDigestAr(digest), [
-      [button('⏳ تغيير النافذة (10 أيام افتراضياً)', 'panel:digwindow'), button('👥 العملاء', 'panel:clients')],
+      [button(`⏳ تغيير النافذة (${SOON_DAYS} أيام افتراضياً)`, 'panel:digwindow'), button('👥 العملاء', 'panel:clients')],
       [button('🏠 القائمة الرئيسية', 'panel:home')],
     ])
   }
@@ -758,7 +884,7 @@ export async function handlePanelButton(data, chatId, cfg) {
     const group = await findCustomer(cfg, parts[1])
     if (!group) return clientsReply(cfg, chatId)
     await startFlow(cfg, chatId, { kind: 'add_device', customer: group.name })
-    return flowPrompt(chatId, `أرسل معرّف الجهاز الجديد للعميل ${group.name}.`)
+    return flowPrompt(chatId, `أرسل معرّف الجهاز الجديد للعميل ${tgEscape(group.name)}.`)
   }
   /* بند 10: كل مداخل التنبيه تمرّ عبر قائمة الدرجات — فلا تنبيه بلا درجة معلنة */
   if (action === 'notice' && parts[1] === 'all') return noticeLevelReply(cfg, chatId, { scope: 'global' })
@@ -774,7 +900,7 @@ export async function handlePanelButton(data, chatId, cfg) {
     const result = await issueForDevice(cfg, device.deviceId, device.customer)
     return clientReply(cfg, chatId, device.deviceId).then((reply) => ({
       ...reply,
-      text: `✅ صدر مفتاح جديد للعميل ${device.customer}. بعد إدخاله في التطبيق ستُستخدم الإعدادات الجديدة:\n<code>${result.key}</code>`,
+      text: `✅ صدر مفتاح جديد للعميل ${tgEscape(device.customer)}. بعد إدخاله في التطبيق ستُستخدم الإعدادات الجديدة:\n<code>${result.key}</code>`,
     }))
   }
   if (action === 'csettings' && DEVICE_RE.test(parts[1] ?? '')) return clientSettingsReply(cfg, chatId, parts[1])
@@ -789,7 +915,7 @@ export async function handlePanelButton(data, chatId, cfg) {
     const device = await getDevice(cfg, parts[1])
     if (!device) return clientsReply(cfg, chatId)
     const result = await issueForDevice(cfg, device.deviceId, device.customer)
-    return menuReply(chatId, `✅ صدر مفتاح جديد للعميل ${device.customer}. أدخله في التطبيق لتطبيق الإعدادات:\n<code>${result.key}</code>`, [
+    return menuReply(chatId, `✅ صدر مفتاح جديد للعميل ${tgEscape(device.customer)}. أدخله في التطبيق لتطبيق الإعدادات:\n<code>${result.key}</code>`, [
       [button('⬅️ رجوع للعميل', `client:${device.deviceId}`)],
       [button('🏠 القائمة الرئيسية', 'panel:home')],
     ])
@@ -797,7 +923,7 @@ export async function handlePanelButton(data, chatId, cfg) {
   if (action === 'revoke' && DEVICE_RE.test(parts[1] ?? '')) {
     const device = await getDevice(cfg, parts[1])
     if (!device) return clientsReply(cfg, chatId)
-    return menuReply(chatId, `هل تريد إبطال رخصة ${device.customer} للجهاز ${device.deviceId}؟`, [
+    return menuReply(chatId, `هل تريد إبطال رخصة ${tgEscape(device.customer)} للجهاز ${device.deviceId}؟`, [
       [button('نعم، أبطلها', `revokeconfirm:${device.deviceId}`), button('إلغاء', `client:${device.deviceId}`)],
     ])
   }
@@ -856,7 +982,7 @@ export async function handlePanelButton(data, chatId, cfg) {
     if (!device) return clientsReply(cfg, chatId)
     const hash = await hashCustomerName(device.customer)
     await startFlow(cfg, chatId, { kind: 'number', scope: 'customer', customerHash: hash, customer: device.customer, deviceId: device.deviceId, field: parts[2] })
-    return flowPrompt(chatId, `أرسل العدد الخاص بالعميل ${device.customer} (0 إلى 99).`)
+    return flowPrompt(chatId, `أرسل العدد الخاص بالعميل ${tgEscape(device.customer)} (0 إلى 99).`)
   }
   if (data === 'panel:help') return panelHome(chatId)
   return null
