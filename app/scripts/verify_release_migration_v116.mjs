@@ -64,12 +64,19 @@ if (/RELEASES_REPO_TOKEN غير مضبوط/.test(wf)) {
   bad('لا فحص صراحة للسر الفارغ في السير');
 }
 
-// v1.0.16 (بعد النشر): الإصدار بوسم مقصود حصراً — لا محفز يدوي (التشغيل
-// اليدوي على فرع كان سينشر إصداراً باسم الفرع) وحارس نمط الوسم قبل النشر
-if (!wf.includes('workflow_dispatch:')) {
-  ok('لا محفز يدوي — السير ينطلق بدفع وسم v* حصراً');
+// v1.0.20 — إصلاح سلسلة الإصدار: دفع الوسم بـGITHUB_TOKEN لا يولد حدث push
+// (منع recursion في GitHub) — لذلك auto-release يجب أن يطلق desktop-release
+// صراحةً بـworkflow_dispatch. workflow_dispatch وحده كان خطراً (ينشر باسم فرع)
+// لكن مع حارس مبكر يرفض أي ref غير vX.Y.Z خلال ثوانٍ يصبح آمناً.
+if (wf.includes('workflow_dispatch:')) {
+  const hasEarlyGuard = /حارس المحفز/.test(wf) && /GITHUB_REF_NAME/.test(wf) && /\^v\[0-9\]/.test(wf);
+  if (hasEarlyGuard) {
+    ok('محفز workflow_dispatch موجود مع حارس مبكر يرفض أي ref غير vX.Y.Z — سلسلة auto-release→desktop-release مؤمنة (إصلاح v1.0.20)');
+  } else {
+    bad('محفز workflow_dispatch موجود بلا حارس مبكر — قد ينشر إصداراً باسم فرع');
+  }
 } else {
-  bad('محفز workflow_dispatch موجود — الدفع اليدوي قد ينشر إصداراً باسم فرع');
+  bad('محفز workflow_dispatch مفقود — سلسلة auto-release بـGITHUB_TOKEN لن تطلق desktop-release (حادثة v1.0.20)');
 }
 
 if (/\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/.test(wf)) {
@@ -113,6 +120,11 @@ if (auto.includes("'docs/**'") && auto.includes("'**/*.md'")) {
   ok('تحديثات الوثائق وحدها لا تولّد إصداراً (paths-ignore)')
 } else {
   bad('استثناء الوثائق من الإصدار الآلي مفقود')
+}
+if (auto.includes('workflow run desktop-release') && auto.includes('--ref')) {
+  ok('auto-release يطلق desktop-release صراحةً بعد الوسم (إصلاح انقطاع السلسلة بـGITHUB_TOKEN)');
+} else {
+  bad('auto-release لا يطلق desktop-release صراحةً — الوسم بـGITHUB_TOKEN لن يبني (حادثة v1.0.20)');
 }
 // v1.0.17 (بعد أول إطلاق فعلي): حساب النسخة من أوسمة الخادم لا المحلية —
 // checkout@v4 بfetch-depth:1 لا يمرر --tags (يمنع --no-tags فقط عند

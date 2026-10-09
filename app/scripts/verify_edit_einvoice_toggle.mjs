@@ -10,6 +10,8 @@
  *     تعمل سليمة في الحالتين؟ وهل التعديل يعود متاحاً بعد الإلغاء؟
  * س6) هل تعديل الفاتورة في نظام الكاشير يتطلب رقماً سرياً من المشرف؟ (فحص نصي للواجهة)
  * س7) هل المرتجع نفسه يُعدَّل؟ (السياسة العالمية: لا — مستند مرحّل يُصحح بمستند آخر)
+ * س8) هل الفتح المباشر للمحرر (?edit= من النوافذ والروابط) يتجاوز قفل المنظومة؟
+ *     (لا — بانر القفل + وقف الحفظ داخل المحرر نفسه، دفاعاً بعد زر القائمة والنواة)
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -213,6 +215,21 @@ console.log('\n— س7) هل المرتجع نفسه يُعدَّل؟ —')
   ok('س7: ولا يمكن تجاوز الكمية الأصلية عبر مرتجعات متتالية (5 = 1+2+2 كحد أقصى)')
   allBalanced()
   ok('س7: الدفتر متوازن بعد كل السيناريوهات — لا قرش تائه')
+}
+
+console.log('\n— س8) مدخل المحرر المتقدم لا يتجاوز قفل المنظومة — فحص نصي —')
+{
+  /* الفتح المباشر ?edit= (نافذة النشاط/المقاولات/رابط المشاركة/تنقل السابق-التالي)
+     يتجاوز زر القائمة — لازم المحرر نفسه يعرض القفل ويوقف الحفظ قبل الاعتماد */
+  const advSales = readFileSync(join(root, 'src/ui/pages/AdvancedSalesInvoicePage.tsx'), 'utf8')
+  const advPur = readFileSync(join(root, 'src/ui/pages/AdvancedPurchaseInvoicePage.tsx'), 'utf8')
+  assert.ok(advSales.includes('data-einvoice-edit-lock'), 'بانر قفل المبيعات موجود')
+  assert.ok(advSales.includes("if(editingInvoice&&einvoiceActive){toast.show(editPolicy.reasonAr,'error');return}"), 'حفظ المبيعات مسجّل قبل الاعتماد')
+  ok('س8: محرر المبيعات يعرض بانر القفل بزرَّي (إشعار دائن/مدين) ويوقف الحفظ فوراً عند الفتح المباشر')
+  assert.ok(advPur.includes('data-einvoice-edit-lock'), 'بانر قفل المشتريات موجود')
+  assert.ok(advPur.includes("if(editingInvoice&&einvoiceActive){toast.show(editLockMsg,'error');return}"), 'حفظ المشتريات مسجّل قبل الاعتماد')
+  assert.ok(advPur.includes('/purchases/returns'), 'زر المرتجع في البانر')
+  ok('س8: محرر المشتريات كذلك — بانر بزرَّي (مرتجع شراء/فاتورة إضافية) وحفظ موقوف قبل طلب الرقم السري')
 }
 
 console.log(`\n✅ verify_edit_einvoice_toggle: ${pass} تحققاً — كل أسئلة التعديل والفاتورة الإلكترونية مجابة بالتشغيل الفعلي`)

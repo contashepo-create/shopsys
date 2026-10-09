@@ -26,6 +26,33 @@ export function computeAdvancedTotals(args:{lines:AdvancedInvoiceLine[];invoiceD
 export function buildInternalExpenseLines(expenses:InternalExpense[],fallbackTreasury='1101'):JournalLine[]{const lines:JournalLine[]=[];for(const expense of expenses){validMinor(expense.amountMinor,'المصروف الداخلي');if(expense.amountMinor<=0)throw new Error('قيمة المصروف الداخلي يجب أن تكون موجبة');if(!expense.accountCode.startsWith('5'))throw new Error('حساب المصروف الداخلي يجب أن يكون حساب مصروفات');if(expense.settlement==='payable_later'&&expense.payableAccountCode==='2101')throw new Error('استحقاق جهة أخرى لا يجوز ترحيله على حساب الموردين 2101');let taxMinor=0,base=expense.amountMinor;if(expense.taxTreatment==='exclusive')taxMinor=Math.round(base*expense.taxPercent/100);else if(expense.taxTreatment==='inclusive'&&expense.taxPercent>0){base=Math.round(expense.amountMinor/(1+expense.taxPercent/100));taxMinor=expense.amountMinor-base}const payout=expense.taxTreatment==='exclusive'?expense.amountMinor+taxMinor:expense.amountMinor;lines.push({accountCode:expense.accountCode,debit:base,credit:0,note:`مصروف داخلي — ${expense.label}`,...(expense.costCenterId != null ? {costCenterId:expense.costCenterId} : {})});if(taxMinor)lines.push({accountCode:'2102',debit:taxMinor,credit:0,note:`ضريبة مدخلات مصروف — ${expense.label}`});lines.push({accountCode:expense.settlement==='payable_later'?(expense.payableAccountCode??'2117'):(expense.custodyFileId != null ? '1108' : (expense.treasury??fallbackTreasury)),debit:0,credit:payout,note:expense.settlement==='payable_later'?`مصروف مستحق${expense.beneficiaryName?.trim()?` لـ ${expense.beneficiaryName.trim()}`:''} — ${expense.label}`:expense.custodyFileId != null ? `سداد مصروف من العهدة — ${expense.label}` : `سداد مصروف — ${expense.label}`})}return lines}
 export function applyDefaultWarehouse(lines:AdvancedInvoiceLine[],warehouseId:number|null){return lines.map(l=>l.warehouseSource==='manual'?l:{...l,warehouseId})}
 export function inventoryWarnings(lines:AdvancedInvoiceLine[],allowNegative:boolean){return lines.flatMap(l=>{if(l.availableQty===undefined||l.qty<=l.availableQty)return[];const expected=l.availableQty-l.qty;return[{lineId:l.id,severity:allowNegative?'warning' as const:'error' as const,message:allowNegative?`سيصبح الرصيد ${expected}`:`المتاح ${l.availableQty} والمطلوب ${l.qty}`} ]})}
+/**
+ * المتاح لفحص المخزون أثناء تعديل مستند مرحّل (بلاغ المالك 2026-10-09):
+ * الرصيد الحالي يشمل أثر سطور الفاتورة الأصلية فعلياً (خرجت من المخزون عند الترحيل)،
+ * فتُضاف كمياتها الأصلية (بالوحدة الأساسية) قبل مقارنتها بالجديدة — وإلا عُرض
+ * «سيصبح الرصيد» بخصم مزدوج: كان الرصيد ‎-10 بكمية فاتورة قديمة 10 وكمية جديدة 5
+ * يُحسب ‎-15 (‎-10 − 5) والصحيح ‎-5 (‎-10 + 10 − 5).
+ */
+export function availableForDocEdit(currentStockQty:number,originalDocQty:number):number{
+ return currentStockQty+originalDocQty
+}
+/**
+ * تقسيم تحصيل فاتورة البيع كما هو محفوظ في «وسائل التحصيل» — لاستعادته في المحرر
+ * عند فتح تعديل (إكمال إصلاح 2026-10-09: التحصيل المجزأ (خزينة/بنك/موظف) كان ينهار
+ * إلى نقدي وحده عند التعديل فيُقيَّد كله على الخزينة).
+ * القواعد: بنك = سطر بملاحظة «تحويل بنكي» · موظف = سطر 1107 بموظف مسجَّل · والباقي نقدي.
+ * بلا وسائل، أو مجموعها لا يساوي المدفوع (سجل قديم مختل)، أو بلا مدفوع ⇒ بلا تقسيم:
+ * المبلغ كله في الخزينة كما كان سلوك المحرر قديماً — لا تُخترع أطراف ولا تضيع مبالغ.
+ */
+export interface SaleCollectionSplit { cashMinor:number; bankMinor:number; employeeMinor:number; employeeId:number|null; multiPay:boolean }
+export function saleCollectionSplit(allocations:readonly{accountCode:string;amountMinor:number;note?:string;employeeId?:number}[],totalPaidMinor:number):SaleCollectionSplit{
+ const sum=allocations.reduce((s,a)=>s+a.amountMinor,0)
+ if(!allocations.length||sum!==totalPaidMinor||totalPaidMinor<=0)return{cashMinor:Math.max(0,totalPaidMinor),bankMinor:0,employeeMinor:0,employeeId:null,multiPay:false}
+ const bankMinor=allocations.filter(a=>a.note==='تحويل بنكي').reduce((s,a)=>s+a.amountMinor,0)
+ const employeeRows=allocations.filter(a=>a.accountCode==='1107'&&a.employeeId)
+ const employeeMinor=employeeRows.reduce((s,a)=>s+a.amountMinor,0)
+ return{cashMinor:Math.max(0,totalPaidMinor-bankMinor-employeeMinor),bankMinor,employeeMinor,employeeId:employeeRows[0]?.employeeId??null,multiPay:bankMinor>0}
+}
 export function allocateLandedCost(expense:InternalExpense,lines:AdvancedInvoiceLine[]):Record<string,number>{
  if(expense.landedCostAllocation==='none')return{};if(expense.landedCostAllocation==='manual'){const a=expense.manualAllocations??{};if(Object.values(a).reduce((s,v)=>s+v,0)!==expense.amountMinor)throw new Error('التوزيع اليدوي لا يساوي المصروف');return a}
  const weights=lines.map(l=>expense.landedCostAllocation==='value'?l.qty*l.unitPriceMinor:expense.landedCostAllocation==='quantity'?l.qty:expense.landedCostAllocation==='weight'?(l.weight??0)*l.qty:expense.landedCostAllocation==='volume'?(l.volume??0)*l.qty:1);const total=weights.reduce((a,b)=>a+b,0);if(total<=0)throw new Error('لا يوجد أساس صالح لتوزيع المصروف');let used=0;const out:Record<string,number>={};lines.forEach((l,i)=>{const value=i===lines.length-1?expense.amountMinor-used:Math.round(expense.amountMinor*weights[i]/total);out[l.id]=value;used+=value});return out

@@ -6672,8 +6672,17 @@ export const useDataStore = create<DataState>()(
           receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
           receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
         }
-        const newEntryLines = args.paymentAllocations?.length
-          ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, editReceivable)
+        // إصلاح (بلاغ المالك 2026-10-09): وسائل التحصيل تُبنى من حالة المحرر الحالية —
+        // لا تُورَّث من الفاتورة القديمة أبداً. الوراثة كانت ترمي «إجمالي التحصيل أكبر من
+        // إجمالي الفاتورة» حتى لو ساوى المستخدم المبلغ المستلم قيمة الفاتورة الجديدة بالضبط،
+        // وتقيّد تحصيلاً قديماً في القيد الجديد بينما تحمل الفاتورة المدفوع الجديد.
+        const freshAllocations = args.paymentAllocations?.length
+          ? args.paymentAllocations
+          : (paidM > 0 ? [{ accountCode: args.treasury, amountMinor: paidM, note: 'تحصيل نقدي/بنكي' }] : [])
+        const allocatedPaid = freshAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
+        if (allocatedPaid !== paidM) throw new Error(`إجمالي وسائل التحصيل (${allocatedPaid}) لا يساوي المبلغ المستلم (${paidM}) — راجع مبالغ التحصيل قبل الحفظ`)
+        const newEntryLines = freshAllocations.length
+          ? buildSaleEntryWithAllocations(totals, freshAllocations, editReceivable)
           : buildSaleEntry(totals, args.payment, args.treasury, paidM, editReceivable)
         const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
         for (const expense of internalExpenses) {
@@ -6746,6 +6755,9 @@ export const useDataStore = create<DataState>()(
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury,
+          // وسائل التحصيل الجديدة تحل محل القديمة على المستند نفسه — وإلا بقيت
+          // مبالغ المحصَّل القديمة على الفاتورة المعدلة (تشويش المرتجعات والتعديل التالي)
+          paymentAllocations: freshAllocations,
           lines: costedLines,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           customerReference: args.customerReference?.trim() || undefined,
@@ -6862,13 +6874,22 @@ export const useDataStore = create<DataState>()(
         const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
         const editedSupplierDue = grandTotal + keptInputVat + periodExpenseTotal
         if (args.dueDate && args.paidMinor >= editedSupplierDue) throw new Error('الفاتورة مسددة بالكامل ولا تحتاج تاريخ استحقاق')
+        // إصلاح (بلاغ المالك 2026-10-09): وسائل السداد تُبنى من حالة المحرر الحالية ولا
+        // تُورَّث من الفاتورة القديمة — الوراثة كانت تقيّد السداد القديم في القيد الجديد
+        // فترفض التعديل بـ«المدفوع أكبر من مستحق المورد» حتى لو ساوى المستخدم المبلغ
+        // المدفوع قيمة الفاتورة الجديدة بالضبط، أو تسجّل سداداً قديماً مختلفاً عن الجديد.
+        const freshPaymentCredits = args.paymentAllocations?.length
+          ? args.paymentAllocations.map((payment) => ({ account: payment.accountCode, amountMinor: payment.amountMinor, note: payment.note ?? 'سداد مورد' }))
+          : (args.paidMinor > 0 ? [{ account: args.treasury, amountMinor: args.paidMinor, note: 'مدفوع للمورد' }] : [])
+        const allocatedPaid = freshPaymentCredits.reduce((sum, payment) => sum + payment.amountMinor, 0)
+        if (allocatedPaid !== args.paidMinor) throw new Error(`إجمالي وسائل السداد (${allocatedPaid}) لا يساوي المبلغ المدفوع (${args.paidMinor}) — راجع مبالغ السداد قبل الحفظ`)
         const newEntryLines = buildPurchaseEntryV2({
           inventoryAccount: '1103',
           inventoryNote: 'بضاعة واردة بتكلفتها الكاملة (فاتورة معدلة)',
           grandTotalMinor: grandTotal,
           paidMinor: args.paidMinor,
           payAccount: args.treasury,
-          paymentCredits: args.paymentAllocations?.map((payment) => ({ account: payment.accountCode, amountMinor: payment.amountMinor, note: payment.note ?? 'سداد مورد' })),
+          paymentCredits: freshPaymentCredits,
           cashPurchase: editedSupplierId === 0,
           expensePayments: [],
           inputVatMinor: keptInputVat,
@@ -6949,6 +6970,9 @@ export const useDataStore = create<DataState>()(
           supplierDueMinor: editedSupplierDue, // يشمل ضريبة المدخلات ومصروفات الفترة على المورد
           paidMinor: args.paidMinor,
           treasury: args.treasury,
+          // وسائل السداد الجديدة تحل محل القديمة على المستند نفسه — وإلا بقيت مبالغ
+          // السداد القديمة على الفاتورة المعدلة (تشويش المرتجعات والتعديل التالي)
+          paymentAllocations: freshPaymentCredits.map((payment) => ({ accountCode: payment.account, amountMinor: payment.amountMinor, note: payment.note })),
           supplierInvoiceNumber: args.supplierInvoiceNumber?.trim() || undefined,
           purchaseOrderNumber: args.purchaseOrderNumber?.trim() || undefined,
           dueDate: args.dueDate || undefined,

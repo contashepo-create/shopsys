@@ -6,6 +6,9 @@
  * ④ موانع تعديل البيع: مرتجع/أقساط/وردية مقفلة/سيريالات/تحصيلات مخصصة
  * ⑤ editPurchase: عكس + إعادة ترحيل بالتكلفة المحملة + متوسط مرجح صحيح + دفعات صلاحية
  * ⑥ موانع تعديل الشراء: بيع من بضاعتها/مرتجع شراء/مصاريف من خزائن
+ * ⑦ إصلاح (بلاغ المالك 2026-10-09): تعديل الفاتورة بوسائل تحصيل/سداد حالية لا قديمة —
+ *    «المبلغ المستلم = قيمة الفاتورة الجديدة» يقبل دائماً، والقديمة تُرفض برسالة صريحة،
+ *    وسجل الفاتورة يُحدَّث بوسائل جديدة · تنبيه المخزون يُرجع أثر الفاتورة قبل المقارنة
  * تشغيل: node --experimental-strip-types scripts/verify_invoice_edit.mjs
  */
 const mem = new Map()
@@ -135,6 +138,72 @@ const pur2 = S().postPurchase({
   paidMinor: 0, treasury: '1101', notes: '',
 })
 throws('مصاريف من خزينة ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur2.id, lines: [{ itemId: itA.id, qty: 5, unitPriceMinor: 1000 }], expenses: pur2.expenses, paidMinor: 0, treasury: '1101', reason: 'اختبار تعديل', einvoiceActive: false }), 'مدفوعة من خزائن')
+
+console.log('\n7️⃣ إصلاح وسائل التحصيل/السداد القديمة عند التعديل (بلاغ المالك 2026-10-09)')
+const { inventoryWarnings, availableForDocEdit } = await import('../src/core/advancedInvoice.ts')
+// بيع مُتحصَّل بالكامل بوسائل تحصيل (كما يبنيها محرر الفاتورة)
+const cashBeforeFix = bal('1101')
+const salePay = S().postSale({
+  lines: [cartLine(itA.id, 2, 3000, 1000)], customerId: cust.id, payment: 'cash',
+  invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, treasury: '1101',
+  paidMinor: 6000, paymentAllocations: [{ accountCode: '1101', amountMinor: 6000, note: 'تحصيل نقدي/بنكي' }],
+})
+// الوسائل القديمة (6000) مع إجمالي جديد 3000 ⇒ رفض صريح يذكر وسائل التحصيل لا «أكبر من الفاتورة»
+throws('تحصيلات قديمة ≠ المدفوع الجديد ⇒ رفض برسالة صريحة', () => S().editSale({
+  saleId: salePay.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: cust.id,
+  payment: 'cash', paidMinor: 3000, treasury: '1101', invoiceDiscountPercent: 0,
+  reason: 'اختبار وسائل قديمة', einvoiceActive: false,
+  paymentAllocations: salePay.paymentAllocations,
+}), 'وسائل التحصيل')
+// نفس التعديل بوسائل حالية: المبلغ المستلم 3000 = قيمة الفاتورة الجديدة بالضبط ⇒ يقبل
+const saleEdited = S().editSale({
+  saleId: salePay.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: cust.id,
+  payment: 'cash', paidMinor: 3000, treasury: '1101', invoiceDiscountPercent: 0,
+  reason: 'تصحيح الكمية', einvoiceActive: false,
+  paymentAllocations: [{ accountCode: '1101', amountMinor: 3000, note: 'تحصيل نقدي/بنكي' }],
+})
+ok('المستلم = الفاتورة الجديدة يقبل التعديل', saleEdited.paidMinor === 3000 && saleEdited.totals.totalMinor === 3000)
+ok('صافي الخزينة = 3000 الجديدة (عُكس القيد 6000 ووُلد قيد 3000)', bal('1101') - cashBeforeFix === 3000, bal('1101') - cashBeforeFix)
+ok('سجل الفاتورة: وسائل التحصيل = المدفوع الجديد', (saleEdited.paymentAllocations ?? []).reduce((s, a) => s + a.amountMinor, 0) === 3000, JSON.stringify(saleEdited.paymentAllocations))
+ok('الدفتر متوازن بعد تعديل التحصيل', balanced())
+// فاتورة بلا وسائل (منشأ خارج المحرر — مثال الكاشير): تُبنى وسائل جديدة من المدفوع
+const saleNoAlloc = S().postSale({
+  lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: cust.id, payment: 'cash',
+  invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, treasury: '1101', paidMinor: 3000,
+})
+const saleNoAllocEdited = S().editSale({
+  saleId: saleNoAlloc.id, lines: [cartLine(itA.id, 1, 2500, 1000)], customerId: cust.id,
+  payment: 'cash', paidMinor: 2500, treasury: '1101', invoiceDiscountPercent: 0,
+  reason: 'تصحيح سعر', einvoiceActive: false,
+})
+ok('بلا وسائل ⇒ تُبنى من المدفوع وتُحفظ على السجل', (saleNoAllocEdited.paymentAllocations ?? []).reduce((s, a) => s + a.amountMinor, 0) === 2500, JSON.stringify(saleNoAllocEdited.paymentAllocations))
+ok('الدفتر متوازن', balanced())
+// شراء سداده القديم يرثه المحرر ⇒ نفس إصلاح البيع
+const purPay = S().postPurchase({
+  supplierId: sup.id, date: '2026-09-20',
+  lines: [{ itemId: itB.id, qty: 10, unitPriceMinor: 1000, expiryDate: null }],
+  expenses: [], paidMinor: 10000, treasury: '1101', notes: '',
+  paymentAllocations: [{ accountCode: '1101', amountMinor: 10000, note: 'السداد' }],
+})
+throws('وسائل سداد قديمة ≠ المدفوع الجديد ⇒ رفض برسالة صريحة', () => S().editPurchase({
+  purchaseId: purPay.id, lines: [{ itemId: itB.id, qty: 5, unitPriceMinor: 1000 }],
+  expenses: [], paidMinor: 5000, treasury: '1101', reason: 'اختبار وسائل قديمة', einvoiceActive: false,
+  paymentAllocations: purPay.paymentAllocations,
+}), 'وسائل السداد')
+const purPayEdited = S().editPurchase({
+  purchaseId: purPay.id, lines: [{ itemId: itB.id, qty: 5, unitPriceMinor: 1000 }],
+  expenses: [], paidMinor: 5000, treasury: '1101', reason: 'تصحيح الكمية', einvoiceActive: false,
+  paymentAllocations: [{ accountCode: '1101', amountMinor: 5000, note: 'السداد' }],
+})
+ok('المدفوع = قيمة الشراء الجديدة يقبل التعديل', purPayEdited.paidMinor === 5000 && purPayEdited.grandTotalMinor === 5000)
+ok('سجل الشراء: وسائل السداد = المدفوع الجديد', (purPayEdited.paymentAllocations ?? []).reduce((s, a) => s + a.amountMinor, 0) === 5000, JSON.stringify(purPayEdited.paymentAllocations))
+ok('الدفتر متوازن بعد تعديل السداد', balanced())
+
+console.log('\n8️⃣ تنبيه المخزون أثناء التعديل لا يخصم الفاتورة القديمة مرتين')
+// الرصيد ‎-10 (يضم خروج فاتورة بكمية 10) والتعديل لكمية 5 ⇒ الصحيح ‎-5 لا ‎-15
+ok('المتاح أثناء التعديل = الرصيد الحالي + كمية الفاتورة الأصلية', availableForDocEdit(-10, 10) === 0)
+const editWarn = inventoryWarnings([{ id: 'l1', itemId: 1, description: 'صنف', warehouseId: null, warehouseSource: 'manual', qty: 5, unitPriceMinor: 1000, lineDiscountMinor: 0, taxPercent: 0, availableQty: availableForDocEdit(-10, 10) }], true)
+ok('سيصبح الرصيد -5 بعد التعديل (لا -15)', editWarn[0]?.message === 'سيصبح الرصيد -5', editWarn[0]?.message)
 
 console.log(`\n═══════════ PASS=${pass} FAIL=${fail} ═══════════`)
 if (fail > 0) process.exit(1)

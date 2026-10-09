@@ -3,8 +3,10 @@
 #
 # كيف يعمل: هذا السير رفيع لا يبني شيئاً — يحسب النسخة التالية (patch+1)
 # من آخر وسم v*، يرفعها في app/package.json، يدفع التزام إصدار آلي إلى
-# main، ثم يوسمه vX.Y.Z — ووسم الوسم يشغّل desktop-release الموجود الذي
-# يفحص كل شيء (أنواع/اختبارات/بوابات 283) ثم يبني وينشر للرف العام
+# main، ثم يوسمه vX.Y.Z ويطلق desktop-release صراحةً بـworkflow_dispatch
+# (الوسم المدفوع بـGITHUB_TOKEN لا يولد حدث push — منع recursion؛ بلا
+# الإطلاق الصريح يبقى الإصدار موسوماً ولا يبني — حادثة v1.0.20). السير
+# المُطلق يفحص كل شيء (أنواع/اختبارات/بوابات) ثم يبني وينشر للرف العام
 # tahakam-releases ويمرآء للعملاء القدامى. أي كود فاسد يفشل بالفحوص قبل
 # أي نشر — لا يصل للعملاء شيء غير مفحوص.
 #
@@ -82,6 +84,8 @@ jobs:
       - name: التزام الإصدار والوسم ودفعها
         if: steps.guard.outputs.skip != 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NEW="${{ steps.version.outputs.new }}"
           BASE=$(git rev-parse --short HEAD)
@@ -96,4 +100,8 @@ jobs:
           fi
           git tag -a "${NEW}" -m "تَحَكَّم ${NEW#v} — إصدار آلي من دمج ${BASE}"
           git push origin "${NEW}"
-          echo "✓ وُسم ${NEW} — سير desktop-release يبنيه وينشره للعملاء الآن"
+          # ⚠️ دفع الوسم بـGITHUB_TOKEN لا يولد حدث push (منع recursion) — بلا هذا
+          # الإطلاق يبقى الإصدار موسوماً ولا يصل للعملاء (حادثة v1.0.20):
+          # workflow_dispatch هو الاستثناء الموثّق في سلوك GITHUB_TOKEN.
+          gh workflow run desktop-release --ref "${NEW}"
+          echo "✓ وُسم ${NEW} وأُطلق desktop-release عليه — يبنيه وينشره للعملاء الآن"
