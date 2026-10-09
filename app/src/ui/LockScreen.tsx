@@ -12,7 +12,7 @@ import { ACTIVITY_TEMPLATES } from '../core/activities.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { useDataStore } from '../data/repo.ts'
 import {
-  verifyLicenseKey, activityMatches, isRevoked, PLAN_LABELS, type LicenseState,
+  acceptActivationKey, PLAN_LABELS, type LicenseState,
 } from '../core/license.ts'
 import { LOCK_REASON_LABELS, toCsv, type LockReason } from '../core/security.ts'
 import { FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../core/cloud.ts'
@@ -52,9 +52,10 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
     setBusy(true)
     try {
       const trimmed = keyInput.trim()
-      if (isRevoked(trimmed, revokedKeys)) throw new Error('هذا المفتاح محروق (مُبطل من المطوّر) — اطلب مفتاحاً جديداً')
-      const payload = await verifyLicenseKey(trimmed, deviceId)
-      if (!activityMatches(payload, setup.activityId, setup.activityKeyHistory)) throw new Error('المفتاح صادر لنشاط آخر — اطلب مفتاحاً لنشاطك الحالي')
+      // فحص الإبطال والنشاط داخل الدالة المشتركة — نفس الفحص في شاشة «الترخيص» (M4)
+      const payload = await acceptActivationKey({
+        key: trimmed, deviceId, revokedKeys, activityId: setup.activityId, activityKeyHistory: setup.activityKeyHistory,
+      })
       setActivated(trimmed, payload)
       toast.show(`تم التفعيل — خطة ${PLAN_LABELS[payload.plan]} ✅ يعاد التحميل…`)
       setTimeout(() => window.location.reload(), 900)

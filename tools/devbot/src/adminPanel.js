@@ -219,15 +219,27 @@ export async function ackCountForNotice(cfg, noticeId) {
   return parseList(await cfg.kv.get(`${ACK_PREFIX}${cleanText(noticeId, 64)}`)).filter((v) => typeof v === 'string').length
 }
 
+/* H2 (مراجعة 2026-10-09): الحد يُطبَّق **لكل درجة على حدة**. كان الحد 50 على القائمة
+   كلها، فيُسقط تنبيه `critical` غير مقروء بمجرد تراكم 50 إعلاناً أحدث منه — ويتعطل وعد
+   «إلزامي الإقرار». الآن الإعلانات (info) آخر 50، والمهم/العاجل آخر 100 — لا يُسقطهما
+   تراكم الإعلانات. */
+export const NOTICE_KEEP_INFO = 50
+export const NOTICE_KEEP_URGENT = 100
+
+const isUrgentNotice = (notice) => notice?.level === 'important' || notice?.level === 'critical'
+
+export function capNotices(list) {
+  const urgent = list.filter((n) => isUrgentNotice(n)).slice(-NOTICE_KEEP_URGENT)
+  const info = list.filter((n) => !isUrgentNotice(n)).slice(-NOTICE_KEEP_INFO)
+  return [...urgent, ...info].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+}
+
 export async function getNotificationsForDevice(cfg, deviceId) {
   const deviceKey = `notices:${deviceId}`
   const all = [...parseList(await cfg.kv.get('notices:global')), ...parseList(await cfg.kv.get(deviceKey))]
   const now = Date.now()
-  return all
-    .filter((notice) => notice && typeof notice.id === 'string' && typeof notice.body === 'string'
-      && (!notice.expiresAt || Date.parse(notice.expiresAt) > now))
-    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
-    .slice(-50)
+  return capNotices(all.filter((notice) => notice && typeof notice.id === 'string' && typeof notice.body === 'string'
+    && (!notice.expiresAt || Date.parse(notice.expiresAt) > now)))
 }
 
 /* بند 10 (تدقيق 2026-10-08): درجات الإلزام —
@@ -255,7 +267,8 @@ async function appendNotice(cfg, key, body, opts = {}) {
   }
   const previous = parseList(await cfg.kv.get(key)).filter((n) => n?.expiresAt && Date.parse(n.expiresAt) > now.getTime())
   previous.push(notice)
-  await cfg.kv.put(key, JSON.stringify(previous.slice(-50)))
+  // H2: التخزين يحفظ المهم/العاجل حتى لو تراكمت إعلانات بعده (كان slice(-50) يُسقطه من المصدر)
+  await cfg.kv.put(key, JSON.stringify(capNotices(previous)))
   return notice
 }
 

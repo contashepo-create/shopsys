@@ -159,6 +159,12 @@ const usableMeta = (meta) => Boolean(meta && meta.v === REG_META_VERSION && type
  * `isNew` هي ما يقرّر التبليغ على التليجرام: أول بلاغ للجهاز ⇒ إبلاغ،
  * وما بعده تحديث صامت (لا إزعاج متكرر عند كل إقلاع/إعادة تثبيت).
  */
+/* M1 (مراجعة 2026-10-09): الحقول التعريفية تُعتمد من **أول** بلاغ فقط. نقطة `/register`
+   عامة بلا توثيق، فبلاغ لاحق بالمعرّف نفسه كان يستبدل الاسم والهاتف والبريد بقيم مزيفة
+   بصمت. الآن البلاغ اللاحق يُحفظ قيمه المختلفة في `pendingChanges` فيراها المالك
+   ويقرّرها، ولا تُستبدل القيم المعتمدة. */
+export const REG_IDENTITY_FIELDS = ['shopName', 'ownerName', 'phone', 'email', 'city', 'street', 'countryCode', 'activityId', 'activityNameAr', 'accountingMode', 'plan', 'doctorSpecialty']
+
 export async function saveRegistration(cfg, report) {
   const existingRaw = await cfg.kv.get(regKey(report.deviceId))
   let existing = null
@@ -167,11 +173,32 @@ export async function saveRegistration(cfg, report) {
     if (parsed && typeof parsed === 'object') existing = parsed
   } catch { existing = null }
   const now = new Date().toISOString()
-  const record = {
-    ...report,
-    firstSeenAt: existing?.firstSeenAt ?? now,
-    lastSeenAt: now,
-    reports: (existing?.reports ?? 0) + 1,
+  let record
+  if (!existing) {
+    record = { ...report, firstSeenAt: now, lastSeenAt: now, reports: 1 }
+  } else {
+    // القيم المعتمدة تبقى كما هي؛ المختلف من البلاغ اللاحق يُعرض للمالك فقط
+    const approved = {}
+    const pendingChanges = {}
+    for (const f of REG_IDENTITY_FIELDS) {
+      const current = existing[f] ?? report[f]
+      approved[f] = current
+      if (report[f] !== undefined && report[f] !== '' && report[f] !== current) pendingChanges[f] = report[f]
+    }
+    const carried = { ...existing }
+    delete carried.pendingChanges // التغييرات المعلّقة تُحسب من جديد في كل بلاغ (لا تبقى قديمة)
+    delete carried.pendingAt
+    record = {
+      ...carried,
+      ...approved,
+      appVersion: report.appVersion ?? existing.appVersion,
+      platform: report.platform ?? existing.platform,
+      deviceId: existing.deviceId ?? report.deviceId,
+      firstSeenAt: existing.firstSeenAt ?? now,
+      lastSeenAt: now,
+      reports: (existing.reports ?? 0) + 1,
+      ...(Object.keys(pendingChanges).length ? { pendingChanges, pendingAt: now } : {}),
+    }
   }
   await cfg.kv.put(regKey(report.deviceId), JSON.stringify(record), { metadata: registrationMetadata(record) })
   return { saved: true, isNew: !existing, record }
@@ -249,6 +276,15 @@ export function formatRegistrationDetailAr(record, { licensed = false } = {}) {
     `🗓️ أول بلاغ: ${val(record.firstSeenAt)}`,
     `👁️ آخر بلاغ: ${val(record.lastSeenAt)} · عدد البلاغات: ${Number(record.reports) || 0}`,
   ]
+  // M1: بلاغ لاحق بقيم مختلفة لم يُعتمد — يعرضه المالك ويقرّره
+  if (record.pendingChanges && typeof record.pendingChanges === 'object') {
+    const labels = { shopName: 'المنشأة', ownerName: 'المالك', phone: 'الهاتف', email: 'البريد', city: 'المدينة', street: 'الشارع' }
+    const diffs = Object.entries(record.pendingChanges).filter(([k]) => labels[k])
+      .map(([k, v]) => `${labels[k]}: ${tgEscape(String(v))}`)
+    if (diffs.length) {
+      lines.push(`⚠️ بلاغ لاحق بقيم مختلفة لم تُعتمد (${val(record.pendingAt)}): ${diffs.join(' · ')}`)
+    }
+  }
   return lines.filter((line) => line !== '').join('\n')
 }
 

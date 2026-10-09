@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { ShieldCheck, KeyRound, Copy, Fingerprint, CalendarClock, Sparkles, AlertTriangle, XCircle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import {
-  evaluateLicense, verifyLicenseKey, hasFeature, effectiveLimits, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
+  evaluateLicense, acceptActivationKey, hasFeature, effectiveLimits, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
   type LicenseFeature,
 } from '../../core/license.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
@@ -16,7 +16,7 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 const ALL_FEATURES: LicenseFeature[] = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot']
 
 export function LicensePage() {
-  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation } = useAppStore()
+  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation, revokedKeys, setup } = useAppStore()
   const toast = useToast()
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,7 +34,10 @@ export function LicensePage() {
   const activate = async () => {
     setBusy(true)
     try {
-      const payload = await verifyLicenseKey(keyInput, deviceId)
+      // M4: الفحوص نفسها التي في شاشة القفل — الإبطال ثم التوقيع ثم النشاط
+      const payload = await acceptActivationKey({
+        key: keyInput, deviceId, revokedKeys, activityId: setup.activityId, activityKeyHistory: setup.activityKeyHistory,
+      })
       setActivated(keyInput.trim(), payload)
       setKeyInput('')
       toast.show(`تم التفعيل — خطة ${PLAN_LABELS[payload.plan]} ✅`)

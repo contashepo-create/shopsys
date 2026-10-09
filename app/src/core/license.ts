@@ -266,6 +266,27 @@ export async function verifyLicenseKey(
   return payload
 }
 
+/**
+ * قبول مفتاح تفعيل — نقطة الدخول الوحيدة لشاشتي القفل و«الترخيص» (مراجعة 2026-10-09 · M4).
+ * كانت شاشة «الترخيص» تتجاوز فحص الإبطال وتطابق النشاط فتحفظ مفتاحاً مُبطلاً
+ * ويستبدل المفتاح الصالح. الآن الفحوص الثلاثة في مكان واحد لا يمكن تجاوزه.
+ */
+export async function acceptActivationKey(args: {
+  key: string
+  deviceId: string
+  revokedKeys: readonly string[]
+  activityId: string | null
+  activityKeyHistory?: readonly string[]
+  /** اختياري للاختبار فقط — الإنتاج يستخدم المفتاح العام المدمج */
+  pubB64u?: string
+}): Promise<LicensePayload> {
+  const key = args.key.trim()
+  if (isRevoked(key, args.revokedKeys)) throw new Error('هذا المفتاح محروق (مُبطل من المطوّر) — اطلب مفتاحاً جديداً')
+  const payload = await verifyLicenseKey(key, args.deviceId, args.pubB64u)
+  if (!activityMatches(payload, args.activityId, args.activityKeyHistory)) throw new Error('المفتاح صادر لنشاط آخر — اطلب مفتاحاً لنشاطك الحالي')
+  return payload
+}
+
 /* ─── حالة الترخيص (منطق خالص قابل للفحص) ─── */
 
 export function daysBetween(fromIso: string, toIso: string): number {

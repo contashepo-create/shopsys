@@ -139,7 +139,9 @@ await okAsync('العامل: أول بلاغ يُسجَّل، والثاني ت�
   const second = await saveRegistration({ kv }, { ...report, shopName: 'اسم محدّث' })
   assert.equal(second.isNew, false) // ⇒ لا رسالة تليجرام ثانية
   assert.equal(second.record.reports, 2)
-  assert.equal(second.record.shopName, 'اسم محدّث')
+  // M1 (مراجعة 2026-10-09): الاسم المعتمد لا يُستبدل ببلاغ غير موثّق، والمختلف يُعرض للمالك
+  assert.equal(second.record.shopName, CUSTOMER.shopName)
+  assert.equal(second.record.pendingChanges?.shopName, 'اسم محدّث')
   assert.equal(second.record.firstSeenAt, first.record.firstSeenAt)
   assert.ok(await kv.get(regKey(CUSTOMER.deviceId)))
 })

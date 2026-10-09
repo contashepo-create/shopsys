@@ -196,14 +196,16 @@ describe('②③ العامل: تسجيل + تبليغ مرة واحدة لكل 
     expect(sent[0].text).toContain('SHOP-AAA1-1111-1111')
   })
 
-  it('③ البلاغ الثاني للجهاز نفسه ⇒ تحديث صامت بلا رسالة أخرى', async () => {
+  it('③ البلاغ الثاني للجهاز نفسه ⇒ بلا رسالة أخرى، والحقول المعتمدة لا تُستبدل (M1)', async () => {
     const sent = captureTelegram()
     await postRegister(kv, CUSTOMER)
     const second = await postRegister(kv, { ...CUSTOMER, shopName: 'اسم محدّث' })
     expect(await second.json()).toEqual({ ok: true, isNew: false })
     expect(sent).toHaveLength(1) // لا إزعاج متكرر
     const stored = JSON.parse((await kv.get(regKey(CUSTOMER.deviceId)))!) as Record<string, unknown>
-    expect(stored.shopName).toBe('اسم محدّث')
+    // M1: الاسم المعتمد من أول بلاغ يبقى، والمختلف يُعرض للمالك كتغيير لم يُعتمد
+    expect(stored.shopName).toBe(CUSTOMER.shopName)
+    expect(stored.pendingChanges).toMatchObject({ shopName: 'اسم محدّث' })
     expect(stored.reports).toBe(2)
     expect(stored.firstSeenAt).toBeTruthy()
   })
