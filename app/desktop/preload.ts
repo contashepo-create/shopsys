@@ -31,7 +31,13 @@ const databaseStorage = {
   restoreFileBackup: (path: string) => ipcRenderer.invoke('database:restoreFileBackup', { path }),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage })
+/* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
+   يمر عبر IPC فقط — لا يُكشف Notification ولا أي API آخر للمُصيّر. */
+const notifications = {
+  show: (title: string, body: string): Promise<boolean> => ipcRenderer.invoke('notify:show', { title, body }),
+}
+
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))
@@ -57,7 +63,7 @@ contextBridge.exposeInMainWorld('shopsysAppInfo', () => ipcRenderer.invoke('app:
 contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('app:backupNow'))
 
 /* v1.0.8: مرساة التجربة خارج القاعدة — تمنع إعادة التجربة بمسح البيانات */
-contextBridge.exposeInMainWorld('shopsysTrialAnchor', (firstTrialAt: string) => ipcRenderer.invoke('trial:anchor', { firstTrialAt }))
+contextBridge.exposeInMainWorld('shopsysTrialAnchor', (args: { firstTrialAt?: string; lastSeenAt?: string }) => ipcRenderer.invoke('trial:anchor', args ?? {}))
 
 /* §102 — مضيف شبكة المحل: تشغيل خادم ws + أحداث الأجهزة (المنطق في المُصيّر) */
 contextBridge.exposeInMainWorld('shopsysLanHost', {

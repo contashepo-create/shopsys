@@ -2,18 +2,23 @@ import { useEffect, useMemo } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
 import { useDataStore } from './data/repo.ts'
-import { evaluateLicense, activityMatches, isRevoked } from './core/license.ts'
-import { lockReasonFor, isBackupDue } from './core/security.ts'
+import { evaluateLicense, oldestValidDay, newestValidDay } from './core/license.ts'
+import { currentLockReason, isBackupDue } from './core/security.ts'
 import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
-import { fetchAbout, fetchRevocationList, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
+import { fetchAbout, fetchRevocationList, mergeRevocationLists, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
+/* بند 2 (تدقيق 2026-10-08): بلاغ التسجيل الجديد يصل المطوّر عبر مركز التحكم */
+import { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport } from './core/registration.ts'
+import { APP_VERSION } from './core/updates.ts'
+import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
+import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
@@ -24,6 +29,7 @@ import { labelFor } from './core/activityLabels.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
+import { LEGAL_VERSION } from './core/legal.ts'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
 import { Dashboard } from './ui/pages/Dashboard.tsx'
 import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
@@ -58,8 +64,8 @@ import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { LanSettingsPage } from './ui/pages/LanSettingsPage.tsx'
-import { startHostSession } from './data/lan/hostSession.ts'
-import { bootRemoteSession } from './data/lan/remoteSession.ts'
+import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
+import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
 import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
@@ -360,22 +366,33 @@ export default function App() {
   }, [storesHydrated])
 
   const {
-    theme, setup, touchLastSeen, appearance, legal,
+    theme, setup, touchLastSeen, appearance,
+    /* إصدار الوثيقة تغيّر (2026-10-08: إفصاح بلاغ التسجيل) ⇒ الموافقة القديمة لا
+       تكفي، فتُطلب من جديد — وهذا ما كان معلناً في المتجر («تطلب مجدداً عند
+       التحديث») ولم يكن منفذاً: كان الفحص `!legal` فقط. */
+    legal: legalCurrent,
     activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
-    setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt,
+    setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt, licenseAudit,
   } = useAppStore()
+  /* الموافقة سارية فقط على الإصدار الحالي من الوثيقة — فأي تغيير جوهري في
+     الاتفاقية/الخصوصية يعيد بوابة الموافقة مرة واحدة بعد التحديث. */
+  const legal = legalCurrent && legalCurrent.version === LEGAL_VERSION ? legalCurrent : null
   const seed = useDataStore((s) => s.seed)
 
   /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
      التجربة: عند الإقلاع نطابق بداية التجربة مع أقدم تاريخ معروف للجهاز */
-  useEffect(() => {
+  /* ح1/ح5 (مراجعة ③): مطابقة مرساة سطح المكتب — الأقدم لبداية التجربة، والأحدث لآخر
+     ظهور، والقيم التالفة لا تُقبل. تُستدعى عند الإقلاع وكل ساعة من مؤقت «آخر ظهور». */
+  const syncDesktopAnchor = (): void => {
     if (typeof window === 'undefined' || typeof window.shopsysTrialAnchor !== 'function') return
-    void window.shopsysTrialAnchor(useAppStore.getState().trialStartedAt).then((anchor) => {
-      if (anchor.firstTrialAt < useAppStore.getState().trialStartedAt) {
-        useAppStore.setState({ trialStartedAt: anchor.firstTrialAt })
-      }
+    const before = useAppStore.getState()
+    void window.shopsysTrialAnchor({ firstTrialAt: before.trialStartedAt, lastSeenAt: before.lastSeenAt }).then((anchor) => {
+      const cur = useAppStore.getState()
+      const trialStartedAt = oldestValidDay(cur.trialStartedAt, anchor.firstTrialAt) ?? cur.trialStartedAt
+      const lastSeenAt = newestValidDay(cur.lastSeenAt, anchor.lastSeenAt) ?? cur.lastSeenAt
+      if (trialStartedAt !== cur.trialStartedAt || lastSeenAt !== cur.lastSeenAt) useAppStore.setState({ trialStartedAt, lastSeenAt })
     }).catch(() => { /* المرساة مساعدة — لا تعطل الإقلاع */ })
-  }, [])
+  }
 
   /* v1.0.9 (درع البيانات): إشعار استرداد القاعدة — إن اكتُشف تلف عند الإقلاع
      استُردت أحدث نسخة سليمة تلقائياً (أو بدئت قاعدة جديدة لعدم وجود نسخة) */
@@ -391,16 +408,21 @@ export default function App() {
   }, [])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
+  /* ث1 (تدقيق 2026-10-08): إعادة التحقق من توقيع المفتاح المحفوظ في كل إقلاع.
+     الحمولة تُشتق من المفتاح الموقّع لا من التخزين — تعديل `activatedPayload`
+     في localStorage (نسخة الويب نص صريح) لم يعد يفتح `lifetime` بكل الميزات. */
+  useEffect(() => {
+    if (!storesHydrated) return
+    void useAppStore.getState().reverifyActivation()
+  }, [storesHydrated])
+
   const licenseState = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
     [activatedPayload, trialStartedAt, lastSeenAt],
   )
   const lockReason = useMemo(
-    () => lockReasonFor(licenseState, {
-      revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
-      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
-    }),
-    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId, setup.activityKeyHistory],
+    () => currentLockReason(licenseState, { activatedKey, activatedPayload, revokedKeys, licenseAudit, setup }),
+    [licenseState, activatedKey, activatedPayload, revokedKeys, licenseAudit, setup],
   )
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
@@ -448,26 +470,42 @@ export default function App() {
 
   // ─── شبكة المحل (§102): إقلاع دور الجهاز — مضيف مفعّل يفتح خادمه، وعميل
   // مفعل يعيد الاتصال بالمضيف تلقائياً بالتوكن المحفوظ (بلا رمز اقتران) ───
+  /* ح7 (مراجعة ③): شبكة المحل لا تعمل خلف شاشة القفل ولا لغير المرخّص. المضيف يتطلب
+     ميزة multi_user_lan بالمفتاح، والعميل يتطلب فتح القفل. كانت تُفتح عند كل إقلاع بلا
+     أي بوابة ترخيص. تُعاد المراجعة عند كل تغيّر في الترخيص أو القفل. */
   useEffect(() => {
+    if (!storesHydrated || licenseAudit.status === 'checking') return
     const { lanHost, lanClient } = useAppStore.getState()
-    if (lanHost.enabled && lanHost.pairingCode) {
+    const lan = useLanStatusStore.getState()
+    const unlocked = lockReason === null
+    const hostConfigured = lanHost.enabled && lanHost.pairingCode !== ''
+    if (!unlocked || !hasFeature(licenseState, 'multi_user_lan')) {
+      if (lan.hostRunning) void stopHostSession()
+    } else if (hostConfigured && !lan.hostRunning) {
       void startHostSession({ pairingCode: lanHost.pairingCode, port: lanHost.port, hostName: lanHost.hostName }).catch(() => undefined)
-    } else if (lanClient.enabled && lanClient.hostUrl) {
+    }
+    if (!unlocked) {
+      if (lan.role === 'client') disconnectRemoteSession()
+    } else if (!hostConfigured && lanClient.enabled && lanClient.hostUrl && lan.role !== 'client') {
       bootRemoteSession()
     }
-  }, [])
+  }, [storesHydrated, licenseAudit.status, licenseState, lockReason])
 
   // ─── مزامنة الترخيص و«حول» من عامل التحكم — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
-      const [about, revoked, flags] = await Promise.all([
+      const [about, revokedDevbot, revokedServices, flags] = await Promise.all([
         fetchAbout(LICENSE_CLOUD_BASE_URL),
         fetchRevocationList(LICENSE_CLOUD_BASE_URL),
+        /* ث8: لكل عامل قائمة إبطال مستقلة — نقرأهما معاً ونوحّدهما، وإلا فالحرق
+           من العامل الآخر لا يصل ويبقى المفتاح المحروق يعمل عند العميل. */
+        fetchRevocationList(APP_SERVICES_CLOUD_BASE_URL),
         fetchDeviceFlags(APP_SERVICES_CLOUD_BASE_URL, devId), // يبقى عبر العامل الكامل
       ])
       if (cancelled) return
+      const revoked = mergeRevocationLists(revokedDevbot, revokedServices)
       // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
       if (about !== null || revoked !== null || flags !== null) {
         setCloudData({
@@ -501,6 +539,51 @@ export default function App() {
     }
   }, [setCloudData])
 
+  /* ─── بند 2 (تدقيق 2026-10-08): إبلاغ المطوّر بكل عميل جديد ───────────────
+     ما كان: المعالج يجمع الاسم والهاتف والبريد والمنشأة والنشاط ثم لا يُرسل
+     شيء إطلاقاً — لا POST في الكود كله. الآن بلاغ واحد لكل جهاز بعد اكتمال
+     الإعداد. القواعد: fire-and-forget (لا يعطّل الإقلاع ولا العمل)، مرة واحدة
+     (العلامة تُحفظ عند النجاح فقط)، ويصلح أوفلاين بالمحاولة في الإقلاع التالي.
+     لا يُرسل إلا بيانات التواصل والمنشأة التي كتبها العميل في المعالج نفسه. */
+  useEffect(() => {
+    if (!setup.completed) return
+    let cancelled = false
+    const report = async () => {
+      const app = useAppStore.getState()
+      /* الموافقة الصريحة شرط إرسال — بلاها لا يُرسل شيء إطلاقاً (سياسة الخصوصية:
+         البيانات محلية، وبلاغ التسجيل اختياري بخانة يفعّلها العميل بنفسه). */
+      if (!shouldReportRegistration({
+        setupCompleted: app.setup.completed,
+        deviceId: app.deviceId,
+        reportedAt: app.registrationReportedAt,
+        consentAt: app.registrationConsentAt,
+      })) return
+      const payload = buildRegistrationReport({
+        deviceId: app.deviceId,
+        appVersion: APP_VERSION,
+        platform: isElectronRuntime() ? 'desktop' : 'web',
+        shopName: app.setup.shopName,
+        ownerName: app.setup.ownerName,
+        phone: app.setup.phone,
+        email: app.setup.email,
+        city: app.setup.city,
+        street: app.setup.street,
+        countryCode: app.setup.countryCode,
+        activityId: app.setup.activityId,
+        activityNameAr: ACTIVITY_TEMPLATES.find((t) => t.id === app.setup.activityId)?.nameAr ?? '',
+        accountingMode: app.setup.accountingMode,
+        plan: app.activatedPayload?.plan ?? 'trial',
+        doctorSpecialty: app.setup.doctorSpecialty,
+      })
+      if (!payload) return
+      const result = await sendRegistrationReport(LICENSE_CLOUD_BASE_URL, payload)
+      // الفشل (أوفلاين) لا يُعلَّم ⇒ تُعاد المحاولة في الإقلاع التالي
+      if (!cancelled && result !== 'failed') app.markRegistrationReported()
+    }
+    void report()
+    return () => { cancelled = true }
+  }, [setup.completed])
+
   // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───
   useEffect(() => {
     if (!setup.completed) return
@@ -512,7 +595,7 @@ export default function App() {
         activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt,
         lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
       })
-      if (!hasFeature(lic, 'telegram_bot')) return
+      if (currentLockReason(lic, app) !== null || !hasFeature(lic, 'telegram_bot')) return
       const now = localNowIso()
       if (!isDailySendDue(app.lastDailySentDay, now, app.schedule.hour)) return
       try {
@@ -559,7 +642,7 @@ export default function App() {
         activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt,
         lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
       })
-      if (!hasFeature(lic, 'cloud_sync')) return
+      if (currentLockReason(lic, app) !== null || !hasFeature(lic, 'cloud_sync')) return
       // مفتاح الإطفاء السحابي (البند 5): ميزة ممنوحة لكن المطوّر أطفأها مؤقتاً
       if (lic.status === 'active' && !effectiveFeatures(lic.payload.features, app.deviceFlags).includes('cloud_sync')) return
       await runSyncCycle() // أخطاؤها تُسجل في sync.lastResult ولا ترمي أبداً
@@ -583,8 +666,9 @@ export default function App() {
 
   // مرساة «آخر ظهور» ضد إرجاع ساعة الجهاز (نظام الترخيص) — عند الإقلاع وكل ساعة
   useEffect(() => {
-    touchLastSeen()
-    const t = setInterval(touchLastSeen, 60 * 60 * 1000)
+    const beat = () => { touchLastSeen(); syncDesktopAnchor() }
+    beat()
+    const t = setInterval(beat, 60 * 60 * 1000)
     return () => clearInterval(t)
   }, [touchLastSeen])
 
@@ -615,12 +699,32 @@ export default function App() {
     return () => clearInterval(t)
   }, [setup.completed])
 
+  /* ث1: لا حكم على الترخيص (ولا شاشة قفل) قبل انتهاء إعادة التحقق من التوقيع —
+     وإلا ومضت شاشة «انتهى اشتراكك» لعميل مفعّل في نافذة الفحص. */
+  if (setup.completed && licenseAudit.status === 'checking') {
+    return (
+      <>
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+          <div className="text-center space-y-3">
+            <div className="text-4xl animate-pulse">🔐</div>
+            <div className="text-[13px] font-black text-slate-400">جارٍ التحقق من سلامة الترخيص…</div>
+          </div>
+        </div>
+        <ToastHost />
+      </>
+    )
+  }
+
   // القفل (القرار 28): بعد اكتمال الإعداد، أي حالة غير سارية ⇒ الشاشة المقفلة فقط
   if (setup.completed && lockReason) {
     return (
       <>
         <LockScreen reason={lockReason} state={licenseState} />
         <ToastHost />
+        {/* بند 10: العميل المقفول **أحوج** من غيره لتنبيه المطوّر (تعليمات التجديد،
+            «أُرسل مفتاحك — أعد التشغيل»)، والاستطلاع يعمل في هذه الحالة أيضاً، فبدون
+            التركيب هنا تصل التنبيهات ولا يعرضها شيء — ولا جرس في شاشة القفل. */}
+        <DevNoticeHost />
       </>
     )
   }
@@ -662,6 +766,12 @@ export default function App() {
         <><LegalGate /></>
       ) : setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
+      {/* بند 10 (تدقيق 2026-10-08): نافذة تنبيه المطوّر المنبثقة. تظهر فقط لدرجتَي
+          important/critical؛ أما info فبقي جرساً وتوستاً بلا مقاطعة.
+          تُركَّب أيضاً في فرع شاشة القفل أعلاه (بوابة verify_dev_notice_levels تحصي
+          التركيبين) — ولا تُركَّب في ومضة «جارٍ التحقق» العابرة ولا في تبويب القراءة
+          فقط، حيث النافذة الأخرى هي التي تعمل ويكفيها تنبيه واحد. */}
+      <DevNoticeHost />
       {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):
           تبقى حية أثناء فتح قسم إعدادات الطباعة وتتحدث فوراً مع كل تغيير */}
       <ThermalPreview />

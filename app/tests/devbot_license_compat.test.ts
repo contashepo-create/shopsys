@@ -39,12 +39,18 @@ const basePayload: LicensePayload = {
 
 class MemoryKv {
   private values = new Map<string, string>()
+  /* metadata المفاتيح كما في KV الحقيقي: يُعاد من list() بلا نداء get إضافي */
+  private metas = new Map<string, Record<string, unknown>>()
   async get(key: string) { return this.values.get(key) ?? null }
-  async put(key: string, value: string) { this.values.set(key, String(value)) }
-  async delete(key: string) { this.values.delete(key) }
+  async put(key: string, value: string, opts?: { metadata?: Record<string, unknown> }) {
+    this.values.set(key, String(value))
+    if (opts && opts.metadata !== undefined) this.metas.set(key, opts.metadata)
+    else this.metas.delete(key)
+  }
+  async delete(key: string) { this.values.delete(key); this.metas.delete(key) }
   async list({ prefix = '', limit = 1000 }: { prefix?: string; limit?: number } = {}) {
     return {
-      keys: [...this.values.keys()].filter((key) => key.startsWith(prefix)).slice(0, limit).map((name) => ({ name })),
+      keys: [...this.values.keys()].filter((key) => key.startsWith(prefix)).slice(0, limit).map((name) => (this.metas.has(name) ? { name, metadata: this.metas.get(name) } : { name })),
       list_complete: true,
     }
   }
@@ -150,6 +156,14 @@ describe('التوافق الذهبي: بوت المطوّر ↔ عميل الت
     const group = await handlePanelButton(`group:${groupHash}`, chatId, cfg)
     expect(group.text).toContain('أجهزة العميل')
 
+    /* انحدار: بطاقة العميل كانت تنهار بـReferenceError (متغير `hash` غير معرّف
+       في نطاق clientReply) — لا تُفتح إطلاقاً من قائمة الأجهزة. */
+    const card = await handlePanelButton(`client:${deviceId}`, chatId, cfg)
+    expect(card.text).toContain('متجر النور')
+    const addDeviceData = card.opts.reply_markup.inline_keyboard
+      .flat().find((b) => String(b.callback_data).startsWith('adddevice:'))?.callback_data
+    expect(addDeviceData).toBe(`adddevice:${groupHash}`)
+
     await handlePanelButton('g:plan:pro', chatId, cfg)
     await handlePanelButton('g:feature:telegram_bot', chatId, cfg)
     await handlePanelButton(`c:${deviceId}:plan:basic`, chatId, cfg)
@@ -163,13 +177,22 @@ describe('التوافق الذهبي: بوت المطوّر ↔ عميل الت
     expect(verified.plan).toBe('basic')
     expect(verified.features).toEqual([])
 
+    /* بند 10 (تدقيق 2026-10-08): كل مداخل التنبيه صارت تمرّ عبر قائمة **درجة
+       الإلزام** قبل كتابة النص — فهي خطوة إضافية في التدفق، لا خطوة مفقودة.
+       نختار info (الافتراضي السابق) فيبقى السلوك المُتحقَّق منه هنا كما كان. */
     await handlePanelButton('panel:notice:all', chatId, cfg)
+    await handlePanelButton('panel:noticelevel:info:global', chatId, cfg)
     await handlePanelText('تحديث عام للتطبيق', chatId, cfg)
     await handlePanelButton(`notice:${deviceId}`, chatId, cfg)
+    await handlePanelButton(`panel:noticelevel:info:customer:${groupHash}`, chatId, cfg)
     await handlePanelText('رسالة خاصة للعميل', chatId, cfg)
-    expect((await getNotificationsForDevice(cfg, deviceId)).map((notice) => notice.body)).toEqual([
+    const deviceNotices = await getNotificationsForDevice(cfg, deviceId)
+    expect(deviceNotices.map((notice) => notice.body)).toEqual([
       'تحديث عام للتطبيق', 'رسالة خاصة للعميل',
     ])
+    // التوافق الرجعي: درجة معلنة لكل تنبيه، وinfo لا يطلب إقراراً
+    expect(deviceNotices.every((notice) => notice.level === 'info')).toBe(true)
+    expect(deviceNotices.every((notice) => notice.requiresAck === false)).toBe(true)
 
     const response = await devbotWorker.fetch(new Request(`https://shopsys-control/notifications/${deviceId}`), { SHOPSYS_CONTROL: kv })
     expect(response.headers.get('access-control-allow-origin')).toBe('*')

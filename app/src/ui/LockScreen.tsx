@@ -7,15 +7,15 @@
  * لا سبيل لتجاوزها: كل الشاشات الأخرى غير معروضة أصلاً في هذه الحالة.
  */
 import { useMemo, useState } from 'react'
-import { KeyRound, Download, MessageCircle, Phone, FileJson, FileSpreadsheet, Copy, Store } from 'lucide-react'
+import { KeyRound, Download, MessageCircle, Phone, Mail, FileJson, FileSpreadsheet, Copy, Store } from 'lucide-react'
 import { ACTIVITY_TEMPLATES } from '../core/activities.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { useDataStore } from '../data/repo.ts'
 import {
-  verifyLicenseKey, activityMatches, isRevoked, PLAN_LABELS, type LicenseState,
+  acceptActivationKey, PLAN_LABELS, type LicenseState,
 } from '../core/license.ts'
 import { LOCK_REASON_LABELS, toCsv, type LockReason } from '../core/security.ts'
-import { FALLBACK_ABOUT } from '../core/cloud.ts'
+import { FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../core/cloud.ts'
 import { buildBackup, backupFileName } from '../core/backup.ts'
 import { Btn, inputCls, useToast } from './components/ui.tsx'
 
@@ -52,9 +52,10 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
     setBusy(true)
     try {
       const trimmed = keyInput.trim()
-      if (isRevoked(trimmed, revokedKeys)) throw new Error('هذا المفتاح محروق (مُبطل من المطوّر) — اطلب مفتاحاً جديداً')
-      const payload = await verifyLicenseKey(trimmed, deviceId)
-      if (!activityMatches(payload, setup.activityId, setup.activityKeyHistory)) throw new Error('المفتاح صادر لنشاط آخر — اطلب مفتاحاً لنشاطك الحالي')
+      // فحص الإبطال والنشاط داخل الدالة المشتركة — نفس الفحص في شاشة «الترخيص» (M4)
+      const payload = await acceptActivationKey({
+        key: trimmed, deviceId, revokedKeys, activityId: setup.activityId, activityKeyHistory: setup.activityKeyHistory,
+      })
       setActivated(trimmed, payload)
       toast.show(`تم التفعيل — خطة ${PLAN_LABELS[payload.plan]} ✅ يعاد التحميل…`)
       setTimeout(() => window.location.reload(), 900)
@@ -134,11 +135,27 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-2">
               <h2 className="font-black flex items-center gap-2"><MessageCircle className="w-5 h-5 text-sky-500" /> تواصل مع المطوّر</h2>
               {about.supportTelegram ? (
-                <a href={`https://t.me/${about.supportTelegram.replace('@', '')}`} target="_blank" rel="noreferrer"
-                  className="flex items-center gap-2 text-sky-600 font-bold text-sm hover:underline"><MessageCircle className="w-4 h-4" /> {about.supportTelegram}</a>
+                <a href={`https://t.me/${about.supportTelegram}`} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-2 text-sky-600 font-bold text-sm hover:underline"><MessageCircle className="w-4 h-4" /> @{about.supportTelegram}</a>
               ) : <p className="text-[12px] text-slate-400">تليجرام: عبر بوت العملاء المسجل لديك</p>}
               {about.supportPhone && (
-                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 font-bold text-sm" dir="ltr"><Phone className="w-4 h-4" /> {about.supportPhone}</div>
+                <a href={`tel:${about.supportPhone.replace(/\s/g, '')}`} className="flex items-center gap-2 text-slate-600 dark:text-slate-300 font-bold text-sm hover:underline" dir="ltr"><Phone className="w-4 h-4" /> {about.supportPhone}</a>
+              )}
+              {/* بند 9: واتساب والبريد — أهم قناتين للتجديد، وكانتتا غائبتين تماماً */}
+              {about.supportWhatsapp && (
+                <a href={whatsappLink(about.supportWhatsapp)} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-2 text-emerald-600 font-bold text-sm hover:underline"><MessageCircle className="w-4 h-4" /> واتساب التجديد</a>
+              )}
+              {about.supportEmail && (
+                <a href={`mailto:${about.supportEmail}`} className="flex items-center gap-2 text-violet-600 font-bold text-sm hover:underline" dir="ltr"><Mail className="w-4 h-4" /> {about.supportEmail}</a>
+              )}
+              {/* عميل منتهٍ + أوفلاين: لا قنوات سحابية ⇒ نوجّهه لمحادثة الدعم الداخلية
+                  ولمعرّف الجهاز الذي يرسله يدوياً — لا طريق مسدود أمام التجديد. */}
+              {!hasAboutContact(about) && (
+                <p className="text-[11.5px] text-slate-400 leading-relaxed">
+                  لا اتصال ببيانات التواصل الآن — انسخ <b>معرّف الجهاز</b> أعلاه وأرسله للمطوّر من أي قناة
+                  تملكها، أو افتح «الدعم الفني» من داخل التطبيق عند توفر الإنترنت.
+                </p>
               )}
             </div>
 

@@ -58,6 +58,13 @@ for (const f of files) {
   // discriminated unions بكائنات: `| { kind: 'read_only'; ... }` — القيمة معلنة داخل الكائن
   for (const m of src.matchAll(/\{\s*kind:\s*'([^']+)'/g)) legal.add(m[1])
 }
+// ح2 (مراجعة ③): LicenseState اتحاد بكائنات متعددة الأسطر — قيم status معلنة داخل أعضائه.
+// تُجمع من هذا النوع وحده (لا من كل `{ status: '…' }` في المشروع) كي لا تضعف البوابة.
+{
+  const licSrc = readFileSync(new URL('../src/core/license.ts', import.meta.url), 'utf8')
+  const block = licSrc.match(/export type LicenseState =([\s\S]*?)\n\n/)?.[1] ?? ''
+  for (const m of block.matchAll(/status:\s*'([^']+)'/g)) legal.add(m[1])
+}
 // أنواع MIME لفحوص File.type — ليست حقول حالة تجارية
 legal.add('application/pdf')
 for (const value of ['string', 'checkbox', 'radio', 'option']) legal.add(value)

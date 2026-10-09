@@ -3,10 +3,10 @@
  * Cloudflare Worker (نقطة /about) — تتحدث تلقائياً عند توفر الإنترنت
  * وتعمل بآخر نسخة محفوظة أوفلاين.
  */
-import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale } from 'lucide-react'
+import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale, Mail, MapPin, Clock } from 'lucide-react'
 import { useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { fetchAbout, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT } from '../../core/cloud.ts'
+import { fetchAbout, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../../core/cloud.ts'
 import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
 import { DownloadCloud, ShieldCheck } from 'lucide-react'
 import { PLAN_LABELS } from '../../core/license.ts'
@@ -49,19 +49,70 @@ export function AboutPage() {
         <img src="./app-logo.png" alt="TAHAKAM ERP" className="max-h-32 mx-auto object-contain rounded-2xl shadow-lg" />
         <h1 className="text-2xl font-black">{about.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{about.body}</p>
-        <div className="flex items-center justify-center gap-4 flex-wrap text-sm font-bold">
-          {about.supportTelegram && (
-            <a href={`https://t.me/${about.supportTelegram.replace('@', '')}`} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-sky-600 hover:underline">
-              <MessageCircle className="w-4 h-4" /> {about.supportTelegram}
-            </a>
-          )}
-          {about.supportPhone && <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300" dir="ltr"><Phone className="w-4 h-4" /> {about.supportPhone}</span>}
-          {about.website && (
-            <a href={about.website} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-violet-600 hover:underline">
-              <Globe className="w-4 h-4" /> الموقع
-            </a>
-          )}
-        </div>
+        {/* بند 9 (تدقيق 2026-10-08): كل قنوات التواصل — تُملأ من لوحة المطوّر.
+            الروابط معقّمة في parseAbout (http/https/mailto/tel فقط). */}
+        {hasAboutContact(about) ? (
+          <div className="flex items-center justify-center gap-3 flex-wrap text-sm font-bold pt-1">
+            {about.supportWhatsapp && (
+              <a href={whatsappLink(about.supportWhatsapp)} target="_blank" rel="noreferrer"
+                className="flex items-center gap-1.5 text-emerald-600 hover:underline" title="واتساب الدعم">
+                <MessageCircle className="w-4 h-4" /> واتساب
+              </a>
+            )}
+            {about.supportPhone && (
+              <a href={`tel:${about.supportPhone.replace(/\s/g, '')}`} dir="ltr"
+                className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:underline">
+                <Phone className="w-4 h-4" /> {about.supportPhone}
+              </a>
+            )}
+            {about.supportTelegram && (
+              <a href={`https://t.me/${about.supportTelegram}`} target="_blank" rel="noreferrer"
+                className="flex items-center gap-1.5 text-sky-600 hover:underline">
+                <MessageCircle className="w-4 h-4" /> @{about.supportTelegram}
+              </a>
+            )}
+            {about.supportEmail && (
+              <a href={`mailto:${about.supportEmail}`} dir="ltr"
+                className="flex items-center gap-1.5 text-violet-600 hover:underline">
+                <Mail className="w-4 h-4" /> {about.supportEmail}
+              </a>
+            )}
+            {about.website && (
+              <a href={about.website} target="_blank" rel="noreferrer"
+                className="flex items-center gap-1.5 text-violet-600 hover:underline">
+                <Globe className="w-4 h-4" /> الموقع
+              </a>
+            )}
+            {about.socialLinks.map((link) => (
+              <a key={`${link.label}-${link.url}`} href={link.url} target="_blank" rel="noreferrer"
+                className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 hover:underline">
+                <Globe className="w-4 h-4" /> {link.label}
+              </a>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[11.5px] text-slate-400 font-bold">
+            لم يضبط المطوّر بيانات تواصل عن بُعد بعد — استخدم «الدعم الفني» من الإعدادات لفتح محادثة مباشرة.
+          </div>
+        )}
+        {(about.address || about.workHours) && (
+          <div className="text-[12px] text-slate-500 dark:text-slate-400 space-y-0.5 pt-1">
+            {about.address && <div className="flex items-center justify-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> {about.address}</div>}
+            {about.workHours && <div className="flex items-center justify-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {about.workHours}</div>}
+          </div>
+        )}
+        {about.extraFields.length > 0 && (
+          <div className="pt-2 space-y-1.5 text-right">
+            {about.extraFields.map((field) => (
+              <div key={`${field.label}-${field.value}`} className="flex items-start justify-between gap-3 rounded-xl bg-slate-500/5 px-3 py-2 text-[12.5px]">
+                <span className="font-bold text-slate-500 dark:text-slate-400 shrink-0">{field.label}</span>
+                {field.url
+                  ? <a href={field.url} target="_blank" rel="noreferrer" className="font-bold text-sky-600 hover:underline break-all">{field.value}</a>
+                  : <span className="font-bold text-slate-700 dark:text-slate-200 break-all">{field.value}</span>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className={card}>

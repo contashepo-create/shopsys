@@ -40,6 +40,12 @@ export interface NotificationsInput {
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
   openPinResets?: { id: number; nameAr: string }[]
+  /**
+   * تذكير قرب انتهاء الاشتراك (بند 5 من تدقيق 2026-10-08) — يُحسب محلياً من
+   * الرخصة الموقّعة فيعمل أوفلاين. يُمرَّر جاهزاً (النواة في subscriptionReminder.ts)
+   * كي يستفيد من آليات الجرس الموجودة بدل اختراع واجهة جديدة.
+   */
+  licenseReminder?: AppNotification | null
   fmt: (minor: number) => string
   todayIso: string // ISO كامل أو YYYY-MM-DD
 }
@@ -48,6 +54,9 @@ export function collectNotifications(input: NotificationsInput): AppNotification
   const out: AppNotification[] = []
   const day = input.todayIso.slice(0, 10)
   const dayMs = Date.parse(`${day}T00:00:00Z`)
+
+  // 0) تذكير قرب انتهاء الاشتراك — يُحسب محلياً من الرخصة الموقّعة (يعمل أوفلاين)
+  if (input.licenseReminder) out.push(input.licenseReminder)
 
   // 1) صلاحيات الدُفعات (منتهية أو خلال 30 يوماً)
   for (const a of expiryAlerts(input.batches, input.itemName, input.todayIso)) {

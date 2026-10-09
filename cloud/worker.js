@@ -43,6 +43,9 @@ const DEVICE_RE = /^[A-Za-z0-9_-]{6,64}$/
 const TEXT_MAX = 1500
 const LOG_MAX = 60_000
 const CHAT_KEEP = 200 // آخر 200 رسالة لكل جهاز
+/* أقصى قراءات محادثة في صندوق الوارد الواحد — يبقى الطلب تحت حدّ النداءات
+   الفرعية (50 في خطة Cloudflare المجانية) حتى لو وُجدت محادثات قديمة بلا فهرس */
+const CHAT_INBOX_MAX_READS = 30
 const RATE_LIMIT = 10 // رسائل لكل جهاز في الساعة
 const SUPPORT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/ // 32 bytes base64url
 
@@ -118,6 +121,18 @@ async function authorizeSupport(request, env, deviceId, body = '') {
   return true
 }
 
+/**
+ * مصادقة جسر اللوحة (بند 1): سرّ مشترك في ترويسة `x-bridge-secret`، ومقارنة
+ * بزمن ثابت. بلا سرّ مضبوط في البيئة ⇒ الجسر مغلق كلياً (لا «وضع تطوير» مفتوح).
+ * كل أفعال الجسر كتابة/قراءة لمحادثة دعم، فلا تُقبل إلا من عامل اللوحة.
+ */
+function bridgeAuthorized(request, env) {
+  const expected = String(env.SUPPORT_BRIDGE_SECRET ?? '')
+  if (expected.length < 16) return false
+  const presented = request.headers.get('x-bridge-secret') ?? ''
+  return constantTimeEqual(presented, expected)
+}
+
 /* ─── إصدار المفاتيح من البوت (ترقية بوت المطوّر — سد فجوة التدقيق) ───
  * نفس صيغة license_tool.mjs حرفياً: canonicalPayload → Ed25519 → SHOPSYS1.<b64u>.<b64u>
  * يتطلب: wrangler secret put SHOPSYS_PRIVATE_KEY (pkcs8 بترميز base64url)
@@ -154,7 +169,10 @@ function canonicalPayload(p) {
 
 /** بصمة المفتاح — مطابقة لـkeyFingerprint في core/license.ts (DJB2 على جزء التوقيع) */
 function keyFingerprint(key) {
-  const sigPart = key.trim().split('.')[2] ?? key
+  // ح1 (مراجعة ③): تطبيع البايتات المعيارية — مطابق لـkeyFingerprint في core/license.ts
+  const raw = key.trim().split('.')[2] ?? key
+  let sigPart = raw
+  try { sigPart = b64uEncode(b64uDecode(raw)) } catch { /* ترميز تالف — التحقق سيفشل أصلاً */ }
   let h = 5381
   for (let i = 0; i < sigPart.length; i++) h = ((h << 5) + h + sigPart.charCodeAt(i)) >>> 0
   return h.toString(16).padStart(8, '0')
@@ -238,12 +256,28 @@ async function readChat(env, deviceId) {
   } catch { return [] }
 }
 
+/* فهرس المحادثة في metadata المفتاح (بند 1): صندوق الوارد في لوحة المطوّر كان
+   يقرأ **كل** محادثة بـ`kv.get` مستقل — وخطط Cloudflare المجانية تحدّ النداءات
+   الفرعية بـ50 للطلب، أي أن الصندوق ينهار عند نحو 48 محادثة. من الآن يُبنى
+   الصندوق من `kv.list` وحده، والقراءة الكاملة تبقى لفتح محادثة واحدة فقط. */
+const CHAT_META_VERSION = 1
+function chatMetadata(chat) {
+  const last = chat.length ? chat[chat.length - 1] : {}
+  return {
+    v: CHAT_META_VERSION,
+    count: chat.length,
+    lastFrom: String(last.from ?? '').slice(0, 12),
+    lastAt: String(last.at ?? '').slice(0, 30),
+    lastText: clean(last.text, 120),
+  }
+}
+
 async function pushChat(env, deviceId, from, text) {
   const chat = await readChat(env, deviceId)
   const id = chat.length ? Math.max(...chat.map((m) => m.id || 0)) + 1 : 1
   chat.push({ id, from, text, at: new Date().toISOString() })
   const trimmed = chat.length > CHAT_KEEP ? chat.slice(chat.length - CHAT_KEEP) : chat
-  await env.SHOPSYS_KV.put(`chat:${deviceId}`, JSON.stringify(trimmed))
+  await env.SHOPSYS_KV.put(`chat:${deviceId}`, JSON.stringify(trimmed), { metadata: chatMetadata(trimmed) })
   return id
 }
 
@@ -339,6 +373,90 @@ export default {
       }
 
       return json({ error: 'method' }, 405, request, env)
+    }
+
+    /* ─── بند 1 (تدقيق 2026-10-08): جسر لوحة المطوّر ─────────────────────────
+       قناة الدعم تعيش هنا (HMAC v2 + TOFU + تحديد المعدل)، بينما لوحة المطوّر
+       وبوت التليجرام يعيشان في عامل آخر (`tools/devbot`). وبوت تليجرام واحد لا
+       يقبل إلا ويبهوك واحداً ⇒ لو كان الويبهوك على مركز التحكم، فـ`/tg-webhook`
+       هنا ميت ولا يصل رد المطوّر للعميل أبداً، ولو كان على اللوحة فبلاغات الدعم
+       تُرسل للمطوّر لكن الرد عليها (Reply) يُعامل أمراً مجهولاً هناك.
+       الحل: جسر مصادَق عليه — مركز التحكم يحوّل الردود ويقرأ المحادثات من هنا
+       بلا نقل تخزين ولا تغيير في العميل. السرّ مشترك بين العاملين. */
+    if (path === '/support-bridge' && request.method === 'POST') {
+      if (!bridgeAuthorized(request, env)) return json({ error: 'forbidden' }, 403, request, env)
+      let body
+      try { body = await request.json() } catch { return json({ error: 'json only' }, 400, request, env) }
+      const action = String(body?.action ?? '')
+
+      /* رد المطوّر على تليجرام (Reply على بلاغ دعم) — يحلّ الربط هنا لأن
+         `tgmap:<messageId>` محفوظ في هذه المساحة لا في مساحة اللوحة. */
+      if (action === 'telegram-reply') {
+        const messageId = String(body?.messageId ?? '')
+        const text = clean(body?.text, TEXT_MAX)
+        if (!messageId || text.length < 1) return json({ error: 'empty' }, 400, request, env)
+        const deviceId = await env.SHOPSYS_KV.get(`tgmap:${messageId}`)
+        if (!deviceId || !DEVICE_RE.test(deviceId)) return json({ error: 'unknown message' }, 404, request, env)
+        await pushChat(env, deviceId, 'developer', text)
+        return json({ ok: true, deviceId }, 200, request, env)
+      }
+
+      /* صندوق الوارد: المحادثات التي آخر رسالة فيها من العميل (تنتظر رداً) أولاً */
+      if (action === 'inbox') {
+        const list = await env.SHOPSYS_KV.list({ prefix: 'chat:', limit: 200 })
+        const rows = []
+        let reads = 0
+        let truncated = 0
+        for (const key of list.keys) {
+          const deviceId = key.name.slice('chat:'.length)
+          const meta = key.metadata
+          if (meta && meta.v === CHAT_META_VERSION) {
+            rows.push({
+              deviceId,
+              messages: Number(meta.count) || 0,
+              awaitingReply: meta.lastFrom === 'client',
+              lastFrom: String(meta.lastFrom ?? ''),
+              lastText: clean(meta.lastText, 200),
+              lastAt: String(meta.lastAt ?? ''),
+            })
+            continue
+          }
+          /* محادثة قديمة (كُتبت قبل الفهرس) — تُقرأ بعدد محدود، وما زاد يُبلَّغ
+             عنه في `truncated` بدل فشل الطلب كله عند حدّ النداءات الفرعية. */
+          if (reads >= CHAT_INBOX_MAX_READS) { truncated++; continue }
+          reads++
+          const chat = await readChat(env, deviceId)
+          if (!chat.length) continue
+          const last = chat[chat.length - 1]
+          rows.push({
+            deviceId,
+            messages: chat.length,
+            awaitingReply: last?.from === 'client',
+            lastFrom: last?.from ?? '',
+            lastText: clean(last?.text, 200),
+            lastAt: String(last?.at ?? ''),
+          })
+        }
+        rows.sort((a, b) => (b.awaitingReply - a.awaitingReply) || String(b.lastAt).localeCompare(String(a.lastAt)))
+        return json({ ok: true, conversations: rows.slice(0, 50), truncated }, 200, request, env)
+      }
+
+      if (action === 'thread') {
+        const deviceId = clean(body?.deviceId, 64)
+        if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400, request, env)
+        return json({ ok: true, deviceId, messages: (await readChat(env, deviceId)).slice(-40) }, 200, request, env)
+      }
+
+      if (action === 'reply') {
+        const deviceId = clean(body?.deviceId, 64)
+        const text = clean(body?.text, TEXT_MAX)
+        if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400, request, env)
+        if (text.length < 1) return json({ error: 'empty' }, 400, request, env)
+        await pushChat(env, deviceId, 'developer', text)
+        return json({ ok: true, deviceId }, 200, request, env)
+      }
+
+      return json({ error: 'unknown action' }, 400, request, env)
     }
 
     /* ─── ويبهوك تليجرام: رد المطوّر (Reply) يدخل محادثة العميل ─── */
@@ -555,12 +673,16 @@ export default {
       }), { headers: responseHeaders(request, env) })
     }
 
-    // GET /subscription/:deviceId — حالة اشتراك للعرض في التطبيق
+    // GET /subscription/:deviceId — حالة الاشتراك للعرض (عقد devbot v1.0.3).
+    // ح10 (مراجعة ③): لا يُعاد السجل الخام لأنه يحمل اسم العميل — الحقول الثلاثة فقط.
     const m = path.match(/^\/subscription\/([A-Z0-9-]+)$/i)
     if (m) {
       const raw = await env.SHOPSYS_KV.get(`sub:${m[1]}`)
       if (!raw) return json(null, 200, request, env)
-      return new Response(raw, { headers: responseHeaders(request, env) })
+      let o = null
+      try { o = JSON.parse(raw) } catch { o = null }
+      if (!o || typeof o !== 'object') return json(null, 200, request, env)
+      return json({ plan: String(o.plan ?? ''), expiresAt: o.expiresAt ?? null, message: String(o.message ?? '') }, 200, request, env)
     }
 
     // GET /flags/:deviceId — مفتاح الإطفاء السحابي (البند 5):

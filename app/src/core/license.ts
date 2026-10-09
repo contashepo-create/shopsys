@@ -198,8 +198,16 @@ export async function verifyActivityChangeKey(
  * قائمة الإبطال (حرق المفاتيح): تُجلب من Cloudflare Worker وتُخزن محلياً.
  * البصمة = checksum توقيع المفتاح — لا نحتاج المفتاح كاملاً في القائمة.
  */
+/**
+ * ح1 (مراجعة ③ — ثغرة مؤكدة بالتجربة): البصمة تُحسب على **البايتات المعيارية** للتوقيع
+ * لا على نصه الخام. التوقيع الواحد يُكتب بصور يقبلها فك الترميز (حشو `=` بعد الجزء، أو
+ * `+` و`/` بدل `-` و`_`)، وكلها تفك إلى البايتات نفسها فيمرّ التحقق، لكن البصمة النصية
+ * تتغير فلا يُعرف المفتاح كمحروق. المفاتيح المعيارية الصادرة من المطوّر لا تتغير بصمتها.
+ */
 export function keyFingerprint(key: string): string {
-  const sigPart = key.trim().split('.')[2] ?? key
+  const raw = key.trim().split('.')[2] ?? key
+  let sigPart = raw
+  try { sigPart = b64uEncode(b64uDecode(raw)) } catch { /* ترميز تالف: البصمة على النص كما هو — التحقق سيفشل أصلاً */ }
   let h = 5381
   for (let i = 0; i < sigPart.length; i++) h = ((h << 5) + h + sigPart.charCodeAt(i)) >>> 0
   return h.toString(16).padStart(8, '0')
@@ -258,10 +266,53 @@ export async function verifyLicenseKey(
   return payload
 }
 
+/**
+ * قبول مفتاح تفعيل — نقطة الدخول الوحيدة لشاشتي القفل و«الترخيص» (مراجعة 2026-10-09 · M4).
+ * كانت شاشة «الترخيص» تتجاوز فحص الإبطال وتطابق النشاط فتحفظ مفتاحاً مُبطلاً
+ * ويستبدل المفتاح الصالح. الآن الفحوص الثلاثة في مكان واحد لا يمكن تجاوزه.
+ */
+export async function acceptActivationKey(args: {
+  key: string
+  deviceId: string
+  revokedKeys: readonly string[]
+  activityId: string | null
+  activityKeyHistory?: readonly string[]
+  /** اختياري للاختبار فقط — الإنتاج يستخدم المفتاح العام المدمج */
+  pubB64u?: string
+}): Promise<LicensePayload> {
+  const key = args.key.trim()
+  if (isRevoked(key, args.revokedKeys)) throw new Error('هذا المفتاح محروق (مُبطل من المطوّر) — اطلب مفتاحاً جديداً')
+  const payload = await verifyLicenseKey(key, args.deviceId, args.pubB64u)
+  if (!activityMatches(payload, args.activityId, args.activityKeyHistory)) throw new Error('المفتاح صادر لنشاط آخر — اطلب مفتاحاً لنشاطك الحالي')
+  return payload
+}
+
 /* ─── حالة الترخيص (منطق خالص قابل للفحص) ─── */
 
 export function daysBetween(fromIso: string, toIso: string): number {
   return Math.floor((Date.parse(toIso.slice(0, 10)) - Date.parse(fromIso.slice(0, 10))) / 86_400_000)
+}
+
+/** يوم بصيغة YYYY-MM-DD (يُقبل ISO كامل بقص الوقت) — لا يُقبل ما لا يُقرأ تاريخاً */
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+export function isValidIsoDay(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 10) return false
+  const day = value.slice(0, 10)
+  return ISO_DAY_RE.test(day) && Number.isFinite(Date.parse(day))
+}
+
+/** أقدم يوم صالح بين المرشحين — مرساة بداية التجربة: الأقدم هو الدليل الأوثق */
+export function oldestValidDay(...candidates: unknown[]): string | null {
+  let best: string | null = null
+  for (const c of candidates) if (isValidIsoDay(c) && (best === null || c.slice(0, 10) < best.slice(0, 10))) best = c
+  return best
+}
+
+/** أحدث يوم صالح بين المرشحين — مرساة «آخر ظهور»: لا رجوع للخلف أبداً */
+export function newestValidDay(...candidates: unknown[]): string | null {
+  let best: string | null = null
+  for (const c of candidates) if (isValidIsoDay(c) && (best === null || c.slice(0, 10) > best.slice(0, 10))) best = c
+  return best
 }
 
 /**
@@ -276,17 +327,24 @@ export function evaluateLicense(args: {
   lastSeenAt: string // آخر يوم شوهد (مرساة ضد إرجاع الساعة)
   today: string // ISO اليوم
 }): LicenseState {
+  /* ح2 (مراجعة ③): فشل مغلق على كل قيمة زمنية تالفة. قبل هذا الإصلاح كانت trialStartedAt = ""
+     تعطي left = NaN فلا يتحقق `<= 0` أبداً ⇒ تجربة لا تنتهي (مؤكد بالتجربة). */
+  if (!isValidIsoDay(args.today)) return { status: 'invalid', reason: 'تاريخ الجهاز غير صالح' }
   const today = args.today.slice(0, 10)
+  // مرساة «آخر ظهور» التالفة = أثر إرجاع الساعة مُحي ⇒ تعامل كتلاعب
+  if (!isValidIsoDay(args.lastSeenAt)) return { status: 'clock_tampered' }
   if (today < args.lastSeenAt.slice(0, 10)) return { status: 'clock_tampered' }
 
   if (args.activatedPayload) {
     const p = args.activatedPayload
     if (p.expiresAt === null) return { status: 'active', payload: p, daysLeft: null }
+    if (!isValidIsoDay(p.expiresAt)) return { status: 'invalid', reason: 'تاريخ انتهاء المفتاح غير صالح' }
     const left = daysBetween(today, p.expiresAt)
     if (left < 0) return { status: 'expired', payload: p }
     return { status: 'active', payload: p, daysLeft: left }
   }
 
+  if (!isValidIsoDay(args.trialStartedAt)) return { status: 'invalid', reason: 'بداية التجربة المحفوظة غير صالحة' }
   const used = daysBetween(args.trialStartedAt, today)
   if (used < 0) return { status: 'clock_tampered' } // اليوم قبل بداية التجربة
   const left = TRIAL_DAYS - used
@@ -297,6 +355,47 @@ export function evaluateLicense(args: {
 /** هل ميزة مرخّصة؟ (الفاتورة الإلكترونية وغيرها لا تعمل إلا بمفتاح يحملها) */
 export function hasFeature(state: LicenseState, feature: LicenseFeature): boolean {
   return state.status === 'active' && state.payload.features.includes(feature)
+}
+
+/* ═══ نزاهة الترخيص عند الإقلاع (ث1 — تدقيق 2026-10-08) ═══════════════════
+ * الثغرة: التطبيق كان يقيّم الحالة من `activatedPayload` **المحفوظ في التخزين**
+ * ولا يعيد التحقق من التوقيع إلا عند إدخال مفتاح يدوياً. وفي نسخة الويب
+ * التخزين نص صريح (localStorage) ⇒ كتابة حمولة `{plan:'lifetime',expiresAt:null}`
+ * بيد المستخدم تفتح كل الميزات المدفوعة بلا أي مفتاح موقّع.
+ *
+ * القاعدة الجديدة: **المفتاح الموقّع هو المصدر الوحيد للحمولة.**
+ * التخزين يحمل `activatedKey` فقط، والحمولة تُشتق منه في كل إقلاع، وأي
+ * حمولة محفوظة لا يسندها مفتاح صالح تُعتبر تلاعباً وتُمسح. */
+
+export type StoredLicenseAudit =
+  /** لا مفتاح مخزّن ⇒ لا تفعيل (والحمولة المحفوظة — إن وُجدت — باطلة) */
+  | { kind: 'no_key'; hadStoredPayload: boolean }
+  /** المفتاح تحقّق ⇒ الحمولة الموثوقة هي الناتجة من التوقيع */
+  | { kind: 'verified'; payload: LicensePayload; storedPayloadDiffered: boolean }
+  /** مفتاح مخزّن لكنه فاسد/معدّل/لجهاز آخر ⇒ يُسقط التفعيل */
+  | { kind: 'tampered'; reason: string }
+
+/**
+ * قرار فحص الترخيص المحفوظ — دالة خالصة (بلا crypto):
+ * تستقبل نتيجة التحقق (`verifiedPayload` أو سبب الفشل) وتقرر ما يُعتمد.
+ * لا تُرجع الحمولة المحفوظة أبداً: إما حمولة التوقيع أو لا شيء.
+ */
+export function auditStoredLicense(args: {
+  activatedKey: string | null
+  storedPayload: LicensePayload | null
+  verifiedPayload: LicensePayload | null
+  verifyError?: string | null
+}): StoredLicenseAudit {
+  const key = typeof args.activatedKey === 'string' ? args.activatedKey.trim() : ''
+  if (!key) return { kind: 'no_key', hadStoredPayload: args.storedPayload != null }
+  if (args.verifiedPayload) {
+    return {
+      kind: 'verified',
+      payload: args.verifiedPayload,
+      storedPayloadDiffered: JSON.stringify(args.storedPayload ?? null) !== JSON.stringify(args.verifiedPayload),
+    }
+  }
+  return { kind: 'tampered', reason: args.verifyError?.trim() || 'مفتاح التفعيل المخزّن غير صالح' }
 }
 
 /** هل الاستخدام مسموح أصلاً؟ (تجربة سارية أو مفتاح سارٍ) */

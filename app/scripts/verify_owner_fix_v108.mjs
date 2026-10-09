@@ -59,7 +59,7 @@ check('⑤ شاشة القفل (انتهاء الاشتراك): تفعيل + ت�
 
 /* ─── ⑥ مرساة التجربة ─── */
 check('⑥ مرساة التجربة خارج القاعدة (trial:anchor في main + preload)', main.includes("ipcMain.handle('trial:anchor'") && read('desktop/preload.ts').includes('shopsysTrialAnchor'))
-check('⑥ التطبيق يطابق بداية التجربة مع أقدم مرساة للجهاز', app.includes('shopsysTrialAnchor') && app.includes('anchor.firstTrialAt <'))
+check('⑥ التطبيق يطابق بداية التجربة مع أقدم مرساة للجهاز', app.includes('shopsysTrialAnchor') && app.includes('oldestValidDay(cur.trialStartedAt, anchor.firstTrialAt)'))
 
 /* ─── ⑦ مركز المطوّر المتطور ─── */
 const worker = read('../tools/devbot/src/worker.js')

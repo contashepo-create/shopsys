@@ -21,3 +21,9 @@ compatibility_date = "2026-09-01"
 #   wrangler secret put DEV_CHAT_ID          ← محادثة المطوّر
 #   wrangler secret put TG_WEBHOOK_SECRET    ← سر ويبهوك تليجرام
 #   wrangler secret put SHOPSYS_PRIVATE_KEY  ← مفتاح التوقيع الخاص (pkcs8 b64u) لأمر «اصدار»
+#
+# ─── جسر لوحة المطوّر (بند 1 من تدقيق 2026-10-08) ───
+# مركز التحكم (tools/devbot) يقرأ محادثات الدعم ويرد عليها عبر نقطة
+# POST /support-bridge المصادَقة بهذا السرّ — اضبط القيمة نفسها في العاملين:
+#   wrangler secret put SUPPORT_BRIDGE_SECRET   ← 32 محرفاً عشوائياً فأكثر
+# بلا هذا السرّ (أو بأقل من 16 محرفاً) تكون نقطة الجسر مغلقة كلياً.
