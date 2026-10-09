@@ -18,6 +18,8 @@
  *   (إزعاج لا اختراق) — ويُحدّ منه حدّ الحجم والتعقيم وعدم كشف أي بيانات.
  */
 
+import { tgEscape } from './tgHtml.js'
+
 export const REG_PREFIX = 'reg:'
 export const REG_MAX_BYTES = 8_192
 const DEVICE_RE = /^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/
@@ -74,6 +76,33 @@ export function sanitizeRegistration(raw) {
 
 export const regKey = (deviceId) => `${REG_PREFIX}${deviceId}`
 
+/* ── سقف تنبيهات التسجيل اليومية ─────────────────────────────────────────────
+ * `POST /register` نقطة عامة بلا سرّ (أي سرّ مضمّن في التطبيق مكشوف). التخزين
+ * آمن بسبب التعقيم والحدود، لكن **التنبيه** لكل جهاز جديد قناة إزعاج: سكربت
+ * بأرقام أجهزة مختلقة يرسل آلاف الرسائل في محادثة المطوّر، وتليجرام يحدّ نحو
+ * 20 رسالة/دقيقة للمحادثة الواحدة ⇒ 429 يؤخّر البلاغات الحقيقية.
+ * السقف يومي (48 ساعة TTL) ويُسقف التنبيه لا التسجيل. */
+export const REG_TG_DAILY_CAP = 25
+export const regAlertKey = (dayIso) => `reg-tg:${dayIso}`
+
+/**
+ * يستهلك حصة تنبيه واحدة لليوم. يعيد:
+ *   allowed      ⇒ هل يُرسل التنبيه الآن
+ *   count        ⇒ عدد التنبيهات المرسلة اليوم (بعد هذه)
+ *   justCrossed  ⇒ هل هذا آخر تنبيه مسموح اليوم (لإبلاغ المطوّر مرة واحدة)
+ * KV ليس ذرّياً: تجاوز طفيف عند التزامن ممكن ومقبول (منظومة أحادية المطوّر).
+ */
+export async function consumeRegistrationAlert(cfg, dayIso = new Date().toISOString().slice(0, 10)) {
+  const key = regAlertKey(dayIso)
+  let count = 0
+  try { count = Number(await cfg.kv.get(key)) || 0 } catch { count = 0 }
+  if (count >= REG_TG_DAILY_CAP) return { allowed: false, count, justCrossed: false }
+  try { await cfg.kv.put(key, String(count + 1), { expirationTtl: 172_800 }) } catch { /* السقف تحسين */ }
+  /* `justCrossed` مع **آخر تنبيه مسموح** لا بعده: لو أُعيدت مع كل نداء مرفوض
+     لأرسلنا تحذير المجاوزة في كل مرة — وهو نفسه إزعاج. */
+  return { allowed: true, count: count + 1, justCrossed: count + 1 === REG_TG_DAILY_CAP }
+}
+
 /* ── فهرس القائمة في metadata المفتاح ────────────────────────────────────────
  * `kv.list` يعيد metadata كل مفتاح **بلا نداء إضافي**، بينما قراءة كل سجل
  * `kv.get` على حدة. خطط Cloudflare المجانية تحدّ النداءات الفرعية بـ50 للطلب
@@ -128,26 +157,28 @@ export async function saveRegistration(cfg, report) {
    30 يوماً، وهذا هو الأداة التي تنفّذه — أمر `/احذف SHOP-…` في البوت. */
 }
 
-/** صياغة عربية للتليجرام — كل بيانات العميل في رسالة واحدة قابلة للنسخ */
+/** صياغة عربية للتليجرام — كل بيانات العميل في رسالة واحدة قابلة للنسخ.
+ *  كل قيمة كتبها العميل تُهرَّب (tgEscape): الرسالة تُرسل بـparse_mode=HTML،
+ *  و`&` غير مُهرَّبة تُفشل الرسالة كلها بصمت فلا يصلك البلاغ (انظر tgHtml.js). */
 export function formatRegistrationAr(record, { isNew = true } = {}) {
   const head = isNew ? '🆕 <b>تسجيل عميل جديد</b>' : '🔁 <b>تحديث بيانات عميل مسجّل</b>'
   const lines = [
     head,
     '',
-    `🏪 المنشأة: ${record.shopName || '—'}`,
-    `👤 المالك: ${record.ownerName || '—'}`,
-    record.phone ? `📞 الهاتف: <code>${record.phone}</code>` : '',
-    record.email ? `📧 البريد: <code>${record.email}</code>` : '',
-    record.city || record.street ? `📍 العنوان: ${[record.city, record.street].filter(Boolean).join(' — ')}` : '',
-    `🧭 النشاط: ${record.activityNameAr || record.activityId || '—'}${record.countryCode ? ` (${record.countryCode})` : ''}`,
-    record.doctorSpecialty ? `🩺 التخصص: ${record.doctorSpecialty}` : '',
-    `📦 الخطة: ${record.plan} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
-    `🖥️ الجهاز: <code>${record.deviceId}</code> · ${record.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
-    `🔖 الإصدار: ${record.appVersion || '—'}`,
-    `🕒 التسجيل: ${record.registeredAt}`,
+    `🏪 المنشأة: ${tgEscape(record.shopName) || '—'}`,
+    `👤 المالك: ${tgEscape(record.ownerName) || '—'}`,
+    record.phone ? `📞 الهاتف: <code>${tgEscape(record.phone)}</code>` : '',
+    record.email ? `📧 البريد: <code>${tgEscape(record.email)}</code>` : '',
+    record.city || record.street ? `📍 العنوان: ${[record.city, record.street].filter(Boolean).map(tgEscape).join(' — ')}` : '',
+    `🧭 النشاط: ${tgEscape(record.activityNameAr) || tgEscape(record.activityId) || '—'}${record.countryCode ? ` (${tgEscape(record.countryCode)})` : ''}`,
+    record.doctorSpecialty ? `🩺 التخصص: ${tgEscape(record.doctorSpecialty)}` : '',
+    `📦 الخطة: ${tgEscape(record.plan)} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
+    `🖥️ الجهاز: <code>${tgEscape(record.deviceId)}</code> · ${record.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
+    `🔖 الإصدار: ${tgEscape(record.appVersion) || '—'}`,
+    `🕒 التسجيل: ${tgEscape(record.registeredAt)}`,
     isNew
       ? ''
-      : `🔁 عدد البلاغات: ${record.reports} · أول ظهور: ${record.firstSeenAt}`,
+      : `🔁 عدد البلاغات: ${Number(record.reports) || 0} · أول ظهور: ${tgEscape(record.firstSeenAt)}`,
     '',
     isNew ? '💡 لإصدار مفتاح لهذا الجهاز: <code>/اصدر</code> ثم اختر العميل والجهاز.' : '',
   ]
@@ -195,8 +226,8 @@ export function formatRegistrationsAr(records, { skipped = 0 } = {}) {
   if (!records.length) return 'لا تسجيلات جديدة بعد — يظهر هنا كل عميل يكمل معالج أول التشغيل.'
   const lines = ['🆕 <b>آخر التسجيلات</b>', '']
   for (const r of records.slice(0, 20)) {
-    const contact = [r.phone, r.email].filter(Boolean).join(' · ')
-    lines.push(`• ${r.shopName || 'بلا اسم'} — ${r.ownerName || '—'}${contact ? `\n   ${contact}` : ''}\n   <code>${r.deviceId}</code> · ${r.activityNameAr || r.activityId || '—'} · ${String(r.lastSeenAt ?? '').slice(0, 10)}`)
+    const contact = [r.phone, r.email].filter(Boolean).map(tgEscape).join(' · ')
+    lines.push(`• ${tgEscape(r.shopName) || 'بلا اسم'} — ${tgEscape(r.ownerName) || '—'}${contact ? `\n   ${contact}` : ''}\n   <code>${tgEscape(r.deviceId)}</code> · ${tgEscape(r.activityNameAr) || tgEscape(r.activityId) || '—'} · ${tgEscape(String(r.lastSeenAt ?? '').slice(0, 10))}`)
   }
   if (records.length > 20) lines.push(`\n… و${records.length - 20} آخرين`)
   if (skipped > 0) {

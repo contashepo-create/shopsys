@@ -6,6 +6,7 @@ import {
 } from './aboutContent.js'
 import { listRegistrations, formatRegistrationsAr } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
+import { tgEscape } from './tgHtml.js'
 
 const PLANS = ['trial', 'basic', 'pro', 'lifetime']
 const PLAN_LABELS = { trial: 'تجريبي', basic: 'أساسي', pro: 'احترافي', lifetime: 'مدى الحياة' }
@@ -166,10 +167,28 @@ export function panelHome(chatId, text = 'لوحة التحكم — اختر م�
  * السقف 1000 جهاز: قائمة لا مخزن — يكفي للإحصاء ولا ينمو للأبد. */
 export const ACK_PREFIX = 'notice-acks:'
 
+/** هل التنبيه موجود فعلاً (عام أو لهذا الجهاز)؟ — شرط قبل أي كتابة */
+export async function noticeExists(cfg, noticeId, deviceId) {
+  const id = cleanText(noticeId, 64)
+  const device = cleanText(deviceId, 24).toUpperCase()
+  if (!id) return false
+  const keys = ['notices:global']
+  if (/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(device)) keys.push(`notices:${device}`)
+  for (const key of keys) {
+    const list = parseList(await cfg.kv.get(key))
+    if (list.some((n) => n && n.id === id)) return true
+  }
+  return false
+}
+
 export async function recordNoticeAck(cfg, noticeId, deviceId) {
   const id = cleanText(noticeId, 64)
   const device = cleanText(deviceId, 24).toUpperCase()
   if (!id || !/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(device)) return { ok: false, isNew: false }
+  /* نقطة عامة بلا سرّ ⇒ بلا هذا الفحص تصير كتابةً مفتوحة تُنشئ مفاتيح
+     `notice-acks:<معرّف عشوائي>` بلا حد (تلويث المساحة وكلفة كتابة) وتُضخّم
+     إحصاء القراءات الذي يبني عليه المطوّر قراره. تكلفته نداءان نادران. */
+  if (!(await noticeExists(cfg, id, device))) return { ok: false, isNew: false, reason: 'unknown notice' }
   const key = `${ACK_PREFIX}${id}`
   const seen = parseList(await cfg.kv.get(key)).filter((v) => typeof v === 'string')
   if (seen.includes(device)) return { ok: true, isNew: false, count: seen.length }
@@ -581,7 +600,7 @@ async function supportInboxReply(cfg, chatId) {
     return menuReply(chatId, '💬 لا محادثات دعم بعد.\nيظهر هنا كل عميل راسلك من «الدعم الفني» داخل التطبيق.', [[button('🏠 القائمة الرئيسية', 'panel:home')]])
   }
   const rows = conversations.slice(0, 12).map((c) => [button(
-    `${c.awaitingReply ? '🔴' : '⚪'} ${String(c.deviceId).slice(-13)} — ${cleanText(c.lastText, 30) || '…'}`,
+    `${c.awaitingReply ? '🔴' : '⚪'} ${tgEscape(String(c.deviceId).slice(-13))} — ${tgEscape(cleanText(c.lastText, 30)) || '…'}`,
     `support-thread:${c.deviceId}`,
   )])
   rows.push([button('🔄 تحديث', 'panel:support')], [button('🏠 القائمة الرئيسية', 'panel:home')])
@@ -596,7 +615,7 @@ async function supportThreadReply(cfg, chatId, deviceId) {
   const thread = await supportBridge(cfg, 'thread', { deviceId })
   if (!thread.ok) return menuReply(chatId, `⚠️ ${thread.error}`, [[button('⬅️ رجوع', 'panel:support')]])
   const messages = Array.isArray(thread.messages) ? thread.messages : []
-  const lines = messages.slice(-12).map((m) => `${m.from === 'developer' ? '🧑‍💻' : '👤'} ${String(m.at ?? '').slice(0, 16).replace('T', ' ')}\n${cleanText(m.text, 500)}`)
+  const lines = messages.slice(-12).map((m) => `${m.from === 'developer' ? '🧑‍💻' : '👤'} ${tgEscape(String(m.at ?? '').slice(0, 16).replace('T', ' '))}\n${tgEscape(cleanText(m.text, 500))}`)
   const body = lines.length ? lines.join('\n\n') : 'لا رسائل في هذه المحادثة.'
   return menuReply(chatId, `💬 <code>${deviceId}</code>\n\n${body}`, [
     [button('✍️ الرد على العميل', `support-reply:${deviceId}`)],

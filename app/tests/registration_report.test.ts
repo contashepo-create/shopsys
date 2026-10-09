@@ -25,6 +25,7 @@ const {
 } = await import('../src/core/registration.ts')
 const {
   sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, deleteRegistration, regKey,
+  REG_TG_DAILY_CAP, regAlertKey,
   formatRegistrationAr: formatRegistrationArServer,
 } = await import('../../tools/devbot/src/registrations.js')
 
@@ -364,5 +365,41 @@ describe('⑥ الاستعراض من اللوحة والأمر', () => {
     await devbotWorker.fetch(hook(), env_(kv))
     expect(sent.at(-1)?.text ?? '').toContain('بقالة النور')
     expect(sent.at(-1)?.text ?? '').toContain('آخر التسجيلات')
+  })
+})
+
+describe('⑧ نقطة عامة: سقف التنبيهات وتهريب HTML', () => {
+  let kv: MemoryKv
+  beforeEach(() => { kv = new MemoryKv() })
+
+  /* أربع مجموعات من 4 محارف [A-Z0-9] تماماً — وإلا رفض العامل البلاغ 400 */
+  const deviceIdAt = (i: number) => `SHOP-A${i.toString(36).padStart(3, '0').toUpperCase()}-1111-1111`
+
+  it('التخزين يستمر بعد السقف، والتنبيه وحده يُسقف + تحذير واحد', async () => {
+    const calls = captureTelegram()
+    const total = REG_TG_DAILY_CAP + 2
+    for (let i = 0; i < total; i++) {
+      const res = await postRegister(kv, { ...CUSTOMER, deviceId: deviceIdAt(i), shopName: `محل ${i}` })
+      expect(res.status).toBe(200) // البلاغ مقبول دائماً — السقف على التنبيه فقط
+    }
+    const { records } = await listRegistrations({ kv } as never)
+    expect(records.length).toBe(total) // كل التسجيلات محفوظة
+    const customerAlerts = calls.filter((c) => c.text.includes('تسجيل عميل جديد'))
+    expect(customerAlerts).toHaveLength(REG_TG_DAILY_CAP)
+    const capWarnings = calls.filter((c) => c.text.includes('سقف تنبيهات التسجيل اليومي'))
+    expect(capWarnings).toHaveLength(1) // لا تحذير في كل نداء مرفوض
+    expect(await kv.get(regAlertKey(new Date().toISOString().slice(0, 10)))).toBe(String(REG_TG_DAILY_CAP))
+  })
+
+  it('اسم فيه & يصل مُهرَّباً — لا تفشل رسالة البلاغ بصمت', async () => {
+    /* المركز يرسل بـparse_mode=HTML: `&` غير مُهرَّبة ⇒ تليجرام يرفض الرسالة
+       كلها («Can't parse entities») والاستثناء مبتلع ⇒ لا يصلك العميل أصلاً. */
+    const calls = captureTelegram()
+    const res = await postRegister(kv, { ...CUSTOMER, shopName: 'سوبر ماركت A&B', ownerName: 'أحمد &#x27; علي' })
+    expect(res.status).toBe(200)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].text).toContain('A&amp;B')
+    expect(calls[0].text).toContain('&amp;#x27;')
+    expect(calls[0].text).not.toContain('A&B')
   })
 })

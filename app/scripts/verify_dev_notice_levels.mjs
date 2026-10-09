@@ -24,7 +24,7 @@ import {
   noticeSeverity, osNotificationFor, sendNoticeAck,
   NOTICE_LEVEL_LABELS_AR, NOTICE_LEVEL_ICONS,
 } from '../src/core/devNotice.ts'
-import { recordNoticeAck, ackCountForNotice, normalizeNoticeLevel, NOTICE_LEVELS } from '../../tools/devbot/src/adminPanel.js'
+import { recordNoticeAck, ackCountForNotice, noticeExists, normalizeNoticeLevel, NOTICE_LEVELS } from '../../tools/devbot/src/adminPanel.js'
 
 let passed = 0
 function ok(name, fn) {
@@ -43,6 +43,9 @@ const modalSrc = src('../src/ui/components/DevNoticeModal.tsx')
 const appSrc = src('../src/App.tsx')
 const headerSrc = src('../src/ui/layout/Header.tsx')
 const storeSrc = src('../src/stores/app.store.ts')
+const workerSrcOf = (name) => src(`../../tools/devbot/src/${name}.js`)
+const ACK_DEVICE = 'SHOP-AAA1-1111-1111'
+const tgHtml = await import('../../tools/devbot/src/tgHtml.js')
 const workerSrc = src('../../tools/devbot/src/worker.js')
 const panelSrc = src('../../tools/devbot/src/adminPanel.js')
 const bridgeSrc = src('../src/data/desktopBridge.ts')
@@ -162,6 +165,8 @@ await okAsync('sendNoticeAck: sent/failed ولا استثناء أبداً', asy
 
 await okAsync('العامل: الإقرار مرة لكل جهاز، والمعرّف التالف مرفوض', async () => {
   const kv = new MemoryKv()
+  /* الإقرار مشروط بوجود التنبيه (انظر الفحص أدناه) — فنزرعه أولاً */
+  await kv.put('notices:global', JSON.stringify([{ id: 'n-1', body: 'تنبيه', level: 'critical' }]))
   const cfg = { kv }
   assert.equal((await recordNoticeAck(cfg, '', 'SHOP-AAA1-1111-1111')).ok, false)
   assert.equal((await recordNoticeAck(cfg, 'n-1', 'abc')).ok, false)
@@ -248,5 +253,57 @@ ok('اللوحة: اختيار الدرجة قبل النص + قائمة الت�
   assert.match(panelSrc, /if \(action === 'notice' && parts\[1\] === 'all'\) return noticeLevelReply/)
   assert.match(workerSrc, /case '\/تنبيهات'/)
 })
+
+/* نقطة الإقرار عامة بلا سرّ ⇒ يجب أن تكون كتابة محدودة الأثر: لا تُقبل إلا
+   لتنبيه موجود فعلاً، وإلا صارت مولّد مفاتيح `notice-acks:<عشوائي>` بلا حد
+   وأداة لتضخيم إحصاء القراءات الذي يبني عليه المطوّر قراره. */
+await okAsync('الإقرار لا يُقبل إلا لتنبيه موجود — ولا يُنشئ مفتاحاً لغيره', async () => {
+  const kv = new MemoryKv()
+  const ghost = await recordNoticeAck({ kv }, 'not-exists', ACK_DEVICE)
+  assert.deepEqual({ ok: ghost.ok, reason: ghost.reason }, { ok: false, reason: 'unknown notice' })
+  assert.equal(await kv.get('notice-acks:not-exists'), null)
+  assert.equal(await ackCountForNotice({ kv }, 'not-exists'), 0)
+  assert.equal(await noticeExists({ kv }, 'not-exists', ACK_DEVICE), false)
+
+  await kv.put('notices:global', JSON.stringify([{ id: 'g-1', body: 'عام', level: 'critical' }]))
+  assert.equal(await noticeExists({ kv }, 'g-1', ACK_DEVICE), true)
+  assert.equal((await recordNoticeAck({ kv }, 'g-1', ACK_DEVICE)).ok, true)
+  assert.equal(await ackCountForNotice({ kv }, 'g-1'), 1)
+
+  /* تنبيه خاص بجهاز لا يُقبل إقراره من جهاز آخر */
+  await kv.put('notices:SHOP-CCC3-3333-3333', JSON.stringify([{ id: 'p-1', body: 'خاص', level: 'info' }]))
+  assert.equal((await recordNoticeAck({ kv }, 'p-1', ACK_DEVICE)).ok, false)
+  assert.equal((await recordNoticeAck({ kv }, 'p-1', 'SHOP-CCC3-3333-3333')).ok, true)
+
+  /* ولا يُسرَّب عدد القراءات لنداء عام */
+  assert.match(workerSrcOf('worker'), /return json\(\{ ok: result\.ok \}, CORS, result\.ok \? 200 : 400\)/)
+})
+
+/* المركز يرسل بـparse_mode=HTML: قيمة غير مُهرَّبة (خصوصاً `&`) تُفشل الرسالة
+   كلها فيبتلعها catch ⇒ لا يصل المطوّر بلاغ العميل ولا يقرأ محادثة الدعم. */
+ok('كل نص يكتبه العميل يُهرَّب قبل دخوله رسالة HTML', () => {
+  const { tgEscape } = tgHtml
+  assert.equal(tgEscape('A&B'), 'A&amp;B')
+  assert.equal(tgEscape('<b>x</b>'), '&lt;b&gt;x&lt;/b&gt;')
+  assert.equal(tgEscape(null), '')
+  const regSrc = src('../../tools/devbot/src/registrations.js')
+  const supSrc = src('../../tools/devbot/src/subscriptions.js')
+  assert.match(regSrc, /tgEscape\(record\.shopName\)/)
+  assert.match(regSrc, /tgEscape\(record\.ownerName\)/)
+  assert.match(supSrc, /tgEscape\(row\.customer\)/)
+  /* العامل يغلّف بـString() واللوحة بـcleanText() — المهم أن التهريب هو الأبعد */
+  const cases = [
+    ['عامل المركز', '../../tools/devbot/src/worker.js', /tgEscape\(String\(c\.lastText/],
+    ['عامل المركز (المحادثة)', '../../tools/devbot/src/worker.js', /tgEscape\(String\(m\.text/],
+    ['اللوحة (الصندوق)', '../../tools/devbot/src/adminPanel.js', /tgEscape\(cleanText\(c\.lastText/],
+    ['اللوحة (المحادثة)', '../../tools/devbot/src/adminPanel.js', /tgEscape\(cleanText\(m\.text/],
+  ]
+  for (const [name, file, pattern] of cases) {
+    const text = src(file)
+    assert.match(text, /import \{ tgEscape \} from '\.\/tgHtml\.js'/, `${name} لا يستورد التهريب`)
+    assert.match(text, pattern, `${name}: نص العميل في الدعم بلا تهريب`)
+  }
+})
+
 
 console.log(`\nالنتيجة: ${passed} فحوص ناجحة${process.exitCode ? ' — مع فشل أعلاه' : ' ✅'}`)

@@ -30,8 +30,10 @@ import { readAbout, setAboutField } from './aboutContent.js'
 import {
   REG_MAX_BYTES, sanitizeRegistration, saveRegistration, formatRegistrationAr,
   listRegistrations, formatRegistrationsAr, deleteRegistration,
+  consumeRegistrationAlert, REG_TG_DAILY_CAP,
 } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
+import { tgEscape } from './tgHtml.js'
 
 /* ═══════════ إعدادات البيئة (secrets + vars) ═══════════ */
 const env_ = env => ({
@@ -105,7 +107,9 @@ export default {
       try { payload = JSON.parse(await request.text()) } catch { return json({ ok: false }, CORS, 400) }
       const deviceId = typeof payload?.deviceId === 'string' ? payload.deviceId : ''
       const result = await recordNoticeAck(cfg, decodeURIComponent(ackRoute[1]), deviceId)
-      return json({ ok: result.ok, ...(result.count !== undefined ? { count: result.count } : {}) }, CORS, result.ok ? 200 : 400)
+      /* لا يُعاد العدد للعميل: نقطة عامة، والعدد إحصاء للمطوّر وحده (يُقرأ من
+         `/تنبيهات`). العميل يحتاج `ok` فقط — والإيصال تحسين لا يعتمد عليه. */
+      return json({ ok: result.ok }, CORS, result.ok ? 200 : 400)
     }
 
     const sub = url.pathname.match(/^\/subscription\/([^/]+)$/)
@@ -135,9 +139,19 @@ export default {
       const report = sanitizeRegistration(raw)
       if (!report) return json({ ok: false, error: 'bad device id' }, CORS, 400)
       const { isNew, record } = await saveRegistration(cfg, report)
-      /* التبليغ للمطوّر عند أول بلاغ للجهاز فقط — لا إزعاج متكرر */
+      /* التبليغ للمطوّر عند أول بلاغ للجهاز فقط — لا إزعاج متكرر. ومع سقف يومي:
+         النقطة عامة وبلا سرّ، فبدون سقف يستطيع سكربت بأرقام أجهزة مختلقة أن يغرّق
+         محادثة المطوّر (تليجرام يحدّ ~20 رسالة/دقيقة للمحادثة ⇒ 429 يؤخّر بلاغات
+         حقيقية) وأن يستهلك كتابات KV. التخزين يستمر؛ المُسقف هو التنبيه فقط. */
       if (isNew && cfg.token && cfg.adminId) {
-        try { await sendTelegram(cfg, cfg.adminId, formatRegistrationAr(record)) } catch { /* التبليغ تحسين */ }
+        try {
+          const alert = await consumeRegistrationAlert(cfg)
+          if (alert.allowed) await sendTelegram(cfg, cfg.adminId, formatRegistrationAr(record))
+          if (alert.justCrossed) {
+            await sendTelegram(cfg, cfg.adminId,
+              `⚠️ بلغنا سقف تنبيهات التسجيل اليومي (${REG_TG_DAILY_CAP}). التسجيلات ما زالت تُحفظ وتُرى في <code>/تسجيلات</code> واللوحة.\nإن لم يكن هذا ضغطاً عادياً فراجع الأرقام — ولرفع السقف عدّل <code>REG_TG_DAILY_CAP</code>.`)
+          }
+        } catch { /* التبليغ تحسين — لا يعطّل قبول البلاغ */ }
       }
       return json({ ok: true, isNew }, CORS)
     }
@@ -221,8 +235,9 @@ function formatSupportInboxAr(conversations, truncated = 0) {
   const lines = ['💬 <b>محادثات الدعم</b>', '']
   for (const c of conversations.slice(0, 15)) {
     const flag = c.awaitingReply ? '🔴 بانتظار ردك' : '⚪ آخر رسالة ردك'
-    lines.push(`${flag} · <code>${c.deviceId}</code> · ${String(c.lastAt ?? '').slice(0, 16).replace('T', ' ')}`)
-    lines.push(`   ${String(c.lastText ?? '').slice(0, 120)}`)
+    lines.push(`${flag} · <code>${tgEscape(c.deviceId)}</code> · ${tgEscape(String(c.lastAt ?? '').slice(0, 16).replace('T', ' '))}`)
+    /* نص كتبه العميل: يُهرَّب وإلا رفض تليجرام الرسالة كلها (parse_mode=HTML) */
+    lines.push(`   ${tgEscape(String(c.lastText ?? '').slice(0, 120))}`)
   }
   if (conversations.length > 15) lines.push(`\n… و${conversations.length - 15} محادثات أخرى`)
   if (Number(truncated) > 0) lines.push(`\n⚠️ ${truncated} محادثة قديمة بلا فهرس لم تُعرض في هذه الدورة (حدّ النداءات) — تُفهرس تلقائياً عند أول رسالة جديدة فيها.`)
@@ -233,10 +248,10 @@ function formatSupportInboxAr(conversations, truncated = 0) {
 
 function formatSupportThreadAr(deviceId, messages) {
   if (!messages?.length) return `لا رسائل في محادثة <code>${deviceId}</code>.`
-  const lines = [`💬 <b>محادثة</b> <code>${deviceId}</code>`, '']
+  const lines = [`💬 <b>محادثة</b> <code>${tgEscape(deviceId)}</code>`, '']
   for (const m of messages.slice(-15)) {
     const who = m.from === 'developer' ? '🧑‍💻 أنت' : '👤 العميل'
-    lines.push(`${who} · ${String(m.at ?? '').slice(0, 16).replace('T', ' ')}\n${String(m.text ?? '').slice(0, 600)}`)
+    lines.push(`${who} · ${tgEscape(String(m.at ?? '').slice(0, 16).replace('T', ' '))}\n${tgEscape(String(m.text ?? '').slice(0, 600))}`)
     lines.push('')
   }
   lines.push(`↩️ للرد: <code>/رد ${deviceId} نص الرد</code>`)

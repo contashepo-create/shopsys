@@ -24,6 +24,7 @@ import {
 } from '../src/core/registration.ts'
 import {
   sanitizeRegistration, saveRegistration, listRegistrations, formatRegistrationsAr, deleteRegistration, regKey,
+  consumeRegistrationAlert, REG_TG_DAILY_CAP, regAlertKey,
   formatRegistrationAr as formatServerAr,
 } from '../../tools/devbot/src/registrations.js'
 
@@ -271,5 +272,47 @@ await okAsync('قائمة التسجيلات تُبنى من فهرس metadata (
   assert.equal(skipped, 0)
   assert.match(formatRegistrationsAr(records), /بقالة النور/)
 })
+
+/* `/register` نقطة عامة بلا سرّ (أي سرّ مضمّن في التطبيق مكشوف). التخزين محدود
+   الأثر بالتعقيم والحدود، لكن **التنبيه** لكل جهاز جديد قناة إزعاج: سكربت بأرقام
+   أجهزة مختلقة يُغرق محادثة المطوّر، وتليجرام يحدّ ~20 رسالة/دقيقة للمحادثة ⇒
+   429 يؤخّر البلاغات الحقيقية. السقف يومي ويُسقف التنبيه لا التسجيل. */
+await okAsync('سقف تنبيهات التسجيل اليومي: التنبيه يُسقف والتخزين يستمر', async () => {
+  assert.equal(REG_TG_DAILY_CAP, 25)
+  assert.equal(regAlertKey('2026-10-08'), 'reg-tg:2026-10-08')
+  const kv = new MemoryKv()
+  let allowed = 0
+  let crossings = 0
+  for (let i = 0; i < REG_TG_DAILY_CAP + 5; i++) {
+    const r = await consumeRegistrationAlert({ kv }, '2026-10-08')
+    if (r.allowed) allowed++
+    if (r.justCrossed) crossings++
+  }
+  assert.equal(allowed, REG_TG_DAILY_CAP, 'السقف لا يُحترم')
+  assert.equal(crossings, 1, 'الإبلاغ عن مجاوزة السقف يجب أن يكون مرة واحدة')
+  /* اليوم التالي حصة جديدة */
+  assert.equal((await consumeRegistrationAlert({ kv }, '2026-10-09')).allowed, true)
+  /* والتخزين نفسه لا يمرّ عبر السقف */
+  const regSrc = src('../../tools/devbot/src/registrations.js')
+  assert.match(regSrc, /expirationTtl: 172_800/)
+  assert.match(workerSrc, /const alert = await consumeRegistrationAlert\(cfg\)/)
+  assert.match(workerSrc, /if \(alert\.allowed\) await sendTelegram/)
+  assert.match(workerSrc, /alert\.justCrossed/)
+  const before = await saveRegistration({ kv }, sanitizeRegistration(CUSTOMER))
+  assert.equal(before.saved, true)
+})
+
+/* المركز يرسل بـparse_mode=HTML: اسم محل فيه `&` غير مُهرَّبة يُفشل الرسالة كلها
+   فيبتلعها catch ⇒ لا يصلك بلاغ العميل الجديد (بند 2 يتعطل لعملاء بعينهم). */
+ok('بلاغ التسجيل يهرّب كل قيمة كتبها العميل قبل إدراجها في HTML', async () => {
+  const regSrc = src('../../tools/devbot/src/registrations.js')
+  assert.match(regSrc, /import \{ tgEscape \} from '\.\/tgHtml\.js'/)
+  const withAmp = sanitizeRegistration({ ...CUSTOMER, shopName: 'سوبر ماركت A&B', ownerName: 'أحمد &#x27;', city: 'المنصورة <b>' })
+  const text = formatServerAr(withAmp)
+  assert.ok(text.includes('A&amp;B'), 'الاسم ذو & لم يُهرَّب')
+  assert.ok(!text.includes('&#x27;'), 'تسلسل كيان غير مُهرَّب يمرّ كما هو')
+  assert.ok(!/<b>/.test(text.replace(/<\/?(b|code)>/g, '')), 'وسوم من مدخل العميل وصلت')
+})
+
 
 console.log(`\nالنتيجة: ${passed} فحوص ناجحة${process.exitCode ? ' — مع فشل أعلاه' : ' ✅'}`)

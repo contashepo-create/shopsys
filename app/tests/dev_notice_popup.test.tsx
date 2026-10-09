@@ -212,7 +212,12 @@ describe('النافذة في الواجهة', () => {
 
 describe('⑤ العامل: إقرار القراءة وعدد القراءات', () => {
   let kv: MemoryKv
-  beforeEach(() => { kv = new MemoryKv() })
+  /* الإقرار لا يُقبل إلا لتنبيه **موجود فعلاً** — وإلا صارت النقطة العامة كتابةً
+     مفتوحة تُنشئ notice-acks:<عشوائي> بلا حد وتُضخّم إحصاء المطوّر. */
+  beforeEach(async () => {
+    kv = new MemoryKv()
+    await kv.put('notices:global', JSON.stringify([{ id: 'n-1', body: 'تنبيه', level: 'critical', createdAt: '2026-10-08T00:00:00Z' }]))
+  })
 
   const postAck = async (noticeId: string, deviceId: unknown, method = 'POST') => {
     const request = new Request(`https://shopsys-control/notifications/${noticeId}/ack`, {
@@ -223,17 +228,30 @@ describe('⑤ العامل: إقرار القراءة وعدد القراءات'
     return await devbotWorker.fetch(request, env_(kv)) as Response
   }
 
-  it('يسجّل الإقرار مرة لكل جهاز ويعيد العدد', async () => {
+  it('يسجّل الإقرار مرة لكل جهاز — والعدد يُقرأ من اللوحة لا من الرد العام', async () => {
     const first = await postAck('n-1', 'SHOP-AAA1-1111-1111')
     expect(first.status).toBe(200)
-    expect(await first.json()).toEqual({ ok: true, count: 1 })
+    expect(await first.json()).toEqual({ ok: true }) // لا count: نقطة عامة
 
     const dup = await postAck('n-1', 'SHOP-AAA1-1111-1111')
-    expect(await dup.json()).toEqual({ ok: true, count: 1 }) // لا تضخيم للعدد
+    expect(await dup.json()).toEqual({ ok: true })
+    expect(await ackCountForNotice({ kv }, 'n-1')).toBe(1) // لا تضخيم للعدد
 
     const other = await postAck('n-1', 'SHOP-BBB2-2222-2222')
-    expect(await other.json()).toEqual({ ok: true, count: 2 })
+    expect(await other.json()).toEqual({ ok: true })
     expect(await ackCountForNotice({ kv }, 'n-1')).toBe(2)
+  })
+
+  it('تنبيه غير موجود ⇒ 400 ولا مفتاح notice-acks يُنشأ (كتابة عامة محدودة الأثر)', async () => {
+    const res = await postAck('not-exists-999', 'SHOP-AAA1-1111-1111')
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ ok: false })
+    expect(await kv.get('notice-acks:not-exists-999')).toBeNull()
+    expect(await ackCountForNotice({ kv }, 'not-exists-999')).toBe(0)
+    /* ولا يُقبل إقرار جهاز لتنبيه خاص بجهاز آخر */
+    await kv.put('notices:SHOP-CCC3-3333-3333', JSON.stringify([{ id: 'p-1', body: 'خاص', level: 'info' }]))
+    expect((await postAck('p-1', 'SHOP-AAA1-1111-1111')).status).toBe(400)
+    expect((await postAck('p-1', 'SHOP-CCC3-3333-3333')).status).toBe(200)
   })
 
   it('يرفض معرّف جهاز تالف وطلب غير POST', async () => {
@@ -243,9 +261,10 @@ describe('⑤ العامل: إقرار القراءة وعدد القراءات'
     expect(await ackCountForNotice({ kv }, 'n-1')).toBe(0)
   })
 
-  it('recordNoticeAck يرفض المعرفات التالفة مباشرة', async () => {
+  it('recordNoticeAck يرفض المعرفات التالفة والتنبيه غير الموجود', async () => {
     expect((await recordNoticeAck({ kv }, '', 'SHOP-AAA1-1111-1111')).ok).toBe(false)
     expect((await recordNoticeAck({ kv }, 'n-1', 'abc')).ok).toBe(false)
+    expect(await recordNoticeAck({ kv }, 'n-ghost', 'SHOP-AAA1-1111-1111')).toMatchObject({ ok: false, reason: 'unknown notice' })
     expect((await recordNoticeAck({ kv }, 'n-1', 'SHOP-AAA1-1111-1111')).ok).toBe(true)
   })
 

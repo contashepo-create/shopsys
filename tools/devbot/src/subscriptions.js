@@ -15,6 +15,8 @@
  */
 
 /** نافذة «قرب الانتهاء» بالأيام — طلب المالك: 10 أيام */
+import { tgEscape } from './tgHtml.js'
+
 export const SOON_DAYS = 10
 
 /** مفتاح منع التكرار اليومي للـcron (KV ليس ذرياً، لكنه كافٍ لمنظومة أحادية المطوّر) */
@@ -141,7 +143,8 @@ const rowAr = (row, kind) => {
   const when = kind === 'expired'
     ? `انتهى منذ ${daysWordAr(-row.days, true)} (${row.expiresAt})`
     : row.days === 0 ? 'ينتهي اليوم' : `يتبقى ${daysWordAr(row.days)} (${row.expiresAt})`
-  return `${kind === 'expired' ? '⛔' : '⏳'} <b>${row.customer}</b> — ${planAr(row.plan)}\n   <code>${row.deviceId}</code> · ${when}${row.email ? ` · ${row.email}` : ''}`
+  /* اسم العميل قد يحوي & — الرسالة HTML تُرفض كلها بلا تهريب (tgHtml.js) */
+  return `${kind === 'expired' ? '⛔' : '⏳'} <b>${tgEscape(row.customer)}</b> — ${tgEscape(planAr(row.plan))}\n   <code>${tgEscape(row.deviceId)}</code> · ${when}${row.email ? ` · ${tgEscape(row.email)}` : ''}`
 }
 
 /** هل يوجد ما يستحق رسالة؟ (لا إزعاج فارغ) */
