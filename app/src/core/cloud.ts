@@ -298,6 +298,27 @@ export async function fetchRevocationList(baseUrl: string): Promise<string[] | n
   return raw == null ? null : parseRevocationList(raw)
 }
 
+/**
+ * ث8 (مراجعة المرحلة ②، 2026-10-08): دمج قائمتَي الإبطال من العاملين.
+ *
+ * لدينا عاملان ولكلٍّ منهما مفتاح `revoked` مستقل وأمر «حرق» خاص به:
+ *   - عامل لوحة المطوّر (devbot / SHOPSYS_CONTROL) — يصدر المفاتيح ويحرقها؛
+ *   - عامل خدمات التطبيق (SHOPSYS_KV) — بوت أقدم فيه «حرق» أيضاً.
+ * والتطبيق كان يقرأ قائمة **واحدة** فقط ⇒ حرق مفتاح من العامل الآخر لا يصل
+ * أبداً ويبقى المفتاح المحروق يعمل عند العميل (ثقة زائفة أخطر من غياب الحرق).
+ * الحل: اتحاد القائمتين — الحرق من أيّ البوتين نافذ.
+ *
+ * `null` = تعذّر الجلب (أوفلاين) ⇒ القائمة كلها `null` تعيد `null` فلا يُمسّ
+ * المحفوظ (قاعدة البند 6: الفشل الشبكي لا يغيّر حالة العميل).
+ */
+export function mergeRevocationLists(...lists: (string[] | null | undefined)[]): string[] | null {
+  const known = lists.filter((list): list is string[] => Array.isArray(list))
+  if (known.length === 0) return null
+  const merged = new Set<string>()
+  for (const list of known) for (const fp of list) if (/^[0-9a-f]{8}$/.test(fp)) merged.add(fp)
+  return [...merged]
+}
+
 export async function fetchSubscription(baseUrl: string, deviceId: string): Promise<CloudSubscription | null> {
   const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/subscription/${encodeURIComponent(deviceId)}`)
   return parseSubscription(raw)

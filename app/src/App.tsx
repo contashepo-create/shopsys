@@ -8,7 +8,7 @@ import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
-import { fetchAbout, fetchRevocationList, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
+import { fetchAbout, fetchRevocationList, mergeRevocationLists, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 /* بند 2 (تدقيق 2026-10-08): بلاغ التسجيل الجديد يصل المطوّر عبر مركز التحكم */
 import { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport } from './core/registration.ts'
@@ -419,9 +419,10 @@ export default function App() {
   const lockReason = useMemo(
     () => lockReasonFor(licenseState, {
       revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
+      unverifiable: licenseAudit.status === 'unverifiable',
       activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
     }),
-    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId, setup.activityKeyHistory],
+    [licenseState, activatedKey, revokedKeys, licenseAudit.status, activatedPayload, setup.completed, setup.activityId, setup.activityKeyHistory],
   )
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
@@ -483,12 +484,16 @@ export default function App() {
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
-      const [about, revoked, flags] = await Promise.all([
+      const [about, revokedDevbot, revokedServices, flags] = await Promise.all([
         fetchAbout(LICENSE_CLOUD_BASE_URL),
         fetchRevocationList(LICENSE_CLOUD_BASE_URL),
+        /* ث8: لكل عامل قائمة إبطال مستقلة — نقرأهما معاً ونوحّدهما، وإلا فالحرق
+           من العامل الآخر لا يصل ويبقى المفتاح المحروق يعمل عند العميل. */
+        fetchRevocationList(APP_SERVICES_CLOUD_BASE_URL),
         fetchDeviceFlags(APP_SERVICES_CLOUD_BASE_URL, devId), // يبقى عبر العامل الكامل
       ])
       if (cancelled) return
+      const revoked = mergeRevocationLists(revokedDevbot, revokedServices)
       // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
       if (about !== null || revoked !== null || flags !== null) {
         setCloudData({

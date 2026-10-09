@@ -11,7 +11,8 @@ import {
   activityMatches, keyFingerprint, isRevoked, canonicalPayload, b64uDecode,
   DEVELOPER_PUBLIC_KEY_B64U, evaluateLicense, PLAN_LIMITS, effectiveLimits,
 } from '../src/core/license.ts'
-import { parseAbout, parseRevocationList, parseSubscription, FALLBACK_ABOUT } from '../src/core/cloud.ts'
+import { parseAbout, parseRevocationList, parseSubscription, FALLBACK_ABOUT, mergeRevocationLists } from '../src/core/cloud.ts'
+import { readFileSync } from 'node:fs'
 
 let pass = 0, fail = 0
 const ok = (cond, name) => { if (cond) { pass++ } else { fail++; console.error(`❌ ${name}`) } }
@@ -57,7 +58,17 @@ ok(lockReasonFor(mk({ ...activePayload, expiresAt: '2026-09-10' })) === 'expired
 ok(lockReasonFor(evaluateLicense({ activatedPayload: null, trialStartedAt: '2026-09-01', lastSeenAt: '2026-09-20', today })) === 'clock_tampered', 'ساعة مرجعة ⇒ قفل')
 ok(lockReasonFor(mk(activePayload), { revoked: true }) === 'revoked', 'مفتاح محروق ⇒ قفل حتى لو سارٍ')
 ok(lockReasonFor(mk(activePayload), { activityMismatch: true }) === 'activity_mismatch', 'نشاط مختلف ⇒ قفل')
-ok(Object.keys(LOCK_REASON_LABELS).length === 5, 'كل أسباب القفل لها نصوص')
+/* ث9: العدد مشتق من اتحاد النوع في المصدر — رقم ثابت يُنسى مع كل سبب جديد */
+const lockUnion = (readFileSync(new URL('../src/core/security.ts', import.meta.url), 'utf8')
+  .match(/export type LockReason = ([^\n]+)/)?.[1] ?? '')
+  .split('|').map((x) => x.trim().replace(/^'|'$/g, '')).filter(Boolean)
+ok(lockUnion.length >= 6 && lockUnion.every((r) => LOCK_REASON_LABELS[r]?.title && LOCK_REASON_LABELS[r]?.desc), 'كل أسباب القفل لها نصوص')
+ok(lockReasonFor(mk(activePayload), { unverifiable: true }) === 'license_unverifiable', 'تعذّر التحقق ⇒ سبب صادق لا حكم خاطئ')
+ok(lockReasonFor(mk(activePayload), { revoked: true, unverifiable: true }) === 'revoked', 'الحرق أسبق من تعذّر التحقق')
+/* ث8: اتحاد قائمتَي الإبطال من العاملين — null = أوفلاين فلا يمسّ المحفوظ */
+ok(JSON.stringify(mergeRevocationLists(['1a2b3c4d'], ['1a2b3c4d', 'deadbeef'])) === '["1a2b3c4d","deadbeef"]', 'دمج القائمتين بلا تكرار')
+ok(mergeRevocationLists(null, null) === null, 'تعذّر الجلب من الطرفين ⇒ null (لا مسح للمحفوظ)')
+ok(isRevoked('SHOPSYS1.a.b', mergeRevocationLists(null, [keyFingerprint('SHOPSYS1.a.b')]) ?? []), 'حرق من العامل الثاني وحده نافذ')
 
 /* ═══ ربط المفتاح بالنشاط ═══ */
 ok(activityMatches({ ...activePayload, activityId: 'pharmacy' }, 'pharmacy'), 'نشاط مطابق يمر')

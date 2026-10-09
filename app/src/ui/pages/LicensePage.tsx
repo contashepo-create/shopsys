@@ -16,7 +16,7 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 const ALL_FEATURES: LicenseFeature[] = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot']
 
 export function LicensePage() {
-  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, setActivated, clearActivation } = useAppStore()
+  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation } = useAppStore()
   const toast = useToast()
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -66,6 +66,17 @@ export function LicensePage() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {/* ث9: لا نُظهر حكماً كاذباً (تجربة/انتهاء) لعميل له مفتاح لا يمكن التحقق
+          منه في هذه البيئة — نُقول السبب ونطمئنه أن مفتاحه لم يُحذف. */}
+      {licenseAudit.status === 'unverifiable' && (
+        <div className="anim-up lg:col-span-2 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-500/10 p-4 flex items-start gap-2">
+          <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+          <div className="text-[13px] text-amber-800 dark:text-amber-200">
+            <div className="font-extrabold mb-1">تعذّر التحقق من مفتاح التفعيل في بيئة التشغيل الحالية</div>
+            <div>مفتاحك محفوظ ولم يُحذف، لكن الحدود المعروضة الآن هي حدود التجربة لأن التوقيع لا يمكن التحقق منه هنا ({licenseAudit.reason ?? 'WebCrypto غير متاح'}). افتح التطبيق من نسخة سطح المكتب أو عبر اتصال آمن https — فيعود تفعيلك كاملاً تلقائياً.</div>
+          </div>
+        </div>
+      )}
       <div className="anim-up space-y-4">
         {/* الحالة */}
         <div className={card}>

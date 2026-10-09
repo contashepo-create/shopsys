@@ -97,14 +97,20 @@ export function pushSnapshot(ring: readonly HourlySnapshot[], snap: HourlySnapsh
 
 /* ═══ 3) منطق القفل (القسم الخاص عند انتهاء الباقة) ═══ */
 
-export type LockReason = 'trial_expired' | 'expired' | 'clock_tampered' | 'revoked' | 'activity_mismatch'
+export type LockReason = 'trial_expired' | 'expired' | 'clock_tampered' | 'revoked' | 'activity_mismatch' | 'license_unverifiable'
 
 /**
  * هل يُحوَّل المستخدم لشاشة القفل؟
  * التجربة السارية والمفتاح الساري فقط يسمحان بالدخول — كل ما عدا ذلك قفل.
  */
-export function lockReasonFor(state: LicenseState, extra?: { revoked?: boolean; activityMismatch?: boolean }): LockReason | null {
+export function lockReasonFor(
+  state: LicenseState,
+  extra?: { revoked?: boolean; activityMismatch?: boolean; unverifiable?: boolean },
+): LockReason | null {
   if (extra?.revoked) return 'revoked'
+  /* ث9 (مراجعة المرحلة ②): تعذّر التحقق البيئي ليس «انتهت التجربة» — عميل
+     مدفوع له مفتاح محفوظ يجب أن يُقال له السبب الحقيقي لا حكم خاطئ. */
+  if (extra?.unverifiable) return 'license_unverifiable'
   if (extra?.activityMismatch) return 'activity_mismatch'
   if (state.status === 'trial' || state.status === 'active') return null
   if (state.status === 'trial_expired') return 'trial_expired'
@@ -133,6 +139,11 @@ export const LOCK_REASON_LABELS: Record<LockReason, { title: string; desc: strin
     title: 'مفتاح التفعيل محروق',
     desc: 'أُبطل هذا المفتاح من المطوّر (يُحرق عند تغيير النشاط أو مخالفة الشروط) ولا يُعاد استخدامه.',
     icon: '🔥',
+  },
+  license_unverifiable: {
+    title: 'تعذّر التحقق من مفتاح التفعيل',
+    desc: 'مفتاحك محفوظ كما هو ولم يُحذف، لكن بيئة التشغيل الحالية لا تتيح التحقق من التوقيع. افتح التطبيق من نسخة سطح المكتب أو عبر اتصال آمن https — ويعود العمل تلقائياً بلا فقدان للمفتاح.',
+    icon: '🛡️',
   },
   activity_mismatch: {
     title: 'المفتاح لنشاط آخر',

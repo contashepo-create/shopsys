@@ -45,7 +45,8 @@ vi.mock('../src/core/license.ts', async (importOriginal) => {
 })
 
 const { useAppStore } = await import('../src/stores/app.store.ts')
-const { auditStoredLicense } = await import('../src/core/license.ts')
+const { auditStoredLicense, evaluateLicense } = await import('../src/core/license.ts')
+const { lockReasonFor } = await import('../src/core/security.ts')
 const { clampModulesToLicense, effectiveModules, ACTIVITY_TEMPLATES } = await import('../src/core/activities.ts')
 type LicensePayload = import('../src/core/license.ts').LicensePayload
 type BusinessModule = import('../src/core/activities.ts').BusinessModule
@@ -178,6 +179,36 @@ describe('③ المتجر: إعادة التحقق في كل إقلاع', () =>
 
     expect(A().licenseAudit.status).toBe('tampered')
     expect(A().activatedKey).toBeNull()
+  })
+
+  /* ث9: غياب WebCrypto (سياق غير آمن http:// مثلاً) يجعل التحقق مستحيلاً.
+     الخطأ أن يُعامل كتلاعب فيُحذف مفتاح عميل مدفوع لسبب لا يد له فيه ولا
+     يستعيده إلا بإعادة إصدار من المطوّر — والصحيح حفظ المفتاح والقفل بوضوح. */
+  it('بيئة بلا WebCrypto ⇒ المفتاح يُحفظ، لا حمولة تُعتمد، وسبب القفل صادق', async () => {
+    const key = await harness.sign!(payloadFor({ plan: 'pro', expiresAt: '2027-10-01' }))
+    useAppStore.setState({ activatedKey: key, activatedPayload: null, licenseAudit: { status: 'checking' } })
+    const original = globalThis.crypto.subtle
+    Object.defineProperty(globalThis.crypto, 'subtle', { value: undefined, configurable: true })
+    try {
+      await A().reverifyActivation()
+      expect(A().licenseAudit.status).toBe('unverifiable')
+      expect(A().activatedKey).toBe(key)       // لا حذف لمفتاح صالح
+      expect(A().activatedPayload).toBeNull()  // ولا اعتماد بلا تحقق (لا ثغرة)
+      const state = evaluateLicense({
+        activatedPayload: A().activatedPayload,
+        trialStartedAt: A().trialStartedAt, lastSeenAt: A().lastSeenAt, today: new Date().toISOString(),
+      })
+      /* السبب المعروض ليس «انتهت التجربة» الكاذب */
+      expect(lockReasonFor(state, { unverifiable: A().licenseAudit.status === 'unverifiable' })).toBe('license_unverifiable')
+      /* والحرق يبقى أسبق — لا يُتذرع بتعذّر التحقق للتهرب من الإبطال */
+      expect(lockReasonFor(state, { revoked: true, unverifiable: true })).toBe('revoked')
+    } finally {
+      Object.defineProperty(globalThis.crypto, 'subtle', { value: original, configurable: true })
+    }
+    /* ومتى توفّرت البيئة رجع المفتاح نفسه إلى العمل بلا تدخل من أحد */
+    await A().reverifyActivation()
+    expect(A().licenseAudit.status).toBe('verified')
+    expect(A().activatedPayload?.plan).toBe('pro')
   })
 
   it('فحص متكرر بلا تغيّر ⇒ لا تحديث للحالة (يمنع إعادة رسم بلا سبب)', async () => {

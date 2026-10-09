@@ -15,6 +15,9 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { auditStoredLicense, canonicalPayload, encodeLicenseKey, b64uEncode, verifyLicenseKey } from '../src/core/license.ts'
 import { clampModulesToLicense, effectiveModules } from '../src/core/activities.ts'
+import { mergeRevocationLists } from '../src/core/cloud.ts'
+import { isRevoked, keyFingerprint } from '../src/core/license.ts'
+import { lockReasonFor, LOCK_REASON_LABELS } from '../src/core/security.ts'
 
 let passed = 0
 function ok(name, fn) {
@@ -146,5 +149,53 @@ ok('App يعيد التحقق بعد الترطيب ولا يحكم قبل ان�
 ok('المفتاح نفسه يُسقط عند التلاعب — لا يبقى قابلاً لإعادة الاعتماد', () => {
   assert.match(storeSrc, /activatedKey: null,\s*\n\s*activatedPayload: null,\s*\n\s*licenseAudit: \{ status: 'tampered'/, 'يسقط المفتاح والحمولة معاً')
 })
+console.log('\n🔍 ث9: تعذّر التحقق البيئي ≠ التلاعب')
+
+/* حذف المفتاح عند أي استثناء يعني أن بيئة لا تتيح WebCrypto (سياق غير آمن
+   http:// مثلاً) تُفقد عميلاً مدفوعاً مفتاحه — ولا يستعيده إلا بإعادة إصدار.
+   القاعدة: التلاعب يُحذف، وتعذّر التحقق يحفظ المفتاح ويقفل بسبب صادق. */
+ok('غياب WebCrypto ⇒ unverifiable مع حفظ المفتاح، والقفل ليس «انتهت التجربة»', () => {
+  assert.match(storeSrc, /typeof globalThis\.crypto\?\.subtle\?\.verify !== 'function'/, 'حارس البيئة موجود')
+  assert.match(
+    storeSrc,
+    /activatedKey: before\.activatedKey,\s*\n\s*activatedPayload: null,\s*\n\s*licenseAudit: \{\s*\n\s*status: 'unverifiable'/,
+    'المفتاح يُحفظ والحمولة لا تُعتمد',
+  )
+  assert.match(storeSrc, /'tampered' \| 'unverifiable'/, 'الحالة معلنة في النوع')
+  /* الحكم: سبب صادق لا كاذب، والحرق أسبق دائماً */
+  assert.equal(lockReasonFor({ status: 'trial_expired' }, { unverifiable: true }), 'license_unverifiable')
+  assert.equal(lockReasonFor({ status: 'active', payload: signed, daysLeft: 5 }, { revoked: true, unverifiable: true }), 'revoked')
+  assert.equal(lockReasonFor({ status: 'active', payload: signed, daysLeft: 5 }, {}), null)
+  assert.ok(LOCK_REASON_LABELS.license_unverifiable.desc.includes('لم يُحذف'), 'الرسالة تطمئن أن المفتاح محفوظ')
+  assert.match(appSrc, /unverifiable: licenseAudit\.status === 'unverifiable'/, 'App يمرّر الحالة للحكم')
+  /* صفحة الترخيص تُقول السبب بدل إظهار «تجربة» كاذبة لعميل مدفوع */
+  assert.match(src('../src/ui/pages/LicensePage.tsx'), /licenseAudit\.status === 'unverifiable'/)
+})
+
+console.log('\n🔍 ث8: قائمة الإبطال — عاملان وقائمتان')
+
+/* لكل عامل مفتاح `revoked` مستقل وأمر «حرق» خاص به، والتطبيق كان يقرأ قائمة
+   واحدة ⇒ حرق مفتاح من العامل الآخر لا يصل أبداً ويبقى المفتاح يعمل عند
+   العميل (ثقة زائفة أخطر من غياب الحرق: المطوّر يظن أنه أبطله). */
+ok('الإبطال يُقرأ من العاملين ويُوَحَّد، والحرق من أيّهما يقفل المفتاح الساري', () => {
+  /* القراءة من العاملين معاً في مزامنة الإقلاع/الست ساعات */
+  assert.match(appSrc, /fetchRevocationList\(LICENSE_CLOUD_BASE_URL\)/, 'قائمة عامل اللوحة')
+  assert.match(appSrc, /fetchRevocationList\(APP_SERVICES_CLOUD_BASE_URL\)/, 'قائمة عامل الخدمات')
+  assert.match(appSrc, /mergeRevocationLists\(revokedDevbot, revokedServices\)/, 'الاتحاد قبل الحفظ')
+  /* والعاملان يخدمان /revoked فعلاً — وإلا القراءة الثانية null بلا أثر */
+  assert.match(src('../../tools/devbot/src/worker.js'), /url\.pathname === '\/revoked'/)
+  assert.match(src('../../cloud/worker.js'), /readRevoked\(env\)/)
+  /* الاتحاد: إزالة تكرار + تنقية غير hex + null = تعذّر الجلب فلا يمسّ المحفوظ */
+  assert.deepEqual(mergeRevocationLists(['1a2b3c4d'], ['1a2b3c4d', 'deadbeef']), ['1a2b3c4d', 'deadbeef'])
+  assert.deepEqual(mergeRevocationLists(null, ['deadbeef']), ['deadbeef'])
+  assert.equal(mergeRevocationLists(null, undefined), null, 'أوفلاين على الطرفين ⇒ null (بند 6)')
+  assert.deepEqual(mergeRevocationLists(['NOT-HEX'], ['deadbeef']), ['deadbeef'])
+  /* والأثر: بصمة محروقة من **العامل الثاني وحده** تقفل مفتاحاً سارياً */
+  const KEY = 'SHOPSYS1.cGF5bG9hZA.c2ln'
+  const merged = mergeRevocationLists(null, [keyFingerprint(KEY)])
+  assert.equal(isRevoked(KEY, merged ?? []), true)
+  assert.equal(lockReasonFor({ status: 'active', payload: signed, daysLeft: 30 }, { revoked: true }), 'revoked')
+})
+
 
 console.log(`\n${process.exitCode ? '💥 فشل الفحص' : `🎉 نجح الفحص — ${passed} اختباراً`}`)

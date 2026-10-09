@@ -187,7 +187,12 @@ interface AppState {
    * `checking` = جارٍ إعادة التحقق من توقيع المفتاح — لا يُحكم على الترخيص
    * ولا تُعرض شاشة القفل قبل انتهائه (وإلا ومضت شاشة قفل لعميل مفعّل).
    */
-  licenseAudit: { status: 'checking' | 'verified' | 'no_key' | 'tampered'; reason?: string; at?: string }
+  /**
+   * ث9: `unverifiable` = بيئة لا تتيح التحقق من التوقيع (لا WebCrypto — سياق
+   * غير آمن http:// مثلاً). المفتاح **يُحفظ** ولا يُحذف: حذفه يُفقد عميلاً
+   * مدفوعاً مفتاحه لسبب لا يد له فيه، ولا يستعيده إلا بإعادة إصدار من المطوّر.
+   */
+  licenseAudit: { status: 'checking' | 'verified' | 'no_key' | 'tampered' | 'unverifiable'; reason?: string; at?: string }
   /** إعادة اشتقاق الحمولة من المفتاح الموقّع + قصّ الوحدات غير الممنوحة — تُنفَّذ في كل إقلاع */
   reverifyActivation: () => Promise<void>
   /**
@@ -546,6 +551,21 @@ export const useAppStore = create<AppState>()(
         /* لا نقلب الحالة إلى `checking` من هنا: الترطيب هو من يعلّمها عند الإقلاع
            (فتظهر بوابة «جارٍ التحقق» بدل وميض شاشة القفل). قلبها في كل استدعاء
            كان يعيد رسم الصدفة مرتين ويومض البوابة لو استُدعي الفحص لاحقاً. */
+        /* ث9: غياب WebCrypto ليس تلاعباً — لا نحكم ولا نحذف (انظر النوع أعلاه). */
+        if (typeof globalThis.crypto?.subtle?.verify !== 'function') {
+          commit({
+            activatedKey: before.activatedKey,
+            activatedPayload: null,
+            licenseAudit: {
+              status: 'unverifiable',
+              reason: 'بيئة التشغيل لا تتيح التحقق من التوقيع (WebCrypto غير متاح)',
+              at: new Date().toISOString(),
+            },
+            modules: clamp(null),
+          })
+          return
+        }
+
         let verified: LicensePayload | null = null
         let verifyError: string | null = null
         try { verified = await verifyLicenseKey(before.activatedKey, before.deviceId) }
