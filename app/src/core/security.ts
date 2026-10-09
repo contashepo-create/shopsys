@@ -8,7 +8,7 @@
  * 3) منطق القفل: انتهاء التجربة/الباقة/إرجاع الساعة/مفتاح محروق ⇒
  *    التحويل لقسم مقفل وظيفته فقط: تواصل مع المطوّر، تفعيل، تصدير بيانات.
  */
-import type { LicenseState } from './license.ts'
+import { activityMatches, isRevoked, type LicensePayload, type LicenseState } from './license.ts'
 
 /* ═══ 1) التشفير AES-256-GCM ═══ */
 
@@ -97,7 +97,7 @@ export function pushSnapshot(ring: readonly HourlySnapshot[], snap: HourlySnapsh
 
 /* ═══ 3) منطق القفل (القسم الخاص عند انتهاء الباقة) ═══ */
 
-export type LockReason = 'trial_expired' | 'expired' | 'clock_tampered' | 'revoked' | 'activity_mismatch' | 'license_unverifiable'
+export type LockReason = 'trial_expired' | 'expired' | 'clock_tampered' | 'revoked' | 'activity_mismatch' | 'license_unverifiable' | 'license_invalid'
 
 /**
  * هل يُحوَّل المستخدم لشاشة القفل؟
@@ -116,10 +116,41 @@ export function lockReasonFor(
   if (state.status === 'trial_expired') return 'trial_expired'
   if (state.status === 'clock_tampered') return 'clock_tampered'
   if (state.status === 'expired') return 'expired'
+  /* ح2: قيمة زمنية تالفة في الترخيص ≠ «انتهى اشتراكك» — سبب صادق يطلب الدعم */
+  if (state.status === 'invalid') return 'license_invalid'
   return 'expired' // invalid وغيرها ⇒ قفل
 }
 
+/** الحد الأدنى من حالة المتجر التي يحتاجها قرار القفل (متوافق بنيوياً مع AppState) */
+export interface LockStoreSlice {
+  activatedKey: string | null
+  activatedPayload: LicensePayload | null
+  revokedKeys: readonly string[]
+  licenseAudit: { status: string }
+  setup: { completed: boolean; activityId: string | null; activityKeyHistory: readonly string[] }
+}
+
+/**
+ * القرار الموحّد للقفل (ح6 — مراجعة ③): الواجهة **والمهام الخلفية** (إرسال تليجرام
+ * المجدول، المزامنة السحابية، خادم الشبكة) تستعمل هذه الدالة نفسها. قبلها كانت المهام
+ * الخلفية تكتفي بـ hasFeature، فتستمر خلف شاشة القفل عند الإبطال أو عدم تطابق النشاط.
+ */
+export function currentLockReason(state: LicenseState, store: LockStoreSlice): LockReason | null {
+  const { activatedKey, activatedPayload, revokedKeys, setup } = store
+  return lockReasonFor(state, {
+    revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
+    unverifiable: store.licenseAudit.status === 'unverifiable',
+    activityMismatch: activatedPayload != null && setup.completed
+      && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
+  })
+}
+
 export const LOCK_REASON_LABELS: Record<LockReason, { title: string; desc: string; icon: string }> = {
+  license_invalid: {
+    title: 'بيانات الترخيص غير صالحة',
+    desc: 'مرساة الترخيص المحفوظة تالفة أو معدّلة يدوياً. تواصل مع المطوّر لإعادة ضبط الترخيص — بياناتك محفوظة بالكامل.',
+    icon: '⚠️',
+  },
   trial_expired: {
     title: 'انتهت الفترة التجريبية',
     desc: 'انتهت أيام التجربة الـ14. فعّل باقة للاستمرار — بياناتك محفوظة بالكامل ويمكنك تصديرها.',

@@ -167,7 +167,8 @@ ok('غياب WebCrypto ⇒ unverifiable مع حفظ المفتاح، والقف�
   assert.equal(lockReasonFor({ status: 'active', payload: signed, daysLeft: 5 }, { revoked: true, unverifiable: true }), 'revoked')
   assert.equal(lockReasonFor({ status: 'active', payload: signed, daysLeft: 5 }, {}), null)
   assert.ok(LOCK_REASON_LABELS.license_unverifiable.desc.includes('لم يُحذف'), 'الرسالة تطمئن أن المفتاح محفوظ')
-  assert.match(appSrc, /unverifiable: licenseAudit\.status === 'unverifiable'/, 'App يمرّر الحالة للحكم')
+  assert.match(appSrc, /currentLockReason\(licenseState, \{ activatedKey, activatedPayload, revokedKeys, licenseAudit, setup \}\)/, 'App يمرّر licenseAudit للحكم الموحّد')
+  assert.match(src('../src/core/security.ts'), /unverifiable: store\.licenseAudit\.status === 'unverifiable'/, 'الحكم الموحّد يقرأ حالة التحقق')
   /* صفحة الترخيص تُقول السبب بدل إظهار «تجربة» كاذبة لعميل مدفوع */
   assert.match(src('../src/ui/pages/LicensePage.tsx'), /licenseAudit\.status === 'unverifiable'/)
 })

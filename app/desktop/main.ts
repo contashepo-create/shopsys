@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { describeDeviceKeyOutcome, resolveDeviceKey } from './deviceKeyStore.ts'
+import { mergeTrialAnchor } from './trialAnchor.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
 
@@ -87,7 +88,9 @@ function createMainWindow(): BrowserWindow {
     },
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    /* ح9 (مراجعة ③): مخططات محددة فقط تُمرَّر إلى نظام التشغيل — لا file: ولا مخططات
+       تطبيقات أخرى قد تفتح برامج محلية. الرفض دائماً داخل النافذة نفسها. */
+    if (/^(?:https?:\/\/|mailto:|tel:)/i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
   /* قنوات التشخيص الميداني: فشل التحميل يعرض صفحة خطأ عربية بدل شاشة بيضاء،
@@ -582,16 +585,15 @@ function wireIpc(): void {
   /* v1.0.8 (طلب المالك): مرساة التجربة خارج القاعدة — مسح بيانات التطبيق من
      الواجهة أو حذف القاعدة لا يعيد الفترة التجريبية. تُحفظ أول بداية تجربة
      في ملف مستقل ويعاد الأقدم بينها وبين ما يرسله التطبيق. */
-  ipcMain.handle('trial:anchor', (_event, args: { firstTrialAt: string }) => {
+  /* ح5 (مراجعة ③): الدمج في دالة خالصة (desktop/trialAnchor.ts) — لا تُقبل قيمة تالفة،
+     وآخر ظهور يُحفظ هنا أيضاً فلا يكفي تعديل التخزين المحلي لإعادة الساعة. */
+  ipcMain.handle('trial:anchor', (_event, args: { firstTrialAt?: unknown; lastSeenAt?: unknown }) => {
     const anchorPath = join(app.getPath('userData'), 'trial-anchor.json')
-    let saved: { firstTrialAt: string } | null = null
-    try { saved = JSON.parse(readFileSync(anchorPath, 'utf8')) as { firstTrialAt: string } } catch { /* أول مرة */ }
-    const incoming = typeof args?.firstTrialAt === 'string' ? args.firstTrialAt : new Date().toISOString()
-    const oldest = saved && saved.firstTrialAt < incoming ? saved.firstTrialAt : incoming
-    if (!saved || saved.firstTrialAt !== oldest) {
-      writeFileSync(anchorPath, JSON.stringify({ firstTrialAt: oldest }), 'utf8')
-    }
-    return { firstTrialAt: oldest }
+    let saved: unknown = null
+    try { saved = JSON.parse(readFileSync(anchorPath, 'utf8')) } catch { /* أول مرة أو ملف تالف — يُعاد بناؤه من القيم الصالحة */ }
+    const merged = mergeTrialAnchor(saved, args)
+    if (merged.changed) writeFileSync(anchorPath, JSON.stringify(merged.anchor), 'utf8')
+    return merged.anchor
   })
 
   /* ── v1.0.8: إدارة مكان القاعدة والنسخ (طلب المالك) ── */

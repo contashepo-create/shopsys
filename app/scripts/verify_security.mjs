@@ -11,7 +11,7 @@ import {
   activityMatches, keyFingerprint, isRevoked, canonicalPayload, b64uDecode,
   DEVELOPER_PUBLIC_KEY_B64U, evaluateLicense, PLAN_LIMITS, effectiveLimits,
 } from '../src/core/license.ts'
-import { parseAbout, parseRevocationList, parseSubscription, FALLBACK_ABOUT, mergeRevocationLists } from '../src/core/cloud.ts'
+import { parseAbout, parseRevocationList, FALLBACK_ABOUT, mergeRevocationLists } from '../src/core/cloud.ts'
 import { readFileSync } from 'node:fs'
 
 let pass = 0, fail = 0
@@ -116,9 +116,6 @@ const rl = parseRevocationList(['deadbeef', 'BAD', 123, 'cafe1234'])
 ok(rl.length === 2 && rl.includes('deadbeef') && rl.includes('cafe1234'), 'قائمة الحرق: بصمات hex فقط')
 ok(parseRevocationList({ text: '["deadbeef"]' }).includes('deadbeef'), 'قراءة استجابة بوت الترخيص القديمة')
 ok(parseRevocationList('not-array').length === 0, 'قائمة فاسدة ⇒ فارغة')
-const sub = parseSubscription({ plan: 'pro', expiresAt: '2026-12-01', message: 'جدد قريباً' })
-ok(sub.plan === 'pro' && sub.message === 'جدد قريباً', 'parseSubscription يعمل')
-ok(parseSubscription(null) === null, 'اشتراك غائب ⇒ null')
 
 /* ═══ تصدير CSV ═══ */
 const csv = toCsv([{ الاسم: 'جبنة, بيضاء', السعر: 130 }, { الاسم: 'قال "أهلاً"', السعر: 5 }])

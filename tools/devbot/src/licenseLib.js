@@ -46,7 +46,10 @@ export function canonicalPayload(p) {
  * 8 خانات hex صغيرة، وهي الصيغة الوحيدة التي تقبلها parseRevocationList بالعميل.
  */
 export function keyFingerprint(key) {
-  const sigPart = key.trim().split('.')[2] ?? key
+  // ح1 (مراجعة ③): تطبيع البايتات المعيارية — مطابق لـkeyFingerprint في core/license.ts
+  const raw = key.trim().split('.')[2] ?? key
+  let sigPart = raw
+  try { sigPart = b64uEncode(b64uDecode(raw)) } catch { /* ترميز تالف — التحقق سيفشل أصلاً */ }
   let h = 5381
   for (let i = 0; i < sigPart.length; i++) h = ((h << 5) + h + sigPart.charCodeAt(i)) >>> 0
   return h.toString(16).padStart(8, '0')

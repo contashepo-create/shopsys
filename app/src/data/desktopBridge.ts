@@ -108,7 +108,7 @@ declare global {
   interface Window {
     shopsysDesktop?: ShopsysDesktopBridge
     /** v1.0.8: مرساة التجربة — تعيد أقدم بداية تجربة معروفة لهذا الجهاز */
-    shopsysTrialAnchor?: (firstTrialAt: string) => Promise<{ firstTrialAt: string }>
+    shopsysTrialAnchor?: (args: { firstTrialAt?: string; lastSeenAt?: string }) => Promise<{ firstTrialAt: string | null; lastSeenAt: string | null }>
     /** نسخة ملفية فورية للقاعدة في المكانين — يكشفها preload في سطح المكتب */
     shopsysBackupNow?: () => Promise<string[]>
   }

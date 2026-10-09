@@ -198,12 +198,6 @@ export function parseRevocationList(raw: unknown): string[] {
 
 /* ─── حالة الاشتراك (عرض) ─── */
 
-export interface CloudSubscription {
-  plan: string
-  expiresAt: string | null
-  message: string // رسالة من المطوّر للعميل (تجديد قريب…)
-}
-
 /**
  * تنبيه أرسله المطوّر من البوت إلى جهاز واحد أو إلى جميع العملاء.
  * بند 10 (تدقيق 2026-10-08): درجة التنبيه هي التي تحدّد طريقة عرضه.
@@ -263,16 +257,6 @@ export function parseCloudNotices(raw: unknown): CloudNotice[] {
   })
 }
 
-export function parseSubscription(raw: unknown): CloudSubscription | null {
-  if (raw == null || typeof raw !== 'object') return null
-  const o = raw as Record<string, unknown>
-  return {
-    plan: typeof o.plan === 'string' ? o.plan : '',
-    expiresAt: typeof o.expiresAt === 'string' ? o.expiresAt : null,
-    message: typeof o.message === 'string' ? o.message : '',
-  }
-}
-
 /* ─── الجالبات (فشلها الصامت مقصود — أوفلاين أولاً) ─── */
 
 async function getJson(url: string, timeoutMs = 6000): Promise<unknown | null> {
@@ -317,11 +301,6 @@ export function mergeRevocationLists(...lists: (string[] | null | undefined)[]):
   const merged = new Set<string>()
   for (const list of known) for (const fp of list) if (/^[0-9a-f]{8}$/.test(fp)) merged.add(fp)
   return [...merged]
-}
-
-export async function fetchSubscription(baseUrl: string, deviceId: string): Promise<CloudSubscription | null> {
-  const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/subscription/${encodeURIComponent(deviceId)}`)
-  return parseSubscription(raw)
 }
 
 export async function fetchCloudNotices(baseUrl: string, deviceId: string): Promise<CloudNotice[] | null> {

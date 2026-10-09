@@ -2,8 +2,8 @@ import { useEffect, useMemo } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
 import { useDataStore } from './data/repo.ts'
-import { evaluateLicense, activityMatches, isRevoked } from './core/license.ts'
-import { lockReasonFor, isBackupDue } from './core/security.ts'
+import { evaluateLicense, oldestValidDay, newestValidDay } from './core/license.ts'
+import { currentLockReason, isBackupDue } from './core/security.ts'
 import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
@@ -64,8 +64,8 @@ import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { LanSettingsPage } from './ui/pages/LanSettingsPage.tsx'
-import { startHostSession } from './data/lan/hostSession.ts'
-import { bootRemoteSession } from './data/lan/remoteSession.ts'
+import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
+import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
 import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
@@ -381,14 +381,18 @@ export default function App() {
 
   /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
      التجربة: عند الإقلاع نطابق بداية التجربة مع أقدم تاريخ معروف للجهاز */
-  useEffect(() => {
+  /* ح1/ح5 (مراجعة ③): مطابقة مرساة سطح المكتب — الأقدم لبداية التجربة، والأحدث لآخر
+     ظهور، والقيم التالفة لا تُقبل. تُستدعى عند الإقلاع وكل ساعة من مؤقت «آخر ظهور». */
+  const syncDesktopAnchor = (): void => {
     if (typeof window === 'undefined' || typeof window.shopsysTrialAnchor !== 'function') return
-    void window.shopsysTrialAnchor(useAppStore.getState().trialStartedAt).then((anchor) => {
-      if (anchor.firstTrialAt < useAppStore.getState().trialStartedAt) {
-        useAppStore.setState({ trialStartedAt: anchor.firstTrialAt })
-      }
+    const before = useAppStore.getState()
+    void window.shopsysTrialAnchor({ firstTrialAt: before.trialStartedAt, lastSeenAt: before.lastSeenAt }).then((anchor) => {
+      const cur = useAppStore.getState()
+      const trialStartedAt = oldestValidDay(cur.trialStartedAt, anchor.firstTrialAt) ?? cur.trialStartedAt
+      const lastSeenAt = newestValidDay(cur.lastSeenAt, anchor.lastSeenAt) ?? cur.lastSeenAt
+      if (trialStartedAt !== cur.trialStartedAt || lastSeenAt !== cur.lastSeenAt) useAppStore.setState({ trialStartedAt, lastSeenAt })
     }).catch(() => { /* المرساة مساعدة — لا تعطل الإقلاع */ })
-  }, [])
+  }
 
   /* v1.0.9 (درع البيانات): إشعار استرداد القاعدة — إن اكتُشف تلف عند الإقلاع
      استُردت أحدث نسخة سليمة تلقائياً (أو بدئت قاعدة جديدة لعدم وجود نسخة) */
@@ -417,12 +421,8 @@ export default function App() {
     [activatedPayload, trialStartedAt, lastSeenAt],
   )
   const lockReason = useMemo(
-    () => lockReasonFor(licenseState, {
-      revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
-      unverifiable: licenseAudit.status === 'unverifiable',
-      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
-    }),
-    [licenseState, activatedKey, revokedKeys, licenseAudit.status, activatedPayload, setup.completed, setup.activityId, setup.activityKeyHistory],
+    () => currentLockReason(licenseState, { activatedKey, activatedPayload, revokedKeys, licenseAudit, setup }),
+    [licenseState, activatedKey, activatedPayload, revokedKeys, licenseAudit, setup],
   )
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
@@ -470,14 +470,26 @@ export default function App() {
 
   // ─── شبكة المحل (§102): إقلاع دور الجهاز — مضيف مفعّل يفتح خادمه، وعميل
   // مفعل يعيد الاتصال بالمضيف تلقائياً بالتوكن المحفوظ (بلا رمز اقتران) ───
+  /* ح7 (مراجعة ③): شبكة المحل لا تعمل خلف شاشة القفل ولا لغير المرخّص. المضيف يتطلب
+     ميزة multi_user_lan بالمفتاح، والعميل يتطلب فتح القفل. كانت تُفتح عند كل إقلاع بلا
+     أي بوابة ترخيص. تُعاد المراجعة عند كل تغيّر في الترخيص أو القفل. */
   useEffect(() => {
+    if (!storesHydrated || licenseAudit.status === 'checking') return
     const { lanHost, lanClient } = useAppStore.getState()
-    if (lanHost.enabled && lanHost.pairingCode) {
+    const lan = useLanStatusStore.getState()
+    const unlocked = lockReason === null
+    const hostConfigured = lanHost.enabled && lanHost.pairingCode !== ''
+    if (!unlocked || !hasFeature(licenseState, 'multi_user_lan')) {
+      if (lan.hostRunning) void stopHostSession()
+    } else if (hostConfigured && !lan.hostRunning) {
       void startHostSession({ pairingCode: lanHost.pairingCode, port: lanHost.port, hostName: lanHost.hostName }).catch(() => undefined)
-    } else if (lanClient.enabled && lanClient.hostUrl) {
+    }
+    if (!unlocked) {
+      if (lan.role === 'client') disconnectRemoteSession()
+    } else if (!hostConfigured && lanClient.enabled && lanClient.hostUrl && lan.role !== 'client') {
       bootRemoteSession()
     }
-  }, [])
+  }, [storesHydrated, licenseAudit.status, licenseState, lockReason])
 
   // ─── مزامنة الترخيص و«حول» من عامل التحكم — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
@@ -583,7 +595,7 @@ export default function App() {
         activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt,
         lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
       })
-      if (!hasFeature(lic, 'telegram_bot')) return
+      if (currentLockReason(lic, app) !== null || !hasFeature(lic, 'telegram_bot')) return
       const now = localNowIso()
       if (!isDailySendDue(app.lastDailySentDay, now, app.schedule.hour)) return
       try {
@@ -630,7 +642,7 @@ export default function App() {
         activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt,
         lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
       })
-      if (!hasFeature(lic, 'cloud_sync')) return
+      if (currentLockReason(lic, app) !== null || !hasFeature(lic, 'cloud_sync')) return
       // مفتاح الإطفاء السحابي (البند 5): ميزة ممنوحة لكن المطوّر أطفأها مؤقتاً
       if (lic.status === 'active' && !effectiveFeatures(lic.payload.features, app.deviceFlags).includes('cloud_sync')) return
       await runSyncCycle() // أخطاؤها تُسجل في sync.lastResult ولا ترمي أبداً
@@ -654,8 +666,9 @@ export default function App() {
 
   // مرساة «آخر ظهور» ضد إرجاع ساعة الجهاز (نظام الترخيص) — عند الإقلاع وكل ساعة
   useEffect(() => {
-    touchLastSeen()
-    const t = setInterval(touchLastSeen, 60 * 60 * 1000)
+    const beat = () => { touchLastSeen(); syncDesktopAnchor() }
+    beat()
+    const t = setInterval(beat, 60 * 60 * 1000)
     return () => clearInterval(t)
   }, [touchLastSeen])
 

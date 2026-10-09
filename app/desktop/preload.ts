@@ -63,7 +63,7 @@ contextBridge.exposeInMainWorld('shopsysAppInfo', () => ipcRenderer.invoke('app:
 contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('app:backupNow'))
 
 /* v1.0.8: مرساة التجربة خارج القاعدة — تمنع إعادة التجربة بمسح البيانات */
-contextBridge.exposeInMainWorld('shopsysTrialAnchor', (firstTrialAt: string) => ipcRenderer.invoke('trial:anchor', { firstTrialAt }))
+contextBridge.exposeInMainWorld('shopsysTrialAnchor', (args: { firstTrialAt?: string; lastSeenAt?: string }) => ipcRenderer.invoke('trial:anchor', args ?? {}))
 
 /* §102 — مضيف شبكة المحل: تشغيل خادم ws + أحداث الأجهزة (المنطق في المُصيّر) */
 contextBridge.exposeInMainWorld('shopsysLanHost', {

@@ -7,7 +7,7 @@
  *   ② نقاط REST التي تقرؤها نسخة العميل (متوافقة حرفياً مع app/src/core/cloud.ts):
  *      GET /about                  → محتوى صفحة «حول» بصيغة JSON
  *      GET /revoked                → مصفوفة بصمات المفاتيح المحروقة (8-hex)
- *      GET /subscription/:deviceId → { plan, expiresAt, message }
+ *      GET /subscription/:deviceId → { plan, expiresAt, message } (حالة الاشتراك للعرض — بلا بيانات العميل)
  *      GET /notifications/:deviceId → التنبيهات العامة والخاصة بالجهاز
  *
  *   التخزين: KV واحد (SHOPSYS_CONTROL) — المفاتيح:
@@ -112,6 +112,7 @@ export default {
       return json({ ok: result.ok }, CORS, result.ok ? 200 : 400)
     }
 
+    // GET /subscription/:deviceId — عقد v1.0.3: حالة الاشتراك للعرض في التطبيق (بلا اسم العميل)
     const sub = url.pathname.match(/^\/subscription\/([^/]+)$/)
     if (sub) {
       const state = await cfg.kv.get(`dev:${decodeURIComponent(sub[1])}`)

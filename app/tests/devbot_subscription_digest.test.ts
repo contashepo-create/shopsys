@@ -24,6 +24,9 @@ const {
 const DAY = 86_400_000
 const NOW = Date.parse('2026-10-08T00:00:00Z')
 const dayIso = (offsetDays: number) => new Date(NOW + offsetDays * DAY).toISOString().slice(0, 10)
+/* لوحة المطوّر تحسب الأيام المتبقية من الساعة الحقيقية (لا من NOW المثبّت) — فمشهد زر
+   «الاشتراكات» يُشتق من الساعة نفسها، وإلا صار الاختبار قنبلة زمنية (نجح في 08 وفشل في 09). */
+const realDayIso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString().slice(0, 10)
 
 class MemoryKv {
   private values = new Map<string, string>()
@@ -263,7 +266,7 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
 
   it('زر «⏳ الاشتراكات» في اللوحة يعرض الملخص نفسه', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-NNN1-1111-1111', customer: 'موشك', plan: 'basic', expiresAt: dayIso(2) }])
+    await seed(kv, [{ id: 'SHOP-NNN1-1111-1111', customer: 'موشك', plan: 'basic', expiresAt: realDayIso(2) }])
     const reply = await handlePanelButton('panel:digest', 777, { kv } as never)
     expect(reply?.text).toContain('موشك')
     expect(reply?.text).toContain('يتبقى يومان')

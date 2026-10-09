@@ -169,7 +169,10 @@ function canonicalPayload(p) {
 
 /** بصمة المفتاح — مطابقة لـkeyFingerprint في core/license.ts (DJB2 على جزء التوقيع) */
 function keyFingerprint(key) {
-  const sigPart = key.trim().split('.')[2] ?? key
+  // ح1 (مراجعة ③): تطبيع البايتات المعيارية — مطابق لـkeyFingerprint في core/license.ts
+  const raw = key.trim().split('.')[2] ?? key
+  let sigPart = raw
+  try { sigPart = b64uEncode(b64uDecode(raw)) } catch { /* ترميز تالف — التحقق سيفشل أصلاً */ }
   let h = 5381
   for (let i = 0; i < sigPart.length; i++) h = ((h << 5) + h + sigPart.charCodeAt(i)) >>> 0
   return h.toString(16).padStart(8, '0')
@@ -670,12 +673,16 @@ export default {
       }), { headers: responseHeaders(request, env) })
     }
 
-    // GET /subscription/:deviceId — حالة اشتراك للعرض في التطبيق
+    // GET /subscription/:deviceId — حالة الاشتراك للعرض (عقد devbot v1.0.3).
+    // ح10 (مراجعة ③): لا يُعاد السجل الخام لأنه يحمل اسم العميل — الحقول الثلاثة فقط.
     const m = path.match(/^\/subscription\/([A-Z0-9-]+)$/i)
     if (m) {
       const raw = await env.SHOPSYS_KV.get(`sub:${m[1]}`)
       if (!raw) return json(null, 200, request, env)
-      return new Response(raw, { headers: responseHeaders(request, env) })
+      let o = null
+      try { o = JSON.parse(raw) } catch { o = null }
+      if (!o || typeof o !== 'object') return json(null, 200, request, env)
+      return json({ plan: String(o.plan ?? ''), expiresAt: o.expiresAt ?? null, message: String(o.message ?? '') }, 200, request, env)
     }
 
     // GET /flags/:deviceId — مفتاح الإطفاء السحابي (البند 5):

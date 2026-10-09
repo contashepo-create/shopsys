@@ -14,7 +14,7 @@ import { settingsAppStorage } from '../data/persistentStorage.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
-import { generateDeviceId, verifyActivityChangeKey, verifyLicenseKey, auditStoredLicense, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, type LicensePayload } from '../core/license.ts'
+import { generateDeviceId, verifyActivityChangeKey, verifyLicenseKey, auditStoredLicense, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, isValidIsoDay, oldestValidDay, keyFingerprint, type LicensePayload } from '../core/license.ts'
 import { LEGAL_VERSION } from '../core/legal.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
@@ -65,6 +65,8 @@ interface SetupState {
   lastActivityChangeAt: string | null
   /** v1.0.7: الأنشطة المرخصة على الجهاز (الأصلي + كل تغيير موقّع) — مفتاح التفعيل القديم يظل صالحاً */
   activityKeyHistory: string[]
+  /** ح8 (مراجعة ③): بصمات مفاتيح تحويل النشاط المطبّقة — المفتاح الواحد لا يُعاد تطبيقه */
+  activityKeyFingerprints: string[]
 }
 
 /**
@@ -359,6 +361,7 @@ export const useAppStore = create<AppState>()(
         doctorSpecialty: '',
         lastActivityChangeAt: null,
         activityKeyHistory: [],
+        activityKeyFingerprints: [],
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
@@ -388,6 +391,7 @@ export const useAppStore = create<AppState>()(
             doctorSpecialty: doctorSpecialty?.trim() ?? '',
             lastActivityChangeAt: null,
             activityKeyHistory: [],
+            activityKeyFingerprints: [],
           },
         })),
       addFiscalYear: (fy) =>
@@ -633,6 +637,13 @@ export const useAppStore = create<AppState>()(
         if (!state.setup.completed) throw new Error('أكمل الإعداد الأول أولاً')
         if (!state.setup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
         const payload = await verifyActivityChangeKey(key, state.deviceId, pubB64u)
+        /* ح8 (مراجعة ③): مفتاح التحويل يُطبَّق مرة واحدة. التحقق السابق يمنع المفتاح إن لم
+           يطابق النشاط الحالي فقط — فمفتاح A→B الموقّع يُعاد تطبيقه بعد عودة الجهاز إلى A
+           بمفتاح B→A دون طلب جديد من الدعم. */
+        const fingerprint = keyFingerprint(key)
+        if ((state.setup.activityKeyFingerprints ?? []).includes(fingerprint)) {
+          throw new Error('مفتاح تحويل النشاط هذا استُخدم من قبل — اطلب مفتاحاً جديداً من الدعم')
+        }
         if (payload.fromActivityId !== state.setup.activityId) {
           throw new Error(`المفتاح صادر للتحويل من نشاط «${payload.fromActivityId}» — نشاطك الحالي «${state.setup.activityId}». اطلب مفتاحاً محدّثاً من الدعم`)
         }
@@ -656,12 +667,16 @@ export const useAppStore = create<AppState>()(
             modules: template.modules,
             lastActivityChangeAt: now,
             activityKeyHistory: [...s.setup.activityKeyHistory, template.id],
+            activityKeyFingerprints: [...(s.setup.activityKeyFingerprints ?? []), fingerprint],
           },
         }))
         return template.nameAr
       },
       touchLastSeen: () =>
         set((s) => {
+          /* ح3 (مراجعة ③): مرساة تالفة لا تُستبدل بـ«الآن» — ذلك كان يمحو دليل إرجاع الساعة
+             (lastSeenAt = "" كان يُكتب فوراً بالوقت الحالي عند الإقلاع فيمر التلاعب) */
+          if (!isValidIsoDay(s.lastSeenAt)) return {}
           const now = new Date().toISOString()
           // لا نرجع المرساة للخلف أبداً — هي خط دفاع ضد إرجاع الساعة
           return now > s.lastSeenAt ? { lastSeenAt: now } : {}
@@ -803,8 +818,12 @@ export const useAppStore = create<AppState>()(
         }
         // حماية: مرساة الجهاز (shopsys-i) هي المرجع — لو بداية التجربة المخزنة
         // أحدث من المرساة (مسح بيانات/تلاعب لإعادة العدّاد) نرجع للأقدم دائماً
-        if (state && state.trialStartedAt > BOOT.firstTrialAt) {
-          state.trialStartedAt = BOOT.firstTrialAt
+        if (state) state.trialStartedAt = oldestValidDay(state.trialStartedAt, BOOT.firstTrialAt) ?? state.trialStartedAt
+        // ح2 (مراجعة ③): القيمة التالفة ("" أو نص) تُستبدل بالأقدم **الصالح** بينها وبين
+        // المرساة — ولا تبقى لتعطي تجربة لا تنتهي (evaluateLicense يفشل مغلقاً عليها).
+        // ح4: مخطط الإعداد القديم لا يعرف بصمات تحويل النشاط
+        if (state && state.setup && !Array.isArray(state.setup.activityKeyFingerprints)) {
+          state.setup = { ...state.setup, activityKeyFingerprints: [] }
         }
       },
     },
