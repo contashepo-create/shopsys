@@ -36,6 +36,23 @@ export function inventoryWarnings(lines:AdvancedInvoiceLine[],allowNegative:bool
 export function availableForDocEdit(currentStockQty:number,originalDocQty:number):number{
  return currentStockQty+originalDocQty
 }
+/**
+ * تقسيم تحصيل فاتورة البيع كما هو محفوظ في «وسائل التحصيل» — لاستعادته في المحرر
+ * عند فتح تعديل (إكمال إصلاح 2026-10-09: التحصيل المجزأ (خزينة/بنك/موظف) كان ينهار
+ * إلى نقدي وحده عند التعديل فيُقيَّد كله على الخزينة).
+ * القواعد: بنك = سطر بملاحظة «تحويل بنكي» · موظف = سطر 1107 بموظف مسجَّل · والباقي نقدي.
+ * بلا وسائل، أو مجموعها لا يساوي المدفوع (سجل قديم مختل)، أو بلا مدفوع ⇒ بلا تقسيم:
+ * المبلغ كله في الخزينة كما كان سلوك المحرر قديماً — لا تُخترع أطراف ولا تضيع مبالغ.
+ */
+export interface SaleCollectionSplit { cashMinor:number; bankMinor:number; employeeMinor:number; employeeId:number|null; multiPay:boolean }
+export function saleCollectionSplit(allocations:readonly{accountCode:string;amountMinor:number;note?:string;employeeId?:number}[],totalPaidMinor:number):SaleCollectionSplit{
+ const sum=allocations.reduce((s,a)=>s+a.amountMinor,0)
+ if(!allocations.length||sum!==totalPaidMinor||totalPaidMinor<=0)return{cashMinor:Math.max(0,totalPaidMinor),bankMinor:0,employeeMinor:0,employeeId:null,multiPay:false}
+ const bankMinor=allocations.filter(a=>a.note==='تحويل بنكي').reduce((s,a)=>s+a.amountMinor,0)
+ const employeeRows=allocations.filter(a=>a.accountCode==='1107'&&a.employeeId)
+ const employeeMinor=employeeRows.reduce((s,a)=>s+a.amountMinor,0)
+ return{cashMinor:Math.max(0,totalPaidMinor-bankMinor-employeeMinor),bankMinor,employeeMinor,employeeId:employeeRows[0]?.employeeId??null,multiPay:bankMinor>0}
+}
 export function allocateLandedCost(expense:InternalExpense,lines:AdvancedInvoiceLine[]):Record<string,number>{
  if(expense.landedCostAllocation==='none')return{};if(expense.landedCostAllocation==='manual'){const a=expense.manualAllocations??{};if(Object.values(a).reduce((s,v)=>s+v,0)!==expense.amountMinor)throw new Error('التوزيع اليدوي لا يساوي المصروف');return a}
  const weights=lines.map(l=>expense.landedCostAllocation==='value'?l.qty*l.unitPriceMinor:expense.landedCostAllocation==='quantity'?l.qty:expense.landedCostAllocation==='weight'?(l.weight??0)*l.qty:expense.landedCostAllocation==='volume'?(l.volume??0)*l.qty:1);const total=weights.reduce((a,b)=>a+b,0);if(total<=0)throw new Error('لا يوجد أساس صالح لتوزيع المصروف');let used=0;const out:Record<string,number>={};lines.forEach((l,i)=>{const value=i===lines.length-1?expense.amountMinor-used:Math.round(expense.amountMinor*weights[i]/total);out[l.id]=value;used+=value});return out
