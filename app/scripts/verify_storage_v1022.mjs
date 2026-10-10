@@ -67,5 +67,25 @@ check('رسالة التحديث تظهر مرة واحدة بعد تغيّر ا
 check('مؤشر التحديث يصف النسخة الاحتياطية وفتح البيانات تلقائياً', /تُؤخذ نسخة احتياطية قبل التثبيت/.test(read('src/ui/components/DesktopUpdater.tsx')))
 check('الحوار لا يدّعي تراجعاً تلقائياً', !/تراجع تلقائي واستعادة/.test(about))
 
+/* v1.0.22 — استرداد مكان القاعدة وتقوية Electron */
+const navPolicy = read('desktop/navigationPolicy.ts')
+const indexHtml = read('index.html')
+const viteConfig = read('vite.config.ts')
+check('النافذة الرئيسية في sandbox (مع contextIsolation وبلا nodeIntegration)', /contextIsolation: true,\s*nodeIntegration: false,\s*\/\*[\s\S]*?\*\/\s*sandbox: true,/.test(main) || /sandbox: true,\s*spellcheck: false/.test(main))
+check('لا توجد نافذة بـ sandbox: false في main.ts', !/sandbox: false/.test(main))
+check('will-navigate يمنع التنقل خارج صفحة التطبيق', /webContents\.on\('will-navigate'/.test(main) && /isInAppNavigation\(url, APP_INDEX_FILE_URL, devOrigin\)/.test(main) && /event\.preventDefault\(\)/.test(main))
+check('setWindowOpenHandler يستعمل قائمة المخططات الموحدة', /isExternalOpenable\(url\)/.test(main))
+check('سياسة التنقل منطق خالص قابل للاختبار', /export function isInAppNavigation/.test(navPolicy) && /export function isExternalOpenable/.test(navPolicy))
+const cspContent = (indexHtml.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/) ?? [])[1] ?? ''
+check('CSP في index.html بـ script-src self فقط (بلا unsafe-inline/unsafe-eval)', /default-src 'self'; script-src 'self';/.test(cspContent) && !/script-src[^;]*unsafe-(inline|eval)/.test(cspContent))
+check('CSP: object-src none و base-uri self', /object-src 'none'/.test(indexHtml) && /base-uri 'self'/.test(indexHtml))
+check('التطوير يزيل CSP (React Refresh وHMR)', /devStripsCsp/.test(viteConfig) && /ctx\.server \? html\.replace\(CSP_META_RE, ''\)/.test(viteConfig))
+check('الحوار يطلب الملف عند غياب القاعدة مع دليل تشغيل سابق', /await askForExistingDatabaseIfNeeded\(\)/.test(main) && /shouldAskForExistingDatabase\(\{/.test(main))
+check('الحوار يُستدعى بعد offerExistingData وقبل فتح القاعدة', main.indexOf('await offerExistingData()\n  await askForExistingDatabaseIfNeeded()') > 0 && main.indexOf('await askForExistingDatabaseIfNeeded()') < main.indexOf('const { dbPath, isCustom } = resolveDbPath()', main.indexOf('async function openDatabase')))
+check('الملف المختار يُفحص بجدول snapshots قبل اعتماده', /probeShopsysDatabase\(file\)/.test(main) && /name = 'snapshots'/.test(read('desktop/dbLocation.ts')))
+check('الخيار «إغلاق البرنامج» يُنهي دون قاعدة فارغة صامتة', /choice === 2[\s\S]{0,200}app\.exit\(0\)/.test(main))
+check('دليل التشغيل السابق: backups أو last-run.json أو مؤشر المكان', /existsSync\(join\(ud, 'backups'\)\) \|\| existsSync\(join\(ud, 'last-run\.json'\)\) \|\| existsSync\(dbLocationFileAt\(ud\)\)/.test(read('desktop/dbLocation.ts')))
+check('المسار النسبي مرفوض عند الكتابة (isAbsoluteDbPath في writeDbLocationAt)', /writeDbLocationAt[\s\S]{0,300}isAbsoluteDbPath\(cfg\.customDbPath\)/.test(read('desktop/dbLocation.ts')))
+
 console.log(failures ? `\n❌ فشلت ${failures} فحوص` : '\n✅ بوابة التخزين والنسخ v1.0.22 تعمل')
 process.exit(failures ? 1 : 0)

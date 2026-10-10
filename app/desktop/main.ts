@@ -11,6 +11,7 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell }
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
 import { keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
@@ -19,8 +20,10 @@ import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
 import {
   readDbLocationAt, writeDbLocationAt, restoreLocationPointerAt, customDbStatusAt, resolveDbPathAt,
+  hasPreviousUseEvidenceAt, shouldAskForExistingDatabase, probeShopsysDatabase, isAbsoluteDbPath,
   type DbLocationConfig,
 } from './dbLocation.ts'
+import { isInAppNavigation, isExternalOpenable } from './navigationPolicy.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
   type CustomLocationStatus, type ExistingDataCandidate,
@@ -169,6 +172,10 @@ function writeLastRunVersion(): void {
   }
 }
 
+/* v1.0.22: عنوان صفحة التطبيق المحلية (الإنتاج) وأصل خادم التطوير — لسياسة التنقل */
+const APP_INDEX_FILE_URL = pathToFileURL(join(__dirname, '../dist/index.html')).href
+const devOrigin: string | null = isDev ? new URL(process.env.ELECTRON_START_URL!).origin : null
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1360,
@@ -184,15 +191,26 @@ function createMainWindow(): BrowserWindow {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      /* v1.0.22: الصفحة الرئيسية تعمل في sandbox كنوافذ الطباعة والشاشة الافتتاحية.
+         الجسر (preload) يستورد من 'electron' فقط — متوافق مع sandbox. */
+      sandbox: true,
       spellcheck: false,
     },
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     /* ح9 (مراجعة ③): مخططات محددة فقط تُمرَّر إلى نظام التشغيل — لا file: ولا مخططات
        تطبيقات أخرى قد تفتح برامج محلية. الرفض دائماً داخل النافذة نفسها. */
-    if (/^(?:https?:\/\/|mailto:|tel:)/i.test(url)) void shell.openExternal(url)
+    if (isExternalOpenable(url)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+  /* v1.0.22: التنقل داخل النافذة مقصور على صفحة التطبيق نفسها. أي رابط آخر (صفحة خارجية
+     أو ملف محلي آخر) يُمنع، وإن كان http(s)/mailto/tel يُفتح في المتصفح الافتراضي.
+     الحدث لا يُطلق لـ loadURL/loadFile البرمجية، فصفحة الخطأ وتحميل التطبيق لا يتأثران. */
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isInAppNavigation(url, APP_INDEX_FILE_URL, devOrigin)) return
+    event.preventDefault()
+    logLine('security', `منع تنقل غير مسموح: ${url.slice(0, 120)}`)
+    if (isExternalOpenable(url)) void shell.openExternal(url)
   })
   /* قنوات التشخيص الميداني: فشل التحميل يعرض صفحة خطأ عربية بدل شاشة بيضاء،
      وأخطاء المُصيّر تُسجَّل في main.log — أين المشكلة يصبح معروفاً فوراً */
@@ -283,6 +301,59 @@ function writeDbLocation(cfg: DbLocationConfig): void {
   writeDbLocationAt(userDataDir(), cfg, (message) => logLine('db-location', message))
 }
 /* ملف التوجيه مفقود ⇒ استعادته من المرآة في المكان الافتراضي */
+/**
+ * v1.0.22 (طلب المالك): لا يُنشأ قاعدة فارغة صامتاً. إذا غابت القاعدة وفيه دليل تشغيل سابق
+ * (ولم يجد offerExistingData نسخة صالحة) نطلب من العميل اختيار الملف الموجود، ونحفظ مساره
+ * المطلق في المؤشر. التثبيت الجديد بلا دليل لا يرى هذا الحوار.
+ */
+async function askForExistingDatabaseIfNeeded(): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const { dbPath } = resolveDbPath()
+    const need = shouldAskForExistingDatabase({
+      resolvedDbExists: existsSync(dbPath),
+      previousUse: hasPreviousUseEvidenceAt(userDataDir()),
+    })
+    if (!need) return
+    logLine('db-recovery', `القاعدة غير موجودة في ${dbPath} مع دليل تشغيل سابق — نطلب اختيار الملف`)
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      title: 'تَحَكَّم — لم نجد قاعدة بياناتك',
+      message: 'لم نجد قاعدة بياناتك الحالية، ولن نُنشئ قاعدة فارغة تلقائياً.\n\nاختر ملف قاعدة البيانات الموجود مسبقاً (shopsys.db).',
+      detail: `المكان المتوقع: ${dbPath}\n\n«بدء قاعدة جديدة» يبدأ ببيانات فارغة، ولن تظهر بياناتك السابقة إلا إذا اخترت ملفها لاحقاً.`,
+      buttons: ['اختيار ملف shopsys.db الموجود', 'بدء قاعدة جديدة', 'إغلاق البرنامج'],
+      defaultId: 0,
+      cancelId: 2,
+    })
+    if (choice === 2) {
+      logLine('db-recovery', 'أغلق المستخدم الحوار دون اختيار قاعدة')
+      app.exit(0)
+      throw new Error('أُغلق البرنامج: لم تُختر قاعدة بيانات')
+    }
+    if (choice === 1) {
+      logLine('db-recovery', 'بدأ المستخدم قاعدة جديدة باختياره')
+      return
+    }
+    const picked = dialog.showOpenDialogSync({
+      title: 'اختر ملف قاعدة البيانات الموجود مسبقاً (shopsys.db)',
+      properties: ['openFile'],
+      filters: [{ name: 'قاعدة بيانات', extensions: ['db'] }],
+    })
+    const file = picked?.[0]
+    if (!file) continue
+    const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
+    if (verdict !== 'ok') {
+      const why = verdict === 'not-shopsys' ? 'ليس ملف قاعدة بيانات تَحَكَّم'
+        : verdict === 'corrupt' ? 'الملف تالف' : 'تعذّر فتح الملف'
+      logLine('db-recovery', `رُفض الملف المختار (${why}): ${file}`)
+      dialog.showErrorBox('تَحَكَّم — ملف غير صالح', `${why}:\n${file}\n\nاختر ملف shopsys.db الصحيح.`)
+      continue
+    }
+    writeDbLocation({ ...readDbLocation(), customDbPath: file, customDbOpenedAt: null })
+    logLine('db-recovery', `اعتُمدت القاعدة التي اختارها المستخدم: ${file}`)
+  }
+  throw new Error('تعذّر تحديد قاعدة البيانات بعد عدة محاولات')
+}
+
 function restoreLocationPointerIfMissing(): void {
   const restored = restoreLocationPointerAt(userDataDir())
   if (restored) logLine('db-location', `استُعيد مؤشر المكان من المرآة: ${restored}`)
@@ -571,6 +642,7 @@ async function openDatabase(): Promise<ShopsysDatabase> {
   restoreLocationPointerIfMissing()
   await resolveMissingLocation()
   await offerExistingData()
+  await askForExistingDatabaseIfNeeded()
   const { dbPath, isCustom } = resolveDbPath()
   // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
   try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
