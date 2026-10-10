@@ -17,14 +17,14 @@ import { activateOnline } from '../../core/activation.ts'
 const ALL_FEATURES: LicenseFeature[] = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot']
 
 export function LicensePage() {
-  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation, revokedKeys, setup } = useAppStore()
+  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation, revokedKeys, setup, deviceFlags } = useAppStore()
   const toast = useToast()
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
 
   const state = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
-    [activatedPayload, trialStartedAt, lastSeenAt],
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
 
   const copyDevice = async () => {

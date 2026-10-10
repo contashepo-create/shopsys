@@ -25,7 +25,7 @@
  */
 import { issueLicenseKey, keyFingerprint, decodeLicenseKey, expiresAfterDays, canonicalPayload, issueActivityChangeKey } from './licenseLib.js'
 import { acknowledgePanelCallback, getNotificationsForDevice, handlePanelButton, handlePanelText, panelHome, recordNoticeAck, noticeListReply } from './adminPanel.js'
-import { subscriptionDigest, formatDigestAr, formatStatsAr, hasDigestNews, digestMarkerKey, readSoonDays, deviceMetadata } from './subscriptions.js'
+import { subscriptionDigest, formatDigestAr, formatStatsAr, hasDigestNews, digestMarkerKey, readSoonDays, deviceMetadata, touchDeviceLastSeen } from './subscriptions.js'
 import { readAbout, setAboutField } from './aboutContent.js'
 import {
   REG_MAX_BYTES, sanitizeRegistration, saveRegistration, formatRegistrationAr,
@@ -101,6 +101,7 @@ export default {
     if (notifications) {
       if (request.method !== 'GET') return new Response('method not allowed', { status: 405, headers: CORS })
       const deviceId = decodeURIComponent(notifications[1])
+      await touchDeviceLastSeen(cfg, deviceId)
       return json(await getNotificationsForDevice(cfg, deviceId), CORS)
     }
     /* بند 10 (تدقيق 2026-10-08): إيصال قراءة تنبيه المطوّر.
@@ -122,7 +123,9 @@ export default {
     // GET /subscription/:deviceId — عقد v1.0.3: حالة الاشتراك للعرض في التطبيق (بلا اسم العميل)
     const sub = url.pathname.match(/^\/subscription\/([^/]+)$/)
     if (sub) {
-      const state = await cfg.kv.get(`dev:${decodeURIComponent(sub[1])}`)
+      const deviceId = decodeURIComponent(sub[1])
+      await touchDeviceLastSeen(cfg, deviceId)
+      const state = await cfg.kv.get(`dev:${deviceId}`)
       if (!state) return json({ plan: '', expiresAt: null, message: '' }, CORS)
       const o = JSON.parse(state)
       return json({ plan: o.plan ?? '', expiresAt: o.expiresAt ?? null, message: o.message ?? '' }, CORS)
@@ -430,9 +433,17 @@ async function handleUpdate(update, cfg) {
         const key = await issueLicenseKey(payload, cfg.priv)
         const fp = keyFingerprint(key)
         await cfg.kv.put(`lic:${fp}`, JSON.stringify({ payload, key, issuedAt: payload.issuedAt, revoked: false }))
+        /* S4: الإصدار يحدّث السجل ولا يستبدله — يحفظ البريد وآخر ظهور وأي حقل آخر
+           (كان يُكتب من الصفر فيضيع البريد عند كل إعادة إصدار).
+           استثناءان مقصودان، ومطابقان لما تفعله اللوحة (mergeDevRecord):
+           • message تُمسح: رسالة المطوّر (مثل «تم إيقاف الاشتراك») تخص الحالة السابقة؛
+           • disabledAt تُزال: الإصدار تنشيط للجهاز. */
+        const prevRaw = await cfg.kv.get(`dev:${deviceId}`)
+        const prevRecord = prevRaw ? JSON.parse(prevRaw) : {}
         const deviceRecord = {
-          plan, expiresAt: payload.expiresAt, customer: payload.customer, message: '', fingerprint: fp,
+          ...prevRecord, plan, expiresAt: payload.expiresAt, customer: payload.customer, message: '', fingerprint: fp,
         }
+        delete deviceRecord.disabledAt
         await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(deviceRecord), { metadata: deviceMetadata(deviceRecord) })
         await appendDeviceLog(cfg, deviceId, `تفعيل ${plan} حتى ${payload.expiresAt ?? 'الحياة'} — ${payload.customer}${extraModules.length ? ` +وحدات ${extraModules.join(',')}` : ''}`)
         return {

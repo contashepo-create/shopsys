@@ -3,6 +3,7 @@
  * (اليوم: localStorage — غداً: جدول settings في SQLite عبر نفس الواجهة)
  */
 import { create } from 'zustand'
+import { setActiveDeviceFlags } from '../core/featureFlags.ts'
 import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
@@ -683,14 +684,17 @@ export const useAppStore = create<AppState>()(
         )),
       deviceFlags: null,
       cloudSyncedAt: null,
-      setCloudData: (patch) =>
+      setCloudData: (patch) => {
+        // الإطفاء يسري فوراً على كل بوابة ترخيص (evaluateLicense يقرأ هذه الحالة)
+        if (patch.flags !== undefined) setActiveDeviceFlags(patch.flags)
         set((s) => ({
           cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
           revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
           cloudNotifications: patch.notifications !== undefined ? patch.notifications : s.cloudNotifications,
           deviceFlags: patch.flags !== undefined ? patch.flags : s.deviceFlags,
           cloudSyncedAt: new Date().toISOString(),
-        })),
+        }))
+      },
       lastHourlyBackupAt: null,
       setLastHourlyBackupAt: (iso) => set({ lastHourlyBackupAt: iso }),
       backupIntervalMinutes: 60,
@@ -716,6 +720,8 @@ export const useAppStore = create<AppState>()(
            التوقيع. تُعلَّم الحالة `checking` كي لا تُعرض شاشة القفل في نافذة
            الفحص (وإلا ومضت لعميل مفعّل) — `App.tsx` ينتظرها قبل الحكم. */
         if (state) {
+          // آخر أعلام محفوظة (وضع الأوفلاين) تسري من أول لحظة قبل أي جلب جديد
+          setActiveDeviceFlags(state.deviceFlags ?? null)
           state.activatedPayload = null
           state.licenseAudit = state.activatedKey
             ? { status: 'checking', at: new Date().toISOString() }

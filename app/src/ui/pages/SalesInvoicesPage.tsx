@@ -36,7 +36,7 @@ import { openItemPricesWindow } from '../windows/windowStore.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
-  const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
@@ -55,8 +55,8 @@ export function SalesInvoicesPage() {
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة بمفتاح المطور ⇒ لا تعديل — إشعارات فقط
   const lic = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
-    [activatedPayload, trialStartedAt, lastSeenAt],
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const einvoiceActive = electronicInvoiceLockActive({ licensed: hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg'), enabled: einvoice.enabled === true, taxNumber: einvoice.taxNumber })
   const policy = invoiceEditPolicy({ einvoiceActive })

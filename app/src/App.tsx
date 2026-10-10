@@ -373,7 +373,7 @@ export default function App() {
        تكفي، فتُطلب من جديد — وهذا ما كان معلناً في المتجر («تطلب مجدداً عند
        التحديث») ولم يكن منفذاً: كان الفحص `!legal` فقط. */
     legal: legalCurrent,
-    activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
+    activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys, deviceFlags,
     setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt, licenseAudit,
   } = useAppStore()
   /* الموافقة سارية فقط على الإصدار الحالي من الوثيقة — فأي تغيير جوهري في
@@ -422,8 +422,8 @@ export default function App() {
   }, [storesHydrated])
 
   const licenseState = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
-    [activatedPayload, trialStartedAt, lastSeenAt],
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const lockReason = useMemo(
     () => currentLockReason(licenseState, { activatedKey, activatedPayload, revokedKeys, licenseAudit, setup }),

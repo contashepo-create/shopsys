@@ -1,3 +1,5 @@
+import { effectiveFeatures, getActiveDeviceFlags, type DeviceFlags } from './featureFlags.ts'
+
 /**
  * الترخيص — ShopSys (المرحلة 5) — منقول مفهومياً من نظام mobileshop (القرار 4)
  * ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +328,9 @@ export function evaluateLicense(args: {
   trialStartedAt: string // ISO أول تشغيل
   lastSeenAt: string // آخر يوم شوهد (مرساة ضد إرجاع الساعة)
   today: string // ISO اليوم
+  /* أعلام الجهاز الحالية. يمرّرها كل مكان يحسب الحالة داخل useMemo، فتكون جزءاً من
+     الاعتماديات وتُعاد الحسبة عند تغيّر الإطفاء. غيابها (undefined) = الحالة المحفوظة في الوحدة. */
+  deviceFlags?: DeviceFlags | null
 }): LicenseState {
   /* ح2 (مراجعة ③): فشل مغلق على كل قيمة زمنية تالفة. قبل هذا الإصلاح كانت trialStartedAt = ""
      تعطي left = NaN فلا يتحقق `<= 0` أبداً ⇒ تجربة لا تنتهي (مؤكد بالتجربة). */
@@ -336,7 +341,9 @@ export function evaluateLicense(args: {
   if (today < args.lastSeenAt.slice(0, 10)) return { status: 'clock_tampered' }
 
   if (args.activatedPayload) {
-    const p = args.activatedPayload
+    // إطفاء سحابي (kill-switch): الميزة الممنوحة المُطفأة لا تُعتمد في أي بوابة
+    const flags = args.deviceFlags !== undefined ? args.deviceFlags : getActiveDeviceFlags()
+    const p: LicensePayload = { ...args.activatedPayload, features: effectiveFeatures(args.activatedPayload.features, flags) }
     if (p.expiresAt === null) return { status: 'active', payload: p, daysLeft: null }
     if (!isValidIsoDay(p.expiresAt)) return { status: 'invalid', reason: 'تاريخ انتهاء المفتاح غير صالح' }
     const left = daysBetween(today, p.expiresAt)

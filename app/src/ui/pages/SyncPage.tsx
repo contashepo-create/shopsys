@@ -22,9 +22,9 @@ export function SyncPage() {
   const toast = useToast()
 
   const licensed = useMemo(() => {
-    const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+    const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags })
     return hasFeature(state, 'cloud_sync')
-  }, [activatedPayload, trialStartedAt, lastSeenAt])
+  }, [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags])
 
   // وضع التشغيل الحالي (البنية الهجينة — 4 أوضاع) مشتق من الرخصة الموقَّعة فقط
   const archMode = useMemo(

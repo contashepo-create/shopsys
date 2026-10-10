@@ -17,15 +17,15 @@ import {
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 export function EinvoicePage() {
-  const { setup, einvoice, updateEinvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, einvoice, updateEinvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const { sales, customers, items } = useDataStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const lic = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
-    [activatedPayload, trialStartedAt, lastSeenAt],
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const saActive = hasFeature(lic, 'einvoice_sa')
   const egActive = hasFeature(lic, 'einvoice_eg')
