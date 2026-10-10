@@ -5,7 +5,7 @@
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
+import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal, MessageCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -23,6 +23,8 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
+import { purchaseWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
@@ -116,8 +118,9 @@ export function PurchasesPage() {
   const settleExpensePayable = (id: number, remaining: number) => { try { const amount = payableAmount.trim() ? toMinor(payableAmount, cur.decimals) : remaining; settlePurchaseExpensePayable({ payableId: id, amountMinor: amount, treasury: payableTreasury, date: today }); setPayableAmount(''); toast.show('تم سداد الاستحقاق وإنشاء سند الصرف والقيد ✓') } catch (error) { toast.show((error as Error).message, 'error') } }
 
   /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
-  const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
-    const model = buildSimpleDocModel({
+  /** نموذج الطباعة لفاتورة شراء — يُستعمل للطباعة وللإرسال عبر واتساب */
+  const buildPurchaseModel = (inv: PurchaseInvoice) => {
+    return buildSimpleDocModel({
       docTitle: 'فاتورة شراء',
       invoiceNumber: inv.invoiceNumber,
       refCode: inv.refCode ?? '',
@@ -136,8 +139,16 @@ export function PurchasesPage() {
       settings: receipt,
       extraFooter: [`${inv.supplierInvoiceNumber ? `فاتورة المورد ${inv.supplierInvoiceNumber}` : ''}${inv.purchaseOrderNumber ? ` · أمر شراء ${inv.purchaseOrderNumber}` : ''}${inv.dueDate ? ` · استحقاق ${inv.dueDate}` : ''}`, inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : ''].filter(Boolean).join(' — ') || undefined,
     })
-    printModelWithTemplate(model, cur, receipt, template)
+  }
+  const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    printModelWithTemplate(buildPurchaseModel(inv), cur, receipt, template)
     toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
+  }
+  /** إرسال فاتورة الشراء PDF عبر واتساب إلى رقم المورد المسجّل في بطاقته */
+  const sendPurchaseWhatsapp = (inv: PurchaseInvoice) => {
+    const party = purchaseWaParty(inv.supplierId, suppliers)
+    if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا المورد في بطاقته', 'error')
+    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, shopName: setup.shopName, toast })
   }
   const [supplierId, setSupplierId] = useState(0)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
@@ -539,6 +550,14 @@ export function PurchasesPage() {
                     <button onClick={() => setViewing(p)} title="عرض الفاتورة وقيدها" className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
                       <Eye size={15} />
                     </button>
+                    {(() => {
+                      const party = purchaseWaParty(p.supplierId, suppliers)
+                      return (
+                        <button onClick={() => sendPurchaseWhatsapp(p)} disabled={!party?.phone} title={party?.phone ? `إرسال الفاتورة إلى ${party.name} على واتساب (${party.phone})` : 'لا يوجد رقم مسجّل لهذا المورد في بطاقته'} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all duration-200 hover:scale-110 disabled:cursor-not-allowed disabled:opacity-35">
+                          <MessageCircle size={15} />
+                        </button>
+                      )
+                    })()}
                     <button onClick={() => setPrintTarget(p)} title="طباعة فاتورة الشراء — حراري/A4/A5" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
                       <Printer size={15} />
                     </button>

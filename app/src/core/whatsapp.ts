@@ -36,3 +36,50 @@ export function docShareMessage(docLabel: string, docNumber: string, shopName: s
   const n = (docNumber || 'مسودة').replace(/[^\u0600-\u06FFA-Za-z0-9/-]/g, '')
   return `${docLabel} ${n} — ${shopName}\nالملف مرفق (PDF). شكراً لثقتكم 🌟`
 }
+
+/** الطرف المستحق لمستند مع رقمه المسجّل في بطاقته (لزر الإرسال لكل سطر) */
+export interface WaParty {
+  name: string
+  /** الرقم كما هو مسجّل في البطاقة (قد يكون فارغاً) */
+  phone: string
+}
+
+interface WaSaleLike {
+  customerId: number | null
+  partyKind?: 'supplier' | 'employee' | null
+  partyId?: number | null
+  partyName?: string | null
+}
+
+interface WaPhonedRecord {
+  id: number
+  nameAr: string
+  phone?: string
+}
+
+/**
+ * طرف فاتورة البيع: عميل مسجّل (customerId) ⇒ بطاقة العميل،
+ * أو مورد/موظف (partyKind + partyId) ⇒ بطاقته، وإلا (نقدي بلا طرف) ⇒ null.
+ * الاسم يُؤخذ من البطاقة إن وُجدت، وإلا من الاسم المحفوظ على الفاتورة.
+ */
+export function saleWaParty(
+  sale: WaSaleLike,
+  parties: { customers: WaPhonedRecord[]; suppliers: WaPhonedRecord[]; employees: WaPhonedRecord[] },
+): WaParty | null {
+  if (sale.customerId != null && sale.customerId > 0) {
+    const customer = parties.customers.find((row) => row.id === sale.customerId)
+    return customer ? { name: customer.nameAr, phone: customer.phone ?? '' } : null
+  }
+  if (sale.partyId == null || sale.partyId <= 0) return null
+  const pool = sale.partyKind === 'supplier' ? parties.suppliers : sale.partyKind === 'employee' ? parties.employees : []
+  const record = pool.find((row) => row.id === sale.partyId)
+  if (record) return { name: record.nameAr, phone: record.phone ?? '' }
+  return sale.partyName ? { name: sale.partyName, phone: '' } : null
+}
+
+/** طرف فاتورة الشراء: المورد المسجّل على الفاتورة (0 = مورد نقدي ⇒ لا طرف) */
+export function purchaseWaParty(supplierId: number, suppliers: WaPhonedRecord[]): WaParty | null {
+  if (!supplierId || supplierId <= 0) return null
+  const supplier = suppliers.find((row) => row.id === supplierId)
+  return supplier ? { name: supplier.nameAr, phone: supplier.phone ?? '' } : null
+}
