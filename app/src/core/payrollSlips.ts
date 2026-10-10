@@ -43,10 +43,69 @@ export interface PayrollSlip {
   notes?: string
   /** §93: الجزاءات المسجلة التي خُصمت بهذه القسيمة (الأقدم أولاً) — تُعكس عند الإلغاء */
   recoveredDeductions?: { deductionId: number; minor: number }[]
+  /** دفعات الصرف الجزئية (بلاغ المالك): كل سند صرف يسدد جزءاً من الصافي. الحالة تبقى «مستحقة» ما دام المتبقي > 0 */
+  payments?: SlipPayment[]
+}
+
+export interface SlipPayment {
+  entryId: number
+  amountMinor: Minor
+  date: string
+  /** مصدر الصرف: الخزينة أو رقم سند الصرف */
+  from: string
 }
 
 export const slipNetMinor = (row: { grossMinor: Minor; allowancesMinor: Minor; deductionsMinor: Minor; advanceMinor: Minor }): Minor =>
   Math.max(0, row.grossMinor + row.allowancesMinor - row.deductionsMinor - row.advanceMinor)
+
+/** ما دُفع من صافي القسيمة حتى الآن. القسائم القديمة (مصروفة كاملةً قبل الدفعات) تُحسب كاملةً */
+export function slipPaidMinor(slip: Pick<PayrollSlip, 'status' | 'netMinor' | 'payments'>): Minor {
+  if (slip.payments?.length) return slip.payments.reduce((sum, p) => sum + p.amountMinor, 0)
+  return slip.status === 'paid' ? slip.netMinor : 0
+}
+
+/** المتبقي للصرف من القسيمة — يظهر وحده في سندات الصرف والكشف (بلاغ المالك) */
+export function slipRemainingMinor(slip: Pick<PayrollSlip, 'status' | 'netMinor' | 'payments'>): Minor {
+  if (slip.status === 'cancelled') return 0
+  return Math.max(0, slip.netMinor - slipPaidMinor(slip))
+}
+
+/**
+ * توزيع مبلغ سند صرف على قسائم مختارة بالترتيب (الأقدم أولاً): كل قسيمة تأخذ حتى متبقيها.
+ * ما يزيد عن مجموع متبقيها يُعاد كـ surplus (يبقى مبلغاً عاماً غير مربوط بقسيمة).
+ */
+export function allocateSlipPayments(
+  slips: Pick<PayrollSlip, 'id' | 'status' | 'netMinor' | 'payments'>[],
+  amountMinor: Minor,
+): { allocations: { slipId: number; amountMinor: Minor }[]; surplusMinor: Minor } {
+  let left = amountMinor
+  const allocations: { slipId: number; amountMinor: Minor }[] = []
+  for (const slip of slips) {
+    if (left <= 0) break
+    const take = Math.min(left, slipRemainingMinor(slip))
+    if (take <= 0) continue
+    allocations.push({ slipId: slip.id, amountMinor: take })
+    left -= take
+  }
+  return { allocations, surplusMinor: Math.max(0, left) }
+}
+
+/**
+ * الاستقطاع التلقائي للسلفة في القسيمة (بلاغ المالك): يُستقطع المتبقي من السلفة
+ * بحدّين: لا يتجاوز نصف الراتب (القاعدة التي تفرضها validateSlipDraft)، ولا يتجاوز
+ * صافي الراتب قبل السلفة. الباقي يُقسَّم تلقائياً على الأشهر التالية.
+ */
+export function defaultAdvanceRecovery(row: {
+  remainingAdvanceMinor: Minor
+  grossMinor: Minor
+  allowancesMinor: Minor
+  deductionsMinor: Minor
+}): Minor {
+  const base = row.grossMinor + row.allowancesMinor
+  const netBeforeAdvance = Math.max(0, base - row.deductionsMinor)
+  const halfHeadroom = Math.max(0, Math.round(base / 2) - row.deductionsMinor)
+  return Math.max(0, Math.min(row.remainingAdvanceMinor, halfHeadroom, netBeforeAdvance))
+}
 
 export function slipsTotals(slips: PayrollSlip[]): { gross: Minor; deductions: Minor; advances: Minor; net: Minor; unpaid: Minor } {
   return slips.reduce(
@@ -55,7 +114,7 @@ export function slipsTotals(slips: PayrollSlip[]): { gross: Minor; deductions: M
       deductions: sum.deductions + slip.deductionsMinor,
       advances: sum.advances + slip.advanceMinor,
       net: sum.net + slip.netMinor,
-      unpaid: sum.unpaid + (slip.status === 'accrued' ? slip.netMinor : 0),
+      unpaid: sum.unpaid + slipRemainingMinor(slip),
     }),
     { gross: 0, deductions: 0, advances: 0, net: 0, unpaid: 0 },
   )

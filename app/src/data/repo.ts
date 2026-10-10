@@ -116,7 +116,8 @@ import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCa
 import type { JournalEntry } from '../core/ledger.ts'
 import { needsApproval, canApprove, type DocApprovalRequest, type ApprovalDocKind, type DocApprovalStatus } from '../core/approvals.ts'
 import {
-  type PayrollSlip, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
+  type PayrollSlip, type SlipPayment, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
+  slipPaidMinor, slipRemainingMinor, allocateSlipPayments,
 } from '../core/payrollSlips.ts'
 import { type EmployeeImportRow } from '../core/employeesImport.ts'
 import {
@@ -1485,7 +1486,7 @@ interface DataState {
     rows: { employeeId: number; grossMinor: number; allowancesMinor: number; deductionsMinor: number; advanceMinor: number; notes?: string }[]
   }) => PayrollSlip[]
   /** صرف قسيمة واحدة (اليوم أو غداً) — قيدها مستقل فلا يختلط بغيرها */
-  payPayrollSlip: (slipId: number, args: { treasury: TreasuryAccount; date?: string }) => PayrollSlip
+  payPayrollSlip: (slipId: number, args: { treasury: TreasuryAccount; date?: string; amountMinor?: number }) => PayrollSlip
   /** إلغاء قسيمة لم تُصرف (بقيد عكسي للاستحقاق) */
   cancelPayrollSlip: (slipId: number, reason: string) => void
   /** القسائم غير المصروفة — يعرضها سند الصرف لكل موظف على حدة */
@@ -3115,6 +3116,11 @@ export const useDataStore = create<DataState>()(
           if (!employee) throw new Error('موظف غير موجود في المسير')
           const errors = validateSlipDraft({ ...row, overrideBy: args.overrideBy })
           if (errors.length) throw new Error(`${employee.nameAr}: ${errors.join(' — ')}`)
+          /* بلاغ المالك (تدقيق الرواتب): الصافي السالب لا يُقتطع إلى صفر بصمت — فالسلفة
+             والجزاء يُستردان كاملين دون أن يغطيهما الراتب. يُرفض المسير كله، مهما كان
+             الاعتماد (الاعتماد يسمح بتجاوز نصف الراتب، لا بصافٍ سالب). */
+          const rawNet = row.grossMinor + row.allowancesMinor - row.deductionsMinor - row.advanceMinor
+          if (rawNet < 0) throw new Error(`${employee.nameAr}: الخصومات والسلف تتجاوز الراتب والبدلات — صافي القسيمة سالب`)
           return { ...row, employeeName: employee.nameAr, netMinor: slipNetMinor(row) }
         })
         /* منع تكرار استحقاق نفس الموظف لنفس الشهر */
@@ -3212,8 +3218,14 @@ export const useDataStore = create<DataState>()(
         if (!slip) throw new Error('القسيمة غير موجودة')
         if (slip.status === 'paid') throw new Error('هذه القسيمة مصروفة بالفعل')
         if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة')
+        const remaining = slipRemainingMinor(slip)
+        if (remaining <= 0) throw new Error('لا متبقي للصرف في هذه القسيمة')
+        /* بلاغ المالك: الصرف قد يكون جزئياً — الافتراضي المتبقي، ولا يُصرف أكثر منه */
+        const amount = args.amountMinor ?? remaining
+        if (!Number.isInteger(amount) || amount <= 0) throw new Error('مبلغ الصرف يجب أن يكون موجباً')
+        if (amount > remaining) throw new Error(`مبلغ الصرف (${amount}) أكبر من المتبقي من القسيمة (${remaining})`)
         const now = args.date ? `${args.date}T12:00:00.000Z` : new Date().toISOString()
-        const lines = buildSlipPaymentLines(slip, args.treasury)
+        const lines = buildSlipPaymentLines({ slipNumber: slip.slipNumber, employeeName: slip.employeeName, netMinor: amount }, args.treasury)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -3221,7 +3233,13 @@ export const useDataStore = create<DataState>()(
           sourceType: 'payroll', sourceId: slip.runId, lines,
           createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const updated: PayrollSlip = { ...slip, status: 'paid', paidAt: now, paidEntryId: entry.id, paidFrom: args.treasury }
+        const payment: SlipPayment = { entryId, amountMinor: amount, date: now.slice(0, 10), from: args.treasury }
+        const payments = [...(slip.payments ?? []), payment]
+        const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
+        const fullyPaid = paidNow >= slip.netMinor
+        const updated: PayrollSlip = fullyPaid
+          ? { ...slip, status: 'paid', paidAt: now, paidEntryId: entry.id, paidFrom: args.treasury, payments }
+          : { ...slip, payments }
         set({
           payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? updated : row)),
           journal: [...state.journal, entry],
@@ -3233,6 +3251,7 @@ export const useDataStore = create<DataState>()(
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
         if (slip.status === 'paid') throw new Error('لا تُلغى قسيمة مصروفة — سجّل تسوية بدلاً منها')
+        if (slipPaidMinor(slip) > 0) throw new Error('لا تُلغى قسيمة بها صرف جزئي — ألغِ الدفعات أولاً أو سجّل تسوية')
         // إصلاح §83 (بوابة العمق): الملغاة كانت تُلغى مرة ثانية فيولَّد قيد عكسي
         // مزدوج بلا مقابل — يفسد مصروف الرواتب والذمة معاً. القاتل في المستودع.
         if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة بالفعل — لا يُلغى مستند ملغى')
@@ -6098,6 +6117,7 @@ export const useDataStore = create<DataState>()(
         if (args.kind === 'payment' && args.counterAccountCode === '2101' && (args.partyKind !== 'supplier' || args.partyId == null)) throw new Error('سداد الموردين 2101 يتطلب اختيار مورد مسجل')
         /* سداد قسائم رواتب محددة (طلب المالك ㉘): تحقق قبل أي كتابة — لا قسيمة إلا لموظف السند نفسه */
         let settleSlips: PayrollSlip[] = []
+        let settleAllocations: { slipId: number; amountMinor: number }[] = []
         if (args.settleSlipIds?.length) {
           if (args.kind !== 'payment' || args.counterAccountCode !== '2104' || args.partyKind !== 'employee' || args.partyId == null)
             throw new Error('سداد القسائم متاح في سند صرف على «رواتب مستحقة 2104» لموظف محدد')
@@ -6109,9 +6129,11 @@ export const useDataStore = create<DataState>()(
             if (slip.employeeId !== args.partyId) throw new Error(`القسيمة ${slip.slipNumber} ليست لهذا الموظف — ${slip.employeeName}`)
             if (slip.status === 'paid') throw new Error(`القسيمة ${slip.slipNumber} مصروفة بالفعل — لا يُسدَّد مرتين`)
             if (slip.status === 'cancelled') throw new Error(`القسيمة ${slip.slipNumber} ملغاة`)
+            if (slipRemainingMinor(slip) <= 0) throw new Error(`القسيمة ${slip.slipNumber} لا متبقي فيها للصرف`)
           }
-          const settledTotal = settleSlips.reduce((sum, slip) => sum + slip.netMinor, 0)
-          if (settledTotal > args.amountMinor) throw new Error(`مجموع القسائم المحددة (${settledTotal}) أكبر من مبلغ السند (${args.amountMinor}) — ارفع المبلغ أو أزل قسيمة`)
+          /* بلاغ المالك: السند الجزئي يسدد جزءاً من القسيمة (لا كلها) — يُوزَّع المبلغ على المحددة
+             من الأقدم، ويُسدَّد المتبقي فقط. ما زاد عن مجموع المتبقي يبقى مبلغاً عاماً. */
+          settleAllocations = allocateSlipPayments([...settleSlips].sort((a, b) => a.id - b.id), args.amountMinor).allocations
         }
         let partyAllocations: FifoAllocation[] | undefined
         let partyUnallocatedMinor: number | undefined
@@ -6247,13 +6269,20 @@ export const useDataStore = create<DataState>()(
         set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
            القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
-        if (settleSlips.length) {
-          const settledIds = new Set(settleSlips.map((slip) => slip.id))
+        if (settleAllocations.length) {
+          const applied = new Map(settleAllocations.map((row) => [row.slipId, row.amountMinor]))
           const settledNow = new Date().toISOString()
+          const from = `سند صرف ${voucherNumber}`
           set({
-            payrollSlips: get().payrollSlips.map((slip) => (settledIds.has(slip.id)
-              ? { ...slip, status: 'paid' as const, paidAt: settledNow, paidEntryId: entryId, paidFrom: `سند صرف ${voucherNumber}` }
-              : slip)),
+            payrollSlips: get().payrollSlips.map((slip) => {
+              const amount = applied.get(slip.id)
+              if (!amount) return slip
+              const payments: SlipPayment[] = [...(slip.payments ?? []), { entryId, amountMinor: amount, date: settledNow.slice(0, 10), from }]
+              const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
+              return paidNow >= slip.netMinor
+                ? { ...slip, status: 'paid' as const, paidAt: settledNow, paidEntryId: entryId, paidFrom: from, payments }
+                : { ...slip, payments }
+            }),
           })
         }
         return voucher
@@ -8115,6 +8144,12 @@ export const useDataStore = create<DataState>()(
          *   • الخصومات: بند توثيقي داخل البيان — لا دين ولا دفع
          *   • الصرف: مدين بالصافي
          * بهذا لا يتكرر الاسترداد مرتين ولا يختفي — والرصيد يطابق 2104/1107. */
+        /* دفعات القسيمة: الدفعات المسجَّلة، أو صرف واحد كامل للقسائم القديمة (قبل الصرف الجزئي) */
+        const slipPaymentsOf = (slip: PayrollSlip): SlipPayment[] => {
+          if (slip.payments?.length) return slip.payments
+          if (slip.status === 'paid' && slip.paidAt) return [{ entryId: slip.paidEntryId ?? 0, amountMinor: slip.netMinor, date: slip.paidAt.slice(0, 10), from: slip.paidFrom ?? '' }]
+          return []
+        }
         for (const slip of state.payrollSlips.filter((row) => row.employeeId === employeeId && row.status !== 'cancelled')) {
           const slipMonth = monthLabelAr(slip.month)
           rows.push({
@@ -8123,7 +8158,10 @@ export const useDataStore = create<DataState>()(
             debitMinor: 0, creditMinor: slip.netMinor,
           })
           if (slip.advanceMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'سلفة استُردت من الراتب (سداد دين السلفة)', debitMinor: 0, creditMinor: slip.advanceMinor })
-          if (slip.status === 'paid' && slip.paidAt) rows.push({ date: slip.paidAt.slice(0, 10), ref: slip.slipNumber, description: `صرف راتب ${slipMonth}${slip.paidFrom ? ` — من ${slip.paidFrom}` : ''}`, debitMinor: slip.netMinor, creditMinor: 0 })
+          /* بلاغ المالك: كل دفعة صرف تظهر بمبلغها الفعلي (لا الصافي كاملاً) — والمتبقي يبقى عليه */
+          for (const payment of slipPaymentsOf(slip)) {
+            rows.push({ date: payment.date, ref: slip.slipNumber, description: `صرف راتب ${slipMonth}${payment.from ? ` — من ${payment.from}` : ''}`, debitMinor: payment.amountMinor, creditMinor: 0 })
+          }
         }
         /* ── المسيرات القديمة (postPayroll المباشر): استحقاق وصرف في مستند واحد.
          * آجل (accrue): 2104 دائن بالصافي + رد السلف المستقطع.
@@ -8155,8 +8193,10 @@ export const useDataStore = create<DataState>()(
         for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
           const settledByVoucher = voucher.kind === 'payment'
             ? state.payrollSlips
-              .filter((row) => row.employeeId === employeeId && row.status === 'paid' && row.paidEntryId === voucher.journalEntryId)
-              .reduce((sum, row) => sum + row.netMinor, 0)
+              .filter((row) => row.employeeId === employeeId && row.status !== 'cancelled')
+              .flatMap((row) => slipPaymentsOf(row))
+              .filter((payment) => payment.entryId === voucher.journalEntryId)
+              .reduce((sum, payment) => sum + payment.amountMinor, 0)
             : 0
           const voucherDebit = voucher.kind === 'payment' ? Math.max(0, voucher.amountMinor - settledByVoucher) : 0
           if (voucher.kind === 'payment' && voucherDebit === 0) continue

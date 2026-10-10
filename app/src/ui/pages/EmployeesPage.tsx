@@ -18,7 +18,7 @@ import { matchesPartyCode, partyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
-import type { PayrollSlip } from '../../core/payrollSlips.ts'
+import { type PayrollSlip, defaultAdvanceRecovery, slipPaidMinor, slipRemainingMinor } from '../../core/payrollSlips.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -157,17 +157,26 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [slipDraftOpen, setSlipDraftOpen] = useState(false)
   const [slipSearch, setSlipSearch] = useState('')
   const [slipScope, setSlipScope] = useState<'all' | 'selected'>('all')
-  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number; attDed: number; attAllw: number; regDed: number }[]>([])
+  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number; advanceEdited: boolean; attDed: number; attAllw: number; regDed: number }[]>([])
   useEffect(() => {
     if (!slipDraftOpen) return
     setSlipRows(employees.filter((employee) => employee.active !== false).map((employee) => ({
       employeeId: employee.id, name: employee.nameAr, on: true,
-      gross: employee.baseSalaryMinor ?? 0, allowances: 0, deductions: 0, advance: 0,
+      gross: employee.baseSalaryMinor ?? 0, allowances: 0, deductions: 0, advance: 0, advanceEdited: false,
       attDed: 0, attAllw: 0, regDed: 0,
     })))
   }, [employees, slipDraftOpen])
+  /* السلفة الاستقطاعية تلقائية (بلاغ المالك): ما لم يعدّلها المالك يُحسب الاستقطاع من
+     المتبقي وسقف نصف الراتب والصافي الحالي — فيُقسَّم على الأشهر تلقائياً، ويتحدّث مع الحضور */
+  const slipRowsEffective = slipRows.map((row) => (row.advanceEdited ? row : {
+    ...row,
+    advance: defaultAdvanceRecovery({
+      remainingAdvanceMinor: getEmployeeAdvanceBalance(row.employeeId).remainingMinor,
+      grossMinor: row.gross, allowancesMinor: row.allowances, deductionsMinor: row.deductions,
+    }),
+  }))
   /* بحث الموظف داخل المسير: تُعرض قسيمته وحده (طلب المالك) */
-  const visibleSlipRows = slipRows.filter((row) => {
+  const visibleSlipRows = slipRowsEffective.filter((row) => {
     const term = slipSearch.trim()
     if (term && !row.name.includes(term)) return false
     if (slipScope === 'selected' && !row.on) return false
@@ -175,12 +184,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   })
   /* §92: إجماليات المسير الصلبة — لشريط الترحيل السفلي */
   const slipTotals = useMemo(() => {
-    const sel = slipRows.filter((row) => row.on)
+    const sel = slipRowsEffective.filter((row) => row.on)
     const gross = sel.reduce((sum, row) => sum + row.gross + row.allowances, 0)
     const cut = sel.reduce((sum, row) => sum + row.deductions + row.advance, 0)
     return { count: sel.length, gross, cut, net: Math.max(0, gross - cut) }
-  }, [slipRows])
-  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number; attDed: number; attAllw: number; regDed: number }>) =>
+  }, [slipRowsEffective])
+  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number; advanceEdited: boolean; attDed: number; attAllw: number; regDed: number }>) =>
     setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
   /**
    * «احتساب من الحضور» (طلب المالك ㉘): يملأ خصومات الغياب/التأخير والإجازة بلا
@@ -224,7 +233,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       if (dedRemaining > 0) { dedCount += 1; dedSum += dedRemaining }
       return {
         ...row,
-        advance: advRemaining,
+        advanceEdited: false,
         regDed: dedRemaining,
         deductions: Math.max(0, row.deductions - (row.regDed ?? 0)) + dedRemaining,
       }
@@ -236,7 +245,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const accrueSlips = () => {
     /* جسر الحضور ⑤ (جولة «اكمل ونفذ»): لا ترحيل أعمى لمسير شهرٍ بلا أي سجلات
        حضور لمحددينه — تحذير صريح بالأسماء، والقرار النهائي للمالك بموافقة ثانية */
-    const chosen = slipRows.filter((row) => row.on)
+    const chosen = slipRowsEffective.filter((row) => row.on)
     const withRecords = new Set(attendanceRecords.filter((r) => r.date.startsWith(slipMonth)).map((r) => r.employeeId))
     const missing = chosen.filter((row) => !withRecords.has(row.employeeId)).map((row) => row.name)
     if (missing.length > 0 && slipNoAttendance == null) {
@@ -246,7 +255,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     }
     setSlipNoAttendance(null)
     try {
-      const rows = slipRows.filter((row) => row.on).map((row) => ({
+      const rows = slipRowsEffective.filter((row) => row.on).map((row) => ({
         employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances,
         deductionsMinor: row.deductions, advanceMinor: row.advance,
       }))
@@ -261,13 +270,16 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [paySlipFor, setPaySlipFor] = useState<PayrollSlip | null>(null)
   const [paySlipTreasury, setPaySlipTreasury] = useState('1101')
   const [paySlipDate, setPaySlipDate] = useState(() => new Date().toISOString().slice(0, 10))
+  /* مبلغ سند الصرف: افتراضياً المتبقي من القسيمة فقط (بلاغ المالك) — وقابل للتعديل للصرف الجزئي */
+  const [paySlipAmount, setPaySlipAmount] = useState(0)
   const postSlipVoucher = () => {
     if (!paySlipFor) return
+    if (!Number.isInteger(paySlipAmount) || paySlipAmount <= 0) { toast.show('مبلغ السند يجب أن يكون أكبر من صفر', 'error'); return }
     try {
       const voucher = postVoucher({
         kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
-        amountMinor: paySlipFor.netMinor,
-        description: `صرف راتب ${paySlipFor.month} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
+        amountMinor: paySlipAmount,
+        description: `صرف راتب ${monthLabelAr(paySlipFor.month)} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
         partyKind: 'employee', partyId: paySlipFor.employeeId,
         settleSlipIds: [paySlipFor.id], date: paySlipDate || undefined,
       })
@@ -1171,7 +1183,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             <td className="p-1.5" key={field}>
                               <input className={`${inputCls} h-8 text-center font-mono`} inputMode="decimal" value={String(row[field] / 100)}
                                 aria-label={`${field} ${row.name}`}
-                                onChange={(event) => patchSlipRow(row.employeeId, { [field]: Math.round((Number(event.target.value) || 0) * 100) })} />
+                                onChange={(event) => patchSlipRow(row.employeeId, { [field]: Math.round((Number(event.target.value) || 0) * 100), ...(field === 'advance' ? { advanceEdited: true } : {}) })} />
                             </td>
                           ))}
                           <td className="p-1.5 text-center font-mono text-[13px] font-black text-emerald-600">{fmt(net)}</td>
@@ -1195,7 +1207,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </div>
                     <div className="px-4 py-3">
                       <div className="text-[10px] font-bold text-slate-400">سلف مستقطعة (1107)</div>
-                      <div className="mt-0.5 text-lg font-black tabular-nums text-amber-300">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + row.advance, 0))}</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums text-amber-300">{fmt(slipRowsEffective.filter((row) => row.on).reduce((sum, row) => sum + row.advance, 0))}</div>
                     </div>
                     <div className="px-4 py-3 bg-white/[0.06]">
                       <div className="text-[10px] font-bold text-emerald-300">صافي المستحق ({slipTotals.count} قسيمة)</div>
@@ -1232,8 +1244,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     <Field label="تاريخ السند">
                       <input type="date" className={inputCls} value={paySlipDate} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
                     </Field>
-                    <Field label={`صافي القسيمة (${cur.symbol})`}>
-                      <input className={inputCls + ' text-center font-mono font-black'} readOnly value={fmt(paySlipFor.netMinor)} aria-label="مبلغ سند صرف الراتب" />
+                    <Field label={`المبلغ المصروف الآن (${cur.symbol}) — المتبقي ${fmt(slipRemainingMinor(paySlipFor))}`}>
+                      <input className={inputCls + ' text-center font-mono font-black'} inputMode="decimal" value={String(paySlipAmount / 10 ** cur.decimals)} aria-label="مبلغ سند صرف الراتب"
+                        onChange={(event) => setPaySlipAmount(Math.round((Number(event.target.value) || 0) * 10 ** cur.decimals))} />
                     </Field>
                   </div>
                   <DocOutcome>الأثر: سند صرف PV يُقفل «رواتب مستحقة 2104» مديناً باسم الموظف والخزينة دائنةً بالنقد المصروف — القسيمة تُوسم «مصروفة» باسم هذا السند، وتظهر في كشف حساب الموظف مرة واحدة بلا ازدواج.</DocOutcome>
@@ -1279,16 +1292,16 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   <tr key={slip.id} className="border-t border-slate-200/70 dark:border-slate-700/60" data-slip={slip.slipNumber}>
                     <td className="p-1 text-center font-mono font-bold">{slip.slipNumber}</td>
                     <td className="p-1 text-center">{slip.employeeName}</td>
-                    <td className="p-1 text-center font-mono">{slip.month}</td>
-                    <td className="p-1 text-center font-mono font-bold">{fmt(slip.netMinor)}</td>
+                    <td className="p-1 text-center">{monthLabelAr(slip.month)}</td>
+                    <td className="p-1 text-center font-mono font-bold" title={`الصافي ${fmt(slip.netMinor)} · المصروف ${fmt(slipPaidMinor(slip))}`}>{fmt(slipRemainingMinor(slip))}</td>
                     <td className="p-1 text-center">
                       <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${slip.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600' : slip.status === 'cancelled' ? 'bg-slate-500/10 text-slate-500' : 'bg-amber-500/10 text-amber-600'}`}>
-                        {slip.status === 'paid' ? 'مصروفة' : slip.status === 'cancelled' ? 'ملغاة' : 'مستحقة'}
+                        {slip.status === 'paid' ? 'مصروفة' : slip.status === 'cancelled' ? 'ملغاة' : slipPaidMinor(slip) > 0 ? 'مستحقة · صرف جزئي' : 'مستحقة'}
                       </span>
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(new Date().toISOString().slice(0, 10)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(new Date().toISOString().slice(0, 10)); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>

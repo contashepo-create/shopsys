@@ -25,7 +25,7 @@ const check = (name, cond) => {
 check('النسخ الساعية: 24 نسخة كل ساعة (يوم واحد) — من storagePolicy', /hourly:\s*\{\s*keep:\s*24,\s*ms:\s*60 \* 60 \* 1000\s*\}/.test(read('desktop/storagePolicy.ts')))
 check('النسخ الساعية تُكتب في المكان الافتراضي userData/backups دائماً', /join\(app\.getPath\('userData'\), 'backups', kind\)/.test(main))
 check('rotateBackups يستقبل القاعدة صراحة', /async function rotateBackups\(target: ShopsysDatabase \| null = database\)/.test(main))
-check('before-quit يمرّر القاعدة المغلقة للنسخة (إصلاح: كانت تُصفَّر فتخرج بلا نسخة)', /void rotateBackups\(closing\)/.test(main) && !/void rotateBackups\(\)\s*\n\s*\.catch/.test(main))
+check('before-quit يمرّر القاعدة المغلقة للنسخة (إصلاح: كانت تُصفَّر فتخرج بلا نسخة)', /backup: \(\) => rotateBackups\(closing\)/.test(main) && !/void rotateBackups\(\)\s*\n\s*\.catch/.test(main))
 check('نسخة قبل التحديث تُؤخذ فور اكتمال التنزيل', /state\.status === 'downloaded'[\s\S]{0,400}backupBeforeUpdate\(state\.version\)/.test(main))
 check('نسخة ما قبل التحديث في backups/pre-update', /join\(app\.getPath\('userData'\), 'backups', 'pre-update'\)/.test(main))
 check('التثبيت ينتظر نسخة ما قبل التحديث ويرفض بلا نسخة', /await preUpdateBackup[\s\S]{0,300}throw new Error\('تعذّرت النسخة الاحتياطية قبل التحديث/.test(main))

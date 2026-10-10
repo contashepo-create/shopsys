@@ -1,4 +1,6 @@
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { monthLabelAr } from '../../core/payroll.ts'
+import { slipRemainingMinor } from '../../core/payrollSlips.ts'
 import { documentKindLabel } from '../../core/openPartyDocuments.ts'
 import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, parseRateToPpm, validateFxLeg, type FxLeg } from '../../core/foreignCurrency.ts'
 /**
@@ -98,11 +100,12 @@ export function VouchersPage() {
   if (prevPartyKey !== partyKey) { setPrevPartyKey(partyKey); setSettleSlipIds([]) }
   const toggleSlip = (id: number) =>
     setSettleSlipIds((ids) => (ids.includes(id) ? ids.filter((row) => row !== id) : [...ids, id]))
-  const settledTotalMinor = unpaidSlips.filter((s) => settleSlipIds.includes(s.id)).reduce((sum, s) => sum + s.netMinor, 0)
+  /* بلاغ المالك: المبلغ المطلوب تسديده من كل قسيمة هو المتبقي فقط — لا الصافي كاملاً */
+  const settledTotalMinor = unpaidSlips.filter((s) => settleSlipIds.includes(s.id)).reduce((sum, s) => sum + slipRemainingMinor(s), 0)
   const selectAllSlips = () => {
     const ids = unpaidSlips.map((s) => s.id)
     setSettleSlipIds(ids)
-    if (ids.length) setAmount(String(unpaidSlips.reduce((sum, s) => sum + s.netMinor, 0) / 10 ** cur.decimals))
+    if (ids.length) setAmount(String(unpaidSlips.reduce((sum, s) => sum + slipRemainingMinor(s), 0) / 10 ** cur.decimals))
   }
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
@@ -560,9 +563,9 @@ export function VouchersPage() {
                             <span className="flex items-center gap-1.5">
                               <input type="checkbox" checked={settleSlipIds.includes(slip.id)} onChange={() => toggleSlip(slip.id)} className="size-3.5 accent-amber-600" />
                               <b className="font-mono">{slip.slipNumber}</b>
-                              <span className="text-slate-500">{slip.month}</span>
+                              <span className="text-slate-500">{monthLabelAr(slip.month)}</span>
                             </span>
-                            <b className="font-mono">{fmt(slip.netMinor)} {cur.symbol}</b>
+                            <b className="font-mono" title={`الصافي ${fmt(slip.netMinor)}`}>المتبقي {fmt(slipRemainingMinor(slip))} {cur.symbol}</b>
                           </label>
                         ))}
                         {settledTotalMinor > 0 && (

@@ -20,7 +20,7 @@ const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
   assert.ok(/debitMinor: 0, creditMinor: slip\.netMinor/.test(repo), 'استحقاق القسيمة ليس دائناً بالصافي فقط')
   assert.ok(/سلفة استُردت من الراتب \(سداد دين السلفة\)'.*debitMinor: 0, creditMinor: slip\.advanceMinor/s.test(repo), 'استقطاع السلفة ليس دائناً — الازدواج عاد')
   assert.ok(!/debitMinor: slip\.deductionsMinor/.test(repo), 'الخصومات لا تكون مدينة على الموظف (ازدواج)')
-  assert.ok(/صرف راتب \$\{slipMonth\}/.test(repo) && /debitMinor: slip\.netMinor, creditMinor: 0/.test(repo), 'الصرف لا يصفّي رصيد الموظف')
+  assert.ok(/صرف راتب \$\{slipMonth\}/.test(repo) && /for \(const payment of slipPaymentsOf\(slip\)\)[\s\S]{0,200}debitMinor: payment\.amountMinor, creditMinor: 0/.test(repo), 'الصرف لا يصفّي رصيد الموظف')
   assert.ok(/سلفة استُردت من المسير/.test(repo), 'سلف المسير القديم لا تُسترد في الكشف')
   R.ok('كشف الموظف: استحقاق دائن بالصافي · استقطاع السلفة سداد دائن · الخصم توثيقي · الصرف يصفّي الرصيد')
 }

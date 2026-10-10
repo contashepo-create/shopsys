@@ -37,7 +37,7 @@ const css = read('index.css')
 }
 {
   assert.ok(/<Modal open=\{slipDraftOpen\}[\s\S]{0,200}مسير رواتب/.test(employees), 'مسير الرواتب ليس نافذة منبثقة')
-  assert.ok(/data-slip-search/.test(employees) && /const visibleSlipRows = slipRows\.filter/.test(employees),
+  assert.ok(/data-slip-search/.test(employees) && /const visibleSlipRows = slipRowsEffective\.filter/.test(employees),
     'لا بحث عن موظف داخل المسير')
   assert.ok(/slipScope === 'selected' && !row\.on/.test(employees), 'لا نطاق «المحدَّدون فقط» في المسير')
   R.ok('مسير الرواتب نافذة منبثقة ببحث موظف ونطاق اختيار')
