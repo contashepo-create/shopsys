@@ -25,6 +25,7 @@ import {
 } from './dbLocation.ts'
 import { isInAppNavigation, isExternalOpenable } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
+import { gracefulShutdown } from './shutdown.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
   type CustomLocationStatus, type ExistingDataCandidate,
@@ -821,14 +822,14 @@ async function rotateBackups(target: ShopsysDatabase | null = database): Promise
   if (!target) return
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   for (const kind of Object.keys(ROTATION) as RotationKind[]) {
-    const dir = join(app.getPath('userData'), 'backups', kind)
-    mkdirSync(dir, { recursive: true })
+    const dest = join(app.getPath('userData'), 'backups', kind, `${kind}-${stamp}.db`)
     const lastKey = `backup_last_${kind}`
-    const last = target.getMeta(lastKey)
-    const lastMs = last ? Date.parse(last) : 0
-    if (Date.now() - lastMs < ROTATION[kind].ms) continue
-    const dest = join(dir, `${kind}-${stamp}.db`)
     try {
+      /* داخل try: فشل المجلد (قرص ممتلئ/صلاحيات) لا يُسقط الإقلاع (بلاغ: فجوات الإقلاع) */
+      mkdirSync(join(app.getPath('userData'), 'backups', kind), { recursive: true })
+      const last = target.getMeta(lastKey)
+      const lastMs = last ? Date.parse(last) : 0
+      if (Date.now() - lastMs < ROTATION[kind].ms) continue
       await target.raw.backup(dest)
       target.setMeta(lastKey, new Date().toISOString())
       pruneGeneration(kind)
@@ -1141,71 +1142,114 @@ function wireIpc(): void {
 }
 
 /* ── دورة الحياة ── */
+/** يُضبط عند بدء الإغلاق — يمنع إعادة فتح النافذة أثناء الخروج */
+let shuttingDown = false
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
+  /* بلاغ المالك: المحاولة الثانية لفتح البرنامج كانت لا تفعل شيئاً إذا أُغلقت النافذة.
+     الآن: تُعاد النافذة إن كانت مغلقة والقاعدة مفتوحة، وإلا يُركَّز الموجود. */
   app.on('second-instance', () => {
-    if (mainWindow) {
+    if (shuttingDown) return
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
+    } else if (database) {
+      mainWindow = createMainWindow()
+    } else if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.focus()
     }
   })
 
-  void app.whenReady().then(async () => {
-    logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
-    const previousVersion = readLastRunVersion()
-    showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
-    setSplashProgress(15, 'تهيئة مفتاح الجهاز…')
+  /* معالج أخطاء عام: خطأ غير ملتقط لا يُسقط البرنامج بصمت ولا يترك عملية معلّقة.
+     الخطأ القاتل يسجَّل ويُعرض، وتُغلق القاعدة، ثم تنتهي العملية بوضوح. */
+  process.on('uncaughtException', (error) => {
+    logLine('fatal', `خطأ غير ملتقط: ${error.stack ?? error.message}`)
     try {
-      deviceEncryptionKey = ensureDeviceEncryptionKey()
+      dialog.showErrorBox('تَحَكَّم — خطأ غير متوقع', `${error.message}\n\nسُجّل الخطأ في سجل البرنامج، ولم تُحذف أي بيانات.\nأعد تشغيل البرنامج.`)
+    } catch { /* لا شيء — السجل كتب بالفعل */ }
+    try { database?.close() } catch { /* القاعدة قد تكون في حالة غير صالحة */ }
+    database = null
+    app.exit(1)
+  })
+  process.on('unhandledRejection', (reason) => {
+    logLine('unhandled', `وعد مرفوض بلا معالج: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}`)
+  })
+
+  void app.whenReady().then(async () => {
+    try {
+      logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
+      const previousVersion = readLastRunVersion()
+      showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
+      setSplashProgress(15, 'تهيئة مفتاح الجهاز…')
+      try {
+        deviceEncryptionKey = ensureDeviceEncryptionKey()
+      } catch (error) {
+        closeSplash()
+        logLine('device-key-fatal', (error as Error).message)
+        dialog.showErrorBox('تَحَكَّم — تعذّر تهيئة مفتاح الجهاز', `${(error as Error).message}\n\nلم تُفقد أي بيانات. أغلق البرنامج وأعد تشغيله، وإن تكرر الخطأ فتواصل مع الدعم.`)
+        app.exit(1)
+        return
+      }
+      setSplashProgress(40, 'فتح قاعدة البيانات…')
+      database = await openDatabase()
+      setSplashProgress(75, 'تجهيز الواجهة…')
+      wireIpc()
+      mainWindow = createMainWindow()
+      mainWindow.once('ready-to-show', () => {
+        setSplashProgress(100, 'جاهز')
+        writeLastRunVersion()
+        closeSplash()
+      })
+      mainWindow.on('closed', () => {
+        mainWindow = null
+      })
+      wireUpdater()
+      await rotateBackups()
+      backupTimer = setInterval(() => {
+        void rotateBackups()
+      }, 60 * 60 * 1000)
+      app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow()
+      })
     } catch (error) {
+      /* إقلاع فاشل: لا عملية معلّقة ولا شاشة بداية عالقة، والبيانات لم تُمسّ */
       closeSplash()
-      logLine('device-key-fatal', (error as Error).message)
-      dialog.showErrorBox('تَحَكَّم — تعذّر تهيئة مفتاح الجهاز', `${(error as Error).message}\n\nلم تُفقد أي بيانات. أغلق البرنامج وأعد تشغيله، وإن تكرر الخطأ فتواصل مع الدعم.`)
+      logLine('boot-fatal', `فشل الإقلاع: ${(error as Error).stack ?? (error as Error).message}`)
+      try {
+        dialog.showErrorBox('تَحَكَّم — تعذّر بدء البرنامج', `${(error as Error).message}\n\nلم تُحذف أي بيانات. أعد تشغيل البرنامج، وإن تكرر الخطأ فأرسل محتوى سجل البرنامج (main.log) للدعم.`)
+      } catch { /* السجل كتب بالفعل */ }
+      try { database?.close() } catch { /* لا شيء */ }
+      database = null
       app.exit(1)
-      return
     }
-    setSplashProgress(40, 'فتح قاعدة البيانات…')
-    database = await openDatabase()
-    setSplashProgress(75, 'تجهيز الواجهة…')
-    wireIpc()
-    mainWindow = createMainWindow()
-    mainWindow.once('ready-to-show', () => {
-      setSplashProgress(100, 'جاهز')
-      writeLastRunVersion()
-      closeSplash()
-    })
-    mainWindow.on('closed', () => {
-      mainWindow = null
-    })
-    wireUpdater()
-    await rotateBackups()
-    backupTimer = setInterval(() => {
-      void rotateBackups()
-    }, 60 * 60 * 1000)
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow()
-    })
   })
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
 
+  /* إغلاق مضمون (بلاغ المالك): لا تبقى العملية حية بلا نافذة. انظر shutdown.ts */
   app.on('before-quit', (event) => {
     if (backupTimer) clearInterval(backupTimer)
     if (printWindow && !printWindow.isDestroyed()) printWindow.destroy()
+    if (shuttingDown) {
+      event.preventDefault()
+      return
+    }
     if (database) {
       event.preventDefault()
+      shuttingDown = true
       const closing = database
       database = null
-      void rotateBackups(closing)
-        .catch(() => undefined)
-        .then(() => {
-          closing.close()
-          app.quit()
-        })
+      void gracefulShutdown({
+        backup: () => rotateBackups(closing),
+        closeDb: () => closing.close(),
+        exit: (code) => app.exit(code),
+        log: logLine,
+        timeoutMs: 8_000,
+      })
     }
   })
 }
