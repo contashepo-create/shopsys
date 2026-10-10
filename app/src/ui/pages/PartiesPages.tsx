@@ -12,7 +12,6 @@ import { redeemValue } from '../../core/loyalty.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { supplierStatement, statementBalance } from '../../core/statements.ts'
 import { partyCode, matchesPartyCode, PARTY_CODE_LABELS } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
@@ -107,7 +106,7 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
+  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, getCustomerBalance, redeemLoyaltyPoints, journal, sales, saleReturns, vouchers, cheques, settlements, partyOffsets, openingBalances, clientSettlements } = useDataStore()
   const { setup, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -118,11 +117,13 @@ export function CustomersPage() {
   const [view, setView] = usePersistedPartyView('customers')
 
   // رصيد كل عميل بجانب اسمه (طلب المالك) — الرصيد الموحّد من كل الأنشطة (إصلاح الترابط)
+  /* الاعتماديات: كل ترحيل مالي يغيّر journal — وإلا بقي الرقم قديماً بعد البيع (بلاغ المالك) */
   const balances = useMemo(() => {
     const map = new Map<number, number>()
     for (const c of customers) map.set(c.id, getCustomerBalance(c.id))
     return map
-  }, [customers, getCustomerBalance])
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- محفزات بيانات المتجر: getCustomerBalance تقرأ الحالة عند الاستدعاء؛ الاعتماديات تضمن إعادة الحساب بعد كل ترحيل
+  }, [customers, getCustomerBalance, journal, sales, saleReturns, vouchers, cheques, settlements, partyOffsets, openingBalances, clientSettlements])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Customer | null>(null)
   /* استبدال نقاط الولاء (نمط Lightspeed): نقاط ← رصيد دائن في حساب العميل */
@@ -335,7 +336,7 @@ export function CustomersPage() {
 const SUPPLIER_CATEGORIES = ['مواد بناء', 'بضاعة تجارية', 'قطع غيار', 'مقاول باطن', 'خدمات ونقل', 'مواد غذائية', 'أخرى']
 
 export function SuppliersPage() {
-  const { suppliers, addSupplier, updateSupplier, removeSupplier, purchases, purchaseReturns, vouchers, cheques } = useDataStore()
+  const { suppliers, addSupplier, updateSupplier, removeSupplier, purchases, purchaseReturns, vouchers, cheques, getSupplierBalance, journal, sales, settlements, partyOffsets, openingBalances, subContracts, subCertificates, subPayments, assets } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -345,13 +346,14 @@ export function SuppliersPage() {
   const [view, setView] = usePersistedPartyView('suppliers')
 
   // رصيد كل مورد بجانب اسمه (طلب المالك) — موجب = مستحق له عندك
+  /* بلاغ المالك: رصيد المورد كان يُحسب بكشف ناقص (بلا فواتير البيع له ولا التسويات ولا الأصول)
+     فلا يطابق كشف حسابه. الآن المصدر الموحّد للمتجر، وكل مستنده يغيّر journal. */
   const balances = useMemo(() => {
     const map = new Map<number, number>()
-    for (const s of suppliers) {
-      map.set(s.id, statementBalance(supplierStatement({ supplierId: s.id, purchases, purchaseReturns, allPurchases: purchases, vouchers, cheques })))
-    }
+    for (const s of suppliers) map.set(s.id, getSupplierBalance(s.id))
     return map
-  }, [suppliers, purchases, purchaseReturns, vouchers, cheques])
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- محفزات بيانات المتجر: getSupplierBalance تقرأ الحالة عند الاستدعاء؛ الاعتماديات تضمن إعادة الحساب بعد كل ترحيل
+  }, [suppliers, getSupplierBalance, journal, purchases, purchaseReturns, vouchers, cheques, sales, settlements, partyOffsets, openingBalances, subContracts, subCertificates, subPayments, assets])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Supplier | null>(null)
   const [name, setName] = useState('')
