@@ -69,14 +69,15 @@ export function isCloudDisabled(feature: LicenseFeature, licensed: readonly Lice
 
 /** جلب أعلام الجهاز من عامل Cloudflare — فشل الشبكة يعيد null (تبقى آخر نسخة محفوظة) */
 export async function fetchDeviceFlags(baseUrl: string, deviceId: string): Promise<DeviceFlags | null> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 8000)
   try {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), 8000)
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/flags/${encodeURIComponent(deviceId)}`, { signal: ctrl.signal, cache: 'no-store' })
-    clearTimeout(t)
     if (!res.ok) return null
     return parseDeviceFlags(await res.json())
   } catch {
     return null
+  } finally {
+    clearTimeout(t)
   }
 }

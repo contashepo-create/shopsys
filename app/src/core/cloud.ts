@@ -260,15 +260,17 @@ export function parseCloudNotices(raw: unknown): CloudNotice[] {
 /* ─── الجالبات (فشلها الصامت مقصود — أوفلاين أولاً) ─── */
 
 async function getJson(url: string, timeoutMs = 6000): Promise<unknown | null> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), timeoutMs)
     const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' })
-    clearTimeout(t)
     if (!res.ok) return null
     return await res.json()
   } catch {
     return null
+  } finally {
+    /* في مسار الفشل أيضاً (مراجعة 2026-10-11): وإلا يبقى المؤقت معلّقاً بعد كل جلب فاشل */
+    clearTimeout(t)
   }
 }
 
