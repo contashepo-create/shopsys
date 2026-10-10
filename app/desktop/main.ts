@@ -18,8 +18,12 @@ import { mergeTrialAnchor } from './trialAnchor.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
 import {
-  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, customLocationStatus, encodeLocationPointer,
-  decodeLocationPointer, bestExistingCandidate, latestBackup, type CustomLocationStatus, type ExistingDataCandidate,
+  readDbLocationAt, writeDbLocationAt, restoreLocationPointerAt, customDbStatusAt, resolveDbPathAt,
+  type DbLocationConfig,
+} from './dbLocation.ts'
+import {
+  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
+  type CustomLocationStatus, type ExistingDataCandidate,
   type RotationKind,
 } from './storagePolicy.ts'
 
@@ -273,87 +277,22 @@ function ensureDeviceEncryptionKey(): Buffer {
    القرص C يحمل ويندوز — نقل القاعدة لقرص آخر يحميها من الفرمتة، والنسخ
    المزدوجة (بجوار القاعدة + مكان ثانٍ) تضاعف الأمان. */
 
-interface DbLocationConfig {
-  customDbPath: string | null
-  secondaryBackupDir: string | null
-  lastFileBackupAt: string | null
-  /** v1.0.22: متى فُتحت القاعدة المخصصة أول مرة — لكشف «الملف اختفى» بدل إنشاء فارغة */
-  customDbOpenedAt: string | null
-}
-
-function dbLocationFile(): string {
-  return join(app.getPath('userData'), 'db-location.json')
-}
-
-/** مرآة المؤشر في المكان الافتراضي دائماً، وبجوار القاعدة المخصصة إن وُجدت */
-function locationPointerMirrors(cfg: DbLocationConfig): string[] {
-  const out = [join(app.getPath('userData'), 'backups', 'db-location.json')]
-  if (cfg.customDbPath) out.push(join(dirname(cfg.customDbPath), 'backups', 'db-location.json'))
-  return out
-}
-
-function readDbLocation(): DbLocationConfig {
-  try {
-    const parsed = JSON.parse(readFileSync(dbLocationFile(), 'utf8')) as Partial<DbLocationConfig>
-    return {
-      customDbPath: typeof parsed.customDbPath === 'string' && parsed.customDbPath.trim() ? parsed.customDbPath : null,
-      secondaryBackupDir: typeof parsed.secondaryBackupDir === 'string' && parsed.secondaryBackupDir.trim() ? parsed.secondaryBackupDir : null,
-      lastFileBackupAt: typeof parsed.lastFileBackupAt === 'string' ? parsed.lastFileBackupAt : null,
-      customDbOpenedAt: typeof parsed.customDbOpenedAt === 'string' ? parsed.customDbOpenedAt : null,
-    }
-  } catch {
-    return { customDbPath: null, secondaryBackupDir: null, lastFileBackupAt: null, customDbOpenedAt: null }
-  }
-}
-
-/** v1.0.22: الكتابة تُرآى فوراً في كل مكان للمؤشر — لو فُقد ملف التوجيه يُستعاد من المرآة */
+const userDataDir = (): string => app.getPath('userData')
+function readDbLocation(): DbLocationConfig { return readDbLocationAt(userDataDir()) }
 function writeDbLocation(cfg: DbLocationConfig): void {
-  const text = encodeLocationPointer(cfg as DbLocationConfig & Record<string, unknown>)
-  writeFileSync(dbLocationFile(), text, 'utf8')
-  for (const mirror of locationPointerMirrors(cfg)) {
-    try {
-      mkdirSync(dirname(mirror), { recursive: true })
-      writeFileSync(mirror, text, 'utf8')
-    } catch (error) {
-      logLine('db-location', `تعذّرت مرآة المؤشر في ${mirror}: ${(error as Error).message}`)
-    }
-  }
+  writeDbLocationAt(userDataDir(), cfg, (message) => logLine('db-location', message))
 }
-
-/** ملف التوجيه مفقود ⇒ استعادته من المرآة في المكان الافتراضي (أو من بجوار القاعدة) */
+/* ملف التوجيه مفقود ⇒ استعادته من المرآة في المكان الافتراضي */
 function restoreLocationPointerIfMissing(): void {
-  if (existsSync(dbLocationFile())) return
-  const ud = app.getPath('userData')
-  const sources = [join(ud, 'backups', 'db-location.json')]
-  for (const source of sources) {
-    try {
-      const cfg = decodeLocationPointer(readFileSync(source, 'utf8'))
-      if (!cfg || !cfg.customDbPath) continue
-      writeDbLocation({ ...readDbLocation(), ...cfg })
-      logLine('db-location', `استُعيد مؤشر المكان من المرآة: ${cfg.customDbPath}`)
-      return
-    } catch { /* لا مرآة هنا */ }
-  }
+  const restored = restoreLocationPointerAt(userDataDir())
+  if (restored) logLine('db-location', `استُعيد مؤشر المكان من المرآة: ${restored}`)
 }
-
-/* v1.0.19: مكان مخصص غير متاح (قرص مفصول / تغيّر حرف الدرايف بعد التحديث)
-   ⇒ كان الإقلاع يسقط بصمت على قاعدة افتراضية فارغة فيظهر معالج «عميل جديد»
-   وتبدو البيانات مفقودة. v1.0.22: الحالة تُحسب بوضوح (انظر storagePolicy.ts)،
-   ولا يُنشأ ملف فارغ أبداً في مكان مخصص كان يحتوي قاعدة. */
+/* v1.0.19/v1.0.22: حالة المكان المخصص (انظر storagePolicy.ts) — لا إنشاء ملف فارغ */
 function customDbStatus(): { status: CustomLocationStatus; path: string | null } {
-  const cfg = readDbLocation()
-  if (!cfg.customDbPath) return { status: 'none', path: null }
-  const status = customLocationStatus(cfg, {
-    folderExists: existsSync(dirname(cfg.customDbPath)),
-    fileExists: existsSync(cfg.customDbPath),
-  })
-  return { status, path: cfg.customDbPath }
+  return customDbStatusAt(userDataDir())
 }
-
 function resolveDbPath(): { dbPath: string; isCustom: boolean } {
-  const cfg = readDbLocation()
-  if (cfg.customDbPath) return { dbPath: cfg.customDbPath, isCustom: true }
-  return { dbPath: join(app.getPath('userData'), 'shopsys.db'), isCustom: false }
+  return resolveDbPathAt(userDataDir())
 }
 
 /** المكان الثاني الافتراضي للنسخ: مجلد مستندات المستخدم (يبقى مع ملفاته عند إعادة تثبيت الويندوز إن نُقلت المستندات) */
