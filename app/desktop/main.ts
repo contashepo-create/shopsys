@@ -302,6 +302,27 @@ function writeDbLocation(cfg: DbLocationConfig): void {
 }
 /* ملف التوجيه مفقود ⇒ استعادته من المرآة في المكان الافتراضي */
 /**
+ * v1.0.22: حوار اختيار ملف قاعدة يمر دائماً بالفحص قبل الاعتماد (سلامة + جدول snapshots).
+ * يعيد المسار المعتمد، أو null عند الإلغاء أو الرفض (ويُعرض سبب الرفض للمستخدم).
+ */
+function pickValidatedDatabaseFile(): string | null {
+  const picked = dialog.showOpenDialogSync({
+    title: 'اختر ملف قاعدة البيانات الموجود مسبقاً (shopsys.db)',
+    properties: ['openFile'],
+    filters: [{ name: 'قاعدة بيانات تَحَكَّم', extensions: ['db', 'sqlite'] }],
+  })
+  const file = picked?.[0]
+  if (!file) return null
+  const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
+  if (verdict === 'ok') return file
+  const why = verdict === 'not-shopsys' ? 'ليس ملف قاعدة بيانات تَحَكَّم'
+    : verdict === 'corrupt' ? 'الملف تالف' : 'تعذّر فتح الملف'
+  logLine('db-recovery', `رُفض الملف المختار (${why}): ${file}`)
+  dialog.showErrorBox('تَحَكَّم — ملف غير صالح', `${why}:\n${file}\n\nاختر ملف shopsys.db الصحيح.`)
+  return null
+}
+
+/**
  * v1.0.22 (طلب المالك): لا يُنشأ قاعدة فارغة صامتاً. إذا غابت القاعدة وفيه دليل تشغيل سابق
  * (ولم يجد offerExistingData نسخة صالحة) نطلب من العميل اختيار الملف الموجود، ونحفظ مساره
  * المطلق في المؤشر. التثبيت الجديد بلا دليل لا يرى هذا الحوار.
@@ -333,21 +354,8 @@ async function askForExistingDatabaseIfNeeded(): Promise<void> {
       logLine('db-recovery', 'بدأ المستخدم قاعدة جديدة باختياره')
       return
     }
-    const picked = dialog.showOpenDialogSync({
-      title: 'اختر ملف قاعدة البيانات الموجود مسبقاً (shopsys.db)',
-      properties: ['openFile'],
-      filters: [{ name: 'قاعدة بيانات', extensions: ['db'] }],
-    })
-    const file = picked?.[0]
+    const file = pickValidatedDatabaseFile()
     if (!file) continue
-    const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
-    if (verdict !== 'ok') {
-      const why = verdict === 'not-shopsys' ? 'ليس ملف قاعدة بيانات تَحَكَّم'
-        : verdict === 'corrupt' ? 'الملف تالف' : 'تعذّر فتح الملف'
-      logLine('db-recovery', `رُفض الملف المختار (${why}): ${file}`)
-      dialog.showErrorBox('تَحَكَّم — ملف غير صالح', `${why}:\n${file}\n\nاختر ملف shopsys.db الصحيح.`)
-      continue
-    }
     writeDbLocation({ ...readDbLocation(), customDbPath: file, customDbOpenedAt: null })
     logLine('db-recovery', `اعتُمدت القاعدة التي اختارها المستخدم: ${file}`)
   }
@@ -643,33 +651,51 @@ async function openDatabase(): Promise<ShopsysDatabase> {
   await resolveMissingLocation()
   await offerExistingData()
   await askForExistingDatabaseIfNeeded()
-  const { dbPath, isCustom } = resolveDbPath()
-  // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
-  try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
-  try {
-    const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
-    logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
-    if (isCustom) {
+  // v1.0.22: عند فشل الفتح يعرض حوار الخطأ خيار «اختيار ملف القاعدة يدوياً»، ثم يُعاد الفتح من الملف المعتمد
+  for (let attempt = 1; ; attempt += 1) {
+    const { dbPath, isCustom } = resolveDbPath()
+    // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
+    try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
+    try {
+      const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
+      logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
+      if (isCustom) {
+        const cfg = readDbLocation()
+        if (!cfg.customDbOpenedAt) writeDbLocation({ ...cfg, customDbOpenedAt: new Date().toISOString() })
+      }
+      // v1.0.8: نسخة ملفية تلقائية يومياً في المكانين عند الإقلاع
       const cfg = readDbLocation()
-      if (!cfg.customDbOpenedAt) writeDbLocation({ ...cfg, customDbOpenedAt: new Date().toISOString() })
-    }
-    // v1.0.8: نسخة ملفية تلقائية يومياً في المكانين عند الإقلاع
-    const cfg = readDbLocation()
-    const lastAuto = cfg.lastFileBackupAt ? Date.parse(cfg.lastFileBackupAt) : 0
-    if (Date.now() - lastAuto > 24 * 60 * 60 * 1000) {
-      void backupDatabaseFile('auto', db, dbPath).then((files) => {
-        if (files.length) logLine('backup', `نسخة تلقائية في ${files.length} مكان: ${files.join(' | ')}`)
+      const lastAuto = cfg.lastFileBackupAt ? Date.parse(cfg.lastFileBackupAt) : 0
+      if (Date.now() - lastAuto > 24 * 60 * 60 * 1000) {
+        void backupDatabaseFile('auto', db, dbPath).then((files) => {
+          if (files.length) logLine('backup', `نسخة تلقائية في ${files.length} مكان: ${files.join(' | ')}`)
+        })
+      }
+      return db
+    } catch (error) {
+      const message = (error as Error).message
+      logLine('db-fatal', `فشل فتح القاعدة (${dbPath}): ${message}`)
+      const choice = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'تَحَكَّم — فشل تشغيل القاعدة',
+        message: `تعذّر فتح قاعدة البيانات:\n${dbPath}`,
+        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
+        buttons: ['اختيار ملف القاعدة يدوياً...', 'إغلاق البرنامج'],
+        defaultId: 0,
+        cancelId: 1,
       })
+      if (choice === 0 && attempt < 20) {
+        const picked = pickValidatedDatabaseFile()
+        if (picked) {
+          writeDbLocation({ ...readDbLocation(), customDbPath: picked, customDbOpenedAt: null })
+          logLine('db-recovery', `اعتُمد ملف يدوي بعد فشل الفتح، وتُعاد المحاولة: ${picked}`)
+        }
+        // إلغاء الاستعراض يعيد حوار الخطأ نفسه بدل إغلاق صامت
+        continue
+      }
+      app.exit(1)
+      throw error
     }
-    return db
-  } catch (error) {
-    const message = (error as Error).message
-    logLine('db-fatal', `فشل فتح القاعدة (${dbPath}): ${message}`)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { dialog } = require('electron') as typeof import('electron')
-    dialog.showErrorBox('تَحَكَّم — فشل تشغيل القاعدة', `تعذّر فتح قاعدة البيانات:\n${message}\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`)
-    app.exit(1)
-    throw error
   }
 }
 
