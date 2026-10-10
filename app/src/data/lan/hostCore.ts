@@ -9,7 +9,7 @@
  * نقية تماماً: تُوصل بأي قناة (WebSocket في التطبيق، قناة ذاكرة في البوابات)
  * وتُغرس فوق أي متجر يشبه عقد LanStoreLike — لا تعتمد على Electron إطلاقاً.
  */
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import {
   LAN_SESSION_FNS,
   LAN_SESSION_KEYS,
@@ -35,6 +35,36 @@ interface Session extends LanSessionHandle {
   loggedIn: boolean
 }
 
+/** عدد محاولات الاقتران الخاطئة قبل إغلاق الاقتران مؤقتاً (مراجعة 2026-10-11) */
+export const PAIR_MAX_FAILURES = 5
+/** مدة إغلاق الاقتران بعد تجاوز المحاولات (10 دقائق) */
+export const PAIR_LOCK_MS = 10 * 60_000
+
+/**
+ * عمليات إدارية لا تُنفَّذ عبر الشبكة أبداً: إدارة المستخدمين والأدوار والصلاحيات
+ * ورموز PIN والفروع والترحيل. لو وُجد جهاز مقترن ومسجّل دخوله بحساب عادي لا يصل
+ * إليها، وتبقى على جهاز المالك مباشرة. (قبل المراجعة كانت كل دوال المتجر متاحة.)
+ */
+export const LAN_FORBIDDEN_FNS: ReadonlySet<string> = new Set([
+  'addAppUser', 'updateAppUser', 'removeAppUser',
+  'setOwnerPin', 'setOwnerTempPin',
+  'addCustomRole', 'removeCustomRole', 'renameCustomRole',
+  'setRolePermissions', 'setUserPermExceptions',
+  /* approveByPin متاح عن بُعد عمداً: اعتماد المدير من جهاز الكاشير بـPIN المدير (قرار المالك 2026-10-11) */
+  'setCurrentUser', 'resolvePinReset',
+  'addBranch', 'updateBranch', 'removeBranch',
+  'migrate',
+])
+
+/** مقارنة رمز الاقتران بزمن ثابت (لا تسرّب من توقيت المقارنة) */
+export function pairingCodesMatch(given: unknown, expected: string): boolean {
+  if (typeof given !== 'string') return false
+  const a = Buffer.from(given, 'utf8')
+  const b = Buffer.from(expected, 'utf8')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
 export interface LanHostEvents {
   /** استُخدمت محاولة اقتران خاطئة — للعرض والتسجيل عند المضيف. */
   onBadPairing?: (deviceName: string) => void
@@ -58,6 +88,11 @@ export class LanHostCore {
   private readonly hostName: string
   private readonly events: LanHostEvents
   private readonly generateToken: () => string
+  private readonly now: () => number
+  /** محاولات اقتران خاطئة متتالية منذ آخر اقتران ناجح أو آخر قفل */
+  private failedPairings = 0
+  /** الاقتران مغلق حتى هذا الوقت (ms) بعد تجاوز المحاولات */
+  private pairingLockedUntil = 0
 
   constructor(
     store: LanStoreLike,
@@ -65,12 +100,14 @@ export class LanHostCore {
     hostName: string,
     events: LanHostEvents = {},
     generateToken: () => string = () => randomUUID(),
+    options: { now?: () => number } = {},
   ) {
     this.store = store
     this.pairingCode = pairingCode
     this.hostName = hostName
     this.events = events
     this.generateToken = generateToken
+    this.now = options.now ?? (() => Date.now())
   }
 
   /** رقم المراجعة الحالي (تشخيص). */
@@ -118,11 +155,22 @@ export class LanHostCore {
   }
 
   private handlePair(session: Session, code: string, deviceName: string): void {
-    if (code !== this.pairingCode) {
+    const now = this.now()
+    if (now < this.pairingLockedUntil) {
+      session.send({ op: 'error', message: 'الاقتران مغلق مؤقتاً بعد محاولات خاطئة — انتظر بضع دقائق ثم أعد المحاولة' })
+      return
+    }
+    if (!pairingCodesMatch(code, this.pairingCode)) {
+      this.failedPairings++
+      if (this.failedPairings >= PAIR_MAX_FAILURES) {
+        this.pairingLockedUntil = now + PAIR_LOCK_MS
+        this.failedPairings = 0
+      }
       this.events.onBadPairing?.(deviceName)
       session.send({ op: 'error', message: 'رمز الاقتران غير صحيح — اطلبه من جهاز المضيف' })
       return
     }
+    this.failedPairings = 0
     const token = this.generateToken()
     this.pairedTokens.add(token)
     session.token = token
@@ -152,6 +200,10 @@ export class LanHostCore {
     }
     if (!session.loggedIn && fn !== 'login') {
       session.send({ op: 'result', id: callId, ok: false, error: 'سجّل الدخول من هذا الجهاز أولاً — كل عملية تُنفّذ وتُسجَّل باسم صاحبها' })
+      return
+    }
+    if (typeof fn !== 'string' || LAN_FORBIDDEN_FNS.has(fn)) {
+      session.send({ op: 'result', id: callId, ok: false, error: 'هذه العملية الإدارية تُنفَّذ من جهاز المالك مباشرة ولا تُتاح عبر الشبكة' })
       return
     }
     this.chain = this.chain.then(async () => {
