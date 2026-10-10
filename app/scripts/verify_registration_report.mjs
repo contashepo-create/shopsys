@@ -61,12 +61,12 @@ class MemoryKv {
   }
 }
 
+/* الحقول المعلنة فقط (الاتفاقية القسم 5) */
 const CUSTOMER = {
-  deviceId: 'SHOP-AAA1-1111-1111', appVersion: '1.0.19', platform: 'desktop',
+  deviceId: 'SHOP-AAA1-1111-1111',
   shopName: 'بقالة النور', ownerName: 'أحمد محمد', phone: '+20 100 123 4567',
   email: 'ahmed@example.com', city: 'المنزلة', street: 'شارع البحر',
-  countryCode: 'EG', activityId: 'grocery', activityNameAr: 'بقالة وسوبر ماركت',
-  accountingMode: 'simple', plan: 'trial',
+  activityNameAr: 'بقالة وسوبر ماركت',
 }
 
 console.log('بوابة بند 2 — إبلاغ المطوّر بكل تسجيل جديد:')
@@ -77,7 +77,9 @@ ok('يجمع كل بيانات المعالج كما هي', () => {
     assert.equal(report[key], value, key)
   }
   assert.ok(report.registeredAt)
-  assert.equal(report.doctorSpecialty, undefined)
+  // لا يحمل البلاغ أي حقل خارج القائمة المعلنة، حتى لو مرّره المستدعي
+  const leaky = buildRegistrationReport({ ...CUSTOMER, plan: 'pro', countryCode: 'EG', activityId: 'g', accountingMode: 'full', doctorSpecialty: 'أسنان', appVersion: '1.0.22', platform: 'web', fiscalYearName: '2026' })
+  assert.deepEqual(Object.keys(leaky).sort(), ['activityNameAr', 'city', 'deviceId', 'email', 'ownerName', 'phone', 'registeredAt', 'shopName', 'street'])
 })
 
 ok('بلا معرف جهاز صالح ⇒ لا بلاغ (لا تسجيل مجهول الهوية)', () => {
@@ -90,27 +92,23 @@ ok('التعقيم: وسوم ومحارف تحكم تُنزع، والبريد/�
   const report = buildRegistrationReport({
     ...CUSTOMER,
     shopName: `<b>محل</b>\u0000${'ط'.repeat(400)}`,
-    email: 'javascript:alert(1)', phone: 'اتصل بي', platform: 'weird', accountingMode: 'weird',
+    email: 'javascript:alert(1)', phone: 'اتصل بي',
   })
   assert.ok(!report.shopName.includes('<'))
   assert.ok(report.shopName.length <= 120)
   assert.equal(report.email, '')
   assert.equal(report.phone, '')
-  assert.equal(report.platform, 'desktop')
-  assert.equal(report.accountingMode, 'simple')
   // الخادم يعقّم independently (دفاع مزدوج)
   assert.equal(sanitizeRegistration({ deviceId: 'SHOP-AAA1-1111-1111', email: 'ليس بريداً', phone: 'كلام' }).email, '')
 })
 
-ok('مرة واحدة لكل جهاز، وبعد اكتمال الإعداد، وبموافقة صريحة', () => {
-  const base = { deviceId: CUSTOMER.deviceId, reportedAt: null, consentAt: '2026-10-08T09:00:00Z' }
+ok('مرة واحدة لكل جهاز، وبعد اكتمال الإعداد (الإلزام بقبول الاتفاقية — بلا خانة موافقة)', () => {
+  const base = { deviceId: CUSTOMER.deviceId, reportedAt: null }
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: false }), false)
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: true }), true)
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, reportedAt: '2026-10-08T09:00:00Z' }), false)
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, deviceId: 'تالف' }), false)
-  // شرط قانوني: سياسة الخصوصية تقول إن البيانات محلية ⇒ بلا خانة موافقة لا إرسال
-  assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, consentAt: null }), false)
-  assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, consentAt: '' }), false)
+  // v1.0.22: لا consentAt — قبول الاتفاقية الإلزامي (مع إفصاح صريح) هو الموافقة
 })
 
 await okAsync('sendRegistrationReport: sent/duplicate/failed — ولا استثناء أبداً', async () => {
@@ -161,7 +159,7 @@ await okAsync('القائمة ترتّب بالأحدث وتتجاوز السج�
 
 ok('الصياغة العربية تحمل كل البيانات، والخطوة التالية زر لا تعليمة معلّقة', () => {
   const client = formatRegistrationAr(buildRegistrationReport(CUSTOMER))
-  for (const needle of ['بقالة النور', 'أحمد محمد', '+20 100 123 4567', 'ahmed@example.com', 'SHOP-AAA1-1111-1111', '1.0.19']) {
+  for (const needle of ['بقالة النور', 'أحمد محمد', '+20 100 123 4567', 'ahmed@example.com', 'SHOP-AAA1-1111-1111']) {
     assert.match(client, new RegExp(needle.replace(/[+.*?(){}[\]\\]/g, '\\$&')), needle)
   }
   /* تعليمة /اصدر المعلّقة على مسافة (اسم متعدد الكلمات يفشل التحليل) حلّها زر داخل الرسالة */
@@ -173,7 +171,8 @@ ok('الصياغة العربية تحمل كل البيانات، والخطو�
 ok('العامل: مسار /register بحدَّي حجم ورفض ما بلا معرف صالح', () => {
   assert.match(workerSrc, /url\.pathname === '\/register'/)
   assert.match(workerSrc, /REG_MAX_BYTES/)
-  assert.match(workerSrc, /rawText\.length > REG_MAX_BYTES/) // لا اعتماد على content-length وحده
+  assert.match(workerSrc, /new TextEncoder\(\)\.encode\(rawText\)\.byteLength > REG_MAX_BYTES/) // الحد بالبايت لا بالمحارف (العربي بايتان)
+  assert.doesNotMatch(workerSrc, /rawText\.length > REG_MAX_BYTES/)
   assert.match(workerSrc, /sanitizeRegistration\(raw\)/)
   assert.match(workerSrc, /413/)
   assert.match(workerSrc, /405/)
@@ -188,7 +187,10 @@ ok('العميل: أثر الإرسال في App.tsx (fire-and-forget + تعلي
   assert.match(appSrc, /sendRegistrationReport\(LICENSE_CLOUD_BASE_URL/)
   assert.match(appSrc, /if \(!cancelled && result !== 'failed'\) app\.markRegistrationReported\(\)/)
   assert.match(appSrc, /ACTIVITY_TEMPLATES\.find/)
-  assert.match(appSrc, /isElectronRuntime\(\) \? 'desktop' : 'web'/)
+  // الحقول المعلنة فقط: لا إصدار ولا منصة ولا خطة ولا سنة مالية في البلاغ (الاتفاقية القسم 5)
+  assert.doesNotMatch(appSrc, /appVersion: APP_VERSION/)
+  assert.doesNotMatch(appSrc, /plan: app\.activatedPayload/)
+  assert.doesNotMatch(appSrc, /fiscalYearName: fy/)
 })
 
 ok('المتجر: حقل البلاغ مع حارس فرق (لا set بلا تغيّر)', () => {
@@ -204,20 +206,26 @@ ok('اللوحة والأمر: /تسجيلات + زر «🆕 التسجيلات�
   assert.match(serverSrc, /export const REG_PREFIX = 'reg:'/)
 })
 
-ok('الموافقة: خانة في المعالج + إفصاح في سياسة الخصوصية + حقل في المتجر', () => {
+ok('v1.0.22 الإلزام: لا خانة موافقة في المعالج + التسجيل شرط إكمال الإعداد + إفصاح في الاتفاقية', () => {
   const wizardSrc = src('../src/ui/setup/FirstRunWizard.tsx')
   const legalSrc = src('../src/core/legal.ts')
-  assert.match(wizardSrc, /useState\(false\)/) // غير مفعّلة افتراضياً
-  assert.match(wizardSrc, /setRegistrationConsent/)
-  assert.match(wizardSrc, /if \(sendRegistration\) setRegistrationConsent\(\)/)
-  assert.match(wizardSrc, /أوافق على إبلاغ المطوّر بتسجيلي/)
-  assert.match(wizardSrc, /اختياري/)
-  assert.match(storeSrc, /registrationConsentAt: string \| null/)
-  assert.match(storeSrc, /setRegistrationConsent/)
-  assert.match(appSrc, /consentAt: app\.registrationConsentAt/)
-  assert.match(legalSrc, /بلاغ التسجيل/)
-  assert.match(legalSrc, /موافقة صريحة/)
-  assert.match(legalSrc, /LEGAL_VERSION = '2026-10-08'/) // تغيير جوهري ⇒ إعادة طلب الموافقة
+  assert.doesNotMatch(wizardSrc, /setRegistrationConsent|أوافق على إبلاغ المطوّر بتسجيلي/)
+  assert.doesNotMatch(storeSrc, /registrationConsentAt|setRegistrationConsent/)
+  assert.doesNotMatch(appSrc, /consentAt/)
+  assert.match(wizardSrc, /const result = await sendRegistrationReport\(LICENSE_CLOUD_BASE_URL, report\)/)
+  // الحقول المعلنة فقط في استدعاء البلاغ (لا في حفظ الإعداد المحلي)
+  const reportCall = wizardSrc.slice(wizardSrc.indexOf('buildRegistrationReport({'), wizardSrc.indexOf('const result = await sendRegistrationReport'))
+  assert.doesNotMatch(reportCall, /appVersion|platform:|countryCode|activityId|accountingMode|plan:|doctorSpecialty|fiscalYear/)
+  assert.match(wizardSrc, /if \(result === 'failed'\)/) // لا إكمال بلا تسجيل
+  assert.match(legalSrc, /تُرسل تلقائياً بقبولك هذه الاتفاقية/)
+  assert.doesNotMatch(legalSrc, /وت supremacy|الذود/) // أخطاء الصياغة المصلّحة
+  // بوابة الاتفاقية: موافقات منفصلة + مسار رفض يشرح الإلغاء ويغلق البرنامج
+  const gateSrc = src('../src/ui/LegalGate.tsx')
+  assert.match(gateSrc, /LEGAL_CONSENT_CHECKBOXES\.map/)
+  assert.match(gateSrc, /setDeclined\(true\)/)
+  assert.match(gateSrc, /window\.close\(\)/)
+  assert.match(gateSrc, /ألغِ تثبيته/)
+  assert.match(legalSrc, /LEGAL_VERSION = '2026-10-11'/) // تغيير جوهري ⇒ إعادة طلب القبول
   assert.match(appSrc, /legalCurrent\.version === LEGAL_VERSION/)
 })
 

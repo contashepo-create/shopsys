@@ -71,25 +71,41 @@ export function sanitizeRegistration(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const deviceId = cleanText(raw.deviceId, 24).toUpperCase()
   if (!DEVICE_RE.test(deviceId)) return null
+  /* الإصدار التالي من العميل يرسل الحقول المعلنة فقط (الاتفاقية القسم 5): لا نخترع
+     قيماً للحقول الغائبة (كانت تظهر للمطوّر «تطبيق سطح المكتب» و«خطة trial» كذباً). */
   const out = {
     deviceId,
-    appVersion: cleanText(raw.appVersion, 20),
-    platform: cleanText(raw.platform, 16) === 'web' ? 'web' : 'desktop',
     shopName: cleanText(raw.shopName, 120),
     ownerName: cleanText(raw.ownerName, 120),
     phone: normalizePhone(raw.phone),
     email: cleanEmail(raw.email),
     city: cleanText(raw.city, 80),
     street: cleanText(raw.street, 160),
-    countryCode: cleanText(raw.countryCode, 4).toUpperCase(),
-    activityId: cleanText(raw.activityId, 40),
     activityNameAr: cleanText(raw.activityNameAr, 60),
-    accountingMode: cleanText(raw.accountingMode, 10) === 'full' ? 'full' : 'simple',
-    plan: cleanText(raw.plan, 12) || 'trial',
     registeredAt: cleanText(raw.registeredAt, 30) || new Date().toISOString(),
   }
+  // حقول قديمة (عملاء سابقون) تُقبل إن وُجدت فقط، ولا تُملأ بقيم افتراضية
+  const appVersion = cleanText(raw.appVersion, 20)
+  if (appVersion) out.appVersion = appVersion
+  const platform = cleanText(raw.platform, 16)
+  if (platform === 'web' || platform === 'desktop') out.platform = platform
+  const countryCode = cleanText(raw.countryCode, 4).toUpperCase()
+  if (countryCode) out.countryCode = countryCode
+  const activityId = cleanText(raw.activityId, 40)
+  if (activityId) out.activityId = activityId
+  const accountingMode = cleanText(raw.accountingMode, 10)
+  if (accountingMode === 'full' || accountingMode === 'simple') out.accountingMode = accountingMode
+  const plan = cleanText(raw.plan, 12)
+  if (plan) out.plan = plan
   const specialty = cleanText(raw.doctorSpecialty, 60)
   if (specialty) out.doctorSpecialty = specialty
+  /* v1.0.22: السنة المالية الأولى من المعالج — تاريخ YYYY-MM-DD فقط، وإلا تُسقط */
+  const fyName = cleanText(raw.fiscalYearName, 40)
+  if (fyName) out.fiscalYearName = fyName
+  for (const key of ['fiscalYearStart', 'fiscalYearEnd']) {
+    const v = typeof raw[key] === 'string' ? raw[key].trim() : ''
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) out[key] = v
+  }
   return out
 }
 
@@ -239,9 +255,9 @@ export function formatRegistrationAr(record, { isNew = true } = {}) {
     `📍 العنوان: ${[record.city, record.street].filter(Boolean).map(tgEscape).join(' — ') || '—'}`,
     `🧭 النشاط: ${tgEscape(record.activityNameAr) || tgEscape(record.activityId) || '—'}${record.countryCode ? ` (${tgEscape(record.countryCode)})` : ''}`,
     record.doctorSpecialty ? `🩺 التخصص: ${tgEscape(record.doctorSpecialty)}` : '',
-    `📦 الخطة: ${tgEscape(record.plan)} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
-    `🖥️ الجهاز: <code>${tgEscape(record.deviceId)}</code> · ${record.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
-    `🔖 الإصدار: ${tgEscape(record.appVersion) || '—'}`,
+    record.plan || record.accountingMode ? `📦 الخطة: ${tgEscape(record.plan) || '—'} · المحاسبة: ${accountingAr(record.accountingMode)}` : '',
+    `🖥️ الجهاز: <code>${tgEscape(record.deviceId)}</code>${record.platform ? ` · ${platformAr(record.platform)}` : ''}`,
+    record.appVersion ? `🔖 الإصدار: ${tgEscape(record.appVersion)}` : '',
     `🕒 التسجيل: ${tgEscape(record.registeredAt)}`,
     isNew
       ? ''
@@ -254,6 +270,10 @@ export function formatRegistrationAr(record, { isNew = true } = {}) {
  * البطاقة الكاملة لتسجيل واحد في اللوحة — **كل** الحقول المحفوظة، وحالة الترخيص.
  * الهدف من طلب المالك: أن يرى كل البيانات التي دخلها العميل، لا ملخصاً منها.
  */
+/** تسميات العرض: الحقل الغائب يُعرض «—» ولا يُفترض له قيمة */
+const platformAr = (p) => (p === 'web' ? 'المتصفح' : p === 'desktop' ? 'تطبيق سطح المكتب' : '—')
+const accountingAr = (m) => (m === 'full' ? 'متقدمة' : m === 'simple' ? 'بسيطة' : '—')
+
 export function formatRegistrationDetailAr(record, { licensed = false } = {}) {
   const val = (v) => (v === undefined || v === null || v === '' ? '—' : tgEscape(String(v)))
   const lines = [
@@ -269,8 +289,8 @@ export function formatRegistrationDetailAr(record, { licensed = false } = {}) {
     `🌍 الدولة: ${val(record.countryCode)}`,
     `🧭 النشاط: ${val(record.activityNameAr)}${record.activityId ? ` (${tgEscape(record.activityId)})` : ''}`,
     record.doctorSpecialty ? `🩺 التخصص: ${val(record.doctorSpecialty)}` : '',
-    `📦 الخطة: ${val(record.plan)} · المحاسبة: ${record.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
-    `🖥️ الجهاز: <code>${val(record.deviceId)}</code> · ${record.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
+    `📦 الخطة: ${val(record.plan)} · المحاسبة: ${accountingAr(record.accountingMode)}`,
+    `🖥️ الجهاز: <code>${val(record.deviceId)}</code> · ${platformAr(record.platform)}`,
     `🔖 الإصدار: ${val(record.appVersion)}`,
     `🕒 التسجيل: ${val(record.registeredAt)}`,
     `🗓️ أول بلاغ: ${val(record.firstSeenAt)}`,

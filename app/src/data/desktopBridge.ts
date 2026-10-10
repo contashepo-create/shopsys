@@ -86,6 +86,8 @@ export interface DesktopDatabaseStorageBridge {
   recoveryNotice(): Promise<{ at: string; from: string | null } | null>
   listFileBackups(): Promise<{ path: string; where: string; kind: string; size: number; at: string }[]>
   restoreFileBackup(path: string): Promise<{ ok: boolean; restarting?: boolean }>
+  /* v1.0.22: تنزيل نسخة SQLite كاملة — يُعاد المسار الذي اختاره المستخدم */
+  exportCopy(): Promise<{ ok: true; path: string } | { ok: false; canceled: true }>
 }
 
 /**
@@ -97,11 +99,19 @@ export interface DesktopNotificationsBridge {
   show(title: string, body: string): Promise<boolean>
 }
 
+/** v1.0.22: مفتاح الاسترداد — ملف مغلّف بكلمة مرور يختارها العميل */
+export interface DesktopKeyRecoveryBridge {
+  status(): Promise<{ exportedAt: string | null }>
+  export(args: { passphrase: string; deviceId: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; path?: string }>
+  import(args: { passphrase: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; deviceId?: string; relaunching?: boolean }>
+}
+
 export interface ShopsysDesktopBridge {
   runtime: 'electron'
   database: DesktopDatabaseBridge
   databaseStorage?: DesktopDatabaseStorageBridge
   notifications?: DesktopNotificationsBridge
+  keyRecovery?: DesktopKeyRecoveryBridge
 }
 
 declare global {
@@ -150,4 +160,9 @@ export async function showDesktopNotification(title: string, body: string): Prom
   } catch {
     return false
   }
+}
+
+/** v1.0.22: جسر مفتاح الاسترداد — null خارج سطح المكتب */
+export function desktopKeyRecoveryBridge(): DesktopKeyRecoveryBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysDesktop?.keyRecovery ?? null : null
 }

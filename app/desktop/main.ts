@@ -4,18 +4,32 @@
  *   • الجسور: shopsysDesktop.database (عقد المُصيّر القائم) + shopsysPrint
  *     وshopsysPrinters (§102 تعدد الطابعات) + shopsysUpdater
  *   • التحديث: electron-updater من GitHub Releases — فحص عند الإقلاع وزر يدوي
- *   • النسخ الدوّارة: ساعي 24 · يومي 30 · أسبوعي 12 (Backup API الساخنة)
+ *   • النسخ الدوّارة: ساعي 24 فقط = يوم واحد (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
-import { describeDeviceKeyOutcome, resolveDeviceKey } from './deviceKeyStore.ts'
+import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
+import { keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
+import {
+  readDbLocationAt, writeDbLocationAt, restoreLocationPointerAt, customDbStatusAt, resolveDbPathAt,
+  hasPreviousUseEvidenceAt, shouldAskForExistingDatabase, probeShopsysDatabase, isAbsoluteDbPath,
+  type DbLocationConfig,
+} from './dbLocation.ts'
+import { isInAppNavigation, isExternalOpenable } from './navigationPolicy.ts'
+import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
+import {
+  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
+  type CustomLocationStatus, type ExistingDataCandidate,
+  type RotationKind,
+} from './storagePolicy.ts'
 
 type ClaimOutboxInput = { now?: string; limit?: number }
 type DeleteSnapshotInput = { storeName: string; expectedRevision: number }
@@ -67,9 +81,102 @@ function showLoadError(win: BrowserWindow, reason: string): void {
   logLine('load-error', reason)
   const html = errorPageHtml(reason, logPath)
   win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => undefined)
+  // النافذة مخفية حتى ready-to-show: صفحة الخطأ يجب أن تظهر حتماً
+  if (!win.isDestroyed() && !win.isVisible()) win.show()
 }
 
 /* ── النافذة ── */
+/* ── v1.0.22: شاشة البدء بشريط تقدّم ─────────────────────────────────────
+   تُعرض فوراً عند الإقلاع (ومنه أول تشغيل بعد التحديث) حتى تُفتح البيانات
+   المحفوظة تلقائياً — بلا نافذة بيضاء وبلا معالج إعداد. تُغلق عند ظهور الواجهة
+   أو بعد مهلة قصوى حتى لا تبقى معلّقة مهما حدث. */
+let splashWindow: BrowserWindow | null = null
+let splashLoaded = false
+let splashState: { percent: number; text: string } = { percent: 0, text: '' }
+let splashCloseTimer: NodeJS.Timeout | null = null
+
+function escapeHtmlText(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string))
+}
+
+function splashHtml(headline: string): string {
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#f1f5f9;color:#0f172a;font-family:'Segoe UI',Tahoma,sans-serif;-webkit-user-select:none;user-select:none}
+.card{width:380px;padding:26px 28px;border-radius:18px;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
+h1{margin:0 0 4px;font-size:18px;font-weight:800}
+p{margin:0 0 18px;font-size:12.5px;line-height:1.7;color:#475569}
+.bar{height:10px;border-radius:999px;background:#e2e8f0;overflow:hidden}
+.fill{height:100%;width:0;background:linear-gradient(90deg,#0ea5e9,#6366f1);transition:width .35s ease}
+.step{margin-top:10px;min-height:16px;font-size:11.5px;color:#64748b}
+</style></head><body><div class="card"><h1>تَحَكَّم</h1><p>${escapeHtmlText(headline)}</p>
+<div class="bar"><div class="fill" id="f"></div></div><div class="step" id="s"></div></div>
+<script>window.setProgress=function(p,t){document.getElementById('f').style.width=Math.max(0,Math.min(100,p))+'%';document.getElementById('s').textContent=t};</script>
+</body></html>`
+}
+
+function showSplash(afterUpdateFrom: string | null): void {
+  const headline = afterUpdateFrom
+    ? `تم تحديث تَحَكَّم من ${afterUpdateFrom} إلى ${app.getVersion()} — جارٍ فتح بياناتك كما هي، لا شيء يُحذف.`
+    : 'جارٍ فتح بياناتك…'
+  splashWindow = new BrowserWindow({
+    width: 440, height: 250, frame: false, resizable: false, minimizable: false, maximizable: false,
+    center: true, skipTaskbar: true, backgroundColor: '#f1f5f9', title: 'تَحَكَّم',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  splashLoaded = false
+  splashWindow.webContents.once('did-finish-load', () => {
+    splashLoaded = true
+    pushSplashState()
+  })
+  void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml(headline))}`)
+  /* مهلة أمان: لا تبقى الشاشة معلّقة إن لم تظهر الواجهة */
+  splashCloseTimer = setTimeout(() => {
+    closeSplash()
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show()
+  }, 20_000)
+}
+
+function pushSplashState(): void {
+  if (!splashWindow || splashWindow.isDestroyed() || !splashLoaded) return
+  const payload = JSON.stringify(splashState)
+  void splashWindow.webContents.executeJavaScript(`window.setProgress(${payload}.percent, ${payload}.text)`).catch(() => undefined)
+}
+
+function setSplashProgress(percent: number, text: string): void {
+  splashState = { percent, text }
+  pushSplashState()
+}
+
+function closeSplash(): void {
+  if (splashCloseTimer) { clearTimeout(splashCloseTimer); splashCloseTimer = null }
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy()
+  splashWindow = null
+}
+
+/* آخر إصدار فُتح به البرنامج — لإظهار رسالة «تم التحديث» مرة واحدة بعد التثبيت */
+function lastRunVersionPath(): string {
+  return join(app.getPath('userData'), 'last-run.json')
+}
+function readLastRunVersion(): string | null {
+  try {
+    const value = JSON.parse(readFileSync(lastRunVersionPath(), 'utf8'))
+    return typeof value?.version === 'string' ? value.version : null
+  } catch {
+    return null
+  }
+}
+function writeLastRunVersion(): void {
+  try {
+    writeFileSync(lastRunVersionPath(), JSON.stringify({ version: app.getVersion(), at: new Date().toISOString() }), 'utf8')
+  } catch (error) {
+    logLine('last-run', `تعذّر تسجيل الإصدار: ${(error as Error).message}`)
+  }
+}
+
+/* v1.0.22: عنوان صفحة التطبيق المحلية (الإنتاج) وأصل خادم التطوير — لسياسة التنقل */
+const APP_INDEX_FILE_URL = pathToFileURL(join(__dirname, '../dist/index.html')).href
+const devOrigin: string | null = isDev ? new URL(process.env.ELECTRON_START_URL!).origin : null
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1360,
@@ -77,21 +184,34 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1024,
     minHeight: 640,
     title: 'تَحَكَّم',
+    /* مخفية حتى تكتمل أول رسمة: لا نافذة بيضاء فارغة تظهر فوق شاشة البدء بشريط التقدّم */
+    show: false,
     autoHideMenuBar: true,
     icon: join(__dirname, '../dist/app-icon.png'),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      /* v1.0.22: الصفحة الرئيسية تعمل في sandbox كنوافذ الطباعة والشاشة الافتتاحية.
+         الجسر (preload) يستورد من 'electron' فقط — متوافق مع sandbox. */
+      sandbox: true,
       spellcheck: false,
     },
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     /* ح9 (مراجعة ③): مخططات محددة فقط تُمرَّر إلى نظام التشغيل — لا file: ولا مخططات
        تطبيقات أخرى قد تفتح برامج محلية. الرفض دائماً داخل النافذة نفسها. */
-    if (/^(?:https?:\/\/|mailto:|tel:)/i.test(url)) void shell.openExternal(url)
+    if (isExternalOpenable(url)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+  /* v1.0.22: التنقل داخل النافذة مقصور على صفحة التطبيق نفسها. أي رابط آخر (صفحة خارجية
+     أو ملف محلي آخر) يُمنع، وإن كان http(s)/mailto/tel يُفتح في المتصفح الافتراضي.
+     الحدث لا يُطلق لـ loadURL/loadFile البرمجية، فصفحة الخطأ وتحميل التطبيق لا يتأثران. */
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isInAppNavigation(url, APP_INDEX_FILE_URL, devOrigin)) return
+    event.preventDefault()
+    logLine('security', `منع تنقل غير مسموح: ${url.slice(0, 120)}`)
+    if (isExternalOpenable(url)) void shell.openExternal(url)
   })
   /* قنوات التشخيص الميداني: فشل التحميل يعرض صفحة خطأ عربية بدل شاشة بيضاء،
      وأخطاء المُصيّر تُسجَّل في main.log — أين المشكلة يصبح معروفاً فوراً */
@@ -109,6 +229,9 @@ function createMainWindow(): BrowserWindow {
   win.webContents.on('preload-error', (_e, preloadPath, error) => {
     logLine('preload-error', `${preloadPath}: ${error}`)
   })
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show()
+  })
   if (isDev) void win.loadURL(process.env.ELECTRON_START_URL!)
   else {
     void win.loadFile(join(__dirname, '../dist/index.html')).catch((err: unknown) => {
@@ -123,13 +246,10 @@ function createMainWindow(): BrowserWindow {
    تُشفَّر بـ AES-GCM في المُصيّر قبل وصولها إلى SQLite عبر IPC، فتُقرأ القاعدة
    على هذا الجهاز فقط — نسخ shopsys.db إلى جهاز آخر يعطي بيانات غير قابلة
    للفك. اللقطات النصية القديمة تُقرأ كما هي وتُرحَّل مشفرة عند أول حفظ. */
-function ensureDeviceEncryptionKey(): Buffer {
-  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
-     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
-     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
-     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+/** مدخل قرص مفتاح الجهاز — مشترك بين الإقلاع واستيراد مفتاح الاسترداد */
+function buildDeviceKeyIo(): DeviceKeyIo {
   const dir = app.getPath('userData')
-  const outcome = resolveDeviceKey({
+  return {
     readFile: (name) => {
       try { return readFileSync(join(dir, name)) } catch { return null }
     },
@@ -141,7 +261,28 @@ function ensureDeviceEncryptionKey(): Buffer {
     generate: () => randomBytes(32),
     safeStorage,
     log: logLine,
-  })
+  }
+}
+
+/* v1.0.22 — حالة تصدير مفتاح الاسترداد (تذكير المالك حتى يصدّره) */
+function keyRecoveryStatePath(): string {
+  return join(app.getPath('userData'), 'key-recovery.json')
+}
+function readKeyRecoveryExportedAt(): string | null {
+  try {
+    const value = JSON.parse(readFileSync(keyRecoveryStatePath(), 'utf8'))
+    return typeof value?.exportedAt === 'string' ? value.exportedAt : null
+  } catch {
+    return null
+  }
+}
+
+function ensureDeviceEncryptionKey(): Buffer {
+  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
+     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
+     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
+     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+  const outcome = resolveDeviceKey(buildDeviceKeyIo())
   for (const warning of outcome.warnings) logLine('device-key', `تحذير: ${warning}`)
   logLine('device-key', describeDeviceKeyOutcome(outcome))
   return outcome.key
@@ -155,49 +296,83 @@ function ensureDeviceEncryptionKey(): Buffer {
    القرص C يحمل ويندوز — نقل القاعدة لقرص آخر يحميها من الفرمتة، والنسخ
    المزدوجة (بجوار القاعدة + مكان ثانٍ) تضاعف الأمان. */
 
-interface DbLocationConfig {
-  customDbPath: string | null
-  secondaryBackupDir: string | null
-  lastFileBackupAt: string | null
-}
-
-function dbLocationFile(): string {
-  return join(app.getPath('userData'), 'db-location.json')
-}
-
-function readDbLocation(): DbLocationConfig {
-  try {
-    const parsed = JSON.parse(readFileSync(dbLocationFile(), 'utf8')) as Partial<DbLocationConfig>
-    return {
-      customDbPath: typeof parsed.customDbPath === 'string' && parsed.customDbPath.trim() ? parsed.customDbPath : null,
-      secondaryBackupDir: typeof parsed.secondaryBackupDir === 'string' && parsed.secondaryBackupDir.trim() ? parsed.secondaryBackupDir : null,
-      lastFileBackupAt: typeof parsed.lastFileBackupAt === 'string' ? parsed.lastFileBackupAt : null,
-    }
-  } catch {
-    return { customDbPath: null, secondaryBackupDir: null, lastFileBackupAt: null }
-  }
-}
-
+const userDataDir = (): string => app.getPath('userData')
+function readDbLocation(): DbLocationConfig { return readDbLocationAt(userDataDir()) }
 function writeDbLocation(cfg: DbLocationConfig): void {
-  writeFileSync(dbLocationFile(), JSON.stringify(cfg, null, 2), 'utf8')
+  writeDbLocationAt(userDataDir(), cfg, (message) => logLine('db-location', message))
+}
+/* ملف التوجيه مفقود ⇒ استعادته من المرآة في المكان الافتراضي */
+/**
+ * v1.0.22: حوار اختيار ملف قاعدة يمر دائماً بالفحص قبل الاعتماد (سلامة + جدول snapshots).
+ * يعيد المسار المعتمد، أو null عند الإلغاء أو الرفض (ويُعرض سبب الرفض للمستخدم).
+ */
+function pickValidatedDatabaseFile(): string | null {
+  const picked = dialog.showOpenDialogSync({
+    title: 'اختر ملف قاعدة البيانات الموجود مسبقاً (shopsys.db)',
+    properties: ['openFile'],
+    filters: [{ name: 'قاعدة بيانات تَحَكَّم', extensions: ['db', 'sqlite'] }],
+  })
+  const file = picked?.[0]
+  if (!file) return null
+  const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
+  if (verdict === 'ok') return file
+  const why = verdict === 'not-shopsys' ? 'ليس ملف قاعدة بيانات تَحَكَّم'
+    : verdict === 'corrupt' ? 'الملف تالف' : 'تعذّر فتح الملف'
+  logLine('db-recovery', `رُفض الملف المختار (${why}): ${file}`)
+  dialog.showErrorBox('تَحَكَّم — ملف غير صالح', `${why}:\n${file}\n\nاختر ملف shopsys.db الصحيح.`)
+  return null
 }
 
-/* v1.0.19: مكان مخصص غير متاح (قرص مفصول / تغيّر حرف الدرايف بعد التحديث)
-   ⇒ كان الإقلاع يسقط بصمت على قاعدة افتراضية فارغة فيظهر معالج «عميل جديد»
-   وتبدو البيانات مفقودة. الآن الإقلاع يتوقف ويسأل المستخدم (انظر openDatabase)،
-   ولا يُستخدم الافتراضي إلا باختيار صريح من المستخدم لهذه الجلسة فقط. */
-let useDefaultDbForSession = false
-
-function customDbUnavailable(): string | null {
-  const cfg = readDbLocation()
-  if (!cfg.customDbPath || useDefaultDbForSession) return null
-  return existsSync(dirname(cfg.customDbPath)) ? null : cfg.customDbPath
+/**
+ * v1.0.22 (طلب المالك): لا يُنشأ قاعدة فارغة صامتاً. إذا غابت القاعدة وفيه دليل تشغيل سابق
+ * (ولم يجد offerExistingData نسخة صالحة) نطلب من العميل اختيار الملف الموجود، ونحفظ مساره
+ * المطلق في المؤشر. التثبيت الجديد بلا دليل لا يرى هذا الحوار.
+ */
+async function askForExistingDatabaseIfNeeded(): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const { dbPath } = resolveDbPath()
+    const need = shouldAskForExistingDatabase({
+      resolvedDbExists: existsSync(dbPath),
+      previousUse: hasPreviousUseEvidenceAt(userDataDir()),
+    })
+    if (!need) return
+    logLine('db-recovery', `القاعدة غير موجودة في ${dbPath} مع دليل تشغيل سابق — نطلب اختيار الملف`)
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      title: 'تَحَكَّم — لم نجد قاعدة بياناتك',
+      message: 'لم نجد قاعدة بياناتك الحالية، ولن نُنشئ قاعدة فارغة تلقائياً.\n\nاختر ملف قاعدة البيانات الموجود مسبقاً (shopsys.db).',
+      detail: `المكان المتوقع: ${dbPath}\n\n«بدء قاعدة جديدة» يبدأ ببيانات فارغة، ولن تظهر بياناتك السابقة إلا إذا اخترت ملفها لاحقاً.`,
+      buttons: ['اختيار ملف shopsys.db الموجود', 'بدء قاعدة جديدة', 'إغلاق البرنامج'],
+      defaultId: 0,
+      cancelId: 2,
+    })
+    if (choice === 2) {
+      logLine('db-recovery', 'أغلق المستخدم الحوار دون اختيار قاعدة')
+      app.exit(0)
+      throw new Error('أُغلق البرنامج: لم تُختر قاعدة بيانات')
+    }
+    if (choice === 1) {
+      logLine('db-recovery', 'بدأ المستخدم قاعدة جديدة باختياره')
+      return
+    }
+    const file = pickValidatedDatabaseFile()
+    if (!file) continue
+    writeDbLocation({ ...readDbLocation(), customDbPath: file, customDbOpenedAt: null })
+    logLine('db-recovery', `اعتُمدت القاعدة التي اختارها المستخدم: ${file}`)
+  }
+  throw new Error('تعذّر تحديد قاعدة البيانات بعد عدة محاولات')
 }
 
+function restoreLocationPointerIfMissing(): void {
+  const restored = restoreLocationPointerAt(userDataDir())
+  if (restored) logLine('db-location', `استُعيد مؤشر المكان من المرآة: ${restored}`)
+}
+/* v1.0.19/v1.0.22: حالة المكان المخصص (انظر storagePolicy.ts) — لا إنشاء ملف فارغ */
+function customDbStatus(): { status: CustomLocationStatus; path: string | null } {
+  return customDbStatusAt(userDataDir())
+}
 function resolveDbPath(): { dbPath: string; isCustom: boolean } {
-  const cfg = readDbLocation()
-  if (cfg.customDbPath && !useDefaultDbForSession && existsSync(dirname(cfg.customDbPath))) return { dbPath: cfg.customDbPath, isCustom: true }
-  return { dbPath: join(app.getPath('userData'), 'shopsys.db'), isCustom: false }
+  return resolveDbPathAt(userDataDir())
 }
 
 /** المكان الثاني الافتراضي للنسخ: مجلد مستندات المستخدم (يبقى مع ملفاته عند إعادة تثبيت الويندوز إن نُقلت المستندات) */
@@ -269,100 +444,248 @@ function quickCheck(dbPath: string): boolean {
   return probeDatabase(dbPath) === 'ok'
 }
 
-/** كل ملفات النسخ في المكانين (يدوي/تلقائي) — الأحدث أولاً (أسماؤها بطابع زمني) */
+/** كل ملفات النسخ: المكانان (يدوي/تلقائي) + الأجيال الساعية/اليومية/قبل التحديث في المكان الافتراضي — الأحدث أولاً */
 function candidateBackups(dbPath: string): string[] {
+  const ud = app.getPath('userData')
   const dirs = [
     join(dirname(dbPath), 'backups', 'manual'),
     join(dirname(dbPath), 'backups', 'auto'),
     join(resolveSecondaryBackupDir().dir, 'manual'),
     join(resolveSecondaryBackupDir().dir, 'auto'),
+    join(ud, 'backups', 'hourly'),
+    join(ud, 'backups', 'pre-update'),
   ]
-  const out: string[] = []
+  const out: { path: string; mtimeMs: number }[] = []
   for (const dir of dirs) {
-    try { for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) out.push(join(dir, f)) } catch { /* مجلد غير موجود */ }
+    try {
+      for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
+        const full = join(dir, f)
+        out.push({ path: full, mtimeMs: statSync(full).mtimeMs })
+      }
+    } catch { /* مجلد غير موجود */ }
   }
-  return out.sort().reverse()
+  return newestFirst(out).map((x) => x.path)
 }
 
 /** يُنفَّذ قبل الفتح: القاعدة تالفة ⇐ عزلها + استرداد أحدث نسخة سليمة (أو قاعدة جديدة إن لا نسخة) */
-function shieldDamagedDatabase(dbPath: string): void {
-  if (!existsSync(dbPath)) return
-  const probe = probeDatabase(dbPath)
-  if (probe === 'ok') return
-  if (probe === 'unreadable') {
-    // ليست تلفاً مؤكداً (قفل/صلاحيات) — لا عزل ولا استبدال؛ الفتح العادي يتولى الأمر
-    logLine('db-shield', 'تعذّر فحص القاعدة دون دليل تلف (قفل أو صلاحيات) — تُفتح كما هي بلا عزل')
-    return
-  }
-  logLine('db-shield', 'فحص الإقلاع: القاعدة تالفة — بدء الاسترداد التلقائي')
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const quarantine = `${dbPath}.corrupt-${stamp}`
-  try { renameSync(dbPath, quarantine) } catch { return /* تعذّر العزل — نحاول الفتح كما هو */ }
-  // ملفات WAL/SHM التابعة للتالف تُعزل معه (بقاءها قد يفسد النسخة المستردة)
-  for (const ext of ['-wal', '-shm']) {
-    const side = dbPath + ext
-    if (existsSync(side)) { try { renameSync(side, `${quarantine}${ext}`) } catch { try { unlinkSync(side) } catch { /* استمر */ } } }
-  }
-  let restoredFrom: string | null = null
-  for (const candidate of candidateBackups(dbPath)) {
+/**
+ * v1.0.22: الدرع قبل الفتح — المنطق في desktop/dbShield.ts (مُختبر على ملفات حقيقية).
+ * هنا فقط: قائمة النسخ الاحتياطية، والسجل، وإشعار الاسترداد عند النجاح.
+ */
+function shieldDamagedDatabase(dbPath: string): ShieldOutcome {
+  const result = shieldDatabaseAt(dbPath, () => candidateBackups(dbPath), {
+    log: (message) => logLine('db-shield', message),
+  })
+  if (result.outcome === 'restored') {
     try {
-      if (!quickCheck(candidate)) continue
-      copyFileSync(candidate, dbPath)
-      restoredFrom = candidate
-      break
-    } catch { /* النسخة التالية */ }
+      writeFileSync(join(app.getPath('userData'), RECOVERY_MARKER), JSON.stringify({
+        at: new Date().toISOString(), from: result.restoredFrom, quarantine: result.quarantine,
+      }), 'utf8')
+    } catch { /* الإشعار اختياري */ }
   }
-  try {
-    writeFileSync(join(app.getPath('userData'), RECOVERY_MARKER), JSON.stringify({
-      at: new Date().toISOString(), from: restoredFrom, quarantine,
-    }), 'utf8')
-  } catch { /* الإشعار اختياري */ }
-  logLine('db-shield', restoredFrom ? `استُردت القاعدة تلقائياً من: ${restoredFrom} (التالف محفوظ: ${quarantine})` : 'لا نسخة سليمة — ستُنشأ قاعدة جديدة فارغة')
+  return result.outcome
 }
 
 /* ── القاعدة ── */
-async function openDatabase(): Promise<ShopsysDatabase> {
-  // v1.0.19: المكان المخصص غائب ⇒ لا إنشاء قاعدة فارغة صامتاً. نسأل المستخدم.
-  for (let guard = 0; customDbUnavailable() && guard < 1000; guard += 1) {
-    const missing = customDbUnavailable() as string
-    logLine('db-location', `المكان المخصص غير متاح الآن: ${missing}`)
+
+/** أحدث نسخة متاحة من أي مكان (للاستعادة إلى مكان جديد) — الافتراضي أولاً ثم الحيّ */
+function latestBackupAnywhere(): string | null {
+  const ud = app.getPath('userData')
+  const dirs = ['hourly', 'pre-update'].map((k) => join(ud, 'backups', k))
+  const files: { path: string; mtimeMs: number }[] = []
+  for (const dir of dirs) {
+    try {
+      for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
+        const full = join(dir, f)
+        files.push({ path: full, mtimeMs: statSync(full).mtimeMs })
+      }
+    } catch { /* لا مجلد */ }
+  }
+  const latest = latestBackup(files)
+  if (latest) return latest.path
+  const fallback = join(ud, 'shopsys.db')
+  return existsSync(fallback) ? fallback : null
+}
+
+/** الحالة المفقودة: المكان المخصص غير متاح أو ملفه اختفى ⇒ نسأل، ولا نفتح فارغاً */
+async function resolveMissingLocation(): Promise<void> {
+  for (let guard = 0; guard < 1000; guard += 1) {
+    const { status, path } = customDbStatus()
+    if (status === 'none' || status === 'ok' || !path) return
+    logLine('db-location', `المكان المخصص (${status}): ${path}`)
+    const folderMissing = status === 'folder-missing'
     const choice = dialog.showMessageBoxSync({
       type: 'error',
       title: 'تَحَكَّم — مكان قاعدة البيانات غير متاح',
-      message: `مكان قاعدة البيانات المحفوظ غير متاح الآن:\n${missing}\n\nغالباً القرص أو الفلاشة غير موصولة، أو تغيّر حرف الدرايف. بياناتك لم تُحذف.`,
-      detail: 'وصّل القرص ثم اختر «إعادة المحاولة». «المكان الافتراضي مؤقتاً» يفتح برنامجاً فارغاً لهذه الجلسة فقط — أي بيانات تُدخل فيها لن تظهر عند عودة القرص.',
-      buttons: ['إعادة المحاولة', 'المكان الافتراضي مؤقتاً', 'إغلاق البرنامج'],
+      message: folderMissing
+        ? `مكان قاعدة البيانات المحفوظ غير متاح الآن:\n${dirname(path)}\n\nغالباً القرص أو الفلاشة غير موصولة، أو تغيّر حرف الدرايف. بياناتك لم تُحذف.`
+        : `ملف قاعدة البيانات في المكان المحفوظ غير موجود الآن:\n${path}\n\nلم يُنشأ ملف فارغ مكانه. بياناتك لم تُحذف من النسخ الاحتياطية.`,
+      detail: folderMissing
+        ? 'وصّل القرص ثم اختر «إعادة المحاولة». أو اختر «اختيار مكان آخر» لاستعادة آخر نسخة احتياطية إلى مكان جديد (قد تفقد التغييرات بعد آخر نسخة ساعية).'
+        : 'إن نُقل الملف أو حُذف بالخطأ فأعده إلى مكانه ثم اختر «إعادة المحاولة». أو اختر «اختيار مكان آخر» لاستعادة آخر نسخة احتياطية إلى مكان جديد.',
+      buttons: ['إعادة المحاولة', 'اختيار مكان آخر', 'إغلاق البرنامج'],
       defaultId: 0,
       cancelId: 2,
     })
     if (choice === 0) continue
-    if (choice === 1) { useDefaultDbForSession = true; break }
-    app.exit(0)
-    throw new Error('مكان قاعدة البيانات المخصص غير متاح — أُغلق البرنامج بطلب المستخدم')
-  }
-  const { dbPath, isCustom } = resolveDbPath()
-  // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
-  try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
-  try {
-    const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
-    logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
-    // v1.0.8: نسخة ملفية تلقائية يومياً في المكانين عند الإقلاع
-    const cfg = readDbLocation()
-    const lastAuto = cfg.lastFileBackupAt ? Date.parse(cfg.lastFileBackupAt) : 0
-    if (Date.now() - lastAuto > 24 * 60 * 60 * 1000) {
-      void backupDatabaseFile('auto', db, dbPath).then((files) => {
-        if (files.length) logLine('backup', `نسخة تلقائية في ${files.length} مكان: ${files.join(' | ')}`)
-      })
+    if (choice === 2) {
+      app.exit(0)
+      throw new Error('مكان قاعدة البيانات المخصص غير متاح — أُغلق البرنامج بطلب المستخدم')
     }
-    return db
-  } catch (error) {
-    const message = (error as Error).message
-    logLine('db-fatal', `فشل فتح القاعدة (${dbPath}): ${message}`)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { dialog } = require('electron') as typeof import('electron')
-    dialog.showErrorBox('تَحَكَّم — فشل تشغيل القاعدة', `تعذّر فتح قاعدة البيانات:\n${message}\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`)
-    app.exit(1)
-    throw error
+    const picked = dialog.showOpenDialogSync({ properties: ['openDirectory', 'createDirectory'], title: 'اختر مجلد قاعدة البيانات الجديد' })
+    const dir = picked?.[0]
+    if (!dir) continue
+    const source = latestBackupAnywhere()
+    if (!source) {
+      dialog.showErrorBox('تَحَكَّم — لا توجد نسخة احتياطية', 'لم نجد أي نسخة احتياطية لاستعادتها. أعد توصيل المكان القديم ثم حاول مرة أخرى.')
+      continue
+    }
+    const dest = join(dir, 'shopsys.db')
+    if (existsSync(dest)) {
+      dialog.showErrorBox('تَحَكَّم — يوجد ملف بهذا الاسم', `يوجد ملف shopsys.db في المجلد المختار، ولن نستبدله تلقائياً. اختر مجلداً آخر.`)
+      continue
+    }
+    mkdirSync(dir, { recursive: true })
+    copyFileSync(source, dest)
+    writeDbLocation({ ...readDbLocation(), customDbPath: dest, customDbOpenedAt: null })
+    logLine('db-location', `استُعيدت آخر نسخة (${source}) إلى المكان الجديد ${dest}`)
+  }
+}
+
+/** كل مرشّحات البيانات السابقة: نسخ الاحتياطي في المكان الافتراضي/المستندات + قاعدة حيّة على الأقراص (Tahakom\shopsys.db) */
+function discoverExistingData(): ExistingDataCandidate[] {
+  const ud = app.getPath('userData')
+  const out: ExistingDataCandidate[] = []
+  const backupDirs = [
+    ...(['hourly', 'pre-update'] as const).map((k) => join(ud, 'backups', k)),
+    join(app.getPath('documents'), 'Tahakom-Backups', 'manual'),
+    join(app.getPath('documents'), 'Tahakom-Backups', 'auto'),
+  ]
+  for (const dir of backupDirs) {
+    try {
+      for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
+        const full = join(dir, f)
+        out.push({ path: full, mtimeMs: statSync(full).mtimeMs, kind: 'backup', whereAr: full })
+      }
+    } catch { /* لا مجلد */ }
+  }
+  if (process.platform === 'win32') {
+    for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+      const live = `${letter}:\\Tahakom\\shopsys.db`
+      try {
+        if (existsSync(live)) out.push({ path: live, mtimeMs: statSync(live).mtimeMs, kind: 'live', whereAr: live })
+      } catch { /* درايف غير موصول */ }
+    }
+  }
+  return out
+}
+
+/** أول تشغيل بلا مؤشر ولا قاعدة افتراضية: إن وُجدت بيانات سابقة نعرضها ونسأل قبل أي معالج */
+async function offerExistingData(): Promise<void> {
+  const cfg = readDbLocation()
+  if (cfg.customDbPath) return
+  if (existsSync(join(app.getPath('userData'), 'shopsys.db'))) return
+  // نتحقق من السلامة للمرشّح الأفضل فقط (الفحص مكلف على ملفات كبيرة)
+  const ranked = newestFirst(discoverExistingData())
+  const valid: ExistingDataCandidate[] = []
+  for (const c of ranked.slice(0, 8)) {
+    if (probeDatabase(c.path) === 'ok') valid.push(c)
+  }
+  const best = bestExistingCandidate(valid)
+  if (!best) return
+  logLine('db-discovery', `وُجدت بيانات سابقة: ${best.path} (${best.kind})`)
+  const when = new Date(best.mtimeMs).toLocaleString('ar-EG')
+  const choice = dialog.showMessageBoxSync({
+    type: 'question',
+    title: 'تَحَكَّم — وُجدت بيانات سابقة',
+    message: `وجدنا بيانات سابقة على هذا الجهاز:\n${best.path}\nآخر تعديل: ${when}\n\nهل تريد استخدامها؟`,
+    detail: '«فتح البيانات» يعيدها كما كانت دون معالج إعداد. «اختيار ملف آخر» لملف قاعدة تختاره. «بدء قاعدة جديدة» يبدأ برنامجاً فارغاً — لا تختره إن كانت لديك بيانات.',
+    buttons: ['فتح البيانات', 'اختيار ملف آخر', 'بدء قاعدة جديدة'],
+    defaultId: 0,
+    cancelId: 2,
+  })
+  if (choice === 0) {
+    adoptExistingData(best)
+    return
+  }
+  if (choice === 1) {
+    const picked = dialog.showOpenDialogSync({ properties: ['openFile'], filters: [{ name: 'قاعدة بيانات', extensions: ['db'] }], title: 'اختر ملف قاعدة البيانات' })
+    const file = picked?.[0]
+    if (!file) return
+    const isBackup = /[\\/]backups[\\/]|Tahakom-Backups/.test(file)
+    adoptExistingData({ path: file, mtimeMs: 0, kind: isBackup ? 'backup' : 'live', whereAr: file })
+  }
+}
+
+/** live ⇒ يُفتح في مكانه ويصبح مكاننا المخصص. backup ⇒ يُنسخ إلى المكان الافتراضي */
+function adoptExistingData(c: ExistingDataCandidate): void {
+  if (c.kind === 'live') {
+    writeDbLocation({ ...readDbLocation(), customDbPath: c.path, customDbOpenedAt: null })
+    logLine('db-discovery', `اعتُمدت القاعدة الحيّة في مكانها: ${c.path}`)
+    return
+  }
+  const dest = join(app.getPath('userData'), 'shopsys.db')
+  mkdirSync(dirname(dest), { recursive: true })
+  copyFileSync(c.path, dest)
+  logLine('db-discovery', `استُعيدت نسخة ${c.path} إلى المكان الافتراضي`)
+}
+
+async function openDatabase(): Promise<ShopsysDatabase> {
+  restoreLocationPointerIfMissing()
+  await resolveMissingLocation()
+  await offerExistingData()
+  await askForExistingDatabaseIfNeeded()
+  // v1.0.22: عند فشل الفتح يعرض حوار الخطأ خيار «اختيار ملف القاعدة يدوياً»، ثم يُعاد الفتح من الملف المعتمد
+  for (let attempt = 1; ; attempt += 1) {
+    const { dbPath, isCustom } = resolveDbPath()
+    // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة. v1.0.22: بلا نسخة سليمة ⇒ يوقف الإقلاع بحوار
+    let shield: ShieldOutcome = 'ok'
+    try { shield = shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
+    try {
+      if (shield === 'corrupt-no-backup') throw new Error('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة في أي مكان')
+      const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
+      logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
+      if (isCustom) {
+        const cfg = readDbLocation()
+        if (!cfg.customDbOpenedAt) writeDbLocation({ ...cfg, customDbOpenedAt: new Date().toISOString() })
+      }
+      // v1.0.8: نسخة ملفية تلقائية يومياً في المكانين عند الإقلاع
+      const cfg = readDbLocation()
+      const lastAuto = cfg.lastFileBackupAt ? Date.parse(cfg.lastFileBackupAt) : 0
+      if (Date.now() - lastAuto > 24 * 60 * 60 * 1000) {
+        void backupDatabaseFile('auto', db, dbPath).then((files) => {
+          if (files.length) logLine('backup', `نسخة تلقائية في ${files.length} مكان: ${files.join(' | ')}`)
+        })
+      }
+      return db
+    } catch (error) {
+      const message = (error as Error).message
+      logLine('db-fatal', `فشل فتح القاعدة (${dbPath}): ${message}`)
+      const choice = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'تَحَكَّم — فشل تشغيل القاعدة',
+        message: `تعذّر فتح قاعدة البيانات:\n${dbPath}`,
+        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}).\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
+        buttons: ['اختيار ملف القاعدة يدوياً...', 'إظهار ملف القاعدة في المجلد (لإرساله للدعم)', 'إغلاق البرنامج'],
+        defaultId: 0,
+        cancelId: 2,
+      })
+      if (choice === 0 && attempt < 20) {
+        const picked = pickValidatedDatabaseFile()
+        if (picked) {
+          writeDbLocation({ ...readDbLocation(), customDbPath: picked, customDbOpenedAt: null })
+          logLine('db-recovery', `اعتُمد ملف يدوي بعد فشل الفتح، وتُعاد المحاولة: ${picked}`)
+        }
+        // إلغاء الاستعراض يعيد حوار الخطأ نفسه بدل إغلاق صامت
+        continue
+      }
+      if (choice === 1 && attempt < 20) {
+        if (existsSync(dbPath)) shell.showItemInFolder(dbPath)
+        continue
+      }
+      app.exit(1)
+      throw error
+    }
   }
 }
 
@@ -440,7 +763,14 @@ let updaterState: UpdaterState = { status: 'idle' }
 function pushUpdaterState(state: UpdaterState): void {
   updaterState = state
   if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
-  if (state.status === 'downloaded') logLine('updater', `جاهز للتثبيت عند الإغلاق: ${state.version}`)
+  if (state.status === 'downloaded') {
+    logLine('updater', `جاهز للتثبيت عند الإغلاق: ${state.version}`)
+    // v1.0.22: نسخة قبل التثبيت تُؤخذ فوراً — أي مسار للتثبيت (إغلاق/زر) يجدها جاهزة
+    preUpdateBackup = backupBeforeUpdate(state.version).catch((error) => {
+      logLine('backup', `تعذّرت نسخة ما قبل التحديث: ${(error as Error).message}`)
+      return null
+    })
+  }
   mainWindow?.webContents.send('updater:state', state)
 }
 
@@ -466,40 +796,66 @@ function wireUpdater(): void {
   }
 }
 
-/* ── النسخ الدوّارة (وثيقة §3.3): ساعي 24 · يومي 30 · أسبوعي 12 ── */
-const ROTATION = { hourly: { keep: 24, ms: 60 * 60 * 1000 }, daily: { keep: 30, ms: 24 * 60 * 60 * 1000 }, weekly: { keep: 12, ms: 7 * 24 * 60 * 60 * 1000 } } as const
+/* ── النسخ الدوّارة (طلب المالك): ساعي 24 فقط = يوم واحد ──
+   v1.0.22: تُكتب دائماً في المكان الافتراضي (%APPDATA%) حتى لو كانت القاعدة الحيّة
+   في مكان مخصص، وتُمرَّر القاعدة صراحة (كان before-quit يُصفّر database ثم يستدعي
+   الدالة فتخرج فوراً بلا نسخة — الآن تُمرَّر القاعدة المغلقة للنسخ). */
 let backupTimer: NodeJS.Timeout | null = null
 
-function pruneGeneration(kind: keyof typeof ROTATION): void {
+function pruneGeneration(kind: RotationKind): void {
   const dir = join(app.getPath('userData'), 'backups', kind)
   if (!existsSync(dir)) return
-  const files = readdirSync(dir).filter((file) => file.endsWith('.db')).sort()
-  const excess = files.length - ROTATION[kind].keep
-  for (const file of files.slice(0, Math.max(0, excess))) {
+  const files = readdirSync(dir).filter((file) => file.endsWith('.db')).map((file) => ({
+    path: join(dir, file), mtimeMs: statSync(join(dir, file)).mtimeMs,
+  }))
+  for (const file of filesToPrune(files, ROTATION[kind].keep)) {
     try {
-      unlinkSync(join(dir, file))
+      unlinkSync(file.path)
     } catch {
       /* ملف مشغول — يُترك للجولة القادمة */
     }
   }
 }
 
-async function rotateBackups(): Promise<void> {
-  if (!database) return
+async function rotateBackups(target: ShopsysDatabase | null = database): Promise<void> {
+  if (!target) return
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  for (const kind of Object.keys(ROTATION) as (keyof typeof ROTATION)[]) {
+  for (const kind of Object.keys(ROTATION) as RotationKind[]) {
     const dir = join(app.getPath('userData'), 'backups', kind)
     mkdirSync(dir, { recursive: true })
     const lastKey = `backup_last_${kind}`
-    const last = database.getMeta(lastKey)
+    const last = target.getMeta(lastKey)
     const lastMs = last ? Date.parse(last) : 0
     if (Date.now() - lastMs < ROTATION[kind].ms) continue
     const dest = join(dir, `${kind}-${stamp}.db`)
-    await database.raw.backup(dest)
-    /* ترقية أفضل نسخة من الجيل الأدق إلى الأعلى قبل التقليم */
-    database.setMeta(lastKey, new Date().toISOString())
-    pruneGeneration(kind)
+    try {
+      await target.raw.backup(dest)
+      target.setMeta(lastKey, new Date().toISOString())
+      pruneGeneration(kind)
+    } catch (error) {
+      logLine('backup', `تعذّرت النسخة ${kind}: ${(error as Error).message}`)
+    }
   }
+}
+
+/** v1.0.22: نسخة قبل التحديث — مستقلة عن الجداول الزمنية، تُؤخذ فور اكتمال تنزيل التحديث */
+let preUpdateBackup: Promise<string | null> | null = null
+
+async function backupBeforeUpdate(version: string): Promise<string | null> {
+  if (!database) return null
+  const dir = join(app.getPath('userData'), 'backups', 'pre-update')
+  mkdirSync(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const dest = join(dir, `pre-update-${version}-${stamp}.db`)
+  await database.raw.backup(dest)
+  const files = readdirSync(dir).filter((f) => f.endsWith('.db')).map((f) => ({
+    path: join(dir, f), mtimeMs: statSync(join(dir, f)).mtimeMs,
+  }))
+  for (const old of filesToPrune(files, PRE_UPDATE_KEEP)) {
+    try { unlinkSync(old.path) } catch { /* مشغول — الجولة القادمة */ }
+  }
+  logLine('backup', `نسخة قبل التحديث إلى ${version}: ${dest}`)
+  return dest
 }
 
 /* ── IPC ── */
@@ -562,10 +918,14 @@ function wireIpc(): void {
     }
     return updaterState
   })
-  ipcMain.handle('updater:install', () => {
+  ipcMain.handle('updater:install', async () => {
     if (!app.isPackaged) return
+    // v1.0.22: ننتظر النسخة قبل التحديث، ثم نثبّت ونعيد التشغيل تلقائياً — يفتح البرنامج
+    // ببياناتك كما كانت (لا معالج إعداد). وإن فشلت النسخة نُبلغ ولا نثبّت بلا نسخة.
+    const backed = preUpdateBackup ? await preUpdateBackup : null
+    if (preUpdateBackup && !backed) throw new Error('تعذّرت النسخة الاحتياطية قبل التحديث — لم يُثبَّت التحديث. راجع صلاحيات المجلد وأعد المحاولة.')
     const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
-    autoUpdater.quitAndInstall()
+    autoUpdater.quitAndInstall(false, true)
   })
 
   ipcMain.handle('app:info', () => ({
@@ -580,6 +940,69 @@ function wireIpc(): void {
     const written = await backupDatabaseFile('manual', database, resolveDbPath().dbPath)
     if (!written.length) throw new Error('تعذّرت النسخة الاحتياطية — راجع صلاحيات المجلدات')
     return written
+  })
+
+  /* v1.0.22: تنزيل نسخة كاملة من القاعدة (SQLite .db) بحوار حفظ — بصيغة قابلة للفتح بأي أداة SQLite */
+  ipcMain.handle('database:exportCopy', async () => {
+    if (!database) throw new Error('قاعدة البيانات غير مهيأة')
+    const stamp = new Date().toISOString().slice(0, 10)
+    const options = {
+      title: 'حفظ نسخة كاملة من قاعدة البيانات',
+      defaultPath: join(app.getPath('documents'), `tahakom-${stamp}.db`),
+      filters: [{ name: 'قاعدة SQLite', extensions: ['db'] }],
+    }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { ok: false as const, canceled: true as const }
+    await database.raw.backup(result.filePath)
+    logLine('export', `نسخة كاملة للتنزيل: ${result.filePath}`)
+    return { ok: true as const, path: result.filePath }
+  })
+
+  /* v1.0.22 — مفتاح الاسترداد: ملف المفتاح مغلّف بكلمة مرور العميل (انظر desktop/keyRecovery.ts).
+     التصدير لا يكشف المفتاح الخام أبداً؛ الاستيراد يحتفظ بالنسخة الحالية ثم يعيد التشغيل. */
+  ipcMain.handle('keyRecovery:status', () => ({ exportedAt: readKeyRecoveryExportedAt() }))
+
+  ipcMain.handle('keyRecovery:export', async (_event, args: { passphrase?: unknown; deviceId?: unknown }) => {
+    const passphrase = typeof args?.passphrase === 'string' ? args.passphrase : ''
+    const deviceId = typeof args?.deviceId === 'string' ? args.deviceId : 'unknown'
+    const problem = validateRecoveryPassphrase(passphrase)
+    if (problem) return { ok: false as const, reason: problem }
+    if (deviceEncryptionKey.length !== 32) return { ok: false as const, reason: 'مفتاح الجهاز غير مهيأ' }
+    const options = {
+      title: 'حفظ مفتاح الاسترداد — احفظه على USB أو مكان آمن خارج هذا الجهاز',
+      defaultPath: join(app.getPath('documents'), keyRecoveryFileName()),
+      filters: [{ name: 'مفتاح استرداد تَحَكَّم', extensions: ['tkey'] }],
+    }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { ok: false as const, canceled: true as const }
+    writeFileSync(result.filePath, wrapDeviceKey(deviceEncryptionKey, passphrase, deviceId), { mode: 0o600 })
+    writeFileSync(keyRecoveryStatePath(), JSON.stringify({ exportedAt: new Date().toISOString(), deviceId }), 'utf8')
+    logLine('key-recovery', `صُدّر مفتاح الاسترداد إلى ${result.filePath}`)
+    return { ok: true as const, path: result.filePath }
+  })
+
+  ipcMain.handle('keyRecovery:import', async (_event, args: { passphrase?: unknown }) => {
+    const passphrase = typeof args?.passphrase === 'string' ? args.passphrase : ''
+    if (!passphrase.trim()) return { ok: false as const, reason: 'أدخل كلمة مرور ملف الاسترداد' }
+    const options = {
+      title: 'اختيار ملف مفتاح الاسترداد',
+      properties: ['openFile' as const],
+      filters: [{ name: 'مفتاح استرداد تَحَكَّم', extensions: ['tkey', 'json'] }],
+    }
+    const picked = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false as const, canceled: true as const }
+    let recovered: ReturnType<typeof unwrapDeviceKey>
+    try {
+      recovered = unwrapDeviceKey(readFileSync(picked.filePaths[0], 'utf8'), passphrase)
+    } catch (error) {
+      return { ok: false as const, reason: (error as Error).message }
+    }
+    const stored = storeRecoveredDeviceKey(buildDeviceKeyIo(), recovered.key)
+    if (!stored.ok) return { ok: false as const, reason: stored.reason }
+    logLine('key-recovery', `استيراد مفتاح الاسترداد من ${picked.filePaths[0]}${stored.keptCopy ? ` — النسخة السابقة ${stored.keptCopy}` : ''}`)
+    /* إعادة تشغيل كاملة ليُفتح الجهاز بالمفتاح الجديد من الإقلاع (لا حالة متبقية في الذاكرة) */
+    setTimeout(() => { app.relaunch(); app.exit(0) }, 300)
+    return { ok: true as const, deviceId: recovered.deviceId, relaunching: true as const }
   })
 
   /* v1.0.8 (طلب المالك): مرساة التجربة خارج القاعدة — مسح بيانات التطبيق من
@@ -704,7 +1127,7 @@ function wireIpc(): void {
         const src = dbPath + ext
         if (existsSync(src)) copyFileSync(src, dest + ext)
       }
-      writeDbLocation({ ...readDbLocation(), customDbPath: dest })
+      writeDbLocation({ ...readDbLocation(), customDbPath: dest, customDbOpenedAt: null })
       logLine('db-move', `نُقلت القاعدة إلى ${dest} — الأصل باقٍ في ${dbPath} كنسخة أمان`)
       // ردّ الجواب أولاً ثم أعد التشغيل كي يستلمه المُصيّر
       setTimeout(() => { app.relaunch(); app.exit(0) }, 600)
@@ -731,10 +1154,28 @@ if (!gotLock) {
 
   void app.whenReady().then(async () => {
     logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
-    deviceEncryptionKey = ensureDeviceEncryptionKey()
+    const previousVersion = readLastRunVersion()
+    showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
+    setSplashProgress(15, 'تهيئة مفتاح الجهاز…')
+    try {
+      deviceEncryptionKey = ensureDeviceEncryptionKey()
+    } catch (error) {
+      closeSplash()
+      logLine('device-key-fatal', (error as Error).message)
+      dialog.showErrorBox('تَحَكَّم — تعذّر تهيئة مفتاح الجهاز', `${(error as Error).message}\n\nلم تُفقد أي بيانات. أغلق البرنامج وأعد تشغيله، وإن تكرر الخطأ فتواصل مع الدعم.`)
+      app.exit(1)
+      return
+    }
+    setSplashProgress(40, 'فتح قاعدة البيانات…')
     database = await openDatabase()
+    setSplashProgress(75, 'تجهيز الواجهة…')
     wireIpc()
     mainWindow = createMainWindow()
+    mainWindow.once('ready-to-show', () => {
+      setSplashProgress(100, 'جاهز')
+      writeLastRunVersion()
+      closeSplash()
+    })
     mainWindow.on('closed', () => {
       mainWindow = null
     })
@@ -759,7 +1200,7 @@ if (!gotLock) {
       event.preventDefault()
       const closing = database
       database = null
-      void rotateBackups()
+      void rotateBackups(closing)
         .catch(() => undefined)
         .then(() => {
           closing.close()

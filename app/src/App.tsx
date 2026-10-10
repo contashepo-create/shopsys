@@ -8,13 +8,13 @@ import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
-import { fetchAbout, fetchRevocationList, mergeRevocationLists, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
+import { fetchAbout, fetchAccountMessage, fetchRevocationList, mergeRevocationLists, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 /* بند 2 (تدقيق 2026-10-08): بلاغ التسجيل الجديد يصل المطوّر عبر مركز التحكم */
 import { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport } from './core/registration.ts'
-import { APP_VERSION } from './core/updates.ts'
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
+import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
 import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
@@ -328,6 +328,8 @@ function DataRecoveryScreen({ reason }: { reason: string }) {
         >
           🔄 إعادة المحاولة
         </button>
+        {/* v1.0.22: فقدان المفتاح لا يعني فقدان البيانات — استرداده من ملف مفتاح الاسترداد */}
+        <DesktopKeyRecoveryImport />
       </div>
     </div>
   )
@@ -371,12 +373,15 @@ export default function App() {
        تكفي، فتُطلب من جديد — وهذا ما كان معلناً في المتجر («تطلب مجدداً عند
        التحديث») ولم يكن منفذاً: كان الفحص `!legal` فقط. */
     legal: legalCurrent,
-    activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
+    activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys, deviceFlags,
     setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt, licenseAudit,
   } = useAppStore()
   /* الموافقة سارية فقط على الإصدار الحالي من الوثيقة — فأي تغيير جوهري في
      الاتفاقية/الخصوصية يعيد بوابة الموافقة مرة واحدة بعد التحديث. */
   const legal = legalCurrent && legalCurrent.version === LEGAL_VERSION ? legalCurrent : null
+  /* لا يُرسل أي شيء يحمل معرّف الجهاز قبل قبول الإصدار الحالي من الاتفاقية — وإلا
+     فالمحدَّث الذي لم يوافق بعد على الإفصاح الجديد يرسل بياناته قبل موافقته. */
+  const legalAccepted = legal !== null
   const seed = useDataStore((s) => s.seed)
 
   /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
@@ -417,8 +422,8 @@ export default function App() {
   }, [storesHydrated])
 
   const licenseState = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
-    [activatedPayload, trialStartedAt, lastSeenAt],
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const lockReason = useMemo(
     () => currentLockReason(licenseState, { activatedKey, activatedPayload, revokedKeys, licenseAudit, setup }),
@@ -493,11 +498,13 @@ export default function App() {
 
   // ─── مزامنة الترخيص و«حول» من عامل التحكم — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
+    if (!legalAccepted) return
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
-      const [about, revokedDevbot, revokedServices, flags] = await Promise.all([
+      const [about, accountMessage, revokedDevbot, revokedServices, flags] = await Promise.all([
         fetchAbout(LICENSE_CLOUD_BASE_URL),
+        fetchAccountMessage(LICENSE_CLOUD_BASE_URL, devId), // رسالة المطوّر لهذا الجهاز (عرض فقط)
         fetchRevocationList(LICENSE_CLOUD_BASE_URL),
         /* ث8: لكل عامل قائمة إبطال مستقلة — نقرأهما معاً ونوحّدهما، وإلا فالحرق
            من العامل الآخر لا يصل ويبقى المفتاح المحروق يعمل عند العميل. */
@@ -507,9 +514,10 @@ export default function App() {
       if (cancelled) return
       const revoked = mergeRevocationLists(revokedDevbot, revokedServices)
       // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
-      if (about !== null || revoked !== null || flags !== null) {
+      if (about !== null || accountMessage !== null || revoked !== null || flags !== null) {
         setCloudData({
           ...(about !== null ? { about } : {}),
+          ...(accountMessage !== null ? { accountMessage } : {}),
           ...(revoked !== null ? { revoked } : {}),
           ...(flags !== null ? { flags } : {}),
         })
@@ -518,13 +526,13 @@ export default function App() {
     sync()
     const t = setInterval(sync, 6 * 60 * 60 * 1000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [setCloudData])
+  }, [setCloudData, legalAccepted])
 
   // ─── تنبيهات المطوّر من البوت — تحديث دوري كل دقيقة وعند العودة للتطبيق ───
   useEffect(() => {
     let cancelled = false
     const syncNotices = async () => {
-      if (!useAppStore.getState().setup.completed) return
+      if (!legalAccepted || !useAppStore.getState().setup.completed) return
       const deviceId = useAppStore.getState().deviceId
       const notices = await fetchCloudNotices(LICENSE_CLOUD_BASE_URL, deviceId)
       if (!cancelled && notices !== null) setCloudData({ notifications: notices })
@@ -537,43 +545,36 @@ export default function App() {
       clearInterval(timer)
       window.removeEventListener('focus', syncNotices)
     }
-  }, [setCloudData])
+  }, [setCloudData, legalAccepted])
 
   /* ─── بند 2 (تدقيق 2026-10-08): إبلاغ المطوّر بكل عميل جديد ───────────────
      ما كان: المعالج يجمع الاسم والهاتف والبريد والمنشأة والنشاط ثم لا يُرسل
      شيء إطلاقاً — لا POST في الكود كله. الآن بلاغ واحد لكل جهاز بعد اكتمال
      الإعداد. القواعد: fire-and-forget (لا يعطّل الإقلاع ولا العمل)، مرة واحدة
      (العلامة تُحفظ عند النجاح فقط)، ويصلح أوفلاين بالمحاولة في الإقلاع التالي.
-     لا يُرسل إلا بيانات التواصل والمنشأة التي كتبها العميل في المعالج نفسه. */
+     يُرسل الحقول المعلنة فقط (المنشأة والمالك والتواصل والعنوان والنشاط + معرّف الجهاز)
+     — انظر core/registration.ts. */
   useEffect(() => {
-    if (!setup.completed) return
+    if (!setup.completed || !legalAccepted) return
     let cancelled = false
     const report = async () => {
       const app = useAppStore.getState()
-      /* الموافقة الصريحة شرط إرسال — بلاها لا يُرسل شيء إطلاقاً (سياسة الخصوصية:
-         البيانات محلية، وبلاغ التسجيل اختياري بخانة يفعّلها العميل بنفسه). */
+      /* v1.0.22: البلاغ إلزامي بقبول الاتفاقية — لا خانة موافقة منفصلة. هذا المسار
+         يغطي الأجهزة التي أكملت الإعداد قبل هذا الإصدار، ومَن فشل إرساله عند الإنشاء. */
       if (!shouldReportRegistration({
         setupCompleted: app.setup.completed,
         deviceId: app.deviceId,
         reportedAt: app.registrationReportedAt,
-        consentAt: app.registrationConsentAt,
       })) return
       const payload = buildRegistrationReport({
         deviceId: app.deviceId,
-        appVersion: APP_VERSION,
-        platform: isElectronRuntime() ? 'desktop' : 'web',
         shopName: app.setup.shopName,
         ownerName: app.setup.ownerName,
         phone: app.setup.phone,
         email: app.setup.email,
         city: app.setup.city,
         street: app.setup.street,
-        countryCode: app.setup.countryCode,
-        activityId: app.setup.activityId,
         activityNameAr: ACTIVITY_TEMPLATES.find((t) => t.id === app.setup.activityId)?.nameAr ?? '',
-        accountingMode: app.setup.accountingMode,
-        plan: app.activatedPayload?.plan ?? 'trial',
-        doctorSpecialty: app.setup.doctorSpecialty,
       })
       if (!payload) return
       const result = await sendRegistrationReport(LICENSE_CLOUD_BASE_URL, payload)
@@ -582,7 +583,7 @@ export default function App() {
     }
     void report()
     return () => { cancelled = true }
-  }, [setup.completed])
+  }, [setup.completed, legalAccepted])
 
   // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───
   useEffect(() => {

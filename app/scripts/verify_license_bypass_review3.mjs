@@ -157,7 +157,9 @@ ok('ح7 — زر بدء المضيف في الإعدادات يتحقق من ا�
 
 /* ح9 — نافذة الروابط */
 ok('ح9 — الروابط الخارجية: مخططات محددة فقط (لا file: ولا مخططات أخرى)', () => {
-  assert.match(appMain, /if \(\/\^\(\?:https\?:\\\/\\\/\|mailto:\|tel:\)\/i\.test\(url\)\) void shell\.openExternal\(url\)/)
+  // v1.0.22: القائمة صارت في desktop/navigationPolicy.ts (منطق خالص قابل للاختبار) وmain.ts يستدعيها
+  assert.match(appMain, /if \(isExternalOpenable\(url\)\) void shell\.openExternal\(url\)/)
+  assert.match(read('../desktop/navigationPolicy.ts'), /\/\^\(\?:https\?:\\\/\\\/\|mailto:\|tel:\)\/i\.test\(url\)/)
 })
 
 /* ح10 — لا مسارات عامة للاشتراك ولا كود ميت */

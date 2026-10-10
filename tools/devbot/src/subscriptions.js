@@ -68,6 +68,27 @@ export function deviceMetadata(record) {
   }
 }
 
+/** «آخر ظهور» يُكتب مرة كل 6 ساعات كحد أقصى — يحمي من كتابات KV المتكررة */
+export const LAST_SEEN_THROTTLE_MS = 6 * 60 * 60 * 1000
+
+/**
+ * يسجّل `lastSeenAt` على سجل الجهاز `dev:` عند طلبه حالته من العامل
+ * (كان الحقل يُعرض في اللوحة ولا يكتبه أحد). يفشل صامتاً: التتبع لا يُفسد الاستجابة.
+ * لا يكتب إن لم يكن للجهاز سجل (جهاز لم يُصدَر له مفتاح بعد).
+ */
+export async function touchDeviceLastSeen(cfg, deviceId, now = Date.now()) {
+  try {
+    const key = `dev:${deviceId}`
+    const raw = await cfg.kv.get(key)
+    if (!raw) return
+    const record = JSON.parse(raw)
+    const prev = Date.parse(record.lastSeenAt)
+    if (Number.isFinite(prev) && now - prev < LAST_SEEN_THROTTLE_MS) return
+    const next = { ...record, lastSeenAt: new Date(now).toISOString() }
+    await cfg.kv.put(key, JSON.stringify(next), { metadata: deviceMetadata(next) })
+  } catch { /* تتبع اختياري */ }
+}
+
 /**
  * مسح كل أجهزة المركز وتصنيفها: منتهية · قريبة (≤ soonDays) · مدى الحياة.
  * `expiresAt` بصيغة YYYY-MM-DD كما يكتبها `expiresAfterDays` في licenseLib.

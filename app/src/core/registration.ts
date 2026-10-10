@@ -1,53 +1,47 @@
 /**
- * بلاغ التسجيل الجديد — بند 2 من تدقيق 2026-10-08.
+ * بلاغ التسجيل — بند 2 من تدقيق 2026-10-08، ثم v1.0.22: إلزامي.
  * ─────────────────────────────────────────────────────
- * ما كان: العميل يملأ معالج أول التشغيل (الاسم، الهاتف، البريد، اسم المنشأة،
- * النشاط، المدينة، الشارع) ثم… **لا يصل المطوّر شيء**. لا طلب POST في الكود
- * كله، ولا سجل على الخادم، ولا إشعار. المطوّر لا يعرف بوجود عميل جديد إلا إذا
- * أرسل له العميل معرف الجهاز يدوياً وطلب مفتاحاً.
+ * ما كان: بلاغ اختياري بخانة موافقة لا يفعّلها أحد تقريباً، فلم يصل المطوّر
+ * أي عميل جديد بلا إرسال يدوي من العميل.
  *
- * ما صار: بلاغ واحد لكل جهاز يُرسل بعد اكتمال الإعداد مباشرة إلى مركز التحكم
- * (`tools/devbot`)، فيصل المطوّر على التليجرام بكل بيانات العميل، ويُسجَّل
- * الجهاز في KV للبحث لاحقاً.
+ * الآن (v1.0.22): قبول اتفاقية الترخيص يعني الموافقة على إرسال بيانات المعالج
+ * تلقائياً إلى مركز الترخيص (Cloudflare Workers + KV)، وهذا مفصّل في الاتفاقية
+ * وسياسة الخصوصية ومعلن قبل القبول. **لا توجد خانة موافقة منفصلة.** إنشاء الحساب
+ * يتطلب اتصالاً: معالج أول التشغيل لا يكتمل قبل نجاح البلاغ (انظر FirstRunWizard).
+ *
+ * ما يُرسل (مطابق للاتفاقية — القسم 5 و6): اسم المالك، واسم المحل، والهاتف،
+ * والبريد، والعنوان (المدينة والشارع)، واسم النشاط، ومعرّف الجهاز (رمز تقني
+ * ضروري للتفعيل). **لا شيء غير ذلك:** لا خطة ولا سنة مالية ولا تخصص ولا
+ * إصدار ولا منصة ولا رمز دولة ولا نوع محاسبة، ولا كلمة مرور المالك، ولا الفواتير،
+ * ولا الأرصدة، ولا الأصناف، ولا مسارات الملفات المحلية.
  *
  * قواعد لا تُكسر:
- *   • **لا يمنع الإقلاع ولا يعطّل العمل**: الإرسال fire-and-forget، وأي فشل
- *     شبكة يُبتلع — العميل أوفلاين يكمل عمله عادي ويُعاد المحاولة في الإقلاع
- *     التالي (بند 6: لا إجبار على الإنترنت).
- *   • **مرة واحدة لكل جهاز**: العلامة `registrationReportedAt` تُحفظ محلياً،
- *     فلا إزعاج متكرر للمطوّر عند كل إقلاع.
- *   • **لا بيانات مالية ولا مستندات**: بيانات التواصل والمنشأة التي كتبها
- *     العميل بنفسه في المعالج فقط، وبطول محدود. لا فواتير ولا أرصدة ولا أصناف.
- *   • **موافقة صريحة سابقة**: خانة اختيار في معالج أول التشغيل (غير مفعّلة
- *     افتراضياً ولا تمنع الإكمال) + إفصاح كامل في سياسة الخصوصية (الحقول،
- *     الغرض، ما لا يُرسل أبداً، مكان التخزين، الحذف). بلا `registrationConsentAt`
- *     لا يُرسل شيء إطلاقاً — انظر `shouldReportRegistration` و`LEGAL_VERSION`.
+ *   • **مرة واحدة لكل جهاز**: العلامة `registrationReportedAt` تُحفظ عند النجاح فقط.
+ *   • **صيغة ثابتة وتعقيم كامل** — انظر buildRegistrationReport.
+ *   • **الإقلاع اللاحق يعيد المحاولة** لأي جهاز لم يُبلَّغ (ترقية من إصدار سابق).
  */
 
 export const REGISTRATION_PATH = '/register'
+/** رسالة إنشاء الحساب بلا اتصال — تُعرض في المعالج، والصياغة هنا لتبقى موحّدة */
+export const REGISTRATION_NEEDS_INTERNET_AR =
+  'إنشاء الحساب يتطلب اتصالاً بالإنترنت لتسجيل جهازك لدى المطوّر. تحقق من الاتصال ثم اضغط «ابدأ العمل» مرة أخرى — لن تفقد ما كتبته.'
 /** حد حجم البلاغ — العامل يرفض ما فوقه (دفاع مزدوج) */
 export const REGISTRATION_MAX_BYTES = 8_192
 
 const DEVICE_RE = /^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/
 
 export interface RegistrationReport {
+  /** معرّف الجهاز — رمز تقني يربط التفعيل بالجهاز (لا بيانات شخصية) */
   deviceId: string
-  appVersion: string
-  /** 'desktop' | 'web' — يساعد المطوّر على معرفة قناة العميل */
-  platform: string
   shopName: string
   ownerName: string
   phone: string
   email: string
+  /** العنوان = المدينة + الشارع */
   city: string
   street: string
-  countryCode: string
-  activityId: string
+  /** اسم النشاط بالعربية */
   activityNameAr: string
-  accountingMode: string
-  plan: string
-  /** خصوصية العيادة — تُرسل فقط إن وُجدت (نشاط طبي) */
-  doctorSpecialty?: string
   registeredAt: string
 }
 
@@ -91,64 +85,42 @@ export function normalizePhone(value: unknown): string {
 
 export function buildRegistrationReport(input: {
   deviceId: string
-  appVersion: string
-  platform?: string
   shopName?: string
   ownerName?: string
   phone?: string
   email?: string
   city?: string
   street?: string
-  countryCode?: string | null
-  activityId?: string | null
   activityNameAr?: string
-  accountingMode?: string
-  plan?: string | null
-  doctorSpecialty?: string
   registeredAt?: string
 }): RegistrationReport | null {
   const deviceId = clean(input.deviceId, 24).toUpperCase()
   // بلا معرف جهاز صالح لا فائدة من البلاغ — المطوّر لن يستطيع ربطه بعميل
   if (!DEVICE_RE.test(deviceId)) return null
-  const specialty = clean(input.doctorSpecialty, 60)
-  const report: RegistrationReport = {
+  return {
     deviceId,
-    appVersion: clean(input.appVersion, 20),
-    platform: clean(input.platform, 16) === 'web' ? 'web' : 'desktop',
     shopName: clean(input.shopName, 120),
     ownerName: clean(input.ownerName, 120),
     phone: normalizePhone(input.phone),
     email: cleanEmail(input.email),
     city: clean(input.city, 80),
     street: clean(input.street, 160),
-    countryCode: clean(input.countryCode, 4).toUpperCase(),
-    activityId: clean(input.activityId, 40),
     activityNameAr: clean(input.activityNameAr, 60),
-    accountingMode: clean(input.accountingMode, 10) === 'full' ? 'full' : 'simple',
-    plan: clean(input.plan, 12) || 'trial',
-    ...(specialty ? { doctorSpecialty: specialty } : {}),
     registeredAt: clean(input.registeredAt, 30) || new Date().toISOString(),
   }
-  return report
 }
 
 /**
- * هل نرسل البلاغ الآن؟ — بعد اكتمال الإعداد، وبموافقة صريحة، ومرة واحدة لكل جهاز.
- *
- * الترتيب مقصود: **الموافقة أولاً** لأنها شرط قانوني لا تحسين — سياسة الخصوصية
- * المنشورة تقول إن البيانات محلية، فلا يجوز إرسال بيانات المنشأة والتواصل بلا
- * خانة موافقة فعّلها العميل بنفسه. و`reportedAt` تُحفظ عند النجاح فقط، فيُعاد
- * المحاولة في الإقلاع التالي لو كان العميل أوفلاين (بند 6).
+ * هل نرسل البلاغ الآن؟ — بعد اكتمال الإعداد، ومرة واحدة لكل جهاز.
+ * لا شرط موافقة منفصل: القبول الإلزامي لاتفاقية الترخيص (LEGAL_VERSION) هو الموافقة.
+ * الإرسال عند الإقلاع يغطي الأجهزة التي أكملت الإعداد قبل هذا الإصدار.
  */
 export function shouldReportRegistration(input: {
   setupCompleted: boolean
   deviceId: string
   reportedAt: string | null
-  /** وقت الموافقة الصريحة — null/فارغ ⇒ لا إرسال إطلاقاً */
-  consentAt: string | null
 }): boolean {
   if (!input.setupCompleted) return false
-  if (!input.consentAt) return false
   if (input.reportedAt) return false
   return DEVICE_RE.test(clean(input.deviceId, 24).toUpperCase())
 }
@@ -195,11 +167,8 @@ export function formatRegistrationAr(report: RegistrationReport): string {
     report.phone ? `📞 الهاتف: <code>${report.phone}</code>` : '',
     report.email ? `📧 البريد: <code>${report.email}</code>` : '',
     report.city || report.street ? `📍 العنوان: ${[report.city, report.street].filter(Boolean).join(' — ')}` : '',
-    `🧭 النشاط: ${report.activityNameAr || report.activityId || '—'}${report.countryCode ? ` (${report.countryCode})` : ''}`,
-    report.doctorSpecialty ? `🩺 التخصص: ${report.doctorSpecialty}` : '',
-    `📦 الخطة: ${report.plan} · المحاسبة: ${report.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
-    `🖥️ الجهاز: <code>${report.deviceId}</code> · ${report.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
-    `🔖 الإصدار: ${report.appVersion || '—'}`,
+    `🧭 النشاط: ${report.activityNameAr || '—'}`,
+    `🖥️ الجهاز: <code>${report.deviceId}</code>`,
     `🕒 الوقت: ${report.registeredAt}`,
   ]
   return lines.filter(Boolean).join('\n')

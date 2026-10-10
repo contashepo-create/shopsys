@@ -46,6 +46,22 @@ export function effectiveFeatures(
   return licensed.filter((f) => !disabled.has(f))
 }
 
+/**
+ * أعلام الجهاز النشطة الآن — تُحدَّث من المتجر عند كل جلب ناجح (setCloudData).
+ * evaluateLicense يطبّقها على الميزات الممنوحة، فتصل الإطفاءات إلى كل بوابة ترخيص
+ * (الفوترة الإلكترونية، بوت التليجرام، الشبكة، المزامنة…) لا إلى المزامنة وحدها.
+ * بلا جلب ناجح (أول تشغيل أو أوفلاين) تبقى الميزات كما منحها المفتاح.
+ */
+let activeFlags: DeviceFlags | null = null
+
+export function setActiveDeviceFlags(flags: DeviceFlags | null): void {
+  activeFlags = flags
+}
+
+export function getActiveDeviceFlags(): DeviceFlags | null {
+  return activeFlags
+}
+
 /** هل الميزة مطفأة سحابياً رغم أنها ممنوحة؟ (لعرض رسالة «عُطلت مؤقتاً» بدل «غير مشتراة») */
 export function isCloudDisabled(feature: LicenseFeature, licensed: readonly LicenseFeature[], flags: DeviceFlags | null): boolean {
   return licensed.includes(feature) && (flags?.disabledFeatures ?? []).includes(feature)

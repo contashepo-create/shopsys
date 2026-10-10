@@ -239,8 +239,10 @@ ok('الوحدة خالصة: لا استيراد Electron ولا fs داخلها
 
 ok('العملية الرئيسية موصولة: safeStorage + resolveDeviceKey + صلاحيات 0o600', () => {
   assert.match(mainSrc, /import \{ app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell \} from 'electron'/)
-  assert.match(mainSrc, /import \{ describeDeviceKeyOutcome, resolveDeviceKey \} from '\.\/deviceKeyStore\.ts'/)
-  assert.match(mainSrc, /resolveDeviceKey\(\{/)
+  // v1.0.22: الاستيراد صار يضم storeRecoveredDeviceKey والنوع، ومدخل القرص صار دالة مشتركة
+  assert.match(mainSrc, /import \{[^}]*\bdescribeDeviceKeyOutcome\b[^}]*\bresolveDeviceKey\b[^}]*\} from '\.\/deviceKeyStore\.ts'/)
+  assert.match(mainSrc, /resolveDeviceKey\(buildDeviceKeyIo\(\)\)/)
+  assert.match(mainSrc, /function buildDeviceKeyIo\(\): DeviceKeyIo \{/)
   assert.match(mainSrc, /safeStorage,/)
   assert.match(mainSrc, /mode: 0o600/)
   assert.match(mainSrc, /for \(const warning of outcome\.warnings\) logLine\('device-key'/)

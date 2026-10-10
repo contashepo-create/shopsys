@@ -127,6 +127,56 @@ function writePlaintextKey(io: DeviceKeyIo, key: Buffer): void {
   io.writeFile(DEVICE_KEY_FILE, key)
 }
 
+/**
+ * v1.0.22: ملف مشفّر موجود لكنه غير قابل للفك (تغيّر ملف تعريف ويندوز، أو ترحيل
+ * جهاز، أو عطب) — **لا يُكتب فوقه أبداً**. كان الكتب فوقه يُتلف المفتاح الوحيد
+ * الذي تُفك به البيانات المشفّرة. يُحفظ نسخة مميزة بالوقت بجانبه لاسترجاعه يدوياً،
+ * وإن تعذّر حفظ النسخة نفسها يُرمى خطأ فيبقى الملف الأصلي كما هو.
+ */
+export function preserveUnreadableEncryptedKey(io: DeviceKeyIo, reason: string): string | null {
+  const raw = io.readFile(DEVICE_KEY_ENC_FILE)
+  if (!raw) return null
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const name = `${DEVICE_KEY_ENC_FILE}.unreadable-${stamp}`
+  try {
+    io.writeFile(name, raw)
+  } catch (err) {
+    throw new Error(`تعذّر حفظ نسخة من المفتاح المشفّر غير القابل للفك (${reason}) — لن يُستبدل: ${(err as Error).message}`)
+  }
+  io.log('device-key', `مفتاح مشفّر غير قابل للفك (${reason}) — حُفظت نسخة باسم ${name} ولم تُستبدل`)
+  return name
+}
+
+/**
+ * v1.0.22 — استرداد المفتاح من ملف الاسترداد (طلب المالك: لا فقدان للبيانات).
+ * يُستدعى بعد فكّ ملف الاسترداد بكلمة المرور وقبل إعادة التشغيل:
+ *  • إن كان المفتاح الحالي هو نفسه ⇒ لا شيء يُكتب.
+ *  • وإلا تُحفظ نسخة من المشفّر الحالي باسم مميّز (لا حذف) ثم يُكتب المسترد
+ *    مشفّراً عبر safeStorage مع التحقق بالجولة الكاملة.
+ * لا يُسمح بالتخزين الصريح هنا: مفتاح الاسترداد أهم من أن يُكتب نصاً على القرص.
+ */
+export function storeRecoveredDeviceKey(io: DeviceKeyIo, key: Buffer): { ok: boolean; reason: string; keptCopy: string | null } {
+  if (key.length !== KEY_LENGTH) return { ok: false, reason: `طول المفتاح المسترد غير صالح (${key.length})`, keptCopy: null }
+  if (!safeAvailable(io)) return { ok: false, reason: 'هذا النظام لا يوفّر تخزيناً آمناً للمفتاح (safeStorage غير متاح)', keptCopy: null }
+  const current = readEncryptedKey(io)
+  if (current.key && current.key.equals(key)) return { ok: true, reason: 'المفتاح الحالي مطابق', keptCopy: null }
+  let keptCopy: string | null = null
+  const raw = io.readFile(DEVICE_KEY_ENC_FILE)
+  if (raw) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    keptCopy = `${DEVICE_KEY_ENC_FILE}.replaced-${stamp}`
+    try {
+      io.writeFile(keptCopy, raw)
+    } catch (err) {
+      return { ok: false, reason: `تعذّر حفظ نسخة من المفتاح الحالي — لم يُستبدل: ${(err as Error).message}`, keptCopy: null }
+    }
+  }
+  const written = writeEncryptedKey(io, key)
+  if (!written.ok) return { ok: false, reason: `تعذّر حفظ المفتاح المسترد: ${written.reason}`, keptCopy }
+  io.log('device-key', `استُرد مفتاح الجهاز من ملف الاسترداد${keptCopy ? ` — النسخة السابقة: ${keptCopy}` : ''}`)
+  return { ok: true, reason: 'تم', keptCopy }
+}
+
 export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
   const warnings: string[] = []
 
@@ -145,7 +195,15 @@ export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
     }
     return { key: enc.key, storage: 'safeStorage', migrated: false, regenerated: false, warnings }
   }
-  if (enc.reason && enc.reason !== 'missing') warnings.push(enc.reason)
+  if (enc.reason && enc.reason !== 'missing') {
+    warnings.push(enc.reason)
+    /* لا كتابة فوق مفتاح مشفّر غير قابل للفك — يُحفظ جانباً أولاً (انظر الدالة).
+       إن كان safeStorage نفسه غير متاح فالملف سليم وإنما لم نستطع فكّه الآن ⇒ لا نسخ مكررة. */
+    if (safeAvailable(io)) {
+      const kept = preserveUnreadableEncryptedKey(io, enc.reason)
+      if (kept) warnings.push(`حُفظ المفتاح المشفّر القديم باسم ${kept}`)
+    }
+  }
 
   /* ② ملف صريح قديم ⇒ ترحيل إلى المشفّر إن أمكن (بلا حذف قبل التحقق) */
   const plain = io.readFile(DEVICE_KEY_FILE)

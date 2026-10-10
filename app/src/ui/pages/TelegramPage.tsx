@@ -24,14 +24,14 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
 
 export function TelegramPage() {
-  const { setup, telegram, updateTelegram, schedule, updateSchedule, lastDailySentDay, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, telegram, updateTelegram, schedule, updateSchedule, lastDailySentDay, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const { sales, saleReturns, items } = useDataStore()
   const toast = useToast()
 
   const licensed = useMemo(() => {
-    const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+    const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags })
     return hasFeature(state, 'telegram_bot')
-  }, [activatedPayload, trialStartedAt, lastSeenAt])
+  }, [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags])
 
   const [token, setToken] = useState('')
   const [chatId, setChatId] = useState(telegram.chatId)
