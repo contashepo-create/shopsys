@@ -176,8 +176,10 @@ ok('ح10 — العامل السحابي يعيد الحقول الثلاثة ف
   assert.doesNotMatch(block, /new Response\(raw/)
   assert.doesNotMatch(block, /customer/)
 })
-ok('ح10 — لا fetchSubscription/parseSubscription/CloudSubscription في التطبيق', () => {
-  assert.doesNotMatch(appCloud, /fetchSubscription|parseSubscription|CloudSubscription/)
+ok('ح10 — لا كود ميت في مسار الاشتراك: الجالب الحالي (fetchSubscriptionNote) مستدعى من التطبيق، والاسم القديم غير موجود', () => {
+  // F14: الجالب عاد بمستدعٍ حقيقي (عرض رسالة المطوّر فقط) — فالحارس الآن: لا كود ميت، لا اسم قديم
+  assert.doesNotMatch(appCloud, /\bfetchSubscription\b|\bparseSubscription\b|CloudSubscription/)
+  assert.match(appTsx, /fetchSubscriptionNote\(LICENSE_CLOUD_BASE_URL/)
 })
 
 console.log(`\nالنتيجة: ${passed} فحوص ناجحة${process.exitCode ? ' — مع فشل أعلاه' : ' ✅'}`)

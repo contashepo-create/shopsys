@@ -5,7 +5,7 @@
  * الإلكترونية — قرار 21) لا تعمل إلا إن حملها المفتاح.
  */
 import { useMemo, useState } from 'react'
-import { ShieldCheck, KeyRound, Copy, Fingerprint, CalendarClock, Sparkles, AlertTriangle, XCircle } from 'lucide-react'
+import { ShieldCheck, KeyRound, Copy, Fingerprint, CalendarClock, Sparkles, AlertTriangle, XCircle, MessageSquare } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import {
   evaluateLicense, hasFeature, effectiveLimits, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
@@ -17,7 +17,7 @@ import { activateOnline } from '../../core/activation.ts'
 const ALL_FEATURES: LicenseFeature[] = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot']
 
 export function LicensePage() {
-  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation, revokedKeys, setup, deviceFlags } = useAppStore()
+  const { deviceId, trialStartedAt, lastSeenAt, activatedPayload, licenseAudit, setActivated, clearActivation, revokedKeys, setup, deviceFlags, cloudSubscriptionNote } = useAppStore()
   const toast = useToast()
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -78,6 +78,17 @@ export function LicensePage() {
           <div className="text-[13px] text-amber-800 dark:text-amber-200">
             <div className="font-extrabold mb-1">تعذّر التحقق من مفتاح التفعيل في بيئة التشغيل الحالية</div>
             <div>مفتاحك محفوظ ولم يُحذف، لكن الحدود المعروضة الآن هي حدود التجربة لأن التوقيع لا يمكن التحقق منه هنا ({licenseAudit.reason ?? 'WebCrypto غير متاح'}). افتح التطبيق من نسخة سطح المكتب أو عبر اتصال آمن https — فيعود تفعيلك كاملاً تلقائياً.</div>
+          </div>
+        </div>
+      )}
+      {/* F14: رسالة المطوّر للاشتراك (مثل «تم إيقاف الاشتراك — تواصل مع المطوّر»).
+          تُعرض كنص عادي (React يهرّبه) وتبقى ظاهرة أوفلاين بآخر قيمة محفوظة. */}
+      {cloudSubscriptionNote && (
+        <div className="anim-up lg:col-span-2 rounded-2xl border border-sky-300 bg-sky-50 dark:bg-sky-500/10 p-4 flex items-start gap-2" role="status">
+          <MessageSquare size={16} className="shrink-0 mt-0.5 text-sky-600" />
+          <div className="text-[13px] text-sky-800 dark:text-sky-200">
+            <div className="font-extrabold mb-1">رسالة من المطوّر</div>
+            <div className="whitespace-pre-line">{cloudSubscriptionNote}</div>
           </div>
         </div>
       )}

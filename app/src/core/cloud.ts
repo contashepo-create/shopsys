@@ -307,3 +307,25 @@ export async function fetchCloudNotices(baseUrl: string, deviceId: string): Prom
   const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/notifications/${encodeURIComponent(deviceId)}`)
   return raw == null ? null : parseCloudNotices(raw)
 }
+
+/** أقصى طول لرسالة المطوّر الخاصة بالاشتراك (تُعرض في صفحة الترخيص) */
+export const SUBSCRIPTION_NOTE_MAX = 500
+
+/**
+ * F14 (مراجعة التوافق 2026-10-10): رسالة المطوّر لهذا الجهاز — مثل «تم إيقاف
+ * الاشتراك — تواصل مع المطوّر». تُعرض للعميل في صفحة الترخيص، وهي متاحة حتى
+ * عند الإيقاف. النص ينظَّف كبقية نصوص السحابة. `null` = شكل غير متوقع.
+ */
+export function parseSubscriptionNote(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return sanitizeAboutText((raw as { message?: unknown }).message, SUBSCRIPTION_NOTE_MAX)
+}
+
+/**
+ * يعيد الرسالة الحالية (وقد تكون «» = لا رسالة). `null` = تعذّر الجلب (أوفلاين)
+ * فتبقى آخر رسالة محفوظة كما هي.
+ */
+export async function fetchSubscriptionNote(baseUrl: string, deviceId: string): Promise<string | null> {
+  const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/subscription/${encodeURIComponent(deviceId)}`)
+  return raw == null ? null : parseSubscriptionNote(raw)
+}
