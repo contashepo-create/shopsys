@@ -61,7 +61,7 @@ check('الواجهة لا تستورد node:crypto ولا keyRecovery.ts (تب�
 check('شاشة الاسترداد تعرض استيراد مفتاح الاسترداد', /<DesktopKeyRecoveryImport \/>/.test(appTsx))
 check('صفحة النسخ على سطح المكتب تستعمل مفتاح الاسترداد بدل سر المتصفح', /desktopKeyRecoveryBridge\(\) \? <DesktopKeyRecoveryCard/.test(backupPage))
 check('شاشة البدء تظهر قبل فتح القاعدة وتُغلق عند ظهور الواجهة', /showSplash\(previousVersion/.test(main) && main.indexOf('showSplash(previousVersion') < main.indexOf('await openDatabase()') && /mainWindow\.once\('ready-to-show'/.test(main) && /closeSplash\(\)/.test(main))
-check('شاشة البدء تُظهر تقدّماً فعلياً (نسبة + خطوة) ومهلة أمان', /setSplashProgress\(40, 'فتح قاعدة البيانات/.test(main) && /setTimeout\(closeSplash, 20_000\)/.test(main))
+check('شاشة البدء تُظهر تقدّماً فعلياً (نسبة + خطوة) ومهلة أمان', /setSplashProgress\(40, 'فتح قاعدة البيانات/.test(main) && /setTimeout\(\(\) => \{\s*closeSplash\(\)[\s\S]{0,200}?\}, 20_000\)/.test(main))
 check('رسالة التحديث تظهر مرة واحدة بعد تغيّر الإصدار (last-run.json)', /writeLastRunVersion\(\)/.test(main) && /last-run\.json/.test(main))
 check('مؤشر التحديث يصف النسخة الاحتياطية وفتح البيانات تلقائياً', /تُؤخذ نسخة احتياطية قبل التثبيت/.test(read('src/ui/components/DesktopUpdater.tsx')))
 check('الحوار لا يدّعي تراجعاً تلقائياً', !/تراجع تلقائي واستعادة/.test(about))

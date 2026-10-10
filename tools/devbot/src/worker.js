@@ -149,7 +149,8 @@ export default {
         return json({ ok: false, error: 'payload too large' }, CORS, 413)
       }
       const rawText = await request.text()
-      if (rawText.length > REG_MAX_BYTES) return json({ ok: false, error: 'payload too large' }, CORS, 413)
+      /* الحد بالبايت لا بالمحارف: النص العربي يأخذ بايتين للمحرف في UTF-8 */
+      if (new TextEncoder().encode(rawText).byteLength > REG_MAX_BYTES) return json({ ok: false, error: 'payload too large' }, CORS, 413)
       let raw
       try { raw = JSON.parse(rawText) } catch { return json({ ok: false, error: 'bad json' }, CORS, 400) }
       const report = sanitizeRegistration(raw)

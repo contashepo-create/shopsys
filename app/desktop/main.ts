@@ -73,6 +73,8 @@ function showLoadError(win: BrowserWindow, reason: string): void {
   logLine('load-error', reason)
   const html = errorPageHtml(reason, logPath)
   win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => undefined)
+  // النافذة مخفية حتى ready-to-show: صفحة الخطأ يجب أن تظهر حتماً
+  if (!win.isDestroyed() && !win.isVisible()) win.show()
 }
 
 /* ── النافذة ── */
@@ -120,7 +122,10 @@ function showSplash(afterUpdateFrom: string | null): void {
   })
   void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml(headline))}`)
   /* مهلة أمان: لا تبقى الشاشة معلّقة إن لم تظهر الواجهة */
-  splashCloseTimer = setTimeout(closeSplash, 20_000)
+  splashCloseTimer = setTimeout(() => {
+    closeSplash()
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show()
+  }, 20_000)
 }
 
 function pushSplashState(): void {
@@ -167,6 +172,8 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1024,
     minHeight: 640,
     title: 'تَحَكَّم',
+    /* مخفية حتى تكتمل أول رسمة: لا نافذة بيضاء فارغة تظهر فوق شاشة البدء بشريط التقدّم */
+    show: false,
     autoHideMenuBar: true,
     icon: join(__dirname, '../dist/app-icon.png'),
     webPreferences: {
@@ -198,6 +205,9 @@ function createMainWindow(): BrowserWindow {
   })
   win.webContents.on('preload-error', (_e, preloadPath, error) => {
     logLine('preload-error', `${preloadPath}: ${error}`)
+  })
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.show()
   })
   if (isDev) void win.loadURL(process.env.ELECTRON_START_URL!)
   else {

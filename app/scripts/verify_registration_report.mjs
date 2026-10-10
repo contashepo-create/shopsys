@@ -171,7 +171,8 @@ ok('الصياغة العربية تحمل كل البيانات، والخطو�
 ok('العامل: مسار /register بحدَّي حجم ورفض ما بلا معرف صالح', () => {
   assert.match(workerSrc, /url\.pathname === '\/register'/)
   assert.match(workerSrc, /REG_MAX_BYTES/)
-  assert.match(workerSrc, /rawText\.length > REG_MAX_BYTES/) // لا اعتماد على content-length وحده
+  assert.match(workerSrc, /new TextEncoder\(\)\.encode\(rawText\)\.byteLength > REG_MAX_BYTES/) // الحد بالبايت لا بالمحارف (العربي بايتان)
+  assert.doesNotMatch(workerSrc, /rawText\.length > REG_MAX_BYTES/)
   assert.match(workerSrc, /sanitizeRegistration\(raw\)/)
   assert.match(workerSrc, /413/)
   assert.match(workerSrc, /405/)

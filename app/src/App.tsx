@@ -379,6 +379,9 @@ export default function App() {
   /* الموافقة سارية فقط على الإصدار الحالي من الوثيقة — فأي تغيير جوهري في
      الاتفاقية/الخصوصية يعيد بوابة الموافقة مرة واحدة بعد التحديث. */
   const legal = legalCurrent && legalCurrent.version === LEGAL_VERSION ? legalCurrent : null
+  /* لا يُرسل أي شيء يحمل معرّف الجهاز قبل قبول الإصدار الحالي من الاتفاقية — وإلا
+     فالمحدَّث الذي لم يوافق بعد على الإفصاح الجديد يرسل بياناته قبل موافقته. */
+  const legalAccepted = legal !== null
   const seed = useDataStore((s) => s.seed)
 
   /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
@@ -495,6 +498,7 @@ export default function App() {
 
   // ─── مزامنة الترخيص و«حول» من عامل التحكم — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
+    if (!legalAccepted) return
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
@@ -520,13 +524,13 @@ export default function App() {
     sync()
     const t = setInterval(sync, 6 * 60 * 60 * 1000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [setCloudData])
+  }, [setCloudData, legalAccepted])
 
   // ─── تنبيهات المطوّر من البوت — تحديث دوري كل دقيقة وعند العودة للتطبيق ───
   useEffect(() => {
     let cancelled = false
     const syncNotices = async () => {
-      if (!useAppStore.getState().setup.completed) return
+      if (!legalAccepted || !useAppStore.getState().setup.completed) return
       const deviceId = useAppStore.getState().deviceId
       const notices = await fetchCloudNotices(LICENSE_CLOUD_BASE_URL, deviceId)
       if (!cancelled && notices !== null) setCloudData({ notifications: notices })
@@ -539,7 +543,7 @@ export default function App() {
       clearInterval(timer)
       window.removeEventListener('focus', syncNotices)
     }
-  }, [setCloudData])
+  }, [setCloudData, legalAccepted])
 
   /* ─── بند 2 (تدقيق 2026-10-08): إبلاغ المطوّر بكل عميل جديد ───────────────
      ما كان: المعالج يجمع الاسم والهاتف والبريد والمنشأة والنشاط ثم لا يُرسل
@@ -549,7 +553,7 @@ export default function App() {
      يُرسل الحقول المعلنة فقط (المنشأة والمالك والتواصل والعنوان والنشاط + معرّف الجهاز)
      — انظر core/registration.ts. */
   useEffect(() => {
-    if (!setup.completed) return
+    if (!setup.completed || !legalAccepted) return
     let cancelled = false
     const report = async () => {
       const app = useAppStore.getState()
@@ -577,7 +581,7 @@ export default function App() {
     }
     void report()
     return () => { cancelled = true }
-  }, [setup.completed])
+  }, [setup.completed, legalAccepted])
 
   // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───
   useEffect(() => {
