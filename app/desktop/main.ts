@@ -679,7 +679,7 @@ async function openDatabase(): Promise<ShopsysDatabase> {
         type: 'error',
         title: 'تَحَكَّم — فشل تشغيل القاعدة',
         message: `تعذّر فتح قاعدة البيانات:\n${dbPath}`,
-        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
+        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}).\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
         buttons: ['اختيار ملف القاعدة يدوياً...', 'إغلاق البرنامج'],
         defaultId: 0,
         cancelId: 1,
