@@ -88,7 +88,7 @@ export function DesktopUpdater() {
       )}
       {state?.status === 'error' && <div className="text-[11px] text-rose-600 font-bold">{state.message ?? ''}</div>}
       {installError && <div role="alert" className="text-[11px] text-rose-600 font-bold">{installError}</div>}
-      {state?.status === 'downloaded' && <div className="text-[11px] text-emerald-600 font-bold">يُثبَّت تلقائياً عند إغلاق التطبيق إن لم تعِد التشغيل الآن — بياناتك خارج مسار التثبيت.</div>}
+      {state?.status === 'downloaded' && <div className="text-[11px] text-emerald-600 font-bold">تُؤخذ نسخة احتياطية قبل التثبيت، ويُثبَّت التحديث عند إغلاق التطبيق إن لم تعِد التشغيل الآن. بعد التحديث تُفتح بياناتك كما هي تلقائياً بشاشة بدء بشريط تقدّم — بلا معالج إعداد.</div>}
     </div>
   )
 }

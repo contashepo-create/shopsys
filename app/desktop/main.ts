@@ -12,7 +12,8 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, read
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
-import { describeDeviceKeyOutcome, resolveDeviceKey } from './deviceKeyStore.ts'
+import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
+import { keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
@@ -75,6 +76,90 @@ function showLoadError(win: BrowserWindow, reason: string): void {
 }
 
 /* ── النافذة ── */
+/* ── v1.0.22: شاشة البدء بشريط تقدّم ─────────────────────────────────────
+   تُعرض فوراً عند الإقلاع (ومنه أول تشغيل بعد التحديث) حتى تُفتح البيانات
+   المحفوظة تلقائياً — بلا نافذة بيضاء وبلا معالج إعداد. تُغلق عند ظهور الواجهة
+   أو بعد مهلة قصوى حتى لا تبقى معلّقة مهما حدث. */
+let splashWindow: BrowserWindow | null = null
+let splashLoaded = false
+let splashState: { percent: number; text: string } = { percent: 0, text: '' }
+let splashCloseTimer: NodeJS.Timeout | null = null
+
+function escapeHtmlText(value: string): string {
+  return value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string))
+}
+
+function splashHtml(headline: string): string {
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><style>
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#f1f5f9;color:#0f172a;font-family:'Segoe UI',Tahoma,sans-serif;-webkit-user-select:none;user-select:none}
+.card{width:380px;padding:26px 28px;border-radius:18px;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
+h1{margin:0 0 4px;font-size:18px;font-weight:800}
+p{margin:0 0 18px;font-size:12.5px;line-height:1.7;color:#475569}
+.bar{height:10px;border-radius:999px;background:#e2e8f0;overflow:hidden}
+.fill{height:100%;width:0;background:linear-gradient(90deg,#0ea5e9,#6366f1);transition:width .35s ease}
+.step{margin-top:10px;min-height:16px;font-size:11.5px;color:#64748b}
+</style></head><body><div class="card"><h1>تَحَكَّم</h1><p>${escapeHtmlText(headline)}</p>
+<div class="bar"><div class="fill" id="f"></div></div><div class="step" id="s"></div></div>
+<script>window.setProgress=function(p,t){document.getElementById('f').style.width=Math.max(0,Math.min(100,p))+'%';document.getElementById('s').textContent=t};</script>
+</body></html>`
+}
+
+function showSplash(afterUpdateFrom: string | null): void {
+  const headline = afterUpdateFrom
+    ? `تم تحديث تَحَكَّم من ${afterUpdateFrom} إلى ${app.getVersion()} — جارٍ فتح بياناتك كما هي، لا شيء يُحذف.`
+    : 'جارٍ فتح بياناتك…'
+  splashWindow = new BrowserWindow({
+    width: 440, height: 250, frame: false, resizable: false, minimizable: false, maximizable: false,
+    center: true, skipTaskbar: true, backgroundColor: '#f1f5f9', title: 'تَحَكَّم',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  splashLoaded = false
+  splashWindow.webContents.once('did-finish-load', () => {
+    splashLoaded = true
+    pushSplashState()
+  })
+  void splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml(headline))}`)
+  /* مهلة أمان: لا تبقى الشاشة معلّقة إن لم تظهر الواجهة */
+  splashCloseTimer = setTimeout(closeSplash, 20_000)
+}
+
+function pushSplashState(): void {
+  if (!splashWindow || splashWindow.isDestroyed() || !splashLoaded) return
+  const payload = JSON.stringify(splashState)
+  void splashWindow.webContents.executeJavaScript(`window.setProgress(${payload}.percent, ${payload}.text)`).catch(() => undefined)
+}
+
+function setSplashProgress(percent: number, text: string): void {
+  splashState = { percent, text }
+  pushSplashState()
+}
+
+function closeSplash(): void {
+  if (splashCloseTimer) { clearTimeout(splashCloseTimer); splashCloseTimer = null }
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy()
+  splashWindow = null
+}
+
+/* آخر إصدار فُتح به البرنامج — لإظهار رسالة «تم التحديث» مرة واحدة بعد التثبيت */
+function lastRunVersionPath(): string {
+  return join(app.getPath('userData'), 'last-run.json')
+}
+function readLastRunVersion(): string | null {
+  try {
+    const value = JSON.parse(readFileSync(lastRunVersionPath(), 'utf8'))
+    return typeof value?.version === 'string' ? value.version : null
+  } catch {
+    return null
+  }
+}
+function writeLastRunVersion(): void {
+  try {
+    writeFileSync(lastRunVersionPath(), JSON.stringify({ version: app.getVersion(), at: new Date().toISOString() }), 'utf8')
+  } catch (error) {
+    logLine('last-run', `تعذّر تسجيل الإصدار: ${(error as Error).message}`)
+  }
+}
+
 function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1360,
@@ -128,13 +213,10 @@ function createMainWindow(): BrowserWindow {
    تُشفَّر بـ AES-GCM في المُصيّر قبل وصولها إلى SQLite عبر IPC، فتُقرأ القاعدة
    على هذا الجهاز فقط — نسخ shopsys.db إلى جهاز آخر يعطي بيانات غير قابلة
    للفك. اللقطات النصية القديمة تُقرأ كما هي وتُرحَّل مشفرة عند أول حفظ. */
-function ensureDeviceEncryptionKey(): Buffer {
-  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
-     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
-     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
-     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+/** مدخل قرص مفتاح الجهاز — مشترك بين الإقلاع واستيراد مفتاح الاسترداد */
+function buildDeviceKeyIo(): DeviceKeyIo {
   const dir = app.getPath('userData')
-  const outcome = resolveDeviceKey({
+  return {
     readFile: (name) => {
       try { return readFileSync(join(dir, name)) } catch { return null }
     },
@@ -146,7 +228,28 @@ function ensureDeviceEncryptionKey(): Buffer {
     generate: () => randomBytes(32),
     safeStorage,
     log: logLine,
-  })
+  }
+}
+
+/* v1.0.22 — حالة تصدير مفتاح الاسترداد (تذكير المالك حتى يصدّره) */
+function keyRecoveryStatePath(): string {
+  return join(app.getPath('userData'), 'key-recovery.json')
+}
+function readKeyRecoveryExportedAt(): string | null {
+  try {
+    const value = JSON.parse(readFileSync(keyRecoveryStatePath(), 'utf8'))
+    return typeof value?.exportedAt === 'string' ? value.exportedAt : null
+  } catch {
+    return null
+  }
+}
+
+function ensureDeviceEncryptionKey(): Buffer {
+  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
+     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
+     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
+     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+  const outcome = resolveDeviceKey(buildDeviceKeyIo())
   for (const warning of outcome.warnings) logLine('device-key', `تحذير: ${warning}`)
   logLine('device-key', describeDeviceKeyOutcome(outcome))
   return outcome.key
@@ -820,6 +923,53 @@ function wireIpc(): void {
     return { ok: true as const, path: result.filePath }
   })
 
+  /* v1.0.22 — مفتاح الاسترداد: ملف المفتاح مغلّف بكلمة مرور العميل (انظر desktop/keyRecovery.ts).
+     التصدير لا يكشف المفتاح الخام أبداً؛ الاستيراد يحتفظ بالنسخة الحالية ثم يعيد التشغيل. */
+  ipcMain.handle('keyRecovery:status', () => ({ exportedAt: readKeyRecoveryExportedAt() }))
+
+  ipcMain.handle('keyRecovery:export', async (_event, args: { passphrase?: unknown; deviceId?: unknown }) => {
+    const passphrase = typeof args?.passphrase === 'string' ? args.passphrase : ''
+    const deviceId = typeof args?.deviceId === 'string' ? args.deviceId : 'unknown'
+    const problem = validateRecoveryPassphrase(passphrase)
+    if (problem) return { ok: false as const, reason: problem }
+    if (deviceEncryptionKey.length !== 32) return { ok: false as const, reason: 'مفتاح الجهاز غير مهيأ' }
+    const options = {
+      title: 'حفظ مفتاح الاسترداد — احفظه على USB أو مكان آمن خارج هذا الجهاز',
+      defaultPath: join(app.getPath('documents'), keyRecoveryFileName()),
+      filters: [{ name: 'مفتاح استرداد تَحَكَّم', extensions: ['tkey'] }],
+    }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { ok: false as const, canceled: true as const }
+    writeFileSync(result.filePath, wrapDeviceKey(deviceEncryptionKey, passphrase, deviceId), { mode: 0o600 })
+    writeFileSync(keyRecoveryStatePath(), JSON.stringify({ exportedAt: new Date().toISOString(), deviceId }), 'utf8')
+    logLine('key-recovery', `صُدّر مفتاح الاسترداد إلى ${result.filePath}`)
+    return { ok: true as const, path: result.filePath }
+  })
+
+  ipcMain.handle('keyRecovery:import', async (_event, args: { passphrase?: unknown }) => {
+    const passphrase = typeof args?.passphrase === 'string' ? args.passphrase : ''
+    if (!passphrase.trim()) return { ok: false as const, reason: 'أدخل كلمة مرور ملف الاسترداد' }
+    const options = {
+      title: 'اختيار ملف مفتاح الاسترداد',
+      properties: ['openFile' as const],
+      filters: [{ name: 'مفتاح استرداد تَحَكَّم', extensions: ['tkey', 'json'] }],
+    }
+    const picked = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    if (picked.canceled || picked.filePaths.length === 0) return { ok: false as const, canceled: true as const }
+    let recovered: ReturnType<typeof unwrapDeviceKey>
+    try {
+      recovered = unwrapDeviceKey(readFileSync(picked.filePaths[0], 'utf8'), passphrase)
+    } catch (error) {
+      return { ok: false as const, reason: (error as Error).message }
+    }
+    const stored = storeRecoveredDeviceKey(buildDeviceKeyIo(), recovered.key)
+    if (!stored.ok) return { ok: false as const, reason: stored.reason }
+    logLine('key-recovery', `استيراد مفتاح الاسترداد من ${picked.filePaths[0]}${stored.keptCopy ? ` — النسخة السابقة ${stored.keptCopy}` : ''}`)
+    /* إعادة تشغيل كاملة ليُفتح الجهاز بالمفتاح الجديد من الإقلاع (لا حالة متبقية في الذاكرة) */
+    setTimeout(() => { app.relaunch(); app.exit(0) }, 300)
+    return { ok: true as const, deviceId: recovered.deviceId, relaunching: true as const }
+  })
+
   /* v1.0.8 (طلب المالك): مرساة التجربة خارج القاعدة — مسح بيانات التطبيق من
      الواجهة أو حذف القاعدة لا يعيد الفترة التجريبية. تُحفظ أول بداية تجربة
      في ملف مستقل ويعاد الأقدم بينها وبين ما يرسله التطبيق. */
@@ -969,17 +1119,28 @@ if (!gotLock) {
 
   void app.whenReady().then(async () => {
     logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
+    const previousVersion = readLastRunVersion()
+    showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
+    setSplashProgress(15, 'تهيئة مفتاح الجهاز…')
     try {
       deviceEncryptionKey = ensureDeviceEncryptionKey()
     } catch (error) {
+      closeSplash()
       logLine('device-key-fatal', (error as Error).message)
       dialog.showErrorBox('تَحَكَّم — تعذّر تهيئة مفتاح الجهاز', `${(error as Error).message}\n\nلم تُفقد أي بيانات. أغلق البرنامج وأعد تشغيله، وإن تكرر الخطأ فتواصل مع الدعم.`)
       app.exit(1)
       return
     }
+    setSplashProgress(40, 'فتح قاعدة البيانات…')
     database = await openDatabase()
+    setSplashProgress(75, 'تجهيز الواجهة…')
     wireIpc()
     mainWindow = createMainWindow()
+    mainWindow.once('ready-to-show', () => {
+      setSplashProgress(100, 'جاهز')
+      writeLastRunVersion()
+      closeSplash()
+    })
     mainWindow.on('closed', () => {
       mainWindow = null
     })

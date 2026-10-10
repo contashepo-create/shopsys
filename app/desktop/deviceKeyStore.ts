@@ -147,6 +147,36 @@ export function preserveUnreadableEncryptedKey(io: DeviceKeyIo, reason: string):
   return name
 }
 
+/**
+ * v1.0.22 — استرداد المفتاح من ملف الاسترداد (طلب المالك: لا فقدان للبيانات).
+ * يُستدعى بعد فكّ ملف الاسترداد بكلمة المرور وقبل إعادة التشغيل:
+ *  • إن كان المفتاح الحالي هو نفسه ⇒ لا شيء يُكتب.
+ *  • وإلا تُحفظ نسخة من المشفّر الحالي باسم مميّز (لا حذف) ثم يُكتب المسترد
+ *    مشفّراً عبر safeStorage مع التحقق بالجولة الكاملة.
+ * لا يُسمح بالتخزين الصريح هنا: مفتاح الاسترداد أهم من أن يُكتب نصاً على القرص.
+ */
+export function storeRecoveredDeviceKey(io: DeviceKeyIo, key: Buffer): { ok: boolean; reason: string; keptCopy: string | null } {
+  if (key.length !== KEY_LENGTH) return { ok: false, reason: `طول المفتاح المسترد غير صالح (${key.length})`, keptCopy: null }
+  if (!safeAvailable(io)) return { ok: false, reason: 'هذا النظام لا يوفّر تخزيناً آمناً للمفتاح (safeStorage غير متاح)', keptCopy: null }
+  const current = readEncryptedKey(io)
+  if (current.key && current.key.equals(key)) return { ok: true, reason: 'المفتاح الحالي مطابق', keptCopy: null }
+  let keptCopy: string | null = null
+  const raw = io.readFile(DEVICE_KEY_ENC_FILE)
+  if (raw) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    keptCopy = `${DEVICE_KEY_ENC_FILE}.replaced-${stamp}`
+    try {
+      io.writeFile(keptCopy, raw)
+    } catch (err) {
+      return { ok: false, reason: `تعذّر حفظ نسخة من المفتاح الحالي — لم يُستبدل: ${(err as Error).message}`, keptCopy: null }
+    }
+  }
+  const written = writeEncryptedKey(io, key)
+  if (!written.ok) return { ok: false, reason: `تعذّر حفظ المفتاح المسترد: ${written.reason}`, keptCopy }
+  io.log('device-key', `استُرد مفتاح الجهاز من ملف الاسترداد${keptCopy ? ` — النسخة السابقة: ${keptCopy}` : ''}`)
+  return { ok: true, reason: 'تم', keptCopy }
+}
+
 export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
   const warnings: string[] = []
 

@@ -99,11 +99,19 @@ export interface DesktopNotificationsBridge {
   show(title: string, body: string): Promise<boolean>
 }
 
+/** v1.0.22: مفتاح الاسترداد — ملف مغلّف بكلمة مرور يختارها العميل */
+export interface DesktopKeyRecoveryBridge {
+  status(): Promise<{ exportedAt: string | null }>
+  export(args: { passphrase: string; deviceId: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; path?: string }>
+  import(args: { passphrase: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; deviceId?: string; relaunching?: boolean }>
+}
+
 export interface ShopsysDesktopBridge {
   runtime: 'electron'
   database: DesktopDatabaseBridge
   databaseStorage?: DesktopDatabaseStorageBridge
   notifications?: DesktopNotificationsBridge
+  keyRecovery?: DesktopKeyRecoveryBridge
 }
 
 declare global {

@@ -15,6 +15,7 @@ import { buildRegistrationReport, shouldReportRegistration, sendRegistrationRepo
 import { APP_VERSION } from './core/updates.ts'
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
+import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
 import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
@@ -328,6 +329,8 @@ function DataRecoveryScreen({ reason }: { reason: string }) {
         >
           🔄 إعادة المحاولة
         </button>
+        {/* v1.0.22: فقدان المفتاح لا يعني فقدان البيانات — استرداده من ملف مفتاح الاسترداد */}
+        <DesktopKeyRecoveryImport />
       </div>
     </div>
   )

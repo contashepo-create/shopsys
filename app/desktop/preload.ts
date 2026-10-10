@@ -39,7 +39,14 @@ const notifications = {
   show: (title: string, body: string): Promise<boolean> => ipcRenderer.invoke('notify:show', { title, body }),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications })
+/* v1.0.22: مفتاح الاسترداد — تصدير بكلمة مرور واستيراد عند فقدان المفتاح */
+const keyRecovery = {
+  status: () => ipcRenderer.invoke('keyRecovery:status'),
+  export: (args: { passphrase: string; deviceId: string }) => ipcRenderer.invoke('keyRecovery:export', args),
+  import: (args: { passphrase: string }) => ipcRenderer.invoke('keyRecovery:import', args),
+}
+
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))
