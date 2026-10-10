@@ -21,6 +21,7 @@ import { buildBackup, backupFileName } from '../core/backup.ts'
 import { buildFullExportSheets, sheetsToExcelXml, downloadTextFile, exportFileName } from '../core/fullExport.ts'
 import { desktopDatabaseStorage } from '../data/desktopBridge.ts'
 import { Btn, inputCls, useToast } from './components/ui.tsx'
+import { DeveloperMessage } from './components/DeveloperMessage.tsx'
 
 const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
 const money = (minor: number) => (minor / 100).toFixed(2)
@@ -35,7 +36,7 @@ function downloadBlob(content: string, filename: string, mime: string) {
 }
 
 export function LockScreen({ reason, state }: { reason: LockReason; state: LicenseState }) {
-  const { deviceId, setup, cloudAbout, revokedKeys, setActivated, applyActivityChangeKey } = useAppStore()
+  const { deviceId, setup, cloudAbout, cloudAccountMessage, revokedKeys, setActivated, applyActivityChangeKey } = useAppStore()
   const data = useDataStore()
   const toast = useToast()
   const info = LOCK_REASON_LABELS[reason]
@@ -137,6 +138,8 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
             <div className="text-[12px] font-bold text-slate-400">الخطة السابقة: {PLAN_LABELS[state.payload.plan]}</div>
           )}
         </div>
+
+        <DeveloperMessage message={cloudAccountMessage} />
 
         <div className="grid md:grid-cols-2 gap-4">
           {/* التفعيل */}

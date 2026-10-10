@@ -307,3 +307,21 @@ export async function fetchCloudNotices(baseUrl: string, deviceId: string): Prom
   const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/notifications/${encodeURIComponent(deviceId)}`)
   return raw == null ? null : parseCloudNotices(raw)
 }
+
+/* ─── رسالة المطوّر لهذا الجهاز (عرض فقط) ───
+ * مصدرها حقل `message` في dev:<deviceId> (أمر `/رسالة` في بوت المركز)، ويعيده
+ * /subscription. هذه رسالة **من المطوّر إلى العميل** فقط. لا تمنح ولا تسحب شيئاً:
+ * الحجية للمفتاح الموقّع. (لا تُخلط مع sub.message في بوت الخدمات — هذا الحقل
+ * ملاحظة من العميل إلى المطوّر.) */
+
+/** تنقية `message` من استجابة /subscription — نص عرض عادي بطول محدود */
+export function parseAccountMessage(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) return ''
+  return sanitizeAboutText((raw as Record<string, unknown>).message, 300)
+}
+
+/** `null` = تعذّر الجلب (أوفلاين) ⇒ لا يُمسّ المحفوظ */
+export async function fetchAccountMessage(baseUrl: string, deviceId: string): Promise<string | null> {
+  const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/subscription/${encodeURIComponent(deviceId)}`)
+  return raw == null ? null : parseAccountMessage(raw)
+}

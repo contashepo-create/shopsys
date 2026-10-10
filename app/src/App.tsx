@@ -8,7 +8,7 @@ import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
-import { fetchAbout, fetchRevocationList, mergeRevocationLists, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
+import { fetchAbout, fetchAccountMessage, fetchRevocationList, mergeRevocationLists, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 /* بند 2 (تدقيق 2026-10-08): بلاغ التسجيل الجديد يصل المطوّر عبر مركز التحكم */
 import { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport } from './core/registration.ts'
@@ -502,8 +502,9 @@ export default function App() {
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
-      const [about, revokedDevbot, revokedServices, flags] = await Promise.all([
+      const [about, accountMessage, revokedDevbot, revokedServices, flags] = await Promise.all([
         fetchAbout(LICENSE_CLOUD_BASE_URL),
+        fetchAccountMessage(LICENSE_CLOUD_BASE_URL, devId), // رسالة المطوّر لهذا الجهاز (عرض فقط)
         fetchRevocationList(LICENSE_CLOUD_BASE_URL),
         /* ث8: لكل عامل قائمة إبطال مستقلة — نقرأهما معاً ونوحّدهما، وإلا فالحرق
            من العامل الآخر لا يصل ويبقى المفتاح المحروق يعمل عند العميل. */
@@ -513,9 +514,10 @@ export default function App() {
       if (cancelled) return
       const revoked = mergeRevocationLists(revokedDevbot, revokedServices)
       // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
-      if (about !== null || revoked !== null || flags !== null) {
+      if (about !== null || accountMessage !== null || revoked !== null || flags !== null) {
         setCloudData({
           ...(about !== null ? { about } : {}),
+          ...(accountMessage !== null ? { accountMessage } : {}),
           ...(revoked !== null ? { revoked } : {}),
           ...(flags !== null ? { flags } : {}),
         })

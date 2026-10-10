@@ -219,10 +219,12 @@ interface AppState {
   touchLastSeen: () => void
   // ─── السحابة (القرار 28): آخر ما جُلب من Cloudflare — يعمل أوفلاين بآخر نسخة ───
   cloudAbout: AboutContent | null
+  /** رسالة المطوّر لهذا الجهاز (عرض فقط) — تُحفظ آخر قيمة للعمل أوفلاين */
+  cloudAccountMessage: string
   revokedKeys: string[] // بصمات المفاتيح المحروقة
   cloudNotifications: CloudNotice[]
   cloudSyncedAt: string | null
-  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null; notifications?: CloudNotice[] }) => void
+  setCloudData: (patch: { about?: AboutContent | null; accountMessage?: string; revoked?: string[]; flags?: DeviceFlags | null; notifications?: CloudNotice[] }) => void
   /**
    * بند 10 (تدقيق 2026-10-08): التنبيهات التي أقرّ بها المستخدم — تُحفظ محلياً
    * فلا تعود النافذة المنبثقة، ويُرسل إيصال قراءة للمطوّر (best-effort).
@@ -671,6 +673,7 @@ export const useAppStore = create<AppState>()(
           return now > s.lastSeenAt ? { lastSeenAt: now } : {}
         }),
       cloudAbout: null,
+      cloudAccountMessage: '',
       revokedKeys: [],
       cloudNotifications: [],
       ackedNoticeIds: [],
@@ -689,6 +692,7 @@ export const useAppStore = create<AppState>()(
         if (patch.flags !== undefined) setActiveDeviceFlags(patch.flags)
         set((s) => ({
           cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
+          cloudAccountMessage: patch.accountMessage !== undefined ? patch.accountMessage : s.cloudAccountMessage,
           revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
           cloudNotifications: patch.notifications !== undefined ? patch.notifications : s.cloudNotifications,
           deviceFlags: patch.flags !== undefined ? patch.flags : s.deviceFlags,
