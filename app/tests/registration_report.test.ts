@@ -68,22 +68,18 @@ const captureTelegram = () => {
   return calls
 }
 
+/* الحقول المعلنة فقط (الاتفاقية القسم 5): المنشأة والمالك والهاتف والبريد والعنوان والنشاط + معرّف الجهاز */
 const CUSTOMER = {
   deviceId: 'SHOP-AAA1-1111-1111',
-  appVersion: '1.0.19',
-  platform: 'desktop',
   shopName: 'بقالة النور',
   ownerName: 'أحمد محمد',
   phone: '+20 100 123 4567',
   email: 'ahmed@example.com',
   city: 'المنزلة',
   street: 'شارع البحر',
-  countryCode: 'EG',
-  activityId: 'grocery',
   activityNameAr: 'بقالة وسوبر ماركت',
-  accountingMode: 'simple',
-  plan: 'trial',
 }
+const DISCLOSED_KEYS = ['activityNameAr', 'city', 'deviceId', 'email', 'ownerName', 'phone', 'registeredAt', 'shopName', 'street']
 
 const postRegister = async (kv: MemoryKv, body: unknown, init: { method?: string; headers?: Record<string, string> } = {}) => {
   const request = new Request('https://shopsys-control/register', {
@@ -97,7 +93,7 @@ const postRegister = async (kv: MemoryKv, body: unknown, init: { method?: string
 beforeEach(() => { vi.unstubAllGlobals() })
 
 describe('① بناء البلاغ وتعقيمه', () => {
-  it('يجمع كل بيانات المعالج كما هي', () => {
+  it('يجمع الحقول المعلنة كما هي', () => {
     const report = buildRegistrationReport(CUSTOMER)!
     expect(report).toMatchObject({
       deviceId: 'SHOP-AAA1-1111-1111',
@@ -107,13 +103,19 @@ describe('① بناء البلاغ وتعقيمه', () => {
       email: 'ahmed@example.com',
       city: 'المنزلة',
       street: 'شارع البحر',
-      countryCode: 'EG',
-      activityId: 'grocery',
       activityNameAr: 'بقالة وسوبر ماركت',
-      plan: 'trial',
     })
     expect(report.registeredAt).toBeTruthy()
-    expect(report.doctorSpecialty).toBeUndefined() // لا يُضاف إلا لنشاط طبي
+  })
+
+  /* الاتفاقية تعد بعدم رفع أي شيء آخر: أي حقل إضافي يجب ألا يصل إلى البلاغ أبداً */
+  it('لا يحمل البلاغ أي حقل خارج القائمة المعلنة (حتى لو مرّره المستدعي)', () => {
+    const leaky = { ...CUSTOMER, plan: 'pro', countryCode: 'EG', activityId: 'grocery', accountingMode: 'full',
+      doctorSpecialty: 'أسنان', fiscalYearName: '2026', fiscalYearStart: '2026-01-01', fiscalYearEnd: '2026-12-31',
+      appVersion: '1.0.22', platform: 'desktop' }
+    const report = buildRegistrationReport(leaky)!
+    expect(Object.keys(report).sort()).toEqual(DISCLOSED_KEYS)
+    expect(Object.keys(buildRegistrationReport(CUSTOMER)!).sort()).toEqual(DISCLOSED_KEYS)
   })
 
   it('يرفض ما بلا معرف جهاز صالح ⇒ لا بلاغ مجهول الهوية', () => {
@@ -128,20 +130,11 @@ describe('① بناء البلاغ وتعقيمه', () => {
       shopName: `<b>محل</b>\u0000${'ط'.repeat(400)}`,
       email: 'javascript:alert(1)',
       phone: 'اتصل بي',
-      platform: 'weird',
-      accountingMode: 'weird',
     })!
     expect(report.shopName).not.toContain('<')
     expect(report.shopName.length).toBeLessThanOrEqual(120)
     expect(report.email).toBe('') // بريد تالف ⇒ يُحذف لا يُمرَّر
     expect(report.phone).toBe('')
-    expect(report.platform).toBe('desktop') // أي قيمة غير web ⇒ desktop
-    expect(report.accountingMode).toBe('simple')
-  })
-
-  it('التخصص الطبي يُرسل فقط عند وجوده', () => {
-    expect(buildRegistrationReport({ ...CUSTOMER, doctorSpecialty: 'أسنان' })!.doctorSpecialty).toBe('أسنان')
-    expect(buildRegistrationReport({ ...CUSTOMER, doctorSpecialty: '  ' })!.doctorSpecialty).toBeUndefined()
   })
 
   it('④ لا يُرسل إلا بعد اكتمال الإعداد ومرة واحدة لكل جهاز', () => {
@@ -160,8 +153,10 @@ describe('① بناء البلاغ وتعقيمه', () => {
   it('الإفصاح مكتوب في سياسة الخصوصية المعروضة على العميل', async () => {
     const { PRIVACY, LEGAL_VERSION } = await import('../src/core/legal.ts')
     const text = JSON.stringify(PRIVACY)
-    expect(text).toContain('بلاغ التسجيل')
-    expect(text).toContain('إلزامي عند قبول الاتفاقية')
+    expect(text).toContain('بيانات التسجيل')
+    for (const item of ['اسم المالك', 'اسم المحل', 'الهاتف', 'البريد الإلكتروني', 'العنوان', 'اسم النشاط', 'معرّف الجهاز']) {
+      expect(text).toContain(item) // كل حقل مُرسل معلن بالاسم
+    }
     expect(text).toContain('reg:') // مكان الحفظ معلن
     expect(text).toMatch(/لا أصناف ولا فواتير|ما لا يُرسل أبداً/)
     expect(LEGAL_VERSION).not.toBe('2026-10-08') // تغيير جوهري ⇒ تُطلب الموافقة مجدداً
@@ -337,10 +332,10 @@ describe('⑥ الاستعراض من اللوحة والأمر', () => {
     expect(formatRegistrationsAr([])).toContain('لا تسجيلات')
   })
 
-  it('formatRegistrationAr يذكر الإصدار، وصياغة العامل تضيف الخطوة التالية', () => {
+  it('formatRegistrationAr لا يذكر الإصدار، وصياغة العامل تضيف الخطوة التالية', () => {
     const text = formatRegistrationAr(buildRegistrationReport(CUSTOMER)!)
     expect(text).toContain('تسجيل عميل جديد')
-    expect(text).toContain('1.0.19')
+    expect(text).not.toContain('الإصدار') // الإصدار والمنصة لم تعد تُرسل
     // الصياغة التي تصل التليجرام فعلياً (من العامل): البيانات كاملة، والتعليمة النصية حلّها زر
     const server = formatRegistrationArServer(sanitizeRegistration(CUSTOMER)!)
     expect(server).not.toContain('/اصدر')

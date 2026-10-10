@@ -12,13 +12,9 @@
 import { useEffect, useState } from 'react'
 import { KeyRound, Download, Upload, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { Btn, Modal, inputCls, useToast } from './ui.tsx'
-import type { DesktopKeyRecoveryBridge } from '../../data/desktopBridge.ts'
+import { desktopKeyRecoveryBridge } from '../../data/desktopBridge.ts'
 
-export const KEY_RECOVERY_UI_MIN_PASSPHRASE = 10
-
-export function desktopKeyRecoveryBridge(): DesktopKeyRecoveryBridge | null {
-  return typeof window !== 'undefined' ? window.shopsysDesktop?.keyRecovery ?? null : null
-}
+const KEY_RECOVERY_UI_MIN_PASSPHRASE = 10
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
 

@@ -9,8 +9,10 @@
  * وسياسة الخصوصية ومعلن قبل القبول. **لا توجد خانة موافقة منفصلة.** إنشاء الحساب
  * يتطلب اتصالاً: معالج أول التشغيل لا يكتمل قبل نجاح البلاغ (انظر FirstRunWizard).
  *
- * ما يُرسل: بيانات المنشأة والمالك والتواصل والعنوان والنشاط والخطة والسنة المالية
- * وتخصص الطبيب إن وُجد. **لا يُرسل أبداً:** كلمة مرور المالك (PIN)، ولا الفواتير،
+ * ما يُرسل (مطابق للاتفاقية — القسم 5 و6): اسم المالك، واسم المحل، والهاتف،
+ * والبريد، والعنوان (المدينة والشارع)، واسم النشاط، ومعرّف الجهاز (رمز تقني
+ * ضروري للتفعيل). **لا شيء غير ذلك:** لا خطة ولا سنة مالية ولا تخصص ولا
+ * إصدار ولا منصة ولا رمز دولة ولا نوع محاسبة، ولا كلمة مرور المالك، ولا الفواتير،
  * ولا الأرصدة، ولا الأصناف، ولا مسارات الملفات المحلية.
  *
  * قواعد لا تُكسر:
@@ -29,31 +31,19 @@ export const REGISTRATION_MAX_BYTES = 8_192
 const DEVICE_RE = /^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/
 
 export interface RegistrationReport {
+  /** معرّف الجهاز — رمز تقني يربط التفعيل بالجهاز (لا بيانات شخصية) */
   deviceId: string
-  appVersion: string
-  /** 'desktop' | 'web' — يساعد المطوّر على معرفة قناة العميل */
-  platform: string
   shopName: string
   ownerName: string
   phone: string
   email: string
+  /** العنوان = المدينة + الشارع */
   city: string
   street: string
-  countryCode: string
-  activityId: string
+  /** اسم النشاط بالعربية */
   activityNameAr: string
-  accountingMode: string
-  plan: string
-  /** خصوصية العيادة — تُرسل فقط إن وُجدت (نشاط طبي) */
-  doctorSpecialty?: string
-  /** السنة المالية الأولى التي أنشأها المعالج (اسم + بداية + نهاية) */
-  fiscalYearName?: string
-  fiscalYearStart?: string
-  fiscalYearEnd?: string
   registeredAt: string
 }
-
-const isIsoDay = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
 
 /** نزع محارف التحكم والوسوم + قصّ الطول (مطابق لتعقيم العامل) */
 function clean(value: unknown, max: number): string {
@@ -95,54 +85,29 @@ export function normalizePhone(value: unknown): string {
 
 export function buildRegistrationReport(input: {
   deviceId: string
-  appVersion: string
-  platform?: string
   shopName?: string
   ownerName?: string
   phone?: string
   email?: string
   city?: string
   street?: string
-  countryCode?: string | null
-  activityId?: string | null
   activityNameAr?: string
-  accountingMode?: string
-  plan?: string | null
-  doctorSpecialty?: string
-  fiscalYearName?: string
-  fiscalYearStart?: string
-  fiscalYearEnd?: string
   registeredAt?: string
 }): RegistrationReport | null {
   const deviceId = clean(input.deviceId, 24).toUpperCase()
   // بلا معرف جهاز صالح لا فائدة من البلاغ — المطوّر لن يستطيع ربطه بعميل
   if (!DEVICE_RE.test(deviceId)) return null
-  const specialty = clean(input.doctorSpecialty, 60)
-  const fyName = clean(input.fiscalYearName, 40)
-  const fyStart = isIsoDay(input.fiscalYearStart) ? input.fiscalYearStart : ''
-  const fyEnd = isIsoDay(input.fiscalYearEnd) ? input.fiscalYearEnd : ''
-  const report: RegistrationReport = {
+  return {
     deviceId,
-    appVersion: clean(input.appVersion, 20),
-    platform: clean(input.platform, 16) === 'web' ? 'web' : 'desktop',
     shopName: clean(input.shopName, 120),
     ownerName: clean(input.ownerName, 120),
     phone: normalizePhone(input.phone),
     email: cleanEmail(input.email),
     city: clean(input.city, 80),
     street: clean(input.street, 160),
-    countryCode: clean(input.countryCode, 4).toUpperCase(),
-    activityId: clean(input.activityId, 40),
     activityNameAr: clean(input.activityNameAr, 60),
-    accountingMode: clean(input.accountingMode, 10) === 'full' ? 'full' : 'simple',
-    plan: clean(input.plan, 12) || 'trial',
-    ...(specialty ? { doctorSpecialty: specialty } : {}),
-    ...(fyName ? { fiscalYearName: fyName } : {}),
-    ...(fyStart ? { fiscalYearStart: fyStart } : {}),
-    ...(fyEnd ? { fiscalYearEnd: fyEnd } : {}),
     registeredAt: clean(input.registeredAt, 30) || new Date().toISOString(),
   }
-  return report
 }
 
 /**
@@ -202,11 +167,8 @@ export function formatRegistrationAr(report: RegistrationReport): string {
     report.phone ? `📞 الهاتف: <code>${report.phone}</code>` : '',
     report.email ? `📧 البريد: <code>${report.email}</code>` : '',
     report.city || report.street ? `📍 العنوان: ${[report.city, report.street].filter(Boolean).join(' — ')}` : '',
-    `🧭 النشاط: ${report.activityNameAr || report.activityId || '—'}${report.countryCode ? ` (${report.countryCode})` : ''}`,
-    report.doctorSpecialty ? `🩺 التخصص: ${report.doctorSpecialty}` : '',
-    `📦 الخطة: ${report.plan} · المحاسبة: ${report.accountingMode === 'full' ? 'متقدمة' : 'بسيطة'}`,
-    `🖥️ الجهاز: <code>${report.deviceId}</code> · ${report.platform === 'web' ? 'المتصفح' : 'تطبيق سطح المكتب'}`,
-    `🔖 الإصدار: ${report.appVersion || '—'}`,
+    `🧭 النشاط: ${report.activityNameAr || '—'}`,
+    `🖥️ الجهاز: <code>${report.deviceId}</code>`,
     `🕒 الوقت: ${report.registeredAt}`,
   ]
   return lines.filter(Boolean).join('\n')

@@ -15,7 +15,6 @@ import { ARAB_COUNTRIES, getCountry, type Country } from '../../core/countries.t
 import {
   buildRegistrationReport, normalizePhone, sendRegistrationReport, REGISTRATION_NEEDS_INTERNET_AR,
 } from '../../core/registration.ts'
-import { APP_VERSION } from '../../core/updates.ts'
 import { LICENSE_CLOUD_BASE_URL } from '../../core/cloud.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, type ActivityTemplate } from '../../core/activities.ts'
 import { citiesOf } from '../../core/cities.ts'
@@ -119,25 +118,16 @@ export function FirstRunWizard() {
     setRegError(null)
     try {
       const app = useAppStore.getState()
+      // الحقول المعلنة فقط (الاتفاقية القسم 5): لا خطة ولا سنة مالية ولا تخصص ولا منصة
       const report = buildRegistrationReport({
         deviceId: app.deviceId,
-        appVersion: APP_VERSION,
-        platform: isElectronRuntime() ? 'desktop' : 'web',
         shopName: shopName.trim(),
         ownerName: ownerName.trim(),
         phone: phone.trim(),
         email: email.trim(),
         city: effectiveCity,
         street: street.trim(),
-        countryCode: country.code,
-        activityId: activity.id,
         activityNameAr: activity.nameAr,
-        accountingMode: app.setup.accountingMode,
-        plan: 'trial',
-        doctorSpecialty: specialty === '__other__' ? specialtyOther.trim() : specialty,
-        fiscalYearName: fyName.trim(),
-        fiscalYearStart: fyStart,
-        fiscalYearEnd: fyEnd,
       })
       if (!report) {
         setRegError('معرّف الجهاز غير صالح — أعد تشغيل التطبيق ثم أعد المحاولة.')

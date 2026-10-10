@@ -12,7 +12,6 @@ import { fetchAbout, fetchRevocationList, mergeRevocationLists, fetchCloudNotice
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 /* بند 2 (تدقيق 2026-10-08): بلاغ التسجيل الجديد يصل المطوّر عبر مركز التحكم */
 import { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport } from './core/registration.ts'
-import { APP_VERSION } from './core/updates.ts'
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
@@ -547,8 +546,8 @@ export default function App() {
      شيء إطلاقاً — لا POST في الكود كله. الآن بلاغ واحد لكل جهاز بعد اكتمال
      الإعداد. القواعد: fire-and-forget (لا يعطّل الإقلاع ولا العمل)، مرة واحدة
      (العلامة تُحفظ عند النجاح فقط)، ويصلح أوفلاين بالمحاولة في الإقلاع التالي.
-     يُرسل بيانات المعالج كاملة (المنشأة والمالك والتواصل والعنوان والنشاط والخطة والسنة
-     المالية) — لا كلمة المرور. انظر core/registration.ts. */
+     يُرسل الحقول المعلنة فقط (المنشأة والمالك والتواصل والعنوان والنشاط + معرّف الجهاز)
+     — انظر core/registration.ts. */
   useEffect(() => {
     if (!setup.completed) return
     let cancelled = false
@@ -561,26 +560,15 @@ export default function App() {
         deviceId: app.deviceId,
         reportedAt: app.registrationReportedAt,
       })) return
-      const fy = app.fiscalYears[0]
       const payload = buildRegistrationReport({
         deviceId: app.deviceId,
-        appVersion: APP_VERSION,
-        platform: isElectronRuntime() ? 'desktop' : 'web',
         shopName: app.setup.shopName,
         ownerName: app.setup.ownerName,
         phone: app.setup.phone,
         email: app.setup.email,
         city: app.setup.city,
         street: app.setup.street,
-        countryCode: app.setup.countryCode,
-        activityId: app.setup.activityId,
         activityNameAr: ACTIVITY_TEMPLATES.find((t) => t.id === app.setup.activityId)?.nameAr ?? '',
-        accountingMode: app.setup.accountingMode,
-        plan: app.activatedPayload?.plan ?? 'trial',
-        doctorSpecialty: app.setup.doctorSpecialty,
-        fiscalYearName: fy?.nameAr,
-        fiscalYearStart: fy?.startDate,
-        fiscalYearEnd: fy?.endDate,
       })
       if (!payload) return
       const result = await sendRegistrationReport(LICENSE_CLOUD_BASE_URL, payload)

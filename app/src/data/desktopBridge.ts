@@ -161,3 +161,8 @@ export async function showDesktopNotification(title: string, body: string): Prom
     return false
   }
 }
+
+/** v1.0.22: جسر مفتاح الاسترداد — null خارج سطح المكتب */
+export function desktopKeyRecoveryBridge(): DesktopKeyRecoveryBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysDesktop?.keyRecovery ?? null : null
+}

@@ -16,7 +16,7 @@ const { checkActivationOnline, activateOnline, OFFLINE_ACTIVATION_AR, ACTIVATE_P
 const { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport, REGISTRATION_NEEDS_INTERNET_AR } =
   await import('../src/core/registration.ts')
 const { sanitizeRegistration } = await import('../../tools/devbot/src/registrations.js')
-const { LEGAL_VERSION, EULA, LEGAL_DOCUMENTS, INSTALLER_LICENSE_SUMMARY } = await import('../src/core/legal.ts')
+const { LEGAL_VERSION, EULA, LEGAL_DOCUMENTS, INSTALLER_LICENSE_SUMMARY, LEGAL_CONSENT_CHECKBOXES } = await import('../src/core/legal.ts')
 
 const DEVICE = 'SHOP-AAAA-BBBB-CCCC'
 const BASE = 'https://control.example.test'
@@ -129,7 +129,7 @@ describe('التفعيل: تأكيد الخادم قبل الحفظ', () => {
 })
 
 describe('التسجيل: إلزامي بقبول الاتفاقية', () => {
-  const base = { deviceId: DEVICE, appVersion: '1.0.22', platform: 'desktop' }
+  const base = { deviceId: DEVICE }
 
   it('لا توجد موافقة منفصلة: الإرسال يكفيه اكتمال الإعداد ولم يُبلَّغ بعد', () => {
     expect(shouldReportRegistration({ setupCompleted: true, deviceId: DEVICE, reportedAt: null })).toBe(true)
@@ -147,27 +147,21 @@ describe('التسجيل: إلزامي بقبول الاتفاقية', () => {
     expect(shouldReportRegistration({ setupCompleted: true, deviceId: 'تالف', reportedAt: null })).toBe(false)
   })
 
-  it('البلاغ يحمل بيانات المعالج كاملة بما فيها السنة المالية', () => {
+  it('البلاغ يحمل الحقول المعلنة فقط (لا خطة ولا سنة مالية ولا تخصص ولا رمز دولة)', () => {
     const r = buildRegistrationReport({
       ...base, shopName: 'متجر النور', ownerName: 'أحمد', phone: '01012345678', email: 'a@b.co',
-      city: 'المنصورة', street: 'شارع الجمهورية', countryCode: 'EG', activityId: 'retail',
-      activityNameAr: 'تجزئة', accountingMode: 'simple', plan: 'trial', doctorSpecialty: '',
-      fiscalYearName: '2026', fiscalYearStart: '2026-01-01', fiscalYearEnd: '2026-12-31',
+      city: 'المنصورة', street: 'شارع الجمهورية', activityNameAr: 'تجزئة',
+      // حقول قديمة يمررها مستدعٍ قديم — يجب ألا تصل
+      ...({ countryCode: 'EG', activityId: 'retail', plan: 'trial', doctorSpecialty: '', fiscalYearName: '2026', fiscalYearStart: '2026-01-01' } as Record<string, string>),
     })
     expect(r).not.toBeNull()
     expect(r).toMatchObject({
       shopName: 'متجر النور', ownerName: 'أحمد', phone: '01012345678', email: 'a@b.co',
-      city: 'المنصورة', street: 'شارع الجمهورية', countryCode: 'EG', activityId: 'retail',
-      plan: 'trial', fiscalYearName: '2026', fiscalYearStart: '2026-01-01', fiscalYearEnd: '2026-12-31',
+      city: 'المنصورة', street: 'شارع الجمهورية', activityNameAr: 'تجزئة',
     })
-    expect(r).not.toHaveProperty('pin')
-    expect(r).not.toHaveProperty('ownerPin')
-  })
-
-  it('تاريخ السنة المالية غير صالح يُسقط بدل أن يُرسل نصاً عشوائياً', () => {
-    const r = buildRegistrationReport({ ...base, fiscalYearStart: 'غدا', fiscalYearEnd: '2026-12-31' })
-    expect(r?.fiscalYearStart).toBeUndefined()
-    expect(r?.fiscalYearEnd).toBe('2026-12-31')
+    for (const k of ['countryCode', 'activityId', 'plan', 'doctorSpecialty', 'fiscalYearName', 'fiscalYearStart', 'appVersion', 'platform', 'pin', 'ownerPin']) {
+      expect(r).not.toHaveProperty(k)
+    }
   })
 
   it('الخادم يحفظ السنة المالية ويُسقط ما هو غير صالح (مطابقة لـ core)', () => {
@@ -219,9 +213,21 @@ describe('الاتفاقية: إفصاح صريح عن الإرسال الإلز
     expect(LEGAL_VERSION).not.toBe('2026-10-08')
   })
 
-  it('تُفصح الاتفاقية عن الإرسال الإلزامي للبيانات وأنه لا خانة لرفضه', () => {
-    expect(eulaText).toContain('إرسال بيانات التسجيل إلزامي')
-    expect(eulaText).toContain('لا توجد خانة لرفض هذا الإرسال')
+  it('تُفصح الاتفاقية عن الإرسال التلقائي لبيانات التسجيل وأنه ضروري للتفعيل', () => {
+    expect(eulaText).toContain('تُرسل تلقائياً بقبولك هذه الاتفاقية')
+    expect(eulaText).toContain('إرسالها ضروري لإكمال التسجيل والتفعيل')
+    expect(eulaText).toContain('إن لم توافق عليه فلن يكتمل تسجيل جهازك')
+  })
+
+  it('تُفصح الاتفاقية عن مسؤولية ملف مفتاح الاسترداد وكلمة مروره', () => {
+    expect(eulaText).toContain('ملف مفتاح الاسترداد (.tkey)')
+    expect(eulaText).toContain('أنت وحدك مسؤول عن حفظه')
+  })
+
+  it('شاشة القبول: موافقات منفصلة (الاتفاقية، بيانات التسجيل، مفتاح الاسترداد) — ولا خانة مدمجة', () => {
+    expect(LEGAL_CONSENT_CHECKBOXES.map((c) => c.id)).toEqual(['legal', 'registration', 'recovery'])
+    expect(LEGAL_CONSENT_CHECKBOXES[1].label).toContain('أوافق على إرسال بيانات التسجيل')
+    expect(LEGAL_CONSENT_CHECKBOXES[1].label).toContain('إلغاء تثبيته')
   })
 
   it('تُفصح عن أن إنشاء الحساب والتفعيل يتطلبان اتصالاً', () => {
