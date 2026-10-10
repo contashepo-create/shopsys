@@ -29,6 +29,8 @@ const databaseStorage = {
   recoveryNotice: () => ipcRenderer.invoke('database:recoveryNotice'),
   listFileBackups: () => ipcRenderer.invoke('database:listFileBackups'),
   restoreFileBackup: (path: string) => ipcRenderer.invoke('database:restoreFileBackup', { path }),
+  /* v1.0.22: نسخة كاملة من القاعدة بحوار حفظ (تنزيل SQLite) */
+  exportCopy: () => ipcRenderer.invoke('database:exportCopy'),
 }
 
 /* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.

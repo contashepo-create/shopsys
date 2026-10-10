@@ -205,15 +205,6 @@ interface AppState {
   renewalDismissedDay: string | null
   dismissRenewalNotice: (day?: string) => void
   /**
-   * بند 2 + سياسة الخصوصية (2026-10-08): موافقة العميل الصريحة على إرسال بلاغ
-   * التسجيل. سياسة الخصوصية المنشورة تقول إن البيانات محلية ولا تُرفع ⇒ إرسال
-   * بيانات المنشأة والتواصل بلا موافقة صريحة **مخالفة لوثيقتنا نفسها**. لذلك:
-   * خانة اختيار في معالج أول التشغيل (غير مفعّلة افتراضياً)، وبلا موافقة لا
-   * يُرسل شيء إطلاقاً — والتطبيق يعمل كاملاً دونها.
-   */
-  registrationConsentAt: string | null
-  setRegistrationConsent: (at?: string) => void
-  /**
    * بند 2 (تدقيق 2026-10-08): متى أُبلغ المطوّر بهذا التسجيل — مرة واحدة لكل
    * جهاز. تُحفظ عند **نجاح** الإرسال فقط، فيُعاد المحاولة في الإقلاع التالي لو
    * كان العميل أوفلاين (بند 6: لا إجبار على الإنترنت ولا تعطيل للعمل).
@@ -600,9 +591,6 @@ export const useAppStore = create<AppState>()(
       },
       renewalDismissedDay: null,
       dismissRenewalNotice: (day) => set({ renewalDismissedDay: day ?? new Date().toISOString().slice(0, 10) }),
-      registrationConsentAt: null,
-      setRegistrationConsent: (at) =>
-        set((s) => (s.registrationConsentAt ? s : { registrationConsentAt: at ?? new Date().toISOString() })),
       registrationReportedAt: null,
       /* حارس الفرق (درس ث1): لا set بلا تغيّر فعلي — لا تحديثات متكررة للمتجر */
       markRegistrationReported: (at) =>

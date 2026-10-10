@@ -544,20 +544,21 @@ export default function App() {
      شيء إطلاقاً — لا POST في الكود كله. الآن بلاغ واحد لكل جهاز بعد اكتمال
      الإعداد. القواعد: fire-and-forget (لا يعطّل الإقلاع ولا العمل)، مرة واحدة
      (العلامة تُحفظ عند النجاح فقط)، ويصلح أوفلاين بالمحاولة في الإقلاع التالي.
-     لا يُرسل إلا بيانات التواصل والمنشأة التي كتبها العميل في المعالج نفسه. */
+     يُرسل بيانات المعالج كاملة (المنشأة والمالك والتواصل والعنوان والنشاط والخطة والسنة
+     المالية) — لا كلمة المرور. انظر core/registration.ts. */
   useEffect(() => {
     if (!setup.completed) return
     let cancelled = false
     const report = async () => {
       const app = useAppStore.getState()
-      /* الموافقة الصريحة شرط إرسال — بلاها لا يُرسل شيء إطلاقاً (سياسة الخصوصية:
-         البيانات محلية، وبلاغ التسجيل اختياري بخانة يفعّلها العميل بنفسه). */
+      /* v1.0.22: البلاغ إلزامي بقبول الاتفاقية — لا خانة موافقة منفصلة. هذا المسار
+         يغطي الأجهزة التي أكملت الإعداد قبل هذا الإصدار، ومَن فشل إرساله عند الإنشاء. */
       if (!shouldReportRegistration({
         setupCompleted: app.setup.completed,
         deviceId: app.deviceId,
         reportedAt: app.registrationReportedAt,
-        consentAt: app.registrationConsentAt,
       })) return
+      const fy = app.fiscalYears[0]
       const payload = buildRegistrationReport({
         deviceId: app.deviceId,
         appVersion: APP_VERSION,
@@ -574,6 +575,9 @@ export default function App() {
         accountingMode: app.setup.accountingMode,
         plan: app.activatedPayload?.plan ?? 'trial',
         doctorSpecialty: app.setup.doctorSpecialty,
+        fiscalYearName: fy?.nameAr,
+        fiscalYearStart: fy?.startDate,
+        fiscalYearEnd: fy?.endDate,
       })
       if (!payload) return
       const result = await sendRegistrationReport(LICENSE_CLOUD_BASE_URL, payload)

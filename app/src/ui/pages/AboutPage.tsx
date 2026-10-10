@@ -154,7 +154,7 @@ export function AboutPage() {
               {updDecision.info.releaseNotesAr && <div className="mt-1 font-normal text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{updDecision.info.releaseNotesAr}</div>}
             </div>
             <div className="p-3 rounded-xl bg-slate-500/5 text-[11.5px] space-y-1.5">
-              <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><ShieldCheck size={14} className="text-emerald-500" /> خطة التحديث الآمن (تلقائية بالكامل):</div>
+              <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><ShieldCheck size={14} className="text-emerald-500" /> خطة التحديث الآمن (ما يحدث بالترتيب):</div>
               {buildUpdatePlan().map((st, i) => (
                 <div key={st.id} className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
                   <span className="w-4 h-4 rounded-full bg-slate-200 dark:bg-slate-700 text-[9px] font-black flex items-center justify-center shrink-0">{i + 1}</span>
@@ -162,7 +162,7 @@ export function AboutPage() {
                 </div>
               ))}
               <div className="pt-1 text-[10.5px] text-amber-600 dark:text-amber-400 font-bold">
-                🛟 أي فشل = تراجع تلقائي واستعادة النسخة الاحتياطية — بياناتك خارج مسار التثبيت ولا يمسها الحذف أبداً.
+                🛟 قبل التثبيت تُؤخذ نسخة احتياطية كاملة من قاعدتك في مجلد النسخ قبل التحديث، وإن تعذّرت لا يُثبَّت التحديث. التراجع عن إصدار سابق يتم يدوياً من هذه النسخة؛ بياناتك خارج مسار التثبيت.
               </div>
             </div>
             <div className="text-[11px] text-slate-400">

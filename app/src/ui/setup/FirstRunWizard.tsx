@@ -12,7 +12,11 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useState } from 'react'
 import { Check, ChevronLeft, Crown, Sparkles, CalendarRange, Globe2, Store, Building2, KeyRound } from 'lucide-react'
 import { ARAB_COUNTRIES, getCountry, type Country } from '../../core/countries.ts'
-import { normalizePhone } from '../../core/registration.ts'
+import {
+  buildRegistrationReport, normalizePhone, sendRegistrationReport, REGISTRATION_NEEDS_INTERNET_AR,
+} from '../../core/registration.ts'
+import { APP_VERSION } from '../../core/updates.ts'
+import { LICENSE_CLOUD_BASE_URL } from '../../core/cloud.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, type ActivityTemplate } from '../../core/activities.ts'
 import { citiesOf } from '../../core/cities.ts'
 import { suggestFiscalYear, validateFiscalYear } from '../../core/fiscal.ts'
@@ -50,11 +54,10 @@ const isValidPhone = (v: string) => normalizePhone(v) !== ''
 
 export function FirstRunWizard() {
   const completeSetup = useAppStore((s) => s.completeSetup)
-  const setRegistrationConsent = useAppStore((s) => s.setRegistrationConsent)
   const [step, setStep] = useState(1)
-  /* بند 2 (تدقيق 2026-10-08): موافقة صريحة على بلاغ التسجيل — **غير مفعّلة
-     افتراضياً** ولا تمنع إكمال المعالج، فالتطبيق يعمل كاملاً بدونها. */
-  const [sendRegistration, setSendRegistration] = useState(false)
+  /* v1.0.22: التسجيل لدى المطوّر إلزامي ويحتاج اتصالاً — لا يكتمل المعالج قبل نجاحه */
+  const [regBusy, setRegBusy] = useState(false)
+  const [regError, setRegError] = useState<string | null>(null)
   /* v1.0.8: اختيار مكان قاعدة البيانات عند أول تشغيل (سطح المكتب) */
   const storage = isElectronRuntime() ? desktopDatabaseStorage() : null
   const [chosenDbPath, setChosenDbPath] = useState<string | null>(null)
@@ -107,13 +110,48 @@ export function FirstRunWizard() {
     setFyName(fy.nameAr); setFyStart(fy.startDate); setFyEnd(fy.endDate)
   }
 
+  /* v1.0.22 — إنشاء الحساب يتطلب إنترنتاً: لا يُكمل المعالج إلا بعد تسجيل الجهاز
+     لدى مركز الترخيص (يظهر الجهاز في لوحة المطوّر). بلا اتصال تبقى البيانات في
+     النموذج ويعاد الضغط لاحقاً — لا حفظ نصف مكتمل ولا تفعيل بلا تسجيل. */
   const finish = async () => {
-    if (country && activity && companyOk && fyErrors.length === 0) {
-      // هوية المالك تُستمد من بيانات التسجيل (طلب المالك): اسمه معرف دخوله +
-      // هاتفه وبريده معرفات بديلة + كلمة سره تُعيَّن الآن فتُفعَّل شاشة الدخول فوراً
+    if (!(country && activity && companyOk && fyErrors.length === 0) || regBusy) return
+    setRegBusy(true)
+    setRegError(null)
+    try {
+      const app = useAppStore.getState()
+      const report = buildRegistrationReport({
+        deviceId: app.deviceId,
+        appVersion: APP_VERSION,
+        platform: isElectronRuntime() ? 'desktop' : 'web',
+        shopName: shopName.trim(),
+        ownerName: ownerName.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+        city: effectiveCity,
+        street: street.trim(),
+        countryCode: country.code,
+        activityId: activity.id,
+        activityNameAr: activity.nameAr,
+        accountingMode: app.setup.accountingMode,
+        plan: 'trial',
+        doctorSpecialty: specialty === '__other__' ? specialtyOther.trim() : specialty,
+        fiscalYearName: fyName.trim(),
+        fiscalYearStart: fyStart,
+        fiscalYearEnd: fyEnd,
+      })
+      if (!report) {
+        setRegError('معرّف الجهاز غير صالح — أعد تشغيل التطبيق ثم أعد المحاولة.')
+        return
+      }
+      const result = await sendRegistrationReport(LICENSE_CLOUD_BASE_URL, report)
+      if (result === 'failed') {
+        setRegError(REGISTRATION_NEEDS_INTERNET_AR)
+        return
+      }
+      app.markRegistrationReported()
+      // هوية المالك تُستمد من بيانات التسجيل: اسمه معرف دخوله + هاتفه وبريده معرفات بديلة
+      // + كلمة سره تُعيَّن الآن فتُفعَّل شاشة الدخول فوراً
       const pinHash = await hashPin(ownerPin)
-      // الموافقة تُحفظ قبل completeSetup — فالإرسال يحدث في أثر App.tsx بعده مباشرة
-      if (sendRegistration) setRegistrationConsent()
       const data = useDataStore.getState()
       data.updateOwnerProfile({ nameAr: ownerName.trim(), phone: phone.trim(), email: email.trim() })
       data.setOwnerPin(pinHash)
@@ -123,6 +161,8 @@ export function FirstRunWizard() {
         contact: { phone: phone.trim(), email: email.trim(), city: effectiveCity, street: street.trim() },
         doctorSpecialty: specialty === '__other__' ? specialtyOther.trim() : specialty,
       })
+    } finally {
+      setRegBusy(false)
     }
   }
 
@@ -450,26 +490,12 @@ export function FirstRunWizard() {
                 </div>
               )}
 
-              {/* بند 2: إفصاح وموافقة — سياسة الخصوصية تقول إن البيانات محلية،
-                  فلا يُرسل شيء للمطوّر إلا بخانة يفعّلها العميل بنفسه. */}
-              <label className="flex items-start gap-3 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-800/40 p-4 cursor-pointer hover:border-brand-400/60 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={sendRegistration}
-                  onChange={(e) => setSendRegistration(e.target.checked)}
-                  className="mt-0.5 w-5 h-5 accent-violet-600 rounded shrink-0"
-                />
-                <span className="text-[12px] leading-relaxed text-slate-600 dark:text-slate-300">
-                  <b className="text-slate-800 dark:text-white">أوافق على إبلاغ المطوّر بتسجيلي</b> (اختياري)
-                  <br />
-                  يُرسل <b>مرة واحدة</b>: اسم المنشأة والمالك، الهاتف، البريد، المدينة والشارع، البلد،
-                  نوع النشاط، معرّف الجهاز وإصدار التطبيق — ليتمكن المطوّر من إصدار الترخيص وإبلاغك
-                  قبل انتهاء الاشتراك.
-                  <br />
-                  <span className="text-slate-400">لا تُرسل أي بيانات محاسبية (أصناف، فواتير، قيود، أرصدة، عملاء).
-                  وبدون هذه الموافقة يعمل التطبيق كاملاً ولا يُرسل شيء.</span>
-                </span>
-              </label>
+            </div>
+          )}
+
+          {regError && (
+            <div role="alert" className="mt-4 rounded-2xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 p-4 text-[12.5px] font-bold text-rose-700 dark:text-rose-300">
+              {regError}
             </div>
           )}
 
@@ -482,11 +508,11 @@ export function FirstRunWizard() {
               رجوع
             </button>
             <button
-              disabled={!canNext}
+              disabled={!canNext || regBusy}
               onClick={() => (step === 5 ? void finish() : setStep((s) => s + 1))}
               className="group flex items-center gap-2 px-7 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/30 transition-all duration-200 hover:scale-105 hover:shadow-xl active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
             >
-              {step === 5 ? '🚀 ابدأ العمل' : 'التالي'}
+              {step === 5 ? (regBusy ? '… جارٍ تسجيل الجهاز' : '🚀 ابدأ العمل') : 'التالي'}
               {step < 5 && <ChevronLeft size={16} className="transition-transform duration-200 group-hover:-translate-x-1" />}
             </button>
           </div>

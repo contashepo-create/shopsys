@@ -12,8 +12,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react'
 import React from 'react'
 
-// عزل الشبكة: مزامنة السحابة تفشل بصمت (سلوك الأوفلاين المدعوم)
-vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
+// عزل الشبكة: مزامنة السحابة تفشل بصمت (سلوك الأوفلاين المدعوم).
+// v1.0.22: إنشاء الحساب يتطلب تسجيل الجهاز لدى المطوّر ⇒ نقطة /register تُجاب بنجاح،
+// وأي نقطة أخرى تفشل كما كانت (الأوفلاين المدعوم للمزامنة).
+vi.stubGlobal('fetch', vi.fn((url: string) => (
+  String(url).includes('/register')
+    ? Promise.resolve(new Response(JSON.stringify({ ok: true, isNew: true }), { status: 200 }))
+    : Promise.reject(new Error('offline'))
+)))
 
 const { default: App } = await import('../src/App.tsx')
 const { useAppStore } = await import('../src/stores/app.store.ts')

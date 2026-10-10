@@ -40,6 +40,8 @@ export function DesktopUpdater() {
   const [state, setState] = useState<UpdaterState | null>(null)
   const [version, setVersion] = useState('')
   const [busy, setBusy] = useState(false)
+  /* v1.0.22: التثبيت يبدأ بنسخة احتياطية قبل التحديث — إن تعذّرت لا يُثبَّت ونُبلغ هنا */
+  const [installError, setInstallError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!bridge) return
@@ -62,8 +64,20 @@ export function DesktopUpdater() {
             <RefreshCw className={`w-4 h-4 ${busy || state?.status === 'checking' ? 'animate-spin' : ''}`} /> فحص التحديثات
           </Btn>
         ) : (
-          <Btn onClick={() => void bridge.install()}>
-            <Rocket className="w-4 h-4" /> إعادة التشغيل وتثبيت v{state.version ?? ''}
+          <Btn
+            disabled={busy}
+            onClick={async () => {
+              setInstallError(null)
+              setBusy(true)
+              try {
+                await bridge.install()
+              } catch (error) {
+                setInstallError((error as Error).message)
+                setBusy(false)
+              }
+            }}
+          >
+            <Rocket className="w-4 h-4" /> {busy ? 'جارٍ أخذ نسخة احتياطية ثم التثبيت…' : `إعادة التشغيل وتثبيت v${state.version ?? ''}`}
           </Btn>
         )}
       </div>
@@ -73,6 +87,7 @@ export function DesktopUpdater() {
         </div>
       )}
       {state?.status === 'error' && <div className="text-[11px] text-rose-600 font-bold">{state.message ?? ''}</div>}
+      {installError && <div role="alert" className="text-[11px] text-rose-600 font-bold">{installError}</div>}
       {state?.status === 'downloaded' && <div className="text-[11px] text-emerald-600 font-bold">يُثبَّت تلقائياً عند إغلاق التطبيق إن لم تعِد التشغيل الآن — بياناتك خارج مسار التثبيت.</div>}
     </div>
   )

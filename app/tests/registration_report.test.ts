@@ -145,29 +145,26 @@ describe('① بناء البلاغ وتعقيمه', () => {
   })
 
   it('④ لا يُرسل إلا بعد اكتمال الإعداد ومرة واحدة لكل جهاز', () => {
-    const base = { deviceId: CUSTOMER.deviceId, reportedAt: null, consentAt: '2026-10-08T09:00:00Z' }
+    const base = { deviceId: CUSTOMER.deviceId, reportedAt: null }
     expect(shouldReportRegistration({ ...base, setupCompleted: false })).toBe(false)
     expect(shouldReportRegistration({ ...base, setupCompleted: true })).toBe(true)
     expect(shouldReportRegistration({ ...base, setupCompleted: true, reportedAt: '2026-10-08T09:00:00Z' })).toBe(false)
     expect(shouldReportRegistration({ ...base, setupCompleted: true, deviceId: 'تالف' })).toBe(false)
   })
 
-  /* سياسة الخصوصية المنشورة تقول إن البيانات محلية ولا تُرفع ⇒ إرسال بيانات
-     المنشأة والتواصل بلا موافقة صريحة مخالفة لوثيقتنا نفسها. */
-  it('بلا موافقة صريحة ⇒ لا إرسال إطلاقاً (شرط قانوني لا تحسين)', () => {
-    expect(shouldReportRegistration({ setupCompleted: true, deviceId: CUSTOMER.deviceId, reportedAt: null, consentAt: null })).toBe(false)
-    expect(shouldReportRegistration({ setupCompleted: true, deviceId: CUSTOMER.deviceId, reportedAt: null, consentAt: '' })).toBe(false)
-    expect(shouldReportRegistration({ setupCompleted: true, deviceId: CUSTOMER.deviceId, reportedAt: null, consentAt: '2026-10-08T09:00:00Z' })).toBe(true)
+  /* v1.0.22: الإرسال إلزامي بقبول الاتفاقية — لا خانة موافقة ولا حقل consentAt. */
+  it('لا شرط موافقة منفصل: الإعداد المكتمل وحده يكفي للإرسال', () => {
+    expect(shouldReportRegistration({ setupCompleted: true, deviceId: CUSTOMER.deviceId, reportedAt: null })).toBe(true)
   })
 
   it('الإفصاح مكتوب في سياسة الخصوصية المعروضة على العميل', async () => {
     const { PRIVACY, LEGAL_VERSION } = await import('../src/core/legal.ts')
     const text = JSON.stringify(PRIVACY)
     expect(text).toContain('بلاغ التسجيل')
-    expect(text).toContain('موافقة صريحة')
+    expect(text).toContain('إلزامي عند قبول الاتفاقية')
     expect(text).toContain('reg:') // مكان الحفظ معلن
     expect(text).toMatch(/لا أصناف ولا فواتير|ما لا يُرسل أبداً/)
-    expect(LEGAL_VERSION).toBe('2026-10-08') // تغيير جوهري ⇒ تُطلب الموافقة مجدداً
+    expect(LEGAL_VERSION).not.toBe('2026-10-08') // تغيير جوهري ⇒ تُطلب الموافقة مجدداً
   })
 })
 

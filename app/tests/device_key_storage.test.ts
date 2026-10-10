@@ -251,3 +251,52 @@ describe('السجل التشخيصي', () => {
     expect(describeDeviceKeyOutcome(broken)).toContain('تحذيرات')
   })
 })
+
+/* v1.0.22 — المفتاح المشفّر غير القابل للفك لا يُكتب فوقه أبداً.
+   كان التوليد الجديد يستبدل الملف مباشرة، فتُفقد البيانات المشفّرة بالمفتاح القديم
+   نهائياً (ولو عاد المفتاح القديم لأي سبب — مثلاً تغيّر ملف تعريف ويندوز — لكانت البيانات قابلة للاسترجاع). */
+describe('v1.0.22 — حفظ المفتاح المشفّر القديم قبل أي استبدال', () => {
+  const OLD_ENC = Buffer.from('shopsys-safekey:v1:بيانات-مفتاح-قديم-لا-تُفك', 'utf8')
+
+  it('مشفّر غير قابل للفك ⇒ نسخة مميزة بالبايتات الأصلية ثم توليد جديد', () => {
+    disk.write(DEVICE_KEY_ENC_FILE, OLD_ENC)
+    disk.ops = [] // نُسجّل ترتيب ما يفعله الإقلاع فقط، لا تهيئة الاختبار
+    const outcome = resolveDeviceKey(buildIo(disk, makeSafeStorage(), logs))
+    expect(outcome.regenerated).toBe(true)
+    const preserved = [...disk.files.keys()].filter((name) => name.startsWith(`${DEVICE_KEY_ENC_FILE}.unreadable-`))
+    expect(preserved).toHaveLength(1)
+    expect(disk.files.get(preserved[0])!.equals(OLD_ENC)).toBe(true)
+    // الكتابة الأولى للمفتاح القديم قبل أي كتابة فوق الملف الأصلي
+    const firstWriteToEnc = disk.ops.findIndex((op) => op === `write:${DEVICE_KEY_ENC_FILE}`)
+    const preserveWrite = disk.ops.findIndex((op) => op.startsWith(`write:${DEVICE_KEY_ENC_FILE}.unreadable-`))
+    expect(preserveWrite).toBeGreaterThanOrEqual(0)
+    expect(preserveWrite).toBeLessThan(firstWriteToEnc)
+    expect(logs.join(' ')).toContain('لم تُستبدل')
+  })
+
+  it('لا ملف مشفّر أصلاً ⇒ لا نسخ مكررة', () => {
+    resolveDeviceKey(buildIo(disk, makeSafeStorage()))
+    expect([...disk.files.keys()].some((name) => name.includes('.unreadable-'))).toBe(false)
+  })
+
+  it('safeStorage غير متاح الآن ⇒ الملف المشفّر سليم، فلا نسخ ولا كتابة فوقه', () => {
+    disk.write(DEVICE_KEY_ENC_FILE, OLD_ENC)
+    resolveDeviceKey(buildIo(disk, makeSafeStorage({ available: false })))
+    expect(disk.files.get(DEVICE_KEY_ENC_FILE)!.equals(OLD_ENC)).toBe(true)
+    expect([...disk.files.keys()].some((name) => name.includes('.unreadable-'))).toBe(false)
+  })
+
+  it('تعذّر حفظ النسخة ⇒ يُرمى خطأ والملف الأصلي كما هو (لا استبدال أعمى)', () => {
+    disk.write(DEVICE_KEY_ENC_FILE, OLD_ENC)
+    const io = buildIo(disk, makeSafeStorage())
+    const failingIo = {
+      ...io,
+      writeFile: (name: string, data: Buffer) => {
+        if (name.includes('.unreadable-')) throw new Error('القرص ممتلئ')
+        io.writeFile(name, data)
+      },
+    }
+    expect(() => resolveDeviceKey(failingIo)).toThrow(/لن يُستبدل/)
+    expect(disk.files.get(DEVICE_KEY_ENC_FILE)!.equals(OLD_ENC)).toBe(true)
+  })
+})

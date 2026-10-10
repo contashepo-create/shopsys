@@ -90,6 +90,13 @@ export function sanitizeRegistration(raw) {
   }
   const specialty = cleanText(raw.doctorSpecialty, 60)
   if (specialty) out.doctorSpecialty = specialty
+  /* v1.0.22: السنة المالية الأولى من المعالج — تاريخ YYYY-MM-DD فقط، وإلا تُسقط */
+  const fyName = cleanText(raw.fiscalYearName, 40)
+  if (fyName) out.fiscalYearName = fyName
+  for (const key of ['fiscalYearStart', 'fiscalYearEnd']) {
+    const v = typeof raw[key] === 'string' ? raw[key].trim() : ''
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) out[key] = v
+  }
   return out
 }
 

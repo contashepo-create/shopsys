@@ -1,0 +1,50 @@
+/**
+ * بوابة التخزين والنسخ الاحتياطي (v1.0.22) — فحوص بنيوية على الكود الحقيقي،
+ * لأن Electron لا يعمل داخل بيئة الاختبار. المنطق الخالص مختبر في
+ * tests/storage_policy_v1022.test.ts.
+ */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+const read = (rel) => readFileSync(join(root, rel), 'utf8')
+const main = read('desktop/main.ts')
+const preload = read('desktop/preload.ts')
+const bridge = read('src/data/desktopBridge.ts')
+const lock = read('src/ui/LockScreen.tsx')
+const updater = read('src/ui/components/DesktopUpdater.tsx')
+const about = read('src/ui/pages/AboutPage.tsx')
+
+let failures = 0
+const check = (name, cond) => {
+  if (cond) console.log(`✓ ${name}`)
+  else { failures++; console.log(`❌ ${name}`) }
+}
+
+check('النسخ الساعية: 24 نسخة كل ساعة (يوم واحد) — من storagePolicy', /hourly:\s*\{\s*keep:\s*24,\s*ms:\s*60 \* 60 \* 1000\s*\}/.test(read('desktop/storagePolicy.ts')))
+check('النسخ الساعية تُكتب في المكان الافتراضي userData/backups دائماً', /join\(app\.getPath\('userData'\), 'backups', kind\)/.test(main))
+check('rotateBackups يستقبل القاعدة صراحة', /async function rotateBackups\(target: ShopsysDatabase \| null = database\)/.test(main))
+check('before-quit يمرّر القاعدة المغلقة للنسخة (إصلاح: كانت تُصفَّر فتخرج بلا نسخة)', /void rotateBackups\(closing\)/.test(main) && !/void rotateBackups\(\)\s*\n\s*\.catch/.test(main))
+check('نسخة قبل التحديث تُؤخذ فور اكتمال التنزيل', /state\.status === 'downloaded'[\s\S]{0,400}backupBeforeUpdate\(state\.version\)/.test(main))
+check('نسخة ما قبل التحديث في backups/pre-update', /join\(app\.getPath\('userData'\), 'backups', 'pre-update'\)/.test(main))
+check('التثبيت ينتظر نسخة ما قبل التحديث ويرفض بلا نسخة', /await preUpdateBackup[\s\S]{0,300}throw new Error\('تعذّرت النسخة الاحتياطية قبل التحديث/.test(main))
+check('التثبيت يعيد التشغيل تلقائياً (quitAndInstall(false, true))', /autoUpdater\.quitAndInstall\(false, true\)/.test(main))
+check('مؤشر المكان المخصص يُرآى في المكان الافتراضي وبجوار القاعدة', /locationPointerMirrors/.test(main) && /'backups', 'db-location\.json'/.test(main))
+check('استعادة المؤشر من المرآة عند فقدانه', /function restoreLocationPointerIfMissing/.test(main) && /restoreLocationPointerIfMissing\(\)\s*\n\s*await resolveMissingLocation/.test(main))
+check('لا فتح صامت لقاعدة فارغة: مكان مفقود أو ملف اختفى ⇒ سؤال المستخدم', /resolveMissingLocation/.test(main) && /file-missing|folder-missing/.test(main))
+check('خيار «المكان الافتراضي مؤقتاً» (الفارغ) أُزيل', !/المكان الافتراضي مؤقتاً/.test(main) && !/useDefaultDbForSession/.test(main))
+check('اكتشاف البيانات السابقة عند أول تشغيل قبل أي معالج', /await offerExistingData\(\)/.test(main) && /Tahakom\\\\+shopsys\.db/.test(main))
+check('القاعدة الحيّة المكتشفة تُعتمد في مكانها (لا نسخ)', /adoptExistingData[\s\S]{0,200}kind === 'live'/.test(main))
+check('تاريخ فتح المكان المخصص يُسجَّل لكشف اختفاء الملف', /customDbOpenedAt: new Date\(\)\.toISOString\(\)/.test(main))
+check('shieldDamagedDatabase يسترد من كل الأجيال (ساعي/يومي/أسبوعي/قبل التحديث)', /join\(ud, 'backups', 'hourly'\)/.test(main) && /join\(ud, 'backups', 'pre-update'\)/.test(main))
+check('فشل مفتاح الجهاز يُبلَّغ برسالة ولا يصمت', /تعذّر تهيئة مفتاح الجهاز/.test(main))
+check('تصدير SQLite كامل بحوار حفظ (database:exportCopy)', /ipcMain\.handle\('database:exportCopy'/.test(main) && /raw\.backup\(result\.filePath\)/.test(main))
+check('preload يعرض exportCopy', /exportCopy: \(\) => ipcRenderer\.invoke\('database:exportCopy'\)/.test(preload))
+check('عقد الجسر يصف exportCopy', /exportCopy\(\): Promise/.test(bridge))
+check('شاشة القفل تعرض Excel شاملاً وSQLite', /exportExcel/.test(lock) && /exportSqlite/.test(lock) && /قاعدة SQLite \(\.db\)/.test(lock))
+check('زر التحديث يعالج الخطأ بدل unhandled', /setInstallError/.test(updater) && /await bridge\.install\(\)/.test(updater))
+check('الحوار لا يدّعي تراجعاً تلقائياً', !/تراجع تلقائي واستعادة/.test(about))
+
+console.log(failures ? `\n❌ فشلت ${failures} فحوص` : '\n✅ بوابة التخزين والنسخ v1.0.22 تعمل')
+process.exit(failures ? 1 : 0)

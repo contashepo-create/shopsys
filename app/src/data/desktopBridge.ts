@@ -86,6 +86,8 @@ export interface DesktopDatabaseStorageBridge {
   recoveryNotice(): Promise<{ at: string; from: string | null } | null>
   listFileBackups(): Promise<{ path: string; where: string; kind: string; size: number; at: string }[]>
   restoreFileBackup(path: string): Promise<{ ok: boolean; restarting?: boolean }>
+  /* v1.0.22: تنزيل نسخة SQLite كاملة — يُعاد المسار الذي اختاره المستخدم */
+  exportCopy(): Promise<{ ok: true; path: string } | { ok: false; canceled: true }>
 }
 
 /**

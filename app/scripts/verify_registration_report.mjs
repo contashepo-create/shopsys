@@ -102,15 +102,13 @@ ok('التعقيم: وسوم ومحارف تحكم تُنزع، والبريد/�
   assert.equal(sanitizeRegistration({ deviceId: 'SHOP-AAA1-1111-1111', email: 'ليس بريداً', phone: 'كلام' }).email, '')
 })
 
-ok('مرة واحدة لكل جهاز، وبعد اكتمال الإعداد، وبموافقة صريحة', () => {
-  const base = { deviceId: CUSTOMER.deviceId, reportedAt: null, consentAt: '2026-10-08T09:00:00Z' }
+ok('مرة واحدة لكل جهاز، وبعد اكتمال الإعداد (الإلزام بقبول الاتفاقية — بلا خانة موافقة)', () => {
+  const base = { deviceId: CUSTOMER.deviceId, reportedAt: null }
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: false }), false)
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: true }), true)
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, reportedAt: '2026-10-08T09:00:00Z' }), false)
   assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, deviceId: 'تالف' }), false)
-  // شرط قانوني: سياسة الخصوصية تقول إن البيانات محلية ⇒ بلا خانة موافقة لا إرسال
-  assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, consentAt: null }), false)
-  assert.equal(shouldReportRegistration({ ...base, setupCompleted: true, consentAt: '' }), false)
+  // v1.0.22: لا consentAt — قبول الاتفاقية الإلزامي (مع إفصاح صريح) هو الموافقة
 })
 
 await okAsync('sendRegistrationReport: sent/duplicate/failed — ولا استثناء أبداً', async () => {
@@ -204,20 +202,16 @@ ok('اللوحة والأمر: /تسجيلات + زر «🆕 التسجيلات�
   assert.match(serverSrc, /export const REG_PREFIX = 'reg:'/)
 })
 
-ok('الموافقة: خانة في المعالج + إفصاح في سياسة الخصوصية + حقل في المتجر', () => {
+ok('v1.0.22 الإلزام: لا خانة موافقة في المعالج + التسجيل شرط إكمال الإعداد + إفصاح في الاتفاقية', () => {
   const wizardSrc = src('../src/ui/setup/FirstRunWizard.tsx')
   const legalSrc = src('../src/core/legal.ts')
-  assert.match(wizardSrc, /useState\(false\)/) // غير مفعّلة افتراضياً
-  assert.match(wizardSrc, /setRegistrationConsent/)
-  assert.match(wizardSrc, /if \(sendRegistration\) setRegistrationConsent\(\)/)
-  assert.match(wizardSrc, /أوافق على إبلاغ المطوّر بتسجيلي/)
-  assert.match(wizardSrc, /اختياري/)
-  assert.match(storeSrc, /registrationConsentAt: string \| null/)
-  assert.match(storeSrc, /setRegistrationConsent/)
-  assert.match(appSrc, /consentAt: app\.registrationConsentAt/)
-  assert.match(legalSrc, /بلاغ التسجيل/)
-  assert.match(legalSrc, /موافقة صريحة/)
-  assert.match(legalSrc, /LEGAL_VERSION = '2026-10-08'/) // تغيير جوهري ⇒ إعادة طلب الموافقة
+  assert.doesNotMatch(wizardSrc, /setRegistrationConsent|أوافق على إبلاغ المطوّر بتسجيلي/)
+  assert.doesNotMatch(storeSrc, /registrationConsentAt|setRegistrationConsent/)
+  assert.doesNotMatch(appSrc, /consentAt/)
+  assert.match(wizardSrc, /const result = await sendRegistrationReport\(LICENSE_CLOUD_BASE_URL, report\)/)
+  assert.match(wizardSrc, /if \(result === 'failed'\)/) // لا إكمال بلا تسجيل
+  assert.match(legalSrc, /إرسال بيانات التسجيل إلزامي/)
+  assert.match(legalSrc, /LEGAL_VERSION = '2026-10-11'/) // تغيير جوهري ⇒ إعادة طلب القبول
   assert.match(appSrc, /legalCurrent\.version === LEGAL_VERSION/)
 })
 

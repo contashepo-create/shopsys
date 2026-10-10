@@ -8,10 +8,11 @@ import { useMemo, useState } from 'react'
 import { ShieldCheck, KeyRound, Copy, Fingerprint, CalendarClock, Sparkles, AlertTriangle, XCircle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import {
-  evaluateLicense, acceptActivationKey, hasFeature, effectiveLimits, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
+  evaluateLicense, hasFeature, effectiveLimits, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
   type LicenseFeature,
 } from '../../core/license.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { activateOnline } from '../../core/activation.ts'
 
 const ALL_FEATURES: LicenseFeature[] = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot']
 
@@ -35,7 +36,7 @@ export function LicensePage() {
     setBusy(true)
     try {
       // M4: الفحوص نفسها التي في شاشة القفل — الإبطال ثم التوقيع ثم النشاط
-      const payload = await acceptActivationKey({
+      const payload = await activateOnline({
         key: keyInput, deviceId, revokedKeys, activityId: setup.activityId, activityKeyHistory: setup.activityKeyHistory,
       })
       setActivated(keyInput.trim(), payload)

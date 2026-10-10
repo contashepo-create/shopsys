@@ -73,7 +73,7 @@ export interface UpdatePlanStep {
  */
 export function buildUpdatePlan(): UpdatePlanStep[] {
   return [
-    { id: 'backup_db', titleAr: 'نسخة احتياطية معزولة لقاعدة البيانات في المجلد المؤقت (خارج مسار التثبيت)', critical: true },
+    { id: 'backup_db', titleAr: 'نسخة احتياطية كاملة من القاعدة قبل التثبيت (مجلد backups/pre-update، خارج مسار التثبيت)', critical: true },
     { id: 'download', titleAr: 'تنزيل حزمة التحديث في الخلفية', critical: true },
     { id: 'verify_hash', titleAr: 'التحقق من بصمة SHA-256 للحزمة', critical: true },
     { id: 'stage', titleAr: 'تجهيز التحديث (staging) بلا مساس بالنسخة العاملة', critical: true },

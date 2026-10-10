@@ -127,6 +127,26 @@ function writePlaintextKey(io: DeviceKeyIo, key: Buffer): void {
   io.writeFile(DEVICE_KEY_FILE, key)
 }
 
+/**
+ * v1.0.22: ملف مشفّر موجود لكنه غير قابل للفك (تغيّر ملف تعريف ويندوز، أو ترحيل
+ * جهاز، أو عطب) — **لا يُكتب فوقه أبداً**. كان الكتب فوقه يُتلف المفتاح الوحيد
+ * الذي تُفك به البيانات المشفّرة. يُحفظ نسخة مميزة بالوقت بجانبه لاسترجاعه يدوياً،
+ * وإن تعذّر حفظ النسخة نفسها يُرمى خطأ فيبقى الملف الأصلي كما هو.
+ */
+export function preserveUnreadableEncryptedKey(io: DeviceKeyIo, reason: string): string | null {
+  const raw = io.readFile(DEVICE_KEY_ENC_FILE)
+  if (!raw) return null
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const name = `${DEVICE_KEY_ENC_FILE}.unreadable-${stamp}`
+  try {
+    io.writeFile(name, raw)
+  } catch (err) {
+    throw new Error(`تعذّر حفظ نسخة من المفتاح المشفّر غير القابل للفك (${reason}) — لن يُستبدل: ${(err as Error).message}`)
+  }
+  io.log('device-key', `مفتاح مشفّر غير قابل للفك (${reason}) — حُفظت نسخة باسم ${name} ولم تُستبدل`)
+  return name
+}
+
 export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
   const warnings: string[] = []
 
@@ -145,7 +165,15 @@ export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
     }
     return { key: enc.key, storage: 'safeStorage', migrated: false, regenerated: false, warnings }
   }
-  if (enc.reason && enc.reason !== 'missing') warnings.push(enc.reason)
+  if (enc.reason && enc.reason !== 'missing') {
+    warnings.push(enc.reason)
+    /* لا كتابة فوق مفتاح مشفّر غير قابل للفك — يُحفظ جانباً أولاً (انظر الدالة).
+       إن كان safeStorage نفسه غير متاح فالملف سليم وإنما لم نستطع فكّه الآن ⇒ لا نسخ مكررة. */
+    if (safeAvailable(io)) {
+      const kept = preserveUnreadableEncryptedKey(io, enc.reason)
+      if (kept) warnings.push(`حُفظ المفتاح المشفّر القديم باسم ${kept}`)
+    }
+  }
 
   /* ② ملف صريح قديم ⇒ ترحيل إلى المشفّر إن أمكن (بلا حذف قبل التحقق) */
   const plain = io.readFile(DEVICE_KEY_FILE)

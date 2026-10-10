@@ -1,30 +1,28 @@
 /**
- * بلاغ التسجيل الجديد — بند 2 من تدقيق 2026-10-08.
+ * بلاغ التسجيل — بند 2 من تدقيق 2026-10-08، ثم v1.0.22: إلزامي.
  * ─────────────────────────────────────────────────────
- * ما كان: العميل يملأ معالج أول التشغيل (الاسم، الهاتف، البريد، اسم المنشأة،
- * النشاط، المدينة، الشارع) ثم… **لا يصل المطوّر شيء**. لا طلب POST في الكود
- * كله، ولا سجل على الخادم، ولا إشعار. المطوّر لا يعرف بوجود عميل جديد إلا إذا
- * أرسل له العميل معرف الجهاز يدوياً وطلب مفتاحاً.
+ * ما كان: بلاغ اختياري بخانة موافقة لا يفعّلها أحد تقريباً، فلم يصل المطوّر
+ * أي عميل جديد بلا إرسال يدوي من العميل.
  *
- * ما صار: بلاغ واحد لكل جهاز يُرسل بعد اكتمال الإعداد مباشرة إلى مركز التحكم
- * (`tools/devbot`)، فيصل المطوّر على التليجرام بكل بيانات العميل، ويُسجَّل
- * الجهاز في KV للبحث لاحقاً.
+ * الآن (v1.0.22): قبول اتفاقية الترخيص يعني الموافقة على إرسال بيانات المعالج
+ * تلقائياً إلى مركز الترخيص (Cloudflare Workers + KV)، وهذا مفصّل في الاتفاقية
+ * وسياسة الخصوصية ومعلن قبل القبول. **لا توجد خانة موافقة منفصلة.** إنشاء الحساب
+ * يتطلب اتصالاً: معالج أول التشغيل لا يكتمل قبل نجاح البلاغ (انظر FirstRunWizard).
+ *
+ * ما يُرسل: بيانات المنشأة والمالك والتواصل والعنوان والنشاط والخطة والسنة المالية
+ * وتخصص الطبيب إن وُجد. **لا يُرسل أبداً:** كلمة مرور المالك (PIN)، ولا الفواتير،
+ * ولا الأرصدة، ولا الأصناف، ولا مسارات الملفات المحلية.
  *
  * قواعد لا تُكسر:
- *   • **لا يمنع الإقلاع ولا يعطّل العمل**: الإرسال fire-and-forget، وأي فشل
- *     شبكة يُبتلع — العميل أوفلاين يكمل عمله عادي ويُعاد المحاولة في الإقلاع
- *     التالي (بند 6: لا إجبار على الإنترنت).
- *   • **مرة واحدة لكل جهاز**: العلامة `registrationReportedAt` تُحفظ محلياً،
- *     فلا إزعاج متكرر للمطوّر عند كل إقلاع.
- *   • **لا بيانات مالية ولا مستندات**: بيانات التواصل والمنشأة التي كتبها
- *     العميل بنفسه في المعالج فقط، وبطول محدود. لا فواتير ولا أرصدة ولا أصناف.
- *   • **موافقة صريحة سابقة**: خانة اختيار في معالج أول التشغيل (غير مفعّلة
- *     افتراضياً ولا تمنع الإكمال) + إفصاح كامل في سياسة الخصوصية (الحقول،
- *     الغرض، ما لا يُرسل أبداً، مكان التخزين، الحذف). بلا `registrationConsentAt`
- *     لا يُرسل شيء إطلاقاً — انظر `shouldReportRegistration` و`LEGAL_VERSION`.
+ *   • **مرة واحدة لكل جهاز**: العلامة `registrationReportedAt` تُحفظ عند النجاح فقط.
+ *   • **صيغة ثابتة وتعقيم كامل** — انظر buildRegistrationReport.
+ *   • **الإقلاع اللاحق يعيد المحاولة** لأي جهاز لم يُبلَّغ (ترقية من إصدار سابق).
  */
 
 export const REGISTRATION_PATH = '/register'
+/** رسالة إنشاء الحساب بلا اتصال — تُعرض في المعالج، والصياغة هنا لتبقى موحّدة */
+export const REGISTRATION_NEEDS_INTERNET_AR =
+  'إنشاء الحساب يتطلب اتصالاً بالإنترنت لتسجيل جهازك لدى المطوّر. تحقق من الاتصال ثم اضغط «ابدأ العمل» مرة أخرى — لن تفقد ما كتبته.'
 /** حد حجم البلاغ — العامل يرفض ما فوقه (دفاع مزدوج) */
 export const REGISTRATION_MAX_BYTES = 8_192
 
@@ -48,8 +46,14 @@ export interface RegistrationReport {
   plan: string
   /** خصوصية العيادة — تُرسل فقط إن وُجدت (نشاط طبي) */
   doctorSpecialty?: string
+  /** السنة المالية الأولى التي أنشأها المعالج (اسم + بداية + نهاية) */
+  fiscalYearName?: string
+  fiscalYearStart?: string
+  fiscalYearEnd?: string
   registeredAt: string
 }
+
+const isIsoDay = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
 
 /** نزع محارف التحكم والوسوم + قصّ الطول (مطابق لتعقيم العامل) */
 function clean(value: unknown, max: number): string {
@@ -105,12 +109,18 @@ export function buildRegistrationReport(input: {
   accountingMode?: string
   plan?: string | null
   doctorSpecialty?: string
+  fiscalYearName?: string
+  fiscalYearStart?: string
+  fiscalYearEnd?: string
   registeredAt?: string
 }): RegistrationReport | null {
   const deviceId = clean(input.deviceId, 24).toUpperCase()
   // بلا معرف جهاز صالح لا فائدة من البلاغ — المطوّر لن يستطيع ربطه بعميل
   if (!DEVICE_RE.test(deviceId)) return null
   const specialty = clean(input.doctorSpecialty, 60)
+  const fyName = clean(input.fiscalYearName, 40)
+  const fyStart = isIsoDay(input.fiscalYearStart) ? input.fiscalYearStart : ''
+  const fyEnd = isIsoDay(input.fiscalYearEnd) ? input.fiscalYearEnd : ''
   const report: RegistrationReport = {
     deviceId,
     appVersion: clean(input.appVersion, 20),
@@ -127,28 +137,25 @@ export function buildRegistrationReport(input: {
     accountingMode: clean(input.accountingMode, 10) === 'full' ? 'full' : 'simple',
     plan: clean(input.plan, 12) || 'trial',
     ...(specialty ? { doctorSpecialty: specialty } : {}),
+    ...(fyName ? { fiscalYearName: fyName } : {}),
+    ...(fyStart ? { fiscalYearStart: fyStart } : {}),
+    ...(fyEnd ? { fiscalYearEnd: fyEnd } : {}),
     registeredAt: clean(input.registeredAt, 30) || new Date().toISOString(),
   }
   return report
 }
 
 /**
- * هل نرسل البلاغ الآن؟ — بعد اكتمال الإعداد، وبموافقة صريحة، ومرة واحدة لكل جهاز.
- *
- * الترتيب مقصود: **الموافقة أولاً** لأنها شرط قانوني لا تحسين — سياسة الخصوصية
- * المنشورة تقول إن البيانات محلية، فلا يجوز إرسال بيانات المنشأة والتواصل بلا
- * خانة موافقة فعّلها العميل بنفسه. و`reportedAt` تُحفظ عند النجاح فقط، فيُعاد
- * المحاولة في الإقلاع التالي لو كان العميل أوفلاين (بند 6).
+ * هل نرسل البلاغ الآن؟ — بعد اكتمال الإعداد، ومرة واحدة لكل جهاز.
+ * لا شرط موافقة منفصل: القبول الإلزامي لاتفاقية الترخيص (LEGAL_VERSION) هو الموافقة.
+ * الإرسال عند الإقلاع يغطي الأجهزة التي أكملت الإعداد قبل هذا الإصدار.
  */
 export function shouldReportRegistration(input: {
   setupCompleted: boolean
   deviceId: string
   reportedAt: string | null
-  /** وقت الموافقة الصريحة — null/فارغ ⇒ لا إرسال إطلاقاً */
-  consentAt: string | null
 }): boolean {
   if (!input.setupCompleted) return false
-  if (!input.consentAt) return false
   if (input.reportedAt) return false
   return DEVICE_RE.test(clean(input.deviceId, 24).toUpperCase())
 }

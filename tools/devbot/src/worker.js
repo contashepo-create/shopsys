@@ -33,6 +33,7 @@ import {
   consumeRegistrationAlert, REG_TG_DAILY_CAP,
 } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
+import { verifyActivation } from './activation.js'
 import { tgEscape } from './tgHtml.js'
 import { sendTelegram } from './tgSend.js'
 
@@ -61,9 +62,14 @@ const FEATURES = new Set([
 ])
 /* v1.0.10: الوحدات الـ17 القابلة للمنح بمفتاح موقّع (extraModules — عقد إضافة قسم خارج النشاط) */
 const MODULES = new Set(['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate'])
+/* v1.0.22: المتصفح/Chromium يُرسل preflight لطلب POST بنوع application/json
+   فيحتاج ترويسة allow-headers وallow-methods تشمل POST، وإلا يفشل الطلب قبل أن
+   يصل للخادم. (كان الخلل: allow-methods = GET فقط، ولا allow-headers.) */
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'GET, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+  'access-control-max-age': '86400',
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
 }
@@ -120,6 +126,14 @@ export default {
       if (!state) return json({ plan: '', expiresAt: null, message: '' }, CORS)
       const o = JSON.parse(state)
       return json({ plan: o.plan ?? '', expiresAt: o.expiresAt ?? null, message: o.message ?? '' }, CORS)
+    }
+
+    /* v1.0.22: التفعيل يتطلب اتصالاً — انظر activation.js. */
+    if (url.pathname === '/activate') {
+      if (request.method === 'OPTIONS') return new Response(null, { headers: CORS })
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405, headers: CORS })
+      const result = await verifyActivation(cfg, await request.text())
+      return json(result.body, CORS, result.status)
     }
 
     /* بند 2 (تدقيق 2026-10-08): بلاغ تسجيل عميل جديد — نقطة كتابة عامة محدودة
