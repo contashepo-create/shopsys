@@ -260,15 +260,17 @@ export function parseCloudNotices(raw: unknown): CloudNotice[] {
 /* ─── الجالبات (فشلها الصامت مقصود — أوفلاين أولاً) ─── */
 
 async function getJson(url: string, timeoutMs = 6000): Promise<unknown | null> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), timeoutMs)
     const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' })
-    clearTimeout(t)
     if (!res.ok) return null
     return await res.json()
   } catch {
     return null
+  } finally {
+    /* في مسار الفشل أيضاً (مراجعة 2026-10-11): وإلا يبقى المؤقت معلّقاً بعد كل جلب فاشل */
+    clearTimeout(t)
   }
 }
 
@@ -306,4 +308,22 @@ export function mergeRevocationLists(...lists: (string[] | null | undefined)[]):
 export async function fetchCloudNotices(baseUrl: string, deviceId: string): Promise<CloudNotice[] | null> {
   const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/notifications/${encodeURIComponent(deviceId)}`)
   return raw == null ? null : parseCloudNotices(raw)
+}
+
+/* ─── رسالة المطوّر لهذا الجهاز (عرض فقط) ───
+ * مصدرها حقل `message` في dev:<deviceId> (أمر `/رسالة` في بوت المركز)، ويعيده
+ * /subscription. هذه رسالة **من المطوّر إلى العميل** فقط. لا تمنح ولا تسحب شيئاً:
+ * الحجية للمفتاح الموقّع. (لا تُخلط مع sub.message في بوت الخدمات — هذا الحقل
+ * ملاحظة من العميل إلى المطوّر.) */
+
+/** تنقية `message` من استجابة /subscription — نص عرض عادي بطول محدود */
+export function parseAccountMessage(raw: unknown): string {
+  if (typeof raw !== 'object' || raw === null) return ''
+  return sanitizeAboutText((raw as Record<string, unknown>).message, 300)
+}
+
+/** `null` = تعذّر الجلب (أوفلاين) ⇒ لا يُمسّ المحفوظ */
+export async function fetchAccountMessage(baseUrl: string, deviceId: string): Promise<string | null> {
+  const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/subscription/${encodeURIComponent(deviceId)}`)
+  return raw == null ? null : parseAccountMessage(raw)
 }

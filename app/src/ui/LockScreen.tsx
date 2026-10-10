@@ -7,17 +7,21 @@
  * لا سبيل لتجاوزها: كل الشاشات الأخرى غير معروضة أصلاً في هذه الحالة.
  */
 import { useMemo, useState } from 'react'
-import { KeyRound, Download, MessageCircle, Phone, Mail, FileJson, FileSpreadsheet, Copy, Store } from 'lucide-react'
+import { KeyRound, Download, MessageCircle, Phone, Mail, FileJson, FileSpreadsheet, Copy, Store, Database as DatabaseIcon } from 'lucide-react'
 import { ACTIVITY_TEMPLATES } from '../core/activities.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { useDataStore } from '../data/repo.ts'
 import {
-  acceptActivationKey, PLAN_LABELS, type LicenseState,
+  PLAN_LABELS, type LicenseState,
 } from '../core/license.ts'
+import { activateOnline } from '../core/activation.ts'
 import { LOCK_REASON_LABELS, toCsv, type LockReason } from '../core/security.ts'
 import { FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../core/cloud.ts'
 import { buildBackup, backupFileName } from '../core/backup.ts'
+import { buildFullExportSheets, sheetsToExcelXml, downloadTextFile, exportFileName } from '../core/fullExport.ts'
+import { desktopDatabaseStorage } from '../data/desktopBridge.ts'
 import { Btn, inputCls, useToast } from './components/ui.tsx'
+import { DeveloperMessage } from './components/DeveloperMessage.tsx'
 
 const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
 const money = (minor: number) => (minor / 100).toFixed(2)
@@ -32,7 +36,7 @@ function downloadBlob(content: string, filename: string, mime: string) {
 }
 
 export function LockScreen({ reason, state }: { reason: LockReason; state: LicenseState }) {
-  const { deviceId, setup, cloudAbout, revokedKeys, setActivated, applyActivityChangeKey } = useAppStore()
+  const { deviceId, setup, cloudAbout, cloudAccountMessage, revokedKeys, setActivated, applyActivityChangeKey } = useAppStore()
   const data = useDataStore()
   const toast = useToast()
   const info = LOCK_REASON_LABELS[reason]
@@ -53,7 +57,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
     try {
       const trimmed = keyInput.trim()
       // فحص الإبطال والنشاط داخل الدالة المشتركة — نفس الفحص في شاشة «الترخيص» (M4)
-      const payload = await acceptActivationKey({
+      const payload = await activateOnline({
         key: trimmed, deviceId, revokedKeys, activityId: setup.activityId, activityKeyHistory: setup.activityKeyHistory,
       })
       setActivated(trimmed, payload)
@@ -77,6 +81,24 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
       })
       downloadBlob(JSON.stringify(backup, null, 1), backupFileName(setup.shopName, backup.createdAt), 'application/json')
       toast.show('نُزّلت بياناتك كاملة بصيغة JSON 💾')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* v1.0.22: صيغ التنزيل عند انتهاء الاشتراك — Excel شامل (ورقة لكل جدول) وقاعدة SQLite كاملة */
+  const exportExcel = () => {
+    try {
+      const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
+      downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', new Date().toISOString()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
+      toast.show(`نُزّل ملف Excel شامل (${sheets.length} أوراق) 📊`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const exportSqlite = async () => {
+    const storage = desktopDatabaseStorage()
+    if (!storage) return toast.show('نسخة SQLite متاحة في نسخة سطح المكتب فقط', 'error')
+    try {
+      const result = await storage.exportCopy()
+      if (result.ok) toast.show('حُفظت نسخة قاعدة البيانات الكاملة (.db) ✓')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -116,6 +138,8 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
             <div className="text-[12px] font-bold text-slate-400">الخطة السابقة: {PLAN_LABELS[state.payload.plan]}</div>
           )}
         </div>
+
+        <DeveloperMessage message={cloudAccountMessage} />
 
         <div className="grid md:grid-cols-2 gap-4">
           {/* التفعيل */}
@@ -195,9 +219,13 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
               <p className="text-[11px] text-slate-400">
                 {counts.items} صنف · {counts.customers} عميل · {counts.sales} فاتورة · {counts.journal} قيد
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Btn variant="ghost" onClick={exportExcel} className="flex-1"><FileSpreadsheet className="w-4 h-4" /> Excel شامل</Btn>
+                <Btn variant="ghost" onClick={exportCsv} className="flex-1"><FileSpreadsheet className="w-4 h-4" /> CSV (جداول رئيسية)</Btn>
                 <Btn variant="ghost" onClick={exportJson} className="flex-1"><FileJson className="w-4 h-4" /> JSON كامل</Btn>
-                <Btn variant="ghost" onClick={exportCsv} className="flex-1"><FileSpreadsheet className="w-4 h-4" /> CSV / Excel</Btn>
+                {desktopDatabaseStorage() && (
+                  <Btn variant="ghost" onClick={() => { void exportSqlite() }} className="flex-1"><DatabaseIcon className="w-4 h-4" /> قاعدة SQLite (.db)</Btn>
+                )}
               </div>
             </div>
           </div>

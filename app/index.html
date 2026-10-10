@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/app-icon.png?v=3" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- v1.0.22: سياسة المحتوى. script-src بلا unsafe-inline/unsafe-eval: لا سكربت مُحقن ولا خارجي.
+         connect-src https: لأن رابط المزامنة يحدده العميل، والـLAN يتصل بـ ws:// على الشبكة المحلية. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' data: blob:; connect-src 'self' https: ws: wss:; object-src 'none'; base-uri 'self'; form-action 'none'" />
     <title>TAHAKAM ERP — تَحَكَّم في إدارة أعمالك</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

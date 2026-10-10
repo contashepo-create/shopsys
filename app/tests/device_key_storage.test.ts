@@ -246,8 +246,73 @@ describe('السجل التشخيصي', () => {
     expect(describeDeviceKeyOutcome(migrated)).toContain('safeStorage')
     expect(describeDeviceKeyOutcome(migrated)).toContain('مُرحَّل')
 
+    disk = new FakeDisk() // قرص بلا مفتاح مشفّر: الملاذ الصريح هو السلوك المقصود هنا
     const broken = resolveDeviceKey(buildIo(disk, makeSafeStorage({ available: false })))
     expect(describeDeviceKeyOutcome(broken)).toContain('نص صريح')
     expect(describeDeviceKeyOutcome(broken)).toContain('تحذيرات')
+  })
+})
+
+/* v1.0.22 — المفتاح المشفّر غير القابل للفك لا يُكتب فوقه أبداً.
+   كان التوليد الجديد يستبدل الملف مباشرة، فتُفقد البيانات المشفّرة بالمفتاح القديم
+   نهائياً (ولو عاد المفتاح القديم لأي سبب — مثلاً تغيّر ملف تعريف ويندوز — لكانت البيانات قابلة للاسترجاع). */
+describe('v1.0.22 — حفظ المفتاح المشفّر القديم قبل أي استبدال', () => {
+  const OLD_ENC = Buffer.from('shopsys-safekey:v1:بيانات-مفتاح-قديم-لا-تُفك', 'utf8')
+
+  it('مشفّر غير قابل للفك ⇒ نسخة مميزة بالبايتات الأصلية ثم توليد جديد', () => {
+    disk.write(DEVICE_KEY_ENC_FILE, OLD_ENC)
+    disk.ops = [] // نُسجّل ترتيب ما يفعله الإقلاع فقط، لا تهيئة الاختبار
+    const outcome = resolveDeviceKey(buildIo(disk, makeSafeStorage(), logs))
+    expect(outcome.regenerated).toBe(true)
+    const preserved = [...disk.files.keys()].filter((name) => name.startsWith(`${DEVICE_KEY_ENC_FILE}.unreadable-`))
+    expect(preserved).toHaveLength(1)
+    expect(disk.files.get(preserved[0])!.equals(OLD_ENC)).toBe(true)
+    // الكتابة الأولى للمفتاح القديم قبل أي كتابة فوق الملف الأصلي
+    const firstWriteToEnc = disk.ops.findIndex((op) => op === `write:${DEVICE_KEY_ENC_FILE}`)
+    const preserveWrite = disk.ops.findIndex((op) => op.startsWith(`write:${DEVICE_KEY_ENC_FILE}.unreadable-`))
+    expect(preserveWrite).toBeGreaterThanOrEqual(0)
+    expect(preserveWrite).toBeLessThan(firstWriteToEnc)
+    expect(logs.join(' ')).toContain('لم تُستبدل')
+  })
+
+  it('لا ملف مشفّر أصلاً ⇒ لا نسخ مكررة', () => {
+    resolveDeviceKey(buildIo(disk, makeSafeStorage()))
+    expect([...disk.files.keys()].some((name) => name.includes('.unreadable-'))).toBe(false)
+  })
+
+  it('safeStorage غير متاح الآن ⇒ يُوقف الإقلاع برسالة (لا مفتاح جديد)، والملف المشفّر كما هو، فلا نسخ ولا كتابة فوقه', () => {
+    disk.write(DEVICE_KEY_ENC_FILE, OLD_ENC)
+    expect(() => resolveDeviceKey(buildIo(disk, makeSafeStorage({ available: false })))).toThrow(/لم يُولَّد مفتاح جديد/)
+    expect(disk.files.has(DEVICE_KEY_FILE)).toBe(false)
+    expect(disk.files.get(DEVICE_KEY_ENC_FILE)!.equals(OLD_ENC)).toBe(true)
+    expect([...disk.files.keys()].some((name) => name.includes('.unreadable-'))).toBe(false)
+  })
+
+  it('تعذّر حفظ النسخة ⇒ يُرمى خطأ والملف الأصلي كما هو (لا استبدال أعمى)', () => {
+    disk.write(DEVICE_KEY_ENC_FILE, OLD_ENC)
+    const io = buildIo(disk, makeSafeStorage())
+    const failingIo = {
+      ...io,
+      writeFile: (name: string, data: Buffer) => {
+        if (name.includes('.unreadable-')) throw new Error('القرص ممتلئ')
+        io.writeFile(name, data)
+      },
+    }
+    expect(() => resolveDeviceKey(failingIo)).toThrow(/لن يُستبدل/)
+    expect(disk.files.get(DEVICE_KEY_ENC_FILE)!.equals(OLD_ENC)).toBe(true)
+  })
+})
+
+describe('مراجعة شاملة (2026-10-11) — لا توليد مفتاح جديد فوق مشفّر موجود يتعذّر فكّه الآن', () => {
+  it('إقلاع بلا safeStorage مع مشفّر موجود ⇒ يُرمى خطأ، ولا يُولَّد مفتاح جديد ولا يُكتب صريح', () => {
+    const available = makeSafeStorage()
+    // مولّد يعطي قيمة مختلفة في كل مرة — لنكشف أي توليد خاطئ
+    const withGen = (safe: ReturnType<typeof makeSafeStorage> | null) => ({ ...buildIo(disk, safe), generate: () => Buffer.alloc(32, 7) })
+    const first = resolveDeviceKey({ ...withGen(available), generate: () => Buffer.alloc(32, 3) })
+    expect(() => resolveDeviceKey(withGen(makeSafeStorage({ available: false })))).toThrow()
+    // لا مفتاح صريح جديد على القرص ولا كتابة فوق المشفّر
+    expect(disk.files.has(DEVICE_KEY_FILE)).toBe(false)
+    // الإقلاع التالي (المفتاح متاح) يعيد المفتاح الأصلي — لا ضياع للقطات الجلسة
+    expect(resolveDeviceKey(withGen(available)).key.equals(first.key)).toBe(true)
   })
 })

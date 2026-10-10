@@ -23,7 +23,7 @@ export function BranchesPage() {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
     sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
   } = useDataStore()
-  const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
 
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -31,9 +31,9 @@ export function BranchesPage() {
 
   // حد الفروع من الرخصة الموقعة فقط — لا يُتجاوز إلا بمفتاح جديد من المطوّر
   const maxBranches = useMemo(() => {
-    const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+    const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags })
     return state.status === 'active' ? effectiveLimits(activatedPayload).maxBranches : effectiveLimits(null).maxBranches
-  }, [activatedPayload, trialStartedAt, lastSeenAt])
+  }, [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags])
 
   /* ─── لوحة المقارنة (من نفس الدفاتر — لا عدادات موازية) ─── */
   const comparison = useMemo(() => {

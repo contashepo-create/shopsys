@@ -130,7 +130,8 @@ ok('الربط: البلاغ في الطرفين يمرّ بـnormalizePhone ف�
 
 ok('المعالج يستعمل القاعدة نفسها (لا يقبل ما يرفضه الخادم)', () => {
   assert.match(wizardCode, /const isValidPhone = \(v: string\) => normalizePhone\(v\) !== ''/)
-  assert.match(wizardCode, /import \{ normalizePhone \} from '\.\.\/\.\.\/core\/registration\.ts'/)
+  // v1.0.22: الاستيراد صار متعدد الأسطر (مع buildRegistrationReport وغيرها)
+  assert.match(wizardCode, /import \{[^}]*\bnormalizePhone\b[^}]*\} from '\.\.\/\.\.\/core\/registration\.ts'/)
   assert.doesNotMatch(wizardCode, /v\.replace\(\/\\D\/g, ''\)\.length >= 7/, 'القاعدة القديمة تقبل ما يرفضه الخادم')
 })
 

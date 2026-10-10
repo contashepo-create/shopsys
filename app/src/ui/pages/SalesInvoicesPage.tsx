@@ -5,7 +5,7 @@
  *   مع تفعيلها: يظهر بدلاً منه زرا «إشعار دائن» (مرتجع) و«إشعار مدين» (فاتورة إضافية).
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins } from 'lucide-react'
+import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins, MessageCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { DocumentAttachmentsBox } from '../components/DocumentAttachments.tsx'
@@ -19,6 +19,8 @@ import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.t
 import { effectiveVatPercent, PriceFloorError } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
+import { saleWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
@@ -35,8 +37,8 @@ import { rowOpenProps } from '../components/rowOpen.ts'
 import { openItemPricesWindow } from '../windows/windowStore.ts'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
-  const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { sales, customers, suppliers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
+  const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
@@ -55,8 +57,8 @@ export function SalesInvoicesPage() {
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة بمفتاح المطور ⇒ لا تعديل — إشعارات فقط
   const lic = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
-    [activatedPayload, trialStartedAt, lastSeenAt],
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const einvoiceActive = electronicInvoiceLockActive({ licensed: hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg'), enabled: einvoice.enabled === true, taxNumber: einvoice.taxNumber })
   const policy = invoiceEditPolicy({ einvoiceActive })
@@ -187,7 +189,8 @@ export function SalesInvoicesPage() {
       s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(ref))
   }, [sales, query])
 
-  const printInvoice = async (s: SaleInvoice, template: InvoiceTemplate) => {
+  /** نموذج الطباعة لفاتورة مبيعات — يُستعمل للطباعة وللإرسال عبر واتساب */
+  const buildSaleModel = async (s: SaleInvoice) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
       featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
@@ -215,8 +218,20 @@ export function SalesInvoicesPage() {
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
     if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${receipt.footerText ? ' — ' + receipt.footerText : ''}`
+    return model
+  }
+  const printInvoice = async (s: SaleInvoice, template: InvoiceTemplate) => {
+    const model = await buildSaleModel(s)
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
+  }
+
+  /** إرسال الفاتورة PDF عبر واتساب إلى الرقم المسجّل في بطاقة الطرف (عميل/مورد/موظف) */
+  const sendSaleWhatsapp = async (s: SaleInvoice) => {
+    const party = saleWaParty(s, { customers, suppliers, employees })
+    if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا الطرف في بطاقته', 'error')
+    const model = await buildSaleModel(s)
+    shareDocPdfViaWhatsapp({ model, cur, settings: receipt, template: 'a4', docLabel: 'فاتورة مبيعات', docNumber: s.invoiceNumber, partyPhone: party.phone, shopName: setup.shopName, toast })
   }
 
   const exportSales = () => {
@@ -330,6 +345,14 @@ export function SalesInvoicesPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-left whitespace-nowrap">
+                  {(() => {
+                    const party = saleWaParty(s, { customers, suppliers, employees })
+                    return (
+                      <button onClick={() => void sendSaleWhatsapp(s)} disabled={!party?.phone} title={party?.phone ? `إرسال الفاتورة إلى ${party.name} على واتساب (${party.phone})` : 'لا يوجد رقم مسجّل لهذا الطرف في بطاقته'} className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors disabled:cursor-not-allowed disabled:opacity-35">
+                        <MessageCircle size={14} />
+                      </button>
+                    )
+                  })()}
                   <button onClick={() => setPrintTarget(s)} title="طباعة / تغيير القالب" className="p-1.5 rounded-md text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-colors">
                     <Printer size={14} />
                   </button>

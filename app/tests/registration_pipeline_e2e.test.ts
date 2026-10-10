@@ -105,23 +105,16 @@ const pressAsAdmin = (data: string, fromId = 777) => devbotWorker.fetch(
 /** سياق قراءة اللوحة (المطوّر) — كما يمرّره الـwebhook */
 const panelCfg = () => ({ kv, priv: PRIV_B64U, token: 'bot-token', adminId: '777' }) as never
 
-/** بيانات عميل كما تُدخلها شاشة المعالج — بأرقام هندية في الهاتف وعلامة & في الاسم */
+/** بيانات عميل كما يرسلها المعالج (الحقول المعلنة فقط) — بأرقام هندية في الهاتف وعلامة & في الاسم */
 const CUSTOMER = {
   deviceId: DEVICE,
-  appVersion: '1.0.22',
-  platform: 'desktop',
   shopName: 'صيدلية النور & الشفاء',
   ownerName: 'أحمد محمد',
   phone: '٠١٠ ١٢٣٤ ٥٦٧٨',
   email: 'ahmed@noor-pharmacy.eg',
   city: 'المنصورة',
   street: 'شارع الجلاء',
-  countryCode: 'eg',
-  activityId: 'pharmacy',
   activityNameAr: 'صيدلية',
-  accountingMode: 'full',
-  plan: 'trial',
-  doctorSpecialty: 'صيدلة إكلينيكية',
   registeredAt: '2026-10-09T10:00:00.000Z',
 }
 
@@ -145,11 +138,10 @@ describe('① البلاغ يصل المطوّر كاملاً ويُحفظ', () 
 
     const stored = JSON.parse((await kv.get(`reg:${DEVICE}`)) ?? 'null')
     expect(stored).toMatchObject({
-      deviceId: DEVICE, appVersion: '1.0.22', platform: 'desktop',
+      deviceId: DEVICE,
       shopName: 'صيدلية النور & الشفاء', ownerName: 'أحمد محمد', phone: '010 1234 5678',
-      email: 'ahmed@noor-pharmacy.eg', city: 'المنصورة', street: 'شارع الجلاء', countryCode: 'EG',
-      activityId: 'pharmacy', activityNameAr: 'صيدلية', accountingMode: 'full', plan: 'trial',
-      doctorSpecialty: 'صيدلة إكلينيكية', registeredAt: '2026-10-09T10:00:00.000Z', reports: 1,
+      email: 'ahmed@noor-pharmacy.eg', city: 'المنصورة', street: 'شارع الجلاء',
+      activityNameAr: 'صيدلية', registeredAt: '2026-10-09T10:00:00.000Z', reports: 1,
     })
     expect(kv.metaOf(`reg:${DEVICE}`)).toMatchObject({ v: 1, deviceId: DEVICE, shopName: 'صيدلية النور & الشفاء', phone: '010 1234 5678' })
   })
@@ -164,11 +156,15 @@ describe('① البلاغ يصل المطوّر كاملاً ويُحفظ', () 
     expect(alert.parse_mode).toBe('HTML')
     for (const value of [
       'صيدلية النور &amp; الشفاء', 'أحمد محمد', '010 1234 5678', 'ahmed@noor-pharmacy.eg',
-      'المنصورة', 'شارع الجلاء', 'صيدلية', 'صيدلة إكلينيكية', DEVICE, '1.0.22', 'تطبيق سطح المكتب',
+      'المنصورة', 'شارع الجلاء', 'صيدلية', DEVICE,
     ]) {
       expect(alert.text, value).toContain(value)
     }
     expect(alert.text).not.toContain('/اصدر')
+    // الحقول غير المعلنة لا تظهر في التنبيه (لم تعد تُرسل)
+    for (const hidden of ['صيدلة إكلينيكية', 'تطبيق سطح المكتب', '1.0.22', 'متقدمة']) {
+      expect(alert.text, hidden).not.toContain(hidden)
+    }
     expect(buttonsOf(alert.reply_markup).map((b) => b.callback_data)).toEqual([
       `panel:issuereg:${DEVICE}`, `panel:reg:${DEVICE}`,
     ])
@@ -231,8 +227,7 @@ describe('② اللوحة: القائمة والبطاقة الكاملة وا�
     const res = await handlePanelButton(`panel:reg:${DEVICE}`, '777', panelCfg()) as { text: string; opts: { reply_markup: { inline_keyboard: Button[][] } } }
     for (const value of [
       'صيدلية النور &amp; الشفاء', 'أحمد محمد', '010 1234 5678', 'ahmed@noor-pharmacy.eg',
-      'المنصورة', 'شارع الجلاء', 'EG', 'صيدلية', '(pharmacy)', 'صيدلة إكلينيكية',
-      'trial', 'متقدمة', DEVICE, 'تطبيق سطح المكتب', '1.0.22', '2026-10-09T10:00:00.000Z',
+      'المنصورة', 'شارع الجلاء', 'صيدلية', DEVICE, '2026-10-09T10:00:00.000Z',
     ]) {
       expect(res.text, value).toContain(value)
     }

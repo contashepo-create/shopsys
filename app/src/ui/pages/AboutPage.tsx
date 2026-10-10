@@ -4,9 +4,10 @@
  * وتعمل بآخر نسخة محفوظة أوفلاين.
  */
 import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale, Mail, MapPin, Clock } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { fetchAbout, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../../core/cloud.ts'
+import { fetchAbout, fetchAccountMessage, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../../core/cloud.ts'
+import { DeveloperMessage } from '../components/DeveloperMessage.tsx'
 import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
 import { DownloadCloud, ShieldCheck } from 'lucide-react'
 import { PLAN_LABELS } from '../../core/license.ts'
@@ -15,10 +16,20 @@ import { isElectronRuntime } from '../../data/desktopBridge.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
 export function AboutPage() {
-  const { cloudAbout, cloudSyncedAt, setCloudData, deviceId, activatedPayload, setup } = useAppStore()
+  const { cloudAbout, cloudAccountMessage, cloudSyncedAt, setCloudData, deviceId, activatedPayload, setup } = useAppStore()
   const toast = useToast()
   const [busy, setBusy] = useState(false)
   const about = cloudAbout ?? FALLBACK_ABOUT
+
+  // رسالة المطوّر لهذا الجهاز: تُحدَّث عند فتح «حول» (بجانب المزامنة الدورية)
+  useEffect(() => {
+    if (!deviceId) return
+    let cancelled = false
+    void fetchAccountMessage(LICENSE_CLOUD_BASE_URL, deviceId).then((msg) => {
+      if (!cancelled && msg !== null) setCloudData({ accountMessage: msg })
+    })
+    return () => { cancelled = true }
+  }, [deviceId, setCloudData])
 
   // فحص آخر إصدار منشور على GitHub — Cloudflare مخصص للترخيص ومحتوى «حول».
   const [updBusy, setUpdBusy] = useState(false)
@@ -49,6 +60,7 @@ export function AboutPage() {
         <img src="./app-logo.png" alt="TAHAKAM ERP" className="max-h-32 mx-auto object-contain rounded-2xl shadow-lg" />
         <h1 className="text-2xl font-black">{about.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{about.body}</p>
+        <DeveloperMessage message={cloudAccountMessage} />
         {/* بند 9 (تدقيق 2026-10-08): كل قنوات التواصل — تُملأ من لوحة المطوّر.
             الروابط معقّمة في parseAbout (http/https/mailto/tel فقط). */}
         {hasAboutContact(about) ? (
@@ -154,7 +166,7 @@ export function AboutPage() {
               {updDecision.info.releaseNotesAr && <div className="mt-1 font-normal text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{updDecision.info.releaseNotesAr}</div>}
             </div>
             <div className="p-3 rounded-xl bg-slate-500/5 text-[11.5px] space-y-1.5">
-              <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><ShieldCheck size={14} className="text-emerald-500" /> خطة التحديث الآمن (تلقائية بالكامل):</div>
+              <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><ShieldCheck size={14} className="text-emerald-500" /> خطة التحديث الآمن (ما يحدث بالترتيب):</div>
               {buildUpdatePlan().map((st, i) => (
                 <div key={st.id} className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
                   <span className="w-4 h-4 rounded-full bg-slate-200 dark:bg-slate-700 text-[9px] font-black flex items-center justify-center shrink-0">{i + 1}</span>
@@ -162,7 +174,7 @@ export function AboutPage() {
                 </div>
               ))}
               <div className="pt-1 text-[10.5px] text-amber-600 dark:text-amber-400 font-bold">
-                🛟 أي فشل = تراجع تلقائي واستعادة النسخة الاحتياطية — بياناتك خارج مسار التثبيت ولا يمسها الحذف أبداً.
+                🛟 قبل التثبيت تُؤخذ نسخة احتياطية كاملة من قاعدتك في مجلد النسخ قبل التحديث، وإن تعذّرت لا يُثبَّت التحديث. التراجع عن إصدار سابق يتم يدوياً من هذه النسخة؛ بياناتك خارج مسار التثبيت.
               </div>
             </div>
             <div className="text-[11px] text-slate-400">

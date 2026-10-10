@@ -69,6 +69,11 @@ export function initLanHostIpc(getWindow: () => BrowserWindow | null): void {
     const win = getWindow()
     if (!win) return { running: false, port: null, addresses: [] } satisfies LanHostServerStatus
     server = new WebSocketServer({ host: '0.0.0.0', port: opts.port })
+    /* بلا معالج 'error' يصبح فشل المنفذ (مثلاً EADDRINUSE) استثناءً غير معالج في العملية الرئيسية */
+    server.on('error', (err: Error) => {
+      console.warn(`[lan-host] فشل خادم الشبكة: ${err.message}`)
+      stopServer()
+    })
     server.on('connection', (ws: WebSocket) => {
       const id = nextConnectionId++
       connections.set(id, ws)

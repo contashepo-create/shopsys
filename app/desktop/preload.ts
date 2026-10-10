@@ -29,6 +29,8 @@ const databaseStorage = {
   recoveryNotice: () => ipcRenderer.invoke('database:recoveryNotice'),
   listFileBackups: () => ipcRenderer.invoke('database:listFileBackups'),
   restoreFileBackup: (path: string) => ipcRenderer.invoke('database:restoreFileBackup', { path }),
+  /* v1.0.22: نسخة كاملة من القاعدة بحوار حفظ (تنزيل SQLite) */
+  exportCopy: () => ipcRenderer.invoke('database:exportCopy'),
 }
 
 /* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
@@ -37,7 +39,14 @@ const notifications = {
   show: (title: string, body: string): Promise<boolean> => ipcRenderer.invoke('notify:show', { title, body }),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications })
+/* v1.0.22: مفتاح الاسترداد — تصدير بكلمة مرور واستيراد عند فقدان المفتاح */
+const keyRecovery = {
+  status: () => ipcRenderer.invoke('keyRecovery:status'),
+  export: (args: { passphrase: string; deviceId: string }) => ipcRenderer.invoke('keyRecovery:export', args),
+  import: (args: { passphrase: string }) => ipcRenderer.invoke('keyRecovery:import', args),
+}
+
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))

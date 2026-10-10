@@ -163,7 +163,8 @@ ok('بيع سيارة آجل بلا مشترٍ من السجل — مرفوض ب
   // AUDIT-013: الكشف صار من مصدر واحد — دوال المتجر — فالتحقق ينتقل إليها بدل تكرار التمرير في كل صفحة
   const repoSrc = readFileSync(join(root, 'src/data/repo.ts'), 'utf8')
   assert.ok(repoSrc.includes('consignmentCars: state.consignmentCars'), 'repo.getCustomerStatementRows يمرر سيارات الأمانة')
-  assert.ok(readFileSync(join(root, 'src/ui/pages/VouchersPage.tsx'), 'utf8').includes('consignmentCars'))
+  // سيارات الأمانة تدخل الرصيد عبر دالة المتجر (getCustomerBalance ⇐ getCustomerStatementRows) لا عبر حساب محلي في الشاشة
+  assert.ok(readFileSync(join(root, 'src/ui/pages/VouchersPage.tsx'), 'utf8').includes('getCustomerBalance'))
   for (const f of ['src/ui/pages/StatementsPage.tsx', 'src/ui/pages/SettlementsPage.tsx']) {
     const src = readFileSync(join(root, f), 'utf8')
     assert.ok(src.includes('getCustomerStatementRows') || src.includes('getCustomerBalance'), `${f}: يستدعي دالة المتجر لا نسخة محلية`)

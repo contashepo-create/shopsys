@@ -16,8 +16,11 @@ import { connectRemoteSession, disconnectRemoteSession } from '../../data/lan/re
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
 import { isElectronRuntime } from '../../data/desktopBridge.ts'
 
+/** رمز اقتران من 6 خانات بمصدر عشوائي تشفيري (مراجعة 2026-10-11: كان 4 خانات بـMath.random) */
 function randomPairingCode(): string {
-  return String(Math.floor(1000 + Math.random() * 9000))
+  const buf = new Uint32Array(1)
+  crypto.getRandomValues(buf)
+  return String(100000 + (buf[0] % 900000))
 }
 
 export function LanSettingsPage() {
@@ -39,7 +42,7 @@ export function LanSettingsPage() {
     if (currentLockReason(lic, app) !== null || !hasFeature(lic, 'multi_user_lan')) {
       return toast.show('مضيف المحل خدمة مدفوعة (تعدد المستخدمين على الشبكة) — تتطلب مفتاح ترخيص يتضمنها', 'error')
     }
-    if (!/^\d{4}$/.test(hostCode)) return toast.show('رمز الاقتران أربع خانات رقمية', 'error')
+    if (!/^\d{4,6}$/.test(hostCode)) return toast.show('رمز الاقتران من 4 إلى 6 خانات رقمية', 'error')
     const port = Number(hostPort)
     if (!Number.isInteger(port) || port < 1024 || port > 65535) return toast.show('المنفذ بين 1024 و65535', 'error')
     setBusy(true)
@@ -69,7 +72,7 @@ export function LanSettingsPage() {
     const url = clientUrl.trim()
     if (!/^ws:\/\/.+:\d+$/.test(url)) return toast.show('اكتب عنوان المضيف بصيغة ws://192.168.1.10:8787', 'error')
     if (!clientName.trim()) return toast.show('اكتب اسم هذا الجهاز (يظهر عند المضيف)', 'error')
-    if (!lanClient.token && !/^\d{4}$/.test(clientCode)) return toast.show('رمز الاقتران أربع خانات — تجده على شاشة المضيف', 'error')
+    if (!lanClient.token && !/^\d{4,6}$/.test(clientCode)) return toast.show('رمز الاقتران من 4 إلى 6 خانات — تجده على شاشة المضيف', 'error')
     setBusy(true)
     try {
       await connectRemoteSession({
@@ -163,7 +166,7 @@ export function LanSettingsPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <label className="block">
-                <span className="text-[11px] font-bold text-slate-500">رمز الاقتران (4 خانات)</span>
+                <span className="text-[11px] font-bold text-slate-500">رمز الاقتران (6 خانات)</span>
                 <input value={hostCode} onChange={(e) => setHostCode(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} inputMode="numeric" />
               </label>
               <label className="block">

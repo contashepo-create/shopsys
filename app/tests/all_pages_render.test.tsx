@@ -49,7 +49,7 @@ beforeAll(async () => {
   const { loadDemoActivity } = await import('../src/dev/demoDatabase.ts')
   await loadDemoActivity('contracting')
   ;({ default: App } = await import('../src/App.tsx'))
-})
+}, 60_000) // استيراد الشجرة الكاملة للتطبيق بارد قد يتجاوز 10 ثوانٍ الافتراضية على الأجهزة البطيئة
 
 /** يصيّر مساراً واحداً ويعيد نتيجة الفحص (لا يرمي — كي تُجمع كل الأعطال بالتقرير) */
 async function renderRoute(path: string): Promise<string> {

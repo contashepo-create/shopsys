@@ -20,6 +20,8 @@ const check = (name, ok) => {
 }
 
 const main = read('desktop/main.ts')
+// v1.0.22: منطق الدرع انتقل إلى desktop/dbShield.ts (مُختبر على ملفات حقيقية)
+const mainAndShield = main + read('desktop/dbShield.ts')
 const preload = read('desktop/preload.ts')
 const bridge = read('src/data/desktopBridge.ts')
 const backupPage = read('src/ui/pages/BackupPage.tsx')
@@ -27,10 +29,10 @@ const app = read('src/App.tsx')
 const legal = read('src/core/legal.ts')
 
 /* ─── ① درع التلف ─── */
-check('① فحص سلامة (quick_check) عند كل إقلاع قبل فتح القاعدة', main.includes('shieldDamagedDatabase(dbPath)') && main.includes("pragma('quick_check'"))
-check('① التالف يُعزل (corrupt-*) ولا يُحذف — مع عزل WAL/SHM التابعة له', main.includes('.corrupt-') && main.includes("['-wal', '-shm']"))
-check('① الاسترداد: أحدث نسخة سليمة من المكانين (يدوي/تلقائي) بفحص سلامة لكل مرشح', main.includes('candidateBackups') && main.includes('if (!quickCheck(candidate)) continue'))
-check('① لا نسخة سليمة؟ قاعدة جديدة + إشعار صريح للمستخدم', main.includes('لا نسخة سليمة') && main.includes('db-recovery.json'))
+check('① فحص سلامة (quick_check) عند كل إقلاع قبل فتح القاعدة', mainAndShield.includes('shieldDamagedDatabase(dbPath)') && mainAndShield.includes("pragma('quick_check'"))
+check('① التالف يُعزل (corrupt-*) ولا يُحذف — مع عزل WAL/SHM التابعة له', mainAndShield.includes('.corrupt-') && mainAndShield.includes("['-wal', '-shm']"))
+check('① الاسترداد: أحدث نسخة سليمة من المكانين (يدوي/تلقائي) بفحص سلامة لكل مرشح', mainAndShield.includes('candidateBackups') && mainAndShield.includes("if (probeDbFile(candidate) !== 'ok') continue"))
+check('① لا نسخة سليمة؟ يوقف الإقلاع بحوار خطأ (لا قاعدة فارغة صامتة — v1.0.22)', mainAndShield.includes("'corrupt-no-backup'") && mainAndShield.includes('db-recovery.json') && !/ستُنشأ قاعدة جديدة فارغة/.test(main))
 
 /* ─── ② الاستعادة من داخل التطبيق ─── */
 check('② IPC قائمة النسخ الملفية (المكانان + نوع + حجم + تاريخ)', main.includes("ipcMain.handle('database:listFileBackups'"))

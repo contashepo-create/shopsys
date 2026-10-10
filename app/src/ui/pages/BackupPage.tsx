@@ -10,8 +10,9 @@ import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
 import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
-import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime } from '../../data/desktopBridge.ts'
+import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime, desktopKeyRecoveryBridge } from '../../data/desktopBridge.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { DesktopKeyRecoveryCard } from '../components/DesktopKeyRecovery.tsx'
 import { getDeviceSecret, setDeviceSecret } from '../../data/secureStorage.ts'
 import { wrapSecretWithPassword, unwrapSecretWithPassword, parseKeyFile, keyFileName, type SecretKeyFile } from '../../core/secretTransfer.ts'
 import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
@@ -19,6 +20,7 @@ import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, 
 
 export function BackupPage() {
   const { setup, backupIntervalMinutes, setBackupIntervalMinutes, lastHourlyBackupAt } = useAppStore()
+  const deviceId = useAppStore((s) => s.deviceId)
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const fileRef2 = useRef<HTMLInputElement>(null)
@@ -214,7 +216,9 @@ export function BackupPage() {
         {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص ناجح: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
       </div>
 
-      {/* v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة — القاعدة المنقولة لا تُقرأ بلا سرها */}
+      {/* v1.0.22: على سطح المكتب يحلّ مفتاح الاسترداد محلّ «نقل السر» القديم، لأن سر المتصفح لا يفكّ لقطات SQLite */}
+      {desktopKeyRecoveryBridge() ? <DesktopKeyRecoveryCard deviceId={deviceId} /> : (
+      /* v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة — القاعدة المنقولة لا تُقرأ بلا سرها (المتصفح فقط) */
       <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '30ms' }}>
         <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
           <KeyRound size={17} className="text-amber-500" /> نقل سر التشفير بين الأجهزة
@@ -233,6 +237,7 @@ export function BackupPage() {
           متى تحتاجها؟ نقلت القاعدة لجهاز جديد بملف shopsys.db (أو نسخة SQLite الملفية) وظهرت البيانات فارغة/غير مقروءة — استورد سر الجهاز الأصلي. نسخ JSON الاحتياطية لا تحتاج هذا (تُعاد تشفيرها بسر الجهاز الجديد تلقائياً).
         </div>
       </div>
+      )}
 
       {/* جدولة النسخ التلقائي (طلب المالك) — لقطة مشفرة على الجهاز حسب الفاصل المختار */}
       <div className={`anim-up ${card} space-y-4 lg:col-span-2`} style={{ animationDelay: '40ms' }}>

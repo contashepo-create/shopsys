@@ -58,15 +58,16 @@ const vouchersPage = readFileSync(new URL('../src/ui/pages/VouchersPage.tsx', im
     /ليست لهذا الموظف/,
   )
 
-  /* ④ رفض تجاوز مبلغ السند: مجموع القسائم ≤ مبلغ السند */
-  await expectReject(
-    'مجموع القسائم أكبر من مبلغ السند', c,
-    () => g().postVoucher({
-      kind: 'payment', treasury: '1101', counterAccountCode: '2104', amountMinor: 100,
-      description: 'ناقص', partyKind: 'employee', partyId: other.id, settleSlipIds: [otherSlip.id],
-    }),
-    /أكبر من مبلغ السند/,
-  )
+  /* ④ السداد الجزئي مسموح (بلاغ المالك، تعديل القاعدة القديمة «المجموع ≤ السند»):
+     100 على قسيمة أكبر ⇒ تبقى «مستحقة» بالمتبقي فقط، ولا تُعلَّم مصروفة */
+  g().postVoucher({
+    kind: 'payment', treasury: '1101', counterAccountCode: '2104', amountMinor: 100,
+    description: 'جزئي', partyKind: 'employee', partyId: other.id, settleSlipIds: [otherSlip.id],
+  })
+  const partialSlip = g().payrollSlips.find((x) => x.id === otherSlip.id)
+  assert.equal(partialSlip.status, 'accrued', 'السداد الجزئي لا يُعلّم القسيمة مصروفة')
+  assert.equal((partialSlip.payments ?? []).reduce((sum, p) => sum + p.amountMinor, 0), 100, 'الدفعة الجزئية لم تُسجَّل بمبلغها')
+  assertInvariants('بعد سداد جزئي للقسيمة', c)
 
   /* ⑤ السداد الجزئي مسموح: مبلغ أكبر من القسيمة ⇒ تُسدد القسيمة ويبقى الباقي رصيداً عاماً */
   const over = g().postVoucher({
@@ -85,7 +86,7 @@ const vouchersPage = readFileSync(new URL('../src/ui/pages/VouchersPage.tsx', im
   assert.ok(/settleSlipIds\?: number\[\]/.test(repo), 'خانة settleSlipIds مفقودة من توقيع postVoucher')
   assert.ok(/ليست لهذا الموظف/.test(repo), 'حارس خلط موظفين مفقود')
   assert.ok(/مصروفة بالفعل/.test(repo), 'حارس السداد المزدوج مفقود')
-  assert.ok(/أكبر من مبلغ السند/.test(repo), 'حارس تجاوز المبلغ مفقود')
+  assert.ok(/allocateSlipPayments\(/.test(repo), 'توزيع السداد الجزئي على القسائم مفقود')
   assert.ok(/سند صرف \$\{voucherNumber\}/.test(repo), 'وسم paidFrom بلا رقم السند')
   assert.ok(/settleSlipIds|قسائم/.test(vouchersPage), 'شاشة السندات بلا لوحة تسديد قسائم')
   R.ok('الحراس النصية ولوحة القسائم في شاشة السندات')
