@@ -18,6 +18,10 @@ describe('الاحتفاظ بالنسخ الساعية: يوم واحد (24 نس
     expect(ROTATION.hourly.ms).toBe(HOUR)
   })
 
+  it('لا توجد فئات نسخ أخرى: ساعي فقط (يوم واحد) — لا يومي ولا أسبوعي', () => {
+    expect(Object.keys(ROTATION)).toEqual(['hourly'])
+  })
+
   it('عند 25 نسخة يُحذف الأقدم فقط ويبقى الأحدث 24', () => {
     const files = Array.from({ length: 25 }, (_, i) => ({ path: `h${i}.db`, mtimeMs: T0 + i * HOUR }))
     const doomed = filesToPrune(files, ROTATION.hourly.keep)

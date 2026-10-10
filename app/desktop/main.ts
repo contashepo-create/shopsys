@@ -4,7 +4,7 @@
  *   • الجسور: shopsysDesktop.database (عقد المُصيّر القائم) + shopsysPrint
  *     وshopsysPrinters (§102 تعدد الطابعات) + shopsysUpdater
  *   • التحديث: electron-updater من GitHub Releases — فحص عند الإقلاع وزر يدوي
- *   • النسخ الدوّارة: ساعي 24 · يومي 30 · أسبوعي 12 (Backup API الساخنة)
+ *   • النسخ الدوّارة: ساعي 24 فقط = يوم واحد (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
@@ -434,8 +434,6 @@ function candidateBackups(dbPath: string): string[] {
     join(resolveSecondaryBackupDir().dir, 'manual'),
     join(resolveSecondaryBackupDir().dir, 'auto'),
     join(ud, 'backups', 'hourly'),
-    join(ud, 'backups', 'daily'),
-    join(ud, 'backups', 'weekly'),
     join(ud, 'backups', 'pre-update'),
   ]
   const out: { path: string; mtimeMs: number }[] = []
@@ -491,7 +489,7 @@ function shieldDamagedDatabase(dbPath: string): void {
 /** أحدث نسخة متاحة من أي مكان (للاستعادة إلى مكان جديد) — الافتراضي أولاً ثم الحيّ */
 function latestBackupAnywhere(): string | null {
   const ud = app.getPath('userData')
-  const dirs = ['hourly', 'daily', 'weekly', 'pre-update'].map((k) => join(ud, 'backups', k))
+  const dirs = ['hourly', 'pre-update'].map((k) => join(ud, 'backups', k))
   const files: { path: string; mtimeMs: number }[] = []
   for (const dir of dirs) {
     try {
@@ -557,7 +555,7 @@ function discoverExistingData(): ExistingDataCandidate[] {
   const ud = app.getPath('userData')
   const out: ExistingDataCandidate[] = []
   const backupDirs = [
-    ...(['hourly', 'daily', 'weekly', 'pre-update'] as const).map((k) => join(ud, 'backups', k)),
+    ...(['hourly', 'pre-update'] as const).map((k) => join(ud, 'backups', k)),
     join(app.getPath('documents'), 'Tahakom-Backups', 'manual'),
     join(app.getPath('documents'), 'Tahakom-Backups', 'auto'),
   ]
@@ -771,7 +769,7 @@ function wireUpdater(): void {
   }
 }
 
-/* ── النسخ الدوّارة (وثيقة §3.3): ساعي 24 · يومي 30 · أسبوعي 12 ──
+/* ── النسخ الدوّارة (طلب المالك): ساعي 24 فقط = يوم واحد ──
    v1.0.22: تُكتب دائماً في المكان الافتراضي (%APPDATA%) حتى لو كانت القاعدة الحيّة
    في مكان مخصص، وتُمرَّر القاعدة صراحة (كان before-quit يُصفّر database ثم يستدعي
    الدالة فتخرج فوراً بلا نسخة — الآن تُمرَّر القاعدة المغلقة للنسخ). */
