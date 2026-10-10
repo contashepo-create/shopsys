@@ -8,7 +8,7 @@
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -24,6 +24,7 @@ import {
   type DbLocationConfig,
 } from './dbLocation.ts'
 import { isInAppNavigation, isExternalOpenable } from './navigationPolicy.ts'
+import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
   type CustomLocationStatus, type ExistingDataCandidate,
@@ -467,39 +468,22 @@ function candidateBackups(dbPath: string): string[] {
 }
 
 /** يُنفَّذ قبل الفتح: القاعدة تالفة ⇐ عزلها + استرداد أحدث نسخة سليمة (أو قاعدة جديدة إن لا نسخة) */
-function shieldDamagedDatabase(dbPath: string): void {
-  if (!existsSync(dbPath)) return
-  const probe = probeDatabase(dbPath)
-  if (probe === 'ok') return
-  if (probe === 'unreadable') {
-    // ليست تلفاً مؤكداً (قفل/صلاحيات) — لا عزل ولا استبدال؛ الفتح العادي يتولى الأمر
-    logLine('db-shield', 'تعذّر فحص القاعدة دون دليل تلف (قفل أو صلاحيات) — تُفتح كما هي بلا عزل')
-    return
-  }
-  logLine('db-shield', 'فحص الإقلاع: القاعدة تالفة — بدء الاسترداد التلقائي')
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const quarantine = `${dbPath}.corrupt-${stamp}`
-  try { renameSync(dbPath, quarantine) } catch { return /* تعذّر العزل — نحاول الفتح كما هو */ }
-  // ملفات WAL/SHM التابعة للتالف تُعزل معه (بقاءها قد يفسد النسخة المستردة)
-  for (const ext of ['-wal', '-shm']) {
-    const side = dbPath + ext
-    if (existsSync(side)) { try { renameSync(side, `${quarantine}${ext}`) } catch { try { unlinkSync(side) } catch { /* استمر */ } } }
-  }
-  let restoredFrom: string | null = null
-  for (const candidate of candidateBackups(dbPath)) {
+/**
+ * v1.0.22: الدرع قبل الفتح — المنطق في desktop/dbShield.ts (مُختبر على ملفات حقيقية).
+ * هنا فقط: قائمة النسخ الاحتياطية، والسجل، وإشعار الاسترداد عند النجاح.
+ */
+function shieldDamagedDatabase(dbPath: string): ShieldOutcome {
+  const result = shieldDatabaseAt(dbPath, () => candidateBackups(dbPath), {
+    log: (message) => logLine('db-shield', message),
+  })
+  if (result.outcome === 'restored') {
     try {
-      if (!quickCheck(candidate)) continue
-      copyFileSync(candidate, dbPath)
-      restoredFrom = candidate
-      break
-    } catch { /* النسخة التالية */ }
+      writeFileSync(join(app.getPath('userData'), RECOVERY_MARKER), JSON.stringify({
+        at: new Date().toISOString(), from: result.restoredFrom, quarantine: result.quarantine,
+      }), 'utf8')
+    } catch { /* الإشعار اختياري */ }
   }
-  try {
-    writeFileSync(join(app.getPath('userData'), RECOVERY_MARKER), JSON.stringify({
-      at: new Date().toISOString(), from: restoredFrom, quarantine,
-    }), 'utf8')
-  } catch { /* الإشعار اختياري */ }
-  logLine('db-shield', restoredFrom ? `استُردت القاعدة تلقائياً من: ${restoredFrom} (التالف محفوظ: ${quarantine})` : 'لا نسخة سليمة — ستُنشأ قاعدة جديدة فارغة')
+  return result.outcome
 }
 
 /* ── القاعدة ── */
@@ -654,9 +638,11 @@ async function openDatabase(): Promise<ShopsysDatabase> {
   // v1.0.22: عند فشل الفتح يعرض حوار الخطأ خيار «اختيار ملف القاعدة يدوياً»، ثم يُعاد الفتح من الملف المعتمد
   for (let attempt = 1; ; attempt += 1) {
     const { dbPath, isCustom } = resolveDbPath()
-    // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
-    try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
+    // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة. v1.0.22: بلا نسخة سليمة ⇒ يوقف الإقلاع بحوار
+    let shield: ShieldOutcome = 'ok'
+    try { shield = shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
     try {
+      if (shield === 'corrupt-no-backup') throw new Error('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة في أي مكان')
       const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
       logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
       if (isCustom) {
@@ -680,9 +666,9 @@ async function openDatabase(): Promise<ShopsysDatabase> {
         title: 'تَحَكَّم — فشل تشغيل القاعدة',
         message: `تعذّر فتح قاعدة البيانات:\n${dbPath}`,
         detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}).\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
-        buttons: ['اختيار ملف القاعدة يدوياً...', 'إغلاق البرنامج'],
+        buttons: ['اختيار ملف القاعدة يدوياً...', 'إظهار ملف القاعدة في المجلد (لإرساله للدعم)', 'إغلاق البرنامج'],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 2,
       })
       if (choice === 0 && attempt < 20) {
         const picked = pickValidatedDatabaseFile()
@@ -691,6 +677,10 @@ async function openDatabase(): Promise<ShopsysDatabase> {
           logLine('db-recovery', `اعتُمد ملف يدوي بعد فشل الفتح، وتُعاد المحاولة: ${picked}`)
         }
         // إلغاء الاستعراض يعيد حوار الخطأ نفسه بدل إغلاق صامت
+        continue
+      }
+      if (choice === 1 && attempt < 20) {
+        if (existsSync(dbPath)) shell.showItemInFolder(dbPath)
         continue
       }
       app.exit(1)

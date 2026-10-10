@@ -90,12 +90,19 @@ check('المسار النسبي مرفوض عند الكتابة (isAbsoluteDbP
 /* v1.0.22 — حوار الخطأ عند فشل الفتح: اختيار ملف يدوي بعد الفحص، بلا علامة جلسة */
 const openDbStart = main.indexOf('async function openDatabase()')
 const openDbBody = openDbStart >= 0 ? main.slice(openDbStart, main.indexOf('/* ── الطباعة', openDbStart)) : ''
-check('openDatabase يعرض حوار الخطأ بزر «اختيار ملف القاعدة يدوياً»', /buttons: \['اختيار ملف القاعدة يدوياً\.\.\.', 'إغلاق البرنامج'\]/.test(openDbBody))
+check('openDatabase يعرض حوار الخطأ بزر «اختيار ملف القاعدة يدوياً»', /buttons: \['اختيار ملف القاعدة يدوياً\.\.\.', 'إظهار ملف القاعدة في المجلد \(لإرساله للدعم\)', 'إغلاق البرنامج'\]/.test(openDbBody))
 check('بعد اختيار ملف يدوي يُعاد الفتح من المسار الجديد (حلقة مع حد أقصى)', /for \(let attempt = 1; ; attempt \+= 1\)/.test(openDbBody) && /attempt < 20/.test(openDbBody) && /\bcontinue\b/.test(openDbBody))
 check('الملف اليدوي يُفحص قبل الاعتماد (pickValidatedDatabaseFile)', /function pickValidatedDatabaseFile/.test(main) && /probeShopsysDatabase\(file\)/.test(main) && /pickValidatedDatabaseFile\(\)/.test(openDbBody))
 check('لا علامة جلسة تُنسي الاختيار (useDefaultDbForSession ممنوعة)', !/useDefaultDbForSession|DefaultDbForSession|sessionDefault/i.test(main))
 check('إلغاء الاختيار أو إغلاق الحوار لا يُنشئ قاعدة فارغة (exit عند غير الاختيار)', /app\.exit\(1\)\s*\n\s*throw error/.test(openDbBody))
 check('اسم القاعدة الوحيد shopsys.db (لا shopsys.sqlite)', !/shopsys\.sqlite/.test(main) && !/shopsys\.sqlite/.test(read('desktop/dbLocation.ts')))
+
+/* v1.0.22 — تلف بلا نسخة سليمة: لا نقل للملف قبل التأكد، ولا قاعدة فارغة صامتة */
+const shieldSrc = read('desktop/dbShield.ts')
+check('الدرع يتحقق من نسخة سليمة قبل إعادة تسمية التالف', shieldSrc.indexOf('candidates.some(') > 0 && shieldSrc.indexOf('candidates.some(') < shieldSrc.indexOf('renameSync(dbPath, quarantine)'))
+check('الدرع يعيد التالف إلى مكانه إذا فشل كل نسخ الاسترداد', /renameSync\(quarantine, dbPath\)/.test(shieldSrc) && /corrupt-no-backup/.test(shieldSrc))
+check('التالف بلا نسخة يوقف الفتح بحوار (لا قاعدة فارغة)', /shield === 'corrupt-no-backup'/.test(main) && /throw new Error\('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة/.test(main))
+check('حوار الخطأ يعرض إظهار الملف في المجلد (لإرساله للدعم)', /إظهار ملف القاعدة في المجلد/.test(main) && /shell\.showItemInFolder\(dbPath\)/.test(main))
 
 console.log(failures ? `\n❌ فشلت ${failures} فحوص` : '\n✅ بوابة التخزين والنسخ v1.0.22 تعمل')
 process.exit(failures ? 1 : 0)
