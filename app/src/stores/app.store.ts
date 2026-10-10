@@ -221,10 +221,8 @@ interface AppState {
   cloudAbout: AboutContent | null
   revokedKeys: string[] // بصمات المفاتيح المحروقة
   cloudNotifications: CloudNotice[]
-  /** F14: رسالة المطوّر للاشتراك (مثل سبب الإيقاف) — تُحفظ فتبقى ظاهرة أوفلاين */
-  cloudSubscriptionNote: string
   cloudSyncedAt: string | null
-  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null; notifications?: CloudNotice[]; subscriptionNote?: string }) => void
+  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null; notifications?: CloudNotice[] }) => void
   /**
    * بند 10 (تدقيق 2026-10-08): التنبيهات التي أقرّ بها المستخدم — تُحفظ محلياً
    * فلا تعود النافذة المنبثقة، ويُرسل إيصال قراءة للمطوّر (best-effort).
@@ -675,7 +673,6 @@ export const useAppStore = create<AppState>()(
       cloudAbout: null,
       revokedKeys: [],
       cloudNotifications: [],
-      cloudSubscriptionNote: '',
       ackedNoticeIds: [],
       /* حارس الفرق (درس ث1): لا set بلا تغيّر فعلي. ويُقتصر على آخر 200 معرّف
          كي لا تنمو القائمة للأبد في التخزين المشفر. */
@@ -694,7 +691,6 @@ export const useAppStore = create<AppState>()(
           cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
           revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
           cloudNotifications: patch.notifications !== undefined ? patch.notifications : s.cloudNotifications,
-          cloudSubscriptionNote: patch.subscriptionNote !== undefined ? patch.subscriptionNote : s.cloudSubscriptionNote,
           deviceFlags: patch.flags !== undefined ? patch.flags : s.deviceFlags,
           cloudSyncedAt: new Date().toISOString(),
         }))
