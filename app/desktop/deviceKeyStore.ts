@@ -34,6 +34,8 @@ export const DEVICE_KEY_ENC_FILE = 'device.key.enc'
  */
 const ENC_MAGIC = 'shopsys-safekey:v1:'
 const KEY_LENGTH = 32
+/** سبب فك المشفّر حين تكون خدمة التشفير غير متاحة الآن (لا حين يكون الملف تالفاً) */
+const SAFE_UNAVAILABLE_REASON = 'safeStorage غير متاح لفك المفتاح المشفّر'
 
 /** الجزء من Electron safeStorage الذي نستخدمه (يُحقن في الاختبار) */
 export interface SafeStorageLike {
@@ -88,7 +90,7 @@ function readEncryptedKey(io: DeviceKeyIo): { key: Buffer | null; reason: string
   if (!text.startsWith(ENC_MAGIC)) return { key: null, reason: 'bad-magic' }
   const cipherB64 = text.slice(ENC_MAGIC.length).trim()
   if (!cipherB64) return { key: null, reason: 'ملف المفتاح المشفّر فارغ' }
-  if (!safeAvailable(io)) return { key: null, reason: 'safeStorage غير متاح لفك المفتاح المشفّر' }
+  if (!safeAvailable(io)) return { key: null, reason: SAFE_UNAVAILABLE_REASON }
   try {
     const decrypted = io.safeStorage!.decryptString(Buffer.from(cipherB64, 'base64'))
     const key = Buffer.from(decrypted, 'base64')
@@ -194,6 +196,13 @@ export function resolveDeviceKey(io: DeviceKeyIo): DeviceKeyOutcome {
       }
     }
     return { key: enc.key, storage: 'safeStorage', migrated: false, regenerated: false, warnings }
+  }
+  /* ⑥ (مراجعة 2026-10-11): مشفّر موجود وخدمة التشفير غير متاحة الآن (مثلاً سلسلة
+       مفاتيح لينكس مقفلة). توليد مفتاح جديد هنا يُتلف كل ما يُكتب بالمفتاح المؤقت:
+       في الإقلاع التالي يعود المفتاح الأصلي ويُحذف الصريح الجديد. لذلك نوقف الإقلاع
+       برسالة واضحة (main.ts يعرضها ولا يلمس البيانات). */
+  if (enc.reason === SAFE_UNAVAILABLE_REASON) {
+    throw new Error('مفتاح الجهاز محفوظ مشفّراً عبر نظام التشغيل، وخدمة التشفير غير متاحة الآن (مثلاً سلسلة المفاتيح مقفلة). افتح قفل سلسلة المفاتيح ثم أعد تشغيل البرنامج — لم يُولَّد مفتاح جديد ولم تُفقد أي بيانات.')
   }
   if (enc.reason && enc.reason !== 'missing') {
     warnings.push(enc.reason)

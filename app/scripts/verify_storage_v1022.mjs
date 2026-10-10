@@ -60,7 +60,7 @@ check('preload يعرض keyRecovery فقط عبر contextBridge', /keyRecovery,\
 check('الواجهة لا تستورد node:crypto ولا keyRecovery.ts (تبقى في العملية الرئيسية)', !/from ['"]node:crypto['"]|from ['"][^'"\n]*desktop\/keyRecovery/.test(desktopKeyUi + backupPage + appTsx))
 check('شاشة الاسترداد تعرض استيراد مفتاح الاسترداد', /<DesktopKeyRecoveryImport \/>/.test(appTsx))
 check('صفحة النسخ على سطح المكتب تستعمل مفتاح الاسترداد بدل سر المتصفح', /desktopKeyRecoveryBridge\(\) \? <DesktopKeyRecoveryCard/.test(backupPage))
-check('شاشة البدء تظهر قبل فتح القاعدة وتُغلق عند ظهور الواجهة', /showSplash\(previousVersion/.test(main) && main.indexOf('showSplash(previousVersion') < main.indexOf('await openDatabase()') && /mainWindow\.once\('ready-to-show'/.test(main) && /closeSplash\(\)/.test(main))
+check('شاشة البدء تظهر قبل فتح القاعدة وتُغلق عند ظهور الواجهة', /showSplash\(previousVersion/.test(main) && main.indexOf('showSplash(previousVersion') < main.indexOf('database = await openDatabase()', main.indexOf('void app.whenReady().then(')) && /mainWindow\.once\('ready-to-show'/.test(main) && /closeSplash\(\)/.test(main))
 check('النسخ الدوّارة ساعية فقط (يوم واحد) — لا يومي ولا أسبوعي', /ROTATION = \{\s*hourly: \{ keep: 24/.test(read('desktop/storagePolicy.ts')) && !/daily: \{ keep|weekly: \{ keep/.test(read('desktop/storagePolicy.ts')) && !/'daily'|'weekly'/.test(main))
 check('شاشة البدء تُظهر تقدّماً فعلياً (نسبة + خطوة) ومهلة أمان', /setSplashProgress\(40, 'فتح قاعدة البيانات/.test(main) && /setTimeout\(\(\) => \{\s*closeSplash\(\)[\s\S]{0,200}?\}, 20_000\)/.test(main))
 check('رسالة التحديث تظهر مرة واحدة بعد تغيّر الإصدار (last-run.json)', /writeLastRunVersion\(\)/.test(main) && /last-run\.json/.test(main))

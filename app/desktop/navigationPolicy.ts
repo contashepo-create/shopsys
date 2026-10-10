@@ -19,3 +19,16 @@ export function isInAppNavigation(url: string, appIndexFileUrl: string, devOrigi
 export function isExternalOpenable(url: string): boolean {
   return /^(?:https?:\/\/|mailto:|tel:)/i.test(url)
 }
+
+/**
+ * رابط واتساب الذي يُفتح خارج التطبيق من مسار إرسال PDF: https://wa.me/… فقط.
+ * الرابط يأتي من المُصيّر، فلا يُمرَّر إلى shell.openExternal إلا بعد هذا التحقق.
+ */
+export function isWhatsAppChatLink(url: string): boolean {
+  try {
+    const target = new URL(url)
+    return target.protocol === 'https:' && target.hostname === 'wa.me'
+  } catch {
+    return false
+  }
+}

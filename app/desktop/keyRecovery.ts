@@ -18,6 +18,10 @@ export const KEY_RECOVERY_VERSION = 1
 export const KEY_RECOVERY_ITERATIONS = 600_000
 /** لا يُقبل ملف بتكرارات أقل — منع خفض القوة عبر ملف مُعدّ */
 export const KEY_RECOVERY_MIN_ITERATIONS = 200_000
+/** سقف للتكرارات: ملف مُعدّ بتكرارات هائلة يعلّق التطبيق عند الاستيراد (مراجعة 2026-10-11) */
+export const KEY_RECOVERY_MAX_ITERATIONS = 2_000_000
+/** أقصى حجم لملف الاسترداد — الملف الصحيح بضع مئات من البايتات */
+export const KEY_RECOVERY_MAX_FILE_BYTES = 64 * 1024
 export const KEY_RECOVERY_MIN_PASSPHRASE = 10
 const KEY_LENGTH = 32
 
@@ -95,7 +99,7 @@ export function unwrapDeviceKey(text: string, passphrase: string): RecoveredDevi
   if (!parsed || parsed.format !== KEY_RECOVERY_FORMAT) throw new Error('هذا ليس ملف مفتاح استرداد تَحَكَّم')
   if (parsed.version !== KEY_RECOVERY_VERSION) throw new Error(`إصدار ملف الاسترداد ${parsed.version} غير مدعوم في هذا البرنامج`)
   const iterations = parsed.kdf?.iterations
-  if (!Number.isInteger(iterations) || iterations < KEY_RECOVERY_MIN_ITERATIONS) throw new Error('إعدادات تشفير ملف الاسترداد غير آمنة أو تالفة')
+  if (!Number.isInteger(iterations) || iterations < KEY_RECOVERY_MIN_ITERATIONS || iterations > KEY_RECOVERY_MAX_ITERATIONS) throw new Error('إعدادات تشفير ملف الاسترداد غير آمنة أو تالفة')
   if (typeof parsed.deviceId !== 'string' || typeof parsed.createdAt !== 'string') throw new Error('ترويسة ملف الاسترداد تالفة')
   try {
     const salt = Buffer.from(parsed.kdf.salt, 'base64')

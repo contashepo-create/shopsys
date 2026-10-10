@@ -14,7 +14,7 @@ import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
-import { keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
+import { KEY_RECOVERY_MAX_FILE_BYTES, keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
@@ -23,7 +23,7 @@ import {
   hasPreviousUseEvidenceAt, shouldAskForExistingDatabase, probeShopsysDatabase, isAbsoluteDbPath,
   type DbLocationConfig,
 } from './dbLocation.ts'
-import { isInAppNavigation, isExternalOpenable } from './navigationPolicy.ts'
+import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
 import {
@@ -691,17 +691,40 @@ async function openDatabase(): Promise<ShopsysDatabase> {
 }
 
 /* ── الطباعة (§102): نسخة إلى طابعة مسماة أو الافتراضية، صامتة أو بحوار ── */
+/** تحميل مستند مؤقت في نافذة الطباعة: ينتهي بالنجاح، أو بخطأ عند فشل التحميل، أو بالمهلة (مراجعة 2026-10-11) */
+function loadPrintHtml(win: BrowserWindow, file: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer)
+      win.webContents.removeListener('did-finish-load', onFinish)
+      win.webContents.removeListener('did-fail-load', onFail)
+    }
+    const onFinish = () => { cleanup(); resolve() }
+    const onFail = (_e: unknown, code: number, desc: string) => { cleanup(); reject(new Error(`تعذّر تحميل المستند للطباعة (${code}): ${desc}`)) }
+    const timer = setTimeout(() => { cleanup(); reject(new Error('انتهت مهلة تحميل المستند للطباعة')) }, 20_000)
+    win.webContents.on('did-finish-load', onFinish)
+    win.webContents.on('did-fail-load', onFail)
+    win.loadFile(file).catch((error: Error) => { cleanup(); reject(error) })
+  })
+}
+
+/** حذف الملف المؤقت بعد الاستعمال — يحمل بيانات المستند (فواتير/أسماء عملاء) */
+function removeTempFile(file: string): void {
+  try { unlinkSync(file) } catch { /* غير موجود أو مقفل — لا أثر وظيفي */ }
+}
+
 async function printHtml(html: string, silent: boolean, printerName?: string): Promise<void> {
   const tmp = join(app.getPath('userData'), 'print-tmp.html')
   writeFileSync(tmp, html, 'utf8')
-  if (!printWindow || printWindow.isDestroyed()) {
-    printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } })
+  try {
+    const win = printWindow && !printWindow.isDestroyed()
+      ? printWindow
+      : (printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } }))
+    await loadPrintHtml(win, tmp)
+    await win.webContents.print({ silent, deviceName: printerName || undefined, printBackground: true, margins: { marginType: 'default' } }, () => undefined)
+  } finally {
+    removeTempFile(tmp)
   }
-  await new Promise<void>((resolve) => {
-    printWindow!.webContents.once('did-finish-load', () => resolve())
-    void printWindow!.loadFile(tmp)
-  })
-  await printWindow.webContents.print({ silent, deviceName: printerName || undefined, printBackground: true, margins: { marginType: 'default' } }, () => undefined)
 }
 
 async function listPrinters(): Promise<string[]> {
@@ -727,22 +750,26 @@ async function exportPdfShare(html: string, fileName: string, waLink?: string): 
     const outPath = join(dir, `${safeName}.pdf`)
     const tmp = join(app.getPath('userData'), 'pdf-tmp.html')
     writeFileSync(tmp, html, 'utf8')
-    if (!printWindow || printWindow.isDestroyed()) {
-      printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } })
+    const win = printWindow && !printWindow.isDestroyed()
+      ? printWindow
+      : (printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } }))
+    try {
+      await loadPrintHtml(win, tmp)
+    } catch (loadError) {
+      removeTempFile(tmp)
+      throw loadError
     }
-    await new Promise<void>((resolve) => {
-      printWindow!.webContents.once('did-finish-load', () => resolve())
-      void printWindow!.loadFile(tmp)
-    })
+    removeTempFile(tmp)
     /* المقاس والاتجاه من @page داخل قالب المستند نفسه (A4/A5/حراري)؛
        الهوامش بالبوصة — 0.4" ≈ 1سم مثل افتراضي حوار الطباعة */
-    const pdf = await printWindow.webContents.printToPDF({ printBackground: true, margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } })
+    const pdf = await win.webContents.printToPDF({ printBackground: true, margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } })
     writeFileSync(outPath, pdf)
     /* Electron 44: لا واجهة حافظة للملفات (writeBuffer أزيل) — الصدق التقني:
        النمط المعتمد فتح المجلد بالملف محدداً ليسحبه المستخدم للمحادثة */
     const copied = false
     shell.showItemInFolder(outPath)
-    if (waLink) void shell.openExternal(waLink)
+    /* الرابط من المُصيّر: لا يُفتح إلا إن كان wa.me عبر https (مراجعة 2026-10-11) */
+    if (waLink && isWhatsAppChatLink(waLink)) void shell.openExternal(waLink)
     return { ok: true, path: outPath, copied }
   } catch (error) {
     return { ok: false, copied: false, error: (error as Error).message }
@@ -994,6 +1021,8 @@ function wireIpc(): void {
     if (picked.canceled || picked.filePaths.length === 0) return { ok: false as const, canceled: true as const }
     let recovered: ReturnType<typeof unwrapDeviceKey>
     try {
+      /* حد الحجم قبل القراءة: ملف الاسترداد الصحيح صغير جداً */
+      if (statSync(picked.filePaths[0]).size > KEY_RECOVERY_MAX_FILE_BYTES) throw new Error('ملف الاسترداد أكبر من المسموح — ليس ملف مفتاح تَحَكَّم')
       recovered = unwrapDeviceKey(readFileSync(picked.filePaths[0], 'utf8'), passphrase)
     } catch (error) {
       return { ok: false as const, reason: (error as Error).message }
@@ -1087,6 +1116,13 @@ function wireIpc(): void {
     } catch (error) {
       const message = (error as Error).message
       logLine('db-restore-fatal', `فشل الاستعادة: ${message}`)
+      /* مراجعة 2026-10-11: الإغلاق سبق الاستعادة، فإن فشلت بعده تبقى القاعدة مغلقة
+         حتى إعادة التشغيل. نعيد فتحها الآن ليعمل البرنامج كما كان قبل المحاولة. */
+      if (!database) {
+        try { database = await openDatabase() } catch (reopenError) {
+          logLine('db-restore-fatal', `تعذّر إعادة فتح القاعدة بعد فشل الاستعادة: ${(reopenError as Error).message}`)
+        }
+      }
       throw new Error(`فشل الاستعادة: ${message}`)
     }
   })

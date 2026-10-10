@@ -78,11 +78,22 @@ export function writeDbLocationAt(ud: string, cfg: DbLocationConfig, onMirrorErr
  * المستعاد أو null. ملاحظة: المرآة الثانية (بجوار القاعدة المخصصة) لا تُقرأ هنا لأن
  * موقعها يتوقف على المسار نفسه — فلا تُستعمل للاستعادة التلقائية.
  */
+/** المؤشر موجود وقابل للقراءة كمؤشر صالح (JSON سليم) */
+function pointerIsReadableAt(ud: string): boolean {
+  try {
+    return decodeLocationPointer(readFileSync(dbLocationFileAt(ud), 'utf8')) !== null
+  } catch {
+    return false
+  }
+}
+
 export function restoreLocationPointerAt(ud: string): string | null {
-  if (existsSync(dbLocationFileAt(ud))) return null
+  /* مراجعة 2026-10-11: المؤشر الموجود لكن التالف (JSON مكسور) يُعامل كالمفقود؛ وإلا يُفتح
+     الافتراضي بصمت وتبدو بيانات الزبون (في المسار المخصص) كأنها اختفت. */
+  if (pointerIsReadableAt(ud)) return null
   try {
     const cfg = decodeLocationPointer(readFileSync(join(ud, 'backups', 'db-location.json'), 'utf8'))
-    if (!cfg || !cfg.customDbPath) return null
+    if (!cfg || !cfg.customDbPath || !isAbsoluteDbPath(cfg.customDbPath)) return null
     writeDbLocationAt(ud, { ...readDbLocationAt(ud), ...cfg })
     return cfg.customDbPath
   } catch {
