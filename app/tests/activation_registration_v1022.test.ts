@@ -9,9 +9,9 @@ import { webcrypto } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const { acceptActivationKey, b64uEncode, encodeLicenseKey, canonicalPayload, keyFingerprint } =
+const { b64uEncode, encodeLicenseKey, canonicalPayload, keyFingerprint } =
   await import('../src/core/license.ts')
-const { checkActivationOnline, activateOnline, OFFLINE_ACTIVATION_AR, ACTIVATE_PATH } =
+const { checkActivationOnline, activateOnline, OFFLINE_ACTIVATION_AR, activationUnavailableAr, ACTIVATE_PATH } =
   await import('../src/core/activation.ts')
 const { buildRegistrationReport, shouldReportRegistration, sendRegistrationReport, REGISTRATION_NEEDS_INTERNET_AR } =
   await import('../src/core/registration.ts')
@@ -63,13 +63,53 @@ describe('التفعيل: تأكيد الخادم قبل الحفظ', () => {
     expect(r).toEqual({ kind: 'rejected', code: 'revoked', reasonAr: 'تم إبطال هذا المفتاح' })
   })
 
-  it('خطأ خادم 500 ⇒ offline (لا نحكم بالرفض)', async () => {
+  it('خطأ خادم 500 ⇒ unavailable (وصلنا للخادم: لا نحكم بالرفض ولا نقول «لا إنترنت»)', async () => {
     const f = fakeFetch(() => new Response('boom', { status: 500 }))
-    expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn })).toEqual({ kind: 'offline' })
+    expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn }))
+      .toEqual({ kind: 'unavailable', status: 500 })
   })
 
   it('انقطاع الشبكة ⇒ offline', async () => {
     const f = fakeFetch(() => { throw new TypeError('fetch failed') })
+    expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn })).toEqual({ kind: 'offline' })
+  })
+
+  /* بلاغ عميل 2026-10-11: «يطلب الاتصال بالإنترنت وهو متصل».
+     السبب: العامل المنشور كان أقدم من نقطة /activate، فردّ 200 بنص «shopsys-control»،
+     فسقط الفحص إلى فرع offline. هذه الحالات تثبّت الفصل بين الوضعين. */
+  it('رد 200 بجسم ليس عقد التفعيل (عامل قديم بلا /activate) ⇒ unavailable لا offline', async () => {
+    const f = fakeFetch(() => new Response('shopsys-control', { status: 200, headers: { 'content-type': 'text/plain' } }))
+    expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn }))
+      .toEqual({ kind: 'unavailable', status: 200 })
+  })
+
+  it('صفحة HTML بلا JSON (404 أو بوابة وسيطة) ⇒ unavailable لا offline', async () => {
+    const f = fakeFetch(() => new Response('<html>404 Not Found</html>', { status: 404, headers: { 'content-type': 'text/html' } }))
+    expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn }))
+      .toEqual({ kind: 'unavailable', status: 404 })
+  })
+
+  it('جسم فارغ مع 200 ⇒ unavailable لا offline', async () => {
+    const f = fakeFetch(() => new Response('', { status: 200 }))
+    expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn }))
+      .toEqual({ kind: 'unavailable', status: 200 })
+  })
+
+  it('مفتاح صالح + خدمة التفعيل غير منشورة/قديمة ⇒ رسالة «خدمة التفعيل» لا رسالة «تحقق من الاتصال»', async () => {
+    const { key, pubB64u } = await signedKey()
+    const f = fakeFetch(() => new Response('shopsys-control', { status: 200 }))
+    const err = await activateOnline({
+      key, deviceId: DEVICE, revokedKeys: [], activityId: 'retail', baseUrl: BASE, fetchImpl: f.fn, pubB64u,
+    }).then(() => null, (e: Error) => e)
+    expect(err?.message).toBe(activationUnavailableAr(200))
+    expect(err?.message).not.toBe(OFFLINE_ACTIVATION_AR)
+    expect(err?.message).toContain('خدمة التفعيل')
+  })
+
+  it('مهلة الطلب (abort) ⇒ offline', async () => {
+    const f = fakeFetch(() => new Promise<Response>((_resolve, reject) => {
+      setTimeout(() => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), 5)
+    }) as Promise<Response>)
     expect(await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: f.fn })).toEqual({ kind: 'offline' })
   })
 
