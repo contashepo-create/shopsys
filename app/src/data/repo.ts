@@ -32,7 +32,7 @@ import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildP
 import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
-import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
+import { validatePromotion, promotionCartLines, promotionActiveAt, promotionKind, type Promotion, type PromotionInput } from '../core/promotions.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
@@ -7972,7 +7972,8 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const promo = state.promotions.find((p) => p.id === promotionId)
         if (!promo) throw new Error('العرض غير موجود')
-        if (!promotionActiveOn(promo, new Date().toISOString())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
+        if (promotionKind(promo) !== 'bundle') throw new Error(`عرض «${promo.nameAr}» يُطبَّق تلقائياً في الكاشير — ليس باقة تُضاف يدوياً`)
+        if (!promotionActiveAt(promo, new Date())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
         return promotionCartLines(promo, count, state.items)
       },
 

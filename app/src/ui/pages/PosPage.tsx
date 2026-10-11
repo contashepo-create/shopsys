@@ -17,7 +17,7 @@ import { availableSerials, findBySerial, warrantyLookup } from '../../core/seria
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
-import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
+import { promotionActiveAt, promotionKind, promotionSavingsMinor, applyAutoPromotions } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
@@ -355,12 +355,25 @@ export function PosPage() {
     }
   }
 
+  // ساعة الكاشير (تتجدد كل دقيقة): العروض المجدولة بأيام/ساعات تبدأ وتنتهي بلا إعادة تحميل
+  const [clock, setClock] = useState(() => new Date())
+  useEffect(() => {
+    const t = setInterval(() => setClock(new Date()), 60_000)
+    return () => clearInterval(t)
+  }, [])
+
+  // العروض التلقائية (اشترِ واحصل / شرائح كمية): السلة تبقى خاماً للتحرير، والسلة الفعلية
+  // المشتقة منها هي التي تدخل الإجماليات والترحيل — فلا خصم يتراكم ولا يعلق في السلة
+  const autoPromo = useMemo(() => applyAutoPromotions(cart, promotions, items, clock), [cart, promotions, items, clock])
+  const effectiveCart = autoPromo.lines
+  const promoByLine = useMemo(() => new Map(autoPromo.applied.map((a) => [a.lineIndex, a])), [autoPromo])
+
   const totals = useMemo(() => {
     try {
       if (!cart.length) return null
-      return computeTotals(cart, invoiceDiscount, countryVatPercent, setup.taxInclusive)
+      return computeTotals(effectiveCart, invoiceDiscount, countryVatPercent, setup.taxInclusive)
     } catch { return null }
-  }, [cart, invoiceDiscount, countryVatPercent, setup.taxInclusive])
+  }, [cart.length, effectiveCart, invoiceDiscount, countryVatPercent, setup.taxInclusive])
 
   // تقريب النقد (إن فُعّل في الإعدادات): للفاتورة النقدية المدفوعة كاملةً فقط، ومعطل مع الفاتورة
   // الإلكترونية (الإجمالي المقرَّب لا يطابق الوعاء+الضريبة المرسل للهيئة)
@@ -468,7 +481,7 @@ export function PosPage() {
       // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
       const isSplitOrCredit = payment === 'credit' || creditRemainder > 0
       const sale = postSale({
-        lines: cart,
+        lines: effectiveCart,
         customerId: isSplitOrCredit ? customerId : null,
         payment: payment === 'cash' && creditRemainder > 0 ? 'credit' : payment,
         invoiceDiscountPercent: invoiceDiscount,
@@ -520,13 +533,11 @@ export function PosPage() {
 
   const [promoPickOpen, setPromoPickOpen] = useState(false)
 
-  const livePromotions = useMemo(() => {
-
-    const now = new Date().toISOString()
-
-    return promotions.filter((p) => promotionActiveOn(p, now))
-
-  }, [promotions])
+  // زر 🎁 للباقات فقط (اليدوية)؛ «اشترِ واحصل» والشرائح تُطبَّق تلقائياً على السلة
+  const livePromotions = useMemo(
+    () => promotions.filter((p) => promotionKind(p) === 'bundle' && promotionActiveAt(p, clock)),
+    [promotions, clock],
+  )
 
   const addPromotionToCart = (promotionId: number) => {
 
@@ -909,10 +920,13 @@ export function PosPage() {
                   {/* إجمالي السطر */}
                   <div className="text-left">
                     <div className="font-black text-[14px] text-slate-800 dark:text-white">
-                      {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}
+                      {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)) - (promoByLine.get(i)?.savingsMinor ?? 0))}
                     </div>
-                    {l.discountPercent > 0 && (
+                    {(l.discountPercent > 0 || promoByLine.has(i)) && (
                       <div className="text-[10px] text-rose-400 line-through">{fmt(Math.round(l.unitPriceMinor * l.qty))}</div>
+                    )}
+                    {promoByLine.get(i) && (
+                      <div className="text-[10px] text-emerald-600 font-bold" title="عرض تلقائي سارٍ الآن">🎁 {promoByLine.get(i)!.nameAr} −{fmt(promoByLine.get(i)!.savingsMinor)}</div>
                     )}
                   </div>
                   {/* حذف */}

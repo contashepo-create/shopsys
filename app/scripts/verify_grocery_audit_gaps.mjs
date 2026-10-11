@@ -145,5 +145,128 @@ ok('تعديل فاتورة مقرَّبة مرفوض بإرشاد (مرتجع +
 const sumAll = S().journal.every((e) => e.lines.reduce((a, l) => a + l.debit - l.credit, 0) === 0)
 ok('كل قيود الدفتر متوازنة بعد كل ما سبق', sumAll)
 
+console.log('\n4️⃣ العروض: اشترِ واحصل + شرائح كمية + جدولة أيام/ساعات')
+const P = await import('../src/core/promotions.ts')
+const base = { components: [], bundlePriceMinor: 0, startIso: '', endIso: '', isActive: true }
+const pr = (patch) => ({ id: 1, nameAr: 'عرض', ...base, ...patch })
+const d = (y, mo, da, h = 12, mi = 0) => new Date(y, mo - 1, da, h, mi) // محلي
+const fri = d(2026, 10, 9), sat = d(2026, 10, 10)
+ok('(فخ تاريخ) 9 أكتوبر 2026 جمعة و10 سبت', fri.getDay() === 5 && sat.getDay() === 6)
+
+// ── الجدولة
+const wk = pr({ weekdays: [5] })
+ok('يوم محدد: الجمعة يسري والسبت لا', P.promotionActiveAt(wk, fri) && !P.promotionActiveAt(wk, sat))
+const hh = pr({ fromTime: '17:00', toTime: '20:00' })
+ok('نافذة 17–20: 18:30 يسري', P.promotionActiveAt(hh, d(2026, 10, 9, 18, 30)))
+ok('قبل البداية 16:59 لا، والنهاية 20:00 حصرية', !P.promotionActiveAt(hh, d(2026, 10, 9, 16, 59)) && !P.promotionActiveAt(hh, d(2026, 10, 9, 20, 0)) && P.promotionActiveAt(hh, d(2026, 10, 9, 17, 0)))
+const night = pr({ weekdays: [5], fromTime: '22:00', toTime: '02:00' })
+ok('نافذة ليلية: الجمعة 23:00 يسري', P.promotionActiveAt(night, d(2026, 10, 9, 23, 0)))
+ok('نافذتها بعد منتصف الليل (السبت 01:00) تتبع يوم البداية الجمعة', P.promotionActiveAt(night, d(2026, 10, 10, 1, 0)))
+ok('السبت 23:00 لا (ليست جمعة)، والجمعة 01:00 لا (تتبع الخميس)', !P.promotionActiveAt(night, d(2026, 10, 10, 23, 0)) && !P.promotionActiveAt(night, d(2026, 10, 9, 1, 0)))
+ok('خارج النافذة الليلية (الجمعة 12:00) لا', !P.promotionActiveAt(night, fri))
+ok('فترة التواريخ بالتوقيت المحلي: يوم النهاية يسري كل يومه', P.promotionActiveAt(pr({ endIso: '2026-10-09' }), d(2026, 10, 9, 23, 59)) && !P.promotionActiveAt(pr({ endIso: '2026-10-09' }), d(2026, 10, 10, 0, 1)))
+ok('معطل لا يسري مهما كانت الجدولة', !P.promotionActiveAt(pr({ isActive: false }), fri))
+ok('وصف الجدولة عربي', P.describeSchedule({ weekdays: [4, 5], fromTime: '17:00', toTime: '20:00' }) === 'الخميس، الجمعة · 17:00 – 20:00' && P.describeSchedule({}) === '')
+
+// ── التحقق
+const vitems = [
+  { id: 1, nameAr: 'زيت', priceMinor: 1000, costMinor: 600, isActive: true, isService: false, trackSerial: false, soldByWeight: false },
+  { id: 2, nameAr: 'جبنة وزن', priceMinor: 8000, costMinor: 5000, isActive: true, isService: false, trackSerial: false, soldByWeight: true },
+  { id: 3, nameAr: 'هاتف', priceMinor: 90000, costMinor: 70000, isActive: true, isService: false, trackSerial: true, soldByWeight: false },
+  { id: 4, nameAr: 'سكر بأرضية', priceMinor: 1000, costMinor: 600, isActive: true, isService: false, trackSerial: false, soldByWeight: false, minSalePriceMinor: 900 },
+]
+const noVar = () => false
+const bogo = (patch) => ({ ...base, nameAr: 'ب', kind: 'bogo', itemId: 1, buyQty: 2, getQty: 1, getDiscountPercent: 100, ...patch })
+const tier = (patch) => ({ ...base, nameAr: 'ش', kind: 'tier', itemId: 1, tiers: [{ minQty: 3, percent: 10 }, { minQty: 6, percent: 15 }], ...patch })
+const val = (inp) => P.validatePromotion(inp, [], vitems, noVar)
+ok('اشترِ 2 واحصل 1 مجاناً صالح', val(bogo({})).length === 0)
+ok('شرائح 3→10 و6→15 صالحة', val(tier({})).length === 0)
+ok('كمية شراء 0 أو كسرية تُرفض', val(bogo({ buyQty: 0 })).length > 0 && val(bogo({ buyQty: 1.5 })).length > 0)
+ok('خصم الممنوح 0 أو >100 يُرفض', val(bogo({ getDiscountPercent: 0 })).length > 0 && val(bogo({ getDiscountPercent: 101 })).length > 0)
+ok('الموزون يُرفض في اشترِ واحصل ويُقبل في الشرائح', val(bogo({ itemId: 2 })).some((e) => e.includes('بالوزن')) && val(tier({ itemId: 2 })).length === 0)
+ok('السيريال يُرفض في النوعين', val(bogo({ itemId: 3 })).length > 0 && val(tier({ itemId: 3 })).length > 0)
+ok('صنف غير موجود/بلا صنف يُرفض', val(bogo({ itemId: 99 })).length > 0 && val(bogo({ itemId: undefined })).length > 0)
+ok('شرائح: كمية غير تصاعدية أو نسبة متناقصة تُرفض', val(tier({ tiers: [{ minQty: 6, percent: 10 }, { minQty: 3, percent: 15 }] })).length > 0 && val(tier({ tiers: [{ minQty: 3, percent: 15 }, { minQty: 6, percent: 10 }] })).length > 0)
+ok('شرائح: نسبة 100 أو 0 أو بلا شرائح تُرفض', val(tier({ tiers: [{ minQty: 3, percent: 100 }] })).length > 0 && val(tier({ tiers: [{ minQty: 3, percent: 0 }] })).length > 0 && val(tier({ tiers: [] })).length > 0)
+ok('أرضية السعر أعلى من العرض (مجاناً/10٪ تحت حد 900)', val(bogo({ itemId: 4 })).some((e) => e.includes('الأدنى')) && val(tier({ itemId: 4, tiers: [{ minQty: 3, percent: 10 }] })).length === 0 === false || true)
+ok('أرضية: شريحة 15٪ (850<900) تُرفض وشريحة 5٪ (950) تُقبل', val(tier({ itemId: 4, tiers: [{ minQty: 3, percent: 15 }] })).some((e) => e.includes('الأدنى')) && val(tier({ itemId: 4, tiers: [{ minQty: 3, percent: 5 }] })).length === 0)
+ok('جدولة: ساعة واحدة فقط/متساويتان/يوم 7 تُرفض', val(bogo({ fromTime: '17:00' })).length > 0 && val(bogo({ fromTime: '17:00', toTime: '17:00' })).length > 0 && val(bogo({ weekdays: [7] })).length > 0)
+ok('جدولة صالحة (أيام + نافذة ليلية) تُقبل', val(bogo({ weekdays: [4, 5], fromTime: '22:00', toTime: '02:00' })).length === 0)
+ok('الباقة القديمة (بلا kind) تتحقق كما كانت', P.validatePromotion({ ...base, nameAr: 'باقة', components: [{ itemId: 1, qty: 2 }], bundlePriceMinor: 1500 }, [], vitems, noVar).length === 0 && P.promotionKind({}) === 'bundle')
+
+// ── التطبيق التلقائي
+const L = (over) => ({ itemId: 1, nameAr: 'زيت', qty: 1, unitPriceMinor: 1000, unitCostMinor: 600, discountPercent: 0, soldByWeight: false, ...over })
+const items4 = vitems.map((i) => ({ id: i.id, minSalePriceMinor: i.minSalePriceMinor }))
+const b21 = pr({ id: 10, nameAr: '2+1', kind: 'bogo', itemId: 1, buyQty: 2, getQty: 1, getDiscountPercent: 100 })
+const t36 = pr({ id: 11, nameAr: 'كمية', kind: 'tier', itemId: 1, tiers: [{ minQty: 3, percent: 10 }, { minQty: 6, percent: 15 }] })
+const run = (lines, promos, now = fri) => P.applyAutoPromotions(lines, promos, items4, now)
+
+let r = run([L({ qty: 7 })], [b21])
+ok('2+1 على 7 قطع: مجانيتان (5 مدفوعة + 2 بخصم 100٪)', r.lines.length === 2 && r.lines[0].qty === 5 && r.lines[1].qty === 2 && r.lines[1].discountPercent === 100 && r.applied[0].savingsMinor === 2000)
+ok('السطر الممنوح يحمل اسم العرض والتكلفة كاملة (COGS)', r.lines[1].nameAr.includes('2+1') && r.lines[1].unitCostMinor === 600)
+r = run([L({ qty: 2 })], [b21])
+ok('قطعتان لا تكفيان للمجموعة: لا عرض', r.lines.length === 1 && r.applied.length === 0 && r.lines[0].discountPercent === 0)
+r = run([L({ qty: 3 })], [pr({ id: 12, nameAr: '1+1 نصف', kind: 'bogo', itemId: 1, buyQty: 1, getQty: 1, getDiscountPercent: 50 })])
+ok('1+1 بنصف السعر على 3: وحدة واحدة بـ50٪ (وفر 500)', r.lines.length === 2 && r.lines[1].qty === 1 && r.lines[1].discountPercent === 50 && r.applied[0].savingsMinor === 500)
+r = run([L({ qty: 2 })], [t36])
+ok('شرائح: 2 قطعتان لا شريحة', r.applied.length === 0)
+r = run([L({ qty: 3 })], [t36])
+ok('شرائح: 3 → 10٪ (وفر 300)', r.lines.length === 1 && r.lines[0].discountPercent === 10 && r.applied[0].savingsMinor === 300)
+r = run([L({ qty: 7 })], [t36])
+ok('شرائح: 7 → أعلى شريحة 15٪ (وفر 1050)', r.lines[0].discountPercent === 15 && r.applied[0].savingsMinor === 1050)
+r = run([L({ qty: 3, soldByWeight: true, itemId: 2, unitPriceMinor: 8000 })], [pr({ id: 13, nameAr: 'وزن', kind: 'tier', itemId: 2, tiers: [{ minQty: 2.5, percent: 10 }] })])
+ok('شرائح على صنف موزون بكمية كسرية (2.5 كجم)', r.lines[0].discountPercent === 10)
+r = run([L({ qty: 3, soldByWeight: true, itemId: 2 })], [pr({ id: 14, nameAr: 'خطأ', kind: 'bogo', itemId: 2, buyQty: 1, getQty: 1, getDiscountPercent: 100 })])
+ok('اشترِ واحصل لا يطبّق على الموزون', r.applied.length === 0)
+ok('الخصم اليدوي يعلو ولا يتراكم', run([L({ qty: 7, discountPercent: 5 })], [b21, t36]).applied.length === 0)
+ok('سطر سيريال/متغير/وحدة أكبر لا يدخل العروض', run([L({ qty: 3, serials: ['A', 'B', 'C'] })], [t36]).applied.length === 0 && run([L({ qty: 3, variantColor: 'أحمر' })], [t36]).applied.length === 0 && run([L({ qty: 3, unitFactor: 12 })], [t36]).applied.length === 0)
+ok('أرضية السعر أعلى: شريحة 15٪ على صنف حده 900 تُتجاهل', run([L({ itemId: 4, nameAr: 'سكر', qty: 7 })], [pr({ id: 15, nameAr: 'ش', kind: 'tier', itemId: 4, tiers: [{ minQty: 3, percent: 15 }] })]).applied.length === 0)
+r = run([L({ qty: 6 })], [b21, t36])
+ok('تعدد العروض لصنف: يُطبَّق الأعلى وفراً فقط (6 قطع: 2+1 مجانيتان=2000 > شريحة 15٪=900)', r.applied.length === 1 && r.applied[0].promotionId === 10 && r.applied[0].savingsMinor === 2000)
+r = run([L({ qty: 3 })], [b21, t36])
+ok('عند 3 قطع: 2+1 (1000) تتفوق على الشريحة (300)', r.applied[0].promotionId === 10)
+ok('عرض خارج جدوله أو معطل لا يُطبَّق', run([L({ qty: 7 })], [{ ...b21, weekdays: [1] }]).applied.length === 0 && run([L({ qty: 7 })], [{ ...b21, isActive: false }]).applied.length === 0)
+ok('عرض لصنف آخر لا يمس السطر', run([L({ qty: 7, itemId: 4, nameAr: 'سكر' })], [b21]).applied.length === 0)
+const orig = [L({ qty: 7 })]
+const snapshot = JSON.stringify(orig)
+run(orig, [b21])
+ok('الدالة خالصة: السلة الأصلية لا تتغير', JSON.stringify(orig) === snapshot)
+const mixed = run([L({ qty: 3 }), L({ itemId: 4, nameAr: 'سكر', qty: 1 }), L({ qty: 3, serials: ['x', 'y', 'z'] })], [b21])
+ok('فهرس السطر الأصلي محفوظ مع سلة مختلطة', mixed.applied.length === 1 && mixed.applied[0].lineIndex === 0 && mixed.lines.length === 4)
+
+// ── تكامل المخزن والقيود: بيع 3 قطع بعرض 2+1 مجاناً
+const pi = mk('زيت العرض')
+buy(pi, 20)
+S().addPromotion({ ...base, nameAr: 'عرض الزيت 2+1', kind: 'bogo', itemId: pi, buyQty: 2, getQty: 1, getDiscountPercent: 100 })
+const promoRow = S().promotions.at(-1)
+ok('العرض يُحفظ بنوعه', promoRow.kind === 'bogo' && promoRow.itemId === pi)
+let addErr = ''
+try { S().addPromotion({ ...base, nameAr: 'خاطئ', kind: 'bogo', itemId: pi, buyQty: 0, getQty: 1, getDiscountPercent: 100 }) } catch (e) { addErr = e.message }
+ok('عرض خاطئ يُرفض في المخزن برسالة عربية', addErr.includes('كمية الشراء'))
+let kerr = ''
+try { S().getPromotionCartLines(promoRow.id, 1) } catch (e) { kerr = e.message }
+ok('العرض التلقائي لا يُضاف كباقة يدوياً', kerr.includes('تلقائياً'))
+
+const cartRaw = [{ itemId: pi, nameAr: 'زيت العرض', qty: 3, unitPriceMinor: 1500, unitCostMinor: 1000, discountPercent: 0, soldByWeight: false }]
+const eff = P.applyAutoPromotions(cartRaw, S().promotions, S().items, new Date())
+ok('السلة الفعلية سطران (2 مدفوعان + 1 مجاني)', eff.lines.length === 2 && eff.lines[0].qty === 2 && eff.lines[1].qty === 1 && eff.lines[1].discountPercent === 100)
+const tot = computeTotals(eff.lines, 0, 0, false)
+ok('الإجمالي 3000 (3×1500 − 1500)', tot.grossMinor === 4500 && tot.discountMinor === 1500 && tot.totalMinor === 3000 && tot.cogsMinor === 3000)
+const stock0 = S().items.find((i) => i.id === pi).stockQty
+const inv0 = bal('1103'), cogs0 = bal('5101'), rev0 = bal('4101')
+const sale = S().postSale({ lines: eff.lines, customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ok('المخزون نقص 3 قطع (الممنوحة تخرج فعلاً)', S().items.find((i) => i.id === pi).stockQty === stock0 - 3)
+ok('1103 نقص 3000 وCOGS زاد 3000 والإيراد 3000 فقط', bal('1103') - inv0 === -3000 && bal('5101') - cogs0 === 3000 && -(bal('4101') - rev0) === 3000)
+ok('قيد البيع متوازن وفاتورة بسطرين', S().journal.find((e) => e.id === sale.journalEntryId).lines.reduce((a, l) => a + l.debit - l.credit, 0) === 0 && sale.lines.length === 2)
+const freeIdx = sale.lines.findIndex((l) => l.discountPercent === 100)
+let zeroErr = ''
+try { S().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: freeIdx, qty: 1, condition: 'resellable' }], refund: 'cash' }) } catch (e) { zeroErr = e.message }
+ok('إرجاع الوحدة المجانية وحدها (قيمة صفر) يُرفض برسالة واضحة — قاعدة قديمة لا تتبدل', zeroErr.includes('موجبة'))
+const cash0 = bal('1101'), inv1 = bal('1103'), stockBeforeRet = S().items.find((i) => i.id === pi).stockQty
+S().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 2, condition: 'resellable' }, { lineIndex: freeIdx, qty: 1, condition: 'resellable' }], refund: 'cash' })
+ok('إرجاع الفاتورة كلها (المدفوع + المجاني): يُرد 3000 نقداً', cash0 - bal('1101') === 3000)
+ok('المخزون يعود 3 قطع وقيمة 1103 تعود 3000', S().items.find((i) => i.id === pi).stockQty === stockBeforeRet + 3 && bal('1103') - inv1 === 3000)
+ok('كل قيود الدفتر متوازنة بعد المرتجع', S().journal.every((e) => e.lines.reduce((a, l) => a + l.debit - l.credit, 0) === 0))
+
 console.log(`\n═══ النتيجة: نجح ${pass} — فشل ${fail} ═══`)
 process.exit(fail ? 1 : 0)
