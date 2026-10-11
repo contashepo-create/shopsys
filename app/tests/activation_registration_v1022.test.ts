@@ -9,7 +9,7 @@ import { webcrypto } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const { acceptActivationKey, b64uEncode, encodeLicenseKey, canonicalPayload, keyFingerprint } =
+const { b64uEncode, encodeLicenseKey, canonicalPayload, keyFingerprint } =
   await import('../src/core/license.ts')
 const { checkActivationOnline, activateOnline, OFFLINE_ACTIVATION_AR, activationUnavailableAr, ACTIVATE_PATH } =
   await import('../src/core/activation.ts')
