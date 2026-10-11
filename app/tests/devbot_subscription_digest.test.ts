@@ -159,7 +159,10 @@ describe('① التصنيف: منتهية · موشكة · مدى الحياة'
 describe('②③ التذكير اليومي التلقائي (scheduled)', () => {
   it('ينبّه المطوّر بلا أمر عند وجود قريبة من الانتهاء', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-FFF1-1111-1111', customer: 'عميل قريب', plan: 'basic', expiresAt: dayIso(2) }])
+    /* realDayIso لا dayIso: جدار `scheduled` يقرأ الساعة الحقيقية، فمشهد «قريبة
+       من الانتهاء» بمرساة ثابتة يصير «منتهية» بمجرد مرور التاريخ ⇒ قنبلة زمنية
+       (فشل فعلي في CI يوم 2026-10-11: 2026-10-08 + 2 = 2026-10-10 صار ماضياً). */
+    await seed(kv, [{ id: 'SHOP-FFF1-1111-1111', customer: 'عميل قريب', plan: 'basic', expiresAt: realDayIso(2) }])
     const sent = captureTelegram()
 
     await devbotWorker.scheduled!({} as never, env_(kv) as never)
@@ -172,7 +175,7 @@ describe('②③ التذكير اليومي التلقائي (scheduled)', () =
 
   it('المنتهية وحدها لا تُرسل يومياً ولا تُعلَّم اليوم (لا تكرار عن عميل انتهى)', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-FFF2-2222-2222', customer: 'عميل منتهي', plan: 'basic', expiresAt: dayIso(-1) }])
+    await seed(kv, [{ id: 'SHOP-FFF2-2222-2222', customer: 'عميل منتهي', plan: 'basic', expiresAt: realDayIso(-1) }])
     const sent = captureTelegram()
 
     await devbotWorker.scheduled!({} as never, env_(kv) as never)
@@ -194,7 +197,7 @@ describe('②③ التذكير اليومي التلقائي (scheduled)', () =
 
   it('لا يكرر التذكير في اليوم نفسه', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-HHH1-1111-1111', customer: 'موشك', plan: 'basic', expiresAt: dayIso(3) }])
+    await seed(kv, [{ id: 'SHOP-HHH1-1111-1111', customer: 'موشك', plan: 'basic', expiresAt: realDayIso(3) }])
     const sent = captureTelegram()
 
     await devbotWorker.scheduled!({} as never, env_(kv) as never)
@@ -206,7 +209,7 @@ describe('②③ التذكير اليومي التلقائي (scheduled)', () =
 
   it('بلا أسرار تليجرام ⇒ لا محاولة إرسال ولا انهيار', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-III1-1111-1111', customer: 'موشك', plan: 'basic', expiresAt: dayIso(3) }])
+    await seed(kv, [{ id: 'SHOP-III1-1111-1111', customer: 'موشك', plan: 'basic', expiresAt: realDayIso(3) }])
     const sent = captureTelegram()
     await devbotWorker.scheduled!({} as never, { SHOPSYS_CONTROL: kv } as never)
     expect(sent).toHaveLength(0)

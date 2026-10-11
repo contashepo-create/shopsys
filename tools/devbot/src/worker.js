@@ -199,7 +199,20 @@ export default {
       return new Response('ok')
     }
 
-    return new Response('shopsys-control', { status: 200, headers: CORS })
+    /* المسار الجذري: نبضة حياة نصية (يبقى كما كان للتوافق مع أي مراقبة). */
+    if (url.pathname === '/' || url.pathname === '') {
+      return new Response('shopsys-control', { status: 200, headers: CORS })
+    }
+    /* أي مسار غير معروف ⇒ JSON 404 برمز وسبب.
+       كان الردّ هنا 200 بنصّ «shopsys-control» لأي مسار — وهذا بالضبط ما جعل
+       عميل v1.0.22 الذي وصل قبل نشر `/activate` يقرأ «تحقق من الاتصال»: الطلب
+       وصل وردّ العامل بردٍّ لا يطابق عقد التفعيل. ردّ JSON صريح يجعل أي عميل
+       (قديم أو جديد) يعرف أن الطلب وصل وأن المسار غير موجود. */
+    return json({
+      ok: false,
+      code: 'not_found',
+      reason: 'هذا المسار غير موجود في مركز التحكم — تأكد من نشر العامل بأحدث إصدار (npx wrangler deploy في tools/devbot)',
+    }, CORS, 404)
   },
 
   /**

@@ -138,6 +138,49 @@ await check('GET /activate غير مسموح ⇒ 405', async () => {
   assert.equal(res.status, 405)
 })
 
+/* ═══ حماية بلاغ 2026-10-11 ═══════════════════════════════════════════════
+ * العميل رأى «التفعيل يتطلب الاتصال بالإنترنت» وهو متصل. السبب: العامل المنشور
+ * كان أقدم من نقطة /activate، فردّ على أي مسار غير معروف بـ200 ونص
+ * «shopsys-control»، فسقط فحص العميل إلى فرع offline. الحالات التالية تمنع
+ * تكرار الالتباس: العامل يرد 404 JSON صريحاً، والعميل يميّز «رد بلا عقد» عن
+ * «لا رد إطلاقاً». */
+await check('مسار غير معروف ⇒ JSON 404 برمز وسبب (لا 200 بنصّ يُلبِس على العميل)', async () => {
+  const res = await worker.fetch(new Request(`${BASE}/activate-v2`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: '{}' }), env)
+  assert.equal(res.status, 404)
+  assert.match(res.headers.get('content-type') ?? '', /application\/json/)
+  const body = await res.json()
+  assert.equal(body.code, 'not_found')
+  assert.ok(typeof body.reason === 'string' && body.reason.length > 0, 'لا بد من سبب عربي يشرح للمطوّر أن العامل لم يُنشر')
+})
+
+await check('المسار الجذري ما زال نبضة حياة نصية 200', async () => {
+  const res = await worker.fetch(new Request(`${BASE}/`, { headers: { origin } }), env)
+  assert.equal(res.status, 200)
+  assert.equal(await res.text(), 'shopsys-control')
+})
+
+await check('العميل: رد 200 بنص قديم ⇒ unavailable (لا يُقال للعميل «تحقق من الاتصال»)', async () => {
+  const { checkActivationOnline } = await import('../src/core/activation.ts')
+  const legacyWorker = async () => new Response('shopsys-control', { status: 200, headers: { 'content-type': 'text/plain' } })
+  const result = await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: legacyWorker })
+  assert.equal(result.kind, 'unavailable')
+  assert.equal(result.status, 200)
+})
+
+await check('العميل: انقطاع الشبكة فعلاً ⇒ offline (الرسالة الأصلية باقية)', async () => {
+  const { checkActivationOnline } = await import('../src/core/activation.ts')
+  const dead = async () => { throw new TypeError('fetch failed') }
+  const result = await checkActivationOnline({ deviceId: DEVICE, key: 'SHOPSYS1.a.b', baseUrl: BASE, fetchImpl: dead })
+  assert.equal(result.kind, 'offline')
+})
+
+await check('العميل: رسالة «الخدمة لم تُجب» تحمل رمز HTTP وتنفي مسؤولية اتصال العميل', async () => {
+  const { activationUnavailableAr } = await import('../src/core/activation.ts')
+  const message = activationUnavailableAr(404)
+  assert.match(message, /رمز 404/)
+  assert.match(message, /الإنترنت عندك سليم/)
+})
+
 if (failures > 0) {
   console.log(`\n❌ فشلت ${failures} حالة`)
   process.exit(1)

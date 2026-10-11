@@ -70,6 +70,10 @@ class MemoryKv {
 const DAY = 86_400_000
 const NOW = Date.parse('2026-10-08T00:00:00Z')
 const dayIso = (offset) => new Date(NOW + offset * DAY).toISOString().slice(0, 10)
+/* `devbotWorker.scheduled` يقرأ الساعة الحقيقية (لا NOW المثبّت)، فمشهد «قريب من
+   الانتهاء» بمرساة ثابتة يصير «منتهياً» بمجرد مرور التاريخ ⇒ قنبلة زمنية سقطت
+   فعلاً في CI يوم 2026-10-11 (2026-10-08 + 2 = 2026-10-10 صار ماضياً). */
+const realDayIso = (offset) => new Date(Date.now() + offset * DAY).toISOString().slice(0, 10)
 
 const putDevice = async (kv, { id, customer, plan, expiresAt, indexed = true }) => {
   const record = { customer, plan, expiresAt, email: '', fingerprint: 'abcdef01' }
@@ -149,12 +153,12 @@ await okAsync('لا إزعاج بلا خبر، ولا تكرار في اليوم
 
   /* المنتهية وحدها لا تُرسل يومياً (تُعدّ في الإحصائيات) */
   const expiredOnly = new MemoryKv()
-  await putDevice(expiredOnly, { id: 'SHOP-AAA9-9999-9999', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-1) })
+  await putDevice(expiredOnly, { id: 'SHOP-AAA9-9999-9999', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-1) })
   const expiredRun = instrument(expiredOnly)
   await devbotWorker.scheduled({}, envOf(expiredRun.kv))
   assert.equal(expiredRun.sent.length, 0, 'المنتهية وحدها لا تُرسل تذكيراً يومياً')
 
-  await putDevice(kv, { id: 'SHOP-AAA2-2222-2222', customer: 'قريب', plan: 'basic', expiresAt: dayIso(2) })
+  await putDevice(kv, { id: 'SHOP-AAA2-2222-2222', customer: 'قريب', plan: 'basic', expiresAt: realDayIso(2) })
   const first = instrument(kv)
   await devbotWorker.scheduled({}, envOf(first.kv))
   assert.equal(first.sent.length, 1)
