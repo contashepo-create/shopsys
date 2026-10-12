@@ -9,7 +9,7 @@ import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, 
  * صرف: نقدية خارجة (سداد مورد، مصروف، مسحوبات…)
  * كل سند يولّد قيده المتوازن فوراً ويظهر في اليومية.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowDownCircle, ArrowUpCircle, BookOpenText, CheckCircle2, Eye, FileSpreadsheet, FileText, Landmark, Paperclip, Pencil, Printer, ReceiptText, Save, Search, Stamp, Undo2, WalletCards, X } from 'lucide-react'
 import { useDataStore, type Voucher } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -24,17 +24,9 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
-import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
+import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
 
 /** الحسابات المقابلة المتاحة لكل نوع سند — بلغة التاجر */
-const RECEIPT_COUNTERS = [
-  { code: '1104', label: 'سداد من عميل (تخفيض مديونيته)' },
-  { code: '4103', label: 'إيراد خدمات' },
-  { code: '3101', label: 'زيادة رأس المال' },
-  { code: '4101', label: 'إيراد مبيعات (بدون فاتورة)' },
-]
-/** كود خاص: مصروف على فاتورة شراء — يوزَّع على أصنافها ويرفع تكلفتها (طلب المالك) */
-const PURCHASE_EXPENSE_CODE = '__purchase_expense__'
 const VEHICLE_COST_CATEGORIES = [
   ['maintenance', 'صيانة'],
   ['fuel', 'وقود'],
@@ -42,19 +34,6 @@ const VEHICLE_COST_CATEGORIES = [
   ['tolls', 'نولون/رسوم طريق'],
   ['other', 'أخرى'],
 ] as const
-const PAYMENT_COUNTERS = [
-  { code: '2101', label: 'سداد لمورد (تخفيض ديننا له)' },
-  { code: PURCHASE_EXPENSE_CODE, label: 'مصروف على فاتورة شراء (نولون/جمارك… يرفع تكلفة أصنافها)' },
-  { code: '5103', label: 'إيجار المحل' },
-  { code: '5104', label: 'كهرباء ومياه' },
-  // سداد مسير مرحّل «استحقاقاً» يصفّي 2104 — أما 5102 فلأجور يومية عارضة لم تدخل مسيراً
-  { code: '2104', label: 'سداد رواتب مستحقة (مسير استحقاق سابق)' },
-  { code: '2117', label: 'سداد مصروفات تصنيع مستحقة (تعبئة/تشغيل…)' },
-  { code: '5102', label: 'أجور يومية عارضة جديدة (غير مثبتة سابقاً)' },
-  { code: '5108', label: 'مصروفات عمومية' },
-  { code: '3101', label: 'مسحوبات شخصية (تخفيض رأس المال)' },
-]
-
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
@@ -126,25 +105,22 @@ export function VouchersPage() {
   const reverseApproval = useSupervisorApproval('acc.journal.reverse')
   // ربط الشجرة المفتوحة بالسندات (طلب المالك): حساب إيراد مخصص يظهر في القبض،
   // وحساب مصروف مخصص يظهر في الصرف — ويُعالج بقيد سليم فور اختياره
-  const counters = useMemo(() => {
-    // فلترة حسب النشاط (أمر المالك): «إيراد مبيعات بدون فاتورة» لا يظهر لنشاط بلا بيع،
-    // و«مصروف على فاتورة شراء» لا يظهر لنشاط بلا وحدة مشتريات
-    const allowed = (code: string): boolean => {
-      if (code === PURCHASE_EXPENSE_CODE) return setup.modules.includes('purchases')
-      const req = ACCOUNT_MODULE_MAP[code]
-      return !req || req.some((m) => setup.modules.includes(m))
-    }
-    if (kind === 'receipt') {
-      return [
-        ...RECEIPT_COUNTERS.filter((c) => allowed(c.code)),
-        ...customAccounts.filter((a) => a.rootType === 'revenue').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
-      ]
-    }
-    return [
-      ...PAYMENT_COUNTERS.filter((c) => allowed(c.code)),
-      ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
-    ]
-  }, [kind, customAccounts, setup.modules])
+  // فلترة حسب النشاط والوحدات المفعّلة: الكتالوج في `core/voucherCounters.ts` مصدر واحد
+  // للشاشة والبوابة — فبند القسم يُفتح بمنح وحدته، ولن يظهر بند لا يخص النشاط
+  const counters = useMemo(
+    () => voucherCountersFor(kind, setup.modules, customAccounts),
+    [kind, customAccounts, setup.modules],
+  )
+
+  /* تهيئة الخانة على أول حساب مسموح — ودعم «فتح سند قبض للعميل X» مباشرة:
+     إن مرّرت الشاشة طرفاً قصدياً (طلب المالك من كشف الحساب/شاشة الأطراف)
+     تُختار خانتُه تلقائياً بدل أن يبقى الاختيار فارغاً. */
+  useEffect(() => {
+    if (!counters.length) return
+    if (!counters.some((c) => c.code === counter)) setCounter(counters[0].code)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- نقصد المزامنة عند تغيّر القائمة/النوع فقط، لا مع كل ضغطة
+  }, [counters, counter])
+
   const [filterFrom,setFilterFrom]=useState(''),[filterTo,setFilterTo]=useState(''),[filterQuery,setFilterQuery]=useState('')
   const listed = useMemo(() => {const q=filterQuery.trim().toLowerCase();return [...vouchers].filter((v) => v.kind !== 'transfer'&&(!filterFrom||v.date.slice(0,10)>=filterFrom)&&(!filterTo||v.date.slice(0,10)<=filterTo)&&(!q||v.voucherNumber.toLowerCase().includes(q)||v.description.toLowerCase().includes(q))).reverse()}, [vouchers,filterFrom,filterTo,filterQuery])
 
@@ -499,22 +475,25 @@ export function VouchersPage() {
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-1 text-sm font-bold doc-ink">
                     {kind === 'receipt' ? <WalletCards size={16} className="doc-accent" /> : <Landmark size={16} className="doc-accent" />}
-                    {needsParty ? kind === 'receipt' ? 'استلمنا من العميل' : 'يصرف إلى المورد' : kind === 'receipt' ? 'مصدر النقدية والحساب المقابل' : 'وجهة النقدية والحساب المقابل'}
-                    {needsParty && <span className="text-rose-600">*</span>}
+                    {kind === 'receipt' ? 'مصدر النقدية والحساب المقابل' : 'وجهة النقدية والحساب المقابل'}
+                    <span className="text-rose-600">*</span>
                   </label>
                   {needsParty && <span className="rounded doc-tint-strong px-2 py-0.5 text-[10px] font-semibold doc-accent-deep">بحث سريع [F3]</span>}
                 </div>
-                {needsParty ? (
-                  <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={(id) => { setPartyId(id); setAllocationDraft({}) }} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
-                ) : (
-                  /* بلاغ المالك: جملة «اختر الحساب المقابل من القائمة» كانت نصاً ميتاً فوق القائمة.
-                     صارت الخانة نفسها هي البحث: اكتب أول حرف من اسم الحساب أو كوده فتُفلتر القائمة فوراً. */
-                  <div className="relative">
-                    <Search size={16} className="pointer-events-none absolute right-2.5 top-1/2 z-10 -translate-y-1/2 doc-faint" />
-                    <QuickSelect aria-label="بحث الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 w-full rounded-lg border doc-line doc-sheet pr-8 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)]">
-                      <option value="">ابحث بالاسم أو الكود ثم Enter…</option>
-                      {counters.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
-                    </QuickSelect>
+                {/* الحساب المقابل ظاهر دائماً — حتى لا يُحتجز على بند واحد لا يمكن الخروج منه.
+                   بلاغ المالك: جملة «اختر الحساب المقابل من القائمة» كانت نصاً ميتاً فوق القائمة،
+                   فالخانة نفسها هي البحث: اكتب أول حرف من اسم الحساب أو كوده فتُفلتر القائمة فوراً. */}
+                <div className="relative">
+                  <Search size={16} className="pointer-events-none absolute right-2.5 top-1/2 z-10 -translate-y-1/2 doc-faint" />
+                  <QuickSelect aria-label="بحث الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 w-full rounded-lg border doc-line doc-sheet pr-8 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)]">
+                    <option value="">ابحث بالاسم أو الكود ثم Enter…</option>
+                    {counters.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
+                  </QuickSelect>
+                </div>
+                {needsParty && (
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold doc-ink">{kind === 'receipt' ? 'استلمنا من العميل' : 'يصرف إلى المورد'} <span className="text-rose-600">*</span></label>
+                    <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={(id) => { setPartyId(id); setAllocationDraft({}) }} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
                   </div>
                 )}
                 {/* الموظف طرف كامل (طلب المالك): اختره فتُسجَّل الحركة في حسابه وكشفه */}

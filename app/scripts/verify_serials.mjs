@@ -68,13 +68,16 @@ check('ضمان منتهٍ: active=false وdaysLeft=0', wExpired.active === fals
 console.log('— قوالب الأنشطة والوحدات —')
 check('كل نشاط له قالب فاتورة افتراضي', ACTIVITY_TEMPLATES.every((a) => a.defaultInvoiceTemplate === 'thermal' || a.defaultInvoiceTemplate === 'a4'))
 check('البقالة حراري واللوجستيات A4', getActivity('grocery').defaultInvoiceTemplate === 'thermal' && getActivity('logistics').defaultInvoiceTemplate === 'a4')
-check('اللوجستيات بلا مخزون ولا كاشير', !getActivity('logistics').modules.includes('inventory') && !getActivity('logistics').modules.includes('pos'))
-check('إيجار المعدات بلا مخازن افتراضياً', !getActivity('equipment_rental').modules.includes('inventory'))
+check('اللوجستيات بلا كاشير وبمخزون ومشتريات (سياسة النواة الموحّدة)', !getActivity('logistics').modules.includes('pos') && getActivity('logistics').modules.includes('inventory') && getActivity('logistics').modules.includes('purchases'))
+check('إيجار المعدات بلا كاشير وبمخزون قطع غيار (سياسة النواة الموحّدة)', !getActivity('equipment_rental').modules.includes('pos') && getActivity('equipment_rental').modules.includes('inventory'))
 check('البقالة والموبايلات بمخزون ومشتريات', ['grocery', 'mobile'].every((id) => getActivity(id).modules.includes('inventory') && getActivity(id).modules.includes('purchases')))
 check('الموبايلات: سيريال وضمان + صيانة', getActivity('mobile').features.includes('serial_warranty') && getActivity('mobile').modules.includes('maintenance'))
 check('كل الوحدات لها تسمية ووصف', ALL_MODULES.every((m) => MODULE_LABELS[m].nameAr && MODULE_LABELS[m].desc))
-const toggled = toggleModuleList(['pos', 'inventory'], 'inventory')
-check('إلغاء المخزون مع بقاء الكاشير مسموح', !toggled.includes('inventory') && toggled.includes('pos'))
+let invThrow = false
+try { toggleModuleList(['pos', 'inventory'], 'inventory') } catch { invThrow = true }
+check('إلغاء المخزون والكاشير عامل مرفوض (تبعيات الوحدات)', invThrow)
+const toggled = toggleModuleList(['laundry', 'inventory'], 'inventory')
+check('إلغاء المخزون لنشاط لا وحدة تعتمد عليه مسموح', !toggled.includes('inventory') && toggled.includes('laundry'))
 check('التفعيل يضيف الوحدة', toggleModuleList(['pos'], 'maintenance').includes('maintenance'))
 threw = false
 try { toggleModuleList(['pos', 'inventory'], 'pos') } catch { threw = true }

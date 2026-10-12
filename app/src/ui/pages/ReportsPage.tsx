@@ -4,16 +4,20 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * ملخص المبيعات والأرباح، مبيعات يومية (أعمدة)، أفضل الأصناف،
  * أرصدة العملاء والموردين، تنبيهات وقيمة المخزون — بفترات جاهزة أو مخصصة.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, TrendingUp, PackageSearch, Users, Truck, AlertTriangle, Boxes, ReceiptText, Coins } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
-  salesSummary, topItems, dailySales, stagnantItems,
+  salesSummary, topItems, dailySales, stagnantItems, activityRevenueRows,
   stockAlerts, inventoryValue, periodPresets, type Period,
 } from '../../core/reports.ts'
+import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
+import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
+import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
+import { reportCentersForModules } from '../../core/moduleCatalog.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
@@ -24,9 +28,15 @@ import { FxTreasuryTab } from './FxTreasuryTab.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { Landmark } from 'lucide-react'
 
-type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial' | 'currencies'
+/* التبويبات من السجل الواحد `core/reportTabs.ts` — لا نسخة محلية تتقادم (سدّ ف1) */
+type TabId = ReportTabId
+const TAB_ICONS: Record<TabId, typeof BarChart3> = {
+  sales: BarChart3, items: Boxes, parties: Users, inventory: PackageSearch,
+  expenses: ReceiptText, financial: Landmark, currencies: Coins,
+}
 
 /** تسميات مصادر العمليات لتقرير المصروفات */
 const EXP_SOURCE_LABELS: Record<string, string> = {
@@ -105,7 +115,33 @@ export function ReportsPage() {
     [suppRows, getSupplierStatementRows, todayYmd],
   )
   const alerts = useMemo(() => stockAlerts(items), [items])
-  const invValue = useMemo(() => inventoryValue(items), [items])
+  const invValue = useMemo(() => inventoryValue(items), [items])  /* ─── إيراد الفترة من دفتر اليومية — مصدر واحد لكل الأنشطة (تدقيق 2026-10-11) ───
+     بطاقات المبيعات أعلاه تقرأ مستندات الكاشير فقط؛ هذه القراءة تشمل كل الوحدات
+     والمحركات التخصصية (معمل/عيادة/لوجستيات/مقاولات/عقارات/مغسلة/إيجار/سيارات)
+     فلا يرى صاحبها «صفر مبيعات» وله إيراد حقيقي في اليومية. */
+  const revenueCodes = useMemo(() => new Set(customAccounts.filter((a) => a.rootType === 'revenue').map((a) => a.code)), [customAccounts])
+  const revenueNames = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const a of customAccounts) map[a.code] = a.nameAr
+    return map
+  }, [customAccounts])
+  const revenueByModule = useMemo(
+    () => activityRevenueRows(journal, period, {
+      extraNames: revenueNames,
+      customRevenueCodes: revenueCodes,
+      moduleOf: ACCOUNT_MODULE_MAP,
+      moduleNames: Object.fromEntries(Object.entries(MODULE_LABELS).map(([k, v]) => [k, v.nameAr])),
+      activeModules: setup.modules,
+      coreModules: ['pos', 'inventory', 'purchases'],
+    }),
+    [journal, period, revenueNames, revenueCodes, setup.modules],
+  )
+  // عنوان البطاقة حسب طريقة بيع النشاط — «مبيعات» للكاشير، «إيراد» لغيره
+  const salesCardTitle = (() => {
+    const base = isInvoiceFirst(setup.activityId) ? 'إيراد الفواتير' : 'إيراد البيع (كاشير)'
+    return setup.modules.includes('pos') ? base : 'إيراد الفترة'
+  })()
+
   const expAlerts = useMemo(
     () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
     [batches, items],
@@ -183,6 +219,27 @@ export function ReportsPage() {
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 
+  /* ─── سجل التبويبات (§6/ف1): شرط الوحدة أو وجود بيانات، ووسم «لا حركة بعد» ─── */
+  const enabledModules = effectiveModules(setup.activityId, setup.modules)
+  const tabHasData = (id: TabId): boolean => {
+    switch (id) {
+      case 'sales': return daily.length > 0
+      case 'items': return top.length > 0
+      case 'parties': return customers.length > 0 || suppliers.length > 0
+      case 'inventory': return items.length > 0
+      case 'expenses': return purchases.length > 0 || vouchers.length > 0
+      case 'financial': return journal.length > 0
+      case 'currencies': return customAccounts.length > 0
+    }
+  }
+  const visibleTabs = visibleReportTabs(enabledModules, tabHasData)
+  useEffect(() => {
+    if (!visibleTabs.some((def) => def.id === tab)) setTab(visibleTabs[0]?.id ?? 'financial')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTabs.map((def) => def.id).join(','), tab])
+  /* بطاقة «تقارير أقسامك المضافة»: الوحدات فوق النواة الثلاثة (المبيعات/المخزون/المشتريات) */
+  const extraCenters = reportCentersForModules(enabledModules.filter((module) => module !== 'pos' && module !== 'inventory' && module !== 'purchases'))
+
   return (
     <div className="space-y-4">
       {/* اختيار الفترة */}
@@ -215,7 +272,7 @@ export function ReportsPage() {
       {/* بطاقات الملخص */}
       <div className="anim-up grid grid-cols-2 lg:grid-cols-4 gap-3" style={{ animationDelay: '40ms' }}>
         <div className={`${card} p-4`}>
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400"><ReceiptText size={13} /> صافي المبيعات ({summary.invoiceCount} فاتورة)</div>
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400"><ReceiptText size={13} /> {salesCardTitle} ({summary.invoiceCount} فاتورة)</div>
           <div className="font-black text-xl mt-1">{fmt(summary.totalMinor)} <span className="text-[11px] font-bold text-slate-400">{cur.symbol}</span></div>
           <div className="text-[10px] text-slate-400 mt-0.5">نقدي {fmt(summary.cashMinor)} — آجل {fmt(summary.creditMinor)}</div>
         </div>
@@ -234,23 +291,104 @@ export function ReportsPage() {
           <div className={`font-black text-xl mt-1 ${summary.returnsMinor > 0 ? 'text-rose-600' : ''}`}>{fmt(summary.returnsMinor)} <span className="text-[11px] font-bold text-slate-400">{cur.symbol}</span></div>
           <div className="text-[10px] text-slate-400 mt-0.5">قيمة المخزون الآن {fmt(invValue.totalMinor)}</div>
         </div>
+        {/* إيراد الفترة من دفتر اليومية — يشمل كل الوحدات والمحركات التخصصية */}
+        <div className={`${card} p-4 border-emerald-200 dark:border-emerald-900/60`}>
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400"><TrendingUp size={13} /> إيراد الفترة من الدفتر (كل الأقسام)</div>
+          <div className="font-black text-xl mt-1 text-emerald-700 dark:text-emerald-300">{fmt(revenueByModule.totalMinor)} <span className="text-[11px] font-bold text-slate-400">{cur.symbol}</span></div>
+          <div className="text-[10px] text-slate-400 mt-0.5">
+            {setup.modules.includes('pos')
+              ? (revenueByModule.totalMinor === summary.totalMinor - summary.taxMinor
+                ? 'مطابق لمبيعات الكاشير في هذه الفترة ✓'
+                : `منها غير الكاشير: ${fmt(revenueByModule.totalMinor - (summary.totalMinor - summary.taxMinor))}`)
+              : 'نشاطك يبيع بمحركه التخصصي — هذا رقمه الصحيح'}
+          </div>
+        </div>
+        {/* توزيع الإيراد على الأقسام: النشاط + كل وحدة مطعَّمة بمفتاح */}
+        {revenueByModule.rows.filter((r) => r.module).length > 0 && (
+          <div className={`${card} p-4`}>
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400"><Boxes size={13} /> الإيراد حسب القسم</div>
+            <div className="mt-1 space-y-0.5">
+              {(() => {
+                const byModule = new Map<string, number>()
+                for (const r of revenueByModule.rows) if (r.module) byModule.set(r.moduleNameAr ?? r.module, (byModule.get(r.moduleNameAr ?? r.module) ?? 0) + r.amountMinor)
+                return [...byModule.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, amount]) => (
+                  <div key={name} className="flex items-center justify-between text-[11.5px]">
+                    <span className="text-slate-500 dark:text-slate-400">{name}</span>
+                    <b className="text-slate-700 dark:text-slate-200">{fmt(amount)}</b>
+                  </div>
+                ))
+              })()}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* التبويبات */}
+      {/* تفصيل الإيراد بالحساب — بند «كم ربح كل قسم فعلاً» (يظهر عند تعدد مصادر الإيراد) */}
+      {revenueByModule.rows.length > 1 && (
+        <div className={`anim-up ${card} overflow-hidden`} style={{ animationDelay: '60ms' }}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            💰 الإيراد حسب البند والقسم — من دفتر اليومية (الفترة {period.from} → {period.to})
+          </div>
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {revenueByModule.rows.map((r) => (
+                <tr key={r.accountCode} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <td className="px-4 py-2 text-slate-700 dark:text-slate-200">{accountName(r.accountCode)}</td>
+                  <td className="px-4 py-2 text-[11px] text-slate-400">{r.moduleNameAr ?? 'إيراد عام'}</td>
+                  <td className="px-4 py-2 font-black text-left text-emerald-600">{fmt(r.amountMinor)}</td>
+                </tr>
+              ))}
+              <tr className="bg-slate-50/60 dark:bg-slate-800/30">
+                <td className="px-4 py-2 font-black" colSpan={2}>الإجمالي</td>
+                <td className="px-4 py-2 font-black text-left">{fmt(revenueByModule.totalMinor)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* التبويبات — من السجل: تبويب بلا وحدته وبلا بيانات لا يُعرض، وبلا حركة يُوسم (ف1) */}
       <div className="anim-up flex items-center gap-2 flex-wrap" style={{ animationDelay: '80ms' }}>
-        <button onClick={() => setTab('sales')} className={tabCls('sales')}><BarChart3 size={14} className="inline -mt-0.5 me-1" /> المبيعات اليومية</button>
-        <button onClick={() => setTab('items')} className={tabCls('items')}><Boxes size={14} className="inline -mt-0.5 me-1" /> أفضل الأصناف</button>
-        <button onClick={() => setTab('parties')} className={tabCls('parties')}><Users size={14} className="inline -mt-0.5 me-1" /> الذمم</button>
-        <button onClick={() => setTab('inventory')} className={tabCls('inventory')}><PackageSearch size={14} className="inline -mt-0.5 me-1" /> المخزون</button>
-        <button onClick={() => setTab('expenses')} className={tabCls('expenses')}><ReceiptText size={14} className="inline -mt-0.5 me-1" /> المصروفات</button>
-        <button onClick={() => setTab('financial')} className={tabCls('financial')}><Landmark size={14} className="inline -mt-0.5 me-1" /> القوائم المالية</button>
-        <button onClick={() => setTab('currencies')} className={tabCls('currencies')}><Coins size={14} className="inline -mt-0.5 me-1" /> العملات</button>
+        {visibleTabs.map((def) => {
+          const Icon = TAB_ICONS[def.id]
+          const empty = !tabHasData(def.id)
+          return (
+            <button key={def.id} onClick={() => setTab(def.id)} className={tabCls(def.id)} data-report-tab={def.id} title={empty ? `لا حركة بعد — ${def.dataHintAr}` : def.dataHintAr}>
+              <Icon size={14} className="inline -mt-0.5 me-1" /> {def.labelAr}
+              {empty && <span className="ms-2 rounded-full bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300" data-report-empty>لا حركة بعد</span>}
+            </button>
+          )
+        })}
       </div>
+
+      {/* بطاقة «تقارير أقسامك المضافة» (سدّ ف2): تقرير الوحدة المطعَّمة كان بلا باب من المركز */}
+      {extraCenters.length > 0 && (
+        <section className={`anim-up ${card} p-4`} data-report-module-card>
+          <div className="mb-3 text-[13px] font-black text-slate-700 dark:text-slate-200">🧩 تقارير أقسامك المضافة</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {extraCenters.map(({ module, center }) => (
+              <div key={module} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3" data-report-module={module}>
+                <div className="mb-2 text-[12.5px] font-bold text-slate-700 dark:text-slate-200">{MODULE_LABELS[module]?.icon} {center.labelAr}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {center.links.map((link) => (
+                    <Link key={link.path} to={link.path} className="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 dark:text-sky-300 dark:hover:bg-slate-700">{link.labelAr} ←</Link>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {tab === 'sales' && (
         <div className={`anim-up ${card} p-5`}>
+          {setup.modules.includes('pos') && (
+            <div className="mb-3 text-[11px] text-slate-400">الرسم أدناه لفواتير الكاشير وحدها — إيراد الوحدات التخصصية (معمل/عيادة/لوجستيات/مقاولات/عقارات/مغسلة…) في «القوائم المالية» وفي بطاقة «إيراد الفترة من الدفتر» أعلاه.</div>
+          )}
           {daily.length === 0 ? (
-            <div className="text-center text-slate-400 text-[13px] py-10">لا مبيعات في هذه الفترة</div>
+            <div className="text-center text-slate-400 text-[13px] py-10">
+              {setup.modules.includes('pos') ? 'لا مبيعات كاشير في هذه الفترة' : `لا فواتير كاشير — إيراد نشاطك في هذه الفترة: ${fmt(revenueByModule.totalMinor)} ${cur.symbol} (من الدفتر)`}
+            </div>
           ) : (
             <>
               <div className="flex items-end gap-1.5 h-44 overflow-x-auto pb-1">
@@ -279,7 +417,9 @@ export function ReportsPage() {
       {tab === 'items' && (
         <div className={`anim-up ${card} overflow-hidden`}>
           {top.length === 0 ? (
-            <div className="text-center text-slate-400 text-[13px] py-10">لا مبيعات أصناف في هذه الفترة</div>
+            <div className="text-center text-slate-400 text-[13px] py-10">
+              {setup.modules.includes('pos') ? 'لا مبيعات أصناف في هذه الفترة' : 'نشاطك لا يبيع بالكاشير — الأصناف هنا تُعرض عند البيع عبر الفاتورة أو المحرك التخصصي'}
+            </div>
           ) : (
             <table className="w-full text-[13px]">
               <thead>

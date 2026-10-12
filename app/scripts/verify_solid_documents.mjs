@@ -39,7 +39,7 @@ const modal = read('ui/components/InvoiceDraftsModal.tsx')
 /* ═══ ② مسودات العروض والمشروعات بنفس مخزن الفواتير ═══ */
 {
   // المخزن: النوع موسع والتسميات موجودة
-  assert.ok(repo.includes("kind: 'sale' | 'purchase' | 'quotation' | 'project'"), 'مخزن المسودات لا يقبل العروض والمشروعات')
+  assert.ok(repo.includes("kind: 'sale' | 'purchase' | 'purchase_order' | 'quotation' | 'project'"), 'مخزن المسودات لا يقبل أوامر الشراء والعروض والمشروعات')
   assert.ok(modal.includes("'quotation' | 'project'") && modal.includes('عروض الأسعار') && modal.includes('المشروعات'), 'نافذة المسودات بلا تسميات العروض والمشروعات')
   // العرض: حفظ واسترجاع وربط بالشريط وحذف عند الاعتماد
   assert.ok(quotes.includes("kind: 'quotation'") && quotes.includes('const saveDraft = () =>'), 'العرض لا يحفظ مسودة')

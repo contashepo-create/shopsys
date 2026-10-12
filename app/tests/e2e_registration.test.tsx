@@ -116,8 +116,9 @@ const PROFILES: { activity: string; mustSee: string[]; mustNotSee: string[] }[] 
   },
   {
     activity: 'إيجار معدات ثقيلة',
-    mustSee: ['إيجار المعدات'],
-    mustNotSee: ['المبيعات', 'المخزون', 'المشتريات', 'المقاولات', 'العيادة'],
+    // v1.0.24: المخزون والمشتريات نواة لكل نشاط (قطع غيار المعدات وموردوها)
+    mustSee: ['إيجار المعدات', 'المخزون', 'المشتريات'],
+    mustNotSee: ['المبيعات', 'المقاولات', 'العيادة', 'معمل التحاليل'],
   },
   {
     activity: 'موبايلات وصيانة',
@@ -126,8 +127,9 @@ const PROFILES: { activity: string; mustSee: string[]; mustNotSee: string[] }[] 
   },
   {
     activity: 'خدمات لوجستية ونقل',
-    mustSee: ['اللوجستيات'],
-    mustNotSee: ['المبيعات', 'المخزون', 'المقاولات', 'الصيانة', 'العيادة'],
+    // v1.0.24: قطع الغيار والسولار في المخزون، والموردون في المشتريات
+    mustSee: ['اللوجستيات', 'المخزون', 'المشتريات'],
+    mustNotSee: ['المبيعات', 'المقاولات', 'الصيانة', 'العيادة'],
   },
 ]
 
@@ -178,7 +180,7 @@ describe('تسجيل حقيقي لكل نشاط + عزل الأقسام (Feature
     render(<App />)
     await completeWizard('معمل تحاليل طبية', 'معمل ب')
     const mods = useAppStore.getState().setup.modules
-    expect(mods).toEqual(['lab', 'booking']) // v1.0.11: المعمل يضم المواعيد والحجوزات
+    expect(mods).toEqual(['inventory', 'purchases', 'lab', 'booking']) // v1.0.24: النواة + v1.0.11: المعمل يضم المواعيد
     expect(mods).not.toContain('contracting')
     const sb = sidebar()
     expect(sb.queryAllByText('معمل التحاليل').length).toBeGreaterThan(0)

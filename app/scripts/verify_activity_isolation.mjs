@@ -73,7 +73,7 @@ console.log('\n═══ B) حراسة المسارات حسب الوحدات �
     ['realestate', '/pos', false],
     ['realestate', '/realestate/leases', true],
     ['realestate', '/contracting/projects', false],
-    ['realestate', '/inventory/items', false],
+    ['realestate', '/inventory/items', true], // سياسة النواة: المخزون لكل نشاط (مستلزمات صيانة الوحدات)
     ['contracting', '/contracting/projects', true],
     ['contracting', '/pos', false],
     ['contracting', '/inventory/items', true],
@@ -133,7 +133,10 @@ ok('28 نشاطاً: الصلاحيات المعروضة = العامة + الم
   const re = permissionsForModules(effectiveModules('realestate', []))
   assert.ok(!re.some((p) => p.id === 'sales.pos.open'), 'فتح الكاشير ظهر للعقارات!')
   assert.ok(!re.some((p) => p.id === 'sales.shift.close'), 'إقفال وردية ظهر للعقارات!')
-  assert.ok(!re.some((p) => p.id === 'inv.cost.view'), 'رؤية التكلفة ظهرت للعقارات (بلا مخزون)!')
+  /* سياسة النواة الموحّدة (2026-10-11): العقارات لها مخزون (مستلزمات صيانة الوحدات
+     وعقارات مملوكة) فرؤية التكلفة مشروعة — والممنوع عليها هو صلاحيات الكاشير */
+  assert.ok(re.some((p) => p.id === 'inv.cost.view'), 'رؤية التكلفة غابت عن العقارات (لها مخزون)!')
+  assert.ok(!re.some((p) => p.id === 'sales.return.create'), 'تسجيل مرتجع كاشير ظهر للعقارات!')
   assert.ok(re.some((p) => p.id === 'ops.activity.use'), 'صلاحية النشاط التخصصي غابت عن العقارات!')
   const gro = permissionsForModules(effectiveModules('grocery', []))
   assert.ok(gro.some((p) => p.id === 'sales.pos.open'), 'فتح الكاشير غاب عن البقالة!')
@@ -153,6 +156,9 @@ console.log('\n═══ D) الأدوار المرئية حسب النشاط �
     assert.equal(rids.has('senior_seller'), hasPos, `${tpl.id}: بائع أول — متوقع ${hasPos}`)
     // المالك والمحاسب دائماً
     assert.ok(rids.has('owner') && rids.has('accountant'), `${tpl.id}: المالك/المحاسب غائب!`)
+    // v1.0.24: كل نشاط صار له مخزون ⇒ دور «أمين مخزن» متاح له مرة واحدة (دور مشترك بالنواة)
+    assert.ok(modules.includes('inventory'), `${tpl.id}: بلا وحدة مخزون في سياسة النواة!`)
+    assert.equal(roles.filter((r) => r.id === 'warehouse_keeper').length, 1, `${tpl.id}: دور أمين المخزن غائب أو مكرر`)
     // أدوار النشاط نفسه تظهر له
     for (const r of ACTIVITY_ROLES[tpl.id] ?? []) {
       assert.ok(rids.has(r.id), `${tpl.id}: دوره ${r.id} غائب!`)
@@ -167,7 +173,7 @@ console.log('\n═══ D) الأدوار المرئية حسب النشاط �
       }
     }
   }
-  ok('28 نشاطاً: كاشير مرهون بـpos، أدوار كل نشاط له وحده، لا تسريب عكسي، المالك/المحاسب دائماً')
+  ok('29 نشاطاً: كاشير مرهون بـpos، أمين مخزن بالنواة، أدوار كل نشاط له وحده، لا تسريب عكسي، المالك/المحاسب دائماً')
   // مستخدم قديم على دور مخفي: التقييم يعمل (rolesWithOverrides الكاملة)
   const all = rolesWithOverrides({}, [], 'realestate')
   assert.ok(all.some((r) => r.id === 'cashier'), 'الدور الكامن اختفى من التقييم — مستخدم قديم سينكسر!')

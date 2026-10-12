@@ -130,7 +130,11 @@ const read = (p) => readFileSync(new URL(`../src/${p}`, import.meta.url), 'utf8'
   const ledger = read('core/ledger.ts')
   const repo = read('data/repo.ts')
 
-  assert.ok(reports.includes("setTab('currencies')") && reports.includes('العملات') && reports.includes('<FxTreasuryTab'), 'تبويب العملات غير موصول بمركز التقارير')
+  /* تبويب العملات صار يُبنى من سجل التبويبات `core/reportTabs.ts` (ف1) — الشرط
+     الآن: التبويب معرَّف في السجل، والصفحة ترسم من السجل، ومحتواه مكوّن FxTreasuryTab */
+  const tabsRegistry = read('core/reportTabs.ts')
+  assert.ok(tabsRegistry.includes("id: 'currencies'") && tabsRegistry.includes('labelAr: \'العملات\''), 'تبويب العملات غير معرَّف في سجل التبويبات')
+  assert.ok(reports.includes('visibleTabs.map(') && reports.includes('<FxTreasuryTab') && reports.indexOf("case 'currencies'") > 0, 'تبويب العملات غير موصول بمركز التقارير')
   assert.ok(tab.includes('data-fx-holdings') && tab.includes('المكان (الخزينة/البنك)'), 'جدول الأرصدة بلا عمود المكان')
   assert.ok(tab.includes('متوسط التكلفة') && tab.includes('غير محقق'), 'الأرصدة بلا متوسط تكلفة وفرق غير محقق')
   assert.ok(tab.includes('data-fx-convert-open') && tab.includes('data-fx-convert-modal') && tab.includes('data-fx-conv-preview'), 'نافذة التحويل أو معاينتها مفقودة')

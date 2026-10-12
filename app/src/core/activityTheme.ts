@@ -37,6 +37,14 @@ export type ActivityWidget =
   | 'gold_position' // مركز الذهب (وزن المخزون) — مجوهرات
   | 'top_debtors' // أعلى المديونيات — عام
   | 'yield_today' // تصافي التقطيع/الفرز الأخير — جزارة وتمور
+  /* ودجات الوحدات المضافة (§6/ف5): تظهر لأي نشاط فعّل الوحدة، لا للنشاط الأصلي وحده */
+  | 'low_stock' // أصناف تحت الحد الأدنى — المخزون
+  | 'po_waiting' // أوامر شراء بانتظار الاستلام — المشتريات
+  | 'upcoming_installments' // أقساط مستحقة قريباً — الأقساط
+  | 'laundry_orders' // أوامر غسيل مفتوحة — المغسلة
+  | 'today_bookings' // حجوزات اليوم — المواعيد
+  | 'wallet_float' // عمليات محافظ اليوم وربحها — خدمات المحافظ
+  | 'rentals_expiring' // إيجارات تستحق قريباً — العقارات
 
 export interface ActivityTheme {
   persona: CardPersona
@@ -164,5 +172,12 @@ export const WIDGET_LABELS: Record<ActivityWidget, { titleAr: string; icon: stri
   expiry_soon: { titleAr: 'قرب انتهاء الصلاحية', icon: '⏳', route: '/inventory/items', emptyAr: 'لا أصناف قرب الانتهاء' },
   gold_position: { titleAr: 'مركز الذهب', icon: '⚖️', route: '/inventory/jewelry', emptyAr: 'لا مخزون ذهب' },
   top_debtors: { titleAr: 'أعلى المديونيات', icon: '💳', route: '/reports/statements', emptyAr: 'لا مديونيات — ممتاز' },
+  low_stock: { titleAr: 'أصناف تحت الحد الأدنى', icon: '📉', route: '/inventory/items', emptyAr: 'لا أصناف تحت الحد' },
+  po_waiting: { titleAr: 'أوامر شراء منتظرة', icon: '🚚', route: '/purchases/orders', emptyAr: 'لا أوامر بانتظار الاستلام' },
+  upcoming_installments: { titleAr: 'أقساط مستحقة قريباً', icon: '💳', route: '/parties/installments', emptyAr: 'لا أقساط قريبة' },
+  laundry_orders: { titleAr: 'أوامر غسيل مفتوحة', icon: '🧺', route: '/laundry/orders', emptyAr: 'لا أوامر غسيل' },
+  today_bookings: { titleAr: 'حجوزات اليوم', icon: '📅', route: '/bookings', emptyAr: 'لا حجوزات اليوم' },
+  wallet_float: { titleAr: 'عمليات محافظ اليوم', icon: '📲', route: '/wallets/ops', emptyAr: 'لا عمليات محافظ اليوم' },
+  rentals_expiring: { titleAr: 'إيجارات تستحق قريباً', icon: '🏘️', route: '/realestate/leases', emptyAr: 'لا استحقاقات قريبة' },
   yield_today: { titleAr: 'آخر تصافي تجهيز', icon: '⚖️', route: '/inventory/processing', emptyAr: 'لا أوامر تجهيز بعد' },
 }
