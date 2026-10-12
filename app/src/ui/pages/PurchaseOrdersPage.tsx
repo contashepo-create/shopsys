@@ -28,7 +28,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn, Field, Modal, guardNavigation, inputCls, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { QuickSelect, PartyQuickPicker, ItemQuickPicker } from '../components/KeyboardPickers.tsx'
-import { formatMinor } from '../../core/money.ts'
+import { formatMinor, toMinor } from '../../core/money.ts'
 import { getCountry } from '../../core/countries.ts'
 import {
   PURCHASE_ORDER_STATUS_AR, poRemainingQty, purchaseOrderTotals,
@@ -115,12 +115,19 @@ export function PurchaseOrdersPage() {
 
   const patch = (key: string, value: Partial<DraftLine>) => setLines((current) => current.map((line) => (line.key === key ? { ...line, ...value } : line)))
 
-  const addItem = (id: number) => {
+  /**
+   * إضافة سطر — **تحترم الإدخال الذكي** كما تفعله فاتورة الشراء بالحرف:
+   * «شاي*3@45» ⇒ كمية 3 وسعر وحدة 45، و«شاي» وحدها ⇒ كمية 1 بآخر تكلفة.
+   * (كان الأمر يتجاهل الكمية/السعر المكتوبين فيخالف الفاتورة في نفس الكتابة.)
+   */
+  const addItem = (id: number, smart?: { qty?: number; price?: number; discount?: number }) => {
     const item = items.find((x) => x.id === id)
     if (!item) return
+    const qty = smart?.qty && smart.qty > 0 ? smart.qty : 1
+    const unitPriceMinor = smart?.price !== undefined ? toMinor(String(smart.price), cur.decimals) : (item.costMinor ?? 0)
     setLines((current) => [...current, {
-      key: crypto.randomUUID(), itemId: item.id, nameAr: item.nameAr, qty: 1, receivedQty: 0,
-      unitAr: item.baseUnit ?? 'قطعة', unitPriceMinor: item.costMinor ?? 0,
+      key: crypto.randomUUID(), itemId: item.id, nameAr: item.nameAr, qty, receivedQty: 0,
+      unitAr: item.baseUnit ?? 'قطعة', unitPriceMinor,
       vatPercent: applyTax ? taxPolicy.effectivePercent : 0, notes: '', warehouseId,
     }])
   }
@@ -211,7 +218,7 @@ export function PurchaseOrdersPage() {
     if (!clean.length) return toast.show('أضف أصنافاً قبل طباعة إذن الاستلام', 'error')
     printHtml(buildWarehouseReceiptHtml({
       title: 'إذن استلام بنود أمر شراء (كميات فقط)',
-      docNumber: pendingDraftNumber(purchaseOrders.length),
+      docNumber: pendingDraftNumber(purchaseOrders),
       dateLabel: `التسليم المتوقع ${expectedDate}`,
       partyLabel: selectedSupplier?.nameAr ?? (supplierName.trim() || 'مورد نقدي'),
       branchLabel: branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? branches.find((b) => b.isMain)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'الفرع الرئيسي',
@@ -278,7 +285,7 @@ export function PurchaseOrdersPage() {
           branchLabel={branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? branches.find((b) => b.isMain)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'وضع الفرع الواحد'}
           userLabel={currentUser?.nameAr ?? setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
-          documentNumber={pendingDraftNumber(purchaseOrders.length)}
+          documentNumber={pendingDraftNumber(purchaseOrders)}
           draftCount={advancedInvoiceDrafts.filter((d) => d.kind === 'purchase_order').length}
           onBack={() => unsaved.requestClose(closeEditor)}
           onNavigate={(path) => { if (!guardNavigation(() => nav(path))) nav(path) }}
@@ -425,7 +432,7 @@ export function PurchaseOrdersPage() {
                   onEdit={(id) => openItemEditorWindow(id, host?.windowId ?? null)}
                   onMovement={(id) => openItemLedgerWindow(id, host?.windowId ?? null)}
                   onPrices={(id) => openItemPricesWindow(id, host?.windowId ?? null)}
-                  amountLabel={(item) => `آخر تكلفة ${fmt(item.costMinor ?? 0)}`}
+                  amountLabel={(item) => `متاح ${item.stockQty ?? 0} · تكلفة ${fmt(item.costMinor ?? 0)}`}
                   placeholder="اكتب اسم الصنف المطلوب؛ ثم اختر بالسهم + Enter"
                   showPicker={false}
                 />
@@ -560,9 +567,14 @@ export function PurchaseOrdersPage() {
   )
 }
 
-/** رقم الأمر القادم كما سيُسجَّل — عرضٌ تعريفي فقط (الترقيم يُمنح في المخزن عند الاعتماد) */
-function pendingDraftNumber(existing: number): string {
-  return `PO-${String(existing + 1).padStart(4, '0')} (مسودة)`
+/**
+ * رقم الأمر القادم كما سيُمنح فعلاً — عرضٌ تعريفي (الترقيم الحقيقي في المخزن عند الاعتماد).
+ * يُحسب من **أكبر معرّف موجود + 1** لا من عدد الأوامر: حذف أمر قديم كان يجعل
+ * الرقم المعروض يكرر رقماً مسجَّلاً بالفعل (`nextId` في المخزن يستعمل نفس القاعدة).
+ */
+function pendingDraftNumber(existing: readonly { id: number }[]): string {
+  const next = existing.reduce((max, order) => Math.max(max, order.id), 0) + 1
+  return `PO-${String(next).padStart(4, '0')} (مسودة)`
 }
 
 /** زر نصي بنمط أزرار اللوحات — بلا حد ولا خلفية (نفس شكل «ملاحظات المورد» في الفاتورة) */

@@ -99,12 +99,25 @@ console.log('\n🧾 بوابة تكافؤ أمر الشراء مع فاتورة 
 
 /* ① الخصائص: مقارنة آلية مع الفاتورة على المكوّنين المشتركين */
 const table = compare('جدول البنود InvoiceLinesTable', 'InvoiceLinesTable')
-const frame = compare('إطار المستند InvoicePOSFrame', 'InvoicePOSFrame')
+compare('إطار المستند InvoicePOSFrame', 'InvoicePOSFrame')
 
 /* خصائص موجودة في الأمر وراء إصلاح السطر الأول: يجب ألا تعود للفاتورة وحدها */
 for (const prop of ['entry', 'entryFilter', 'onActiveItem', 'onDuplicate', 'onMoveLine', 'onReplaceLine'])
   assert.ok(table.fromOrder.has(prop), `أمر الشراء فقد تسهيل «${prop}» الموجود في جدول الفاتورة`)
 ok('تسهيلات السطر: تصفية التصنيف · إفراغ/تكرار/نقل/استبدال البند — حاضرة')
+
+/* ①.ب الإدخال الذكي: لا يكفي تمرير الخصائص — الدالة نفسها يجب أن تقرأ smart */
+for (const [label, page] of [['الفاتورة', purchaseInvoice], ['الأمر', po]]) {
+  const i = page.indexOf('const addItem')
+  assert.ok(i >= 0, `${label}: دالة إضافة السطر مفقودة`)
+  const body = page.slice(i, i + 600)
+  assert.ok(/smart\?\.qty/.test(body) && /smart\?\.price/.test(body), `${label}: إضافة السطر تتجاهل الإدخال الذكي (كمية/سعر)`)
+}
+/* ونفس الشيء في المكوّن المشترك: منتقي الأصناف يجب أن يمرّر الإدخال الذكي،
+   وإلا ضاع الكمية/السعر قبل أن يصل للصفحة أصلاً (كان يضيع فعلاً) */
+const pickers = src('ui/components/KeyboardPickers.tsx')
+assert.ok(/const pick = \(id: number, smart\?: SmartEntry\) => \{ onPick\(id, smart\)/.test(pickers), 'منتقي الأصناف في الجدول يُسقط الإدخال الذكي (كمية/سعر)')
+ok('الإدخال الذكي «شاي*3@45»: يمرّ من المنتقي وصولاً للصفحة — في الأمر والفاتورة')
 
 /* ② السطر الأول: لا سطر محتجز، والجدول يبدأ فارغاً فيحمل أول صف خانة البحث */
 assert.ok(/const \[lines, setLines\] = useState<DraftLine\[\]>\(\[\]\)/.test(po), 'أمر الشراء يبدأ بأسطر جاهزة — أول سطر بلا خانة بحث')
@@ -117,8 +130,16 @@ for (const rx of [/invoice-line-entry-cell input/, /data-line-key/, /invoice-sea
   assert.ok(rx.test(uiTest), `اختبار محرر الأمر لا يفحص «${rx}»`)
 ok('السطر الأول: الجدول يبدأ بلا سطور · أول صف يحمل خانة البحث · اختبار واجهة يحرسه')
 
+/* ①.ج رقم المستند المعروض = أكبر معرّف + 1 (لا عدد الأوامر): حذف أمر قديم
+   كان يجعل الرقم المعروض يكرر رقماً مسجَّلاً — والقاعدة نفسها في المخزن */
+assert.ok(/function pendingDraftNumber\(existing: readonly \{ id: number \}\[\]\)/.test(po), 'رقم المستند لا يُحسب من المعرّفات')
+assert.ok(/Math\.max\(max, order\.id\)/.test(po), 'رقم المستند يُحسب بعدد الأوامر فيكرر رقماً محذوفاً')
+assert.ok(/pendingDraftNumber\(purchaseOrders\)/.test(po), 'الرقم المعروض لا يقرأ قائمة الأوامر')
+ok('رقم المستند المعروض = أكبر معرّف + 1 — لا تكرار لرقم مسجَّل بعد حذف أمر')
+
 /* ③ مالية الفاتورة وحدها — مسجَّلة بلا نقص صامت */
 assert.ok(Object.keys(INVOICE_ONLY).length >= 8, 'قائمة «خاص بالفاتورة» فُقدت سطورها')
+console.log('     ميزتان لا تُنقلان إلى الأمر: الخصم النهائي (يُتفق عليه عند التوريد في الفاتورة) وتوزيع المصروفات/الدفع — أمرٌ بلا قيد لا يحملهما.')
 console.log('     خاص بالفاتورة (بلا نقص في الأمر): ' + Object.entries(INVOICE_ONLY)
   .filter(([key]) => ['onApply', 'onClear', 'bookCurrency', 'costShares', 'open', 'warnings', 'belowCostKeys'].includes(key))
   .map(([key, why]) => `${key} (${why})`).join(' · '))

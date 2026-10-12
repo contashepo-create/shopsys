@@ -7,7 +7,7 @@
  *    الفاتورة في الأمر: تصفية التصنيف، بطاقة الصنف، شروط التوريد، الضريبة،
  *    المسودات، مفاتيح الطباعة، وحراسة التغييرات غير المحفوظة.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -18,6 +18,10 @@ const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
 const { PurchaseOrdersPage } = await import('../src/ui/pages/PurchaseOrdersPage.tsx')
 const { ToastHost } = await import('../src/ui/components/ui.tsx')
+
+
+/* عزل DOM بين الاختبارات: فشل اختبار لا يُسقط الذي بعده */
+afterEach(() => cleanup())
 
 const S = () => useDataStore.getState()
 
@@ -98,6 +102,19 @@ describe('محرر أمر الشراء — تسهيلات الفاتورة', () 
     expect(text).toContain('السداد بعد المطابقة والاستلام')
     expect(text).toContain('الرصيد السابق')
     expect(document.querySelector('[data-po-totals]'), 'لوحة الإجماليات بلا معرّف').toBeTruthy()
+    cleanup()
+    view.unmount()
+  })
+
+  it('الإدخال الذكي «شاي*3@40» يُطبَّق كما في الفاتورة: كمية 3 وسعر 40 ⇒ 120', () => {
+    const view = openEditor()
+    const input = rows()[0].querySelector('.invoice-line-entry-cell input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'شاي*3@40' } })
+    const search = document.querySelector('.invoice-search-overlay input') as HTMLInputElement
+    fireEvent.focus(search)
+    fireEvent.keyDown(search, { key: 'Enter' })
+    const totals = document.querySelector('[data-po-totals]')!.textContent ?? ''
+    expect(totals, 'الكمية المكتوبة في الإدخال الذكي لم تُطبَّق').toContain('120')
     cleanup()
     view.unmount()
   })

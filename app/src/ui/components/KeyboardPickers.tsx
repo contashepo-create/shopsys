@@ -302,7 +302,10 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [])
-  const pick = (id: number) => { onPick(id); setQuery(''); setOpen(false) }
+  /* الإدخال الذكي «شاي*3@45»: كان `pick` يُسقط الكمية/السعر المكتوبين فيضيف
+     سطراً بكمية 1 — بخلاف مسار النافذة أعلاه الذي يمرّرهما. الآن المساران سواء،
+     فجدول الفواتير وأوامر الشراء يقرآن ما كتبه المستخدم فعلاً. */
+  const pick = (id: number, smart?: SmartEntry) => { onPick(id, smart); setQuery(''); setOpen(false) }
   /**
    * داخل نافذة ⇒ المنتقي نفسه نافذة مستقلة تُكدَّس فوق الفاتورة (قرار المالك)،
    * فتبقى حية خلف نوافذ التعديل/الحركة/الأسعار ولا تختفي بإغلاقها.

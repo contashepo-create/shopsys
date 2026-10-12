@@ -5,7 +5,7 @@
  *  · ف4: قوالب مصروف الوحدة تُضاف بضغطة واحدة إلى بنود المصروف.
  *  · ف5: ودجت الوحدة المطعَّمة يظهر في اللوحة ولو لم يكن نشاطه الأصلي.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -18,6 +18,10 @@ const { ReportsPage } = await import('../src/ui/pages/ReportsPage.tsx')
 const { CostCentersPage } = await import('../src/ui/pages/CostCentersPage.tsx')
 const { ActivityWidgets } = await import('../src/ui/components/ActivityWidgets.tsx')
 const { ToastHost } = await import('../src/ui/components/ui.tsx')
+
+
+/* عزل DOM بين الاختبارات: فشل اختبار لا يُسقط الذي بعده */
+afterEach(() => cleanup())
 
 const S = () => useDataStore.getState()
 

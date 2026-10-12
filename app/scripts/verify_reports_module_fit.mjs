@@ -51,7 +51,6 @@ ok('الشرط محقّق: وحدة أو بيانات + وسم «لا حركة �
 
 /* ③ محاكاة ٢٩ نشاطاً */
 const NO_DATA = () => false
-const WITH_DATA = () => true
 let coreTabCount = 0
 for (const template of ACTIVITY_TEMPLATES) {
   const modules = effectiveModules(template.id, undefined)

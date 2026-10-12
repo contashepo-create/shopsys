@@ -115,7 +115,9 @@ export function ReportsPage() {
     [suppRows, getSupplierStatementRows, todayYmd],
   )
   const alerts = useMemo(() => stockAlerts(items), [items])
-  const invValue = useMemo(() => inventoryValue(items), [items])  /* ─── إيراد الفترة من دفتر اليومية — مصدر واحد لكل الأنشطة (تدقيق 2026-10-11) ───
+  const invValue = useMemo(() => inventoryValue(items), [items])
+
+  /* ─── إيراد الفترة من دفتر اليومية — مصدر واحد لكل الأنشطة (تدقيق 2026-10-11) ───
      بطاقات المبيعات أعلاه تقرأ مستندات الكاشير فقط؛ هذه القراءة تشمل كل الوحدات
      والمحركات التخصصية (معمل/عيادة/لوجستيات/مقاولات/عقارات/مغسلة/إيجار/سيارات)
      فلا يرى صاحبها «صفر مبيعات» وله إيراد حقيقي في اليومية. */

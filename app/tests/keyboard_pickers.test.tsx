@@ -24,9 +24,26 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
       fireEvent.change(search, { target: { value: query } })
       expect(view.getAllByText('سكر أبيض').length).toBeGreaterThan(0)
       fireEvent.keyDown(search, { key: 'Enter' })
-      expect(onPick).toHaveBeenLastCalledWith(1)
+      /* يُمرَّر الصنف + الإدخال الذكي (undefined حين لا كمية/سعر مكتوبين) */
+      expect(onPick.mock.lastCall?.[0]).toBe(1)
       expect(view.queryByLabelText('بحث الصنف')).toBeNull()
     }
+  })
+
+  it('يمرّر الإدخال الذكي «سكر*2@30-5%» مع الصنف (كان يُسقطه فيضيف كمية 1)', () => {
+    const onPick = vi.fn()
+    const view = render(<ItemQuickPicker items={items} onPick={onPick}/>)
+    const cell = view.getByLabelText(/اسم الصنف/)
+    fireEvent.change(cell, { target: { value: 'س' } })
+    const search = view.getByLabelText('بحث الصنف')
+    fireEvent.change(search, { target: { value: 'سكر*2@30-5%' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    const [, smart] = onPick.mock.lastCall ?? []
+    expect(smart, 'الإدخال الذكي ضاع قبل وصوله للصفحة').toBeTruthy()
+    expect(smart.qty).toBe(2)
+    expect(smart.price).toBe(30)
+    expect(smart.discount).toBe(5)
+    expect(smart.term).toBe('سكر')
   })
 
   it('خلية اسم الصنف خالية تماماً: بلا نص إرشادي ولا أيقونة، ونقرة واحدة لا تفتح البحث (قرار المالك ⑩ي)', () => {
@@ -78,7 +95,7 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     const search = view.getByLabelText('بحث الصنف')
     fireEvent.keyDown(search, { key: 'ArrowDown' })
     fireEvent.keyDown(search, { key: 'Enter' })
-    expect(onPick).toHaveBeenCalledWith(2)
+    expect(onPick.mock.lastCall?.[0]).toBe(2)
     /* الاختيار يغلق اللوحة؛ ونفتحها ثانيةً لنتأكد أن Escape يغلقها بلا اختيار */
     fireEvent.change(cell, { target: { value: 'س' } })
     const reopened = view.getByLabelText('بحث الصنف')
