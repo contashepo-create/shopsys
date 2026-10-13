@@ -37,6 +37,8 @@ export type InvoiceTableLine = {
   orderedQty?: number
   rejectedQty?: number
   expiryDate?: string
+  /** رقم التشغيلة/الدفعة التجاري (اختياري) — لتتبع السحب عند استدعاء منتج */
+  lotNumber?: string
 }
 
 type Warehouse = { id: number; nameAr: string }
@@ -518,7 +520,10 @@ export function InvoiceLinesTable({
                     onDoubleClick={() => openReplacePicker(line.key, line.nameAr || item?.nameAr || '')}>
                     <b>{line.nameAr || item?.nameAr}</b>
                     {kind === 'purchase' && item?.trackExpiry && (
-                      <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
+                      <div className="flex flex-col gap-1">
+                        <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
+                        <input type="text" placeholder="رقم التشغيلة (اختياري)" title="رقم التشغيلة/الدفعة التجاري — لتتبع السحب عند استدعاء منتج" className={`${inputCls} text-[11px] py-1`} dir="ltr" value={line.lotNumber ?? ''} onChange={(event) => onPatch(line.key, { lotNumber: event.target.value })} />
+                      </div>
                     )}
                   </td>
                   {lineWarehouseMode && <td className={`p-1 align-middle ${COL.warehouse}`}><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}

@@ -12,8 +12,9 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
   salesSummary, topItems, dailySales, stagnantItems, activityRevenueRows,
-  stockAlerts, inventoryValue, periodPresets, type Period,
+  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, type Period,
 } from '../../core/reports.ts'
+import { returnReasonName } from '../../core/returns.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
@@ -76,6 +77,8 @@ export function ReportsPage() {
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
   // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع 30+ يوماً = رأس مال محبوس
   const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
+  // أسباب الإرجاع (سد فجوة التوثيق — دليل الأغذية كان يَعِد بهذا التقرير دون وجوده فعلياً)
+  const returnReasons = useMemo(() => returnReasonsSummary(saleReturns, period, returnReasonName), [saleReturns, period])
   // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
   // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
   const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
@@ -480,6 +483,46 @@ export function ReportsPage() {
               </table>
             )}
           </div>
+          {/* أسباب الإرجاع — سد فجوة توثيق (الدليل الداخلي يوصي بمراقبته) */}
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between">
+              <span>↩️ تحليل أسباب الإرجاع (الفترة المحددة)</span>
+              {returnReasons.length > 0 && <span className="text-slate-400">{returnReasons.reduce((a, r) => a + r.count, 0)} مرتجعاً</span>}
+            </div>
+            {returnReasons.length === 0 ? (
+              <div className="text-center text-emerald-500 text-[12px] pb-4 font-bold">لا مرتجعات في هذه الفترة ✓</div>
+            ) : (
+              <>
+                {returnReasons[0].reasonCode === 'expired' && returnReasons[0].count >= 3 && (
+                  <div className="mx-4 mb-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[11.5px] font-bold px-3 py-2">
+                    ⚠️ «منتهي الصلاحية» هو السبب الأكثر تكراراً ({returnReasons[0].count} مرتجعاً) — يشير غالباً لخلل في تدوير الأرفف (الأقدم صلاحية يُباع أولاً).
+                  </div>
+                )}
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">السبب</th>
+                      <th className="px-4 py-2 text-right font-bold">عدد المرتجعات</th>
+                      <th className="px-4 py-2 text-right font-bold">القيمة الإجمالية</th>
+                      <th className="px-4 py-2 text-right font-bold">تالف</th>
+                      <th className="px-4 py-2 text-right font-bold">سليم (يعود للرف)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {returnReasons.map((r) => (
+                      <tr key={r.reasonCode} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2">{r.count}</td>
+                        <td className="px-4 py-2 font-bold text-amber-600">{fmt(r.totalValueMinor)}</td>
+                        <td className="px-4 py-2 text-rose-500">{r.damagedLines || '—'}</td>
+                        <td className="px-4 py-2 text-emerald-600">{r.resellableLines || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -639,7 +682,7 @@ export function ReportsPage() {
                   <tbody>
                     {expAlerts.map((r, i) => (
                       <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}{r.lotNumber && <span className="mr-1.5 font-mono font-normal text-[10px] text-slate-400" dir="ltr">(تشغيلة {r.lotNumber})</span>}</td>
                         <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.expiryDate} — كمية {r.qty}</td>
                         <td className="px-4 py-2 text-left">
                           {r.status === 'expired'

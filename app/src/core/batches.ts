@@ -103,6 +103,8 @@ export function applyFefo(batches: StockBatch[], plan: FefoPlan): StockBatch[] {
 export interface ExpiryAlertRow {
   itemId: number
   nameAr: string
+  /** رقم التشغيلة/الدفعة التجاري — null إن لم يُسجَّل وقت الاستلام */
+  lotNumber: string | null
   expiryDate: string
   qty: number
   daysLeft: number // سالب = منتهٍ
@@ -129,6 +131,7 @@ export function expiryAlerts(
     rows.push({
       itemId: b.itemId,
       nameAr: itemName(b.itemId),
+      lotNumber: b.lotNumber ?? null,
       expiryDate: b.expiryDate,
       qty: b.qty,
       daysLeft,

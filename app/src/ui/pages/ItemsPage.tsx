@@ -48,9 +48,12 @@ export function ItemsPage() {
   const canDeleteItems = currentUserId == null || currentUser?.roleId === 'owner' || itemDeletePermissions.has('inv.item.delete')
   const deleteApproval = useSupervisorApproval('inv.item.delete', { forcePin: true })
 
+
   const [query, setQuery] = useState('')
   const [catFilter, setCatFilter] = useState<number | 0>(0)
   const [warehouseFilter, setWarehouseFilter] = useState<number | 0>(0)
+  // تحديد متعدد — لإجراءات جماعية مثل تفعيل/إيقاف تتبع الصلاحية دفعة واحدة (سد فجوة تطبيق الأغذية)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [modal, setModal] = useState<'closed' | 'item' | 'category'>('closed')
   const [deleteTarget, setDeleteTarget] = useState<Item | null>(null)
   const [editing, setEditing] = useState<Item | null>(null)
@@ -416,6 +419,35 @@ export function ItemsPage() {
         </Btn>
       </div>
 
+      {/* شريط الإجراءات الجماعية — يظهر عند تحديد أصناف (سد فجوة: لا توجد أداة تفعيل جماعي لتتبع الصلاحية) */}
+      {selectedIds.size > 0 && (
+        <div className="anim-up flex flex-wrap items-center gap-2.5 rounded-2xl bg-brand-500/8 border border-brand-500/20 px-4 py-2.5">
+          <span className="text-[12px] font-bold text-brand-700 dark:text-brand-300">محدَّد: {selectedIds.size} صنف</span>
+          <div className="flex-1" />
+          <Btn
+            variant="soft"
+            onClick={() => {
+              for (const id of selectedIds) updateItem(id, { trackExpiry: true })
+              toast.show(`فُعِّل تتبع الصلاحية والدفعات لـ ${selectedIds.size} صنف`)
+              setSelectedIds(new Set())
+            }}
+          >
+            <span className="flex items-center gap-1.5">📅 تفعيل تتبع الصلاحية</span>
+          </Btn>
+          <Btn
+            variant="ghost"
+            onClick={() => {
+              for (const id of selectedIds) updateItem(id, { trackExpiry: false })
+              toast.show(`أُوقف تتبع الصلاحية والدفعات لـ ${selectedIds.size} صنف`)
+              setSelectedIds(new Set())
+            }}
+          >
+            <span className="flex items-center gap-1.5">إيقاف تتبع الصلاحية</span>
+          </Btn>
+          <Btn variant="ghost" onClick={() => setSelectedIds(new Set())}>إلغاء التحديد</Btn>
+        </div>
+      )}
+
       {/* شجرة الأقسام */}
       {orderedCats.length > 0 && (
         <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-3" style={{ animationDelay: '60ms' }}>
@@ -476,6 +508,15 @@ export function ItemsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                <th className="px-3 py-3 font-bold w-8">
+                  <input
+                    type="checkbox"
+                    title="تحديد الكل"
+                    checked={filtered.length > 0 && filtered.every((it) => selectedIds.has(it.id))}
+                    onChange={(e) => setSelectedIds(e.target.checked ? new Set(filtered.map((it) => it.id)) : new Set())}
+                    className="w-4 h-4 rounded accent-brand-600"
+                  />
+                </th>
                 <th className="px-4 py-3 font-bold">الصنف</th>
                 <th className="px-4 py-3 font-bold">القسم</th>
                 <th className="px-4 py-3 font-bold">الخصائص</th>
@@ -498,6 +539,20 @@ export function ItemsPage() {
                     title="اضغط مرتين لفتح كارت حركة الصنف"
                     className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-brand-500/[0.03] dark:hover:bg-brand-500/[0.06] transition-colors duration-150"
                   >
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(it.id)}
+                        onChange={(e) => {
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(it.id); else next.delete(it.id)
+                            return next
+                          })
+                        }}
+                        className="w-4 h-4 rounded accent-brand-600"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2"><span className="font-mono text-[10px] text-slate-400" dir="ltr">{it.sku || it.barcodes?.[0] || it.id}</span><div className="font-bold text-slate-800 dark:text-white">{it.nameAr}</div></div>
                       <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
@@ -817,6 +872,35 @@ export function ItemsPage() {
                 {itemBatches.length > 0 && <span className="px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 font-bold">⏳ {itemBatches.length} دفعة صلاحية</span>}
                 {itemSerials.length > 0 && <span className="px-2 py-1 rounded-lg bg-sky-500/10 text-sky-600 font-bold">🔢 {itemSerials.length} سيريال بالمخزون</span>}
               </div>
+
+              {/* دفعات الصلاحية المفتوحة — ترتيب FEFO (الأقرب انتهاءً أولاً)، مع رقم التشغيلة عند توفره */}
+              {itemBatches.length > 0 && (
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] overflow-hidden">
+                  <div className="px-4 py-2 text-[11.5px] font-black text-amber-700 dark:text-amber-400 border-b border-amber-500/10">⏳ دفعات الصلاحية المفتوحة (FEFO)</div>
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-slate-400 text-[10.5px] border-b border-amber-500/10">
+                        <th className="px-4 py-1.5 text-right font-bold">تاريخ الصلاحية</th>
+                        <th className="px-4 py-1.5 text-right font-bold">رقم التشغيلة</th>
+                        <th className="px-4 py-1.5 text-right font-bold">الكمية المتبقية</th>
+                        <th className="px-4 py-1.5 text-right font-bold">المخزن</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...itemBatches]
+                        .sort((a, b) => (a.expiryDate ?? '9999-99-99').localeCompare(b.expiryDate ?? '9999-99-99'))
+                        .map((b) => (
+                          <tr key={b.id} className="border-b border-amber-500/5">
+                            <td className="px-4 py-1.5 font-bold text-slate-700 dark:text-slate-200" dir="ltr">{b.expiryDate ?? 'بلا تاريخ'}</td>
+                            <td className="px-4 py-1.5 font-mono text-slate-500" dir="ltr">{b.lotNumber || '—'}</td>
+                            <td className="px-4 py-1.5">{qtyFmt(b.qty)} {cardFor.baseUnit}</td>
+                            <td className="px-4 py-1.5 text-slate-400">{warehouses.find((w) => w.id === b.warehouseId)?.nameAr ?? '—'}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* فلتر الفترة + طباعة */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">

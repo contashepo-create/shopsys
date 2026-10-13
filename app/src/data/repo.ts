@@ -1736,7 +1736,7 @@ interface DataState {
     dueDate?: string
     approvedBy?: string | null
     date: string
-    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     /** خصم الفاتورة المطبق على أسعار السطور قبل landed cost */
     discountMinor?: number
@@ -4288,6 +4288,7 @@ export const useDataStore = create<DataState>()(
             id: batchId++,
             itemId: l.itemId,
             warehouseId: l.warehouseId ?? inv.warehouseId ?? null,
+            lotNumber: l.lotNumber ?? null,
             expiryDate: l.expiryDate ?? null,
             qty: l.qty,
             purchaseId: purchaseId,
@@ -6977,7 +6978,7 @@ export const useDataStore = create<DataState>()(
           const item = state.items.find((it) => it.id === l.itemId)
           const oldBatch = state.batches.find((b) => b.purchaseId === inv.id && b.itemId === l.itemId)
           if (!item?.trackExpiry) return
-          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId ?? oldBatch?.warehouseId ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
+          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId ?? oldBatch?.warehouseId ?? null, lotNumber: oldBatch?.lotNumber ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
         })
 
         const updatedInv: PurchaseInvoice = {

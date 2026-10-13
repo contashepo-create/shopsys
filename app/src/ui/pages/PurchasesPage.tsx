@@ -39,7 +39,7 @@ import { openItemPricesWindow } from '../windows/windowStore.ts'
  * «الكمية» و«السعر» المدخلين بهذه الوحدة — وعند الترحيل يتحولان تلقائياً
  * للوحدة الأساسية (كمية×المعامل، السعر÷المعامل) فيبقى المخزون بالقطعة دائماً.
  */
-interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string; vatPercent: number; warehouseId: number | null }
+interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; lotNumber: string; serialsRaw: string; unitName: string; vatPercent: number; warehouseId: number | null }
 interface DraftExpense {
   nameAr: string
   amount: string
@@ -94,7 +94,7 @@ export function PurchasesPage() {
   const defaultPurchaseWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => taxPolicy.effectivePercent === 0 ? 0 : effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, effectiveCountryVatPercent)
   const makeDraftLine = (itemId: number = items[0]?.id ?? 0, patch: Partial<DraftLine> = {}): DraftLine => ({
-    itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
+    itemId, qty: '', unitPrice: '', expiryDate: '', lotNumber: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
   const supplierLabel = (id: number) => id === 0 ? 'مورد نقدي' : suppliers.find((supplier) => supplier.id === id)?.nameAr ?? `مورد #${id}`
@@ -213,8 +213,8 @@ export function PurchasesPage() {
   const [expensesOpen, setExpensesOpen] = useState(false)
   const lineWarehouseMode = warehouses.length > 1 && warehouseId == null
   const lineGridClass = lineWarehouseMode
-    ? (lineOptions.expiry ? 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_130px_36px]' : 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_36px]')
-    : (lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]')
+    ? (lineOptions.expiry ? 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_150px_36px]' : 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_36px]')
+    : (lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_160px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]')
   // مصروف لاحق على فاتورة مرحّلة (طلب المالك — «يمكن لاحقاً تسجيل مصروفات أخرى»)
   const [lateName, setLateName] = useState('')
   const [lateAmount, setLateAmount] = useState('')
@@ -417,6 +417,7 @@ export function PurchasesPage() {
           inputVatMinor: d ? lineVatMinor(d) : 0,
           warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : undefined,
           expiryDate: d?.expiryDate || null,
+          lotNumber: d?.lotNumber?.trim() || null,
           serialsRaw: d?.serialsRaw || undefined,
         }
       }),
@@ -659,7 +660,7 @@ export function PurchasesPage() {
             </div>
             {/* رؤوس أعمدة واضحة — الضريبة بجانب كل بند، والصلاحية لا تظهر إلا من «خيارات أكثر» */}
             <div className={`hidden sm:grid ${lineGridClass} gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400`}>
-              <span>الصنف</span>{lineWarehouseMode && <span>المخزن</span>}<span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية</span>}<span />
+              <span>الصنف</span>{lineWarehouseMode && <span>المخزن</span>}<span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية / رقم التشغيلة</span>}<span />
             </div>
             <div className="space-y-2">
               {lines.map((l, i) => {
@@ -723,11 +724,18 @@ export function PurchasesPage() {
                     <span className="text-[9px] text-sky-500/80">{fmt(lineVatMinor(l))}</span>
                   </div>
                   {lineOptions.expiry && (lineItem?.trackExpiry ? (
-                    <input
-                      value={l.expiryDate}
-                      onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
-                      type="date" title="تاريخ الصلاحية (FEFO)" className={inputCls} dir="ltr"
-                    />
+                    <div className="flex flex-col gap-1">
+                      <input
+                        value={l.expiryDate}
+                        onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
+                        type="date" title="تاريخ الصلاحية (FEFO)" className={inputCls} dir="ltr"
+                      />
+                      <input
+                        value={l.lotNumber}
+                        onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, lotNumber: e.target.value } : x)))}
+                        type="text" placeholder="رقم التشغيلة (اختياري)" title="رقم التشغيلة/الدفعة التجاري — لتتبع السحب عند استدعاء منتج" className={`${inputCls} text-[11px] py-1.5`} dir="ltr"
+                      />
+                    </div>
                   ) : <span className="hidden sm:flex h-11 items-center justify-center rounded-xl border-2 border-slate-100 dark:border-slate-800 text-slate-300 dark:text-slate-700 text-[11px]">لا يتتبع</span>)}
                   <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                     <Trash2 size={15} />

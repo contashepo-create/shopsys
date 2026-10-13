@@ -196,6 +196,59 @@ export function stagnantItems(
   return rows.sort((a, b) => b.stockValueMinor - a.stockValueMinor)
 }
 
+/* ─── 2.6) تحليل أسباب الإرجاع (سد فجوة توثيق — دليل الأغذية الداخلي كان
+   يَعِد المستخدم بهذا التقرير دون أن يكون موجوداً فعلياً في الواجهة) ───
+   يجمع مرتجعات المبيعات حسب سبب الإرجاع الموحَّد (RETURN_REASONS)، فيُظهر
+   أكثر الأسباب تكراراً وقيمتها — مثال الاستخدام المذكور في الدليل:
+   «تكرار منتهي الصلاحية يعني خللاً في تدوير الأرفف». */
+
+export interface ReturnReasonDoc {
+  id: number
+  date: string
+  reasonCode?: string
+  totals: { totalMinor: Minor }
+  lines: readonly { condition?: 'resellable' | 'damaged' }[]
+}
+
+export interface ReturnReasonRow {
+  reasonCode: string
+  nameAr: string
+  count: number // عدد مستندات المرتجع بهذا السبب
+  totalValueMinor: Minor
+  damagedLines: number
+  resellableLines: number
+}
+
+/**
+ * ملخص أسباب الإرجاع ضمن فترة — مرتب بالأكثر تكراراً أولاً.
+ * reasonName: دالة اسم السبب بالعربية (RETURN_REASONS.returnReasonName) —
+ * تُمرَّر كوسيط لا تُستورد مباشرة فتبقى هذه الوحدة خالصة بلا اعتماد إضافي.
+ */
+export function returnReasonsSummary(
+  returns: readonly ReturnReasonDoc[],
+  p: Period,
+  reasonName: (code: string) => string,
+): ReturnReasonRow[] {
+  const map = new Map<string, ReturnReasonRow>()
+  for (const r of returns) {
+    if (!inPeriod(r.date, p)) continue
+    const code = r.reasonCode ?? 'unspecified'
+    const row = map.get(code) ?? {
+      reasonCode: code,
+      nameAr: r.reasonCode ? reasonName(code) : 'غير محدد (سجل قديم)',
+      count: 0, totalValueMinor: 0, damagedLines: 0, resellableLines: 0,
+    }
+    row.count += 1
+    row.totalValueMinor += r.totals.totalMinor
+    for (const l of r.lines) {
+      if (l.condition === 'damaged') row.damagedLines += 1
+      else if (l.condition === 'resellable') row.resellableLines += 1
+    }
+    map.set(code, row)
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count)
+}
+
 /* ─── 3) المبيعات اليومية (لرسم بياني بسيط) ─── */
 
 export interface DailyRow {
