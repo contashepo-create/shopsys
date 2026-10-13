@@ -31,7 +31,7 @@ import { QuickSelect, PartyQuickPicker, ItemQuickPicker } from '../components/Ke
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { getCountry } from '../../core/countries.ts'
 import {
-  PURCHASE_ORDER_STATUS_AR, poRemainingQty, purchaseOrderTotals,
+  PURCHASE_ORDER_STATUS_AR, poRemainingQty, purchaseOrderTotals, suggestReorderLines,
   type PurchaseOrderLine, type PurchaseOrderStatus,
 } from '../../core/purchaseOrders.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
@@ -108,6 +108,8 @@ export function PurchaseOrdersPage() {
     () => purchaseOrders.filter((order) => statusFilter === 'all' || order.status === statusFilter).slice().reverse(),
     [purchaseOrders, statusFilter],
   )
+  // اقتراح أمر شراء تلقائي من حد الطلب (سد فجوة مشتركة: بقالة وأعلاف — طلب يدوي صنفاً صنفاً سابقاً)
+  const reorderSuggestions = useMemo(() => suggestReorderLines(items), [items])
   const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null
   const selectedSupplierBalance = selectedSupplier ? getSupplierBalance(selectedSupplier.id) : 0
   const focusedItem = (activeItemId != null ? items.find((item) => item.id === activeItemId) : null)
@@ -144,6 +146,19 @@ export function PurchaseOrdersPage() {
   }
   const openNew = () => {
     reset(); setDate(new Date().toISOString().slice(0, 10)); setExpectedDate(new Date().toISOString().slice(0, 10)); setOpen(true)
+  }
+  /** يفتح أمراً جديداً مُعبَّأً تلقائياً بكل الأصناف تحت حد الطلب — يبقى المورد والكميات والأسعار قابلة للمراجعة قبل الاعتماد */
+  const openAutoReorder = () => {
+    reset()
+    const today = new Date().toISOString().slice(0, 10)
+    setDate(today); setExpectedDate(today)
+    setLines(reorderSuggestions.map((row) => ({
+      key: crypto.randomUUID(), itemId: row.itemId, nameAr: row.nameAr, qty: row.suggestedQty, receivedQty: 0,
+      unitAr: row.baseUnit, unitPriceMinor: row.costMinor, vatPercent: 0, notes: '', warehouseId,
+    })))
+    setNotes('أمر مُولَّد تلقائياً من تنبيه نقص المخزون (حد الطلب) — راجع الكميات والمورد قبل الاعتماد')
+    setOpen(true)
+    toast.show(`جُهِّز أمر شراء بـ ${reorderSuggestions.length} صنف تحت حد الطلب — راجعه قبل الاعتماد`)
   }
 
   /* ════ المسودات: نفس مخزن مسودات الفواتير بنوع مستقل (طلب المالك: تسهيلات الفاتورة كاملة) ════ */
@@ -503,6 +518,15 @@ export function PurchaseOrdersPage() {
           <Btn onClick={openNew}><Plus size={15} /> أمر شراء</Btn>
         </div>
       </div>
+
+      {reorderSuggestions.length > 0 && (
+        <div className="anim-up rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 text-[12.5px] font-bold text-amber-700 dark:text-amber-400">
+            ⚠️ {reorderSuggestions.length} صنف تحت حد الطلب — يمكن توليد أمر شراء مقترح بكمياته تلقائياً
+          </div>
+          <Btn variant="soft" onClick={openAutoReorder}>⚡ إنشاء أمر شراء تلقائي</Btn>
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-8 text-center text-[13px] text-slate-400">
