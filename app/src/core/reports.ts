@@ -290,6 +290,56 @@ export function returnReasonsSummary(
   return [...map.values()].sort((a, b) => b.count - a.count)
 }
 
+/* ─── توقع طلب إحصائي (سد فجوة «مستقبلية»: تنبؤ ذكاء اصطناعي) ───
+   هذا ليس نموذج تعلّم آلة حقيقياً — متوسط متحرك باتجاه خطي بسيط يعمل
+   محلياً بالكامل بلا أي اتصال سحابي. أداة استرشادية تكمّل أمر الشراء
+   اليدوي ولا تحل محل قرار المالك. */
+
+export interface DemandForecastRow {
+  itemId: number
+  nameAr: string
+  /** متوسط الكمية المباعة أسبوعياً خلال فترة الرصد */
+  avgWeeklyQty: number
+  /** نسبة تغيّر النصف الأحدث من الفترة عن النصف الأقدم — موجب = طلب صاعد */
+  trendPercent: number
+  /** توقع الأسبوع القادم (امتداد خطي للاتجاه، لا يقل عن صفر) */
+  forecastNextWeekQty: number
+}
+
+export function demandForecast(
+  sales: readonly SaleDoc[],
+  todayIso: string,
+  lookbackWeeks = 8,
+): DemandForecastRow[] {
+  const today = new Date(todayIso.slice(0, 10) + 'T00:00:00Z').getTime()
+  const weekMs = 7 * 86_400_000
+  const startTime = today - lookbackWeeks * weekMs
+  const perItem = new Map<number, { nameAr: string; buckets: number[] }>()
+  for (const s of sales) {
+    const t = new Date(s.date.slice(0, 10) + 'T00:00:00Z').getTime()
+    if (t < startTime || t > today) continue
+    const weekIdx = Math.min(lookbackWeeks - 1, Math.max(0, Math.floor((t - startTime) / weekMs)))
+    for (const l of s.lines) {
+      const row = perItem.get(l.itemId) ?? { nameAr: l.nameAr, buckets: new Array(lookbackWeeks).fill(0) }
+      row.buckets[weekIdx] += l.qty
+      perItem.set(l.itemId, row)
+    }
+  }
+  const rows: DemandForecastRow[] = []
+  const half = Math.floor(lookbackWeeks / 2)
+  for (const [itemId, { nameAr, buckets }] of perItem) {
+    const total = buckets.reduce((a, b) => a + b, 0)
+    if (total <= 0) continue
+    const avgWeeklyQty = Math.round((total / lookbackWeeks) * 100) / 100
+    const olderAvg = buckets.slice(0, half).reduce((a, b) => a + b, 0) / Math.max(1, half)
+    const recentAvg = buckets.slice(half).reduce((a, b) => a + b, 0) / Math.max(1, lookbackWeeks - half)
+    const trendPercent = olderAvg > 0 ? Math.round(((recentAvg - olderAvg) / olderAvg) * 1000) / 10 : (recentAvg > 0 ? 100 : 0)
+    const forecastNextWeekQty = Math.max(0, Math.round((recentAvg + (recentAvg - olderAvg)) * 100) / 100)
+    rows.push({ itemId, nameAr, avgWeeklyQty, trendPercent, forecastNextWeekQty })
+  }
+  return rows.sort((a, b) => b.forecastNextWeekQty - a.forecastNextWeekQty)
+}
+
 /* ─── 3) المبيعات اليومية (لرسم بياني بسيط) ─── */
 
 export interface DailyRow {

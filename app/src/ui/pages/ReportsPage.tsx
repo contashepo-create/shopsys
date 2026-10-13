@@ -12,14 +12,14 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
   salesSummary, topItems, dailySales, stagnantItems, activityRevenueRows,
-  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, type Period,
+  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, demandForecast, type Period,
 } from '../../core/reports.ts'
 import { returnReasonName } from '../../core/returns.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
-import { expiryAlerts } from '../../core/batches.ts'
+import { expiryAlerts, markdownSuggestions } from '../../core/batches.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
@@ -81,6 +81,10 @@ export function ReportsPage() {
   const returnReasons = useMemo(() => returnReasonsSummary(saleReturns, period, returnReasonName), [saleReturns, period])
   // تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95)
   const abcRows = useMemo(() => abcAnalysis(sales, saleReturns, period), [sales, saleReturns, period])
+  // توقع طلب إحصائي (سد فجوة مستقبلية: تنبؤ ذكاء اصطناعي — نسخة إحصائية محلية بلا سحابة)
+  const forecastRows = useMemo(() => demandForecast(sales, new Date().toISOString(), 8), [sales])
+  // اقتراح تسعير تصاعدي قرب الانتهاء (سد فجوة مستقبلية: تسعير ديناميكي)
+  const markdowns = useMemo(() => markdownSuggestions(batches, items, new Date().toISOString(), 7), [batches, items])
   // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
   // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
   const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
@@ -498,6 +502,37 @@ export function ReportsPage() {
               </div>
             </div>
           )}
+          {/* توقع طلب إحصائي (سد فجوة مستقبلية: تنبؤ ذكاء اصطناعي — نسخة إحصائية محلية، ليست تعلّماً آلياً حقيقياً) */}
+          {forecastRows.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300">📈 توقع الطلب الأسبوعي (إحصائي — متوسط متحرك باتجاه)</div>
+              <div className="px-4 pb-2 text-[10.5px] text-slate-400">أداة استرشادية محلية بلا اتصال سحابي: تقارن متوسط آخر 8 أسابيع بنصفها الأحدث لتقدير اتجاه الطلب — ليست تنبؤاً بالذكاء الاصطناعي، والقرار النهائي للمالك.</div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-2 text-right font-bold">متوسط أسبوعي</th>
+                      <th className="px-4 py-2 text-right font-bold">الاتجاه</th>
+                      <th className="px-4 py-2 text-right font-bold">توقع الأسبوع القادم</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecastRows.slice(0, 15).map((r) => (
+                      <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2">{r.avgWeeklyQty}</td>
+                        <td className={`px-4 py-2 font-bold ${r.trendPercent > 0 ? 'text-emerald-600' : r.trendPercent < 0 ? 'text-rose-500' : 'text-slate-400'}`}>
+                          {r.trendPercent > 0 ? '▲' : r.trendPercent < 0 ? '▼' : '—'} {r.trendPercent}٪
+                        </td>
+                        <td className="px-4 py-2 font-black">{r.forecastNextWeekQty}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {/* الراكد — نمط DEXEF «تقرير الراكد وحد الطلب»: رأس المال المحبوس أولاً */}
           <div className="border-t border-slate-100 dark:border-slate-800">
             <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between">
@@ -742,6 +777,37 @@ export function ReportsPage() {
               </div>
             )}
           </div>
+          {markdowns.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                🏷️ اقتراح تخفيض قرب الانتهاء ({markdowns.length}) <span className="text-[10px] font-normal text-slate-400">— استرشادي، لا يُغيّر السعر تلقائياً</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-2 text-right font-bold">ينتهي خلال</th>
+                      <th className="px-4 py-2 text-right font-bold">السعر الحالي</th>
+                      <th className="px-4 py-2 text-right font-bold">خصم مقترح</th>
+                      <th className="px-4 py-2 text-right font-bold">السعر المقترح</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {markdowns.map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 text-amber-600 text-[11px]">{r.daysLeft} يوم</td>
+                        <td className="px-4 py-2 text-slate-400">{fmt(r.currentPriceMinor)}</td>
+                        <td className="px-4 py-2 font-bold text-rose-500">{r.suggestedDiscountPercent}٪</td>
+                        <td className="px-4 py-2 font-black text-emerald-600">{fmt(r.suggestedPriceMinor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <span className="flex items-center gap-1.5"><Boxes size={14} className="text-emerald-500" /> قيمة المخزون (بالتكلفة)</span>

@@ -142,6 +142,50 @@ export function expiryAlerts(
   return rows
 }
 
+/* ─── اقتراح تسعير تصاعدي قرب الانتهاء (سد فجوة «مستقبلية»: تسعير ديناميكي) ───
+   اقتراح استرشادي فقط — لا يُغيّر سعر الصنف تلقائياً، يعرضه المالك ليقرر
+   تفعيله يدوياً (عبر قائمة أسعار أو عرض). نسبة الخصم تتصاعد خطياً كلما
+   قرب موعد الانتهاء، من 10٪ عند أفق الرصد إلى 50٪ يوم الانتهاء. */
+
+export interface MarkdownSuggestionRow {
+  itemId: number
+  nameAr: string
+  lotNumber: string | null
+  expiryDate: string
+  qty: number
+  daysLeft: number
+  currentPriceMinor: number
+  suggestedDiscountPercent: number
+  suggestedPriceMinor: number
+}
+
+export function markdownSuggestions(
+  batches: StockBatch[],
+  items: readonly { id: number; nameAr: string; priceMinor: number }[],
+  today: string,
+  horizonDays = 7,
+): MarkdownSuggestionRow[] {
+  const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`
+  // لا نقترح خصماً على المنتهي فعلاً (status='expired') — ذاك مرشح للإتلاف لا للبيع
+  const soon = expiryAlerts(batches, itemName, today, horizonDays).filter((a) => a.status === 'soon')
+  return soon.map((a) => {
+    const priceMinor = items.find((it) => it.id === a.itemId)?.priceMinor ?? 0
+    const ratio = 1 - Math.max(0, Math.min(horizonDays, a.daysLeft)) / horizonDays
+    const suggestedDiscountPercent = Math.round(10 + ratio * 40)
+    return {
+      itemId: a.itemId,
+      nameAr: a.nameAr,
+      lotNumber: a.lotNumber,
+      expiryDate: a.expiryDate,
+      qty: a.qty,
+      daysLeft: a.daysLeft,
+      currentPriceMinor: priceMinor,
+      suggestedDiscountPercent,
+      suggestedPriceMinor: Math.max(0, Math.round(priceMinor * (1 - suggestedDiscountPercent / 100))),
+    }
+  })
+}
+
 /** إجمالي الكمية المنتهية لصنف (تُعرض في الكاشير والتقارير) */
 export function expiredQty(batches: StockBatch[], itemId: number, today: string): number {
   const day = today.slice(0, 10)
