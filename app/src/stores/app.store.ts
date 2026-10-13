@@ -406,10 +406,14 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'open' as const } : y)) })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
       toggleModule: (m) =>
-        /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له */
-        set((s) => (s.setup.modules.includes(m) && s.setup.modules.length <= 1
-          ? {}
-          : { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
+        /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له.
+           حارس الترخيص: لا إظهار لوحدة خارج الممنوح (افتراضيات النشاط + extraModules
+           الموقّعة) — الواجهة تمنع ذلك، والمتجر لا يعتمد عليها وحدها. */
+        set((s) => {
+          if (s.setup.modules.includes(m) && s.setup.modules.length <= 1) return {}
+          if (!s.setup.modules.includes(m) && !effectiveModules(s.setup.activityId, s.activatedPayload?.extraModules).includes(m)) return {}
+          return { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } }
+        }),
       resetSetup: () =>
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },

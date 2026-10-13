@@ -27,7 +27,8 @@ describe('إدارة الأقسام — قسم إضافي لأي نشاط (v1.0.
     expect(granted).toContain('maintenance')
     expect(granted).toContain('pos') // افتراضيات النشاط تبقى
     // العميل يوقف القسم الممنوح (إخفاء شاشات فقط — البيانات بالمتجر) ثم يعيد إظهاره
-    useAppStore.setState({ setup: { ...A().setup, modules: [...granted] } })
+    // الحارس (مراجعة الجولة 5): المتجر يرى الممنوح من المفتاح الموقّع المفعَّل نفسه
+    useAppStore.setState({ activatedPayload: { extraModules: ['maintenance'] } as never, setup: { ...A().setup, modules: [...granted] } })
     A().toggleModule('maintenance')
     expect(A().setup.modules).not.toContain('maintenance')
     A().toggleModule('maintenance')

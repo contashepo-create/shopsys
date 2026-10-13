@@ -239,8 +239,9 @@ export function ReportsPage() {
     if (!visibleTabs.some((def) => def.id === tab)) setTab(visibleTabs[0]?.id ?? 'financial')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleTabs.map((def) => def.id).join(','), tab])
-  /* بطاقة «تقارير أقسامك المضافة»: الوحدات فوق النواة الثلاثة (المبيعات/المخزون/المشتريات) */
-  const extraCenters = reportCentersForModules(enabledModules.filter((module) => module !== 'pos' && module !== 'inventory' && module !== 'purchases'))
+  /* بطاقة «تقارير أقسامك»: كل الأقسام المفعّلة — بما فيها الكاشير والمخزون والمشتريات
+     (كانت روابط مرتجعات المبيعات والجرد وأوامر الشراء لا تظهر في المركز إلا من القائمة الجانبية) */
+  const extraCenters = reportCentersForModules(enabledModules)
 
   return (
     <div className="space-y-4">
@@ -363,10 +364,10 @@ export function ReportsPage() {
         })}
       </div>
 
-      {/* بطاقة «تقارير أقسامك المضافة» (سدّ ف2): تقرير الوحدة المطعَّمة كان بلا باب من المركز */}
+      {/* بطاقة «تقارير أقسامك» (سدّ ف2): تقرير الوحدة المطعَّمة كان بلا باب من المركز */}
       {extraCenters.length > 0 && (
         <section className={`anim-up ${card} p-4`} data-report-module-card>
-          <div className="mb-3 text-[13px] font-black text-slate-700 dark:text-slate-200">🧩 تقارير أقسامك المضافة</div>
+          <div className="mb-3 text-[13px] font-black text-slate-700 dark:text-slate-200">🧩 تقارير أقسامك</div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
             {extraCenters.map(({ module, center }) => (
               <div key={module} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3" data-report-module={module}>

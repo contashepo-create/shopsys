@@ -1,7 +1,7 @@
 /**
  * فجوات §6 المتبقية — فحص سلوكي (لا نصياً):
  *  · ف1: تبويب مبيعات لا يظهر لنشاط بلا كاشير وبلا مبيعات، ويُوسم «لا حركة بعد» عند الفراغ.
- *  · ف2: بطاقة «تقارير أقسامك المضافة» تُدعى من كتالوج الوحدات بمسارات حقيقية.
+ *  · ف2: بطاقة «تقارير أقسامك» تُدعى من كتالوج الوحدات بمسارات حقيقية.
  *  · ف4: قوالب مصروف الوحدة تُضاف بضغطة واحدة إلى بنود المصروف.
  *  · ف5: ودجت الوحدة المطعَّمة يظهر في اللوحة ولو لم يكن نشاطه الأصلي.
  */
@@ -89,6 +89,19 @@ describe('ف2 — بطاقة تقارير أقسامك المضافة', () => {
     expect(block, 'تقارير العقارات غير مُدرجة').toBeTruthy()
     const links = [...block!.querySelectorAll('a')].map((a) => a.getAttribute('href'))
     expect(links).toContain('/realestate/leases')
+    cleanup()
+    view.unmount()
+  })
+})
+
+describe('ف2 — مراكز الأقسام الأساسية تظهر في المركز (مراجعة الجولة 5)', () => {
+  it('الكاشير والمخزون والمشتريات لهم بطاقات بروابطهم الحقيقية', () => {
+    useActivity('grocery', ['pos', 'inventory', 'purchases'])
+    const view = mount(<ReportsPage />)
+    const hrefs = (m: string) => [...(document.querySelector(`[data-report-module="${m}"]`)?.querySelectorAll('a') ?? [])].map((a) => a.getAttribute('href'))
+    expect(hrefs('pos')).toContain('/sales/returns')
+    expect(hrefs('inventory')).toContain('/inventory/counting')
+    expect(hrefs('purchases')).toContain('/purchases/orders')
     cleanup()
     view.unmount()
   })
