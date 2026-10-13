@@ -12,7 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
   salesSummary, topItems, dailySales, stagnantItems, activityRevenueRows,
-  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, type Period,
+  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, type Period,
 } from '../../core/reports.ts'
 import { returnReasonName } from '../../core/returns.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
@@ -79,6 +79,8 @@ export function ReportsPage() {
   const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
   // أسباب الإرجاع (سد فجوة التوثيق — دليل الأغذية كان يَعِد بهذا التقرير دون وجوده فعلياً)
   const returnReasons = useMemo(() => returnReasonsSummary(saleReturns, period, returnReasonName), [saleReturns, period])
+  // تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95)
+  const abcRows = useMemo(() => abcAnalysis(sales, saleReturns, period), [sales, saleReturns, period])
   // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
   // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
   const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
@@ -436,6 +438,7 @@ export function ReportsPage() {
                   <th className="px-4 py-3 text-right font-bold">الإيراد</th>
                   <th className="px-4 py-3 text-right font-bold">التكلفة</th>
                   <th className="px-4 py-3 text-right font-bold">الربح</th>
+                  <th className="px-4 py-3 text-right font-bold">هامش الربح</th>
                 </tr>
               </thead>
               <tbody>
@@ -447,10 +450,53 @@ export function ReportsPage() {
                     <td className="px-4 py-2.5 font-bold">{fmt(r.revenueMinor)}</td>
                     <td className="px-4 py-2.5 text-slate-500">{fmt(r.cogsMinor)}</td>
                     <td className={`px-4 py-2.5 font-black ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(r.profitMinor)}</td>
+                    <td className={`px-4 py-2.5 font-bold ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {r.revenueMinor > 0 ? `${Math.round((r.profitMinor / r.revenueMinor) * 1000) / 10}٪` : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          )}
+          {/* تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95) */}
+          {abcRows.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between flex-wrap gap-2">
+                <span>🔠 تحليل ABC — تصنيف الأصناف بمساهمتها بالإيراد</span>
+                <span className="flex items-center gap-2 text-[10.5px] font-bold">
+                  <span className="text-emerald-600">A: {abcRows.filter((r) => r.class === 'A').length}</span>
+                  <span className="text-amber-600">B: {abcRows.filter((r) => r.class === 'B').length}</span>
+                  <span className="text-rose-500">C: {abcRows.filter((r) => r.class === 'C').length}</span>
+                </span>
+              </div>
+              <div className="px-4 pb-2 text-[10.5px] text-slate-400">A = أول أصناف تشكّل 80٪ من الإيراد (تستحق أعلى عناية ومتابعة مخزون) · B = حتى 95٪ · C = الباقي (أثر محدود على الإيراد)</div>
+              <div className="max-h-96 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">الفئة</th>
+                      <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-2 text-right font-bold">الإيراد</th>
+                      <th className="px-4 py-2 text-right font-bold">% من الإيراد</th>
+                      <th className="px-4 py-2 text-right font-bold">% تراكمية</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {abcRows.map((r) => (
+                      <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2">
+                          <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black text-white ${r.class === 'A' ? 'bg-emerald-500' : r.class === 'B' ? 'bg-amber-500' : 'bg-rose-400'}`}>{r.class}</span>
+                        </td>
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 font-bold">{fmt(r.revenueMinor)}</td>
+                        <td className="px-4 py-2">{r.sharePercent}٪</td>
+                        <td className="px-4 py-2 text-slate-400">{r.cumulativeSharePercent}٪</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
           {/* الراكد — نمط DEXEF «تقرير الراكد وحد الطلب»: رأس المال المحبوس أولاً */}
           <div className="border-t border-slate-100 dark:border-slate-800">

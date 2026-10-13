@@ -122,7 +122,11 @@ export interface TopItemRow {
  * يوزَّع صافي كل مستند على سطوره نسبياً، فتتسق أرباح الأصناف مع ملخص المبيعات
  * وقائمة الدخل بالقرش (إصلاح المراجعة: كان يضخَّم بالضريبة ويتجاهل خصم الفاتورة).
  */
-export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, limit = 10): TopItemRow[] {
+/**
+ * التجميع المشترك: إيراد/تكلفة/ربح كل الأصناف (بلا حد أقصى) — يُبنى عليه
+ * كل من topItems (أعلى N) وabcAnalysis (يحتاج كل الأصناف لحساب النسبة التراكمية).
+ */
+function allItemRevenueRows(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period): TopItemRow[] {
   const map = new Map<number, TopItemRow>()
   const acc = (doc: { lines: CartLine[]; totals: CartTotals }, sign: 1 | -1) => {
     const lineNets = doc.lines.map((l) => Math.round(Math.round(l.unitPriceMinor * l.qty) * (1 - l.discountPercent / 100)))
@@ -144,7 +148,44 @@ export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, 
   }
   for (const s of sales) if (inPeriod(s.date, p)) acc(s, 1)
   for (const r of returns) if (inPeriod(r.date, p)) acc(r, -1)
-  return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor).slice(0, limit)
+  return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor)
+}
+
+export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, limit = 10): TopItemRow[] {
+  return allItemRevenueRows(sales, returns, p).slice(0, limit)
+}
+
+/* ─── تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد) ───
+   تصنيف Pareto كلاسيكي: A = أول أصناف تشكّل حتى 80٪ من الإيراد التراكمي،
+   B = حتى 95٪، C = الباقي — يوجّه المالك لأي الأصناف تستحق عناية أعلى
+   (تتبع مخزون أدق، تفاوض أفضل مع المورد) وأيها أقل أهمية. */
+
+export type AbcClass = 'A' | 'B' | 'C'
+
+export interface AbcRow extends TopItemRow {
+  class: AbcClass
+  /** نسبة إيراد هذا الصنف وحده من إجمالي الإيراد */
+  sharePercent: number
+  /** النسبة التراكمية حتى هذا الصنف (مرتب تنازلياً بالإيراد) */
+  cumulativeSharePercent: number
+}
+
+export function abcAnalysis(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period): AbcRow[] {
+  const rows = allItemRevenueRows(sales, returns, p).filter((r) => r.revenueMinor > 0)
+  const total = rows.reduce((a, r) => a + r.revenueMinor, 0)
+  if (total <= 0) return []
+  let cum = 0
+  return rows.map((r) => {
+    const cumBeforePercent = (cum / total) * 100
+    cum += r.revenueMinor
+    const cls: AbcClass = cumBeforePercent < 80 ? 'A' : cumBeforePercent < 95 ? 'B' : 'C'
+    return {
+      ...r,
+      class: cls,
+      sharePercent: Math.round((r.revenueMinor / total) * 10000) / 100,
+      cumulativeSharePercent: Math.round((cum / total) * 10000) / 100,
+    }
+  })
 }
 
 /* ─── 2.5) الأصناف الراكدة (سد فجوة DEXEF/برامج السوق السعودي: «تقرير الراكد») ─── */
