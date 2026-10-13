@@ -345,6 +345,102 @@ export function inventoryValue(items: { id: number; nameAr: string; stockQty: nu
   return { rows, totalMinor: rows.reduce((a, r) => a + r.valueMinor, 0) }
 }
 
+/* ─── 7.5) إيراد الفترة من دفتر اليومية — مصدر واحد لكل الأنشطة ─── */
+
+export interface RevenueRow {
+  accountCode: string
+  nameAr: string
+  /** صافي الإيراد (دائن − مدين) — موجب دائماً في العرض */
+  amountMinor: Minor
+  /** وحدة العمل التي تملك هذا الحساب (فارغ = إيراد عام) */
+  module: string | null
+  /** اسم القسم كما يراه صاحب النشاط */
+  moduleNameAr: string | null
+}
+
+export interface JournalLike {
+  date: string
+  sourceType?: string
+  lines: readonly { accountCode: string; debit: Minor; credit: Minor }[]
+}
+
+/**
+ * إيراد الفترة من اليومية — يشمل **كل** الأنشطة والوحدات المطعَّمة.
+ *
+ * لماذا هذه الدالة (تدقيق 2026-10-11): بطاقات مركز التقارير كانت تُبنى من
+ * `salesSummary` التي تقرأ مستندات البيع فقط، وهي لا تُنشأ إلا من الكاشير.
+ * فالنشاط الذي يبيع بمحركه التخصصي (معمل، عيادة، لوجستيات، مقاولات، عقارات،
+ * مغسلة، إيجار معدات، سيارات) كان يرى «صفر مبيعات» وله إيراد حقيقي في اليومية.
+ *
+ * القاعدة: نطاق الإيراد = الحسابات التي **جذرها** `revenue` في الشجرة القياسية
+ * أو المخصصة (4xxx) — لا الحسابات المقابلة (خزينة/عملاء) ولا الضريبة (2102).
+ * قيود إقفال السنة مستثناة (عكسها لا يمثل أداءً).
+ *
+ * التوزيع على الأقسام: الحساب قد يخص أكثر من وحدة في الخريطة (4103 صيانة/مغسلة/
+ * محافظ/كاشير…)، فنعتمد **وحدات النشاط المفعّلة فعلاً** كمرشّح حاسم: التقاطع بين
+ * وحدات الحساب والوحدات المفعّلة هو القسم الحقيقي؛ فإن بقي أكثر من مرشّح (وحدة
+ * نواة ووحدة تخصصية معاً) قُدِّم التخصصي لأنه الأقرب لسياق النشاط.
+ *
+ * @param journal دفتر اليومية
+ * @param p الفترة
+ * @param opts extraNames: أسماء الحسابات المخصصة · customRevenueCodes: أكواد مخصصة جذرها إيراد ·
+ *             moduleOf: خريطة حساب←وحدة (من ACCOUNT_MODULE_MAP) · moduleNames: أسماء الوحدات للعرض ·
+ *             activeModules: وحدات النشاط المفعّلة (لحل تعدد المالكين) · excludeEntryIds: قيود تُستثنى
+ */
+export function activityRevenueRows(
+  journal: readonly JournalLike[],
+  p: Period,
+  opts: {
+    extraNames?: Readonly<Record<string, string>>
+    customRevenueCodes?: ReadonlySet<string>
+    moduleOf?: Readonly<Record<string, readonly string[]>>
+    moduleNames?: Readonly<Record<string, string>>
+    activeModules?: readonly string[]
+    /** ترتيب الأفضلية عند تعدد المرشحين (التخصصي قبل وحدة النواة) — الأخير أولاً */
+    coreModules?: readonly string[]
+    excludeEntryIds?: ReadonlySet<number>
+  } = {},
+): { rows: RevenueRow[]; totalMinor: Minor } {
+  const isRevenue = (code: string): boolean => {
+    if (opts.customRevenueCodes?.has(code)) return true
+    const root = code[0]
+    return root === '4'
+  }
+  const tot = new Map<string, Minor>()
+  for (const e of journal) {
+    if (!inPeriod(e.date, p)) continue
+    for (const l of e.lines) {
+      if (!isRevenue(l.accountCode)) continue
+      tot.set(l.accountCode, (tot.get(l.accountCode) ?? 0) + (l.credit - l.debit))
+    }
+  }
+  const rows: RevenueRow[] = [...tot.entries()]
+    .filter(([, v]) => v !== 0)
+    .map(([code, v]) => {
+      const owners = opts.moduleOf?.[code] ?? null
+      let mod: string | null = null
+      if (owners?.length) {
+        const active = opts.activeModules
+        const candidates = active?.length ? owners.filter((m) => active.includes(m)) : owners
+        if (candidates.length === 1) mod = candidates[0]
+        else if (candidates.length > 1) {
+          // التخصصي قبل وحدة النواة: 4103 داخل (كاشير + مغسلة) = «المغسلة» لا «الكاشير»
+          const core = opts.coreModules ?? []
+          mod = [...candidates].sort((a, b) => Number(core.includes(a)) - Number(core.includes(b)))[0]
+        }
+      }
+      return {
+        accountCode: code,
+        nameAr: opts.extraNames?.[code] ?? code,
+        amountMinor: v,
+        module: mod,
+        moduleNameAr: mod ? (opts.moduleNames?.[mod] ?? mod) : null,
+      }
+    })
+    .sort((a, b) => b.amountMinor - a.amountMinor)
+  return { rows, totalMinor: rows.reduce((a, r) => a + r.amountMinor, 0) }
+}
+
 /* ─── فترات جاهزة ─── */
 
 export function periodPresets(todayIso: string): { id: string; label: string; period: Period }[] {

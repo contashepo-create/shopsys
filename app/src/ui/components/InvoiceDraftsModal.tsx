@@ -23,7 +23,7 @@ export function InvoiceDraftsModal({
 }: {
   open: boolean
   onClose: () => void
-  kind: 'sale' | 'purchase' | 'quotation' | 'project'
+  kind: 'sale' | 'purchase' | 'purchase_order' | 'quotation' | 'project'
   drafts: AdvancedInvoiceDraft[]
   currency: CurrencyConfig
   currentDraftId?: string
@@ -34,6 +34,7 @@ export function InvoiceDraftsModal({
 }) {
   const [query, setQuery] = useState('')
   const partyWord = kind === 'sale' ? 'العميل' : kind === 'quotation' ? 'العميل/الجهة' : kind === 'project' ? 'العميل' : 'المورد'
+  const kindWord = kind === 'sale' ? 'المبيعات' : kind === 'quotation' ? 'عروض الأسعار' : kind === 'project' ? 'المشروعات' : kind === 'purchase_order' ? 'أوامر الشراء' : 'المشتريات'
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return drafts
@@ -44,7 +45,7 @@ export function InvoiceDraftsModal({
   }, [drafts, kind, query, templatesOnly])
 
   return (
-    <Modal open={open} onClose={onClose} title={templatesOnly ? `قوالب ${kind === 'sale' ? 'المبيعات' : kind === 'quotation' ? 'العروض' : kind === 'project' ? 'المشروعات' : 'المشتريات'} الجاهزة` : `مسودات ${kind === 'sale' ? 'المبيعات' : kind === 'quotation' ? 'عروض الأسعار' : kind === 'project' ? 'المشروعات' : 'المشتريات'} المحفوظة`} wide>
+    <Modal open={open} onClose={onClose} title={templatesOnly ? `قوالب ${kindWord} الجاهزة` : `مسودات ${kindWord} المحفوظة`} wide>
       <div className="space-y-3" dir="rtl">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[12px] leading-6 text-slate-500 dark:text-slate-400">

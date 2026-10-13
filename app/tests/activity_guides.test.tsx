@@ -44,15 +44,16 @@ describe('دليل النشاط — العزل بين الأنشطة', () => {
     expect(container.textContent).not.toContain('المريض')
   })
 
-  it('المعمل يرى شاشاته الطبية ولا يرى شاشة البيع ولا المخزون', () => {
+  it('المعمل يرى شاشاته الطبية وشاشات النواة (مخزون ومشتريات) ولا يرى شاشة البيع', () => {
     useActivity('lab')
     const { container } = renderGuides()
     const paths = screens(container)
     expect(paths).toContain('/lab/orders')
     expect(paths).toContain('/lab/tests')
+    // v1.0.24: النواة لكل نشاط — المحاليل والمستلزمات في المخزون وموردوها في المشتريات
+    expect(paths).toContain('/inventory/items')
+    expect(paths).toContain('/purchases/invoices')
     expect(paths).not.toContain('/pos')
-    expect(paths).not.toContain('/inventory/items')
-    expect(container.textContent).not.toContain('الجرد')
   })
 
   it('المقاولات ترى المستخلصات ولا ترى الكاشير ولا عروض المبيعات', () => {

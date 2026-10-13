@@ -156,7 +156,10 @@ function visiblePaths(activity, accountingMode = 'simple') {
   const grocery = visiblePaths(ACTIVITY_TEMPLATES.find((a) => a.id === 'grocery'), 'full')
   assert.ok(!grocery.some((p) => p.startsWith('/contracting') || p.startsWith('/lab') || p.startsWith('/realestate')), 'بقالة ترى أقسام أنشطة أخرى')
   const lab = visiblePaths(ACTIVITY_TEMPLATES.find((a) => a.id === 'lab'), 'full')
-  assert.ok(!lab.includes('/pos') && !lab.includes('/inventory/items'), 'معمل يرى شاشات مبيعات/مخزون')
+  // سياسة النواة الموحّدة (2026-10-11): المخزون والمشتريات لكل نشاط —
+  // والمعمل يبقى بلا كاشير (مبيعاته كما هي: طلبات تحاليل لا POS)
+  assert.ok(!lab.includes('/pos'), 'معمل يرى شاشة الكاشير')
+  assert.ok(lab.includes('/inventory/items'), 'معمل بلا شاشة أصناف/مستهلكات')
   assert.ok(lab.includes('/lab/orders') && lab.includes('/lab/tests'), 'معمل بلا شاشاته')
   const contracting = visiblePaths(ACTIVITY_TEMPLATES.find((a) => a.id === 'contracting'), 'full')
   assert.ok(contracting.includes('/contracting/projects') && !contracting.includes('/laundry/orders'), 'مقاولات: عزل خاطئ')
@@ -194,7 +197,10 @@ function visiblePaths(activity, accountingMode = 'simple') {
   const lTopics = topicsForSetup(guidesForActivity('lab'), lab.modules, 'lab')
   const tTopics = topicsForSetup(guidesForActivity('trading'), trading.modules, 'trading')
   assert.ok(gTopics.some((t) => t.id === 'returns_wizard'), 'البقالة يجب أن ترى معالج المرتجعات')
-  assert.ok(!lTopics.some((t) => t.id === 'returns_wizard' || t.id === 'purchase_returns'), 'المعمل لا يرى مرتجعات المبيعات/المشتريات')
+  /* سياسة النواة الموحّدة: المعمل يشتري مستلزمات ومحاليل ⇒ مرتجعات الشراء مشروعة له،
+     أما مرتجعات المبيعات (معالج الكاشير) فممنوعة عليه لأنه بلا كاشير */
+  assert.ok(!lTopics.some((t) => t.id === 'returns_wizard'), 'المعمل يرى معالج مرتجعات المبيعات (بلا كاشير)!')
+  assert.ok(lTopics.some((t) => t.id === 'purchase_returns'), 'المعمل بلا موضوع مرتجعات الشراء (له مشتريات)')
   assert.ok(!tTopics.some((t) => t.id === 'returns_exchange'), 'أنشطة الفاتورة أولاً بلا شاشة استبدال')
   assert.equal(topicsForSetup(COMMON_GUIDES, grocery.modules, 'grocery').length, COMMON_GUIDES.length)
   assert.ok(guidesForActivity('lab').length >= COMMON_GUIDES.length, 'توافق خلفي مع الواجهة القديمة')

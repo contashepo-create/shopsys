@@ -1495,6 +1495,20 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
   --doc-danger: #fca5a5; --doc-danger-tint: #3f1414; --doc-danger-line: #7f1d1d;
 }
 .doc-sheet { background: var(--doc-surface); color: var(--doc-ink-soft); }
+/* ── هوية كل مستند (طلب المالك): فاتورة البيع تبقى على النيلي، وأمر الشراء أخضر فاتح،
+      وفاتورة الشراء بنفسجية فاتحة — كي لا يتشابه مستندان بلون واحد ── */
+.invoice-pos-purchase_order {
+  --doc-accent: #15803d; --doc-accent-deep: #166534; --doc-accent-soft: #bbf7d0; --doc-tint-strong: #f0fdf4;
+}
+.dark .invoice-pos-purchase_order {
+  --doc-accent: #86efac; --doc-accent-deep: #bbf7d0; --doc-accent-soft: #14532d; --doc-tint-strong: #052e16;
+}
+.invoice-pos-purchase {
+  --doc-accent: #7c3aed; --doc-accent-deep: #6d28d9; --doc-accent-soft: #ddd6fe; --doc-tint-strong: #f5f3ff;
+}
+.dark .invoice-pos-purchase {
+  --doc-accent: #c4b5fd; --doc-accent-deep: #ddd6fe; --doc-accent-soft: #4c1d95; --doc-tint-strong: #1e1338;
+}
 
 /* ── نافذة المستند: الغلاف الموحّد لكل منبثقة إدخال في النظام (18 شاشة تخصصية وغيرها)
       كانت كل نافذة بيضاء بترويسة زجاجية لا تمتّ للفاتورة بصلة؛ صارت ورقة مستند:

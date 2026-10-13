@@ -7,7 +7,7 @@ import { setActiveDeviceFlags } from '../core/featureFlags.ts'
 import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
-import { toggleModuleList, effectiveModules, clampModulesToLicense, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
+import { toggleModuleList, effectiveModules, clampModulesToLicense, withDependencies, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
@@ -68,6 +68,12 @@ interface SetupState {
   activityKeyHistory: string[]
   /** ح8 (مراجعة ③): بصمات مفاتيح تحويل النشاط المطبّقة — المفتاح الواحد لا يُعاد تطبيقه */
   activityKeyFingerprints: string[]
+  /**
+   * v1.0.24: بصمة «سياسة النواة الموحّدة» — تُكتب مرة واحدة عند ترحيل
+   * التخزين القديم (إضافة المخزون والمشتريات لكل نشاط). وجودُها يمنع المِهاجر
+   * من إعادة إضافة وحدة أطفأها المالك بنفسه بعد التحديث.
+   */
+  coreModulesMigratedAt?: string | null
 }
 
 /**
@@ -356,6 +362,7 @@ export const useAppStore = create<AppState>()(
         lastActivityChangeAt: null,
         activityKeyHistory: [],
         activityKeyFingerprints: [],
+        coreModulesMigratedAt: null,
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
@@ -399,10 +406,14 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'open' as const } : y)) })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
       toggleModule: (m) =>
-        /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له */
-        set((s) => (s.setup.modules.includes(m) && s.setup.modules.length <= 1
-          ? {}
-          : { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
+        /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له.
+           حارس الترخيص: لا إظهار لوحدة خارج الممنوح (افتراضيات النشاط + extraModules
+           الموقّعة) — الواجهة تمنع ذلك، والمتجر لا يعتمد عليها وحدها. */
+        set((s) => {
+          if (s.setup.modules.includes(m) && s.setup.modules.length <= 1) return {}
+          if (!s.setup.modules.includes(m) && !effectiveModules(s.setup.activityId, s.activatedPayload?.extraModules).includes(m)) return {}
+          return { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } }
+        }),
       resetSetup: () =>
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
@@ -742,15 +753,27 @@ export const useAppStore = create<AppState>()(
             status: 'open',
           }]
         }
-        // ترحيل: حسابات أُنشئت قبل فصل وحدتي «المخزون» و«المشتريات» كانت تراهما دائماً —
-        // نضيفهما لها تلقائياً كي لا يختفي شيء بعد التحديث (إلا وجيستيكس/إيجار المعدات:
-        // مخازنهم غير مستخدمة أصلاً فتبقى مطفأة كما يريد المالك، وتُفعَّل من الإعدادات عند الحاجة)
+        // ترحيل تاريخي (v1.0.2x): حسابات أُنشئت قبل فصل وحدتي «المخزون» و«المشتريات» كانت
+        // تراهما دائماً. استثناء لوجيستيات/إيجار المعدات هنا **متجاوَز** بالسياسة الجديدة
+        // أدناه (v1.0.24: النواة لكل الأنشطة) — أُبقي لأن بصمته التاريخية قد تكون كُتبت
         if (state && state.setup.completed) {
           const mods = new Set(state.setup.modules)
           const knowsSplit = mods.has('inventory') || mods.has('purchases')
           const stockless = state.setup.activityId === 'logistics' || state.setup.activityId === 'equipment_rental'
           if (!knowsSplit && !stockless) {
             state.setup = { ...state.setup, modules: [...state.setup.modules, 'inventory', 'purchases'] }
+          }
+        }
+        /* ترحيل v1.0.24 (سياسة النواة الموحّدة — أمر المالك): «كل الأنشطة لها مخزون
+           ومشتريات وموردون». يُطبَّق مرة واحدة لكل جهاز (البصمة أدناه)، لئلا
+           تعود وحدة أطفأها المالك بنفسه بعد التحديث. المبيعات لا تُمس إطلاقاً. */
+        if (state && state.setup.completed && !state.setup.coreModulesMigratedAt) {
+          const mods = new Set<BusinessModule>(state.setup.modules)
+          mods.add('inventory'); mods.add('purchases')
+          state.setup = {
+            ...state.setup,
+            modules: withDependencies([...mods]),
+            coreModulesMigratedAt: new Date().toISOString(),
           }
         }
         // ترحيل: نشاط المغسلة كان يعرض «الصيانة» خطأً (بلاغ المالك) — نستبدلها بوحدة المغسلة المستقلة

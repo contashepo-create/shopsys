@@ -11,6 +11,12 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { KARAT_LABELS } from '../../core/jewelry.ts'
 import { themeForActivity, WIDGET_LABELS, type ActivityWidget } from '../../core/activityTheme.ts'
+import { widgetsForModules } from '../../core/moduleCatalog.ts'
+import { collectLeaseAlerts } from '../../core/realestate.ts'
+import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
+import { bookingsForDate, BOOKING_STATUS_LABELS } from '../../core/booking.ts'
+import { LAUNDRY_STATUS_LABELS } from '../../core/laundry.ts'
+import type { BusinessModule } from '../../core/activities.ts'
 
 interface Row { key: string; main: string; sub: string; badge?: string; tone?: 'ok' | 'warn' | 'danger' }
 
@@ -128,6 +134,81 @@ export function ActivityWidgets() {
             }),
           }
         }
+        case 'low_stock': {
+          const list = store.items.filter((i) => !i.isService && (i.stockQty ?? 0) <= (i.minQty ?? 0))
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((i) => ({
+              key: `ls${i.id}`, main: i.nameAr, sub: `الحد ${i.minQty ?? 0} ${i.baseUnit ?? ''}`,
+              badge: `${i.stockQty ?? 0}`, tone: 'warn' as const,
+            })),
+          }
+        }
+        case 'po_waiting': {
+          const list = store.purchaseOrders.filter((o) => o.status === 'sent' || o.status === 'partial')
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((o) => ({
+              key: `po${o.id}`, main: o.supplierName, sub: `${o.orderNumber} — تسليم ${o.expectedDate || 'غير محدد'}`,
+              badge: fmt(o.lines.reduce((sum, l) => sum + Math.round(l.qty * l.unitPriceMinor), 0)), tone: 'ok' as const,
+            })),
+          }
+        }
+        case 'upcoming_installments': {
+          const list = collectInstallmentAlerts(store.installmentPlans, today)
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((a) => ({
+              key: `in${a.planId}-${a.seq}`,
+              main: store.customers.find((c) => c.id === store.installmentPlans.find((p) => p.id === a.planId)?.customerId)?.nameAr ?? `خطة #${a.planId}`,
+              sub: `قسط ${a.seq} — استحقاق ${a.dueDate}`,
+              badge: fmt(a.amountDueMinor), tone: a.kind === 'overdue' ? ('danger' as const) : ('warn' as const),
+            })),
+          }
+        }
+        case 'laundry_orders': {
+          const list = store.laundryOrders.filter((o) => o.status === 'received' || o.status === 'processing' || o.status === 'ready')
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((o) => ({
+              key: `lo${o.id}`, main: o.customerName || 'عميل نقدي', sub: `${o.orderNumber} — وعد ${o.promisedAt || 'غير محدد'}`,
+              badge: LAUNDRY_STATUS_LABELS[o.status], tone: o.status === 'ready' ? ('warn' as const) : ('ok' as const),
+            })),
+          }
+        }
+        case 'today_bookings': {
+          const list = bookingsForDate(store.bookings, today).filter((b) => b.status === 'scheduled')
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((b) => ({
+              key: `bk${b.id}`, main: b.customerName || 'عميل', sub: b.serviceName || b.notes || 'حجز',
+              badge: `${b.time} · ${BOOKING_STATUS_LABELS[b.status]}`, tone: 'ok' as const,
+            })),
+          }
+        }
+        case 'wallet_float': {
+          const list = store.walletOps.filter((o) => o.date === today)
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((o) => ({
+              key: `wo${o.id}`, main: `${o.opNumber} — ${o.targetPhone || '—'}`,
+              sub: `هامش الخدمة ${fmt(o.totals?.revenueMinor ?? o.chargeMinor ?? 0)} · آجل ${fmt(o.totals?.remainingMinor ?? 0)}`,
+              badge: fmt(o.paidMinor), tone: 'ok' as const,
+            })),
+          }
+        }
+        case 'rentals_expiring': {
+          const list = collectLeaseAlerts(store.leases, today)
+          return {
+            count: list.length,
+            rows: list.slice(0, 4).map((a) => ({
+              key: `le${a.leaseId}`,
+              main: a.tenantName || `عقد #${a.leaseId}`,
+              sub: a.kind === 'overdue' ? `قسط متأخر ${a.days} يوماً — ${a.contractNumber}` : `العقد ينتهي بعد ${a.days} يوماً — ${a.contractNumber}`,
+              badge: a.amountMinor ? fmt(a.amountMinor) : 'انتهاء', tone: a.kind === 'overdue' ? ('danger' as const) : ('warn' as const),
+            })),
+          }
+        }
         case 'top_debtors': {
           const rows = store.customers
             .map((c) => ({
@@ -140,9 +221,15 @@ export function ActivityWidgets() {
         }
       }
     }
-    return theme.widgets.slice(0, 3).map((w) => ({ id: w, meta: WIDGET_LABELS[w], ...build(w) }))
+    /* ويدجات النشاط أولاً (هوية الشاشة)، ثم ودجات الوحدات المضافة بترتيب ALL_MODULES —
+       فلا يبقى ويدجت الوحدة المطعَّمة حبيس نشاطه الأصلي (سدّ ف5). */
+    const modules = ((setup.modules ?? []) as BusinessModule[])
+    const extra = widgetsForModules(modules).filter((w) => !theme.widgets.includes(w))
+    /* حدّ أقصى ٦ بطاقات: ودجتا النشاط + حتى أربع ودجات لوحداته المضافة */
+    const list = [...theme.widgets, ...extra].slice(0, 6)
+    return list.map((w) => ({ id: w, meta: WIDGET_LABELS[w], ...build(w) }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, setup.activityId, today])
+  }, [store, setup.activityId, setup.modules, today])
 
   if (widgets.length === 0) return null
 

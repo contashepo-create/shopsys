@@ -6,7 +6,7 @@
  */
 import {
   ACTIVITY_TEMPLATES, ALL_MODULES, MODULE_LABELS, FEATURE_LABELS,
-  getActivity, toggleModuleList,
+  getActivity, toggleModuleList, effectiveModules, withDependencies, MODULE_DEPENDENCIES,
 } from '../src/core/activities.ts'
 import { STANDARD_COA } from '../src/core/ledger.ts'
 
@@ -58,11 +58,16 @@ ok(jew.features.includes('weight_scale') && jew.features.includes('price_lists')
 ok(jew.taxInclusiveDefault === false && jew.defaultInvoiceTemplate === 'a4', 'المجوهرات: فاتورة A4 موثقة')
 
 const lau = getActivity('laundry')
-ok(lau.modules.includes('laundry') && !lau.modules.includes('maintenance') && !lau.modules.includes('inventory'), 'المغسلة: وحدة غسيل مستقلة (لا صيانة) بلا مخازن')
+ok(lau.modules.includes('laundry') && !lau.modules.includes('maintenance') && lau.modules.includes('inventory'), 'المغسلة: وحدة غسيل مستقلة (لا صيانة) وبمخزون حسب سياسة النواة الموحّدة')
 
-/* ─── الأنشطة الخدمية بلا مخازن افتراضياً (قرار 22) ─── */
-for (const id of ['logistics', 'lab', 'clinic', 'equipment_rental', 'laundry']) {
-  ok(!getActivity(id).modules.includes('inventory'), `${id}: بلا مخازن افتراضياً (تُفعَّل من الإعدادات)`)
+/* ─── سياسة النواة الموحّدة (أمر المالك 2026-10-11): كل نشاط له مخزون ومشتريات وموردون ───
+   «كل نشاط مبيعاته كما هي»: وحدة المبيعات (pos) لم تُضف قسراً لأي نشاط —
+   الأنشطة الخدمية تبيع بمحركها التخصصي (معمل/عيادة/عقارات/مغسلة/لوجستيات). */
+for (const a of ACTIVITY_TEMPLATES) {
+  ok(a.modules.includes('inventory') && a.modules.includes('purchases'), `${a.id}: مخزون + مشتريات + موردون`)
+}
+for (const id of ['logistics', 'lab', 'clinic', 'equipment_rental', 'laundry', 'realestate', 'contracting', 'cars']) {
+  ok(!getActivity(id).modules.includes('pos'), `${id}: بلا كاشير (مبيعاته كما هي — بمحركه التخصصي)`)
 }
 
 /* ─── المقاولات: المخزون والمشتريات أساسيان (أمر المالك — دورة المواد) ───
@@ -85,8 +90,17 @@ ok(codes.has('4101') && codes.has('5101') && codes.has('1103'), 'أنشطة ال
 
 /* ─── التبديل: آخر وحدة عمل محمية ─── */
 throws(() => toggleModuleList(['pos'], 'pos'), 'إطفاء آخر وحدة عمل يرمي')
-ok(toggleModuleList(['pos', 'inventory'], 'inventory').length === 1, 'إطفاء المخزون مسموح مع بقاء الكاشير')
-ok(toggleModuleList(['maintenance'], 'inventory').includes('inventory'), 'المغسلة تفعّل المخزون لاحقاً من الإعدادات')
+/* تبعيات الوحدات (سياسة 2026-10-11): لا يُطفأ المخزون ما دامت وحدة تعتمد عليه
+   مفعّلة — وإلا بقي الكاشير بلا أصناف يُرحّل على حسابات مخفية */
+throws(() => toggleModuleList(['pos', 'inventory'], 'inventory'), 'إطفاء المخزون والكاشير عامل يرمي بنص عربي')
+ok(toggleModuleList(['laundry', 'inventory'], 'inventory').length === 1, 'إطفاء المخزون مسموح لنشاط لا وحدة تعتمد عليه')
+ok(toggleModuleList(['maintenance'], 'inventory').includes('inventory'), 'تفعيل المخزون متاح دائماً')
+ok(toggleModuleList(['laundry'], 'recipes').includes('inventory'), 'تفعيل الوصفات يجلب تبعيتها (المخزون) تلقائياً')
+ok(effectiveModules('logistics', []).includes('inventory') && effectiveModules('logistics', []).includes('purchases'), 'كل نشاط يُغلق على وحدتَي النواة')
+for (const [mod, deps] of Object.entries(MODULE_DEPENDENCIES)) {
+  const closed = withDependencies([mod])
+  ok(deps.every((d) => closed.includes(d)), `تبعية ${mod} ← ${deps.join('+')} تُغلق آلياً`)
+}
 
 console.log(`PASS=${pass} FAIL=${fail}`)
 if (fail > 0) process.exit(1)

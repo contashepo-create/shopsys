@@ -1242,7 +1242,7 @@ export interface DocumentFile {
 export interface AdvancedInvoiceDraft {
   id: string
   /** §92: مسودات عروض الأسعار بنفس مخزن الفواتير — لكل نوع مسوداته المستقلة */
-  kind: 'sale' | 'purchase' | 'quotation' | 'project'
+  kind: 'sale' | 'purchase' | 'purchase_order' | 'quotation' | 'project'
   name: string
   payload: string
   createdAt: string

@@ -370,6 +370,12 @@ const ALL = PERMISSIONS.map((p) => p.id)
 export const DEFAULT_ROLES: Role[] = [
   { id: 'owner', nameAr: 'المالك', isSystem: true, isOwner: true, permissions: ALL },
   {
+    /* أمين المخزن (v1.0.24): كل نشاط صار له أصناف ومخازن، فالدور يظهر لكل من فعّل
+       المخزون (لا يُكتب في ٢٩ موضعاً) — مثل «كاشير» مع pos تماماً */
+    id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true, requiredModule: 'inventory',
+    permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
+  },
+  {
     id: 'cashier', nameAr: 'كاشير', isSystem: true, requiredModule: 'pos',
     // يفتح شاشة المرتجع ويجهزه — التنفيذ برقم مشرف سري (sales.return.approve ليست له)
     permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view'],
@@ -538,20 +544,12 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
       id: 'sales_rep', nameAr: 'مندوب مبيعات', isSystem: true,
       permissions: ['sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
     },
-    {
-      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
-      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
-    },
   ],
   manufacturing: [
     {
       // مسؤول الإنتاج — نمط Katana/MRPeasy: أوامر إنتاج وجرد بلا مبيعات
       id: 'production_manager', nameAr: 'مسؤول إنتاج', isSystem: true,
       permissions: ['ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.count', 'inv.transfer'],
-    },
-    {
-      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
-      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
     },
   ],
   services: [
@@ -566,16 +564,8 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
       id: 'sales_rep', nameAr: 'مندوب مبيعات وتوصيل', isSystem: true,
       permissions: ['sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
     },
-    {
-      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
-      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
-    },
   ],
   grocery: [
-    {
-      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
-      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
-    },
   ],
   jewelry: [
     {

@@ -15,7 +15,7 @@ export type ItemFeature =
 
 export type BusinessModule =
   | 'pos' // الكاشير
-  | 'inventory' // المخزون والمخازن (وجيستيكس/إيجار معدات لا يحتاجونه غالباً)
+  | 'inventory' // المخزون والمخازن — وحدة نواة في كل الأنشطة (قطع غيار/مستهلكات/خامات)
   | 'purchases' // المشتريات والموردون
   | 'maintenance' // الصيانة
   | 'equipment_rental' // إيجار المعدات
@@ -46,7 +46,50 @@ export interface ActivityTemplate {
   defaultInvoiceTemplate: 'thermal' | 'a4'
 }
 
-export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
+/**
+ * ─── سياسة النواة الموحّدة (أمر المالك، 2026-10-11) ───
+ * «اجعل لكل الأنشطة مخزوناً ومشتريات وموردين، ولكن كل نشاط مبيعاته كما هي».
+ *
+ * السبب الهندسي: كل محركات القيود تحتاج أصنافاً ومخزناً وتكلفة (حتى لو «مستهلكات
+ * تشغيل» أو «قطع غيار معدة» أو «مستلزمات معمل»)، وكل نشاط يشتري من موردين ولو
+ * نادراً. إخفاء الوحدة كان يفتح ثقوباً: منح «كاشير» لنشاط بلا مخزون يعطيه شاشة
+ * بيع بلا شاشة أصناف، ويرحّل على 1103/5101/5111 مخفية.
+ *
+ * ما لا يتغيّر: **أسلوب المبيعات يبقى كما هو لكل نشاط** — من لا يملك `pos` لا
+ * كاشير له ولا ورديات ولا استبدال (يبيع بفواتيره أو بمحركه التخصصي)، وحسابات
+ * إيراده تبقى حصرية لوحدته (`4106` للمعمل، `4107` للمقاولات، `4108` للعيادة…) —
+ * فلا يظهر «إيراد مبيعات» لنشاط لا يبيع بالكاشير.
+ *
+ * لذلك: `inventory` و`purchases` تُضافان تلقائياً لكل قالب عبر `withCoreModules`
+ * (قائمة صريحة واحدة، لا تكرار في 29 موضعاً)، وتبقى القوالب قابلة للإطفاء من
+ * الإعدادات إن أراد صاحب النشاط تبسيط شاشته.
+ */
+const CORE_MODULES: readonly BusinessModule[] = ['inventory', 'purchases']
+
+/** يضمن وجود وحدتَي النواة (مخزون + مشتريات/موردون) في أي قالب نشاط */
+function withCoreModules(tpl: ActivityTemplate): ActivityTemplate {
+  const missing = CORE_MODULES.filter((m) => !tpl.modules.includes(m))
+  if (!missing.length) return tpl
+  /* الإدراج في موضعه المعياري من ALL_MODULES_ORDER لا في النهاية: فترتيب الوحدات
+     هو ترتيب الأقسام في الشاشة والإعدادات، ونفسه يُفحَص في بوابة اكتمال الأنشطة */
+  const ordered = [...tpl.modules]
+  for (const m of missing) {
+    const canonical = ALL_MODULES_ORDER.indexOf(m)
+    const at = ordered.findIndex((x) => ALL_MODULES_ORDER.indexOf(x) > canonical)
+    if (at === -1) ordered.push(m)
+    else ordered.splice(at, 0, m)
+  }
+  return { ...tpl, modules: ordered }
+}
+
+/** ترتيب الوحدات المعياري (يُستخدم للتطبيع والعرض) — القائمة الكاملة في نهاية الملف */
+const ALL_MODULES_ORDER: readonly BusinessModule[] = [
+  'pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry',
+  'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab',
+  'contracting', 'clinic', 'cars', 'wallet_services', 'realestate',
+]
+
+const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
   {
     id: 'grocery', nameAr: 'أغذية / سوبر ماركت', icon: '🛒',
     description: 'صلاحيات ودفعات، بيع بالوزن، وحدات متعددة',
@@ -101,21 +144,21 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
   {
     id: 'equipment_rental', nameAr: 'إيجار معدات ثقيلة', icon: '🚜',
-    description: 'حفارات ولوادر — عقود، عدّادات، ربحية كل معدة (بلا مخازن افتراضياً)',
+    description: 'حفارات ولوادر — عقود، عدّادات، ربحية كل معدة، وقطع غيار ومستهلكات في المخزن',
     features: ['multi_unit'],
     modules: ['equipment_rental', 'installments'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
     id: 'logistics', nameAr: 'خدمات لوجستية ونقل', icon: '🚚',
-    description: 'نقلات، أسطول وسائقون، مستخلصات (بلا مخازن ولا كاشير افتراضياً)',
+    description: 'نقلات، أسطول وسائقون، مستخلصات، وقطع غيار وسولار في المخزن (بلا كاشير افتراضياً)',
     features: [],
     modules: ['logistics'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
     id: 'lab', nameAr: 'معمل تحاليل طبية', icon: '🔬',
-    description: 'مرضى وفحوصات ونطاقات مرجعية، عمولات أطباء محيلين (بلا مخازن ولا كاشير)',
+    description: 'مرضى وفحوصات ونطاقات مرجعية، عمولات أطباء محيلين، ومستلزمات ومحاليل في المخزن (بلا كاشير)',
     features: [],
     modules: ['lab', 'booking'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
@@ -181,7 +224,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
   {
     // نشاط جديد (توسعة الشراكة): أكثر نشاط خدمي انتشاراً في السوق العربي —
-    // بيع خدمات (حلاقة/صبغة/عناية) كأصناف isService بلا مخزون + بيع منتجات عناية
+    // بيع خدمات (حلاقة/صبغة/عناية) كأصناف isService + بيع منتجات عناية
     // من المخزون + مواعيد وعمولات موظفين. المرجع العالمي: Fresha / Booksy.
     id: 'salon', nameAr: 'صالون حلاقة وتجميل', icon: '💈',
     description: 'خدمات بلا مخزون + منتجات عناية، مواعيد وعمولات موظفين',
@@ -201,7 +244,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
   {
     id: 'realestate', nameAr: 'عقارات وإدارة أملاك', icon: '🏘️',
-    description: 'عقارات ووحدات، عقود إيجار بأقساط وتأمين مسترد وتوثيق إيجار، سعي أملاك الغير، وبيع عقارات (بلا مخازن ولا كاشير)',
+    description: 'عقارات ووحدات، عقود إيجار بأقساط وتأمين مسترد وتوثيق إيجار، سعي أملاك الغير، وبيع عقارات، ومستلزمات صيانة الوحدات في المخزن (بلا كاشير)',
     features: [],
     modules: ['realestate'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
@@ -227,7 +270,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
-    // نشاط جديد (طلب المالك): شركة خدمية — أصناف خدمات بلا مخزون (isService)
+    // نشاط جديد (طلب المالك): شركة خدمية — أصناف خدمات (isService) بلا كمية مخزنية
     // فواتير خدمات آجلة وعقود ومقبوضات. المرجع العالمي: FreshBooks / Zoho Invoice.
     id: 'services', nameAr: 'شركة خدمات', icon: '🧾',
     description: 'بيع خدمات بلا مخزون: فواتير آجلة ونقدية، عملاء بحدود ائتمان، مصروفات وأرباح لكل فترة',
@@ -282,6 +325,9 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
 ]
 
+/** القوالب النهائية: كل نشاط بمخزونه ومشترياته ومورديه (سياسة النواة الموحّدة أعلاه) */
+export const ACTIVITY_TEMPLATES: ActivityTemplate[] = ACTIVITY_TEMPLATE_SEED.map(withCoreModules)
+
 /** قالب نشاط بالمعرف — أو undefined */
 export function getActivity(id: string | null): ActivityTemplate | undefined {
   return ACTIVITY_TEMPLATES.find((a) => a.id === id)
@@ -303,13 +349,47 @@ export function isInvoiceFirst(activityId: string | null): boolean {
 }
 
 /**
- * تبديل وحدة عمل (تفعيل/إلغاء) — دالة خالصة:
- * تعيد قائمة الوحدات الجديدة، وتمنع إلغاء آخر وحدة عمل (لا تطبيق بلا أي وحدة).
+ * ─── تبعيات الوحدات (سد فجوة التدقيق 2026-10-11) ───
+ * بعض الوحدات **يستحيل أن تعمل وحدها**: محركها يرحّل على حسابات وحدة أخرى أو
+ * يفتح شاشات تشير إليها. منحها بلا تبعياتها كان يفتح «قسم ناقص»:
+ *   • `pos` بلا `inventory` = كاشير بلا شاشة أصناف، ويُرحّل مخزوناً (1103)
+ *     وتكلفة (5101) ومستهلكات (5114) على حسابات مخفية عن صاحبها.
+ *   • `purchases` بلا `inventory` = فاتورة شراء بسطور أصناف لا مكان لتعريفها.
+ *   • `recipes`/`processing`/`jewelry`/`maintenance`/`cars` = كلها تصرف/تستلم أصنافاً.
+ * الدالة `withDependencies` تُغلق القائمة تلقائياً (وراثياً: تبعية التبعية)،
+ * وتُستعمل في: حساب الوحدات المفعّلة، وقصّ الوحدات على الرخصة، وحراسة الإطفاء.
  */
+export const MODULE_DEPENDENCIES: Partial<Record<BusinessModule, readonly BusinessModule[]>> = {
+  pos: ['inventory'],
+  purchases: ['inventory'],
+  recipes: ['inventory'],
+  processing: ['inventory'],
+  jewelry: ['inventory'],
+  maintenance: ['inventory'],
+  cars: ['inventory'],
+}
+
+/** يُغلق مجموعة وحدات على تبعياتها (مع الحفاظ على ترتيب ALL_MODULES للعرض) */
+export function withDependencies(modules: readonly BusinessModule[]): BusinessModule[] {
+  const out = new Set<BusinessModule>(modules)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const m of [...out]) {
+      for (const dep of MODULE_DEPENDENCIES[m] ?? []) {
+        if (!out.has(dep)) { out.add(dep); changed = true }
+      }
+    }
+  }
+  const canonical = [...out].sort((a, b) => ALL_MODULES.indexOf(a) - ALL_MODULES.indexOf(b))
+  // الوحدات المجهولة في ALL_MODULES (لا ينبغي) تُلحق بأمان في نهاية القائمة
+  return canonical.length === out.size ? canonical : [...canonical, ...[...out].filter((m) => !ALL_MODULES.includes(m))]
+}
+
 /**
  * سياسة الأقسام (أمر المالك): الأقسام الظاهرة = افتراضيات النشاط فقط،
  * والقسم الإضافي لا يفعّله إلا المطوّر عبر مفتاح موقَّع (extraModules في الرخصة).
- * دالة خالصة: تتجاهل أي اسم وحدة غير معروف في المفتاح بأمان.
+ * دالة خالصة: تتجاهل أي اسم وحدة غير معروف في المفتاح بأمان، وتُغلق التبعيات.
  */
 export function effectiveModules(activityId: string | null, licensedExtra: readonly string[] | undefined): BusinessModule[] {
   const tpl = ACTIVITY_TEMPLATES.find((a) => a.id === activityId)
@@ -317,7 +397,7 @@ export function effectiveModules(activityId: string | null, licensedExtra: reado
   for (const m of licensedExtra ?? []) {
     if ((ALL_MODULES as readonly string[]).includes(m) && !base.includes(m as BusinessModule)) base.push(m as BusinessModule)
   }
-  return base
+  return withDependencies(base)
 }
 
 /**
@@ -337,20 +417,39 @@ export function clampModulesToLicense(args: {
   const known = ACTIVITY_TEMPLATES.some((a) => a.id === args.activityId)
   if (!known) return [...args.stored]
   const allowed = new Set<string>(effectiveModules(args.activityId, args.licensedExtra))
-  return args.stored.filter((m) => allowed.has(m))
+  return withDependencies(args.stored.filter((m) => allowed.has(m)))
 }
 
+/** وحدات «العمل» (المحرّك التخصصي الذي يقود النشاط) — بمعزل عن وحدات النواة */
+export const WORK_MODULES: readonly BusinessModule[] = [
+  'pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab',
+  'contracting', 'clinic', 'cars', 'wallet_services', 'realestate',
+]
+
+/**
+ * تبديل وحدة (تفعيل/إلغاء) — دالة خالصة: تعيد القائمة الجديدة مغلقةً على تبعياتها،
+ * وترفض:
+ *  · إلغاء وحدة **تحتاجها** وحدة أخرى مفعّلة (نص عربي يسمّي المانع).
+ *  · إلغاء آخر وحدة عمل (يبقى التطبيق بلا أي محرك).
+ */
 export function toggleModuleList(current: BusinessModule[], m: BusinessModule): BusinessModule[] {
   if (current.includes(m)) {
+    // إطفاء وحدة ما دامت وحدة **أخرى مفعّلة** تعتمد عليها مرفوض بنص عربي واضح
+    // (مثال: لا يُطفأ المخزون والكاشير عامل — يبقى الكاشير بلا أصناف وتكلفة)
+    const blocking = (ALL_MODULES as readonly BusinessModule[])
+      .filter((x) => x !== m && current.includes(x))
+      .filter((x) => (MODULE_DEPENDENCIES[x] ?? []).includes(m))
+    if (blocking.length) {
+      throw new Error(`لا يمكن إلغاء «${MODULE_LABELS[m].nameAr}» وهي يحتاجها: ${blocking.map((x) => MODULE_LABELS[x].nameAr).join('، ')} — أوقفها أولاً`)
+    }
     const next = current.filter((x) => x !== m)
-    // لا يجوز إطفاء كل شيء: يجب أن تبقى وحدة «عمل» واحدة على الأقل
-    const workModules: BusinessModule[] = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
-    if (!next.some((x) => workModules.includes(x))) {
+    // وحدة عمل واحدة على الأقل (invariant قائم لا يتغيّر)
+    if (!next.some((x) => WORK_MODULES.includes(x))) {
       throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة عمل واحدة على الأقل')
     }
-    return next
+    return withDependencies(next)
   }
-  return [...current, m]
+  return withDependencies([...current, m])
 }
 
 export const FEATURE_LABELS: Record<ItemFeature, { nameAr: string; icon: string; desc: string }> = {
@@ -385,3 +484,11 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
 export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
+
+/* حراسة تحميل: القائمة أعلاه هي المرجع لترتيب الوحدات، وقائمة الترتيب المستخدمة
+ * داخل `withCoreModules` يجب أن تطابقها حرفياً — وإلا اختلف ترتيب الشاشات.
+ * الفحص هنا يفشل عند أول تحميل لا في الإنتاج بعد شهور. */
+{
+  const sameOrder = ALL_MODULES.length === ALL_MODULES_ORDER.length && ALL_MODULES.every((m, i) => m === ALL_MODULES_ORDER[i])
+  if (!sameOrder) throw new Error('ترتيب ALL_MODULES لا يطابق ALL_MODULES_ORDER — صحّح القائمتين في activities.ts')
+}
