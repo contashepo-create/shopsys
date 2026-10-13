@@ -279,6 +279,7 @@ export function PurchaseOrdersPage() {
       <div data-po-doc-editor>
         <InvoicePOSFrame
           kind="purchase"
+          docKind="purchase_order"
           modeLabel="أمر شراء"
           currencyLabel={`${cur.code} · ${cur.symbol}`}
           dateLabel={date}
@@ -537,13 +538,13 @@ export function PurchaseOrdersPage() {
                     <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-white">{fmt(total.totalMinor)} <span className="text-[10px] text-slate-400">{cur.symbol}</span></td>
                     <td className="px-4 py-2.5">
                       <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${
-                        order.status === 'closed' ? 'bg-emerald-500/10 text-emerald-600' : order.status === 'partial' ? 'bg-amber-500/10 text-amber-600' : order.status === 'cancelled' ? 'bg-rose-500/10 text-rose-500' : 'bg-sky-500/10 text-sky-600'
+                        order.status === 'closed' ? 'bg-emerald-500/10 text-emerald-600' : order.status === 'partial' ? 'bg-amber-500/10 text-amber-600' : order.status === 'cancelled' ? 'bg-rose-500/10 text-rose-500' : 'bg-green-500/10 text-green-600'
                       }`}>{PURCHASE_ORDER_STATUS_AR[order.status]}</span>
                     </td>
                     <td className="px-4 py-2.5 text-left">
                       <div className="flex gap-1 justify-end">
                         {order.status === 'draft' && (
-                          <button onClick={() => { try { setPurchaseOrderStatus(order.id, 'sent'); toast.show('عُلّم الأمر كمُرسل للمورد ✓') } catch (e) { toast.show((e as Error).message, 'error') } }} title="إرسال للمورد" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Send size={14} /></button>
+                          <button onClick={() => { try { setPurchaseOrderStatus(order.id, 'sent'); toast.show('عُلّم الأمر كمُرسل للمورد ✓') } catch (e) { toast.show((e as Error).message, 'error') } }} title="إرسال للمورد" className="p-1.5 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-500/10 transition-all"><Send size={14} /></button>
                         )}
                         {order.status !== 'cancelled' && order.status !== 'closed' && (
                           <button onClick={() => { try { setPurchaseOrderStatus(order.id, 'cancelled'); toast.show('أُلغي الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }} title="إلغاء" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"><XCircle size={14} /></button>

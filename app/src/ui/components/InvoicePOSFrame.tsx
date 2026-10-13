@@ -9,6 +9,8 @@ import { PrintSwitches } from './PrintSwitches.tsx'
 
 type InvoicePOSFrameProps = {
   kind: 'sale' | 'purchase'
+  /** تلوين المستند: أمر الشراء له لونه الأخضر (لا يشارك فاتورة الشراء في invoice-pos-purchase) */
+  docKind?: 'sale' | 'purchase' | 'purchase_order'
   modeLabel: string
   currencyLabel: string
   dateLabel: string
@@ -72,6 +74,7 @@ type InvoicePOSFrameProps = {
  */
 export function InvoicePOSFrame({
   kind,
+  docKind,
   modeLabel,
   currencyLabel,
   dateLabel,
@@ -143,7 +146,7 @@ export function InvoicePOSFrame({
   const serial = documentNumber ? documentNumber.split('-').pop() : 'مسودة'
 
   return (
-    <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${kind}`} dir="rtl">
+    <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${docKind ?? kind}`} dir="rtl">
       {/* ① الشريط العلوي: أدوات · رقم المستند وحالته · أزرار الاعتماد */}
       <header className="invoice-doc-topbar">
         {/* أزرار النافذة: **وظيفة كل زر مرسومة داخله** لا دوائر ملونة (طلب المالك) */}
