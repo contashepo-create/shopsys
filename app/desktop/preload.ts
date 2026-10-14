@@ -55,7 +55,7 @@ const persistence = {
       )
     })
   },
-  onResume: (listener: () => void): void => { ipcRenderer.on('persistence:resume', listener) },
+  onResume: (listener: () => void): void => { ipcRenderer.on('persistence:resume', () => listener()) },
 }
 contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence })
 

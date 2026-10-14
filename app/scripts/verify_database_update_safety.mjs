@@ -21,6 +21,7 @@ check('التنزيل خلفي بلا إشعار تحديث نظامي', main.in
 const steps = ['await deps.flush()', 'await deps.protect()', 'await deps.backup()', 'deps.close()', 'deps.install()', 'deps.exit()'].map(step => lifecycle.indexOf(step))
 check('الترتيب: flush ثم protect ثم backup ثم close ثم install ثم exit', steps.every((position, index) => position >= 0 && (index === 0 || position > steps[index - 1])))
 check('ACK الحفظ مربوط بالمصيّر والتوكن المتوقع فقط', main.includes('event.sender !== mainWindow?.webContents') && main.includes('token !== flushRequest.token'))
+check('جسر الاستئناف لا يمرر IpcRendererEvent إلى الواجهة', preload.includes("ipcRenderer.on('persistence:resume', () => listener())"))
 check('جسر preload يربط flush والنتيجة والاستئناف', ['persistence:flush', 'persistence:flushed', 'persistence:resume'].every(channel => preload.includes(channel)))
 check('flush يسجل الإعدادات والأعمال معاً', storage.includes('registerDesktopStorage(new DesktopStateStorage(bridge.database, rawLocalStorage))') && storage.includes('registerDesktopStorage(new DesktopStateStorage(bridge.database))'))
 check('flush ينتظر طوابير التخزين ولا يبتلع فشل الحفظ', storage.includes('await Promise.all(this.queues.values())') && storage.includes('if (this.queueFailures.size) throw new Error'))
