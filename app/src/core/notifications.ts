@@ -36,6 +36,10 @@ export interface NotificationsInput {
   overdueMaintenanceEquipment?: { id: number; nameAr: string; overdueHours: number }[]
   /** معدات اقترب/انتهى تأمينها أو فحصها الدوري — سد فجوة تقرير النشاط #8 Future #3 */
   complianceDueEquipment?: { equipmentId: number; equipmentName: string; kind: 'insurance' | 'inspection'; dueDate: string; daysLeft: number }[]
+  /** مركبات اقتربت/انتهت رخصتها أو تأمينها — سد فجوة تقرير النشاط #9 Immediate #1 */
+  complianceDueVehicles?: { vehicleId: number; vehiclePlate: string; kind: 'license' | 'insurance'; dueDate: string; daysLeft: number }[]
+  /** مستحقات سائقين غير مسواة مجمعة — سد فجوة تقرير النشاط #9 Immediate #2 */
+  unsettledDriverDues?: { driverId: number; driverName: string; totalMinor: number; tripCount: number }[]
   /** تذاكر صيانة/أوامر غسيل متجاوزة موعد التسليم الموعود */
   overduePromises?: { id: number; docNumber: string; what: string; kind: 'maintenance' | 'laundry'; promisedAt: string }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
@@ -130,6 +134,35 @@ export function collectNotifications(input: NotificationsInput): AppNotification
         : `${what} ينتهي خلال ${c.daysLeft} يوماً (${c.dueDate})`,
       severity: c.daysLeft < 0 ? 'danger' : 'warn',
       route: '/rental/equipment',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.63) امتثال مركبات: رخصة/تأمين يقترب أو انتهى (سد فجوة تقرير النشاط #9 — Immediate #1)
+  for (const c of input.complianceDueVehicles ?? []) {
+    const what = c.kind === 'license' ? 'رخصة' : 'تأمين'
+    out.push({
+      id: `vehcompl:${c.kind}:${c.vehicleId}`,
+      icon: '🪪',
+      title: c.daysLeft < 0 ? `${what} منتهية: ${c.vehiclePlate}` : `${what} تقترب: ${c.vehiclePlate}`,
+      body: c.daysLeft < 0
+        ? `انتهت ${what} منذ ${-c.daysLeft} يوماً (${c.dueDate}) — جدّدها قبل أي نقلة جديدة`
+        : `${what} تنتهي خلال ${c.daysLeft} يوماً (${c.dueDate})`,
+      severity: c.daysLeft < 0 ? 'danger' : 'warn',
+      route: '/logistics/fleet',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.64) مستحقات سائقين غير مسواة مجمعة (سد فجوة تقرير النشاط #9 — Immediate #2)
+  for (const d of input.unsettledDriverDues ?? []) {
+    out.push({
+      id: `drvdue:${d.driverId}`,
+      icon: '💰',
+      title: `مستحقات سائق غير مسواة: ${d.driverName}`,
+      body: `${input.fmt(d.totalMinor)} عن ${d.tripCount} رحلة — سوِّها من شاشة النقلات أو اصرفها مع الراتب`,
+      severity: 'warn',
+      route: '/logistics/trips',
       perm: 'ops.activity.use',
     })
   }

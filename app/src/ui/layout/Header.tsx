@@ -17,6 +17,7 @@ import { renewalReminder, reminderAsNotification } from '../../core/subscription
 import { NOTICE_LEVEL_ICONS, noticeSeverity, shouldAnnounceToast } from '../../core/devNotice.ts'
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
 import { serviceStatus, equipmentComplianceWarnings } from '../../core/rentalMeter.ts'
+import { vehicleComplianceWarnings, unsettledDriverDues } from '../../core/logistics.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
@@ -38,7 +39,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -102,6 +103,15 @@ export function Header({ title }: { title: string }) {
         .map((x) => ({ id: x.e.id, nameAr: x.e.nameAr, overdueHours: Math.abs(x.svc!.remainingHours) })),
       // امتثال معدات: تأمين/فحص دوري يقترب أو انتهى (سد فجوة تقرير النشاط #8 — Future #3)
       complianceDueEquipment: equipmentComplianceWarnings(equipment, new Date().toISOString(), 30),
+      // امتثال مركبات: رخصة/تأمين يقترب أو انتهى (سد فجوة تقرير النشاط #9 — Immediate #1)
+      complianceDueVehicles: vehicleComplianceWarnings(vehicles, new Date().toISOString(), 30),
+      // مستحقات سائقين غير مسواة مجمعة — مرفوعة لمركز التنبيهات (سد فجوة تقرير النشاط #9 — Immediate #2)
+      unsettledDriverDues: unsettledDriverDues(driverDues).map((d) => ({
+        driverId: d.driverId,
+        driverName: employees.find((e) => e.id === d.driverId)?.nameAr ?? 'سائق',
+        totalMinor: d.totalMinor,
+        tripCount: d.tripCount,
+      })),
       overduePromises: [
         ...tickets
           .filter((t) => (t.status === 'received' || t.status === 'in_progress' || t.status === 'ready') && t.promisedAt && t.promisedAt < new Date().toISOString())
@@ -127,7 +137,7 @@ export function Header({ title }: { title: string }) {
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

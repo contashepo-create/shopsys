@@ -53,7 +53,7 @@ import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryA
 import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
-import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
+import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry, type VehicleCostKind, VEHICLE_COST_LABELS } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalPaymentMode, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
@@ -238,6 +238,25 @@ export interface Vehicle {
   plateNumber: string
   vehicleType: string // تريلا، قلاب، دينا…
   defaultDriverId: number | null // سائق افتراضي (من الموظفين)
+  notes: string
+  /** سجل امتثال بسيط (سد فجوة تقرير النشاط #9 — Immediate #1): لا تكامل GPS/RFID، مجرد تاريخين يُنبَّه قبل اقترابهما */
+  licenseExpiryDate?: string | null
+  insuranceExpiryDate?: string | null
+}
+
+/**
+ * قطعة غيار/مستهلك مبسَّط خاص بالأسطول (سد فجوة تقرير النشاط #9 — Future #1):
+ * ليس وحدة مخزون كاملة (inventory/purchases غير مفعَّلتين أصلاً لهذا النشاط)
+ * بل عداد رصيد بسيط يُخصَم تلقائياً عند تسجيل مصروف «قطع غيار» مرتبط بقطعة —
+ * يفي بوعد الوصف الرسمي «قطع غيار وسولار في المخزن» دون تكلفة تفعيل وحدة
+ * كاملة لنشاط لا يبيع منتجات.
+ */
+export interface VehiclePart {
+  id: number
+  nameAr: string
+  qty: number
+  unitCostMinor: number
+  minQty: number
   notes: string
 }
 
@@ -1127,6 +1146,9 @@ export interface VehicleCostCenterEntry {
   payableId?: number | null
   journalEntryId: number | null
   settlementEntryIds: number[]
+  /** ربط اختياري بقطعة غيار من vehicleParts (سد فجوة تقرير النشاط #9 — Future #1): يخصم رصيدها تلقائياً بدل وصف نصي حر فقط */
+  partId?: number | null
+  partQty?: number
 }
 
 export interface PurchaseInvoice {
@@ -1555,6 +1577,8 @@ interface DataState {
   vehicles: Vehicle[]
   /** دفتر تكاليف/تحميلات مركبات الأسطول (منفصل عن سيارات المعرض) */
   vehicleCostEntries: VehicleCostCenterEntry[]
+  /** قطع غيار/مستهلكات الأسطول المبسَّطة (سد فجوة تقرير النشاط #9 — Future #1) */
+  vehicleParts: VehiclePart[]
   trips: Trip[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
@@ -2393,6 +2417,26 @@ interface DataState {
   getDriverDueBalance: (driverId: number) => number
   /** تسوية كل مستحقات سائق دفعة واحدة من خزينة/بنك */
   settleDriverDues: (driverId: number, treasury?: string) => { total: number; count: number }
+  /**
+   * مصروف مركبة مبسَّط من داخل شاشة الأسطول مباشرة (سد فجوة تقرير النشاط #9
+   * — Immediate #3): يبني قيداً فورياً (5106 مدين / الخزينة دائناً) ومركز
+   * تكلفة «cost» للمركبة، دون الحاجة لفتح نظام مشتريات كامل. اختيار partId
+   * يخصم رصيد قطعة الغيار تلقائياً (Future #1).
+   */
+  addVehicleExpense: (args: {
+    vehicleId: number
+    kind: VehicleCostKind
+    /** غيابه مع partId يُحسب تلقائياً = الكمية × تكلفة الوحدة */
+    amountMinor?: number
+    description: string
+    treasury?: string
+    date?: string
+    partId?: number | null
+    partQty?: number
+  }) => VehicleCostCenterEntry
+  addVehiclePart: (p: Omit<VehiclePart, 'id'>) => VehiclePart
+  updateVehiclePart: (id: number, patch: Partial<VehiclePart>) => void
+  removeVehiclePart: (id: number) => void
 
   // ————— جهات التأمين والتعاقد (صيدلية/معمل) —————
   addInsuranceProvider: (args: { nameAr: string; coveragePercent: number; phone?: string; notes?: string }) => InsuranceProvider
@@ -3690,6 +3734,7 @@ export const useDataStore = create<DataState>()(
       installmentPlans: [],
       vehicles: [],
       vehicleCostEntries: [],
+      vehicleParts: [],
       trips: [],
       equipment: [],
       rentalContracts: [],
@@ -9010,6 +9055,79 @@ export const useDataStore = create<DataState>()(
           journal: [...state.journal, entry],
         })
         return { total, count: unsettled.length }
+      },
+
+      addVehicleExpense: (args) => {
+        const state = get()
+        const vehicle = state.vehicles.find((v) => v.id === args.vehicleId)
+        if (!vehicle) throw new Error('المركبة غير موجودة')
+        const label = VEHICLE_COST_LABELS[args.kind]
+        // ربط اختياري بقطعة غيار (سد فجوة تقرير النشاط #9 — Future #1): يخصم الرصيد تلقائياً
+        let part: VehiclePart | undefined
+        let partQty = 0
+        let amountMinor = args.amountMinor ?? 0
+        if (args.partId != null) {
+          part = state.vehicleParts.find((p) => p.id === args.partId)
+          if (!part) throw new Error('قطعة الغيار غير موجودة')
+          partQty = args.partQty ?? 0
+          if (!(partQty > 0)) throw new Error('كمية قطعة الغيار يجب أن تكون أكبر من صفر')
+          if (partQty > part.qty) throw new Error(`الرصيد المتاح من «${part.nameAr}» ${part.qty} فقط`)
+          if (!(amountMinor > 0)) amountMinor = partQty * part.unitCostMinor
+        }
+        if (!(amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
+        const treasury = args.treasury ?? '1101'
+        if (!state.treasuries.some((t) => t.code === treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
+        const now = new Date().toISOString()
+        const date = args.date ?? now.slice(0, 10)
+        const entryId = nextId(state.journal)
+        const costId = nextId(state.vehicleCostEntries)
+        const partNote = part ? ` — قطعة غيار: ${part.nameAr} × ${partQty}` : ''
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date,
+          description: `${label} — ${vehicle.plateNumber}${args.description ? ` (${args.description})` : ''}${partNote}`,
+          sourceType: 'vehicle_cost', sourceId: costId,
+          lines: [
+            { accountCode: '5106', debit: amountMinor, credit: 0, note: `${label} ${vehicle.plateNumber}${partNote}` },
+            { accountCode: treasury, debit: 0, credit: amountMinor, note: 'دفع مصروف مركبة' },
+          ],
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const costEntry: VehicleCostCenterEntry = {
+          id: costId, vehicleId: args.vehicleId, date, kind: 'cost', amountMinor,
+          description: args.description.trim() || label, category: args.kind, status: 'paid',
+          purchaseId: null, payableId: null, journalEntryId: entryId, settlementEntryIds: [],
+          partId: part ? part.id : undefined, partQty: part ? partQty : undefined,
+        }
+        set({
+          vehicleCostEntries: [...state.vehicleCostEntries, costEntry],
+          journal: [...state.journal, entry],
+          ...(part ? { vehicleParts: state.vehicleParts.map((p) => (p.id === part!.id ? { ...p, qty: p.qty - partQty } : p)) } : {}),
+        })
+        return costEntry
+      },
+      addVehiclePart: (p) => {
+        const state = get()
+        if (!p.nameAr.trim()) throw new Error('اسم القطعة مطلوب')
+        if (!(p.qty >= 0)) throw new Error('الرصيد لا يكون سالباً')
+        if (!(p.unitCostMinor >= 0)) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        const part: VehiclePart = { ...p, nameAr: p.nameAr.trim(), id: nextId(state.vehicleParts) }
+        set({ vehicleParts: [...state.vehicleParts, part] })
+        return part
+      },
+      updateVehiclePart: (id, patch) => {
+        const state = get()
+        const existing = state.vehicleParts.find((p) => p.id === id)
+        if (!existing) throw new Error('قطعة الغيار غير موجودة')
+        const merged = { ...existing, ...patch }
+        if (!merged.nameAr.trim()) throw new Error('اسم القطعة مطلوب')
+        if (!(merged.qty >= 0)) throw new Error('الرصيد لا يكون سالباً')
+        if (!(merged.unitCostMinor >= 0)) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        set({ vehicleParts: state.vehicleParts.map((p) => (p.id === id ? merged : p)) })
+      },
+      removeVehiclePart: (id) => {
+        const state = get()
+        if (state.vehicleCostEntries.some((c) => c.partId === id)) throw new Error('لا يمكن حذف قطعة مرتبطة بمصاريف مسجَّلة')
+        set({ vehicleParts: state.vehicleParts.filter((p) => p.id !== id) })
       },
 
       /* ─── جهات التأمين والتعاقد (صيدلية/معمل) ─── */
@@ -14394,6 +14512,7 @@ export const useDataStore = create<DataState>()(
           installmentPlans: s.installmentPlans ?? [],
           vehicles: s.vehicles ?? [],
           vehicleCostEntries: s.vehicleCostEntries ?? [],
+          vehicleParts: s.vehicleParts ?? [],
           trips: s.trips ?? [],
           // ترقية القرار 25: معدات قديمة تحصل على حقول العدّاد والأسعار الجديدة
           equipment: (s.equipment ?? []).map((e) => ({

@@ -5,18 +5,22 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * (المسمى الوظيفي «سائق») — مصدر واحد للأشخاص، لا تكرار.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Truck, Pencil, Trash2, UserRound, Route } from 'lucide-react'
+import { Plus, Truck, Pencil, Trash2, UserRound, Route, Wrench, AlertTriangle } from 'lucide-react'
 import { useDataStore, type Vehicle } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { buildVehicleReport, vehicleReportCategories, type VehicleReportKind } from '../../core/vehicleReports.ts'
+import { vehicleComplianceWarnings, vehicleFuelStats, fuelDeviationWarnings, VEHICLE_COST_LABELS, type VehicleCostKind } from '../../core/logistics.ts'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { toMinor } from '../../core/money.ts'
 
 const VEHICLE_TYPES = ['تريلا', 'قلاب', 'دينا', 'سطحة', 'براد', 'صهريج', 'أخرى']
+const VEHICLE_COST_KINDS: VehicleCostKind[] = ['fuel', 'maintenance', 'parts', 'tolls', 'other']
 
 export function FleetPage() {
-  const { vehicles, employees, trips, vehicleCostEntries, addVehicle, updateVehicle, removeVehicle } = useDataStore()
+  const { vehicles, employees, trips, vehicleCostEntries, vehicleParts, addVehicle, updateVehicle, removeVehicle, addVehicleExpense } = useDataStore()
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -47,17 +51,29 @@ export function FleetPage() {
       && (reportCategory === 'all' || (entry.category ?? entry.description) === reportCategory)
   }), [vehicleCostEntries, reportFrom, reportTo, reportVehicleId, reportKind, reportCategory])
 
+  // تنبيهات امتثال المركبات: رخصة/تأمين تقترب أو انتهت (سد فجوة تقرير النشاط #9 — Immediate #1)
+  const complianceWarnings = useMemo(() => vehicleComplianceWarnings(vehicles, new Date().toISOString(), 30), [vehicles])
+  // تحليل استهلاك الوقود لكل مركبة وانحرافاته عن متوسط الأسطول (سد فجوة تقرير النشاط #9 — Future #2)
+  const fuelStats = useMemo(() => vehicleFuelStats(trips), [trips])
+  const fuelWarnings = useMemo(() => fuelDeviationWarnings(fuelStats), [fuelStats])
+
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Vehicle | null>(null)
   const [plate, setPlate] = useState('')
   const [vtype, setVtype] = useState(VEHICLE_TYPES[0])
   const [driverId, setDriverId] = useState('')
   const [notes, setNotes] = useState('')
+  const [licenseExpiryDate, setLicenseExpiryDate] = useState('')
+  const [insuranceExpiryDate, setInsuranceExpiryDate] = useState('')
 
-  const openNew = () => { setEditing(null); setPlate(''); setVtype(VEHICLE_TYPES[0]); setDriverId(''); setNotes(''); setOpen(true) }
+  const openNew = () => {
+    setEditing(null); setPlate(''); setVtype(VEHICLE_TYPES[0]); setDriverId(''); setNotes('')
+    setLicenseExpiryDate(''); setInsuranceExpiryDate(''); setOpen(true)
+  }
   const openEdit = (v: Vehicle) => {
     setEditing(v); setPlate(v.plateNumber); setVtype(v.vehicleType)
-    setDriverId(v.defaultDriverId ? String(v.defaultDriverId) : ''); setNotes(v.notes); setOpen(true)
+    setDriverId(v.defaultDriverId ? String(v.defaultDriverId) : ''); setNotes(v.notes)
+    setLicenseExpiryDate(v.licenseExpiryDate ?? ''); setInsuranceExpiryDate(v.insuranceExpiryDate ?? ''); setOpen(true)
   }
   const save = () => {
     if (!plate.trim()) return
@@ -66,6 +82,8 @@ export function FleetPage() {
       vehicleType: vtype,
       defaultDriverId: driverId ? Number(driverId) : null,
       notes: notes.trim(),
+      licenseExpiryDate: licenseExpiryDate || null,
+      insuranceExpiryDate: insuranceExpiryDate || null,
     }
     if (editing) { updateVehicle(editing.id, data); toast.show('تم تعديل المركبة') }
     else { addVehicle(data); toast.show(`أُضيفت المركبة «${data.plateNumber}»`) }
@@ -74,6 +92,38 @@ export function FleetPage() {
   const remove = (v: Vehicle) => {
     try { removeVehicle(v.id); toast.show(`حُذفت «${v.plateNumber}»`) }
     catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  /* ─── تسجيل مصروف مركبة مبسَّط من شاشة الأسطول مباشرة (سد فجوة تقرير النشاط #9 — Immediate #3) ─── */
+  const [expenseVehicle, setExpenseVehicle] = useState<Vehicle | null>(null)
+  const [expenseKind, setExpenseKind] = useState<VehicleCostKind>('fuel')
+  const [expenseAmount, setExpenseAmount] = useState('')
+  const [expenseDesc, setExpenseDesc] = useState('')
+  const [expenseTreasury, setExpenseTreasury] = useState('1101')
+  const [expensePartId, setExpensePartId] = useState('')
+  const [expensePartQty, setExpensePartQty] = useState('1')
+  const availableParts = useMemo(() => vehicleParts.filter((p) => p.qty > 0), [vehicleParts])
+
+  const openExpense = (v: Vehicle) => {
+    setExpenseVehicle(v); setExpenseKind('fuel'); setExpenseAmount(''); setExpenseDesc('')
+    setExpenseTreasury('1101'); setExpensePartId(''); setExpensePartQty('1')
+  }
+  const saveExpense = () => {
+    if (!expenseVehicle) return
+    try {
+      const partId = expenseKind === 'parts' && expensePartId ? Number(expensePartId) : null
+      const entry = addVehicleExpense({
+        vehicleId: expenseVehicle.id,
+        kind: expenseKind,
+        amountMinor: expenseAmount.trim() ? toMinor(expenseAmount, cur.decimals) : undefined,
+        description: expenseDesc.trim(),
+        treasury: expenseTreasury,
+        partId,
+        partQty: partId ? Number(expensePartQty) || 0 : undefined,
+      })
+      toast.show(`سُجل مصروف ${VEHICLE_COST_LABELS[expenseKind]} على «${expenseVehicle.plateNumber}» بمبلغ ${fmt(entry.amountMinor)} ✅`)
+      setExpenseVehicle(null)
+    } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
   return (
@@ -113,6 +163,37 @@ export function FleetPage() {
         )}
       </section>
 
+      {complianceWarnings.length > 0 && (
+        <section className="anim-up rounded-2xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
+          <div className="px-4 py-2.5 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-black text-sm flex items-center gap-1.5">
+            <AlertTriangle size={14} /> تنبيهات رخصة وتأمين المركبات
+          </div>
+          <div className="p-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2 text-[11.5px]">
+            {complianceWarnings.map((c) => (
+              <div key={`${c.kind}:${c.vehicleId}`} className={`rounded-xl p-2.5 ${c.daysLeft < 0 ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                <b>{c.vehiclePlate}</b> · {c.kind === 'license' ? 'رخصة' : 'تأمين'}
+                <div className="opacity-80">{c.daysLeft < 0 ? `منتهية منذ ${-c.daysLeft} يوماً (${c.dueDate})` : `تنتهي خلال ${c.daysLeft} يوماً (${c.dueDate})`}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {fuelWarnings.length > 0 && (
+        <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-sky-500/20 p-4 text-[11.5px] space-y-2">
+          <div className="font-black text-sky-700 dark:text-sky-300">⛽ انحراف استهلاك الوقود عن متوسط الأسطول</div>
+          <div className="text-slate-400">مبني على مصاريف «سولار» المسجَّلة فعلاً بالنقلات — بلا أي عداد مسافة أو تكامل تتبع.</div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {fuelWarnings.map((w) => (
+              <div key={w.vehicleId} className="rounded-xl bg-sky-500/10 p-2.5">
+                <b>{vehicles.find((v) => v.id === w.vehicleId)?.plateNumber ?? '—'}</b>
+                <div className="text-slate-500">متوسطها {fmt(w.avgFuelPerTripMinor)}/نقلة مقابل متوسط الأسطول {fmt(w.fleetAvgMinor)} (+{w.deviationPercent}٪)</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {vehicles.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
           <EmptyState icon="🚚" title="لا مركبات بعد" sub="أضف مركبات الأسطول ثم سجّل النقلات من شاشة النقلات" />
@@ -129,7 +210,8 @@ export function FleetPage() {
                     <div className="text-[11px] text-slate-400">{v.vehicleType}</div>
                   </div>
                 </div>
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center">
+                  <button onClick={() => openExpense(v)} title="تسجيل مصروف مركبة" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all"><Wrench size={13} /></button>
                   <button onClick={() => openEdit(v)} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all"><Pencil size={13} /></button>
                   <button onClick={() => remove(v)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"><Trash2 size={13} /></button>
                 </div>
@@ -180,9 +262,53 @@ export function FleetPage() {
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="تجديد الرخصة" hint="تنبيه مركزي قبل 30 يوماً من الانتهاء">
+              <input type="date" value={licenseExpiryDate} onChange={(e) => setLicenseExpiryDate(e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="تجديد التأمين" hint="تنبيه مركزي قبل 30 يوماً من الانتهاء">
+              <input type="date" value={insuranceExpiryDate} onChange={(e) => setInsuranceExpiryDate(e.target.value)} className={inputCls} />
+            </Field>
+          </div>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} disabled={!plate.trim()}>💾 حفظ</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!expenseVehicle} onClose={() => setExpenseVehicle(null)} title={expenseVehicle ? `تسجيل مصروف — ${expenseVehicle.plateNumber}` : ''}>
+        <div className="space-y-4">
+          <Field label="نوع المصروف">
+            <QuickSelect value={expenseKind} onChange={(e) => setExpenseKind(e.target.value as VehicleCostKind)} className={inputCls}>
+              {VEHICLE_COST_KINDS.map((k) => <option key={k} value={k}>{VEHICLE_COST_LABELS[k]}</option>)}
+            </QuickSelect>
+          </Field>
+          {expenseKind === 'parts' && (
+            <Field label="قطعة غيار من المخزون المبسَّط (اختياري)" hint="اختيارها يحسب المبلغ تلقائياً ويخصم الرصيد">
+              <QuickSelect value={expensePartId} onChange={(e) => setExpensePartId(e.target.value)} className={inputCls}>
+                <option value="">بدون — مبلغ حر</option>
+                {availableParts.map((p) => <option key={p.id} value={p.id}>{p.nameAr} — متاح {p.qty} × {fmt(p.unitCostMinor)}</option>)}
+              </QuickSelect>
+            </Field>
+          )}
+          {expenseKind === 'parts' && expensePartId && (
+            <Field label="الكمية">
+              <input type="number" min="1" value={expensePartQty} onChange={(e) => setExpensePartQty(e.target.value)} className={inputCls} dir="ltr" />
+            </Field>
+          )}
+          <Field label={expensePartId && expenseKind === 'parts' ? 'المبلغ (محسوب تلقائياً — اتركه فارغاً)' : 'المبلغ'}>
+            <input value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0.00" />
+          </Field>
+          <Field label="بيان">
+            <input value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} className={inputCls} />
+          </Field>
+          <Field label="الخزينة/البنك">
+            <TreasuryPicker value={expenseTreasury} onChange={setExpenseTreasury} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setExpenseVehicle(null)}>إلغاء</Btn>
+            <Btn onClick={saveExpense} disabled={!expenseAmount.trim() && !(expenseKind === 'parts' && expensePartId)}>💾 تسجيل وترحيل القيد</Btn>
           </div>
         </div>
       </Modal>
