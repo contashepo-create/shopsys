@@ -20,13 +20,15 @@ import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/acti
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
 import { expiryAlerts, markdownSuggestions, expiryValueAtRisk, supplierReturnCandidates } from '../../core/batches.ts'
+import { warrantyAttachRate, warrantyClaimRateByItem } from '../../core/warrantyReports.ts'
+import { deliveryOnTimeRate } from '../../core/deliveryReports.ts'
 import { variantLowStockAlerts } from '../../core/variants.ts'
 import { purchaseReceivingVarianceReport } from '../../core/purchases.ts'
 import { productionVarianceReport } from '../../core/recipes.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
-import { inputCls } from '../components/ui.tsx'
+import { inputCls, useToast } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
 import { FxTreasuryTab } from './FxTreasuryTab.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -51,7 +53,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders, variantStocks } = useDataStore()
+  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders, variantStocks, deliveryJobs, scheduleDelivery, setDeliveryStatus, serials, tickets } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -59,6 +61,7 @@ export function ReportsPage() {
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
   const today = new Date().toISOString()
+  const toast = useToast()
 
   const presets = useMemo(() => periodPresets(today), [today])
   const [presetId, setPresetId] = useState('month')
@@ -195,6 +198,48 @@ export function ReportsPage() {
     }
     return Array.from(m.entries()).map(([supplierId, v]) => ({ supplierId, ...v }))
   }, [returnCandidates])
+
+  /**
+   * سد فجوة فورية — النشاط #6 (أجهزة كهربائية): طلبات التوصيل/التركيب
+   * المجدولة — بديل منظَّم لبند رسوم «شحن وتوصيل» النصي الحر على الفاتورة.
+   */
+  const [deliveryInvoiceQuery, setDeliveryInvoiceQuery] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState('')
+  const [deliveryAssignee, setDeliveryAssignee] = useState('')
+  const pendingDeliveries = useMemo(
+    () => deliveryJobs
+      .filter((j) => j.status !== 'done')
+      .map((j) => ({ job: j, sale: sales.find((s) => s.id === j.saleId) }))
+      .sort((a, b) => a.job.scheduledAt.localeCompare(b.job.scheduledAt)),
+    [deliveryJobs, sales],
+  )
+  const scheduleDeliveryFromInvoice = () => {
+    const sale = sales.find((s) => s.invoiceNumber === deliveryInvoiceQuery.trim() || s.refCode === deliveryInvoiceQuery.trim())
+    if (!sale) { toast.show('رقم فاتورة غير موجود', 'error'); return }
+    if (!deliveryDate) { toast.show('اختر تاريخ التوصيل', 'error'); return }
+    try {
+      scheduleDelivery({ saleId: sale.id, scheduledAt: deliveryDate, assignedTo: deliveryAssignee })
+      setDeliveryInvoiceQuery(''); setDeliveryDate(''); setDeliveryAssignee('')
+      toast.show(`جُدول توصيل الفاتورة ${sale.invoiceNumber} ✓`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /**
+   * سد فجوة فورية — النشاط #6 (أجهزة كهربائية): معدل إقران الضمان الممتد
+   * خلال الفترة المختارة + معدل تكرار مطالبات الضمان لكل صنف (كل الفترات —
+   * مؤشر جودة طويل المدى لا يُقيَّد بنطاق تاريخ التقرير).
+   */
+  /**
+   * سد فجوة مستقبلية #3 — النشاط #6 (أجهزة كهربائية): نسبة التزام مواعيد
+   * التوصيل/التركيب خلال الفترة المختارة — مبنية فوق scheduledAt/completedAt.
+   */
+  const deliveryOnTime = useMemo(() => deliveryOnTimeRate(deliveryJobs, period.from, period.to), [deliveryJobs, period])
+  const warrantyAttach = useMemo(() => warrantyAttachRate(serials, period.from, period.to), [serials, period])
+  const warrantyClaims = useMemo(
+    () => warrantyClaimRateByItem(serials, tickets).filter((r) => r.soldUnderWarranty > 0),
+    [serials, tickets],
+  )
+  const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`
 
   /* ─── تقارير المصروفات (طلب المالك): مجمّع + تفصيلي بفلترة محترفة ─── */
   const customExpenseCodes = useMemo(() => new Set(customAccounts.filter((a) => a.rootType === 'expenses').map((a) => a.code)), [customAccounts])
@@ -480,6 +525,134 @@ export function ReportsPage() {
                 <div><span className="text-slate-400">أفضل يوم:</span> <b dir="ltr">{daily.reduce((a, b) => (b.totalMinor > a.totalMinor ? b : a)).date}</b></div>
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {tab === 'sales' && (
+        <div className={`anim-up ${card} overflow-hidden`}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            🚚 طلبات التوصيل/التركيب <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (أجهزة كهربائية): بديل منظَّم لبند رسوم «شحن وتوصيل» النصي الحر</span>
+          </div>
+          {deliveryOnTime.completedCount > 0 && (
+            <div className="px-4 py-2 flex items-center gap-3 text-[11px] font-bold border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+              <span className="text-slate-400">معدل الالتزام بالموعد (الفترة المختارة):</span>
+              <span className={deliveryOnTime.onTimeRatePercent >= 80 ? 'text-emerald-600' : 'text-amber-600'}>{deliveryOnTime.onTimeRatePercent}%</span>
+              <span className="text-slate-400">({deliveryOnTime.onTimeCount} في الموعد / {deliveryOnTime.lateCount} متأخر من {deliveryOnTime.completedCount} مكتمل)</span>
+            </div>
+          )}
+          <div className="p-4 grid md:grid-cols-[1fr_10rem_10rem_auto] gap-2 items-end border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">رقم الفاتورة</label>
+              <input value={deliveryInvoiceQuery} onChange={(e) => setDeliveryInvoiceQuery(e.target.value)} className={inputCls} dir="ltr" placeholder="SAL-… أو رقم الفاتورة" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">تاريخ التوصيل</label>
+              <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className={inputCls} dir="ltr" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">المندوب/الفريق (اختياري)</label>
+              <input value={deliveryAssignee} onChange={(e) => setDeliveryAssignee(e.target.value)} className={inputCls} />
+            </div>
+            <button type="button" onClick={scheduleDeliveryFromInvoice} className="h-9 px-3 rounded-lg bg-brand-600 text-white text-[12px] font-bold hover:bg-brand-700">جدولة</button>
+          </div>
+          {pendingDeliveries.length === 0 ? (
+            <div className="text-center text-slate-400 text-[12px] py-8">لا طلبات توصيل معلَّقة ✅</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الفاتورة</th>
+                  <th className="px-4 py-2 text-right font-bold">تاريخ التوصيل</th>
+                  <th className="px-4 py-2 text-right font-bold">المندوب</th>
+                  <th className="px-4 py-2 text-right font-bold">الحالة</th>
+                  <th className="px-4 py-2 text-left font-bold">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingDeliveries.map(({ job, sale }) => (
+                  <tr key={job.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{sale?.invoiceNumber ?? `#${job.saleId}`}</td>
+                    <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{job.scheduledAt}</td>
+                    <td className="px-4 py-2 text-slate-400 text-[11px]">{job.assignedTo ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${job.status === 'scheduled' ? 'bg-sky-500/10 text-sky-600' : 'bg-amber-500/10 text-amber-600'}`}>
+                        {job.status === 'scheduled' ? 'مجدوَل' : 'جارٍ التنفيذ'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-left">
+                      {job.status === 'scheduled' && <button type="button" onClick={() => setDeliveryStatus(job.id, 'in_progress')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 ml-1">بدء التنفيذ</button>}
+                      <button type="button" onClick={() => setDeliveryStatus(job.id, 'done')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">تم التسليم</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'sales' && (
+        <div className={`anim-up ${card} overflow-hidden`}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            🛡️ الضمان الممتد ومعدل المطالبات <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (أجهزة كهربائية): معدل الإقران خلال الفترة + معدل تكرار مطالبات الضمان لكل صنف</span>
+          </div>
+          <div className="p-4 grid sm:grid-cols-2 gap-3 border-b border-slate-100 dark:border-slate-800 text-center">
+            <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 py-3">
+              <div className="text-[11px] font-bold text-slate-400">قطع مباعة في الفترة</div>
+              <div className="text-xl font-black text-slate-700 dark:text-slate-200">{warrantyAttach.totalSold}</div>
+            </div>
+            <div className="rounded-xl bg-sky-500/5 border border-sky-500/20 py-3">
+              <div className="text-[11px] font-bold text-slate-400">معدل إقران الضمان الممتد (Attach Rate)</div>
+              <div className="text-xl font-black text-sky-600">{warrantyAttach.overallAttachRatePercent}% <span className="text-[11px] font-bold text-slate-400">({warrantyAttach.totalExtended} قطعة)</span></div>
+            </div>
+          </div>
+          {warrantyAttach.rows.length > 0 && (
+            <table className="w-full text-[12.5px] border-b border-slate-100 dark:border-slate-800">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                  <th className="px-4 py-2 text-right font-bold">قطع مباعة</th>
+                  <th className="px-4 py-2 text-right font-bold">بضمان ممتد</th>
+                  <th className="px-4 py-2 text-right font-bold">معدل الإقران</th>
+                </tr>
+              </thead>
+              <tbody>
+                {warrantyAttach.rows.map((r) => (
+                  <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{itemName(r.itemId)}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.soldCount}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.extendedCount}</td>
+                    <td className="px-4 py-2 font-bold text-sky-600">{r.attachRatePercent}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="px-4 py-2 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">معدل تكرار مطالبات الضمان لكل صنف (كل الفترات — مؤشر جودة)</div>
+          {warrantyClaims.length === 0 ? (
+            <div className="text-center text-slate-400 text-[12px] py-6">لا بيانات كافية (قطع مباعة مرتبطة بسيريال وضمان)</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                  <th className="px-4 py-2 text-right font-bold">قطع مباعة</th>
+                  <th className="px-4 py-2 text-right font-bold">قطع فُتحت لها تذكرة ضمن الضمان</th>
+                  <th className="px-4 py-2 text-right font-bold">معدل المطالبات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {warrantyClaims.map((r) => (
+                  <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{itemName(r.itemId)}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.soldUnderWarranty}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.claimsCount}</td>
+                    <td className={`px-4 py-2 font-bold ${r.claimRatePercent >= 15 ? 'text-rose-600' : 'text-slate-600 dark:text-slate-300'}`}>{r.claimRatePercent}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}

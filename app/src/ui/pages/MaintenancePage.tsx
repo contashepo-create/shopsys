@@ -12,6 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, maintenanceRepairTimeReport, ticketWorkMinutes, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
+import { warrantyLookup } from '../../core/serials.ts'
 import { SignaturePad } from '../components/SignaturePad.tsx'
 import { buildTicketStatusMessage, ticketWhatsappLink } from '../../core/maintenance.ts'
 import { PURCHASE_ORDER_STATUS_AR } from '../../core/purchaseOrders.ts'
@@ -41,7 +42,7 @@ interface DraftPart { itemId: string; qty: string; unitPrice: string }
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, setTicketTechnician, logTicketNotificationSent, setTicketSignature, startTicketWork, stopTicketWork, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService, employees, purchaseOrders } = useDataStore()
+  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, setTicketTechnician, logTicketNotificationSent, setTicketSignature, startTicketWork, stopTicketWork, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService, employees, purchaseOrders, serials, sales } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -97,6 +98,24 @@ export function MaintenancePage() {
   const [technicianId, setTechnicianId] = useState('') // الفني المسؤول (سد فجوة النشاط #3)
   const activeTechnicians = useMemo(() => employees.filter((e) => e.active), [employees])
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
+  /**
+   * سد فجوة فورية — النشاط #6 (أجهزة كهربائية): ربط حقل السيريال الموجود
+   * فعلاً في تذكرة الصيانة باستدعاء warrantyLookup تلقائياً — بدل بحث يدوي
+   * منفصل زمنياً في شاشة السيريالات المستقلة.
+   */
+  const deviceWarranty = useMemo(() => {
+    if (!deviceSerial.trim()) return null
+    const info = warrantyLookup(serials, deviceSerial, new Date().toISOString())
+    if (!info) return null
+    const originalCustomerName = info.saleId != null
+      ? (() => {
+          const sale = sales.find((s) => s.id === info.saleId)
+          if (!sale) return null
+          return sale.customerId != null ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : (sale.partyName ?? 'عميل نقدي')
+        })()
+      : null
+    return { info, originalCustomerName }
+  }, [deviceSerial, serials, sales, customers])
 
   const openNew = () => {
     setCustomerId(''); setCustomerName(''); setCustomerPhone(''); setDeviceName('')
@@ -515,6 +534,15 @@ export function MaintenancePage() {
               <input value={deviceCondition} onChange={(e) => setDeviceCondition(e.target.value)} className={inputCls} placeholder="اختياري" />
             </Field>
           </div>
+          {deviceWarranty && (
+            <div className={`p-3 rounded-xl text-[12px] border ${deviceWarranty.info.active ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300' : 'bg-rose-500/10 border-rose-500/25 text-rose-700 dark:text-rose-400'}`}>
+              {deviceWarranty.info.active
+                ? `✅ الضمان سارٍ — متبقٍ ${deviceWarranty.info.daysLeft} يوماً (حتى ${deviceWarranty.info.warrantyUntil})`
+                : `⛔ الضمان منتهٍ منذ ${deviceWarranty.info.warrantyUntil}`}
+              {deviceWarranty.originalCustomerName && <span className="mr-2 text-slate-500"> — العميل الأصلي: {deviceWarranty.originalCustomerName}</span>}
+              {deviceWarranty.info.extendedWarrantyProvider && <span className="mr-2 text-slate-500"> — ضمان ممتد عبر: {deviceWarranty.info.extendedWarrantyProvider}</span>}
+            </div>
+          )}
           <Field label="الفني المسؤول" hint="اختياري عند الفتح — يمكن تعيينه/تغييره لاحقاً من عرض التذكرة">
             <QuickSelect className={inputCls} value={technicianId} onChange={(e) => setTechnicianId(e.target.value)}>
               <option value="">— بلا تعيين —</option>

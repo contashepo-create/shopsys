@@ -23,6 +23,18 @@ export interface SerialUnit {
   soldAt: string | null // ISO وقت البيع
   warrantyMonths: number // مدة الضمان بالأشهر (تُثبت وقت البيع)
   receivedAt: string // ISO وقت الدخول
+  /**
+   * ضمان ممتد مُباع وقت هذه القطعة بعينها (سد فجوة فورية — النشاط #6: أجهزة
+   * كهربائية): أشهر إضافية فوق `warrantyMonths` الأساسي، بند بيع اختياري.
+   * 0/undefined = لم يُشترَ ضمان ممتد لهذه القطعة.
+   */
+  extendedWarrantyMonths?: number
+  /**
+   * مزوّد الضمان الممتد الخارجي (سد فجوة مستقبلية #2 — النشاط #6: أجهزة
+   * كهربائية): اسم شركة تأمين/ضمان طرف ثالث حين يكون الضمان الممتد
+   * مُسجَّلاً خارجياً لا داخلياً فقط. اختياري — undefined/'' = تسجيل داخلي.
+   */
+  extendedWarrantyProvider?: string | null
 }
 
 /** تنظيف سيريال مُدخل: إزالة الفراغات وتطبيع الأرقام العربية */
@@ -82,12 +94,14 @@ export function findBySerial(pool: readonly SerialUnit[], raw: string): SerialUn
  */
 export function markSold(
   pool: readonly SerialUnit[],
-  assignments: readonly { itemId: number; serial: string }[],
+  assignments: readonly { itemId: number; serial: string; extendedWarrantyMonths?: number; extendedWarrantyProvider?: string }[],
   saleId: number,
   soldAtIso: string,
 ): SerialUnit[] {
   const used = new Set<string>()
   const bySerial = new Map(pool.map((u) => [u.serial, u]))
+  const extByNormalizedSerial = new Map<string, number>()
+  const providerByNormalizedSerial = new Map<string, string>()
   for (const a of assignments) {
     const s = normalizeSerial(a.serial)
     if (used.has(s)) throw new Error(`السيريال ${s} مكرر في نفس الفاتورة`)
@@ -96,9 +110,20 @@ export function markSold(
     if (!unit) throw new Error(`السيريال ${s} غير مسجل`)
     if (unit.itemId !== a.itemId) throw new Error(`السيريال ${s} يخص صنفاً آخر`)
     if (unit.status !== 'in_stock') throw new Error(`السيريال ${s} مباع بالفعل`)
+    if (a.extendedWarrantyMonths && a.extendedWarrantyMonths > 0) extByNormalizedSerial.set(s, a.extendedWarrantyMonths)
+    if (a.extendedWarrantyProvider?.trim()) providerByNormalizedSerial.set(s, a.extendedWarrantyProvider.trim())
   }
   return pool.map((u) =>
-    used.has(u.serial) ? { ...u, status: 'sold' as const, saleId, soldAt: soldAtIso } : u,
+    used.has(u.serial)
+      ? {
+          ...u,
+          status: 'sold' as const,
+          saleId,
+          soldAt: soldAtIso,
+          extendedWarrantyMonths: extByNormalizedSerial.get(u.serial) ?? u.extendedWarrantyMonths,
+          extendedWarrantyProvider: providerByNormalizedSerial.get(u.serial) ?? u.extendedWarrantyProvider,
+        }
+      : u,
   )
 }
 
@@ -143,6 +168,10 @@ export interface WarrantyInfo {
   warrantyUntil: string // YYYY-MM-DD
   active: boolean
   daysLeft: number // 0 عند الانتهاء
+  /** فاتورة البيع الأصلية — تتيح سحب اسم العميل الأصلي (سد فجوة النشاط #6: أجهزة كهربائية) */
+  saleId: number | null
+  /** مزوّد الضمان الممتد الخارجي إن وُجد (سد فجوة مستقبلية #2 — النشاط #6) */
+  extendedWarrantyProvider?: string | null
 }
 
 /** تاريخ نهاية الضمان: نفس اليوم بعد N شهراً (تشبع نهاية الشهر: 31/1 + شهر = 28/2) */
@@ -160,16 +189,20 @@ export function warrantyEndDate(soldAtIso: string, months: number): string {
 export function warrantyLookup(pool: readonly SerialUnit[], raw: string, todayIso: string): WarrantyInfo | undefined {
   const unit = findBySerial(pool, raw)
   if (!unit || unit.status !== 'sold' || !unit.soldAt) return undefined
-  const until = warrantyEndDate(unit.soldAt, unit.warrantyMonths)
+  // سد فجوة فورية — النشاط #6: الضمان الممتد المُباع لهذه القطعة يُضاف فوق الأساسي
+  const totalMonths = unit.warrantyMonths + (unit.extendedWarrantyMonths ?? 0)
+  const until = warrantyEndDate(unit.soldAt, totalMonths)
   const today = todayIso.slice(0, 10)
   const daysLeft = Math.max(0, Math.round((Date.parse(until) - Date.parse(today)) / 86_400_000))
   return {
     serial: unit.serial,
     itemId: unit.itemId,
     soldAt: unit.soldAt,
-    warrantyMonths: unit.warrantyMonths,
+    warrantyMonths: totalMonths,
     warrantyUntil: until,
     active: today <= until,
     daysLeft,
+    saleId: unit.saleId,
+    extendedWarrantyProvider: unit.extendedWarrantyProvider ?? null,
   }
 }

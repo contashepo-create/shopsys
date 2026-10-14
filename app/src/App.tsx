@@ -113,6 +113,7 @@ import { ExchangePage } from './ui/pages/ExchangePage.tsx'
 import { RestaurantOrdersPage } from './ui/pages/RestaurantOrdersPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
+import { DeliveryTasksPage } from './ui/pages/DeliveryTasksPage.tsx'
 import { LaundryPage } from './ui/pages/LaundryPage.tsx'
 import { BookingsPage } from './ui/pages/BookingsPage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
@@ -232,6 +233,7 @@ function Shell() {
     <Route path="/hr/:tab" element={<HrPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
+        <Route path="/sales/delivery-tasks" element={<DeliveryTasksPage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />

@@ -965,6 +965,45 @@ export function PosPage() {
                         ))}
                       </QuickSelect>
                     )}
+                    {/* ضمان ممتد (سد فجوة فورية — النشاط #6: أجهزة كهربائية): بند بيع
+                        اختياري يضاف فوق ضمان الصنف الأساسي — يُثبَّت على القطعة (السيريال)
+                        نفسها وقت البيع؛ ثمنه يُضاف يدوياً لحقل السعر أعلاه. */}
+                    {l.serials && l.serials.length > 0 && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="text-[10px] text-slate-400">🛡️ ضمان ممتد:</span>
+                        <QuickSelect
+                          value={String(l.extendedWarrantyMonths ?? 0)}
+                          onChange={(e) => {
+                            const months = Number(e.target.value)
+                            setCart((current) => current.map((line, index) => (
+                              index === i ? { ...line, extendedWarrantyMonths: months || undefined } : line
+                            )))
+                          }}
+                          className="text-[10px] font-bold rounded-md border border-emerald-200 dark:border-emerald-800 bg-transparent px-1 py-0.5 text-emerald-600 outline-none"
+                          title="أشهر إضافية فوق ضمان الصنف الأساسي — تُثبَّت على هذه القطعة بعينها"
+                        >
+                          <option value="0">بلا</option>
+                          <option value="3">+3 أشهر</option>
+                          <option value="6">+6 أشهر</option>
+                          <option value="12">+12 شهراً</option>
+                          <option value="24">+24 شهراً</option>
+                        </QuickSelect>
+                        {(l.extendedWarrantyMonths ?? 0) > 0 && (
+                          <input
+                            value={l.extendedWarrantyProvider ?? ''}
+                            onChange={(e) => {
+                              const provider = e.target.value
+                              setCart((current) => current.map((line, index) => (
+                                index === i ? { ...line, extendedWarrantyProvider: provider || undefined } : line
+                              )))
+                            }}
+                            placeholder="مزوّد خارجي (اختياري)"
+                            title="شركة تأمين/ضمان طرف ثالث — اتركه فارغاً لضمان ممتد مسجَّل داخلياً فقط"
+                            className="text-[10px] w-28 rounded-md border border-emerald-200 dark:border-emerald-800 bg-transparent px-1 py-0.5 text-emerald-600 outline-none"
+                          />
+                        )}
+                      </div>
+                    )}
                     {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
                     {l.serials && l.serials.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">

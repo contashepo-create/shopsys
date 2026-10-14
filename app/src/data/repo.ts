@@ -1431,6 +1431,30 @@ export interface ExchangeDoc {
 }
 
 /**
+ * طلب توصيل/تركيب مجدوَل (سد فجوة فورية — النشاط #6: أجهزة كهربائية):
+ * بديل منظَّم لبند الرسوم النصي الحر الحالي («شحن وتوصيل») على الفاتورة —
+ * تاريخ مجدوَل وحالة تقدم بسيطة، بدل الاعتماد فقط على مبلغ رسم بلا متابعة.
+ * سجل مستقل مرتبط بالفاتورة (لا يُعدِّل بنية الفاتورة نفسها) فيمكن جدولة
+ * توصيل لفاتورة قديمة لاحقاً أيضاً.
+ */
+export type DeliveryStatus = 'scheduled' | 'in_progress' | 'done'
+export interface DeliveryJob {
+  id: number
+  saleId: number
+  scheduledAt: string // YYYY-MM-DD
+  status: DeliveryStatus
+  completedAt?: string | null // ISO — يُملأ تلقائياً عند status = done
+  assignedTo?: string // اسم فريق/مندوب التوصيل الحر
+  notes?: string
+  /**
+   * توقيع رقمي للعميل عند التسليم (dataURL) — سد فجوة مستقبلية #1 (النشاط
+   * #6: أجهزة كهربائية): تأكيد تسليم من واجهة المندوب المبسَّطة، بإعادة
+   * استخدام `SignaturePad` نفسه المستخدم في محرك الصيانة.
+   */
+  deliverySignatureDataUrl?: string | null
+}
+
+/**
  * سجل صرف الأصناف الخاضعة للرقابة (سد فجوة مستقبلية — النشاط #5: صيدلية):
  * سجل مستقل عن الفاتورة (مطلب قانوني في أغلب الأسواق) يوثّق هوية المريض
  * والطبيب الواصف وكمية الصرف لكل صنف `isControlled`، بصرف النظر عن كونه
@@ -1675,6 +1699,7 @@ interface DataState {
   marketPrices: MarketPriceEntry[]
   controlledDispenses: ControlledDispense[] // سجل صرف الأصناف الخاضعة للرقابة (النشاط #5)
   coldChainReadings: ColdChainReading[] // سجل قراءات سلسلة التبريد (النشاط #5)
+  deliveryJobs: DeliveryJob[] // طلبات التوصيل/التركيب المجدولة (النشاط #6)
   assets: FixedAsset[]
   externalCommissions: ExternalCommission[] // العمولات بقسميها: لي لدى الغير / عليّ للغير (طلب المالك)
   commissionParties: CommissionParty[] // سجل أشخاص/جهات العمولات — التسجيل إلزامي قبل أي عمولة
@@ -2813,6 +2838,16 @@ interface DataState {
   /** تسجيل قراءة حرارة دورية لوحدة تبريد (النشاط #5) */
   addColdChainReading: (args: { storageUnitName: string; tempC: number; minC?: number | null; maxC?: number | null; recordedBy?: string; notes?: string }) => ColdChainReading
   deleteColdChainReading: (id: number) => void
+  /** جدولة/تحديث توصيل لفاتورة بيع (النشاط #6) — فاتورة واحدة لها طلب توصيل واحد فعّال */
+  scheduleDelivery: (args: { saleId: number; scheduledAt: string; assignedTo?: string; notes?: string }) => DeliveryJob
+  setDeliveryStatus: (id: number, status: DeliveryStatus) => void
+  deleteDeliveryJob: (id: number) => void
+  /**
+   * سد فجوة مستقبلية #1 — النشاط #6 (أجهزة كهربائية): واجهة مندوب التوصيل
+   * المبسَّطة تؤكد التسليم بتوقيع رقمي بدل زر "تم التسليم" المجرد — يضبط
+   * الحالة 'done' ويختم completedAt ويحفظ التوقيع معاً في خطوة واحدة.
+   */
+  completeDeliveryWithSignature: (id: number, signatureDataUrl: string) => void
   /* ─── المغاسل (وحدة مستقلة — طلب المالك) ─── */
   /** فتح أمر غسيل: قطع + خدمات + عربون اختياري (قيده: خزينة/2109 دفعات مقدمة) */
   openLaundryOrder: (args: { customerId: number | null; customerName: string; phone: string; promisedAt: string; rackNumber?: string; lines: LaundryLine[]; prepaidMinor: number; treasury?: TreasuryAccount; notes: string }) => LaundryOrder
@@ -3807,6 +3842,7 @@ export const useDataStore = create<DataState>()(
       marketPrices: [],
       controlledDispenses: [],
       coldChainReadings: [],
+      deliveryJobs: [],
       assets: [],
       externalCommissions: [],
       commissionParties: [],
@@ -4847,7 +4883,7 @@ export const useDataStore = create<DataState>()(
         // 2.5) سيريالات القطع المعيّنة (نمط موبايل شوب — استشاري مثل الدفعات):
         // صنف يتتبع السيريال وله سيريالات متاحة ⇒ يجب تعيين سيريال لكل قطعة؛
         // لا سيريالات مسجلة أصلاً ⇒ يُباع عادياً (مخزون افتتاحي بلا سيريالات)
-        const assignments: { itemId: number; serial: string }[] = []
+        const assignments: { itemId: number; serial: string; extendedWarrantyMonths?: number; extendedWarrantyProvider?: string }[] = []
         for (const l of saleLines) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item?.trackSerial) continue
@@ -4857,7 +4893,7 @@ export const useDataStore = create<DataState>()(
           if (given.length !== l.qty) {
             throw new Error(`«${item.nameAr}»: عيّن سيريالاً لكل قطعة (${given.length} من ${l.qty})`)
           }
-          for (const s of given) assignments.push({ itemId: l.itemId, serial: s })
+          for (const s of given) assignments.push({ itemId: l.itemId, serial: s, extendedWarrantyMonths: l.extendedWarrantyMonths, extendedWarrantyProvider: l.extendedWarrantyProvider })
         }
 
         // 3) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
@@ -13356,6 +13392,52 @@ export const useDataStore = create<DataState>()(
 
       deleteColdChainReading: (id) => {
         set({ coldChainReadings: get().coldChainReadings.filter((entry) => entry.id !== id) })
+      },
+
+      scheduleDelivery: (args) => {
+        const state = get()
+        if (!state.sales.some((s) => s.id === args.saleId)) throw new Error('الفاتورة غير موجودة')
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(args.scheduledAt)) throw new Error('تاريخ غير صالح')
+        const existing = state.deliveryJobs.find((j) => j.saleId === args.saleId)
+        if (existing) {
+          const updated: DeliveryJob = { ...existing, scheduledAt: args.scheduledAt, assignedTo: args.assignedTo?.trim() || undefined, notes: args.notes?.trim() || undefined }
+          set({ deliveryJobs: state.deliveryJobs.map((j) => (j.id === existing.id ? updated : j)) })
+          return updated
+        }
+        const job: DeliveryJob = {
+          id: nextId(state.deliveryJobs),
+          saleId: args.saleId,
+          scheduledAt: args.scheduledAt,
+          status: 'scheduled',
+          completedAt: null,
+          assignedTo: args.assignedTo?.trim() || undefined,
+          notes: args.notes?.trim() || undefined,
+        }
+        set({ deliveryJobs: [...state.deliveryJobs, job] })
+        return job
+      },
+
+      setDeliveryStatus: (id, status) => {
+        const state = get()
+        const job = state.deliveryJobs.find((j) => j.id === id)
+        if (!job) throw new Error('طلب التوصيل غير موجود')
+        set({ deliveryJobs: state.deliveryJobs.map((j) => (j.id === id ? { ...j, status, completedAt: status === 'done' ? new Date().toISOString() : j.completedAt } : j)) })
+      },
+
+      deleteDeliveryJob: (id) => {
+        set({ deliveryJobs: get().deliveryJobs.filter((j) => j.id !== id) })
+      },
+
+      completeDeliveryWithSignature: (id, signatureDataUrl) => {
+        const state = get()
+        const job = state.deliveryJobs.find((j) => j.id === id)
+        if (!job) throw new Error('طلب التوصيل غير موجود')
+        if (!signatureDataUrl.trim()) throw new Error('التوقيع مطلوب لتأكيد التسليم')
+        set({
+          deliveryJobs: state.deliveryJobs.map((j) =>
+            j.id === id ? { ...j, status: 'done' as const, completedAt: new Date().toISOString(), deliverySignatureDataUrl: signatureDataUrl } : j,
+          ),
+        })
       },
 
       deleteCustomAccount: (code) => {
