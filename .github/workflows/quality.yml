@@ -97,7 +97,12 @@ jobs:
         run: node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; console.log(validateDesktopArtifacts('release',JSON.parse(readFileSync('package.json','utf8')).version));"
       - name: Native install, update-mode reinstall, forced restart and encrypted SQLite
         shell: pwsh
-        run: ./scripts/windows_installer_smoke.ps1
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Native NSIS smoke::$detail"
+            throw
+          }
       - name: Save native smoke evidence and installer
         if: always()
         uses: actions/upload-artifact@v4
