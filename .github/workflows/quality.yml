@@ -113,6 +113,39 @@ jobs:
             Write-Output "::error title=Native NSIS smoke::$detail"
             throw
           }
+      - name: Published update discovery and real anonymous download (no installation)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $tag = gh api repos/contashepo-create/tahakam-releases/releases/latest --jq '.tag_name'
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read the published release tag' }
+            if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid public release tag' }
+            if ($tag -eq 'v1.0.23') {
+              Write-Output 'No release newer than probe baseline 1.0.23 yet — skip download detection'
+              exit 0
+            }
+            $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+            $probe = (Resolve-Path 'scripts/windows_public_update_probe.cjs').Path
+            $out = Join-Path $env:RUNNER_TEMP 'public-update-readback.json'
+            $arguments = @("`"$probe`"", $tag.Substring(1), "`"$out`"")
+            $process = Start-Process -FilePath $electron -ArgumentList $arguments -PassThru
+            if (-not $process.WaitForExit(330000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw 'Public updater probe hung'
+            }
+            if (-not (Test-Path $out)) { throw 'Public updater probe produced no evidence' }
+            $result = Get-Content $out -Raw | ConvertFrom-Json
+            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Public updater probe failed: $($result.error)" }
+            Write-Output "::notice title=Public update verified::Anonymous ElectronHttpExecutor detected $($result.fromVersion) -> $($result.detectedVersion), downloaded $($result.size) bytes, SHA512 matched; no installer executed"
+            Get-Content $out
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Public update download::$detail"
+            throw
+          }
       - name: Save native smoke evidence and installer
         if: always()
         uses: actions/upload-artifact@v4
@@ -123,6 +156,7 @@ jobs:
             app/release/*.exe
             app/release/*.blockmap
             app/release/latest.yml
+            ${{ runner.temp }}/public-update-readback.json
             ${{ runner.temp }}/native-build.log
             ${{ runner.temp }}/native-smoke-results.json
             ${{ runner.temp }}/db-probe-*.json
