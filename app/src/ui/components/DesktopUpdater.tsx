@@ -77,7 +77,7 @@ export function DesktopUpdater() {
               }
             }}
           >
-            <Rocket className="w-4 h-4" /> {busy ? 'جارٍ أخذ نسخة احتياطية ثم التثبيت…' : `إعادة التشغيل وتثبيت v${state.version ?? ''}`}
+            <Rocket className="w-4 h-4" /> {busy ? 'جارٍ الحفظ والتحديث…' : `إعادة التشغيل وتثبيت v${state.version ?? ''}`}
           </Btn>
         )}
       </div>
@@ -88,7 +88,7 @@ export function DesktopUpdater() {
       )}
       {state?.status === 'error' && <div className="text-[11px] text-rose-600 font-bold">{state.message ?? ''}</div>}
       {installError && <div role="alert" className="text-[11px] text-rose-600 font-bold">{installError}</div>}
-      {state?.status === 'downloaded' && <div className="text-[11px] text-emerald-600 font-bold">تُؤخذ نسخة احتياطية قبل التثبيت، ويُثبَّت التحديث عند إغلاق التطبيق إن لم تعِد التشغيل الآن. بعد التحديث تُفتح بياناتك كما هي تلقائياً بشاشة بدء بشريط تقدّم — بلا معالج إعداد.</div>}
+      {state?.status === 'downloaded' && <div className="text-[11px] text-emerald-600 font-bold">تُؤخذ نسخة احتياطية قبل التثبيت، ويُثبَّت التحديث عند إغلاق التطبيق إن لم تعِد التشغيل الآن. يتم التثبيت بصمت في مجلد البرنامج نفسه، ثم إعادة التشغيل على قاعدة البيانات نفسها — بلا أسئلة تثبيت أو معالج إعداد.</div>}
     </div>
   )
 }

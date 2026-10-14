@@ -151,6 +151,17 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
 export class DesktopStateStorage implements StateStorage {
   private readonly snapshots = new Map<string, CachedSnapshot>()
   private readonly queues = new Map<string, Promise<unknown>>()
+  private readonly queueFailures = new Map<string, string>()
+  private paused = false
+
+  async flush(): Promise<void> {
+    this.paused = true
+    await Promise.all(this.queues.values())
+    if (failedStores.size) throw new Error(desktopStorageFailure() ?? 'تعذّر تحميل البيانات')
+    if (this.queueFailures.size) throw new Error([...this.queueFailures.values()].join(' | '))
+  }
+
+  resume(): void { this.paused = false }
   private readonly database: DesktopDatabaseBridge
   private readonly legacyStorage: StateStorage | null
   /* v1.0.7: مفتاح تشفير الجهاز — يُجلب مرة عند الإنشاء (بلا IPC متكرر) */
@@ -186,10 +197,13 @@ export class DesktopStateStorage implements StateStorage {
     }
   }
 
-  private enqueue<T>(storeName: string, work: () => Promise<T>): Promise<T> {
+  private enqueue<T>(storeName: string, work: () => Promise<T>, isWrite = false): Promise<T> {
     const previous = this.queues.get(storeName) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(work)
-    this.queues.set(storeName, next.then(() => undefined, () => undefined))
+    this.queues.set(storeName, next.then(
+      () => { if (isWrite) this.queueFailures.delete(storeName) },
+      (error: unknown) => { if (isWrite) this.queueFailures.set(storeName, error instanceof Error ? error.message : String(error)) },
+    ))
     return next
   }
 
@@ -238,6 +252,7 @@ export class DesktopStateStorage implements StateStorage {
   }
 
   setItem(name: string, value: string): Promise<void> {
+    if (this.paused) return Promise.reject(new Error('جارٍ حفظ البيانات وإغلاق البرنامج'))
     return this.enqueue(name, async () => {
       if (failedStores.has(name)) {
         throw new Error(`لم تُحمَّل بيانات «${name}» — منع الحفظ حتى لا تُكتب فوقها. ${failedStores.get(name)}`)
@@ -258,10 +273,11 @@ export class DesktopStateStorage implements StateStorage {
         journalEntries: newJournalEntries(value, current.payloadJson),
       })
       this.snapshots.set(name, { revision: result.revision, payloadJson: value })
-    })
+    }, true)
   }
 
   removeItem(name: string): Promise<void> {
+    if (this.paused) return Promise.reject(new Error('جارٍ حفظ البيانات وإغلاق البرنامج'))
     return this.enqueue(name, async () => {
       if (failedStores.has(name)) throw new Error(`لم تُحمَّل بيانات «${name}» — منع الحذف`)
       const current = await this.load(name)
@@ -273,14 +289,30 @@ export class DesktopStateStorage implements StateStorage {
       }
       // توافق مؤقت مع preload قديم: لا نرسل لقطة فارغة غير قابلة للفك، بل نرفض بوضوح.
       throw new Error('نسخة جسر SQLite لا تدعم حذف اللقطة — حدّث نسخة سطح المكتب')
-    })
+    }, true)
   }
+}
+
+const activeDesktopStores = new Set<DesktopStateStorage>()
+let flushListenerRegistered = false
+
+function registerDesktopStorage(storage: DesktopStateStorage): DesktopStateStorage {
+  const bridge = desktopBridge()
+  activeDesktopStores.add(storage)
+  if (bridge?.persistence && !flushListenerRegistered) {
+    flushListenerRegistered = true
+    bridge.persistence.onFlush(async () => {
+      await Promise.all([...activeDesktopStores].map(store => store.flush()))
+    })
+    bridge.persistence.onResume(() => { for (const store of activeDesktopStores) store.resume() })
+  }
+  return storage
 }
 
 /** مصدر persist الوحيد: SQLite في Electron، والتخزين المشفر الحالي في الويب. */
 export function appStorage(): StateStorage {
   const bridge = desktopBridge()
-  return bridge ? new DesktopStateStorage(bridge.database) : secureStorage
+  return bridge ? registerDesktopStorage(new DesktopStateStorage(bridge.database)) : secureStorage
 }
 
 /** localStorage الخام كما هو — لمتجر الإعدادات في الويب (سلوك اليوم بلا تغيير). */
@@ -298,5 +330,5 @@ const rawLocalStorage: StateStorage = {
  */
 export function settingsAppStorage(): StateStorage {
   const bridge = desktopBridge()
-  return bridge ? new DesktopStateStorage(bridge.database, rawLocalStorage) : rawLocalStorage
+  return bridge ? registerDesktopStorage(new DesktopStateStorage(bridge.database, rawLocalStorage)) : rawLocalStorage
 }

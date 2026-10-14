@@ -1,6 +1,7 @@
 {
   "name": "app",
   "private": true,
+  "productName": "Tahakom",
   "version": "1.0.24",
   "type": "module",
   "scripts": {

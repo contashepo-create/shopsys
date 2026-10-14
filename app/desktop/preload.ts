@@ -46,7 +46,18 @@ const keyRecovery = {
   import: (args: { passphrase: string }) => ipcRenderer.invoke('keyRecovery:import', args),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery })
+const persistence = {
+  onFlush: (listener: () => Promise<void>): void => {
+    ipcRenderer.on('persistence:flush', (_event, token: string) => {
+      void Promise.resolve().then(listener).then(
+        () => ipcRenderer.invoke('persistence:flushed', token, null),
+        (error: unknown) => ipcRenderer.invoke('persistence:flushed', token, error instanceof Error ? error.message : String(error)),
+      )
+    })
+  },
+  onResume: (listener: () => void): void => { ipcRenderer.on('persistence:resume', listener) },
+}
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))
