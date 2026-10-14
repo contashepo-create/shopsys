@@ -1,5 +1,5 @@
 param([switch]$FromPublished23)
-# مثبت NSIS حقيقي على runner معزول. إعادة تثبيت نفس الحزمة بوضع --updated؛ ليس اختبار تنزيل قناة GitHub.
+# NSIS حقيقي على runner معزول: نفس الحزمة، أو v23 المنشور إلى المرشح. ليس فحص قناة HTTP.
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'CI Windows runner only — never run against the owner installation' }
 $install = Join-Path $env:RUNNER_TEMP 'Tahakom native smoke\previous install'
@@ -51,7 +51,10 @@ function Run-Installer([string[]]$arguments, [bool]$launchManually = $false) {
     }
     Start-Process $exe
   }
-  Wait-Until 'installed application forced restart' { (Test-Path $ready) -and (App-Processes).Count -gt 0 }
+  $expectedVersion = $(if ($FromPublished23 -and $installer -ne $candidateInstaller) { '1.0.23' } else { $version })
+  Wait-Until 'installed application startup with expected version/profile' {
+    try { (Test-Path $ready) -and (Get-Content $ready -Raw | ConvertFrom-Json).version -eq $expectedVersion -and (App-Processes).Count -gt 0 } catch { $false }
+  }
 }
 function Run-Probe($mode, $file, $destination = $null) {
   Write-Output "::notice title=Native database stage::Probe $mode : $file"
@@ -94,13 +97,17 @@ try {
     $backupDir = Join-Path $env:USERPROFILE 'Documents/Tahakom-Backups/manual'
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
     $backup = Join-Path $backupDir 'owner-first-upgrade.db'
-    Run-Probe 'copy' $unsafeDb $backup
-    Run-Probe 'verify' $backup
+    # اترك القاعدة الافتراضية القديمة أقدم عمداً؛ الاسترداد يجب أن يحفظ آخر عمل.
+    Run-Probe 'advance' $unsafeDb
+    Run-Probe 'verify-latest' $unsafeDb
+    Run-Probe 'copy-latest' $unsafeDb $backup
+    Run-Probe 'verify-latest' $backup
     $installer = $candidateInstaller
   }
   $marker = Join-Path $install 'old-installation-marker.txt'
   Set-Content $marker 'must be removed by actual NSIS update'
-  Remove-Item $ready
+  # last-run دليل هوية حقيقي للنسخة القديمة؛ لا نحذفه من fixture أول انتقال.
+  if (-not $FromPublished23) { Remove-Item $ready }
   if ($FromPublished23) {
     # أول انتقال من EXE لا يعرف الحماية: تثبيت فعلي من القديم إلى المرشح، ثم
     # فتحه يدوياً بوجهة fixture غير متصلة. --force-run مفحوص في job مستقل.
@@ -118,10 +125,14 @@ try {
     if ((Get-Content $ready -Raw | ConvertFrom-Json).version -ne $version) { throw 'Candidate application did not start on the original profile' }
   } elseif ($afterPath -ne $safePath) { throw 'Existing safe database pointer changed during update' }
   if ((Get-FileHash $key -Algorithm SHA256).Hash -ne $keyHash) { throw 'Device encryption key changed during update' }
-  Run-Probe 'verify' $afterPath
+  Run-Probe $(if ($FromPublished23) { 'verify-latest' } else { 'verify' }) $afterPath
   @{ ok = $true; version = $version; installation = $install; database = $afterPath; nativeNSIS = $true; samePackageReinstall = (-not $FromPublished23); oldBinaryExecuted = [bool]$FromPublished23; fromVersion = $(if ($FromPublished23) { '1.0.23' } else { $version }); actualProfile = $ud; feedDownloadTested = $false } | ConvertTo-Json | Set-Content $results
   Write-Host "PASS: actual NSIS, oldBinaryExecuted=$FromPublished23, same profile and encrypted SQLite/key; forced restart tested only in same-package mode."
 } catch {
+  foreach ($profile in @('app', 'Tahakom')) {
+    $log = Join-Path $env:APPDATA "$profile/main.log"
+    if (Test-Path $log) { Get-Content $log | Where-Object { $_ -match '\[(boot|db|db-recovery|device-key-fatal)\]' } | Select-Object -Last 6 | ForEach-Object { Write-Output "::notice title=Profile ${profile}::$($_.Replace('%', '%25'))" } }
+  }
   @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json | Set-Content $results
   if (Test-Path (Join-Path $ud 'main.log')) {
     Get-Content (Join-Path $ud 'main.log') -Tail 100
