@@ -72,6 +72,41 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - name: Real SQLite, WAL, directory replacement and updater arguments
-        run: npx vitest run tests/database_update_safety.test.ts tests/desktop_storage.test.ts tests/db_location_update_v1022.test.ts tests/db_recovery_v1022.test.ts tests/desktop_shutdown.test.ts
+        run: npx vitest run tests/database_update_safety.test.ts tests/desktop_storage.test.ts tests/db_location_update_v1022.test.ts tests/db_recovery_v1022.test.ts tests/desktop_shutdown.test.ts tests/release_pipeline.test.ts
       - name: Runtime wiring guard
         run: node --experimental-strip-types scripts/verify_database_update_safety.mjs
+
+  windows-installer-smoke:
+    name: Native NSIS installation and database preservation (no publication)
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Build actual Windows NSIS installer without publishing
+        run: npm run desktop:dist
+      - name: Verify installer metadata and bytes
+        run: node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; console.log(validateDesktopArtifacts('release',JSON.parse(readFileSync('package.json','utf8')).version));"
+      - name: Native install, update-mode reinstall, forced restart and encrypted SQLite
+        shell: pwsh
+        run: ./scripts/windows_installer_smoke.ps1
+      - name: Save native smoke evidence and installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-installer-smoke
+          retention-days: 7
+          path: |
+            app/release/*.exe
+            app/release/*.blockmap
+            app/release/latest.yml
+            ${{ runner.temp }}/native-smoke-results.json
+            ${{ runner.temp }}/db-probe-*.json

@@ -1,0 +1,46 @@
+// CI فقط: يعمل داخل Electron الحقيقي لفك DPAPI وفحص SQLite ABI بعد إعادة البناء.
+const { app, safeStorage } = require('electron')
+const { readFileSync, writeFileSync, mkdirSync } = require('node:fs')
+const { join, resolve } = require('node:path')
+const { createCipheriv, createDecipheriv, randomBytes } = require('node:crypto')
+const Database = require('better-sqlite3')
+const [mode, ud, file, output] = process.argv.slice(2)
+app.setName('Tahakom-CI-probe')
+const profile = join(process.env.RUNNER_TEMP, 'tahakom-ci-probe-profile')
+mkdirSync(profile, { recursive: true })
+app.setPath('userData', profile)
+app.whenReady().then(() => {
+  try {
+    const encryptedKey = readFileSync(join(ud, 'device.key.enc'), 'utf8')
+    // ابق العقد مطابقاً لوحدة deviceKeyStore بدلاً من طباعة المفتاح.
+    const actualMagic = require('node:fs').readFileSync(resolve('desktop/deviceKeyStore.ts'), 'utf8').match(/const ENC_MAGIC = ['"]([^'"]+)/)?.[1]
+    if (!actualMagic || !encryptedKey.startsWith(actualMagic)) throw new Error('Invalid encrypted key format')
+    const key = Buffer.from(safeStorage.decryptString(Buffer.from(encryptedKey.slice(actualMagic.length).trim(), 'base64')), 'base64')
+    if (key.length !== 32) throw new Error('Invalid device key length')
+    const expected = JSON.stringify({ state: { ciSentinel: 'actual-native-nsis-update', balance: 98765 } })
+    const db = new Database(file, { readonly: mode !== 'seed', fileMustExist: true })
+    try {
+      if (mode === 'seed') {
+        const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv)
+        const bytes = Buffer.concat([cipher.update(expected), cipher.final(), cipher.getAuthTag()])
+        const payload = `enc:v1:${iv.toString('base64url')}:${bytes.toString('base64url')}`
+        const id = db.prepare("SELECT value FROM meta WHERE key='device_id'").get().value
+        db.prepare('INSERT INTO snapshots (store_name,revision,payload_json,origin_device,origin_branch,updated_at) VALUES (?,?,?,?,?,?)').run('ci-native-update', 1, payload, id, '', new Date().toISOString())
+      } else {
+        if (db.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('SQLite integrity failed')
+        const payload = db.prepare("SELECT payload_json FROM snapshots WHERE store_name='ci-native-update'").get()?.payload_json
+        if (!payload) throw new Error('Original snapshot missing')
+        const [, , iv, ct] = payload.split(':'); const bytes = Buffer.from(ct, 'base64url')
+        const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'))
+        decipher.setAuthTag(bytes.subarray(-16))
+        const plain = Buffer.concat([decipher.update(bytes.subarray(0, -16)), decipher.final()]).toString('utf8')
+        if (plain !== expected) throw new Error('Original encrypted data changed')
+      }
+    } finally { db.close() }
+    writeFileSync(output, JSON.stringify({ ok: true, mode, file }))
+    app.exit(0)
+  } catch (error) {
+    writeFileSync(output, JSON.stringify({ ok: false, error: error.message }))
+    app.exit(1)
+  }
+})

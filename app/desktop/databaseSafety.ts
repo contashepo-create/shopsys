@@ -60,6 +60,13 @@ export async function protectDatabaseAt(ud: string, installDir: string): Promise
   return destination
 }
 
+/** لا نبدّل المؤشر تحت اتصال مفتوح؛ عند فشل النسخة يجب أن تبقى الكتابة على القاعدة نفسها. */
+export function assertSafeUpdateLocation(ud: string, installDir: string, activePath: string): void {
+  if (isInsideInstallation(activePath, installDir)) throw new Error('قاعدة التشغيل داخل مجلد التثبيت — أعد تشغيل النسخة المصلحة لحمايتها قبل التحديث')
+  const pointedPath = resolveDbPathAt(ud).dbPath
+  if (physicalPath(pointedPath) !== physicalPath(activePath)) throw new Error('تغيّر مؤشر قاعدة البيانات أثناء التشغيل — لم يبدأ التحديث، أعد تشغيل البرنامج')
+}
+
 export interface RecoveryOptions {
   userData: string
   installDir: string
@@ -127,7 +134,11 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
   const { dbPath } = resolveDbPathAt(ud)
   if (existsSync(dbPath)) return null
   const expectedId = savedIdentity(ud)
-  const live = [...new Set([join(ud, 'shopsys.db'), join(installDir, 'shopsys.db'), ...(options.relocatedPaths ?? changedDrivePaths(dbPath))])]
+  const live = [...new Set(options.relocatedPaths ?? changedDrivePaths(dbPath))]
+  const legacy = [join(ud, 'shopsys.db'), join(installDir, 'shopsys.db')]
+  if (!readDbLocationAt(ud).customDbPath) {
+    try { for (const name of readdirSync(join(ud, 'databases'))) if (name.endsWith('.db')) live.push(join(ud, 'databases', name)) } catch { /* لا مجلد حماية سابق */ }
+  }
   const backups: string[] = []
   for (const dir of recoveryBackupDirs(options, dbPath)) {
     try {
@@ -142,15 +153,15 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
   }).sort((a, b) => b.time - a.time)
   // قاعدة حية موثوقة أولاً؛ بعدها أحدث نسخة سليمة من كل الأماكن.
   const liveCandidates = eligible(live)
-  const candidates = liveCandidates.length ? liveCandidates : eligible([...new Set(backups)])
+  const candidates = liveCandidates.length ? liveCandidates : eligible([...new Set([...backups, ...legacy])])
   if (!candidates.length || new Set(candidates.map(candidate => candidate.id)).size > 1) return null
   for (const source of candidates) {
     try {
       const destination = join(ud, 'databases', `recovered-${randomUUID()}.db`)
       if (isInsideInstallation(destination, installDir)) throw new Error('مكان الاسترداد داخل مجلد التثبيت')
       await copyDatabaseSafely(source.file, destination)
-      writeDbLocationAt(ud, { ...readDbLocationAt(ud), customDbPath: destination, customDbOpenedAt: new Date().toISOString() })
       rememberDatabaseIdentity(ud, source.id)
+      writeDbLocationAt(ud, { ...readDbLocationAt(ud), customDbPath: destination, customDbOpenedAt: new Date().toISOString() })
       return source.file
     } catch { /* نسخة غير قابلة للنسخ: التالية، دون لمس الأصل أو استبدال ملف */ }
   }

@@ -29,7 +29,7 @@ check('before-quit يمرّر القاعدة المغلقة للنسخة (إصل
 check('نسخة قبل التحديث تُؤخذ فور اكتمال التنزيل', /state\.status === 'downloaded'[\s\S]{0,400}backupBeforeUpdate\(state\.version\)/.test(main))
 check('نسخة ما قبل التحديث في backups/pre-update', /join\(app\.getPath\('userData'\), 'backups', 'pre-update'\)/.test(main))
 check('التثبيت ينتظر نسخة ما قبل التحديث ويرفض بلا نسخة', /await installSilentUpdate/.test(main) && /if \(!backed\) throw new Error\('تعذّرت النسخة الاحتياطية قبل التحديث/.test(main))
-check('التثبيت صامت ويعيد التشغيل تلقائياً (quitAndInstall(true, true))', /autoUpdater\.quitAndInstall\(true, true\)/.test(main))
+check('التثبيت صامت ويعيد التشغيل تلقائياً (quitAndInstall(true, true))', /await requestSilentInstall\(autoUpdater\)/.test(main) && /updater\.quitAndInstall\(true, true\)/.test(read('desktop/updateLifecycle.ts')))
 check('مؤشر المكان المخصص يُرآى في المكان الافتراضي وبجوار القاعدة', /locationPointerMirrorsAt/.test(read('desktop/dbLocation.ts')) && /'backups', 'db-location\.json'/.test(read('desktop/dbLocation.ts')) && /writeDbLocationAt\(/.test(read('desktop/dbLocation.ts')))
 check('استعادة المؤشر من المرآة عند فقدانه', /export function restoreLocationPointerAt/.test(read('desktop/dbLocation.ts')) && /restoreLocationPointerIfMissing\(\)\s*\n\s*await recoverDatabaseSilently\(\)\s*\n\s*await resolveMissingLocation/.test(main))
 check('لا فتح صامت لقاعدة فارغة: مكان مفقود أو ملف اختفى ⇒ سؤال المستخدم', /resolveMissingLocation/.test(main) && /file-missing|folder-missing/.test(read('desktop/storagePolicy.ts')))

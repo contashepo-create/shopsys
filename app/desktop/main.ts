@@ -26,9 +26,9 @@ import {
 import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
-import { isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity } from './databaseSafety.ts'
+import { isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData } from './runtimeData.ts'
-import { installSilentUpdate, withDeadline } from './updateLifecycle.ts'
+import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller } from './updateLifecycle.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
   type CustomLocationStatus, type ExistingDataCandidate,
@@ -44,6 +44,8 @@ type CompleteOutboxInput = Parameters<ShopsysDatabase['completeOutbox']>[0]
 
 let mainWindow: BrowserWindow | null = null
 let database: ShopsysDatabase | null = null
+let activeDatabasePath: string | null = null
+let updateLaunchInProgress = false
 let deviceEncryptionKey: Buffer = Buffer.alloc(0)
 let printWindow: BrowserWindow | null = null
 
@@ -640,6 +642,7 @@ async function openDatabase(): Promise<ShopsysDatabase> {
       if (shield === 'corrupt-no-backup') throw new Error('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة في أي مكان')
       const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
       logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
+      activeDatabasePath = dbPath
       rememberDatabaseIdentity(userDataDir(), db.origin.device)
       if (isCustom) {
         const cfg = readDbLocation()
@@ -783,6 +786,7 @@ type UpdaterState =
 
 let updaterState: UpdaterState = { status: 'idle' }
 let downloadedUpdateVersion: string | null = null
+let downloadedInstallerPath: string | null = null
 
 function pushUpdaterState(state: UpdaterState): void {
   updaterState = state
@@ -816,7 +820,10 @@ function wireUpdater(): void {
     autoUpdater.on('update-available', (info) => pushUpdaterState({ status: 'available', version: info.version }))
     autoUpdater.on('update-not-available', (info) => pushUpdaterState({ status: 'not-available', version: info.version }))
     autoUpdater.on('download-progress', (progress) => pushUpdaterState({ status: 'downloading', percent: Math.round(progress.percent) }))
-    autoUpdater.on('update-downloaded', (info) => pushUpdaterState({ status: 'downloaded', version: info.version }))
+    autoUpdater.on('update-downloaded', (info) => {
+      downloadedInstallerPath = info.downloadedFile
+      pushUpdaterState({ status: 'downloaded', version: info.version })
+    })
     autoUpdater.on('error', (error) => pushUpdaterState({ status: 'error', message: error.message }))
     void autoUpdater.checkForUpdates()
   } catch (error) {
@@ -1210,8 +1217,14 @@ function shutdownApplication(update: boolean): Promise<void> {
       await installSilentUpdate({
         flush: flushRenderer,
         protect: async () => {
-          await protectDatabaseAt(userDataDir(), installationDir())
-          if (isInsideInstallation(resolveDbPath().dbPath, installationDir())) throw new Error('قاعدة البيانات داخل مجلد التثبيت')
+          if (!activeDatabasePath) throw new Error('تعذّر معرفة مسار قاعدة التشغيل')
+          assertSafeUpdateLocation(userDataDir(), installationDir(), activeDatabasePath)
+          try { assertDownloadedInstaller(downloadedInstallerPath) } catch (error) {
+            downloadedUpdateVersion = null
+            downloadedInstallerPath = null
+            pushUpdaterState({ status: 'error', message: (error as Error).message })
+            throw error
+          }
         },
         backup: async () => {
           if (preUpdateBackup) await withDeadline(preUpdateBackup, 30_000, 'لم تنتهِ نسخة ما قبل التحديث — لم يُثبَّت التحديث')
@@ -1220,9 +1233,10 @@ function shutdownApplication(update: boolean): Promise<void> {
           if (!backed) throw new Error('تعذّرت النسخة الاحتياطية قبل التحديث — لم يُثبَّت التحديث')
         },
         close: () => { closing.close(); database = null; if (backupTimer) clearInterval(backupTimer) },
-        install: () => {
+        install: async () => {
           const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
-          autoUpdater.quitAndInstall(true, true)
+          updateLaunchInProgress = true
+          try { await requestSilentInstall(autoUpdater) } finally { updateLaunchInProgress = false }
         },
         exit: () => app.exit(0),
       })
@@ -1234,7 +1248,16 @@ function shutdownApplication(update: boolean): Promise<void> {
         exit: (code) => app.exit(code), log: logLine, timeoutMs: 8_000,
       })
     }
-  })().catch((error: unknown) => {
+  })().catch(async (error: unknown) => {
+    if (!database && activeDatabasePath) {
+      // فشل إطلاق المثبت بعد close: افتح الاتصال مجدداً قبل استئناف طوابير الواجهة.
+      database = await openDatabase()
+      backupTimer = setInterval(() => { void rotateBackups() }, 60 * 60 * 1000)
+      downloadedUpdateVersion = null
+      downloadedInstallerPath = null
+      preUpdateBackup = null
+      pushUpdaterState({ status: 'error', message: `لم يبدأ التحديث: ${(error as Error).message}. أعد تشغيل البرنامج قبل إعادة المحاولة.` })
+    }
     // لا تثبيت عند فشل الحفظ/الحماية/النسخة؛ يستأنف المُصيّر العمل.
     shuttingDown = false
     shutdownWork = null
@@ -1337,6 +1360,7 @@ if (!gotLock) {
   })
 
   app.on('before-quit', (event) => {
+    if (updateLaunchInProgress) { event.preventDefault(); return }
     if (!database) return
     event.preventDefault()
     if (shuttingDown) return

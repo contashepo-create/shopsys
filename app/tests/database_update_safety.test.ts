@@ -4,13 +4,14 @@ import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createCipheriv, randomBytes } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import Database from 'better-sqlite3'
 import { spawnSync } from 'node:child_process'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
 import { readDbLocationAt, writeDbLocationAt, resolveDbPathAt, EMPTY_DB_LOCATION } from '../desktop/dbLocation.ts'
-import { changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity } from '../desktop/databaseSafety.ts'
+import { changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity, assertSafeUpdateLocation } from '../desktop/databaseSafety.ts'
 import { preserveCurrentUserData } from '../desktop/runtimeData.ts'
-import { installSilentUpdate } from '../desktop/updateLifecycle.ts'
+import { installSilentUpdate, requestSilentInstall, assertDownloadedInstaller } from '../desktop/updateLifecycle.ts'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -306,4 +307,95 @@ describe('عقد electron-updater الفعلي (مع عزل تشغيل المث�
     expect(calls[0].args).toEqual(['--updated', '/S', '--force-run', '/D=D:\\accounting\\Tahakam\\Tahakom'])
     expect(calls[1]).toBe('exit')
   })
+})
+
+
+describe('مراجعة مسار التحديث وحالات فشله', () => {
+  it('فحص التحديث لا ينقل المؤشر تحت اتصال حي؛ بعد الرفض تحفظ كتابات جديدة في القاعدة الأصلية', async () => {
+    const s = scenario(), file = join(s.installDir, 'shopsys.db')
+    const db = await create(file); point(s.userData, file)
+    try {
+      expect(() => assertSafeUpdateLocation(s.userData, s.installDir, file)).toThrow('داخل مجلد التثبيت')
+      expect(resolveDbPathAt(s.userData).dbPath).toBe(file)
+      db.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 1, payloadJson: '{"state":{"balance":777}}' })
+    } finally { db.close() }
+    expect(await payload(resolveDbPathAt(s.userData).dbPath)).toBe('{"state":{"balance":777}}')
+  })
+  it('يرفض اختلاف المؤشر عن الاتصال الفعلي، ويسمح بالمكان المستقل نفسه', async () => {
+    const s = scenario(), file = join(s.root, 'active.db')
+    ;(await create(file)).close(); point(s.userData, file)
+    expect(() => assertSafeUpdateLocation(s.userData, s.installDir, file)).not.toThrow()
+    point(s.userData, join(s.root, 'other.db'))
+    expect(() => assertSafeUpdateLocation(s.userData, s.installDir, file)).toThrow('تغيّر مؤشر')
+  })
+  it('بقايا القاعدة الافتراضية القديمة لا تتقدم على نسخة أحدث من المكان المخصص المفقود', async () => {
+    const s = scenario(), old = join(s.userData, 'shopsys.db'), recent = join(s.documentsBackupDir, 'auto', 'recent.db')
+    ;(await create(old, 'same-device', '{"state":{"balance":1}}')).close()
+    ;(await create(recent, 'same-device', '{"state":{"balance":99}}')).close()
+    utimesSync(old, 1000, 1000); utimesSync(recent, 2000, 2000)
+    point(s.userData, join(s.root, 'custom-missing.db')); rememberDatabaseIdentity(s.userData, 'same-device')
+    expect(await recoverMissingDatabaseAt(s)).toBe(recent)
+    expect(await payload(resolveDbPathAt(s.userData).dbPath)).toBe('{"state":{"balance":99}}')
+  })
+  it('فشل تثبيت هوية المسترد لا ينشر مؤشر قاعدة جديدة', async () => {
+    const s = scenario(), key = randomBytes(32), missing = join(s.root, 'missing.db')
+    point(s.userData, missing)
+    ;(await create(join(s.documentsBackupDir, 'auto', 'backup.db'), 'same-device', encrypted(key, '{"state":{}}'))).close()
+    mkdirSync(join(s.userData, 'database-identity.json'))
+    expect(await recoverMissingDatabaseAt({ ...s, deviceKey: key })).toBeNull()
+    expect(resolveDbPathAt(s.userData).dbPath).toBe(missing)
+  })
+  it('فقد المؤشر والمرآة يستعيد ملف الحماية الحالي المؤكد بدل إنشاء قاعدة فارغة', async () => {
+    const s = scenario(), live = join(s.userData, 'databases', 'shopsys-protected.db')
+    ;(await create(live)).close(); rememberDatabaseIdentity(s.userData, 'same-device')
+    expect(await recoverMissingDatabaseAt(s)).toBe(live)
+  })
+  it('فحص ملف المثبت قبل close يمنع مسار ENOENT التفاعلي في المكتبة', () => {
+    const s = scenario(), file = join(s.root, 'setup.exe')
+    expect(() => assertDownloadedInstaller(null)).toThrow()
+    expect(() => assertDownloadedInstaller(file)).toThrow('مفقود')
+    writeFileSync(file, ''); expect(() => assertDownloadedInstaller(file)).toThrow()
+    writeFileSync(file, 'installer fixture'); expect(() => assertDownloadedInstaller(file)).not.toThrow()
+    expect(() => assertDownloadedInstaller(s.root)).toThrow()
+  })
+  for (const phase of ['sync', 'async'] as const) {
+    it(`خطأ إطلاق ${phase} يمنع exit بعد close، ويمكن إعادة فتح البيانات نفسها`, async () => {
+      const s = scenario(), file = join(s.root, 'active.db'), db = await create(file)
+      const updater = new EventEmitter() as EventEmitter & { quitAndInstall: (silent: boolean, restart: boolean) => void }
+      updater.quitAndInstall = (silent, restart) => {
+        expect([silent, restart]).toEqual([true, true])
+        const fail = () => updater.emit('error', new Error('launch failed'))
+        if (phase === 'sync') fail(); else process.nextTick(fail)
+      }
+      let exited = false
+      await expect(installSilentUpdate({ flush: async () => {}, protect: async () => {}, backup: async () => {}, close: () => db.close(), install: () => requestSilentInstall(updater), exit: () => { exited = true } })).rejects.toThrow('launch failed')
+      expect(exited).toBe(false); expect(updater.listenerCount('error')).toBe(0)
+      expect(await payload(file)).toBe('{"state":{"balance":12345}}')
+    })
+  }
+  it('التثبيت السليم ينتظر نافذة أخطاء spawn الأولية ثم يخرج', async () => {
+    const events: string[] = []
+    const updater = new EventEmitter() as EventEmitter & { quitAndInstall: (silent: boolean, restart: boolean) => void }
+    updater.quitAndInstall = () => { events.push('install'); process.nextTick(() => events.push('spawn accepted')) }
+    await installSilentUpdate({ flush: async () => {}, protect: async () => {}, backup: async () => {}, close: () => {}, install: () => requestSilentInstall(updater), exit: () => { events.push('exit') } })
+    expect(events).toEqual(['install', 'spawn accepted', 'exit'])
+  })
+})
+
+
+it('electron-updater الفعلي: quitAndInstall لا يرمي عند غياب ملف التنزيل؛ الحارس يرصد error ولا يخرج', () => {
+  const script = String.raw`
+    (async () => {
+      const { NsisUpdater } = require('electron-updater');
+      const { requestSilentInstall } = await import('./desktop/updateLifecycle.ts');
+      const updater = new NsisUpdater(null, { version: '1.0.24', onQuit: () => {}, quit: () => { throw new Error('must not quit') } });
+      updater.logger = null;
+      updater.autoInstallOnAppQuit = false;
+      try { await requestSilentInstall(updater); process.exit(2) }
+      catch (error) { process.stdout.write(error.message); process.exit(0) }
+    })().catch(error => { console.error(error); process.exit(3) });
+  `
+  const child = spawnSync(process.execPath, ['--experimental-strip-types', '-e', script], { encoding: 'utf8', timeout: 10000 })
+  expect(child.status, child.stderr).toBe(0)
+  expect(child.stdout).toContain('No update filepath provided')
 })
