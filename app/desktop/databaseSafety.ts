@@ -37,11 +37,16 @@ export async function copyDatabaseSafely(source: string, destination: string): P
   mkdirSync(dirname(destination), { recursive: true })
   const temporary = `${destination}.${randomUUID()}.tmp`
   const db = new Database(source, { readonly: true, fileMustExist: true })
+  let operation = 'SQLite backup'
   try {
     await db.backup(temporary)
+    operation = 'verify temporary'
     if (probeShopsysDatabase(temporary) !== 'ok') throw new Error('فشل التحقق من نسخة قاعدة البيانات')
     // نشر ذري دون overwrite؛ الملف المؤقت على نفس القرص.
+    operation = 'atomic publish'
     linkSync(temporary, destination)
+  } catch (error) {
+    throw new Error(`${operation}: ${(error as Error).message}; source=${source}; destination=${destination}; temporary=${temporary}`, { cause: error })
   } finally {
     db.close()
     try { unlinkSync(temporary) } catch { /* قد لم تُنشأ النسخة */ }
