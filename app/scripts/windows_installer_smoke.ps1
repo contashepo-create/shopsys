@@ -67,7 +67,7 @@ function Run-Probe($mode, $file, $destination = $null) {
   if (-not $p.WaitForExit(60000)) { throw 'Electron database probe hung' }
   if (-not (Test-Path $out)) { throw 'Electron probe produced no result' }
   $result = Get-Content $out -Raw | ConvertFrom-Json
-  if ($p.ExitCode -ne 0 -or -not $result.ok) { throw "Database probe failed: $($result.error)" }
+  if ($p.ExitCode -ne 0 -or -not $result.ok) { throw "Database probe failed: mode=$mode file=$file error=$($result.error)" }
 }
 $script:installerProcesses = @()
 try {
@@ -140,7 +140,13 @@ try {
       Write-Output "::notice title=Native runtime log::$($_.Replace('%', '%25'))"
     }
   }
-  throw
+  $diagnostics = @()
+  foreach ($name in @('app', 'Tahakom')) {
+    $root = Join-Path $env:APPDATA $name
+    if (Test-Path (Join-Path $root 'db-location.json')) { $diagnostics += "$name pointer=" + (Get-Content (Join-Path $root 'db-location.json') -Raw) }
+    if (Test-Path (Join-Path $root 'main.log')) { $diagnostics += (Get-Content (Join-Path $root 'main.log') | Where-Object { $_ -match '\[(db|db-recovery|db-protection|boot-fatal|fatal)\]' } | Select-Object -Last 5) }
+  }
+  throw ($_.Exception.Message + '; fixture diagnostics: ' + ($diagnostics -join ' | '))
 } finally {
   # Cleanup applies only to processes at the isolated fixture installation path.
   foreach ($p in $script:installerProcesses) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
