@@ -19,6 +19,11 @@ on:
   # محفز الطوارئ: يُستدعى من auto-release بعد وسم الإصدار، أو يدوياً:
   #   gh workflow run desktop-release --ref v1.0.21
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'بناء وفحص فقط — بلا إصدار أو نشر، يسمح باختبار فرع العمل'
+        type: boolean
+        default: false
 
 # بناء واحد في كل مرة: وسمان متلاحقان يبنيان بالترتيب لا بالسباق
 concurrency:
@@ -31,7 +36,7 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: app
@@ -41,6 +46,10 @@ jobs:
       - name: حارس المحفز — وسم إصدار v(X.Y.Z) حصراً (مدفوع أو مُطلق يدوياً)
         shell: bash
         run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "✓ بناء تجريبي فقط — لا نشر ولا تعديل لقناة التحديث"
+            exit 0
+          fi
           if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "✗ السير أُنشئ على «${GITHUB_REF_NAME}» وليس وسم إصدار v(X.Y.Z) — لا بناء ولا نشر"
             exit 1
@@ -52,6 +61,29 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
+
+
+      - name: تطابق الوسم مع الإصدار ووجهة النشر قبل البناء
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          LOCK_VER=$(node -p "require('./package-lock.json').packages[''].version")
+          if [ "${GITHUB_REF_NAME}" != "v${VER}" ] || [ "${LOCK_VER}" != "${VER}" ]; then
+            echo "::error::الوسم وpackage.json وpackage-lock.json غير متطابقة — لا بناء لإصدار ملتبس"
+            exit 1
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::RELEASES_REPO_TOKEN غير مضبوط — لا بناء نشر بلا وجهة"
+            exit 1
+          fi
+          gh api repos/contashepo-create/tahakam-releases --jq '.permissions.push' > ../publish-permission.txt
+          if ! grep -qx true ../publish-permission.txt; then
+            echo "::error::توكن رف النشر لا يملك صلاحية الكتابة"
+            exit 1
+          fi
 
       - name: تثبيت الاعتماديات
         run: npm ci
@@ -132,7 +164,7 @@ jobs:
       # ── v1.0.16: ترحيل التحديث لرف الإصدارات العام ──────────────────────
       # المعمارية: البناء هنا (بلا توكن) → app-update.yml داخل المثبت يشير
       # لtahakam-releases → نشر صريح للرف العام بتوكن محصور → مرآة هنا
-      # للعملاء القدامى (تُزال بعد اكتمال الترحيل وخصخصة المستودع).
+      # مرآة مصدر للتشخيص فقط؛ لا ترحيل مفترض لمستخدمين غير موجودين.
       # راجع docs/الترحيل-لمستودع-خاص.md
 
       - name: بناء المثبت (بلا نشر — النشر خطوات صريحة أدناه)
@@ -151,58 +183,37 @@ jobs:
           fi
           echo "✓ التحديث داخل المثبت موجه للرف العام tahakam-releases"
 
-      - name: نشر الإصدار إلى رف الإصدارات العام (tahakam-releases)
+      - name: تحقق من حجم وبصمة المثبت وملفات التحديث
+        shell: bash
+        run: |
+          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; const version=JSON.parse(readFileSync('package.json','utf8')).version; console.log(validateDesktopArtifacts('release',version));"
+
+      - name: حفظ حزمة البناء المفحوصة (بما فيها البناء التجريبي)
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-installer-${{ github.run_id }}
+          retention-days: 7
+          path: |
+            app/release/*.exe
+            app/release/*.blockmap
+            app/release/latest.yml
+
+      - name: نشر الإصدار إلى رف الإصدارات العام — draft ثم نشر بعد التحقق
+        if: inputs.dry_run != true
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER=$(node -p "require('./package.json').version")
-          REL="contashepo-create/tahakam-releases"
-          # حارس الوسم: لا نشر إلا لوسم إصدار v(X.Y.Z) — يحمي من أي تشغيل
-          # مستقبلي خارج قصدنا (محفز يدوي قديم أو وسم غير إصداري)
-          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "✗ \${TAG} ليس وسماً بإصدار vX.Y.Z — لا نشر (طلب المالك: الإصدار بوسم مقصود حصراً)"
-            exit 1
-          fi
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "✗ سر RELEASES_REPO_TOKEN غير مضبوط — لا نشر بلا رف التحديث (إصدار بلا رف = عملاء معطلون عن التحديث)"
-            exit 1
-          fi
-          # سلامة مخرجات البناء قبل الرفع
-          if [ ! -f release/latest.yml ]; then echo "✗ release/latest.yml مفقود"; exit 1; fi
-          ls release/tahakom-setup-*.exe >/dev/null || { echo "✗ المثبت مفقود"; exit 1; }
-          if ! grep -q "version: ${VER}" release/latest.yml; then echo "✗ latest.yml بإصدار مختلف عن package.json"; exit 1; fi
-          # إصدار جديد أو تحديث نفس الوسم (إعادة تشغيل) — clobber يستبدل الأصول
-          gh release view "${TAG}" --repo "${REL}" >/dev/null 2>&1 \
-            || gh release create "${TAG}" --repo "${REL}" --title "تَحَكَّم ${VER}" --notes "تحديث تلقائي — الإصدار ${VER}"
-          gh release upload "${TAG}" --repo "${REL}" release/tahakom-setup-*.exe release/latest.yml --clobber
-          if compgen -G "release/*.blockmap" > /dev/null; then
-            gh release upload "${TAG}" --repo "${REL}" release/*.blockmap --clobber
-          fi
-          echo "✓ نُشر ${TAG} إلى رف الإصدارات العام — أجهزة العملاء ستراه"
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPO: contashepo-create/tahakam-releases
+          RELEASE_SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/publish_desktop_release.mjs
 
-      - name: مرآة إصدار الترحيل في هذا المستودع (للعملاء القدامى — تُزال بعد اكتمال الترحيل)
-        # الجهاز على 1.0.12/1.0.15 ينظر إلى shopsys: يجد هذه المرآة فيثبّت
-        # 1.0.16 فينتقل لرف الإصدارات (app-update.yml الجديد). بعد خصخصة
-        # shopsys لا فائدة منها — تُحذف الخطوة بتعليمات دليل الترحيل.
+      - name: مرآة حزمة المصدر — draft ثم نشر بعد التحقق
+        if: inputs.dry_run != true
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER=$(node -p "require('./package.json').version")
-          gh release view "${TAG}" >/dev/null 2>&1 \
-            || gh release create "${TAG}" --title "تَحَكَّم ${VER}" --notes "إصدار الترحيل لرف الإصدارات العام — التنزيل اليدوي والعملاء القدامى"
-          gh release upload "${TAG}" release/tahakom-setup-*.exe release/latest.yml --clobber
-          if compgen -G "release/*.blockmap" > /dev/null; then
-            gh release upload "${TAG}" release/*.blockmap --clobber
-          fi
-          echo "✓ مُرآء ${TAG} هنا للعملاء القدامى (1.0.12/1.0.15)"
-          # تحقق نهائي: exe + latest.yml معاً في إصدار واحد
-          ASSETS=$(gh release view "${TAG}" --json assets --jq '[.assets[].name] | join(" ")')
-          echo "أصول الإصدار: ${ASSETS}"
-          case "${ASSETS}" in
-            *latest.yml*) echo "✓ latest.yml مرفوع مع المثبت" ;;
-            *) echo "✗ latest.yml مفقود من الإصدار — العملاء القدامى لن يجدوا التحديث"; exit 1 ;;
-          esac
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/publish_desktop_release.mjs

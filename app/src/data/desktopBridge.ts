@@ -108,6 +108,10 @@ export interface DesktopKeyRecoveryBridge {
 
 export interface ShopsysDesktopBridge {
   runtime: 'electron'
+  persistence?: {
+    onFlush(listener: () => Promise<void>): void
+    onResume(listener: () => void): void
+  }
   database: DesktopDatabaseBridge
   databaseStorage?: DesktopDatabaseStorageBridge
   notifications?: DesktopNotificationsBridge

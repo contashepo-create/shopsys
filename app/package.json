@@ -1,6 +1,7 @@
 {
   "name": "app",
   "private": true,
+  "productName": "Tahakom",
   "version": "1.0.24",
   "type": "module",
   "scripts": {
@@ -18,8 +19,8 @@
     "demo:dump": "node demo-db/dump.mjs",
     "desktop:compile": "node desktop/build.mjs",
     "desktop:dev": "node desktop/build.mjs && node desktop/dev.mjs",
-    "desktop:dist": "vite build && node desktop/build.mjs && electron-builder --win nsis --publish never",
-    "desktop:publish": "vite build && node desktop/build.mjs && electron-builder --win nsis --publish always"
+    "desktop:dist": "node node_modules/electron/install.js && vite build && node desktop/build.mjs && electron-builder --win nsis --publish never",
+    "desktop:publish": "node node_modules/electron/install.js && vite build && node desktop/build.mjs && electron-builder --win nsis --publish always"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -54,7 +55,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "yaml": "^2.9.1"
   },
   "main": "dist-desktop/main.cjs",
   "description": "تَحَكَّم — نظام إدارة ومحاسبة متكامل للأنشطة (نسخة ويب + سطح المكتب SQLite)",

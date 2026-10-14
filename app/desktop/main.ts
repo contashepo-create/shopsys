@@ -26,8 +26,11 @@ import {
 import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
+import { isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
+import { DESKTOP_APP_NAME, preserveCurrentUserData } from './runtimeData.ts'
+import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller } from './updateLifecycle.ts'
 import {
-  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
+  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
   type CustomLocationStatus, type ExistingDataCandidate,
   type RotationKind,
 } from './storagePolicy.ts'
@@ -41,10 +44,19 @@ type CompleteOutboxInput = Parameters<ShopsysDatabase['completeOutbox']>[0]
 
 let mainWindow: BrowserWindow | null = null
 let database: ShopsysDatabase | null = null
+let activeDatabasePath: string | null = null
+let updateLaunchInProgress = false
 let deviceEncryptionKey: Buffer = Buffer.alloc(0)
 let printWindow: BrowserWindow | null = null
 
 const isDev = !!process.env.ELECTRON_START_URL
+// قبل قفل العملية وأي قراءة: هوية ثابتة مستقلة عن اسم package وإصدار البرنامج.
+const currentUserData = app.getPath('userData')
+app.setName(DESKTOP_APP_NAME)
+const stableUserData = join(app.getPath('appData'), DESKTOP_APP_NAME)
+mkdirSync(stableUserData, { recursive: true })
+app.setPath('userData', stableUserData)
+const installationDir = (): string => dirname(app.getPath('exe'))
 
 /* ── سجل تشخيصي ملفي (بلاغ v1.0.0: شاشة بيضاء بلا أثر) — كل حدث مهم يُكتب
       في userData/main.log ليتحقق منه الدعم الفني على جهاز العميل ── */
@@ -230,6 +242,13 @@ function createMainWindow(): BrowserWindow {
   win.webContents.on('preload-error', (_e, preloadPath, error) => {
     logLine('preload-error', `${preloadPath}: ${error}`)
   })
+  win.on('close', (event) => {
+    if (database && !shuttingDown) {
+      // أبقِ المُصيّر حياً حتى تُحفظ طوابير الكتابة ويُؤخذ آخر backup.
+      event.preventDefault()
+      app.quit()
+    }
+  })
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) win.show()
   })
@@ -315,6 +334,10 @@ function pickValidatedDatabaseFile(): string | null {
   })
   const file = picked?.[0]
   if (!file) return null
+  if (isInsideInstallation(file, installationDir())) {
+    dialog.showErrorBox('مكان غير آمن لقاعدة البيانات', 'قاعدة البيانات داخل مجلد تثبيت البرنامج. اختر ملفاً خارج هذا المجلد لحمايته من التحديث.')
+    return null
+  }
   const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
   if (verdict === 'ok') return file
   const why = verdict === 'not-shopsys' ? 'ليس ملف قاعدة بيانات تَحَكَّم'
@@ -379,7 +402,7 @@ function resolveDbPath(): { dbPath: string; isCustom: boolean } {
 /** المكان الثاني الافتراضي للنسخ: مجلد مستندات المستخدم (يبقى مع ملفاته عند إعادة تثبيت الويندوز إن نُقلت المستندات) */
 function resolveSecondaryBackupDir(): { dir: string; isDefault: boolean } {
   const cfg = readDbLocation()
-  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir)) return { dir: cfg.secondaryBackupDir, isDefault: false }
+  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir) && !isInsideInstallation(cfg.secondaryBackupDir, installationDir())) return { dir: cfg.secondaryBackupDir, isDefault: false }
   return { dir: join(app.getPath('documents'), 'Tahakom-Backups'), isDefault: true }
 }
 
@@ -448,14 +471,7 @@ function quickCheck(dbPath: string): boolean {
 /** كل ملفات النسخ: المكانان (يدوي/تلقائي) + الأجيال الساعية/اليومية/قبل التحديث في المكان الافتراضي — الأحدث أولاً */
 function candidateBackups(dbPath: string): string[] {
   const ud = app.getPath('userData')
-  const dirs = [
-    join(dirname(dbPath), 'backups', 'manual'),
-    join(dirname(dbPath), 'backups', 'auto'),
-    join(resolveSecondaryBackupDir().dir, 'manual'),
-    join(resolveSecondaryBackupDir().dir, 'auto'),
-    join(ud, 'backups', 'hourly'),
-    join(ud, 'backups', 'pre-update'),
-  ]
+  const dirs = recoveryBackupDirs({ userData: ud, installDir: installationDir(), documentsBackupDir: join(app.getPath('documents'), 'Tahakom-Backups') }, dbPath)
   const out: { path: string; mtimeMs: number }[] = []
   for (const dir of dirs) {
     try {
@@ -489,74 +505,48 @@ function shieldDamagedDatabase(dbPath: string): ShieldOutcome {
 
 /* ── القاعدة ── */
 
-/** أحدث نسخة متاحة من أي مكان (للاستعادة إلى مكان جديد) — الافتراضي أولاً ثم الحيّ */
-function latestBackupAnywhere(): string | null {
-  const ud = app.getPath('userData')
-  const dirs = ['hourly', 'pre-update'].map((k) => join(ud, 'backups', k))
-  const files: { path: string; mtimeMs: number }[] = []
-  for (const dir of dirs) {
-    try {
-      for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
-        const full = join(dir, f)
-        files.push({ path: full, mtimeMs: statSync(full).mtimeMs })
-      }
-    } catch { /* لا مجلد */ }
-  }
-  const latest = latestBackup(files)
-  if (latest) return latest.path
-  const fallback = join(ud, 'shopsys.db')
-  return existsSync(fallback) ? fallback : null
-}
-
-/** الحالة المفقودة: المكان المخصص غير متاح أو ملفه اختفى ⇒ نسأل، ولا نفتح فارغاً */
+/** الاسترداد التلقائي يسبق هذا الحوار؛ هنا فقط اختيار الأصل عند عدم وجود نسخة موثوقة. */
 async function resolveMissingLocation(): Promise<void> {
   for (let guard = 0; guard < 1000; guard += 1) {
     const { status, path } = customDbStatus()
     if (status === 'none' || status === 'ok' || !path) return
     logLine('db-location', `المكان المخصص (${status}): ${path}`)
-    const folderMissing = status === 'folder-missing'
     const choice = dialog.showMessageBoxSync({
-      type: 'error',
-      title: 'تَحَكَّم — مكان قاعدة البيانات غير متاح',
-      message: folderMissing
-        ? `مكان قاعدة البيانات المحفوظ غير متاح الآن:\n${dirname(path)}\n\nغالباً القرص أو الفلاشة غير موصولة، أو تغيّر حرف الدرايف. بياناتك لم تُحذف.`
-        : `ملف قاعدة البيانات في المكان المحفوظ غير موجود الآن:\n${path}\n\nلم يُنشأ ملف فارغ مكانه. بياناتك لم تُحذف من النسخ الاحتياطية.`,
-      detail: folderMissing
-        ? 'وصّل القرص ثم اختر «إعادة المحاولة». أو اختر «اختيار مكان آخر» لاستعادة آخر نسخة احتياطية إلى مكان جديد (قد تفقد التغييرات بعد آخر نسخة ساعية).'
-        : 'إن نُقل الملف أو حُذف بالخطأ فأعده إلى مكانه ثم اختر «إعادة المحاولة». أو اختر «اختيار مكان آخر» لاستعادة آخر نسخة احتياطية إلى مكان جديد.',
-      buttons: ['إعادة المحاولة', 'اختيار مكان آخر', 'إغلاق البرنامج'],
-      defaultId: 0,
-      cancelId: 2,
+      type: 'warning',
+      title: 'تَحَكَّم — تعذّر العثور على قاعدة البيانات',
+      message: `لم نجد القاعدة أو نسخة سليمة مؤكدة الهوية:\n${path}\n\nلم تُنشأ قاعدة فارغة ولم يُستبدل أي ملف.`,
+      detail: 'وصّل القرص وأعد المحاولة، أو اختر ملف القاعدة الموجود بالفعل. لا حاجة لاختيار مجلد جديد.',
+      buttons: ['إعادة المحاولة', 'اختيار ملف القاعدة الموجود', 'إغلاق البرنامج'],
+      defaultId: 0, cancelId: 2,
     })
-    if (choice === 0) continue
+    if (choice === 0) {
+      await recoverDatabaseSilently()
+      continue
+    }
     if (choice === 2) {
       app.exit(0)
-      throw new Error('مكان قاعدة البيانات المخصص غير متاح — أُغلق البرنامج بطلب المستخدم')
+      throw new Error('أُغلق البرنامج دون إنشاء قاعدة بديلة')
     }
-    const picked = dialog.showOpenDialogSync({ properties: ['openDirectory', 'createDirectory'], title: 'اختر مجلد قاعدة البيانات الجديد' })
-    const dir = picked?.[0]
-    if (!dir) continue
-    const source = latestBackupAnywhere()
-    if (!source) {
-      dialog.showErrorBox('تَحَكَّم — لا توجد نسخة احتياطية', 'لم نجد أي نسخة احتياطية لاستعادتها. أعد توصيل المكان القديم ثم حاول مرة أخرى.')
-      continue
-    }
-    const dest = join(dir, 'shopsys.db')
-    if (existsSync(dest)) {
-      dialog.showErrorBox('تَحَكَّم — يوجد ملف بهذا الاسم', `يوجد ملف shopsys.db في المجلد المختار، ولن نستبدله تلقائياً. اختر مجلداً آخر.`)
-      continue
-    }
-    mkdirSync(dir, { recursive: true })
-    copyFileSync(source, dest)
-    writeDbLocation({ ...readDbLocation(), customDbPath: dest, customDbOpenedAt: null })
-    logLine('db-location', `استُعيدت آخر نسخة (${source}) إلى المكان الجديد ${dest}`)
+    const file = pickValidatedDatabaseFile()
+    if (file) writeDbLocation({ ...readDbLocation(), customDbPath: file, customDbOpenedAt: null })
   }
+}
+
+async function recoverDatabaseSilently(): Promise<void> {
+  const source = await recoverMissingDatabaseAt({
+    userData: userDataDir(), installDir: installationDir(),
+    documentsBackupDir: join(app.getPath('documents'), 'Tahakom-Backups'),
+    deviceKey: deviceEncryptionKey,
+  })
+  if (source) logLine('db-recovery', `استُعيدت القاعدة المفقودة تلقائياً من ${source} إلى ${resolveDbPath().dbPath}`)
 }
 
 /** كل مرشّحات البيانات السابقة: نسخ الاحتياطي في المكان الافتراضي/المستندات + قاعدة حيّة على الأقراص (Tahakom\shopsys.db) */
 function discoverExistingData(): ExistingDataCandidate[] {
   const ud = app.getPath('userData')
   const out: ExistingDataCandidate[] = []
+  const installedDb = join(installationDir(), 'shopsys.db')
+  if (existsSync(installedDb)) out.push({ path: installedDb, mtimeMs: statSync(installedDb).mtimeMs, kind: 'live', whereAr: installedDb })
   const backupDirs = [
     ...(['hourly', 'pre-update'] as const).map((k) => join(ud, 'backups', k)),
     join(app.getPath('documents'), 'Tahakom-Backups', 'manual'),
@@ -633,11 +623,17 @@ function adoptExistingData(c: ExistingDataCandidate): void {
 
 async function openDatabase(): Promise<ShopsysDatabase> {
   restoreLocationPointerIfMissing()
+  await recoverDatabaseSilently()
   await resolveMissingLocation()
   await offerExistingData()
   await askForExistingDatabaseIfNeeded()
+  // حماية القاعدة الفعلية الموجودة فقط؛ لا ترحيل جماعي لعملاء. الأصل يبقى نسخة أمان.
+  const beforeProtection = resolveDbPath().dbPath
+  const protectedPath = await protectDatabaseAt(userDataDir(), installationDir())
+  if (beforeProtection !== protectedPath) logLine('db-protection', `حُميت القاعدة خارج التثبيت: ${beforeProtection} → ${protectedPath}`)
   // v1.0.22: عند فشل الفتح يعرض حوار الخطأ خيار «اختيار ملف القاعدة يدوياً»، ثم يُعاد الفتح من الملف المعتمد
   for (let attempt = 1; ; attempt += 1) {
+    await protectDatabaseAt(userDataDir(), installationDir())
     const { dbPath, isCustom } = resolveDbPath()
     // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة. v1.0.22: بلا نسخة سليمة ⇒ يوقف الإقلاع بحوار
     let shield: ShieldOutcome = 'ok'
@@ -646,6 +642,8 @@ async function openDatabase(): Promise<ShopsysDatabase> {
       if (shield === 'corrupt-no-backup') throw new Error('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة في أي مكان')
       const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
       logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
+      activeDatabasePath = dbPath
+      rememberDatabaseIdentity(userDataDir(), db.origin.device)
       if (isCustom) {
         const cfg = readDbLocation()
         if (!cfg.customDbOpenedAt) writeDbLocation({ ...cfg, customDbOpenedAt: new Date().toISOString() })
@@ -787,11 +785,14 @@ type UpdaterState =
   | { status: 'error'; message: string }
 
 let updaterState: UpdaterState = { status: 'idle' }
+let downloadedUpdateVersion: string | null = null
+let downloadedInstallerPath: string | null = null
 
 function pushUpdaterState(state: UpdaterState): void {
   updaterState = state
   if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
   if (state.status === 'downloaded') {
+    downloadedUpdateVersion = state.version
     logLine('updater', `جاهز للتثبيت عند الإغلاق: ${state.version}`)
     // v1.0.22: نسخة قبل التثبيت تُؤخذ فوراً — أي مسار للتثبيت (إغلاق/زر) يجدها جاهزة
     preUpdateBackup = backupBeforeUpdate(state.version).catch((error) => {
@@ -811,14 +812,20 @@ function wireUpdater(): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
     autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
+    // app.exit لا يرسل quit؛ نبدأ التثبيت صراحة بعد الحفظ والإغلاق.
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.autoRunAppAfterInstall = true
+    if (process.platform === 'win32') (autoUpdater as import('electron-updater').NsisUpdater).installDirectory = installationDir()
     autoUpdater.on('checking-for-update', () => pushUpdaterState({ status: 'checking' }))
     autoUpdater.on('update-available', (info) => pushUpdaterState({ status: 'available', version: info.version }))
     autoUpdater.on('update-not-available', (info) => pushUpdaterState({ status: 'not-available', version: info.version }))
     autoUpdater.on('download-progress', (progress) => pushUpdaterState({ status: 'downloading', percent: Math.round(progress.percent) }))
-    autoUpdater.on('update-downloaded', (info) => pushUpdaterState({ status: 'downloaded', version: info.version }))
+    autoUpdater.on('update-downloaded', (info) => {
+      downloadedInstallerPath = info.downloadedFile
+      pushUpdaterState({ status: 'downloaded', version: info.version })
+    })
     autoUpdater.on('error', (error) => pushUpdaterState({ status: 'error', message: error.message }))
-    void autoUpdater.checkForUpdatesAndNotify()
+    void autoUpdater.checkForUpdates()
   } catch (error) {
     pushUpdaterState({ status: 'error', message: (error as Error).message })
   }
@@ -948,12 +955,8 @@ function wireIpc(): void {
   })
   ipcMain.handle('updater:install', async () => {
     if (!app.isPackaged) return
-    // v1.0.22: ننتظر النسخة قبل التحديث، ثم نثبّت ونعيد التشغيل تلقائياً — يفتح البرنامج
-    // ببياناتك كما كانت (لا معالج إعداد). وإن فشلت النسخة نُبلغ ولا نثبّت بلا نسخة.
-    const backed = preUpdateBackup ? await preUpdateBackup : null
-    if (preUpdateBackup && !backed) throw new Error('تعذّرت النسخة الاحتياطية قبل التحديث — لم يُثبَّت التحديث. راجع صلاحيات المجلد وأعد المحاولة.')
-    const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
-    autoUpdater.quitAndInstall(false, true)
+    if (!downloadedUpdateVersion) throw new Error('لم يكتمل تنزيل التحديث بعد')
+    await shutdownApplication(true)
   })
 
   ipcMain.handle('app:info', () => ({
@@ -1130,6 +1133,7 @@ function wireIpc(): void {
   ipcMain.handle('database:chooseSecondaryBackupDir', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد النسخة الاحتياطية الثانية' })
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true as const }
+    if (isInsideInstallation(result.filePaths[0], installationDir())) throw new Error('اختر مكاناً للنسخة الاحتياطية خارج مجلد تثبيت البرنامج')
     const cfg = readDbLocation()
     writeDbLocation({ ...cfg, secondaryBackupDir: result.filePaths[0] })
     mkdirSync(result.filePaths[0], { recursive: true })
@@ -1143,6 +1147,11 @@ function wireIpc(): void {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد حفظ قاعدة البيانات (خارج قرص C إن أمكن)' })
     if (result.canceled || !result.filePaths[0]) return { ok: false as const, canceled: true as const }
     const dir = result.filePaths[0]
+    if (isInsideInstallation(join(dir, 'shopsys.db'), installationDir())) {
+      const error = 'لا يمكن حفظ قاعدة البيانات داخل مجلد تثبيت البرنامج أو أحد مجلداته؛ التحديث يستبدل هذا المجلد. اختر مجلداً مستقلاً للبيانات.'
+      dialog.showErrorBox('مكان قاعدة البيانات غير آمن', error)
+      return { ok: false as const, error }
+    }
     const { dbPath } = resolveDbPath()
     const dest = join(dir, 'shopsys.db')
     if (dest === dbPath) return { ok: false as const, canceled: true as const }
@@ -1175,6 +1184,88 @@ function wireIpc(): void {
       return { ok: false as const, error: message }
     }
   })
+}
+
+let flushRequest: { token: string; resolve: () => void; reject: (error: Error) => void } | null = null
+ipcMain.handle('persistence:flushed', (event, token: unknown, error: unknown) => {
+  if (!flushRequest || event.sender !== mainWindow?.webContents || token !== flushRequest.token) return
+  if (typeof error === 'string' && error) flushRequest.reject(new Error(error))
+  else flushRequest.resolve()
+  flushRequest = null
+})
+
+async function flushRenderer(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('تعذّر التأكد من حفظ بيانات الواجهة — لم يبدأ التحديث')
+  const token = randomBytes(16).toString('hex')
+  try {
+    await withDeadline(new Promise<void>((resolve, reject) => {
+      flushRequest = { token, resolve, reject }
+      mainWindow!.webContents.send('persistence:flush', token)
+    }), 15_000, 'تعذّر إتمام حفظ البيانات قبل الإغلاق — أعد المحاولة')
+  } finally { flushRequest = null }
+}
+
+let shutdownWork: Promise<void> | null = null
+function shutdownApplication(update: boolean): Promise<void> {
+  if (shutdownWork) return shutdownWork
+  shuttingDown = true
+  mainWindow?.setEnabled(false)
+  shutdownWork = (async () => {
+    const closing = database
+    if (!closing) return
+    if (update) {
+      await installSilentUpdate({
+        flush: flushRenderer,
+        protect: async () => {
+          if (!activeDatabasePath) throw new Error('تعذّر معرفة مسار قاعدة التشغيل')
+          assertSafeUpdateLocation(userDataDir(), installationDir(), activeDatabasePath)
+          try { assertDownloadedInstaller(downloadedInstallerPath) } catch (error) {
+            downloadedUpdateVersion = null
+            downloadedInstallerPath = null
+            pushUpdaterState({ status: 'error', message: (error as Error).message })
+            throw error
+          }
+        },
+        backup: async () => {
+          if (preUpdateBackup) await withDeadline(preUpdateBackup, 30_000, 'لم تنتهِ نسخة ما قبل التحديث — لم يُثبَّت التحديث')
+          // نسخة حديثة بعد تفريغ طوابير الواجهة، لا نسخة وقت التنزيل فقط.
+          const backed = await withDeadline(backupBeforeUpdate(downloadedUpdateVersion!), 30_000, 'تجاوزت النسخة قبل التحديث مهلة الانتظار — لم يُثبَّت التحديث')
+          if (!backed) throw new Error('تعذّرت النسخة الاحتياطية قبل التحديث — لم يُثبَّت التحديث')
+        },
+        close: () => { closing.close(); database = null; if (backupTimer) clearInterval(backupTimer) },
+        install: async () => {
+          const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+          updateLaunchInProgress = true
+          try { await requestSilentInstall(autoUpdater) } finally { updateLaunchInProgress = false }
+        },
+        exit: () => app.exit(0),
+      })
+    } else {
+      await flushRenderer()
+      await gracefulShutdown({
+        backup: () => rotateBackups(closing),
+        closeDb: () => { closing.close(); database = null; if (backupTimer) clearInterval(backupTimer) },
+        exit: (code) => app.exit(code), log: logLine, timeoutMs: 8_000,
+      })
+    }
+  })().catch(async (error: unknown) => {
+    if (!database && activeDatabasePath) {
+      // فشل إطلاق المثبت بعد close: افتح الاتصال مجدداً قبل استئناف طوابير الواجهة.
+      database = await openDatabase()
+      backupTimer = setInterval(() => { void rotateBackups() }, 60 * 60 * 1000)
+      downloadedUpdateVersion = null
+      downloadedInstallerPath = null
+      preUpdateBackup = null
+      pushUpdaterState({ status: 'error', message: `لم يبدأ التحديث: ${(error as Error).message}. أعد تشغيل البرنامج قبل إعادة المحاولة.` })
+    }
+    // لا تثبيت عند فشل الحفظ/الحماية/النسخة؛ يستأنف المُصيّر العمل.
+    shuttingDown = false
+    shutdownWork = null
+    mainWindow?.setEnabled(true)
+    mainWindow?.webContents.send('persistence:resume')
+    throw error
+  })
+  return shutdownWork
 }
 
 /* ── دورة الحياة ── */
@@ -1215,6 +1306,8 @@ if (!gotLock) {
 
   void app.whenReady().then(async () => {
     try {
+      await preserveCurrentUserData(currentUserData, stableUserData)
+      if (currentUserData !== stableUserData) logLine('userData', `الهوية الثابتة: ${stableUserData} — مجلد التشغيل السابق: ${currentUserData}`)
       logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
       const previousVersion = readLastRunVersion()
       showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
@@ -1266,26 +1359,14 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  /* إغلاق مضمون (بلاغ المالك): لا تبقى العملية حية بلا نافذة. انظر shutdown.ts */
   app.on('before-quit', (event) => {
-    if (backupTimer) clearInterval(backupTimer)
-    if (printWindow && !printWindow.isDestroyed()) printWindow.destroy()
-    if (shuttingDown) {
-      event.preventDefault()
-      return
-    }
-    if (database) {
-      event.preventDefault()
-      shuttingDown = true
-      const closing = database
-      database = null
-      void gracefulShutdown({
-        backup: () => rotateBackups(closing),
-        closeDb: () => closing.close(),
-        exit: (code) => app.exit(code),
-        log: logLine,
-        timeoutMs: 8_000,
-      })
-    }
+    if (updateLaunchInProgress) { event.preventDefault(); return }
+    if (!database) return
+    event.preventDefault()
+    if (shuttingDown) return
+    void shutdownApplication(!!downloadedUpdateVersion).catch((error) => {
+      logLine('shutdown', (error as Error).message)
+      dialog.showErrorBox(downloadedUpdateVersion ? 'تَحَكَّم — لم يُثبَّت التحديث' : 'تَحَكَّم — تعذّر حفظ البيانات قبل الإغلاق', (error as Error).message)
+    })
   })
 }

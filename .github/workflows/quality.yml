@@ -55,3 +55,74 @@ jobs:
 
       - name: Business invariants, security and accounting journeys
         run: npm run verify:all
+
+  windows-database-update:
+    name: Windows database and silent-update safety
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Real SQLite, WAL, directory replacement and updater arguments
+        run: npx vitest run tests/database_update_safety.test.ts tests/desktop_storage.test.ts tests/db_location_update_v1022.test.ts tests/db_recovery_v1022.test.ts tests/desktop_shutdown.test.ts tests/release_pipeline.test.ts
+      - name: Runtime wiring guard
+        run: node --experimental-strip-types scripts/verify_database_update_safety.mjs
+
+  windows-installer-smoke:
+    name: Native NSIS installation and database preservation (no publication)
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Build actual Windows NSIS installer without publishing
+        shell: pwsh
+        run: |
+          npm run desktop:dist 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-build.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content "$env:RUNNER_TEMP/native-build.log" | Where-Object { $_ -match 'Error|ERR_|error|Cannot|failed' } | Select-Object -Last 15 | ForEach-Object {
+              $detail = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Native installer build::$detail"
+            }
+            exit $code
+          }
+      - name: Verify installer metadata and bytes
+        run: node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; console.log(validateDesktopArtifacts('release',JSON.parse(readFileSync('package.json','utf8')).version));"
+      - name: Native install, update-mode reinstall, forced restart and encrypted SQLite
+        shell: pwsh
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Native NSIS smoke::$detail"
+            throw
+          }
+      - name: Save native smoke evidence and installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-installer-smoke
+          retention-days: 7
+          path: |
+            app/release/*.exe
+            app/release/*.blockmap
+            app/release/latest.yml
+            ${{ runner.temp }}/native-build.log
+            ${{ runner.temp }}/native-smoke-results.json
+            ${{ runner.temp }}/db-probe-*.json

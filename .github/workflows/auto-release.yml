@@ -1,16 +1,5 @@
-# الإصدار الآلي (طلب المالك v1.0.17): أي كود يصل للفرع الرئيسي main —
-# بدمج PR أو دفع مباشر — يولّد إصداراً محدّثاً يصل للعملاء تلقائياً.
-#
-# كيف يعمل: هذا السير رفيع لا يبني شيئاً — يحسب النسخة التالية (patch+1)
-# من آخر وسم v*، يرفعها في app/package.json، يدفع التزام إصدار آلي إلى
-# main، ثم يوسمه vX.Y.Z ويطلق desktop-release صراحةً بـworkflow_dispatch
-# (الوسم المدفوع بـGITHUB_TOKEN لا يولد حدث push — منع recursion؛ بلا
-# الإطلاق الصريح يبقى الإصدار موسوماً ولا يبني — حادثة v1.0.20). السير
-# المُطلق يفحص كل شيء (أنواع/اختبارات/بوابات) ثم يبني وينشر للرف العام
-# tahakam-releases ويمرآء للعملاء القدامى. أي كود فاسد يفشل بالفحوص قبل
-# أي نشر — لا يصل للعملاء شيء غير مفحوص.
-#
-# تحديثات الوثائق وحدها (docs/** و**/*.md) لا تولّد إصداراً — كود فقط.
+# الإصدار الآلي: main → خطة قابلة للاستئناف → دفع الالتزام والوسم ذرياً → إطلاق البناء.
+# دفعة GITHUB_TOKEN لا تطلق push آخر؛ workflow_dispatch يحتاج actions: write.
 name: auto-release
 
 on:
@@ -21,9 +10,11 @@ on:
       - '**/*.md'
       - '.gitignore'
       - '.gitattributes'
+  workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: auto-release
@@ -34,74 +25,123 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          fetch-tags: true
-
-      - name: هل هذا التزام إصدار آلي؟ (حارس منع الدوران)
-        id: guard
+      - name: حارس الفرع — الإصدار من main فقط
         shell: bash
         run: |
-          if git log -1 --pretty=%s | grep -q '^chore(release):'; then
-            echo "التزام إصدار آلي (رفع رقم النسخة) — لا يولّد إصداراً جديداً"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_NAME}" != "main" ]; then
+            echo "::error::auto-release يقبل main فقط"
+            exit 1
           fi
 
-      - name: حساب النسخة التالية ورفعها في package.json
-        if: steps.guard.outputs.skip != 'true'
+      - uses: actions/checkout@v4
+        with:
+          # في إعادة المحاولة نقرأ حالة main الحالية، لا نسخة الحدث القديمة قبل رفع الإصدار.
+          ref: main
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: التحقق من رف النشر قبل أي تعديل أو وسم
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::RELEASES_REPO_TOKEN غير مضبوط — لم نغيّر الإصدار ولم ننشئ وسماً"
+            exit 1
+          fi
+          gh api repos/contashepo-create/tahakam-releases --jq '.permissions.push' > publish-permission.txt
+          if ! grep -qx true publish-permission.txt; then
+            echo "::error::توكن رف النشر لا يملك صلاحية الكتابة — لا إصدار ناقص"
+            exit 1
+          fi
+          rm publish-permission.txt
+
+      - name: خطة الإصدار وحارس chore(release) القابل للاستئناف
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # prepare_release يستخدم ls-remote --tags origin لا الأوسمة المحلية للسحب الضحال.
+        run: node app/scripts/prepare_release.mjs
+
+      - name: إنشاء التزام الإصدار محلياً (package.json وpackage-lock.json معاً)
+        if: steps.version.outputs.skip != 'true'
         shell: bash
         run: |
-          # آخر وسم يُقرأ من الخادم مباشرة (ls-remote) لا من الأوسمة المحلية:
-          # عيب أول إطلاق فعلي (دمج PR #10): checkout@v4 مع fetch-depth:1
-          # يمنع --no-tags عند fetch-tags:true لكنه لا يمرر --tags أصلاً —
-          # فلا تُجلب إلا الأوسمة المتصلة بالالتزامات المجلوبة (التزام الدمج
-          # فقط)، وكل أوسمة v* القديمة غائبة → «لا وسم إصدار سابق» خلال 4 ثوانٍ.
-          # ls-remote لا يعتمد على الجلب المحلي إطلاقاً (كما يفعل checkout
-          # نفسه لجلب الفرع الافتراضي).
-          LATEST=$(git ls-remote --tags origin 'refs/tags/v*' \
-            | awk -F/ '{print $NF}' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -1 | sed 's/^v//')
-          echo "تشخيص: آخر وسم إصدار من الخادم = v${LATEST:-<لا شيء>}"
-          if [ -z "${LATEST}" ]; then echo "✗ لا وسم إصدار سابق على الخادم — لا أساس للترقيم"; exit 1; fi
-          IFS='.' read -r MA MI PA <<< "${LATEST}"
-          NEW="v${MA}.${MI}.$((PA + 1))"
-          echo "النسخة الحالية ${LATEST} ← الجديدة ${NEW}"
-          cd app
-          node -e "
-            const fs = require('fs')
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
-            pkg.version = '${NEW#v}'
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
-          "
-          grep -q "\"version\": \"${NEW#v}\"" package.json || { echo "✗ فشل رفع الإصدار"; exit 1; }
-          echo "new=${NEW}" >> "$GITHUB_OUTPUT"
+          git config user.name "tahakam-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/package.json app/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): ${{ steps.version.outputs.tag }} — إصدار آلي قابل للاستئناف"
+          fi
 
-      - name: التزام الإصدار والوسم ودفعها
-        if: steps.guard.outputs.skip != 'true'
+      - name: إنشاء الوسم أو التحقق من الوسم السابق دون تغييره
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # يكفي جلب الوسم المعين، ولا اعتماد على fetch-tags في checkout الضحال.
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            if [ "$(git rev-parse "${TAG}^{commit}")" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::الوسم ${TAG} يشير إلى مصدر مختلف — لن نحرك وسم إصدار موجود"
+              exit 1
+            fi
+          else
+            git tag -a "${TAG}" -m "تَحَكَّم ${TAG#v}"
+          fi
+
+      - name: دفع الالتزام والوسم معاً — لا package جديد بلا وسم
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set +e
+          git push --atomic origin HEAD:main "refs/tags/${TAG}" > release-push.log 2>&1
+          code=$?
+          set -e
+          cat release-push.log
+          if [ "$code" -ne 0 ]; then
+            # API annotations تحفظ سبب الفشل حتى لو تعذّر تنزيل سجلات Actions.
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              echo "::error title=فشل دفع الإصدار::${line}"
+            done < release-push.log
+            exit "$code"
+          fi
+
+      - name: إطلاق desktop-release بصلاحية actions-write
+        if: steps.version.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          NEW="${{ steps.version.outputs.new }}"
-          BASE=$(git rev-parse --short HEAD)
-          git config user.name "tahakam-release-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/package.json
-          # بلا [skip ci] عمداً: الوسم يشير لهذا الالتزام ويجب أن يشغّل سير البناء
-          git commit -m "chore(release): ${NEW} — إصدار آلي بعد دمج ${BASE}"
-          if ! git push origin main; then
-            echo "✗ فشل دفع التزام الإصدار — هل main محمي؟ (سمح للبوت بالدفع أو أزل الحماية)"
-            exit 1
+          set +e
+          gh workflow run desktop-release.yml --ref "${TAG}" > release-dispatch.log 2>&1
+          code=$?
+          set -e
+          cat release-dispatch.log
+          if [ "$code" -ne 0 ]; then
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              echo "::error title=فشل إطلاق البناء::${line}"
+            done < release-dispatch.log
+            exit "$code"
           fi
-          git tag -a "${NEW}" -m "تَحَكَّم ${NEW#v} — إصدار آلي من دمج ${BASE}"
-          git push origin "${NEW}"
-          # ⚠️ دفع الوسم بـGITHUB_TOKEN لا يولد حدث push (منع recursion) — بلا هذا
-          # الإطلاق يبقى الإصدار موسوماً ولا يصل للعملاء (حادثة v1.0.20):
-          # workflow_dispatch هو الاستثناء الموثّق في سلوك GITHUB_TOKEN.
-          gh workflow run desktop-release --ref "${NEW}"
-          echo "✓ وُسم ${NEW} وأُطلق desktop-release عليه — يبنيه وينشره للعملاء الآن"
+          echo "✓ قُبل طلب بناء ${TAG} — نجاح الإصدار يحدده desktop-release بعد الفحوص والبناء والنشر"
+
+      - name: حفظ تشخيص الدفع والإطلاق
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-orchestration-logs
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            release-push.log
+            release-dispatch.log

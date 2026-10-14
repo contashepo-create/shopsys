@@ -61,8 +61,8 @@ const electronBinary = [
 ]
 const hasElectron = electronBinary.some((p) => existsSync(p))
 if (hasElectron) {
-  const { compileFile } = await import('bytenode')
-  await compileFile({
+  const { default: bytenode } = await import('bytenode')
+  await bytenode.compileFile({
     filename: 'dist-desktop/main-full.cjs',
     output: 'dist-desktop/main.jsc',
     electronMain: true,
@@ -70,6 +70,7 @@ if (hasElectron) {
   })
   console.log('✅ dist-desktop/main.jsc (bytecode, electronMain) + main.cjs (loader) + preload.cjs')
 } else {
+  if (['desktop:dist', 'desktop:publish'].includes(process.env.npm_lifecycle_event)) throw new Error('Electron binary required for CI release bytecode — run node node_modules/electron/install.js before building')
   console.warn('⚠️ بلا ثنائي Electron في هذه البيئة — تُخطي توليد main.jsc؛ الحزمة ستعمل بالاحتياط المشوش main-full.cjs. بيئة الإنتاج (CI/ويندوز) تولّد الـ bytecode دائماً.')
   console.log('✅ dist-desktop/main.cjs (loader) + main-full.cjs (obfuscated) + preload.cjs')
 }
