@@ -61,8 +61,8 @@ const electronBinary = [
 ]
 const hasElectron = electronBinary.some((p) => existsSync(p))
 if (hasElectron) {
-  const { compileFile } = await import('bytenode')
-  await compileFile({
+  const { default: bytenode } = await import('bytenode')
+  await bytenode.compileFile({
     filename: 'dist-desktop/main-full.cjs',
     output: 'dist-desktop/main.jsc',
     electronMain: true,

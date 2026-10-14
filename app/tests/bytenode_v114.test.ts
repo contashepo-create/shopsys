@@ -32,3 +32,9 @@ describe('④ bytenode — سلسلة bytecode من التجميع إلى الت
     }
   }, 30_000)
 })
+
+
+it('ESM يستورد bytenode CommonJS من default — نفس مسار بناء Electron الحقيقي', () => {
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', "const { default: bytenode } = await import('bytenode'); if (typeof bytenode.compileFile !== 'function') throw new Error('missing compiler'); console.log('compiler ready')"], { cwd: process.cwd(), encoding: 'utf8' })
+  expect(out.trim()).toBe('compiler ready')
+})

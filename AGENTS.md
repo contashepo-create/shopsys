@@ -7075,3 +7075,10 @@ desktop:publish أصبحا ينفذان install.js الرسمي صراحةً ق�
 خطوة التحضير الجديدة؛ أضيفت annotations لstderr البناء نفسه لتحديد سبب السطر
 بدلاً من الاكتفاء برمز الخروج. Windows safety بقي ناجحاً. النشر ما زال ممنوعاً
 على فرع الجلسة ولم يحدث إصدار جديد.
+
+**السبب التالي المثبت `38642610176`:** ثنائي Electron نُزّل، فدخل build.mjs
+لأول مرة فعلياً إلى فرع bytecode وكشف `TypeError: compileFile is not a function`.
+bytenode 1.7.0 CommonJS يصدّر module.exports=global.bytenode؛ dynamic import
+يعطي default فقط (ثبت محلياً)، لا named compileFile. أصلح البناء إلى
+`default: bytenode` ثم `bytenode.compileFile` وأضيف اختبار subprocess لنفس
+استيراد ESM. هذه ثغرة في اختبار البناء القديم: كانت مخفية بتخطي الفرع دائماً.
