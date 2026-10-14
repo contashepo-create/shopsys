@@ -1,14 +1,15 @@
 // CI فقط: يعمل داخل Electron الحقيقي لفك DPAPI وفحص SQLite ABI بعد إعادة البناء.
 const { app, safeStorage } = require('electron')
-const { readFileSync, writeFileSync, mkdirSync } = require('node:fs')
+const { readFileSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { createCipheriv, createDecipheriv, randomBytes } = require('node:crypto')
 const Database = require('better-sqlite3')
 const [mode, ud, file, output] = process.argv.slice(2)
-app.setName('Tahakom-CI-probe')
-const profile = join(process.env.RUNNER_TEMP, 'tahakom-ci-probe-profile')
-mkdirSync(profile, { recursive: true })
-app.setPath('userData', profile)
+// safeStorage على Windows يستعمل مفتاح Chromium في Local State؛ DPAPI وحده
+// لا يكفي لفك ciphertext من profile آخر. التطبيق مثبت لكنه مغلق أثناء الفحص.
+app.setName('Tahakom')
+app.setPath('userData', ud)
+app.setPath('sessionData', ud)
 app.whenReady().then(() => {
   try {
     const encryptedKey = readFileSync(join(ud, 'device.key.enc'), 'utf8')
