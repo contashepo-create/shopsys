@@ -237,6 +237,115 @@ export function stagnantItems(
   return rows.sort((a, b) => b.stockValueMinor - a.stockValueMinor)
 }
 
+/* ─── 2.5-ب) ركود الأصناف على مستوى التركيبة لون×مقاس (فجوة فورية ③ —
+   نشاط الملابس): صنف "متحرك" ككل قد يُخفي تركيبة (لون/مقاس) راكدة تماماً
+   لأشهر بينما تركيبات أخرى من نفس الصنف تُباع بانتظام — `stagnantItems`
+   أعلاه لا ينزل لهذا المستوى، فهذا التقرير مكمِّل له لا بديل عنه. ─── */
+
+export interface StagnantVariantRow {
+  itemId: number
+  nameAr: string
+  color: string
+  size: string
+  qty: number
+  stockValueMinor: Minor
+  lastSoldDate: string | null
+  idleDays: number
+}
+
+/**
+ * تركيبات لون/مقاس راكدة: لها رصيد في المصفوفة الفرعية (`variantStocks`) ولم
+ * تُبع خلال آخر idleDaysThreshold يوماً — بصرف النظر عن حالة الصنف ككل.
+ */
+export function stagnantVariants(
+  items: readonly { id: number; nameAr: string; costMinor: Minor; isActive: boolean; isService?: boolean }[],
+  variantStocks: readonly { itemId: number; color: string; size: string; qty: number }[],
+  sales: readonly SaleDoc[],
+  todayIso: string,
+  idleDaysThreshold = 30,
+): StagnantVariantRow[] {
+  const lastSoldByVariant = new Map<string, string>()
+  for (const s of sales) {
+    for (const l of s.lines) {
+      if (!l.variantColor && !l.variantSize) continue
+      const key = `${l.itemId}⁞${(l.variantColor ?? '').trim()}⁞${(l.variantSize ?? '').trim()}`
+      const prev = lastSoldByVariant.get(key)
+      if (!prev || s.date > prev) lastSoldByVariant.set(key, s.date)
+    }
+  }
+  const today = new Date(todayIso.slice(0, 10) + 'T00:00:00Z').getTime()
+  const itemById = new Map(items.map((it) => [it.id, it]))
+  const rows: StagnantVariantRow[] = []
+  for (const v of variantStocks) {
+    if (v.qty <= 0) continue
+    const item = itemById.get(v.itemId)
+    if (!item || !item.isActive || item.isService) continue
+    const key = `${v.itemId}⁞${v.color.trim()}⁞${v.size.trim()}`
+    const last = lastSoldByVariant.get(key) ?? null
+    const refTime = last ? new Date(last.slice(0, 10) + 'T00:00:00Z').getTime() : 0
+    const idleDays = last ? Math.floor((today - refTime) / 86_400_000) : Number.MAX_SAFE_INTEGER
+    if (idleDays < idleDaysThreshold) continue
+    rows.push({
+      itemId: v.itemId, nameAr: item.nameAr, color: v.color, size: v.size, qty: v.qty,
+      stockValueMinor: Math.round(item.costMinor * v.qty),
+      lastSoldDate: last ? last.slice(0, 10) : null,
+      idleDays: last ? idleDays : -1,
+    })
+  }
+  return rows.sort((a, b) => b.stockValueMinor - a.stockValueMinor)
+}
+
+/* ─── 2.5-ج) تحليل منحنى المقاسات Size Curve Analysis (تطوير مستقبلي ② —
+   نشاط الملابس): نسبة مبيعات كل مقاس من إجمالي مبيعات الصنف خلال الفترة،
+   تُرشد قرار الشراء القادم (اطلب تشكيلة مقاسات تعكس ما يُباع فعلياً لا توزيعاً
+   عشوائياً متساوياً). مبني فوق سطور البيع التي تحمل `variantSize` فعلاً. ─── */
+
+export interface SizeCurveRow {
+  itemId: number
+  nameAr: string
+  size: string
+  soldQty: number
+  /** نسبة هذا المقاس من إجمالي ما بيع من الصنف (كل المقاسات) خلال الفترة */
+  sharePercent: number
+}
+
+export function sizeCurveAnalysis(
+  items: readonly { id: number; nameAr: string; isActive: boolean }[],
+  sales: readonly SaleDoc[],
+  fromDate?: string,
+  toDate?: string,
+): SizeCurveRow[] {
+  const soldBySize = new Map<string, number>() // itemId⁞size → كمية
+  const totalByItem = new Map<number, number>()
+  for (const s of sales) {
+    if (fromDate && s.date < fromDate) continue
+    if (toDate && s.date > toDate) continue
+    for (const l of s.lines) {
+      const size = (l.variantSize ?? '').trim()
+      if (!size) continue
+      const key = `${l.itemId}⁞${size}`
+      soldBySize.set(key, (soldBySize.get(key) ?? 0) + l.qty)
+      totalByItem.set(l.itemId, (totalByItem.get(l.itemId) ?? 0) + l.qty)
+    }
+  }
+  const itemById = new Map(items.map((it) => [it.id, it]))
+  const rows: SizeCurveRow[] = []
+  for (const [key, qty] of soldBySize) {
+    const sep = key.lastIndexOf('⁞')
+    const itemId = Number(key.slice(0, sep))
+    const size = key.slice(sep + 1)
+    const item = itemById.get(itemId)
+    if (!item || !item.isActive) continue
+    const total = totalByItem.get(itemId) ?? 0
+    rows.push({
+      itemId, nameAr: item.nameAr, size,
+      soldQty: Math.round(qty * 1000) / 1000,
+      sharePercent: total > 0 ? Math.round((qty / total) * 10000) / 100 : 0,
+    })
+  }
+  return rows.sort((a, b) => a.itemId - b.itemId || b.sharePercent - a.sharePercent)
+}
+
 /* ─── 2.6) تحليل أسباب الإرجاع (سد فجوة توثيق — دليل الأغذية الداخلي كان
    يَعِد المستخدم بهذا التقرير دون أن يكون موجوداً فعلياً في الواجهة) ───
    يجمع مرتجعات المبيعات حسب سبب الإرجاع الموحَّد (RETURN_REASONS)، فيُظهر

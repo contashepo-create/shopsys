@@ -11,7 +11,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
-  salesSummary, topItems, dailySales, stagnantItems, activityRevenueRows,
+  salesSummary, topItems, dailySales, stagnantItems, stagnantVariants, sizeCurveAnalysis, activityRevenueRows,
   stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, demandForecast, type Period,
 } from '../../core/reports.ts'
 import { returnReasonName } from '../../core/returns.ts'
@@ -20,6 +20,7 @@ import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/acti
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
 import { expiryAlerts, markdownSuggestions } from '../../core/batches.ts'
+import { variantLowStockAlerts } from '../../core/variants.ts'
 import { purchaseReceivingVarianceReport } from '../../core/purchases.ts'
 import { productionVarianceReport } from '../../core/recipes.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
@@ -50,7 +51,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders } = useDataStore()
+  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders, variantStocks } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -79,6 +80,21 @@ export function ReportsPage() {
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
   // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع 30+ يوماً = رأس مال محبوس
   const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
+  // ركود التركيبات لون×مقاس (فجوة فورية ③ — نشاط الملابس): مكمِّل لتقرير ركود الصنف أعلاه
+  const stagnantVariantRows = useMemo(
+    () => (variantStocks.length ? stagnantVariants(items, variantStocks, sales, new Date().toISOString(), 30) : []),
+    [items, variantStocks, sales],
+  )
+  // منحنى المقاسات (تطوير مستقبلي ② — نشاط الملابس): نسبة كل مقاس من مبيعات الصنف بالفترة المحددة
+  const sizeCurveRows = useMemo(() => sizeCurveAnalysis(items, sales, period.from, period.to), [items, sales, period])
+  const sizeCurveByItem = useMemo(() => {
+    const m = new Map<number, { nameAr: string; rows: typeof sizeCurveRows }>()
+    for (const r of sizeCurveRows) {
+      if (!m.has(r.itemId)) m.set(r.itemId, { nameAr: r.nameAr, rows: [] })
+      m.get(r.itemId)!.rows.push(r)
+    }
+    return Array.from(m.values())
+  }, [sizeCurveRows])
   // أسباب الإرجاع (سد فجوة التوثيق — دليل الأغذية كان يَعِد بهذا التقرير دون وجوده فعلياً)
   const returnReasons = useMemo(() => returnReasonsSummary(saleReturns, period, returnReasonName), [saleReturns, period])
   // تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95)
@@ -129,6 +145,8 @@ export function ReportsPage() {
     [suppRows, getSupplierStatementRows, todayYmd],
   )
   const alerts = useMemo(() => stockAlerts(items), [items])
+  // نقص مخزون على مستوى تركيبة لون/مقاس (فجوة فورية ② — نشاط الملابس)
+  const variantLowStockRows = useMemo(() => variantLowStockAlerts(variantStocks, items), [variantStocks, items])
   const invValue = useMemo(() => inventoryValue(items), [items])
 
   /* ─── إيراد الفترة من دفتر اليومية — مصدر واحد لكل الأنشطة (تدقيق 2026-10-11) ───
@@ -569,6 +587,35 @@ export function ReportsPage() {
                 </tbody>
               </table>
             )}
+            {/* تفصيل الركود على مستوى التركيبة لون×مقاس — نشاط الملابس: صنف "متحرك" ككل
+                قد يُخفي لوناً/مقاساً راكداً تماماً لا يظهر في الجدول أعلاه */}
+            {stagnantVariantRows.length > 0 && (
+              <div className="border-t border-slate-100 dark:border-slate-800">
+                <div className="px-4 py-2.5 text-[11.5px] font-black text-slate-500 dark:text-slate-400">🎨 تفصيل الركود حسب التركيبة (لون/مقاس) — قد تكون راكدة حتى لو الصنف ككل "متحرك"</div>
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-1.5 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-1.5 text-right font-bold">التركيبة</th>
+                      <th className="px-4 py-1.5 text-right font-bold">الرصيد</th>
+                      <th className="px-4 py-1.5 text-right font-bold">قيمة المخزون</th>
+                      <th className="px-4 py-1.5 text-right font-bold">آخر بيع</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stagnantVariantRows.slice(0, 15).map((r) => (
+                      <tr key={`${r.itemId}-${r.color}-${r.size}`} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-1.5 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-1.5 text-slate-500">{[r.color, r.size].filter(Boolean).join(' / ') || '—'}</td>
+                        <td className="px-4 py-1.5">{r.qty}</td>
+                        <td className="px-4 py-1.5 font-bold text-rose-600">{fmt(r.stockValueMinor)}</td>
+                        <td className="px-4 py-1.5 text-slate-500">{r.idleDays === -1 ? 'لم يُبع قط' : `${r.lastSoldDate} (${r.idleDays} يوماً)`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
           {/* أسباب الإرجاع — سد فجوة توثيق (الدليل الداخلي يوصي بمراقبته) */}
           <div className="border-t border-slate-100 dark:border-slate-800">
@@ -813,6 +860,55 @@ export function ReportsPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+          {variantLowStockRows.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                <AlertTriangle size={14} className="text-amber-500" /> نقص مخزون التركيبات لون/مقاس ({variantLowStockRows.length}) <span className="text-[10px] font-normal text-slate-400">— سد فجوة نشاط الملابس: نفاد تركيبة بعينها قد لا يظهر في تنبيه الصنف العام</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <tbody>
+                    {variantLowStockRows.map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.itemName}</td>
+                        <td className="px-4 py-2 text-slate-400 text-[11px]">{[r.color, r.size].filter(Boolean).join(' / ') || '—'} — المتاح {r.qty}{r.impliedMinQty > 0 ? ` (حد تناسبي ${r.impliedMinQty})` : ''}</td>
+                        <td className="px-4 py-2 text-left">
+                          {r.kind === 'out'
+                            ? <span className="text-[10px] font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded-full">نافدة</span>
+                            : <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full">منخفضة</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {sizeCurveByItem.length > 0 && (
+            <div className={`${card} overflow-hidden lg:col-span-2`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                📐 منحنى المقاسات (Size Curve) <span className="text-[10px] font-normal text-slate-400">— نسبة مبيعات كل مقاس بالفترة المحددة؛ استرشد به لتوزيع كمية الشراء القادمة على المقاسات (نشاط الملابس)</span>
+              </div>
+              <div className="max-h-80 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x md:divide-x-reverse divide-slate-100 dark:divide-slate-800">
+                {sizeCurveByItem.map((g) => (
+                  <div key={g.nameAr + g.rows[0]?.itemId} className="p-3 border-b border-slate-50 dark:border-slate-800/50">
+                    <div className="text-[11.5px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{g.nameAr}</div>
+                    <div className="space-y-1">
+                      {g.rows.map((r) => (
+                        <div key={r.size} className="flex items-center gap-2">
+                          <span className="w-14 text-[10.5px] text-slate-400 shrink-0">{r.size}</span>
+                          <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                            <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.min(100, r.sharePercent)}%` }} />
+                          </div>
+                          <span className="w-16 text-left text-[10.5px] font-bold text-violet-600 dark:text-violet-300">{r.sharePercent}٪ ({r.soldQty})</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

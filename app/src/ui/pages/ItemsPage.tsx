@@ -29,6 +29,7 @@ import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
 import { renderItemLabelsHtml } from '../print/printProLabels.ts'
 import type { ItemLabelData } from '../../core/labels.ts'
+import { variantBarcode, variantLabel as variantComboLabel } from '../../core/variants.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { rowOpenProps } from '../components/rowOpen.ts'
 
@@ -112,15 +113,27 @@ export function ItemsPage() {
   const [cardFor, setCardFor] = useState<Item | null>(null)
   /* ─── طباعة ملصقات الباركود (مراجعة السوبرماركت) ─── */
   const [labelsOpen, setLabelsOpen] = useState(false)
-  const [labelCounts, setLabelCounts] = useState<Record<number, string>>({})
+  /** مفتاح صف الصنف الكامل = "itemId"، مفتاح صف تركيبة = "itemId_V_colorIdx_sizeIdx"
+   *  (فجوة فورية ④ — نشاط الملابس: ملصق مستقل لكل تركيبة لون/مقاس بدل ملصق واحد للصنف) */
+  const [labelCounts, setLabelCounts] = useState<Record<string, string>>({})
   const printLabels = () => {
     const list: ItemLabelData[] = []
-    for (const [idStr, cntStr] of Object.entries(labelCounts)) {
+    for (const [key, cntStr] of Object.entries(labelCounts)) {
       const cnt = Number(cntStr) || 0
       if (cnt <= 0) continue
-      const it = items.find((x) => x.id === Number(idStr))
+      const parts = key.split('_V_')
+      const it = items.find((x) => x.id === Number(parts[0]))
       if (!it) continue
-      list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), sku: it.sku, priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
+      if (parts.length > 1) {
+        const [ciStr, siStr] = parts[1].split('_')
+        const ci = Number(ciStr); const si = Number(siStr)
+        const color = ci >= 0 ? (it.variantColors[ci] ?? '') : ''
+        const size = si >= 0 ? (it.variantSizes[si] ?? '') : ''
+        const baseCode = it.barcodes.find(Boolean) || it.sku || String(it.id)
+        list.push({ nameAr: `${it.nameAr} — ${variantComboLabel(color, size)}`, barcode: variantBarcode(baseCode, it.variantColors, it.variantSizes, color, size), sku: it.sku, priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
+      } else {
+        list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), sku: it.sku, priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
+      }
     }
     if (!list.length) { toast.show('حدد عدد الملصقات لصنف واحد على الأقل', 'error'); return }
     // القالب المركزي (مركز الباركود) — يُضبط مرة ويسري على كل الطباعات
@@ -795,7 +808,7 @@ export function ItemsPage() {
       {/* 🏷️ ملصقات الباركود — شبكة A4 (اسم + سعر + Code128) */}
       <Modal open={labelsOpen} onClose={() => setLabelsOpen(false)} title="طباعة ملصقات باركود" wide>
         <div className="space-y-3">
-          <p className="text-[11.5px] text-slate-400">حدد عدد الملصقات لكل صنف — تُطبع شبكة A4 (4 أعمدة) باسم الصنف وسعره وباركود Code128 قابل للمسح.</p>
+          <p className="text-[11.5px] text-slate-400">حدد عدد الملصقات لكل صنف — تُطبع شبكة A4 (4 أعمدة) باسم الصنف وسعره وباركود Code128 قابل للمسح. الأصناف الموزَّعة على تركيبات لون/مقاس تظهر بصف مستقل وباركود خاص بكل تركيبة.</p>
           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden max-h-[50vh] overflow-y-auto">
             <table className="w-full text-[12.5px]">
               <thead>
@@ -804,19 +817,45 @@ export function ItemsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.filter((it) => it.isActive).map((it) => (
-                  <tr key={it.id} {...rowOpenProps(() => openEditItem(it), `انقر مرتين لفتح بطاقة ${it.nameAr}`)} className="border-b border-slate-50 dark:border-slate-800/50">
-                    <td className="px-4 py-1.5 font-bold">
-                      {it.nameAr}
-                      {it.fitment ? <span className="ms-1.5 text-[9.5px] font-normal text-slate-400" title={`يناسب: ${it.fitment}`}>🔧 {it.fitment.length > 22 ? `${it.fitment.slice(0, 22)}…` : it.fitment}</span> : null}
-                    </td>
-                    <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
-                    <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>
-                    <td className="px-4 py-1.5">
-                      <input value={labelCounts[it.id] ?? ''} onChange={(e) => setLabelCounts((c) => ({ ...c, [it.id]: e.target.value }))} className={`${inputCls} !py-1 !text-[12px] text-center`} dir="ltr" placeholder="0" />
-                    </td>
-                  </tr>
-                ))}
+                {items.filter((it) => it.isActive).flatMap((it) => {
+                  // فجوة فورية ④ — نشاط الملابس: صنف له تركيبات موزَّعة فعلاً ⇒ ملصق مستقل لكل
+                  // تركيبة لون/مقاس بباركود خاص بها (`variantBarcode`)، بدل ملصق واحد للصنف ككل.
+                  const combos = variantStocks.filter((v) => v.itemId === it.id)
+                  if (!combos.length) {
+                    return [
+                      <tr key={it.id} {...rowOpenProps(() => openEditItem(it), `انقر مرتين لفتح بطاقة ${it.nameAr}`)} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-1.5 font-bold">
+                          {it.nameAr}
+                          {it.fitment ? <span className="ms-1.5 text-[9.5px] font-normal text-slate-400" title={`يناسب: ${it.fitment}`}>🔧 {it.fitment.length > 22 ? `${it.fitment.slice(0, 22)}…` : it.fitment}</span> : null}
+                        </td>
+                        <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
+                        <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>
+                        <td className="px-4 py-1.5">
+                          <input value={labelCounts[String(it.id)] ?? ''} onChange={(e) => setLabelCounts((c) => ({ ...c, [String(it.id)]: e.target.value }))} className={`${inputCls} !py-1 !text-[12px] text-center`} dir="ltr" placeholder="0" />
+                        </td>
+                      </tr>,
+                    ]
+                  }
+                  return combos.map((v) => {
+                    const ci = v.color ? it.variantColors.indexOf(v.color) : -1
+                    const si = v.size ? it.variantSizes.indexOf(v.size) : -1
+                    const baseCode = it.barcodes.find(Boolean) || it.sku || String(it.id)
+                    const code = variantBarcode(baseCode, it.variantColors, it.variantSizes, v.color, v.size)
+                    const key = `${it.id}_V_${ci}_${si}`
+                    return (
+                      <tr key={key} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-1.5 font-bold">
+                          {it.nameAr} <span className="ms-1 text-[10px] font-normal text-violet-500">🎨 {variantComboLabel(v.color, v.size)}</span>
+                        </td>
+                        <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{code}</td>
+                        <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>
+                        <td className="px-4 py-1.5">
+                          <input value={labelCounts[key] ?? ''} onChange={(e) => setLabelCounts((c) => ({ ...c, [key]: e.target.value }))} className={`${inputCls} !py-1 !text-[12px] text-center`} dir="ltr" placeholder="0" />
+                        </td>
+                      </tr>
+                    )
+                  })
+                })}
               </tbody>
             </table>
           </div>

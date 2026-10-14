@@ -36,7 +36,7 @@ import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrap
 import { validatePriceList, validateCategoryRule, resolvePrice, type PriceList, type PriceListEntry, type PriceListCategoryRule } from '../core/priceLists.ts'
 import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
-import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
+import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, validatePurchaseVariantBreakdown, applyPurchaseVariantBreakdown, type VariantStock, type VariantBreakdownLine } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
@@ -1792,7 +1792,7 @@ interface DataState {
     dueDate?: string
     approvedBy?: string | null
     date: string
-    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; shippedQty?: number; moisturePercent?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; shippedQty?: number; moisturePercent?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string; /** توزيع اختياري لتركيبات لون/مقاس داخل سطر الشراء نفسه (نشاط الملابس) */ variantBreakdown?: VariantBreakdownLine[] }[]
     expenses: PurchaseExpense[]
     /** خصم الفاتورة المطبق على أسعار السطور قبل landed cost */
     discountMinor?: number
@@ -4160,6 +4160,18 @@ export const useDataStore = create<DataState>()(
           for (const s of accepted) existingSerialSet.add(s) // منع التكرار بين سطور نفس الفاتورة
           parsedByLine.set(li, accepted)
         })
+        // توزيع تركيبات لون/مقاس مباشرة من سطر فاتورة الشراء (فجوة فورية ① — نشاط الملابس):
+        // تحقق قبل أي كتابة أن كل تركيبة واردة من ألوان/مقاسات الصنف وأن مجموعها لا يتجاوز كمية السطر.
+        inv.lines.forEach((l) => {
+          if (!l.variantBreakdown?.length) return
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item) return
+          const errors = validatePurchaseVariantBreakdown({
+            breakdown: l.variantBreakdown, purchasedQty: l.qty,
+            itemColors: item.variantColors, itemSizes: item.variantSizes,
+          })
+          if (errors.length) throw new Error(`توزيع تركيبات «${item.nameAr}»: ${errors.join('، ')}`)
+        })
         const costLines: CostLine[] = inv.lines.map((l) => ({
           itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
         }))
@@ -4360,6 +4372,16 @@ export const useDataStore = create<DataState>()(
           return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + totalQty }
         })
 
+        // تطبيق توزيع التركيبات المُدخَل في سطور الشراء (لو وُجد) فوق المصفوفة الحالية —
+        // إضافة تراكمية لكل تركيبة، لا استبدال (فاتورة المشروع لا تمس المخزون فلا تُطبَّق هنا أيضاً)
+        let updatedVariantStocks = state.variantStocks
+        if (!linkedProject) {
+          for (const l of inv.lines) {
+            if (!l.variantBreakdown?.length) continue
+            updatedVariantStocks = applyPurchaseVariantBreakdown(updatedVariantStocks, l.itemId, l.variantBreakdown)
+          }
+        }
+
         // فتح دفعات صلاحية للأصناف المتتبَّعة (FEFO — القرار 5)
         // (لا دفعات ولا سيريالات لفاتورة المشروع — بضاعتها ليست مخزوناً)
         let batchId = nextId(state.batches)
@@ -4459,6 +4481,7 @@ export const useDataStore = create<DataState>()(
           items: updatedItems,
           batches: newBatches.length ? [...state.batches, ...newBatches] : state.batches,
           serials: newSerials.length ? [...state.serials, ...newSerials] : state.serials,
+          variantStocks: updatedVariantStocks,
           custodyTxs,
           projectCosts,
         })

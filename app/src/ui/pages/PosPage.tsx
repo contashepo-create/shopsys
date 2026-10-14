@@ -19,7 +19,7 @@ import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, 
 import { matchesSearch, searchRank } from '../../core/search.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
-import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
+import { hasVariantStock, variantLabel, variantKey, resolveVariantBarcode } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
@@ -397,6 +397,25 @@ export function PosPage() {
       toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode}) — راجع قائمة PLU في إعدادات الميزان`, 'error')
       setQuery('')
       return
+    }
+    // باركود تركيبة لون/مقاس مستقل (تطوير مستقبلي ① — نشاط الملابس): يحدد التركيبة
+    // تلقائياً بدل فتح نافذة الاختيار اليدوي، بعد التحقق من توفرها فعلياً فوق ما في السلة
+    const variantMatch = resolveVariantBarcode(q, sellable)
+    if (variantMatch) {
+      const it = sellable.find((x) => x.id === variantMatch.itemId)
+      if (it) {
+        const inCartQty = cart.reduce((s, l) => s + (l.itemId === variantMatch.itemId && (l.variantColor ?? '') === variantMatch.color && (l.variantSize ?? '') === variantMatch.size ? l.qty : 0), 0)
+        const stock = variantStocks.find((v) => v.itemId === variantMatch.itemId && variantKey(v.color, v.size) === variantKey(variantMatch.color, variantMatch.size))
+        const avail = Math.round(((stock?.qty ?? 0) - inCartQty) * 1000) / 1000
+        if (avail > 0) {
+          addVariantToCart(variantMatch.itemId, variantMatch.color, variantMatch.size)
+          setQuery('')
+          return
+        }
+        toast.show(`«${it.nameAr}» ${variantLabel(variantMatch.color, variantMatch.size)}: لا رصيد متاح`, 'error')
+        setQuery('')
+        return
+      }
     }
     // باركود وحدة أكبر (شريط/علبة — جولة الصيدلية)؟ يضيف السطر بوحدته وسعره
     for (const it of sellable) {
