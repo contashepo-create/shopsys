@@ -21,7 +21,8 @@ import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey, resolveVariantBarcode } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
-import { ExpiredStockError } from '../../core/batches.ts'
+import { ExpiredStockError, nearestExpiryByItem } from '../../core/batches.ts'
+import { emptyRxLine, validateRxLines, doseText, type RxLine } from '../../core/prescription.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { userPrefsKey } from '../../core/userPreferences.ts'
 import { resolveShortcuts } from '../../core/keyboardShortcuts.ts'
@@ -65,7 +66,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
@@ -202,6 +203,8 @@ export function PosPage() {
   const searchResults = useMemo(() => filtered.slice(0, 8), [filtered])
   const searchOpen = query.trim().length > 0
   const searchMenuStyle = useAnchoredMenu(searchBoxRef, searchOpen, 420)
+  /** سد فجوة فورية — النشاط #5 (صيدلية): شارة استباقية لأقرب تاريخ انتهاء قبل الإضافة للسلة */
+  const nearestExpiry = useMemo(() => nearestExpiryByItem(batches, new Date().toISOString()), [batches])
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
@@ -531,19 +534,51 @@ export function PosPage() {
   const discountApproval = useSupervisorApproval('sales.discount.grant')
   const [discountUnlockedBy, setDiscountUnlockedBy] = useState<string | null>(null)
   const discountLocked = discountApproval.willAskPin && discountUnlockedBy === null
+
+  /* ─── سد فجوة مستقبلية — النشاط #5 (صيدلية): أصناف خاضعة للرقابة/تستلزم روشتة ───
+     قبل إتمام أي بيع يحوي صنفاً من النوعين، نطلب بيانات المريض/الطبيب الواصف
+     مرة واحدة لكل سلة؛ للروشتة نعيد استخدام نفس نموذج core/prescription.ts
+     الجاهز في وحدة العيادة بدل بناء نموذج جديد. */
+  const cartControlledLines = useMemo(() => cart.filter((line) => items.find((it) => it.id === line.itemId)?.isControlled), [cart, items])
+  const cartRxLines = useMemo(() => cart.filter((line) => items.find((it) => it.id === line.itemId)?.requiresPrescription), [cart, items])
+  const needsPharmacyCompliance = cartControlledLines.length > 0 || cartRxLines.length > 0
+  const [pharmacyComplianceOpen, setPharmacyComplianceOpen] = useState(false)
+  const [pharmacyConfirmed, setPharmacyConfirmed] = useState(false)
+  const [pharmacyPatientName, setPharmacyPatientName] = useState('')
+  const [pharmacyPrescriberName, setPharmacyPrescriberName] = useState('')
+  const [pharmacyIdNumber, setPharmacyIdNumber] = useState('')
+  const [pharmacyRxLines, setPharmacyRxLines] = useState<RxLine[]>([])
+  const openPharmacyCompliance = () => {
+    setPharmacyRxLines(cartRxLines.map((line) => ({ ...emptyRxLine(), medication: line.nameAr })))
+    setPharmacyComplianceOpen(true)
+  }
+  const confirmPharmacyCompliance = () => {
+    if (!pharmacyPatientName.trim()) { toast.show('اسم المريض مطلوب', 'error'); return }
+    if (!pharmacyPrescriberName.trim()) { toast.show('اسم الطبيب الواصف مطلوب', 'error'); return }
+    if (cartRxLines.length > 0) {
+      const errors = validateRxLines(pharmacyRxLines)
+      if (errors.length) { toast.show(errors[0], 'error'); return }
+    }
+    setPharmacyConfirmed(true)
+    setPharmacyComplianceOpen(false)
+    const [expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy] = pendingFinishArgs ?? []
+    executeSale(expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy)
+  }
   const unlockDiscount = () => discountApproval.request((approvedBy) => {
     setDiscountUnlockedBy(approvedBy ?? 'المشرف')
     toast.show(`فُتحت الخصومات لهذه السلة — اعتمدها «${approvedBy ?? 'المشرف'}» ✓`)
   })
 
-  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
-    if (!cart.length) return
+  const [pendingFinishArgs, setPendingFinishArgs] = useState<[string?, string?, string?] | null>(null)
+
+  const executeSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     try {
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
       if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,
+        prescription: cartRxLines.length > 0 ? { patientName: pharmacyPatientName, prescriberName: pharmacyPrescriberName, rxLines: pharmacyRxLines } : null,
         // v1.0.12: العميل المختار يُسجل دائماً — كسب نقاط الولاء وكشف حسابه،
         // والقيد يتحدد بالمدفوع فقط (نقدي كامل = خزينة، لا ذمة) فلا أثر محاسبي
         customerId: customerId ?? null,
@@ -562,6 +597,10 @@ export function PosPage() {
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
+      // سد فجوة مستقبلية — النشاط #5 (صيدلية): تسجيل صرف كل صنف خاضع للرقابة في سجل مستقل
+      for (const line of cartControlledLines) {
+        addControlledDispense({ itemId: line.itemId, qty: line.qty, patientName: pharmacyPatientName, prescriberName: pharmacyPrescriberName, idNumber: pharmacyIdNumber, saleId: sale.id })
+      }
       setCart([]); setQtyDrafts({}); setSelectedCartIndex(null)
       setDiscountUnlockedBy(null)
       setInvoiceDiscount(0)
@@ -571,6 +610,9 @@ export function PosPage() {
       setCustomerId(null)
       setPaidCash('')
       setExpiredBlock(null)
+      setPharmacyConfirmed(false)
+      setPharmacyPatientName(''); setPharmacyPrescriberName(''); setPharmacyIdNumber(''); setPharmacyRxLines([])
+      setPendingFinishArgs(null)
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
       if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
@@ -593,6 +635,17 @@ export function PosPage() {
     }
   }
 
+  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
+    if (!cart.length) return
+    // سد فجوة مستقبلية — النشاط #5 (صيدلية): بيع يحوي صنفاً خاضعاً للرقابة أو يستلزم
+    // روشتة لا يتم حتى تُجمع بيانات المريض/الطبيب الواصف مرة واحدة لهذه السلة
+    if (needsPharmacyCompliance && !pharmacyConfirmed) {
+      setPendingFinishArgs([expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy])
+      openPharmacyCompliance()
+      return
+    }
+    executeSale(expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy)
+  }
 
   /* العروض/الباقات (سد فجوة السوق): زر 🎁 يضيف مكونات الباقة كسطور عادية */
 
@@ -722,7 +775,17 @@ export function PosPage() {
                       className={`w-full grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 rounded-lg text-right text-xs ${index === searchIndex ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'hover:bg-emerald-500/10'}`}
                     >
                       <span className="font-mono text-[10px] text-slate-500" dir="ltr">{item.sku || item.barcodes?.[0] || item.id}</span>
-                      <span className="truncate font-bold">{item.nameAr}<span className="mr-2 text-[10px] font-normal text-slate-400">رصيد {item.stockQty}</span></span>
+                      <span className="truncate font-bold">{item.nameAr}<span className="mr-2 text-[10px] font-normal text-slate-400">رصيد {item.stockQty}</span>
+                        {(() => {
+                          const ne = nearestExpiry.get(item.id)
+                          if (!ne) return null
+                          if (ne.daysLeft < 0) return <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-600">منتهٍ</span>
+                          if (ne.daysLeft <= 30) return <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600">⏳ ينتهي خلال {ne.daysLeft} يوم</span>
+                          return null
+                        })()}
+                        {item.isControlled && <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-600">☠️ خاضع للرقابة</span>}
+                        {item.requiresPrescription && <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600">📋 روشتة</span>}
+                      </span>
                       <span className="whitespace-nowrap font-black text-emerald-700 dark:text-emerald-300">{fmt(item.priceMinor)}</span>
                     </button>
                   ))}
@@ -1204,6 +1267,44 @@ export function PosPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* سد فجوة مستقبلية — النشاط #5 (صيدلية): بيانات المريض/الطبيب الواصف
+          لأصناف خاضعة للرقابة أو تستلزم روشتة — نفس نموذج core/prescription.ts */}
+      <Modal open={pharmacyComplianceOpen} onClose={() => setPharmacyComplianceOpen(false)} title="بيانات الصرف الطبي">
+        <div className="space-y-4">
+          {cartControlledLines.length > 0 && (
+            <div className="p-3 rounded-2xl bg-violet-500/10 border border-violet-500/25 text-[12px] text-violet-700 dark:text-violet-300">
+              ☠️ السلة تحوي صنفاً خاضعاً للرقابة: {cartControlledLines.map((l) => l.nameAr).join('، ')} — يُسجَّل الصرف في سجل مستقل.
+            </div>
+          )}
+          {cartRxLines.length > 0 && (
+            <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/25 text-[12px] text-sky-700 dark:text-sky-300">
+              📋 السلة تحوي صنفاً يستلزم روشتة: {cartRxLines.map((l) => l.nameAr).join('، ')}
+            </div>
+          )}
+          <Field label="اسم المريض"><input value={pharmacyPatientName} onChange={(e) => setPharmacyPatientName(e.target.value)} className={inputCls} /></Field>
+          <Field label="اسم الطبيب الواصف"><input value={pharmacyPrescriberName} onChange={(e) => setPharmacyPrescriberName(e.target.value)} className={inputCls} /></Field>
+          <Field label="رقم إثبات الهوية (اختياري)"><input value={pharmacyIdNumber} onChange={(e) => setPharmacyIdNumber(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          {pharmacyRxLines.length > 0 && (
+            <div className="space-y-2">
+              {pharmacyRxLines.map((line, i) => (
+                <div key={i} className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
+                  <div className="text-[11px] font-bold text-slate-500">{line.medication}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="مرات يومياً"><input type="number" value={line.timesPerDay} onChange={(e) => setPharmacyRxLines((rows) => rows.map((r, idx) => idx === i ? { ...r, timesPerDay: Number(e.target.value) || 0 } : r))} className={inputCls} /></Field>
+                    <Field label="المدة (أيام)"><input type="number" value={line.durationDays} onChange={(e) => setPharmacyRxLines((rows) => rows.map((r, idx) => idx === i ? { ...r, durationDays: Number(e.target.value) || 0 } : r))} className={inputCls} /></Field>
+                  </div>
+                  <div className="text-[10px] text-slate-400">{doseText(line)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 justify-end">
+            <Btn variant="ghost" onClick={() => setPharmacyComplianceOpen(false)}>إلغاء</Btn>
+            <Btn onClick={confirmPharmacyCompliance}>تأكيد وإتمام البيع</Btn>
+          </div>
+        </div>
       </Modal>
 
       {/* اختيار القطعة بسيريالها/IMEI — نمط موبايل شوب (البيع بالقطعة المعيّنة) */}

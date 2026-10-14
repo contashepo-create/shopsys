@@ -124,6 +124,18 @@ export interface Item {
   proteinPercent?: number | null
   /** طاقة الخامة بالكيلو كالوري لكل كيلوجرام — تقديري، إدخال يدوي اختياري */
   energyKcalPerKg?: number | null
+  /**
+   * صنف خاضع للرقابة (مخدرات/مؤثرات عقلية — سد فجوة النشاط #5 صيدلية):
+   * يستلزم تسجيل بيانات المريض/الطبيب الواصف عند كل عملية صرف في سجل
+   * مستقل (`controlledDispenses`) — مطلب قانوني فعلي في معظم الأسواق.
+   */
+  isControlled?: boolean
+  /**
+   * يستلزم روشتة طبية عند الصرف (سد فجوة النشاط #5 صيدلية): يتيح للكاشير
+   * إرفاق روشتة منظَّمة (نفس نموذج `core/prescription.ts` المستخدم في
+   * وحدة العيادة) على فاتورة البيع قبل الإتمام.
+   */
+  requiresPrescription?: boolean
   isActive: boolean
 }
 
@@ -176,14 +188,28 @@ export const GRADE_LABELS: Record<NonNullable<Item['grade']>, { nameAr: string; 
  * بدائل الدواء بنفس المادة الفعالة (نمط ShelfLifePro): عند نفاد صنف،
  * اقترح الأصناف النشطة المتوفرة التي تشاركه المادة الفعالة — مرتبة بالسعر
  */
+/**
+ * تطبيع المادة الفعالة: توحيد الحالة وإزالة الفراغات الزائدة بين الكلمات،
+ * **وإزالة الفراغ الفاصل بين الرقم ووحدة الجرعة تحديداً** (سد فجوة: "500 mg"
+ * كانت لا تُطابق "500mg" رغم كونهما نفس الجرعة فعلياً) — الحساسية الكاملة
+ * لقيمة الجرعة نفسها تبقى محفوظة (لا تلمس الأرقام ذاتها، فقط الفراغ قبل
+ * الوحدة التالية لها مباشرة).
+ */
+function normalizeIngredient(x: string): string {
+  return x
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/(\d)\s+(?=[a-z%\u0600-\u06FF])/g, '$1')
+}
+
 export function sameIngredientAlternatives(item: Pick<Item, 'id' | 'activeIngredient'>, all: readonly Item[]): Item[] {
-  const ing = (item.activeIngredient ?? '').trim()
+  const ing = normalizeIngredient(item.activeIngredient ?? '')
   if (!ing) return []
-  const norm = (x: string) => x.trim().replace(/\s+/g, ' ')
   return all
     .filter((it) =>
       it.id !== item.id && it.isActive && !it.isService &&
-      norm(it.activeIngredient ?? '') !== '' && norm(it.activeIngredient ?? '') === norm(ing) &&
+      normalizeIngredient(it.activeIngredient ?? '') === ing &&
       (it.stockQty ?? 0) > 0,
     )
     .sort((a, b) => a.priceMinor - b.priceMinor)

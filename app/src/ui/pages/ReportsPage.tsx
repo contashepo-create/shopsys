@@ -19,7 +19,7 @@ import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
-import { expiryAlerts, markdownSuggestions } from '../../core/batches.ts'
+import { expiryAlerts, markdownSuggestions, expiryValueAtRisk, supplierReturnCandidates } from '../../core/batches.ts'
 import { variantLowStockAlerts } from '../../core/variants.ts'
 import { purchaseReceivingVarianceReport } from '../../core/purchases.ts'
 import { productionVarianceReport } from '../../core/recipes.ts'
@@ -180,6 +180,21 @@ export function ReportsPage() {
     () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
     [batches, items],
   )
+  // قيمة المخزون المعرَّض لخطر الانتهاء بالعملة لكل أفق (سد فجوة فورية — النشاط #5: صيدلية)
+  const expiryValueRows = useMemo(() => expiryValueAtRisk(batches, items, new Date().toISOString(), [30, 60, 90]), [batches, items])
+  // مرشحات إرجاع المورد: دفعات لا تزال داخل نافذة إرجاع موردها المسجَّلة (سد فجوة فورية — النشاط #5: صيدلية)
+  const returnCandidates = useMemo(
+    () => supplierReturnCandidates(batches, items, purchases, suppliers, new Date().toISOString()),
+    [batches, items, purchases, suppliers],
+  )
+  const returnCandidatesBySupplier = useMemo(() => {
+    const m = new Map<number, { supplierName: string; rows: typeof returnCandidates }>()
+    for (const r of returnCandidates) {
+      if (!m.has(r.supplierId)) m.set(r.supplierId, { supplierName: r.supplierName, rows: [] })
+      m.get(r.supplierId)!.rows.push(r)
+    }
+    return Array.from(m.entries()).map(([supplierId, v]) => ({ supplierId, ...v }))
+  }, [returnCandidates])
 
   /* ─── تقارير المصروفات (طلب المالك): مجمّع + تفصيلي بفلترة محترفة ─── */
   const customExpenseCodes = useMemo(() => new Set(customAccounts.filter((a) => a.rootType === 'expenses').map((a) => a.code)), [customAccounts])
@@ -234,6 +249,26 @@ export function ReportsPage() {
     const body = `<table><thead><tr><th>المركز العام</th><th>المشروع</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>${costCenterExpenses.rows.map((row) => `<tr><td>${esc(costCenterName(row.costCenterId ?? null))}</td><td>${esc(projectName(row.projectId))}</td><td class="num">${row.txCount}</td><td class="num">${fmt(row.paidMinor)}</td><td class="num">${fmt(row.accruedMinor)}</td><td class="num">${fmt(row.totalMinor)}</td></tr>`).join('')}<tr class="total"><td colspan="5">الإجمالي</td><td class="num">${fmt(costCenterExpenses.totalMinor)}</td></tr></tbody></table>`
     const { reportPrint, receipt } = useAppStore.getState()
     printHtml(renderReportShell({ title: 'تحليل مصروفات الفواتير حسب مركز التكلفة', subtitle: `الفترة ${period.from} → ${period.to} · ${costSettlement === 'paid_now' ? 'مدفوع' : costSettlement === 'payable_later' ? 'مستحق' : 'كل حالات السداد'}`, companyName: setup.shopName || '', logoDataUrl: receipt.logoDataUrl, settings: reportPrint, bodyHtml: body }))
+  }
+
+  /**
+   * مستند مطالبة إرجاع للمورد (سد فجوة مستقبلية — النشاط #5: صيدلية):
+   * يُصدَّر مباشرة من مرشحات إرجاع المورد (supplierReturnCandidates) —
+   * مستند جاهز للطباعة/الإرسال بدل تجميع الدفعات يدوياً عند كل مطالبة.
+   */
+  const printSupplierReturnClaim = (supplierId: number, supplierName: string, rows: typeof returnCandidates) => {
+    const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const body = `<table><thead><tr><th>الصنف</th><th>التشغيلة</th><th>تاريخ الانتهاء</th><th>الكمية</th><th>المتبقي لنهاية نافذة الإرجاع</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.nameAr)}</td><td class="num">${esc(r.lotNumber ?? '—')}</td><td class="num">${r.expiryDate}</td><td class="num">${r.qty}</td><td class="num">${r.daysLeft} يوم</td></tr>`).join('')}</tbody></table>`
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({
+      title: `مطالبة إرجاع — ${esc(supplierName)}`,
+      subtitle: `${rows.length} بند — نافذة الإرجاع ${rows[0]?.returnWindowDays ?? ''} يوماً قبل الانتهاء`,
+      companyName: setup.shopName || '',
+      logoDataUrl: receipt.logoDataUrl,
+      settings: reportPrint,
+      bodyHtml: body,
+    }))
+    void supplierId
   }
 
   const printExpenseCategories = () => {
@@ -860,6 +895,61 @@ export function ReportsPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+          {expiryValueRows.some((r) => r.qty > 0) && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                💰 قيمة المخزون المعرَّض لخطر الانتهاء <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (صيدلية): تجميع مالي لتنبيهات الصلاحية حسب الأفق الزمني</span>
+              </div>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-2 text-right font-bold">الأفق</th>
+                    <th className="px-4 py-2 text-right font-bold">عدد الدفعات</th>
+                    <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                    <th className="px-4 py-2 text-right font-bold">القيمة المعرَّضة للخطر</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expiryValueRows.map((r) => (
+                    <tr key={r.horizonDays} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">خلال {r.horizonDays} يوم{r.horizonDays === 30 ? ' (شامل المنتهي فعلاً)' : ''}</td>
+                      <td className="px-4 py-2 text-slate-400 text-[11px]">{r.batchCount}</td>
+                      <td className="px-4 py-2 text-slate-400 text-[11px]">{r.qty}</td>
+                      <td className="px-4 py-2 font-black text-rose-600">{fmt(r.valueMinor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {returnCandidatesBySupplier.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                ↩️ مرشحات إرجاع المورد ({returnCandidates.length}) <span className="text-[10px] font-normal text-slate-400">— دفعات لا تزال داخل نافذة إرجاع موردها المسجَّلة قبل الانتهاء</span>
+              </div>
+              <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                {returnCandidatesBySupplier.map((group) => (
+                  <div key={group.supplierId} className="px-4 py-2">
+                    <div className="text-[11px] font-extrabold text-brand-600 mb-1 flex items-center justify-between">
+                      <span>{group.supplierName} ({group.rows.length})</span>
+                      <button type="button" onClick={() => printSupplierReturnClaim(group.supplierId, group.supplierName, group.rows)} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 hover:bg-brand-500/20">🖨️ طباعة مطالبة الإرجاع</button>
+                    </div>
+                    <table className="w-full text-[12.5px]">
+                      <tbody>
+                        {group.rows.map((r, i) => (
+                          <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                            <td className="px-2 py-1.5 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}{r.lotNumber && <span className="mr-1.5 font-mono font-normal text-[10px] text-slate-400" dir="ltr">(تشغيلة {r.lotNumber})</span>}</td>
+                            <td className="px-2 py-1.5 text-slate-400 text-[11px]" dir="ltr">{r.expiryDate} — كمية {r.qty}</td>
+                            <td className="px-2 py-1.5 text-left"><span className="text-[10px] font-bold text-sky-600 bg-sky-500/10 px-2 py-0.5 rounded-full">متبقٍ {r.daysLeft} يوم — نافذة {r.returnWindowDays} يوم</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
               </div>
             </div>
           )}

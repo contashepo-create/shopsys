@@ -182,6 +182,13 @@ export interface Supplier extends PartyExtended {
   bankName?: string
   iban?: string
   active?: boolean
+  /**
+   * نافذة إرجاع الأصناف القريبة من الانتهاء بالأيام (سد فجوة النشاط #5
+   * صيدلية): عدد الأيام قبل تاريخ الانتهاء التي لا يزال المورد يقبل خلالها
+   * استرجاع الدفعة. 0/undefined = غير مسجَّلة — لا تظهر دفعاته في تقرير
+   * "مرشحات إرجاع المورد" (core/batches.ts → supplierReturnCandidates).
+   */
+  returnWindowDays?: number
 }
 
 /** موظف — نفس البيانات الموسعة الاختيارية للأطراف + بيانات التوظيف */
@@ -1342,6 +1349,13 @@ export interface SaleInvoice {
   fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
   /** مشروع المقاولات المرتبط — يُنسب إليه إيراد الفاتورة وربحيتها (طلب المالك) */
   projectId?: number | null
+  /**
+   * روشتة مرفقة بالفاتورة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة
+   * المنظَّمة الجاهز فعلاً في وحدة العيادة (`core/prescription.ts`) مُعاد
+   * استخدامه هنا مباشرة على مستوى الفاتورة — بلا حاجة لملف مريض/زيارة
+   * كاملين، مناسب لصيدلية مستقلة بلا وحدة عيادة.
+   */
+  prescription?: { patientName: string; prescriberName: string; rxLines: RxLine[] } | null
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -1414,6 +1428,41 @@ export interface ExchangeDoc {
   newValueMinor: number
   netMinor: number // موجب = دفع العميل الفرق، سالب = رُدّ له
   notes: string
+}
+
+/**
+ * سجل صرف الأصناف الخاضعة للرقابة (سد فجوة مستقبلية — النشاط #5: صيدلية):
+ * سجل مستقل عن الفاتورة (مطلب قانوني في أغلب الأسواق) يوثّق هوية المريض
+ * والطبيب الواصف وكمية الصرف لكل صنف `isControlled`، بصرف النظر عن كونه
+ * مرتبطاً بفاتورة بيع أم صرفاً مباشراً بلا فاتورة.
+ */
+export interface ControlledDispense {
+  id: number
+  date: string // ISO
+  itemId: number
+  qty: number
+  patientName: string
+  prescriberName: string
+  idNumber?: string // رقم إثبات هوية المريض (اختياري حسب سياسة الصيدلية)
+  saleId?: number | null // الفاتورة المرتبطة إن وُجدت
+  notes?: string
+}
+
+/**
+ * قراءة درجة حرارة دورية لوحدة تبريد (سد فجوة مستقبلية — النشاط #5: صيدلية):
+ * سجل يدوي بسيط، مع حدّي تنبيه أدنى/أعلى اختياريين لكل وحدة؛ القراءة خارج
+ * النطاق تُعلَّم تلقائياً عند الحساب في `core/pharmacyOps.ts` (لا تُخزَّن
+ * كحقل منفصل حتى لا تتعارض مع تعديل الحدود لاحقاً لنفس الوحدة).
+ */
+export interface ColdChainReading {
+  id: number
+  date: string // ISO
+  storageUnitName: string
+  tempC: number
+  minC?: number | null
+  maxC?: number | null
+  recordedBy?: string
+  notes?: string
 }
 
 /**
@@ -1624,6 +1673,8 @@ interface DataState {
    * لمساعدة المالك على ضبط سعر اليوم أول الصباح؛ لا يُغيّر أسعار الأصناف تلقائياً.
    */
   marketPrices: MarketPriceEntry[]
+  controlledDispenses: ControlledDispense[] // سجل صرف الأصناف الخاضعة للرقابة (النشاط #5)
+  coldChainReadings: ColdChainReading[] // سجل قراءات سلسلة التبريد (النشاط #5)
   assets: FixedAsset[]
   externalCommissions: ExternalCommission[] // العمولات بقسميها: لي لدى الغير / عليّ للغير (طلب المالك)
   commissionParties: CommissionParty[] // سجل أشخاص/جهات العمولات — التسجيل إلزامي قبل أي عمولة
@@ -1874,6 +1925,11 @@ interface DataState {
     bookCurrencyCode?: string
     /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
     projectId?: number | null
+    /**
+     * روشتة مرفقة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة المنظَّمة
+     * الجاهز في core/prescription.ts، معاد استخدامه مباشرة على الفاتورة.
+     */
+    prescription?: { patientName: string; prescriberName: string; rxLines: RxLine[] } | null
     /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
     __approvalBypass?: boolean
   }) => SaleInvoice
@@ -2751,6 +2807,12 @@ interface DataState {
   /** إضافة سعر سوق يدوي (سد فجوة مستقبلية — النشاط #2: تجارة الأعلاف والحبوب) */
   addMarketPrice: (args: { date: string; commodityName: string; unit: string; pricePerUnitMinor: number; note?: string }) => MarketPriceEntry
   deleteMarketPrice: (id: number) => void
+  /** تسجيل عملية صرف صنف خاضع للرقابة (النشاط #5) — إلزامي قبل تمام البيع لصنف isControlled */
+  addControlledDispense: (args: { itemId: number; qty: number; patientName: string; prescriberName: string; idNumber?: string; saleId?: number | null; notes?: string }) => ControlledDispense
+  deleteControlledDispense: (id: number) => void
+  /** تسجيل قراءة حرارة دورية لوحدة تبريد (النشاط #5) */
+  addColdChainReading: (args: { storageUnitName: string; tempC: number; minC?: number | null; maxC?: number | null; recordedBy?: string; notes?: string }) => ColdChainReading
+  deleteColdChainReading: (id: number) => void
   /* ─── المغاسل (وحدة مستقلة — طلب المالك) ─── */
   /** فتح أمر غسيل: قطع + خدمات + عربون اختياري (قيده: خزينة/2109 دفعات مقدمة) */
   openLaundryOrder: (args: { customerId: number | null; customerName: string; phone: string; promisedAt: string; rackNumber?: string; lines: LaundryLine[]; prepaidMinor: number; treasury?: TreasuryAccount; notes: string }) => LaundryOrder
@@ -3743,6 +3805,8 @@ export const useDataStore = create<DataState>()(
       batches: [],
       tradeIns: [],
       marketPrices: [],
+      controlledDispenses: [],
+      coldChainReadings: [],
       assets: [],
       externalCommissions: [],
       commissionParties: [],
@@ -4976,6 +5040,19 @@ export const useDataStore = create<DataState>()(
           notes: args.notes?.trim() || undefined,
           fx: saleFxLeg,
           projectId: args.projectId ?? null,
+          prescription: args.prescription
+            ? (() => {
+                if (!args.prescription!.patientName.trim()) throw new Error('اسم المريض مطلوب في الروشتة المرفقة')
+                if (!args.prescription!.prescriberName.trim()) throw new Error('اسم الطبيب الواصف مطلوب في الروشتة المرفقة')
+                const rxErrors = validateRxLines(args.prescription!.rxLines)
+                if (rxErrors.length) throw new Error(rxErrors.join(' — '))
+                return {
+                  patientName: args.prescription!.patientName.trim(),
+                  prescriberName: args.prescription!.prescriberName.trim(),
+                  rxLines: args.prescription!.rxLines,
+                }
+              })()
+            : null,
         }
 
         const employeeCollections: EmployeeAdvance[] = (args.paymentAllocations ?? []).filter((row) => row.accountCode === '1107' && row.employeeId).map((row, index) => ({ id: nextId(state.employeeAdvances) + index, advanceNumber: `ADV-${String(nextId(state.employeeAdvances) + index).padStart(4, '0')}`, employeeId: row.employeeId!, date: now.slice(0, 10), amountMinor: row.amountMinor, recoveredMinor: 0, source: 'sale_collection', custodyFileId: null, treasury: (args.treasury ?? '1101') as TreasuryAccount, notes: `تحصيل فاتورة ${invoiceNumber} على حساب الموظف`, journalEntryId: entryId }))
@@ -13232,6 +13309,53 @@ export const useDataStore = create<DataState>()(
 
       deleteMarketPrice: (id) => {
         set({ marketPrices: get().marketPrices.filter((entry) => entry.id !== id) })
+      },
+
+      addControlledDispense: (args) => {
+        const state = get()
+        if (!state.items.some((it) => it.id === args.itemId)) throw new Error('الصنف غير موجود')
+        if (!args.patientName.trim()) throw new Error('اسم المريض مطلوب')
+        if (!args.prescriberName.trim()) throw new Error('اسم الطبيب الواصف مطلوب')
+        if (!Number.isFinite(args.qty) || args.qty <= 0) throw new Error('الكمية غير صالحة')
+        const entry: ControlledDispense = {
+          id: nextId(state.controlledDispenses),
+          date: new Date().toISOString(),
+          itemId: args.itemId,
+          qty: args.qty,
+          patientName: args.patientName.trim(),
+          prescriberName: args.prescriberName.trim(),
+          idNumber: args.idNumber?.trim() || undefined,
+          saleId: args.saleId ?? null,
+          notes: args.notes?.trim() || undefined,
+        }
+        set({ controlledDispenses: [...state.controlledDispenses, entry] })
+        return entry
+      },
+
+      deleteControlledDispense: (id) => {
+        set({ controlledDispenses: get().controlledDispenses.filter((entry) => entry.id !== id) })
+      },
+
+      addColdChainReading: (args) => {
+        const state = get()
+        if (!args.storageUnitName.trim()) throw new Error('اكتب اسم وحدة التبريد')
+        if (!Number.isFinite(args.tempC)) throw new Error('درجة الحرارة غير صالحة')
+        const entry: ColdChainReading = {
+          id: nextId(state.coldChainReadings),
+          date: new Date().toISOString(),
+          storageUnitName: args.storageUnitName.trim(),
+          tempC: args.tempC,
+          minC: args.minC ?? null,
+          maxC: args.maxC ?? null,
+          recordedBy: args.recordedBy?.trim() || undefined,
+          notes: args.notes?.trim() || undefined,
+        }
+        set({ coldChainReadings: [...state.coldChainReadings, entry] })
+        return entry
+      },
+
+      deleteColdChainReading: (id) => {
+        set({ coldChainReadings: get().coldChainReadings.filter((entry) => entry.id !== id) })
       },
 
       deleteCustomAccount: (code) => {
