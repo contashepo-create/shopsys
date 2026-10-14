@@ -103,6 +103,25 @@ export interface ProductionExpense {
   payableAccountCode?: '2117' | '2104'
 }
 
+/**
+ * أسباب فرق وزن/كمية التصنيع المصنَّفة (سد فجوة النشاط #2 — تجارة الأعلاف):
+ * قبل هذا كان السبب نصاً حراً يُدمَج في ملاحظات أمر الإنتاج فلا يمكن فرزه
+ * أو تجميعه في تقرير — الآن حقل مصنَّف رقمياً قابل للتجميع حسب الفترة/المنتج.
+ */
+export const PRODUCTION_VARIANCE_REASONS = [
+  { code: 'moisture_loss', labelAr: 'فقد رطوبة أثناء الطحن/الخلط' },
+  { code: 'spillage', labelAr: 'انسكاب/تسرب أثناء التشغيل' },
+  { code: 'measurement_error', labelAr: 'خطأ وزن/قياس عند الإدخال' },
+  { code: 'equipment_residue', labelAr: 'متبقٍ عالق بالمعدات/الخط' },
+  { code: 'other', labelAr: 'سبب آخر' },
+] as const
+
+export type ProductionVarianceReasonCode = (typeof PRODUCTION_VARIANCE_REASONS)[number]['code']
+
+export function productionVarianceReasonLabel(code: string | null | undefined): string {
+  return PRODUCTION_VARIANCE_REASONS.find((r) => r.code === code)?.labelAr ?? (code ? code : '—')
+}
+
 export interface ProductionOrder {
   id: number
   orderNumber: string // PRD-0001
@@ -127,6 +146,97 @@ export interface ProductionOrder {
   treasury: string | null // مصدر مصاريف التشغيل إن وجدت
   journalEntryId: number
   notes: string
+  /** فرق الكمية (الخامات الداخلة − الناتج الفعلي) حين تكون المطابقة الصارمة معطَّلة؛ موجب = هالك/نقص */
+  varianceQty?: number | null
+  /** سبب مصنَّف من `PRODUCTION_VARIANCE_REASONS` — إجباري من الواجهة متى وُجد فرق وتُعطَّل المطابقة الصارمة */
+  varianceReasonCode?: string | null
+}
+
+/**
+ * محرك تركيب أعلاف غذائي مبسط اختياري (سد فجوة النشاط #2): يحسب نسبة البروتين
+ * التقديرية والطاقة لكل كيلوجرام من الخلطة الناتجة، استناداً فقط للقيم الغذائية
+ * المُدخَلة يدوياً على كل خامة (`Item.proteinPercent`/`energyKcalPerKg`) —
+ * بالمتوسط المرجح بوزن كل خامة في التشغيلة. الخامات بلا بيانات غذائية مُدخَلة
+ * تُستبعد من الحساب وتُرصَد في `missingDataItemIds` بدل افتراض صفر مضلِّل.
+ * هذا تقدير إرشادي بسيط فقط، وليس محرك تحسين تركيبة بأقل تكلفة.
+ */
+export interface RecipeNutritionResult {
+  totalQty: number
+  /** نسبة بروتين الخلطة الموزونة — null إن لم تتوفر بيانات لأي خامة */
+  proteinPercent: number | null
+  /** طاقة الخلطة (كيلو كالوري/كجم) الموزونة — null إن لم تتوفر بيانات لأي خامة */
+  energyKcalPerKg: number | null
+  /** أصناف الخامات التي لا تملك بيانات غذائية مُدخَلة (استُبعدت من الحساب) */
+  missingDataItemIds: number[]
+}
+
+export function computeRecipeNutrition(
+  ingredients: readonly { itemId: number; qty: number }[],
+  nutritionByItemId: ReadonlyMap<number, { proteinPercent?: number | null; energyKcalPerKg?: number | null }>,
+): RecipeNutritionResult {
+  const totalQty = ingredients.reduce((sum, ing) => sum + ing.qty, 0)
+  let proteinWeighted = 0
+  let proteinQty = 0
+  let energyWeighted = 0
+  let energyQty = 0
+  const missingDataItemIds: number[] = []
+  for (const ing of ingredients) {
+    const info = nutritionByItemId.get(ing.itemId)
+    const hasProtein = info?.proteinPercent != null
+    const hasEnergy = info?.energyKcalPerKg != null
+    if (!hasProtein && !hasEnergy) missingDataItemIds.push(ing.itemId)
+    if (hasProtein) { proteinWeighted += ing.qty * info!.proteinPercent!; proteinQty += ing.qty }
+    if (hasEnergy) { energyWeighted += ing.qty * info!.energyKcalPerKg!; energyQty += ing.qty }
+  }
+  return {
+    totalQty: Math.round(totalQty * 1000) / 1000,
+    proteinPercent: proteinQty > 0 ? Math.round((proteinWeighted / proteinQty) * 100) / 100 : null,
+    energyKcalPerKg: energyQty > 0 ? Math.round((energyWeighted / energyQty) * 100) / 100 : null,
+    missingDataItemIds,
+  }
+}
+
+export interface ProductionVarianceReportRow {
+  /** مفتاح التجميع: شهر (YYYY-MM) */
+  period: string
+  productItemId: number
+  productNameAr: string
+  ordersCount: number
+  totalVarianceQty: number
+  byReason: { code: string; labelAr: string; count: number; totalQty: number }[]
+}
+
+/**
+ * تقرير مجمَّع لفرق وزن/هالك التصنيع الداخلي حسب الفترة (شهرياً) والمنتج الناتج —
+ * يبنى فوق الحقلين الرقميين الجديدين بدل التنقيب في نص الملاحظات الحر.
+ */
+export function productionVarianceReport(
+  orders: readonly Pick<ProductionOrder, 'date' | 'productItemId' | 'varianceQty' | 'varianceReasonCode'>[],
+  items: readonly { id: number; nameAr: string }[],
+): ProductionVarianceReportRow[] {
+  const nameOf = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `#${id}`
+  const groups = new Map<string, ProductionVarianceReportRow>()
+  for (const o of orders) {
+    if (!o.varianceQty || Math.abs(o.varianceQty) < 0.0001) continue
+    const period = (o.date || '').slice(0, 7)
+    const key = `${period}|${o.productItemId}`
+    let row = groups.get(key)
+    if (!row) {
+      row = { period, productItemId: o.productItemId, productNameAr: nameOf(o.productItemId), ordersCount: 0, totalVarianceQty: 0, byReason: [] }
+      groups.set(key, row)
+    }
+    row.ordersCount += 1
+    row.totalVarianceQty = Math.round((row.totalVarianceQty + o.varianceQty) * 1000) / 1000
+    const reasonCode = o.varianceReasonCode || 'other'
+    let reasonRow = row.byReason.find((r) => r.code === reasonCode)
+    if (!reasonRow) {
+      reasonRow = { code: reasonCode, labelAr: productionVarianceReasonLabel(reasonCode), count: 0, totalQty: 0 }
+      row.byReason.push(reasonRow)
+    }
+    reasonRow.count += 1
+    reasonRow.totalQty = Math.round((reasonRow.totalQty + o.varianceQty) * 1000) / 1000
+  }
+  return [...groups.values()].sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : b.totalVarianceQty - a.totalVarianceQty))
 }
 
 /** قيد أمر الإنتاج — المصروفات تُحمّل على المنتج وتُثبت استحقاقاً بلا دفع نقدي فوري. */

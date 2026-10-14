@@ -17,6 +17,45 @@ export interface PurchaseExpenseTaxInput {
   taxPercent?: number
 }
 
+/**
+ * فرق وزن/كمية الاستلام من المورد (سد فجوة النشاط #2 — تجارة الأعلاف والحبوب):
+ * يقارن الكمية/الوزن المذكور في فاتورة المورد (`shippedQty`) بالكمية الفعلية
+ * المستلمة فعلياً على الأرض (`qty`) — وهو فرق مختلف عن `orderedQty`/`rejectedQty`
+ * الموجودين أصلاً (هذان يقيسان طلبنا نحن مقابل الرفض الجودي، لا فرق وزن الشحن
+ * نفسه بين ما فوتره المورد وما وصل فعلياً، مثل فقد الرطوبة أو النقص أثناء النقل).
+ */
+export interface PurchaseWeightDiscrepancyLine {
+  itemId: number
+  nameAr: string
+  shippedQty: number
+  receivedQty: number
+}
+
+export interface PurchaseWeightDiscrepancyRow extends PurchaseWeightDiscrepancyLine {
+  /** موجب = نقص عند الاستلام عن المفوتَر، سالب = زيادة */
+  diffQty: number
+  diffPercent: number
+  exceedsThreshold: boolean
+}
+
+/**
+ * يحسب فرق الوزن/الكمية لكل سطر له `shippedQty` مُدخل فعلاً (> 0)؛ السطور بلا
+ * إدخال لحقل الوزن المرسل تُستبعد (تعني أن المستخدم لم يفعّل تتبع الفرق لهذا السطر).
+ * `thresholdPercent` نسبة التنبيه الافتراضية (2% معتاد في تجارة الحبوب للهالك الطبيعي).
+ */
+export function purchaseWeightDiscrepancy(
+  lines: readonly PurchaseWeightDiscrepancyLine[],
+  thresholdPercent = 2,
+): PurchaseWeightDiscrepancyRow[] {
+  return lines
+    .filter((l) => l.shippedQty > 0)
+    .map((l) => {
+      const diffQty = Math.round((l.shippedQty - l.receivedQty) * 1000) / 1000
+      const diffPercent = Math.round((Math.abs(diffQty) / l.shippedQty) * 10000) / 100
+      return { ...l, diffQty, diffPercent, exceedsThreshold: diffPercent > thresholdPercent }
+    })
+}
+
 /** يفصل مبلغ الدفع عن التكلفة وضريبة المدخلات وفق صفة المنشأة. */
 export function purchaseExpenseTaxParts(expense: PurchaseExpenseTaxInput, policy: BusinessTaxPolicy): { baseMinor: Minor; taxMinor: Minor; recoverableTaxMinor: Minor; costMinor: Minor; payableMinor: Minor } {
   if (!Number.isSafeInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('قيمة مصروف الشراء غير صالحة')

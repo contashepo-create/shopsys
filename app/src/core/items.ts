@@ -114,6 +114,16 @@ export interface Item {
    * 0/undefined = بلا حد.
    */
   minSalePriceMinor?: Minor
+  /**
+   * القيمة الغذائية اختيارية — سد فجوة النشاط #2 (تجارة الأعلاف والحبوب):
+   * تُدخَل يدوياً من بطاقة التحليل الغذائي للخامة (لا جهاز مختبر)، وتُستخدم
+   * فقط لحساب تقديري لنسبة البروتين/الطاقة الكلية لخلطة علف مركّبة عبر
+   * `computeRecipeNutrition` في core/recipes.ts — طبقة مبسطة فوق الوصفات،
+   * وليست محرك تركيب بأقل تكلفة (Least-Cost Formulation) كبرامج مثل BESTMIX.
+   */
+  proteinPercent?: number | null
+  /** طاقة الخامة بالكيلو كالوري لكل كيلوجرام — تقديري، إدخال يدوي اختياري */
+  energyKcalPerKg?: number | null
   isActive: boolean
 }
 

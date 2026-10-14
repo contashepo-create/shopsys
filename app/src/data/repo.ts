@@ -969,6 +969,8 @@ export interface PurchaseLine {
   qty: number
   orderedQty?: number
   rejectedQty?: number
+  /** الكمية/الوزن المذكور في فاتورة المورد وقت الشحن — لمقارنته بـ`qty` المستلم فعلياً (فرق وزن الاستلام) */
+  shippedQty?: number
   unitPriceMinor: number // سعر الوحدة قبل المصاريف
   expenseShareMinor: number // نصيب السطر من المصاريف (يُحسب)
   landedUnitCostMinor: number // التكلفة النهائية للوحدة (يُحسب)
@@ -1736,7 +1738,7 @@ interface DataState {
     dueDate?: string
     approvedBy?: string | null
     date: string
-    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; shippedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     /** خصم الفاتورة المطبق على أسعار السطور قبل landed cost */
     discountMinor?: number
@@ -2453,7 +2455,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number; warehouseId?: number | null }[]; allowNegativeIngredients?: boolean; warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null; outputLotNumber?: string | null }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number; warehouseId?: number | null }[]; allowNegativeIngredients?: boolean; warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null; outputLotNumber?: string | null; varianceQty?: number | null; varianceReasonCode?: string | null }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -4031,6 +4033,7 @@ export const useDataStore = create<DataState>()(
           if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية مستلمة يجب أن تكون رقماً موجباً')
           if (l.rejectedQty != null && (!Number.isFinite(l.rejectedQty) || l.rejectedQty < 0)) throw new Error('الكمية المرفوضة غير صالحة')
           if (l.orderedQty != null && (!Number.isFinite(l.orderedQty) || l.orderedQty < l.qty + (l.rejectedQty ?? 0))) throw new Error('الكمية المطلوبة لا تقل عن المستلم والمرفوض')
+          if (l.shippedQty != null && (!Number.isFinite(l.shippedQty) || l.shippedQty <= 0)) throw new Error('الكمية/الوزن المرسَل من المورد غير صالح')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
         }
         for (const expense of inv.expenses) {
@@ -4240,6 +4243,7 @@ export const useDataStore = create<DataState>()(
             qty: l.qty,
             orderedQty: inv.lines[i]?.orderedQty,
             rejectedQty: inv.lines[i]?.rejectedQty,
+            shippedQty: inv.lines[i]?.shippedQty,
             unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor,
             landedUnitCostMinor: l.landedUnitCostMinor,
@@ -6989,7 +6993,7 @@ export const useDataStore = create<DataState>()(
             expenseShareMinor: l.expenseShareMinor, landedUnitCostMinor: l.landedUnitCostMinor,
             warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId,
             vatPercent: args.lines[i]?.vatPercent ?? inv.lines[i]?.vatPercent ?? 0,
-            orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty,
+            orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty, shippedQty: inv.lines[i]?.shippedQty,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
           })),
           warehouseId: newHeaderWarehouseId,
@@ -11449,6 +11453,7 @@ export const useDataStore = create<DataState>()(
           ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, warehouseId: ingredient.warehouseId ?? ingredientWarehouseId, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
           treasury: null, journalEntryId: entryId, notes: args.notes ?? '',
+          varianceQty: args.varianceQty ?? null, varianceReasonCode: args.varianceReasonCode ?? null,
         }
         // خصم الخامات + إدخال الناتج بمتوسط مرجح جديد (قيمة قديمة + تكلفة الإنتاج)
         const consumed = new Map<number, number>()
