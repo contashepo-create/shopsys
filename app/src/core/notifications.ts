@@ -40,6 +40,8 @@ export interface NotificationsInput {
   complianceDueVehicles?: { vehicleId: number; vehiclePlate: string; kind: 'license' | 'insurance'; dueDate: string; daysLeft: number }[]
   /** مستحقات سائقين غير مسواة مجمعة — سد فجوة تقرير النشاط #9 Immediate #2 */
   unsettledDriverDues?: { driverId: number; driverName: string; totalMinor: number; tripCount: number }[]
+  /** قيم تحاليل حرجة لم يُوثَّق إبلاغ الطبيب بها — سد فجوة تقرير النشاط #10 Immediate #3 (CAP/CLIA) */
+  criticalLabResults?: { orderId: number; orderNumber: string; testNameAr: string; patientName: string; resultValue: string; unit: string }[]
   /** تذاكر صيانة/أوامر غسيل متجاوزة موعد التسليم الموعود */
   overduePromises?: { id: number; docNumber: string; what: string; kind: 'maintenance' | 'laundry'; promisedAt: string }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
@@ -163,6 +165,19 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: `${input.fmt(d.totalMinor)} عن ${d.tripCount} رحلة — سوِّها من شاشة النقلات أو اصرفها مع الراتب`,
       severity: 'warn',
       route: '/logistics/trips',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.66) قيم تحاليل حرجة غير موثَّقة الإبلاغ (سد فجوة تقرير النشاط #10 — Immediate #3، معيار CAP/CLIA)
+  for (const c of input.criticalLabResults ?? []) {
+    out.push({
+      id: `labcrit:${c.orderId}:${c.testNameAr}`,
+      icon: '🚨',
+      title: `قيمة حرجة بانتظار الإبلاغ: ${c.testNameAr}`,
+      body: `${c.patientName} — ${c.resultValue} ${c.unit} (${c.orderNumber}) — وثّق إبلاغ الطبيب المعالج فوراً`,
+      severity: 'danger',
+      route: '/lab/orders',
       perm: 'ops.activity.use',
     })
   }

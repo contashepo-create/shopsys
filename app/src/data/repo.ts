@@ -83,7 +83,7 @@ import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMino
 import { validateAsset, assetDisposalPreview, buildAssetDisposalEntry, type AssetDisposalMode, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, normalizeSerial, isValidSerial, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
-import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
+import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, isCriticalFlag, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import {
   custodyFileNumber, validateCustodyFile, summarizeCustody, buildCustodyFundEntry,
   splitCustodyExpense, buildCustodyExpenseEntry, buildCustodySettleEntry as buildCustodyFileSettleEntry,
@@ -425,6 +425,15 @@ export interface LabOrderTest {
   collectedAt: string | null
   resultedAt: string | null
   approvedAt: string | null
+  /** رفض العينة معملياً (مرحلة ب — سد فجوة تقرير النشاط #10 Immediate #1):
+   * انحلال دموي/متجلطة/كمية غير كافية… — `rejected → pending` يبدأ سحباً جديداً */
+  rejectedAt?: string | null
+  rejectionReason?: string
+  /** إبلاغ القيمة الحرجة (مرحلة ب — سد فجوة تقرير النشاط #10 Immediate #3):
+   * سجل موثَّق لمن أُبلغ ومتى بدل الاكتفاء بشارة بصرية في الشاشة فقط (CAP/CLIA) */
+  criticalAckAt?: string | null
+  criticalAckBy?: string
+  criticalAckNote?: string
 }
 
 /** طلب تحاليل LAB-#### — مربوط بقيده وقيد عمولة مُحيله */
@@ -2504,7 +2513,11 @@ interface DataState {
   updateLabTest: (id: number, patch: Partial<Omit<LabTest, 'id'>>) => void
   /** تحميل كتالوج البدء (10 فحوصات شائعة) بأسعار افتراضية — مرة واحدة */
   seedStarterTests: (defaultPriceMinor: number) => number
-  addLabReferrer: (r: Omit<Referrer, 'id'>) => Referrer
+  addLabReferrer: (r: Omit<Referrer, 'id' | 'isActive'>) => Referrer
+  /** تعديل بيانات طبيب مُحيل (هاتف/عمولة/ملاحظات) — لا يمس isActive (له toggleLabReferrer) */
+  updateLabReferrer: (id: number, patch: Partial<Omit<Referrer, 'id' | 'isActive'>>) => void
+  /** تفعيل/أرشفة طبيب مُحيل (سد فجوة تقرير النشاط #10 Immediate #4) — لا حذف، فقط إخفاء من اختيار الطلبات الجديدة */
+  toggleLabReferrer: (id: number) => void
   addLabPatient: (p: Omit<LabPatient, 'id'>) => LabPatient
   /** تعديل مريض معمل — منه ربطه بعميل مالي (linkedCustomerId) فتظهر طلباته الآجلة بكشف العميل */
   updateLabPatient: (id: number, patch: Partial<Omit<LabPatient, 'id'>>) => void
@@ -2527,8 +2540,17 @@ interface DataState {
     creditLimitOverrideBy?: string | null
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => LabOrder
-  /** تقدُّم فحص في دورته: سحب العينة ← نتيجة (بقيمة) ← اعتماد. انتقالات مشروعة فقط */
-  advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string) => LabOrder
+  /**
+   * تقدُّم فحص في دورته: سحب العينة ← نتيجة (بقيمة) ← اعتماد — أو رفض العينة
+   * (`to: 'rejected'` بسبب إلزامي في `rejectionReason`) ثم إعادة السحب
+   * (`to: 'pending'` من حالة rejected) لبدء دورة جديدة. انتقالات مشروعة فقط.
+   */
+  advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string, rejectionReason?: string) => LabOrder
+  /**
+   * توثيق إبلاغ قيمة حرجة للطبيب المعالج (سد فجوة تقرير النشاط #10 Immediate #3) —
+   * متطلب امتثال CAP/CLIA: من أُبلغ ومتى، لا شارة بصرية فقط
+   */
+  acknowledgeCriticalLabResult: (orderId: number, testId: number, by: string, note?: string) => LabOrder
   /** صرف كل عمولات مُحيل غير المدفوعة بقيد واحد (2105 ← 1101) */
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
@@ -9234,8 +9256,8 @@ export const useDataStore = create<DataState>()(
         if (!provider) throw new Error('جهة التأمين غير موجودة أو معطلة')
         const patient = state.labPatients.find((p) => p.id === args.patientId)
         if (!patient) throw new Error('المريض غير مسجل')
-        const referrer = args.referrerId != null ? state.labReferrers.find((r) => r.id === args.referrerId) : null
-        if (args.referrerId != null && !referrer) throw new Error('الطبيب المُحيل غير موجود')
+        const referrer = args.referrerId != null ? state.labReferrers.find((r) => r.id === args.referrerId && r.isActive) : null
+        if (args.referrerId != null && !referrer) throw new Error('الطبيب المُحيل غير موجود أو معطل')
         if (!args.testIds.length) throw new Error('اختر فحصاً واحداً على الأقل')
         const chosen = args.testIds.map((tid) => {
           const t = state.labTests.find((x) => x.id === tid && x.isActive)
@@ -9714,9 +9736,21 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const errors = validateReferrer(r)
         if (errors.length) throw new Error(errors.join(' — '))
-        const ref: Referrer = { ...r, id: nextId(state.labReferrers) }
+        const ref: Referrer = { ...r, id: nextId(state.labReferrers), isActive: true }
         set({ labReferrers: [...state.labReferrers, ref] })
         return ref
+      },
+      updateLabReferrer: (id, patch) => {
+        const state = get()
+        const existing = state.labReferrers.find((r) => r.id === id)
+        if (!existing) throw new Error('الطبيب المُحيل غير موجود')
+        const merged = { ...existing, ...patch }
+        const errors = validateReferrer(merged)
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ labReferrers: state.labReferrers.map((r) => (r.id === id ? merged : r)) })
+      },
+      toggleLabReferrer: (id) => {
+        set((s) => ({ labReferrers: s.labReferrers.map((r) => (r.id === id ? { ...r, isActive: !r.isActive } : r)) }))
       },
       addLabPatient: (p) => {
         const state = get()
@@ -9732,8 +9766,8 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const patient = state.labPatients.find((p) => p.id === args.patientId)
         if (!patient) throw new Error('المريض غير مسجل')
-        const referrer = args.referrerId != null ? state.labReferrers.find((r) => r.id === args.referrerId) : null
-        if (args.referrerId != null && !referrer) throw new Error('الطبيب المُحيل غير موجود')
+        const referrer = args.referrerId != null ? state.labReferrers.find((r) => r.id === args.referrerId && r.isActive) : null
+        if (args.referrerId != null && !referrer) throw new Error('الطبيب المُحيل غير موجود أو معطل')
         if (!args.testIds.length) throw new Error('اختر فحصاً واحداً على الأقل')
         const chosen = args.testIds.map((tid) => {
           const t = state.labTests.find((x) => x.id === tid && x.isActive)
@@ -9816,16 +9850,17 @@ export const useDataStore = create<DataState>()(
         set({ labOrders: [...state.labOrders, order], journal, ...(labDebtor ? { customers: labDebtor.customers, labPatients: labDebtor.labPatients } : {}), ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return order
       },
-      advanceLabTest: (orderId, testId, to, resultValue) => {
+      advanceLabTest: (orderId, testId, to, resultValue, rejectionReason) => {
         const state = get()
         const order = state.labOrders.find((o) => o.id === orderId)
         if (!order) throw new Error('الطلب غير موجود')
         const test = order.tests.find((t) => t.testId === testId)
         if (!test) throw new Error('الفحص ليس في هذا الطلب')
         if (!canTransition(test.status, to)) {
-          throw new Error(`انتقال غير مشروع: لا يمكن من «${test.status}» إلى «${to}» — الدورة: تسجيل ← سحب عينة ← نتيجة ← اعتماد`)
+          throw new Error(`انتقال غير مشروع: لا يمكن من «${test.status}» إلى «${to}» — الدورة: تسجيل ← سحب عينة ← نتيجة ← اعتماد (أو رفض العينة ← إعادة سحب)`)
         }
         if (to === 'resulted' && !resultValue?.trim()) throw new Error('أدخل قيمة النتيجة أولاً')
+        if (to === 'rejected' && !rejectionReason?.trim()) throw new Error('سبب رفض العينة مطلوب (انحلال دموي/متجلطة/كمية غير كافية…)')
         const now = new Date().toISOString()
         const updatedTest: LabOrderTest = {
           ...test,
@@ -9839,7 +9874,26 @@ export const useDataStore = create<DataState>()(
               }
             : {}),
           ...(to === 'approved' ? { approvedAt: now } : {}),
+          ...(to === 'rejected' ? { rejectedAt: now, rejectionReason: rejectionReason!.trim() } : {}),
+          // إعادة السحب (rejected → pending): دورة جديدة من الصفر — صفِّر كل آثار الدورة السابقة
+          ...(to === 'pending'
+            ? { collectedAt: null, rejectedAt: null, rejectionReason: '', resultedAt: null, resultValue: '', resultFlag: 'none' as const, approvedAt: null }
+            : {}),
         }
+        const updated: LabOrder = { ...order, tests: order.tests.map((t) => (t.testId === testId ? updatedTest : t)) }
+        set({ labOrders: state.labOrders.map((o) => (o.id === orderId ? updated : o)) })
+        return updated
+      },
+      acknowledgeCriticalLabResult: (orderId, testId, by, note) => {
+        const state = get()
+        const order = state.labOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الطلب غير موجود')
+        const test = order.tests.find((t) => t.testId === testId)
+        if (!test) throw new Error('الفحص ليس في هذا الطلب')
+        if (!isCriticalFlag(test.resultFlag)) throw new Error('النتيجة ليست حرجة — لا حاجة لتوثيق إبلاغ')
+        if (!by?.trim()) throw new Error('اسم مُستلم الإبلاغ مطلوب (الطبيب المعالج أو من ناب عنه)')
+        const now = new Date().toISOString()
+        const updatedTest: LabOrderTest = { ...test, criticalAckAt: now, criticalAckBy: by.trim(), criticalAckNote: (note ?? '').trim() }
         const updated: LabOrder = { ...order, tests: order.tests.map((t) => (t.testId === testId ? updatedTest : t)) }
         set({ labOrders: state.labOrders.map((o) => (o.id === orderId ? updated : o)) })
         return updated
@@ -14552,9 +14606,21 @@ export const useDataStore = create<DataState>()(
           approvalFlows: s.approvalFlows ?? [],
           approvalRequests: s.approvalRequests ?? [],
           labTests: s.labTests ?? [],
-          labReferrers: s.labReferrers ?? [],
+          // مرحلة ب (سد فجوة تقرير النشاط #10 Immediate #4): isActive لم يكن موجوداً قبل هذه الدفعة
+          labReferrers: (s.labReferrers ?? []).map((r) => ({ ...r, isActive: r.isActive ?? true })),
           labPatients: s.labPatients ?? [],
-          labOrders: s.labOrders ?? [],
+          // مرحلة ب (سد فجوة تقرير النشاط #10 Immediate #1 و#3): حقول رفض العينة وتوثيق الإبلاغ الحرج جديدة
+          labOrders: (s.labOrders ?? []).map((o) => ({
+            ...o,
+            tests: o.tests.map((t) => ({
+              ...t,
+              rejectedAt: t.rejectedAt ?? null,
+              rejectionReason: t.rejectionReason ?? '',
+              criticalAckAt: t.criticalAckAt ?? null,
+              criticalAckBy: t.criticalAckBy ?? '',
+              criticalAckNote: t.criticalAckNote ?? '',
+            })),
+          })),
           changeOrders: s.changeOrders ?? [],
           clientAdvances: s.clientAdvances ?? [],
           projectBudgets: s.projectBudgets ?? [],

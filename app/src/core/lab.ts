@@ -105,19 +105,33 @@ export function ageYears(birthDate: string, atIso: string): number {
 
 /* ─── الطلب ودورة العينة ─── */
 
-/** حالة الفحص الواحد داخل الطلب */
-export type TestStatus = 'pending' | 'collected' | 'resulted' | 'approved'
+/**
+ * حالة الفحص الواحد داخل الطلب — أُضيفت `rejected` (مرحلة ب — سد فجوة
+ * تقرير النشاط #10 Immediate #1): عيّنة مرفوضة معملياً (انحلال دموي/
+ * متجلطة/كمية غير كافية) أشهر سيناريو عمل حقيقي كان مفقوداً تماماً.
+ */
+export type TestStatus = 'pending' | 'collected' | 'resulted' | 'approved' | 'rejected'
 
-/** انتقالات مشروعة فقط — لا قفز ولا رجوع (سلامة الدورة) */
+/**
+ * انتقالات مشروعة فقط — لا قفز ولا رجوع إلا لإعادة السحب بعد رفض صريح:
+ * `collected → rejected` (رفض عيّنة بسبب مُسجَّل)، و`rejected → pending`
+ * (إعادة السحب تبدأ دورة جديدة من الصفر).
+ */
 export const TEST_TRANSITIONS: Record<TestStatus, TestStatus[]> = {
   pending: ['collected'],
-  collected: ['resulted'],
+  collected: ['resulted', 'rejected'],
   resulted: ['approved'],
   approved: [],
+  rejected: ['pending'],
 }
 
 export function canTransition(from: TestStatus, to: TestStatus): boolean {
   return TEST_TRANSITIONS[from].includes(to)
+}
+
+/** هل الفحص بانتظار إعادة سحب بعد رفض العينة؟ */
+export function isRejected(status: TestStatus): boolean {
+  return status === 'rejected'
 }
 
 /** حالة الطلب مشتقة من فحوصاته — لا تُخزن منفصلة فلا تتناقض */
@@ -188,9 +202,12 @@ export interface Referrer {
   phone: string
   commissionPercent: number // نسبة من صافي الطلب (بعد الخصم قبل الضريبة)
   notes: string
+  /** تفعيل/أرشفة (مرحلة ب — سد فجوة تقرير النشاط #10 Immediate #4): لا حذف أبداً —
+   * فقط إخفاء من قوائم اختيار الطلبات الجديدة مع إبقاء كل تاريخه وكشوفه كما هي */
+  isActive: boolean
 }
 
-export function validateReferrer(r: Omit<Referrer, 'id'>): string[] {
+export function validateReferrer(r: Omit<Referrer, 'id' | 'isActive'>): string[] {
   const errors: string[] = []
   if (!r.nameAr.trim()) errors.push('اسم الطبيب مطلوب')
   if (r.commissionPercent < 0 || r.commissionPercent > 50) errors.push('نسبة العمولة بين 0 و50٪')
@@ -337,4 +354,98 @@ export function resultDeltaPercent(current: string, previous: string): number | 
   const p = Number(previous)
   if (!Number.isFinite(c) || !Number.isFinite(p) || p === 0) return null
   return Math.round(((c - p) / Math.abs(p)) * 1000) / 10
+}
+
+/* ─── إبلاغ القيم الحرجة (مرحلة ب — سد فجوة تقرير النشاط #10 Immediate #3) ─── */
+
+/**
+ * صف تنبيه لقيمة حرجة لم يُوثَّق إبلاغ الطبيب بها بعد — متطلب امتثال
+ * قياسي (CAP/CLIA): كل قيمة حرجة يجب تسجيل من/متى أُبلغ بها لا الاكتفاء
+ * بشارة بصرية في الشاشة فقط.
+ */
+export interface CriticalResultAlert {
+  orderId: number
+  orderNumber: string
+  testId: number
+  testNameAr: string
+  patientName: string
+  resultValue: string
+  unit: string
+  resultFlag: ResultFlag
+  resultedAt: string | null
+}
+
+/** كل القيم الحرجة (مرتفعة/منخفضة) المُدخلة وغير المُبلَّغة بعد لطبيبها */
+export function criticalUnacknowledgedResults(
+  orders: readonly {
+    id: number
+    orderNumber: string
+    patientName: string
+    tests: readonly {
+      testId: number
+      nameAr: string
+      unit: string
+      status: TestStatus
+      resultValue: string
+      resultFlag: ResultFlag
+      resultedAt: string | null
+      criticalAckAt?: string | null
+    }[]
+  }[],
+): CriticalResultAlert[] {
+  const out: CriticalResultAlert[] = []
+  for (const o of orders) {
+    for (const t of o.tests) {
+      if (!isCriticalFlag(t.resultFlag)) continue
+      if (t.criticalAckAt) continue
+      out.push({
+        orderId: o.id, orderNumber: o.orderNumber, testId: t.testId, testNameAr: t.nameAr,
+        patientName: o.patientName, resultValue: t.resultValue, unit: t.unit,
+        resultFlag: t.resultFlag, resultedAt: t.resultedAt,
+      })
+    }
+  }
+  return out
+}
+
+/* ─── تقرير زمن تنفيذ الفحص — Turnaround Time (مرحلة ب — سد فجوة تقرير النشاط #10 Immediate #5) ─── */
+
+export interface TurnaroundStat {
+  testId: number
+  code: string
+  nameAr: string
+  count: number
+  avgMinutes: number
+  maxMinutes: number
+}
+
+/**
+ * متوسط وأقصى زمن تنفيذ (من سحب العينة حتى اعتماد النتيجة) لكل فحص —
+ * يحسب فقط من الفحوصات المعتمدة فعلياً (collectedAt و approvedAt كلاهما موجود).
+ * البيانات الخام (الطابعان الزمنيان) كانت موجودة بالفعل؛ الناقص هو هذا التجميع.
+ */
+export function testTurnaroundReport(
+  orders: readonly { tests: readonly { testId: number; code: string; nameAr: string; collectedAt: string | null; approvedAt: string | null }[] }[],
+): TurnaroundStat[] {
+  const byTest = new Map<number, { code: string; nameAr: string; minutes: number[] }>()
+  for (const o of orders) {
+    for (const t of o.tests) {
+      if (!t.collectedAt || !t.approvedAt) continue
+      const minutes = (Date.parse(t.approvedAt) - Date.parse(t.collectedAt)) / 60000
+      if (!Number.isFinite(minutes) || minutes < 0) continue
+      const entry = byTest.get(t.testId) ?? { code: t.code, nameAr: t.nameAr, minutes: [] }
+      entry.minutes.push(minutes)
+      byTest.set(t.testId, entry)
+    }
+  }
+  const rows: TurnaroundStat[] = []
+  for (const [testId, entry] of byTest) {
+    const sum = entry.minutes.reduce((a, m) => a + m, 0)
+    rows.push({
+      testId, code: entry.code, nameAr: entry.nameAr, count: entry.minutes.length,
+      avgMinutes: Math.round(sum / entry.minutes.length),
+      maxMinutes: Math.round(Math.max(...entry.minutes)),
+    })
+  }
+  return rows.sort((a, b) => b.avgMinutes - a.avgMinutes)
 }
