@@ -346,7 +346,7 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
    else if(exposure>selectedCustomer.creditLimitMinor*((setup.creditWarningThresholdPercent??85)/100))list.push({id:'credit-near',level:'warning',text:'اقتراب من حد الائتمان',hint:`المتاح ${formatMinor(selectedCustomer.creditLimitMinor-exposure,cur,false)} ${cur.symbol}`,focus:'[data-invoice-paid]'})
   }
   return list
- },[collectNote.text,cur,grandMinor,selectedCustomer,selectedCustomerBalance,shortMinor,totalPaidMinor])/* §97: نص الملاحظة (ثابت القيمة) بدل الكائن الذي يتجدد كل تصيير */
+ },[collectNote.text,cur,grandMinor,selectedCustomer,selectedCustomerBalance,shortMinor,totalPaidMinor,setup.creditWarningThresholdPercent])/* §97: نص الملاحظة (ثابت القيمة) بدل الكائن الذي يتجدد كل تصيير */
  const allPrePostIssues=useMemo(()=>[...prePostIssues,...prePostFinancial],[prePostFinancial,prePostIssues])
  const bookOrder=[...sales].sort((a,b)=>a.id-b.id);const bookIndex=editingInvoice?bookOrder.findIndex(invoice=>invoice.id===editingInvoice.id):-1
  const prevInvoice=bookIndex>0?bookOrder[bookIndex-1]:null;const nextInvoice=bookIndex>=0&&bookIndex<bookOrder.length-1?bookOrder[bookIndex+1]:null
