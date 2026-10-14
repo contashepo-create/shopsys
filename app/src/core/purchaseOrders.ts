@@ -40,6 +40,8 @@ export interface PurchaseOrder {
   warehouseId: number | null
   status: PurchaseOrderStatus
   lines: PurchaseOrderLine[]
+  /** تذكرة صيانة مرتبطة (سد فجوة النشاط #3: موبايلات وصيانة) — طلب قطعة غيار خاصة لجهاز عميل بعينه بدل طلب منفصل تماماً */
+  linkedTicketId?: number | null
   notes: string
   /** فواتير الشراء التي عُبِّئت من هذا الأمر */
   invoiceIds: number[]

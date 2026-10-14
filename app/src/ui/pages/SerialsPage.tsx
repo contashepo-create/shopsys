@@ -4,13 +4,16 @@
  * لمن، وحالة ضمانها الآن — استعلام فوري بأي IMEI (للفني ولخدمة العملاء).
  */
 import { useMemo, useState } from 'react'
-import { ScanBarcode, Smartphone, ShieldCheck, ShieldX, PackageCheck, RotateCcw } from 'lucide-react'
+import { ScanBarcode, Smartphone, ShieldCheck, ShieldX, PackageCheck, RotateCcw, Repeat } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { normalizeSerial, warrantyEndDate } from '../../core/serials.ts'
-import { inputCls, EmptyState } from '../components/ui.tsx'
+import { inputCls, EmptyState, Btn, Field, Modal, useToast } from '../components/ui.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { renderWarrantyCardHtml } from '../print/printWarranty.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { formatMinor } from '../../core/money.ts'
+import { getCountry } from '../../core/countries.ts'
 import { Printer } from 'lucide-react'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -20,11 +23,38 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
 }
 
 export function SerialsPage() {
-  const { serials, items, sales, customers } = useDataStore()
+  const { serials, items, sales, customers, tradeIns, registerTradeIn } = useDataStore()
   const { setup } = useAppStore()
+  const toast = useToast()
+  const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier'>('all')
   const today = new Date().toISOString().slice(0, 10)
+
+  /* ─── استبدال/مقايضة جهاز قديم (Trade-In) — سد فجوة مستقبلية من تقرير النشاط #3 ───
+     يسجل الجهاز القديم كسيريال داخل بسعر تقييم متفق عليه، ويولّد رصيداً دائناً
+     للعميل (2109) يُخصم يدوياً من فاتورة الجهاز الجديد عند البيع. */
+  const [tradeInOpen, setTradeInOpen] = useState(false)
+  const [tiItemId, setTiItemId] = useState('')
+  const [tiSerial, setTiSerial] = useState('')
+  const [tiCondition, setTiCondition] = useState('')
+  const [tiValuation, setTiValuation] = useState('')
+  const [tiCustomerId, setTiCustomerId] = useState(0)
+  const [tiCustomerName, setTiCustomerName] = useState('')
+  const [tiNotes, setTiNotes] = useState('')
+  const serialTrackedItems = useMemo(() => items.filter((it) => it.trackSerial), [items])
+  const resetTradeIn = () => { setTiItemId(''); setTiSerial(''); setTiCondition(''); setTiValuation(''); setTiCustomerId(0); setTiCustomerName(''); setTiNotes('') }
+  const submitTradeIn = () => {
+    try {
+      const rec = registerTradeIn({
+        itemId: Number(tiItemId), serial: tiSerial, deviceCondition: tiCondition,
+        valuationMinor: Math.round((Number(tiValuation) || 0) * 10 ** cur.decimals),
+        customerId: tiCustomerId || null, customerName: tiCustomerName, notes: tiNotes,
+      })
+      toast.show(`سُجِّل استبدال الجهاز ${rec.tradeInNumber} — رصيد دائن ${formatMinor(rec.valuationMinor, cur, false)} ${cur.symbol} للعميل، يُخصم يدوياً من فاتورة الجهاز الجديد`)
+      resetTradeIn(); setTradeInOpen(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? '—'
   const saleInfo = (saleId: number | null) => {
@@ -90,6 +120,10 @@ export function SerialsPage() {
           <div className="text-[10.5px] text-slate-400 font-bold flex items-center justify-center gap-1"><ShieldCheck size={12} /> ضمان سارٍ</div>
           <div className="text-xl font-black text-violet-600">{counts.activeWarranty}</div>
         </div>
+      </div>
+
+      <div className="anim-up flex justify-end">
+        <Btn variant="ghost" onClick={() => { resetTradeIn(); setTradeInOpen(true) }}><span className="flex items-center gap-1.5"><Repeat size={15} /> استبدال جهاز قديم (Trade-In)</span></Btn>
       </div>
 
       <div className="anim-up flex gap-2 flex-wrap items-center">
@@ -182,6 +216,65 @@ export function SerialsPage() {
           {rows.length > 300 && <div className="px-4 py-2 text-[10.5px] text-slate-400 text-center">يعرض أول 300 نتيجة — ضيّق البحث</div>}
         </div>
       )}
+
+      {tradeIns.length > 0 && (
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5"><Repeat size={14} /> سجل استبدال الأجهزة القديمة (Trade-In)</div>
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {[...tradeIns].reverse().map((t) => (
+                <tr key={t.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <td className="px-4 py-2 font-bold text-brand-600">{t.tradeInNumber}</td>
+                  <td className="px-4 py-2 font-mono text-[11px]" dir="ltr">{t.serial}</td>
+                  <td className="px-4 py-2 text-slate-500">{itemName(t.itemId)}</td>
+                  <td className="px-4 py-2 text-slate-500">{t.customerName || '—'}</td>
+                  <td className="px-4 py-2 font-black text-emerald-600">{formatMinor(t.valuationMinor, cur, false)} {cur.symbol}</td>
+                  <td className="px-4 py-2 text-slate-400 text-[10.5px]" dir="ltr">{t.date.slice(0, 10)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal open={tradeInOpen} onClose={() => setTradeInOpen(false)} title="استبدال جهاز قديم (Trade-In)" subtitle="يسجَّل الجهاز القديم بالمخزون برصيد دائن للعميل — يُخصم يدوياً من فاتورة الجهاز الجديد عند البيع">
+        <div className="space-y-3">
+          <Field label="تسجيل الجهاز القديم تحت صنف" hint="لا بد أن يكون الصنف مفعَّلاً له تتبع السيريال">
+            <QuickSelect className={inputCls} value={tiItemId} onChange={(e) => setTiItemId(e.target.value)}>
+              <option value="">— اختر صنفاً —</option>
+              {serialTrackedItems.map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
+            </QuickSelect>
+          </Field>
+          {serialTrackedItems.length === 0 && <div className="text-[11px] text-amber-600">لا يوجد صنف مفعَّل له تتبع السيريال بعد — فعّله من شاشة الأصناف أولاً</div>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="السيريال / IMEI للجهاز القديم">
+              <input value={tiSerial} onChange={(e) => setTiSerial(e.target.value)} className={inputCls} dir="ltr" placeholder="مثال: 356789012345678" />
+            </Field>
+            <Field label={`سعر التقييم المتفق عليه (${cur.symbol})`}>
+              <input value={tiValuation} onChange={(e) => setTiValuation(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+          </div>
+          <Field label="حالة الجهاز القديم">
+            <input value={tiCondition} onChange={(e) => setTiCondition(e.target.value)} className={inputCls} placeholder="خدوش بسيطة، يعمل بكفاءة…" />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="عميل مسجل">
+              <PartyQuickPicker parties={customers} value={tiCustomerId} onChange={setTiCustomerId} cashLabel="غير مسجل" label="بحث العميل" cashValue={0} />
+            </Field>
+            <Field label="أو اسم العميل" hint="عند عدم التسجيل">
+              <input value={tiCustomerName} onChange={(e) => setTiCustomerName(e.target.value)} className={inputCls} disabled={!!tiCustomerId} />
+            </Field>
+          </div>
+          <Field label="ملاحظات">
+            <input value={tiNotes} onChange={(e) => setTiNotes(e.target.value)} className={inputCls} />
+          </Field>
+          <div className="text-[10.5px] text-slate-400 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2.5">الأثر: <b>1103 المخزون</b> مديناً بسعر التقييم، و<b>2109 دفعات مقدمة</b> دائناً كرصيد للعميل — طبّقه يدوياً كخصم عند فوترة الجهاز الجديد.</div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setTradeInOpen(false)}>إلغاء</Btn>
+            <Btn onClick={submitTradeIn} disabled={!tiItemId || !tiSerial.trim() || !(Number(tiValuation) > 0)}>💾 تسجيل الاستبدال</Btn>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

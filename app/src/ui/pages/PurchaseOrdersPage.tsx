@@ -68,7 +68,7 @@ export function PurchaseOrdersPage() {
   const {
     purchaseOrders, addPurchaseOrder, setPurchaseOrderStatus, deletePurchaseOrder, suppliers, items, warehouses, branches, categories,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
-    partyNotes, addPartyNote, appUsers, currentUserId, userPrefs, roleOverrides, customRoles, getSupplierBalance,
+    partyNotes, addPartyNote, appUsers, currentUserId, userPrefs, roleOverrides, customRoles, getSupplierBalance, tickets,
   } = useDataStore()
   const setup = useAppStore((s) => s.setup)
   const warehouseReceipt = useAppStore((s) => s.warehouseReceipt)
@@ -87,6 +87,9 @@ export function PurchaseOrdersPage() {
   const [notes, setNotes] = useState('')
   /** مرجع داخلي (رقم عرض/طلبية) — يُحفظ مع ملاحظات الأمر كأول سطر */
   const [reference, setReference] = useState('')
+  /** ربط أمر الشراء بتذكرة صيانة محددة (سد فجوة النشاط #3: طلب قطعة غيار خاصة لجهاز عميل بعينه) */
+  const [linkedTicketId, setLinkedTicketId] = useState('')
+  const openMaintenanceTickets = useMemo(() => tickets.filter((t) => t.status !== 'delivered' && t.status !== 'cancelled'), [tickets])
   /** يبدأ الجدول بلا سطور: أول سطر ظاهر يحمل خانة البحث — كما في فاتورة الشراء حرفياً */
   const [lines, setLines] = useState<DraftLine[]>([])
   const [applyTax, setApplyTax] = useState(false)
@@ -142,7 +145,7 @@ export function PurchaseOrdersPage() {
 
   const reset = () => {
     setLines([]); setNotes(''); setReference(''); setSupplierId(null); setSupplierName(''); setApplyTax(false); setLastSavedAt(null)
-    setActiveItemId(null); setPartyNote(''); setCategoryFilter(0)
+    setActiveItemId(null); setPartyNote(''); setCategoryFilter(0); setLinkedTicketId('')
   }
   const openNew = () => {
     reset(); setDate(new Date().toISOString().slice(0, 10)); setExpectedDate(new Date().toISOString().slice(0, 10)); setOpen(true)
@@ -261,6 +264,7 @@ export function PurchaseOrdersPage() {
         warehouseId,
         notes: [reference.trim(), notes.trim()].filter(Boolean).join('\n'),
         lines: clean,
+        linkedTicketId: linkedTicketId ? Number(linkedTicketId) : null,
       })
       const text = partyNote.trim()
       if (text && selectedSupplier) { try { addPartyNote({ partyKind: 'supplier', partyId: selectedSupplier.id, text, userName: currentUser?.nameAr ?? setup.ownerName ?? 'المالك', source: order.orderNumber }) } catch { /* الملاحظة لا تمنع اعتماد الأمر */ } }
@@ -272,7 +276,7 @@ export function PurchaseOrdersPage() {
   }
 
   /* حارس التغييرات غير المحفوظة — نفس نمط فاتورة الشراء */
-  const signature = JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, applyTax, lines })
+  const signature = JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, applyTax, lines, linkedTicketId })
   const unsaved = useUnsavedChangesGuard(signature)
   const closeEditor = () => setOpen(false)
   useEffect(() => {
@@ -346,6 +350,14 @@ export function PurchaseOrdersPage() {
               <Field label="المرجع" icon={<Link2 size={11} />}>
                 <input className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="مرجع داخلي أو رقم عرض المورد — اختياري" aria-label="مرجع أمر الشراء" />
               </Field>
+              {setup.modules.includes('maintenance') && (
+                <Field label="تذكرة صيانة مرتبطة" hint="لطلب قطعة غيار خاصة لجهاز عميل بعينه — اختياري">
+                  <QuickSelect className={inputCls} value={linkedTicketId} onChange={(e) => setLinkedTicketId(e.target.value)}>
+                    <option value="">— بلا ربط —</option>
+                    {openMaintenanceTickets.map((t) => <option key={t.id} value={t.id}>{t.ticketNumber} — {t.deviceName}</option>)}
+                  </QuickSelect>
+                </Field>
+              )}
             </>
           }
           partyProfile={
@@ -555,6 +567,9 @@ export function PurchaseOrdersPage() {
                     <td className="px-4 py-2.5">
                       <div className="font-black text-slate-800 dark:text-white">{order.orderNumber}</div>
                       <div className="text-[11px] text-slate-400 font-mono">{order.date}</div>
+                      {order.linkedTicketId != null && (
+                        <div className="text-[10px] text-indigo-500 mt-0.5">🧩 {tickets.find((t) => t.id === order.linkedTicketId)?.ticketNumber ?? `#${order.linkedTicketId}`}</div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{order.supplierName}</td>
                     <td className="px-4 py-2.5 text-[12px] text-slate-400 font-mono">{order.expectedDate}</td>

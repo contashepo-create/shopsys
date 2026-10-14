@@ -81,7 +81,7 @@ import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, assetDisposalPreview, buildAssetDisposalEntry, type AssetDisposalMode, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
-import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, type SerialUnit } from '../core/serials.ts'
+import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, normalizeSerial, isValidSerial, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import {
@@ -861,6 +861,8 @@ export interface MaintenanceTicket {
   deviceCondition?: string
   issue: string
   estimateMinor: number // تقدير مبدئي يُتفق عليه عند الاستلام (0 = بلا)
+  /** الفني المسؤول عن التذكرة (سد فجوة النشاط #3) — يفتح الباب لتقارير إنتاجية/عمولة لكل فني؛ قابل للتعيين أو التغيير في أي وقت */
+  technicianId?: number | null
   /** عربون مقبوض عند الاستلام (نمط RepairShopr deposit): قيده خزينة/2109 ويُصفى عند التسليم */
   prepaidMinor?: number
   prepaidEntryId?: number | null
@@ -868,6 +870,13 @@ export interface MaintenanceTicket {
   promisedAt?: string
   status: TicketStatus
   statusHistory: { status: TicketStatus; at: string }[]
+  /** سجل إشعارات واتساب يدوية أُرسلت فعلياً (ضغط زر «إرسال») — سد فجوة النشاط #3: توثيق أنه أُرسل ولو ظل الإرسال نفسه يدوياً */
+  notifications?: { status: TicketStatus; at: string }[]
+  /** توقيع العميل الرقمي عند الاستلام/التسليم (dataURL) — سد فجوة مستقبلية: حماية الطرفين من نزاع حالة الجهاز */
+  receivedSignatureDataUrl?: string | null
+  deliveredSignatureDataUrl?: string | null
+  /** جلسات عمل الفني على التذكرة (سد فجوة مستقبلية: تتبع وقت العمل بدقة الدقيقة لا الحالة فقط) */
+  workSessions?: { startedAt: string; endedAt: string | null }[]
   // تُملأ عند التسليم فقط:
   parts: { itemId: number; nameAr: string; qty: number; unitPriceMinor: number; unitCostMinor: number }[]
   /** خدمات مقدمة من الكتالوج بتكلفة وسعر (الأمر 23) — التكلفة لا تُطبع للعميل */
@@ -883,6 +892,28 @@ export interface MaintenanceTicket {
   refunds?: ServiceRefundRecord[]
   /** قطع غيار أُرجعت للمخزون مع مرتجعات الخدمة (بسقف المصروف لكل قطعة) */
   returnedParts?: { itemId: number; qty: number; at: string }[]
+}
+
+/**
+ * استبدال/مقايضة جهاز قديم (Trade-In) — سد فجوة مستقبلية من تقرير النشاط #3
+ * (موبايلات وصيانة)، مبنية فوق محرك السيريال الحالي (core/serials.ts):
+ * الجهاز القديم يدخل المخزون كوحدة سيريال (`purchaseId: null` — دخول يدوي لا
+ * فاتورة شراء) بسعر تقييم متفق عليه مع العميل، ويُسجَّل رصيد دائن للعميل
+ * (2109 دفعات مقدمة) بنفس نمط عربون تذكرة الصيانة — يُخصم لاحقاً يدوياً من
+ * فاتورة الجهاز الجديد عند البيع.
+ */
+export interface TradeInRecord {
+  id: number
+  tradeInNumber: string // TI-0001
+  date: string // ISO
+  itemId: number // الصنف الذي سيُسجَّل تحته الجهاز المستعمل في المخزون
+  serial: string
+  deviceCondition: string
+  valuationMinor: number // سعر التقييم المتفق عليه — يصبح رصيداً دائناً للعميل
+  customerId: number | null
+  customerName: string
+  journalEntryId: number
+  notes: string
 }
 
 /** مستند إتلاف مخزون (هالك وتوالف) — موثق بسبب ومربوط بقيده (مراجعة نشاط الأغذية) */
@@ -1438,7 +1469,7 @@ interface DataState {
   markDocApprovalPosted: (id: number, documentId: number) => void
   deleteDocApproval: (id: number) => void
   purchaseOrders: PurchaseOrder[]
-  addPurchaseOrder: (input: { supplierId: number | null; supplierName: string; date: string; expectedDate: string; warehouseId: number | null; lines: PurchaseOrderLine[]; notes: string }) => PurchaseOrder
+  addPurchaseOrder: (input: { supplierId: number | null; supplierName: string; date: string; expectedDate: string; warehouseId: number | null; lines: PurchaseOrderLine[]; notes: string; linkedTicketId?: number | null }) => PurchaseOrder
   setPurchaseOrderStatus: (id: number, status: PurchaseOrderStatus) => void
   /** تسجيل ما استُلم من أمر شراء عند تعبئة فاتورة منه */
   receivePurchaseOrder: (id: number, received: { itemId: number; qty: number }[], invoiceId?: number) => void
@@ -1585,6 +1616,8 @@ interface DataState {
   loyaltyRedemptions: { id: number; date: string; customerId: number; points: number; valueMinor: number; journalEntryId: number }[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
+  /** استبدال/مقايضة أجهزة قديمة (سد فجوة مستقبلية — النشاط #3: موبايلات وصيانة) */
+  tradeIns: TradeInRecord[]
   /**
    * مرجع سعر السوق اليومي (سد فجوة مستقبلية من تقرير النشاط #2: تجارة الأعلاف
    * والحبوب) — سجل يدوي بسيط لسعر سلعة في السوق (بورصة محلية/نشرة يومية)
@@ -2625,6 +2658,8 @@ interface DataState {
     deviceCondition?: string
     issue: string
     estimateMinor: number
+    /** الفني المسؤول — اختياري عند الفتح، قابل للتعيين لاحقاً */
+    technicianId?: number | null
     /** عربون مقبوض عند الاستلام — قيده خزينة/2109 (نمط RepairShopr) */
     prepaidMinor?: number
     treasury?: TreasuryAccount
@@ -2633,6 +2668,21 @@ interface DataState {
   }) => MaintenanceTicket
   /** نقل حالة التذكرة وفق الانتقالات المسموحة (مع سجل الحالات) */
   setTicketStatus: (ticketId: number, status: TicketStatus) => MaintenanceTicket
+  /** تعيين/تغيير الفني المسؤول عن التذكرة في أي وقت (سد فجوة النشاط #3) */
+  setTicketTechnician: (ticketId: number, technicianId: number | null) => MaintenanceTicket
+  /** تسجيل أن إشعار واتساب أُرسل فعلياً لحالة معينة (ضغطة الزر) — توثيق لا إرسال تلقائي (سد فجوة النشاط #3) */
+  logTicketNotificationSent: (ticketId: number, status: TicketStatus) => MaintenanceTicket
+  /**
+   * تسجيل استبدال/مقايضة جهاز قديم (سد فجوة مستقبلية — النشاط #3): يدخل
+   * الجهاز القديم المخزون كوحدة سيريال بسعر تقييم متفق عليه، ويُقيَّد رصيد
+   * دائن للعميل (2109) يُخصم يدوياً من فاتورة الجهاز الجديد عند البيع.
+   */
+  registerTradeIn: (args: { itemId: number; serial: string; deviceCondition: string; valuationMinor: number; customerId: number | null; customerName: string; notes: string }) => TradeInRecord
+  /** حفظ توقيع العميل الرقمي عند الاستلام أو التسليم (سد فجوة مستقبلية — النشاط #3) */
+  setTicketSignature: (ticketId: number, phase: 'received' | 'delivered', dataUrl: string) => MaintenanceTicket
+  /** بدء/إنهاء جلسة عمل فني على التذكرة (سد فجوة مستقبلية — النشاط #3: تتبع وقت العمل) */
+  startTicketWork: (ticketId: number) => MaintenanceTicket
+  stopTicketWork: (ticketId: number) => MaintenanceTicket
   /**
    * تسليم التذكرة (المرحلة 6): تحقق ← إجماليات ← قيد متوازن
    * (تحصيل مقابل 4103 إيراد صيانة + 2102 ضريبة، وقطع الغيار 5101/1103
@@ -3581,6 +3631,7 @@ export const useDataStore = create<DataState>()(
           warehouseId: input.warehouseId ?? null,
           status: 'draft',
           lines,
+          linkedTicketId: input.linkedTicketId ?? null,
           notes: input.notes ?? '',
           invoiceIds: [],
           createdAt: new Date().toISOString(),
@@ -3690,6 +3741,7 @@ export const useDataStore = create<DataState>()(
       loyaltyRedemptions: [],
       transfers: [],
       batches: [],
+      tradeIns: [],
       marketPrices: [],
       assets: [],
       externalCommissions: [],
@@ -12383,6 +12435,7 @@ export const useDataStore = create<DataState>()(
           deviceCondition: args.deviceCondition?.trim() || undefined,
           issue: args.issue.trim(),
           estimateMinor: args.estimateMinor,
+          technicianId: args.technicianId ?? null,
           prepaidMinor: prepaid > 0 ? prepaid : undefined,
           prepaidEntryId,
           promisedAt: args.promisedAt || undefined,
@@ -12425,6 +12478,96 @@ export const useDataStore = create<DataState>()(
           statusHistory: [...ticket.statusHistory, { status, at: now }],
         }
         set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)), journal })
+        return updated
+      },
+      setTicketTechnician: (ticketId, technicianId) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        if (technicianId != null && !state.employees.find((e) => e.id === technicianId)) throw new Error('الموظف غير موجود')
+        const updated: MaintenanceTicket = { ...ticket, technicianId }
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
+        return updated
+      },
+      logTicketNotificationSent: (ticketId, status) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        const updated: MaintenanceTicket = { ...ticket, notifications: [...(ticket.notifications ?? []), { status, at: new Date().toISOString() }] }
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
+        return updated
+      },
+      registerTradeIn: (args) => {
+        const state = get()
+        const item = state.items.find((it) => it.id === args.itemId)
+        if (!item) throw new Error('الصنف غير موجود')
+        if (!item.trackSerial) throw new Error('الصنف المختار لا يتتبع السيريال — فعّل تتبع السيريال له أولاً')
+        const serial = normalizeSerial(args.serial)
+        if (!isValidSerial(serial)) throw new Error('سيريال/IMEI غير صالح (4-30 حرفاً أو رقماً)')
+        if (state.serials.some((u) => u.serial === serial)) throw new Error('هذا السيريال مسجل من قبل')
+        if (!Number.isInteger(args.valuationMinor) || args.valuationMinor <= 0) throw new Error('سعر التقييم يجب أن يكون موجباً')
+        if (!args.customerName.trim() && args.customerId == null) throw new Error('حدد العميل أو اكتب اسمه')
+        const now = new Date().toISOString()
+        const serialId = nextId(state.serials)
+        const unit: SerialUnit = {
+          id: serialId, itemId: args.itemId, serial, status: 'in_stock',
+          purchaseId: null, saleId: null, soldAt: null, warrantyMonths: 0, receivedAt: now,
+        }
+        const id = nextId(state.tradeIns)
+        const tradeInNumber = `TI-${String(id).padStart(4, '0')}`
+        const entryId = nextId(state.journal)
+        const lines: JournalLine[] = [
+          { accountCode: '1103', debit: args.valuationMinor, credit: 0, note: `استلام جهاز استبدال ${tradeInNumber} (${serial})` },
+          { accountCode: '2109', debit: 0, credit: args.valuationMinor, note: `رصيد دائن للعميل — استبدال جهاز قديم ${tradeInNumber}` },
+        ]
+        assertBalanced(lines)
+        const journal: JournalEntry[] = [...state.journal, {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `استبدال جهاز قديم ${tradeInNumber} — ${args.customerName.trim() || 'عميل'}`,
+          sourceType: 'trade_in', sourceId: id, lines,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }]
+        const record: TradeInRecord = {
+          id, tradeInNumber, date: now, itemId: args.itemId, serial,
+          deviceCondition: args.deviceCondition.trim(), valuationMinor: args.valuationMinor,
+          customerId: args.customerId, customerName: args.customerName.trim(), journalEntryId: entryId,
+          notes: args.notes.trim(),
+        }
+        set({ serials: [...state.serials, unit], tradeIns: [...state.tradeIns, record], journal })
+        return record
+      },
+      setTicketSignature: (ticketId, phase, dataUrl) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        if (!dataUrl) throw new Error('التوقيع فارغ')
+        const updated: MaintenanceTicket = phase === 'received'
+          ? { ...ticket, receivedSignatureDataUrl: dataUrl }
+          : { ...ticket, deliveredSignatureDataUrl: dataUrl }
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
+        return updated
+      },
+      startTicketWork: (ticketId) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        const sessions = ticket.workSessions ?? []
+        if (sessions.some((s) => s.endedAt == null)) throw new Error('توجد جلسة عمل مفتوحة بالفعل على هذه التذكرة')
+        const updated: MaintenanceTicket = { ...ticket, workSessions: [...sessions, { startedAt: new Date().toISOString(), endedAt: null }] }
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
+        return updated
+      },
+      stopTicketWork: (ticketId) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        const sessions = ticket.workSessions ?? []
+        const openIdx = sessions.findIndex((s) => s.endedAt == null)
+        if (openIdx === -1) throw new Error('لا توجد جلسة عمل مفتوحة لإنهائها')
+        const now = new Date().toISOString()
+        const updatedSessions = sessions.map((s, i) => (i === openIdx ? { ...s, endedAt: now } : s))
+        const updated: MaintenanceTicket = { ...ticket, workSessions: updatedSessions }
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
         return updated
       },
       deliverTicket: (ticketId, input) => {

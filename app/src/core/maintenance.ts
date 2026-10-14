@@ -303,3 +303,70 @@ export function ticketWhatsappLink(phone: string, message: string): string {
   const intl = digits.startsWith('0') ? `2${digits}` : digits // مصر: 20 + الرقم بلا الصفر
   return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
 }
+
+/* ─── تقرير متوسط زمن الإصلاح لكل نوع عطل (سد فجوة النشاط #3: موبايلات وصيانة) ───
+   يُبنى فوق statusHistory الموجود فعلاً في كل تذكرة — بلا أي حقل بيانات جديد.
+   «نوع العطل» = نص `issue` بعد تطبيع بسيط (إزالة المسافات الزائدة وتوحيد الحالة)
+   لتجميع الإدخالات المتشابهة، لعدم وجود كتالوج أعطال مُهيكل في هذا المستودع. */
+export interface RepairTimeReportRow {
+  issueKey: string // نص العطل بعد التطبيع — مفتاح التجميع
+  issueLabel: string // أول صياغة ظهر بها هذا العطل (للعرض)
+  ticketCount: number
+  avgHours: number
+  minHours: number
+  maxHours: number
+}
+
+const normalizeIssueKey = (issue: string): string => issue.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ar')
+
+/**
+ * متوسط زمن الإصلاح = الفارق الزمني بين أول دخول لحالة 'received' وأول دخول
+ * لحالة 'delivered' في statusHistory لكل تذكرة مُسلَّمة فعلياً — غير المُسلَّمة
+ * تُستبعد لأن زمنها غير مكتمل بعد.
+ */
+export function maintenanceRepairTimeReport(
+  tickets: { issue: string; status: TicketStatus; statusHistory: { status: TicketStatus; at: string }[] }[],
+): RepairTimeReportRow[] {
+  const groups = new Map<string, { label: string; hours: number[] }>()
+  for (const t of tickets) {
+    if (t.status !== 'delivered') continue
+    const receivedAt = t.statusHistory.find((h) => h.status === 'received')?.at
+    const deliveredAt = t.statusHistory.find((h) => h.status === 'delivered')?.at
+    if (!receivedAt || !deliveredAt) continue
+    const hours = (new Date(deliveredAt).getTime() - new Date(receivedAt).getTime()) / 3_600_000
+    if (!Number.isFinite(hours) || hours < 0) continue
+    const key = normalizeIssueKey(t.issue) || '—'
+    const group = groups.get(key) ?? { label: t.issue.trim() || '—', hours: [] }
+    group.hours.push(hours)
+    groups.set(key, group)
+  }
+  const rows: RepairTimeReportRow[] = []
+  for (const [issueKey, group] of groups) {
+    const { hours, label } = group
+    rows.push({
+      issueKey,
+      issueLabel: label,
+      ticketCount: hours.length,
+      avgHours: Math.round((hours.reduce((a, h) => a + h, 0) / hours.length) * 10) / 10,
+      minHours: Math.round(Math.min(...hours) * 10) / 10,
+      maxHours: Math.round(Math.max(...hours) * 10) / 10,
+    })
+  }
+  rows.sort((a, b) => b.ticketCount - a.ticketCount || a.issueLabel.localeCompare(b.issueLabel, 'ar'))
+  return rows
+}
+
+/* ─── تتبع وقت العمل اختياري لكل تذكرة (سد فجوة مستقبلية — النشاط #3) ───
+   جلسات بدء/إنهاء بسيطة؛ الجلسة المفتوحة (بلا endedAt) تُحسب حتى `nowIso`. */
+export function ticketWorkMinutes(
+  sessions: { startedAt: string; endedAt: string | null }[],
+  nowIso: string = new Date().toISOString(),
+): number {
+  let totalMs = 0
+  for (const s of sessions) {
+    const end = s.endedAt ?? nowIso
+    const ms = new Date(end).getTime() - new Date(s.startedAt).getTime()
+    if (Number.isFinite(ms) && ms > 0) totalMs += ms
+  }
+  return Math.round(totalMs / 60_000)
+}
