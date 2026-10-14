@@ -70,6 +70,7 @@ if (hasElectron) {
   })
   console.log('✅ dist-desktop/main.jsc (bytecode, electronMain) + main.cjs (loader) + preload.cjs')
 } else {
+  if (process.env.CI === 'true') throw new Error('Electron binary required for CI release bytecode — run node node_modules/electron/install.js before building')
   console.warn('⚠️ بلا ثنائي Electron في هذه البيئة — تُخطي توليد main.jsc؛ الحزمة ستعمل بالاحتياط المشوش main-full.cjs. بيئة الإنتاج (CI/ويندوز) تولّد الـ bytecode دائماً.')
   console.log('✅ dist-desktop/main.cjs (loader) + main-full.cjs (obfuscated) + preload.cjs')
 }

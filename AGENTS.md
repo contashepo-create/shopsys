@@ -7060,3 +7060,11 @@ samePackageReinstall=true وfeedDownloadTested=false. لم يُنفذ هذا job
 أُضيف تشخيص صريح حتى للفشل قبل try الداخلي للسكربت؛ لا ندّعي نجاح تشغيل NSIS
 بعد هذا الفحص بعد. مخطط الإصدار شُغّل قراءةً على GitHub الحقيقي وأعطى
 v1.0.24 / bump=false / resume=true، بلا تعديل للشجرة أو وسوم أو نشر.
+
+**سبب فشل smoke المثبت في CI الثانية `38640965158`:** مسار
+node_modules/electron/dist/electron.exe غير موجود. Electron **44.5.1 لا يملك
+postinstall**، وnpm ci لا ينزّل ثنائيه؛ electron-builder ينزله لنفسه فقط عند
+التغليف. لذلك ادعاء أن CI كان يولد bytecode دائماً غير صحيح. desktop:dist/
+desktop:publish أصبحا ينفذان install.js الرسمي صراحةً قبل التجميع؛ build.mjs
+يرفض غياب الثنائي في CI بدلاً من الاحتياط الصامت. الاحتياط المحلي فقط باقٍ.
+التشخيص ليس فشل NSIS ذاته — الاختبار لم يصل إلى تشغيله في أول جولتين.
