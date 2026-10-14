@@ -1385,6 +1385,19 @@ export interface ExchangeDoc {
   notes: string
 }
 
+/**
+ * مرجع سعر سوق يدوي (سد فجوة مستقبلية — النشاط #2: تجارة الأعلاف والحبوب):
+ * إدخال يدوي سريع لسعر سلعة في السوق اليومي (بديل خفيف عن تكامل بورصة حبوب).
+ */
+export interface MarketPriceEntry {
+  id: number
+  date: string // YYYY-MM-DD
+  commodityName: string
+  unit: string
+  pricePerUnitMinor: number
+  note?: string
+}
+
 interface DataState {
   seeded: boolean
   items: Item[]
@@ -1572,6 +1585,12 @@ interface DataState {
   loyaltyRedemptions: { id: number; date: string; customerId: number; points: number; valueMinor: number; journalEntryId: number }[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
+  /**
+   * مرجع سعر السوق اليومي (سد فجوة مستقبلية من تقرير النشاط #2: تجارة الأعلاف
+   * والحبوب) — سجل يدوي بسيط لسعر سلعة في السوق (بورصة محلية/نشرة يومية)
+   * لمساعدة المالك على ضبط سعر اليوم أول الصباح؛ لا يُغيّر أسعار الأصناف تلقائياً.
+   */
+  marketPrices: MarketPriceEntry[]
   assets: FixedAsset[]
   externalCommissions: ExternalCommission[] // العمولات بقسميها: لي لدى الغير / عليّ للغير (طلب المالك)
   commissionParties: CommissionParty[] // سجل أشخاص/جهات العمولات — التسجيل إلزامي قبل أي عمولة
@@ -2679,6 +2698,9 @@ interface DataState {
   addCustomAccount: (args: { code: string; nameAr: string; parentCode: string }) => CustomAccount
   /** حذف حساب مخصص — يُرفض لو عليه حركة في اليومية */
   deleteCustomAccount: (code: string) => void
+  /** إضافة سعر سوق يدوي (سد فجوة مستقبلية — النشاط #2: تجارة الأعلاف والحبوب) */
+  addMarketPrice: (args: { date: string; commodityName: string; unit: string; pricePerUnitMinor: number; note?: string }) => MarketPriceEntry
+  deleteMarketPrice: (id: number) => void
   /* ─── المغاسل (وحدة مستقلة — طلب المالك) ─── */
   /** فتح أمر غسيل: قطع + خدمات + عربون اختياري (قيده: خزينة/2109 دفعات مقدمة) */
   openLaundryOrder: (args: { customerId: number | null; customerName: string; phone: string; promisedAt: string; rackNumber?: string; lines: LaundryLine[]; prepaidMinor: number; treasury?: TreasuryAccount; notes: string }) => LaundryOrder
@@ -3668,6 +3690,7 @@ export const useDataStore = create<DataState>()(
       loyaltyRedemptions: [],
       transfers: [],
       batches: [],
+      marketPrices: [],
       assets: [],
       externalCommissions: [],
       commissionParties: [],
@@ -13029,6 +13052,20 @@ export const useDataStore = create<DataState>()(
         }
         set({ customAccounts: [...state.customAccounts, account] })
         return account
+      },
+
+      addMarketPrice: (args) => {
+        const state = get()
+        if (!args.commodityName.trim()) throw new Error('اكتب اسم السلعة')
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ غير صالح')
+        if (!Number.isFinite(args.pricePerUnitMinor) || args.pricePerUnitMinor < 0) throw new Error('السعر غير صالح')
+        const entry: MarketPriceEntry = { id: nextId(state.marketPrices), date: args.date, commodityName: args.commodityName.trim(), unit: args.unit.trim() || 'كجم', pricePerUnitMinor: args.pricePerUnitMinor, note: args.note?.trim() || undefined }
+        set({ marketPrices: [...state.marketPrices, entry] })
+        return entry
+      },
+
+      deleteMarketPrice: (id) => {
+        set({ marketPrices: get().marketPrices.filter((entry) => entry.id !== id) })
       },
 
       deleteCustomAccount: (code) => {

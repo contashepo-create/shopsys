@@ -74,6 +74,12 @@ interface SetupState {
    * من إعادة إضافة وحدة أطفأها المالك بنفسه بعد التحديث.
    */
   coreModulesMigratedAt?: string | null
+  /**
+   * عتبة التحذير الاستباقي من حد الائتمان (سد فجوة النشاط #2: تجارة الأعلاف
+   * والحبوب) — كانت نسبة 85% ثابتة في الكود؛ الآن قابلة للتخصيص بالإعدادات.
+   * undefined/null = الافتراضي 85.
+   */
+  creditWarningThresholdPercent?: number | null
 }
 
 /**

@@ -343,7 +343,7 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
   if(selectedCustomer&&selectedCustomer.creditLimitMinor>0){
    const exposure=selectedCustomerBalance+grandMinor-totalPaidMinor
    if(exposure>selectedCustomer.creditLimitMinor)list.push({id:'credit-limit',level:'blocking',text:`تجاوز حد الائتمان بـ ${formatMinor(exposure-selectedCustomer.creditLimitMinor,cur,false)} ${cur.symbol}`,hint:`الحد ${formatMinor(selectedCustomer.creditLimitMinor,cur,false)} · المكشوف ${formatMinor(exposure,cur,false)}`,focus:'[data-invoice-paid]'})
-   else if(exposure>selectedCustomer.creditLimitMinor*0.85)list.push({id:'credit-near',level:'warning',text:'اقتراب من حد الائتمان',hint:`المتاح ${formatMinor(selectedCustomer.creditLimitMinor-exposure,cur,false)} ${cur.symbol}`,focus:'[data-invoice-paid]'})
+   else if(exposure>selectedCustomer.creditLimitMinor*((setup.creditWarningThresholdPercent??85)/100))list.push({id:'credit-near',level:'warning',text:'اقتراب من حد الائتمان',hint:`المتاح ${formatMinor(selectedCustomer.creditLimitMinor-exposure,cur,false)} ${cur.symbol}`,focus:'[data-invoice-paid]'})
   }
   return list
  },[collectNote.text,cur,grandMinor,selectedCustomer,selectedCustomerBalance,shortMinor,totalPaidMinor])/* §97: نص الملاحظة (ثابت القيمة) بدل الكائن الذي يتجدد كل تصيير */

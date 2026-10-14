@@ -1222,6 +1222,28 @@ function ItemForm({
           </div>
         )}
 
+        {/* القيمة الغذائية (سد فجوة النشاط #2 — تجارة الأعلاف والحبوب): محرك تركيب أعلاف مبسط اختياري يحسب بروتين/طاقة الخلطة */}
+        {(setup.activityId === 'feed_trade' || draft.proteinPercent != null || draft.energyKcalPerKg != null) && (
+          <div className="mt-3 anim-pop grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="🌾 نسبة البروتين ٪ (اختياري)" hint="من بطاقة التحليل الغذائي للخامة — تُستخدم لتقدير بروتين خلطات الأعلاف">
+              <input
+                type="number" inputMode="decimal" step="any" min={0} max={100}
+                value={draft.proteinPercent ?? ''}
+                onChange={(e) => p({ proteinPercent: e.target.value ? Number(e.target.value) : null })}
+                className={inputCls} dir="ltr" placeholder="مثال: 44 لكسب الصويا"
+              />
+            </Field>
+            <Field label="⚡ الطاقة (كيلو كالوري/كجم) (اختياري)">
+              <input
+                type="number" inputMode="decimal" step="any" min={0}
+                value={draft.energyKcalPerKg ?? ''}
+                onChange={(e) => p({ energyKcalPerKg: e.target.value ? Number(e.target.value) : null })}
+                className={inputCls} dir="ltr" placeholder="مثال: 3300 للذرة"
+              />
+            </Field>
+          </div>
+        )}
+
         {/* أرقام OEM والتوافق (جولة قطع الغيار) — أساسية لنشاطي قطع الغيار والأجهزة */}
         {(setup.activityId === 'spare_parts' || setup.activityId === 'electronics' || (draft.oemNumbers?.length ?? 0) > 0 || (draft.fitment ?? '') !== '') && (
           <div className="mt-3 anim-pop space-y-3">

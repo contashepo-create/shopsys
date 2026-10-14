@@ -254,6 +254,29 @@ export function GeneralSettingsPage() {
         })()}
       </section>
 
+      {/* عتبة التحذير الاستباقي من حد الائتمان (سد فجوة النشاط #2: تجارة الأعلاف والحبوب) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '132ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <ShieldAlert size={17} className="text-amber-500" /> عتبة التحذير الاستباقي من حد الائتمان
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          في فاتورة البيع المتقدمة، يظهر تحذير مبكر «اقتراب من حد الائتمان» قبل الوصول للحد الفعلي —
+          كانت النسبة 85% ثابتة، والآن يمكنك تخصيصها حسب طبيعة عملائك (مثلاً: المزارعون الكبار يحتاجون تحذيراً أبكر).
+        </p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number" min={1} max={99} step={1}
+            value={setup.creditWarningThresholdPercent ?? 85}
+            onChange={(e) => {
+              const v = Math.min(99, Math.max(1, Number(e.target.value) || 85))
+              useAppStore.setState((s) => ({ setup: { ...s.setup, creditWarningThresholdPercent: v } }))
+            }}
+            className="w-24 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent px-3 py-2 text-center font-black"
+          />
+          <span className="text-[12px] font-bold text-slate-500">% من حد الائتمان — التحذير يظهر عند تجاوز هذه النسبة من المكشوف المتوقع</span>
+        </div>
+      </section>
+
       {/* برنامج نقاط الولاء (نمط Lightspeed Loyalty / Square) */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '135ms' }}>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">

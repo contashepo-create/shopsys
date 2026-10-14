@@ -432,7 +432,8 @@ export function ReportsPage() {
       )}
 
       {tab === 'items' && (
-        <div className={`anim-up ${card} overflow-hidden`}>
+        <div className="anim-up space-y-4">
+        <div className={`${card} overflow-hidden`}>
           {top.length === 0 ? (
             <div className="text-center text-slate-400 text-[13px] py-10">
               {setup.modules.includes('pos') ? 'لا مبيعات أصناف في هذه الفترة' : 'نشاطك لا يبيع بالكاشير — الأصناف هنا تُعرض عند البيع عبر الفاتورة أو المحرك التخصصي'}
@@ -605,10 +606,12 @@ export function ReportsPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </>
-            )}
-          </div>
+                 </table>
+               </>
+             )}
+           </div>
+         </div>
+         <MarketPriceReferenceCard card={card} />
         </div>
       )}
 
@@ -1047,6 +1050,63 @@ export function ReportsPage() {
         <FxTreasuryTab cur={cur} companyName={setup.shopName || 'المنشأة'} />
       )}
 
+    </div>
+  )
+}
+
+/**
+ * مرجع سعر السوق اليومي (سد فجوة مستقبلية — تقرير النشاط #2: تجارة الأعلاف
+ * والحبوب): إدخال يدوي سريع لسعر سلعة (ذرة/صويا/دريس...) من نشرة السوق
+ * اليومية، لمساعدة المالك على ضبط سعر اليوم أول الصباح — استرشادي بحت،
+ * لا يُغيّر سعر أي صنف تلقائياً. بديل خفيف عن تكامل بورصة حبوب كامل.
+ */
+function MarketPriceReferenceCard({ card }: { card: string }) {
+  const { marketPrices, addMarketPrice, deleteMarketPrice } = useDataStore()
+  const { setup } = useAppStore()
+  const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
+  const [commodityName, setCommodityName] = useState('')
+  const [unit, setUnit] = useState('طن')
+  const [price, setPrice] = useState('')
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [error, setError] = useState('')
+  const sorted = useMemo(() => [...marketPrices].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)), [marketPrices])
+  const submit = () => {
+    try {
+      addMarketPrice({ date, commodityName, unit, pricePerUnitMinor: Math.round((Number(price) || 0) * 10 ** cur.decimals) })
+      setCommodityName(''); setPrice(''); setError('')
+    } catch (e) { setError((e as Error).message) }
+  }
+  return (
+    <div className={`${card} overflow-hidden`}>
+      <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+        📈 مرجع سعر السوق اليومي <span className="text-[10px] font-normal text-slate-400">— إدخال يدوي استرشادي، لا يُغيّر أسعار الأصناف تلقائياً</span>
+      </div>
+      <div className="p-3 flex flex-wrap gap-2 items-end border-b border-slate-100 dark:border-slate-800">
+        <input value={commodityName} onChange={(e) => setCommodityName(e.target.value)} placeholder="اسم السلعة (مثال: ذرة صفراء)" className={inputCls} />
+        <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="الوحدة" className={`${inputCls} !w-20`} />
+        <input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" step="any" min={0} placeholder={`السعر (${cur.symbol})`} className={`${inputCls} !w-32`} dir="ltr" />
+        <input value={date} onChange={(e) => setDate(e.target.value)} type="date" className={`${inputCls} !w-40`} dir="ltr" />
+        <button onClick={submit} disabled={!commodityName.trim() || !(Number(price) > 0)} className="px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-[12px] font-bold disabled:opacity-40">+ تسجيل</button>
+        {error && <span className="text-[11px] text-rose-500 font-bold">{error}</span>}
+      </div>
+      {sorted.length === 0 ? (
+        <div className="text-center text-slate-400 text-[12px] py-6">لا أسعار سوق مسجَّلة بعد</div>
+      ) : (
+        <div className="max-h-56 overflow-y-auto">
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {sorted.slice(0, 30).map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{entry.date}</td>
+                  <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{entry.commodityName}</td>
+                  <td className="px-4 py-2 font-black text-emerald-600">{formatMinor(entry.pricePerUnitMinor, cur, false)} {cur.symbol} / {entry.unit}</td>
+                  <td className="px-4 py-2 text-left"><button onClick={() => deleteMarketPrice(entry.id)} className="text-[10px] text-rose-400 hover:text-rose-600">حذف</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

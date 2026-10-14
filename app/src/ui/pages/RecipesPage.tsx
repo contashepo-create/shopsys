@@ -5,7 +5,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { PRODUCTION_VARIANCE_REASONS, type ProductionExpense } from '../../core/recipes.ts'
+import { PRODUCTION_VARIANCE_REASONS, computeRecipeNutrition, type ProductionExpense } from '../../core/recipes.ts'
 import { Btn, DecimalInput, Field, inputCls, useToast, OverlayPortal } from '../components/ui.tsx'
 import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
 
@@ -69,6 +69,18 @@ export function RecipesPage() {
     ...customAccounts.filter((account) => account.rootType === 'expenses').map((account) => ({ code: account.code, nameAr: account.nameAr })),
   ]
   const fmt = (value: number) => formatMinor(value, cur, false)
+  /**
+   * محرك تركيب أعلاف غذائي مبسط اختياري (سد فجوة مستقبلية من تقرير النشاط #2:
+   * تجارة الأعلاف والحبوب) — تقدير بروتين/طاقة الخلطة من بيانات الخامات
+   * المُدخَلة يدوياً على بطاقة الصنف (Item.proteinPercent/energyKcalPerKg).
+   * إرشادي فقط — ليس محرك تحسين تركيبة بأقل تكلفة.
+   */
+  const nutritionPreview = useMemo(() => {
+    const rows = materials.filter((row) => row.itemId && Number(row.qty) > 0)
+    if (!rows.length) return null
+    const nutritionMap = new Map(items.map((item) => [item.id, { proteinPercent: item.proteinPercent, energyKcalPerKg: item.energyKcalPerKg }]))
+    return computeRecipeNutrition(rows.map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor })), nutritionMap)
+  }, [materials, items])
   const itemToken = (itemId: number) => {
     const item = items.find((candidate) => candidate.id === itemId)
     return item ? `${item.sku || item.barcodes?.[0] || item.id} — ${item.nameAr}` : ''
@@ -193,6 +205,18 @@ export function RecipesPage() {
       <div className={`rounded-xl border p-3 ${Math.abs(variance) < 0.0001 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}><div className="text-[10px] text-slate-400">فرق الكمية</div><b className="flex items-center gap-1">{Math.abs(variance) < 0.0001 ? <CheckCircle2 size={15}/> : <AlertTriangle size={15}/>} {variance}</b><div className="text-[9px] text-slate-400">يُسمح بالفرق للهالك أو تغير الوزن</div></div>
       <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">التكلفة / تكلفة الوحدة</div><b>{fmt(totalCost)} / {fmt(unitCost)}</b></div>
     </section>
+    {/* محرك تركيب أعلاف غذائي مبسط اختياري (سد فجوة مستقبلية — النشاط #2) — يظهر فقط إن أُدخلت بيانات غذائية على خامة واحدة على الأقل */}
+    {nutritionPreview && (nutritionPreview.proteinPercent != null || nutritionPreview.energyKcalPerKg != null) && (
+      <div className="rounded-xl border border-lime-500/30 bg-lime-500/5 p-3 flex flex-wrap items-center gap-4">
+        <span className="text-[11px] font-black text-lime-700 dark:text-lime-400 flex items-center gap-1.5">🌾 القيمة الغذائية التقديرية للخلطة</span>
+        {nutritionPreview.proteinPercent != null && <span className="text-[12px]"><b className="text-lime-700 dark:text-lime-400">{nutritionPreview.proteinPercent}٪</b> بروتين</span>}
+        {nutritionPreview.energyKcalPerKg != null && <span className="text-[12px]"><b className="text-lime-700 dark:text-lime-400">{nutritionPreview.energyKcalPerKg}</b> ك.كالوري/كجم</span>}
+        {nutritionPreview.missingDataItemIds.length > 0 && (
+          <span className="text-[10.5px] text-amber-600 dark:text-amber-400">⚠️ {nutritionPreview.missingDataItemIds.length} خامة بلا بيانات غذائية مُدخَلة — استُبعدت من الحساب</span>
+        )}
+        <span className="text-[10px] text-slate-400">تقدير إرشادي من بيانات تُدخل يدوياً على بطاقة كل خامة — ليس تحليلاً مختبرياً</span>
+      </div>
+    )}
     <div className="rounded-xl border p-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={strictBalance} onChange={(e)=>setStrictBalance(e.target.checked)}/> مطابقة صارمة: الداخل = الخارج</label><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={allowNegativeIngredients} onChange={(e)=>{setAllowNegativeIngredients(e.target.checked);localStorage.setItem('shopsys:manufacturing:allow-negative-stock',String(e.target.checked))}}/> السماح بصرف خامات برصيد سالب</label>{!strictBalance&&Math.abs(variance)>0.0001&&<>
       <QuickSelect className={`${inputCls} flex-1 min-w-[220px]`} value={varianceReasonCode} onChange={(e)=>setVarianceReasonCode(e.target.value)} title="سبب فرق الوزن/الهالك — مصنَّف ليُجمَّع لاحقاً في تقرير الفرق حسب الفترة والمنتج">
         <option value="">— اختر سبب فرق الوزن/الهالك (إجباري) —</option>
