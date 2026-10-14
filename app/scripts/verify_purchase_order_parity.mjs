@@ -83,6 +83,8 @@ const INVOICE_ONLY = {
   /* بحث السطور: الأمر يعرض الوسم كاملاً لأن أول سطر هو سطر الإدخال */
   className: 'تنسيق خارجي', onClick: 'مُعالج نقر خارجي', onClickCapture: 'مُعالج نقر خارجي',
   itemMetaJoined: 'وسيط داخلي', categoriesJoined: 'وسيط داخلي',
+  /* استلام فعلي: لا معنى له قبل وصول البضاعة — الأمر خطة شراء لم تُستلم بعد */
+  showReceivingTracking: 'فرق وزن الاستلام ونسبة الرطوبة — لا بضاعة استُلمت فعلياً في أمر الشراء ليُقارَن وزنها',
 }
 
 function compare(label, component, extraAllowed = []) {
