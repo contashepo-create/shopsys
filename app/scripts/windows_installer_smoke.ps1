@@ -30,10 +30,17 @@ function Stop-App-Gracefully {
   if (-not $closed) { throw 'Installed application did not expose a real window to close' }
   Wait-Until 'application flush/backup/exit' { (App-Processes).Count -eq 0 } 45
 }
-function Run-Installer([string[]]$arguments) {
+function Run-Installer([string[]]$arguments, [bool]$launchManually = $false) {
+  Write-Output "::notice title=Native NSIS stage::Installer arguments: $($arguments -join ' ')"
   $p = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru
-  if (-not $p.WaitForExit(180000)) { throw 'NSIS installer hung' }
+  $script:installerProcesses += $p
+  if (-not $p.WaitForExit(180000)) {
+    $command = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)").CommandLine
+    $title = (Get-Process -Id $p.Id -ErrorAction SilentlyContinue).MainWindowTitle
+    throw "NSIS installer hung; command=$command; window=$title; installed=$(Test-Path $exe); ready=$(Test-Path $ready); appProcesses=$((App-Processes).Count)"
+  }
   if ($p.ExitCode -ne 0) { throw "NSIS exit code $($p.ExitCode)" }
+  if ($launchManually) { Start-Process $exe }
   Wait-Until 'installed application forced restart' { (Test-Path $ready) -and (App-Processes).Count -gt 0 }
 }
 function Run-Probe($mode, $file) {
@@ -47,8 +54,10 @@ function Run-Probe($mode, $file) {
   $result = Get-Content $out -Raw | ConvertFrom-Json
   if ($p.ExitCode -ne 0 -or -not $result.ok) { throw "Database probe failed: $($result.error)" }
 }
+$script:installerProcesses = @()
 try {
-  Run-Installer @('/S', '--force-run', "/D=$install")
+  # التثبيت الأول ليس تحديثاً: اعزل إنهاء المثبت عن بدء التطبيق يدوياً.
+  Run-Installer -arguments @('/S', '/currentuser', "/D=$install") -launchManually $true
   Stop-App-Gracefully
   $key = Join-Path $ud 'device.key.enc'
   $keyHash = (Get-FileHash $key -Algorithm SHA256).Hash
@@ -68,7 +77,7 @@ try {
   $marker = Join-Path $install 'old-installation-marker.txt'
   Set-Content $marker 'must be removed by actual NSIS update'
   Remove-Item $ready
-  Run-Installer @('/S', '--updated', '--force-run', "/D=$install")
+  Run-Installer -arguments @('/S', '--updated', '--force-run', "/D=$install")
   Stop-App-Gracefully
   if (Test-Path $marker) { throw 'NSIS did not replace the old installation tree' }
   if (Test-Path $unsafeDb) { throw 'Old unsafe database unexpectedly survived installation removal' }
@@ -84,5 +93,6 @@ try {
   throw
 } finally {
   # Cleanup applies only to processes at the isolated fixture installation path.
+  foreach ($p in $script:installerProcesses) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
   App-Processes | Stop-Process -Force -ErrorAction SilentlyContinue
 }

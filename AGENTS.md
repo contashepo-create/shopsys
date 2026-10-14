@@ -7082,3 +7082,11 @@ bytenode 1.7.0 CommonJS يصدّر module.exports=global.bytenode؛ dynamic impo
 يعطي default فقط (ثبت محلياً)، لا named compileFile. أصلح البناء إلى
 `default: bytenode` ثم `bytenode.compileFile` وأضيف اختبار subprocess لنفس
 استيراد ESM. هذه ثغرة في اختبار البناء القديم: كانت مخفية بتخطي الفرع دائماً.
+
+**CI الخامسة `38643246293` على `720d98a`:** Ubuntu وWindows safety ناجحان؛
+NSIS مع bytecode الحقيقي والبصمات نجح في البناء. وصل smoke لتشغيل NSIS لكنه
+انتهى بمهلة `NSIS installer hung` في التثبيت الأول. أُفصل أول تثبيت صامت
+/currentuser عن تشغيل التطبيق يدوياً؛ خطوة إعادة التثبيت --updated --force-run
+تظل تختبر إعادة التشغيل فعلاً. أُضيفت مرحلة/command line/window title وحالة
+الملفات للمهلة لتحديد تعثر fixture أو التطبيق دون ادعاء نجاح أو إخفاء الفشل.
+الفحوص المحلية الكاملة الأخيرة: **163 ملفاً / 1111 اختباراً ناجحاً**.
