@@ -219,11 +219,37 @@ export function normalizePartNumber(raw: string): string {
   return raw.replace(/[\s\-_./]/g, '').toUpperCase()
 }
 
+/**
+ * هل تقع سنة داخل أي نطاق سنوات مكتوب نصاً في هذا الجزء من التوافق؟
+ * (سد فجوة فورية #4 — النشاط #7: قطع غيار) — "2013-2017" يطابق فعلياً
+ * أي سنة مفردة بينهما (مثال: 2015) لا التضمين الحرفي فقط.
+ */
+function yearInAnyWrittenRange(segment: string, year: number): boolean {
+  for (const m of segment.matchAll(/(19|20)\d{2}\s*-\s*(19|20)\d{2}/g)) {
+    const [start, end] = m[0].split('-').map((x) => Number(x.trim()))
+    if (year >= Math.min(start, end) && year <= Math.max(start, end)) return true
+  }
+  return false
+}
+
 export function itemMatchesPartQuery(it: Item, rawQuery: string): boolean {
   const q = rawQuery.trim()
   if (!q) return false
   if (it.nameAr.includes(q) || it.sku === q || it.barcodes.includes(q)) return true
-  if (it.fitment && it.fitment.includes(q)) return true
+  if (it.fitment) {
+    if (it.fitment.includes(q)) return true
+    // سد فجوة فورية #4: استعلام يحوي سنة مفردة (موديل + سنة، أو سنة فقط) يُطابق
+    // أي جزء توافق يذكر اسم الموديل (إن وُجد بالاستعلام) ونطاق سنوات يشملها
+    const yearMatch = q.match(/\b(19|20)\d{2}\b/)
+    if (yearMatch) {
+      const year = Number(yearMatch[0])
+      const remainder = q.replace(yearMatch[0], '').trim()
+      for (const segment of it.fitment.split(/[،,;]/)) {
+        if (remainder && !segment.includes(remainder)) continue
+        if (yearInAnyWrittenRange(segment, year)) return true
+      }
+    }
+  }
   const nq = normalizePartNumber(q)
   if (nq.length < 3) return false
   return (it.oemNumbers ?? []).some((n) => normalizePartNumber(n).includes(nq))

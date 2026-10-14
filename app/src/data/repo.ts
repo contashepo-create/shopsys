@@ -130,6 +130,7 @@ import {
   type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderStatus,
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
+import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
 
 export interface Warehouse {
   id: number
@@ -1547,6 +1548,14 @@ interface DataState {
   /** تسجيل ما استُلم من أمر شراء عند تعبئة فاتورة منه */
   receivePurchaseOrder: (id: number, received: { itemId: number; qty: number }[], invoiceId?: number) => void
   deletePurchaseOrder: (id: number) => void
+  /** طلبات العملاء المعلّقة (سد فجوة فورية #2 — النشاط #7: قطع غيار) */
+  pendingPartOrders: PendingPartOrder[]
+  addPendingPartOrder: (input: {
+    itemId: number; itemNameAr: string; customerId: number | null; customerName: string; customerPhone: string
+    qty: number; orderedAt: string; linkedPurchaseOrderId?: number | null; notes?: string
+  }) => PendingPartOrder
+  setPendingPartOrderStatus: (id: number, status: PendingPartOrderStatus) => void
+  deletePendingPartOrder: (id: number) => void
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
   retentionReleases: RetentionRelease[]
@@ -3748,8 +3757,9 @@ export const useDataStore = create<DataState>()(
         }
         return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status } : o)) }
       }),
-      receivePurchaseOrder: (id, received, invoiceId) => set((state) => ({
-        purchaseOrders: state.purchaseOrders.map((order) => {
+      receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
+        let justClosed = false
+        const purchaseOrders = state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
           // إصلاح (مراجعة المالك 2026-10-01): المستلم يُجمَّع لكل صنف أولاً — سطور
           // فاتورة متعددة لنفس الصنف كانت تُحتسب أولاها فقط — ثم يوزَّع متدرجاً على
@@ -3772,10 +3782,60 @@ export const useDataStore = create<DataState>()(
             lines,
             invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
           }
-          return { ...next, status: derivePurchaseOrderStatus(next) }
-        }),
-      })),
+          const updated = { ...next, status: derivePurchaseOrderStatus(next) }
+          if (updated.status === 'closed' && order.status !== 'closed') justClosed = true
+          return updated
+        })
+        // سد فجوة فورية #2 (النشاط #7: قطع غيار) — اكتمال استلام الأمر يُحوّل
+        // تلقائياً أي طلب عميل معلّق مرتبط به من «بانتظار الوصول» إلى «وصلت»،
+        // فيظهر كتنبيه جاهز للتسليم في مركز التنبيهات دون متابعة يدوية.
+        const pendingPartOrders = justClosed
+          ? state.pendingPartOrders.map((po) => (
+              po.linkedPurchaseOrderId === id && po.status === 'pending'
+                ? { ...po, status: 'arrived' as const, arrivedAt: new Date().toISOString() }
+                : po
+            ))
+          : state.pendingPartOrders
+        return { purchaseOrders, pendingPartOrders }
+      }),
       deletePurchaseOrder: (id) => set((state) => ({ purchaseOrders: state.purchaseOrders.filter((order) => order.id !== id) })),
+      pendingPartOrders: [],
+      addPendingPartOrder: (input) => {
+        const state = get()
+        if (!input.itemId) throw new Error('اختر الصنف المطلوب')
+        if (!(input.qty > 0)) throw new Error('الكمية يجب أن تكون أكبر من صفر')
+        if (!input.customerName.trim()) throw new Error('اسم العميل مطلوب')
+        const id = nextId(state.pendingPartOrders)
+        const order: PendingPartOrder = {
+          id,
+          orderNumber: `CPO-${String(id).padStart(4, '0')}`,
+          itemId: input.itemId,
+          itemNameAr: input.itemNameAr.trim() || (state.items.find((it) => it.id === input.itemId)?.nameAr ?? ''),
+          customerId: input.customerId ?? null,
+          customerName: input.customerName.trim(),
+          customerPhone: input.customerPhone.trim(),
+          qty: input.qty,
+          orderedAt: input.orderedAt || new Date().toISOString(),
+          status: 'pending',
+          linkedPurchaseOrderId: input.linkedPurchaseOrderId ?? null,
+          arrivedAt: null,
+          deliveredAt: null,
+          notes: input.notes?.trim() ?? '',
+        }
+        set({ pendingPartOrders: [...state.pendingPartOrders, order] })
+        return order
+      },
+      setPendingPartOrderStatus: (id, status) => set((state) => {
+        const order = state.pendingPartOrders.find((o) => o.id === id)
+        if (!order) throw new Error('الطلب غير موجود')
+        const now = new Date().toISOString()
+        return {
+          pendingPartOrders: state.pendingPartOrders.map((o) => (o.id === id
+            ? { ...o, status, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
+            : o)),
+        }
+      }),
+      deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
       projectExtracts: [],
       projectCosts: [],
       retentionReleases: [],

@@ -22,7 +22,7 @@ import { UsersRound } from 'lucide-react'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, bookings, variantStocks } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, bookings, variantStocks, pendingPartOrders } = useDataStore()
   /* جسور الحضور (جولة «اكمل ونفذ»): حضور اليوم وأسماء الغائبين بلا إجازة */
   const { employees, attendanceRecords, leaveRequests, employeeShifts, hrRules } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -144,10 +144,11 @@ export function Dashboard() {
       pendingLeaveRequests: pendingLeaveCount,
       absentToday: attendanceToday.absentNames,
       longUndistributedVariants: undistributedVariantRows.map((r) => ({ itemName: r.itemName, undistributedQty: r.undistributedQty, daysSincePurchase: r.daysSincePurchase })),
+      arrivedPartOrders: pendingPartOrders.filter((o) => o.status === 'arrived').map((o) => ({ customerName: o.customerName, itemNameAr: o.itemNameAr, orderNumber: o.orderNumber })),
     })
     // fmt يتغير فقط بتغير عملة الدولة — نمثلها بـ setup.countryCode بدل الدالة المتجددة كل رندر
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode, pendingLeaveCount, attendanceToday, undistributedVariantRows])
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode, pendingLeaveCount, attendanceToday, undistributedVariantRows, pendingPartOrders])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,

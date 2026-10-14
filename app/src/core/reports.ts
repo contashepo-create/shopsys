@@ -7,6 +7,7 @@
  */
 import type { Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
+import type { Item } from './items.ts'
 
 /* ─── أنواع مدخلات عامة (بنى فرعية من مستندات repo — لا استيراد دائري) ─── */
 
@@ -126,7 +127,7 @@ export interface TopItemRow {
  * التجميع المشترك: إيراد/تكلفة/ربح كل الأصناف (بلا حد أقصى) — يُبنى عليه
  * كل من topItems (أعلى N) وabcAnalysis (يحتاج كل الأصناف لحساب النسبة التراكمية).
  */
-function allItemRevenueRows(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period): TopItemRow[] {
+export function allItemRevenueRows(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period): TopItemRow[] {
   const map = new Map<number, TopItemRow>()
   const acc = (doc: { lines: CartLine[]; totals: CartTotals }, sign: 1 | -1) => {
     const lineNets = doc.lines.map((l) => Math.round(Math.round(l.unitPriceMinor * l.qty) * (1 - l.discountPercent / 100)))
@@ -186,6 +187,44 @@ export function abcAnalysis(sales: SaleDoc[], returns: SaleReturnDoc[], p: Perio
       cumulativeSharePercent: Math.round((cum / total) * 10000) / 100,
     }
   })
+}
+
+/* ─── تقرير الربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار) ───
+   حقل `Item.grade` (أصلي/بديل تجاري/مستعمل) مُدخَل ومعروض فعلاً لكن لم يكن
+   مُستثمَراً في أي تقرير يفصل الهامش بينها — الهدف المعلَن صراحة في دليل
+   التشغيل الداخلي من إضافة الحقل أصلاً: "حتى لا تختلط الأسعار والهوامش". */
+
+export interface GradeProfitRow {
+  grade: NonNullable<Item['grade']> | 'unspecified'
+  qty: number
+  revenueMinor: Minor
+  cogsMinor: Minor
+  profitMinor: Minor
+  /** هامش الربح = الربح / الإيراد × 100 — صفر إن لم يوجد إيراد لهذه الدرجة */
+  marginPercent: number
+}
+
+/** يجمّع ربح/إيراد المبيعات (بعد خصم المرتجعات) لكل درجة قطعة خلال فترة */
+export function gradeProfitReport(
+  sales: SaleDoc[],
+  returns: SaleReturnDoc[],
+  items: readonly Pick<Item, 'id' | 'grade'>[],
+  p: Period,
+): GradeProfitRow[] {
+  const gradeByItem = new Map(items.map((it) => [it.id, it.grade ?? 'unspecified']))
+  const byGrade = new Map<string, GradeProfitRow>()
+  for (const r of allItemRevenueRows(sales, returns, p)) {
+    const grade = gradeByItem.get(r.itemId) ?? 'unspecified'
+    const bucket = byGrade.get(grade) ?? { grade: grade as GradeProfitRow['grade'], qty: 0, revenueMinor: 0, cogsMinor: 0, profitMinor: 0, marginPercent: 0 }
+    bucket.qty = Math.round((bucket.qty + r.qty) * 1000) / 1000
+    bucket.revenueMinor += r.revenueMinor
+    bucket.cogsMinor += r.cogsMinor
+    bucket.profitMinor += r.profitMinor
+    byGrade.set(grade, bucket)
+  }
+  return [...byGrade.values()]
+    .map((b) => ({ ...b, marginPercent: b.revenueMinor > 0 ? Math.round((b.profitMinor / b.revenueMinor) * 1000) / 10 : 0 }))
+    .sort((a, b) => b.revenueMinor - a.revenueMinor)
 }
 
 /* ─── 2.5) الأصناف الراكدة (سد فجوة DEXEF/برامج السوق السعودي: «تقرير الراكد») ─── */

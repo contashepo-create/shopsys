@@ -12,8 +12,11 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
   salesSummary, topItems, dailySales, stagnantItems, stagnantVariants, sizeCurveAnalysis, activityRevenueRows,
-  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, demandForecast, type Period,
+  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, demandForecast, gradeProfitReport, type Period,
 } from '../../core/reports.ts'
+import { GRADE_LABELS } from '../../core/items.ts'
+import { PENDING_PART_ORDER_STATUS_AR, buildPartArrivedMessage } from '../../core/partOrders.ts'
+import { waChatLink } from '../../core/whatsapp.ts'
 import { returnReasonName } from '../../core/returns.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
@@ -53,7 +56,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders, variantStocks, deliveryJobs, scheduleDelivery, setDeliveryStatus, serials, tickets } = useDataStore()
+  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders, variantStocks, deliveryJobs, scheduleDelivery, setDeliveryStatus, serials, tickets, pendingPartOrders, addPendingPartOrder, setPendingPartOrderStatus, deletePendingPartOrder, purchaseOrders } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -81,8 +84,22 @@ export function ReportsPage() {
   const summary = useMemo(() => salesSummary(sales, saleReturns, period), [sales, saleReturns, period])
   const daily = useMemo(() => dailySales(sales, period), [sales, period])
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
-  // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع 30+ يوماً = رأس مال محبوس
-  const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
+  // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع — عتبة قابلة للتعديل (سد فجوة
+  // فورية #1 — النشاط #7: قطع غيار): الدالة كانت تقبل عتبة فعلياً لكن الواجهة
+  // تستدعيها بقيمة ثابتة 30 دائماً؛ الافتراضي يختلف حسب طبيعة النشاط (قطع
+  // الغيار: ركودها الطبيعي أطول بكثير من بقالة سريعة الدوران فتوصية الدليل
+  // الداخلي لها تحديداً 6 أشهر لا شهر واحد).
+  const defaultStagnantDays = setup.activityId === 'spare_parts' ? 180 : 30
+  const [stagnantThresholdDays, setStagnantThresholdDays] = useState(defaultStagnantDays)
+  const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), stagnantThresholdDays), [items, sales, stagnantThresholdDays])
+
+  /**
+   * تقرير الربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار):
+   * يفصل الهامش بين الأصلي/البديل التجاري/المستعمل — الهدف المعلَن من حقل
+   * `grade` أصلاً. يظهر فقط حين توجد أصناف عليها درجة مسجَّلة فعلياً.
+   */
+  const gradeProfit = useMemo(() => gradeProfitReport(sales, saleReturns, items, period), [sales, saleReturns, items, period])
+  const hasGradedItems = useMemo(() => items.some((it) => it.grade), [items])
   // ركود التركيبات لون×مقاس (فجوة فورية ③ — نشاط الملابس): مكمِّل لتقرير ركود الصنف أعلاه
   const stagnantVariantRows = useMemo(
     () => (variantStocks.length ? stagnantVariants(items, variantStocks, sales, new Date().toISOString(), 30) : []),
@@ -240,6 +257,42 @@ export function ReportsPage() {
     [serials, tickets],
   )
   const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`
+
+  /**
+   * طلبات العملاء المعلّقة (سد فجوة فورية #2 — النشاط #7: قطع غيار):
+   * طلب خاص لقطعة غير متوفرة بالمخزون — أول مهمة يومية بدليل تشغيل محلات
+   * قطع الغيار. تتحول تلقائياً إلى «وصلت» عند اكتمال استلام أمر الشراء
+   * المرتبط (إن وُجد)، وتظهر عندها كتنبيه في لوحة التحكم.
+   */
+  const [newPartOrderItemId, setNewPartOrderItemId] = useState('')
+  const [newPartOrderCustomerId, setNewPartOrderCustomerId] = useState('')
+  const [newPartOrderCustomerName, setNewPartOrderCustomerName] = useState('')
+  const [newPartOrderCustomerPhone, setNewPartOrderCustomerPhone] = useState('')
+  const [newPartOrderQty, setNewPartOrderQty] = useState('1')
+  const [newPartOrderPoId, setNewPartOrderPoId] = useState('')
+  const sortedPartOrders = useMemo(
+    () => [...pendingPartOrders].sort((a, b) => (a.status === b.status ? b.orderedAt.localeCompare(a.orderedAt) : a.status === 'pending' ? -1 : b.status === 'pending' ? 1 : a.status === 'arrived' ? -1 : 1)),
+    [pendingPartOrders],
+  )
+  const openPurchaseOrders = useMemo(() => purchaseOrders.filter((o) => o.status !== 'closed' && o.status !== 'cancelled'), [purchaseOrders])
+  const submitPartOrder = () => {
+    const itemId = Number(newPartOrderItemId)
+    if (!itemId) { toast.show('اختر الصنف المطلوب', 'error'); return }
+    try {
+      addPendingPartOrder({
+        itemId,
+        itemNameAr: itemName(itemId),
+        customerId: newPartOrderCustomerId ? Number(newPartOrderCustomerId) : null,
+        customerName: newPartOrderCustomerId ? custName(Number(newPartOrderCustomerId)) : newPartOrderCustomerName,
+        customerPhone: newPartOrderCustomerPhone,
+        qty: Number(newPartOrderQty) || 1,
+        orderedAt: new Date().toISOString(),
+        linkedPurchaseOrderId: newPartOrderPoId ? Number(newPartOrderPoId) : null,
+      })
+      setNewPartOrderItemId(''); setNewPartOrderCustomerId(''); setNewPartOrderCustomerName(''); setNewPartOrderCustomerPhone(''); setNewPartOrderQty('1'); setNewPartOrderPoId('')
+      toast.show('سُجِّل طلب العميل ✓')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   /* ─── تقارير المصروفات (طلب المالك): مجمّع + تفصيلي بفلترة محترفة ─── */
   const customExpenseCodes = useMemo(() => new Set(customAccounts.filter((a) => a.rootType === 'expenses').map((a) => a.code)), [customAccounts])
@@ -657,6 +710,92 @@ export function ReportsPage() {
         </div>
       )}
 
+      {tab === 'sales' && (
+        <div className={`anim-up ${card} overflow-hidden`}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            📦 طلبات العملاء المعلّقة <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (قطع غيار): طلب خاص لقطعة غير متوفرة، يُربط اختيارياً بأمر شراء فيتحول تلقائياً إلى «وصلت» عند اكتمال استلامه</span>
+          </div>
+          <div className="p-4 grid md:grid-cols-6 gap-2 items-end border-b border-slate-100 dark:border-slate-800">
+            <div className="md:col-span-2">
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">الصنف</label>
+              <select value={newPartOrderItemId} onChange={(e) => setNewPartOrderItemId(e.target.value)} className={inputCls}>
+                <option value="">اختر الصنف…</option>
+                {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">عميل مسجّل (اختياري)</label>
+              <select value={newPartOrderCustomerId} onChange={(e) => setNewPartOrderCustomerId(e.target.value)} className={inputCls}>
+                <option value="">— بلا —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+              </select>
+            </div>
+            {!newPartOrderCustomerId && (
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 block mb-1">اسم العميل</label>
+                <input value={newPartOrderCustomerName} onChange={(e) => setNewPartOrderCustomerName(e.target.value)} className={inputCls} />
+              </div>
+            )}
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">جوال العميل (لواتساب)</label>
+              <input value={newPartOrderCustomerPhone} onChange={(e) => setNewPartOrderCustomerPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01x…" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">الكمية</label>
+              <input type="number" min={1} value={newPartOrderQty} onChange={(e) => setNewPartOrderQty(e.target.value)} className={inputCls} dir="ltr" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">أمر شراء مرتبط (اختياري)</label>
+              <select value={newPartOrderPoId} onChange={(e) => setNewPartOrderPoId(e.target.value)} className={inputCls}>
+                <option value="">— بلا —</option>
+                {openPurchaseOrders.map((o) => <option key={o.id} value={o.id}>{o.orderNumber} — {o.supplierName}</option>)}
+              </select>
+            </div>
+            <button type="button" onClick={submitPartOrder} className="px-4 py-2 rounded-xl bg-sky-600 text-white text-[12.5px] font-bold hover:bg-sky-700 md:col-span-6 w-fit justify-self-start">+ تسجيل طلب عميل</button>
+          </div>
+          {sortedPartOrders.length === 0 ? (
+            <div className="text-center text-slate-400 text-[12px] py-6">لا طلبات عملاء معلّقة مسجّلة</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الأمر</th>
+                  <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                  <th className="px-4 py-2 text-right font-bold">العميل</th>
+                  <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                  <th className="px-4 py-2 text-right font-bold">الحالة</th>
+                  <th className="px-4 py-2 text-left font-bold">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedPartOrders.map((o) => (
+                  <tr key={o.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200" dir="ltr">{o.orderNumber}</td>
+                    <td className="px-4 py-2">{o.itemNameAr}</td>
+                    <td className="px-4 py-2">{o.customerName}</td>
+                    <td className="px-4 py-2">{o.qty}</td>
+                    <td className="px-4 py-2">
+                      <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${o.status === 'pending' ? 'bg-amber-500/10 text-amber-600' : o.status === 'arrived' ? 'bg-sky-500/10 text-sky-600' : o.status === 'delivered' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-500'}`}>
+                        {PENDING_PART_ORDER_STATUS_AR[o.status]}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-left whitespace-nowrap">
+                      {o.status === 'pending' && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'arrived')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 ml-1">وصلت</button>}
+                      {o.status === 'arrived' && o.customerPhone && (
+                        <a href={waChatLink(o.customerPhone, buildPartArrivedMessage(o, setup.shopName || ''))} target="_blank" rel="noreferrer" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1">📲 إخطار واتساب</a>
+                      )}
+                      {o.status === 'arrived' && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'delivered')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1">تم التسليم</button>}
+                      {(o.status === 'pending' || o.status === 'arrived') && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'cancelled')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 ml-1">إلغاء</button>}
+                      <button type="button" onClick={() => deletePendingPartOrder(o.id)} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 hover:bg-slate-500/20">حذف</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {tab === 'items' && (
         <div className="anim-up space-y-4">
         <div className={`${card} overflow-hidden`}>
@@ -734,6 +873,36 @@ export function ReportsPage() {
               </div>
             </div>
           )}
+          {/* ربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار) */}
+          {hasGradedItems && gradeProfit.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300">⚙️ الربح حسب درجة القطعة (أصلي/بديل تجاري/مستعمل)</div>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-2 text-right font-bold">الدرجة</th>
+                    <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                    <th className="px-4 py-2 text-right font-bold">الإيراد</th>
+                    <th className="px-4 py-2 text-right font-bold">الربح</th>
+                    <th className="px-4 py-2 text-right font-bold">هامش الربح</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gradeProfit.map((r) => (
+                    <tr key={r.grade} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">
+                        {r.grade === 'unspecified' ? '— غير محددة' : `${GRADE_LABELS[r.grade].icon} ${GRADE_LABELS[r.grade].nameAr}`}
+                      </td>
+                      <td className="px-4 py-2">{r.qty}</td>
+                      <td className="px-4 py-2 font-bold">{fmt(r.revenueMinor)}</td>
+                      <td className={`px-4 py-2 font-black ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(r.profitMinor)}</td>
+                      <td className={`px-4 py-2 font-bold ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{r.marginPercent}٪</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {/* توقع طلب إحصائي (سد فجوة مستقبلية: تنبؤ ذكاء اصطناعي — نسخة إحصائية محلية، ليست تعلّماً آلياً حقيقياً) */}
           {forecastRows.length > 0 && (
             <div className="border-t border-slate-100 dark:border-slate-800">
@@ -767,8 +936,19 @@ export function ReportsPage() {
           )}
           {/* الراكد — نمط DEXEF «تقرير الراكد وحد الطلب»: رأس المال المحبوس أولاً */}
           <div className="border-t border-slate-100 dark:border-slate-800">
-            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between">
-              <span>🐢 الأصناف الراكدة (لم تُبع منذ 30+ يوماً وعليها مخزون)</span>
+            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                🐢 الأصناف الراكدة (لم تُبع منذ {stagnantThresholdDays}+ يوماً وعليها مخزون)
+                <span className="flex items-center gap-1 font-normal">
+                  <label className="text-[10px] text-slate-400">عتبة الركود (أيام):</label>
+                  <input
+                    type="number" min={1} value={stagnantThresholdDays}
+                    onChange={(e) => setStagnantThresholdDays(Math.max(1, Number(e.target.value) || defaultStagnantDays))}
+                    className="w-16 h-6 text-center text-[11px] rounded-md border border-slate-200 dark:border-slate-700 bg-transparent outline-none"
+                    dir="ltr"
+                  />
+                </span>
+              </span>
               {stagnant.length > 0 && <span className="text-rose-500">رأس مال محبوس: {fmt(stagnant.reduce((a, r) => a + r.stockValueMinor, 0))} {cur.symbol}</span>}
             </div>
             {stagnant.length === 0 ? (
