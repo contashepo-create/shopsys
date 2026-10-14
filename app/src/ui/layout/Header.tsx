@@ -16,6 +16,7 @@ import { collectNotifications, visibleNotifications } from '../../core/notificat
 import { renewalReminder, reminderAsNotification } from '../../core/subscriptionReminder.ts'
 import { NOTICE_LEVEL_ICONS, noticeSeverity, shouldAnnounceToast } from '../../core/devNotice.ts'
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { serviceStatus, equipmentComplianceWarnings } from '../../core/rentalMeter.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
@@ -37,7 +38,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases, shifts } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -94,6 +95,13 @@ export function Header({ title }: { title: string }) {
       overdueRentals: rentalContracts
         .filter((c) => isRentalOverdue(c, new Date().toISOString()))
         .map((c) => ({ id: c.id, contractNumber: c.contractNumber, equipmentName: c.equipmentName, expectedEnd: rentalExpectedEnd(c.date, c.days, c.rateType ?? 'daily') })),
+      // معدات تجاوزت صيانتها الوقائية (سد فجوة تقرير النشاط #8 — Immediate #1): نفس تصميم overdueRentals، الحساب جاهز بالفعل في serviceStatus
+      overdueMaintenanceEquipment: equipment
+        .map((e) => ({ e, svc: serviceStatus(e.lastServiceReading, e.serviceEveryHours, e.meterReading) }))
+        .filter((x) => x.svc?.overdue)
+        .map((x) => ({ id: x.e.id, nameAr: x.e.nameAr, overdueHours: Math.abs(x.svc!.remainingHours) })),
+      // امتثال معدات: تأمين/فحص دوري يقترب أو انتهى (سد فجوة تقرير النشاط #8 — Future #3)
+      complianceDueEquipment: equipmentComplianceWarnings(equipment, new Date().toISOString(), 30),
       overduePromises: [
         ...tickets
           .filter((t) => (t.status === 'received' || t.status === 'in_progress' || t.status === 'ready') && t.promisedAt && t.promisedAt < new Date().toISOString())
@@ -119,7 +127,7 @@ export function Header({ title }: { title: string }) {
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases, activatedPayload],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

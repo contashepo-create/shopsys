@@ -32,6 +32,10 @@ export interface NotificationsInput {
   cheques: { chequeNumber: string; direction: string; partyName: string; amountMinor: number; dueDate: string; status: string }[]
   /** عقود إيجار متجاوزة موعد الإرجاع (نمط Point of Rental: overdue return alerts) */
   overdueRentals?: { id: number; contractNumber: string; equipmentName: string; expectedEnd: string }[]
+  /** معدات تجاوزت صيانتها الوقائية (serviceStatus) — سد فجوة تقرير النشاط #8 Immediate #1 */
+  overdueMaintenanceEquipment?: { id: number; nameAr: string; overdueHours: number }[]
+  /** معدات اقترب/انتهى تأمينها أو فحصها الدوري — سد فجوة تقرير النشاط #8 Future #3 */
+  complianceDueEquipment?: { equipmentId: number; equipmentName: string; kind: 'insurance' | 'inspection'; dueDate: string; daysLeft: number }[]
   /** تذاكر صيانة/أوامر غسيل متجاوزة موعد التسليم الموعود */
   overduePromises?: { id: number; docNumber: string; what: string; kind: 'maintenance' | 'laundry'; promisedAt: string }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
@@ -98,6 +102,35 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       severity: 'danger',
       route: '/rental/contracts',
       perm: 'ops.activity.use', // وحدات النشاط التشغيلية
+    })
+  }
+
+  // 1.61) معدات تجاوزت موعد صيانتها الوقائية (سد فجوة تقرير النشاط #8 — Immediate #1)
+  for (const e of input.overdueMaintenanceEquipment ?? []) {
+    out.push({
+      id: `eqsvc:${e.id}`,
+      icon: '🔧',
+      title: `صيانة متأخرة: ${e.nameAr}`,
+      body: `تجاوزت ${e.overdueHours} ساعة عن موعد الصيانة الوقائية — سجّل الخدمة أو أجّل الخطة`,
+      severity: 'danger',
+      route: '/rental/equipment',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.62) امتثال معدات: تأمين/فحص دوري يقترب أو انتهى (سد فجوة تقرير النشاط #8 — Future #3)
+  for (const c of input.complianceDueEquipment ?? []) {
+    const what = c.kind === 'insurance' ? 'تأمين' : 'فحص دوري'
+    out.push({
+      id: `eqcompl:${c.kind}:${c.equipmentId}`,
+      icon: '📋',
+      title: c.daysLeft < 0 ? `${what} منتهٍ: ${c.equipmentName}` : `${what} يقترب: ${c.equipmentName}`,
+      body: c.daysLeft < 0
+        ? `انتهى ${what} منذ ${-c.daysLeft} يوماً (${c.dueDate}) — جدّده قبل أي عقد جديد`
+        : `${what} ينتهي خلال ${c.daysLeft} يوماً (${c.dueDate})`,
+      severity: c.daysLeft < 0 ? 'danger' : 'warn',
+      route: '/rental/equipment',
+      perm: 'ops.activity.use',
     })
   }
 

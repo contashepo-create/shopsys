@@ -298,6 +298,9 @@ export interface Equipment {
   /** قراءة العدّاد عند آخر خدمة */
   lastServiceReading: number
   notes: string
+  /** سجل امتثال بسيط (سد فجوة تقرير النشاط #8 — Future #3): لا تكامل GPS/RFID، مجرد تاريخين يُنبَّه قبل اقترابهما */
+  insuranceExpiryDate?: string | null
+  nextInspectionDate?: string | null
 }
 
 /** مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) — يقيد 5105/خزينة ويغذي ربحية المعدة */
@@ -310,6 +313,25 @@ export interface EquipmentCost {
   description: string
   treasury: string
   journalEntryId: number
+  /** ربط اختياري بقطعة غيار من equipmentParts (سد فجوة تقرير النشاط #8 — Future #1): يخصم رصيدها تلقائياً بدل وصف نصي حر فقط */
+  partId?: number | null
+  partQty?: number
+}
+
+/**
+ * قطعة غيار/مستهلك مبسَّط خاص بالمعدات (سد فجوة تقرير النشاط #8 — Future #1):
+ * ليس وحدة مخزون كاملة (pos/inventory/purchases غير مفعَّلة أصلاً لهذا
+ * النشاط) بل عداد رصيد بسيط يُخصَم تلقائياً عند تسجيل مصروف صيانة/إصلاح
+ * مرتبط بقطعة — يفي بوعد الوصف الرسمي «قطع غيار ومستهلكات في المخزن» دون
+ * تكلفة تفعيل وحدة كاملة لنشاط لا يبيع منتجات.
+ */
+export interface EquipmentPart {
+  id: number
+  nameAr: string
+  qty: number
+  unitCostMinor: number
+  minQty: number
+  notes: string
 }
 
 /** عقد إيجار معدة — مربوط بقيد الفتح، وقيد الإقفال عند ردّ التأمين */
@@ -343,6 +365,13 @@ export interface RentalContract {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
+  /** توثيق حالة المعدة عند التسليم/الاستلام بتوقيع رقمي + ملاحظة حرة (سد فجوة تقرير النشاط #8 — Immediate #4) */
+  deliveryConditionNote?: string
+  returnConditionNote?: string
+  deliverySignatureDataUrl?: string | null
+  returnSignatureDataUrl?: string | null
+  /** موقع المعدة الحالي (اسم عميل/موقع مشروع) — بلا GPS/RFID (سد فجوة تقرير النشاط #8 — Future #2) */
+  siteName?: string
 }
 
 /* ─── معامل التحاليل (القرار 26) ─── */
@@ -1667,6 +1696,7 @@ interface DataState {
   scrapLots: ScrapLot[] // دفعات الكسر المشتراة (FIFO)
   scrapSales: ScrapSale[] // مبيعات الكسر
   equipmentCosts: EquipmentCost[] // مصاريف تشغيل المعدات (وقود/صيانة/إصلاح)
+  equipmentParts: EquipmentPart[] // قطع غيار/مستهلكات معدات مبسَّطة (سد فجوة تقرير النشاط #8)
   priceLists: PriceList[] // قوائم الأسعار (جملة/نصف جملة/VIP)
   priceListEntries: PriceListEntry[] // أسعار خاصة لكل صنف داخل قائمة
   priceListCategoryRules: PriceListCategoryRule[] // خصم لكل فئة داخل القائمة (قرار المالك ⑩ي)
@@ -2401,21 +2431,30 @@ interface DataState {
     /** تجاوز حد ائتمان العميل بموافقة مدير */
     creditLimitOverrideBy?: string | null
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+    /** ملاحظة حالة المعدة عند التسليم + موقعها الحالي (سد فجوة تقرير النشاط #8 — Immediate #4 / Future #2) */
+    deliveryConditionNote?: string
+    siteName?: string
   }) => RentalContract
   /**
    * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
    * ترقية القرار 25: قراءة عدّاد الإرجاع (ساعي) أو تاريخ الإرجاع (يومي/شهري)
    * ⇒ تسوية تجاوز الاستخدام بقيد منفصل، وتقدُّم عدّاد المعدة.
    */
-  closeRental: (contractId: number, deductMinor: number, usage?: { endReading?: number; endDate?: string }, treasury?: string) => RentalContract
+  closeRental: (contractId: number, deductMinor: number, usage?: { endReading?: number; endDate?: string }, treasury?: string, returnConditionNote?: string) => RentalContract
+  /** توقيع رقمي لعميل عقد الإيجار عند التسليم/الاستلام (سد فجوة تقرير النشاط #8 — Immediate #4، نفس نمط setTicketSignature) */
+  setRentalSignature: (contractId: number, phase: 'delivery' | 'return', dataUrl: string) => RentalContract
   /** وردية مشغل على معدة — تتحقق من القراءات وتقدّم عدّاد المعدة */
   addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
   /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
   recordEquipmentService: (equipmentId: number) => void
   /** مصروف تشغيل معدة بقيده (5105/خزينة) — وقود/صيانة/إصلاح/مشغل */
-  addEquipmentCost: (args: { equipmentId: number; kind: EquipmentCostKind; amountMinor: number; description?: string; treasury?: string }) => EquipmentCost
+  addEquipmentCost: (args: { equipmentId: number; kind: EquipmentCostKind; amountMinor: number; description?: string; treasury?: string; partId?: number | null; partQty?: number }) => EquipmentCost
   /** ربحية معدة: إيراد عقودها − تكاليفها، وربح الساعة من الساعات الموثقة */
   getEquipmentProfit: (equipmentId: number) => { revenueMinor: number; costsMinor: number; profitMinor: number; hours: number; profitPerHourMinor: number | null }
+  /* ─── قطع غيار/مستهلكات معدات مبسَّطة (سد فجوة تقرير النشاط #8 — Future #1) ─── */
+  addEquipmentPart: (p: Omit<EquipmentPart, 'id'>) => EquipmentPart
+  updateEquipmentPart: (id: number, patch: Partial<EquipmentPart>) => void
+  removeEquipmentPart: (id: number) => void
   /* ─── معامل التحاليل (القرار 26) ─── */
   addLabTest: (t: Omit<LabTest, 'id' | 'isActive'>) => LabTest
   updateLabTest: (id: number, patch: Partial<Omit<LabTest, 'id'>>) => void
@@ -3870,6 +3909,7 @@ export const useDataStore = create<DataState>()(
       scrapLots: [],
       scrapSales: [],
       equipmentCosts: [],
+      equipmentParts: [],
       priceLists: [],
       priceListEntries: [],
       priceListCategoryRules: [],
@@ -9284,6 +9324,8 @@ export const useDataStore = create<DataState>()(
           closeEntryId: null,
           deductMinor: 0,
           notes: args.notes,
+          deliveryConditionNote: args.deliveryConditionNote?.trim() || undefined,
+          siteName: args.siteName?.trim() || undefined,
         }
 
         let terminalTransaction: PaymentTerminalTransaction | null = null
@@ -9299,7 +9341,7 @@ export const useDataStore = create<DataState>()(
         set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return contract
       },
-      closeRental: (contractId, deductMinor, usage, treasury = '1101') => {
+      closeRental: (contractId, deductMinor, usage, treasury = '1101', returnConditionNote) => {
         const state = get()
         const contract = state.rentalContracts.find((c) => c.id === contractId)
         if (!contract) throw new Error('العقد غير موجود')
@@ -9383,12 +9425,26 @@ export const useDataStore = create<DataState>()(
               )
             : state.equipment
 
-        const updated: RentalContract = { ...contract, status: 'closed', closeEntryId, deductMinor, endReading, extraMinor, extraEntryId }
+        const updated: RentalContract = {
+          ...contract, status: 'closed', closeEntryId, deductMinor, endReading, extraMinor, extraEntryId,
+          returnConditionNote: returnConditionNote?.trim() || undefined,
+        }
         set({
           rentalContracts: state.rentalContracts.map((c) => (c.id === contractId ? updated : c)),
           journal,
           equipment,
         })
+        return updated
+      },
+      setRentalSignature: (contractId, phase, dataUrl) => {
+        const state = get()
+        const contract = state.rentalContracts.find((c) => c.id === contractId)
+        if (!contract) throw new Error('العقد غير موجود')
+        if (!dataUrl) throw new Error('التوقيع فارغ')
+        const updated: RentalContract = phase === 'delivery'
+          ? { ...contract, deliverySignatureDataUrl: dataUrl }
+          : { ...contract, returnSignatureDataUrl: dataUrl }
+        set({ rentalContracts: state.rentalContracts.map((c) => (c.id === contractId ? updated : c)) })
         return updated
       },
       addOperatorShift: (s) => {
@@ -9424,27 +9480,45 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const eq = state.equipment.find((e) => e.id === args.equipmentId)
         if (!eq) throw new Error('المعدة غير موجودة')
-        if (!(args.amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
+        // ربط اختياري بقطعة غيار (سد فجوة تقرير النشاط #8 — Future #1): يخصم الرصيد تلقائياً
+        let part: EquipmentPart | undefined
+        let partQty = 0
+        let amountMinor = args.amountMinor
+        if (args.partId != null) {
+          part = state.equipmentParts.find((p) => p.id === args.partId)
+          if (!part) throw new Error('قطعة الغيار غير موجودة')
+          partQty = args.partQty ?? 0
+          if (!(partQty > 0)) throw new Error('كمية قطعة الغيار يجب أن تكون أكبر من صفر')
+          if (partQty > part.qty) throw new Error(`الرصيد المتاح من «${part.nameAr}» ${part.qty} فقط`)
+          if (!(amountMinor > 0)) amountMinor = partQty * part.unitCostMinor
+        }
+        if (!(amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
         const treasury = args.treasury ?? '1101'
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const costId = nextId(state.equipmentCosts)
         const label = EQUIPMENT_COST_LABELS[args.kind]
+        const partNote = part ? ` — قطعة غيار: ${part.nameAr} × ${partQty}` : ''
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `${label} — ${eq.nameAr}${args.description ? ` (${args.description})` : ''}`,
+          description: `${label} — ${eq.nameAr}${args.description ? ` (${args.description})` : ''}${partNote}`,
           sourceType: 'equipment_cost', sourceId: costId,
           lines: [
-            { accountCode: '5105', debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}` },
-            { accountCode: treasury, debit: 0, credit: args.amountMinor, note: 'دفع مصروف تشغيل' },
+            { accountCode: '5105', debit: amountMinor, credit: 0, note: `${label} ${eq.nameAr}${partNote}` },
+            { accountCode: treasury, debit: 0, credit: amountMinor, note: 'دفع مصروف تشغيل' },
           ],
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cost: EquipmentCost = {
           id: costId, equipmentId: args.equipmentId, date: now.slice(0, 10), kind: args.kind,
-          amountMinor: args.amountMinor, description: args.description ?? '', treasury, journalEntryId: entryId,
+          amountMinor, description: args.description ?? '', treasury, journalEntryId: entryId,
+          partId: part ? part.id : undefined, partQty: part ? partQty : undefined,
         }
-        set({ equipmentCosts: [...state.equipmentCosts, cost], journal: [...state.journal, entry] })
+        set({
+          equipmentCosts: [...state.equipmentCosts, cost],
+          journal: [...state.journal, entry],
+          ...(part ? { equipmentParts: state.equipmentParts.map((p) => (p.id === part!.id ? { ...p, qty: p.qty - partQty } : p)) } : {}),
+        })
         return cost
       },
       getEquipmentProfit: (equipmentId) => {
@@ -9462,6 +9536,30 @@ export const useDataStore = create<DataState>()(
         const costs = state.equipmentCosts.filter((c) => c.equipmentId === equipmentId).reduce((s2, c) => s2 + c.amountMinor, 0)
         const sh = shiftsSummary(state.operatorShifts, equipmentId)
         return equipmentProfitability({ rentMinor: rent, extraMinor: extra, costsMinor: costs, contractHours, shiftHours: sh.totalHours })
+      },
+      addEquipmentPart: (p) => {
+        const state = get()
+        if (!p.nameAr.trim()) throw new Error('اسم القطعة مطلوب')
+        if (!(p.qty >= 0)) throw new Error('الرصيد لا يكون سالباً')
+        if (!(p.unitCostMinor >= 0)) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        const part: EquipmentPart = { ...p, nameAr: p.nameAr.trim(), id: nextId(state.equipmentParts) }
+        set({ equipmentParts: [...state.equipmentParts, part] })
+        return part
+      },
+      updateEquipmentPart: (id, patch) => {
+        const state = get()
+        const existing = state.equipmentParts.find((p) => p.id === id)
+        if (!existing) throw new Error('قطعة الغيار غير موجودة')
+        const merged = { ...existing, ...patch }
+        if (!merged.nameAr.trim()) throw new Error('اسم القطعة مطلوب')
+        if (!(merged.qty >= 0)) throw new Error('الرصيد لا يكون سالباً')
+        if (!(merged.unitCostMinor >= 0)) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        set({ equipmentParts: state.equipmentParts.map((p) => (p.id === id ? merged : p)) })
+      },
+      removeEquipmentPart: (id) => {
+        const state = get()
+        if (state.equipmentCosts.some((c) => c.partId === id)) throw new Error('لا يمكن حذف قطعة مرتبطة بمصاريف مسجَّلة')
+        set({ equipmentParts: state.equipmentParts.filter((p) => p.id !== id) })
       },
 
       /* ─── معامل التحاليل (القرار 26) ─── */
@@ -14369,6 +14467,7 @@ export const useDataStore = create<DataState>()(
           scrapLots: s.scrapLots ?? [],
           scrapSales: s.scrapSales ?? [],
           equipmentCosts: s.equipmentCosts ?? [],
+          equipmentParts: s.equipmentParts ?? [],
           consignmentCars: s.consignmentCars ?? [],
           carPrepCosts: s.carPrepCosts ?? [],
           carPurchaseInvoices: s.carPurchaseInvoices ?? [],
