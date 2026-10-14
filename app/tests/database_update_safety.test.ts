@@ -441,3 +441,24 @@ describe('هوية مجلد التشغيل الفعلي عبر v23 وما بعد
     expect(selectRuntimeUserData(appData, current)).toBe(current)
   })
 })
+
+
+describe('مراجعات البيانات لا ساعة الملف فقط', () => {
+  it('يرفض auto الأقدم ذا mtime أحدث ويسترد آخر عمل من SQLite backup الخارجي', async () => {
+    const s = scenario(), old = join(s.documentsBackupDir, 'auto', 'old.db'), latest = join(s.documentsBackupDir, 'manual', 'owner.db')
+    const key = randomBytes(32)
+    const before = encrypted(key, '{"state":{"balance":98765}}')
+    const after = encrypted(key, '{"state":{"balance":98766}}')
+    const db = await create(old, 'same-device', before)
+    try {
+      await copyDatabaseSafely(old, latest)
+    } finally { db.close() }
+    const newer = await ShopsysDatabase.open(latest)
+    try { newer.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 1, payloadJson: after }) } finally { newer.close() }
+    utimesSync(old, 9000, 9000); utimesSync(latest, 1000, 1000)
+    point(s.userData, join(s.installDir, 'deleted.db'))
+    expect(await recoverMissingDatabaseAt({ ...s, deviceKey: key })).toBe(latest)
+    expect(await payload(resolveDbPathAt(s.userData).dbPath)).toBe(after)
+    expect(await payload(old)).toBe(before)
+  })
+})

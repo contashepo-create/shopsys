@@ -128,6 +128,25 @@ function candidateIdentity(file: string, expectedId: string | null, key?: Buffer
   } catch { return null } finally { db.close() }
 }
 
+/** مراجعات المتاجر تتقدم على mtime: الملف قد يكتسب وقتاً أحدث عند النسخ/فحص WAL.
+ * المقارنة فقط لنفس كاتب/فرع كل متجر؛ لا نستنتج ترتيب نسختين متفرعتين. */
+function snapshotVersions(file: string): Map<string, { revision: number; origin: string }> {
+  const db = new Database(file, { readonly: true, fileMustExist: true })
+  try {
+    const rows = db.prepare('SELECT store_name, revision, origin_device, origin_branch FROM snapshots').all() as { store_name: string; revision: number; origin_device: string; origin_branch: string }[]
+    return new Map(rows.map(row => [row.store_name, { revision: row.revision, origin: JSON.stringify([row.origin_device, row.origin_branch]) }]))
+  } finally { db.close() }
+}
+function newerSnapshots(a: ReturnType<typeof snapshotVersions>, b: ReturnType<typeof snapshotVersions>): boolean {
+  let advanced = false
+  for (const [store, previous] of b) {
+    const current = a.get(store)
+    if (!current || current.origin !== previous.origin || current.revision < previous.revision) return false
+    if (current.revision > previous.revision) advanced = true
+  }
+  return advanced || a.size > b.size
+}
+
 /** الموجود لا يُمسّ ولو كان مقفلاً/تالفاً؛ الاسترداد للمفقود فقط. */
 export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promise<string | null> {
   const { userData: ud, installDir } = options
@@ -148,14 +167,16 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
   const eligible = (files: string[]) => files.flatMap(file => {
     try {
       const id = candidateIdentity(file, expectedId, options.deviceKey)
-      return id ? [{ file, id, time: statSync(file).mtimeMs }] : []
+      return id ? [{ file, id, time: statSync(file).mtimeMs, versions: snapshotVersions(file) }] : []
     } catch { return [] }
   }).sort((a, b) => b.time - a.time)
   // قاعدة حية موثوقة أولاً؛ بعدها أحدث نسخة سليمة من كل الأماكن.
   const liveCandidates = eligible(live)
   const candidates = liveCandidates.length ? liveCandidates : eligible([...new Set([...backups, ...legacy])])
   if (!candidates.length || new Set(candidates.map(candidate => candidate.id)).size > 1) return null
-  for (const source of candidates) {
+  // لا تختَر نسخة ذات مراجعات أقدم لمجرد أن mtime ملفها أحدث.
+  const freshest = candidates.filter(candidate => !candidates.some(other => other !== candidate && newerSnapshots(other.versions, candidate.versions)))
+  for (const source of freshest) {
     try {
       const destination = join(ud, 'databases', `recovered-${randomUUID()}.db`)
       if (isInsideInstallation(destination, installDir)) throw new Error('مكان الاسترداد داخل مجلد التثبيت')
