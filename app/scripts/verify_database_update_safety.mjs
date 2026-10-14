@@ -9,6 +9,7 @@ const preload = read('desktop/preload.ts')
 const storage = read('src/data/persistentStorage.ts')
 const check = (title, condition) => { assert.ok(condition, title); console.log(`✓ ${title}`) }
 check('هوية الاسم والمسار تثبت قبل قفل العملية', main.indexOf('app.setName(DESKTOP_APP_NAME)') < main.indexOf('app.requestSingleInstanceLock()') && main.includes("app.setPath('userData', stableUserData)"))
+check('مجلد التشفير وsessionData مثبتان قبل ready على profile الحقيقي', main.includes('selectRuntimeUserData(app.getPath(\'appData\'), currentUserData)') && main.includes("app.setPath('sessionData', stableUserData)"))
 check('productName في metadata وفي إعداد المثبت متطابق', JSON.parse(read('package.json')).productName === 'Tahakom' && /productName: Tahakom/.test(read('electron-builder.yml')))
 check('الاسترداد الصامت قبل سؤال المكان المفقود', /restoreLocationPointerIfMissing\(\)\s*\n\s*await recoverDatabaseSilently\(\)\s*\n\s*await resolveMissingLocation\(\)/.test(main))
 check('كل فتح يحمي القاعدة خارج مجلد التثبيت', main.includes('await protectDatabaseAt(userDataDir(), installationDir())'))

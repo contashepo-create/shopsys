@@ -27,7 +27,7 @@ import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './nav
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
 import { isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
-import { DESKTOP_APP_NAME, preserveCurrentUserData } from './runtimeData.ts'
+import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
 import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller } from './updateLifecycle.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
@@ -53,9 +53,10 @@ const isDev = !!process.env.ELECTRON_START_URL
 // قبل قفل العملية وأي قراءة: هوية ثابتة مستقلة عن اسم package وإصدار البرنامج.
 const currentUserData = app.getPath('userData')
 app.setName(DESKTOP_APP_NAME)
-const stableUserData = join(app.getPath('appData'), DESKTOP_APP_NAME)
+const stableUserData = selectRuntimeUserData(app.getPath('appData'), currentUserData)
 mkdirSync(stableUserData, { recursive: true })
 app.setPath('userData', stableUserData)
+app.setPath('sessionData', stableUserData)
 const installationDir = (): string => dirname(app.getPath('exe'))
 
 /* ── سجل تشخيصي ملفي (بلاغ v1.0.0: شاشة بيضاء بلا أثر) — كل حدث مهم يُكتب

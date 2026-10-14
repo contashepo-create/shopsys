@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
 import { readDbLocationAt, writeDbLocationAt, resolveDbPathAt, EMPTY_DB_LOCATION } from '../desktop/dbLocation.ts'
 import { changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity, assertSafeUpdateLocation } from '../desktop/databaseSafety.ts'
-import { preserveCurrentUserData } from '../desktop/runtimeData.ts'
+import { preserveCurrentUserData, selectRuntimeUserData } from '../desktop/runtimeData.ts'
 import { installSilentUpdate, requestSilentInstall, assertDownloadedInstaller } from '../desktop/updateLifecycle.ts'
 
 const roots: string[] = []
@@ -398,4 +398,46 @@ it('electron-updater الفعلي: quitAndInstall لا يرمي عند غياب 
   const child = spawnSync(process.execPath, ['--experimental-strip-types', '-e', script], { encoding: 'utf8', timeout: 10000 })
   expect(child.status, child.stderr).toBe(0)
   expect(child.stdout).toContain('No update filepath provided')
+})
+
+
+describe('هوية مجلد التشغيل الفعلي عبر v23 وما بعدها، دون نقل', () => {
+  it('يتعرف على profile النسخة المنشورة app ويحفظ مكان المفتاح وLocal State نفسه', () => {
+    const s = scenario(), appData = join(s.root, 'profiles'), previous = join(appData, 'app'), current = join(appData, 'Tahakom')
+    mkdirSync(previous, { recursive: true })
+    writeFileSync(join(previous, 'last-run.json'), JSON.stringify({ version: '1.0.23' }))
+    writeFileSync(join(previous, 'device.key.enc'), 'shopsys-safekey:v1:existing-encrypted-key')
+    writeFileSync(join(previous, 'Local State'), 'original Chromium key profile')
+    expect(selectRuntimeUserData(appData, current)).toBe(previous)
+    expect(existsSync(current)).toBe(false)
+    expect(readFileSync(join(previous, 'Local State'), 'utf8')).toBe('original Chromium key profile')
+    writeFileSync(join(previous, 'last-run.json'), JSON.stringify({ version: '1.0.25' }))
+    expect(selectRuntimeUserData(appData, current)).toBe(previous)
+  })
+  it('عمل المالك الحالي في Tahakom يتقدم على profile أقدم؛ لا عودة صامتة لبيانات قديمة', () => {
+    const s = scenario(), appData = join(s.root, 'profiles'), previous = join(appData, 'app'), current = join(appData, 'Tahakom')
+    for (const dir of [previous, current]) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(previous, 'last-run.json'), JSON.stringify({ version: '1.0.23' }))
+    writeFileSync(join(previous, 'device.key.enc'), 'shopsys-safekey:v1:old-key')
+    writeFileSync(join(current, 'device.key.enc'), 'actual-current-key')
+    expect(selectRuntimeUserData(appData, current)).toBe(current)
+    expect(readFileSync(join(current, 'device.key.enc'), 'utf8')).toBe('actual-current-key')
+  })
+  it('لا يعتمد مجلد app لمجرد الاسم، ولا يبحث في مجلدات لمستخدمين آخرين', () => {
+    const s = scenario(), appData = join(s.root, 'profiles'), previous = join(appData, 'app'), current = join(appData, 'Tahakom')
+    mkdirSync(previous, { recursive: true })
+    writeFileSync(join(previous, 'last-run.json'), JSON.stringify({ version: '1.0.23' }))
+    writeFileSync(join(previous, 'device.key.enc'), 'some-other-application-key')
+    expect(selectRuntimeUserData(appData, current)).toBe(current)
+    expect(existsSync(current)).toBe(false)
+    writeFileSync(join(previous, 'device.key.enc'), 'shopsys-safekey:v1:key')
+    writeFileSync(join(previous, 'last-run.json'), 'broken')
+    expect(selectRuntimeUserData(appData, current)).toBe(current)
+  })
+  it('مسار التشغيل الحالي المخصص يبقى كما هو، حتى مع وجود profile افتراضي', () => {
+    const s = scenario(), appData = join(s.root, 'profiles'), current = join(s.root, 'current-profile')
+    mkdirSync(current)
+    writeFileSync(join(current, 'db-location.json'), '{}')
+    expect(selectRuntimeUserData(appData, current)).toBe(current)
+  })
 })

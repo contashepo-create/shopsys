@@ -1,16 +1,16 @@
 // CI فقط: يعمل داخل Electron الحقيقي لفك DPAPI وفحص SQLite ABI بعد إعادة البناء.
 const { app, safeStorage } = require('electron')
-const { readFileSync, writeFileSync } = require('node:fs')
+const { readFileSync, writeFileSync, existsSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { createCipheriv, createDecipheriv, randomBytes } = require('node:crypto')
 const Database = require('better-sqlite3')
-const [mode, ud, file, output] = process.argv.slice(2)
+const [mode, ud, file, output, destination] = process.argv.slice(2)
 // safeStorage على Windows يستعمل مفتاح Chromium في Local State؛ DPAPI وحده
 // لا يكفي لفك ciphertext من profile آخر. التطبيق مثبت لكنه مغلق أثناء الفحص.
 app.setName('Tahakom')
 app.setPath('userData', ud)
 app.setPath('sessionData', ud)
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
     const encryptedKey = readFileSync(join(ud, 'device.key.enc'), 'utf8')
     // ابق العقد مطابقاً لوحدة deviceKeyStore بدلاً من طباعة المفتاح.
@@ -37,6 +37,10 @@ app.whenReady().then(() => {
         decipher.setAuthTag(bytes.subarray(-16))
         const plain = Buffer.concat([decipher.update(bytes.subarray(0, -16)), decipher.final()]).toString('utf8')
         if (plain !== expected) throw new Error('Original encrypted data changed')
+        if (mode === 'copy') {
+          if (!destination || existsSync(destination)) throw new Error('Backup destination missing or already exists')
+          await db.backup(destination)
+        }
       }
     } finally { db.close() }
     writeFileSync(output, JSON.stringify({ ok: true, mode, file }))
