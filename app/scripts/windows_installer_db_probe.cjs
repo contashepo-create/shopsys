@@ -27,10 +27,11 @@ app.whenReady().then(() => {
         const payload = `enc:v1:${iv.toString('base64url')}:${bytes.toString('base64url')}`
         const id = db.prepare("SELECT value FROM meta WHERE key='device_id'").get().value
         db.prepare('INSERT INTO snapshots (store_name,revision,payload_json,origin_device,origin_branch,updated_at) VALUES (?,?,?,?,?,?)').run('ci-native-update', 1, payload, id, '', new Date().toISOString())
+        db.pragma('wal_checkpoint(TRUNCATE)') // fixture سيُنسخ ملفياً بعد غلق الاتصال
       } else {
         if (db.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('SQLite integrity failed')
         const payload = db.prepare("SELECT payload_json FROM snapshots WHERE store_name='ci-native-update'").get()?.payload_json
-        if (!payload) throw new Error('Original snapshot missing')
+        if (!payload) throw new Error('Original snapshot missing in ' + file + '; stores=' + JSON.stringify(db.prepare('SELECT store_name,revision FROM snapshots').all()))
         const [, , iv, ct] = payload.split(':'); const bytes = Buffer.from(ct, 'base64url')
         const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'))
         decipher.setAuthTag(bytes.subarray(-16))

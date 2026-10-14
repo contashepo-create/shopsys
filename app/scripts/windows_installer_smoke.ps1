@@ -44,6 +44,7 @@ function Run-Installer([string[]]$arguments, [bool]$launchManually = $false) {
   Wait-Until 'installed application forced restart' { (Test-Path $ready) -and (App-Processes).Count -gt 0 }
 }
 function Run-Probe($mode, $file) {
+  Write-Output "::notice title=Native database stage::Probe $mode : $file"
   $out = Join-Path $env:RUNNER_TEMP "db-probe-$mode.json"
   Remove-Item $out -ErrorAction SilentlyContinue
   # ArgumentList is joined by PowerShell; quote filesystem arguments explicitly.
@@ -63,9 +64,11 @@ try {
   $keyHash = (Get-FileHash $key -Algorithm SHA256).Hash
   $defaultDb = Join-Path $ud 'shopsys.db'
   Run-Probe 'seed' $defaultDb
+  Run-Probe 'verify' $defaultDb
   # سيناريو المالك: قاعدة حقيقية داخل شجرة التثبيت، تُحمى عند الإقلاع قبل أي تحديث.
   $unsafeDb = Join-Path $install 'shopsys.db'
   Copy-Item $defaultDb $unsafeDb
+  Run-Probe 'verify' $unsafeDb
   @{ customDbPath = $unsafeDb; secondaryBackupDir = $null; lastFileBackupAt = $null; customDbOpenedAt = (Get-Date).ToUniversalTime().ToString('o') } | ConvertTo-Json | Set-Content (Join-Path $ud 'db-location.json') -Encoding utf8
   Remove-Item $ready
   Start-Process $exe
@@ -89,7 +92,12 @@ try {
   Write-Host 'PASS: actual NSIS install/update-mode, same directory, forced restart, old-tree removal, encrypted SQLite/key preservation.'
 } catch {
   @{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json | Set-Content $results
-  if (Test-Path (Join-Path $ud 'main.log')) { Get-Content (Join-Path $ud 'main.log') -Tail 100 }
+  if (Test-Path (Join-Path $ud 'main.log')) {
+    Get-Content (Join-Path $ud 'main.log') -Tail 100
+    Get-Content (Join-Path $ud 'main.log') | Where-Object { $_ -match '\[(db|boot|db-protection|db-recovery|device-key-fatal)\]' } | Select-Object -Last 10 | ForEach-Object {
+      Write-Output "::notice title=Native runtime log::$($_.Replace('%', '%25'))"
+    }
+  }
   throw
 } finally {
   # Cleanup applies only to processes at the isolated fixture installation path.
