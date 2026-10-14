@@ -92,7 +92,17 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - name: Build actual Windows NSIS installer without publishing
-        run: npm run desktop:dist
+        shell: pwsh
+        run: |
+          npm run desktop:dist 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-build.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content "$env:RUNNER_TEMP/native-build.log" | Where-Object { $_ -match 'Error|ERR_|error|Cannot|failed' } | Select-Object -Last 15 | ForEach-Object {
+              $detail = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Native installer build::$detail"
+            }
+            exit $code
+          }
       - name: Verify installer metadata and bytes
         run: node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; console.log(validateDesktopArtifacts('release',JSON.parse(readFileSync('package.json','utf8')).version));"
       - name: Native install, update-mode reinstall, forced restart and encrypted SQLite
@@ -113,5 +123,6 @@ jobs:
             app/release/*.exe
             app/release/*.blockmap
             app/release/latest.yml
+            ${{ runner.temp }}/native-build.log
             ${{ runner.temp }}/native-smoke-results.json
             ${{ runner.temp }}/db-probe-*.json
