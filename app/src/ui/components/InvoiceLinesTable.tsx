@@ -1,8 +1,9 @@
-import { useState, type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { useState, type ReactNode, useEffect, useMemo, useRef, Fragment } from 'react'
 import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { purchaseWeightDiscrepancy, moistureRiskLevel } from '../../core/purchases.ts'
 import { inputCls } from './ui.tsx'
 import { ItemQuickPicker, QuickSelect } from './KeyboardPickers.tsx'
 import { useWindowHost } from '../windows/windowHostContext.ts'
@@ -39,6 +40,10 @@ export type InvoiceTableLine = {
   expiryDate?: string
   /** رقم التشغيلة/الدفعة التجاري (اختياري) — لتتبع السحب عند استدعاء منتج */
   lotNumber?: string
+  /** الكمية/الوزن المذكور بفاتورة المورد وقت الشحن (سد فجوة النشاط #2: فرق وزن الاستلام) */
+  shippedQty?: number
+  /** نسبة الرطوبة عند الاستلام — إدخال يدوي اختياري (حبوب/أعلاف) */
+  moisturePercent?: number
 }
 
 type Warehouse = { id: number; nameAr: string }
@@ -111,6 +116,12 @@ type Props = {
   entry?: ReactNode
   /** تصفية التصنيف المصاحبة للبحث — تظهر فوق الجدول بجوار العدادات */
   entryFilter?: ReactNode
+  /**
+   * يُظهر خانتي «الوزن المرسَل» و«نسبة الرطوبة» عند الاستلام (سد فجوة النشاط #2:
+   * تجارة الأعلاف والحبوب) — فقط في شاشة فاتورة الشراء الفعلية، وليس أمر الشراء
+   * (الاستلام لم يحدث بعد في أمر الشراء فلا معنى لفرق وزن استلام).
+   */
+  showReceivingTracking?: boolean
 }
 
 /** خلايا السطر القابلة للتحرير بالترتيب — تُستعمل في التنقل بالأسهم */
@@ -213,7 +224,7 @@ export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys,
   onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
-  entry, entryFilter,
+  entry, entryFilter, showReceivingTracking = false,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
   /* أعمدة العرض الاختيارية — من زر «تخصيص الحقول»؛ إخفاؤها لا يغيّر أي حساب */
@@ -510,7 +521,8 @@ export function InvoiceLinesTable({
                 : ''
               const qtyTone = stockShort ? ' is-shortstock' : ''
               return (
-                <tr key={line.key} data-line-key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
+                <Fragment key={line.key}>
+                <tr data-line-key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
                   className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : ''}`}>
                   <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
                   {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
@@ -549,6 +561,26 @@ export function InvoiceLinesTable({
                     </div>
                   </td>
                 </tr>
+                {/* فرق وزن الاستلام ونسبة الرطوبة (سد فجوة النشاط #2: تجارة الأعلاف والحبوب) —
+                    سطر فرعي مستقل بعرض الجدول كامل حتى لا يغيّر ترتيب حقول السطر الرئيسي. */}
+                {kind === 'purchase' && showReceivingTracking && (() => {
+                  const [disc] = line.shippedQty ? purchaseWeightDiscrepancy([{ itemId: line.itemId, nameAr: '', shippedQty: line.shippedQty, receivedQty: line.qty }]) : []
+                  const risk = moistureRiskLevel(line.moisturePercent ?? null)
+                  return (
+                    <tr className="border-t-0">
+                      <td />
+                      <td colSpan={columnPlan.length - 1} className="pb-2 px-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input type="number" min={0} step="any" placeholder="الوزن المرسَل بالفاتورة (اختياري)" title="الوزن/الكمية المفوتَر من المورد — يُقارَن بالمستلم" className={`${inputCls} text-[11px] py-1 max-w-[200px]`} dir="ltr" value={line.shippedQty ?? ''} onChange={(event) => onPatch(line.key, { shippedQty: event.target.value ? Number(event.target.value) : undefined })} />
+                          <input type="number" min={0} max={100} step="any" placeholder="نسبة الرطوبة ٪ (اختياري)" title="نسبة الرطوبة عند الاستلام — إدخال يدوي" className={`${inputCls} text-[11px] py-1 max-w-[160px]`} dir="ltr" value={line.moisturePercent ?? ''} onChange={(event) => onPatch(line.key, { moisturePercent: event.target.value ? Number(event.target.value) : undefined })} />
+                          {disc && <span className={`text-[10px] font-bold ${disc.exceedsThreshold ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{disc.exceedsThreshold ? '⚠️' : '✓'} فرق {disc.diffPercent}٪</span>}
+                          {risk === 'high' && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">⚠️ رطوبة مرتفعة</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })()}
+                </Fragment>
               )
             })}
             {/* السطور الفارغة في النموذج المعتمد ليست فراغاً: لكل سطر نفس خلايا السطر

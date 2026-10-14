@@ -43,6 +43,63 @@ export interface PurchaseWeightDiscrepancyRow extends PurchaseWeightDiscrepancyL
  * إدخال لحقل الوزن المرسل تُستبعد (تعني أن المستخدم لم يفعّل تتبع الفرق لهذا السطر).
  * `thresholdPercent` نسبة التنبيه الافتراضية (2% معتاد في تجارة الحبوب للهالك الطبيعي).
  */
+export interface PurchaseReceivingVarianceReportRow {
+  /** مفتاح التجميع: شهر (YYYY-MM) */
+  period: string
+  supplierId: number
+  supplierNameAr: string
+  invoicesCount: number
+  /** إجمالي النقص (موجب) أو الزيادة (سالب) عبر كل السطور المتتبَّعة في الفترة */
+  totalDiffQty: number
+  /** أكبر نسبة فرق فردية سُجِّلت — لإبراز أسوأ حالة للمتابعة السريعة */
+  maxDiffPercent: number
+  exceedsThresholdCount: number
+}
+
+/**
+ * تقرير مجمَّع لفرق وزن استلام المشتريات حسب المورد والفترة (شهرياً) — مكمل
+ * لتقرير فرق وزن التصنيع الداخلي (`productionVarianceReport` في core/recipes.ts)
+ * ومعاً يغطيان توصية «تقرير فرق الوزن/الهالك حسب المورد والفترة» من تقرير النشاط #2.
+ */
+export function purchaseReceivingVarianceReport(
+  invoices: readonly { date: string; supplierId: number; lines: readonly { itemId: number; qty: number; shippedQty?: number }[] }[],
+  suppliers: readonly { id: number; nameAr: string }[],
+  thresholdPercent = 2,
+): PurchaseReceivingVarianceReportRow[] {
+  const nameOf = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? (id === 0 ? 'مورد نقدي' : `#${id}`)
+  const groups = new Map<string, PurchaseReceivingVarianceReportRow>()
+  for (const inv of invoices) {
+    const tracked = inv.lines.filter((l) => l.shippedQty != null && l.shippedQty > 0)
+    if (!tracked.length) continue
+    const rows = purchaseWeightDiscrepancy(tracked.map((l) => ({ itemId: l.itemId, nameAr: '', shippedQty: l.shippedQty!, receivedQty: l.qty })), thresholdPercent)
+    if (!rows.length) continue
+    const period = (inv.date || '').slice(0, 7)
+    const key = `${period}|${inv.supplierId}`
+    let row = groups.get(key)
+    if (!row) {
+      row = { period, supplierId: inv.supplierId, supplierNameAr: nameOf(inv.supplierId), invoicesCount: 0, totalDiffQty: 0, maxDiffPercent: 0, exceedsThresholdCount: 0 }
+      groups.set(key, row)
+    }
+    row.invoicesCount += 1
+    for (const r of rows) {
+      row.totalDiffQty = Math.round((row.totalDiffQty + r.diffQty) * 1000) / 1000
+      row.maxDiffPercent = Math.max(row.maxDiffPercent, r.diffPercent)
+      if (r.exceedsThreshold) row.exceedsThresholdCount += 1
+    }
+  }
+  return [...groups.values()].sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : b.maxDiffPercent - a.maxDiffPercent))
+}
+
+/**
+ * تصنيف مبسط لمخاطر نسبة رطوبة الحبوب/الأعلاف عند الاستلام (سد فجوة النشاط #2):
+ * إدخال يدوي بلا جهاز، مجرد تصنيف إرشادي — 14% هي الحد المعتاد عالمياً للتخزين
+ * الآمن للحبوب (فوقها خطر تعفّن/احتراق ذاتي)، وقابل للتخصيص حسب نوع الحَبّة.
+ */
+export function moistureRiskLevel(moisturePercent: number | null | undefined, highThreshold = 14): 'ok' | 'high' | null {
+  if (moisturePercent == null || !Number.isFinite(moisturePercent)) return null
+  return moisturePercent > highThreshold ? 'high' : 'ok'
+}
+
 export function purchaseWeightDiscrepancy(
   lines: readonly PurchaseWeightDiscrepancyLine[],
   thresholdPercent = 2,

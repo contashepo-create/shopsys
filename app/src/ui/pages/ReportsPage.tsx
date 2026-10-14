@@ -20,6 +20,8 @@ import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/acti
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
 import { expiryAlerts, markdownSuggestions } from '../../core/batches.ts'
+import { purchaseReceivingVarianceReport } from '../../core/purchases.ts'
+import { productionVarianceReport } from '../../core/recipes.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
@@ -48,7 +50,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets } = useDataStore()
+  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -85,6 +87,9 @@ export function ReportsPage() {
   const forecastRows = useMemo(() => demandForecast(sales, new Date().toISOString(), 8), [sales])
   // اقتراح تسعير تصاعدي قرب الانتهاء (سد فجوة مستقبلية: تسعير ديناميكي)
   const markdowns = useMemo(() => markdownSuggestions(batches, items, new Date().toISOString(), 7), [batches, items])
+  /** سد فجوة النشاط #2 (تجارة الأعلاف والحبوب): تقرير مجمَّع لفرق الوزن — استلام من موردين + تصنيع داخلي */
+  const receivingVariance = useMemo(() => purchaseReceivingVarianceReport(purchases, suppliers), [purchases, suppliers])
+  const productionVariance = useMemo(() => productionVarianceReport(productionOrders, items), [productionOrders, items])
   // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
   // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
   const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
@@ -805,6 +810,75 @@ export function ReportsPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+          {(receivingVariance.length > 0 || productionVariance.length > 0) && (
+            <div className={`${card} overflow-hidden lg:col-span-2`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                ⚖️ تقرير فرق الوزن/الهالك <span className="text-[10px] font-normal text-slate-400">— استلام من الموردين + تصنيع داخلي (سد فجوة تجارة الأعلاف والحبوب)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x md:divide-x-reverse divide-slate-100 dark:divide-slate-800">
+                <div>
+                  <div className="px-4 pt-3 pb-1 text-[11px] font-bold text-slate-500">فرق استلام المشتريات حسب المورد والشهر</div>
+                  {receivingVariance.length === 0 ? (
+                    <div className="text-center text-slate-400 text-[12px] py-6">لا بيانات وزن مرسَل مسجَّلة بعد</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                            <th className="px-4 py-2 text-right font-bold">المورد</th>
+                            <th className="px-4 py-2 text-right font-bold">الشهر</th>
+                            <th className="px-4 py-2 text-right font-bold">فواتير</th>
+                            <th className="px-4 py-2 text-right font-bold">أسوأ فرق</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {receivingVariance.map((r, i) => (
+                            <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.supplierNameAr}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.period}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{r.invoicesCount}</td>
+                              <td className={`px-4 py-2 font-black ${r.exceedsThresholdCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{r.maxDiffPercent}٪{r.exceedsThresholdCount > 0 && <span className="text-[10px] font-normal text-rose-400"> ({r.exceedsThresholdCount} تجاوز العتبة)</span>}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="px-4 pt-3 pb-1 text-[11px] font-bold text-slate-500">فرق هالك التصنيع الداخلي حسب المنتج والشهر</div>
+                  {productionVariance.length === 0 ? (
+                    <div className="text-center text-slate-400 text-[12px] py-6">لا فروق تصنيع مسجَّلة بعد</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                            <th className="px-4 py-2 text-right font-bold">المنتج</th>
+                            <th className="px-4 py-2 text-right font-bold">الشهر</th>
+                            <th className="px-4 py-2 text-right font-bold">أوامر</th>
+                            <th className="px-4 py-2 text-right font-bold">إجمالي الفرق</th>
+                            <th className="px-4 py-2 text-right font-bold">أبرز سبب</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {productionVariance.map((r, i) => (
+                            <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.productNameAr}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.period}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{r.ordersCount}</td>
+                              <td className="px-4 py-2 font-black text-amber-600">{r.totalVarianceQty}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{[...r.byReason].sort((a, b) => b.count - a.count)[0]?.labelAr ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

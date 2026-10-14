@@ -10,7 +10,7 @@ import{DocumentAttachmentsBox,type PendingAttachment}from'../components/Document
 import { allocateExpense, type CostLine } from '../../core/costing.ts'
 import { partyNotesFor } from '../../core/partyNotes.ts'
 import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
-type Line={key:string;itemId:number;qty:number;orderedQty:number;rejectedQty:number;unitPriceMinor:number;vatPercent:number;warehouseId:number|null;warehouseSource:'default'|'manual';expiryDate?:string;lotNumber?:string};const modes:Record<InvoiceEditorMode,string>={simple:'مبسط',standard:'شراء مباشر',profit:'احترافي — تكلفة نهائية',advanced:'احترافي — متقدم'};
+type Line={key:string;itemId:number;qty:number;orderedQty:number;rejectedQty:number;unitPriceMinor:number;vatPercent:number;warehouseId:number|null;warehouseSource:'default'|'manual';expiryDate?:string;lotNumber?:string;shippedQty?:number;moisturePercent?:number};const modes:Record<InvoiceEditorMode,string>={simple:'مبسط',standard:'شراء مباشر',profit:'احترافي — تكلفة نهائية',advanced:'احترافي — متقدم'};
 /** شروط توريد جاهزة تُضاف بضغطة إلى ملاحظات أمر الشراء */
 const PURCHASE_TERMS=['السداد بعد المطابقة والاستلام','ضمان المورد سنة على العيوب المصنعية','التوريد على نفقة المورد حتى المخزن','يُرد التالف خلال 7 أيام من الاستلام']
 
@@ -192,6 +192,7 @@ const buildPrintModel=()=>{const live=useAppStore.getState().receipt;return buil
    amountLabel={item => `متاح ${item.stockQty ?? 0} · تكلفة ${formatMinor(item.costMinor ?? 0, cur, false)}`}
    placeholder="اكتب اسم الصنف أو الكود؛ ثم اختر بالسهم + Enter أو مرتين"
    showPicker={false}
+   showReceivingTracking
   />
    </div>
   <Modal open={notesLogOpen&&!!selectedSupplier} onClose={() => setNotesLogOpen(false)} title={`سجل ملاحظات ${selectedSupplier?.nameAr??'المورد'}`}>

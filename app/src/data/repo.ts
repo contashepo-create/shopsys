@@ -971,6 +971,8 @@ export interface PurchaseLine {
   rejectedQty?: number
   /** الكمية/الوزن المذكور في فاتورة المورد وقت الشحن — لمقارنته بـ`qty` المستلم فعلياً (فرق وزن الاستلام) */
   shippedQty?: number
+  /** نسبة الرطوبة عند الاستلام (إدخال يدوي بلا جهاز) — لحبوب/أعلاف قابلة للتلف بالرطوبة الزائدة */
+  moisturePercent?: number
   unitPriceMinor: number // سعر الوحدة قبل المصاريف
   expenseShareMinor: number // نصيب السطر من المصاريف (يُحسب)
   landedUnitCostMinor: number // التكلفة النهائية للوحدة (يُحسب)
@@ -1738,7 +1740,7 @@ interface DataState {
     dueDate?: string
     approvedBy?: string | null
     date: string
-    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; shippedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; shippedQty?: number; moisturePercent?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; lotNumber?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     /** خصم الفاتورة المطبق على أسعار السطور قبل landed cost */
     discountMinor?: number
@@ -4034,6 +4036,7 @@ export const useDataStore = create<DataState>()(
           if (l.rejectedQty != null && (!Number.isFinite(l.rejectedQty) || l.rejectedQty < 0)) throw new Error('الكمية المرفوضة غير صالحة')
           if (l.orderedQty != null && (!Number.isFinite(l.orderedQty) || l.orderedQty < l.qty + (l.rejectedQty ?? 0))) throw new Error('الكمية المطلوبة لا تقل عن المستلم والمرفوض')
           if (l.shippedQty != null && (!Number.isFinite(l.shippedQty) || l.shippedQty <= 0)) throw new Error('الكمية/الوزن المرسَل من المورد غير صالح')
+          if (l.moisturePercent != null && (!Number.isFinite(l.moisturePercent) || l.moisturePercent < 0 || l.moisturePercent > 100)) throw new Error('نسبة الرطوبة يجب أن تكون بين 0 و100')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
         }
         for (const expense of inv.expenses) {
@@ -4244,6 +4247,7 @@ export const useDataStore = create<DataState>()(
             orderedQty: inv.lines[i]?.orderedQty,
             rejectedQty: inv.lines[i]?.rejectedQty,
             shippedQty: inv.lines[i]?.shippedQty,
+            moisturePercent: inv.lines[i]?.moisturePercent,
             unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor,
             landedUnitCostMinor: l.landedUnitCostMinor,
@@ -6993,7 +6997,7 @@ export const useDataStore = create<DataState>()(
             expenseShareMinor: l.expenseShareMinor, landedUnitCostMinor: l.landedUnitCostMinor,
             warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId,
             vatPercent: args.lines[i]?.vatPercent ?? inv.lines[i]?.vatPercent ?? 0,
-            orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty, shippedQty: inv.lines[i]?.shippedQty,
+            orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty, shippedQty: inv.lines[i]?.shippedQty, moisturePercent: inv.lines[i]?.moisturePercent,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
           })),
           warehouseId: newHeaderWarehouseId,
