@@ -44,6 +44,14 @@ export interface NotificationsInput {
   criticalLabResults?: { orderId: number; orderNumber: string; testNameAr: string; patientName: string; resultValue: string; unit: string }[]
   /** تذاكر صيانة/أوامر غسيل متجاوزة موعد التسليم الموعود */
   overduePromises?: { id: number; docNumber: string; what: string; kind: 'maintenance' | 'laundry'; promisedAt: string }[]
+  /** خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء — سد فجوة تقرير النشاط #11 Immediate #3 */
+  complianceDueBonds?: { bondId: number; bondNumber: string; dueDate: string; daysLeft: number }[]
+  /** بنود موازنة مشروعات تجاوزت الفعلي موازنتها — سد فجوة تقرير النشاط #11 Immediate #3 */
+  projectBudgetOverruns?: { projectId: number; projectNameAr: string; kindAr: string; overrunMinor: number }[]
+  /** طلبات اعتماد مقاولات معلّقة تجاوزت مهلة معقولة بلا قرار — سد فجوة تقرير النشاط #11 Immediate #3 */
+  pendingApprovalsAging?: { requestId: number; subject: string; actionLabel: string; daysPending: number }[]
+  /** مشروعات مقاولات تستحق/تقترب من استحقاق الإفراج عن محتجزها بعد فترة الضمان — سد فجوة تقرير النشاط #11 Future #1 */
+  retentionDueProjects?: { projectId: number; projectNameAr: string; dueDate: string; daysLeft: number; remainingMinor: number }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
   leaseAlerts?: { leaseId: number; contractNumber: string; tenantName: string; kind: 'expiring' | 'overdue'; days: number; amountMinor: number }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
@@ -208,6 +216,62 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: `${t.docNumber} وُعد العميل بتسليمه ${t.promisedAt.slice(0, 10)} — اتصل به أو أعد جدولته`,
       severity: 'warn',
       route: t.kind === 'maintenance' ? '/maintenance/tickets' : '/laundry/orders',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.71) خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء (سد فجوة تقرير النشاط #11 — Immediate #3)
+  for (const b of input.complianceDueBonds ?? []) {
+    out.push({
+      id: `bondcompl:${b.bondId}`,
+      icon: '📜',
+      title: b.daysLeft < 0 ? `خطاب ضمان منتهٍ: ${b.bondNumber}` : `خطاب ضمان يقترب: ${b.bondNumber}`,
+      body: b.daysLeft < 0
+        ? `انتهى منذ ${-b.daysLeft} يوماً (${b.dueDate}) — جدّده أو أفرج عنه فوراً`
+        : `ينتهي خلال ${b.daysLeft} يوماً (${b.dueDate})`,
+      severity: b.daysLeft < 0 ? 'danger' : 'warn',
+      route: '/contracting/bonds',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.72) بنود موازنة مشروعات تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)
+  for (const o of input.projectBudgetOverruns ?? []) {
+    out.push({
+      id: `prjbudget:${o.projectId}:${o.kindAr}`,
+      icon: '📊',
+      title: `تجاوز موازنة: ${o.projectNameAr}`,
+      body: `بند «${o.kindAr}» تجاوز موازنته بمقدار ${input.fmt(o.overrunMinor)} — راجع أسعار التوريد أو عدّل الموازنة`,
+      severity: 'danger',
+      route: '/contracting/budget',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.73) طلبات اعتماد مقاولات معلّقة تجاوزت مهلة معقولة (سد فجوة تقرير النشاط #11 — Immediate #3)
+  for (const a of input.pendingApprovalsAging ?? []) {
+    out.push({
+      id: `apprage:${a.requestId}`,
+      icon: '🕓',
+      title: `طلب اعتماد معلّق: ${a.subject}`,
+      body: `${a.actionLabel} بانتظار قرار منذ ${a.daysPending} يوماً — تابعه قبل تعطّل العمل عليه`,
+      severity: a.daysPending >= 7 ? 'danger' : 'warn',
+      route: '/contracting/approvals',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.74) مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
+  for (const r of input.retentionDueProjects ?? []) {
+    out.push({
+      id: `retdue:${r.projectId}`,
+      icon: '🔓',
+      title: r.daysLeft < 0 ? `محتجز مستحق الإفراج: ${r.projectNameAr}` : `محتجز يقترب استحقاقه: ${r.projectNameAr}`,
+      body: r.daysLeft < 0
+        ? `انتهت فترة الضمان منذ ${-r.daysLeft} يوماً (${r.dueDate}) — ${input.fmt(r.remainingMinor)} بانتظار الإفراج`
+        : `فترة الضمان تنتهي خلال ${r.daysLeft} يوماً (${r.dueDate}) — ${input.fmt(r.remainingMinor)} محتجزة`,
+      severity: r.daysLeft < 0 ? 'danger' : 'warn',
+      route: '/contracting/projects',
       perm: 'ops.activity.use',
     })
   }

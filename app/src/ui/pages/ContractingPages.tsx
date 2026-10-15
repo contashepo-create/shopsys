@@ -382,12 +382,15 @@ export function ProjectsPage() {
   const [epValue, setEpValue] = useState(''); const [epRetention, setEpRetention] = useState('')
   const [epStart, setEpStart] = useState(''); const [epEnd, setEpEnd] = useState(''); const [epLocation, setEpLocation] = useState('')
   const [epContractNo, setEpContractNo] = useState(''); const [epNotes, setEpNotes] = useState('')
+  /* سد فجوة تقرير النشاط #11: لا مرجعية زمنية لاستحقاق الإفراج عن المحتجز بعد التسليم */
+  const [epHandover, setEpHandover] = useState(''); const [epDlpMonths, setEpDlpMonths] = useState('')
   const openProjectEdit = (p: Project) => {
     setEditPrj(p)
     setEpName(p.nameAr); setEpClient(p.clientName); setEpClientId(p.clientId != null ? String(p.clientId) : '')
     setEpValue(String(p.contractValueMinor / 10 ** cur.decimals)); setEpRetention(String(p.retentionPercent))
     setEpStart(p.startDate); setEpEnd(p.expectedEndDate ?? ''); setEpLocation(p.location ?? '')
     setEpContractNo(p.contractNumber ?? ''); setEpNotes(p.notes ?? '')
+    setEpHandover(p.actualHandoverDate ?? ''); setEpDlpMonths(p.defectsLiabilityMonths ? String(p.defectsLiabilityMonths) : '')
   }
   const saveProjectEdit = () => {
     if (!editPrj) return
@@ -397,6 +400,7 @@ export function ProjectsPage() {
         ...(epValue ? { contractValueMinor: toMinor(epValue, cur.decimals) } : {}),
         retentionPercent: Number(epRetention) || 0, startDate: epStart, expectedEndDate: epEnd || undefined,
         location: epLocation.trim() || undefined, contractNumber: epContractNo.trim() || undefined, notes: epNotes.trim(),
+        actualHandoverDate: epHandover || null, defectsLiabilityMonths: epDlpMonths ? Number(epDlpMonths) : null,
       })
       toast.show(`عُدّلت بيانات ${updated.code} ✓`)
       setEditPrj(null)
@@ -1088,6 +1092,8 @@ export function ProjectsPage() {
               <Field label="تاريخ التسليم لل site"><input className={inputCls} type="date" value={epStart} onChange={(e) => setEpStart(e.target.value)} aria-label="تاريخ التسليم" /></Field>
               <Field label="موعد التسليم المتوقع"><input className={inputCls} type="date" value={epEnd} onChange={(e) => setEpEnd(e.target.value)} aria-label="موعد التسليم" /></Field>
               <Field label="موقع الأعمال"><input className={inputCls} value={epLocation} onChange={(e) => setEpLocation(e.target.value)} aria-label="موقع الأعمال" /></Field>
+              <Field label="تاريخ التسليم الفعلي" hint="بعده تبدأ فترة الضمان — لتذكير استحقاق الإفراج عن المحتجز"><input className={inputCls} type="date" value={epHandover} onChange={(e) => setEpHandover(e.target.value)} aria-label="تاريخ التسليم الفعلي" /></Field>
+              <Field label="فترة الضمان/الصيانة (أشهر)" hint="تُحسب من تاريخ التسليم الفعلي"><input className={inputCls} type="number" min={0} value={epDlpMonths} onChange={(e) => setEpDlpMonths(e.target.value)} aria-label="فترة الضمان بالشهور" /></Field>
               <Field label="ملاحظات"><input className={inputCls} value={epNotes} onChange={(e) => setEpNotes(e.target.value)} aria-label="ملاحظات" /></Field>
               <div className="col-span-2 flex gap-2 justify-end pt-1">
                 <Btn variant="ghost" onClick={() => setEditPrj(null)}>إلغاء</Btn>

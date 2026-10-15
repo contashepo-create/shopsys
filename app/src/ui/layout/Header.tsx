@@ -20,6 +20,8 @@ import { serviceStatus, equipmentComplianceWarnings } from '../../core/rentalMet
 import { vehicleComplianceWarnings, unsettledDriverDues } from '../../core/logistics.ts'
 import { criticalUnacknowledgedResults } from '../../core/lab.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
+import { bondComplianceWarnings, retentionDueWarnings, COST_KIND_LABELS } from '../../core/contracting.ts'
+import { pendingApprovalAging, APPROVAL_ACTION_LABELS } from '../../core/projectOps.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
@@ -40,7 +42,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -128,6 +130,22 @@ export function Header({ title }: { title: string }) {
       ],
       // عقود إيجار العقارات: انتهاء قريب (60 يوماً) أو أقساط متأخرة (نمط سمات)
       leaseAlerts: collectLeaseAlerts(leases, new Date().toISOString().slice(0, 10), 60),
+      // خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء (سد فجوة تقرير النشاط #11 — Immediate #3)
+      complianceDueBonds: bondComplianceWarnings(bonds, new Date().toISOString(), 30),
+      // بنود موازنة مشروعات نشطة تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)
+      projectBudgetOverruns: projects
+        .filter((p) => p.status === 'active')
+        .flatMap((p) => getProjectBudgetVariance(p.id).rows
+          .filter((r) => r.status === 'over')
+          .map((r) => ({ projectId: p.id, projectNameAr: p.nameAr, kindAr: COST_KIND_LABELS[r.kind].nameAr, overrunMinor: r.actualMinor - r.budgetMinor }))),
+      // طلبات اعتماد مقاولات معلّقة تجاوزت 3 أيام بلا قرار (سد فجوة تقرير النشاط #11 — Immediate #3)
+      pendingApprovalsAging: pendingApprovalAging(approvalRequests, new Date().toISOString(), 3).map((a) => ({
+        requestId: a.requestId, subject: a.subject, actionLabel: APPROVAL_ACTION_LABELS[a.action], daysPending: a.daysPending,
+      })),
+      // مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
+      retentionDueProjects: retentionDueWarnings(projects, (projectId) => getRemainingRetention(projectId), new Date().toISOString(), 30).map((r) => ({
+        projectId: r.projectId, projectNameAr: r.projectNameAr, dueDate: r.dueDate, daysLeft: r.daysLeft, remainingMinor: r.remainingRetentionMinor,
+      })),
       openIssues: issues.filter((i) => i.status !== 'resolved').map((i) => ({ id: i.id, title: i.title, reportedBy: i.reportedBy })),
       // طلبات استعادة كلمة السر — تظهر للمالك فقط (الموظف لا يرى الجرس المالي أصلاً بحكم الصلاحيات)
       openPinResets: currentUserId == null
@@ -143,7 +161,7 @@ export function Header({ title }: { title: string }) {
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

@@ -2556,7 +2556,7 @@ interface DataState {
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
-  updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[] }) => Project
+  updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   setQuotationStatus: (id: number, status: QuotationStatus) => void
@@ -2632,6 +2632,8 @@ interface DataState {
   getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
   releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { amount: number }
+  /** المحتجز المتبقي (غير المُفرَج عنه) لمشروع — سد فجوة تقرير النشاط #11: تذكير استحقاق الإفراج */
+  getRemainingRetention: (projectId: number) => number
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
   /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
@@ -2687,14 +2689,19 @@ interface DataState {
   remitWithholdingTax: (treasury: string) => { amount: number }
   /** لوحة القيمة المكتسبة EVM لمشروع من بنود BOQ وتكاليفه الفعلية */
   getProjectEvm: (projectId: number) => EvmProjectResult
-  /** تعريف/تحديث مسار موافقات لإجراء حرج (تسلسل أدوار حتى 6 مستويات) */
-  setApprovalFlow: (action: ApprovalAction, steps: { roleAr: string; employeeId: number | null }[], active: boolean) => ApprovalFlow
+  /** تعريف/تحديث مسار موافقات لإجراء حرج (تسلسل أدوار حتى 6 مستويات)، بحد مالي اختياري */
+  setApprovalFlow: (action: ApprovalAction, steps: { roleAr: string; employeeId: number | null }[], active: boolean, thresholdMinor?: number | null) => ApprovalFlow
   /** طلب اعتماد لإجراء خاضع لمسار موافقات */
   requestApproval: (action: ApprovalAction, subject: string, refId: number) => ApprovalRequest
   /** قرار على المستوى الحالي: موافقة تنقل للمستوى التالي، ورفضٌ يقفل الطلب */
   decideApproval: (requestId: number, decision: 'approved' | 'rejected', decidedBy: string, note?: string) => ApprovalRequest
-  /** حارس داخلي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ) */
-  assertApproved: (action: ApprovalAction, refId: number, subject: string) => void
+  /**
+   * حارس داخلي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ).
+   * amountMinor اختياري: إن حُدد حد مالي للمسار (thresholdMinor) ومرَّت قيمة أقل منه،
+   * يمر المستند حراً دون اعتماد (سد فجوة تقرير النشاط #11 — دليل الشاشة وصف هذا السلوك
+   * من قبل دون أن يكون منفَّذاً فعلياً).
+   */
+  assertApproved: (action: ApprovalAction, refId: number, subject: string, amountMinor?: number) => void
 
   // ————— الوصفات والتصنيع (مطاعم) —————
   addRecipe: (input: RecipeInput) => Recipe
@@ -10040,13 +10047,14 @@ export const useDataStore = create<DataState>()(
         if (!q) throw new Error('العرض غير موجود')
         if (q.status !== 'won') throw new Error('يتحول للمشروع العرضُ الفائز فقط — علّمه «فائز» أولاً')
         if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
-        // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
-        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`)
         /* §95 (محاذاة pro-acc — طلب المالك): قيمة عقد المشروع = صافي العرض **بلا ضريبة** —
            الضريبة تظهر في إجماليات العرض فقط، والضريبة على الإيراد تحصّل وتُورَّد للدولة،
            فلو دخلت قيمة العقد لتضخم سقف المستخلصات ونسب الإنجاز. البنود كذلك بأسعار صافية
            (إن كان سعر العرض شاملاً الضريبة تُستخرج منه). */
         const netContractMinor = quotationTotals(q.lines).netMinor
+        // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
+        // (الحد المالي الاختياري — إن وُجد — يُقاس بصافي قيمة العقد الناتج)
+        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
         const project = get().addProject({
           nameAr: q.titleAr,
           clientName: q.clientName,
@@ -10336,8 +10344,6 @@ export const useDataStore = create<DataState>()(
             throw new Error(`المستخلصات (${fmtMinorPlain(claimed + newGross)}) ستتجاوز قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير بالفارق أولاً أو خفّض قيمة المستخلص`)
           }
         }
-        // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل)
-        get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`)
         // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
         if (state.projectExtracts.some((x) => x.projectId === project.id && x.isFinal)) {
           throw new Error('صدر المستخلص الختامي لهذا المشروع — لا مستخلصات بعده، أفرج عن المحتجز لإقفاله')
@@ -10352,6 +10358,9 @@ export const useDataStore = create<DataState>()(
           gross = r.grossMinor
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل) — تُقاس بقيمة
+        // المستخلص الإجمالية (الحد المالي الاختياري إن وُجد)
+        get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`, gross)
         extractCeiling(gross)
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
@@ -10435,7 +10444,6 @@ export const useDataStore = create<DataState>()(
           const later = state.projectExtracts.find((e) => e.projectId === extract.projectId && e.id > extract.id && e.lines?.some((l) => mine.has(l.boqItemId)))
           if (later) throw new Error(`المستخلص ${later.extractNumber} الأحدث عدّل نسب بنود هذا المستخلص — عدّل الأحدث أولاً أو أصدر مستخلصاً بديلاً`)
         }
-        get().assertApproved('project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`)
         /* ① القيد الأصلي يُعكس بقيد موثق السبب (يبقى الرقم والتاريخ في الدفتر) */
         const original = state.journal.find((e) => e.id === extract.journalEntryId)
         if (!original) throw new Error('قيد المستخلص الأصلي غير موجود')
@@ -10481,6 +10489,8 @@ export const useDataStore = create<DataState>()(
           gross = r.grossMinor
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        // بوابة الموافقات: تعديل مستخلص إجراء حرج كالإصدار — تُقاس بقيمة المستخلص الجديدة
+        get().assertApproved('project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`, gross)
         /* سقف العقد مع إقصاء قيمة هذا المستخلص القديمة — التعديل يعيد حساب المتراكم كأنه استُبدل */
         {
           const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
@@ -11070,6 +11080,12 @@ export const useDataStore = create<DataState>()(
         set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry], custodyTxs })
         return cost
       },
+      getRemainingRetention: (projectId) => {
+        const state = get()
+        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
+        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        return held - released
+      },
       releaseRetention: (projectId, treasury = '1101', terminalPaymentInput) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
@@ -11316,8 +11332,6 @@ export const useDataStore = create<DataState>()(
         const contract = state.subContracts.find((c) => c.id === args.contractId)
         if (!contract) throw new Error('عقد الباطن غير موجود')
         if (contract.status !== 'active') throw new Error('العقد غير نشط')
-        // بوابة الموافقات: اعتماد مستخلص الباطن إجراء حرج
-        get().assertApproved('sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`)
         // نمط AccFlex: نسبة إنجاز تراكمية من قيمة العقد بدل إعادة إدخال المبالغ
         let amountMinor = args.amountMinor ?? 0
         let newProgress: number | null = null
@@ -11330,6 +11344,8 @@ export const useDataStore = create<DataState>()(
           newProgress = np
         }
         if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الشهادة يجب أن تكون موجبة — أدخل مبلغاً أو نسبة إنجاز جديدة')
+        // بوابة الموافقات: اعتماد مستخلص الباطن إجراء حرج — تُقاس بقيمة الشهادة
+        get().assertApproved('sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`, amountMinor)
         // حماية تجاوز قيمة العقد
         const certified = state.subCertificates.filter((c) => c.contractId === contract.id).reduce((s, c) => s + c.amountMinor, 0)
         if (certified + amountMinor > contract.contractValueMinor) {
@@ -11573,8 +11589,6 @@ export const useDataStore = create<DataState>()(
         if (!receiver) throw new Error('حدد مهندس الموقع/المشرف (المستلم) من سجل الموظفين')
         if (issuer.id === receiver.id) throw new Error('الصارف والمستلم لا يكونان نفس الموظف')
         if (args.lines.length === 0) throw new Error('أضف صنفاً واحداً على الأقل')
-        // بوابة الموافقات: إذن الصرف إجراء حرج
-        get().assertApproved('material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`)
         // بناء السطور بالتحويل للوحدة الأساسية وفحص التوافر الصارم (لا سالب إطلاقاً)
         const planned = new Map<number, number>()
         const lines: MaterialIssueLine[] = args.lines.map((input) => {
@@ -11585,6 +11599,8 @@ export const useDataStore = create<DataState>()(
           return line
         })
         const totalCost = lines.reduce((sum, l) => sum + l.costMinor, 0)
+        // بوابة الموافقات: إذن الصرف إجراء حرج — تُقاس بإجمالي تكلفة الإذن
+        get().assertApproved('material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`, totalCost)
         const id = nextId(state.materialRequisitions)
         const reqNumber = `MRQ-${String(id).padStart(4, '0')}`
         const entryLines = buildMaterialIssueEntry(totalCost, `${reqNumber} — ${project.nameAr}`)
@@ -11835,19 +11851,21 @@ export const useDataStore = create<DataState>()(
         return computeProjectEvm(evmLines, actual)
       },
 
-      setApprovalFlow: (action, steps, active) => {
+      setApprovalFlow: (action, steps, active, thresholdMinor) => {
         const state = get()
         const errors = validateApprovalFlow(steps)
         if (errors.length) throw new Error(errors.join(' — '))
         for (const st of steps) {
           if (st.employeeId != null && !state.employees.find((e) => e.id === st.employeeId)) throw new Error(`موظف المستوى «${st.roleAr}» غير موجود`)
         }
+        if (thresholdMinor != null && (!Number.isInteger(thresholdMinor) || thresholdMinor < 0)) throw new Error('الحد المالي يجب أن يكون صفراً أو رقماً صحيحاً موجباً')
         const existing = state.approvalFlows.find((f) => f.action === action)
         const flow: ApprovalFlow = {
           id: existing?.id ?? nextId(state.approvalFlows),
           action,
           steps: steps.map((st, i) => ({ order: i + 1, roleAr: st.roleAr.trim(), employeeId: st.employeeId })),
           active,
+          thresholdMinor: thresholdMinor ?? null,
         }
         set({ approvalFlows: existing ? state.approvalFlows.map((f) => (f.id === existing.id ? flow : f)) : [...state.approvalFlows, flow] })
         return flow
@@ -11878,10 +11896,12 @@ export const useDataStore = create<DataState>()(
         return updated
       },
 
-      assertApproved: (action, refId, subject) => {
+      assertApproved: (action, refId, subject, amountMinor) => {
         const state = get()
         const flow = state.approvalFlows.find((f) => f.action === action && f.active)
         if (!flow) return // لا مسار نشطاً = الإجراء حر (المحرك اختياري قابل للتخصيص)
+        // حد مالي اختياري (سد فجوة تقرير النشاط #11): دون الحد يمر المستند حراً بلا اعتماد
+        if (flow.thresholdMinor != null && amountMinor != null && amountMinor < flow.thresholdMinor) return
         const approved = state.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'approved' && r.consumedAt == null)
         if (!approved) throw new Error(`«${APPROVAL_ACTION_LABELS[action]}» يتطلب اعتماداً مكتملاً عبر مسار الموافقات — ${subject}`)
         // استهلاك الاعتماد: كل تنفيذ يحتاج اعتماداً جديداً

@@ -38,6 +38,13 @@ export interface Project {
   expectedEndDate?: string // تاريخ التسليم المتوقع
   managerEmployeeId?: number | null // مدير المشروع من سجل الموظفين
   tags?: string[] // وسوم حرة للتصنيف والفلترة
+  /**
+   * تاريخ التسليم الفعلي للمشروع (سد فجوة تقرير النشاط #11 — لا تتبع لفترة
+   * الضمان/الصيانة بعد التسليم). يختلف عن expectedEndDate (المتوقع قبل التنفيذ).
+   */
+  actualHandoverDate?: string | null
+  /** مدة فترة الضمان/الصيانة بالشهور بعد التسليم — بعدها يستحق الإفراج عن المحتجز المتبقي */
+  defectsLiabilityMonths?: number | null
 }
 
 export function validateProject(p: Pick<Project, 'nameAr' | 'contractValueMinor' | 'retentionPercent'>): string[] {
@@ -46,6 +53,80 @@ export function validateProject(p: Pick<Project, 'nameAr' | 'contractValueMinor'
   if (!Number.isInteger(p.contractValueMinor) || p.contractValueMinor <= 0) errors.push('قيمة العقد يجب أن تكون موجبة')
   if (p.retentionPercent < 0 || p.retentionPercent > 20) errors.push('نسبة المحتجز بين 0 و20٪')
   return errors
+}
+
+/**
+ * تاريخ استحقاق الإفراج عن المحتجز = التسليم الفعلي + فترة الضمان (سد فجوة
+ * تقرير النشاط #11 — لا مرجعية زمنية كانت موجودة لتذكير صاحب القرار).
+ * null لو لا تاريخ تسليم أو لا فترة ضمان مُسجَّلة.
+ */
+export function retentionReleaseDueDate(p: Pick<Project, 'actualHandoverDate' | 'defectsLiabilityMonths'>): string | null {
+  if (!p.actualHandoverDate || !p.defectsLiabilityMonths || p.defectsLiabilityMonths <= 0) return null
+  const due = new Date(`${p.actualHandoverDate.slice(0, 10)}T00:00:00Z`)
+  if (Number.isNaN(due.getTime())) return null
+  due.setUTCMonth(due.getUTCMonth() + p.defectsLiabilityMonths)
+  return due.toISOString().slice(0, 10)
+}
+
+export interface RetentionDueWarning {
+  projectId: number
+  projectNameAr: string
+  dueDate: string
+  daysLeft: number
+  remainingRetentionMinor: Minor
+}
+
+/**
+ * مشروعات تستحق أو اقتربت من استحقاق الإفراج عن محتجزها المتبقي — يُغذّي
+ * جرس التنبيهات المركزي (سد فجوة تقرير النشاط #11 — Immediate #3).
+ * remainingRetentionMinor بالخارج محسوبة من فروق extracts.retentionMinor −
+ * retentionReleases (نفس حساب releaseRetention في المتجر) — تُمرَّر جاهزة.
+ */
+export function retentionDueWarnings(
+  projects: readonly (Pick<Project, 'id' | 'nameAr' | 'actualHandoverDate' | 'defectsLiabilityMonths'>)[],
+  remainingRetentionByProject: (projectId: number) => Minor,
+  todayIso: string,
+  warnDays = 30,
+): RetentionDueWarning[] {
+  const today = todayIso.slice(0, 10)
+  const todayMs = Date.parse(`${today}T00:00:00Z`)
+  const out: RetentionDueWarning[] = []
+  for (const p of projects) {
+    const dueDate = retentionReleaseDueDate(p)
+    if (!dueDate) continue
+    const remaining = remainingRetentionByProject(p.id)
+    if (remaining <= 0) continue
+    const daysLeft = Math.round((Date.parse(`${dueDate}T00:00:00Z`) - todayMs) / 86_400_000)
+    if (daysLeft <= warnDays) out.push({ projectId: p.id, projectNameAr: p.nameAr, dueDate, daysLeft, remainingRetentionMinor: remaining })
+  }
+  return out.sort((a, b) => a.daysLeft - b.daysLeft)
+}
+
+/**
+ * خطابات ضمان اقتربت/تجاوزت تاريخ انتهائها — تُغذّي جرس التنبيهات المركزي
+ * (سد فجوة تقرير النشاط #11: الشارة كانت داخل شاشة الضمانات فقط، بلا وصول مركزي).
+ */
+export interface BondComplianceWarning {
+  bondId: number
+  bondNumber: string
+  dueDate: string
+  daysLeft: number
+}
+
+export function bondComplianceWarnings(
+  bonds: readonly { id: number; bondNumber: string; status: string; expiryDate: string }[],
+  todayIso: string,
+  warnDays = 30,
+): BondComplianceWarning[] {
+  const today = todayIso.slice(0, 10)
+  const todayMs = Date.parse(`${today}T00:00:00Z`)
+  const out: BondComplianceWarning[] = []
+  for (const b of bonds) {
+    if (b.status !== 'active') continue
+    const daysLeft = Math.round((Date.parse(`${b.expiryDate}T00:00:00Z`) - todayMs) / 86_400_000)
+    if (daysLeft <= warnDays) out.push({ bondId: b.id, bondNumber: b.bondNumber, dueDate: b.expiryDate, daysLeft })
+  }
+  return out.sort((a, b) => a.daysLeft - b.daysLeft)
 }
 
 /* ─── المستخلصات ─── */

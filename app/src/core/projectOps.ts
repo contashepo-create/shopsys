@@ -308,6 +308,14 @@ export interface ApprovalFlow {
   /** أسماء المستويات بالترتيب — من سجل الموظفين أو مسميات وظيفية */
   steps: { order: number; roleAr: string; employeeId: number | null }[]
   active: boolean
+  /**
+   * حد مالي اختياري (سد فجوة تقرير النشاط #11 — تضارب التوثيق مع التنفيذ):
+   * null/undefined = الاعتماد مطلوب لكل مستند من هذا الإجراء (السلوك السابق،
+   * محفوظ للتوافق الرجعي). رقم موجب = الاعتماد مطلوب فقط للمستندات التي تساوي
+   * قيمتها الحد أو تتجاوزه؛ ما دونه يمر حراً مباشرة (مطابقاً تماماً لمثال دليل
+   * الشاشة: «مستخلص فوق 200,000 ج.م يمر على مدير المشروع ثم المالك»).
+   */
+  thresholdMinor?: number | null
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected'
@@ -358,4 +366,33 @@ export function applyApprovalDecision(
   return isLast
     ? { ...request, status: 'approved', decisions }
     : { ...request, currentStep: request.currentStep + 1, decisions }
+}
+
+/**
+ * طلبات اعتماد معلّقة تجاوزت عدد أيام سماح معقولاً بلا قرار (سد فجوة تقرير
+ * النشاط #11 — Immediate #3: صفر تكامل مع جرس التنبيهات رغم وجود البيانات).
+ */
+export interface PendingApprovalAging {
+  requestId: number
+  action: ApprovalAction
+  subject: string
+  daysPending: number
+}
+
+export function pendingApprovalAging(
+  requests: readonly ApprovalRequest[],
+  todayIso: string,
+  warnDays = 3,
+): PendingApprovalAging[] {
+  const todayMs = Date.parse(`${todayIso.slice(0, 10)}T00:00:00Z`)
+  return requests
+    .filter((r) => r.status === 'pending')
+    .map((r) => ({
+      requestId: r.id,
+      action: r.action,
+      subject: r.subject,
+      daysPending: Math.max(0, Math.floor((todayMs - Date.parse(`${r.createdAt.slice(0, 10)}T00:00:00Z`)) / 86_400_000)),
+    }))
+    .filter((r) => r.daysPending >= warnDays)
+    .sort((a, b) => b.daysPending - a.daysPending)
 }

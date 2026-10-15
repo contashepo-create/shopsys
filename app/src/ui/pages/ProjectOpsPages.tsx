@@ -429,24 +429,29 @@ const ALL_ACTIONS: ApprovalAction[] = ['quotation_to_project', 'material_requisi
 
 export function ApprovalsPage() {
   const { approvalFlows, approvalRequests, employees, setApprovalFlow, requestApproval, decideApproval } = useDataStore()
+  const cur = useCur()
   const toast = useToast()
 
   /* تحرير مسار */
   const [editAction, setEditAction] = useState<ApprovalAction | null>(null)
   const [steps, setSteps] = useState<{ roleAr: string; employeeId: string }[]>([])
   const [flowActive, setFlowActive] = useState(true)
+  /* حد مالي اختياري (سد فجوة تقرير النشاط #11): فارغ = الاعتماد مطلوب لكل مستند دون استثناء */
+  const [thresholdStr, setThresholdStr] = useState('')
 
   const openFlow = (action: ApprovalAction) => {
     const existing = approvalFlows.find((f) => f.action === action)
     setSteps(existing ? existing.steps.map((s) => ({ roleAr: s.roleAr, employeeId: s.employeeId == null ? '' : String(s.employeeId) })) : [{ roleAr: 'مهندس الموقع', employeeId: '' }, { roleAr: 'مدير المشروع', employeeId: '' }])
     setFlowActive(existing ? existing.active : true)
+    setThresholdStr(existing?.thresholdMinor != null ? String(formatMinor(existing.thresholdMinor, cur, false)).replace(/[^\d.]/g, '') : '')
     setEditAction(action)
   }
 
   const saveFlow = () => {
     if (!editAction) return
     try {
-      setApprovalFlow(editAction, steps.map((s) => ({ roleAr: s.roleAr, employeeId: s.employeeId ? Number(s.employeeId) : null })), flowActive)
+      const thresholdMinor = thresholdStr.trim() ? toMinor(Number(thresholdStr), cur.decimals) : null
+      setApprovalFlow(editAction, steps.map((s) => ({ roleAr: s.roleAr, employeeId: s.employeeId ? Number(s.employeeId) : null })), flowActive, thresholdMinor)
       toast.show(`حُفظ مسار «${APPROVAL_ACTION_LABELS[editAction]}» ✅`)
       setEditAction(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -501,6 +506,9 @@ export function ApprovalsPage() {
               </div>
               {flow && flow.steps.length > 0 && (
                 <div className="text-[11.5px] text-slate-500">{flow.steps.map((s) => s.roleAr).join(' ← ')}</div>
+              )}
+              {flow?.active && flow.thresholdMinor != null && (
+                <div className="text-[11px] text-amber-600 font-bold">فوق {formatMinor(flow.thresholdMinor, cur, false)} فقط — وإلا يمر حراً</div>
               )}
               <Btn variant="soft" onClick={() => openFlow(action)} className="!text-[12px]">⚙️ ضبط المسار</Btn>
             </div>
@@ -568,6 +576,9 @@ export function ApprovalsPage() {
             <input type="checkbox" checked={flowActive} onChange={(e) => setFlowActive(e.target.checked)} className="accent-violet-600 w-4 h-4" />
             المسار نشط — الإجراء لا يُنفَّذ إلا باعتماد مكتمل
           </label>
+          <Field label="حد مالي اختياري" hint="اتركه فارغاً ليُطلَب الاعتماد لكل مستند دون استثناء — أو أدخل مبلغاً فلا يُطلَب الاعتماد إلا لما يساويه أو يتجاوزه (مثال: فوق 200,000 ج.م يمر على مدير المشروع ثم المالك، وما دونه حر)">
+            <input value={thresholdStr} onChange={(e) => setThresholdStr(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" dir="ltr" placeholder="بلا حد — لكل المستندات" className={inputCls} />
+          </Field>
           <DocOutcome>الأثر: <b>لا قيد</b> محاسبياً — المسار ضابط تشغيلي يمنع تنفيذ الإجراء قبل اعتماده، والقيد يتولد من المستند نفسه بعد الاعتماد.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setEditAction(null)}>إلغاء</Btn>
