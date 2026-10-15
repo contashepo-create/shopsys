@@ -94,6 +94,22 @@ export function sessionFees(totalFeeMinor: Minor, totalSessions: number): Minor[
   return fees
 }
 
+/* ─── تغطية تأمينية لزيارة (سد فجوة النشاط #12) ─── */
+
+export interface InsuredVisitTotals {
+  netMinor: Minor // رسم الزيارة قبل الضريبة
+  vatMinor: Minor
+  totalMinor: Minor
+}
+
+/** إجمالي زيارة بتغطية تأمينية — بلا خصم (الخصومات ليست نمطاً شائعاً لرسم الكشف) */
+export function computeInsuredVisitTotals(feeMinor: Minor, vatPercent: number): InsuredVisitTotals {
+  if (!Number.isInteger(feeMinor) || feeMinor <= 0) throw new Error('قيمة الزيارة يجب أن تكون موجبة')
+  if (vatPercent < 0 || vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
+  const vat = Math.round((feeMinor * vatPercent) / 100)
+  return { netMinor: feeMinor, vatMinor: vat, totalMinor: feeMinor + vat }
+}
+
 /* ─── رصيد المريض وملفه ─── */
 
 /** رصيد مريض = مجموع المتبقي من زياراته − تحصيلاته اللاحقة */
@@ -119,4 +135,59 @@ export function patientFileSummary(
     if (last === null || v.date > last) last = v.date
   }
   return { visitCount: visits.length, totalFeesMinor: total, lastVisit: last, byKind }
+}
+
+/* ─── تنبيهات الجرس المركزي (سد فجوة تقرير النشاط #12 — صفر تكامل سابقاً) ─── */
+
+export interface TodayUnfinishedAppointment {
+  appointmentId: number
+  patientName: string
+  time: string
+  purpose: string
+}
+
+/** مواعيد اليوم التي لم تُحسم بعد (ما زالت «محجوز») — قراءة فقط بلا منطق محاسبي */
+export function todaysUnfinishedAppointments(
+  appointments: readonly { id: number; patientId: number; date: string; time: string; purpose: string; status: string }[],
+  patientName: (patientId: number) => string,
+  todayIso: string,
+): TodayUnfinishedAppointment[] {
+  const day = todayIso.slice(0, 10)
+  return appointments
+    .filter((a) => a.date.slice(0, 10) === day && a.status === 'scheduled')
+    .map((a) => ({ appointmentId: a.id, patientName: patientName(a.patientId), time: a.time, purpose: a.purpose }))
+    .sort((a, b) => a.time.localeCompare(b.time))
+}
+
+export interface OverduePatientBalance {
+  patientId: number
+  patientName: string
+  balanceMinor: Minor
+  daysPending: number
+}
+
+/**
+ * مرضى برصيد مستحق غير محصَّل تجاوز مدة معقولة (افتراضياً ٧ أيام منذ أقدم
+ * زيارة غير مسددة بالكامل) — قراءة فقط من `getPatientBalance` وزيارات
+ * المريض، بلا أي قيد أو منطق محاسبي جديد.
+ */
+export function overduePatientBalances(
+  patients: readonly { id: number; nameAr: string }[],
+  visits: readonly { patientId: number; date: string; dueMinor: Minor }[],
+  getBalance: (patientId: number) => Minor,
+  todayIso: string,
+  warnDays = 7,
+): OverduePatientBalance[] {
+  const todayMs = Date.parse(`${todayIso.slice(0, 10)}T00:00:00Z`)
+  const out: OverduePatientBalance[] = []
+  for (const p of patients) {
+    const balance = getBalance(p.id)
+    if (balance <= 0) continue
+    const unpaid = visits.filter((v) => v.patientId === p.id && v.dueMinor > 0)
+    if (!unpaid.length) continue
+    const oldest = unpaid.reduce((min, v) => (v.date < min ? v.date : min), unpaid[0].date)
+    const daysPending = Math.max(0, Math.floor((todayMs - Date.parse(`${oldest.slice(0, 10)}T00:00:00Z`)) / 86_400_000))
+    if (daysPending >= warnDays) out.push({ patientId: p.id, patientName: p.nameAr, balanceMinor: balance, daysPending })
+  }
+  return out.sort((a, b) => b.daysPending - a.daysPending)
 }

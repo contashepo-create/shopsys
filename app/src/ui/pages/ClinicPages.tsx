@@ -9,12 +9,13 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * • علامات حيوية بكل زيارة (ضغط/نبض/حرارة/وزن) مع تنبيهات بصرية.
  */
 import { useMemo, useRef, useState } from 'react'
-import { Plus, Stethoscope, CalendarClock, Eye, BookOpenText, Banknote, ClipboardList, CheckCircle2, Trash2, Paperclip, FileText, Printer, Link2, HeartPulse, X } from 'lucide-react'
+import { Plus, Stethoscope, CalendarClock, Eye, BookOpenText, Banknote, ClipboardList, CheckCircle2, Trash2, Paperclip, FileText, Printer, Link2, HeartPulse, X, UserX, Ban } from 'lucide-react'
 import { useDataStore, type ClinicPatient, type ClinicVisit } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { VISIT_KIND_LABELS, patientFileSummary, type VisitKind } from '../../core/clinic.ts'
+import { BOOKING_STATUS_LABELS, BOOKING_STATUS_STYLE } from '../../core/booking.ts'
 import {
   emptyRxLine, doseText, dispenseText, DISPENSE_FORMS, MEAL_RELATIONS, BLOOD_TYPES, COMMON_CHRONIC,
   emptyMedicalHistory, historySummary, vitalsText, vitalsFlags, EMPTY_VITALS, ATTACHMENT_KINDS,
@@ -33,6 +34,7 @@ import { renderPatientRecordHtml } from '../print/printPatientRecord.ts'
 import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { InsuranceProvidersSection } from '../components/InsuranceProvidersSection.tsx'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -217,8 +219,8 @@ function RxLineEditor({ line, index, onChange, onRemove }: { line: RxLine; index
 
 export function ClinicPatientsPage() {
   const {
-    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments, paymentTerminals, paymentTerminalTransactions, appUsers, currentUserId,
-    addClinicPatient, updateClinicPatient, addClinicVisit, addTreatmentPlan, collectFromPatient, getPatientBalance,
+    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments, paymentTerminals, paymentTerminalTransactions, appUsers, currentUserId, insuranceProviders,
+    addClinicPatient, updateClinicPatient, addClinicVisit, registerInsuredVisit, addTreatmentPlan, collectFromPatient, getPatientBalance,
     addPatientAttachment, removePatientAttachment, addCustomer, refundClinicVisit,
   } = useDataStore()
   const { setup } = useAppStore()
@@ -310,10 +312,11 @@ export function ClinicPatientsPage() {
   const [vTreasury, setVTreasury] = useState('1101')
   const [vVat, setVVat] = useState(false)
   const [vPlan, setVPlan] = useState('')
+  const [vInsuranceId, setVInsuranceId] = useState('') // '' = بلا تغطية
 
   const openVisit = () => {
     setVKind('checkup'); setVComplaint(''); setVDiagnosis(''); setVRx([emptyRxLine()]); setVVitals(EMPTY_VITALS); setVNext('')
-    setVFee(''); setVPaid(''); setVVat(false); setVPlan('')
+    setVFee(''); setVPaid(''); setVVat(false); setVPlan(''); setVInsuranceId('')
     setVisitOpen(true)
   }
 
@@ -392,15 +395,22 @@ export function ClinicPatientsPage() {
     if (!liveFile) return
     try {
       const fee = toMinor(vFee, cur.decimals)
-      const paid = vPaid.trim() === '' ? fee + (vVat ? Math.round((fee * setup.vatPercent) / 100) : 0) : toMinor(vPaid, cur.decimals)
-      const v = addClinicVisit({
-        patientId: liveFile.id, kind: vKind, complaint: vComplaint.trim(), diagnosis: vDiagnosis.trim(), treatment: '',
-        rxLines: vRx.filter((l) => l.medication.trim()), vitals: vVitals, nextVisit: vNext,
-        feeMinor: fee, paidMinor: paid, vatPercent: vVat ? setup.vatPercent : 0,
-        planId: vPlan ? Number(vPlan) : null,
-        treasury: vTreasury,
-        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
-      })
+      const v = vInsuranceId
+        ? registerInsuredVisit({
+            patientId: liveFile.id, providerId: Number(vInsuranceId), kind: vKind, complaint: vComplaint.trim(), diagnosis: vDiagnosis.trim(), treatment: '',
+            rxLines: vRx.filter((l) => l.medication.trim()), vitals: vVitals, nextVisit: vNext,
+            feeMinor: fee, vatPercent: vVat ? setup.vatPercent : 0,
+            planId: vPlan ? Number(vPlan) : null,
+            treasury: vTreasury,
+          })
+        : addClinicVisit({
+            patientId: liveFile.id, kind: vKind, complaint: vComplaint.trim(), diagnosis: vDiagnosis.trim(), treatment: '',
+            rxLines: vRx.filter((l) => l.medication.trim()), vitals: vVitals, nextVisit: vNext,
+            feeMinor: fee, paidMinor: vPaid.trim() === '' ? fee + (vVat ? Math.round((fee * setup.vatPercent) / 100) : 0) : toMinor(vPaid, cur.decimals), vatPercent: vVat ? setup.vatPercent : 0,
+            planId: vPlan ? Number(vPlan) : null,
+            treasury: vTreasury,
+            creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+          })
       toast.show(`سُجلت الزيارة ${v.visitNumber}${v.totals.dueMinor > 0 ? ` — متبقٍ ${fmt(v.totals.dueMinor)} على المريض` : ''} ✅`)
       setVisitOpen(false)
     } catch (e) {
@@ -494,6 +504,9 @@ export function ClinicPatientsPage() {
           </table>
         </div>
       )}
+
+      {/* جهات التأمين والتعاقد — متاحة من العيادة مباشرة (سد فجوة النشاط #12: كانت محصورة بنشاط المعمل) */}
+      <InsuranceProvidersSection />
 
       {/* ملف مريض جديد */}
       <Modal open={open} onClose={() => setOpen(false)} title="فتح ملف مريض" wide subtitle="ملف مريض يُربط بحساب عميل عند أول دين">
@@ -792,9 +805,17 @@ export function ClinicPatientsPage() {
             )}
           </div>
 
+          {insuranceProviders.some((pv) => pv.isActive) && (
+            <Field label="تغطية تأمين / جهة تعاقد" hint="الجهة تتحمل نسبتها كمطالبة (1110) والمريض يدفع الباقي نقداً فوراً">
+              <QuickSelect value={vInsuranceId} onChange={(e) => setVInsuranceId(e.target.value)} className={inputCls}>
+                <option value="">بلا تغطية (المريض يدفع كاملاً)</option>
+                {insuranceProviders.filter((pv) => pv.isActive).map((pv) => <option key={pv.id} value={pv.id}>{pv.nameAr} — تتحمل {pv.coveragePercent}٪</option>)}
+              </QuickSelect>
+            </Field>
+          )}
           <div className="grid grid-cols-4 gap-3">
             <Field label={`قيمة الزيارة (${cur.symbol}) *`}><input value={vFee} onChange={(e) => setVFee(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="المسدد الآن" hint="فارغ = سداد كامل"><input value={vPaid} onChange={(e) => setVPaid(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            {!vInsuranceId && <Field label="المسدد الآن" hint="فارغ = سداد كامل"><input value={vPaid} onChange={(e) => setVPaid(e.target.value)} inputMode="decimal" className={inputCls} /></Field>}
             <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={vTreasury} onChange={setVTreasury} compact /></Field>
             <Field label="موعد المراجعة" hint="يُطبع أسفل الروشتة"><input type="date" value={vNext} onChange={(e) => setVNext(e.target.value)} className={inputCls} /></Field>
           </div>
@@ -804,7 +825,11 @@ export function ClinicPatientsPage() {
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪</span>
             </label>
           </Field>
-          <DocOutcome>الأثر: <b>4108 إيراد كشف وعلاج</b> دائناً بالأتعاب · <b>الخزينة</b> مديناً بالمحصَّل الآن · <b>1104 ذمم العملاء</b> مديناً بالمتبقي بعد فتح حساب للمريض آلياً · والضريبة إن وُجدت على <b>2102</b>.</DocOutcome>
+          {vInsuranceId ? (
+            <DocOutcome>الأثر: <b>4108 إيراد كشف وعلاج</b> دائناً بالأتعاب · <b>الخزينة</b> مديناً بنصيب المريض نقداً فوراً · <b>1110 مطالبات تأمين</b> مديناً بنصيب الجهة حتى تحصيله · والضريبة إن وُجدت على <b>2102</b> — لا دين على المريض.</DocOutcome>
+          ) : (
+            <DocOutcome>الأثر: <b>4108 إيراد كشف وعلاج</b> دائناً بالأتعاب · <b>الخزينة</b> مديناً بالمحصَّل الآن · <b>1104 ذمم العملاء</b> مديناً بالمتبقي بعد فتح حساب للمريض آلياً · والضريبة إن وُجدت على <b>2102</b>.</DocOutcome>
+          )}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setVisitOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveVisit} shortcut="F9" disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
@@ -850,7 +875,7 @@ export function ClinicPatientsPage() {
 /* ═══════════════ المواعيد ═══════════════ */
 
 export function ClinicAppointmentsPage() {
-  const { clinicAppointments, clinicPatients, addAppointment, markAppointmentDone } = useDataStore()
+  const { clinicAppointments, clinicPatients, addAppointment, setAppointmentStatus } = useDataStore()
   const toast = useToast()
   const today = new Date().toISOString().slice(0, 10)
 
@@ -869,8 +894,8 @@ export function ClinicAppointmentsPage() {
   }
 
   const pName = (id: number) => clinicPatients.find((p) => p.id === id)?.nameAr ?? '—'
-  const upcoming = clinicAppointments.filter((a) => !a.done).sort((a, b) => (a.date + a.time < b.date + b.time ? -1 : 1))
-  const done = clinicAppointments.filter((a) => a.done)
+  const upcoming = clinicAppointments.filter((a) => a.status === 'scheduled').sort((a, b) => (a.date + a.time < b.date + b.time ? -1 : 1))
+  const settled = clinicAppointments.filter((a) => a.status !== 'scheduled')
 
   return (
     <div className="space-y-4">
@@ -879,7 +904,7 @@ export function ClinicAppointmentsPage() {
         <Btn onClick={() => setOpen(true)} disabled={!clinicPatients.length}><Plus className="w-4 h-4" /> حجز موعد</Btn>
       </div>
 
-      {upcoming.length === 0 && done.length === 0 ? (
+      {upcoming.length === 0 && settled.length === 0 ? (
         <EmptyState icon="📅" title="لا مواعيد" sub="احجز مواعيد المرضى — مواعيد اليوم تظهر أولاً" />
       ) : (
         <div className="space-y-2">
@@ -891,11 +916,31 @@ export function ClinicAppointmentsPage() {
               </div>
               <div className="flex items-center gap-3">
                 <span className={`text-[12px] font-bold ${a.date === today ? 'text-cyan-600' : 'text-slate-500'}`}>{a.date === today ? 'اليوم' : a.date} — {a.time}</span>
-                <button onClick={() => markAppointmentDone(a.id)} title="تم الحضور" className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><CheckCircle2 className="w-4 h-4" /></button>
+                <button onClick={() => setAppointmentStatus(a.id, 'done')} title="تم الحضور" className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><CheckCircle2 className="w-4 h-4" /></button>
+                <button onClick={() => setAppointmentStatus(a.id, 'no_show')} title="لم يحضر" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><UserX className="w-4 h-4" /></button>
+                <button onClick={() => setAppointmentStatus(a.id, 'cancelled')} title="إلغاء الموعد" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Ban className="w-4 h-4" /></button>
               </div>
             </div>
           ))}
-          {done.length > 0 && <div className="text-[11px] text-slate-400 font-bold pt-2">مكتملة: {done.length} موعد</div>}
+          {settled.length > 0 && (
+            <details className="pt-2">
+              <summary className="text-[11px] text-slate-400 font-bold cursor-pointer select-none">مواعيد منتهية: {settled.length} (تم/لم يحضر/أُلغي)</summary>
+              <div className="space-y-1.5 mt-2">
+                {settled.map((a) => (
+                  <div key={a.id} className="rounded-lg border border-slate-200 dark:border-slate-700 p-2 flex items-center justify-between text-[12px]">
+                    <div>
+                      <span className="font-bold">{pName(a.patientId)}</span>
+                      <span className="text-slate-500 mr-2">{a.purpose || '—'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">{a.date} — {a.time}</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${BOOKING_STATUS_STYLE[a.status]}`}>{BOOKING_STATUS_LABELS[a.status]}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
 

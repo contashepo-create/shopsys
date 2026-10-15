@@ -26,6 +26,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { InsuranceProvidersSection } from '../components/InsuranceProvidersSection.tsx'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -742,7 +743,7 @@ export function LabPatientsPage() {
 /* ═══════════════ 4) الأطباء المُحيلون ═══════════════ */
 
 export function LabReferrersPage() {
-  const { labReferrers, labOrders, paymentTerminals, addLabReferrer, toggleLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
+  const { labReferrers, labOrders, addLabReferrer, toggleLabReferrer, payReferrerCommissions } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -775,27 +776,6 @@ export function LabReferrersPage() {
   const [payoutFor, setPayoutFor] = useState<{ id: number; name: string } | null>(null)
   const [payoutTreasury, setPayoutTreasury] = useState('1101')
 
-  /* جهات التأمين والتعاقد */
-  const [insOpen, setInsOpen] = useState(false)
-  const [insName, setInsName] = useState('')
-  const [insPercent, setInsPercent] = useState('80')
-  const [insPhone, setInsPhone] = useState('')
-  const saveIns = () => {
-    try {
-      addInsuranceProvider({ nameAr: insName, coveragePercent: Number(insPercent) || 0, phone: insPhone.trim() })
-      toast.show('أُضيفت الجهة — ستظهر في نموذج الطلب كخيار تغطية ✅')
-      setInsOpen(false); setInsName(''); setInsPercent('80'); setInsPhone('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
-  }
-  const [claimTreasury, setClaimTreasury] = useState('1101')
-  const [claimTerminal, setClaimTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
-  const doSettleClaims = (id: number, name: string) => {
-    try {
-      const terminal = paymentTerminals.find((row) => row.id === claimTerminal.terminalId)
-      const r = settleInsuranceClaims(id, terminal?.settlementAccountCode ?? claimTreasury, terminal ? { terminalId: terminal.id, providerReference: claimTerminal.providerReference.trim(), cardLast4: claimTerminal.cardLast4 || undefined } : undefined)
-      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`); setClaimTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
-    } catch (e) { toast.show((e as Error).message, 'error') }
-  }
   const doPayout = () => {
     if (!payoutFor) return
     try {
@@ -921,56 +901,8 @@ export function LabReferrersPage() {
         )}
       </Modal>
 
-      {/* ═══ جهات التأمين والتعاقد ═══ */}
-      <div className="flex items-center justify-between pt-2">
-        <h2 className="font-black flex items-center gap-2">🏥 جهات التأمين والتعاقد</h2>
-        <div className="flex items-center gap-2">
-          {insuranceProviders.length > 0 && <div className="space-y-1"><PaymentMethodPicker value={{treasury:claimTreasury,terminalPayment:claimTerminal}} onChange={value=>{setClaimTreasury(value.treasury);setClaimTerminal(value.terminalPayment)}} operation="receipt"/></div>}
-          <Btn variant="soft" onClick={() => setInsOpen(true)}><Plus className="w-4 h-4" /> جهة جديدة</Btn>
-        </div>
-      </div>
-      {insuranceProviders.length === 0 ? (
-        <div className="text-[12px] text-slate-400 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-4 text-center">
-          أضف شركة تأمين أو جهة تعاقد بنسبة تحملها — المريض يدفع نصيبه فقط، ونصيب الجهة يتجمع كمطالبات تُحصَّل دفعة واحدة
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <tbody>
-              {insuranceProviders.map((pv) => {
-                const balance = getClaimBalance(pv.id)
-                const count = insuranceClaims.filter((c) => c.providerId === pv.id && !c.settled).length
-                return (
-                  <tr key={pv.id} className={`border-t border-slate-100 dark:border-slate-800 ${!pv.isActive ? 'opacity-50' : ''}`}>
-                    <td className="px-4 py-2.5 font-bold">{pv.nameAr}</td>
-                    <td className="px-4 py-2.5 text-[12px]">تتحمل {pv.coveragePercent}٪</td>
-                    <td className="px-4 py-2.5 font-black text-violet-600 tabular-nums">{balance > 0 ? `${fmt(balance)} (${count} مطالبة)` : 'لا مطالبات'}</td>
-                    <td className="px-4 py-2.5 text-left">
-                      <div className="flex gap-1 justify-end">
-                        {balance > 0 && <Btn variant="soft" onClick={() => doSettleClaims(pv.id, pv.nameAr)}>تحصيل الكل</Btn>}
-                        <button onClick={() => toggleInsuranceProvider(pv.id)} className="text-[11px] font-bold text-slate-400 hover:text-amber-600 px-2">{pv.isActive ? 'تعطيل' : 'تفعيل'}</button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* نافذة جهة جديدة */}
-      <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة" subtitle="ملف تعاقد: نسبة تحمّل الجهة وما يدفعه المريض نقداً">
-        <div className="space-y-3"><DocSectionHead step="١" title="الجهة ونسبة تحمّلها وشروط التحصيل" hint="حصة الجهة ذمة عليها لا نقدية في الخزينة" />
-          <Field label="اسم الجهة *"><input value={insName} onChange={(e) => setInsName(e.target.value)} placeholder="شركة مصر للتأمين…" className={inputCls} /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="نسبة التحمل ٪ *" hint="ما تتحمله الجهة من الفاتورة"><input value={insPercent} onChange={(e) => setInsPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="هاتف"><input value={insPhone} onChange={(e) => setInsPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
-          </div>
-          <DocOutcome>الأثر: <b>لا قيد</b> عند التعاقد — ومع كل طلب مؤمَّن يتوزع الإيراد <b>4106</b>: حصة المريض تحصيلاً نقدياً وحصة الجهة ذمةً على <b>1104 ذمم العملاء</b> باسمها حتى التحصيل.</DocOutcome>
-          <Btn onClick={saveIns} className="w-full" disabled={!insName.trim() || !insPercent}>إضافة الجهة</Btn>
-        </div>
-      </Modal>
+      {/* جهات التأمين والتعاقد — مكوّن مشترك (سد فجوة النشاط #12: نفس القسم يصل الآن لشاشة العيادة أيضاً) */}
+      <InsuranceProvidersSection />
     </div>
   )
 }

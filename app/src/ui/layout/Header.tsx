@@ -22,6 +22,7 @@ import { criticalUnacknowledgedResults } from '../../core/lab.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { bondComplianceWarnings, retentionDueWarnings, COST_KIND_LABELS } from '../../core/contracting.ts'
 import { pendingApprovalAging, APPROVAL_ACTION_LABELS } from '../../core/projectOps.ts'
+import { todaysUnfinishedAppointments, overduePatientBalances } from '../../core/clinic.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
@@ -42,7 +43,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -146,6 +147,20 @@ export function Header({ title }: { title: string }) {
       retentionDueProjects: retentionDueWarnings(projects, (projectId) => getRemainingRetention(projectId), new Date().toISOString(), 30).map((r) => ({
         projectId: r.projectId, projectNameAr: r.projectNameAr, dueDate: r.dueDate, daysLeft: r.daysLeft, remainingMinor: r.remainingRetentionMinor,
       })),
+      // مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)
+      clinicAppointmentsToday: todaysUnfinishedAppointments(
+        clinicAppointments,
+        (id) => clinicPatients.find((p) => p.id === id)?.nameAr ?? `مريض #${id}`,
+        new Date().toISOString(),
+      ),
+      // مرضى عيادة برصيد مستحق تجاوز مدة معقولة (سد فجوة تقرير النشاط #12 — Immediate #3)
+      overduePatientBalances: overduePatientBalances(
+        clinicPatients,
+        clinicVisits.map((v) => ({ patientId: v.patientId, date: v.date, dueMinor: v.totals.dueMinor })),
+        getPatientBalance,
+        new Date().toISOString(),
+        7,
+      ),
       openIssues: issues.filter((i) => i.status !== 'resolved').map((i) => ({ id: i.id, title: i.title, reportedBy: i.reportedBy })),
       // طلبات استعادة كلمة السر — تظهر للمالك فقط (الموظف لا يرى الجرس المالي أصلاً بحكم الصلاحيات)
       openPinResets: currentUserId == null
@@ -161,7 +176,7 @@ export function Header({ title }: { title: string }) {
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

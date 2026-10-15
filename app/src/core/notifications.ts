@@ -54,6 +54,10 @@ export interface NotificationsInput {
   retentionDueProjects?: { projectId: number; projectNameAr: string; dueDate: string; daysLeft: number; remainingMinor: number }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
   leaseAlerts?: { leaseId: number; contractNumber: string; tenantName: string; kind: 'expiring' | 'overdue'; days: number; amountMinor: number }[]
+  /** مواعيد عيادة اليوم ما زالت «محجوز» دون حسم — سد فجوة تقرير النشاط #12 (Immediate #3) */
+  clinicAppointmentsToday?: { appointmentId: number; patientName: string; time: string; purpose: string }[]
+  /** مرضى عيادة برصيد مستحق غير محصَّل تجاوز مدة معقولة — سد فجوة تقرير النشاط #12 (Immediate #3) */
+  overduePatientBalances?: { patientId: number; patientName: string; balanceMinor: number; daysPending: number }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
@@ -272,6 +276,32 @@ export function collectNotifications(input: NotificationsInput): AppNotification
         : `فترة الضمان تنتهي خلال ${r.daysLeft} يوماً (${r.dueDate}) — ${input.fmt(r.remainingMinor)} محتجزة`,
       severity: r.daysLeft < 0 ? 'danger' : 'warn',
       route: '/contracting/projects',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.75) مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)
+  for (const a of input.clinicAppointmentsToday ?? []) {
+    out.push({
+      id: `clinicappt:${a.appointmentId}`,
+      icon: '🗓️',
+      title: `موعد اليوم لم يُحسم: ${a.patientName}`,
+      body: `${a.time} — ${a.purpose || 'بلا وصف'} — راجع جدول اليوم وحدّث الحالة (حضر/تأجل/لم يحضر)`,
+      severity: 'warn',
+      route: '/clinic/appointments',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.76) مرضى عيادة برصيد مستحق تجاوز مدة معقولة (سد فجوة تقرير النشاط #12 — Immediate #3)
+  for (const o of input.overduePatientBalances ?? []) {
+    out.push({
+      id: `patbal:${o.patientId}`,
+      icon: '💳',
+      title: `رصيد مريض متأخر: ${o.patientName}`,
+      body: `${input.fmt(o.balanceMinor)} مستحقة منذ ${o.daysPending} يوماً — تابع التحصيل`,
+      severity: o.daysPending >= 14 ? 'danger' : 'warn',
+      route: '/clinic/patients',
       perm: 'ops.activity.use',
     })
   }

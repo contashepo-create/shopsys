@@ -106,7 +106,7 @@ import {
   type OpenInvoice, type FifoAllocation, type EvmProjectResult,
   type ApprovalAction, type ApprovalFlow, type ApprovalRequest,
 } from '../core/projectOps.ts'
-import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
+import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, computeInsuredVisitTotals, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateRxLines, validateAttachment, migrateFreeHistory, EMPTY_VITALS, type RxLine, type MedicalHistory, type Vitals, type AttachmentKind } from '../core/prescription.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, buildConsignmentSaleEntry, buildConsignmentPayoutEntry, computeCarPurchaseInvoice, buildCarPurchaseInvoiceEntry, allocateByValue, type CarInput, type CarPurpose, type CarStatus, type CarPaymentMode, type CarInvoiceLine, type CarInvoiceExpense } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
@@ -599,6 +599,8 @@ export interface ClinicVisit {
   nextVisit?: string
   totals: VisitTotals
   planId: number | null // إن كانت جلسة ضمن خطة علاج
+  /** جهة تأمين غطّت الزيارة (سد فجوة النشاط #12) — null = زيارة عادية نقد/دين */
+  insuranceProviderId?: number | null
   journalEntryId: number
   /** مرتجع خدمة (كشف/علاج): تراكمي بسقف totals.totalMinor */
   refundedMinor?: number
@@ -633,14 +635,19 @@ export interface ClinicCollection {
   viaVoucherId?: number | null
 }
 
-/** موعد قادم */
+/**
+ * موعد قادم — سد فجوة النشاط #12 (عيادة): كان `done: boolean` فقط رغم أن
+ * دليل الشاشة يصف 4 حالات (محجوز/حضر/لم يحضر/أُلغي)، ورغم وجود وحدة
+ * `booking.ts` الجاهزة بهذه الحالات بالضبط ومستخدمة في 3 أنشطة أخرى —
+ * أُعيد استخدام `BookingStatus` نفسه هنا بدل اختراع تعداد مواز.
+ */
 export interface ClinicAppointment {
   id: number
   patientId: number
   date: string // YYYY-MM-DD
   time: string // HH:MM
   purpose: string
-  done: boolean
+  status: BookingStatus
 }
 
 /**
@@ -2787,6 +2794,17 @@ interface DataState {
     /** تجاوز حد ائتمان العميل المرتبط بالمريض بموافقة مدير */
     creditLimitOverrideBy?: string | null
   }) => ClinicVisit
+  /**
+   * زيارة بتغطية تأمينية (سد فجوة النشاط #12): يقسم رسم الزيارة بين نصيب
+   * المريض نقداً ونصيب جهة التأمين (مطالبة 1110) — بنفس نمط
+   * `registerInsuredLabOrder` تماماً، لا دَين على المريض (1104) إطلاقاً.
+   */
+  registerInsuredVisit: (args: {
+    patientId: number; providerId: number; kind: VisitKind; complaint: string; diagnosis: string; treatment: string
+    feeMinor: number; vatPercent: number; planId?: number | null; treasury?: string
+    rxLines?: RxLine[]; vitals?: Vitals; nextVisit?: string
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+  }) => ClinicVisit
   addTreatmentPlan: (args: { patientId: number; title: string; totalSessions: number; totalFeeMinor: number }) => TreatmentPlan
   /** تحصيل متأخرات مريض بقيد 1101 ← 1104 */
   collectFromPatient: (patientId: number, amountMinor: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => ClinicCollection
@@ -2797,8 +2815,9 @@ interface DataState {
   setBookingStatus: (id: number, status: BookingStatus) => void
   updateBooking: (id: number, patch: Partial<Omit<Booking, 'id'>>) => { conflicts: Booking[] }
   deleteBooking: (id: number) => void
-  addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
-  markAppointmentDone: (id: number) => void
+  addAppointment: (a: Omit<ClinicAppointment, 'id' | 'status'>) => ClinicAppointment
+  /** يضبط حالة الموعد لأي من الأربع (محجوز/تم/أُلغي/لم يحضر) — سد فجوة النشاط #12 */
+  setAppointmentStatus: (id: number, status: BookingStatus) => void
   /* ─── معرض السيارات (القرار 27) ─── */
   /** شراء سيارة كبضاعة بقيد 1103 ← 1101|2101؛ الآجل يتطلب مورداً محدداً */
   addCar: (args: CarInput & { payment: CarPaymentMode; paidMinor?: number; supplierId?: number | null; notes: string; treasury?: string }) => Car
@@ -12468,6 +12487,75 @@ export const useDataStore = create<DataState>()(
         })
         return visit
       },
+      registerInsuredVisit: (args) => {
+        const state = get()
+        const provider = state.insuranceProviders.find((p) => p.id === args.providerId && p.isActive)
+        if (!provider) throw new Error('جهة التأمين غير موجودة أو معطلة')
+        const patient = state.clinicPatients.find((p) => p.id === args.patientId)
+        if (!patient) throw new Error('المريض غير مسجل')
+        if (args.planId != null) {
+          const plan = state.treatmentPlans.find((pl) => pl.id === args.planId)
+          if (!plan) throw new Error('خطة العلاج غير موجودة')
+          if (plan.patientId !== patient.id) throw new Error('الخطة لمريض آخر')
+          if (plan.doneSessions >= plan.totalSessions) throw new Error('اكتملت جلسات هذه الخطة')
+        }
+        const rxLines = (args.rxLines ?? []).filter((l) => l.medication.trim())
+        if (rxLines.length > 0) {
+          const rxErrors = validateRxLines(rxLines)
+          if (rxErrors.length) throw new Error(rxErrors.join(' — '))
+        }
+        const insured = computeInsuredVisitTotals(args.feeMinor, args.vatPercent)
+        const { providerShareMinor, patientShareMinor } = splitCoverage(insured.totalMinor, provider.coveragePercent)
+        const id = nextId(state.clinicVisits)
+        const visitNumber = `VIS-${String(id).padStart(4, '0')}`
+        const lines = buildInsuredEntry({
+          patientShareMinor, providerShareMinor, revenueMinor: insured.netMinor,
+          revenueAccount: '4108', vatMinor: insured.vatMinor, cogsMinor: 0,
+          treasury: args.treasury ?? '1101', providerName: provider.nameAr,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `زيارة ${visitNumber} — ${patient.nameAr} بتغطية ${provider.nameAr}`,
+          sourceType: 'clinic_visit', sourceId: id, lines,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const totals: VisitTotals = {
+          feeMinor: insured.netMinor, vatMinor: insured.vatMinor, totalMinor: insured.totalMinor,
+          paidMinor: patientShareMinor, dueMinor: 0, // لا دَين على المريض — نصيب الجهة مطالبة 1110 منفصلة
+        }
+        const visit: ClinicVisit = {
+          id, visitNumber, patientId: patient.id, date: now, kind: args.kind,
+          complaint: args.complaint, diagnosis: args.diagnosis, treatment: args.treatment,
+          rxLines, vitals: args.vitals ?? EMPTY_VITALS, nextVisit: args.nextVisit ?? '',
+          totals, planId: args.planId ?? null, insuranceProviderId: provider.id, journalEntryId: entryId,
+        }
+        const claim: InsuranceClaim = {
+          id: nextId(state.insuranceClaims), providerId: provider.id, source: 'clinic_visit', sourceId: id,
+          date: now.slice(0, 10), totalMinor: insured.totalMinor, claimMinor: providerShareMinor,
+          settled: false, settlementEntryId: null,
+        }
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (patientShareMinor <= 0) throw new Error('لا توجد حصة مريض محصلة على الماكينة')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', patientShareMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'clinic', documentId: String(id), amountMinor: patientShareMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({
+          clinicVisits: [...state.clinicVisits, visit],
+          journal: [...state.journal, entry],
+          insuranceClaims: [...state.insuranceClaims, claim],
+          treatmentPlans: args.planId != null
+            ? state.treatmentPlans.map((pl) => (pl.id === args.planId ? { ...pl, doneSessions: pl.doneSessions + 1 } : pl))
+            : state.treatmentPlans,
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
+        })
+        return visit
+      },
       addTreatmentPlan: (args) => {
         const state = get()
         if (!state.clinicPatients.some((p) => p.id === args.patientId)) throw new Error('المريض غير مسجل')
@@ -12557,12 +12645,12 @@ export const useDataStore = create<DataState>()(
       addAppointment: (a) => {
         const state = get()
         if (!state.clinicPatients.some((p) => p.id === a.patientId)) throw new Error('المريض غير مسجل')
-        const appt: ClinicAppointment = { ...a, id: nextId(state.clinicAppointments), done: false }
+        const appt: ClinicAppointment = { ...a, id: nextId(state.clinicAppointments), status: 'scheduled' }
         set({ clinicAppointments: [...state.clinicAppointments, appt] })
         return appt
       },
-      markAppointmentDone: (id) => {
-        set((s) => ({ clinicAppointments: s.clinicAppointments.map((a) => (a.id === id ? { ...a, done: true } : a)) }))
+      setAppointmentStatus: (id, status) => {
+        set((s) => ({ clinicAppointments: s.clinicAppointments.map((a) => (a.id === id ? { ...a, status } : a)) }))
       },
 
       /* ─── معرض السيارات (القرار 27) ─── */
@@ -14702,7 +14790,9 @@ export const useDataStore = create<DataState>()(
           clinicVisits: s.clinicVisits ?? [],
           treatmentPlans: s.treatmentPlans ?? [],
           clinicCollections: s.clinicCollections ?? [],
-          clinicAppointments: s.clinicAppointments ?? [],
+          // ترحيل المواعيد القديمة: done:boolean ← status (سد فجوة النشاط #12)
+          clinicAppointments: (s.clinicAppointments ?? []).map((a: ClinicAppointment & { done?: boolean }) =>
+            a.status ? a : { ...a, status: (a.done ? 'done' : 'scheduled') as BookingStatus }),
           patientAttachments: s.patientAttachments ?? [],
           // ترحيل التاريخ المرضي الحر القديم إلى البنية المنظمة (بلا فقد)
           clinicPatients: (s.clinicPatients ?? []).map((p) => (p.history ? p : { ...p, history: migrateFreeHistory(p.medicalHistory ?? ''), linkedCustomerId: p.linkedCustomerId ?? null })),
