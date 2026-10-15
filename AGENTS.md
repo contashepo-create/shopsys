@@ -7286,3 +7286,31 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 فعلياً إن بقي عند فقد المؤشر. اختبار حذف databases بعد الحماية يحفظ98766.
 إعادة المحاولة محدودة، والتطبيع أحادي الملف دفاعات إضافية وليسا تفسير السبب.
 يلزم نجاح Windows الجديد قبل دمجPR24/نشر26؛ لا تحديث جهاز المالك حتى ذلك.
+
+## إغلاق الإثبات الفعلي —15/10/2026 بعد سبب Chromium
+
+- beeaf51: **كل4 jobs** نجحت في PR38661894465 وفي push38661887677؛
+  حماية الدليل الخاص، forced restart، وانتقالEXE23 الحقيقي بآخر98766 وprofile/key.
+- PR24 دُمج2433d2ef عند00:52:28Z؛ main Quality38662493911 ناجح؛
+  auto38662493914 أنشأtag26/source3ca4fab1976be4139ca32a58a99a90a9ad68261b.
+- **desktop38662517891 ناجح**. قبل أي نشر، job116186867172 نفذEXE23 ثم
+  **نفس EXE26 الذي نُشر** وأثبتprofile app/key/98766. هذا ليسmetadata-only.
+- public26 نُشر01:02:28Z: https://github.com/contashepo-create/tahakam-releases/releases/tag/v1.0.26
+  id413315511، draft=false/prerelease=false؛ المصدرmirror بassets مطابقة.
+  latest.yml346B SHA256452e64238ab5790897da7e4135707d6f87b0b276434792fae8eb2cc7a391554e؛
+  EXE134255434B SHA2561690d422b4fe6491dc3d557dff82836019602dc4e78a02fd87b735e2403a85d8؛
+  blockmap142407B SHA2569644f15ea5d2f67ec380a2867fc0c03d06f451ca8b221a1aa2e16affb87cd265.
+- **public SDK26نجح فعلياً** بعد النشر:38663536161 native116190095299
+  ElectronHttpExecutor anonymous baseline23→26، نزل134255434بايت وSHA512 مطابق؛
+  هذا الفحص لا يثبت installer. اختبارEXE23→26 وفحصforced restart نجحا
+  كذلك في116190095773/116190095299. لم يُنفذ شيء على جهاز المالك.
+- run38663536161 إجمالاً failed بسببfixture آخر لا بسببWindows أو النشر:
+  activation_registration_v1022.test كان يبدل الحرف الثالث منآخر التوقيع
+  وفق قيمة **الحرف الأخير**؛ أحياناً اختار نفس القيمة ولم يفسد التوقيع إطلاقاً.
+  أُصلح اختبار الفساد ليضمن اختلاف الحرف المستهدف؛ لم يتغير أي إنتاج/ترخيص.
+- backup أول انتقال يجب أن يكون الأحدث وقابلاً للاكتشاف فيDocuments/Tahakom-Backups
+  أوsecondaryBackupDir المسجل/مجلدbackups. حفظ ملف في مكان خارجي غير مسجل
+  ليس وعداً بأن الفحص سيبحث كل القرص عنه. لا ننقل ملفات المالك منsandbox.
+- Source current branch صارfast-forward إلىmain26 دون تبديلbranch. بيانات
+  المصدر الحالية فيTahakom-Data فقط عند الحاجة لحماية/استرداد؛ لا تغيير profile
+  ولا نسخ مفاتيح أوLocalState ولا ترحيل واسع.
