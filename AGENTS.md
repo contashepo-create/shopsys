@@ -7314,3 +7314,38 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - Source current branch صارfast-forward إلىmain26 دون تبديلbranch. بيانات
   المصدر الحالية فيTahakom-Data فقط عند الحاجة لحماية/استرداد؛ لا تغيير profile
   ولا نسخ مفاتيح أوLocalState ولا ترحيل واسع.
+
+## الحالة النهائية المؤكدة — v1.0.27، 2026-10-15
+
+- PR25 (توثيق+fixture توقيع فقط، بلا تعديل إنتاج/ترخيص) دُمج908f03c9؛
+  Quality38664190171 و38664186585 ناجحان بكل4 jobs، main38664894614 ناجح.
+  سياسة أي كود يصل main أطلقتauto38664894784، tag27 عند
+  **b8f221ac07a659c954e7b252eb731599fc1debd3**؛ لا bump يدوي ولا استبدال26.
+- **desktop38664916518 ناجح**. gate116194531817 نفذEXE23 ثم **نفس EXE27
+  الذي نُشر** قبل أي نشر، مع نفسprofile app/key و98766. أول انتقال حقيقي
+  ليس metadata-only ولا إعادة تثبيت نفس النسخة.
+- الرف العام **v1.0.27** stable/latest، id413328717، نُشر01:29:06Z:
+  https://github.com/contashepo-create/tahakam-releases/releases/tag/v1.0.27
+  المصدرmirror بملفات مطابقة تماماً:
+  https://github.com/contashepo-create/shopsys/releases/tag/v1.0.27
+  - latest.yml346B SHA256 eb32d9302c07493f57e14ba86e2b3773b19e3116827700381fa2ce449701a45d
+  - EXE134261394B SHA256 c771acc6eab792ecf1be4b2ba5ec4a381b2c8b7598451a23e282f8602fdb783c
+  - blockmap142191B SHA256 d440162b4699b5e32191ad60ecc7089c960f9534eebe5cc57d203fbd982b2764
+- **قراءة ما بعد النشر38666014513: SUCCESS بكل4 jobs** على نفس source27:
+  - 116198035605: EXE23 الحقيقي→مرشح27، original profile/key، آخر98766.
+  - 116198035577: NSISحقيقي /S --updated --force-run، نفس مكان التثبيت،
+    حذف القديم، بقاء البيانات فيTahakom-Data، ثم **HTTP حقيقي بلا توكن**
+    ElectronHttpExecutor اكتشف23→27، ونزل **134261394 بايت كاملة** وSHA512
+    مطابق. جزءSDK لا يثبت installer؛ المثبت اختُبر في gate وfixture المنفصلين.
+  - 116198035462: SQLite/WAL/drive relocation/الحفظ والاسترداد lifecycle.
+  - 116198036153: build/lint واختبارات التطبيق وبوابات الأعمال كلها ناجحة.
+- لا عائق اختبار إنتاج معروف متبقٍ من هذا الإصلاح. لم ننفذ على جهاز المالك؛
+  لا ادعاء أن تحديثD:\accounting\Tahakam\Tahakom لوحظ فعلياً.
+- بيانات/مفتاح النسخة القديمة معLocal State تبقى فيprofile الحقيقي بلا نقل.
+  فقط قاعدة فعلية داخل التثبيت أو مجلدChrome المحجوز databases تُحمى إلى
+  **Tahakom-Data**. القاعدة المستقلة الموجودة لا تُنقل؛ الاسترداد للمفقود فقط.
+- **أول انتقال منEXE23 مشروط بالنسخة الخارجية الأحدث القابلة للاكتشاف** التي
+  أكدها المالك: backup directory المسجل/المستندات/secondaryBackupDir. لا يكفي
+  ملف خارجي عشوائي غير مسجل لنَعِد باكتشافه. احتفظ أيضاً بنسخة المفتاح/profile؛
+  لا نسحب ملفات الجهاز منsandbox، ولا نفترض أي عملاء أو نرحّل لهم بيانات.
+- هذا الإدخال documentation-only: لا يغيّر برنامج27 ولا يطلب إصدار28.
