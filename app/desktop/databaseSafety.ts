@@ -1,5 +1,5 @@
 /** حماية قاعدة البيانات من مجلد التثبيت واسترداد ملف مفقود — بلا Electron. */
-import { existsSync, mkdirSync, readdirSync, realpathSync, readFileSync, writeFileSync, renameSync, unlinkSync, linkSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, readFileSync, writeFileSync, renameSync, unlinkSync, linkSync, statSync, rmSync } from 'node:fs'
 import { dirname, join, resolve, relative, isAbsolute, win32 } from 'node:path'
 import { createDecipheriv, randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
@@ -52,7 +52,8 @@ export async function copyDatabaseSafely(source: string, destination: string): P
         const code = String((error as { code?: unknown }).code ?? '')
         if (attempt >= 3 || !/^SQLITE_(CANTOPEN|BUSY|LOCKED)(_|$)/.test(code)) throw error
         await new Promise(resolveDelay => setTimeout(resolveDelay, 200 * (attempt + 1)))
-        unlinkSync(temporary)
+        // Backup API قد يزيل وجهته الفاشلة بنفسه؛ ENOENT هنا ليس فشل إعادة المحاولة.
+        rmSync(temporary, { force: true })
         writeFileSync(temporary, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
       }
     }

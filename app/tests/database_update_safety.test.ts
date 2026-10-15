@@ -469,6 +469,9 @@ it('يعيد محاولة فتح SQLite المؤقت المقفول على Windo
   ;(await create(source)).close()
   const backup = Database.prototype.backup
   const spy = vi.spyOn(Database.prototype, 'backup').mockImplementationOnce(async () => {
+    // يحاكي تنظيف Backup API للوجهة بعد الفشل، لا مجرد رمي استثناء.
+    const [temporary] = spy.mock.calls.at(-1)!
+    rmSync(temporary, { force: true })
     throw Object.assign(new Error('temporary file open failed'), { code: 'SQLITE_CANTOPEN' })
   }).mockImplementation(backup)
   try {
