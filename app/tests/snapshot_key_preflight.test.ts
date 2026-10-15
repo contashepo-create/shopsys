@@ -34,8 +34,8 @@ async function createDatabase(filename: string, payloadJson: string): Promise<vo
   }
 }
 
-describe('فحص مفتاح اللقطات قبل ترحيل قاعدة SQLite', () => {
-  it('يثبت أن المفتاح الحالي يفتح اللقطة المشفرة، ويكشف المفتاح المختلف', async () => {
+describe('فحص توافق اللقطات القديمة enc:v1 قبل حماية/ترحيل قاعدة SQLite', () => {
+  it('يثبت أن المفتاح الأصلي يفتح اللقطة القديمة، ويكشف المفتاح المختلف', async () => {
     const directory = makeDirectory()
     const filename = join(directory, 'shopsys.db')
     const correctKey = randomBytes(32)
@@ -72,6 +72,11 @@ describe('فحص مفتاح اللقطات قبل ترحيل قاعدة SQLite',
 
     const after = createHash('sha256').update(readFileSync(filename)).digest('hex')
     expect(after).toBe(before)
+  })
+
+  it('يرشّح اللقطات المشفرة في SQL قبل تحميل JSON العادي إلى ذاكرة العملية', () => {
+    const source = readFileSync(join(process.cwd(), 'desktop/snapshotKeyProbe.ts'), 'utf8')
+    expect(source).toContain("WHERE substr(payload_json, 1, 4) = 'enc:'")
   })
 
   it('يتجاوز القواعد الغائبة أو اللقطات النصية القديمة، ولا يعتبرها فشل مفتاح', async () => {

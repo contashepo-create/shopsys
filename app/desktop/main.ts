@@ -2,8 +2,9 @@
  * عملية Electron الرئيسية — تنفيذ «مرحلة القاعدة المحلية» (وثيقة §101):
  *   • القاعدة: userData/shopsys.db عبر better-sqlite3 (WAL) — كاتب واحد
  *   • الجسور: shopsysDesktop.database (عقد المُصيّر القائم) + shopsysPrint
- *     وshopsysPrinters (§102 تعدد الطابعات) + shopsysUpdater
- *   • التحديث: electron-updater من GitHub Releases — فحص عند الإقلاع وزر يدوي
+ *     وshopsysPrinters (§102 تعدد الطابعات) — التحديث يعمل تلقائياً بلا جسر UI
+ *   • التحديث: electron-updater يفحص وينزّل بصمت عند الإقلاع؛ يثبّت ويعيد التشغيل بصمت عند الإغلاق
+ *   • مفتاح الجهاز محفوظ للتوافق مع لقطات enc:v1 القديمة فقط؛ اللقطات الجديدة نص SQLite
  *   • النسخ الدوّارة: ساعي 24 فقط = يوم واحد (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
@@ -29,7 +30,7 @@ import { gracefulShutdown } from './shutdown.ts'
 import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
 import { probeSnapshotKey } from './snapshotKeyProbe.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
-import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller } from './updateLifecycle.ts'
+import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
   type CustomLocationStatus, type ExistingDataCandidate,
@@ -45,8 +46,8 @@ class DatabaseKeyMismatchError extends Error {
   readonly dbPath: string
   readonly stores: string[]
 
-  constructor(dbPath: string, stores: string[]) {
-    super(`تعذّر التحقق من اللقطات المشفّرة في قاعدة البيانات (${stores.join('، ')}). قد يكون مفتاح الجهاز مختلفاً أو إحدى اللقطات تالفة. أوقف التطبيق فتحها للتعديل؛ استعد ملف مفتاح الاسترداد أو أعد ملف البيانات ومفتاحه الأصلي ثم أعد المحاولة.`)
+  constructor(dbPath: string, stores: string[], keyAvailable: boolean) {
+    super(`تعذّر فتح لقطات SQLite القديمة enc:v1 (${stores.join('، ')}). ${keyAvailable ? 'المفتاح الحالي لا يطابق اللقطة أو بياناتها تالفة.' : 'مفتاحها الأصلي غير متاح.'} لم تُكتب فوق القاعدة؛ استعد المفتاح الأصلي أو ملف .tkey ثم أعد المحاولة.`)
     this.name = 'DatabaseKeyMismatchError'
     this.dbPath = dbPath
     this.stores = stores
@@ -76,8 +77,8 @@ app.setPath('userData', stableUserData)
 app.setPath('sessionData', stableUserData)
 const installationDir = (): string => dirname(app.getPath('exe'))
 
-/* ── سجل تشخيصي ملفي (بلاغ v1.0.0: شاشة بيضاء بلا أثر) — كل حدث مهم يُكتب
-      في userData/main.log ليتحقق منه الدعم الفني على جهاز العميل ── */
+/* ── سجل تشغيلي ملفي: تُكتب الأحداث المهمة محلياً في userData/main.log للفحص الداخلي؛
+      لا يُرسل الملف ولا قاعدة البيانات تلقائياً أو يُطلب من المستخدم رفعهما. ── */
 function logLine(tag: string, message: string): void {
   const stamp = new Date().toISOString()
   const line = `[${stamp}] [${tag}] ${message}\n`
@@ -102,8 +103,8 @@ code{background:#0f172a;padding:2px 8px;border-radius:6px;font-size:12px;color:#
 .hint{color:#94a3b8;font-size:12px}</style></head><body><div class="card">
 <h1>⚠ تعذّر تحميل واجهة التطبيق</h1>
 <p>السبب المسجَّل: <b>${esc(reason)}</b></p>
-<p>تفاصيل التشخيص محفوظة في ملف السجل:<br><code>${esc(logPath)}</code></p>
-<p class="hint">أرسل ملف السجل هذا للدعم الفني وسيتابع فوراً — بياناتك المحلية سليمة ولم تتأثر.</p>
+<p>حُفظت تفاصيل الخطأ محلياً في:<br><code>${esc(logPath)}</code></p>
+<p class="hint">لم تُحذف بياناتك. لا تشارك ملف القاعدة أو السجل؛ أغلق التطبيق وأعد تشغيله بعد التأكد من بقاء ملفات البيانات كما هي.</p>
 </div></body></html>`
 }
 
@@ -145,10 +146,9 @@ p{margin:0 0 18px;font-size:12.5px;line-height:1.7;color:#475569}
 </body></html>`
 }
 
-function showSplash(afterUpdateFrom: string | null): void {
-  const headline = afterUpdateFrom
-    ? `تم تحديث تَحَكَّم من ${afterUpdateFrom} إلى ${app.getVersion()} — جارٍ فتح بياناتك كما هي، لا شيء يُحذف.`
-    : 'جارٍ فتح بياناتك…'
+function showSplash(): void {
+  // شاشة بدء موحدة بلا إعلان/حوار تحديث؛ التحديث الصامت لا يطلب أي تفاعل.
+  const headline = 'جارٍ فتح بياناتك…'
   splashWindow = new BrowserWindow({
     width: 440, height: 250, frame: false, resizable: false, minimizable: false, maximizable: false,
     center: true, skipTaskbar: true, backgroundColor: '#f1f5f9', title: 'تَحَكَّم',
@@ -187,14 +187,6 @@ function closeSplash(): void {
 /* آخر إصدار فُتح به البرنامج — لإظهار رسالة «تم التحديث» مرة واحدة بعد التثبيت */
 function lastRunVersionPath(): string {
   return join(app.getPath('userData'), 'last-run.json')
-}
-function readLastRunVersion(): string | null {
-  try {
-    const value = JSON.parse(readFileSync(lastRunVersionPath(), 'utf8'))
-    return typeof value?.version === 'string' ? value.version : null
-  } catch {
-    return null
-  }
 }
 function writeLastRunVersion(): void {
   try {
@@ -279,11 +271,8 @@ function createMainWindow(): BrowserWindow {
   return win
 }
 
-/* ── مفتاح تشفير الجهاز (v1.0.7 — تشفير قاعدة البيانات بمفتاح الجهاز) ──
-   يولَّد مرة واحدة في userData/device.key (32 بايت عشوائية). لقطات المتاجر
-   تُشفَّر بـ AES-GCM في المُصيّر قبل وصولها إلى SQLite عبر IPC، فتُقرأ القاعدة
-   على هذا الجهاز فقط — نسخ shopsys.db إلى جهاز آخر يعطي بيانات غير قابلة
-   للفك. اللقطات النصية القديمة تُقرأ كما هي وتُرحَّل مشفرة عند أول حفظ. */
+/* مفتاح التوافق القديم: لا تعتمد عليه اللقطات الجديدة. يُقرأ فقط لفك
+   لقطات enc:v1 التي كُتبت في إصدارات سابقة، ثم تُرحّل إلى نص SQLite عادي. */
 /** مدخل قرص مفتاح الجهاز — مشترك بين الإقلاع واستيراد مفتاح الاسترداد */
 function buildDeviceKeyIo(): DeviceKeyIo {
   const dir = app.getPath('userData')
@@ -316,14 +305,21 @@ function readKeyRecoveryExportedAt(): string | null {
 }
 
 function ensureDeviceEncryptionKey(): Buffer {
-  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
-     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
-     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
-     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+  /* يُستخدم فقط لفك لقطات enc:v1 القديمة. المفتاح نفسه يُحفظ كما كان
+     عبر safeStorage، مع عدم حذف أو استبدال أي نسخة قديمة غير قابلة للقراءة. */
   const outcome = resolveDeviceKey(buildDeviceKeyIo())
   for (const warning of outcome.warnings) logLine('device-key', `تحذير: ${warning}`)
   logLine('device-key', describeDeviceKeyOutcome(outcome))
   return outcome.key
+}
+
+/** تعذّر مفتاح قديم لا يمنع تشغيل قواعد النص العادي الجديدة. إذا عثرنا على
+ * لقطة مشفرة، يفشل فحصها قبل الكتابة وتظهر شاشة استرداد بدلاً من فقدها. */
+function loadLegacySnapshotKey(): Buffer {
+  try { return ensureDeviceEncryptionKey() } catch (error) {
+    logLine('device-key', `مفتاح اللقطات القديمة غير متاح؛ يستمر الإقلاع للبيانات النصية: ${(error as Error).message}`)
+    return Buffer.alloc(0)
+  }
 }
 
 /* ═══ v1.0.8 (طلب المالك): قاعدة بيانات قابلة للنقل + نسخ احتياطية مزدوجة ═══
@@ -649,9 +645,11 @@ async function openDatabase(): Promise<ShopsysDatabase> {
      سلامة SQLite وحدها لا تكفي: قد يكون الملف سليماً لكن مفتاح الجهاز تغيّر بعد
      تحديث/نقل profile. في هذه الحالة نترك الملف كما هو ونُظهر شاشة الاسترداد. */
   const selectedDatabasePath = resolveDbPath().dbPath
-  if (deviceEncryptionKey.length === 32 && existsSync(selectedDatabasePath)) {
+  if (existsSync(selectedDatabasePath)) {
+    // قاعدة البيانات النصية لا تعتمد على المفتاح. وجود لقطة enc:v1 قديمة
+    // بلا مفتاح مطابق يوقف الفتح قبل أي كتابة أو نقل، حفاظاً على الأصل.
     const keyProbe = probeSnapshotKey(selectedDatabasePath, deviceEncryptionKey)
-    if (keyProbe.status === 'mismatch') throw new DatabaseKeyMismatchError(selectedDatabasePath, keyProbe.stores)
+    if (keyProbe.status === 'mismatch') throw new DatabaseKeyMismatchError(selectedDatabasePath, keyProbe.stores, deviceEncryptionKey.length === 32)
   }
   // حماية القاعدة الفعلية الموجودة فقط؛ لا ترحيل جماعي لعملاء. الأصل يبقى نسخة أمان.
   const beforeProtection = resolveDbPath().dbPath
@@ -690,8 +688,8 @@ async function openDatabase(): Promise<ShopsysDatabase> {
         type: 'error',
         title: 'تَحَكَّم — فشل تشغيل القاعدة',
         message: `تعذّر فتح قاعدة البيانات:\n${dbPath}`,
-        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}).\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
-        buttons: ['اختيار ملف القاعدة يدوياً...', 'إظهار ملف القاعدة في المجلد (لإرساله للدعم)', 'إغلاق البرنامج'],
+        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}). لا تشارك ملف القاعدة؛ يحتوي بياناتك المحلية.`,
+        buttons: ['اختيار ملف القاعدة يدوياً...', 'إظهار ملف القاعدة في المجلد', 'إغلاق البرنامج'],
         defaultId: 0,
         cancelId: 2,
       })
@@ -800,7 +798,7 @@ async function exportPdfShare(html: string, fileName: string, waLink?: string): 
   }
 }
 
-/* ── التحديث التلقائي: فحص إقلاعي + يدوي + تثبيت عند الإغلاق ── */
+/* ── التحديث التلقائي بصمت: فحص/تنزيل في الخلفية + تثبيت وإعادة تشغيل عند الإغلاق ── */
 type UpdaterState =
   | { status: 'idle' }
   | { status: 'checking' }
@@ -814,46 +812,151 @@ let updaterState: UpdaterState = { status: 'idle' }
 let downloadedUpdateVersion: string | null = null
 let downloadedInstallerPath: string | null = null
 
-function pushUpdaterState(state: UpdaterState): void {
+function recordUpdaterState(state: UpdaterState): void {
   updaterState = state
   if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
+  if (state.status === 'available') logLine('updater', `يتوفر تحديث ${state.version}؛ بدأ التنزيل في الخلفية`)
+  if (state.status === 'not-available') logLine('updater', `لا يوجد تحديث أحدث من ${state.version}`)
   if (state.status === 'downloaded') {
     downloadedUpdateVersion = state.version
-    logLine('updater', `جاهز للتثبيت عند الإغلاق: ${state.version}`)
-    // v1.0.22: نسخة قبل التثبيت تُؤخذ فوراً — أي مسار للتثبيت (إغلاق/زر) يجدها جاهزة
+    logLine('updater', `اكتمل تنزيل ${state.version}؛ سيُثبّت بصمت عند الإغلاق`)
     preUpdateBackup = backupBeforeUpdate(state.version).catch((error) => {
       logLine('backup', `تعذّرت نسخة ما قبل التحديث: ${(error as Error).message}`)
       return null
     })
   }
-  mainWindow?.webContents.send('updater:state', state)
+}
+
+function reportUpdaterError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error)
+  if (updaterState.status === 'error' && updaterState.message === message) return
+  recordUpdaterState({ status: 'error', message })
+}
+
+function ensureUpdaterFeed(autoUpdater: typeof import('electron-updater').autoUpdater): void {
+  const configPath = join(process.resourcesPath, 'app-update.yml')
+  if (existsSync(configPath)) return
+  // بعض المثبتات القديمة/المتضررة فقدت metadata. استخدم الرف العام المعروف
+  // كحل احتياطي بدلاً من ترك ENOENT غير معالج أو تعطيل التطبيق كله.
+  logLine('updater', `ملف ${configPath} غير موجود؛ استخدام إعداد التحديث العام المضمّن`)
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'contashepo-create',
+    repo: 'tahakam-releases',
+    releaseType: 'release',
+  })
+}
+
+let updateCheckTimer: NodeJS.Timeout | null = null
+let updateCheckTimerIsRetry = false
+let updateCheckInFlight = false
+let updateCheckFailedDuringFlight = false
+let updateDownloadInProgress = false
+let updateCheckRetryAttempt = 0
+
+function clearUpdateCheckTimer(): void {
+  if (updateCheckTimer) clearTimeout(updateCheckTimer)
+  updateCheckTimer = null
+  updateCheckTimerIsRetry = false
+}
+
+function scheduleUpdateCheck(autoUpdater: typeof import('electron-updater').autoUpdater, delayMs: number, isRetry = false): void {
+  clearUpdateCheckTimer()
+  if (!app.isPackaged || shuttingDown || updateLaunchInProgress || updateDownloadInProgress || downloadedUpdateVersion) return
+  updateCheckTimerIsRetry = isRetry
+  updateCheckTimer = setTimeout(() => {
+    updateCheckTimer = null
+    updateCheckTimerIsRetry = false
+    checkUpdatesQuietly(autoUpdater)
+  }, delayMs)
+  updateCheckTimer.unref()
+}
+
+function scheduleUpdateRetry(autoUpdater: typeof import('electron-updater').autoUpdater): void {
+  if (downloadedUpdateVersion || shuttingDown || updateLaunchInProgress || (updateCheckTimer && updateCheckTimerIsRetry)) return
+  const delayMs = updateCheckRetryDelay(updateCheckRetryAttempt)
+  updateCheckRetryAttempt += 1
+  logLine('updater', `ستُعاد محاولة فحص التحديث تلقائياً بعد ${Math.round(delayMs / 1000)} ثانية`)
+  scheduleUpdateCheck(autoUpdater, delayMs, true)
+}
+
+function checkUpdatesQuietly(autoUpdater: typeof import('electron-updater').autoUpdater): void {
+  if (!app.isPackaged || updateDownloadInProgress || downloadedUpdateVersion || shuttingDown || updateLaunchInProgress) return
+  if (updateCheckInFlight) {
+    scheduleUpdateRetry(autoUpdater)
+    return
+  }
+  clearUpdateCheckTimer()
+  updateCheckInFlight = true
+  updateCheckFailedDuringFlight = false
+  observeUpdateCheck(
+    () => autoUpdater.checkForUpdates(),
+    (error) => {
+      updateCheckInFlight = false
+      updateCheckFailedDuringFlight = false
+      updateDownloadInProgress = false
+      reportUpdaterError(error)
+      scheduleUpdateRetry(autoUpdater)
+    },
+    () => {
+      updateCheckInFlight = false
+      if (updateCheckFailedDuringFlight) {
+        updateCheckFailedDuringFlight = false
+        scheduleUpdateRetry(autoUpdater)
+        return
+      }
+      updateCheckRetryAttempt = 0
+      if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
+    },
+  )
 }
 
 function wireUpdater(): void {
   if (!app.isPackaged) {
-    pushUpdaterState({ status: 'not-available', version: app.getVersion() })
+    recordUpdaterState({ status: 'not-available', version: app.getVersion() })
     return
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
     autoUpdater.autoDownload = true
-    // app.exit لا يرسل quit؛ نبدأ التثبيت صراحة بعد الحفظ والإغلاق.
+    // نُدير الإغلاق والحفظ يدوياً ثم نطلق المثبّت الصامت؛ لا نكرر معالج quit.
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.autoRunAppAfterInstall = true
     if (process.platform === 'win32') (autoUpdater as import('electron-updater').NsisUpdater).installDirectory = installationDir()
-    autoUpdater.on('checking-for-update', () => pushUpdaterState({ status: 'checking' }))
-    autoUpdater.on('update-available', (info) => pushUpdaterState({ status: 'available', version: info.version }))
-    autoUpdater.on('update-not-available', (info) => pushUpdaterState({ status: 'not-available', version: info.version }))
-    autoUpdater.on('download-progress', (progress) => pushUpdaterState({ status: 'downloading', percent: Math.round(progress.percent) }))
-    autoUpdater.on('update-downloaded', (info) => {
-      downloadedInstallerPath = info.downloadedFile
-      pushUpdaterState({ status: 'downloaded', version: info.version })
+    ensureUpdaterFeed(autoUpdater)
+    autoUpdater.on('checking-for-update', () => recordUpdaterState({ status: 'checking' }))
+    autoUpdater.on('update-available', (info) => {
+      updateDownloadInProgress = true
+      clearUpdateCheckTimer()
+      recordUpdaterState({ status: 'available', version: info.version })
     })
-    autoUpdater.on('error', (error) => pushUpdaterState({ status: 'error', message: error.message }))
-    void autoUpdater.checkForUpdates()
+    autoUpdater.on('update-not-available', (info) => {
+      updateDownloadInProgress = false
+      recordUpdaterState({ status: 'not-available', version: info.version })
+    })
+    autoUpdater.on('download-progress', (progress) => {
+      updateDownloadInProgress = true
+      recordUpdaterState({ status: 'downloading', percent: Math.round(progress.percent) })
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      updateDownloadInProgress = false
+      clearUpdateCheckTimer()
+      updateCheckRetryAttempt = 0
+      downloadedInstallerPath = info.downloadedFile
+      recordUpdaterState({ status: 'downloaded', version: info.version })
+    })
+    autoUpdater.on('error', (error) => {
+      reportUpdaterError(error)
+      if (updateCheckInFlight) updateCheckFailedDuringFlight = true
+      if (!downloadedUpdateVersion) {
+        updateDownloadInProgress = false
+        scheduleUpdateRetry(autoUpdater)
+      }
+    })
+    checkUpdatesQuietly(autoUpdater)
   } catch (error) {
-    pushUpdaterState({ status: 'error', message: (error as Error).message })
+    reportUpdaterError(error)
   }
 }
 
@@ -925,7 +1028,7 @@ function wireIpc(): void {
     if (!database) throw new Error(databaseInitializationFailure ?? 'قاعدة البيانات غير مهيأة بعد')
     return database
   }
-  ipcMain.handle('device:getEncryptionKey', (): Uint8Array => new Uint8Array(deviceEncryptionKey))
+  ipcMain.handle('device:getEncryptionKey', (): Uint8Array | null => deviceEncryptionKey.length === 32 ? new Uint8Array(deviceEncryptionKey) : null)
 
   /* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
      يُعرض عبر Electron Notification (مركز الإشعارات في ويندوز/ماك) — ويعيد false
@@ -967,23 +1070,6 @@ function wireIpc(): void {
 
   /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
   initLanHostIpc(() => mainWindow)
-
-  ipcMain.handle('updater:state', () => updaterState)
-  ipcMain.handle('updater:check', () => {
-    if (!app.isPackaged) return updaterState
-    try {
-      const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
-      void autoUpdater.checkForUpdates()
-    } catch (error) {
-      pushUpdaterState({ status: 'error', message: (error as Error).message })
-    }
-    return updaterState
-  })
-  ipcMain.handle('updater:install', async () => {
-    if (!app.isPackaged) return
-    if (!downloadedUpdateVersion) throw new Error('لم يكتمل تنزيل التحديث بعد')
-    await shutdownApplication(true)
-  })
 
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
@@ -1036,7 +1122,7 @@ function wireIpc(): void {
     if (problem) return { ok: false as const, reason: problem }
     if (deviceEncryptionKey.length !== 32) return { ok: false as const, reason: 'مفتاح الجهاز غير مهيأ' }
     const options = {
-      title: 'حفظ مفتاح الاسترداد — احفظه على USB أو مكان آمن خارج هذا الجهاز',
+      title: 'حفظ مفتاح الاسترداد — اختر مكاناً آمناً',
       defaultPath: join(app.getPath('documents'), keyRecoveryFileName()),
       filters: [{ name: 'مفتاح استرداد تَحَكَّم', extensions: ['tkey'] }],
     }
@@ -1254,11 +1340,13 @@ function shutdownApplication(update: boolean): Promise<void> {
         flush: flushRenderer,
         protect: async () => {
           if (!activeDatabasePath) throw new Error('تعذّر معرفة مسار قاعدة التشغيل')
+          // حماية المسار تمت قبل فتح SQLite؛ لا نحرّك المؤشر تحت اتصال حي. نتحقق هنا
+          // بعد flush من أن الاتصال الحي ما زال يشير إلى الملف المحمي خارج مجلد التثبيت.
           assertSafeUpdateLocation(userDataDir(), installationDir(), activeDatabasePath)
           try { assertDownloadedInstaller(downloadedInstallerPath) } catch (error) {
             downloadedUpdateVersion = null
             downloadedInstallerPath = null
-            pushUpdaterState({ status: 'error', message: (error as Error).message })
+            recordUpdaterState({ status: 'error', message: (error as Error).message })
             throw error
           }
         },
@@ -1292,7 +1380,7 @@ function shutdownApplication(update: boolean): Promise<void> {
       downloadedUpdateVersion = null
       downloadedInstallerPath = null
       preUpdateBackup = null
-      pushUpdaterState({ status: 'error', message: `لم يبدأ التحديث: ${(error as Error).message}. أعد تشغيل البرنامج قبل إعادة المحاولة.` })
+      recordUpdaterState({ status: 'error', message: `لم يبدأ التحديث: ${(error as Error).message}. أعد تشغيل البرنامج قبل إعادة المحاولة.` })
     }
     // لا تثبيت عند فشل الحفظ/الحماية/النسخة؛ يستأنف المُصيّر العمل.
     shuttingDown = false
@@ -1345,18 +1433,9 @@ if (!gotLock) {
       await preserveCurrentUserData(currentUserData, stableUserData)
       if (currentUserData !== stableUserData) logLine('userData', `الهوية الثابتة: ${stableUserData} — مجلد التشغيل السابق: ${currentUserData}`)
       logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
-      const previousVersion = readLastRunVersion()
-      showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
-      setSplashProgress(15, 'تهيئة مفتاح الجهاز…')
-      try {
-        deviceEncryptionKey = ensureDeviceEncryptionKey()
-      } catch (error) {
-        closeSplash()
-        logLine('device-key-fatal', (error as Error).message)
-        dialog.showErrorBox('تَحَكَّم — تعذّر تهيئة مفتاح الجهاز', `${(error as Error).message}\n\nلم تُفقد أي بيانات. أغلق البرنامج وأعد تشغيله، وإن تكرر الخطأ فتواصل مع الدعم.`)
-        app.exit(1)
-        return
-      }
+      showSplash()
+      setSplashProgress(15, 'فحص توافق البيانات القديمة…')
+      deviceEncryptionKey = loadLegacySnapshotKey()
       setSplashProgress(40, 'فتح قاعدة البيانات…')
       try {
         database = await openDatabase()
@@ -1384,7 +1463,7 @@ if (!gotLock) {
           void rotateBackups()
         }, 60 * 60 * 1000)
       } else {
-        pushUpdaterState({ status: 'error', message: 'أُوقف التحديث مؤقتاً حتى استرداد مفتاح البيانات' })
+        recordUpdaterState({ status: 'error', message: 'أُوقف التحديث مؤقتاً حتى استرداد مفتاح البيانات' })
       }
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow()
@@ -1394,7 +1473,7 @@ if (!gotLock) {
       closeSplash()
       logLine('boot-fatal', `فشل الإقلاع: ${(error as Error).stack ?? (error as Error).message}`)
       try {
-        dialog.showErrorBox('تَحَكَّم — تعذّر بدء البرنامج', `${(error as Error).message}\n\nلم تُحذف أي بيانات. أعد تشغيل البرنامج، وإن تكرر الخطأ فأرسل محتوى سجل البرنامج (main.log) للدعم.`)
+        dialog.showErrorBox('تَحَكَّم — تعذّر بدء البرنامج', `${(error as Error).message}\n\nلم تُحذف أي بيانات. اترك ملفات القاعدة والنسخ كما هي، ثم أعد تشغيل البرنامج.`)
       } catch { /* السجل كتب بالفعل */ }
       try { database?.close() } catch { /* لا شيء */ }
       database = null

@@ -312,7 +312,7 @@ function Shell() {
 
 /** شاشة استرداد: تظهر حين تعذّر قراءة البيانات — لا معالج إعداد ولا كتابة فوق البيانات */
 function DataRecoveryScreen({ reason }: { reason: string }) {
-  const keyMismatch = /فك تشفير|مفتاح الجهاز|اللقطات المشف|لقطة.*مشفرة/i.test(reason)
+  const keyMismatch = /enc:v1|فك تشفير|مفتاح الجهاز/i.test(reason)
   return (
     <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-slate-100 dark:bg-slate-950">
       <div className="max-w-lg space-y-4 p-8 rounded-3xl bg-white dark:bg-card-dark border border-rose-500/30 shadow-2xl">
@@ -323,18 +323,17 @@ function DataRecoveryScreen({ reason }: { reason: string }) {
         </p>
         {keyMismatch ? (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[12px] text-slate-700 dark:text-slate-200 leading-relaxed space-y-2">
-            <b className="block text-amber-700 dark:text-amber-300">تعذّر التحقق من تشفير القاعدة؛ قد يكون المفتاح الحالي مختلفاً أو إحدى اللقطات تالفة.</b>
+            <b className="block text-amber-700 dark:text-amber-300">تحتوي القاعدة على لقطة قديمة مشفّرة <span dir="ltr">enc:v1</span> تعذّر التحقق منها بالمفتاح الحالي (قد يكون غير متاح أو غير مطابق)؛ لم تُفتح القاعدة ولم تُكتب فوقها.</b>
             <ol className="list-decimal pr-5 space-y-1">
-              <li>إن كانت البيانات على قرص خارجي، وصّله ثم اضغط «إعادة المحاولة».</li>
-              <li>إن كان لديك ملف مفتاح استرداد <span dir="ltr">.tkey</span> وكلمة مروره، أدخلهما أدناه.</li>
-              <li>إن لم يكن لديك الملف، أوقف المحاولات واحفظ مجلد بيانات التطبيق كاملاً كما هو (بما فيه <span dir="ltr">Local State</span> و<span dir="ltr">device.key.enc</span> و<span dir="ltr">db-location.json</span> و<span dir="ltr">backups</span>)، واحتفظ بملف <span dir="ltr">shopsys.db</span> و<span dir="ltr">main.log</span> دون تعديل.</li>
-              <li>إن كان الجهاز أو حساب Windows الأصلي ما زال متاحاً، افتح القاعدة عليه وصدّر مفتاح الاسترداد من الإعدادات، ثم استورده هنا.</li>
+              <li>إن كان لديك ملف مفتاح استرداد <span dir="ltr">.tkey</span> وكلمة مروره، أدخلهما أدناه؛ يجب أن يحتوي الملف على المفتاح الأصلي لهذه اللقطة.</li>
+              <li>إن لم يكن لديك الملف، احتفظ بمجلد بيانات التطبيق كما هو (بما فيه <span dir="ltr">Local State</span> و<span dir="ltr">device.key.enc</span> و<span dir="ltr">db-location.json</span> و<span dir="ltr">backups</span>) وبملف <span dir="ltr">shopsys.db</span> دون تعديل أو استبدال.</li>
+              <li>إن كان ملف التعريف/حساب Windows الأصلي متاحاً، استخدمه لاستعادة المفتاح الأصلي ثم أعد المحاولة.</li>
             </ol>
-            <p className="font-bold">إذا كان المفتاح مفقوداً، فنسخة قاعدة البيانات وحدها لا تعوّضه. وإذا لم تنجح الاستعادة، لا تستبدل الأصل؛ احتفظ بنسخه وأرسل السجل للدعم.</p>
+            <p className="font-bold">لا يمكن ترحيل اللقطة القديمة بلا مفتاحها الأصلي. لا تحذف القاعدة ولا تنشئ قاعدة بديلة؛ البيانات النصية الجديدة لا تحتاج هذا المفتاح.</p>
           </div>
         ) : (
           <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-            تأكد من توصيل قرص مكان البيانات ثم أعد المحاولة. إن استمر الخطأ، اترك ملفات البيانات كما هي وأرسل ملف السجل <span dir="ltr">main.log</span> للدعم.
+            لم يبدأ التطبيق إعداداً جديداً ولم يغيّر ملفات البيانات. اترك الملفات المحلية كما هي، وتحقق من وجود مجلد البيانات الذي اختير سابقاً ثم أعد المحاولة.
           </p>
         )}
         <p dir="ltr" className="text-[11px] font-mono text-rose-600 dark:text-rose-400 break-all">{reason}</p>

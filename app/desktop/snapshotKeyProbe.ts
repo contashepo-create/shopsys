@@ -1,9 +1,9 @@
 /**
- * فحص مفتاح لقطات SQLite قبل أي ترحيل أو حماية أو كتابة.
+ * فحص توافق لقطات SQLite القديمة enc:v1 قبل أي حماية أو كتابة.
  *
- * يفيد خصوصاً بعد تحديث التطبيق: إذا كان الملف سليماً بنيوياً لكن مفتاح الجهاز
- * الحالي لا يفك لقطاته، نتوقف قبل فتحه بمسار الكتابة. لا نبدّل المفتاح ولا ننشئ
- * قاعدة بديلة؛ يمكن للمستخدم استيراد ملف الاسترداد ثم إعادة المحاولة.
+ * اللقطات الجديدة نصية ولا تعتمد على مفتاح. إذا وجدنا لقطة قديمة مشفرة ولم
+ * يفتحها المفتاح الحالي، نتوقف قبل فتح القاعدة بمسار الكتابة؛ لا نبدّل المفتاح
+ * ولا ننشئ قاعدة بديلة. يمكن استعادة المفتاح الأصلي ثم إعادة المحاولة.
  */
 import { createDecipheriv } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -47,7 +47,8 @@ export function probeSnapshotKey(dbPath: string, key: Buffer): SnapshotKeyProbeR
     const hasSnapshots = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'snapshots'").get()
     if (!hasSnapshots) return { status: 'no-encrypted-snapshots', stores: [] }
 
-    const rows = db.prepare('SELECT store_name AS storeName, payload_json AS payloadJson FROM snapshots WHERE payload_json IS NOT NULL').all() as {
+    // لا نحمّل لقطات JSON العادية (التي قد تكبر كثيراً) إلى ذاكرة العملية عند كل إقلاع.
+    const rows = db.prepare("SELECT store_name AS storeName, payload_json AS payloadJson FROM snapshots WHERE substr(payload_json, 1, 4) = 'enc:'").all() as {
       storeName: string
       payloadJson: string
     }[]

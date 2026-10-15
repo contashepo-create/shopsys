@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * بوابة جولة v1.0.7 — موافقة المالك على تنفيذ الاقتراحات (باستثناء النقل
- * إلى Cloudflare المؤجل لمرحلة أخيرة):
- *   ① تشفير قاعدة البيانات بمفتاح الجهاز (AES-256-GCM قبل SQLite).
+ * بوابة تاريخية لجولة v1.0.7 مع التعديل الحالي:
+ *   ① اللقطات النصية الجديدة غير مشفرة؛ تُقرأ وتُرحّل enc:v1 القديمة فقط.
  *   ② قفل النشاط: التغيير فقط بمفتاح SHOPSYS2 موقّع من الدعم الفني،
  *      بتقييد 30 يوماً بين تغييرين، ومفتاح التفعيل القديم يظل صالحاً.
  */
@@ -19,17 +18,18 @@ const check = (name, ok) => {
   if (!ok) { failed++; failedNames.push(name) }
 }
 
-/* ─── ① تشفير القاعدة بمفتاح الجهاز ─── */
+/* ─── ① تخزين SQLite النصي مع توافق رجعي للقطات القديمة المشفرة ─── */
 const ps = read('src/data/persistentStorage.ts')
-check('① تشفير AES-256-GCM للقطات (encryptSnapshotForDevice/decryptSnapshotForDevice)', ps.includes('encryptSnapshotForDevice') && ps.includes('decryptSnapshotForDevice'))
-check('① صيغة enc:v1 مميزة عن اللقطات النصية القديمة (توافق رجعي)', ps.includes("const ENC_PREFIX = 'enc:v1:'") && ps.includes('isEncryptedSnapshot'))
-check('① setItem يشفر قبل عبور IPC إلى SQLite', ps.includes('const storedPayload = key ? await encryptSnapshotForDevice(value, key) : value'))
-check('① قراءة اللقطة المشفرة تفك بالذاكرة وترفض مفتاح جهاز آخر برسالة واضحة', ps.includes('منسوخة من جهاز آخر'))
+check('① صيغة enc:v1 القديمة ما زالت قابلة للقراءة (توافق رجعي)', ps.includes("const ENC_PREFIX = 'enc:v1:'") && ps.includes('decryptSnapshotForDevice'))
+check('① اللقطات الجديدة تكتب payloadJson نصياً لا ciphertext', ps.includes('payloadJson: value') && !ps.includes('const storedPayload = key ? await encryptSnapshotForDevice(value, key) : value'))
+check('① أول قراءة للّقطة القديمة تفكها ثم تحفظها نصاً بإصدار متفائل', ps.includes('isEncryptedSnapshot(snapshot.payloadJson)') && ps.includes('expectedRevision: snapshot.revision') && ps.includes('payloadJson,\n          idempotencyKey'))
+check('① فشل المفتاح القديم يمنع الكتابة الافتراضية فوق البيانات', ps.includes('لم تُكتب فوقها أي بيانات') && ps.includes('منع الحفظ'))
 const main = read('desktop/main.ts')
-check('① main: مفتاح الجهاز يولَّد مرة في userData/device.key (32 بايت)', main.includes('ensureDeviceEncryptionKey') && main.includes("device.key"))
+check('① المفتاح القديم اختياري للبيانات النصية ولا يمنع الإقلاع وحده', main.includes('loadLegacySnapshotKey') && main.includes('return Buffer.alloc(0)'))
+check('① فحص اللقطات المشفرة القديمة قبل الكتابة أو الحماية', main.includes('probeSnapshotKey(selectedDatabasePath, deviceEncryptionKey)'))
 check('① main: IPC ‏device:getEncryptionKey مكشوف للpreload فقط', main.includes("ipcMain.handle('device:getEncryptionKey'"))
 const preload = read('desktop/preload.ts')
-check('① preload يكشف getEncryptionKey ضمن عقد القاعدة', preload.includes('getEncryptionKey'))
+check('① preload يكشف مفتاح legacy nullable للتوافق', preload.includes('getEncryptionKey'))
 
 /* ─── ② قفل النشاط وتغييره بمفتاح موقّع ─── */
 const lic = read('src/core/license.ts')
@@ -53,7 +53,7 @@ check('③ أداة CLI محلية تعمل اليوم بلا نشر (keygen-act
 
 /* ─── ④ الاختبارات الدائمة ─── */
 const encTest = read('tests/desktop_db_encryption.test.ts')
-check('④ اختبار التشفير: دورة + مفتاح جهاز آخر مرفوض + IV عشوائي + توافق نصي', encTest.includes('otherDevice') && encTest.includes('IV عشوائي'))
+check('④ اختبار توافق enc:v1 القديمة: دورة فك + مفتاح غير مطابق مرفوض + IV عشوائي', encTest.includes('otherDevice') && encTest.includes('IV عشوائي') && encTest.includes('توافق رجعي'))
 const actTest = read('tests/activity_change_key.test.ts')
 check('④ اختبار مفتاح النشاط: دورة كاملة + تقييد 30 + أمان الرفض', actTest.includes('activityKeyHistory') && actTest.includes('باقٍ') && actTest.includes('جهاز آخر'))
 const compat = read('tests/devbot_license_compat.test.ts')

@@ -20,6 +20,34 @@ export async function installSilentUpdate(deps: SilentUpdateDeps): Promise<void>
   deps.exit()
 }
 
+export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
+const UPDATE_CHECK_RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000] as const
+
+/** تأخير إعادة المحاولة بتصاعد محدود؛ بعد أربع محاولات يعاود الفحص كل 30 دقيقة. */
+export function updateCheckRetryDelay(attempt: number): number {
+  const safeAttempt = Number.isFinite(attempt) ? Math.max(0, Math.floor(attempt)) : 0
+  return UPDATE_CHECK_RETRY_DELAYS_MS[Math.min(safeAttempt, UPDATE_CHECK_RETRY_DELAYS_MS.length - 1)]
+}
+
+/** يمسك رفض checkForUpdates (ومنها ENOENT لـ app-update.yml) كي لا يتحول إلى unhandledRejection. */
+export function observeUpdateCheck(
+  check: () => Promise<unknown>,
+  onError: (error: unknown) => void,
+  onSuccess?: () => void,
+): void {
+  const report = (error: unknown): void => {
+    try { onError(error) } catch { /* حتى فشل تسجيل الخطأ لا ينشئ rejection جديداً غير معالج */ }
+  }
+  const succeed = (): void => {
+    try { onSuccess?.() } catch (error) { report(error) }
+  }
+  try {
+    void Promise.resolve(check()).then(succeed, report)
+  } catch (error) {
+    report(error)
+  }
+}
+
 export async function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {

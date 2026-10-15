@@ -1,12 +1,8 @@
 #!/usr/bin/env node
 /**
- * verify_device_key_store — بوابة ث2 (تدقيق 2026-10-08) — ثغرة حرجة:
- * مفتاح تشفير الجهاز كان نصاً صريحاً في `userData/device.key`.
- *
- * أي عملية على جهاز العميل تقرأ ذلك الملف فتفكّ كل لقطات القاعدة المشفّرة
- * بـAES-GCM ⇒ «القاعدة تُقرأ على هذا الجهاز فقط» كانت حماية شكلية. وسياسة
- * الخصوصية (التي يجزم اختبار legal_and_storage_v108 بصدقها) تدّعي safeStorage
- * منذ v1.0.7 بينما `app/desktop` لم يستدعه إطلاقاً.
+ * verify_device_key_store — بوابة مفتاح التوافق القديم للّقطات enc:v1.
+ * المفتاح يُحمى عبر safeStorage كي يُستخدم عند فك/ترحيل بيانات الإصدارات القديمة؛
+ * اللقطات الجديدة في SQLite نصية ولا تعتمد عليه.
  *
  * ما تُثبته البوابة:
  *   • أول تشغيل ⇒ مفتاح مشفّر عبر safeStorage ولا ملف صريح على القرص.
@@ -67,7 +63,7 @@ const io = (disk, safeStorage, logs = []) => ({
   log: (_tag, message) => logs.push(message),
 })
 
-console.log('بوابة ث2 — مفتاح تشفير الجهاز (safeStorage بدل النص الصريح):')
+console.log('بوابة مفتاح التوافق القديم enc:v1 — تخزينه الآمن عبر safeStorage:')
 
 ok('أول تشغيل ⇒ مشفّر فقط، ولا أثر صريح على القرص', () => {
   const disk = new FakeDisk()
@@ -248,7 +244,9 @@ ok('العملية الرئيسية موصولة: safeStorage + resolveDeviceKey
   assert.match(mainSrc, /for \(const warning of outcome\.warnings\) logLine\('device-key'/)
   // لم يعد يكتب المفتاح نصاً صريحاً مباشرةً
   assert.ok(!/writeFileSync\(keyPath, key, \{ mode: 0o600 \}\)/.test(mainSrc), 'الكتابة الصريحة المباشرة يجب أن تكون قد زالت')
-  assert.match(mainSrc, /deviceEncryptionKey = ensureDeviceEncryptionKey\(\)/)
+  assert.match(mainSrc, /deviceEncryptionKey = loadLegacySnapshotKey\(\)/)
+  assert.match(mainSrc, /function loadLegacySnapshotKey\(\): Buffer/)
+  assert.match(mainSrc, /deviceEncryptionKey\.length === 32 \? new Uint8Array\(deviceEncryptionKey\) : null/)
 })
 
 console.log(`\nالنتيجة: ${passed} فحوص ناجحة${process.exitCode ? ' — مع فشل أعلاه' : ' ✅'}`)

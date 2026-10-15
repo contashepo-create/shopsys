@@ -13,8 +13,8 @@ const main = read('desktop/main.ts')
 const preload = read('desktop/preload.ts')
 const bridge = read('src/data/desktopBridge.ts')
 const lock = read('src/ui/LockScreen.tsx')
-const updater = read('src/ui/components/DesktopUpdater.tsx')
 const about = read('src/ui/pages/AboutPage.tsx')
+const lifecycle = read('desktop/updateLifecycle.ts')
 
 let failures = 0
 const check = (name, cond) => {
@@ -38,12 +38,14 @@ check('اكتشاف البيانات السابقة عند أول تشغيل ق�
 check('القاعدة الحيّة المكتشفة تُعتمد في مكانها (لا نسخ)', /adoptExistingData[\s\S]{0,200}kind === 'live'/.test(main))
 check('تاريخ فتح المكان المخصص يُسجَّل لكشف اختفاء الملف', /customDbOpenedAt: new Date\(\)\.toISOString\(\)/.test(main))
 check('shieldDamagedDatabase يسترد من كل الأجيال (ساعي/قبل التحديث)', /recoveryBackupDirs/.test(main) && /'hourly', 'pre-update'/.test(read('desktop/databaseSafety.ts')))
-check('فشل مفتاح الجهاز يُبلَّغ برسالة ولا يصمت', /تعذّر تهيئة مفتاح الجهاز/.test(main))
+check('مفتاح التوافق القديم اختياري للنصوص، واللقطة القديمة غير المطابقة توقف فتح القاعدة', main.includes('loadLegacySnapshotKey') && main.includes('return Buffer.alloc(0)') && main.includes('DatabaseKeyMismatchError') && main.includes('deviceEncryptionKey.length === 32'))
 check('تصدير SQLite كامل بحوار حفظ (database:exportCopy)', /ipcMain\.handle\('database:exportCopy'/.test(main) && /raw\.backup\(result\.filePath\)/.test(main))
 check('preload يعرض exportCopy', /exportCopy: \(\) => ipcRenderer\.invoke\('database:exportCopy'\)/.test(preload))
 check('عقد الجسر يصف exportCopy', /exportCopy\(\): Promise/.test(bridge))
 check('شاشة القفل تعرض Excel شاملاً وSQLite', /exportExcel/.test(lock) && /exportSqlite/.test(lock) && /قاعدة SQLite \(\.db\)/.test(lock))
-check('زر التحديث يعالج الخطأ بدل unhandled', /setInstallError/.test(updater) && /await bridge\.install\(\)/.test(updater))
+check('التحديث صامت بلا أزرار فحص أو تثبيت يدوية في الواجهة', !/DesktopUpdater|checkUpdates|updater:install/.test(about) && !preload.includes('shopsysUpdater') && main.includes('autoUpdater.autoDownload = true'))
+check('رفض checkForUpdates يُلتقط وتُعاد المحاولة بصمت حتى عند تعذر الشبكة', main.includes('scheduleUpdateRetry(autoUpdater)') && main.includes('UPDATE_CHECK_INTERVAL_MS') && lifecycle.includes('updateCheckRetryDelay') && lifecycle.includes('Promise.resolve(check()).then(succeed, report)'))
+check('غياب app-update.yml يستخدم إعداد GitHub احتياطياً معروفاً', main.includes("join(process.resourcesPath, 'app-update.yml')") && main.includes("repo: 'tahakam-releases'") && main.includes('autoUpdater.setFeedURL'))
 const keyRecoveryTs = read('desktop/keyRecovery.ts')
 const keyStoreTs = read('desktop/deviceKeyStore.ts')
 const desktopKeyUi = read('src/ui/components/DesktopKeyRecovery.tsx')
@@ -60,11 +62,11 @@ check('preload يعرض keyRecovery فقط عبر contextBridge', /keyRecovery,\
 check('الواجهة لا تستورد node:crypto ولا keyRecovery.ts (تبقى في العملية الرئيسية)', !/from ['"]node:crypto['"]|from ['"][^'"\n]*desktop\/keyRecovery/.test(desktopKeyUi + backupPage + appTsx))
 check('شاشة الاسترداد تعرض استيراد مفتاح الاسترداد', /<DesktopKeyRecoveryImport \/>/.test(appTsx))
 check('صفحة النسخ على سطح المكتب تستعمل مفتاح الاسترداد بدل سر المتصفح', /desktopKeyRecoveryBridge\(\) \? <DesktopKeyRecoveryCard/.test(backupPage))
-check('شاشة البدء تظهر قبل فتح القاعدة وتُغلق عند ظهور الواجهة', /showSplash\(previousVersion/.test(main) && main.indexOf('showSplash(previousVersion') < main.indexOf('database = await openDatabase()', main.indexOf('void app.whenReady().then(')) && /mainWindow\.once\('ready-to-show'/.test(main) && /closeSplash\(\)/.test(main))
+check('شاشة البدء تظهر قبل فحص المفتاح وفتح القاعدة وتُغلق عند ظهور الواجهة', /showSplash\(\)/.test(main) && main.indexOf('showSplash()') < main.indexOf('database = await openDatabase()', main.indexOf('void app.whenReady().then(')) && /mainWindow\.once\('ready-to-show'/.test(main) && /closeSplash\(\)/.test(main))
 check('النسخ الدوّارة ساعية فقط (يوم واحد) — لا يومي ولا أسبوعي', /ROTATION = \{\s*hourly: \{ keep: 24/.test(read('desktop/storagePolicy.ts')) && !/daily: \{ keep|weekly: \{ keep/.test(read('desktop/storagePolicy.ts')) && !/'daily'|'weekly'/.test(main))
 check('شاشة البدء تُظهر تقدّماً فعلياً (نسبة + خطوة) ومهلة أمان', /setSplashProgress\(40, 'فتح قاعدة البيانات/.test(main) && /setTimeout\(\(\) => \{\s*closeSplash\(\)[\s\S]{0,200}?\}, 20_000\)/.test(main))
 check('رسالة التحديث تظهر مرة واحدة بعد تغيّر الإصدار (last-run.json)', /writeLastRunVersion\(\)/.test(main) && /last-run\.json/.test(main))
-check('مؤشر التحديث يصف النسخة الاحتياطية وفتح البيانات تلقائياً', /تُؤخذ نسخة احتياطية قبل التثبيت/.test(read('src/ui/components/DesktopUpdater.tsx')))
+check('يجهّز نسخة عند اكتمال التنزيل ويأخذ نسخة جديدة بعد flush قبل التثبيت', /state\.status === 'downloaded'[\s\S]{0,400}backupBeforeUpdate\(state\.version\)/.test(main) && /flush: flushRenderer/.test(main) && /backupBeforeUpdate\(downloadedUpdateVersion!\)/.test(main))
 check('الحوار لا يدّعي تراجعاً تلقائياً', !/تراجع تلقائي واستعادة/.test(about))
 
 /* v1.0.22 — استرداد مكان القاعدة وتقوية Electron */
@@ -90,7 +92,7 @@ check('المسار النسبي مرفوض عند الكتابة (isAbsoluteDbP
 /* v1.0.22 — حوار الخطأ عند فشل الفتح: اختيار ملف يدوي بعد الفحص، بلا علامة جلسة */
 const openDbStart = main.indexOf('async function openDatabase()')
 const openDbBody = openDbStart >= 0 ? main.slice(openDbStart, main.indexOf('/* ── الطباعة', openDbStart)) : ''
-check('openDatabase يعرض حوار الخطأ بزر «اختيار ملف القاعدة يدوياً»', /buttons: \['اختيار ملف القاعدة يدوياً\.\.\.', 'إظهار ملف القاعدة في المجلد \(لإرساله للدعم\)', 'إغلاق البرنامج'\]/.test(openDbBody))
+check('openDatabase يعرض حوار الخطأ بزر اختيار ملف/إظهار القاعدة دون طلب إرسالها', /buttons: \['اختيار ملف القاعدة يدوياً\.\.\.', 'إظهار ملف القاعدة في المجلد', 'إغلاق البرنامج'\]/.test(openDbBody) && /لا تشارك ملف القاعدة/.test(openDbBody))
 check('بعد اختيار ملف يدوي يُعاد الفتح من المسار الجديد (حلقة مع حد أقصى)', /for \(let attempt = 1; ; attempt \+= 1\)/.test(openDbBody) && /attempt < 20/.test(openDbBody) && /\bcontinue\b/.test(openDbBody))
 check('الملف اليدوي يُفحص قبل الاعتماد (pickValidatedDatabaseFile)', /function pickValidatedDatabaseFile/.test(main) && /probeShopsysDatabase\(file\)/.test(main) && /pickValidatedDatabaseFile\(\)/.test(openDbBody))
 check('لا علامة جلسة تُنسي الاختيار (useDefaultDbForSession ممنوعة)', !/useDefaultDbForSession|DefaultDbForSession|sessionDefault/i.test(main))
@@ -102,7 +104,7 @@ const shieldSrc = read('desktop/dbShield.ts')
 check('الدرع يتحقق من نسخة سليمة قبل إعادة تسمية التالف', shieldSrc.indexOf('candidates.some(') > 0 && shieldSrc.indexOf('candidates.some(') < shieldSrc.indexOf('renameSync(dbPath, quarantine)'))
 check('الدرع يعيد التالف إلى مكانه إذا فشل كل نسخ الاسترداد', /renameSync\(quarantine, dbPath\)/.test(shieldSrc) && /corrupt-no-backup/.test(shieldSrc))
 check('التالف بلا نسخة يوقف الفتح بحوار (لا قاعدة فارغة)', /shield === 'corrupt-no-backup'/.test(main) && /throw new Error\('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة/.test(main))
-check('حوار الخطأ يعرض إظهار الملف في المجلد (لإرساله للدعم)', /إظهار ملف القاعدة في المجلد/.test(main) && /shell\.showItemInFolder\(dbPath\)/.test(main))
+check('حوار الخطأ يتيح حفظ/فحص ملف القاعدة محلياً ولا يطلب إرساله', /إظهار ملف القاعدة في المجلد/.test(main) && /shell\.showItemInFolder\(dbPath\)/.test(main) && /لا تشارك ملف القاعدة/.test(main))
 
 console.log(failures ? `\n❌ فشلت ${failures} فحوص` : '\n✅ بوابة التخزين والنسخ v1.0.22 تعمل')
 process.exit(failures ? 1 : 0)

@@ -7,18 +7,11 @@ type CachedSnapshot = {
   payloadJson: string | null
 }
 
-/* ═══ تشفير القاعدة بمفتاح الجهاز (v1.0.7 — موافقة المالك) ═══
-   الصيغة المخزنة في SQLite: `enc:v1:<iv-b64u>:<ct-b64u>` (AES-256-GCM).
-   اللقطات القديمة النصية تُقرأ كما هي (توافق رجعي) وتُكتب مشفرة منذ أول
-   حفظ — ترحيل تدريجي تلقائي بلا خطوة يدوية. نسخ القاعدة إلى جهاز آخر
-   (بمفتاح جهاز مختلف) يعطي فكّاً فاشلاً — هذا هو الهدف المعلن. */
+/* لقطة سطح المكتب تُخزَّن الآن كنص JSON محلي داخل SQLite، لتجنّب ربط فتح
+   البيانات بمفتاح جهاز يتعطل أو يتغير عند التحديث. التوافق مع اللقطات القديمة
+   `enc:v1` باقٍ: تُفك بالمفتاح القديم عند نجاحه ثم تُحوّل إلى نص عادي مرة واحدة.
+   لا تُشفّر كلمات المرور وبيانات الاعتماد هنا؛ لها secureStorage مستقل. */
 const ENC_PREFIX = 'enc:v1:'
-
-function bytesToB64u(bytes: Uint8Array): string {
-  let s = ''
-  for (const b of bytes) s += String.fromCharCode(b)
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
 
 function b64uToBytes(s: string): Uint8Array {
   const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)
@@ -29,14 +22,7 @@ function b64uToBytes(s: string): Uint8Array {
 }
 
 async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', raw as unknown as ArrayBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
-}
-
-export async function encryptSnapshotForDevice(payloadJson: string, keyBytes: Uint8Array): Promise<string> {
-  const key = await importAesKey(keyBytes)
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as unknown as ArrayBuffer }, key, new TextEncoder().encode(payloadJson) as unknown as ArrayBuffer))
-  return `${ENC_PREFIX}${bytesToB64u(iv)}:${bytesToB64u(ct)}`
+  return crypto.subtle.importKey('raw', raw as unknown as ArrayBuffer, { name: 'AES-GCM' }, false, ['decrypt'])
 }
 
 export async function decryptSnapshotForDevice(stored: string, keyBytes: Uint8Array): Promise<string> {
@@ -50,7 +36,7 @@ export async function decryptSnapshotForDevice(stored: string, keyBytes: Uint8Ar
 }
 
 export function isEncryptedSnapshot(stored: string): boolean {
-  return stored.startsWith(ENC_PREFIX)
+  return stored.startsWith('enc:')
 }
 
 /* v1.0.19: متاجر فشلت قراءتها من SQLite. عند الفشل لا يُعرض معالج «عميل جديد»
@@ -144,9 +130,9 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
 /**
  * تخزين Zustand المتوافق مع نسخة الويب ونسخة Electron.
  *
- * في المتصفح يبقى secureStorage هو المسار الحالي المشفر بمفتاح الجهاز.
- * داخل Electron تنتقل اللقطة نفسها إلى SQLite عبر IPC، مع رقم إصدار
- * متفائل يمنع كاتباً قديماً من الكتابة فوق لقطة أحدث.
+ * في المتصفح يبقى secureStorage هو المسار الحالي المشفر بمفتاحه المحلي.
+ * داخل Electron تنتقل اللقطة نفسها إلى SQLite كنص عبر IPC، مع رقم إصدار
+ * متفائل يمنع كاتباً قديماً من الكتابة فوق لقطة أحدث؛ enc:v1 للتوافق الرجعي فقط.
  */
 export class DesktopStateStorage implements StateStorage {
   private readonly snapshots = new Map<string, CachedSnapshot>()
@@ -164,7 +150,7 @@ export class DesktopStateStorage implements StateStorage {
   resume(): void { this.paused = false }
   private readonly database: DesktopDatabaseBridge
   private readonly legacyStorage: StateStorage | null
-  /* v1.0.7: مفتاح تشفير الجهاز — يُجلب مرة عند الإنشاء (بلا IPC متكرر) */
+  /* مفتاح توافق لقطات enc:v1 القديمة — يُجلب مرة عند الحاجة، لا للكتابات الجديدة. */
   private encryptionKey: Uint8Array | null = null
   private encryptionKeyLoaded = false
   private readonly keyLoader: () => Promise<Uint8Array | null>
@@ -175,7 +161,7 @@ export class DesktopStateStorage implements StateStorage {
     this.keyLoader = keyLoader ?? (async () => (database.getEncryptionKey ? await database.getEncryptionKey() : null))
   }
 
-  /** مفتاح الجهاز أو null (إصدارات preload قديمة بلا دعم — يبقى التخزين نصياً) */
+  /** مفتاح اللقطات القديمة أو null؛ لا حاجة إليه للقطات النصية الجديدة. */
   private async deviceKey(): Promise<Uint8Array | null> {
     if (!this.encryptionKeyLoaded) {
       this.encryptionKeyLoaded = true
@@ -184,16 +170,16 @@ export class DesktopStateStorage implements StateStorage {
     return this.encryptionKey
   }
 
-  /** فك لقطة مؤمنة؛ النصية القديمة تُعاد كما هي (توافق رجعي) */
+  /** فك لقطة enc:v1 قديمة؛ اللقطات النصية تُعاد كما هي. */
   private async readPayload(stored: string | null, storeName: string): Promise<string | null> {
     if (stored == null) return null
     if (!isEncryptedSnapshot(stored)) return stored
     const key = await this.deviceKey()
-    if (!key) throw new Error(`لقطة «${storeName}» مشفرة بمفتاح جهاز لا يتوفر — حدّث نسخة سطح المكتب ثم أعد المحاولة`)
+    if (!key || key.length !== 32) throw new Error(`اللقطة القديمة «${storeName}» مشفرة، لكن مفتاحها الأصلي غير متاح. احفظ قاعدة البيانات كما هي؛ لا تُنشئ قاعدة بديلة.`)
     try {
       return await decryptSnapshotForDevice(stored, key)
     } catch {
-      throw new Error(`تعذّر فك تشفير «${storeName}» — القاعدة منسوخة من جهاز آخر أو المفتاح تالف. استخدم النسخة الاحتياطية على الجهاز الأصلي`)
+      throw new Error(`تعذّر فك اللقطة القديمة «${storeName}» — المفتاح لا يطابقها أو أن بياناتها تالفة. لم تُكتب فوقها أي بيانات.`)
     }
   }
 
@@ -231,9 +217,33 @@ export class DesktopStateStorage implements StateStorage {
         return loaded
       }
     }
-    /* v1.0.7: اللقطة المشفرة تُفك فوراً وتُخزن صريحة في ذاكرة العمل —
-       المرجع الوحيد للكتابة اللاحقة (idempotency/القيود الجديدة) يرى النص الصريح */
-    const loaded: CachedSnapshot = { revision: snapshot.revision, payloadJson: await this.readPayload(snapshot.payloadJson, storeName) }
+    const payloadJson = await this.readPayload(snapshot.payloadJson, storeName)
+    let loaded: CachedSnapshot = { revision: snapshot.revision, payloadJson }
+
+    // ترحيل صامت لمرة واحدة: بعد فك لقطة إصدار قديم بالمفتاح الأصلي، نكتب
+    // الحمولة نفسها كنص عادي بإصدار متفائل. فشل الترحيل لا يمنع القراءة ولا
+    // يستبدل الأصل؛ أول حفظ عادي لاحق سيكتب النص العادي أيضاً.
+    if (snapshot.payloadJson != null && isEncryptedSnapshot(snapshot.payloadJson) && payloadJson != null) {
+      try {
+        const migrated = await this.database.saveSnapshot({
+          storeName,
+          expectedRevision: snapshot.revision,
+          payloadJson,
+          idempotencyKey: await snapshotIdempotencyKey(storeName, snapshot.revision, payloadJson),
+          auditEvents: [],
+          journalEntries: [],
+        })
+        loaded = { revision: migrated.revision, payloadJson }
+      } catch {
+        // تعارض متزامن أو قرص غير متاح: لا نعرض إعداداً فارغاً ولا نلمس الأصل.
+        try {
+          const latest = await this.database.getSnapshot(storeName)
+          if (latest.storeName === storeName && latest.payloadJson != null && !isEncryptedSnapshot(latest.payloadJson)) {
+            loaded = { revision: latest.revision, payloadJson: await this.readPayload(latest.payloadJson, storeName) }
+          }
+        } catch { /* تبقى النسخة المفكوكة في الذاكرة؛ سيُعاد الحفظ في أول كتابة */ }
+      }
+    }
     this.snapshots.set(storeName, loaded)
     return loaded
   }
@@ -259,15 +269,12 @@ export class DesktopStateStorage implements StateStorage {
       }
       const current = await this.load(name)
       const idempotencyKey = await snapshotIdempotencyKey(name, current.revision, value)
-      /* v1.0.7: الحمولة تُشفَّر قبل عبور IPC والتخزين — استخراج القيود
-         والتدقيق يعمل على النص الصريح محلياً قبل التشفير (الجداول الملحقة
-         تبقى للتقارير السريعة داخل الجهاز نفسه) */
-      const key = await this.deviceKey()
-      const storedPayload = key ? await encryptSnapshotForDevice(value, key) : value
+      // تخزين SQLite النصي مقصود: لا تعتمد البيانات الجديدة على مفتاح جهاز
+      // أو safeStorage. اللقطات القديمة تُفك وتُرحّل تلقائياً عند أول قراءة.
       const result = await this.database.saveSnapshot({
         storeName: name,
         expectedRevision: current.revision,
-        payloadJson: storedPayload,
+        payloadJson: value,
         idempotencyKey,
         auditEvents: newAuditEvents(value, current.payloadJson),
         journalEntries: newJournalEntries(value, current.payloadJson),
@@ -294,25 +301,46 @@ export class DesktopStateStorage implements StateStorage {
 }
 
 const activeDesktopStores = new Set<DesktopStateStorage>()
-let flushListenerRegistered = false
+const registeredPersistenceBridges = new WeakSet<object>()
+
+type DesktopStorageCache = { database: DesktopDatabaseBridge; storage: DesktopStateStorage }
+let appStorageCache: DesktopStorageCache | null = null
+let settingsStorageCache: DesktopStorageCache | null = null
 
 function registerDesktopStorage(storage: DesktopStateStorage): DesktopStateStorage {
   const bridge = desktopBridge()
   activeDesktopStores.add(storage)
-  if (bridge?.persistence && !flushListenerRegistered) {
-    flushListenerRegistered = true
-    bridge.persistence.onFlush(async () => {
+  const persistence = bridge?.persistence
+  if (persistence && !registeredPersistenceBridges.has(persistence)) {
+    registeredPersistenceBridges.add(persistence)
+    persistence.onFlush(async () => {
       await Promise.all([...activeDesktopStores].map(store => store.flush()))
     })
-    bridge.persistence.onResume(() => { for (const store of activeDesktopStores) store.resume() })
+    persistence.onResume(() => { for (const store of activeDesktopStores) store.resume() })
   }
   return storage
+}
+
+function cachedDesktopStorage(
+  cache: DesktopStorageCache | null,
+  database: DesktopDatabaseBridge,
+  legacyStorage: StateStorage | null,
+): { cache: DesktopStorageCache; storage: DesktopStateStorage } {
+  if (cache?.database === database) {
+    return { cache, storage: registerDesktopStorage(cache.storage) }
+  }
+  if (cache) activeDesktopStores.delete(cache.storage)
+  const storage = registerDesktopStorage(new DesktopStateStorage(database, legacyStorage))
+  return { cache: { database, storage }, storage }
 }
 
 /** مصدر persist الوحيد: SQLite في Electron، والتخزين المشفر الحالي في الويب. */
 export function appStorage(): StateStorage {
   const bridge = desktopBridge()
-  return bridge ? registerDesktopStorage(new DesktopStateStorage(bridge.database)) : secureStorage
+  if (!bridge) return secureStorage
+  const cached = cachedDesktopStorage(appStorageCache, bridge.database, null)
+  appStorageCache = cached.cache
+  return cached.storage
 }
 
 /** localStorage الخام كما هو — لمتجر الإعدادات في الويب (سلوك اليوم بلا تغيير). */
@@ -330,5 +358,8 @@ const rawLocalStorage: StateStorage = {
  */
 export function settingsAppStorage(): StateStorage {
   const bridge = desktopBridge()
-  return bridge ? registerDesktopStorage(new DesktopStateStorage(bridge.database, rawLocalStorage)) : rawLocalStorage
+  if (!bridge) return rawLocalStorage
+  const cached = cachedDesktopStorage(settingsStorageCache, bridge.database, rawLocalStorage)
+  settingsStorageCache = cached.cache
+  return cached.storage
 }

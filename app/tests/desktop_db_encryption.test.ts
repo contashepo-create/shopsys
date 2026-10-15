@@ -1,19 +1,18 @@
-/**
- * جولة v1.0.7 — موافقة المالك على تشفير قاعدة البيانات بمفتاح الجهاز:
- * لقطات المتاجر تُشفَّر AES-256-GCM قبل تخزينها في SQLite (نسخة سطح المكتب)،
- * فلا تُقرأ القاعدة المنسوخة على جهاز آخر. اللقطات النصية القديمة تُقرأ
- * كما هي (توافق رجعي) وتُكتب مشفرة عند أول حفظ (ترحيل تدريجي).
+/** توافق رجعي لبيانات سطح المكتب المشفرة في الإصدارات القديمة.
+ * اللقطات الجديدة تحفظ كنص عادي؛ هذه الاختبارات تثبت فقط فك صيغة enc:v1 القديمة
+ * حتى ينجح ترحيلها الصامت إلى SQLite النصي في DesktopStateStorage.
  */
 import { describe, it, expect, vi } from 'vitest'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
-const { encryptSnapshotForDevice, decryptSnapshotForDevice, isEncryptedSnapshot } = await import('../src/data/persistentStorage.ts')
+const { decryptSnapshotForDevice, isEncryptedSnapshot } = await import('../src/data/persistentStorage.ts')
+const { encryptLegacySnapshotForTest } = await import('./legacy_snapshot_fixture.ts')
 
-describe('تشفير قاعدة البيانات بمفتاح الجهاز (v1.0.7)', () => {
+describe('توافق قراءة اللقطات القديمة المشفرة', () => {
   it('دورة كاملة: تشفير → نص غير مقروء → فك بالمفتاح نفسه فقط', async () => {
     const key = crypto.getRandomValues(new Uint8Array(32))
     const payload = JSON.stringify({ state: { items: [{ id: 1, nameAr: 'أرز مصري 5كجم', priceMinor: 8500 }], journal: [] }, version: 7 })
-    const stored = await encryptSnapshotForDevice(payload, key)
+    const stored = await encryptLegacySnapshotForTest(payload, key)
     // المخزون: بصيغة enc:v1 ولا يحوي أي أثر للنص الصريح
     expect(stored.startsWith('enc:v1:')).toBe(true)
     expect(stored.includes('أرز')).toBe(false)
@@ -28,14 +27,15 @@ describe('تشفير قاعدة البيانات بمفتاح الجهاز (v1.0
 
   it('نفس اللقطة تعطي نصاً مخزناً مختلفاً كل مرة (IV عشوائي)', async () => {
     const key = crypto.getRandomValues(new Uint8Array(32))
-    const a = await encryptSnapshotForDevice('{"x":1}', key)
-    const b = await encryptSnapshotForDevice('{"x":1}', key)
+    const a = await encryptLegacySnapshotForTest('{"x":1}', key)
+    const b = await encryptLegacySnapshotForTest('{"x":1}', key)
     expect(a).not.toBe(b)
   })
 
   it('الصيغة التالفة ترفض بوضوح، والنص القديم يُعرف كغير مشفر', async () => {
     const key = crypto.getRandomValues(new Uint8Array(32))
     await expect(decryptSnapshotForDevice('enc:v9:xx:yy', key)).rejects.toThrow('صيغة لقطة') // إصدار صيغة مجهول
+    expect(isEncryptedSnapshot('enc:v9:xx:yy')).toBe(true) // تنسيق مشفّر مجهول لا يُعامل كنص
     expect(isEncryptedSnapshot('{"state":{}}')).toBe(false) // لقطة نصية قديمة — تُقرأ كما هي
   })
 })

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DesktopStateStorage, newAuditEvents, newJournalEntries, snapshotIdempotencyKey, appStorage, settingsAppStorage } from '../src/data/persistentStorage.ts'
+import { encryptLegacySnapshotForTest } from './legacy_snapshot_fixture.ts'
 import type { DesktopDatabaseBridge, DesktopSnapshot } from '../src/data/desktopBridge.ts'
 
 function fakeDatabase() {
@@ -33,7 +34,7 @@ function fakeDatabase() {
     integrityCheck: async () => ({ ok: true, message: 'ok' }),
     schemaVersion: async () => 1,
   }
-  return { database, calls }
+  return { database, calls, rows }
 }
 
 describe('جسر تخزين Zustand إلى SQLite', () => {
@@ -80,6 +81,44 @@ describe('جسر تخزين Zustand إلى SQLite', () => {
     expect(await storage.getItem('shopsys-data')).toBe('{"version":2}')
     await storage.removeItem('shopsys-data')
     expect(await storage.getItem('shopsys-data')).toBeNull()
+  })
+
+  it('يحفظ اللقطات الجديدة كنص عادي حتى مع توافر مفتاح الجهاز', async () => {
+    const { database, calls } = fakeDatabase()
+    const keyLoader = vi.fn(async () => new Uint8Array(32).fill(7))
+    const storage = new DesktopStateStorage(database, null, keyLoader)
+    const payload = '{"state":{"plain":true}}'
+
+    await storage.setItem('shopsys-data', payload)
+
+    expect(calls).toEqual([{ expectedRevision: 0, payloadJson: payload }])
+    expect(keyLoader).not.toHaveBeenCalled()
+  })
+
+  it('يفك لقطة enc:v1 القديمة ثم يرحّلها تلقائياً إلى SQLite كنص عادي', async () => {
+    const { database, calls, rows } = fakeDatabase()
+    const key = new Uint8Array(32).fill(9)
+    const payload = '{"state":{"legacyBalance":42}}'
+    const encrypted = await encryptLegacySnapshotForTest(payload, key)
+    rows.set('shopsys-data', { revision: 4, payloadJson: encrypted, updatedAt: '2026-10-14T20:00:00.000Z' })
+    const storage = new DesktopStateStorage(database, null, async () => key)
+
+    await expect(storage.getItem('shopsys-data')).resolves.toBe(payload)
+
+    expect(calls).toEqual([{ expectedRevision: 4, payloadJson: payload }])
+    expect(rows.get('shopsys-data')).toMatchObject({ revision: 5, payloadJson: payload })
+  })
+
+  it('مفتاح قديم خاطئ لا يكتب فوق اللقطة ولا يسمح بالحفظ الافتراضي', async () => {
+    const { database, calls, rows } = fakeDatabase()
+    const payload = await encryptLegacySnapshotForTest('{"state":{"keep":true}}', new Uint8Array(32).fill(1))
+    rows.set('shopsys-data', { revision: 2, payloadJson: payload, updatedAt: '2026-10-14T20:00:00.000Z' })
+    const storage = new DesktopStateStorage(database, null, async () => new Uint8Array(32).fill(2))
+
+    await expect(storage.getItem('shopsys-data')).rejects.toThrow('المفتاح لا يطابقها')
+    await expect(storage.setItem('shopsys-data', '{"state":{}}')).rejects.toThrow('منع الحفظ')
+    expect(calls).toHaveLength(0)
+    expect(rows.get('shopsys-data')?.payloadJson).toBe(payload)
   })
 
   it('ينقل التخزين القديم إلى SQLite قبل حذف نسخته', async () => {
@@ -153,6 +192,8 @@ it('flush يضم مخزن الإعدادات shopsys-app ومخزن الأعما
   } }
   try {
     const settings = settingsAppStorage(), data = appStorage()
+    expect(settingsAppStorage()).toBe(settings)
+    expect(appStorage()).toBe(data)
     const a = settings.setItem('shopsys-app', '{"state":{"setup":{"completed":true}}}')
     const b = data.setItem('shopsys-data', '{"state":{"balance":54321}}')
     await onFlush()

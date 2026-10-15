@@ -127,7 +127,7 @@ try {
   if ((Get-FileHash $key -Algorithm SHA256).Hash -ne $keyHash) { throw 'Device encryption key changed during update' }
   Run-Probe $(if ($FromPublished23) { 'verify-latest' } else { 'verify' }) $afterPath
   @{ ok = $true; version = $version; installation = $install; database = $afterPath; nativeNSIS = $true; samePackageReinstall = (-not $FromPublished23); oldBinaryExecuted = [bool]$FromPublished23; fromVersion = $(if ($FromPublished23) { '1.0.23' } else { $version }); actualProfile = $ud; feedDownloadTested = $false } | ConvertTo-Json | Set-Content $results
-  Write-Host "PASS: actual NSIS, oldBinaryExecuted=$FromPublished23, same profile and encrypted SQLite/key; forced restart tested only in same-package mode."
+  Write-Host "PASS: actual NSIS, oldBinaryExecuted=$FromPublished23, same profile and legacy enc:v1 snapshot key/data preserved; forced restart tested only in same-package mode."
 } catch {
   foreach ($profile in @('app', 'Tahakom')) {
     $log = Join-Path $env:APPDATA "$profile/main.log"

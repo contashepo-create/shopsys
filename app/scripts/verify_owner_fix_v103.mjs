@@ -15,16 +15,19 @@ const R = reporter('جولة v1.0.3 — بلاغات الأسبوع الأول')
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8')
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
 
-/* ①② صور ووحدة التحديث في «حول» */
+/* ①② صور «حول» وتحديث سطح المكتب الصامت بلا تحكم يدوي */
 {
   const about = read('src/ui/pages/AboutPage.tsx')
   assert.ok(about.includes('src="./app-logo.png"') && about.includes('src="./dev-logo.png"'), 'صور حول ليست نسبية')
   assert.ok(!about.includes('src="/app-logo.png"') && !about.includes('src="/dev-logo.png"'), 'بقي مسار مطلق لصورة')
   R.ok('صورتا «حول» بمسارين نسبيين — لا مطلق ينكسر تحت file://')
-  assert.ok(about.includes('!isElectronRuntime() && ('), 'قسم فحص السحابة ليس حكراً على المتصفح')
-  assert.ok(about.includes('import { isElectronRuntime }'))
-  assert.ok(strip(about).includes('<DesktopUpdater />'), 'DesktopUpdater مفقود لنسخة سطح المكتب')
-  R.ok('زرّا التحديث موحّدان: السحابة للمتصفح فقط وسطح المكتب على electron-updater وحده')
+  assert.ok(!/DesktopUpdater|checkUpdates|updater:install|فحص التحديثات/.test(strip(about)), 'بقي تحكم يدوي بالتحديث في صفحة حول')
+  const main = read('desktop/main.ts')
+  const preload = read('desktop/preload.ts')
+  assert.ok(main.includes('autoUpdater.autoDownload = true') && main.includes('autoUpdater.autoInstallOnAppQuit = false'), 'التنزيل الصامت عند الإقلاع أو التثبيت عند الإغلاق غير مضبوط')
+  assert.ok(main.includes('await requestSilentInstall(autoUpdater)') && main.includes('flush: flushRenderer'), 'التثبيت الصامت لا يمر بحفظ الواجهة')
+  assert.ok(!preload.includes('shopsysUpdater') && !main.includes("ipcMain.handle('updater:install'"), 'بقي جسر التثبيت اليدوي مكشوفاً')
+  R.ok('تحديث Windows آلي وصامت في main process — لا أزرار فحص/تثبيت يدوية في «حول»')
 }
 
 /* ③ الأيقونة الحقيقية */

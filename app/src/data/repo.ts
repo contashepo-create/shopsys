@@ -13710,7 +13710,8 @@ export const useDataStore = create<DataState>()(
     {
       name: 'shopsys-data',
       version: DATA_VERSION,
-      // القرار 28: قاعدة البيانات مشفرة AES-256-GCM بمفتاح مشتق لهذا الجهاز
+      // Electron: لقطات SQLite الجديدة نصية؛ enc:v1 القديمة تُفك وتُرحّل عند القراءة.
+      // المتصفح يبقي secureStorage المشفر عبر appStorage دون تغيير.
       storage: createJSONStorage(appStorage),
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
       migrate: (persisted: unknown) => {

@@ -42,7 +42,7 @@ check('② الجسر كامل: preload + types', preload.includes('restoreFileB
 check('② بطاقة الاستعادة: قائمة + تحذير الاستبدال الكامل + تأكيد على مرحلتين', backupPage.includes('استعادة نسخة قاعدة كاملة (من النسخ الملفية)') && backupPage.includes('تستبدل بياناتك الحالية بالكامل') && backupPage.includes('متأكد — استبدل بياناتي الحالية'))
 
 /* ─── ③ صدق الوثيقة ─── */
-check('③ وثيقة قانونية صادقة: تشفير AES-256-GCM بمخزن مفاتيح النظام + توصية BitLocker طبقة إضافية', legal.includes('AES-256-GCM') && legal.includes('مخزن مفاتيح النظام') && legal.includes('BitLocker'))
+check('③ وثيقة قانونية صادقة: تصرح أن لقطات SQLite نص JSON عادي وتوضح المزامنة المشفرة الاختيارية وتوصي بBitLocker', legal.includes('نص JSON عادي غير مشفّر على مستوى التطبيق') && legal.includes('AES-256-GCM') && legal.includes('المزامنة السحابية الاختيارية') && legal.includes('BitLocker') && !legal.includes('قاعدة بيانات مشفرة بمفتاح جهازك'))
 
 /* ─── ④ الإشعار ─── */
 check('④ إشعار الاسترداد التلقائي يظهر للمستخدم مرة واحدة عند الإقلاع', app.includes('recoveryNotice') && app.includes('استُردت تلقائياً من أحدث نسخة سليمة') && main.includes("ipcMain.handle('database:recoveryNotice'"))

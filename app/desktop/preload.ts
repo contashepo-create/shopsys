@@ -3,13 +3,12 @@
  *   • window.shopsysDesktop.database — عقد SQLite الكامل
  *     (مطابق حرفياً لـ src/data/desktopBridge.ts — المصدر: المُصيّر)
  *   • globalThis.shopsysPrint / shopsysPrinters — تعدد الطابعات (§102)
- *   • globalThis.shopsysUpdater — فحص وتثبيت التحديثات
- * لا يُكشف أي شيء من Node/Electron خارج هذه الواجهات الثلاث.
+ * لا يُكشف أي شيء من Node/Electron خارج هذه الواجهة.
  */
 import { contextBridge, ipcRenderer } from 'electron'
 
 const database = {
-  getEncryptionKey: (): Promise<Uint8Array> => ipcRenderer.invoke('device:getEncryptionKey'),
+  getEncryptionKey: (): Promise<Uint8Array | null> => ipcRenderer.invoke('device:getEncryptionKey'),
   getSnapshot: (storeName: string) => ipcRenderer.invoke('database:getSnapshot', storeName),
   saveSnapshot: (input: unknown) => ipcRenderer.invoke('database:saveSnapshot', input),
   deleteSnapshot: (input: unknown) => ipcRenderer.invoke('database:deleteSnapshot', input),
@@ -68,17 +67,6 @@ contextBridge.exposeInMainWorld('shopsysPrinters', () => ipcRenderer.invoke('pri
 /* v1.0.13 — إرسال مستند PDF عبر واتساب: يولّد الملف بالسطح المكتب ويفتح المحادثة */
 contextBridge.exposeInMainWorld('shopsysPdfShare', (html: string, fileName: string, waLink?: string) =>
   ipcRenderer.invoke('pdf:export-share', html, fileName, waLink))
-
-contextBridge.exposeInMainWorld('shopsysUpdater', {
-  state: () => ipcRenderer.invoke('updater:state'),
-  check: () => ipcRenderer.invoke('updater:check'),
-  install: () => ipcRenderer.invoke('updater:install'),
-  onState: (listener: (state: unknown) => void) => {
-    const wrapped = (_event: unknown, state: unknown) => listener(state)
-    ipcRenderer.on('updater:state', wrapped)
-    return () => ipcRenderer.removeListener('updater:state', wrapped)
-  },
-})
 
 contextBridge.exposeInMainWorld('shopsysAppInfo', () => ipcRenderer.invoke('app:info'))
 contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('app:backupNow'))
