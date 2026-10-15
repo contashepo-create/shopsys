@@ -37,8 +37,11 @@ export async function copyDatabaseSafely(source: string, destination: string): P
   mkdirSync(dirname(destination), { recursive: true })
   const temporary = `${destination}.${randomUUID()}.tmp`
   const db = new Database(source, { readonly: true, fileMustExist: true })
-  let operation = 'SQLite backup'
+  let operation = 'exclusive temporary creation'
   try {
+    // امتلاك ملف الوجهة حصرياً عبر fs قبل فتح SQLite له؛ لا overwrite حتى للمؤقت.
+    writeFileSync(temporary, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
+    operation = 'SQLite backup'
     await db.backup(temporary)
     operation = 'verify temporary'
     if (probeShopsysDatabase(temporary) !== 'ok') throw new Error('فشل التحقق من نسخة قاعدة البيانات')
