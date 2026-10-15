@@ -9,7 +9,7 @@ import Database from 'better-sqlite3'
 import { spawnSync } from 'node:child_process'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
 import { readDbLocationAt, writeDbLocationAt, resolveDbPathAt, EMPTY_DB_LOCATION } from '../desktop/dbLocation.ts'
-import { changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity, assertSafeUpdateLocation } from '../desktop/databaseSafety.ts'
+import { DATABASE_DATA_DIRECTORY, isUnsafeDatabaseLocation, changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity, assertSafeUpdateLocation } from '../desktop/databaseSafety.ts'
 import { preserveCurrentUserData, selectRuntimeUserData } from '../desktop/runtimeData.ts'
 import { installSilentUpdate, requestSilentInstall, assertDownloadedInstaller } from '../desktop/updateLifecycle.ts'
 
@@ -479,4 +479,18 @@ it('يعيد محاولة فتح SQLite المؤقت المقفول على Windo
     expect(spy).toHaveBeenCalledTimes(2)
     expect(await payload(target)).toBe(await payload(source))
   } finally { spy.mockRestore() }
+})
+
+
+it('لا يضع حماية أو استرداداً داخل databases المحذوف آلياً بواسطة Chromium', async () => {
+  const s = scenario(), old = join(s.userData, 'databases', 'actual-existing.db')
+  const text = encrypted(randomBytes(32), '{"state":{"balance":98766}}')
+  ;(await create(old, 'same-device', text)).close(); point(s.userData, old)
+  expect(isUnsafeDatabaseLocation(old, s.installDir, s.userData)).toBe(true)
+  expect(() => assertSafeUpdateLocation(s.userData, s.installDir, old)).toThrow()
+  const safe = await protectDatabaseAt(s.userData, s.installDir)
+  expect(dirname(safe)).toBe(join(s.userData, DATABASE_DATA_DIRECTORY))
+  rmSync(join(s.userData, 'databases'), { recursive: true, force: true })
+  expect(await payload(safe)).toBe(text)
+  expect(isUnsafeDatabaseLocation(safe, s.installDir, s.userData)).toBe(false)
 })

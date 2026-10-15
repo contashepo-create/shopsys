@@ -14,7 +14,7 @@ check('productName في metadata وفي إعداد المثبت متطابق', J
 check('الاسترداد الصامت قبل سؤال المكان المفقود', /restoreLocationPointerIfMissing\(\)\s*\n\s*await recoverDatabaseSilently\(\)\s*\n\s*await resolveMissingLocation\(\)/.test(main))
 check('كل فتح يحمي القاعدة خارج مجلد التثبيت', main.includes('await protectDatabaseAt(userDataDir(), installationDir())'))
 const choose = main.slice(main.indexOf("ipcMain.handle('database:chooseDbLocation'"))
-check('اختيار مكان القاعدة يرفض مجلد التثبيت قبل النسخ والإغلاق', choose.indexOf('isInsideInstallation(') >= 0 && choose.indexOf('isInsideInstallation(') < choose.indexOf('database.close()'))
+check('اختيار مكان القاعدة يرفض مجلد التثبيت قبل النسخ والإغلاق', choose.indexOf('isUnsafeDatabaseLocation(') >= 0 && choose.indexOf('isUnsafeDatabaseLocation(') < choose.indexOf('database.close()'))
 check('المثبّت صامت ويطلب إعادة التشغيل', main.includes('await requestSilentInstall(autoUpdater)') && lifecycle.includes('updater.quitAndInstall(true, true)') && !main.includes('quitAndInstall(false, true)'))
 check('NSIS يحتفظ بمجلد التثبيت السابق', main.includes('.installDirectory = installationDir()'))
 check('التثبيت لا يعتمد على quit مع app.exit', main.includes('autoUpdater.autoInstallOnAppQuit = false') && main.includes('await installSilentUpdate('))

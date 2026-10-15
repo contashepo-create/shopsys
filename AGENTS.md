@@ -7271,3 +7271,18 @@ unlink أثناء retry: Backup API قد يزيل وجهته الفاشلة بن
 أوقف إعادة المحاولة الأولى. صار حذف المؤقت الخاص force مع الحفاظ على wx
 في إنشائه؛ اختبار الحقن يزيل الملف بنفسه قبل CANTOPEN ليطابق الحالة الحقيقية.
 لا دمج PR24 ولا نشر26 حتى إعادة تحقق Windows. v25 ما يزال public latest.
+
+**سبب جذري مؤكد من المصدر المطابق للثنائي، لا افتراض قفل:** Electron v44.5.1
+DEPS يثبت Chromium152.0.7977.130.
+https://github.com/electron/electron/blob/v44.5.1/DEPS
+https://github.com/chromium/chromium/blob/152.0.7977.130/content/browser/storage_partition_impl_map.cc#L452-L462
+PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionPath/
+"databases") لإزالة WebSQL. كان مجلد الحماية بنفس الاسم داخل sessionData؛
+هذا يفسر CANTOPEN، اختفاء المؤقتات، وفقد الصف قبل/بعد فتح القاعدة بتوقيت متقطع.
+المسار الجديد الخاص **Tahakom-Data** لا يتداخل مع Chromium. userData/sessionData
+ومفتاح/Local State لا يتغيران. فقط قاعدة فعلية بمؤشر يشير إلى reserved databases
+أو التثبيت تُحمى؛ لا مسح/نقل لمجلدات عملاء. الاسترداد والاختيار والتحديث يرفضان
+المكان المحجوز كذلك، والبحث عن ملف حماية سابق يحتفظ بقراءة المجلد القديم
+فعلياً إن بقي عند فقد المؤشر. اختبار حذف databases بعد الحماية يحفظ98766.
+إعادة المحاولة محدودة، والتطبيع أحادي الملف دفاعات إضافية وليسا تفسير السبب.
+يلزم نجاح Windows الجديد قبل دمجPR24/نشر26؛ لا تحديث جهاز المالك حتى ذلك.

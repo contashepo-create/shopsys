@@ -26,7 +26,7 @@ import {
 import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
-import { isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
+import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
 import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller } from './updateLifecycle.ts'
 import {
@@ -335,8 +335,8 @@ function pickValidatedDatabaseFile(): string | null {
   })
   const file = picked?.[0]
   if (!file) return null
-  if (isInsideInstallation(file, installationDir())) {
-    dialog.showErrorBox('مكان غير آمن لقاعدة البيانات', 'قاعدة البيانات داخل مجلد تثبيت البرنامج. اختر ملفاً خارج هذا المجلد لحمايته من التحديث.')
+  if (isUnsafeDatabaseLocation(file, installationDir(), userDataDir())) {
+    dialog.showErrorBox('مكان غير آمن لقاعدة البيانات', 'المكان داخل مجلد التثبيت أو مجلد databases الذي يحذفه Chromium. اختر ملفاً في مجلد مستقل لحماية بياناتك.')
     return null
   }
   const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
@@ -403,7 +403,7 @@ function resolveDbPath(): { dbPath: string; isCustom: boolean } {
 /** المكان الثاني الافتراضي للنسخ: مجلد مستندات المستخدم (يبقى مع ملفاته عند إعادة تثبيت الويندوز إن نُقلت المستندات) */
 function resolveSecondaryBackupDir(): { dir: string; isDefault: boolean } {
   const cfg = readDbLocation()
-  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir) && !isInsideInstallation(cfg.secondaryBackupDir, installationDir())) return { dir: cfg.secondaryBackupDir, isDefault: false }
+  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir) && !isUnsafeDatabaseLocation(cfg.secondaryBackupDir, installationDir(), userDataDir())) return { dir: cfg.secondaryBackupDir, isDefault: false }
   return { dir: join(app.getPath('documents'), 'Tahakom-Backups'), isDefault: true }
 }
 
@@ -1134,7 +1134,7 @@ function wireIpc(): void {
   ipcMain.handle('database:chooseSecondaryBackupDir', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد النسخة الاحتياطية الثانية' })
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true as const }
-    if (isInsideInstallation(result.filePaths[0], installationDir())) throw new Error('اختر مكاناً للنسخة الاحتياطية خارج مجلد تثبيت البرنامج')
+    if (isUnsafeDatabaseLocation(result.filePaths[0], installationDir(), userDataDir())) throw new Error('اختر مكاناً للنسخة الاحتياطية خارج مجلد تثبيت البرنامج')
     const cfg = readDbLocation()
     writeDbLocation({ ...cfg, secondaryBackupDir: result.filePaths[0] })
     mkdirSync(result.filePaths[0], { recursive: true })
@@ -1148,8 +1148,8 @@ function wireIpc(): void {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد حفظ قاعدة البيانات (خارج قرص C إن أمكن)' })
     if (result.canceled || !result.filePaths[0]) return { ok: false as const, canceled: true as const }
     const dir = result.filePaths[0]
-    if (isInsideInstallation(join(dir, 'shopsys.db'), installationDir())) {
-      const error = 'لا يمكن حفظ قاعدة البيانات داخل مجلد تثبيت البرنامج أو أحد مجلداته؛ التحديث يستبدل هذا المجلد. اختر مجلداً مستقلاً للبيانات.'
+    if (isUnsafeDatabaseLocation(join(dir, 'shopsys.db'), installationDir(), userDataDir())) {
+      const error = 'لا يمكن حفظ قاعدة البيانات داخل مجلد التثبيت أو مجلد databases التابع لChromium؛ قد تُحذف محتوياته. اختر مجلداً مستقلاً للبيانات.'
       dialog.showErrorBox('مكان قاعدة البيانات غير آمن', error)
       return { ok: false as const, error }
     }

@@ -30,6 +30,13 @@ export function isInsideInstallation(file: string, installDir: string): boolean 
   return contained(resolve(installDir), resolve(file)) || contained(physicalPath(installDir), physicalPath(file))
 }
 
+// Chromium 152 يحذف sessionData/databases دورياً كبيانات WebSQL متروكة.
+// الاسم الخاص لا يتداخل مع مجلد تديره Chromium، مع بقاء profile/key في مكانهما.
+export const DATABASE_DATA_DIRECTORY = 'Tahakom-Data'
+export function isUnsafeDatabaseLocation(file: string, installDir: string, userData: string): boolean {
+  return isInsideInstallation(file, installDir) || isInsideInstallation(file, join(userData, 'databases'))
+}
+
 /** نسخة SQLite متسقة تشمل WAL. لا استبدال لملف موجود، ولا حذف للأصل. */
 export async function copyDatabaseSafely(source: string, destination: string): Promise<void> {
   if (existsSync(destination)) throw new Error('لن تُستبدل قاعدة موجودة أثناء الحماية أو الاسترداد')
@@ -80,9 +87,9 @@ export async function copyDatabaseSafely(source: string, destination: string): P
 
 export async function protectDatabaseAt(ud: string, installDir: string): Promise<string> {
   const { dbPath } = resolveDbPathAt(ud)
-  if (!isInsideInstallation(dbPath, installDir)) return dbPath
-  const destination = join(ud, 'databases', `shopsys-${randomUUID()}.db`)
-  if (isInsideInstallation(destination, installDir)) throw new Error('مجلد بيانات المستخدم نفسه داخل مجلد التثبيت — لا يمكن التحديث بأمان')
+  if (!isUnsafeDatabaseLocation(dbPath, installDir, ud)) return dbPath
+  const destination = join(ud, DATABASE_DATA_DIRECTORY, `shopsys-${randomUUID()}.db`)
+  if (isUnsafeDatabaseLocation(destination, installDir, ud)) throw new Error('مجلد بيانات المستخدم نفسه داخل مجلد التثبيت — لا يمكن التحديث بأمان')
   if (existsSync(dbPath)) await copyDatabaseSafely(dbPath, destination)
   else if (readDbLocationAt(ud).customDbOpenedAt) throw new Error('قاعدة البيانات القديمة مفقودة — لم يُغيَّر مسارها')
   const cfg = readDbLocationAt(ud)
@@ -92,7 +99,7 @@ export async function protectDatabaseAt(ud: string, installDir: string): Promise
 
 /** لا نبدّل المؤشر تحت اتصال مفتوح؛ عند فشل النسخة يجب أن تبقى الكتابة على القاعدة نفسها. */
 export function assertSafeUpdateLocation(ud: string, installDir: string, activePath: string): void {
-  if (isInsideInstallation(activePath, installDir)) throw new Error('قاعدة التشغيل داخل مجلد التثبيت — أعد تشغيل النسخة المصلحة لحمايتها قبل التحديث')
+  if (isUnsafeDatabaseLocation(activePath, installDir, ud)) throw new Error('قاعدة التشغيل داخل مجلد التثبيت — أعد تشغيل النسخة المصلحة لحمايتها قبل التحديث')
   const pointedPath = resolveDbPathAt(ud).dbPath
   if (physicalPath(pointedPath) !== physicalPath(activePath)) throw new Error('تغيّر مؤشر قاعدة البيانات أثناء التشغيل — لم يبدأ التحديث، أعد تشغيل البرنامج')
 }
@@ -186,7 +193,9 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
   const live = [...new Set(options.relocatedPaths ?? changedDrivePaths(dbPath))]
   const legacy = [join(ud, 'shopsys.db'), join(installDir, 'shopsys.db')]
   if (!readDbLocationAt(ud).customDbPath) {
-    try { for (const name of readdirSync(join(ud, 'databases'))) if (name.endsWith('.db')) live.push(join(ud, 'databases', name)) } catch { /* لا مجلد حماية سابق */ }
+    for (const folder of [DATABASE_DATA_DIRECTORY, 'databases']) {
+      try { for (const name of readdirSync(join(ud, folder))) if (name.endsWith('.db')) live.push(join(ud, folder, name)) } catch { /* لا مجلد حماية سابق */ }
+    }
   }
   const backups: string[] = []
   for (const dir of recoveryBackupDirs(options, dbPath)) {
@@ -208,8 +217,8 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
   const freshest = candidates.filter(candidate => !candidates.some(other => other !== candidate && newerSnapshots(other.versions, candidate.versions)))
   for (const source of freshest) {
     try {
-      const destination = join(ud, 'databases', `recovered-${randomUUID()}.db`)
-      if (isInsideInstallation(destination, installDir)) throw new Error('مكان الاسترداد داخل مجلد التثبيت')
+      const destination = join(ud, DATABASE_DATA_DIRECTORY, `recovered-${randomUUID()}.db`)
+      if (isUnsafeDatabaseLocation(destination, installDir, ud)) throw new Error('مكان الاسترداد داخل مجلد التثبيت')
       await copyDatabaseSafely(source.file, destination)
       rememberDatabaseIdentity(ud, source.id)
       writeDbLocationAt(ud, { ...readDbLocationAt(ud), customDbPath: destination, customDbOpenedAt: new Date().toISOString() })
