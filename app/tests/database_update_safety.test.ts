@@ -48,7 +48,7 @@ async function payload(file: string) {
 }
 
 describe('فصل القاعدة عن ملفات التثبيت — SQLite وملفات حقيقية', () => {
-  it('سيناريو المالك: WAL حي ← حماية ← حذف مجلد النسخة القديمة ← إعادة الفتح بنفس أحدث بيانات مشفرة', async () => {
+  it('سيناريو اللقطة القديمة enc:v1: WAL حي ← حماية ← حذف مجلد النسخة القديمة ← بقاء البيانات والمفتاح', async () => {
     const s = scenario()
     const original = join(s.installDir, 'shopsys.db')
     const text = encrypted(randomBytes(32), '{"state":{"balance":98765}}')

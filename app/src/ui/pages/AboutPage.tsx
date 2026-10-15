@@ -8,11 +8,8 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { fetchAbout, fetchAccountMessage, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../../core/cloud.ts'
 import { DeveloperMessage } from '../components/DeveloperMessage.tsx'
-import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
-import { DownloadCloud, ShieldCheck } from 'lucide-react'
+import { APP_VERSION } from '../../core/updates.ts'
 import { PLAN_LABELS } from '../../core/license.ts'
-import { DesktopUpdater } from '../components/DesktopUpdater.tsx'
-import { isElectronRuntime } from '../../data/desktopBridge.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
 export function AboutPage() {
@@ -30,19 +27,6 @@ export function AboutPage() {
     })
     return () => { cancelled = true }
   }, [deviceId, setCloudData])
-
-  // فحص آخر إصدار منشور على GitHub — Cloudflare مخصص للترخيص ومحتوى «حول».
-  const [updBusy, setUpdBusy] = useState(false)
-  const [updDecision, setUpdDecision] = useState<UpdateDecision | null>(null)
-  const checkUpdates = async () => {
-    setUpdBusy(true)
-    const info = await fetchUpdateInfo()
-    setUpdBusy(false)
-    if (info === null) { toast.show('تعذّر الوصول لخادم التحديثات — أنت على النسخة المحفوظة', 'error'); return }
-    const d = decideUpdate(APP_VERSION, info)
-    setUpdDecision(d)
-    toast.show(d.kind === 'up_to_date' ? 'أنت على أحدث إصدار ✅' : 'يتوفر تحديث جديد ⬇️')
-  }
 
   const refresh = async () => {
     setBusy(true)
@@ -133,61 +117,13 @@ export function AboutPage() {
           <Btn variant="ghost" onClick={refresh} disabled={busy}><RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} /> تحديث من السحابة</Btn>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
+          <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">إصدار التطبيق</div><div className="font-mono font-bold" dir="ltr">v{APP_VERSION}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">معرف الجهاز</div><div className="font-mono font-bold" dir="ltr">{deviceId}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">الباقة</div><div className="font-black">{activatedPayload ? PLAN_LABELS[activatedPayload.plan] : 'تجريبي'}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">النشاط</div><div className="font-black">{setup.activityId ?? '—'}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">آخر مزامنة سحابية</div><div className="font-bold">{cloudSyncedAt ? cloudSyncedAt.slice(0, 16).replace('T', ' ') : 'لم تتم بعد'}</div></div>
         </div>
       </div>
-
-      {/* فحص الإصدارات المنشورة على GitHub — للمتصفح فقط.
-          نسخة سطح المكتب تفحص وتنزل التحديث مباشرة عبر electron-updater. */}
-      {!isElectronRuntime() && (
-      <div className={card}>
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="font-black flex items-center gap-2"><DownloadCloud className="w-5 h-5 text-emerald-500" /> التحديثات</h2>
-          <div className="flex items-center gap-3">
-            <span className="text-[12px] font-bold text-slate-400">الإصدار الحالي: <b className="text-slate-700 dark:text-slate-200 font-mono" dir="ltr">v{APP_VERSION}</b></span>
-            <Btn onClick={checkUpdates} disabled={updBusy}>
-              <RefreshCw className={`w-4 h-4 ${updBusy ? 'animate-spin' : ''}`} /> فحص التحديثات
-            </Btn>
-          </div>
-        </div>
-        {updDecision && updDecision.kind === 'up_to_date' && (
-          <div className="mt-3 p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/15 text-[12.5px] font-bold text-emerald-600 anim-pop">
-            ✅ أنت على أحدث إصدار — لا تحديثات متاحة الآن.
-          </div>
-        )}
-        {updDecision && updDecision.kind !== 'up_to_date' && (
-          <div className="mt-3 space-y-3 anim-pop">
-            <div className={`p-3 rounded-xl border text-[12.5px] font-bold ${updDecision.kind === 'mandatory_update' ? 'bg-rose-500/5 border-rose-500/15 text-rose-600' : 'bg-sky-500/5 border-sky-500/15 text-sky-600'}`}>
-              {updDecision.kind === 'mandatory_update' ? '⚠️ تحديث إجباري (أمني) — ' : '⬇️ يتوفر إصدار جديد: '}
-              <b className="font-mono" dir="ltr">v{updDecision.info.latestVersion}</b>
-              {updDecision.info.releaseNotesAr && <div className="mt-1 font-normal text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{updDecision.info.releaseNotesAr}</div>}
-            </div>
-            <div className="p-3 rounded-xl bg-slate-500/5 text-[11.5px] space-y-1.5">
-              <div className="font-black text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><ShieldCheck size={14} className="text-emerald-500" /> خطة التحديث الآمن (ما يحدث بالترتيب):</div>
-              {buildUpdatePlan().map((st, i) => (
-                <div key={st.id} className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                  <span className="w-4 h-4 rounded-full bg-slate-200 dark:bg-slate-700 text-[9px] font-black flex items-center justify-center shrink-0">{i + 1}</span>
-                  {st.titleAr}
-                </div>
-              ))}
-              <div className="pt-1 text-[10.5px] text-amber-600 dark:text-amber-400 font-bold">
-                🛟 قبل التثبيت تُؤخذ نسخة احتياطية كاملة من قاعدتك في مجلد النسخ قبل التحديث، وإن تعذّرت لا يُثبَّت التحديث. التراجع عن إصدار سابق يتم يدوياً من هذه النسخة؛ بياناتك خارج مسار التثبيت.
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-400">
-              💡 التنزيل والتثبيت التلقائي يتفعلان في نسخة سطح المكتب — من متصفح التطوير يظهر الإشعار فقط.
-            </div>
-          </div>
-        )}
-      </div>
-
-      )}
-
-      {/* §101: تحديث نسخة سطح المكتب (electron-updater) — مخفي في المتصفح */}
-      <DesktopUpdater />
 
       {/* v1.0.8: الاتفاقية والخصوصية — مراجعة دائمة */}
       <button

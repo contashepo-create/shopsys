@@ -4,6 +4,8 @@
  * والموافقة إلزامية مسجلة بالإصدار والتاريخ، وتظهر مجدداً عند تحديث الإصدار.
  */
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
 const { useAppStore } = await import('../src/stores/app.store.ts')
@@ -44,11 +46,25 @@ describe('الاتفاقية والخصوصية والموافقة الموثق�
     // الخصوصية: البيانات محلية ولا تُباع
     const privacyText = JSON.stringify(PRIVACY)
     expect(privacyText).toContain('لا نستخدم إعلانات')
-    // v1.0.9: ادعاء التشفير صادق (AES-256-GCM + safeStorage منذ v1.0.7) + طبقة BitLocker بيد المستخدم
-    expect(privacyText).toContain('AES-256-GCM')
-    expect(privacyText).toContain('مخزن مفاتيح النظام')
+    // إفصاح صادق: لقطات SQLite الجديدة نصية، والقديمة enc:v1 تحتاج المفتاح الأصلي؛ BitLocker طبقة حماية على القرص.
+    expect(privacyText).toContain('نص JSON عادي غير مشفّر على مستوى التطبيق')
+    expect(privacyText).toContain('كل من يصل إلى ملفات الجهاز قراءتها')
+    expect(privacyText).toContain('enc:v1')
     expect(privacyText).toContain('BitLocker')
     expect(privacyText).toContain('بياناتك ليست رهينة')
+    // إفصاح صريح عن رفع حالة المتجر المشفرة عند تفعيل المزامنة اختيارياً.
+    expect(privacyText).toContain('المزامنة السحابية الاختيارية')
+    expect(privacyText).toContain('AES-256-GCM')
+    expect(privacyText).toContain('سر المزامنة نفسه لا يُرسل')
+    expect(eulaText).toContain('مشروع Supabase الذي تختاره')
+
+    const lockScreen = readFileSync(join(process.cwd(), 'src/ui/LockScreen.tsx'), 'utf8')
+    expect(lockScreen).toContain('isElectronRuntime()')
+    expect(lockScreen).toContain('لقطاتها نص JSON غير مشفّر')
+    expect(lockScreen).not.toContain('بياناتك محفوظة ومشفرة على جهازك')
+    const aboutPage = readFileSync(join(process.cwd(), 'src/ui/pages/AboutPage.tsx'), 'utf8')
+    expect(aboutPage).toContain('APP_VERSION')
+    expect(aboutPage).toContain('إصدار التطبيق')
   })
 
   it('موجز المثبِّت جاهز وتسمية الموافقة صريحة (توقيع إلكتروني)', () => {

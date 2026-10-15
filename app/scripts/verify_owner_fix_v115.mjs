@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * بوابة المرحلة ⑤ (ضمن جولة v1.0.15): نسخة سر التشفير بكلمة سر (نقل بين الأجهزة).
- * القاعدة مشفرة بسر الجهاز (256-بت) — نقل ملف القاعدة وحده يعطي شفرة لا تُقرأ؛
- * الملف المغلّف (.tkey.json) ينقل السر بكلمة سر يختارها المالك:
+ * بوابة تاريخية لنسخة المتصفح (v1.0.15): نقل سر localStorage المشفّر بكلمة سر.
+ * لا تخص SQLite في Electron؛ ملف .tkey.json يغلف سر المتصفح:
  * PBKDF2/SHA-256 بـ250 ألف دورة + ملح عشوائي + AES-256-GCM.
  */
 import { readFileSync } from 'node:fs'
@@ -34,10 +33,10 @@ const main = read('src/main.tsx')
 check('⑤ الإقلاع: فتح الختم مرة واحدة عند كل إقلاع جديد', main.includes('unsealStorageAfterReload()'))
 
 const page = read('src/ui/pages/BackupPage.tsx')
-check('⑤ الواجهة: بطاقة نقل السر في صفحة النسخ الاحتياطي (تصدير + استيراد)', page.includes('نقل سر التشفير بين الأجهزة') && page.includes('تصدير نسخة السر بكلمة سر') && page.includes('استيراد نسخة سر'))
+check('⑤ الواجهة: بطاقة نقل سر localStorage المشفّر للمتصفح (تصدير + استيراد)', page.includes('نقل سر التخزين المشفّر للمتصفح') && page.includes('تصدير نسخة السر بكلمة سر') && page.includes('استيراد نسخة سر'))
 check('⑤ الواجهة: مودال التصدير بكلمة سر وتأكيدها', page.includes('keyExportOpen') && page.includes('تأكيد كلمة السر'))
 check('⑤ الواجهة: مودال الاستيراد بتحذير الاستبدال وإعادة التشغيل', page.includes('يستبدل سر هذا الجهاز') && page.includes('window.location.reload()'))
-check('⑤ الواجهة: إرشاد صادق متى لا تحتاج النسخة (نسخ JSON تعاد تشفيرها بسر الجهاز)', page.includes('لا تحتاج هذا'))
+check('⑤ الواجهة: تنبيه أن نسخة JSON مقروءة ولا تحتاج سر المتصفح', page.includes('بيانات مقروءة ولا تحتاج هذا المفتاح') && page.includes('لا تخص قاعدة SQLite'))
 
 const test = read('tests/secret_transfer_v115.test.ts')
 check('⑤ اختبارات الجولة (8): تغليف/فك/ملح عشوائي/رفض خاطئ/صيغة/ختم', test.includes('wrapSecretWithPassword') && test.includes('sealedForTransfer') || test.includes('isStorageSealed'))
@@ -48,4 +47,4 @@ if (failed > 0) {
   for (const n of failedNames) console.error(`  — ${n}`)
   process.exit(1)
 }
-console.log('✓ بوابة المرحلة ⑤ (12 فحصاً): نسخة سر التشفير بكلمة سر — نقل القاعدة بين الأجهزة بختم يمنع الكارثة')
+console.log('✓ بوابة المرحلة ⑤ (12 فحصاً): نسخة سر التخزين المشفّر لنسخة المتصفح — لا تخص SQLite في Electron')

@@ -1,10 +1,9 @@
 /**
- * تخزين مشفر لقاعدة البيانات (القرار 28):
- * كل ما يكتبه zustand persist لقاعدة بيانات المتجر يمر عبر AES-256-GCM.
- * - أول تشغيل يولّد سراً عشوائياً 256-بت يُشتق منه مفتاح PBKDF2.
- * - بيانات قديمة غير مشفرة تُقرأ كما هي وتُشفَّر عند أول حفظ (ترحيل صامت).
- * - في نسخة Electron ينتقل السر إلى مخزن مفاتيح النظام (safeStorage)
- *   فيصبح ملف القاعدة المسروق بلا فائدة على أي جهاز آخر.
+ * تشفير تخزين المتصفح (localStorage) والقيم المحلية الحساسة/العابرة، لا SQLite.
+ * - في الويب، حالة Zustand المستمرة تُشفّر بـ AES-256-GCM بمفتاح PBKDF2.
+ * - بيانات المتصفح القديمة غير المشفرة تُقرأ كما هي وتُشفّر عند أول حفظ.
+ * - نسخة Electron تستعمل SQLite للقطات الجديدة كنص عادي؛ فك enc:v1 القديم
+ *   موجود في persistentStorage.ts، ومفتاح safeStorage محصور بالتوافق والاسترداد.
  */
 import type { StateStorage } from 'zustand/middleware'
 import { deriveKey, encryptText, decryptText, isEncrypted } from '../core/security.ts'

@@ -140,7 +140,7 @@ function savedIdentity(ud: string): string | null {
   } catch { return null }
 }
 
-/** لا نعتمد نسخة مشفرة بمفتاح آخر؛ ولا قاعدة نصية مجهولة الهوية تلقائياً. */
+/** لا نعتمد لقطة قديمة مشفرة بمفتاح آخر؛ ولا قاعدة نصية مجهولة الهوية تلقائياً. */
 function candidateIdentity(file: string, expectedId: string | null, key?: Buffer): string | null {
   if (probeShopsysDatabase(file) !== 'ok') return null
   const db = new Database(file, { readonly: true, fileMustExist: true })

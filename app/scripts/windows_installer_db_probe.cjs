@@ -1,4 +1,5 @@
-// CI فقط: يعمل داخل Electron الحقيقي لفك DPAPI وفحص SQLite ABI بعد إعادة البناء.
+// CI فقط: يعمل داخل Electron الحقيقي لفك مفتاح legacy عبر DPAPI وفحص SQLite ABI بعد إعادة البناء.
+// enc:v1 هنا fixture قديم للتحقق من بقاء المفتاح/البيانات عبر التحديث؛ الإنتاج لا يكتب لقطات جديدة بهذه الصيغة.
 const { app, safeStorage } = require('electron')
 const { readFileSync, writeFileSync, existsSync } = require('node:fs')
 const { join, resolve } = require('node:path')

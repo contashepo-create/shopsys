@@ -58,8 +58,8 @@ export interface DesktopJournalEntry {
 }
 
 export interface DesktopDatabaseBridge {
-  /** v1.0.7: مفتاح تشفير هذا الجهاز — تُشفَّر به لقطات المتاجر قبل تخزينها في SQLite */
-  getEncryptionKey?(): Promise<Uint8Array>
+  /** مفتاح توافق لقراءة وترحيل لقطات SQLite القديمة enc:v1؛ لا يُستخدم لتشفير اللقطات الجديدة. */
+  getEncryptionKey?(): Promise<Uint8Array | null>
   getSnapshot(storeName: string): Promise<DesktopSnapshot>
   saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string; idempotencyKey?: string; auditEvents?: readonly DesktopAuditEvent[]; journalEntries?: readonly DesktopJournalEntry[] }): Promise<{ revision: number; updatedAt: string; replayed?: boolean }>
   deleteSnapshot?(input: { storeName: string; expectedRevision: number }): Promise<{ revision: number; updatedAt: string }>
@@ -104,6 +104,8 @@ export interface DesktopKeyRecoveryBridge {
   status(): Promise<{ exportedAt: string | null }>
   export(args: { passphrase: string; deviceId: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; path?: string }>
   import(args: { passphrase: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; deviceId?: string; relaunching?: boolean }>
+  /** يعيد تشغيل العملية الرئيسية بعد توصيل القرص/استعادة ملفات profile عندما تعذر فتح SQLite عند الإقلاع */
+  retryStartup(): Promise<boolean>
 }
 
 export interface ShopsysDesktopBridge {

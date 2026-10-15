@@ -1,10 +1,9 @@
 /**
- * مفتاح الاسترداد على سطح المكتب (v1.0.22).
+ * مفتاح توافق واسترداد اللقطات القديمة المشفّرة في نسخة سطح المكتب.
  *
- * لماذا منفصل عن «نقل سر التشفير» القديم؟ سطح المكتب يشفّر لقطات SQLite بمفتاح
- * الجهاز الذي تحفظه العملية الرئيسية (device.key.enc عبر DPAPI). السر القديم في
- * المتصفح (localStorage) لا يفكّ تلك اللقطات، فكان ملفه لا يستعيد شيئاً على جهاز
- * جديد. هنا الملف يحمل مفتاح الجهاز الحقيقي مغلّفاً بكلمة مرور (انظر desktop/keyRecovery.ts).
+ * اللقطات الجديدة في SQLite نصية ولا تعتمد على هذا المفتاح. الملف .tkey
+ * يغلّف المفتاح الأصلي اللازم فقط لفك/ترحيل لقطات enc:v1 التي كتبتها إصدارات
+ * سابقة. يبقى المسار لدعم هذه البيانات القديمة دون حذف أو استبدال القاعدة.
  *
  * التحقق من كلمة المرور وفك الملف يتمان في العملية الرئيسية (node:crypto)، فالواجهة
  * تعرض رسائلها كما تأتي.
@@ -42,7 +41,7 @@ export function DesktopKeyRecoveryCard({ deviceId }: { deviceId: string }) {
       if (result.ok) {
         setExportedAt(new Date().toISOString())
         setOpen(false); setPass(''); setPass2('')
-        toast.show('حُفظ ملف مفتاح الاسترداد — انقله إلى USB أو مكان آمن خارج هذا الجهاز 🔑')
+        toast.show('حُفظ ملف مفتاح الاسترداد — احتفظ به في مكان آمن منفصل عن قاعدة البيانات 🔑')
       } else if (!result.canceled) {
         toast.show(result.reason ?? 'تعذّر التصدير', 'error')
       }
@@ -59,20 +58,21 @@ export function DesktopKeyRecoveryCard({ deviceId }: { deviceId: string }) {
         <KeyRound size={17} className="text-amber-500" /> مفتاح الاسترداد
       </div>
       <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
-        بياناتك مشفّرة بمفتاح محفوظ على هذا الجهاز. إن فُقد هذا المفتاح (إعادة تثبيت Windows، تغيّر حساب المستخدم،
-        أو جهاز جديد) لا تُقرأ النسخ الاحتياطية. صَدّر ملف مفتاح الاسترداد <b>مغلّفاً بكلمة مرور تختارها</b> واحفظه
-        خارج هذا الجهاز. كلمة المرور لا تُحفظ في التطبيق.
+        هذا المفتاح مطلوب فقط لفتح وترحيل لقطات SQLite القديمة المشفّرة بصيغة <span dir="ltr">enc:v1</span>.
+        اللقطات الجديدة نصية ولا يحميها هذا المفتاح؛ من يستطيع قراءة ملفات الجهاز يستطيع قراءة محتواها، بما فيه الإعدادات وبيانات الاعتماد المحفوظة.
+        إذا كنت تحتفظ بقاعدة قديمة، صدّر المفتاح الأصلي <b>مغلّفاً بكلمة مرور تختارها</b> قبل نقل ملف التعريف.
+        كلمة المرور لا تُحفظ في التطبيق.
       </div>
       {exportedAt === null && (
         <div className="rounded-xl bg-amber-500/10 p-3 text-[12px] text-amber-700 dark:text-amber-300 leading-relaxed flex gap-2">
           <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-          لم يُصدَّر ملف مفتاح الاسترداد بعد. صدّره الآن حتى لا تضيع بياناتك إن فُقد المفتاح.
+          لا يلزم هذا الملف للّقطات الجديدة النصية. صدّره فقط إذا كنت تحتفظ بقاعدة قديمة قد تحتوي بيانات <span dir="ltr">enc:v1</span>.
         </div>
       )}
       {exportedAt && (
         <div className="rounded-xl bg-emerald-500/10 p-3 text-[12px] text-emerald-700 dark:text-emerald-300 flex gap-2">
           <CheckCircle2 size={15} className="shrink-0 mt-0.5" />
-          آخر تصدير: {exportedAt.slice(0, 16).replace('T', ' ')} — كرّره بعد أي تغيير في الجهاز.
+          آخر تصدير: {exportedAt.slice(0, 16).replace('T', ' ')} — احتفظ به إذا كنت تحتاج ترحيل لقطات قديمة مشفّرة.
         </div>
       )}
       <Btn onClick={() => setOpen(true)} className="w-full"><KeyRound size={15} /> تصدير مفتاح الاسترداد بكلمة مرور</Btn>
@@ -80,7 +80,7 @@ export function DesktopKeyRecoveryCard({ deviceId }: { deviceId: string }) {
       <Modal open={open} onClose={() => setOpen(false)} title="🔑 تصدير مفتاح الاسترداد">
         <div className="space-y-3">
           <div className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
-            الملف الناتج لا يُفتح إلا بكلمة المرور هذه. احفظه على USB أو في مكان لا يوجد فيه هذا الجهاز،
+            الملف الناتج لا يُفتح إلا بكلمة المرور هذه. احتفظ به في مكان آمن منفصل عن قاعدة البيانات،
             واحفظ كلمة المرور في مكان منفصل عن الملف.
           </div>
           <label className="block text-[11px] font-bold text-slate-500">كلمة المرور ({KEY_RECOVERY_UI_MIN_PASSPHRASE} أحرف على الأقل)
@@ -126,8 +126,8 @@ export function DesktopKeyRecoveryImport() {
   return (
     <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-700">
       <div className="text-[12px] text-slate-600 dark:text-slate-300 leading-relaxed">
-        إن كان المفتاح قد فُقد (إعادة تثبيت Windows أو جهاز جديد) فاسترده من ملف مفتاح الاسترداد الذي صدّرته سابقاً.
-        المفتاح الحالي يُحفظ جانباً ولا يُحذف.
+        استخدم هذا الاسترداد فقط إذا كانت القاعدة تحتوي لقطات قديمة <span dir="ltr">enc:v1</span> وتعذّر فتحها بالمفتاح الحالي.
+        يلزم الملف وكلمة المرور بالمفتاح الأصلي؛ المفتاح الحالي وملفاته يُحفظان جانباً ولا يُحذفان.
       </div>
       <label className="block text-[11px] font-bold text-slate-500">كلمة مرور ملف الاسترداد
         <input type="password" className={`${inputCls} mt-1`} value={pass} onChange={(e) => setPass(e.target.value)} autoComplete="off" />
