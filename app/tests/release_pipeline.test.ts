@@ -146,3 +146,13 @@ it.skipIf(process.platform === 'win32')('all bash workflow blocks are syntax che
     }
   }
 })
+
+
+it('يمنع النشر العام قبل اختبار المثبت القديم وprofile ومفتاح وآخر عمل', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/desktop-release.yml', import.meta.url), 'utf8')
+  const native = workflow.indexOf('./scripts/windows_installer_smoke.ps1 -FromPublished23')
+  const publish = workflow.indexOf('run: node scripts/publish_desktop_release.mjs')
+  expect(native).toBeGreaterThan(0)
+  expect(publish).toBeGreaterThan(native)
+  expect(workflow.indexOf('validateDesktopArtifacts(\'release-previous\',\'1.0.23\')')).toBeGreaterThan(0)
+})

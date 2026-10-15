@@ -189,7 +189,10 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
       rememberDatabaseIdentity(ud, source.id)
       writeDbLocationAt(ud, { ...readDbLocationAt(ud), customDbPath: destination, customDbOpenedAt: new Date().toISOString() })
       return source.file
-    } catch { /* نسخة غير قابلة للنسخ: التالية، دون لمس الأصل أو استبدال ملف */ }
+    } catch (error) {
+      console.warn('[db-recovery] Candidate copy failed:', (error as Error).message)
+      /* التالية، دون لمس الأصل أو استبدال ملف */
+    }
   }
   return null
 }
