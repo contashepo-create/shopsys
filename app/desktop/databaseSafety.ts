@@ -37,8 +37,11 @@ export async function copyDatabaseSafely(source: string, destination: string): P
   mkdirSync(dirname(destination), { recursive: true })
   const temporary = `${destination}.${randomUUID()}.tmp`
   const db = new Database(source, { readonly: true, fileMustExist: true })
-  let operation = 'exclusive temporary creation'
+  let operation = 'validate source connection'
   try {
+    // الفحص على الاتصال الذي سينسخ نفسه؛ يفتح قارئ WAL قبل backup، لا اتصال منفصل فقط.
+    if (db.pragma('quick_check', { simple: true }) !== 'ok' || !db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='snapshots'").get()) throw new Error('ملف قاعدة البيانات غير سليم')
+    operation = 'exclusive temporary creation'
     // امتلاك ملف الوجهة حصرياً عبر fs قبل فتح SQLite له؛ لا overwrite حتى للمؤقت.
     writeFileSync(temporary, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
     operation = 'SQLite backup'
@@ -53,6 +56,14 @@ export async function copyDatabaseSafely(source: string, destination: string): P
         writeFileSync(temporary, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
       }
     }
+    operation = 'checkpoint private snapshot'
+    // لا ننشر hardlink لملف يعتمد على WAL باسم المؤقت؛ الوجهة الخاصة فقط قابلة للكتابة.
+    const snapshot = new Database(temporary, { fileMustExist: true })
+    try {
+      const checkpoint = snapshot.pragma('wal_checkpoint(TRUNCATE)') as { busy: number }[]
+      if (checkpoint.some(row => row.busy !== 0)) throw new Error('نسخة SQLite المؤقتة ما زالت مقفلة')
+      if (snapshot.pragma('journal_mode = DELETE', { simple: true }) !== 'delete') throw new Error('لم تصبح نسخة SQLite ملفاً مستقلاً')
+    } finally { snapshot.close() }
     operation = 'verify temporary'
     if (probeShopsysDatabase(temporary) !== 'ok') throw new Error('فشل التحقق من نسخة قاعدة البيانات')
     // نشر ذري دون overwrite؛ الملف المؤقت على نفس القرص.
