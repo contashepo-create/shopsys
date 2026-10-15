@@ -94,12 +94,19 @@ export function computeCarSale(priceMinor: Minor, fullCostMinor: Minor, vatPerce
  * قيدا البيع معاً (سطور قيد واحد متوازن):
  * 1101 و/أو 1104 بالإجمالي ← 4101 + 2102، ثم 5101 التكلفة ← 1103 إخراج من المخزون.
  * يدعم البيع النقدي، الآجل، أو قبض جزء الآن والباقي على حساب العميل.
+ * `tradeInMinor` (سد فجوة النشاط #13): قيمة سيارة مقايضة مقبولة من المشتري
+ * كجزء من الثمن — تدخل 1103 كأصل جديد (سيارة أخرى دخلت المخزون) فتقل بنفس
+ * القدر حاجة البيع للنقد أو الآجل، بلا أي حساب وسيط جديد.
  */
-export function buildCarSaleEntry(t: CarSaleTotals, payment: CarPaymentMode, label: string, treasury = '1101', paidMinor?: Minor): JournalLine[] {
-  const paid = paidMinor ?? (payment === 'cash' ? t.totalMinor : 0)
-  if (!Number.isInteger(paid) || paid < 0 || paid > t.totalMinor) throw new Error('المحصّل يجب أن يكون بين صفر وإجمالي البيع')
-  const remainder = t.totalMinor - paid
+export function buildCarSaleEntry(t: CarSaleTotals, payment: CarPaymentMode, label: string, treasury = '1101', paidMinor?: Minor, tradeInMinor: Minor = 0): JournalLine[] {
+  const trade = tradeInMinor ?? 0
+  if (!Number.isInteger(trade) || trade < 0) throw new Error('قيمة المقايضة لا تكون سالبة')
+  const paid = paidMinor ?? (payment === 'cash' ? t.totalMinor - trade : 0)
+  if (!Number.isInteger(paid) || paid < 0) throw new Error('المحصّل يجب أن يكون صفراً أو أكثر')
+  if (paid + trade > t.totalMinor) throw new Error('المحصّل نقداً + قيمة المقايضة أكبر من إجمالي البيع')
+  const remainder = t.totalMinor - paid - trade
   const lines: JournalLine[] = []
+  if (trade > 0) lines.push({ accountCode: '1103', debit: trade, credit: 0, note: `سيارة مقايضة مقبولة ضمن بيع ${label}` })
   if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: `تحصيل نقدي/بنكي ${label}` })
   if (remainder > 0) lines.push({ accountCode: '1104', debit: remainder, credit: 0, note: `المتبقي على العميل ${label}` })
   lines.push({ accountCode: '4101', debit: 0, credit: t.priceMinor, note: 'إيراد بيع سيارة' })
@@ -309,4 +316,35 @@ export function buildCarPurchaseInvoiceEntry(args: {
   if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: `المتبقي مستحق${args.supplierLabel ? ` للمورد ${args.supplierLabel}` : ' للمورد'}` })
   assertBalanced(lines)
   return lines
+}
+
+/**
+ * سد فجوة النشاط #13 (Gap 3): سيارات متقادمة بالمعرض — بلا أي حقل تاريخ شراء
+ * جديد على `Car`، نستنتج تاريخ الدخول للمخزون من تاريخ قيد الشراء نفسه
+ * (purchaseEntryId) عبر `journalDateOf`. قراءة فقط، صفر أثر محاسبي.
+ */
+export interface AgingCar {
+  carId: number
+  label: string
+  daysInStock: number
+}
+
+export function agingInventoryCars(
+  cars: readonly { id: number; make: string; model: string; year: number; status: CarStatus; purchaseEntryId: number }[],
+  journalDateOf: (entryId: number) => string | null | undefined,
+  todayIso: string,
+  warnDays = 60,
+): AgingCar[] {
+  const todayMs = Date.parse(`${todayIso.slice(0, 10)}T00:00:00Z`)
+  const out: AgingCar[] = []
+  for (const c of cars) {
+    if (c.status !== 'in_stock') continue
+    const purchaseDate = journalDateOf(c.purchaseEntryId)
+    if (!purchaseDate) continue
+    const purchaseMs = Date.parse(`${purchaseDate.slice(0, 10)}T00:00:00Z`)
+    if (!Number.isFinite(purchaseMs)) continue
+    const days = Math.floor((todayMs - purchaseMs) / 86_400_000)
+    if (days >= warnDays) out.push({ carId: c.id, label: `${c.make} ${c.model} ${c.year}`, daysInStock: days })
+  }
+  return out.sort((a, b) => b.daysInStock - a.daysInStock)
 }

@@ -58,6 +58,8 @@ export interface NotificationsInput {
   clinicAppointmentsToday?: { appointmentId: number; patientName: string; time: string; purpose: string }[]
   /** مرضى عيادة برصيد مستحق غير محصَّل تجاوز مدة معقولة — سد فجوة تقرير النشاط #12 (Immediate #3) */
   overduePatientBalances?: { patientId: number; patientName: string; balanceMinor: number; daysPending: number }[]
+  /** سيارات معرض متقادمة بالمخزون 60 يوماً فأكثر بلا بيع — سد فجوة تقرير النشاط #13 (Gap 3) */
+  agingCars?: { carId: number; label: string; daysInStock: number }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
@@ -302,6 +304,19 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: `${input.fmt(o.balanceMinor)} مستحقة منذ ${o.daysPending} يوماً — تابع التحصيل`,
       severity: o.daysPending >= 14 ? 'danger' : 'warn',
       route: '/clinic/patients',
+      perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.77) سيارات معرض متقادمة بالمخزون 60 يوماً فأكثر بلا بيع (سد فجوة تقرير النشاط #13 — Gap 3)
+  for (const a of input.agingCars ?? []) {
+    out.push({
+      id: `caraging:${a.carId}`,
+      icon: '🕰️',
+      title: `سيارة متقادمة بالمعرض: ${a.label}`,
+      body: `بالمعرض منذ ${a.daysInStock} يوماً بلا بيع — فكّر بتخفيض السعر أو عرضها بالجملة`,
+      severity: a.daysInStock >= 90 ? 'danger' : 'warn',
+      route: '/cars',
       perm: 'ops.activity.use',
     })
   }

@@ -2850,9 +2850,13 @@ interface DataState {
     /** تجاوز حد ائتمان المشتري بموافقة مدير */
     creditLimitOverrideBy?: string | null
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+    /** سد فجوة النشاط #13 (Gap 2): سيارة مقايضة من المشتري ضمن ثمن البيع — تدخل 1103 كمخزون جديد بقيمتها التقديرية */
+    tradeIn?: { make: string; model: string; year: number; plateOrVin: string; odometerKm: number; valuationMinor: number; notes?: string }
   }) => Car
   /** تحويل سيارة للتأجير: تُنشأ كمعدة في وحدة الإيجار وتُربط بها */
   moveCarToRental: (carId: number, dailyRateMinor: number, monthlyRateMinor: number) => void
+  /** سد فجوة النشاط #13 (Gap 1): إنهاء حياة التأجير وإعادة السيارة لمخزون البيع — بلا قيد، بشرط عدم وجود عقد نشط عليها */
+  endCarRentalLife: (carId: number) => void
   // ————— سيارات الأمانة (بيع بالعمولة) —————
   /** استلام سيارة أمانة: لا قيد — تسجيل فقط */
   addConsignmentCar: (args: { make: string; model: string; year: number; plateOrVin: string; ownerName: string; ownerPhone?: string; ownerNetMinor: number; askingPriceMinor: number; notes?: string }) => ConsignmentCar
@@ -12806,9 +12810,22 @@ export const useDataStore = create<DataState>()(
         if (car.status !== 'in_stock') throw new Error(car.status === 'sold' ? 'السيارة مباعة بالفعل' : 'السيارة مؤجرة حالياً — أنهِ عقدها أولاً')
         const fullCost = car.purchaseCostMinor + car.prepCostMinor
         const totals = computeCarSale(args.priceMinor, fullCost, args.vatPercent)
-        const paidMinor = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
-        if (!Number.isInteger(paidMinor) || paidMinor < 0 || paidMinor > totals.totalMinor) throw new Error('المحصّل يجب أن يكون بين صفر وإجمالي البيع')
-        const dueMinor = totals.totalMinor - paidMinor
+        // سد فجوة النشاط #13 (Gap 2): مقايضة سيارة — نفس فحوصات validateCar المستخدمة في addCar (بلا تكرار منطق)
+        let tradeInInput: CarInput | null = null
+        if (args.tradeIn) {
+          tradeInInput = {
+            make: args.tradeIn.make, model: args.tradeIn.model, year: args.tradeIn.year,
+            plateOrVin: args.tradeIn.plateOrVin, purpose: 'sale', purchaseCostMinor: args.tradeIn.valuationMinor,
+            odometerKm: args.tradeIn.odometerKm,
+          }
+          const tradeInErrors = validateCar(tradeInInput, state.cars.map((c) => c.plateOrVin))
+          if (tradeInErrors.length) throw new Error(tradeInErrors.join(' — '))
+        }
+        const tradeInMinor = args.tradeIn?.valuationMinor ?? 0
+        const paidMinor = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor - tradeInMinor : 0)
+        if (!Number.isInteger(paidMinor) || paidMinor < 0) throw new Error('المحصّل يجب أن يكون صفراً أو أكثر')
+        if (paidMinor + tradeInMinor > totals.totalMinor) throw new Error('المحصّل نقداً + قيمة المقايضة أكبر من إجمالي البيع')
+        const dueMinor = totals.totalMinor - paidMinor - tradeInMinor
         // ربط المشتري بسجل العملاء: أي جزء آجل يحتاج عميلاً مسجلاً يُتتبع بكشفه
         if (dueMinor > 0 && args.buyerCustomerId == null) {
           throw new Error('بيع السيارة الآجل يتطلب اختيار المشتري من سجل العملاء — لا دين على مشترٍ غير مسجل')
@@ -12819,12 +12836,12 @@ export const useDataStore = create<DataState>()(
         // حد الائتمان يطبق على الجزء المتبقي فقط، لا على المبلغ المحصل فوراً
         if (dueMinor > 0) guardCreditLimit(get(), args.buyerCustomerId, dueMinor, args.creditLimitOverrideBy)
         const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
-        const lines = buildCarSaleEntry(totals, args.payment, label, args.treasury ?? '1101', paidMinor)
+        const lines = buildCarSaleEntry(totals, args.payment, label, args.treasury ?? '1101', paidMinor, tradeInMinor)
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `بيع سيارة ${label}${args.buyerName ? ` — ${args.buyerName}` : ''}`,
+          description: `بيع سيارة ${label}${args.buyerName ? ` — ${args.buyerName}` : ''}${tradeInInput ? ` — مقايضة: ${tradeInInput.make} ${tradeInInput.model} ${tradeInInput.year}` : ''}`,
           sourceType: 'car_sale', sourceId: car.id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -12834,7 +12851,7 @@ export const useDataStore = create<DataState>()(
           saleEntryId: entryId, soldAt: now,
           buyerName: (args.buyerName.trim() || buyerCustomer?.nameAr) ?? '',
           buyerCustomerId: args.buyerCustomerId ?? null,
-          salePayment: dueMinor === 0 ? 'cash' : paidMinor === 0 ? 'credit' : 'mixed',
+          salePayment: dueMinor === 0 ? 'cash' : paidMinor === 0 && tradeInMinor === 0 ? 'credit' : 'mixed',
           salePaidMinor: paidMinor, saleTotalMinor: totals.totalMinor,
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
@@ -12847,7 +12864,21 @@ export const useDataStore = create<DataState>()(
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', paidMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'car_sale', documentId: car.id, amountMinor: paidMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ cars: state.cars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        let newCars = state.cars.map((c) => (c.id === car.id ? updated : c))
+        if (tradeInInput) {
+          const tradeInId = nextId(newCars)
+          const tradeInCar: Car = {
+            id: tradeInId, make: tradeInInput.make.trim(), model: tradeInInput.model.trim(), year: tradeInInput.year,
+            plateOrVin: tradeInInput.plateOrVin.trim(), purpose: 'sale', status: 'in_stock',
+            odometerKm: tradeInInput.odometerKm, purchaseCostMinor: tradeInInput.purchaseCostMinor,
+            purchasePayment: 'cash', purchasePaidMinor: tradeInInput.purchaseCostMinor, purchaseDueMinor: 0,
+            supplierId: null, prepCostMinor: 0, purchaseEntryId: entryId, prepEntryIds: [],
+            salePriceMinor: null, saleProfitMinor: null, saleEntryId: null, soldAt: null, buyerName: '',
+            rentalEquipmentId: null, notes: args.tradeIn?.notes ?? `سيارة مقايضة مقبولة ضمن بيع ${label}`,
+          }
+          newCars = [...newCars, tradeInCar]
+        }
+        set({ cars: newCars, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return updated
       },
       moveCarToRental: (carId, dailyRateMinor, monthlyRateMinor) => {
@@ -12867,6 +12898,20 @@ export const useDataStore = create<DataState>()(
         set({
           equipment: [...state.equipment, eq],
           cars: state.cars.map((c) => (c.id === carId ? { ...c, status: 'renting' as const, purpose: 'rent' as const, rentalEquipmentId: eqId } : c)),
+        })
+      },
+      endCarRentalLife: (carId) => {
+        const state = get()
+        const car = state.cars.find((c) => c.id === carId)
+        if (!car) throw new Error('السيارة غير موجودة')
+        if (car.status !== 'renting') throw new Error('السيارة ليست بحالة تأجير')
+        if (car.rentalEquipmentId == null) throw new Error('لا وحدة إيجار مرتبطة بهذه السيارة')
+        const equipmentId = car.rentalEquipmentId
+        const hasActiveContract = state.rentalContracts.some((c) => c.equipmentId === equipmentId && c.status === 'active')
+        if (hasActiveContract) throw new Error('يوجد عقد إيجار نشط على هذه السيارة — أنهِ العقد أولاً من شاشة عقود الإيجار')
+        set({
+          cars: state.cars.map((c) => (c.id === carId ? { ...c, status: 'in_stock' as const, purpose: 'sale' as const, rentalEquipmentId: null } : c)),
+          equipment: state.equipment.map((e) => (e.id === equipmentId ? { ...e, notes: `${e.notes ? `${e.notes} — ` : ''}⛔ رجعت لمخزون البيع بالمعرض — لا عقود إيجار جديدة عليها` } : e)),
         })
       },
 

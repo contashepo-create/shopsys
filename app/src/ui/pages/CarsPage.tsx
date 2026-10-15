@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, suppliers, employees, addStaffCommission } = useDataStore()
+  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, endCarRentalLife, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, suppliers, employees, addStaffCommission } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -152,6 +152,14 @@ export function CarsPage() {
   const [commAmount, setCommAmount] = useState('')
   // بيع آجل فوق حد ائتمان المشتري — تجاوز باعتماد مدير (نفس نمط الكاشير)
   const creditApproval = useSupervisorApproval('sales.credit.override')
+  // مقايضة سيارة من المشتري ضمن الثمن (سد فجوة تقرير النشاط #13 — Gap 2)
+  const [tradeInOn, setTradeInOn] = useState(false)
+  const [tiMake, setTiMake] = useState('')
+  const [tiModel, setTiModel] = useState('')
+  const [tiYear, setTiYear] = useState(String(new Date().getFullYear()))
+  const [tiPlate, setTiPlate] = useState('')
+  const [tiOdometer, setTiOdometer] = useState('')
+  const [tiValuation, setTiValuation] = useState('')
 
   const doSell = (creditLimitOverrideBy?: string) => {
     if (!sellFor) return
@@ -165,6 +173,10 @@ export function CarsPage() {
         terminalPayment: terminal ? { terminalId: terminal.id, providerReference: sellTerminal.providerReference.trim(), cardLast4: sellTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: buyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+        tradeIn: tradeInOn ? {
+          make: tiMake.trim(), model: tiModel.trim(), year: Number(tiYear) || new Date().getFullYear(),
+          plateOrVin: tiPlate.trim(), odometerKm: Number(tiOdometer) || 0, valuationMinor: toMinor(tiValuation || '0', cur.decimals),
+        } : undefined,
       })
       // عمولة الموظف — استحقاق 5117/2116 مربوط بالسيارة (بعد نجاح البيع)
       if (commEmpId && commAmount.trim()) {
@@ -177,6 +189,7 @@ export function CarsPage() {
       const p = c.saleProfitMinor ?? 0
       toast.show(p >= 0 ? `بيعت بربح ${fmt(p)} ${cur.symbol} 🎉` : `بيعت بخسارة ${fmt(-p)} ${cur.symbol}`, p >= 0 ? 'success' : 'error')
       setSellFor(null); setPrice(''); setBuyer(''); setBuyerCustomerId(0); setSellPaidNow(''); setSellPayment('cash'); setCommEmpId(''); setCommAmount('')
+      setTradeInOn(false); setTiMake(''); setTiModel(''); setTiYear(String(new Date().getFullYear())); setTiPlate(''); setTiOdometer(''); setTiValuation('')
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => doSell(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
@@ -300,6 +313,18 @@ export function CarsPage() {
                         )}
                         {c.status === 'sold' && (
                           <button onClick={() => printSaleContract(c)} title="طباعة عقد البيع" className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Printer className="w-4 h-4" /></button>
+                        )}
+                        {c.status === 'renting' && (
+                          <button
+                            onClick={() => {
+                              try {
+                                endCarRentalLife(c.id)
+                                toast.show('أُنهيت حياة التأجير — السيارة عادت لمخزون البيع ويمكن بيعها الآن ✅')
+                              } catch (e) { toast.show((e as Error).message, 'error') }
+                            }}
+                            title="إنهاء التأجير وإعادة للبيع"
+                            className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"
+                          ><Undo2 className="w-4 h-4" /></button>
                         )}
                         <button onClick={() => setViewing(c)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
@@ -425,9 +450,30 @@ export function CarsPage() {
                 <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!commEmpId} />
               </div>
             </Field>
-            <DocOutcome>الأثر: <b>4101 إيراد بيع السيارات</b> دائناً بثمن البيع · <b>5101 تكلفة المبيعات</b> مديناً بتكلفة السيارة · و<b>1103</b> يفرغ منها.</DocOutcome><div className="flex justify-end gap-2">
+            <Field label="مقايضة: قبول سيارة العميل القديمة ضمن الثمن">
+              <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer w-fit">
+                <input type="checkbox" checked={tradeInOn} onChange={(e) => setTradeInOn(e.target.checked)} className="accent-indigo-600" />
+                <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">يوجد مقايضة بسيارة قديمة</span>
+              </label>
+            </Field>
+            {tradeInOn && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <Field label="ماركة سيارة المقايضة *"><input value={tiMake} onChange={(e) => setTiMake(e.target.value)} className={inputCls} /></Field>
+                  <Field label="الموديل *"><input value={tiModel} onChange={(e) => setTiModel(e.target.value)} className={inputCls} /></Field>
+                  <Field label="سنة الصنع"><input value={tiYear} onChange={(e) => setTiYear(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <Field label="اللوحة / الشاسيه *"><input value={tiPlate} onChange={(e) => setTiPlate(e.target.value)} className={inputCls} dir="ltr" /></Field>
+                  <Field label="عدّاد الكيلومترات"><input value={tiOdometer} onChange={(e) => setTiOdometer(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
+                  <Field label={`القيمة التقديرية (${cur.symbol}) *`}><input value={tiValuation} onChange={(e) => setTiValuation(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                </div>
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold">تُخصم القيمة التقديرية من إجمالي البيع وتدخل سيارة المقايضة مخزون المعرض بنفس القيمة فوراً.</p>
+              </div>
+            )}
+            <DocOutcome>الأثر: <b>4101 إيراد بيع السيارات</b> دائناً بثمن البيع · <b>5101 تكلفة المبيعات</b> مديناً بتكلفة السيارة · و<b>1103</b> يفرغ منها{tradeInOn ? ' ويدخلها سيارة المقايضة بقيمتها.' : '.'}</DocOutcome><div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSellFor(null)}>إلغاء</Btn>
-              <Btn onClick={doSell} shortcut="F9" disabled={!price || (sellPayment !== 'cash' && !buyerCustomerId) || (sellPayment === 'mixed' && !sellPaidNow.trim()) || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
+              <Btn onClick={doSell} shortcut="F9" disabled={!price || (sellPayment !== 'cash' && !buyerCustomerId) || (sellPayment === 'mixed' && !sellPaidNow.trim()) || (!!commEmpId && !commAmount.trim()) || (tradeInOn && (!tiMake.trim() || !tiModel.trim() || !tiPlate.trim() || !tiValuation.trim()))}>بيع وقيد الربحية</Btn>
             </div>
           </div>
         )}
