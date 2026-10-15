@@ -357,8 +357,8 @@ describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ
   it('سجلات مفهرسة ⇒ تصنيف صحيح بصفر قراءات get', async () => {
     const kv = new MemoryKv()
     await seedIndexed(kv, [
-      { id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-5) },
-      { id: 'SHOP-AAA2-2222-2222', customer: 'موشك', plan: 'pro', expiresAt: realDayIso(4) },
+      { id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-5) },
+      { id: 'SHOP-AAA2-2222-2222', customer: 'موشك', plan: 'pro', expiresAt: dayIso(4) },
       { id: 'SHOP-AAA3-3333-3333', customer: 'دائم', plan: 'lifetime', expiresAt: null },
     ])
     const spy = withGetSpy(kv)
@@ -374,7 +374,7 @@ describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ
 
   it('سجلات قديمة بلا فهرس ⇒ تُقرأ وتُفهرس في مكانها، فالدورة التالية صفر قراءات', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'قديم', plan: 'basic', expiresAt: realDayIso(2) }])
+    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'قديم', plan: 'basic', expiresAt: dayIso(2) }])
     const first = withGetSpy(kv)
     const d1 = await subscriptionDigest({ kv: first.kv } as never, { now: NOW })
     expect(first.gets()).toBe(1)
@@ -391,7 +391,7 @@ describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ
   it('تجاوز حدّ القراءات ⇒ skipped صريح في الملخّص، لا فشل صامت ولا «كل شيء سليم»', async () => {
     const kv = new MemoryKv()
     await seed(kv, Array.from({ length: 5 }, (_, i) => ({
-      id: `SHOP-AAA${i + 1}-1111-1111`, customer: `جهاز ${i + 1}`, plan: 'basic', expiresAt: realDayIso(3),
+      id: `SHOP-AAA${i + 1}-1111-1111`, customer: `جهاز ${i + 1}`, plan: 'basic', expiresAt: dayIso(3),
     })))
     const digest = await subscriptionDigest({ kv } as never, { now: NOW, maxReads: 2 })
     expect(digest.total).toBe(5)
@@ -403,7 +403,7 @@ describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ
     const quiet = await subscriptionDigest({ kv: new MemoryKv() } as never, { now: NOW, maxReads: 0 })
     expect(hasDigestNews(quiet)).toBe(false)
     const kv2 = new MemoryKv()
-    await seed(kv2, [{ id: 'SHOP-AAA1-1111-1111', customer: 'بعيد', plan: 'basic', expiresAt: realDayIso(300) }])
+    await seed(kv2, [{ id: 'SHOP-AAA1-1111-1111', customer: 'بعيد', plan: 'basic', expiresAt: dayIso(300) }])
     const noNews = await subscriptionDigest({ kv: kv2 } as never, { now: NOW, maxReads: 0 })
     expect(hasDigestNews(noNews)).toBe(false)
     expect(noNews.skipped).toBe(1)
@@ -412,7 +412,7 @@ describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ
 
   it('فشل cron ⇒ يبلغ المطوّر بدل الصمت', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-2) }])
+    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-2) }])
     const calls = captureTelegram()
     const broken = {
       ...env_(kv),
