@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync, utimesSync, symlinkSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -461,4 +461,19 @@ describe('مراجعات البيانات لا ساعة الملف فقط', () =
     expect(await payload(resolveDbPathAt(s.userData).dbPath)).toBe(after)
     expect(await payload(old)).toBe(before)
   })
+})
+
+
+it('يعيد محاولة فتح SQLite المؤقت المقفول على Windows بحد معلوم دون لمس الأصل', async () => {
+  const s = scenario(), source = join(s.root, 'original.db'), target = join(s.userData, 'backup.db')
+  ;(await create(source)).close()
+  const backup = Database.prototype.backup
+  const spy = vi.spyOn(Database.prototype, 'backup').mockImplementationOnce(async () => {
+    throw Object.assign(new Error('temporary file open failed'), { code: 'SQLITE_CANTOPEN' })
+  }).mockImplementation(backup)
+  try {
+    await copyDatabaseSafely(source, target)
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(await payload(target)).toBe(await payload(source))
+  } finally { spy.mockRestore() }
 })

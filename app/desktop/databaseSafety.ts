@@ -42,7 +42,17 @@ export async function copyDatabaseSafely(source: string, destination: string): P
     // امتلاك ملف الوجهة حصرياً عبر fs قبل فتح SQLite له؛ لا overwrite حتى للمؤقت.
     writeFileSync(temporary, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
     operation = 'SQLite backup'
-    await db.backup(temporary)
+    // Windows قد يحتفظ مؤقتاً بقفل WAL/ملف بعد غلق آخر قارئ أو فحصه.
+    // مهلة محدودة لأخطاء الفتح/القفل فقط؛ أي فساد/إذن دائم يوقف النسخ.
+    for (let attempt = 0; ; attempt++) {
+      try { await db.backup(temporary); break } catch (error) {
+        const code = String((error as { code?: unknown }).code ?? '')
+        if (attempt >= 3 || !/^SQLITE_(CANTOPEN|BUSY|LOCKED)(_|$)/.test(code)) throw error
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 200 * (attempt + 1)))
+        unlinkSync(temporary)
+        writeFileSync(temporary, Buffer.alloc(0), { flag: 'wx', mode: 0o600 })
+      }
+    }
     operation = 'verify temporary'
     if (probeShopsysDatabase(temporary) !== 'ok') throw new Error('فشل التحقق من نسخة قاعدة البيانات')
     // نشر ذري دون overwrite؛ الملف المؤقت على نفس القرص.
