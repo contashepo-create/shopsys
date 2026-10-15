@@ -27,6 +27,7 @@ import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './nav
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
 import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation } from './databaseSafety.ts'
+import { probeSnapshotKey } from './snapshotKeyProbe.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
 import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller } from './updateLifecycle.ts'
 import {
@@ -39,6 +40,22 @@ type ClaimOutboxInput = { now?: string; limit?: number }
 type DeleteSnapshotInput = { storeName: string; expectedRevision: number }
 type EnqueueOutboxInput = Parameters<ShopsysDatabase['enqueueOutbox']>[0]
 type CompleteOutboxInput = Parameters<ShopsysDatabase['completeOutbox']>[0]
+
+class DatabaseKeyMismatchError extends Error {
+  readonly dbPath: string
+  readonly stores: string[]
+
+  constructor(dbPath: string, stores: string[]) {
+    super(`تعذّر التحقق من اللقطات المشفّرة في قاعدة البيانات (${stores.join('، ')}). قد يكون مفتاح الجهاز مختلفاً أو إحدى اللقطات تالفة. أوقف التطبيق فتحها للتعديل؛ استعد ملف مفتاح الاسترداد أو أعد ملف البيانات ومفتاحه الأصلي ثم أعد المحاولة.`)
+    this.name = 'DatabaseKeyMismatchError'
+    this.dbPath = dbPath
+    this.stores = stores
+  }
+}
+
+/* عند فشل فحص مفتاح اللقطة: نعرض واجهة الاسترداد، ولا نفتح SQLite بمسار الكتابة. */
+let databaseInitializationFailure: string | null = null
+let recoveryRestartScheduled = false
 
 /* eslint-disable no-console */
 
@@ -628,6 +645,14 @@ async function openDatabase(): Promise<ShopsysDatabase> {
   await resolveMissingLocation()
   await offerExistingData()
   await askForExistingDatabaseIfNeeded()
+  /* فحص تشفيري قبل الحماية أو فتح SQLite بمسار الكتابة أو تشغيل migrations.
+     سلامة SQLite وحدها لا تكفي: قد يكون الملف سليماً لكن مفتاح الجهاز تغيّر بعد
+     تحديث/نقل profile. في هذه الحالة نترك الملف كما هو ونُظهر شاشة الاسترداد. */
+  const selectedDatabasePath = resolveDbPath().dbPath
+  if (deviceEncryptionKey.length === 32 && existsSync(selectedDatabasePath)) {
+    const keyProbe = probeSnapshotKey(selectedDatabasePath, deviceEncryptionKey)
+    if (keyProbe.status === 'mismatch') throw new DatabaseKeyMismatchError(selectedDatabasePath, keyProbe.stores)
+  }
   // حماية القاعدة الفعلية الموجودة فقط؛ لا ترحيل جماعي لعملاء. الأصل يبقى نسخة أمان.
   const beforeProtection = resolveDbPath().dbPath
   const protectedPath = await protectDatabaseAt(userDataDir(), installationDir())
@@ -897,7 +922,7 @@ async function backupBeforeUpdate(version: string): Promise<string | null> {
 /* ── IPC ── */
 function wireIpc(): void {
   const db = () => {
-    if (!database) throw new Error('قاعدة البيانات غير مهيأة بعد')
+    if (!database) throw new Error(databaseInitializationFailure ?? 'قاعدة البيانات غير مهيأة بعد')
     return database
   }
   ipcMain.handle('device:getEncryptionKey', (): Uint8Array => new Uint8Array(deviceEncryptionKey))
@@ -993,6 +1018,16 @@ function wireIpc(): void {
   /* v1.0.22 — مفتاح الاسترداد: ملف المفتاح مغلّف بكلمة مرور العميل (انظر desktop/keyRecovery.ts).
      التصدير لا يكشف المفتاح الخام أبداً؛ الاستيراد يحتفظ بالنسخة الحالية ثم يعيد التشغيل. */
   ipcMain.handle('keyRecovery:status', () => ({ exportedAt: readKeyRecoveryExportedAt() }))
+
+  /* إعادة محاولة حقيقية: عند فشل فحص المفتاح لم تُفتح قاعدة الكتابة، لذا يلزم
+     إعادة العملية الرئيسية بعد توصيل القرص/استعادة profile؛ إعادة تحميل React وحدها لا تكفي. */
+  ipcMain.handle('keyRecovery:retry-startup', () => {
+    if (!databaseInitializationFailure || database || recoveryRestartScheduled) return false
+    recoveryRestartScheduled = true
+    logLine('db-recovery', 'طلب المستخدم إعادة محاولة الإقلاع من شاشة استرداد البيانات')
+    setTimeout(() => { app.relaunch(); app.exit(0) }, 250)
+    return true
+  })
 
   ipcMain.handle('keyRecovery:export', async (_event, args: { passphrase?: unknown; deviceId?: unknown }) => {
     const passphrase = typeof args?.passphrase === 'string' ? args.passphrase : ''
@@ -1323,23 +1358,34 @@ if (!gotLock) {
         return
       }
       setSplashProgress(40, 'فتح قاعدة البيانات…')
-      database = await openDatabase()
+      try {
+        database = await openDatabase()
+      } catch (error) {
+        if (!(error instanceof DatabaseKeyMismatchError)) throw error
+        databaseInitializationFailure = error.message
+        logLine('db-key-mismatch', `${error.message} المسار=${error.dbPath} المتاجر=${error.stores.join(',')}`)
+        setSplashProgress(75, 'تعذّر التحقق من مفتاح البيانات — افتح شاشة الاسترداد')
+      }
       setSplashProgress(75, 'تجهيز الواجهة…')
       wireIpc()
       mainWindow = createMainWindow()
       mainWindow.once('ready-to-show', () => {
         setSplashProgress(100, 'جاهز')
-        writeLastRunVersion()
+        if (database) writeLastRunVersion()
         closeSplash()
       })
       mainWindow.on('closed', () => {
         mainWindow = null
       })
-      wireUpdater()
-      await rotateBackups()
-      backupTimer = setInterval(() => {
-        void rotateBackups()
-      }, 60 * 60 * 1000)
+      if (database) {
+        wireUpdater()
+        await rotateBackups()
+        backupTimer = setInterval(() => {
+          void rotateBackups()
+        }, 60 * 60 * 1000)
+      } else {
+        pushUpdaterState({ status: 'error', message: 'أُوقف التحديث مؤقتاً حتى استرداد مفتاح البيانات' })
+      }
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow()
       })

@@ -15,7 +15,7 @@ import { buildRegistrationReport, shouldReportRegistration, sendRegistrationRepo
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
-import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
+import { isElectronRuntime, desktopDatabaseStorage, desktopKeyRecoveryBridge } from './data/desktopBridge.ts'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
@@ -312,23 +312,45 @@ function Shell() {
 
 /** شاشة استرداد: تظهر حين تعذّر قراءة البيانات — لا معالج إعداد ولا كتابة فوق البيانات */
 function DataRecoveryScreen({ reason }: { reason: string }) {
+  const keyMismatch = /فك تشفير|مفتاح الجهاز|اللقطات المشف|لقطة.*مشفرة/i.test(reason)
   return (
     <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-slate-100 dark:bg-slate-950">
       <div className="max-w-lg space-y-4 p-8 rounded-3xl bg-white dark:bg-card-dark border border-rose-500/30 shadow-2xl">
         <div className="text-4xl">⚠️</div>
         <h1 className="text-xl font-black text-slate-800 dark:text-white">تعذّر فتح بياناتك — لم يبدأ إعداد جديد</h1>
         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-          بياناتك لم تُحذف ولم يُكتب فوقها. هذا الخطأ يعني أن التطبيق لم يستطع قراءة قاعدة البيانات المحفوظة،
-          فأوقف الحفظ حمايةً لها. تأكد من توصيل قرص مكان البيانات، ثم أعد المحاولة. إن استمر الخطأ أرسل ملف السجل للدعم.
+          لم يُنشأ محل جديد ولم تُكتب الحالة الافتراضية فوق بياناتك. أوقف التطبيق الحفظ حمايةً للقاعدة؛ لا تحذفها ولا تبدأ إعداداً جديداً ولا تُعد تثبيت Windows أو التطبيق الآن.
         </p>
+        {keyMismatch ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[12px] text-slate-700 dark:text-slate-200 leading-relaxed space-y-2">
+            <b className="block text-amber-700 dark:text-amber-300">تعذّر التحقق من تشفير القاعدة؛ قد يكون المفتاح الحالي مختلفاً أو إحدى اللقطات تالفة.</b>
+            <ol className="list-decimal pr-5 space-y-1">
+              <li>إن كانت البيانات على قرص خارجي، وصّله ثم اضغط «إعادة المحاولة».</li>
+              <li>إن كان لديك ملف مفتاح استرداد <span dir="ltr">.tkey</span> وكلمة مروره، أدخلهما أدناه.</li>
+              <li>إن لم يكن لديك الملف، أوقف المحاولات واحفظ مجلد بيانات التطبيق كاملاً كما هو (بما فيه <span dir="ltr">Local State</span> و<span dir="ltr">device.key.enc</span> و<span dir="ltr">db-location.json</span> و<span dir="ltr">backups</span>)، واحتفظ بملف <span dir="ltr">shopsys.db</span> و<span dir="ltr">main.log</span> دون تعديل.</li>
+              <li>إن كان الجهاز أو حساب Windows الأصلي ما زال متاحاً، افتح القاعدة عليه وصدّر مفتاح الاسترداد من الإعدادات، ثم استورده هنا.</li>
+            </ol>
+            <p className="font-bold">إذا كان المفتاح مفقوداً، فنسخة قاعدة البيانات وحدها لا تعوّضه. وإذا لم تنجح الاستعادة، لا تستبدل الأصل؛ احتفظ بنسخه وأرسل السجل للدعم.</p>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+            تأكد من توصيل قرص مكان البيانات ثم أعد المحاولة. إن استمر الخطأ، اترك ملفات البيانات كما هي وأرسل ملف السجل <span dir="ltr">main.log</span> للدعم.
+          </p>
+        )}
         <p dir="ltr" className="text-[11px] font-mono text-rose-600 dark:text-rose-400 break-all">{reason}</p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => {
+            const retryStartup = desktopKeyRecoveryBridge()?.retryStartup
+            if (!retryStartup) { window.location.reload(); return }
+            void retryStartup().then((restarted) => {
+              if (!restarted) window.location.reload()
+            }).catch(() => window.location.reload())
+          }}
           className="px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-colors"
         >
           🔄 إعادة المحاولة
         </button>
-        {/* v1.0.22: فقدان المفتاح لا يعني فقدان البيانات — استرداده من ملف مفتاح الاسترداد */}
+        {/* استرداد المفتاح المعتمد فقط؛ لا تُنشأ قاعدة جديدة عند فشل فك التشفير */}
         <DesktopKeyRecoveryImport />
       </div>
     </div>

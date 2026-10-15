@@ -44,6 +44,7 @@ const keyRecovery = {
   status: () => ipcRenderer.invoke('keyRecovery:status'),
   export: (args: { passphrase: string; deviceId: string }) => ipcRenderer.invoke('keyRecovery:export', args),
   import: (args: { passphrase: string }) => ipcRenderer.invoke('keyRecovery:import', args),
+  retryStartup: (): Promise<boolean> => ipcRenderer.invoke('keyRecovery:retry-startup'),
 }
 
 const persistence = {
