@@ -186,7 +186,8 @@ describe('②③ التذكير اليومي التلقائي (scheduled)', () =
 
   it('لا يرسل شيئاً في يوم بلا قريبة من الانتهاء', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-GGG1-1111-1111', customer: 'بعيد', plan: 'pro', expiresAt: dayIso(300) }])
+    /* realDayIso: scheduled() يقرأ الساعة الحقيقية — انظر تعليق realDayIso أعلاه */
+    await seed(kv, [{ id: 'SHOP-GGG1-1111-1111', customer: 'بعيد', plan: 'pro', expiresAt: realDayIso(300) }])
     const sent = captureTelegram()
 
     await devbotWorker.scheduled!({} as never, env_(kv) as never)
@@ -233,9 +234,12 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
 
   it('الأمر /تذكير يصل المطوّر بالملخص', async () => {
     const kv = new MemoryKv()
+    /* realDayIso لا dayIso: أمر /تذكير (webhook) يستدعي subscriptionDigest بلا now
+       مُمرَّر فيقرأ الساعة الحقيقية — نفس سبب تعليق realDayIso أعلاه (قنبلة زمنية
+       فعلية رُصدت في CI: مرساة 2026-10-08 + 6 أيام صارت ماضياً في 2026-10-15). */
     await seed(kv, [
-      { id: 'SHOP-JJJ1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-5) },
-      { id: 'SHOP-JJJ2-2222-2222', customer: 'موشك', plan: 'pro', expiresAt: dayIso(6) },
+      { id: 'SHOP-JJJ1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-5) },
+      { id: 'SHOP-JJJ2-2222-2222', customer: 'موشك', plan: 'pro', expiresAt: realDayIso(6) },
     ])
     const sent = captureTelegram()
 
@@ -249,7 +253,8 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
 
   it('الأمر /تذكير 30 يوسّع النافذة لهذه الاستعلام', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-KKK1-1111-1111', customer: 'بعد 20 يوماً', plan: 'basic', expiresAt: dayIso(20) }])
+    /* realDayIso: نفس سبب الاختبار السابق — /تذكير يقرأ الساعة الحقيقية */
+    await seed(kv, [{ id: 'SHOP-KKK1-1111-1111', customer: 'بعد 20 يوماً', plan: 'basic', expiresAt: realDayIso(20) }])
     const narrow = captureTelegram()
     await webhook(kv, '/تذكير')
     expect(narrow[0].text).toContain('لا اشتراكات تنتهي خلال 6 أيام')
@@ -261,7 +266,9 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
 
   it('الأمر /احصائيات يعدّ الأجهزة والمنتهية والمحروق', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-LLL1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-1) }])
+    /* realDayIso للاتساق: الأمر عبر webhook يقرأ الساعة الحقيقية (آمن هنا أيضاً بـdayIso
+       لأن -1 يبقى ماضياً أبداً، لكن الاتساق يمنع أي التباس مستقبلي) */
+    await seed(kv, [{ id: 'SHOP-LLL1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-1) }])
     await kv.put('revoked', JSON.stringify(['aaaaaaaa', 'bbbbbbbb']))
     const sent = captureTelegram()
 
@@ -273,7 +280,7 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
 
   it('غير المطوّر لا يستفيد من الأوامر (الحصر بالمعرّف)', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-MMM1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-1) }])
+    await seed(kv, [{ id: 'SHOP-MMM1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-1) }])
     const sent = captureTelegram()
     await devbotWorker.fetch(
       new Request('https://shopsys-control/telegram/hook-secret', {
@@ -298,7 +305,8 @@ describe('④⑤ الأمر واللوحة ونافذة الأيام', () => {
 
   it('ضبط النافذة من اللوحة يسري على التذكير اليومي', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-OOO1-1111-1111', customer: 'بعد 20 يوماً', plan: 'basic', expiresAt: dayIso(20) }])
+    /* realDayIso: scheduled() يقرأ الساعة الحقيقية — انظر تعليق realDayIso أعلاه */
+    await seed(kv, [{ id: 'SHOP-OOO1-1111-1111', customer: 'بعد 20 يوماً', plan: 'basic', expiresAt: realDayIso(20) }])
 
     // الافتراضي 10 ⇒ لا خبر
     const before = captureTelegram()
@@ -412,7 +420,7 @@ describe('⑥ فهرس metadata — لا ينهار التذكير عند حدّ
 
   it('فشل cron ⇒ يبلغ المطوّر بدل الصمت', async () => {
     const kv = new MemoryKv()
-    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: dayIso(-2) }])
+    await seed(kv, [{ id: 'SHOP-AAA1-1111-1111', customer: 'منتهي', plan: 'basic', expiresAt: realDayIso(-2) }])
     const calls = captureTelegram()
     const broken = {
       ...env_(kv),
