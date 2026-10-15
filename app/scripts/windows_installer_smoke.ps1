@@ -49,7 +49,7 @@ function Run-Installer([string[]]$arguments, [bool]$launchManually = $false) {
       # مختلفاً وسط الاختبار. تنزيل القناة العامة مفحوص بشكل مستقل بHTTP حقيقي.
       "provider: generic`nurl: http://127.0.0.1:9`nupdaterCacheDirName: ci-disabled-update" | Set-Content (Join-Path $install 'resources/app-update.yml') -Encoding utf8
     }
-    Start-Process $exe
+    $script:lastLaunch = Start-Process $exe -PassThru -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'native-app-stderr.log') -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'native-app-stdout.log')
   }
   $expectedVersion = $(if ($FromPublished23 -and $installer -ne $candidateInstaller) { '1.0.23' } else { $version })
   Wait-Until 'installed application startup with expected version/profile' {
@@ -67,7 +67,7 @@ function Run-Probe($mode, $file, $destination = $null) {
   if (-not $p.WaitForExit(60000)) { throw 'Electron database probe hung' }
   if (-not (Test-Path $out)) { throw 'Electron probe produced no result' }
   $result = Get-Content $out -Raw | ConvertFrom-Json
-  if ($p.ExitCode -ne 0 -or -not $result.ok) { throw "Database probe failed: $($result.error)" }
+  if ($p.ExitCode -ne 0 -or -not $result.ok) { throw "Database probe failed: mode=$mode file=$file error=$($result.error)" }
 }
 $script:installerProcesses = @()
 try {
@@ -140,7 +140,17 @@ try {
       Write-Output "::notice title=Native runtime log::$($_.Replace('%', '%25'))"
     }
   }
-  throw
+  $diagnostics = @('installedVersion=' + (Get-Item $exe).VersionInfo.ProductVersion)
+  foreach ($stream in @('stderr', 'stdout')) {
+    $streamFile = Join-Path $env:RUNNER_TEMP "native-app-$stream.log"
+    if (Test-Path $streamFile) { $diagnostics += (Get-Content $streamFile -Tail 12) }
+  }
+  foreach ($name in @('app', 'Tahakom')) {
+    $root = Join-Path $env:APPDATA $name
+    if (Test-Path (Join-Path $root 'db-location.json')) { $diagnostics += "$name pointer=" + (Get-Content (Join-Path $root 'db-location.json') -Raw) }
+    if (Test-Path (Join-Path $root 'main.log')) { $diagnostics += (Get-Content (Join-Path $root 'main.log') | Where-Object { $_ -match '\[(db|db-recovery|db-protection|boot-fatal|fatal)\]' } | Select-Object -Last 5) }
+  }
+  throw ($_.Exception.Message + '; fixture diagnostics: ' + ($diagnostics -join ' | '))
 } finally {
   # Cleanup applies only to processes at the isolated fixture installation path.
   foreach ($p in $script:installerProcesses) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }

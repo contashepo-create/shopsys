@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync, utimesSync, symlinkSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -9,7 +9,7 @@ import Database from 'better-sqlite3'
 import { spawnSync } from 'node:child_process'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
 import { readDbLocationAt, writeDbLocationAt, resolveDbPathAt, EMPTY_DB_LOCATION } from '../desktop/dbLocation.ts'
-import { changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity, assertSafeUpdateLocation } from '../desktop/databaseSafety.ts'
+import { DATABASE_DATA_DIRECTORY, isUnsafeDatabaseLocation, changedDrivePaths, copyDatabaseSafely, isInsideInstallation, protectDatabaseAt, recoverMissingDatabaseAt, rememberDatabaseIdentity, assertSafeUpdateLocation } from '../desktop/databaseSafety.ts'
 import { preserveCurrentUserData, selectRuntimeUserData } from '../desktop/runtimeData.ts'
 import { installSilentUpdate, requestSilentInstall, assertDownloadedInstaller } from '../desktop/updateLifecycle.ts'
 
@@ -440,4 +440,57 @@ describe('هوية مجلد التشغيل الفعلي عبر v23 وما بعد
     writeFileSync(join(current, 'db-location.json'), '{}')
     expect(selectRuntimeUserData(appData, current)).toBe(current)
   })
+})
+
+
+describe('مراجعات البيانات لا ساعة الملف فقط', () => {
+  it('يرفض auto الأقدم ذا mtime أحدث ويسترد آخر عمل من SQLite backup الخارجي', async () => {
+    const s = scenario(), old = join(s.documentsBackupDir, 'auto', 'old.db'), latest = join(s.documentsBackupDir, 'manual', 'owner.db')
+    const key = randomBytes(32)
+    const before = encrypted(key, '{"state":{"balance":98765}}')
+    const after = encrypted(key, '{"state":{"balance":98766}}')
+    const db = await create(old, 'same-device', before)
+    try {
+      await copyDatabaseSafely(old, latest)
+    } finally { db.close() }
+    const newer = await ShopsysDatabase.open(latest)
+    try { newer.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 1, payloadJson: after }) } finally { newer.close() }
+    utimesSync(old, 9000, 9000); utimesSync(latest, 1000, 1000)
+    point(s.userData, join(s.installDir, 'deleted.db'))
+    expect(await recoverMissingDatabaseAt({ ...s, deviceKey: key })).toBe(latest)
+    expect(await payload(resolveDbPathAt(s.userData).dbPath)).toBe(after)
+    expect(await payload(old)).toBe(before)
+  })
+})
+
+
+it('يعيد محاولة فتح SQLite المؤقت المقفول على Windows بحد معلوم دون لمس الأصل', async () => {
+  const s = scenario(), source = join(s.root, 'original.db'), target = join(s.userData, 'backup.db')
+  ;(await create(source)).close()
+  const backup = Database.prototype.backup
+  const spy = vi.spyOn(Database.prototype, 'backup').mockImplementationOnce(async () => {
+    // يحاكي تنظيف Backup API للوجهة بعد الفشل، لا مجرد رمي استثناء.
+    const [temporary] = spy.mock.calls.at(-1)!
+    rmSync(temporary, { force: true })
+    throw Object.assign(new Error('temporary file open failed'), { code: 'SQLITE_CANTOPEN' })
+  }).mockImplementation(backup)
+  try {
+    await copyDatabaseSafely(source, target)
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(await payload(target)).toBe(await payload(source))
+  } finally { spy.mockRestore() }
+})
+
+
+it('لا يضع حماية أو استرداداً داخل databases المحذوف آلياً بواسطة Chromium', async () => {
+  const s = scenario(), old = join(s.userData, 'databases', 'actual-existing.db')
+  const text = encrypted(randomBytes(32), '{"state":{"balance":98766}}')
+  ;(await create(old, 'same-device', text)).close(); point(s.userData, old)
+  expect(isUnsafeDatabaseLocation(old, s.installDir, s.userData)).toBe(true)
+  expect(() => assertSafeUpdateLocation(s.userData, s.installDir, old)).toThrow()
+  const safe = await protectDatabaseAt(s.userData, s.installDir)
+  expect(dirname(safe)).toBe(join(s.userData, DATABASE_DATA_DIRECTORY))
+  rmSync(join(s.userData, 'databases'), { recursive: true, force: true })
+  expect(await payload(safe)).toBe(text)
+  expect(isUnsafeDatabaseLocation(safe, s.installDir, s.userData)).toBe(false)
 })
