@@ -23,6 +23,36 @@ export async function installSilentUpdate(deps: SilentUpdateDeps): Promise<void>
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 const UPDATE_CHECK_RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000, 30 * 60_000] as const
 
+/* ─── الفحص اليدوي (زر «فحص التحديثات») ───
+   الغرض: المستخدم يبحث عن التحديث فوراً بلا انتظار الفحص الدوري.
+   القرار نقي هنا ليُختبر بلا Electron، ولا يغيّر مسار التنزيل الصامت ولا التثبيت عند الإغلاق. */
+export type ManualUpdateCheckDecision =
+  | { kind: 'check' }
+  | { kind: 'in_flight' }
+  | { kind: 'downloading' }
+  | { kind: 'downloaded' }
+  | { kind: 'unavailable' }
+
+export interface ManualUpdateCheckInput {
+  /** نسخة مثبَّتة (electron-updater يعمل فقط في الحزمة المنشورة) */
+  packaged: boolean
+  /** فحص جارٍ الآن (لا يفحصان معاً) */
+  inFlight: boolean
+  /** تنزيل جارٍ في الخلفية */
+  downloading: boolean
+  /** التحديث منزَّل بالكامل وبانتظار التثبيت الصامت */
+  downloaded: boolean
+}
+
+/** لا يبدأ فحصاً جديداً فوق فحص جارٍ أو تنزيل جارٍ أو تحديث جاهز — يمنع التداخل والفساد. */
+export function decideManualCheck(input: ManualUpdateCheckInput): ManualUpdateCheckDecision {
+  if (!input.packaged) return { kind: 'unavailable' }
+  if (input.downloaded) return { kind: 'downloaded' }
+  if (input.downloading) return { kind: 'downloading' }
+  if (input.inFlight) return { kind: 'in_flight' }
+  return { kind: 'check' }
+}
+
 /** تأخير إعادة المحاولة بتصاعد محدود؛ بعد أربع محاولات يعاود الفحص كل 30 دقيقة. */
 export function updateCheckRetryDelay(attempt: number): number {
   const safeAttempt = Number.isFinite(attempt) ? Math.max(0, Math.floor(attempt)) : 0

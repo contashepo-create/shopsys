@@ -93,10 +93,11 @@ ok(header.includes("addEventListener('online'"), 'يستمع لأحداث الش
 const aboutPage = readFileSync(new URL('../src/ui/pages/AboutPage.tsx', import.meta.url), 'utf8')
 const desktopMain = readFileSync(new URL('../desktop/main.ts', import.meta.url), 'utf8')
 const desktopPreload = readFileSync(new URL('../desktop/preload.ts', import.meta.url), 'utf8')
-ok(!/DesktopUpdater|فحص التحديثات|buildUpdatePlan/.test(aboutPage), 'لا واجهة فحص/تثبيت يدوية للتحديث في «حول»')
+ok(aboutPage.includes('DesktopUpdater') && aboutPage.includes('فحص التحديثات'), 'زر فحص التحديثات وواجهة التنزيل في «حول» (يدوي فوق الصامت)')
 ok(desktopMain.includes('autoUpdater.autoDownload = true') && desktopMain.includes('observeUpdateCheck') && desktopMain.includes('autoUpdater.autoInstallOnAppQuit = false'), 'الفحص والتنزيل في الخلفية مع التقاط أخطاء الفحص')
 ok(desktopMain.includes('scheduleUpdateRetry(autoUpdater)') && desktopMain.includes('UPDATE_CHECK_INTERVAL_MS') && desktopMain.includes('updateCheckInFlight'), 'إعادة فحص التحديث بصمت بعد أخطاء الشبكة وبفاصل دوري مع منع التداخل')
-ok(!desktopPreload.includes('shopsysUpdater') && !/ipcMain\.handle\('updater:(state|check|install)'/.test(desktopMain), 'لا جسر IPC يدوي لحالة/فحص/تثبيت التحديث')
+ok(desktopPreload.includes('shopsysUpdater') && /ipcMain\.handle\('updater:state'/.test(desktopMain) && /ipcMain\.handle\('updater:check'/.test(desktopMain), 'جسر IPC لحالة وفحص التحديث متاح للواجهة')
+ok(desktopMain.includes('checkUpdatesManually') && desktopMain.includes('decideManualCheck') && desktopMain.includes('scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)'), 'الفحص اليدوي يبدأ فحصاً فورياً فوق نفس المحرك ولا يلغي الفحص الدوري')
 ok(desktopMain.includes('installSilentUpdate') && desktopMain.includes('flush: flushRenderer') && desktopMain.includes('backupBeforeUpdate(downloadedUpdateVersion!)') && desktopMain.includes('requestSilentInstall(autoUpdater)'), 'الإغلاق يفرغ الواجهة ويحمي/ينسخ القاعدة ثم يثبت ويعيد التشغيل بصمت')
 
 console.log(`\nPASS=${PASS} FAIL=${FAIL}`)

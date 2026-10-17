@@ -7377,3 +7377,19 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - التحقق: `npm run build` ✓ · `npm run typecheck` ✓ · `npx oxlint src --deny-warnings` ✓ · `npm run desktop:compile` ✓ (لا ثنائي Electron في sandbox، لذلك لم يُولد `main.jsc`؛ بُني احتياط CJS) · `npm run verify:all` **307/307** ✓ · Vitest الكامل **167 ملفاً / 1142 اختباراً** ✓. بعد آخر تحصين للمعاملة، وحماية الأرشيفات من التقليم، الاختبارات المركزة **53/53** والبوابة الساكنة وفحص diff ✓.
 - تدقيق ما بعد التنفيذ: كان تقليم النسخ المعتاد (24 ساعة/5 نسخ قبل التحديث/20 نسخة ملفية) يستطيع حذف نسخ قديمة بعد البدء النظيف رغم أن إجراء البدء نفسه لا يحذفها. عُدلت سياسات التقليم لتطبق حدود الاحتفاظ على النسخ الجديدة فقط مع الاحتفاظ بالملفات المحددة في العلامة؛ أضيف اختبار انحدار لذلك. لا تُزال الملفات القديمة آلياً.
 - هذه نتائج Linux محلية؛ لم يُبنَ/يُختبر مثبت Windows أو فتح قاعدة فعلية على جهاز المالك في هذه الجولة. لا يُنشر إصدار عميل جديد قبل نجاح Windows CI والتحقق المناسب. لا تُشارك ملفات القاعدة أو سجل الجهاز في المحادثة.
+
+## جولة 2026-10-17 — استرجاع زر «فحص التحديثات» وشريط التنزيل (بأمر المالك)
+
+- **الطلب**: إعادة زر فحص وجود تحديث وشريط التنزيل كما كان، مع إبقاء **الفحص التلقائي كما هو** و**التحديث الصامت كما هو**، والفرق الوحيد أن المستخدم يستطيع البحث عن التحديث فوراً بدل انتظار الفحص الدوري.
+- **ما تغيّر في الإنتاج**:
+  - `app/src/ui/components/DesktopUpdater.tsx` عاد كما كان (مع 계약 types بدل `any`): زر «فحص التحديثات» + شريط تنزيل يعرض نسبة التقدم + رسالة الخطأ + زر «إعادة التشغيل وتثبيت v…» عند اكتمال التنزيل.
+  - `app/src/ui/pages/AboutPage.tsx`: بطاقة «التحديثات» للمتصفح (فحص GitHub المنشور + خطة التحديث الآمن) عادت و`<DesktopUpdater />` مربوط بها — في Electron يظهر المكوّن، وفي المتصفح تظهر البطاقة.
+  - `app/desktop/preload.ts`: جسر `shopsysUpdater` عبر `contextBridge` (أربع دوال: `state` · `check` · `install` · `onState`) — لا يُكشف شيء من Node/Electron خارجه.
+  - `app/desktop/main.ts`: `recordUpdaterState` يبثّ الحالة للواجهة (`updater:state`) مع حفظ نسبة التقدم، و`checkUpdatesManually` يبدأ فحصاً فورياً، و`updater:state`/`updater:check`/`updater:install` معالجات IPC.
+  - `app/desktop/updateLifecycle.ts`: `decideManualCheck` قرار نقي (لا فحص فوق فحص جارٍ أو تنزيل جارٍ أو تحديث جاهز).
+  - `app/src/data/desktopBridge.ts`: `DesktopUpdaterBridge` + `desktopUpdaterBridge()`.
+- **ما لم يتغيّر (بالتصريح)**: `electron-updater` يظل يفحص وينزّل في الخلفية تلقائياً (`autoUpdater.autoDownload = true`)، الفاصل الدوري `UPDATE_CHECK_INTERVAL_MS` ساعة، إعادة المحاولة بعد خطأ الشبكة `scheduleUpdateRetry`، والتثبيت الصامت عند الإغلاق بترتيبه المحمي: `flush → protect → backup → close → install → exit`. زر «تثبيت الآن» يستدعي `shutdownApplication(true)` أي **نفس المسار المحمي** بلا اختصار.
+- **الفحص اليدوي لا يفسد الجدولة**: يوقف المؤقّت الدوري المجدول أثناء الفحص اليدوي ثم يعيد جدولته بالفاصل نفسه بعد انتهائه، ويلتقط رفض `checkForUpdates` عبر `observeUpdateCheck` فلا rejection غير معالج.
+- **البوابات**: `verify_architecture_updates.mjs` · `verify_database_update_safety.mjs` · `verify_owner_fix_v103.mjs` · `verify_storage_v1022.mjs` حُدِّثت من «لا واجهة يدوية» إلى «واجهة يدوية + بقاء المسار الآلي والصامت كما هو». بوابة جديدة `verify_manual_update_ui.mjs` (٢٤ فحصاً) + اختبار Vitest `tests/manual_update_ui.test.tsx` (٩ اختبارات).
+- **التحقق**: `npx tsc -b --force` ✓ · `npm run build` ✓ · `npx oxlint src` (٠ أخطاء/٠ تحذيرات) ✓ · `npm run desktop:compile` ✓ (احتياط CJS؛ لا ثنائي Electron في sandbox فلم يُولد `main.jsc`) · `npm run verify:all` **308/308** ✓ (٢٨٨ بوابة + ٢٠ رحلة مستخدم) · Vitest **١٦٨ ملفاً / ١١٥٥ اختباراً** ✓.
+- **حدود**: نتائج Linux محلية — لم يُختبر مثبت Windows ولا جهاز المالك. لا يُنشر إصدار عميل جديد قبل نجاح Windows CI. `npm ci` في هذه البيئة يحتاج `npm_config_nodedir=/usr/local` (رؤوس node موجودة محلياً) لأن nodejs.org محجوب.

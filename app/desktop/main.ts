@@ -31,7 +31,7 @@ import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, 
 import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
 import { probeSnapshotKey } from './snapshotKeyProbe.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
-import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
+import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, decideManualCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
 import { CHROMIUM_ERR_ABORTED, MAIN_FRAME_ABORT_RETRY_LIMIT, classifyMainFrameLoadFailure, type MainFrameLoadState } from './mainLoad.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
@@ -911,20 +911,27 @@ type UpdaterState =
 let updaterState: UpdaterState = { status: 'idle' }
 let downloadedUpdateVersion: string | null = null
 let downloadedInstallerPath: string | null = null
+/** نسبة آخر تقدم تنزيل معروفة — تُعرض في شريط التنزيل */
+let updateDownloadPercent = 0
 
 function recordUpdaterState(state: UpdaterState): void {
   updaterState = state
   if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
   if (state.status === 'available') logLine('updater', `يتوفر تحديث ${state.version}؛ بدأ التنزيل في الخلفية`)
   if (state.status === 'not-available') logLine('updater', `لا يوجد تحديث أحدث من ${state.version}`)
+  if (state.status === 'downloading') updateDownloadPercent = state.percent
   if (state.status === 'downloaded') {
     downloadedUpdateVersion = state.version
+    updateDownloadPercent = 100
     logLine('updater', `اكتمل تنزيل ${state.version}؛ سيُثبّت بصمت عند الإغلاق`)
     preUpdateBackup = backupBeforeUpdate(state.version).catch((error) => {
       logLine('backup', `تعذّرت نسخة ما قبل التحديث: ${(error as Error).message}`)
       return null
     })
   }
+  /* واجهة التحديث اليدوية: زر «فحص التحديثات» + شريط التنزيل —
+     الحالة تصل للواجهة فوراً؛ الفحص الدوري والتثبيت الصامت يبقيان كما هما. */
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:state', state)
 }
 
 function reportUpdaterError(error: unknown): void {
@@ -1009,6 +1016,54 @@ function checkUpdatesQuietly(autoUpdater: typeof import('electron-updater').auto
       if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
     },
   )
+}
+
+/** فحص يدوي من زر «فحص التحديثات»: يبدأ الفحص فوراً بلا انتظار الفحص الدوري.
+    لا يغيّر مسار التنزيل الخلفي ولا التثبيت الصامت عند الإغلاق — نفس المحرك (electron-updater). */
+function checkUpdatesManually(autoUpdater: typeof import('electron-updater').autoUpdater): UpdaterState {
+  if (!app.isPackaged) return updaterState
+  const decision = decideManualCheck({
+    packaged: app.isPackaged,
+    inFlight: updateCheckInFlight,
+    downloading: updateDownloadInProgress,
+    downloaded: downloadedUpdateVersion !== null,
+  })
+  if (decision.kind === 'downloaded') {
+    recordUpdaterState({ status: 'downloaded', version: downloadedUpdateVersion! })
+    return updaterState
+  }
+  if (decision.kind === 'downloading') {
+    recordUpdaterState({ status: 'downloading', percent: updateDownloadPercent })
+    return updaterState
+  }
+  if (decision.kind === 'in_flight') return updaterState
+  if (decision.kind === 'unavailable') return updaterState
+  // فحص جديد: نوقف المؤقّت الدوري المجدول كي لا يتكرر فحصان، ونعيد جدولته بعد انتهائه.
+  clearUpdateCheckTimer()
+  updateCheckInFlight = true
+  updateCheckFailedDuringFlight = false
+  recordUpdaterState({ status: 'checking' })
+  observeUpdateCheck(
+    () => autoUpdater.checkForUpdates(),
+    (error) => {
+      updateCheckInFlight = false
+      updateCheckFailedDuringFlight = false
+      updateDownloadInProgress = false
+      reportUpdaterError(error)
+      scheduleUpdateRetry(autoUpdater)
+    },
+    () => {
+      updateCheckInFlight = false
+      if (updateCheckFailedDuringFlight) {
+        updateCheckFailedDuringFlight = false
+        scheduleUpdateRetry(autoUpdater)
+        return
+      }
+      updateCheckRetryAttempt = 0
+      if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
+    },
+  )
+  return updaterState
 }
 
 function wireUpdater(): void {
@@ -1172,6 +1227,26 @@ function wireIpc(): void {
 
   /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
   initLanHostIpc(() => mainWindow)
+
+  /* واجهة التحديث اليدوية (نسخة سطح المكتب): زر «فحص التحديثات» + شريط التنزيل.
+     الفحص الدوري الخلفي والتثبيت الصامت عند الإغلاق يبقيان كما هما بلا تغيير. */
+  ipcMain.handle('updater:state', () => updaterState)
+  ipcMain.handle('updater:check', () => {
+    if (!app.isPackaged) return updaterState
+    try {
+      const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+      return checkUpdatesManually(autoUpdater)
+    } catch (error) {
+      reportUpdaterError(error)
+      return updaterState
+    }
+  })
+  ipcMain.handle('updater:install', async () => {
+    if (!app.isPackaged) return
+    if (!downloadedUpdateVersion) throw new Error('لم يكتمل تنزيل التحديث بعد')
+    // نفس مسار الإغلاق الصامت بالضبط: حفظ الواجهة ثم حماية القاعدة ونسخها ثم التثبيت.
+    await shutdownApplication(true)
+  })
 
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),

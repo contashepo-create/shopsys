@@ -99,6 +99,34 @@ export interface DesktopNotificationsBridge {
   show(title: string, body: string): Promise<boolean>
 }
 
+/* ─── التحديث اليدوي في نسخة سطح المكتب (زر الفحص + شريط التنزيل) ─── */
+export type DesktopUpdaterStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface DesktopUpdaterState {
+  status: DesktopUpdaterStatus
+  version?: string
+  percent?: number
+  message?: string
+}
+
+export interface DesktopUpdaterBridge {
+  /** آخر حالة للمُحدِّث كما تراها العملية الرئيسية */
+  state(): Promise<unknown>
+  /** فحص فوري للتحديث (أسرع من انتظار الفحص الدوري) */
+  check(): Promise<unknown>
+  /** تثبيت التحديث المنزَّل الآن — بنفس مسار الإغلاق الصامت المحمي */
+  install(): Promise<void>
+  /** اشتراك في تغيّر الحالة (شريط التنزيل) — يعيد دالة إلغاء الاشتراك */
+  onState(listener: (state: unknown) => void): () => void
+}
+
 /** v1.0.22: مفتاح الاسترداد — ملف مغلّف بكلمة مرور يختارها العميل */
 export interface DesktopKeyRecoveryBridge {
   status(): Promise<{ exportedAt: string | null }>
@@ -129,6 +157,8 @@ declare global {
     shopsysTrialAnchor?: (args: { firstTrialAt?: string; lastSeenAt?: string }) => Promise<{ firstTrialAt: string | null; lastSeenAt: string | null }>
     /** نسخة ملفية فورية للقاعدة في المكانين — يكشفها preload في سطح المكتب */
     shopsysBackupNow?: () => Promise<string[]>
+    /** جسر التحديث اليدوي — يكشفه preload في سطح المكتب فقط */
+    shopsysUpdater?: DesktopUpdaterBridge
   }
 }
 
@@ -173,4 +203,9 @@ export async function showDesktopNotification(title: string, body: string): Prom
 /** v1.0.22: جسر مفتاح الاسترداد — null خارج سطح المكتب */
 export function desktopKeyRecoveryBridge(): DesktopKeyRecoveryBridge | null {
   return typeof window !== 'undefined' ? window.shopsysDesktop?.keyRecovery ?? null : null
+}
+
+/** جسر التحديث اليدوي (زر الفحص + شريط التنزيل) — null خارج سطح المكتب */
+export function desktopUpdaterBridge(): DesktopUpdaterBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysUpdater ?? null : null
 }
