@@ -28,7 +28,7 @@ import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './nav
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
 import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation, changedDrivePaths } from './databaseSafety.ts'
-import { freshStartCutoffAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
+import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
 import { probeSnapshotKey } from './snapshotKeyProbe.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
 import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
@@ -502,7 +502,9 @@ async function backupDatabaseFile(tag: 'manual' | 'auto', database: ShopsysDatab
       if (database) await database.raw.backup(dest)
       else copyFileSync(dbPath, dest)
       // تنظيف: أحدث 20 نسخة لكل مكان (لا امتلاء قرص بلا نهاية)
-      const files = readdirSync(dir).filter((f) => f.endsWith('.db')).sort()
+      const files = freshStartEligibleFilesAt(userDataDir(), readdirSync(dir)
+        .filter((file) => file.endsWith('.db')).map((file) => ({ file, path: join(dir, file) })))
+        .map(({ file }) => file).sort()
       for (const old of files.slice(0, Math.max(0, files.length - 20))) unlinkSync(join(dir, old))
       written.push(dest)
     } catch (error) {
@@ -1070,7 +1072,8 @@ function pruneGeneration(kind: RotationKind): void {
   const files = readdirSync(dir).filter((file) => file.endsWith('.db')).map((file) => ({
     path: join(dir, file), mtimeMs: statSync(join(dir, file)).mtimeMs,
   }))
-  for (const file of filesToPrune(files, ROTATION[kind].keep)) {
+  const currentFiles = freshStartEligibleFilesAt(userDataDir(), files)
+  for (const file of filesToPrune(currentFiles, ROTATION[kind].keep)) {
     try {
       unlinkSync(file.path)
     } catch {
@@ -1113,7 +1116,8 @@ async function backupBeforeUpdate(version: string): Promise<string | null> {
   const files = readdirSync(dir).filter((f) => f.endsWith('.db')).map((f) => ({
     path: join(dir, f), mtimeMs: statSync(join(dir, f)).mtimeMs,
   }))
-  for (const old of filesToPrune(files, PRE_UPDATE_KEEP)) {
+  const currentFiles = freshStartEligibleFilesAt(userDataDir(), files)
+  for (const old of filesToPrune(currentFiles, PRE_UPDATE_KEEP)) {
     try { unlinkSync(old.path) } catch { /* مشغول — الجولة القادمة */ }
   }
   logLine('backup', `نسخة قبل التحديث إلى ${version}: ${dest}`)

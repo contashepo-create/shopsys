@@ -1,4 +1,4 @@
-/** بدء قاعدة أعمال جديدة بإقرار صريح، مع إبقاء القاعدة السابقة قابلة للاسترجاع. */
+/** بدء قاعدة أعمال جديدة بإقرار صريح، مع حفظ ملف القاعدة السابق دون حذفه. */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve, win32 } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -76,6 +76,11 @@ export function isCurrentFreshStartDataAt(userData: string, file: string): boole
   try { return statSync(file).mtimeMs >= cutoff } catch { return false }
 }
 
+/** ملفات النسخ السابقة لا تُقلمها سياسات الاحتفاظ بعد إقرار البدء النظيف. */
+export function freshStartEligibleFilesAt<T extends { path: string }>(userData: string, files: readonly T[]): T[] {
+  return files.filter(file => isCurrentFreshStartDataAt(userData, file.path))
+}
+
 function writeMarkerAt(userData: string, marker: FreshStartMarker): void {
   const destination = freshStartMarkerPathAt(userData)
   const temporary = `${destination}.${randomUUID()}.tmp`
@@ -92,7 +97,9 @@ function writeMarkerAt(userData: string, marker: FreshStartMarker): void {
 function restoreMarkerAt(userData: string, previous: string | null): void {
   const destination = freshStartMarkerPathAt(userData)
   if (previous === null) {
-    try { unlinkSync(destination) } catch { /* لا توجد علامة جديدة لإزالتها */ }
+    try { unlinkSync(destination) } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
     return
   }
   const temporary = `${destination}.${randomUUID()}.rollback.tmp`

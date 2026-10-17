@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { mkdtempSync } from 'node:fs'
 import { ShopsysDatabase } from '../desktop/sqlite/storage.ts'
 import { EMPTY_DB_LOCATION, readDbLocationAt, resolveDbPathAt, writeDbLocationAt } from '../desktop/dbLocation.ts'
-import { freshStartCutoffAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from '../desktop/freshStart.ts'
+import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from '../desktop/freshStart.ts'
 import { recoverMissingDatabaseAt, rememberDatabaseIdentity } from '../desktop/databaseSafety.ts'
 
 const roots: string[] = []
@@ -115,6 +115,20 @@ describe('البدء النظيف مع أرشفة القاعدة القديمة'
     await expect(startFreshWithoutDatabaseAt({ userData: s.userData, installDir: s.installDir, archiveSource: selected })).rejects.toThrow('اختفت نسخة البيانات')
     expect(readFreshStartMarkerAt(s.userData)).toBeNull()
     expect(resolveDbPathAt(s.userData)).toEqual({ dbPath: selected, isCustom: true })
+  })
+
+  it('يحفظ النسخ السابقة من التقليم ويواصل تطبيق حد الاحتفاظ على النسخ الجديدة', async () => {
+    const s = scenario()
+    const oldBackup = join(s.userData, 'backups', 'hourly', 'before-reset.db')
+    mkdirSync(dirname(oldBackup), { recursive: true })
+    writeFileSync(oldBackup, 'old archive')
+    await startFreshWithoutDatabaseAt({ userData: s.userData, installDir: s.installDir, excludedPaths: [oldBackup] })
+
+    const newBackup = join(s.userData, 'backups', 'hourly', 'after-reset.db')
+    writeFileSync(newBackup, 'new backup')
+
+    expect(freshStartEligibleFilesAt(s.userData, [{ path: oldBackup }, { path: newBackup }])).toEqual([{ path: newBackup }])
+    expect(existsSync(oldBackup)).toBe(true)
   })
 
   it('يسجل بدءاً نظيفاً بلا قاعدة سابقة ويزيل المؤشر المخصص المفقود', async () => {
