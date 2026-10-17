@@ -173,3 +173,11 @@ it('يتحقق بعد النشر من تنزيل العميل السابق لل�
   expect(probe).toContain("process.env.PUBLIC_UPDATE_FROM_VERSION || '1.0.23'")
   expect(probe).toContain('installAttempted: false')
 })
+it('keeps the v23 upgrade fixture in the source repo, not the current public releases feed', () => {
+  const desktop = readFileSync('../.github/workflows/desktop-release.yml', 'utf8')
+  const quality = readFileSync('../.github/workflows/quality.yml', 'utf8')
+  for (const workflow of [desktop, quality]) {
+    expect(workflow).toContain('gh release download v1.0.23 --repo contashepo-create/shopsys')
+    expect(workflow).not.toContain('gh release download v1.0.23 --repo contashepo-create/tahakam-releases')
+  }
+})
