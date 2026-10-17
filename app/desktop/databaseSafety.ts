@@ -110,6 +110,10 @@ export interface RecoveryOptions {
   documentsBackupDir: string
   /** تبديل حرف القرص: نفس اللاحقة فقط، لا مسح شامل لمحتويات الأقراص. */
   relocatedPaths?: string[]
+  /** عند بدء نظيف صريح، لا تُسترد ملفات أقدم من هذه العتبة. */
+  minimumMtimeMs?: number | null
+  /** استبعاد المسارات القديمة المعروفة حتى لو كان mtime حديثاً بالنسخ/المزامنة. */
+  isCandidateAllowed?: (file: string) => boolean
   deviceKey?: Buffer
 }
 
@@ -205,8 +209,11 @@ export async function recoverMissingDatabaseAt(options: RecoveryOptions): Promis
   }
   const eligible = (files: string[]) => files.flatMap(file => {
     try {
+      if (options.isCandidateAllowed && !options.isCandidateAllowed(file)) return []
+      const time = statSync(file).mtimeMs
+      if (options.minimumMtimeMs != null && time < options.minimumMtimeMs) return []
       const id = candidateIdentity(file, expectedId, options.deviceKey)
-      return id ? [{ file, id, time: statSync(file).mtimeMs, versions: snapshotVersions(file) }] : []
+      return id ? [{ file, id, time, versions: snapshotVersions(file) }] : []
     } catch { return [] }
   }).sort((a, b) => b.time - a.time)
   // قاعدة حية موثوقة أولاً؛ بعدها أحدث نسخة سليمة من كل الأماكن.

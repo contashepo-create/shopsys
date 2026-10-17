@@ -106,6 +106,8 @@ export interface DesktopKeyRecoveryBridge {
   import(args: { passphrase: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; deviceId?: string; relaunching?: boolean }>
   /** يعيد تشغيل العملية الرئيسية بعد توصيل القرص/استعادة ملفات profile عندما تعذر فتح SQLite عند الإقلاع */
   retryStartup(): Promise<boolean>
+  /** أرشفة قاعدة غير قابلة للفك والبدء بقاعدة فارغة بعد تأكيد المستخدم — للاختبار فقط */
+  startFresh(): Promise<{ ok: boolean; canceled?: boolean; reason?: string; archivePath?: string; relaunching?: boolean }>
 }
 
 export interface ShopsysDesktopBridge {
