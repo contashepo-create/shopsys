@@ -128,6 +128,22 @@ export interface DesktopUpdaterBridge {
 }
 
 /** v1.0.22: مفتاح الاسترداد — ملف مغلّف بكلمة مرور يختارها العميل */
+/**
+ * بند 5 (طلب المالك): قناة الدعم عبر العملية الرئيسية.
+ * السبب: نسخة سطح المكتب تعمل من file:// ⇒ المتصفح يرسل Origin: null ⇒ يرفضه
+ * العامل (403) ويظهر للمستخدم «لا يوجد اتصال» كاذبة. الطلب من العملية
+ * الرئيسية يذهب بلا Origin، والاعتماد (HMAC + TOFU) هو الحماية الحقيقية.
+ * كما تُحفظ هنا اعتماد القناة (بعيداً عن القاعدة) ليبقى ثابتاً بعد مسحها.
+ */
+export interface DesktopSupportBridge {
+  /** تنفيذ طلب دعم (GET/POST) — العملية الرئيسية تطبّق قائمة المضيفين المسموحين */
+  request(args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<{ ok: boolean; status: number; body: string; error?: string }>
+  /** اعتماد قناة الدعم المحفوظ خارج القاعدة (userData) — أو null */
+  getToken(): Promise<string | null>
+  /** حفظ اعتماد قناة الدعم خارج القاعدة */
+  setToken(token: string): Promise<boolean>
+}
+
 export interface DesktopKeyRecoveryBridge {
   status(): Promise<{ exportedAt: string | null }>
   export(args: { passphrase: string; deviceId: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; path?: string }>
@@ -159,6 +175,14 @@ declare global {
     shopsysBackupNow?: () => Promise<string[]>
     /** جسر التحديث اليدوي — يكشفه preload في سطح المكتب فقط */
     shopsysUpdater?: DesktopUpdaterBridge
+    /**
+     * بند 2 (طلب المالك): هوية الجهاز — العملية الرئيسية هي المرجع (ملف في
+     * userData خارج القاعدة) ⇒ معرّف الجهاز لا يتغيّر بمسح القاعدة.
+     * تُقرأ **تزامنياً** عند الإقلاع لأن فحص الترخيص يحتاج المعرّف فوراً.
+     */
+    shopsysDeviceIdentity?: (candidate?: { deviceId?: string; firstTrialAt?: string }) => { deviceId: string; firstTrialAt: string | null }
+    /** بند 5: قناة الدعم عبر العملية الرئيسية (بلا Origin) + اعتماد ثابت خارج القاعدة */
+    shopsysSupport?: DesktopSupportBridge
   }
 }
 
@@ -208,4 +232,18 @@ export function desktopKeyRecoveryBridge(): DesktopKeyRecoveryBridge | null {
 /** جسر التحديث اليدوي (زر الفحص + شريط التنزيل) — null خارج سطح المكتب */
 export function desktopUpdaterBridge(): DesktopUpdaterBridge | null {
   return typeof window !== 'undefined' ? window.shopsysUpdater ?? null : null
+}
+
+/**
+ * بند 2 (طلب المالك): جسر هوية الجهاز — null خارج سطح المكتب.
+ * يُرجع المعرّف الذي تحتفظ به العملية الرئيسية (خارج القاعدة) فيتبقى ثابتاً
+ * بعد مسح القاعدة ⇒ يبقى العميل في لوحة المطوّر عميلاً قديماً لا جديداً.
+ */
+export function desktopDeviceIdentity(): ((candidate?: { deviceId?: string; firstTrialAt?: string }) => { deviceId: string; firstTrialAt: string | null }) | null {
+  return typeof window !== 'undefined' && typeof window.shopsysDeviceIdentity === 'function' ? window.shopsysDeviceIdentity : null
+}
+
+/** بند 5: جسر قناة الدعم — null خارج سطح المكتب */
+export function desktopSupportBridge(): DesktopSupportBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysSupport ?? null : null
 }

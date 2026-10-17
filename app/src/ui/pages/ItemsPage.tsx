@@ -358,6 +358,7 @@ export function ItemsPage() {
     if (it.oemNumbers?.length) badges.push({ icon: '🔧', label: `${it.oemNumbers.length} OEM`, cls: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' })
     if (it.activeIngredient) badges.push({ icon: '🧪', label: it.activeIngredient, cls: 'bg-lime-500/10 text-lime-600 dark:text-lime-400' })
     if (it.soldByWeight) badges.push({ icon: '⚖️', label: 'وزن', cls: 'bg-teal-500/10 text-teal-600 dark:text-teal-400' })
+    if (it.isService) badges.push({ icon: '🛎️', label: 'خدمة', cls: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' })
     if (it.variantColors.length || it.variantSizes.length) badges.push({ icon: '🎨', label: 'متغيرات', cls: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' })
     if (it.extraUnits.length) badges.push({ icon: '📦', label: `${it.extraUnits.length + 1} وحدات`, cls: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400' })
     return badges
@@ -921,8 +922,7 @@ function ItemForm({
     { key: 'trackExpiry' as const, label: '📅 تتبع الصلاحية والدفعات', on: draft.trackExpiry, relevant: activityFeatures.has('expiry_batches') },
     { key: 'trackSerial' as const, label: '🔢 تتبع السيريال والضمان', on: draft.trackSerial, relevant: activityFeatures.has('serial_warranty') },
     { key: 'soldByWeight' as const, label: '⚖️ يُباع بالوزن', on: draft.soldByWeight, relevant: activityFeatures.has('weight_scale') },
-    // صنف خدمة (Square/Lightspeed): حلاقة/غسيل سيارة/اشتراك جيم — يُباع بلا مخزون ولا تكلفة
-    { key: 'isService' as const, label: '🛎️ صنف خدمة (بلا مخزون)', on: draft.isService ?? false, relevant: setup.activityId === 'salon' },
+    // صنف الخدمة (Square/Lightspeed) صار اختياراً رئيسياً في أعلى النموذج (كل الأنشطة) — لا خاصية مخفية
   ]
   const mainProps = allProps.filter((x) => x.relevant || x.on)
   const extraProps = allProps.filter((x) => !x.relevant && !x.on)
@@ -960,6 +960,44 @@ function ItemForm({
           ))}
         </div>
       )}
+
+      {/* نوع الصنف: منتج له مخزون أم خدمة بلا مخزون (طلب المالك — كل الأنشطة بلا استثناء) */}
+      <div className="p-4 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40">
+        <div className="text-[12px] font-black text-slate-700 dark:text-slate-200 mb-2">نوع الصنف</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {([
+            { on: false, icon: '📦', title: 'منتج — له مخزون', hint: 'يُخصم من المخزون، له تكلفة وكمية ونواقص' },
+            { on: true, icon: '🛎️', title: 'خدمة — بلا مخزون', hint: 'تُباع بلا كمية ولا رصيد ولا تكلفة مخزنية (مقاولات، عقارات، صيانة…)' },
+          ] as const).map((option) => (
+            <button
+              key={String(option.on)}
+              type="button"
+              onClick={() => p({
+                isService: option.on,
+                // خدمة بلا مخزون: لا صلاحية ولا سيريال ولا وزن (المحرّك يمنعها)
+                ...(option.on ? { trackSerial: false, trackExpiry: false, soldByWeight: false, minQty: 0 } : {}),
+              })}
+              className={`text-right p-3.5 rounded-xl border-2 transition-all duration-200 hover:scale-[1.01] ${
+                (draft.isService ?? false) === option.on
+                  ? 'border-brand-500/60 bg-brand-500/10'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-brand-400/50'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{option.icon}</span>
+                <span className="font-black text-[13px] text-slate-700 dark:text-slate-200">{option.title}</span>
+                {(draft.isService ?? false) === option.on && <span className="text-[11px] font-black text-brand-600">✓</span>}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1 leading-relaxed">{option.hint}</div>
+            </button>
+          ))}
+        </div>
+        {draft.isService && (
+          <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-2">
+            ✓ صنف خدمة: لا رصيد ولا خصم من المخزون ولا قيد تكلفة — قيمتها تُسجَّل إيراداً في حساب الخدمة. (يُمنع معه: الصلاحية، السيريال، البيع بالوزن.)
+          </p>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="اسم الصنف *">
@@ -1026,13 +1064,15 @@ function ItemForm({
         <Field label="حد أدنى لسعر البيع" hint="لا بيع تحته إلا باعتماد مدير — حماية من البيع بخسارة (اتركه 0 لتعطيله)">
           {moneyInput(draft.minSalePriceMinor ?? 0, (m) => p({ minSalePriceMinor: m }))}
         </Field>
-        <Field label="حد إعادة الطلب" hint="عند وصول الرصيد إليه يظهر تنبيه نواقص">
-          <input
-            type="number" inputMode="decimal" step="any" min={0} defaultValue={draft.minQty || ''}
-            onChange={(e) => p({ minQty: Number(e.target.value) || 0 })}
-            className={inputCls} placeholder="0"
-          />
-        </Field>
+        {!draft.isService && (
+          <Field label="حد إعادة الطلب" hint="عند وصول الرصيد إليه يظهر تنبيه نواقص">
+            <input
+              type="number" inputMode="decimal" step="any" min={0} defaultValue={draft.minQty || ''}
+              onChange={(e) => p({ minQty: Number(e.target.value) || 0 })}
+              className={inputCls} placeholder="0"
+            />
+          </Field>
+        )}
       </div>
 
       {/* الباركودات */}

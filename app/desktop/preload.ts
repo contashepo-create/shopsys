@@ -89,6 +89,20 @@ contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('ap
 /* v1.0.8: مرساة التجربة خارج القاعدة — تمنع إعادة التجربة بمسح البيانات */
 contextBridge.exposeInMainWorld('shopsysTrialAnchor', (args: { firstTrialAt?: string; lastSeenAt?: string }) => ipcRenderer.invoke('trial:anchor', args ?? {}))
 
+/* بند 2 (طلب المالك): هوية الجهاز خارج القاعدة — تُقرأ تزامنياً عند الإقلاع
+   (قبل فحص الترخيص) ⇒ معرّف الجهاز لا يتغيّر بمسح القاعدة ولا بفقد مرساة Chromium. */
+contextBridge.exposeInMainWorld('shopsysDeviceIdentity', (candidate?: { deviceId?: string; firstTrialAt?: string }) =>
+  ipcRenderer.sendSync('device:identity', candidate))
+
+/* بند 5 (طلب المالك): قناة الدعم — الطلب من العملية الرئيسية (بلا Origin ⇒ لا
+   رفض من سياسة المصدر في نسخة سطح المكتب file://)، والاعتماد يُحفظ خارج القاعدة
+   ليبقى ثابتاً (الخادم يربط الاعتماد بالجهاز مرة واحدة ⇒ اعتماد جديد = رفض دائم). */
+contextBridge.exposeInMainWorld('shopsysSupport', {
+  request: (args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }) => ipcRenderer.invoke('support:request', args),
+  getToken: () => ipcRenderer.invoke('support:tokenGet'),
+  setToken: (token: string) => ipcRenderer.invoke('support:tokenSet', token),
+})
+
 /* §102 — مضيف شبكة المحل: تشغيل خادم ws + أحداث الأجهزة (المنطق في المُصيّر) */
 contextBridge.exposeInMainWorld('shopsysLanHost', {
   start: (opts: { port: number }) => ipcRenderer.invoke('lan-host:start', opts),

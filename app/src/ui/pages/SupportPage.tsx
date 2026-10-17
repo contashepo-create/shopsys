@@ -58,9 +58,13 @@ export function SupportPage() {
       })
       setSending(true)
       const token = await getOrCreateSupportToken()
-      const ok = await sendSupportMessage(APP_SERVICES_CLOUD_BASE_URL, deviceId, token, payload)
+      const result = await sendSupportMessage(APP_SERVICES_CLOUD_BASE_URL, deviceId, token, payload)
       setSending(false)
-      if (!ok) return toast.show('تعذر الإرسال — تأكد من اتصال الإنترنت وحاول ثانية', 'error')
+      /* بند 5: السبب الحقيقي من الخادم/النقل — لا «لا يوجد اتصال» كاذبة */
+      if (!result.ok) {
+        logEvent('error', `support: فشل الإرسال (${result.status || 'شبكة'}) — ${result.reason}`)
+        return toast.show(result.reason, 'error')
+      }
       logEvent('info', `support: أُرسلت رسالة دعم${attachLog ? ' + لوج' : ''}`)
       setMessages((m) => [...m, { id: (m.at(-1)?.id ?? 0) + 1, from: 'client', text: payload.text, at: new Date().toISOString() }])
       setText(''); setAttachLog(false)

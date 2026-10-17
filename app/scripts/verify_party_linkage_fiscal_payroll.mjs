@@ -133,7 +133,9 @@ ok(errsOrder.length === 0, 'أقدم سنة منتهية تُقفل أولاً �
 const errsSkip = validateYearClose(fyPast, [fyPast, { id: 3, nameAr: '2024', startDate: '2024-01-01', endDate: '2024-12-31', status: 'open' }], '2026-09-16')
 ok(errsSkip.some((e) => e.includes('أقفل السنة الأقدم')), 'يُرفض تخطي سنة أقدم مفتوحة (الإقفال بالترتيب)')
 // closeFiscalYear الحي في repo (سنة ماضية مفتوحة بقيود حقيقية)
-useAppStore.getState().addFiscalYear({ nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31' })
+/* السنة 2025 مفتوحة حيّاً: setup مباشر (حارس «سنة واحدة مفتوحة» في addFiscalYear
+   يُفحص في scripts/verify_owner_batch8_settings.mjs — وهذه البوابة تفحص الإقفال) */
+useAppStore.setState({ fiscalYears: [{ id: 90, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }] })
 const liveFy = useAppStore.getState().fiscalYears.at(-1)
 // لا قيود 2025 في المخزن الحي — يرفض «لا شيء يُقفل»
 let liveCloseError = ''

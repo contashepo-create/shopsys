@@ -7393,3 +7393,49 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - **البوابات**: `verify_architecture_updates.mjs` · `verify_database_update_safety.mjs` · `verify_owner_fix_v103.mjs` · `verify_storage_v1022.mjs` حُدِّثت من «لا واجهة يدوية» إلى «واجهة يدوية + بقاء المسار الآلي والصامت كما هو». بوابة جديدة `verify_manual_update_ui.mjs` (٢٤ فحصاً) + اختبار Vitest `tests/manual_update_ui.test.tsx` (٩ اختبارات).
 - **التحقق**: `npx tsc -b --force` ✓ · `npm run build` ✓ · `npx oxlint src` (٠ أخطاء/٠ تحذيرات) ✓ · `npm run desktop:compile` ✓ (احتياط CJS؛ لا ثنائي Electron في sandbox فلم يُولد `main.jsc`) · `npm run verify:all` **308/308** ✓ (٢٨٨ بوابة + ٢٠ رحلة مستخدم) · Vitest **١٦٨ ملفاً / ١١٥٥ اختباراً** ✓.
 - **حدود**: نتائج Linux محلية — لم يُختبر مثبت Windows ولا جهاز المالك. لا يُنشر إصدار عميل جديد قبل نجاح Windows CI. `npm ci` في هذه البيئة يحتاج `npm_config_nodedir=/usr/local` (رؤوس node موجودة محلياً) لأن nodejs.org محجوب.
+
+## جولة 2026-10-17 (ب) — ثمانية بنود بطلب المالك: أقسام النشاط · ثبات هوية الجهاز · سنة واحدة · ترتيب الفاتورة الإلكترونية · قناة الدعم · أيقونة · خدمة · ملاحظات البنود
+
+**الطلب (بلغة المالك)**: (1) «لا أريد لكل الأقسام أن يظهر اسماؤها — عند العميل فقط أقسامه» · (2) ثبات معرّف الجهاز بعد مسح القاعدة وظهور العميل في لوحة المطوّر `shopsys-controler` كعميل جديد/قديم · (3) «لا أريد أن يكون هناك أكثر من سنة مفتوحة» · (4) ترتيب حقول صفحة إعدادات الفاتورة الإلكترونية بعد تفعيلها · (5) «طلب دعم من المطور + إرفاق اللوج» يفشل بـ«لا يوجد اتصال بالإنترنت» · (6) استبدال أيقونة سطح المكتب (حرف T) بنماذج أيقونات احترافية يختار منها المستخدم · (7) «تعميم دعم الخدمات كنوع صنف (بلا مخزون) على جميع الأنشطة» · (8) «عمود جديد للملاحظات بجانب كل سطر في الفواتير».
+
+### ① أقسام نشاط العميل فقط في الإعدادات العامة
+- `app/src/ui/pages/GeneralSettingsPage.tsx`: قائمة الأقسام صارت `granted.map(...)` (افتراضيات نشاط العميل + ما مُنح له بمفتاح موقّع) بدل `ALL_MODULES.map` ⇒ **لا يظهر اسم قسم لا يخص العميل إطلاقاً**. البند الميت «ممنوح — غير مفعّل» حُذف (لاBranches داخل `granted`) وبقي زر «إعادة إظهار» للممنوح الموقوف.
+- إرشاد «بكود الدعم» بقي في صندوق ℹ️ (المالك يعرف كيف يطلب قسماً إضافياً) — والبوابة `verify_sections_policy.mjs` حُدِّثت من `granted.includes(m)` إلى `granted.map(` + منع `ALL_MODULES.map(` (تضييق أضيق، لا أضعف).
+
+### ② ثبات معرّف الجهاز بعد مسح القاعدة (خارج القاعدة + لوحة المطوّر)
+- **جديد** `app/desktop/deviceIdentity.ts` (دالة خالصة): `mergeDeviceIdentity` (المحفوظ **لا يتغيّر أبداً**؛ المرشّح الوارد يُعتمد فقط إن لم يكن محفوظ) + `generateDeviceIdFromBytes` (نفس خوارزمية `core/license.ts`) + `normalizeDeviceId`.
+- `app/desktop/main.ts`: مرساة `userData/device-identity.json` (خارج القاعدة تماماً) تُقرأ/تُكتب من العملية الرئيسية فقط، ومعالج IPC **متزامن** `ipcMain.on('device:identity')` (الإقلاع يحتاج المعرّف قبل فحص الترخيص).
+- `app/desktop/preload.ts`: `shopsysDeviceIdentity` (sendSync) — لا يُكشف شيء من Node خارجه.
+- `app/src/stores/app.store.ts`: `bootIdentity()` صار يقرأ مرساة العملية الرئيسية أولاً (مرشّح = مرساة localStorage) ويعكسها محلياً ⇒ **مسح القاعدة أو فقدان مرساة Chromium لا يغيّر المعرّف**، فالنتيجة: العميل يبقى في لوحة المطوّر **عميلاً قديماً** (`isNew=false` ⇒ لا تنبيه «عميل جديد») ويبقى الترخيص المرتبط بالجهاز صالحاً. الويب بلا جسر ⇒ السلوك القديم (مرساة localStorage).
+- البوابة: `scripts/verify_device_identity_anchor.mjs` (١٩ فحصاً: قواعد الدمج + تطابق المولّدين + قياس الثبات في المتصفح بعمليتين منفصلتين + الربط في العملية الرئيسية).
+
+### ③ سنة مالية واحدة مفتوحة
+- `app/src/stores/app.store.ts::addFiscalYear` يرمي: «السنة «X» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)» و`GeneralSettingsPage` يعرض الخطأ للمستخدم.
+- أثر على بوابق existed: `verify_year_close_worldclass_v117.mjs` و`verify_party_linkage_fiscal_payroll.mjs` صارا يُجهّزان السنوات بـ`setState` مباشر (لأنهما يفحصان منطق الإقفال، لا حارس الفتح — وحارس الفتح مفحوص في `verify_owner_batch8_settings.mjs`).
+
+### ④ ترتيب حقول صفحة الفاتورة الإلكترونية
+- `app/src/ui/pages/EinvoicePage.tsx`: became **الحقول ← زر الحفظ ← الخيارات**: الرقم الضريبي ← عنوان المنشأة ← «💾 حفظ البيانات» (مباشرة بعد الحقول) ← صندوق «خيارات الإصدار» (تشغيل الإصدار الرسمي + طباعة QR زاتكا) — فلم تعد الخيارات تحجب زر الحفظ.
+- مزامنة الحقول مع المخزن عبر **تعديل الحالة أثناء العرض** (نمط `VouchersPage`) لا `useEffect` (قاعدة oxlint: setState داخل effect = تحذير).
+
+### ⑤ قناة الدعم: «لا يوجد اتصال بالإنترنت» الكاذبة
+- **السبب (أ)**: نسخة سطح المكتب تعمل من `file://` ⇒ المتصفح يرسل `Origin: null` ⇒ `cloud/worker.js` (قائمة CORS صريحة بلا wildcard) يردّ 403 ⇒ الواجهة كانت تعرض «تعذّر الإرسال — تأكد من اتصال الإنترنت».
+- **السبب (ب)**: `sendSupportMessage` كان يبتلع كل خطأ ويعيد `boolean` ⇒ لا سبب حقيقي للمستخدم.
+- **السبب (ج)**: اعتماد القناة (TOFU على الخادم) كان يُولَّد من جديد لو ضاع التخزين المحلي ⇒ رفض 401 دائم بلا طريق عودة.
+- **الحل**: `app/desktop/main.ts` ينفّذ الطلب (`support:request`) — **بلا Origin** (حماية المتصفح لا تنطبق على عميل أصلي؛ الحماية الحقيقية HMAC+TOFU) مع **قائمة مضيفين مسموحين صريحة** (`SUPPORT_ALLOWED_HOSTS`) ومهلة ٢٠ث؛ الاعتماد يُحفَظ في `userData/support-token.json` (خارج القاعدة) عبر `support:tokenGet`/`support:tokenSet`؛ `app/src/core/support.ts` أضاف `SupportSendResult` + `supportFailureReason` (ترجمة 401/403/404/413/429/5xx بالعربي) + ناقل يختار الجسر أو المتصفح؛ `app/src/ui/pages/SupportPage.tsx` يعرض **السبب الحقيقي** ويسجّله في اللوج التقني.
+- `app/src/data/supportAuth.ts`: `getOrCreateSupportToken` يقرأ مرساة سطح المكتب أولاً ثم يرفع الاعتماد المحلي إليها (الويب: localStorage مشفّر كما هو).
+- البوابة: `scripts/verify_support_channel_delivery.mjs` (٢٨ فحصاً).
+
+### ⑦ الصنف «خدمة» (بلا مخزون) في كل الأنشطة
+- `app/src/ui/pages/ItemsPage.tsx`: بطاقة **«نوع الصنف»** (منتج / خدمة — بلا مخزون) أعلى نموذج الصنف لكل الأنشطة (لا خاصية مخفية) + شارة «خدمة» في القائمة + إجبار إيقاف الصلاحية/السيريال/الوزن/minQty + إخفاء حقول المخزون للخدمة. `core/items.ts` يمنع.Service مع الصلاحية/السيريال/البيع بالوزن.
+
+### ⑧ عمود ملاحظات لكل بند في كل الفواتير
+- `core/pos.ts`: `CartLine.notes?: string` (نص وصفي — **لا affect الحسابات**).
+- `core/receipt.ts`: `ReceiptRow.notes?: string` + `notes: l.notes ?? ''` في `buildReceiptModel` + `buildSimpleDocModel` يقبل `notes` في الصف.
+- `ui/components/InvoiceLinesTable.tsx`: عمود «ملاحظات البند» كامل (خطة الأعمدة + عدّاد + `<th>` + خلية إدخال لكل سطر + خلية الصف الفارغ) يُفعَّل ب prop `showNotes`.
+- `ui/pages/AdvancedSalesInvoicePage.tsx` + `AdvancedPurchaseInvoicePage.tsx`: تشيك بوكس **«ملاحظات البنود»** (نصه «إظهار عمود الملاحظات») بجانب محدد «النمط» ⇒ `showNotes={showLineNotes}`.
+- `ui/pages/PurchaseOrdersPage.tsx`: الأمر كذلك (بوابة التكافؤ `verify_purchase_order_parity.mjs` تفرض تمرير كل خاصية للجدول — فأُضيفت له ⇒ `PurchaseOrderLine.notes` كان حقلاً غير مستعمل فصار عمود الملاحظات).
+- الطباعة: `ui/print/printInvoiceA4.ts` + `ui/print/printReceipt.ts` ⇒ الملاحظة تُطبع **تحت اسم الصنف**.
+- البوابة: `scripts/verify_invoice_line_notes.mjs` (٢٧ فحصاً) + `scripts/verify_owner_batch8_settings.mjs` (٢٢ فحصاً للبنود ①③④⑦).
+
+### التحقق
+`npx tsc -b --force` ✓ · `npx oxlint src` (٠ أخطاء/٠ تحذيرات) ✓ · `npm run verify:all` **312/312** ✓ (٢٩٢ بوابة + ٢٠ رحلة) · Vitest **١٦٨ ملفاً / ١١٥٥ اختباراً** ✓ · `npm run desktop:compile` ✓ (احتياط CJS؛ لا ثنائي Electron في sandbox).

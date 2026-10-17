@@ -8,7 +8,7 @@ import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Co
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
-import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES, effectiveModules } from '../../core/activities.ts'
+import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, effectiveModules } from '../../core/activities.ts'
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
@@ -76,7 +76,12 @@ export function GeneralSettingsPage() {
   const saveNewYear = () => {
     const errors = validateFiscalYear({ nameAr: fyName, startDate: fyStart, endDate: fyEnd }, fiscalYears)
     if (errors.length) return toast.show(errors[0], 'error')
-    addFiscalYear({ nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd })
+    try {
+      addFiscalYear({ nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd })
+    } catch (err) {
+      setNewYearOpen(false)
+      return toast.show((err as Error).message, 'error')
+    }
     toast.show(`فُتحت السنة المالية «${fyName}» ✅`)
     setNewYearOpen(false)
   }
@@ -428,7 +433,7 @@ export function GeneralSettingsPage() {
             أمر البوت «اصدر ... وحدات=...» يمنح القسم فيظهر فوراً عند التفعيل.
             من هنا: إيقاف/إعادة إظهار الأقسام الممنوحة (بياناتها تبقى دائماً). */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-          {ALL_MODULES.map((m) => { // كل الوحدات ظاهرة: المفعّلة تُدار، والباقي يعرفها العميل ليطلبها من الدعم
+          {granted.map((m) => { // أقسام العميل فقط: افتراضيات نشاطه + ما مُنح له بمفتاح موقّع — لا أسماء أقسام غيره
             const on = setup.modules.includes(m)
             const isDefault = activity?.modules.includes(m)
             const info = MODULE_LABELS[m]
@@ -460,17 +465,13 @@ export function GeneralSettingsPage() {
                   >
                     إيقاف
                   </button>
-                ) : granted.includes(m) ? (
+                ) : (
                   <button
                     onClick={() => { toast.show(`عاد قسم «${info.nameAr}» للظهور — بياناته كاملة كما تركتها ✓`); toggleModule(m) }}
                     className="shrink-0 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg transition-colors bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
                   >
                     إعادة إظهار
                   </button>
-                ) : (
-                  <span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-300" title="اطلبها من الدعم الفني — تُمنح بمفتاح موقّع وتظهر فوراً">
-                    بكود الدعم
-                  </span>
                 )}
               </div>
             )
@@ -479,7 +480,7 @@ export function GeneralSettingsPage() {
         <div className="flex items-center gap-2 p-3 rounded-xl bg-sky-500/5 border border-sky-500/15 mb-4">
           <span className="text-lg">ℹ️</span>
           <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400">
-            الأقسام الافتراضية تتبع نشاطك. القسم الإضافي (أي وحدة أعلاه غير مفعّلة) يُمنح بمفتاح موقّع من الدعم الفني — اطلبه فيظهر فوراً بعد التفعيل. إيقاف قسم يخفي شاشاته فقط وبياناته محفوظة وتعود كاملة عند إعادة الإظهار.
+            هذه أقسام نشاطك أنت فقط — لا تُعرض أسماء أقسام غيرك. أي قسم إضافي يُمنح بمفتاح موقّع من الدعم الفني (بكود الدعم) فيظهر هنا فوراً. إيقاف قسم يخفي شاشاته فقط وبياناته محفوظة وتعود كاملة عند إعادة الإظهار.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
