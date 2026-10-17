@@ -179,12 +179,12 @@ jobs:
       - name: Build candidate NSIS (no publication)
         shell: pwsh
         run: npm run desktop:dist
-      - name: Download actual published v23 installer (not mocked)
+      - name: Download original v23 installer from source repository (not mocked)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download v1.0.23 --repo contashepo-create/tahakam-releases --pattern latest.yml --pattern tahakom-setup-1.0.23.exe --pattern tahakom-setup-1.0.23.exe.blockmap --dir release-previous
+          gh release download v1.0.23 --repo contashepo-create/shopsys --pattern latest.yml --pattern tahakom-setup-1.0.23.exe --pattern tahakom-setup-1.0.23.exe.blockmap --dir release-previous
           node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous','1.0.23'));"
       - name: Real old binary to candidate — same Chromium profile and encrypted data
         shell: pwsh
