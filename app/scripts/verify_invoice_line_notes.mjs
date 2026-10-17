@@ -3,7 +3,7 @@
 // (بيع + شراء)، والملاحظة تنتقل مع السطر حتى الطباعة (A4 + حراري) ولا تؤثر على الحسابات.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(join(appRoot, rel), 'utf8')
@@ -48,7 +48,7 @@ const thermal = read('src/ui/print/printReceipt.ts')
 ok('الإيصال الحراري يُظهر الملاحظة تحت اسم الصنف', /r\.notes/.test(thermal))
 
 // ── ⑤ سلوك: الملاحظة لا تغيّر الحسابات ───────────────────────────────────
-const { buildReceiptModel, DEFAULT_RECEIPT_SETTINGS } = await import(join(appRoot, 'src/core/receipt.ts'))
+const { buildReceiptModel, DEFAULT_RECEIPT_SETTINGS } = await import(pathToFileURL(join(appRoot, 'src/core/receipt.ts')).href)
 const base = {
   invoiceNumber: 'INV-1', dateIso: '2026-10-17', payment: 'cash', customerName: null,
   taxPercent: 14, taxInclusive: true, operatorName: 'المالك',

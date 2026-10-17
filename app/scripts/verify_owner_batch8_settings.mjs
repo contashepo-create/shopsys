@@ -2,7 +2,7 @@
 // (3) سنة مالية واحدة مفتوحة، (4) ترتيب حقول صفحة الفاتورة الإلكترونية، (7) الصنف كنوع «خدمة».
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(join(appRoot, rel), 'utf8')
@@ -34,7 +34,7 @@ ok('effectiveModules تحسب الممنوح من النشاط + المفتاح 
 const storeSrc = read('src/stores/app.store.ts')
 ok('addFiscalYear يرفض فتح سنة والمفتوحة موجودة', /ما زالت مفتوحة/.test(storeSrc))
 ok('الحارس داخل set (بلا فتح صامت)', /fiscalYears\.find\(\(y\) => y\.status === 'open'\)/.test(storeSrc))
-const { useAppStore } = await import(join(appRoot, 'src/stores/app.store.ts'))
+const { useAppStore } = await import(pathToFileURL(join(appRoot, 'src/stores/app.store.ts')).href)
 /* وضع سنة مفتوحة (كما بعد إكمال الإعداد) ثم محاولة فتح أخرى */
 useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' }] })
 const before = useAppStore.getState().fiscalYears.length

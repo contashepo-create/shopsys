@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(join(appRoot, rel), 'utf8')
@@ -81,14 +81,14 @@ ok('⑦ قيد صرف المواد 5110 تكاليف مشروعات / 1103 مخ�
 ok('⑦ الصرف يحوّل للوحدة الأساسية ويرفض تجاوز المتاح', opsSrc.includes('baseQty > available'))
 
 /* ── فحوص حيّة: صنف الخدمة المضمون + فرض العميل + حساب صرف المواد ─────────── */
-const { validateQuotation } = await import(join(appRoot, 'src/core/contracting.ts'))
+const { validateQuotation } = await import(pathToFileURL(join(appRoot, 'src/core/contracting.ts')).href)
 const line = { nameAr: 'بند', descriptionAr: 'وصف بند', qty: 2, unitAr: 'م2', unitPriceMinor: 1000, estCostMinor: 500, vatPercent: 0, taxIncluded: false }
 const errsNoClient = validateQuotation({ titleAr: 'عرض', clientName: 'جهة', clientId: null, lines: [line] })
 ok('③ حيّاً: عرض بلا عميل مسجَّل مرفوض', errsNoClient.some((e) => e.includes('عميل مسجَّل')))
 const errsWithClient = validateQuotation({ titleAr: 'عرض', clientName: 'جهة', clientId: 5, lines: [line] })
 ok('③ حيّاً: عرض بعميل مسجَّل مقبول', errsWithClient.length === 0)
 
-const { useDataStore } = await import(join(appRoot, 'src/data/repo.ts'))
+const { useDataStore } = await import(pathToFileURL(join(appRoot, 'src/data/repo.ts')).href)
 const id1 = useDataStore.getState().ensureServiceItemForFreeLine({ nameAr: 'بند حر تجريبي', unitAr: 'م2', priceMinor: 50000 })
 const id2 = useDataStore.getState().ensureServiceItemForFreeLine({ nameAr: 'بند حر تجريبي', unitAr: 'م2', priceMinor: 50000 })
 ok('⑥ حيّاً: البند الحر يعيد نفس صنف الخدمة (لا تكرار)', id1 === id2 && id1 > 0)

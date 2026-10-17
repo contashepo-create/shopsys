@@ -5,7 +5,7 @@
 // الحل: الطلب يمرّ من العملية الرئيسية (بلا Origin) + اعتماد محفوظ خارج القاعدة + سبب حقيقي للواجهة.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(join(appRoot, rel), 'utf8')
@@ -36,7 +36,7 @@ ok('النواة تستخدم جسر سطح المكتب عند وجوده', /de
 ok('ترجمة رمز الخادم إلى سبب عربي', /export function supportFailureReason/.test(supportSrc))
 ok('الإرسال يعيد كائن نتيجة بالسبب', /export interface SupportSendResult/.test(supportSrc))
 
-const { supportFailureReason, sendSupportMessage } = await import(join(appRoot, 'src/core/support.ts'))
+const { supportFailureReason, sendSupportMessage } = await import(pathToFileURL(join(appRoot, 'src/core/support.ts')).href)
 ok('401 ⇒ سبب «إعادة ربط القناة» لا «لا يوجد اتصال»', supportFailureReason(401).includes('إعادة ربط') && !supportFailureReason(401).includes('اتصال الإنترنت'))
 ok('429 ⇒ سبب حدّ الرسائل', supportFailureReason(429).includes('حدّ الرسائل'))
 ok('403 ⇒ سبب رفض من الخادم', supportFailureReason(403).includes('رفض الخادم'))
