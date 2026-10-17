@@ -11155,8 +11155,14 @@ export const useDataStore = create<DataState>()(
           if (ex.payment !== 'credit') continue
           const project = state.projects.find((pr) => pr.id === ex.projectId)
           if (!project || project.clientId !== customerId) continue
+          // إصلاح (مراجعة 2026-10-17): ذمة المستخلص = المستحق − ما استُرد من الدفعة
+          // المقدمة (القيد أطفأ 2109 به) — وإلا عرض معالج التحصيل FIFO ديناً أكبر من
+          // كشف الحساب وابتلع الفائض الدائن في توزيع وهمي (انفصال الكشف عن الدفتر §74)
+          const recovery = Math.min(ex.totals.dueMinor, Math.max(0, ex.advanceRecoveryMinor ?? 0))
+          const due = ex.totals.dueMinor - recovery
+          if (due <= 0) continue
           const key = `extract:${ex.id}`
-          open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: ex.totals.dueMinor, settledMinor: settled.get(key) ?? 0 })
+          open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: due, settledMinor: settled.get(key) ?? 0 })
         }
         // مستندات الأنشطة المتخصصة (معمل · عيادة · تأجير · نقل · صيانة · محافظ ·
         // معرض سيارات · وحدات عقارية) — بنفس قواعد استحقاق كشف الحساب حرفياً.
