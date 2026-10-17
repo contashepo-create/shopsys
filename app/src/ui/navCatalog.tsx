@@ -74,8 +74,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // أنشطة «الفاتورة أولاً» (تجارة جملة/مصنع/خدمات): نفس الشاشة تظهر لهم باسم
       // «إنشاء فاتورة بيع» عبر ACTIVITY_LABELS (sales.pos) — ولا ورديات ولا استبدال
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
-      { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
-      { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'recipes', activities: ['restaurant'] },
+      { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'restaurant', activities: ['restaurant'] },
+      { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'restaurant', activities: ['restaurant'] },
       { id: 'delivery-tasks', nameAr: 'مهام التوصيل (مندوب)', icon: Truck, path: '/sales/delivery-tasks', activities: ['electronics'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },

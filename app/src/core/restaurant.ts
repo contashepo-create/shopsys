@@ -36,7 +36,15 @@ export interface RestaurantOrder {
   settledAt: string | null
   /** فاتورة البيع الناتجة عند القفل */
   saleId: number | null
+  /**
+   * أول لحظة طُبع فيها بون المطبخ لهذا الأمر (سد فجوة تقرير النشاط #14 —
+   * Gap 1): null = لم يُرسَل للمطبخ بعد، فأي تعديل حر بلا قيود. بعد الإرسال
+   * أي حذف أو تقليل كمية صنف يتطلب سبباً (ويُسجَّل بملاحظات الأمر) — نفس
+   * ضابط "Void after fire requires reason" المعتمد عالمياً في تويست/سكوير.
+   */
+  kitchenFiredAt: string | null
 }
+
 
 export function validateRestaurantOrder(args: {
   type: RestaurantOrderType
@@ -100,6 +108,70 @@ export function occupiedTables(orders: readonly RestaurantOrder[]): Set<string> 
   const s = new Set<string>()
   for (const o of orders) if (o.status === 'open' && o.type === 'dine_in' && o.tableName.trim()) s.add(o.tableName.trim())
   return s
+}
+
+/**
+ * دمج الحساب (عكس التقسيم — نمط فودكس/Toast «Split & Merge Checks»):
+ * يضم أسطر أمر مصدر لأمر هدف — نفس الصنف بنفس السعر والخصم يتجمّع كمية
+ * واحدة، وما عداه (أو رسوم itemId=-1 الصناعية) يُضاف سطراً مستقلاً.
+ */
+export function mergeOrderLines(targetLines: readonly CartLine[], sourceLines: readonly CartLine[]): CartLine[] {
+  const merged = [...targetLines]
+  for (const line of sourceLines) {
+    const idx = merged.findIndex((l) =>
+      l.itemId === line.itemId && l.itemId !== -1 &&
+      l.unitPriceMinor === line.unitPriceMinor && l.discountPercent === line.discountPercent && l.soldByWeight === line.soldByWeight,
+    )
+    if (idx >= 0) merged[idx] = { ...merged[idx], qty: merged[idx].qty + line.qty }
+    else merged.push(line)
+  }
+  return merged
+}
+
+/**
+ * هل التعديل من lines القديمة لـ lines الجديدة يُنقص كمية صنف موجود فعلاً
+ * أو يحذفه بالكامل؟ (سد فجوة تقرير النشاط #14 — Gap 1): يُستخدم لتحديد
+ * متى يلزم سبب + اعتماد مشرف بعد إرسال بون المطبخ — لا يمنع الإضافة قط.
+ */
+export function linesReduceExistingQty(oldLines: readonly CartLine[], newLines: readonly CartLine[]): boolean {
+  const newQtyOf = (itemId: number) => newLines.filter((l) => l.itemId === itemId).reduce((a, l) => a + l.qty, 0)
+  return oldLines.some((l) => newQtyOf(l.itemId) < oldLines.filter((x) => x.itemId === l.itemId).reduce((a, x) => a + x.qty, 0))
+}
+
+export interface StaleOpenOrder {
+  orderId: number
+  orderNumber: string
+  label: string
+  minutesOpen: number
+}
+
+/**
+ * أوامر مفتوحة تجاوزت مدة معقولة بلا إغلاق (سد فجوة تقرير النشاط #14 —
+ * Gap 3): نفس فكرة "Ticket aging" في أنظمة KDS العالمية (تويست/أوراكل) —
+ * طاولة/دليفري علّق طويلاً قد يعني فاتورة منسية أو طلباً عالقاً بالمطبخ.
+ * قراءة فقط من `openedAt` الموجود أصلاً — بلا أي حقل أو منطق محاسبي جديد.
+ */
+export function staleOpenOrders(
+  orders: readonly RestaurantOrder[],
+  nowIso: string,
+  warnMinutes = 45,
+): StaleOpenOrder[] {
+  const now = Date.parse(nowIso)
+  const out: StaleOpenOrder[] = []
+  for (const o of orders) {
+    if (o.status !== 'open') continue
+    const openedMs = Date.parse(o.openedAt)
+    if (!Number.isFinite(openedMs)) continue
+    const minutesOpen = Math.floor((now - openedMs) / 60_000)
+    if (minutesOpen >= warnMinutes) {
+      out.push({
+        orderId: o.id, orderNumber: o.orderNumber,
+        label: o.type === 'dine_in' ? `طاولة ${o.tableName || '—'}` : ORDER_TYPE_LABELS[o.type].nameAr,
+        minutesOpen,
+      })
+    }
+  }
+  return out.sort((a, b) => b.minutesOpen - a.minutesOpen)
 }
 
 /* ═══════════════ وحدة تقارير المطعم (ثالث وحدات «تقارير لكل نشاط») ═══════════════

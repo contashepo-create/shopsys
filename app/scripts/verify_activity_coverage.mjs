@@ -19,7 +19,8 @@ const secRe = /id: '([^']+)', nameAr: '([^']+)', icon: \w+, color: '\w+'(?:, mod
 let m
 while ((m = secRe.exec(body))) {
   const children = []
-  const childRe = /\{ id: '([^']+)', nameAr: '([^']+)', icon: \w+, path: '([^']+)'(?:, module: '(\w+)')? \}/g
+  // الحقل module قد يتبعه activities (مسار مطعم مقصور على نشاطه مثلاً) — اختياري بلا تأثير على استخراج module
+  const childRe = /\{ id: '([^']+)', nameAr: '([^']+)', icon: \w+, path: '([^']+)'(?:, module: '(\w+)')?(?:, activities: \[[^\]]*\])? \}/g
   let c
   while ((c = childRe.exec(m[4]))) children.push({ id: c[1], nameAr: c[2], path: c[3], module: c[4] })
   NAV_SECTIONS.push({ id: m[1], nameAr: m[2], module: m[3], children })

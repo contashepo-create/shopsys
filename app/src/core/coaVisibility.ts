@@ -143,7 +143,10 @@ export interface ModuleRoute {
 export const MODULE_ROUTES: ModuleRoute[] = [
   // /pos متاح أيضاً لأنشطة «الفاتورة أولاً» — هي شاشة إنشاء فواتيرهم (بمسمى مختلف)
   { prefix: '/pos', module: 'pos' },
-  { prefix: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
+  { prefix: '/sales/restaurant-orders', module: 'restaurant', activities: ['restaurant'] },
+  // سد فجوة النشاط #14 (Gap 4): هذا المسار كان بلا حارس وحدة/نشاط هنا إطلاقاً —
+  // أي نشاط يملك ops.activity.use (كمدير فرع في أي قطاع) كان يفتحه بالرابط المباشر
+  { prefix: '/restaurant', module: 'restaurant', activities: ['restaurant'] },
   { prefix: '/sales/price-lists', module: 'pos', feature: 'price_lists' },
   { prefix: '/sales/promotions', module: 'pos', feature: 'price_lists' },
   { prefix: '/sales/exchange', module: 'pos', hideForActivities: INVOICE_FIRST_ACTIVITIES },

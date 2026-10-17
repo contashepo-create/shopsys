@@ -79,7 +79,7 @@ import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxHoldi
 import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
-import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
+import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, mergeOrderLines, linesReduceExistingQty, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, assetDisposalPreview, buildAssetDisposalEntry, type AssetDisposalMode, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, normalizeSerial, isValidSerial, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
@@ -2162,12 +2162,26 @@ interface DataState {
   }) => ExchangeDoc
   /** فتح أمر مطعم (صالة/تيك أواي/دليفري) — لا قيود حتى القفل؛ طاولة الصالة لا تُفتح مرتين */
   openRestaurantOrder: (args: { type: RestaurantOrderType; tableName?: string; deliveryInfo?: string; notes?: string }) => RestaurantOrder
-  /** استبدال سطور الأمر المفتوح بالكامل (الشاشة ترسل السلة الحالية) */
-  setRestaurantOrderLines: (orderId: number, lines: CartLine[]) => void
+  /**
+   * استبدال سطور الأمر المفتوح بالكامل (الشاشة ترسل السلة الحالية).
+   * سد فجوة النشاط #14 (Gap 1): إن كان الأمر أُرسل للمطبخ بالفعل
+   * (`kitchenFiredAt`) وتُنقص السطور الجديدة كمية صنف موجود أو تحذفه،
+   * يلزم سبب (`voidReason`) يُسجَّل بملاحظات الأمر — نفس ضابط «Void after
+   * fire requires reason» العالمي (تويست/سكوير/ألوها).
+   */
+  setRestaurantOrderLines: (orderId: number, lines: CartLine[], voidReason?: string, approvedBy?: string | null) => void
+  /** تسجيل أول إرسال لبون المطبخ — يُفعِّل ضابط حذف الأصناف بعده (Gap 1) */
+  markKitchenFired: (orderId: number) => void
   /** إلغاء أمر مفتوح (لم يلمس الدفاتر أصلاً — توثيق حالة فقط) */
   cancelRestaurantOrder: (orderId: number, reason: string) => void
   /** تقسيم الفاتورة (فودكس/Toast): فصل سطور محددة لأمر جديد يُفوتر مستقلاً */
   splitRestaurantOrder: (orderId: number, lineIndexes: number[]) => RestaurantOrder
+  /**
+   * دمج الحساب (عكس التقسيم — سد فجوة النشاط #14 Gap 2): يضم أسطر أمر
+   * مصدر مفتوح لأمر هدف مفتوح، ويُقفل المصدر «ملغى» بملاحظة الدمج —
+   * بلا أي أثر محاسبي (كلاهما لم يُفوتر بعد).
+   */
+  mergeRestaurantOrders: (targetOrderId: number, sourceOrderId: number) => RestaurantOrder
   /**
    * قفل الأمر بفاتورة: رسوم الخدمة/التوصيل تُحقن سطوراً صناعية (itemId=-1)
    * ثم postSale واحد يتولى المخزون/الوصفات/الضريبة/القيد — المحاسبة تبدأ هنا فقط.
@@ -6388,17 +6402,38 @@ export const useDataStore = create<DataState>()(
           openedAt: new Date().toISOString(),
           settledAt: null,
           saleId: null,
+          kitchenFiredAt: null,
         }
         set({ restaurantOrders: [...state.restaurantOrders, order] })
         return order
       },
 
-      setRestaurantOrderLines: (orderId, lines) => {
+      setRestaurantOrderLines: (orderId, lines, voidReason, approvedBy) => {
         const state = get()
         const order = state.restaurantOrders.find((o) => o.id === orderId)
         if (!order) throw new Error('الأمر غير موجود')
         if (order.status !== 'open') throw new Error('الأمر مقفول — لا تعديل بعد الفوترة')
-        set({ restaurantOrders: state.restaurantOrders.map((o) => (o.id === orderId ? { ...o, lines } : o)) })
+        // سد فجوة النشاط #14 (Gap 1): تقليل/حذف صنف بعد إرسال بون المطبخ يتطلب سبباً موثّقاً
+        const removesAfterFire = order.kitchenFiredAt != null && linesReduceExistingQty(order.lines, lines)
+        if (removesAfterFire && !voidReason?.trim()) {
+          throw new Error('حذف أو تقليل صنف بعد إرساله للمطبخ يتطلب سبباً — يُسجَّل بملاحظات الأمر')
+        }
+        const voidNote = removesAfterFire
+          ? `حذف/تعديل صنف بعد الإرسال للمطبخ: ${voidReason!.trim()}${approvedBy ? ` — اعتماد: ${approvedBy}` : ''}`
+          : null
+        set({
+          restaurantOrders: state.restaurantOrders.map((o) => (o.id === orderId
+            ? { ...o, lines, notes: voidNote ? [o.notes, voidNote].filter(Boolean).join(' — ') : o.notes }
+            : o)),
+        })
+      },
+
+      markKitchenFired: (orderId) => {
+        const state = get()
+        const order = state.restaurantOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.kitchenFiredAt != null) return // أُرسل من قبل — لا داعي لتحديث الطابع
+        set({ restaurantOrders: state.restaurantOrders.map((o) => (o.id === orderId ? { ...o, kitchenFiredAt: new Date().toISOString() } : o)) })
       },
 
       cancelRestaurantOrder: (orderId, reason) => {
@@ -6435,6 +6470,7 @@ export const useDataStore = create<DataState>()(
           openedAt: new Date().toISOString(),
           settledAt: null,
           saleId: null,
+          kitchenFiredAt: order.kitchenFiredAt,
         }
         set({
           restaurantOrders: [
@@ -6443,6 +6479,29 @@ export const useDataStore = create<DataState>()(
           ],
         })
         return child
+      },
+
+      mergeRestaurantOrders: (targetOrderId, sourceOrderId) => {
+        const state = get()
+        if (targetOrderId === sourceOrderId) throw new Error('اختر أمراً مختلفاً للدمج')
+        const target = state.restaurantOrders.find((o) => o.id === targetOrderId)
+        const source = state.restaurantOrders.find((o) => o.id === sourceOrderId)
+        if (!target || !source) throw new Error('أحد الأمرين غير موجود')
+        if (target.status !== 'open' || source.status !== 'open') throw new Error('الدمج بين أمرين مفتوحين فقط')
+        const merged: RestaurantOrder = {
+          ...target,
+          lines: mergeOrderLines(target.lines, source.lines),
+          notes: [target.notes, `دُمج فيه ${source.orderNumber}${source.tableName ? ` (طاولة ${source.tableName})` : ''}`].filter(Boolean).join(' — '),
+          kitchenFiredAt: target.kitchenFiredAt ?? source.kitchenFiredAt,
+        }
+        set({
+          restaurantOrders: state.restaurantOrders.map((o) => {
+            if (o.id === target.id) return merged
+            if (o.id === source.id) return { ...o, status: 'cancelled' as const, notes: [o.notes, `دُمج في ${target.orderNumber}`].filter(Boolean).join(' — ') }
+            return o
+          }),
+        })
+        return merged
       },
 
       settleRestaurantOrder: (args) => {

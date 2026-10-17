@@ -36,6 +36,7 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
   'sales.return.approve': ['pos'],
   'sales.expiry.override': ['pos'],
   'sales.credit.override': ['pos'],
+  'sales.void.override': ['pos'],
   'sales.shift.close': ['pos'],
   'inv.view': ['inventory'],
   'inv.cost.view': ['inventory'],
@@ -49,9 +50,13 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
   'pur.return.create': ['purchases'],
   'pur.supplier.manage': ['purchases'],
   // شاشات النشاط التخصصي — تظهر فقط إن وُجدت وحدة تخصصية واحدة على الأقل
+  // «restaurant» مضافة لوحدة تقارير وأوامر المطعم (سد فجوة تقرير النشاط #14 —
+  // Gap 4): كانت مطعم/كافيه النشاط الوحيد الذي تحميه شاشته `ops.activity.use`
+  // بلا أن تظهر الصلاحية أصلاً في شاشة الصلاحيات لنشاطه — وحدة مستقلة عن
+  // «recipes» المشتركة مع مخبز/مصنع/بقالة فلا يتسرب التفعيل لهم.
   'ops.activity.use': [
     'maintenance', 'laundry', 'wallet_services', 'equipment_rental', 'logistics',
-    'lab', 'contracting', 'clinic', 'cars', 'realestate',
+    'lab', 'contracting', 'clinic', 'cars', 'realestate', 'restaurant',
   ],
   'rep.fleet': ['logistics', 'cars'],
 }
@@ -80,6 +85,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'sales.return.approve', nameAr: 'اعتماد مرتجع دون رقم سري (مشرف/مالك)', section: 'sales', sensitive: true },
   { id: 'sales.expiry.override', nameAr: 'تجاوز حظر بيع منتهي الصلاحية', section: 'sales', sensitive: true },
   { id: 'sales.credit.override', nameAr: 'تجاوز حد ائتمان العميل (بيع آجل فوق الحد)', section: 'sales', sensitive: true },
+  { id: 'sales.void.override', nameAr: 'حذف/تقليل صنف من أمر مطعم بعد إرساله للمطبخ', section: 'sales', sensitive: true },
   { id: 'sales.shift.close', nameAr: 'إقفال وردية', section: 'sales' },
   // اعتماد المستندات (طلب المالك) — التحكم كله من قسم الصلاحيات
   { id: 'docs.approve', nameAr: 'اعتماد المستندات المعلّقة قبل ترحيلها', section: 'sales', sensitive: true },
@@ -392,7 +398,7 @@ export const DEFAULT_ROLES: Role[] = [
     id: 'branch_manager', nameAr: 'مدير فرع', isSystem: true, requiredModule: 'pos',
     permissions: [
       'sales.pos.open', 'sales.invoice.create', 'sales.price.edit', 'sales.discount.grant',
-      'sales.return.create', 'sales.return.approve', 'sales.expiry.override', 'sales.shift.close',
+      'sales.return.create', 'sales.return.approve', 'sales.expiry.override', 'sales.void.override', 'sales.shift.close',
       'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.adjust', 'inv.transfer', 'inv.count',
       'pur.invoice.create', 'pur.return.create', 'pur.supplier.manage',
       'party.customer.manage', 'party.customer.statement',

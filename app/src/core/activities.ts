@@ -24,6 +24,8 @@ export type BusinessModule =
   | 'contracting' // محاسبة المقاولات (القرار 27)
   | 'clinic' // عيادات الأطباء وملفات المرضى (القرار 27)
   | 'cars' // معارض بيع وإيجار السيارات (القرار 27)
+  | 'restaurant' // شاشات صالة المطعم (أوامر الطاولات/الصالة وتقاريرها) — مستقلة عن
+                  // «recipes» المشتركة مع مخبز/مصنع/بقالة ليس لها شاشات طاولات
   | 'installments' // الأقساط
   | 'recipes' // الوصفات والتصنيع (مطاعم/مخابز)
   | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
@@ -84,7 +86,7 @@ function withCoreModules(tpl: ActivityTemplate): ActivityTemplate {
 
 /** ترتيب الوحدات المعياري (يُستخدم للتطبيع والعرض) — القائمة الكاملة في نهاية الملف */
 const ALL_MODULES_ORDER: readonly BusinessModule[] = [
-  'pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry',
+  'pos', 'inventory', 'purchases', 'installments', 'recipes', 'restaurant', 'processing', 'jewelry',
   'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab',
   'contracting', 'clinic', 'cars', 'wallet_services', 'realestate',
 ]
@@ -191,7 +193,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     id: 'restaurant', nameAr: 'مطعم / كافيه', icon: '🍽️',
     description: 'بيع سريع بالكاشير، وصفات أطباق تخصم الخامات آلياً، مشتريات يومية',
     features: ['expiry_batches', 'multi_unit', 'weight_scale'],
-    modules: ['pos', 'inventory', 'purchases', 'recipes'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes', 'restaurant'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -474,6 +476,7 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   cars: { nameAr: 'معرض السيارات', icon: '🚗', desc: 'سيارات بتكلفة وربحية لكل واحدة، تجهيزات ترسمل، بيع وإيجار' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
   recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },
+  restaurant: { nameAr: 'صالة المطعم', icon: '🍽️', desc: 'أوامر الطاولات والتيك أواي والدليفري، بون المطبخ، وتقارير أداء الصالة' },
   jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
   wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
   laundry: { nameAr: 'المغسلة', icon: '🧺', desc: 'أوامر غسيل بقطع وخدمات وعربون — استلام وتجهيز وتسليم بقيود سليمة' },
@@ -483,7 +486,7 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'restaurant', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
 
 /* حراسة تحميل: القائمة أعلاه هي المرجع لترتيب الوحدات، وقائمة الترتيب المستخدمة
  * داخل `withCoreModules` يجب أن تطابقها حرفياً — وإلا اختلف ترتيب الشاشات.

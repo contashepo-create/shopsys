@@ -60,6 +60,8 @@ export interface NotificationsInput {
   overduePatientBalances?: { patientId: number; patientName: string; balanceMinor: number; daysPending: number }[]
   /** سيارات معرض متقادمة بالمخزون 60 يوماً فأكثر بلا بيع — سد فجوة تقرير النشاط #13 (Gap 3) */
   agingCars?: { carId: number; label: string; daysInStock: number }[]
+  /** أوامر مطعم مفتوحة تجاوزت مدة معقولة بلا إغلاق — سد فجوة تقرير النشاط #14 (Gap 3) */
+  staleRestaurantOrders?: { orderId: number; orderNumber: string; label: string; minutesOpen: number }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
@@ -318,6 +320,21 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       severity: a.daysInStock >= 90 ? 'danger' : 'warn',
       route: '/cars',
       perm: 'ops.activity.use',
+    })
+  }
+
+  // 1.78) أوامر مطعم مفتوحة تجاوزت مدة معقولة بلا إغلاق (سد فجوة تقرير النشاط #14 — Gap 3)
+  for (const s of input.staleRestaurantOrders ?? []) {
+    out.push({
+      id: `restaurantstale:${s.orderId}`,
+      icon: '⏲️',
+      title: `أمر مطعم معلّق: ${s.orderNumber} — ${s.label}`,
+      body: `مفتوح منذ ${s.minutesOpen} دقيقة بلا إغلاق — راجعه (فاتورة منسية أو طلب عالق بالمطبخ)`,
+      severity: s.minutesOpen >= 90 ? 'danger' : 'warn',
+      route: '/sales/restaurant-orders',
+      // شاشة أوامر المطعم بوابتها sales.invoice.create (كاشير عادي) لا
+      // ops.activity.use — التنبيه يصل لمن يملك فعلاً صلاحية حل المشكلة
+      perm: 'sales.invoice.create',
     })
   }
 
