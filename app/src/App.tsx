@@ -313,24 +313,58 @@ function Shell() {
 /** شاشة استرداد: تظهر حين تعذّر قراءة البيانات — لا معالج إعداد ولا كتابة فوق البيانات */
 function DataRecoveryScreen({ reason }: { reason: string }) {
   const keyMismatch = /enc:v1|فك تشفير|مفتاح الجهاز/i.test(reason)
+  const [freshStartBusy, setFreshStartBusy] = useState(false)
+  const [freshStartMessage, setFreshStartMessage] = useState<string | null>(null)
+  const startFresh = async () => {
+    const bridge = desktopKeyRecoveryBridge()
+    if (!bridge) return
+    setFreshStartBusy(true)
+    setFreshStartMessage(null)
+    try {
+      const result = await bridge.startFresh()
+      if (result.ok) setFreshStartMessage(`حُفظت نسخة أرشيف من القاعدة في: ${result.archivePath ?? 'مجلد الأرشيف'} — سيُعاد تشغيل البرنامج بقاعدة جديدة.`)
+      else if (!result.canceled) setFreshStartMessage(result.reason ?? 'تعذّر بدء القاعدة الجديدة؛ لم تُحذف النسخة الأرشيفية.')
+    } catch (error) {
+      setFreshStartMessage((error as Error).message)
+    } finally {
+      setFreshStartBusy(false)
+    }
+  }
   return (
     <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-slate-100 dark:bg-slate-950">
       <div className="max-w-lg space-y-4 p-8 rounded-3xl bg-white dark:bg-card-dark border border-rose-500/30 shadow-2xl">
         <div className="text-4xl">⚠️</div>
         <h1 className="text-xl font-black text-slate-800 dark:text-white">تعذّر فتح بياناتك — لم يبدأ إعداد جديد</h1>
         <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-          لم يُنشأ محل جديد ولم تُكتب الحالة الافتراضية فوق بياناتك. أوقف التطبيق الحفظ حمايةً للقاعدة؛ لا تحذفها ولا تبدأ إعداداً جديداً ولا تُعد تثبيت Windows أو التطبيق الآن.
+          لم تُفتح القاعدة ولم تُكتب الحالة الافتراضية فوقها. لا تحذف ملفات البيانات يدوياً؛ اتبع التعليمات أدناه حسب حالتك.
         </p>
         {keyMismatch ? (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[12px] text-slate-700 dark:text-slate-200 leading-relaxed space-y-2">
-            <b className="block text-amber-700 dark:text-amber-300">تحتوي القاعدة على لقطة قديمة مشفّرة <span dir="ltr">enc:v1</span> تعذّر التحقق منها بالمفتاح الحالي (قد يكون غير متاح أو غير مطابق)؛ لم تُفتح القاعدة ولم تُكتب فوقها.</b>
-            <ol className="list-decimal pr-5 space-y-1">
-              <li>إن كان لديك ملف مفتاح استرداد <span dir="ltr">.tkey</span> وكلمة مروره، أدخلهما أدناه؛ يجب أن يحتوي الملف على المفتاح الأصلي لهذه اللقطة.</li>
-              <li>إن لم يكن لديك الملف، احتفظ بمجلد بيانات التطبيق كما هو (بما فيه <span dir="ltr">Local State</span> و<span dir="ltr">device.key.enc</span> و<span dir="ltr">db-location.json</span> و<span dir="ltr">backups</span>) وبملف <span dir="ltr">shopsys.db</span> دون تعديل أو استبدال.</li>
-              <li>إن كان ملف التعريف/حساب Windows الأصلي متاحاً، استخدمه لاستعادة المفتاح الأصلي ثم أعد المحاولة.</li>
-            </ol>
-            <p className="font-bold">لا يمكن ترحيل اللقطة القديمة بلا مفتاحها الأصلي. لا تحذف القاعدة ولا تنشئ قاعدة بديلة؛ البيانات النصية الجديدة لا تحتاج هذا المفتاح.</p>
-          </div>
+          <>
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-[12px] text-slate-700 dark:text-slate-200 leading-relaxed space-y-2">
+              <b className="block text-amber-700 dark:text-amber-300">تحتوي القاعدة على لقطة قديمة مشفّرة <span dir="ltr">enc:v1</span> تعذّر التحقق منها بالمفتاح الحالي (قد يكون غير متاح أو غير مطابق)؛ لم تُفتح القاعدة ولم تُكتب فوقها.</b>
+              <ol className="list-decimal pr-5 space-y-1">
+                <li>إن كان لديك ملف مفتاح استرداد <span dir="ltr">.tkey</span> وكلمة مروره، أدخلهما أدناه؛ يجب أن يحتوي الملف على المفتاح الأصلي لهذه اللقطة.</li>
+                <li>إن لم يكن لديك الملف، احتفظ بمجلد بيانات التطبيق كما هو (بما فيه <span dir="ltr">Local State</span> و<span dir="ltr">device.key.enc</span> و<span dir="ltr">db-location.json</span> و<span dir="ltr">backups</span>) وبملف <span dir="ltr">shopsys.db</span> دون تعديل أو استبدال.</li>
+                <li>إن كان ملف التعريف/حساب Windows الأصلي متاحاً، استخدمه لاستعادة المفتاح الأصلي ثم أعد المحاولة.</li>
+              </ol>
+              <p className="font-bold">لا يمكن ترحيل اللقطة القديمة بلا مفتاحها الأصلي. اللقطات الجديدة لا تحتاج هذا المفتاح؛ ولجهاز الاختبار فقط يمكن بدء قاعدة فارغة مع حفظ القاعدة القديمة في الأرشيف.</p>
+            </div>
+            <div className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-4 space-y-3">
+              <div className="text-[12px] text-slate-700 dark:text-slate-200 leading-relaxed">
+                <b className="block text-rose-700 dark:text-rose-300">بدء نظيف — للجهاز التجريبي الذي لا يحتوي بيانات عملاء</b>
+                سيبدأ معالج الإعداد كأول تشغيل، مع حفظ ملف القاعدة الحالية كما هو. إذا احتوى <span dir="ltr">enc:v1</span> فالأرشيف وحده لا يفكّها دون المفتاح الأصلي. لا تُحذف النسخ القديمة، لكنها لن تُستعاد تلقائياً بعد هذا الاختيار؛ ولا يعيد ذلك ضبط هوية الجهاز أو الترخيص/مدة التجربة.
+              </div>
+              <button
+                type="button"
+                disabled={freshStartBusy}
+                onClick={() => { void startFresh() }}
+                className="w-full px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-60 transition-colors"
+              >
+                {freshStartBusy ? 'جارٍ حفظ الأرشيف…' : 'بدء قاعدة جديدة مع حفظ الأرشيف'}
+              </button>
+              {freshStartMessage && <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 break-all">{freshStartMessage}</p>}
+            </div>
+          </>
         ) : (
           <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
             لم يبدأ التطبيق إعداداً جديداً ولم يغيّر ملفات البيانات. اترك الملفات المحلية كما هي، وتحقق من وجود مجلد البيانات الذي اختير سابقاً ثم أعد المحاولة.
@@ -349,7 +383,7 @@ function DataRecoveryScreen({ reason }: { reason: string }) {
         >
           🔄 إعادة المحاولة
         </button>
-        {/* استرداد المفتاح المعتمد فقط؛ لا تُنشأ قاعدة جديدة عند فشل فك التشفير */}
+        {/* استرداد المفتاح اختياري؛ البدء النظيف لا يُنفذ إلا بخيار التأكيد الصريح أعلاه */}
         <DesktopKeyRecoveryImport />
       </div>
     </div>

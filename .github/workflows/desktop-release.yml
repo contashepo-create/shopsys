@@ -215,6 +215,31 @@ jobs:
             throw
           }
 
+      - name: تحديد آخر إصدار منشور أقدم لاختبار ترقية العميل
+        id: public_baseline
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tags="$(gh api repos/contashepo-create/tahakam-releases/releases --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"
+          previous="$(printf '%s\n' "$tags" | node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { versionOf, compareReleaseVersions } from "./scripts/releaseVersion.mjs";
+            const current = process.env.GITHUB_REF_NAME;
+            versionOf(current);
+            const releases = readFileSync(0, "utf8").trim().split(/\r?\n/).filter(Boolean);
+            const earlier = releases.filter(tag => {
+              try { return compareReleaseVersions(tag, current) < 0; } catch { return false; }
+            });
+            earlier.sort(compareReleaseVersions);
+            if (!earlier.length) throw new Error(`No published stable release precedes ${current}`);
+            console.log(earlier.at(-1).slice(1));
+          ')"
+          echo "version=${previous}" >> "$GITHUB_OUTPUT"
+          echo "✓ Public update probe baseline: ${previous}"
+
       - name: نشر الإصدار إلى رف الإصدارات العام — draft ثم نشر بعد التحقق
         if: inputs.dry_run != true
         shell: bash
@@ -234,3 +259,47 @@ jobs:
           RELEASE_REPO: ${{ github.repository }}
           RELEASE_SOURCE_SHA: ${{ github.sha }}
         run: node scripts/publish_desktop_release.mjs
+
+      - name: اختبار اكتشاف وتنزيل الإصدار العام الجديد كترقية صامتة
+        if: inputs.dry_run != true
+        shell: pwsh
+        env:
+          EXPECTED_RELEASE_TAG: ${{ github.ref_name }}
+          PUBLIC_UPDATE_FROM_VERSION: ${{ steps.public_baseline.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            if ($env:EXPECTED_RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid expected release tag' }
+            if ($env:PUBLIC_UPDATE_FROM_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid previous public version' }
+            $version = $env:EXPECTED_RELEASE_TAG.Substring(1)
+            $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+            $probe = (Resolve-Path 'scripts/windows_public_update_probe.cjs').Path
+            $out = Join-Path $env:RUNNER_TEMP 'public-update-readback.json'
+            $arguments = @("`"$probe`"", $version, "`"$out`"")
+            $process = Start-Process -FilePath $electron -ArgumentList $arguments -PassThru
+            if (-not $process.WaitForExit(330000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw 'Public updater probe hung'
+            }
+            if (-not (Test-Path $out)) { throw 'Public updater probe produced no evidence' }
+            $result = Get-Content $out -Raw | ConvertFrom-Json
+            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Public updater probe failed: $($result.error)" }
+            if ($result.fromVersion -ne $env:PUBLIC_UPDATE_FROM_VERSION -or $result.detectedVersion -ne $version -or $result.authenticated -or $result.installAttempted) {
+              throw 'Public updater evidence does not prove the expected anonymous, download-only upgrade'
+            }
+            Write-Output "::notice title=Public update verified::Anonymous ElectronHttpExecutor detected $($result.fromVersion) -> $($result.detectedVersion), downloaded $($result.size) bytes, SHA512 matched; installer was not run"
+            Get-Content $out
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Public update download::$detail"
+            throw
+          }
+
+      - name: حفظ دليل التحديث العام بعد النشر
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-update-readback-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/public-update-readback.json

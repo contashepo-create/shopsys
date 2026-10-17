@@ -1,4 +1,4 @@
-// فحص قناة التحديث المنشورة بHTTP/ملفات حقيقية؛ AppAdapter يحدد نسخة عميل 1.0.23 فقط.
+// فحص قناة التحديث المنشورة بHTTP/ملفات حقيقية؛ AppAdapter يحدد نسخة العميل عبر PUBLIC_UPDATE_FROM_VERSION (افتراض 1.0.23).
 // لا يحاكي الشبكة أو الحفظ، ولا يشغّل مثبتاً أو يقرأ بيانات المالك.
 const { app } = require('electron')
 const { mkdirSync, readFileSync, writeFileSync, statSync } = require('node:fs')
@@ -11,7 +11,11 @@ if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_OS !== 'Windows'
   throw new Error('Only an isolated GitHub Windows runner may run the public updater probe')
 }
 const [expectedVersion, output] = process.argv.slice(2)
-if (!require('semver').valid(expectedVersion) || !require('semver').gt(expectedVersion, '1.0.23')) throw new Error('Expected a published version newer than 1.0.23')
+const fromVersion = process.env.PUBLIC_UPDATE_FROM_VERSION || '1.0.23'
+const semver = require('semver')
+if (!semver.valid(expectedVersion) || !semver.valid(fromVersion) || !semver.gt(expectedVersion, fromVersion)) {
+  throw new Error(`Expected a published version newer than probe baseline ${fromVersion}`)
+}
 const profile = join(process.env.RUNNER_TEMP, 'public-update-readback-profile')
 mkdirSync(profile, { recursive: true })
 app.setName('Tahakom-CI-Public-Readback')
@@ -29,7 +33,7 @@ const timer = setTimeout(() => finish({ ok: false, error: 'Public updater check/
 app.whenReady().then(async () => {
   try {
     const updater = new NsisUpdater(null, {
-      version: '1.0.23', name: 'Tahakom', isPackaged: true,
+      version: fromVersion, name: 'Tahakom', isPackaged: true,
       userDataPath: profile, baseCachePath: join(profile, 'cache'),
       appUpdateConfigPath: resolve('release/win-unpacked/resources/app-update.yml'),
       whenReady: () => app.whenReady(),
@@ -55,7 +59,7 @@ app.whenReady().then(async () => {
     const size = statSync(file).size
     if (!size || size !== expected?.size || digest !== expected?.sha512) throw new Error('Downloaded installer does not match the public manifest size/SHA512')
     clearTimeout(timer)
-    finish({ ok: true, fromVersion: '1.0.23', detectedVersion: expectedVersion, executor: 'ElectronHttpExecutor', authenticated: false, downloadedInstaller: file, size, sha512: digest, installAttempted: false, oldBinaryExecuted: false }, 0)
+    finish({ ok: true, fromVersion, detectedVersion: expectedVersion, executor: 'ElectronHttpExecutor', authenticated: false, downloadedInstaller: file, size, sha512: digest, installAttempted: false, oldBinaryExecuted: false }, 0)
   } catch (error) {
     clearTimeout(timer)
     finish({ ok: false, error: error.stack || error.message, installAttempted: false }, 1)
