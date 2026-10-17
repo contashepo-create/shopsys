@@ -30,6 +30,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpe
 const { useDataStore } = await import('../src/data/repo.ts')
 const { quotationTotals } = await import('../src/core/contracting.ts')
 const st = () => useDataStore.getState()
+/* سياسة المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل — تُبذَر clientela واحدة */
+useDataStore.setState((s) => ({ customers: [...s.customers, { id: 9901, nameAr: 'عميل البوابة', phone: '01000000002', creditLimitMinor: 0, notes: '', openingMinor: 0 }] }))
+
 
 let pass = 0, fails = []
 const ok = (n, c, extra = '') => { if (c) { pass++; console.log(`  ✅ ${n}`) } else { fails.push(n); console.log(`  ❌ ${n}${extra ? ' — ' + String(extra) : ''}`) } }
@@ -185,12 +188,12 @@ console.log('④ الواجهات: قسم الفواتير ونافذة المر
 console.log('⑤ المراجعة الشاملة: ظهور كل الفواتير · فتح/تعديل/طباعة العروض · تعديل مشروع وبند BOQ')
 {
   /* ── تعديل العرض: قبل التحويل يُعدَّل، بعده يُقفل ── */
-  const q1 = st().addQuotation({ kind: 'quotation', clientName: 'مجلس المدينة', clientId: null, titleAr: 'تشطيبات داخلية', validUntil: '2026-11-01', lines: [{ nameAr: 'دهانات', descriptionAr: 'دهان بلاستيك وجهين', qty: 500, unitAr: 'م2', unitPriceMinor: 120, estCostMinor: 80, vatPercent: 0, taxIncluded: false }], notes: 'الأسعار شاملة التشوين', winProbability: 60, bidBondMinor: 0 })
+  const q1 = st().addQuotation({ kind: 'quotation', clientName: 'مجلس المدينة', clientId: 9901, titleAr: 'تشطيبات داخلية', validUntil: '2026-11-01', lines: [{ nameAr: 'دهانات', descriptionAr: 'دهان بلاستيك وجهين', qty: 500, unitAr: 'م2', unitPriceMinor: 120, estCostMinor: 80, vatPercent: 0, taxIncluded: false }], notes: 'الأسعار شاملة التشوين', winProbability: 60, bidBondMinor: 0 })
   const q1e = st().updateQuotation(q1.id, { titleAr: 'تشطيبات داخلية (مراجعة 2)', lines: [{ nameAr: 'دهانات', descriptionAr: 'دهان بلاستيك وجهين + معجون', qty: 600, unitAr: 'م2', unitPriceMinor: 130, estCostMinor: 85, vatPercent: 0, taxIncluded: false }] })
   ok('تعديل العرض: الرقم والتاريخ والحالة لا يتغيران والمحتوى يتغير', q1e.quoteNumber === q1.quoteNumber && q1e.date === q1.date && q1e.status === q1.status && q1e.titleAr.includes('مراجعة 2') && q1e.lines[0].qty === 600 && q1e.lines[0].unitPriceMinor === 130)
   throws('تعديل عرض بنوده كلها فارغة يُرفض (تحقق البنود)', () => st().updateQuotation(q1.id, { lines: [{ nameAr: 'x', descriptionAr: '  ', qty: 1, unitAr: 'م2', unitPriceMinor: 100, estCostMinor: 0, vatPercent: 0, taxIncluded: false }] }), 'بند واحد')
   /* ── تحويل عرض لمشروع يقفل تعديله (حرس السلامة المحاسبية) ── */
-  const won = st().addQuotation({ kind: 'quotation', clientName: 'مدرسة المستقبل', clientId: null, titleAr: 'سور مدرسة', validUntil: '2026-12-01', lines: [{ nameAr: 'سور', descriptionAr: 'سور بارتفاع 2.5م', qty: 200, unitAr: 'م.ط', unitPriceMinor: 900, estCostMinor: 700, vatPercent: 0, taxIncluded: false }], notes: '', winProbability: 90, bidBondMinor: 0 })
+  const won = st().addQuotation({ kind: 'quotation', clientName: 'مدرسة المستقبل', clientId: 9901, titleAr: 'سور مدرسة', validUntil: '2026-12-01', lines: [{ nameAr: 'سور', descriptionAr: 'سور بارتفاع 2.5م', qty: 200, unitAr: 'م.ط', unitPriceMinor: 900, estCostMinor: 700, vatPercent: 0, taxIncluded: false }], notes: '', winProbability: 90, bidBondMinor: 0 })
   st().setQuotationStatus(won.id, 'submitted')
   st().setQuotationStatus(won.id, 'won')
   st().convertQuotationToProject(won.id, 5)
@@ -226,7 +229,7 @@ console.log('⑤ المراجعة الشاملة: ظهور كل الفواتير
   ok('مركز الفواتير: لا فلتر projectId — كل فواتير البيع تدخل الجدول (بلاغ: «لم تظهر»)', !invoicesPage.includes('s.projectId != null && prjInvoiceIds.has') && invoicesPage.includes('حرة'))
   ok('مركز الفواتير: شارة «حرة» للمفكوكة وعدّاد «منها N مربوطة»', invoicesPage.includes('منها {totals.linked} مربوطة') && invoicesPage.includes('كل الفواتير (حرة ومربوطة)'))
   ok('قائمة العروض: زر فتح/تعديل + زر طباعة على كل صف', quotesPage.includes('data-quotation-open') && quotesPage.includes('data-quotation-print'))
-  ok('الطباعة من القائمة: نموذج A4 كامل برقم العرض وسريانه وملاحظاته', quotesPage.includes('const printQuotation') && quotesPage.includes('ساري حتى ${q.validUntil') && quotesPage.includes('quotationTotals(q.lines).grossMinor'))
+  ok('الطباعة من القائمة: نموذج A4 كامل برقم العرض وسريانه وملاحظاته', quotesPage.includes('const quotationModel') && quotesPage.includes('ساري حتى ${q.validUntil') && quotesPage.includes('totalMinor: t.grossMinor'))
   ok('المحرر يفرّق إنشاء/تعديل ويحفظ رقم العرض المحفوظ', quotesPage.includes('editingQuote') && quotesPage.includes('updateQuotation(editingQuote.id') && quotesPage.includes("invoiceNumber: editingQuote?.quoteNumber ?? 'مسودة'"))
   ok('العروض المحوّلة: قفل 🔒 مع بقاء الطباعة أرشيفية', quotesPage.includes('🔒 مشروع'))
   ok('بطاقة المشروع: قلم تعديل + مودال بيانات العقد', pages.includes('data-project-edit') && pages.includes('data-project-edit-modal') && pages.includes('صدرت مستخلصات'))
@@ -287,7 +290,7 @@ console.log('⑥ استكمال المراجعة: تعديل عقد باطن و�
 console.log('⑦ محاذاة pro-acc: العقد صافٍ · سقف المستخلصات · تكاليف كل المصادر · سند قبض مرتبط بمشروع')
 {
   /* ── ① عرض بأسعار شاملة الضريبة → المشروع وبنوده بالصافي ── */
-  const qTax = st().addQuotation({ kind: 'quotation', clientName: 'شركة البترول', clientId: null, titleAr: 'صيانة خزانات', validUntil: '2026-12-31', lines: [{ nameAr: 'صيانة', descriptionAr: 'صيانة شاملة', qty: 100, unitAr: 'م2', unitPriceMinor: 1140, estCostMinor: 700, vatPercent: 14, taxIncluded: true }], notes: '', winProbability: 80, bidBondMinor: 0 })
+  const qTax = st().addQuotation({ kind: 'quotation', clientName: 'شركة البترول', clientId: 9901, titleAr: 'صيانة خزانات', validUntil: '2026-12-31', lines: [{ nameAr: 'صيانة', descriptionAr: 'صيانة شاملة', qty: 100, unitAr: 'م2', unitPriceMinor: 1140, estCostMinor: 700, vatPercent: 14, taxIncluded: true }], notes: '', winProbability: 80, bidBondMinor: 0 })
   const grossQ = 100 * 1140 // السعر شامل الضريبة
   const netQ = Math.round(grossQ * 100 / 114) // 100,000 صافي
   ok('العرض الشامل: صافيه 100,000 وضريبته 14,000 (إجمالي 114,000)', quotationTotals(qTax.lines).netMinor === netQ && quotationTotals(qTax.lines).taxMinor === grossQ - netQ, quotationTotals(qTax.lines).netMinor)

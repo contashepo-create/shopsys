@@ -29,7 +29,7 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assert.ok(quotationsPage.includes('printModelWithTemplate') && quotationsPage.includes('openPrintPreview'), 'معاينة/الطباعة الصامتة ناقصة في عرض السعر')
   assert.ok(quotationsPage.includes('usePrintSwitches'), 'مفاتيح الطباعة غير مستهلكة في عرض السعر')
   /* الإجماليات الثلاثة نفسها: صافي/ضريبة/إجمالي + تكلفة تقديرية وهامش */
-  for (const label of ['الصافي', 'الضريبة', 'الإجمالي شامل الضريبة', 'التكلفة التقديرية', 'هامش متوقع']) {
+  for (const label of ['الإجمالي', 'الضريبة', 'الإجمالي بالضريبة', 'التكلفة التقديرية', 'هامش متوقع']) {
     assert.ok(quotationsPage.includes(label), `لوحة إجماليات العرض تنقصها خانة «${label}»`)
   }
   R.ok('عرض السعر: إطار الفاتورة + جدول البنود + 3 لوحات (شروط/تكلفة/إجماليات) + طباعة بمحرك الفواتير')
@@ -59,8 +59,9 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
 {
   const c = await freshCase({ activityId: 'contracting' })
   const g = () => c.store.getState()
+  c.store.setState((s) => ({ customers: [...s.customers, { id: 9901, nameAr: 'عميل البوابة', phone: '01000000002', creditLimitMinor: 0, notes: '', openingMinor: 0 }] }))
   const q = g().addQuotation({
-    kind: 'quotation', clientName: 'شركة النور', clientId: null, titleAr: 'تشطيب فيلا',
+    kind: 'quotation', clientName: 'شركة النور', clientId: 9901, titleAr: 'تشطيب فيلا',
     validUntil: '2026-10-30',
     lines: [
       { nameAr: 'دهانات', descriptionAr: 'دهان بلاستيك 3 طبقات', qty: 3, unitAr: 'غرفة', unitPriceMinor: 500000, estCostMinor: 350000, vatPercent: 14, taxIncluded: false },
@@ -93,6 +94,7 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
 {
   const c = await freshCase({ activityId: 'grocery' })
   const g = () => c.store.getState()
+  c.store.setState((s) => ({ customers: [...s.customers, { id: 9901, nameAr: 'عميل البوابة', phone: '01000000002', creditLimitMinor: 0, notes: '', openingMinor: 0 }] }))
   g().addSupplier({ nameAr: 'مورد الأجهزة', phone: '', notes: '' })
   g().addItem({ nameAr: 'ميكروويف', categoryId: null, unit: 'قطعة', priceMinor: 200000, barcode: '', sku: 'MW-1', isActive: true, trackExpiry: false, trackSerial: false, soldByWeight: false, isService: false, minSalePriceMinor: 0, costMinor: 150000, stockQty: 0 })
   const supplier = g().suppliers[0]

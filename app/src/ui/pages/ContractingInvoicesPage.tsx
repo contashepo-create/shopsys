@@ -13,22 +13,27 @@
  *      وطباعة بنفس قوالب الفواتير.
  */
 import { useMemo, useState } from 'react'
-import { FilePlus2, Printer, Pencil, HardHat, Coins } from 'lucide-react'
+import { FilePlus2, Printer, Pencil, HardHat, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { formatMinor } from '../../core/money.ts'
-import { buildReceiptModel } from '../../core/receipt.ts'
-import { printModelWithTemplate } from '../print/printDoc.ts'
-import { Btn, inputCls, useToast, EmptyState } from '../components/ui.tsx'
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { formatMinor, toMinor } from '../../core/money.ts'
+import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
+import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { QuickSelect, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 import { effectiveContractValue } from '../../core/contracting.ts'
+import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
+import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
+import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 
 export function ContractingInvoicesPage() {
   const {
     projects, projectExtracts, projectCosts, changeOrders, sales, customers, boqItems,
-    staffCommissions, purchases,
+    staffCommissions, purchases, postSale, ensureServiceItemForFreeLine,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -86,6 +91,85 @@ export function ContractingInvoicesPage() {
     extracts: projectExtracts.length,
     extracted: projectExtracts.reduce((a, e) => a + e.totals.grossMinor, 0),
   }), [invoices, projectExtracts])
+
+  /* ═══ فاتورة مقاولات ببنود حرة (طلب المالك 2026-10-17) ═══
+     بنودها تُكتب يدوياً بحرية مثل عرض السعر (اسم/وصف/وحدة/كمية/سعر)، وتُرحَّل
+     بمحرك فاتورة البيع نفسه (postSale) بأصناف خدمة مضمونة — فلا مخزون ولا تكلفة،
+     والإيراد والقيد والتحصيل والطباعة والواتساب كلها مثل فاتورة البيع حرفياً. */
+  const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
+  const [edOpen, setEdOpen] = useState(false)
+  const [edProjectId, setEdProjectId] = useState(0)
+  const [edCustomerId, setEdCustomerId] = useState(0)
+  const [edPayment, setEdPayment] = useState<'cash' | 'credit'>('cash')
+  const [edPaid, setEdPaid] = useState('')
+  const [edNotes, setEdNotes] = useState('')
+  interface FreeLine { key: string; nameAr: string; qty: string; unitAr: string; price: string }
+  const [edLines, setEdLines] = useState<FreeLine[]>([])
+  const freeUnits = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يوم عمل']
+  const openFreeEditor = (projectId = 0) => {
+    setEdProjectId(projectId)
+    const prj = projects.find((x) => x.id === projectId)
+    setEdCustomerId(prj?.clientId ?? 0)
+    setEdPayment('cash'); setEdPaid(''); setEdNotes('')
+    setEdLines([{ key: crypto.randomUUID(), nameAr: '', qty: '1', unitAr: 'مقطوعية', price: '' }])
+    setEdOpen(true)
+  }
+  const edParsed = edLines
+    .filter((l) => l.nameAr.trim() && Number(l.qty) > 0)
+    .map((l) => ({ nameAr: l.nameAr.trim(), qty: Number(l.qty), unitAr: l.unitAr, unitPriceMinor: (() => { try { return toMinor(l.price || '0', cur.decimals) } catch { return 0 } })() }))
+  const edNet = edParsed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
+  const edTax = Math.round(edNet * taxPolicy.effectivePercent / 100)
+  const edGross = edNet + edTax
+  const fillFromBoq = () => {
+    const boq = boqItems.filter((b) => b.projectId === edProjectId)
+    if (!boq.length) { toast.show('لا بنود كميات لهذا المشروع — اكتب البنود حرة', 'error'); return }
+    setEdLines(boq.map((b) => ({ key: crypto.randomUUID(), nameAr: b.descriptionAr, qty: String(b.qty), unitAr: b.unit, price: String(b.unitPriceMinor / 10 ** cur.decimals) })))
+    toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع ✓`)
+  }
+  const edPrintModel = () => buildSimpleDocModel({
+    docTitle: 'فاتورة مقاولات',
+    invoiceNumber: 'مسودة',
+    refCode: 'CI',
+    dateIso: new Date().toISOString().slice(0, 10),
+    partyLabel: customers.find((c) => c.id === edCustomerId)?.nameAr ?? projects.find((x) => x.id === edProjectId)?.clientName ?? 'عميل',
+    paymentLabel: edPayment === 'cash' ? 'نقدي' : 'آجل',
+    rows: edParsed.map((l) => ({ nameAr: l.nameAr, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
+    totalMinor: edGross,
+    paidMinor: edGross,
+    operatorName: setup.ownerName ?? 'المالك',
+    settings: receipt,
+    extraFooter: edNotes.trim() || undefined,
+    tax: { label: 'الضريبة', minor: edTax, baseMinor: edNet },
+  })
+  const postFreeInvoice = () => {
+    if (!edParsed.length) { toast.show('أضف بنداً واحداً على الأقل بكمية موجبة', 'error'); return }
+    if (edProjectId && !edCustomerId) { toast.show('حدّد عميل الفاتورة (عميل المشروع أو غيره)', 'error'); return }
+    try {
+      const paidMinor = edPayment === 'cash' ? (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return edGross } })() : edGross) : (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return 0 } })() : 0)
+      const sale = postSale({
+        projectId: edProjectId || null,
+        customerId: edCustomerId || null,
+        payment: edPayment,
+        paidMinor,
+        invoiceDiscountPercent: 0,
+        taxPercent: taxPolicy.effectivePercent,
+        taxInclusive: false,
+        notes: edNotes.trim() || undefined,
+        lines: edParsed.map((l) => ({
+          itemId: ensureServiceItemForFreeLine({ nameAr: l.nameAr, unitAr: l.unitAr, priceMinor: l.unitPriceMinor }),
+          nameAr: l.nameAr,
+          qty: l.qty,
+          unitPriceMinor: l.unitPriceMinor,
+          unitCostMinor: 0,
+          discountPercent: 0,
+          soldByWeight: false,
+          warehouseId: null,
+        })),
+      })
+      setEdOpen(false)
+      toast.show(`رُحِّلت فاتورة المقاولات ${sale.invoiceNumber} — الإجمالي بالضريبة ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✅`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط شاشة فواتير المبيعات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
@@ -148,6 +232,7 @@ export function ContractingInvoicesPage() {
         <div className="flex flex-wrap gap-2">
           {/* تصحيح بطلب المالك: الفاتورة تفتح حرة دوماً — والربط بالمشروع من حقل «المشروع» داخل الفاتورة نفسها */}
           <Btn shortcut="F3" data-contracting-new-invoice onClick={() => { openSalesInvoiceWindow(); toast.show('الفاتورة تفتح حرة — اربط المشروع من حقل «المشروع» داخلها وسيُعبأ عميله تلقائياً') }} title="فاتورة بيع كاملة حرة — اربطها بمشروع من حقل المشروع داخل الفاتورة"><FilePlus2 size={16} /> فاتورة بيع جديدة</Btn>
+          <Btn variant="soft" data-contracting-free-invoice onClick={() => openFreeEditor(prjFilter)} title="فاتورة مقاولات ببنود تُكتب يدوياً بحرية (مثل عرض السعر) وتُرحَّل بمحرك فاتورة البيع"><Plus size={16} /> فاتورة مقاولات ببنود حرة</Btn>
         </div>
       </div>
 
@@ -220,6 +305,11 @@ export function ContractingInvoicesPage() {
                           <button onClick={() => printInvoice(s, 'a5')} title="طباعة A5" className="px-1.5 py-1 rounded-md text-[10px] font-black text-sky-600 hover:bg-sky-500/10">A5</button>
                           <button onClick={() => printInvoice(s, 'a4')} title="طباعة A4" className="px-1.5 py-1 rounded-md text-[10px] font-black text-sky-600 hover:bg-sky-500/10">A4</button>
                           <button onClick={() => printInvoice(s, 'thermal')} title="إيصال حراري" className="p-1.5 rounded-md text-slate-400 hover:text-sky-600 hover:bg-sky-500/10"><Printer size={13} /></button>
+                          <button onClick={() => {
+                            const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
+                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? setup.vatPercent, taxInclusive: s.taxInclusive ?? setup.taxInclusive, settings: receipt })
+                            shareDocPdfViaWhatsapp({ model, cur, settings: receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: setup.shopName, toast })
+                          }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Send size={13} /></button>
                           <button onClick={() => openSalesInvoiceWindow(s.id)} data-contracting-invoice-review title="مراجعة وتعديل الفاتورة في نافذتها الكاملة" className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Pencil size={13} /></button>
                         </div>
                       </td>
@@ -231,6 +321,135 @@ export function ContractingInvoicesPage() {
           </div>
         )}
       </div>
+
+      {edOpen && (
+        <div data-contracting-free-editor className="layer-modal fixed inset-0 overflow-auto bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className="mx-auto max-w-6xl">
+            <InvoicePOSFrame
+              kind="sale"
+              modeLabel="فاتورة مقاولات — بنود حرة"
+              currencyLabel={`${cur.code} · ${cur.symbol}`}
+              dateLabel={new Date().toISOString().slice(0, 10)}
+              branchLabel={setup.shopName ?? ''}
+              userLabel={setup.ownerName ?? 'المالك'}
+              activityLabel="مقاولات"
+              documentNumber="CI-DRAFT"
+              onBack={() => setEdOpen(false)}
+              onNavigate={() => undefined}
+              onPartySearch={() => undefined}
+              onItemSearch={() => undefined}
+              onSaveDraft={() => toast.show('هذه الفاتورة تُرحَّل مباشرة — بلا مسودات (بنودها حرة تُكتب مرة واحدة)')}
+              onRestoreDraft={() => toast.show('لا مسودات لفاتورة البنود الحرة — اكتب البنود أو عبئها من بنود المشروع')}
+              onPrint={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل المعاينة', 'error'); openPrintPreview({ html: buildModelHtml(edPrintModel(), cur, receipt, 'a4'), wide: true, title: 'معاينة فاتورة المقاولات قبل الترحيل', rebuild: () => buildModelHtml(edPrintModel(), cur, receipt, 'a4' as InvoiceTemplate) }) }}
+              onExportPdf={() => toast.show('بعد الترحيل: طباعة ← حفظ كـ PDF 🖨️')}
+              onWhatsappPdf={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: receipt, docLabel: 'فاتورة', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: setup.shopName, toast }) }}
+              onPost={postFreeInvoice}
+              headerFields={
+                <>
+                  <Field label="المشروع (اختياري)">
+                    <QuickSelect className={inputCls} value={edProjectId} onChange={(e) => { const id = Number(e.target.value); setEdProjectId(id); const prj = projects.find((x) => x.id === id); if (prj?.clientId && !edCustomerId) setEdCustomerId(prj.clientId) }} aria-label="مشروع فاتورة المقاولات">
+                      <option value={0}>بدون مشروع</option>
+                      {projects.filter((x) => x.status === 'active').map((x) => <option key={x.id} value={x.id}>{x.code} — {x.nameAr}</option>)}
+                    </QuickSelect>
+                  </Field>
+                  <Field label="العميل المسجَّل *">
+                    <div className="invoice-doc-infield flex gap-1">
+                      <PartyQuickPicker parties={customers} value={edCustomerId} onChange={(id) => setEdCustomerId(id ?? 0)} label="بحث العميل" cashValue={0} cashLabel="عميل نقدي" />
+                      <span className="text-[11px] text-slate-400 self-center">{customers.find((c) => c.id === edCustomerId)?.nameAr ?? '—'}</span>
+                    </div>
+                  </Field>
+                  <Field label="التحصيل">
+                    <QuickSelect className={inputCls} value={edPayment} onChange={(e) => setEdPayment(e.target.value as 'cash' | 'credit')} aria-label="طريقة التحصيل">
+                      <option value="cash">نقدي</option>
+                      <option value="credit">آجل</option>
+                    </QuickSelect>
+                  </Field>
+                  <Field label={`المحصل (${cur.symbol})`} hint="اتركه فارغاً = كامل الإجمالي للنقدي">
+                    <input className={inputCls} value={edPaid} onChange={(e) => setEdPaid(e.target.value)} inputMode="decimal" dir="ltr" />
+                  </Field>
+                  {edProjectId > 0 && <Btn variant="soft" onClick={fillFromBoq}><Download size={14} /> تعبئة من بنود المشروع</Btn>}
+                </>
+              }
+              partyMeta={
+                <div className="invoice-doc-partymeta">
+                  <span>البنود: <b>{edParsed.length}</b></span>
+                  <span>ضريبة المستند: <b>{taxPolicy.effectivePercent}٪</b></span>
+                  {edProjectId > 0 && <span>المشروع: <b>{projects.find((x) => x.id === edProjectId)?.code}</b></span>}
+                </div>
+              }
+            >
+              <section className="invoice-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark">
+                <div className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
+                  <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-slate-500/10 to-transparent p-3 dark:border-slate-700">
+                    <div className="invoice-lines-toolbar-title"><b>بنود الفاتورة (كتابة حرة)</b><small>اسم البند كما تريد — بلا سجل أصناف؛ تُرحَّل كأصناف خدمة بلا مخزون</small></div>
+                    <Btn variant="soft" onClick={() => setEdLines((l) => [...l, { key: crypto.randomUUID(), nameAr: '', qty: '1', unitAr: 'مقطوعية', price: '' }])}><Plus size={14} /> بند</Btn>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="invoice-lines-table w-full table-fixed text-sm">
+                      <thead className="bg-slate-50 dark:bg-slate-800/60">
+                        <tr className="text-[10.5px] font-black text-slate-500">
+                          <th className="w-9 px-1 py-2 text-center">#</th>
+                          <th className="px-1 py-2 text-center">البند / الوصف</th>
+                          <th className="w-[6rem] px-1 py-2 text-center">الوحدة</th>
+                          <th className="w-[6rem] px-1 py-2 text-center">الكمية</th>
+                          <th className="w-[8rem] px-1 py-2 text-center">سعر الوحدة</th>
+                          <th className="w-[9rem] px-1 py-2 text-center">إجمالي البند</th>
+                          <th className="w-[4rem] px-1 py-2 text-center"></th>
+                        </tr>
+                      </thead>
+                      <tbody onKeyDown={gridArrowNavigation}>
+                        {edLines.map((l, i) => (
+                          <tr key={l.key} className="border-t border-slate-100 dark:border-slate-800">
+                            <td className="p-1 text-center text-[11px] font-mono text-slate-400">{i + 1}</td>
+                            <td className="p-1"><input className={`${inputCls} invoice-cell-input`} value={l.nameAr} onChange={(e) => setEdLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, nameAr: e.target.value } : x)))} placeholder="أعمال حفر وردم وتسوية…" /></td>
+                            <td className="p-1">
+                              <QuickSelect value={l.unitAr} onChange={(e) => setEdLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
+                                {freeUnits.map((u) => <option key={u} value={u}>{u}</option>)}
+                              </QuickSelect>
+                            </td>
+                            <td className="p-1"><input className={`${inputCls} invoice-cell-input`} dir="ltr" value={l.qty} onChange={(e) => setEdLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, qty: e.target.value } : x)))} onKeyDown={(e) => { if (e.key !== 'Enter') return; e.preventDefault(); const price = e.currentTarget.closest('tr')?.querySelectorAll<HTMLInputElement>('input')[2]; price?.focus(); price?.select() }} type="number" inputMode="decimal" step="any" min={0} /></td>
+                            <td className="p-1"><input className={`${inputCls} invoice-cell-input`} dir="ltr" value={l.price} onChange={(e) => setEdLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, price: e.target.value } : x)))} onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return
+                              e.preventDefault()
+                              const tbody = e.currentTarget.closest('tbody')
+                              const nextRow = e.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null
+                              const nextQty = nextRow?.querySelectorAll<HTMLInputElement>('input')[1]
+                              if (nextQty) { nextQty.focus(); nextQty.select(); return }
+                              setEdLines((arr) => [...arr, { key: crypto.randomUUID(), nameAr: '', qty: '1', unitAr: 'مقطوعية', price: '' }])
+                              requestAnimationFrame(() => { const rows = tbody?.querySelectorAll<HTMLTableRowElement>('tr') ?? []; const last = rows[rows.length - 1]; last?.querySelectorAll<HTMLInputElement>('input')[0]?.focus() })
+                            }} type="number" inputMode="decimal" step="any" min={0} /></td>
+                            <td className="p-1"><div className="invoice-table-total font-mono">{(() => { const t = Math.round((Number(l.qty) || 0) * (() => { try { return toMinor(l.price || '0', cur.decimals) } catch { return 0 } })()); return t > 0 ? fmt(t) : '—' })()}</div></td>
+                            <td className="p-1">
+                              <div className="invoice-doc-rowtools">
+                                <button type="button" className="doc-row-delete" aria-label="حذف البند" onClick={() => setEdLines((arr) => arr.filter((x) => x.key !== l.key))}><Trash2 size={13} /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {edLines.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-[12px] text-slate-400">لا بنود — أضف أول بند حر</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <section className="invoice-totals-footer">
+                  <div className="invoice-doc-panel">
+                    <div className="invoice-doc-panel-head"><b>ملاحظات الفاتورة</b><small>تُطبع في الحاشية</small></div>
+                    <div className="invoice-doc-panel-body"><textarea className={`${inputCls} invoice-doc-termsbox`} value={edNotes} onChange={(e) => setEdNotes(e.target.value)} placeholder="ملاحظات المستند…" /></div>
+                  </div>
+                  <div className="invoice-doc-panel" data-contracting-free-totals>
+                    <div className="invoice-doc-panel-head"><b>إجماليات الفاتورة</b><small>إجمالي ← ضريبة ← إجمالي بالضريبة</small></div>
+                    <div className="invoice-doc-panel-body">
+                      <div className="invoice-doc-sum-row"><span>الإجمالي</span><i /><b className="font-mono">{fmt(edNet)}</b></div>
+                      <div className="invoice-doc-sum-row"><span>الضريبة ({taxPolicy.effectivePercent}٪)</span><i /><b className="font-mono">{fmt(edTax)}</b></div>
+                      <div className="invoice-doc-sum-row is-strong"><span>الإجمالي بالضريبة</span><i /><b className="font-mono">{fmt(edGross)} {cur.symbol}</b></div>
+                    </div>
+                  </div>
+                </section>
+              </section>
+            </InvoicePOSFrame>
+          </div>
+        </div>
+      )}
 
       {/* إرشاد: أين المستخلصات؟ مراجعتها وتعديلها وطباعتها */}
       <div className="rounded-2xl bg-orange-500/5 border border-orange-500/20 p-3 text-[12px] text-orange-700 dark:text-orange-300 leading-relaxed">

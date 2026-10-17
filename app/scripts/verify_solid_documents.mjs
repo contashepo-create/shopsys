@@ -55,7 +55,7 @@ const modal = read('ui/components/InvoiceDraftsModal.tsx')
 /* ═══ ③ لوحة المراجعة قبل الاعتماد — أخطاء النواة نفسها ═══ */
 {
   // العرض: validateQuotation من النواة (لا ازدواج منطق) + صلاحية منتهاة + أسعار صفر
-  assert.ok(quotes.includes('validateQuotation({ titleAr, clientName, lines: parsedLines })'), 'أخطاء العرض ليست من validateQuotation النواة')
+  assert.ok(quotes.includes('validateQuotation({ titleAr, clientName, clientId: clientId ? Number(clientId) : null, lines: parsedLines })'), 'أخطاء العرض ليست من validateQuotation النواة')
   assert.ok(quotes.includes('صلاحية العرض انتهت') && quotes.includes('بسعر صفر — عرض مجاني؟'), 'فحوص واجهة العرض ناقصة')
   assert.ok(/if \(blockingCount > 0\) \{ setChecksOpen\(true\); return \}/.test(quotes), 'المانع لا يفتح لوحة المراجعة في العرض')
   // المشروع: مانعو الإنشاء

@@ -259,6 +259,12 @@ export function buildSimpleDocModel(args: {
   settings: ReceiptSettings
   /** سطر ملخص إضافي يُبرز في الحاشية (مثلاً «مصاريف شحن وجمارك: …») */
   extraFooter?: string
+  /**
+   * ضريبة المستند (طلب المالك لعروض الأسعار): تُطبع بثلاثة أسطر بترتيب ثابت —
+   * الإجمالي (قبل الضريبة) ثم الضريبة ثم الإجمالي بالضريبة. بلاها يبقى المستند
+   * بلا ضريبة كما كان (فواتير المشتريات المبسطة).
+   */
+  tax?: { label: string; minor: Minor; baseMinor: Minor }
 }): ReceiptModel {
   const rows: ReceiptRow[] = args.rows.map((r) => ({
     nameAr: r.nameAr,
@@ -284,11 +290,11 @@ export function buildSimpleDocModel(args: {
     rows,
     itemCount: rows.length,
     totalQty,
-    grossMinor: args.totalMinor,
-    taxBaseMinor: args.totalMinor,
+    grossMinor: args.tax ? args.tax.baseMinor : args.totalMinor,
+    taxBaseMinor: args.tax ? args.tax.baseMinor : args.totalMinor,
     discountMinor: 0,
-    taxLabel: null,
-    taxMinor: 0,
+    taxLabel: args.tax ? args.tax.label : null,
+    taxMinor: args.tax ? args.tax.minor : 0,
     totalMinor: args.totalMinor,
     paidMinor: args.paidMinor,
     remainingMinor: args.totalMinor - args.paidMinor,

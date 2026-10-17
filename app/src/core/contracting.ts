@@ -307,10 +307,13 @@ export function quotationTotal(lines: readonly QuotationLine[]): Minor {
   return lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
 }
 
-export function validateQuotation(q: Pick<Quotation, 'titleAr' | 'clientName' | 'lines'>): string[] {
+export function validateQuotation(q: Pick<Quotation, 'titleAr' | 'clientName' | 'lines'> & { clientId?: number | null }): string[] {
   const errors: string[] = []
   if (!q.titleAr.trim()) errors.push('عنوان العرض مطلوب')
   if (!q.clientName.trim()) errors.push('اسم العميل/الجهة مطلوب')
+  /* طلب المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل في سجل العملاء —
+     الربط كان اختيارياً «بلا ربط» فيضيع تتبع العرض وعميله عند الفوز والتحويل. */
+  if (!q.clientId || q.clientId <= 0) errors.push('عرض السعر دائماً لعميل مسجَّل — اختر العميل من سجل العملاء')
   const meaningful = q.lines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
   if (meaningful.length === 0) errors.push('بند واحد على الأقل بكمية موجبة')
   for (const l of meaningful) {
