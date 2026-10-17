@@ -24,6 +24,7 @@
  */
 
 import { tgEscape } from './tgHtml.js'
+import { deviceMetadata } from './subscriptions.js'
 
 export const REG_PREFIX = 'reg:'
 export const REG_MAX_BYTES = 8_192
@@ -217,7 +218,63 @@ export async function saveRegistration(cfg, report) {
     }
   }
   await cfg.kv.put(regKey(report.deviceId), JSON.stringify(record), { metadata: registrationMetadata(record) })
+  /* ── بند 2 (طلب المالك 2026-10-17): العميل يظهر في لوحة المطوّر ────────────
+     لوحة المطوّر (مستودع shopsys-controler) تقرأ سجلات `dev:` لا `reg:` ⇒ العميل
+     الذي سجَّل جهازه لم يكن يظهر في قائمة العملاء إطلاقاً (ولا كـ«جديد» ولا
+     كـ«قديم»)، بل كان البلاغ يصل على تليجرام فقط.
+     الحل: أول تسجيل ينشئ سجل `dev:` تجريبياً (بلا مفتاح) ⇒ يظهر العميل في
+     اللوحة فوراً؛ وإعادة التسجيل (بعد مسح القاعدة مثلاً) تُحدّث **نفس** السجل
+     ⇒ يبقى عميلاً واحداً قديماً لا عميلاً جديداً.
+     لا نلمس `plan`/`expiresAt`/`fingerprint` — سلطة المفتاح الموقّع حصراً
+     (إصدار المفتاح لاحقاً يدمج سجله فوق هذا السجل ولا يمحوه). */
+  await ensureDeviceRecord(cfg, report, now)
   return { saved: true, isNew: !existing, record }
+}
+
+/**
+ * هل يحمل سجل الجهاز `dev:` **رخصة صادرة** أم مجرد تسجيل بلا مفتاح؟
+ * سجل التسجيل (العميل سجّل جهازه ولم يُرمّخص بعد) خطة فارغة ⇒ ليس رخصة:
+ * يبقى في «مسجّلون بلا رخصة» وتُتاح له بوابة الإصدار.
+ */
+export function hasLicense(record) {
+  if (!record || typeof record !== 'object') return false
+  return Boolean(String(record.plan ?? '').trim())
+}
+
+/**
+ * يضمن وجود سجل `dev:` للجهاز المسجَّل (قائمة عملاء لوحة المطوّر).
+ * ينشئه إن لم يوجد، ويملأ اسم العميل إن كان فارغاً — ولا يمسّ حالة الترخيص.
+ */
+export async function ensureDeviceRecord(cfg, report, now = new Date().toISOString()) {
+  const key = `dev:${report.deviceId}`
+  let current = null
+  try {
+    const raw = await cfg.kv.get(key)
+    current = raw ? JSON.parse(raw) : null
+  } catch { current = null }
+  const customer = report.shopName || report.ownerName || 'عميل جديد'
+  if (!current || typeof current !== 'object') {
+    /* خطة فارغة = «سجَّل جهازه ولم يُرمّخص بعد» (لا رخصة): تظهر في لوحة المطوّر
+       كعميل بحالة «بدون اشتراك»، ويبقى في «مسجّلون بلا رخصة» حتى يُصدَر له مفتاح.
+       خطة 'trial' محجوزة لمفتاح حقيقي فلا تُستخدم هنا. */
+    const fresh = {
+      plan: '',
+      expiresAt: null,
+      customer,
+      message: '',
+      fingerprint: '',
+      registeredAt: now,
+    }
+    await cfg.kv.put(key, JSON.stringify(fresh), { metadata: deviceMetadata(fresh) })
+    return { created: true, record: fresh }
+  }
+  /* سجل موجود: نُكمل النقص فقط (اسم العميل) ولا نغيّر حالة الترخيص */
+  if (!current.customer && customer) {
+    const next = { ...current, customer }
+    await cfg.kv.put(key, JSON.stringify(next), { metadata: deviceMetadata(next) })
+    return { created: false, record: next }
+  }
+  return { created: false, record: current }
 }
 
 /* حذف سجل تسجيل (حق الاعتراض/الحذف في سياسة الخصوصية): يُستجاب للطلب خلال

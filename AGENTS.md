@@ -7437,5 +7437,12 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - الطباعة: `ui/print/printInvoiceA4.ts` + `ui/print/printReceipt.ts` ⇒ الملاحظة تُطبع **تحت اسم الصنف**.
 - البوابة: `scripts/verify_invoice_line_notes.mjs` (٢٧ فحصاً) + `scripts/verify_owner_batch8_settings.mjs` (٢٢ فحصاً للبنود ①③④⑦).
 
+### ②.ب العميل يظهر في لوحة المطوّر (`shopsys-controler`) — لا بلاغ وحدث فقط
+- **السبب الجذري المكتشوف**: لوحة المطوّر (مستودع `shopsys-controler`) تقرأ سجلات `dev:` (قائمة العملاء) ولا تقرأ `reg:` (سجلات التسجيل) ⇒ العميل الذي سجَّل جهازه **لم يكن يظهر في قائمة العملاء إطلاقاً** — لا كـ«جديد» ولا كـ«قديم»؛ كان البلاغ يصل على تليجرام فقط. (واللوحة تستدعي KV مباشرة عبر REST API بمساحتي `license`=SHOPSYS_CONTROL و`services`=SHOPSYS_KV.)
+- **الحل (في `tools/devbot` — نفس مساحة KV)**: `registrations.js::saveRegistration` صار يستدعي `ensureDeviceRecord(cfg, report, now)` ⇒ **أول** تسجيل ينشئ `dev:<deviceId>` **بلا رخصة** `{plan:'', expiresAt:null, customer:اسم المحل, fingerprint:''}` ⇒ يظهر العميل في اللوحة فوراً بحالة «بدون اشتراك» (وخططة فارغة = «مسجَّل بلا مفتاح»؛ `trial` محجوزة لمفتاح حقيقي)؛ و**إعادة** التسجيل (بعد مسح القاعدة) تُحدّث **نفس** السجل ⇒ يبقى عميلاً واحداً قديماً (لا سجل ثانٍ). سجل جهاز مرخّص **لا يُمسّ** (plan/expiresAt/fingerprint/message) — إصدار المفتاح لاحقاً (زر «🔑 إصدار مفتاح» أو `worker.js`) يدمج فوقه كما كان ⇒ لا عميل مكرر.
+- **تصحيح صنف «الرخصة» (لأن وجود سجل `dev:` لم يعد يعني رخصة)**: `registrations.js::hasLicense(record)` = السجل له خطة غير فارغة؛ تستخدمها لوحة تليجرام: «🆕 مسجّلون بلا رخصة» (الفهرس `metadata.plan` الفارغ) · زر الإصدار يظهر ويمكن الضغط (لم يعد محجوباً بوجود سجل تسجيل) · البطاقة تعرض «بلا رخصة بعد»؛ ولوحة المطوّر (تطبيق سطح مكتب) تعرض العميل «بدون اشتراك» عبر `computeStatus` (خطة فارغة ⇒ none).
+- `subscriptions.js`: عدّاد `trial` منفصل في التذكير اليومي (المسجَّل بلا مفتاح ليس «مدى الحياة» ولا يستحق تذكيراً) + سطر «🧪 تجريبي بلا مفتاح» في الإحصائيات.
+- البوابة: `scripts/verify_registration_client_visibility.mjs` (١٩ فحصاً: الإنشاء · عدم التكرار · عدم المساس بحالة الترخيص · صنف «رخصة/تسجيل» · عدّاد التذكير) + اختبار `tests/registration_pipeline_e2e.test.ts` (٣٣ اختباراً) يغطي «بلا رخصة» والإصدار من الزر.
+
 ### التحقق
-`npx tsc -b --force` ✓ · `npx oxlint src` (٠ أخطاء/٠ تحذيرات) ✓ · `npm run verify:all` **312/312** ✓ (٢٩٢ بوابة + ٢٠ رحلة) · Vitest **١٦٨ ملفاً / ١١٥٥ اختباراً** ✓ · `npm run desktop:compile` ✓ (احتياط CJS؛ لا ثنائي Electron في sandbox).
+`npx tsc -b --force` ✓ · `npx oxlint src` (٠ أخطاء/٠ تحذيرات) ✓ · `npm run verify:all` **313/313** ✓ (٢٩٣ بوابة + ٢٠ رحلة) · Vitest **١٦٨ ملفاً / ١١٥٥ اختباراً** ✓ · `npm run desktop:compile` ✓ (احتياط CJS؛ لا ثنائي Electron في sandbox).
