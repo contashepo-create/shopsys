@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const selfPath = fileURLToPath(import.meta.url)
@@ -15,7 +15,7 @@ const ok = (name, cond) => (cond ? (pass++, console.log('  ✓ ' + name)) : fail
 
 // ── ① قواعد الدمج (دالة خالصة في desktop/deviceIdentity.ts) ─────────────────
 const { mergeDeviceIdentity, generateDeviceIdFromBytes, normalizeDeviceId } =
-  await import(join(appRoot, 'desktop/deviceIdentity.ts'))
+  await import(pathToFileURL(join(appRoot, 'desktop/deviceIdentity.ts')).href)
 
 const SAVED = 'SHOP-AAAA-BBBB-CCCC'
 const OTHER = 'SHOP-ZZZZ-YYYY-XXXX'
@@ -37,10 +37,10 @@ ok('تغيير في المرشّح لا يكسر الهوية المحفوظة',
 ok('معرّف غير صالح يُنظَّف إلى null', normalizeDeviceId('shop-aaaa-bbbb-cccc') === SAVED && normalizeDeviceId('nope') === null)
 
 // ── ② صيغة المعرّف مطابقة لمولّد الترخيص (core/license.ts) ────────────────
-const { generateDeviceId } = await import(join(appRoot, 'src/core/license.ts'))
+const { generateDeviceId } = await import(pathToFileURL(join(appRoot, 'src/core/license.ts')).href)
 const bytes = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
 ok('مولّد العملية الرئيسية = مولّد الواجهة (core/license.ts)', generateDeviceIdFromBytes(bytes) === generateDeviceId(bytes))
-const { buildRegistrationReport } = await import(join(appRoot, 'src/core/registration.ts'))
+const { buildRegistrationReport } = await import(pathToFileURL(join(appRoot, 'src/core/registration.ts')).href)
 ok('المعرّف المولَّد صالح للبلاغ (DEVICE_RE في core/registration.ts)', buildRegistrationReport({ deviceId: generateDeviceIdFromBytes(bytes) }) !== null)
 
 // ── ③ الواجهة: تعتمد هوية العملية الرئيسية وت/herآئها في المرساة المحلية ─────
@@ -65,7 +65,7 @@ if (mode === 'desktop') {
   if (seeded) mem.set('shopsys-i', seeded)
 }
 
-const { useAppStore } = await import(join(appRoot, 'src/stores/app.store.ts'))
+const { useAppStore } = await import(pathToFileURL(join(appRoot, 'src/stores/app.store.ts')).href)
 const deviceId = useAppStore.getState().deviceId
 const anchorRaw = mem.get('shopsys-i')
 const anchor = anchorRaw ? JSON.parse(Buffer.from(anchorRaw, 'base64').toString('utf8')) : null

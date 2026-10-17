@@ -5,7 +5,7 @@
 // تُحدّث **نفس** السجل ⇒ عميل واحد قديم. إصدار المفتاح لاحقاً يدمج فوقه (لا سجل ثانٍ).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
@@ -31,8 +31,8 @@ class MemoryKv {
   }
 }
 
-const { saveRegistration, sanitizeRegistration, hasLicense } = await import(join(repoRoot, 'tools/devbot/src/registrations.js'))
-const { subscriptionDigest, formatDigestAr } = await import(join(repoRoot, 'tools/devbot/src/subscriptions.js'))
+const { saveRegistration, sanitizeRegistration, hasLicense } = await import(pathToFileURL(join(repoRoot, 'tools/devbot/src/registrations.js')).href)
+const { subscriptionDigest, formatDigestAr } = await import(pathToFileURL(join(repoRoot, 'tools/devbot/src/subscriptions.js')).href)
 
 const kv = new MemoryKv()
 const cfg = { kv }

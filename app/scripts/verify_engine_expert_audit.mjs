@@ -41,6 +41,12 @@ const guardSrc = readFileSync(new URL('../src/core/ledgerGuard.ts', import.meta.
 ok('ث0 السنة المقفلة لا يُستثنى منها إلا قيد الإقفال نفسه', guardSrc.includes("CLOSED_YEAR_EXEMPT: readonly SourceType[] = ['year_closing']"))
 ok('ث0 الحارس يمنع التعديل الصامت لسطور/تاريخ/وصف/مصدر القيد المرحّل (Append-Only)', guardSrc.includes('تعديل صامت لسطور القيد') && guardSrc.includes('تغيير تاريخ القيد') && guardSrc.includes('تغيير وصف أو مصدر القيد'))
 ok('ث0 الحارس يرفض الحساب غير الموجود والتجميعي والمبلغ السالب والمدين/الدائن معاً وتجاوز النطاق الآمن', guardSrc.includes('حساب غير موجود في شجرة الحسابات') && guardSrc.includes('حساب تجميعي لا يقبل قيوداً مباشرة') && guardSrc.includes('مبلغ سالب على الحساب') && guardSrc.includes('مدين ودائن معاً') && guardSrc.includes('خارج النطاق الآمن'))
+/* حارس انحدار للمنصة: استيراد ديناميكي بمسار مطلق خام يكسر Windows
+   (ERR_UNSUPPORTED_ESM_URL_SCHEME protocol 'd:') — أوقف إصدار v1.0.31 */
+const { readdirSync } = await import('node:fs')
+const scriptsDir = new URL('../scripts/', import.meta.url)
+const rawJoinImports = readdirSync(scriptsDir).filter((f) => f.endsWith('.mjs') && /await import\(join\(/.test(readFileSync(new URL(f, scriptsDir), 'utf8')))
+ok('ث0 كل البوابات محمولة بين الأنظمة: لا import ديناميكي بمسار مطلق خام (pathToFileURL إلزامي)', rawJoinImports.length === 0, rawJoinImports.join(', '))
 
 /* ── أدوات الثوابت الحية ──────────────────────────────────────────────────── */
 const net = (code) => st().journal.reduce((a, e) => a + e.lines.filter((l) => l.accountCode === code).reduce((x, l) => x + l.debit - l.credit, 0), 0)
