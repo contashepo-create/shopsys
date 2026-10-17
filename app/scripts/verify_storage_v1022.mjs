@@ -43,7 +43,7 @@ check('تصدير SQLite كامل بحوار حفظ (database:exportCopy)', /ipc
 check('preload يعرض exportCopy', /exportCopy: \(\) => ipcRenderer\.invoke\('database:exportCopy'\)/.test(preload))
 check('عقد الجسر يصف exportCopy', /exportCopy\(\): Promise/.test(bridge))
 check('شاشة القفل تعرض Excel شاملاً وSQLite', /exportExcel/.test(lock) && /exportSqlite/.test(lock) && /قاعدة SQLite \(\.db\)/.test(lock))
-check('التحديث صامت بلا أزرار فحص أو تثبيت يدوية في الواجهة', !/DesktopUpdater|checkUpdates|updater:install/.test(about) && !preload.includes('shopsysUpdater') && main.includes('autoUpdater.autoDownload = true'))
+check('التحديث صامت في العملية الرئيسية مع زر فحص يدوي سريع في الواجهة', /DesktopUpdater/.test(about) && preload.includes('shopsysUpdater') && main.includes('autoUpdater.autoDownload = true') && main.includes('autoUpdater.autoInstallOnAppQuit = false'))
 check('رفض checkForUpdates يُلتقط وتُعاد المحاولة بصمت حتى عند تعذر الشبكة', main.includes('scheduleUpdateRetry(autoUpdater)') && main.includes('UPDATE_CHECK_INTERVAL_MS') && lifecycle.includes('updateCheckRetryDelay') && lifecycle.includes('Promise.resolve(check()).then(succeed, report)'))
 check('غياب app-update.yml يستخدم إعداد GitHub احتياطياً معروفاً', main.includes("join(process.resourcesPath, 'app-update.yml')") && main.includes("repo: 'tahakam-releases'") && main.includes('autoUpdater.setFeedURL'))
 const keyRecoveryTs = read('desktop/keyRecovery.ts')
@@ -67,6 +67,7 @@ check('النسخ الدوّارة ساعية فقط (يوم واحد) — لا 
 check('شاشة البدء تُظهر تقدّماً فعلياً (نسبة + خطوة) ومهلة أمان', /setSplashProgress\(40, 'فتح قاعدة البيانات/.test(main) && /setTimeout\(\(\) => \{\s*closeSplash\(\)[\s\S]{0,200}?\}, 20_000\)/.test(main))
 check('رسالة التحديث تظهر مرة واحدة بعد تغيّر الإصدار (last-run.json)', /writeLastRunVersion\(\)/.test(main) && /last-run\.json/.test(main))
 check('يجهّز نسخة عند اكتمال التنزيل ويأخذ نسخة جديدة بعد flush قبل التثبيت', /state\.status === 'downloaded'[\s\S]{0,400}backupBeforeUpdate\(state\.version\)/.test(main) && /flush: flushRenderer/.test(main) && /backupBeforeUpdate\(downloadedUpdateVersion!\)/.test(main))
+check('واجهة التحديث اليدوي تشرح النسخة الاحتياطية قبل التثبيت', /تُؤخذ نسخة احتياطية قبل التثبيت/.test(read('src/ui/components/DesktopUpdater.tsx')))
 check('الحوار لا يدّعي تراجعاً تلقائياً', !/تراجع تلقائي واستعادة/.test(about))
 
 /* v1.0.22 — استرداد مكان القاعدة وتقوية Electron */

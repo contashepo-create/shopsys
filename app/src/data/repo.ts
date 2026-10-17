@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { appStorage } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
+import { draftFromCategory, nextSku } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
 import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
@@ -1707,6 +1708,14 @@ interface DataState {
   // بذر البيانات الأولية حسب النشاط المختار
   seed: (activityFeatures: ItemFeature[]) => void
   addItem: (item: Omit<Item, 'id'>) => void
+  /**
+   * بند حر ⇒ صنف خدمة (طلب المالك 2026-10-17): بنود عروض الأسعار والمشاريع
+   * وفواتير المقاولات تُكتب يدوياً بحرية بلا سجل صنف؛ ولأن محرك البيع لا يرحّل
+   * سطراً بلا صنف، يُضمن هنا صنف **خدمة** (بلا مخزون ولا تكلفة) بنفس الاسم:
+   * موجود ⇒ يُعاد معرفه، وإلا أُنشئ مرة واحدة. فلا يبقى سطر بـ itemId=0 عالقاً
+   * عند الاعتماد («السطر: بلا صنف») ولا تُلوَّث قائمة الأصناف بخدمات مكررة.
+   */
+  ensureServiceItemForFreeLine: (args: { nameAr: string; unitAr?: string; priceMinor?: number }) => number
   updateItem: (id: number, patch: Partial<Item>) => void
   removeItem: (id: number, approval?: { approvedBy: string }) => void
   addCategory: (nameAr: string, features: ItemFeature[], parentId?: number | null) => void
@@ -3766,6 +3775,31 @@ export const useDataStore = create<DataState>()(
         })
       },
 
+      ensureServiceItemForFreeLine: (args) => {
+        const name = args.nameAr.trim()
+        if (!name) throw new Error('اسم البند الحر مطلوب')
+        const state0 = get()
+        const existing = state0.items.find((it) => it.isActive && it.isService === true && it.nameAr.trim() === name)
+        if (existing) return existing.id
+        const draft = draftFromCategory(undefined, nextSku(state0.items))
+        const item: Omit<Item, 'id'> = {
+          ...draft,
+          nameAr: name,
+          baseUnit: args.unitAr?.trim() || 'مقطوعية',
+          isService: true,
+          priceMinor: Number.isInteger(args.priceMinor) && (args.priceMinor as number) > 0 ? args.priceMinor as number : 0,
+          costMinor: 0,
+          stockQty: 0,
+          minQty: 0,
+          trackExpiry: false,
+          trackSerial: false,
+          soldByWeight: false,
+        }
+        get().addItem(item)
+        const created = get().items.at(-1)
+        if (!created) throw new Error('تعذر إنشاء صنف الخدمة للبند الحر')
+        return created.id
+      },
       addItem: (item) => {
         // §81: حراس النواة داخل المستودع — الواجهة ليست المتصل الوحيد
         // (الإضافة السريعة في فاتورة الشراء، الاستيراد، نوافذ التحرير، بوت التليجرام…):
@@ -9472,7 +9506,7 @@ export const useDataStore = create<DataState>()(
           taxIncluded: !!l.taxIncluded,
         }))
         merged.lines = fullLines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
-        const errors = validateQuotation({ clientName: merged.clientName, titleAr: merged.titleAr, lines: merged.lines })
+        const errors = validateQuotation({ clientName: merged.clientName, clientId: merged.clientId, titleAr: merged.titleAr, lines: merged.lines })
         if (errors.length) throw new Error(errors.join(' — '))
         if (merged.clientId != null && !state.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود')
         merged.clientName = merged.clientName.trim()
@@ -11121,8 +11155,14 @@ export const useDataStore = create<DataState>()(
           if (ex.payment !== 'credit') continue
           const project = state.projects.find((pr) => pr.id === ex.projectId)
           if (!project || project.clientId !== customerId) continue
+          // إصلاح (مراجعة 2026-10-17): ذمة المستخلص = المستحق − ما استُرد من الدفعة
+          // المقدمة (القيد أطفأ 2109 به) — وإلا عرض معالج التحصيل FIFO ديناً أكبر من
+          // كشف الحساب وابتلع الفائض الدائن في توزيع وهمي (انفصال الكشف عن الدفتر §74)
+          const recovery = Math.min(ex.totals.dueMinor, Math.max(0, ex.advanceRecoveryMinor ?? 0))
+          const due = ex.totals.dueMinor - recovery
+          if (due <= 0) continue
           const key = `extract:${ex.id}`
-          open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: ex.totals.dueMinor, settledMinor: settled.get(key) ?? 0 })
+          open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: due, settledMinor: settled.get(key) ?? 0 })
         }
         // مستندات الأنشطة المتخصصة (معمل · عيادة · تأجير · نقل · صيانة · محافظ ·
         // معرض سيارات · وحدات عقارية) — بنفس قواعد استحقاق كشف الحساب حرفياً.

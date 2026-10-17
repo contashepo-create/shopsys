@@ -29,7 +29,8 @@ ok('كسور تُقرَّب: 2.5×333 = 833 (تقريب)', quotationTotal([{ des
 ok('قائمة فارغة = 0', quotationTotal([]) === 0)
 
 console.log('📋 التحقق من العرض')
-ok('عرض سليم بلا أخطاء', validateQuotation({ titleAr: 'تشطيب', clientName: 'شركة النور', lines: [{ descriptionAr: 'دهانات', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 50000 }] }).length === 0)
+ok('عرض سليم بعميل مسجَّل بلا أخطاء', validateQuotation({ titleAr: 'تشطيب', clientName: 'شركة النور', clientId: 9901, lines: [{ descriptionAr: 'دهانات', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 50000 }] }).length === 0)
+ok('عرض بلا عميل مسجَّل يُرفض (سياسة المالك)', validateQuotation({ titleAr: 'تشطيب', clientName: 'شركة النور', clientId: null, lines: [{ descriptionAr: 'دهانات', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 50000 }] }).length > 0)
 ok('عنوان فارغ يُرفض', validateQuotation({ titleAr: ' ', clientName: 'ش', lines: [{ descriptionAr: 'x', qty: 1, unitAr: 'م', unitPriceMinor: 1 }] }).length > 0)
 ok('عميل فارغ يُرفض', validateQuotation({ titleAr: 'ع', clientName: '', lines: [{ descriptionAr: 'x', qty: 1, unitAr: 'م', unitPriceMinor: 1 }] }).length > 0)
 ok('بلا بنود يُرفض', validateQuotation({ titleAr: 'ع', clientName: 'ش', lines: [] }).length > 0)

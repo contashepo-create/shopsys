@@ -17,6 +17,7 @@ import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type Snap
 import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
 import { KEY_RECOVERY_MAX_FILE_BYTES, keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
+import { generateDeviceIdFromBytes, mergeDeviceIdentity } from './deviceIdentity.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
 import {
@@ -31,7 +32,7 @@ import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, 
 import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
 import { probeSnapshotKey } from './snapshotKeyProbe.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
-import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
+import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, decideManualCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
 import { CHROMIUM_ERR_ABORTED, MAIN_FRAME_ABORT_RETRY_LIMIT, classifyMainFrameLoadFailure, type MainFrameLoadState } from './mainLoad.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
@@ -911,20 +912,27 @@ type UpdaterState =
 let updaterState: UpdaterState = { status: 'idle' }
 let downloadedUpdateVersion: string | null = null
 let downloadedInstallerPath: string | null = null
+/** نسبة آخر تقدم تنزيل معروفة — تُعرض في شريط التنزيل */
+let updateDownloadPercent = 0
 
 function recordUpdaterState(state: UpdaterState): void {
   updaterState = state
   if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
   if (state.status === 'available') logLine('updater', `يتوفر تحديث ${state.version}؛ بدأ التنزيل في الخلفية`)
   if (state.status === 'not-available') logLine('updater', `لا يوجد تحديث أحدث من ${state.version}`)
+  if (state.status === 'downloading') updateDownloadPercent = state.percent
   if (state.status === 'downloaded') {
     downloadedUpdateVersion = state.version
+    updateDownloadPercent = 100
     logLine('updater', `اكتمل تنزيل ${state.version}؛ سيُثبّت بصمت عند الإغلاق`)
     preUpdateBackup = backupBeforeUpdate(state.version).catch((error) => {
       logLine('backup', `تعذّرت نسخة ما قبل التحديث: ${(error as Error).message}`)
       return null
     })
   }
+  /* واجهة التحديث اليدوية: زر «فحص التحديثات» + شريط التنزيل —
+     الحالة تصل للواجهة فوراً؛ الفحص الدوري والتثبيت الصامت يبقيان كما هما. */
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:state', state)
 }
 
 function reportUpdaterError(error: unknown): void {
@@ -1009,6 +1017,54 @@ function checkUpdatesQuietly(autoUpdater: typeof import('electron-updater').auto
       if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
     },
   )
+}
+
+/** فحص يدوي من زر «فحص التحديثات»: يبدأ الفحص فوراً بلا انتظار الفحص الدوري.
+    لا يغيّر مسار التنزيل الخلفي ولا التثبيت الصامت عند الإغلاق — نفس المحرك (electron-updater). */
+function checkUpdatesManually(autoUpdater: typeof import('electron-updater').autoUpdater): UpdaterState {
+  if (!app.isPackaged) return updaterState
+  const decision = decideManualCheck({
+    packaged: app.isPackaged,
+    inFlight: updateCheckInFlight,
+    downloading: updateDownloadInProgress,
+    downloaded: downloadedUpdateVersion !== null,
+  })
+  if (decision.kind === 'downloaded') {
+    recordUpdaterState({ status: 'downloaded', version: downloadedUpdateVersion! })
+    return updaterState
+  }
+  if (decision.kind === 'downloading') {
+    recordUpdaterState({ status: 'downloading', percent: updateDownloadPercent })
+    return updaterState
+  }
+  if (decision.kind === 'in_flight') return updaterState
+  if (decision.kind === 'unavailable') return updaterState
+  // فحص جديد: نوقف المؤقّت الدوري المجدول كي لا يتكرر فحصان، ونعيد جدولته بعد انتهائه.
+  clearUpdateCheckTimer()
+  updateCheckInFlight = true
+  updateCheckFailedDuringFlight = false
+  recordUpdaterState({ status: 'checking' })
+  observeUpdateCheck(
+    () => autoUpdater.checkForUpdates(),
+    (error) => {
+      updateCheckInFlight = false
+      updateCheckFailedDuringFlight = false
+      updateDownloadInProgress = false
+      reportUpdaterError(error)
+      scheduleUpdateRetry(autoUpdater)
+    },
+    () => {
+      updateCheckInFlight = false
+      if (updateCheckFailedDuringFlight) {
+        updateCheckFailedDuringFlight = false
+        scheduleUpdateRetry(autoUpdater)
+        return
+      }
+      updateCheckRetryAttempt = 0
+      if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
+    },
+  )
+  return updaterState
 }
 
 function wireUpdater(): void {
@@ -1125,6 +1181,50 @@ async function backupBeforeUpdate(version: string): Promise<string | null> {
 }
 
 /* ── IPC ── */
+/* ── بند 5 (طلب المالك): قناة الدعم عبر العملية الرئيسية ─────────────────────
+   نسخة سطح المكتب تعمل من file:// ⇒ المتصفح يرسل Origin: null ⇒ يرفضه العامل
+   (403) فيظهر للمستخدم «تعذّر الإرسال — تأكد من اتصال الإنترنت» بلا سبب.
+   الطلب من العملية الرئيسية يذهب **بلا Origin** (سياسة المصدر حماية متصفح،
+   والحماية الحقيقية هنا هي اعتماد HMAC + TOFU). والمضيفون مسموحون بقائمة
+   صريحة (لا جلب عشوائي من العملية الرئيسية). */
+const SUPPORT_ALLOWED_HOSTS = new Set([
+  'shopsys-control.contashepo.workers.dev',
+  'shopsys-control.mobileshop2026.workers.dev',
+])
+const SUPPORT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
+
+function supportTokenPath(): string {
+  return join(app.getPath('userData'), 'support-token.json')
+}
+
+/* ── بند 2 (طلب المالك): هوية الجهاز خارج القاعدة ───────────────────────────
+   كان معرّف الجهاز يعيش في مرساة localStorage وداخل القاعدة نفسها؛ فمسح
+   القاعدة (أو فقد مرساة Chromium) كان يُنشئ معرّفاً جديداً ⇒ يخرج العميل من
+   لوحة المطوّر «عميلاً جديداً» ويُفقد الترخيص المرتبط بالجهاز.
+   الآن: userData/device-identity.json هو المرجع (خارج القاعدة)، ولا يتغيّر
+   معرّف ثابت أبداً (الدمج في desktop/deviceIdentity.ts — دالة خالصة). */
+function resolveDeviceIdentity(candidate: unknown): { deviceId: string; firstTrialAt: string | null } {
+  const path = join(app.getPath('userData'), 'device-identity.json')
+  let saved: unknown = null
+  try { saved = JSON.parse(readFileSync(path, 'utf8')) } catch { /* أول مرة أو ملف تالف — يُعاد بناؤه */ }
+  const merged = mergeDeviceIdentity(saved, candidate)
+  let deviceId = merged.identity.deviceId
+  if (!deviceId) {
+    /* لا مرشّح ولا محفوظ: أول تشغيل ⇒ نولّد معرّفاً (نفس خوارزمية core/license.ts) */
+    deviceId = generateDeviceIdFromBytes(randomBytes(12))
+    merged.identity.deviceId = deviceId
+    merged.changed = true
+  }
+  if (merged.changed) {
+    try {
+      writeFileSync(path, JSON.stringify(merged.identity), 'utf8')
+    } catch (error) {
+      logLine('identity', `تعذّر حفظ هوية الجهاز: ${(error as Error).message}`)
+    }
+  }
+  return { deviceId, firstTrialAt: merged.identity.firstTrialAt }
+}
+
 function wireIpc(): void {
   const db = () => {
     if (!database) throw new Error(databaseInitializationFailure ?? 'قاعدة البيانات غير مهيأة بعد')
@@ -1172,6 +1272,26 @@ function wireIpc(): void {
 
   /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
   initLanHostIpc(() => mainWindow)
+
+  /* واجهة التحديث اليدوية (نسخة سطح المكتب): زر «فحص التحديثات» + شريط التنزيل.
+     الفحص الدوري الخلفي والتثبيت الصامت عند الإغلاق يبقيان كما هما بلا تغيير. */
+  ipcMain.handle('updater:state', () => updaterState)
+  ipcMain.handle('updater:check', () => {
+    if (!app.isPackaged) return updaterState
+    try {
+      const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+      return checkUpdatesManually(autoUpdater)
+    } catch (error) {
+      reportUpdaterError(error)
+      return updaterState
+    }
+  })
+  ipcMain.handle('updater:install', async () => {
+    if (!app.isPackaged) return
+    if (!downloadedUpdateVersion) throw new Error('لم يكتمل تنزيل التحديث بعد')
+    // نفس مسار الإغلاق الصامت بالضبط: حفظ الواجهة ثم حماية القاعدة ونسخها ثم التثبيت.
+    await shutdownApplication(true)
+  })
 
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
@@ -1313,6 +1433,62 @@ function wireIpc(): void {
     const merged = mergeTrialAnchor(saved, args)
     if (merged.changed) writeFileSync(anchorPath, JSON.stringify(merged.anchor), 'utf8')
     return merged.anchor
+  })
+
+  /* بند 2 (طلب المالك): هوية الجهاز — مزامنة (sendSync) لأن الإقلاع يحتاجها
+     قبل أي فحص ترخيص؛ العملية الرئيسية هي المرجع (ملف خارج القاعدة). */
+  ipcMain.on('device:identity', (event, candidate: unknown) => {
+    event.returnValue = resolveDeviceIdentity(candidate)
+  })
+
+  /* بند 5 (طلب المالك): طلب دعم — من العملية_main (بلا Origin) + قائمة مضيفين */
+  ipcMain.handle('support:request', async (_event, args: { url?: unknown; method?: unknown; headers?: unknown; body?: unknown }) => {
+    const rawUrl = typeof args?.url === 'string' ? args.url : ''
+    let parsed: URL
+    try { parsed = new URL(rawUrl) } catch { return { ok: false, status: 0, body: '', error: 'invalid-url' } }
+    if (parsed.protocol !== 'https:' || !SUPPORT_ALLOWED_HOSTS.has(parsed.hostname)) {
+      return { ok: false, status: 0, body: '', error: 'host-not-allowed' }
+    }
+    const method = args?.method === 'POST' ? 'POST' : 'GET'
+    const headers: Record<string, string> = {}
+    if (args?.headers && typeof args.headers === 'object') {
+      for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
+        if (typeof value === 'string') headers[key] = value
+      }
+    }
+    const body = typeof args?.body === 'string' ? args.body : undefined
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 20_000)
+    try {
+      const res = await fetch(parsed.toString(), { method, headers, body, signal: controller.signal })
+      const text = await res.text()
+      return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
+    } catch (error) {
+      return { ok: false, status: 0, body: '', error: (error as Error).message }
+    } finally {
+      clearTimeout(timer)
+    }
+  })
+
+  /* بند 5: اعتماد قناة الدعم خارج القاعدة (يبقى ثابتاً بعد مسحها ⇒ لا رفض 401) */
+  ipcMain.handle('support:tokenGet', () => {
+    try {
+      const parsed = JSON.parse(readFileSync(supportTokenPath(), 'utf8')) as { token?: unknown }
+      const token = typeof parsed?.token === 'string' ? parsed.token : ''
+      return SUPPORT_TOKEN_RE.test(token) ? token : null
+    } catch { return null }
+  })
+
+  ipcMain.handle('support:tokenSet', (_event, token: unknown) => {
+    const value = typeof token === 'string' ? token : ''
+    if (!SUPPORT_TOKEN_RE.test(value)) return false
+    try {
+      writeFileSync(supportTokenPath(), JSON.stringify({ token: value }), { encoding: 'utf8', mode: 0o600 })
+      return true
+    } catch (error) {
+      logLine('support', `تعذّر حفظ اعتماد الدعم: ${(error as Error).message}`)
+      return false
+    }
   })
 
   /* ── v1.0.8: إدارة مكان القاعدة والنسخ (طلب المالك) ── */

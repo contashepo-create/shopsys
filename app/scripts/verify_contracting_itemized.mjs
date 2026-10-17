@@ -12,6 +12,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 
 const { useDataStore } = await import('../src/data/repo.ts')
 const S = () => useDataStore.getState()
+/* سياسة المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل — تُبذَر clientela واحدة */
+useDataStore.setState((s) => ({ customers: [...s.customers, { id: 9901, nameAr: 'عميل البوابة', phone: '01000000002', creditLimitMinor: 0, notes: '', openingMinor: 0 }] }))
+
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => { if (cond) { pass++; console.log(`  ✅ ${name}`) } else { fail++; console.log(`  ❌ ${name}${extra ? ' — ' + String(extra) : ''}`) } }
@@ -133,8 +136,8 @@ throws('لا مستخلصات بعد الختامي', () => S().addProjectExtrac
 
 console.log('📋 خط أنابيب المناقصات (القيمة المتوقعة)')
 const { quotationPipeline } = await import('../src/core/contracting.ts')
-const qt1 = S().addQuotation({ kind: 'tender', clientName: 'وزارة', titleAr: 'مناقصة طرق', validUntil: '2026-12-31', lines: [{ descriptionAr: 'أعمال طرق', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 1_000_000 }], notes: '', winProbability: 30, bidBondMinor: 20_000 })
-const qt2 = S().addQuotation({ kind: 'quotation', clientName: 'شركة', titleAr: 'تشطيبات', validUntil: '2026-12-31', lines: [{ descriptionAr: 'تشطيب', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 400_000 }], notes: '', winProbability: 80 })
+const qt1 = S().addQuotation({ kind: 'tender', clientName: 'وزارة', clientId: 9901, titleAr: 'مناقصة طرق', validUntil: '2026-12-31', lines: [{ descriptionAr: 'أعمال طرق', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 1_000_000 }], notes: '', winProbability: 30, bidBondMinor: 20_000 })
+const qt2 = S().addQuotation({ kind: 'quotation', clientName: 'شركة', clientId: 9901, titleAr: 'تشطيبات', validUntil: '2026-12-31', lines: [{ descriptionAr: 'تشطيب', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 400_000 }], notes: '', winProbability: 80 })
 S().setQuotationStatus(qt1.id, 'submitted')
 S().setQuotationStatus(qt2.id, 'submitted')
 const pipe = quotationPipeline(S().quotations)

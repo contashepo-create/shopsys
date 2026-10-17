@@ -128,28 +128,127 @@ async function supportHeaders(token: string, method: string, url: string, body =
   }
 }
 
+/* ─── ناقل الطلب (بند 5: طلب المالك) ───────────────────────────────────────
+   كان الطلب يذهب من الواجهة مباشرة ⇒ في نسخة سطح المكتب (file://) يُرسل
+   المتصفح Origin: null ⇒ يرفضه العامل (403 ⇒ «تعذر الإرسال» بلا سبب)،
+   وكان أي فشل يُعرض للمستخدم كـ«لا يوجد اتصال بالإنترنت» حتى لو كان الخادم
+   قد ردّ 401/429.
+   الحل: في سطح Desktop يمرّ الطلب من **العملية الرئيسية** (طلب بلا Origin
+   ⇒ لا политиة مصدر متصفح)؛ ويبقى الاعتماد (HMAC + TOFU) هو الحماية الحقيقية.
+   والواجهة تستلم الآن **السبب الحقيقي** بدل رسالة عامة كاذبة. */
+export interface SupportHttpRequest {
+  url: string
+  method: 'GET' | 'POST'
+  headers: Record<string, string>
+  body?: string
+}
+
+export interface SupportHttpResponse {
+  ok: boolean
+  status: number
+  body: string
+  /** رسالة خطأ من العملية الرئيسية (فشل شبكة/مضيف غير مسموح) */
+  error?: string
+}
+
+/** نتيجة الإرسال — سبب مفهوم للمستخدم + هل المشكلة انقطاع شبكة */
+export interface SupportSendResult {
+  ok: boolean
+  status: number
+  /** سبب جاهز للعرض (عربي) */
+  reason: string
+  /** تعذّر الوصول إلى الخادم أصلاً (شبكة) — لا خادم رافض */
+  offline: boolean
+}
+
+/** جسر سطح المكتب (إن وُجد) — من src/data/desktopBridge.ts */
+function desktopSupportBridge(): {
+  request(args: SupportHttpRequest): Promise<SupportHttpResponse>
+  getToken(): Promise<string | null>
+  setToken(token: string): Promise<boolean>
+} | null {
+  if (typeof window === 'undefined') return null
+  const bridge = window.shopsysSupport
+  return bridge && typeof bridge.request === 'function' ? bridge : null
+}
+
+/** ترجمة رمز الخادم إلى سبب يفهمه العميل (لا «لا يوجد اتصال» كاذبة) */
+export function supportFailureReason(status: number, detail = ''): string {
+  if (status === 401) return 'رفض الخادم اعتماد قناة الدعم لهذا الجهاز — اطلب من المطوّر إعادة ربط القناة'
+  if (status === 403) return 'رفض الخادم الطلب — حدّث البرنامج ثم أعد المحاولة'
+  if (status === 404) return 'هذا الجهاز غير مسجَّل لدى خادم الدعم'
+  if (status === 413) return 'اللوج المرفق أكبر من المسموح — أرسل الرسالة بلا لوج'
+  if (status === 429) return 'تجاوزت حدّ الرسائل في هذه الساعة — انتظر قليلاً ثم أعد المحاولة'
+  if (status >= 500) return 'خطأ في خادم الدعم — حاول بعد قليل'
+  if (status >= 400) return `طلب غير مقبول من الخادم${detail ? ` (${detail})` : ''}`
+  return 'تعذّر الوصول إلى خادم الدعم — تحقّق من اتصال الإنترنت'
+}
+
+/** تنفيذ الطلب: من العملية الرئيسية على سطح المكتب، أو من المتصفح على الويب */
+async function requestSupport(
+  url: string,
+  method: 'GET' | 'POST',
+  headers: Record<string, string>,
+  body: string | undefined,
+  timeoutMs: number,
+): Promise<SupportHttpResponse> {
+  const bridge = desktopSupportBridge()
+  if (bridge) {
+    try {
+      return await bridge.request({ url, method, headers, body })
+    } catch (error) {
+      return { ok: false, status: 0, body: '', error: (error as Error).message }
+    }
+  }
+  try {
+    const res = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(timeoutMs) })
+    return { ok: res.ok, status: res.status, body: await res.text() }
+  } catch (error) {
+    return { ok: false, status: 0, body: '', error: (error as Error).message }
+  }
+}
+
 export async function fetchConversation(baseUrl: string, deviceId: string, token: string): Promise<SupportMessage[] | null> {
   try {
     const url = supportUrl(baseUrl, deviceId)
-    const res = await fetch(url, {
-      headers: await supportHeaders(token, 'GET', url),
-      signal: AbortSignal.timeout(10_000),
-    })
+    const headers = await supportHeaders(token, 'GET', url)
+    const res = await requestSupport(url, 'GET', headers, undefined, 10_000)
     if (!res.ok) return null
-    return parseConversation(await res.json())
+    return parseConversation(JSON.parse(res.body) as unknown)
   } catch { return null }
 }
 
-export async function sendSupportMessage(baseUrl: string, deviceId: string, token: string, payload: ClientSupportPayload): Promise<boolean> {
+/**
+ * إرسال رسالة دعم — يعيد **السبب الحقيقي** عند الفشل (لا «لا يوجد اتصال»).
+ */
+export async function sendSupportMessage(
+  baseUrl: string,
+  deviceId: string,
+  token: string,
+  payload: ClientSupportPayload,
+): Promise<SupportSendResult> {
   try {
     const url = supportUrl(baseUrl, deviceId)
     const body = JSON.stringify(payload)
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: await supportHeaders(token, 'POST', url, body, true),
-      body,
-      signal: AbortSignal.timeout(15_000),
-    })
-    return res.ok
-  } catch { return false }
+    const headers = await supportHeaders(token, 'POST', url, body, true)
+    const res = await requestSupport(url, 'POST', headers, body, 15_000)
+    if (res.ok) return { ok: true, status: res.status, reason: 'وصلت رسالتك للمطوّر', offline: false }
+    /* سبب من جسم الاستجابة إن وُجد (رسالة العامل) — يُقصّ ويُنقّى */
+    let detail = ''
+    try {
+      const parsed = JSON.parse(res.body) as { error?: unknown }
+      if (typeof parsed?.error === 'string') detail = parsed.error.slice(0, 80)
+    } catch { /* جسم غير JSON — نكتفي بالرمز */ }
+    return { ok: false, status: res.status, reason: supportFailureReason(res.status, detail), offline: res.status === 0 }
+  } catch (error) {
+    const message = (error as Error).message
+    return {
+      ok: false,
+      status: 0,
+      reason: message.includes('اعتماد قناة الدعم')
+        ? 'اعتماد قناة الدعم غير صالح على هذا الجهاز'
+        : `تعذّر إرسال الرسالة: ${message.slice(0, 120)}`,
+      offline: true,
+    }
+  }
 }

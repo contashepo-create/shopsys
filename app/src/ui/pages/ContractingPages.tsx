@@ -11,7 +11,7 @@ import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
+import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, boqItemTotal, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
@@ -39,6 +39,7 @@ export function ProjectsPage() {
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
+    ensureServiceItemForFreeLine,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -924,7 +925,22 @@ export function ProjectsPage() {
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
             <div className="flex justify-end">
-              <Btn variant="ghost" data-project-new-invoice onClick={() => openSalesInvoiceWindow(undefined, { projectId: viewingLive.id, customerId: viewingLive.clientId ?? undefined })} title="فاتورة بيع كاملة بنافذة الفاتورة المتقدمة — مربوطة بهذا المشروع وعميله"><ShoppingCart size={14} /> فاتورة بيع لهذا المشروع</Btn>
+              <Btn variant="ghost" data-project-new-invoice onClick={() => {
+                /* بلاغ المالك (2026-10-17): «لماذا لم تظهر بنود المشروع في الفاتورة تلقائياً؟»
+                   ⇒ الفاتورة تُفتح وبنود جدول الكميات معبأة فيها (أصناف خدمة مضمونة)،
+                   لا مشروعاً وعميلاً فقط. */
+                const boq = boqItems.filter((b) => b.projectId === viewingLive.id)
+                openSalesInvoiceWindow(undefined, {
+                  projectId: viewingLive.id,
+                  customerId: viewingLive.clientId ?? undefined,
+                  lines: boq.map((b) => ({
+                    itemId: ensureServiceItemForFreeLine({ nameAr: b.descriptionAr, unitAr: b.unit, priceMinor: b.unitPriceMinor }),
+                    qty: b.qty,
+                    unitPriceMinor: b.unitPriceMinor,
+                  })),
+                  notes: boq.length ? `فاتورة مشروع ${viewingLive.code} — معبأة من جدول الكميات (${boq.length} بنداً)` : undefined,
+                })
+              }} title="فاتورة بيع كاملة بنافذة الفاتورة المتقدمة — مربوطة بهذا المشروع ومعبأة ببنود جدول الكميات وعميله"><ShoppingCart size={14} /> فاتورة بيع لهذا المشروع</Btn>
             </div>
             <div className="grid grid-cols-4 gap-2 text-center">
               <div className="rounded-xl bg-emerald-500/10 p-3"><div className="text-[11px] text-slate-500">المستخلصات</div><div className="font-black text-emerald-600">{fmt(profit.extractedMinor)}</div></div>
@@ -944,6 +960,45 @@ export function ProjectsPage() {
                 ))}
               </div>
             </div>
+
+            {/* بلاغ المالك (2026-10-17): «لماذا لا يمكن معاينة بنود المشروع بعد إنشائه وبكل حرية؟»
+                ⇒ جدول الكميات كاملاً في نافذة العرض: كود ووصف ووحدة وكمية وسعر وإجمالي وتقدم. */}
+            {(() => {
+              const boq = boqItems.filter((b) => b.projectId === viewingLive.id)
+              return (
+                <div data-project-boq-preview>
+                  <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1"><BookOpenText className="w-4 h-4" /> بنود المشروع — جدول الكميات (BOQ)</span>
+                    <b className="text-slate-700 dark:text-slate-200">{boq.length} بنداً · {fmt(boq.reduce((a, b) => a + boqItemTotal(b), 0))} {cur.symbol}</b>
+                  </div>
+                  {boq.length === 0 ? (
+                    <div className="rounded-xl bg-slate-500/5 p-3 text-[11.5px] text-slate-500">لا بنود كميات لهذا المشروع — تُضاف من تعديل المشروع (تبويب جدول الكميات).</div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                      <table className="w-full text-[12px]">
+                        <thead className="bg-slate-500/10 text-slate-600 dark:text-slate-300">
+                          <tr>{['كود البند', 'الوصف', 'الوحدة', 'الكمية', 'سعر الوحدة', 'الإجمالي', 'التكلفة التقديرية', 'الإنجاز'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr>
+                        </thead>
+                        <tbody>
+                          {boq.map((b) => (
+                            <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
+                              <td className="px-3 py-1.5 font-mono font-bold">{b.code}</td>
+                              <td className="px-3 py-1.5">{b.descriptionAr}</td>
+                              <td className="px-3 py-1.5">{b.unit}</td>
+                              <td className="px-3 py-1.5">{b.qty}</td>
+                              <td className="px-3 py-1.5">{fmt(b.unitPriceMinor)}</td>
+                              <td className="px-3 py-1.5 font-bold">{fmt(boqItemTotal(b))}</td>
+                              <td className="px-3 py-1.5 text-rose-600">{fmt(Math.round(b.qty * b.estCostMinor))}</td>
+                              <td className="px-3 py-1.5">{b.progressPercent}٪</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {viewExtracts.length > 0 && (
               <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">

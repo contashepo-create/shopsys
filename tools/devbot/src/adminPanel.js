@@ -4,7 +4,7 @@ import {
   ABOUT_FIELDS, readAbout, setAboutField, addAboutExtraField, removeAboutExtraField,
   addAboutSocialLink, removeAboutSocialLink, previewAboutAr,
 } from './aboutContent.js'
-import { listRegistrations, formatRegistrationDetailAr, deleteRegistration, regKey, REG_LIST_SHOWN } from './registrations.js'
+import { listRegistrations, formatRegistrationDetailAr, deleteRegistration, regKey, REG_LIST_SHOWN, hasLicense } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
 import { tgEscape } from './tgHtml.js'
 
@@ -368,12 +368,19 @@ async function clientReply(cfg, chatId, deviceId) {
     [button('🔥 إبطال الرخصة', `revoke:${deviceId}`), button('➕ إضافة جهاز للعميل', `adddevice:${hash}`)],
     [button('⬅️ رجوع لقائمة العملاء', 'panel:clients')],
   ]
-  const status = device.fingerprint && parseList(await cfg.kv.get('revoked')).includes(device.fingerprint) ? 'مبطلة' : 'سارية'
+  /* عميل سجَّل جهازه ولم يُصدَر له مفتاح بعد = «بلا رخصة» (سجل dev: بلا خطة).
+     كان يُعرض «سارية» (بصمة فارغة ⇒ لا إبطال) وخطة فارغة — مضلّل للمطوّر. */
+  const licensed = hasLicense(device)
+  const revoked = licensed && parseList(await cfg.kv.get('revoked')).includes(device.fingerprint)
+  const status = !licensed ? 'بلا رخصة (سجَّل جهازه)' : revoked ? 'مبطلة' : 'سارية'
+  const planLabel = licensed
+    ? (PLAN_LABELS[license?.plan] ?? device.plan ?? 'غير مسجلة')
+    : 'بلا رخصة — لم يُصدَر له مفتاح بعد'
   const text = [
     `👤 ${tgEscape(device.customer)}`,
     `الجهاز: ${deviceId}`,
-    `الخطة: ${PLAN_LABELS[license?.plan] ?? device.plan ?? 'غير مسجلة'}`,
-    `الانتهاء: ${license?.expiresAt ?? device.expiresAt ?? '—'}`,
+    `الخطة: ${planLabel}`,
+    `الانتهاء: ${licensed ? (license?.expiresAt ?? device.expiresAt ?? '—') : '—'}`,
     `حالة المفتاح: ${status}`,
   ].join('\n')
   return menuReply(chatId, text, rows)
@@ -400,7 +407,7 @@ async function clientsReply(cfg, chatId) {
 async function groupReply(cfg, chatId, hash) {
   const group = await findCustomer(cfg, hash)
   if (!group) return clientsReply(cfg, chatId)
-  const rows = group.devices.map((device) => [button(`${device.deviceId.slice(-4)} — ${device.plan ?? 'رخصة'}`, `client:${device.deviceId}`)])
+  const rows = group.devices.map((device) => [button(`${device.deviceId.slice(-4)} — ${device.plan || 'بلا رخصة'}`, `client:${device.deviceId}`)])
   rows.push([button('🔔 إرسال تنبيه لكل أجهزة العميل', `notice-group:${hash}`)])
   rows.push([button('➕ إضافة جهاز لهذا العميل', `adddevice:${hash}`)])
   rows.push([button('⬅️ رجوع للعملاء', 'panel:clients')])
@@ -703,7 +710,13 @@ async function issuedDeviceIds(cfg) {
   let cursor
   for (let pageNo = 0; pageNo < 10; pageNo++) {
     const page = await cfg.kv.list({ prefix: 'dev:', limit: 1000, ...(cursor ? { cursor } : {}) })
-    for (const key of page.keys ?? []) ids.add(key.name.slice(4))
+    for (const key of page.keys ?? []) {
+      /* سجل تسجيل بلا مفتاح (خطة فارغة في الفهرس) ليس رخصة ⇒ يبقى في
+         «مسجّلون بلا رخصة» ويُتاح له زر الإصدار. سجل قديم بلا فهرس = مرخّص. */
+      const meta = key.metadata
+      if (meta && meta.v === DEVICE_META_VERSION && !String(meta.plan ?? '').trim()) continue
+      ids.add(key.name.slice(4))
+    }
     if (page.list_complete || !page.cursor) break
     cursor = page.cursor
   }
@@ -753,7 +766,7 @@ async function registrationDetailReply(cfg, chatId, deviceId) {
   if (!record.deviceId) {
     return menuReply(chatId, 'لا يوجد تسجيل بهذا المعرّف — ربما حُذف.', [[button('🆕 التسجيلات', 'panel:regs')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
   }
-  const licensed = Boolean(await cfg.kv.get(`dev:${id}`))
+  const licensed = hasLicense(parseObject(await cfg.kv.get(`dev:${id}`)))
   const rows = []
   if (!licensed) rows.push([button('🔑 إصدار مفتاح لهذا الجهاز', `panel:issuereg:${id}`)])
   rows.push([button('🗑️ حذف بيانات هذا التسجيل', `panel:regdel:${id}`)])
@@ -764,7 +777,7 @@ async function registrationDetailReply(cfg, chatId, deviceId) {
 async function issueFromRegistrationReply(cfg, chatId, deviceId) {
   const id = String(deviceId ?? '').toUpperCase()
   if (!DEVICE_RE.test(id)) return panelHome(chatId, '⚠️ معرّف الجهاز غير صالح.')
-  if (await cfg.kv.get(`dev:${id}`)) {
+  if (hasLicense(parseObject(await cfg.kv.get(`dev:${id}`)))) {
     return menuReply(chatId, 'هذا الجهاز مرخّص بالفعل — افتح العميل من قائمة العملاء لتجديده أو إصدار مفتاح جديد.', [[button('👥 العملاء', 'panel:clients')], [button('🏠 القائمة الرئيسية', 'panel:home')]])
   }
   const record = parseObject(await cfg.kv.get(regKey(id)))

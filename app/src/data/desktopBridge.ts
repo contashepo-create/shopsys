@@ -99,7 +99,51 @@ export interface DesktopNotificationsBridge {
   show(title: string, body: string): Promise<boolean>
 }
 
+/* ─── التحديث اليدوي في نسخة سطح المكتب (زر الفحص + شريط التنزيل) ─── */
+export type DesktopUpdaterStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface DesktopUpdaterState {
+  status: DesktopUpdaterStatus
+  version?: string
+  percent?: number
+  message?: string
+}
+
+export interface DesktopUpdaterBridge {
+  /** آخر حالة للمُحدِّث كما تراها العملية الرئيسية */
+  state(): Promise<unknown>
+  /** فحص فوري للتحديث (أسرع من انتظار الفحص الدوري) */
+  check(): Promise<unknown>
+  /** تثبيت التحديث المنزَّل الآن — بنفس مسار الإغلاق الصامت المحمي */
+  install(): Promise<void>
+  /** اشتراك في تغيّر الحالة (شريط التنزيل) — يعيد دالة إلغاء الاشتراك */
+  onState(listener: (state: unknown) => void): () => void
+}
+
 /** v1.0.22: مفتاح الاسترداد — ملف مغلّف بكلمة مرور يختارها العميل */
+/**
+ * بند 5 (طلب المالك): قناة الدعم عبر العملية الرئيسية.
+ * السبب: نسخة سطح المكتب تعمل من file:// ⇒ المتصفح يرسل Origin: null ⇒ يرفضه
+ * العامل (403) ويظهر للمستخدم «لا يوجد اتصال» كاذبة. الطلب من العملية
+ * الرئيسية يذهب بلا Origin، والاعتماد (HMAC + TOFU) هو الحماية الحقيقية.
+ * كما تُحفظ هنا اعتماد القناة (بعيداً عن القاعدة) ليبقى ثابتاً بعد مسحها.
+ */
+export interface DesktopSupportBridge {
+  /** تنفيذ طلب دعم (GET/POST) — العملية الرئيسية تطبّق قائمة المضيفين المسموحين */
+  request(args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<{ ok: boolean; status: number; body: string; error?: string }>
+  /** اعتماد قناة الدعم المحفوظ خارج القاعدة (userData) — أو null */
+  getToken(): Promise<string | null>
+  /** حفظ اعتماد قناة الدعم خارج القاعدة */
+  setToken(token: string): Promise<boolean>
+}
+
 export interface DesktopKeyRecoveryBridge {
   status(): Promise<{ exportedAt: string | null }>
   export(args: { passphrase: string; deviceId: string }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; path?: string }>
@@ -129,6 +173,16 @@ declare global {
     shopsysTrialAnchor?: (args: { firstTrialAt?: string; lastSeenAt?: string }) => Promise<{ firstTrialAt: string | null; lastSeenAt: string | null }>
     /** نسخة ملفية فورية للقاعدة في المكانين — يكشفها preload في سطح المكتب */
     shopsysBackupNow?: () => Promise<string[]>
+    /** جسر التحديث اليدوي — يكشفه preload في سطح المكتب فقط */
+    shopsysUpdater?: DesktopUpdaterBridge
+    /**
+     * بند 2 (طلب المالك): هوية الجهاز — العملية الرئيسية هي المرجع (ملف في
+     * userData خارج القاعدة) ⇒ معرّف الجهاز لا يتغيّر بمسح القاعدة.
+     * تُقرأ **تزامنياً** عند الإقلاع لأن فحص الترخيص يحتاج المعرّف فوراً.
+     */
+    shopsysDeviceIdentity?: (candidate?: { deviceId?: string; firstTrialAt?: string }) => { deviceId: string; firstTrialAt: string | null }
+    /** بند 5: قناة الدعم عبر العملية الرئيسية (بلا Origin) + اعتماد ثابت خارج القاعدة */
+    shopsysSupport?: DesktopSupportBridge
   }
 }
 
@@ -173,4 +227,23 @@ export async function showDesktopNotification(title: string, body: string): Prom
 /** v1.0.22: جسر مفتاح الاسترداد — null خارج سطح المكتب */
 export function desktopKeyRecoveryBridge(): DesktopKeyRecoveryBridge | null {
   return typeof window !== 'undefined' ? window.shopsysDesktop?.keyRecovery ?? null : null
+}
+
+/** جسر التحديث اليدوي (زر الفحص + شريط التنزيل) — null خارج سطح المكتب */
+export function desktopUpdaterBridge(): DesktopUpdaterBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysUpdater ?? null : null
+}
+
+/**
+ * بند 2 (طلب المالك): جسر هوية الجهاز — null خارج سطح المكتب.
+ * يُرجع المعرّف الذي تحتفظ به العملية الرئيسية (خارج القاعدة) فيتبقى ثابتاً
+ * بعد مسح القاعدة ⇒ يبقى العميل في لوحة المطوّر عميلاً قديماً لا جديداً.
+ */
+export function desktopDeviceIdentity(): ((candidate?: { deviceId?: string; firstTrialAt?: string }) => { deviceId: string; firstTrialAt: string | null }) | null {
+  return typeof window !== 'undefined' && typeof window.shopsysDeviceIdentity === 'function' ? window.shopsysDeviceIdentity : null
+}
+
+/** بند 5: جسر قناة الدعم — null خارج سطح المكتب */
+export function desktopSupportBridge(): DesktopSupportBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysSupport ?? null : null
 }

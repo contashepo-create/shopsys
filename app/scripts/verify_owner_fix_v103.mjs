@@ -21,13 +21,13 @@ const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.ok(about.includes('src="./app-logo.png"') && about.includes('src="./dev-logo.png"'), 'صور حول ليست نسبية')
   assert.ok(!about.includes('src="/app-logo.png"') && !about.includes('src="/dev-logo.png"'), 'بقي مسار مطلق لصورة')
   R.ok('صورتا «حول» بمسارين نسبيين — لا مطلق ينكسر تحت file://')
-  assert.ok(!/DesktopUpdater|checkUpdates|updater:install|فحص التحديثات/.test(strip(about)), 'بقي تحكم يدوي بالتحديث في صفحة حول')
+  assert.ok(/DesktopUpdater/.test(strip(about)) && /فحص التحديثات/.test(strip(about)), 'زر فحص التحديثات وشريط التنزيل مفقودان في صفحة حول')
   const main = read('desktop/main.ts')
   const preload = read('desktop/preload.ts')
   assert.ok(main.includes('autoUpdater.autoDownload = true') && main.includes('autoUpdater.autoInstallOnAppQuit = false'), 'التنزيل الصامت عند الإقلاع أو التثبيت عند الإغلاق غير مضبوط')
   assert.ok(main.includes('await requestSilentInstall(autoUpdater)') && main.includes('flush: flushRenderer'), 'التثبيت الصامت لا يمر بحفظ الواجهة')
-  assert.ok(!preload.includes('shopsysUpdater') && !main.includes("ipcMain.handle('updater:install'"), 'بقي جسر التثبيت اليدوي مكشوفاً')
-  R.ok('تحديث Windows آلي وصامت في main process — لا أزرار فحص/تثبيت يدوية في «حول»')
+  assert.ok(preload.includes('shopsysUpdater') && main.includes("ipcMain.handle('updater:install'"), 'جسر التحديث اليدوي مكشوف')
+  R.ok('تحديث Windows آلي وصامت في main process — مع زر فحص يدوي سريع وشريط تنزيل في «حول»')
 }
 
 /* ③ الأيقونة الحقيقية */

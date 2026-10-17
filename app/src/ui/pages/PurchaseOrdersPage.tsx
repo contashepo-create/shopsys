@@ -85,6 +85,8 @@ export function PurchaseOrdersPage() {
   const [expectedDate, setExpectedDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [warehouseId, setWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [notes, setNotes] = useState('')
+  /* عمود ملاحظات البنود (طلب المالك) — نفس تسهيل فاتورة الشراء (بوابة التكافؤ) */
+  const [showLineNotes, setShowLineNotes] = useState(false)
   /** مرجع داخلي (رقم عرض/طلبية) — يُحفظ مع ملاحظات الأمر كأول سطر */
   const [reference, setReference] = useState('')
   /** يبدأ الجدول بلا سطور: أول سطر ظاهر يحمل خانة البحث — كما في فاتورة الشراء حرفياً */
@@ -356,6 +358,9 @@ export function PurchaseOrdersPage() {
                   setLines((previous) => previous.map((line) => ({ ...line, vatPercent: enabled ? taxPolicy.effectivePercent : 0 })))
                 }} /> خاضعة للضريبة {applyTax ? `${taxPolicy.effectivePercent}%` : ''}
               </label>
+              <label className="invoice-doc-stripcheck" title="إظهار عمود ملاحظات بجانب كل بند في جدول الأصناف">
+                <input type="checkbox" checked={showLineNotes} onChange={(e) => setShowLineNotes(e.target.checked)} /> إظهار عمود الملاحظات
+              </label>
               <span className="invoice-doc-stripfield">أمر بلا قيد
                 <b className="invoice-doc-strip-v">لا يُحرّك المخزون ولا «الموردون» — يُرحَّل مع فاتورة الشراء</b>
               </span>
@@ -430,6 +435,7 @@ export function PurchaseOrdersPage() {
                     return next
                   })}
                   onReplaceLine={replaceLineItem}
+                  showNotes={showLineNotes}
                   onEdit={(id) => openItemEditorWindow(id, host?.windowId ?? null)}
                   onMovement={(id) => openItemLedgerWindow(id, host?.windowId ?? null)}
                   onPrices={(id) => openItemPricesWindow(id, host?.windowId ?? null)}

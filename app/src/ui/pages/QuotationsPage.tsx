@@ -17,6 +17,8 @@ import { quotationTotals, quotationTotal, quotationEstCost, quotationPipeline, Q
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { Printer, Pencil } from 'lucide-react'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
+import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
+import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
@@ -43,6 +45,8 @@ export function QuotationsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+  /* ضريبة العمل الحقيقية (نمط فاتورة البيع): أسعار البنود صافية والضريبة تُحسب فوقها */
+  const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
 
 
   /* ─── عرض جديد ─── */
@@ -90,7 +94,7 @@ export function QuotationsPage() {
       unitAr: l.unitAr,
       unitPriceMinor: safeMinor(l.unitPrice),
       estCostMinor: safeMinor(l.estCost),
-      vatPercent: Math.min(100, Math.max(0, Number(l.vat) || 0)),
+      vatPercent: Math.min(100, Math.max(0, Number(l.vat) || taxPolicy.effectivePercent)),
       taxIncluded: !!l.incl,
     }))
   const draftTotal = quotationTotal(parsedLines)
@@ -99,7 +103,7 @@ export function QuotationsPage() {
 
   /* §92: أخطاء النواة نفسها (validateQuotation — لا ازدواج منطق) + فحوص الواجهة */
   const quoteIssues: PrePostIssue[] = [
-    ...validateQuotation({ titleAr, clientName, lines: parsedLines }).map((text) => ({ id: `core:${text}`, level: 'blocking' as const, text })),
+    ...validateQuotation({ titleAr, clientName, clientId: clientId ? Number(clientId) : null, lines: parsedLines }).map((text) => ({ id: `core:${text}`, level: 'blocking' as const, text })),
     ...(validUntil && validUntil < new Date().toISOString().slice(0, 10)
       ? [{ id: 'expired', level: 'blocking' as const, text: 'صلاحية العرض انتهت — حدّث «ساري حتى» قبل الاعتماد', focus: 'input[type="date"]' }]
       : []),
@@ -159,10 +163,12 @@ export function QuotationsPage() {
       paymentLabel: `ساري حتى ${validUntil || '—'}`,
       rows: parsedLines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
       totalMinor: draftTax.grossMinor,
-      paidMinor: 0,
+      /* عرض السعر ليس مستند تحصيل: بلا «مدفوع/متبقي» إطلاقاً (بلاغ المالك) */
+      paidMinor: draftTax.grossMinor,
       operatorName: setup.ownerName ?? 'المالك',
       settings: useAppStore.getState().receipt,
       extraFooter: notes.trim() || undefined,
+      tax: { label: 'الضريبة', minor: draftTax.taxMinor, baseMinor: draftTax.netMinor },
     })
     const printDraft = (template: InvoiceTemplate) => {
       if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
@@ -173,8 +179,9 @@ export function QuotationsPage() {
   }
 
   /** طباعة عرض/مناقصة محفوظة من القائمة — قالب A4 كالفاتورة (بلاغ المالك: «لا يوجد زر طباعة») */
-  const printQuotation = (q: Quotation) => {
-    const model = buildSimpleDocModel({
+  const quotationModel = (q: Quotation) => {
+    const t = quotationTotals(q.lines)
+    return buildSimpleDocModel({
       docTitle: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
       invoiceNumber: q.quoteNumber,
       refCode: 'QT',
@@ -182,12 +189,16 @@ export function QuotationsPage() {
       partyLabel: q.clientName,
       paymentLabel: `ساري حتى ${q.validUntil || '—'}`,
       rows: q.lines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
-      totalMinor: quotationTotals(q.lines).grossMinor,
-      paidMinor: 0,
+      totalMinor: t.grossMinor,
+      paidMinor: t.grossMinor,
       operatorName: setup.ownerName ?? 'المالك',
       settings: useAppStore.getState().receipt,
       extraFooter: q.notes?.trim() || undefined,
+      tax: { label: 'الضريبة', minor: t.taxMinor, baseMinor: t.netMinor },
     })
+  }
+  const printQuotation = (q: Quotation) => {
+    const model = quotationModel(q)
     const live = useAppStore.getState().receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, 'a4') })
@@ -250,10 +261,10 @@ export function QuotationsPage() {
               <Field label="عنوان الأعمال *" icon={<FileText size={11} />}>
                 <input id="quotation-first-line" className={inputCls} value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder="تشطيب فيلا — الدور الأول…" />
               </Field>
-              <Field label="العميل / الجهة *">
+              <Field label="العميل المسجَّل *" hint="عرض السعر دائماً لعميل من سجل العملاء — لا جهة خارج السجل">
                 <div id="quotation-client-field" className="invoice-doc-infield flex gap-1">
-                  <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="اسم الجهة" aria-label="اسم العميل" />
-                  <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
+                  <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="اسم الجهة كما في السجل" aria-label="اسم العميل" />
+                  <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c) setClientName(c.nameAr) }} label="بحث العميل المسجَّل" cashValue={0} cashLabel="اختر عميلاً" />
                 </div>
               </Field>
               <Field label="ساري حتى *">
@@ -273,7 +284,7 @@ export function QuotationsPage() {
             <div className="invoice-doc-partymeta">
               <span>النوع: <b>{kind === 'tender' ? '🏛️ مناقصة' : '📄 عرض سعر'}</b></span>
               <span>العميل: <b>{clientName.trim() || 'غير محدد'}</b></span>
-              {selectedClient && <span>الربط: <b>{selectedClient.nameAr} — للمتابعة فقط بلا أثر محاسبي</b></span>}
+              <span>الربط: <b>{selectedClient ? `${selectedClient.nameAr} — عميل مسجَّل ✓` : '⚠️ اختر عميلاً مسجلاً قبل الاعتماد'}</b></span>
               <span>الصلاحية: <b>{validUntil || '—'}</b></span>
               <span>البنود: <b>{parsedLines.length}</b></span>
             </div>
@@ -291,6 +302,7 @@ export function QuotationsPage() {
                 <Btn variant="soft" onClick={() => setQLines((l) => [...l, { key: crypto.randomUUID(), nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])}><Plus size={14} /> بند</Btn>
               </div>
               <div className="overflow-x-auto">
+                {/* تنقل الفاتورة نفسه: أسهم بين الخلايا والسطور + Enter متسلسل (بلاغ المالك) */}
                 <table className="invoice-lines-table w-full table-fixed text-sm">
                   <thead className="bg-slate-50 dark:bg-slate-800/60">
                     <tr className="text-[10.5px] font-black text-slate-500">
@@ -304,7 +316,7 @@ export function QuotationsPage() {
                       <th className="w-[4rem] px-1 py-2 text-center"></th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody onKeyDown={gridArrowNavigation}>
                     {qLines.map((l, i) => {
                       const lineTotal = Math.round((Number(l.qty) || 0) * safeMinor(l.unitPrice))
                       return (
@@ -317,8 +329,18 @@ export function QuotationsPage() {
                               {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                             </QuickSelect>
                           </td>
-                          <td className="p-1"><input className={inputCls} dir="ltr" value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, qty: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} /></td>
-                          <td className="p-1"><input className={inputCls} dir="ltr" value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, unitPrice: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} /></td>
+                          <td className="p-1"><input className={`${inputCls} invoice-cell-input`} dir="ltr" value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, qty: e.target.value } : x)))} onKeyDown={(e) => { if (e.key !== 'Enter') return; e.preventDefault(); const price = e.currentTarget.closest('tr')?.querySelectorAll<HTMLInputElement>('input')[3]; price?.focus(); price?.select() }} type="number" inputMode="decimal" step="any" min={0} /></td>
+                          <td className="p-1"><input className={`${inputCls} invoice-cell-input`} dir="ltr" value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, unitPrice: e.target.value } : x)))} onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return
+                            e.preventDefault()
+                            const tbody = e.currentTarget.closest('tbody')
+                            const nextRow = e.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null
+                            const nextQty = nextRow?.querySelectorAll<HTMLInputElement>('input')[2]
+                            if (nextQty) { nextQty.focus(); nextQty.select(); return }
+                            /* آخر سطر: Enter يضيف سطراً جديداً وينزل لاسم البند (انسيابية الفاتورة) */
+                            setQLines((arr) => [...arr, { key: crypto.randomUUID(), nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])
+                            requestAnimationFrame(() => { const rows = tbody?.querySelectorAll<HTMLTableRowElement>('tr') ?? []; const last = rows[rows.length - 1]; const name = last?.querySelectorAll<HTMLInputElement>('input')[0]; name?.focus() })
+                          }} type="number" inputMode="decimal" step="any" min={0} /></td>
                           <td className="p-1"><div className="invoice-table-total font-mono">{lineTotal > 0 ? fmt(lineTotal) : '—'}</div></td>
                           <td className="p-1">
                             <div className="invoice-doc-rowtools">
@@ -359,16 +381,15 @@ export function QuotationsPage() {
                     </div>
                   ))}
                   <div className="invoice-doc-sum-row is-strong"><span>إجمالي التكلفة التقديرية</span><i /><b className="font-mono">{fmt(draftEstCost)} {cur.symbol}</b></div>
+                  <div className={`invoice-doc-sum-row${margin < 0 ? ' is-minus' : ''}`}><span>هامش متوقع</span><i /><b className="font-mono">{fmt(margin)}</b></div>
                 </div>
               </div>
               <div className="invoice-doc-panel" data-quotation-totals>
                 <div className="invoice-doc-panel-head"><b>إجماليات العرض</b><small>{kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر'}</small></div>
                 <div className="invoice-doc-panel-body">
-                  <div className="invoice-doc-sum-row"><span>الصافي</span><i /><b className="font-mono">{fmt(draftTax.netMinor)}</b></div>
-                  <div className="invoice-doc-sum-row"><span>الضريبة</span><i /><b className="font-mono">{fmt(draftTax.taxMinor)}</b></div>
-                  <div className="invoice-doc-sum-row is-strong"><span>الإجمالي شامل الضريبة</span><i /><b className="font-mono">{fmt(draftTax.grossMinor)} {cur.symbol}</b></div>
-                  <div className="invoice-doc-sum-row"><span>التكلفة التقديرية</span><i /><b className="font-mono">{fmt(draftEstCost)}</b></div>
-                  <div className={`invoice-doc-sum-row${margin < 0 ? ' is-minus' : ''}`}><span>هامش متوقع</span><i /><b className="font-mono">{fmt(margin)}</b></div>
+                  <div className="invoice-doc-sum-row" data-quotation-sum-net><span>الإجمالي</span><i /><b className="font-mono">{fmt(draftTax.netMinor)}</b></div>
+                  <div className="invoice-doc-sum-row" data-quotation-sum-tax><span>الضريبة</span><i /><b className="font-mono">{fmt(draftTax.taxMinor)}</b></div>
+                  <div className="invoice-doc-sum-row is-strong" data-quotation-sum-gross><span>الإجمالي بالضريبة</span><i /><b className="font-mono">{fmt(draftTax.grossMinor)} {cur.symbol}</b></div>
                 </div>
               </div>
             </section>
@@ -452,6 +473,7 @@ export function QuotationsPage() {
                             <span title="العرض تحوّل لمشروع — بنوده جدول كميات المشروع؛ التعديل من المشروع" className="text-[10px] text-slate-400 px-1">🔒 مشروع</span>
                           )}
                           <button onClick={() => printQuotation(q)} title="طباعة العرض (A4)" data-quotation-print className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Printer size={15} /></button>
+                          <button onClick={() => shareDocPdfViaWhatsapp({ model: quotationModel(q), cur, settings: useAppStore.getState().receipt, docLabel: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: q.quoteNumber, partyPhone: customers.find((c) => c.id === q.clientId)?.phone ?? '', shopName: setup.shopName, toast })} title="إرسال PDF واتساب" data-quotation-whatsapp className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Send size={15} /></button>
                           {q.status === 'draft' && (
                             <button onClick={() => transition(q, 'submitted')} title="تقديم العرض" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Send size={15} /></button>
                           )}

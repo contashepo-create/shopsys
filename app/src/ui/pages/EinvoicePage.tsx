@@ -33,6 +33,14 @@ export function EinvoicePage() {
   const [taxNumber, setTaxNumber] = useState(einvoice.taxNumber)
   const [address, setAddress] = useState(einvoice.address)
 
+  /* بند 4 (طلب المالك): مزامنة الحقول مع المخزن — بلاها بقيت الحقول القديمة
+     معروضة إذا تغيّرت الإعدادات من موضع آخر أو أُعيد فتح الصفحة.
+     النمط: تعديل الحالة أثناء العرض (كما في VouchersPage) — بلا useEffect. */
+  const [syncedTax, setSyncedTax] = useState(einvoice.taxNumber)
+  const [syncedAddress, setSyncedAddress] = useState(einvoice.address)
+  if (syncedTax !== einvoice.taxNumber) { setSyncedTax(einvoice.taxNumber); setTaxNumber(einvoice.taxNumber) }
+  if (syncedAddress !== einvoice.address) { setSyncedAddress(einvoice.address); setAddress(einvoice.address) }
+
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
 
   /* ─── شاشة القفل: الميزة غير مفعلة بالمفتاح ─── */
@@ -152,31 +160,49 @@ export function EinvoicePage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* إعدادات الممول */}
+        {/* إعدادات الممول — الترتيب: الحقول ← الحفظ ← الخيارات (بند 4) */}
         <div className={`anim-up ${card} space-y-4`}>
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <FileCheck2 size={17} className="text-slate-500" /> بيانات الممول
           </div>
-          <label className="flex items-center gap-2 text-[13px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
-            <input type="checkbox" checked={einvoice.enabled === true} onChange={(e) => updateEinvoice({ enabled: e.target.checked })} className="w-4 h-4 accent-emerald-600" />
-            تشغيل الإصدار الإلكتروني الرسمي وربط دورة المستندات
-          </label>
+
+          {/* ① الحقول أولاً */}
           <Field label={saActive ? 'الرقم الضريبي (زاتكا: 15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (مصر: 9 أرقام)'}>
             <input value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} placeholder={saActive ? '310122393500003' : '123456789'} className={inputCls} dir="ltr" />
           </Field>
           <Field label="عنوان المنشأة" hint="يظهر في مستند البوابة المصرية">
             <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="شارع، مدينة" className={inputCls} />
           </Field>
-          {saActive && (
-            <label className="flex items-center gap-2 text-[13px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer">
-              <input type="checkbox" checked={einvoice.printZatcaQr} onChange={(e) => updateEinvoice({ printZatcaQr: e.target.checked })} className="w-4 h-4 accent-emerald-600" />
-              طباعة رمز QR زاتكا على كل فاتورة تلقائياً
-            </label>
-          )}
-          <Btn onClick={saveSettings}>💾 حفظ البيانات</Btn>
+
+          {/* ② الحفظ بعد الحقول مباشرة — لا يختفي تحت الخيارات */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <Btn onClick={saveSettings}>💾 حفظ البيانات</Btn>
+            <span className="text-[11px] text-slate-400">الرقم والعنوان يحتاجان حفظاً — أمّا الخيارات أدناه فتُطبَّق فوراً</span>
+          </div>
           {saActive && einvoice.taxNumber && !isValidSaVatNumber(einvoice.taxNumber) && (
             <div className="text-[12px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={13} /> الرقم المحفوظ غير مطابق لصيغة زاتكا — لن يُطبع الرمز حتى تصحيحه</div>
           )}
+
+          {/* ③ الخيارات بعد الحفظ */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2.5">
+            <div className="text-[11px] font-extrabold text-slate-400">خيارات الإصدار</div>
+            <label className="flex items-start gap-2 text-[13px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
+              <input type="checkbox" checked={einvoice.enabled === true} onChange={(e) => updateEinvoice({ enabled: e.target.checked })} className="w-4 h-4 mt-0.5 accent-emerald-600" />
+              <span>
+                تشغيل الإصدار الإلكتروني الرسمي وربط دورة المستندات
+                <span className="block text-[11px] font-normal text-slate-400">يُفعَّل فوراً بلا حفظ</span>
+              </span>
+            </label>
+            {saActive && (
+              <label className="flex items-start gap-2 text-[13px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={einvoice.printZatcaQr} onChange={(e) => updateEinvoice({ printZatcaQr: e.target.checked })} className="w-4 h-4 mt-0.5 accent-emerald-600" />
+                <span>
+                  طباعة رمز QR زاتكا على كل فاتورة تلقائياً
+                  <span className="block text-[11px] font-normal text-slate-400">يتطلب اتصالاً بالإنترنت وقت الطباعة — يُطبَّق فوراً</span>
+                </span>
+              </label>
+            )}
+          </div>
         </div>
 
         {/* معاينة QR */}

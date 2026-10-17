@@ -24,6 +24,9 @@ const throws = (name, fn, part) => {
   catch (e) { const good = !part || String(e.message).includes(part); good ? pass++ : fail++; console.log(`  ${good ? '✅' : '❌'} ${name}${good ? '' : ' — ' + e.message}`) }
 }
 const S = () => useDataStore.getState()
+/* سياسة المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل — تُبذَر clientela واحدة */
+useDataStore.setState((s) => ({ customers: [...s.customers, { id: 9901, nameAr: 'عميل البوابة', phone: '01000000002', creditLimitMinor: 0, notes: '', openingMinor: 0 }] }))
+
 const balanceOf = (code) => {
   let d = 0, c = 0
   for (const e of S().journal) for (const l of e.lines) if (l.accountCode === code) { d += l.debit; c += l.credit }
@@ -37,7 +40,7 @@ const trialBalanced = () => {
 
 console.log('📋 عرض سعر ← فوز ← مشروع')
 S().addQuotation({
-  kind: 'tender', clientName: 'هيئة الطرق', titleAr: 'رصف طريق قرية النور',
+  kind: 'tender', clientName: 'هيئة الطرق', clientId: 9901, titleAr: 'رصف طريق قرية النور',
   validUntil: '2026-12-31', notes: '',
   lines: [{ descriptionAr: 'رصف أسفلت', qty: 1000, unitAr: 'م2', unitPriceMinor: 5000 }],
 })

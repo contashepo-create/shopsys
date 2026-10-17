@@ -12,6 +12,7 @@ import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
 import { settingsAppStorage } from '../data/persistentStorage.ts'
+import { desktopDeviceIdentity } from '../data/desktopBridge.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
@@ -312,23 +313,54 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
  * الأصلية ومعرف الجهاز الأصلي من هذه المرساة — فلا تتجدد التجربة أبداً.
  */
 const IDENTITY_ANCHOR_KEY = 'shopsys-i'
-const bootIdentity = (): { deviceId: string; now: string; firstTrialAt: string } => {
-  const nowIso = new Date().toISOString()
+
+/** قراءة مرساة الهوية من التخزين المحلي (base64) — أو null */
+const readLocalIdentityAnchor = (): { deviceId: string; firstTrialAt: string } | null => {
   try {
     const raw = localStorage.getItem(IDENTITY_ANCHOR_KEY)
     if (raw) {
       const a = JSON.parse(atob(raw)) as { d?: string; t?: string }
       if (typeof a.d === 'string' && a.d && typeof a.t === 'string' && a.t) {
-        return { deviceId: a.d, now: nowIso, firstTrialAt: a.t }
+        return { deviceId: a.d, firstTrialAt: a.t }
       }
     }
   } catch { /* مرساة تالفة — تُعاد كتابتها أدناه */ }
+  return null
+}
+
+/** كتابة مرساة الهوية محلياً (مرآة لمرساة العملية الرئيسية) */
+const writeLocalIdentityAnchor = (deviceId: string, firstTrialAt: string): void => {
+  try {
+    localStorage.setItem(IDENTITY_ANCHOR_KEY, btoa(JSON.stringify({ d: deviceId, t: firstTrialAt })))
+  } catch { /* تخزين ممتلئ — نكمل بالقيم الحالية */ }
+}
+
+const bootIdentity = (): { deviceId: string; now: string; firstTrialAt: string } => {
+  const nowIso = new Date().toISOString()
+  const local = readLocalIdentityAnchor()
+  /* بند 2 (طلب المالك): على سطح المكتب العملية الرئيسية هي المرجع — ملف الهوية
+     في userData **خارج** القاعدة ⇒ مسح القاعدة (أو فقد مرساة Chromium) لا يغيّر
+     المعرّف، فيبقى العميل في لوحة المطوّر عميلاً قديماً لا جديداً، ويبقى
+     الترخيص المرتبط بالجهاز صالحاً. القراءة **متزامنة** لأن فحص الترخيص يحتاج
+     المعرّف فور الإقلاع. */
+  const desktop = desktopDeviceIdentity()
+  if (desktop) {
+    try {
+      const anchored = desktop({ deviceId: local?.deviceId, firstTrialAt: local?.firstTrialAt })
+      if (anchored && typeof anchored.deviceId === 'string' && anchored.deviceId) {
+        const firstTrialAt = anchored.firstTrialAt ?? local?.firstTrialAt ?? nowIso
+        if (!local || local.deviceId !== anchored.deviceId || local.firstTrialAt !== firstTrialAt) {
+          writeLocalIdentityAnchor(anchored.deviceId, firstTrialAt)
+        }
+        return { deviceId: anchored.deviceId, now: nowIso, firstTrialAt }
+      }
+    } catch { /* الجسر غير متاح أو فشل — نكمل بمرساة التخزين المحلي */ }
+  }
+  if (local) return { deviceId: local.deviceId, now: nowIso, firstTrialAt: local.firstTrialAt }
   const rnd = new Uint8Array(12)
   crypto.getRandomValues(rnd)
   const deviceId = generateDeviceId(rnd)
-  try {
-    localStorage.setItem(IDENTITY_ANCHOR_KEY, btoa(JSON.stringify({ d: deviceId, t: nowIso })))
-  } catch { /* تخزين ممتلئ — نكمل بالقيم الجديدة */ }
+  writeLocalIdentityAnchor(deviceId, nowIso)
   return { deviceId, now: nowIso, firstTrialAt: nowIso }
 }
 const BOOT = bootIdentity()
@@ -395,10 +427,16 @@ export const useAppStore = create<AppState>()(
             activityKeyFingerprints: [],
           },
         })),
+      /* سنة مالية واحدة مفتوحة فقط (طلب المالك) — الحارس هنا في المتجر لا في
+         الشاشة وحدها: أي مسار آخر (استيراد حالة، ترحيل قديم) لا يفتح سنتين. */
       addFiscalYear: (fy) =>
-        set((s) => ({
-          fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
-        })),
+        set((s) => {
+          const open = s.fiscalYears.find((y) => y.status === 'open')
+          if (open) throw new Error(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
+          return {
+            fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
+          }
+        }),
       markFiscalYearClosed: (id) =>
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'closed' as const } : y)) })),
       /** إعادة فتح سنة مقفلة (نمط عالمي — تُستدعى من مسار reopenFiscalYear بجوار عكس قيد الإقفال) */
