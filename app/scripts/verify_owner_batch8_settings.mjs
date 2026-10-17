@@ -69,8 +69,13 @@ const itemsPageSrc = read('src/ui/pages/ItemsPage.tsx')
 ok('نموذج الصنف فيه اختيار «نوع الصنف»', /نوع الصنف/.test(itemsPageSrc))
 ok('الخيار يعرض «خدمة — بلا مخزون»', /خدمة — بلا مخزون/.test(itemsPageSrc))
 ok('شارة «خدمة» في قائمة الأصناف', /label: 'خدمة'/.test(itemsPageSrc))
+ok('شارة «خدمة» واحدة فقط في بطاقة الصنف (لا تكرار)', (itemsPageSrc.match(/label: 'خدمة'/g) ?? []).length === 1)
 ok('الخدمة بلا صلاحية/سيريال/وزن (المحرّك يمنعها)', /draft\.isService && \(draft\.trackSerial \|\| draft\.trackExpiry \|\| draft\.soldByWeight\)/.test(read('src/core/items.ts')))
 ok('حقول المخزون/الصلاحية مخفية للخدمة', /\{!draft\.isService && \(/.test(itemsPageSrc))
+/* رفض فتح سنة ثانية: الرسالة تظهر والنموذج يبقى مفتوحاً (المُدخل محفوظ) */
+const saveNewYearBlock = settingsSrc.slice(settingsSrc.indexOf('const saveNewYear'), settingsSrc.indexOf('const [specialty'))
+const catchBody = saveNewYearBlock.slice(saveNewYearBlock.indexOf('catch (err)'), saveNewYearBlock.indexOf('return toast.show((err as Error).message'))
+ok('رفض فتح سنة ثانية لا يُغلق نموذج السنة (يبقى المُدخل)', /catch \(err\) \{/.test(saveNewYearBlock) && catchBody.length > 10 && !/setNewYearOpen\(false\)/.test(catchBody))
 
 console.log(`\nPASS=${pass} FAIL=${fails.length}${fails.length ? '\n' + fails.join('\n') : ''}`)
 if (fails.length) process.exit(1)

@@ -3,6 +3,7 @@
 // سجَّل جهازه لم يكن يظهر في قائمة العملاء إطلاقاً. الحل: أول تسجيل ينشئ سجل `dev:`
 // بلا رخصة (خطة فارغة ⇒ «بدون اشتراك» في اللوحة)، وإعادة التسجيل (بعد مسح القاعدة)
 // تُحدّث **نفس** السجل ⇒ عميل واحد قديم. إصدار المفتاح لاحقاً يدمج فوقه (لا سجل ثانٍ).
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -78,6 +79,12 @@ ok('العميل المسجَّل بلا مفتاح يُعدّ منفصلاً (t
 ok('ليس ضمن «مدى الحياة»', digest.lifetime === 0)
 ok('لا تذكير انتهاء للتجريبي', digest.soon.length === 0 && digest.expired.length === 0)
 ok('نص الإحصاء يذكر التجريبي', formatDigestAr(digest).includes('تجريبي'))
+
+// ⑤ لوحة تليجرام: العميل بلا رخصة لا يُعرض «سارية» ولا خطة فارغة مضلِّلة
+const adminSrc = readFileSync(new URL('../../tools/devbot/src/adminPanel.js', import.meta.url), 'utf8')
+ok('بطاقة العميل بلا رخصة تعرض «بلا رخصة (سجَّل جهازه)»', adminSrc.includes('بلا رخصة (سجَّل جهازه)'))
+ok('بطاقة العميل بلا رخصة لا تعرض خطة فارغة', adminSrc.includes('بلا رخصة — لم يُصدَر له مفتاح بعد'))
+ok('زر أجهزة المجموعة يعرض «بلا رخصة» للخطة الفارغة', adminSrc.includes("device.plan || 'بلا رخصة'"))
 
 console.log(`\nPASS=${pass} FAIL=${fails.length}${fails.length ? '\n' + fails.join('\n') : ''}`)
 if (fails.length) process.exit(1)

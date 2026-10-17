@@ -79,7 +79,7 @@ export function GeneralSettingsPage() {
     try {
       addFiscalYear({ nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd })
     } catch (err) {
-      setNewYearOpen(false)
+      /* الرفض لا يُغلق النموذج: المستخدم يرى سبب الرفض ويصحّح (يبقى المُدخل محفوظاً) */
       return toast.show((err as Error).message, 'error')
     }
     toast.show(`فُتحت السنة المالية «${fyName}» ✅`)

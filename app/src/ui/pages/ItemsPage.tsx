@@ -358,7 +358,6 @@ export function ItemsPage() {
     if (it.oemNumbers?.length) badges.push({ icon: '🔧', label: `${it.oemNumbers.length} OEM`, cls: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' })
     if (it.activeIngredient) badges.push({ icon: '🧪', label: it.activeIngredient, cls: 'bg-lime-500/10 text-lime-600 dark:text-lime-400' })
     if (it.soldByWeight) badges.push({ icon: '⚖️', label: 'وزن', cls: 'bg-teal-500/10 text-teal-600 dark:text-teal-400' })
-    if (it.isService) badges.push({ icon: '🛎️', label: 'خدمة', cls: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' })
     if (it.variantColors.length || it.variantSizes.length) badges.push({ icon: '🎨', label: 'متغيرات', cls: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' })
     if (it.extraUnits.length) badges.push({ icon: '📦', label: `${it.extraUnits.length + 1} وحدات`, cls: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400' })
     return badges
