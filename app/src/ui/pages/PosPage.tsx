@@ -22,6 +22,7 @@ import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey, resolveVariantBarcode } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError, nearestExpiryByItem } from '../../core/batches.ts'
+import { jewelryBreakdown } from '../../core/jewelry.ts'
 import { emptyRxLine, validateRxLines, doseText, type RxLine } from '../../core/prescription.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { userPrefsKey } from '../../core/userPreferences.ts'
@@ -66,7 +67,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
@@ -97,6 +98,16 @@ export function PosPage() {
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
   const defaultSaleWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => taxPolicy.effectivePercent === 0 ? 0 : effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, effectiveCountryVatPercent)
+  /**
+   * جزء السعر معفى من الضريبة لصنف ذهبي (قيمة المعدن النفيس) — سد فجوة فورية
+   * (النشاط #15: ذهب ومجوهرات): بروتوكول مصلحة الضرائب المصرية مع شعبة الذهب
+   * يفرض 14% على «المصنعية» فقط لا على قيمة الذهب — صفر لأي صنف غير موصوف ذهبياً.
+   */
+  const itemVatExemptPerUnit = (itemId: number): number => {
+    const prof = jewelryProfiles.find((p) => p.itemId === itemId)
+    if (!prof || !gramPrices.updatedAt) return 0
+    return jewelryBreakdown(prof, gramPrices).goldMinor
+  }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
@@ -219,7 +230,7 @@ export function PosPage() {
       if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${variantLabel(color, size)})`, qty: 1,
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
         discountPercent: 0, soldByWeight: false, variantColor: color, variantSize: size,
       }]
     })
@@ -246,7 +257,7 @@ export function PosPage() {
       }
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr, qty: 1,
-        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
+        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
         discountPercent: 0, soldByWeight: false, serials: [serial],
       }]
     })
@@ -292,7 +303,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr,
         qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
@@ -306,7 +317,7 @@ export function PosPage() {
       if (!it) return l
       const basePrice = getEffectivePrice(it.id, activePriceListId)
       if (unitName === it.baseUnit) {
-        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), unitFactor: undefined, unitLabel: undefined }
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id), unitFactor: undefined, unitLabel: undefined }
       }
       const u = it.extraUnits.find((x) => x.nameAr === unitName)
       if (!u) return l
@@ -314,7 +325,7 @@ export function PosPage() {
         ...l,
         nameAr: `${it.nameAr} (${u.nameAr})`,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: Math.round(itemVatExemptPerUnit(it.id) * u.factor),
         unitFactor: u.factor,
         unitLabel: u.nameAr,
       }
@@ -333,7 +344,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${u.nameAr})`, qty: 1,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: Math.round(itemVatExemptPerUnit(it.id) * u.factor),
         discountPercent: 0, soldByWeight: false, unitFactor: u.factor, unitLabel: u.nameAr,
       }]
     })

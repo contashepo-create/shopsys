@@ -62,6 +62,13 @@ export interface NotificationsInput {
   agingCars?: { carId: number; label: string; daysInStock: number }[]
   /** أوامر مطعم مفتوحة تجاوزت مدة معقولة بلا إغلاق — سد فجوة تقرير النشاط #14 (Gap 3) */
   staleRestaurantOrders?: { orderId: number; orderNumber: string; label: string; minutesOpen: number }[]
+  /**
+   * أسعار جرام الذهب لم تُحدَّث منذ اليوم — سد فجوة تقرير النشاط #15 (Gap 2):
+   * دليل شاشة الصاغة نفسه يحذّر «نسيان تحديث سعر الجرام صباحاً يبيعك بسعر
+   * أمس ويأكل هامشك»، لكن التحذير كان يظهر فقط لمن يفتح الشاشة بنفسه.
+   * null/undefined = لا وصف ذهبي مفعَّل على أي صنف أصلاً (لا تنبيه).
+   */
+  staleGoldPrices?: { updatedAt: string | null } | null
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
@@ -336,6 +343,23 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       // ops.activity.use — التنبيه يصل لمن يملك فعلاً صلاحية حل المشكلة
       perm: 'sales.invoice.create',
     })
+  }
+
+  // 1.79) سعر جرام الذهب لم يُحدَّث اليوم (سد فجوة تقرير النشاط #15 — Gap 2)
+  if (input.staleGoldPrices) {
+    const upd = input.staleGoldPrices.updatedAt
+    const isStale = !upd || upd.slice(0, 10) !== day
+    if (isStale) {
+      out.push({
+        id: 'goldpricestale',
+        icon: '🥇',
+        title: upd ? `سعر الذهب من ${upd.slice(0, 10)} — حدّثه قبل البيع` : 'لم تُدخل سعر الذهب اليوم بعد',
+        body: 'البيع بسعر أمس يأكل هامشك فوراً — حدّث جرام كل عيار من شاشة الصاغة أول كل صباح',
+        severity: 'warn',
+        route: '/inventory/jewelry',
+        perm: 'inv.view',
+      })
+    }
   }
 
   // 2) أقساط متأخرة أو تستحق اليوم

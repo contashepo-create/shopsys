@@ -42,6 +42,14 @@ export interface CartLine {
   extendedWarrantyMonths?: number
   /** مزوّد ضمان ممتد خارجي اختياري (سد فجوة مستقبلية — النشاط #6) — نص حر */
   extendedWarrantyProvider?: string
+  /**
+   * جزء من سعر الوحدة (قبل الخصم) معفى بالكامل من ضريبة القيمة المضافة بصرف
+   * النظر عن `vatPercentOverride` — سد فجوة فورية (النشاط #15: ذهب ومجوهرات):
+   * بروتوكول مصلحة الضرائب المصرية مع شعبة الذهب والفضة (قرار 32 لسنة 2026،
+   * منشور الجمارك 33 لسنة 2026) يفرض 14% على «المصنعية» فقط دون قيمة المعدن
+   * النفيس نفسه. undefined/0 = كل السعر خاضع كالمعتاد (أي صنف غير ذهبي).
+   */
+  vatExemptPerUnitMinor?: Minor
 }
 
 /** كمية السطر بالوحدة الأساسية (للمخزون/الدفعات) — qty × unitFactor */
@@ -127,9 +135,11 @@ export function computeTotals(
   const net = afterLineDiscounts - invoiceDiscount
 
   // ═══ ضريبة لكل سطر (طلب المالك: نسبة خاصة لصنف أو إعفاؤه) ═══
-  // لو أي سطر له تجاوز، نحسب الضريبة سطراً سطراً بنسبته الفعلية،
-  // مع توزيع خصم الفاتورة نسبياً على السطور حتى لا يختل الأساس الضريبي.
-  const hasOverrides = lines.some((l) => l.vatPercentOverride !== undefined)
+  // لو أي سطر له تجاوز أو جزءاً معفى (ذهب: قيمة المعدن معفاة والمصنعية
+  // خاضعة ضمن نفس السطر — سد فجوة النشاط #15)، نحسب الضريبة سطراً سطراً
+  // بنسبته الفعلية، مع توزيع خصم الفاتورة نسبياً على السطور حتى لا يختل
+  // الأساس الضريبي.
+  const hasOverrides = lines.some((l) => l.vatPercentOverride !== undefined || (l.vatExemptPerUnitMinor ?? 0) > 0)
   let taxBase: Minor, tax: Minor, total: Minor
   if (hasOverrides) {
     let taxSum = 0
@@ -143,13 +153,20 @@ export function computeTotals(
       const lineNet = lineNetBeforeInvDisc - share
       netCheck += lineNet
       const p = l.vatPercentOverride !== undefined ? l.vatPercentOverride : taxPercent
-      if (p <= 0) { baseSum += lineNet; continue }
+      // جزء السطر المعفى بالكامل (قيمة الذهب) — يُستبعد من الأساس الخاضع
+      // بنفس نسبة انكماش السطر بسبب الخصومات (g>0 دائماً هنا لأن qty>0 تحقق أعلاه)
+      const exemptPerUnit = Math.max(0, Math.min(l.vatExemptPerUnitMinor ?? 0, l.unitPriceMinor))
+      const exemptGross = mulQty(exemptPerUnit, l.qty)
+      const exemptNet = g > 0 ? Math.round((exemptGross * lineNet) / g) : 0
+      const taxableNet = lineNet - exemptNet
+      baseSum += exemptNet // معفى: يدخل الأساس (إيراد) بلا أي ضريبة مهما كانت p
+      if (p <= 0 || taxableNet <= 0) { baseSum += taxableNet; continue }
       if (taxInclusive) {
-        const [b, t] = splitInclusiveTax(lineNet, p)
+        const [b, t] = splitInclusiveTax(taxableNet, p)
         baseSum += b; taxSum += t
       } else {
-        const [t] = addExclusiveTax(lineNet, p)
-        baseSum += lineNet; taxSum += t
+        const [t] = addExclusiveTax(taxableNet, p)
+        baseSum += taxableNet; taxSum += t
       }
     }
     // فرق تقريب توزيع الخصم يذهب لأساس آخر سطر — الصافي الكلي مضمون
