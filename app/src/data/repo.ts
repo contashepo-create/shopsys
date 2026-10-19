@@ -2281,6 +2281,8 @@ interface DataState {
     custodyFileId?: number | null
     notes?: string
   }) => TripExpenseRecord
+  /** عكس / إلغاء مصروف نقلة مستقل وتوليد قيد عاكس متوازن */
+  reverseTripExpense: (expenseId: number) => TripExpenseRecord
   /** إجمالي غير المسوى لسائق */
   getDriverDueBalance: (driverId: number) => number
   /** تسوية كل مستحقات سائق دفعة واحدة من خزينة/بنك */
@@ -8457,7 +8459,7 @@ export const useDataStore = create<DataState>()(
             trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
             rentalInvoices: state.rentalInvoices,
             customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
-            customerTripExpenses: state.tripExpenses.filter((e) => e.bearer === 'customer' && e.customerId != null),
+            customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
             clinicVisits: state.clinicVisits, clinicCollections: state.clinicCollections,
             linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
             labOrders: state.labOrders, linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
@@ -8934,17 +8936,18 @@ export const useDataStore = create<DataState>()(
         nextJournal.push(newEntry)
 
         // 3) دمج أي مصاريف نقلات مستقلة مسجلة على هذه النقلة من قسم «مصاريف النقلات» في إجماليات التكلفة والربح
-        const standaloneCompanyCost = state.tripExpenses
-          .filter((x) => x.tripId === existing.id && x.bearer === 'company')
+        const activeTripExpenses = state.tripExpenses.filter((x) => x.tripId === existing.id && !x.reversedByEntryId)
+        const standaloneCompanyCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company')
           .reduce((s2, x) => s2 + x.amountMinor, 0)
-        const standaloneCashCost = state.tripExpenses
-          .filter((x) => x.tripId === existing.id && x.bearer === 'company' && x.paymentSource === 'cash')
+        const standaloneCashCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company' && x.paymentSource === 'cash')
           .reduce((s2, x) => s2 + x.amountMinor, 0)
-        const standaloneCreditCost = state.tripExpenses
-          .filter((x) => x.tripId === existing.id && x.bearer === 'company' && x.paymentSource === 'credit')
+        const standaloneCreditCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company' && x.paymentSource === 'credit')
           .reduce((s2, x) => s2 + x.amountMinor, 0)
-        const standaloneCustodyCost = state.tripExpenses
-          .filter((x) => x.tripId === existing.id && x.bearer === 'company' && x.paymentSource === 'custody')
+        const standaloneCustodyCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company' && x.paymentSource === 'custody')
           .reduce((s2, x) => s2 + x.amountMinor, 0)
         const mergedTotals: TripTotals = {
           ...totalsProbe,
@@ -8955,8 +8958,7 @@ export const useDataStore = create<DataState>()(
           profitMinor: totalsProbe.revenueMinor - (totalsProbe.costMinor + standaloneCompanyCost),
         }
 
-        const standaloneExpenseLines: Trip['expenses'] = state.tripExpenses
-          .filter((x) => x.tripId === existing.id)
+        const standaloneExpenseLines: Trip['expenses'] = activeTripExpenses
           .map((x) => ({
             nameAr: x.nameAr,
             qty: x.qty,
@@ -9168,6 +9170,75 @@ export const useDataStore = create<DataState>()(
           vehicleCostEntries: nextVehicleCostEntries,
         })
         return record
+      },
+      reverseTripExpense: (expenseId) => {
+        const state = get()
+        const exp = state.tripExpenses.find((x) => x.id === expenseId)
+        if (!exp) throw new Error('مصروف النقلة غير موجود')
+        if (exp.reversedByEntryId) throw new Error('مصروف النقلة معكوس بالفعل')
+        const oldEntry = state.journal.find((e) => e.id === exp.journalEntryId)
+        if (!oldEntry) throw new Error('قيد المصروف غير موجود')
+        const revId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const revEntry: JournalEntry = {
+          id: revId,
+          entryNumber: revId,
+          date: now.slice(0, 10),
+          description: `عكس مصروف نقلة ${exp.expenseNumber} — ${exp.nameAr} (${exp.tripNumber})`,
+          sourceType: 'reversal',
+          sourceId: oldEntry.id,
+          lines: buildReversalLines(oldEntry.lines),
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: oldEntry.id,
+        }
+        const nextJournal = state.journal
+          .map((e) => (e.id === oldEntry.id ? { ...e, reversedByEntryId: revId } : e))
+          .concat(revEntry)
+        const updatedRecord: TripExpenseRecord = { ...exp, reversedByEntryId: revId }
+        const nextTripExpenses = state.tripExpenses.map((x) => (x.id === expenseId ? updatedRecord : x))
+        const nextCustodyTxs = exp.paymentSource === 'custody'
+          ? state.custodyTxs.filter((tx) => tx.journalEntryId !== exp.journalEntryId)
+          : state.custodyTxs
+        const nextVehicleCostEntries = state.vehicleCostEntries.filter((vc) => vc.journalEntryId !== exp.journalEntryId)
+
+        const updatedTrips = state.trips.map((t) => {
+          if (t.id !== exp.tripId) return t
+          const activeForTrip = nextTripExpenses.filter((x) => x.tripId === t.id && !x.reversedByEntryId)
+          const companyCost = activeForTrip.filter((x) => x.bearer === 'company').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const cashCost = activeForTrip.filter((x) => x.bearer === 'company' && x.paymentSource === 'cash').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const creditCost = activeForTrip.filter((x) => x.bearer === 'company' && x.paymentSource === 'credit').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const custodyCost = activeForTrip.filter((x) => x.bearer === 'company' && x.paymentSource === 'custody').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const nextExpenses: Trip['expenses'] = activeForTrip.map((x) => ({
+            nameAr: x.nameAr,
+            qty: x.qty,
+            unitAmountMinor: x.unitAmountMinor,
+            source: x.bearer === 'customer' ? ('customer' as const) : x.paymentSource,
+            amountMinor: x.amountMinor,
+          }))
+          return {
+            ...t,
+            expenses: nextExpenses,
+            totals: {
+              ...t.totals,
+              directCashMinor: cashCost,
+              creditMinor: creditCost,
+              custodyMinor: custodyCost,
+              costMinor: companyCost,
+              profitMinor: t.totals.revenueMinor - companyCost,
+            },
+          }
+        })
+
+        set({
+          tripExpenses: nextTripExpenses,
+          trips: updatedTrips,
+          journal: nextJournal,
+          custodyTxs: nextCustodyTxs,
+          vehicleCostEntries: nextVehicleCostEntries,
+        })
+        return updatedRecord
       },
       getDriverDueBalance: (driverId) => {
         return get().driverDues.filter((d) => d.driverId === driverId && !d.settled).reduce((s2, d) => s2 + d.amountMinor, 0)
@@ -11797,7 +11868,7 @@ export const useDataStore = create<DataState>()(
           rentals: state.rentalContracts,
           rentalInvoices: state.rentalInvoices,
           customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
-          customerTripExpenses: state.tripExpenses.filter((e) => e.bearer === 'customer' && e.customerId != null),
+          customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
           trips: state.trips,
           tickets: state.tickets,
           walletOps: state.walletOps,

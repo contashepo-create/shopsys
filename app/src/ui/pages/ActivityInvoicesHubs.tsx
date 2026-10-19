@@ -216,7 +216,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                 {[...trips].reverse().map((t) => {
                   const cust = t.customerId ? customers.find((c) => c.id === t.customerId) : undefined
                   const customerStandaloneMinor = tripExpenses
-                    .filter((x) => x.tripId === t.id && x.bearer === 'customer')
+                    .filter((x) => x.tripId === t.id && !x.reversedByEntryId && x.bearer === 'customer')
                     .reduce((s, x) => s + x.amountMinor, 0)
                   const totalForCustomer = t.totals.grandMinor + customerStandaloneMinor
                   const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)

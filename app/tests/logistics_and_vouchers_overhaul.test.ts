@@ -242,5 +242,10 @@ describe('تحديثات اللوجستيات وسندات القبض للمشا
     expect(updated.totals.profitMinor).toBe(100_000)
     expect(S().getCustomerBalance(cust.id)).toBe(150_000) // 120,000 النقلة + 30,000 مصروف العميل
     expect(S().getDriverDueBalance(drv.id)).toBe(8_000)
+
+    // عكس مصروف النقلة المحمّل على العميل (reverseTripExpense)
+    const revExp = S().reverseTripExpense(expCust.id)
+    expect(revExp.reversedByEntryId).toBeTruthy()
+    expect(S().getCustomerBalance(cust.id)).toBe(120_000) // عاد رصيد العميل إلى 120,000 بعد عكس المصروف
   })
 })

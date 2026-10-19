@@ -74,6 +74,7 @@ export interface TripExpenseRecord {
   treasury: string
   custodyFileId: number | null
   journalEntryId: number
+  reversedByEntryId?: number | null
   notes: string
 }
 

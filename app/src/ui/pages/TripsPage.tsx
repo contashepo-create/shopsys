@@ -8,7 +8,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * - قسم منفصل «مصاريف النقلات» لتسجيل المصاريف الداخلية (على الشركة 5106) والمصاريف المحمّلة على العميل (1104)
  */
 import { useMemo, useState } from 'react'
-import { Plus, Route, Eye, BookOpenText, Trash2, TrendingUp, Container, Printer, Pencil, FileText, Coins } from 'lucide-react'
+import { Plus, Route, Eye, BookOpenText, Trash2, TrendingUp, Container, Printer, Pencil, FileText, Coins, RotateCcw } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Trip } from '../../data/repo.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { DocumentAttachmentsBox, type PendingAttachment } from '../components/DocumentAttachments.tsx'
@@ -135,7 +135,7 @@ export function TripsPage() {
         }]
     const customerBorneExpenses = t.expenses.filter((e) => e.source === 'customer')
     const customerStandaloneMinor = tripExpenses
-      .filter((x) => x.tripId === t.id && x.bearer === 'customer')
+      .filter((x) => x.tripId === t.id && !x.reversedByEntryId && x.bearer === 'customer')
       .reduce((s, x) => s + x.amountMinor, 0)
     const invoiceLines = [
       ...tripLines.map((line, idx) => {
@@ -1146,7 +1146,7 @@ const QUICK_TRIP_EXPENSE_NAMES = [
 ]
 
 export function TripExpensesPage() {
-  const { trips, tripExpenses, vehicles, employees, customers, custodyFiles, custodyTxs, journal, addTripExpense } = useDataStore()
+  const { trips, tripExpenses, vehicles, employees, customers, custodyFiles, custodyTxs, journal, addTripExpense, reverseTripExpense } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -1181,8 +1181,9 @@ export function TripExpensesPage() {
   }, [tripExpenses, filterTripId, filterBearer])
 
   const totals = useMemo(() => {
-    const companyMinor = filtered.filter((e) => e.bearer === 'company').reduce((s, e) => s + e.amountMinor, 0)
-    const customerMinor = filtered.filter((e) => e.bearer === 'customer').reduce((s, e) => s + e.amountMinor, 0)
+    const active = filtered.filter((e) => !e.reversedByEntryId)
+    const companyMinor = active.filter((e) => e.bearer === 'company').reduce((s, e) => s + e.amountMinor, 0)
+    const customerMinor = active.filter((e) => e.bearer === 'customer').reduce((s, e) => s + e.amountMinor, 0)
     return { companyMinor, customerMinor, totalMinor: companyMinor + customerMinor }
   }, [filtered])
 
@@ -1309,7 +1310,28 @@ export function TripExpensesPage() {
                   <td className="px-4 py-2.5 text-slate-500 text-[11.5px]"><div dir="ltr">{vehName(exp.vehicleId)}</div><div className="text-[10px] text-slate-400">{drvName(exp.driverId)}</div></td>
                   <td className="px-4 py-2.5 text-left font-mono font-black">{fmt(exp.amountMinor)}</td>
                   <td className="px-4 py-2.5 text-left">
-                    <button onClick={() => setViewingExp(exp)} title="عرض القيد المحاسبي" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10"><Eye size={14} /></button>
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => setViewingExp(exp)} title="عرض القيد المحاسبي" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10"><Eye size={14} /></button>
+                      {exp.reversedByEntryId ? (
+                        <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-[10px] font-bold text-slate-500">معكوس #{exp.reversedByEntryId}</span>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            try {
+                              const rev = reverseTripExpense(exp.id)
+                              toast.show(`تم عكس مصروف النقلة ${rev.expenseNumber} وتوليد القيد العاكس ✅`)
+                            } catch (err) {
+                              toast.show((err as Error).message, 'error')
+                            }
+                          }}
+                          data-reverse-trip-expense
+                          title="عكس وإلغاء مصروف النقلة بقيد عاكس"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
