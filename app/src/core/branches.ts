@@ -11,6 +11,8 @@
  * «وضع الفرع الواحد»: قائمة فروع فارغة = التطبيق كما هو تماماً (توافق خلفي كامل).
  */
 
+import type { BusinessModule } from './activities.ts'
+
 export interface Branch {
   id: number
   nameAr: string
@@ -25,6 +27,12 @@ export interface Branch {
   /** اسم مدير الفرع (عرض وتقارير — الربط الصارم بالمستخدمين عبر branchId) */
   managerName?: string
   active: boolean
+  /** وضع أقسام الفرع: شامل لكل أقسام الشركة المفعلة ('all') أو مخصص بأقسام محددة ('custom') */
+  customModulesMode?: 'all' | 'custom'
+  /** الأقسام المفعلة لهذا الفرع عند اختيار وضع التخصيص ('custom') — مجموعة جزئية من أقسام الشركة */
+  enabledModules?: BusinessModule[]
+  /** النشاط التجاري المخصص لهذا الفرع (اختياري — لتخصيص المسميات وشاشات النشاط؛ فارغ = نشاط الشركة العام) */
+  activityId?: string | null
 }
 
 export interface BranchInput {
@@ -34,6 +42,33 @@ export interface BranchInput {
   address?: string
   phone?: string
   managerName?: string
+  customModulesMode?: 'all' | 'custom'
+  enabledModules?: BusinessModule[]
+  activityId?: string | null
+}
+
+/**
+ * الأقسام الفعالة للفرع النشط:
+ * - إن لم يُحدد فرع (عرض شامل) أو كان وضع الفرع 'all' ⇒ كل أقسام الشركة المفعلة.
+ * - إن كان وضع الفرع 'custom' ⇒ تقاطع أقسام الفرع مع أقسام الشركة المرخصة/المفعلة.
+ */
+export function resolveBranchModules(
+  branch: Branch | null | undefined,
+  companyModules: readonly BusinessModule[],
+): BusinessModule[] {
+  if (!branch || branch.customModulesMode !== 'custom' || !Array.isArray(branch.enabledModules)) {
+    return [...companyModules]
+  }
+  return companyModules.filter((m) => branch.enabledModules!.includes(m))
+}
+
+/** النشاط الفعال للفرع النشط (يعود لنشاط الشركة إن لم يُخصص للفرع نشاط مستقل) */
+export function resolveBranchActivityId(
+  branch: Branch | null | undefined,
+  companyActivityId: string | null | undefined,
+): string | null {
+  if (branch?.activityId) return branch.activityId
+  return companyActivityId ?? null
 }
 
 /** تحقق قبل الإنشاء/التعديل — يعيد أخطاء عربية (فارغة = سليم) */
@@ -55,6 +90,8 @@ export function validateBranch(
     errors.push('هذا المخزن مربوط بفرع آخر — لكل فرع مخزنه الخاص')
   if (branches.some((b) => b.treasuryCode === input.treasuryCode && b.id !== editingId))
     errors.push('هذه الخزينة مربوطة بفرع آخر — لكل فرع خزينته الخاصة')
+  if (input.customModulesMode === 'custom' && (!input.enabledModules || input.enabledModules.length === 0))
+    errors.push('اختر قسماً واحداً على الأقل عند تخصيص أقسام الفرع، أو اختر «شامل لكل أقسام الشركة»')
   return errors
 }
 

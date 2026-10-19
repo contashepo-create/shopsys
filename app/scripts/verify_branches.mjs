@@ -29,7 +29,7 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
 const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
-const { compareBranches, branchOfWarehouse, validateBranch } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
+const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0
@@ -142,6 +142,64 @@ console.log('\n═══ 5) قواعد الصحة ═══')
   assert.ok(st().warehouses.some((w) => w.id === whNew), 'مخزن الفرع المحذوف باقٍ بتاريخه')
   assert.ok(st().treasuries.some((t) => t.code === branchNew.treasuryCode), 'خزينة الفرع المحذوف باقية')
   ok('قواعد الصحة: منع التكرار + حماية الرئيسي + الحذف يفك الربط فقط')
+}
+
+console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
+{
+  const companyModules = ['pos', 'inventory', 'purchases', 'contracting', 'logistics', 'equipment_rental']
+  // إنشاء فرع مخصص للشحن واللوجستيات فقط
+  const logisticsBranch = st().addBranch({
+    nameAr: 'فرع الشحن واللوجستيات',
+    warehouseId: 0,
+    treasuryCode: '',
+    createWarehouse: true,
+    createTreasury: 'cash',
+    customModulesMode: 'custom',
+    enabledModules: ['logistics', 'inventory', 'purchases'],
+    activityId: 'logistics',
+  }, 5)
+  const hqBranch = st().branches.find((x) => x.isMain)
+  // تخصيص الفرع الرئيسي للمقاولات وإيجار المعدات
+  st().updateBranch(hqBranch.id, {
+    customModulesMode: 'custom',
+    enabledModules: ['contracting', 'equipment_rental', 'inventory', 'purchases'],
+    activityId: 'contracting',
+  })
+  const updatedHq = st().branches.find((x) => x.id === hqBranch.id)
+
+  // العرض الشامل (null) يعيد كل أقسام الشركة
+  assert.deepEqual(resolveBranchModules(null, companyModules), companyModules)
+  assert.equal(resolveBranchActivityId(null, 'supermarket'), 'supermarket')
+
+  // فرع المقاولات يعيد أقسام المقاولات والمعدات فقط
+  assert.deepEqual(
+    resolveBranchModules(updatedHq, companyModules),
+    ['inventory', 'purchases', 'contracting', 'equipment_rental'],
+  )
+  assert.equal(resolveBranchActivityId(updatedHq, 'supermarket'), 'contracting')
+
+  // فرع اللوجستيات يعيد أقسام اللوجستيات فقط
+  assert.deepEqual(
+    resolveBranchModules(logisticsBranch, companyModules),
+    ['inventory', 'purchases', 'logistics'],
+  )
+  assert.equal(resolveBranchActivityId(logisticsBranch, 'supermarket'), 'logistics')
+
+  // تبديل الفرع النشط في المخزن
+  st().setActiveBranchId(logisticsBranch.id)
+  assert.equal(st().activeBranchId, logisticsBranch.id)
+  st().setActiveBranchId(null)
+  assert.equal(st().activeBranchId, null)
+
+  // رفض التخصيص بدون أي قسم
+  const emptyCustomErrs = validateBranch(
+    { nameAr: 'فرع فارغ الأقسام', warehouseId: whNew, treasuryCode: '1102', customModulesMode: 'custom', enabledModules: [] },
+    st().branches,
+    st().warehouses,
+    st().treasuries,
+  )
+  assert.ok(emptyCustomErrs.some((e) => e.includes('اختر قسماً واحداً على الأقل')))
+  ok('تخصيص الأقسام والأنشطة لكل فرع: شامل أو مخصص (مقاولات/لوجستيات) + تبديل الفرع النشط')
 }
 
 console.log(`\n✅ فحص الفروع الحقيقية: ${pass} محطات — كلها خضراء\n`)

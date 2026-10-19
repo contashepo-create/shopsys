@@ -1011,6 +1011,8 @@ export interface PurchaseLine {
   inputVatMinor?: number
   /** المخزن الذي استلم هذا السطر — يستخدم عند فاتورة مختلطة المخازن */
   warehouseId?: number | null
+  /** ملاحظة البند (مواصفة/ملاحظة المنتج في السطر) */
+  notes?: string
 }
 
 export interface PurchaseExpense {
@@ -1421,6 +1423,8 @@ interface DataState {
   warehouses: Warehouse[]
   /** الفروع الحقيقية (سد فجوة التدقيق): فرع = مخزن + خزينة + هوية — فارغة = وضع الفرع الواحد */
   branches: Branch[]
+  /** الفرع المختار حالياً في الواجهة (للمالك/المدير العام: null = كل الفروع شامل؛ أو معرّف فرع محدد لتصفية أقسامه ونشاطه) */
+  activeBranchId: number | null
   paymentTerminals: PaymentTerminal[]
   paymentTerminalTransactions: PaymentTerminalTransaction[]
   paymentTerminalSettlements: PaymentTerminalSettlement[]
@@ -1779,7 +1783,7 @@ interface DataState {
     dueDate?: string
     approvedBy?: string | null
     date: string
-    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string; notes?: string }[]
     expenses: PurchaseExpense[]
     /** خصم الفاتورة المطبق على أسعار السطور قبل landed cost */
     discountMinor?: number
@@ -2108,7 +2112,7 @@ interface DataState {
     purchaseId: number
     /** المورد المحدد داخل نفس محرر الفاتورة؛ 0 = شراء نقدي */
     supplierId?: number
-    lines: { itemId: number; qty: number; unitPriceMinor: number; warehouseId?: number | null; vatPercent?: number }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; warehouseId?: number | null; vatPercent?: number; notes?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury: TreasuryAccount
@@ -2134,6 +2138,8 @@ interface DataState {
   updateBranch: (id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>) => void
   /** حذف فرع (فك الربط التنظيمي فقط — المخزن والخزينة وتاريخهما باقيان) */
   removeBranch: (id: number) => void
+  /** تبديل الفرع النشط في الواجهة (null = عرض شامل لكل الفروع وأقسام الشركة) */
+  setActiveBranchId: (id: number | null) => void
   addPaymentTerminal: (terminal: PaymentTerminal) => void
   updatePaymentTerminal: (id: string, patch: Partial<Omit<PaymentTerminal, 'id'>>) => void
   removePaymentTerminal: (id: string) => void
@@ -3208,6 +3214,7 @@ export const useDataStore = create<DataState>()(
       categories: [],
       warehouses: [],
       branches: [],
+      activeBranchId: null,
       paymentTerminals: [],
       paymentTerminalTransactions: [],
       paymentTerminalSettlements: [],
@@ -4387,6 +4394,7 @@ export const useDataStore = create<DataState>()(
             vatPercent: inv.lines[i]?.vatPercent,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
             warehouseId: inv.lines[i]?.warehouseId ?? effectivePurchaseWarehouseId,
+            notes: inv.lines[i]?.notes?.trim() || undefined,
           })),
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,
@@ -7152,6 +7160,7 @@ export const useDataStore = create<DataState>()(
             vatPercent: args.lines[i]?.vatPercent ?? inv.lines[i]?.vatPercent ?? 0,
             orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
+            notes: args.lines[i]?.notes !== undefined ? (args.lines[i]?.notes?.trim() || undefined) : inv.lines[i]?.notes,
           })),
           warehouseId: newHeaderWarehouseId,
           expenses: args.expenses,
@@ -7647,6 +7656,9 @@ export const useDataStore = create<DataState>()(
           address: input.address?.trim() || undefined,
           phone: input.phone?.trim() || undefined,
           managerName: input.managerName?.trim() || undefined,
+          customModulesMode: input.customModulesMode ?? 'all',
+          enabledModules: input.customModulesMode === 'custom' ? [...(input.enabledModules ?? [])] : undefined,
+          activityId: input.activityId || null,
         }
         set({ warehouses, treasuries, branches: [...branches, branch] })
         return branch
@@ -7656,7 +7668,14 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const b = state.branches.find((x) => x.id === id)
         if (!b) throw new Error('الفرع غير موجود')
-        const next = { ...b, ...patch, nameAr: (patch.nameAr ?? b.nameAr).trim() }
+        const next: Branch = {
+          ...b,
+          ...patch,
+          nameAr: (patch.nameAr ?? b.nameAr).trim(),
+          enabledModules: (patch.customModulesMode ?? b.customModulesMode) === 'custom'
+            ? [...(patch.enabledModules ?? b.enabledModules ?? [])]
+            : undefined,
+        }
         const errors = validateBranch(next, state.branches, state.warehouses, state.treasuries, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ branches: state.branches.map((x) => (x.id === id ? next : x)) })
@@ -7669,8 +7688,21 @@ export const useDataStore = create<DataState>()(
         const blocked = canRemoveBranch(b, state.branches)
         if (blocked) throw new Error(blocked)
         const rest = state.branches.filter((x) => x.id !== id)
+        const nextBranches = rest.length === 1 && rest[0].isMain ? [] : rest
         // حذف آخر فرع غير الرئيسي يعيد وضع الفرع الواحد (الرئيسي وحده بلا معنى)
-        set({ branches: rest.length === 1 && rest[0].isMain ? [] : rest })
+        set({
+          branches: nextBranches,
+          activeBranchId: nextBranches.some((x) => x.id === state.activeBranchId) ? state.activeBranchId : null,
+        })
+      },
+
+      setActiveBranchId: (id) => {
+        const state = get()
+        if (id != null && !state.branches.some((x) => x.id === id && x.active)) {
+          set({ activeBranchId: null })
+          return
+        }
+        set({ activeBranchId: id })
       },
 
       addPaymentTerminal: (terminal) => {
