@@ -108,7 +108,8 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
-  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask } from '../core/contracting.ts'
+  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask,
+  computeProjectExpenseInvoice, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
   buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry,
@@ -472,16 +473,33 @@ export interface ProjectExtract {
   editReversalEntryId?: number
 }
 
-/** تكلفة مسجلة على مشروع ببند */
+export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed }
+
+/** تكلفة مسجلة على مشروع ببند أو كفاتورة مصروفات متعددة البنود */
 export interface ProjectCost {
   id: number
+  /** رقم مستند المصروف (مثل PEX-0001) */
+  expenseNumber?: string
+  /** رقم فاتورة المورد أو المرجع الخارجي */
+  invoiceRef?: string
   projectId: number
   /** مركز التكلفة العام؛ يبقى projectId كربط مشروع مستقل */
   costCenterId?: number | null
   date: string
   kind: CostKind
   description: string
+  /** الصافي قبل الضريبة — يُقيد على 5110 تكاليف المشروعات ويُخصم من ربح المشروع */
   amountMinor: number
+  /** ضريبة القيمة المضافة للمدخلات — تُقيد على 2102 عند وجودها */
+  vatMinor?: number
+  /** الإجمالي الشامل للضريبة (amountMinor + vatMinor) */
+  grossMinor?: number
+  /** بنود الفاتورة التفصيلية (كل بند بسعره وهل هو شامل الضريبة أم لا) */
+  lines?: ProjectExpenseLineComputed[]
+  /** الخزينة أو البنك المصروف منه */
+  treasury?: string | null
+  /** ملف العهدة المصروف منه إن وجد */
+  custodyFileId?: number | null
   payment: 'cash' | 'credit' | 'mixed'
   /** ما دُفع الآن من خزينة/بنك/عهدة */
   paidMinor?: number
@@ -2455,7 +2473,7 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -11290,7 +11308,13 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         return budgetVarianceReport(
           state.projectBudgets.filter((b) => b.projectId === projectId),
-          state.projectCosts.filter((c) => c.projectId === projectId),
+          state.projectCosts
+            .filter((c) => c.projectId === projectId)
+            .flatMap((c) =>
+              c.lines && c.lines.length > 0
+                ? c.lines.map((l) => ({ kind: l.kind, amountMinor: l.netMinor }))
+                : [{ kind: c.kind, amountMinor: c.amountMinor }],
+            ),
         )
       },
       addProjectTask: (args) => {
@@ -11760,6 +11784,20 @@ export const useRawDataStore = create<DataState>()(
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
         if (args.costCenterId != null && !state.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
+        // دعم فاتورة مصروفات متعددة البنود (شامل/غير شامل/بدون ضريبة) مع توافق كامل مع البند المفرد
+        let netCostMinor = args.amountMinor ?? 0
+        let vatCostMinor = args.inputVatMinor ?? 0
+        let resolvedKind: CostKind = args.kind ?? 'other'
+        let resolvedDescription = args.description?.trim() ?? ''
+        let computedLines: ProjectExpenseLineComputed[] | undefined
+        if (args.lines && args.lines.length > 0) {
+          const inv = computeProjectExpenseInvoice(args.lines, args.defaultVatPercent ?? 14)
+          netCostMinor = inv.netMinor
+          vatCostMinor = inv.vatMinor
+          resolvedKind = args.kind ?? inv.primaryKind
+          resolvedDescription = resolvedDescription || inv.summaryDescription
+          computedLines = inv.lines
+        }
         // الدفع من عهدة موظف (طلب المالك): تُفحص وتُخصم من ملفه بدل الخزينة
         let custodyFile: CustodyFile | null = null
         if (args.payment === 'cash' && args.custodyFileId != null) {
@@ -11767,29 +11805,38 @@ export const useRawDataStore = create<DataState>()(
           if (!custodyFile) throw new Error('ملف العهدة غير موجود')
           assertFileOpen(custodyFile)
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
-          if (args.amountMinor + (args.inputVatMinor ?? 0) > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
+          if (netCostMinor + vatCostMinor > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
         }
         const payAccount = custodyFile ? CUSTODY_ACCOUNT : (args.treasury ?? '1101')
         // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102
-        const grossCostMinor = args.amountMinor + (args.inputVatMinor ?? 0)
+        const grossCostMinor = netCostMinor + vatCostMinor
         const paidCostMinor = args.paidMinor ?? (args.payment === 'cash' ? grossCostMinor : 0)
         const dueCostMinor = grossCostMinor - paidCostMinor
         // الجزء الآجل يُحمَّل على مورد/مقاول باطن مسجل ليظهر في كشف حسابه (قاعدة موحدة لكل الأنشطة)
         if (args.supplierId != null && !state.suppliers.some((row) => row.id === args.supplierId)) throw new Error('المورد غير موجود في سجل الموردين')
         if (custodyFile && dueCostMinor > 0) throw new Error('الدفع من العهدة لا يقبل جزءاً آجلاً — افصل المستند')
-        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount, args.inputVatMinor ?? 0, paidCostMinor).map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
+        const lines = buildProjectCostEntry(netCostMinor, args.payment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor).map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
+        const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `تكلفة على ${project.nameAr}: ${args.description || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
+          description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cost: ProjectCost = {
-          id, projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: args.kind,
-          description: args.description, amountMinor: args.amountMinor,
+          id,
+          expenseNumber,
+          ...(args.invoiceRef?.trim() ? { invoiceRef: args.invoiceRef.trim() } : {}),
+          projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: resolvedKind,
+          description: resolvedDescription, amountMinor: netCostMinor,
+          ...(vatCostMinor > 0 ? { vatMinor: vatCostMinor } : {}),
+          grossMinor: grossCostMinor,
+          ...(computedLines ? { lines: computedLines } : {}),
+          treasury: custodyFile ? null : payAccount,
+          custodyFileId: custodyFile ? custodyFile.id : null,
           payment: dueCostMinor === 0 ? 'cash' : paidCostMinor === 0 ? 'credit' : 'mixed',
           paidMinor: paidCostMinor, dueMinor: dueCostMinor, supplierId: args.supplierId ?? null,
           journalEntryId: entryId,
@@ -11799,7 +11846,7 @@ export const useRawDataStore = create<DataState>()(
           custodyTxs = [...custodyTxs, {
             id: nextId(custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
             date: now.slice(0, 10), amountMinor: grossCostMinor, excessMinor: 0,
-            description: `تكلفة مشروع ${project.nameAr}: ${args.description || '—'}`,
+            description: `تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]
         }
@@ -11876,7 +11923,13 @@ export const useRawDataStore = create<DataState>()(
            عكست 5110 بالدفتر — فتطابق البطاقة صافي 5110 بلا جمع مزدوج */
         const bd = get().getProjectCostBreakdown(projectId)
         const costs = [
-          ...state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          ...state.projectCosts
+            .filter((c) => c.projectId === projectId)
+            .flatMap((c) =>
+              c.lines && c.lines.length > 0
+                ? c.lines.map((l) => ({ kind: l.kind, amountMinor: l.netMinor }))
+                : [{ kind: c.kind, amountMinor: c.amountMinor }],
+            ),
           ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
         ]
         return projectProfit(

@@ -182,3 +182,194 @@ export function renderExtractHtml(args: {
     <div class="foot">مستند نظامي يُصدر آلياً من منظومة المحاسبة — مستخلص ${esc(args.extractNumber)} · ${esc(args.dateIso.slice(0, 10))}${lines.length > 0 ? ' · بندي من جدول الكميات' : ' · مبلغ إجمالي'}</div>
   </body></html>`
 }
+
+export interface ExtractClientInvoicePrintLine {
+  code: string
+  descriptionAr: string
+  unit?: string
+  boqQty?: number
+  unitPrice?: string
+  boqTotal?: string
+  prevPercent: number
+  newPercent: number
+  currentSlicePercent: number
+  value: string
+}
+
+/**
+ * §96: طباعة المستخلص كفاتورة بيع احترافية موجهة للعميل (طلب المالك:
+ * «بجانب المستخلص طباعة فاتوره احترافية للعميل كانها فاتورة بيع ولاكنها مستخلص»).
+ */
+export function renderExtractClientInvoiceHtml(args: {
+  shopName: string
+  shopPhone?: string
+  shopAddress?: string
+  shopTaxId?: string
+  extractNumber: string
+  dateIso: string
+  projectName: string
+  projectCode: string
+  contractNumber?: string
+  clientName: string
+  clientPhone?: string
+  clientTaxId?: string
+  contractValue: string
+  description: string
+  previousGross: string
+  currentGross: string
+  cumulativeGross: string
+  progressPercent: number | null
+  vat: string
+  retention: string
+  retentionPercent: number
+  advanceRecovery?: string
+  due: string
+  payment: 'cash' | 'credit'
+  currencySymbol?: string
+  isFinal?: boolean
+  lines?: ExtractClientInvoicePrintLine[]
+}): string {
+  const sym = args.currencySymbol ?? ''
+  const lines = args.lines ?? []
+  return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>فاتورة مستخلص ${esc(args.extractNumber)}</title><style>
+    @page { size: A4 portrait; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; font-size: 12.5px; line-height: 1.55; }
+    .inv-banner { display: flex; justify-content: space-between; align-items: stretch; border: 2px solid #0f766e; border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
+    .inv-banner .company { padding: 14px 18px; flex: 1; background: #f0fdfa; }
+    .inv-banner .company .name { font-size: 19px; font-weight: 900; color: #0f766e; }
+    .inv-banner .company .sub { font-size: 11px; color: #475569; margin-top: 3px; }
+    .inv-banner .badge { background: linear-gradient(135deg, #0f766e, #0d9488); color: #fff; padding: 14px 22px; text-align: left; min-width: 250px; display: flex; flex-direction: column; justify-content: center; }
+    .inv-banner .badge .title { font-size: 15px; font-weight: 900; letter-spacing: .3px; }
+    .inv-banner .badge .num { font-family: 'Consolas', monospace; font-size: 20px; font-weight: 900; margin: 2px 0; direction: ltr; }
+    .inv-banner .badge .meta-line { font-size: 11px; opacity: .92; }
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    .party-box { border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px 14px; background: #f8fafc; }
+    .party-box .head { font-size: 11px; font-weight: 900; color: #0f766e; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-bottom: 6px; }
+    .party-box .row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+    .party-box .row span { color: #64748b; }
+    .party-box .row b { color: #0f172a; }
+    table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    th, td { border: 1px solid #cbd5e1; padding: 7px 8px; text-align: right; vertical-align: middle; }
+    th { background: #0f766e; color: #fff; font-size: 11px; font-weight: 800; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    .num { font-family: 'Consolas', monospace; direction: ltr; text-align: left; font-weight: 700; }
+    .pct { font-family: 'Consolas', monospace; direction: ltr; text-align: center; font-weight: 800; }
+    .summary-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; margin-top: 14px; align-items: start; }
+    .cum-card { border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px 14px; background: #fff; }
+    .cum-card .head { font-size: 11.5px; font-weight: 900; color: #0f766e; margin-bottom: 8px; }
+    .cum-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #e2e8f0; font-size: 12px; }
+    .totals-card { border: 2px solid #0f766e; border-radius: 10px; overflow: hidden; background: #fff; }
+    .totals-card .t-row { display: flex; justify-content: space-between; padding: 7px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12.5px; }
+    .totals-card .t-row span { color: #334155; font-weight: 700; }
+    .totals-card .t-row b { font-family: 'Consolas', monospace; direction: ltr; }
+    .totals-card .t-due { background: #0f766e; color: #fff; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; }
+    .totals-card .t-due span { font-size: 13.5px; font-weight: 900; }
+    .totals-card .t-due b { font-family: 'Consolas', monospace; direction: ltr; font-size: 18px; font-weight: 900; }
+    .sigs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 32px; }
+    .sig { text-align: center; }
+    .sig .role { font-size: 11.5px; font-weight: 800; color: #334155; margin-bottom: 28px; }
+    .sig .line { border-top: 1.5px solid #334155; padding-top: 4px; font-size: 10.5px; color: #64748b; }
+    .foot { margin-top: 18px; text-align: center; font-size: 10.5px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+  </style></head><body>
+    <div class="inv-banner">
+      <div class="company">
+        <div class="name">${esc(args.shopName)}</div>
+        <div class="sub">فاتورة مطالبة مالية عن أعمال مقاولات منفذة (مستخلص أعمال للعميل)</div>
+        ${args.shopTaxId ? `<div class="sub">الرقم الضريبي: <b>${esc(args.shopTaxId)}</b></div>` : ''}
+        ${args.shopPhone || args.shopAddress ? `<div class="sub">${esc([args.shopPhone, args.shopAddress].filter(Boolean).join(' · '))}</div>` : ''}
+      </div>
+      <div class="badge">
+        <div class="title">فاتورة مستخلص أعمال للعميل${args.isFinal ? ' (ختامي)' : ''}</div>
+        <div class="num">${esc(args.extractNumber)}</div>
+        <div class="meta-line">تاريخ الإصدار: ${esc(args.dateIso.slice(0, 10))}</div>
+        <div class="meta-line">حالة الفاتورة: ${args.payment === 'cash' ? 'محصلة نقداً / بنكياً' : 'آجلة — مستحقة على العميل'}</div>
+      </div>
+    </div>
+
+    <div class="parties">
+      <div class="party-box">
+        <div class="head">فُوترت إلى (العميل / الجهة المالكة)</div>
+        <div class="row"><span>اسم العميل:</span><b>${esc(args.clientName || '—')}</b></div>
+        ${args.clientPhone ? `<div class="row"><span>الهاتف:</span><b>${esc(args.clientPhone)}</b></div>` : ''}
+        ${args.clientTaxId ? `<div class="row"><span>الرقم الضريبي للعميل:</span><b>${esc(args.clientTaxId)}</b></div>` : ''}
+        <div class="row"><span>طريقة السداد:</span><b>${args.payment === 'cash' ? 'نقدي / بنكي مباشر' : 'آجل على حساب العميل'}</b></div>
+      </div>
+      <div class="party-box">
+        <div class="head">بيانات المشروع والعقد</div>
+        <div class="row"><span>المشروع:</span><b>${esc(args.projectCode)} — ${esc(args.projectName)}</b></div>
+        ${args.contractNumber ? `<div class="row"><span>رقم العقد:</span><b>${esc(args.contractNumber)}</b></div>` : ''}
+        ${args.contractValue ? `<div class="row"><span>قيمة العقد:</span><b>${esc(args.contractValue)}</b></div>` : ''}
+        <div class="row"><span>محتجز ضمان الأعمال:</span><b>${args.retentionPercent}٪</b></div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:6%">#</th>
+          <th style="width:11%">الكود</th>
+          <th style="width:${lines.length > 0 ? '33%' : '63%'}">البيان / بند الأعمال</th>
+          ${lines.length > 0 ? `
+          <th style="width:10%">إجمالي البند</th>
+          <th style="width:10%">النسبة السابقة</th>
+          <th style="width:10%">النسبة الجديدة</th>
+          <th style="width:8%">شريحة الفاتورة</th>
+          ` : ''}
+          <th style="width:${lines.length > 0 ? '12%' : '20%'}">قيمة الأعمال (${esc(sym)})</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lines.length > 0
+          ? lines.map((l, idx) => `<tr>
+              <td class="pct">${idx + 1}</td>
+              <td class="num">${esc(l.code)}</td>
+              <td>${esc(l.descriptionAr)}${l.unit && l.boqQty ? ` <small style="color:#64748b">(${l.boqQty} ${esc(l.unit)}${l.unitPrice ? ` × ${esc(l.unitPrice)}` : ''})</small>` : ''}</td>
+              <td class="num">${esc(l.boqTotal ?? '—')}</td>
+              <td class="pct">${l.prevPercent}٪</td>
+              <td class="pct" style="color:#0f766e">${l.newPercent}٪</td>
+              <td class="pct">+${l.currentSlicePercent}٪</td>
+              <td class="num">${esc(l.value)}</td>
+            </tr>`).join('')
+          : `<tr>
+              <td class="pct">1</td>
+              <td class="num">${esc(args.projectCode)}</td>
+              <td>${esc(args.description || `أعمال منفذة على مشروع ${args.projectName}`)}</td>
+              <td class="num">${esc(args.currentGross)}</td>
+            </tr>`
+        }
+      </tbody>
+    </table>
+
+    <div class="summary-grid">
+      <div class="cum-card">
+        <div class="head">كشف الموقف التراكمي للأعمال حتى هذه الفاتورة</div>
+        <div class="cum-row"><span>أعمال الفواتير / المستخلصات السابقة:</span><b class="num">${esc(args.previousGross)}</b></div>
+        <div class="cum-row"><span>أعمال هذه الفاتورة (${esc(args.extractNumber)}):</span><b class="num">${esc(args.currentGross)}</b></div>
+        <div class="cum-row"><span>إجمالي الأعمال المنفذة حتى تاريخه:</span><b class="num">${esc(args.cumulativeGross)}</b></div>
+        ${args.progressPercent !== null ? `<div class="cum-row"><span>نسبة الإنجاز الإجمالية من العقد:</span><b class="pct">${args.progressPercent}٪</b></div>` : ''}
+        ${args.description ? `<div style="margin-top:8px;font-size:11.5px;color:#334155"><b>ملاحظات وبيان الأعمال:</b> ${esc(args.description)}</div>` : ''}
+      </div>
+
+      <div class="totals-card">
+        <div class="t-row"><span>إجمالي قيمة أعمال الفاتورة (قبل الضريبة)</span><b>${esc(args.currentGross)}</b></div>
+        <div class="t-row"><span>ضريبة القيمة المضافة (+)</span><b>${esc(args.vat || `0 ${sym}`.trim())}</b></div>
+        <div class="t-row"><span>يُخصم: محتجز ضمان الأعمال (${args.retentionPercent}٪) (−)</span><b style="color:#b45309">− ${esc(args.retention || `0 ${sym}`.trim())}</b></div>
+        ${args.advanceRecovery ? `<div class="t-row"><span>يُخصم: استرداد دفعة مقدمة (−)</span><b style="color:#b45309">− ${esc(args.advanceRecovery)}</b></div>` : ''}
+        <div class="t-due">
+          <span>صافي الفاتورة المستحق على العميل</span>
+          <b>${esc(args.due)}</b>
+        </div>
+      </div>
+    </div>
+
+    <div class="sigs">
+      <div class="sig"><div class="role">إعداد المحاسبة / المقاول (${esc(args.shopName)})</div><div class="line">التوقيع والختم</div></div>
+      <div class="sig"><div class="role">اعتماد المهندس / الاستشاري</div><div class="line">التوقيع والاعتماد</div></div>
+      <div class="sig"><div class="role">استلام واعتماد العميل (${esc(args.clientName || 'الجهة المالكة')})</div><div class="line">الاسم والتوقيع والتاريخ</div></div>
+    </div>
+
+    <div class="foot">فاتورة مستخلص أعمال للعميل رقم ${esc(args.extractNumber)} · مشروع ${esc(args.projectCode)} (${esc(args.projectName)}) · تاريخ ${esc(args.dateIso.slice(0, 10))}</div>
+  </body></html>`
+}
+
