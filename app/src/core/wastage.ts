@@ -62,3 +62,89 @@ export function buildWastageEntry(lines: WastageLineInput[], label: string): Jou
   assertBalanced(entry)
   return entry
 }
+
+/**
+ * نسبة الهالك الأسبوعية (سد فجوة النشاط #20 — مخبز وحلويات):
+ * كل برامج المخابز العالمية (BakeSmart, Fournil, DoughOps, Logibake…) تتفق
+ * على أن قياس نسبة الهالك أسبوعياً — لا رصدها كرقم إجمالي تراكمي فقط —
+ * هو ما يحوّلها من "خسارة مؤجلة" إلى قرار إنتاج فوري (خبز أقل يوم الاثنين
+ * مثلاً). دليل الاستخدام المدمج `core/guides.ts` (`bakery_wastage`) كان
+ * **يَعِد** المستخدم فعلاً بهذا: "راقب نسبة الهالك أسبوعياً من التقارير:
+ * نسبة تتجاوز 8-10٪ تعني أنك تخبز أكثر من طلب السوق" — رغم عدم وجود أي
+ * تقرير كهذا في التطبيق قبل هذه الدفعة (`wastages` لم تكن تُستهلك إلا من
+ * شاشة الإتلاف نفسها كمجموع كلي بلا تقسيم زمني ولا نسبة).
+ *
+ * المقياس: نسبة = تكلفة الهالك ÷ (تكلفة الهالك + تكلفة البضاعة المباعة
+ * COGS لنفس الأسبوع) — أي "كم من تكلفة البضاعة المُعدة فعلاً لم يُباع
+ * وذهب هالكاً"، بنفس منطق "(discarded / produced) × 100" الذي توثقه
+ * Logibake بالضبط، لكن بوحدة القيمة (تكلفة) بدل الوزن لضمان التوحيد عبر
+ * أصناف مختلفة الوزن والسعر.
+ */
+export interface WastageRatioReportRow {
+  /** أسبوع ISO بصيغة YYYY-Www (الاثنين إلى الأحد، معيار ISO 8601) */
+  period: string
+  wastageCostMinor: Minor
+  salesCogsMinor: Minor
+  /** null إن لم توجد أي حركة (هالك أو مبيعات) في الأسبوع — لا قسمة على صفر */
+  ratioPercent: number | null
+}
+
+/** مفتاح الأسبوع ISO (YYYY-Www) لتاريخ معيّن — حساب معياري بلا اعتماد على توقيت محلي */
+export function isoWeekKey(dateIso: string): string {
+  const parsed = new Date(dateIso)
+  if (Number.isNaN(parsed.getTime())) throw new Error('تاريخ غير صالح لحساب الأسبوع')
+  const d = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()))
+  const dayNum = (d.getUTCDay() + 6) % 7 // الاثنين = 0 … الأحد = 6
+  d.setUTCDate(d.getUTCDate() - dayNum + 3) // أقرب خميس يحدد سنة الأسبوع ISO
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4))
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3)
+  const weekNum = 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000))
+  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+export function wastageRatioReport(
+  wastages: readonly { date: string; totalCostMinor: Minor }[],
+  sales: readonly { date: string; cogsMinor: Minor }[],
+): WastageRatioReportRow[] {
+  const byWeek = new Map<string, { wastageCostMinor: Minor; salesCogsMinor: Minor }>()
+  const bucket = (period: string) => {
+    let row = byWeek.get(period)
+    if (!row) { row = { wastageCostMinor: 0, salesCogsMinor: 0 }; byWeek.set(period, row) }
+    return row
+  }
+  for (const w of wastages) bucket(isoWeekKey(w.date)).wastageCostMinor += w.totalCostMinor
+  for (const s of sales) bucket(isoWeekKey(s.date)).salesCogsMinor += s.cogsMinor
+  return [...byWeek.entries()]
+    .map(([period, row]) => {
+      const base = row.wastageCostMinor + row.salesCogsMinor
+      return { period, ...row, ratioPercent: base > 0 ? Math.round((row.wastageCostMinor / base) * 10000) / 100 : null }
+    })
+    .sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0))
+}
+
+export interface WastageByItemReportRow {
+  itemId: number
+  nameAr: string
+  docsCount: number
+  totalQty: number
+  totalCostMinor: Minor
+}
+
+/** تجميع الهالك حسب الصنف — "أي المنتجات تهلك أكثر" (إجماع برامج المخابز: BakeSmart/Logibake) */
+export function wastageByItemReport(
+  wastages: readonly { lines: readonly { itemId: number; nameAr: string; qty: number; unitCostMinor: Minor }[] }[],
+): WastageByItemReportRow[] {
+  const byItem = new Map<number, WastageByItemReportRow>()
+  for (const w of wastages) {
+    for (const l of w.lines) {
+      let row = byItem.get(l.itemId)
+      if (!row) { row = { itemId: l.itemId, nameAr: l.nameAr, docsCount: 0, totalQty: 0, totalCostMinor: 0 }; byItem.set(l.itemId, row) }
+      row.docsCount += 1
+      row.totalQty = Math.round((row.totalQty + l.qty) * 1000) / 1000
+      row.totalCostMinor += Math.round(l.qty * l.unitCostMinor)
+    }
+  }
+  return [...byItem.values()].sort((a, b) => b.totalCostMinor - a.totalCostMinor)
+}
+
