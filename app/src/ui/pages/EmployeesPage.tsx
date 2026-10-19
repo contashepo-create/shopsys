@@ -392,6 +392,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [hireDate, setHireDate] = useState('')
   const [baseSalary, setBaseSalary] = useState('')
   const [allowances, setAllowances] = useState('')
+  const [commissionPercent, setCommissionPercent] = useState('')
   const [active, setActive] = useState(true)
   const [notes, setNotes] = useState('')
   const [ext, setExt] = useState<PartyExtended>(EMPTY_EXTENDED)
@@ -403,12 +404,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   const openNew = () => {
     setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(new Date().toISOString().slice(0, 10))
-    setBaseSalary(''); setAllowances(''); setActive(true); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true)
+    setBaseSalary(''); setAllowances(''); setCommissionPercent(''); setActive(true); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true)
   }
   const openEdit = (e: Employee) => {
     const suggestedRole = e.roleId ?? suggestRoleForJobTitle(e.jobTitle)
     setEditing(e); setName(e.nameAr); setPhone(e.phone); setJobTitle(e.jobTitle); setRoleId(roleOptions.some((role) => role.id === suggestedRole) ? suggestedRole : (roleOptions[0]?.id ?? 'accountant')); setHireDate(e.hireDate)
-    setBaseSalary(toMajor(e.baseSalaryMinor)); setAllowances(toMajor(e.allowancesMinor)); setActive(e.active); setNotes(e.notes)
+    setBaseSalary(toMajor(e.baseSalaryMinor)); setAllowances(toMajor(e.allowancesMinor)); setCommissionPercent(e.defaultCommissionPercent ? String(e.defaultCommissionPercent) : ''); setActive(e.active); setNotes(e.notes)
     setExt({
       taxNumber: e.taxNumber, commercialReg: e.commercialReg, email: e.email, address: e.address,
       city: e.city, postalCode: e.postalCode, buildingNo: e.buildingNo, nationalId: e.nationalId,
@@ -421,6 +422,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       nameAr: name.trim(), phone: phone.trim(), jobTitle: jobTitle.trim(), roleId: roleId || null, hireDate,
       baseSalaryMinor: baseSalary ? toMinor(baseSalary, cur.decimals) : 0,
       allowancesMinor: allowances ? toMinor(allowances, cur.decimals) : 0,
+      defaultCommissionPercent: commissionPercent ? Math.min(100, Math.max(0, Number(commissionPercent) || 0)) : null,
       active, notes: notes.trim(),
       ...ext,
     }
@@ -1549,6 +1551,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             </Field>
             <Field label={`بدلات شهرية ثابتة (${cur.symbol})`} hint="سكن، مواصلات… تُملأ تلقائياً في المسير">
               <input value={allowances} onChange={(e) => setAllowances(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+            <Field label="نسبة عمولة افتراضية على الخدمات (٪)" hint="صالون/خدمات (نمط Fresha/Booksy) — تُملأ تلقائياً عند اختياره في الكاشير، قابلة للتعديل لكل فاتورة">
+              <input value={commissionPercent} onChange={(e) => setCommissionPercent(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
           </div>
 

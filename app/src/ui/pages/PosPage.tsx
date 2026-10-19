@@ -27,7 +27,8 @@ import { emptyRxLine, validateRxLines, doseText, type RxLine } from '../../core/
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { userPrefsKey } from '../../core/userPreferences.ts'
 import { resolveShortcuts } from '../../core/keyboardShortcuts.ts'
-import { isInvoiceFirst } from '../../core/activities.ts'
+import { isInvoiceFirst, getActivity } from '../../core/activities.ts'
+import { calculateInvoiceCommissionMinor } from '../../core/invoiceCommissions.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
@@ -67,7 +68,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices, employees } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
@@ -136,6 +137,17 @@ export function PosPage() {
   const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
+  /** سد فجوة عالمية (صالون/خدمات — إجماع Fresha/Booksy/Vagaro/Zenoti):
+   * عمولة الموظف المنفّذ للخدمة تُحسب وتُستحق من نفس شاشة الكاشير
+   * السريعة لحظة الدفع — لا حصراً عبر الفاتورة المتقدمة كما كانت. */
+  const [commissionEmployeeId, setCommissionEmployeeId] = useState<number | null>(null)
+  const [commissionPercent, setCommissionPercent] = useState('')
+  const showCommissionPicker = getActivity(setup.activityId)?.modules.includes('booking') && employees.some((e) => e.active)
+  const pickCommissionEmployee = (id: number) => {
+    setCommissionEmployeeId(id || null)
+    const emp = employees.find((e) => e.id === id)
+    if (emp?.defaultCommissionPercent) setCommissionPercent(String(emp.defaultCommissionPercent))
+  }
   /* v1.0.12: العميل المختار (نقاط الولاء وكشفه) */
   const selectedCustomer = useMemo(() => (customerId == null ? null : customers.find((x) => x.id === customerId) ?? null), [customerId, customers])
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
@@ -459,6 +471,17 @@ export function PosPage() {
     } catch { return null }
   }, [cart, invoiceDiscount, effectiveCountryVatPercent, setup.taxInclusive])
 
+  // عمولة الموظف المنفّذ: نسبة % من صافي الفاتورة قبل الضريبة (نفس أساس
+  // 'net' في الفاتورة المتقدمة) — بلا موظف مختار أو بنسبة صفر = بلا عمولة
+  const commissionMinor = useMemo(() => {
+    if (!commissionEmployeeId || !totals) return 0
+    const pct = Number(commissionPercent) || 0
+    if (pct <= 0) return 0
+    try {
+      return calculateInvoiceCommissionMinor({ basis: 'net', value: pct, grossMinor: totals.grossMinor, netMinor: totals.netMinor, profitMinor: totals.netMinor - totals.cogsMinor })
+    } catch { return 0 }
+  }, [commissionEmployeeId, commissionPercent, totals])
+
   // عند فتح شاشة الدفع: المبلغ النقدي يتعبأ تلقائياً بالإجمالي (قابل للتعديل — طلب المالك)
   useEffect(() => {
     if (payOpen && totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals))
@@ -605,6 +628,7 @@ export function PosPage() {
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
         ...(selectedTerminal ? { terminalPayment: { terminalId: selectedTerminal.id, providerReference: terminalReference.trim(), ...(terminalCardLast4 ? { cardLast4: terminalCardLast4 } : {}) } } : {}),
+        ...(commissionEmployeeId && commissionMinor > 0 ? { staffCommission: { employeeId: commissionEmployeeId, amountMinor: commissionMinor } } : {}),
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
@@ -624,6 +648,7 @@ export function PosPage() {
       setPharmacyConfirmed(false)
       setPharmacyPatientName(''); setPharmacyPrescriberName(''); setPharmacyIdNumber(''); setPharmacyRxLines([])
       setPendingFinishArgs(null)
+      setCommissionEmployeeId(null); setCommissionPercent('')
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
       if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
@@ -1133,6 +1158,35 @@ export function PosPage() {
               className="w-16 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
             />
           </div>
+          {showCommissionPicker && (
+            <div className="flex items-center justify-between gap-2 text-[12px] text-slate-500" title="عمولة الموظف المنفّذ للخدمة — تُستحق تلقائياً عند الدفع (مصروف 5117 / مستحق 2116)">
+              <span className="shrink-0">💈 الموظف المنفّذ</span>
+              <select
+                value={commissionEmployeeId ?? ''}
+                onChange={(e) => pickCommissionEmployee(Number(e.target.value) || 0)}
+                className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent outline-none focus:border-brand-400"
+              >
+                <option value="">بلا عمولة</option>
+                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+              </select>
+              {commissionEmployeeId != null && (
+                <input
+                  value={commissionPercent}
+                  onChange={(e) => setCommissionPercent(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="٪"
+                  aria-label="نسبة عمولة الموظف"
+                  className="w-14 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
+                />
+              )}
+            </div>
+          )}
+          {commissionMinor > 0 && (
+            <div className="flex justify-between text-[11.5px] text-sky-600 dark:text-sky-300" title="تُستحق مع ترحيل الفاتورة — مصروف عمولات موظفين">
+              <span>عمولة {employees.find((e) => e.id === commissionEmployeeId)?.nameAr}</span>
+              <span>{fmt(commissionMinor)}</span>
+            </div>
+          )}
           {totals && (
             <>
               {totals.discountMinor > 0 && (

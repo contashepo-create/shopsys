@@ -203,6 +203,11 @@ export interface Employee extends PartyExtended {
   hireDate: string // تاريخ التعيين YYYY-MM-DD
   baseSalaryMinor: number // الراتب الأساسي الشهري
   allowancesMinor: number // بدلات شهرية ثابتة
+  /** سد فجوة عالمية (صالون/خدمات — إجماع Fresha/Booksy/Vagaro/Zenoti):
+   * نسبة عمولة افتراضية % على كل فاتورة بيع يُسند فيها هذا الموظف كمنفّذ
+   * الخدمة — تُملأ تلقائياً عند اختياره في الكاشير وتبقى قابلة للتعديل
+   * يدوياً لكل فاتورة. null/0 = بلا عمولة تلقائية (الافتراضي). */
+  defaultCommissionPercent?: number | null
   active: boolean // موظف على رأس العمل؟
   notes: string
 }
