@@ -50,7 +50,7 @@ const qtyBase = (l: { qty: number; unitFactor?: number }): number =>
  * من الرئيسي إليه، فيبقى الرئيسي = الإجمالي − أرصدة بقية المخازن (متسق دائماً).
  */
 export function computeWarehouseStock(
-  items: { id: number; stockQty: number }[],
+  items: { id: number; stockQty: number; warehouseId?: number | null }[],
   warehouses: { id: number; isMain: boolean }[],
   transfers: TransferInput[],
   docs: WarehouseDoc[] = [],
@@ -59,8 +59,12 @@ export function computeWarehouseStock(
   const stock: WarehouseStock = new Map()
   for (const w of warehouses) stock.set(w.id, new Map())
   if (!main) return stock
-  const mainMap = stock.get(main.id)!
-  for (const it of items) mainMap.set(it.id, it.stockQty ?? 0)
+  const itemHomeWh = new Map<number, number>()
+  for (const it of items) {
+    const homeId = it.warehouseId != null && stock.has(it.warehouseId) ? it.warehouseId : main.id
+    itemHomeWh.set(it.id, homeId)
+    stock.get(homeId)!.set(it.id, it.stockQty ?? 0)
+  }
   for (const t of transfers) {
     const from = stock.get(t.fromWarehouseId)
     const to = stock.get(t.toWarehouseId)
@@ -71,12 +75,16 @@ export function computeWarehouseStock(
     }
   }
   for (const d of docs) {
-    if (d.warehouseId == null || d.warehouseId === main.id) continue // غير محدد/رئيسي = لا إزاحة
+    if (d.warehouseId == null) continue // غير محدد = لا إزاحة
     const w = stock.get(d.warehouseId)
     if (!w) continue
     for (const l of d.lines) {
+      const homeId = itemHomeWh.get(l.itemId) ?? main.id
+      if (d.warehouseId === homeId) continue
+      const homeMap = stock.get(homeId)
+      if (!homeMap) continue
       w.set(l.itemId, (w.get(l.itemId) ?? 0) + l.qtyDelta)
-      mainMap.set(l.itemId, (mainMap.get(l.itemId) ?? 0) - l.qtyDelta)
+      homeMap.set(l.itemId, (homeMap.get(l.itemId) ?? 0) - l.qtyDelta)
     }
   }
   return stock

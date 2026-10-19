@@ -85,12 +85,23 @@ export function PurchaseOrdersPage() {
   const [expectedDate, setExpectedDate] = useState(() => new Date().toISOString().slice(0, 10))
   const [warehouseId, setWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [notes, setNotes] = useState('')
-  /* عمود ملاحظات البنود (طلب المالك) — نفس تسهيل فاتورة الشراء (بوابة التكافؤ) */
+  /* عمود ملاحظات البنود (طلب المالك) — نفس تسهيل فاتورة الشراء (بوابة التكافؤ)، ويُفعَّل تلقائياً من تفضيل المستخدم أو عند وجود ملاحظات بالبنود */
   const [showLineNotes, setShowLineNotes] = useState(false)
   /** مرجع داخلي (رقم عرض/طلبية) — يُحفظ مع ملاحظات الأمر كأول سطر */
   const [reference, setReference] = useState('')
   /** يبدأ الجدول بلا سطور: أول سطر ظاهر يحمل خانة البحث — كما في فاتورة الشراء حرفياً */
   const [lines, setLines] = useState<DraftLine[]>([])
+  useEffect(() => {
+    try { if (localStorage.getItem('shopsys-show-line-notes') === '1') setShowLineNotes(true) } catch { /* ignore */ }
+  }, [])
+  useEffect(() => {
+    if (lines.some((l) => Boolean(l.notes?.trim()))) setShowLineNotes(true)
+  }, [lines])
+  useEffect(() => {
+    if (warehouses.length > 0 && (warehouseId == null || !warehouses.some((w) => w.id === warehouseId))) {
+      setWarehouseId(warehouses[0].id)
+    }
+  }, [warehouses, warehouseId])
   const [applyTax, setApplyTax] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseOrderStatus>('all')
   const [activeItemId, setActiveItemId] = useState<number | null>(null)
@@ -359,7 +370,7 @@ export function PurchaseOrdersPage() {
                 }} /> خاضعة للضريبة {applyTax ? `${taxPolicy.effectivePercent}%` : ''}
               </label>
               <label className="invoice-doc-stripcheck" title="إظهار عمود ملاحظات بجانب كل بند في جدول الأصناف">
-                <input type="checkbox" checked={showLineNotes} onChange={(e) => setShowLineNotes(e.target.checked)} /> إظهار عمود الملاحظات
+                <input type="checkbox" checked={showLineNotes} onChange={(e) => { const v = e.target.checked; setShowLineNotes(v); try { localStorage.setItem('shopsys-show-line-notes', v ? '1' : '0') } catch { /* ignore */ } }} /> إظهار عمود الملاحظات
               </label>
               <span className="invoice-doc-stripfield">أمر بلا قيد
                 <b className="invoice-doc-strip-v">لا يُحرّك المخزون ولا «الموردون» — يُرحَّل مع فاتورة الشراء</b>

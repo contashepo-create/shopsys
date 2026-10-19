@@ -7,11 +7,12 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * - حد الفروع من الرخصة الموقعة (القرار 24) — الزيادة بمفتاح من المطوّر
  */
 import { useMemo, useState } from 'react'
-import { GitBranch, Plus, Trash2, Star, PenLine, BarChart3, Wallet2, Package, ArrowLeftRight, Phone, MapPin, UserCircle2 } from 'lucide-react'
+import { GitBranch, Plus, Trash2, Star, PenLine, BarChart3, Wallet2, Package, ArrowLeftRight, Phone, MapPin, UserCircle2, Layers, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useDataStore } from '../../data/repo.ts'
+import { useRawDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { compareBranches, type Branch } from '../../core/branches.ts'
+import { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS, type BusinessModule } from '../../core/activities.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { evaluateLicense, effectiveLimits } from '../../core/license.ts'
 import { formatMinor } from '../../core/money.ts'
@@ -21,8 +22,9 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
+    activeBranchId, setActiveBranchId,
     sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
-  } = useDataStore()
+  } = useRawDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
 
@@ -66,6 +68,10 @@ export function BranchesPage() {
   // المخزن والخزينة: «جديد تلقائياً» (الافتراضي الأنسب) أو ربط بقائم غير مربوط
   const [whMode, setWhMode] = useState<'new' | number>('new')
   const [trMode, setTrMode] = useState<'new-cash' | 'new-bank' | string>('new-cash')
+  // تخصيص الأقسام والنشاط لكل فرع (طلب المالك: تقسيم الأقسام الإضافية على الفروع أو فرع شامل)
+  const [customModulesMode, setCustomModulesMode] = useState<'all' | 'custom'>('all')
+  const [enabledModules, setEnabledModules] = useState<BusinessModule[]>([])
+  const [branchActivityId, setBranchActivityId] = useState<string>('')
 
   const usedWh = new Set(branches.map((b) => b.warehouseId))
   const usedTr = new Set(branches.map((b) => b.treasuryCode))
@@ -74,11 +80,30 @@ export function BranchesPage() {
 
   const openCreate = () => {
     setEditing(null); setName(''); setAddress(''); setPhone(''); setManager('')
-    setWhMode('new'); setTrMode('new-cash'); setOpen(true)
+    setWhMode('new'); setTrMode('new-cash')
+    setCustomModulesMode('all'); setEnabledModules([...setup.modules]); setBranchActivityId('')
+    setOpen(true)
   }
   const openEdit = (b: Branch) => {
     setEditing(b); setName(b.nameAr); setAddress(b.address ?? ''); setPhone(b.phone ?? ''); setManager(b.managerName ?? '')
-    setWhMode(b.warehouseId); setTrMode(b.treasuryCode); setOpen(true)
+    setWhMode(b.warehouseId); setTrMode(b.treasuryCode)
+    setCustomModulesMode(b.customModulesMode ?? 'all')
+    setEnabledModules(b.customModulesMode === 'custom' && b.enabledModules?.length ? [...b.enabledModules] : [...setup.modules])
+    setBranchActivityId(b.activityId ?? '')
+    setOpen(true)
+  }
+
+  const toggleBranchModule = (mod: BusinessModule) => {
+    setEnabledModules((prev) => prev.includes(mod) ? prev.filter((m) => m !== mod) : [...prev, mod])
+  }
+
+  const applyActivityPreset = (actId: string) => {
+    setBranchActivityId(actId)
+    if (!actId) return
+    const tmpl = getActivity(actId)
+    if (!tmpl) return
+    const allowed = setup.modules.filter((m) => tmpl.modules.includes(m))
+    if (allowed.length > 0) setEnabledModules(allowed)
   }
 
   const save = () => {
@@ -89,6 +114,9 @@ export function BranchesPage() {
           address: address.trim() || undefined,
           phone: phone.trim() || undefined,
           managerName: manager.trim() || undefined,
+          customModulesMode,
+          enabledModules: customModulesMode === 'custom' ? enabledModules : undefined,
+          activityId: branchActivityId || null,
           ...(typeof whMode === 'number' ? { warehouseId: whMode } : {}),
           ...(typeof trMode === 'string' && !trMode.startsWith('new-') ? { treasuryCode: trMode } : {}),
         })
@@ -103,6 +131,9 @@ export function BranchesPage() {
           address: address.trim() || undefined,
           phone: phone.trim() || undefined,
           managerName: manager.trim() || undefined,
+          customModulesMode,
+          enabledModules: customModulesMode === 'custom' ? enabledModules : undefined,
+          activityId: branchActivityId || null,
         }, maxBranches)
         toast.show(`أُنشئ فرع «${name.trim()}» بمخزنه وخزينته ✅`)
       }
@@ -128,6 +159,32 @@ export function BranchesPage() {
           <Btn onClick={openCreate}><Plus size={15} /> فرع جديد</Btn>
         </div>
       </div>
+
+      {branches.length > 0 && (
+        <div className="anim-up rounded-2xl border border-teal-500/25 bg-teal-500/5 p-3.5 flex items-center justify-between flex-wrap gap-3 text-[12px]">
+          <div className="space-y-0.5">
+            <div className="font-bold text-teal-800 dark:text-teal-200 flex items-center gap-1.5">
+              🏢 نظام الشركات والفروع المستقلة بالكامل
+            </div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              عند تفعيل أي فرع يعمل كشركة مستقلة تماماً (عملاؤه، موردوه، موظفوه، أصنافه، مخازنه، خزائنه وبنوكه، فواتيره، أقسامه، وميزانه مستقل عن بقية الفروع). وعند اختيار «كل الفروع (شامل)» ترى المنشأة مجمَّعة.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { setActiveBranchId(null); toast.show('تم التبديل إلى العرض الشامل لكل الفروع والشركات ✓') }}
+              className={`px-3 py-1.5 rounded-xl text-[11.5px] font-bold transition-all ${
+                activeBranchId == null
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              🌐 كل الفروع (عرض شامل)
+            </button>
+          </div>
+        </div>
+      )}
 
       {!branches.length && (
         <div className="anim-up">
@@ -224,6 +281,62 @@ export function BranchesPage() {
                 {b.phone && <div className="flex items-center gap-1.5" dir="ltr"><Phone size={12} /> {b.phone}</div>}
                 {b.address && <div className="flex items-center gap-1.5"><MapPin size={12} /> {b.address}</div>}
               </div>
+
+              {/* شارات أقسام ونشاط الفرع + زر تفعيل عرض الفرع */}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold ${
+                    b.customModulesMode === 'custom'
+                      ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300'
+                      : 'bg-teal-500/10 text-teal-600 dark:text-teal-300'
+                  }`}>
+                    <Layers size={11} />
+                    {b.customModulesMode === 'custom'
+                      ? `أقسام مخصصة (${(b.enabledModules ?? []).length})`
+                      : 'شامل لكل أقسام الشركة'}
+                  </span>
+                  {b.activityId && getActivity(b.activityId) && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-300">
+                      {getActivity(b.activityId)?.icon} {getActivity(b.activityId)?.nameAr}
+                    </span>
+                  )}
+                </div>
+                {b.customModulesMode === 'custom' && (b.enabledModules ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {(b.enabledModules ?? []).map((mod) => (
+                      <span key={mod} className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                        {MODULE_LABELS[mod]?.icon} {MODULE_LABELS[mod]?.nameAr ?? mod}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    data-branch-card-switch={b.id}
+                    onClick={() => {
+                      const next = activeBranchId === b.id ? null : b.id
+                      setActiveBranchId(next)
+                      toast.show(next ? `تم تفعيل عرض فرع «${b.nameAr}» وأقسامه المخصصة في القوائم ✓` : 'تمت العودة للعرض الشامل لكل الفروع ✓')
+                    }}
+                    className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-bold transition-all ${
+                      activeBranchId === b.id
+                        ? 'bg-teal-600 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-teal-500/10 hover:text-teal-600'
+                    }`}
+                  >
+                    <CheckCircle2 size={13} />
+                    {activeBranchId === b.id ? 'الفرع النشط حالياً (إلغاء التخصيص)' : 'تفعيل قوائم هذا الفرع'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(b)}
+                    className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-indigo-500/10 hover:text-indigo-600 transition-all"
+                  >
+                    تخصيص الأقسام
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -253,6 +366,130 @@ export function BranchesPage() {
             <Field label="هاتف الفرع"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
           </div>
           <Field label="العنوان"><input value={address} onChange={(e) => setAddress(e.target.value)} className={inputCls} /></Field>
+
+          {/* ─── تخصيص الأقسام والنشاط لهذا الفرع ─── */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-3 bg-slate-50/60 dark:bg-slate-900/30">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="font-bold text-[12.5px] flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
+                <Layers size={14} className="text-teal-500" />
+                نطاق الأقسام والأنشطة في هذا الفرع
+              </div>
+              <span className="text-[10.5px] text-slate-400">يحدد الشاشات والأقسام الظاهرة لموظفي هذا الفرع وعند اختياره</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className={`flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                customModulesMode === 'all'
+                  ? 'border-teal-500 bg-teal-500/10 text-teal-800 dark:text-teal-200'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60'
+              }`}>
+                <input
+                  type="radio"
+                  name="branchModulesMode"
+                  checked={customModulesMode === 'all'}
+                  onChange={() => setCustomModulesMode('all')}
+                  className="mt-1 accent-teal-600"
+                />
+                <div className="text-[11.5px]">
+                  <div className="font-bold">شامل — كل أقسام الشركة المفعلة</div>
+                  <div className="text-[10.5px] text-slate-400">يعرض جميع الأقسام والأنشطة المفعلة في المنشأة ({setup.modules.length} قسم)</div>
+                </div>
+              </label>
+
+              <label className={`flex items-start gap-2 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                customModulesMode === 'custom'
+                  ? 'border-indigo-500 bg-indigo-500/10 text-indigo-800 dark:text-indigo-200'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60'
+              }`}>
+                <input
+                  type="radio"
+                  name="branchModulesMode"
+                  checked={customModulesMode === 'custom'}
+                  onChange={() => {
+                    setCustomModulesMode('custom')
+                    if (!enabledModules.length) setEnabledModules([...setup.modules])
+                  }}
+                  className="mt-1 accent-indigo-600"
+                />
+                <div className="text-[11.5px]">
+                  <div className="font-bold">تخصيص أقسام أو نشاط محدد للفرع</div>
+                  <div className="text-[10.5px] text-slate-400">مثال: فرع للمقاولات فقط وفرع آخر للشحن واللوجستيات فقط</div>
+                </div>
+              </label>
+            </div>
+
+            {customModulesMode === 'custom' && (
+              <div className="space-y-3 pt-1">
+                <Field label="النشاط التجاري للفرع (اختياري — يضبط مسميات القوائم ويحدد أقسام النشاط تلقائياً)">
+                  <QuickSelect
+                    aria-label="النشاط التجاري للفرع"
+                    value={branchActivityId}
+                    onChange={(e) => applyActivityPreset(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">نفس نشاط الشركة الأساسي ({getActivity(setup.activityId)?.nameAr ?? 'عام'})</option>
+                    {ACTIVITY_TEMPLATES.map((act) => (
+                      <option key={act.id} value={act.id}>
+                        {act.icon} {act.nameAr}
+                      </option>
+                    ))}
+                  </QuickSelect>
+                </Field>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11.5px] font-bold text-slate-600 dark:text-slate-300">
+                      اختر الأقسام المفعلة في هذا الفرع ({enabledModules.length} من {setup.modules.length}):
+                    </span>
+                    <div className="flex items-center gap-2 text-[10.5px]">
+                      <button
+                        type="button"
+                        onClick={() => setEnabledModules([...setup.modules])}
+                        className="text-teal-600 font-bold hover:underline"
+                      >
+                        تحديد الكل
+                      </button>
+                      <span className="text-slate-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setEnabledModules(setup.modules.filter((m) => m === 'inventory' || m === 'purchases'))}
+                        className="text-slate-500 hover:underline"
+                      >
+                        المخزون والمشتريات فقط
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-52 overflow-y-auto p-1">
+                    {setup.modules.map((mod) => {
+                      const info = MODULE_LABELS[mod]
+                      const checked = enabledModules.includes(mod)
+                      return (
+                        <label
+                          key={mod}
+                          data-branch-module-checkbox={mod}
+                          className={`flex items-center gap-2 p-2 rounded-lg border text-[11.5px] cursor-pointer transition-colors ${
+                            checked
+                              ? 'border-indigo-500/60 bg-indigo-500/10 font-bold text-slate-800 dark:text-white'
+                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 text-slate-500'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleBranchModule(mod)}
+                            className="accent-indigo-600 shrink-0"
+                          />
+                          <span>{info?.icon}</span>
+                          <span className="truncate">{info?.nameAr ?? mod}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {!editing && !branches.length && (
             <div className="text-[11.5px] text-teal-600 bg-teal-500/5 border border-teal-400/20 rounded-xl p-3 leading-relaxed">
               💡 أول فرع تنشئه: يتحول المخزن الرئيسي والخزينة الرئيسية تلقائياً إلى «الفرع الرئيسي»،

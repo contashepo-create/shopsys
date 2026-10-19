@@ -99,6 +99,98 @@ ok('رصيد العميل = 120,000', statementBalance(stmt) === 120_000)
 ok('التسمية واضحة «نقلة TR-…»', stmt.every((r) => r.docLabel.includes('نقلة')))
 ok('نقلة نقدية كاملة لا تدخل الكشف', customerUnitDocs({ customerId: 999, trips: S().trips }).length === 0)
 
+console.log('\n4️⃣ بنود خدمة النقل والحاويات + قسم مصاريف النقلات المستقل + تعديل النقلة بعد تسجيلها')
+const svcItemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة نقل داخلي من الميناء إلى التخزين', unitAr: 'نقلة', priceMinor: 40_000 })
+const tripMulti = S().postTrip({
+  customerId: cust.id,
+  vehicleId: null,
+  driverId: drv.id,
+  input: {
+    fromLoc: 'الميناء',
+    toLoc: 'التخزين',
+    qty: 3,
+    unitPriceMinor: 40_000,
+    vatPercent: 15,
+    payment: 'credit',
+    containerNumbers: ['MSKU111', 'MSKU222', 'MSKU333'],
+    expenses: [],
+    lines: [
+      {
+        itemId: svcItemId,
+        serviceNameAr: 'خدمة نقل داخلي من الميناء إلى التخزين',
+        fromLoc: 'الميناء',
+        toLoc: 'التخزين',
+        qty: 3,
+        unitPriceMinor: 40_000,
+        containerNumbers: ['MSKU111', 'MSKU222', 'MSKU333'],
+      },
+    ],
+  },
+  notes: '3 حاويات',
+})
+ok('بنود الخدمة + الضريبة 15% = 120,000 + 18,000 = 138,000', tripMulti.totals.baseMinor === 120_000 && tripMulti.totals.vatMinor === 18_000 && tripMulti.totals.grandMinor === 138_000)
+
+// مصروف داخلي على الشركة (5106) من قسم مصاريف النقلات
+const expCompany = S().addTripExpense({
+  tripId: tripMulti.id,
+  nameAr: 'سولار وكارتة طريق',
+  qty: 1,
+  unitAmountMinor: 15_000,
+  bearer: 'company',
+  paymentSource: 'cash',
+  treasury: '1101',
+  notes: 'مصروف داخلي',
+})
+const balAfterCompanyExp = S().getCustomerBalance(cust.id)
+ok('مصروف الشركة الداخلي (5106) يخصم من ربح النقلة ولا يظهر في رصيد العميل (1104)', expCompany.bearer === 'company' && balAfterCompanyExp === 120_000 + 138_000 && S().trips.find((x) => x.id === tripMulti.id).totals.profitMinor === 105_000)
+
+// مصروف محمّل على العميل (1104) من قسم مصاريف النقلات
+const expCustomer = S().addTripExpense({
+  tripId: tripMulti.id,
+  nameAr: 'أرضيات وتخليص ميناء على حساب العميل',
+  qty: 1,
+  unitAmountMinor: 25_000,
+  bearer: 'customer',
+  paymentSource: 'cash',
+  treasury: '1101',
+  notes: 'على العميل',
+})
+const balAfterCustExp = S().getCustomerBalance(cust.id)
+const openInvs = S().getOpenClientInvoices(cust.id)
+ok('مصروف العميل (1104) ينزل في ذمته وكشف حسابه ومستنداته المفتوحة', expCustomer.bearer === 'customer' && balAfterCustExp === 120_000 + 138_000 + 25_000 && openInvs.some((d) => d.docKey === `tripexp:${expCustomer.id}` && d.dueMinor === 25_000))
+
+// تعديل النقلة بعد تسجيلها (updateTrip)
+const updatedTrip = S().updateTrip({
+  tripId: tripMulti.id,
+  customerId: cust.id,
+  vehicleId: null,
+  driverId: drv.id,
+  input: {
+    fromLoc: 'الميناء',
+    toLoc: 'التخزين',
+    qty: 2,
+    unitPriceMinor: 50_000,
+    vatPercent: 0,
+    payment: 'credit',
+    containerNumbers: ['MSKU111', 'MSKU222'],
+    expenses: [],
+    lines: [
+      {
+        itemId: svcItemId,
+        serviceNameAr: 'خدمة نقل داخلي من الميناء إلى التخزين',
+        fromLoc: 'الميناء',
+        toLoc: 'التخزين',
+        qty: 2,
+        unitPriceMinor: 50_000,
+        containerNumbers: ['MSKU111', 'MSKU222'],
+      },
+    ],
+  },
+  notes: 'بعد التعديل إلى نقلتين بدون ضريبة',
+})
+ok('تعديل النقلة بعد تسجيلها يحدث الإجمالي (100,000) ويحافظ على مصروف الشركة المسجل (15,000) والربح (85,000)', updatedTrip.totals.grandMinor === 100_000 && updatedTrip.totals.costMinor === 15_000 && updatedTrip.totals.profitMinor === 85_000)
+ok('رصيد العميل بعد تعديل النقلة = 120,000 + 100,000 + 25,000 = 245,000', S().getCustomerBalance(cust.id) === 245_000)
+
 const total = S().journal.flatMap((e) => e.lines).reduce((a, l) => a + l.debit - l.credit, 0)
 ok('كل القيود متوازنة', total === 0)
 

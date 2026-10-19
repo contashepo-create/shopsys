@@ -4,13 +4,14 @@
  */
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop } from 'lucide-react'
+import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop, GitBranch } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation } from '../components/ui.tsx'
+import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
@@ -31,32 +32,41 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
   // صلاحيات المستخدم النشط (البند 4 — صفر تجاوز): ما لا يملكه لا يراه أصلاً
   const { appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const {
+    branches: activeBranches,
+    effectiveBranch,
+    effectiveBranchId,
+    isLockedToUserBranch,
+    effectiveModules,
+    effectiveActivityId,
+    setActiveBranchId,
+  } = useEffectiveBranchScope()
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
 
-  // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط (طلب المالك):
+  // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط أو الفرع المخصص (طلب المالك):
   // القسم كله يختفي لو وحدته مطفأة، والفرع المرتبط بوحدة يختفي وحده داخل قسم عام
   const visibleSections = NAV_SECTIONS
     .filter((sec) => {
-      if (sec.module && !setup.modules.includes(sec.module)) return false
+      if (sec.module && !effectiveModules.includes(sec.module)) return false
       if (sec.accountingOnly && setup.accountingMode !== 'full') return false
       return true
     })
     .map((sec) => ({
       ...sec,
       children: sec.children
-        .filter((c) => !c.module || setup.modules.includes(c.module))
+        .filter((c) => !c.module || effectiveModules.includes(c.module))
         // فرع مربوط بخاصية أصناف (سيريالات مثلاً) يختفي لو النشاط لا يدعمها — إصلاح ظهوره للعيادة
         .filter((c) => !c.feature || setup.features.includes(c.feature))
         // فرع لصيق بنشاط بعينه (أوامر الطاولات للمطاعم) — لا يظهر لمصنع فعّل وحدة التصنيع
-        .filter((c) => !c.activities || c.activities.includes(setup.activityId ?? ''))
+        .filter((c) => !c.activities || c.activities.includes(effectiveActivityId ?? ''))
         // قائمة سوداء: الكاشير/الورديات تختفي لأنشطة «الفاتورة أولاً» (تجارة/مصنع/خدمات)
-        .filter((c) => !c.hideForActivities || !c.hideForActivities.includes(setup.activityId ?? ''))
+        .filter((c) => !c.hideForActivities || !c.hideForActivities.includes(effectiveActivityId ?? ''))
         // فرض الصلاحيات في الواجهة: الشاشة غير المصرح بها لا تظهر في القائمة
         .filter((c) => canAccessPath(c.path, perms))
         // مسميات حسب النشاط (أمر المالك): «الزبائن» للجزارة، «الخامات والمنتجات» للمصنع…
-        .map((c) => ({ ...c, nameAr: labelFor(setup.activityId, `${sec.id}.${c.id}`, c.nameAr) })),
-      nameAr: labelFor(setup.activityId, sec.id, sec.nameAr),
+        .map((c) => ({ ...c, nameAr: labelFor(effectiveActivityId, `${sec.id}.${c.id}`, c.nameAr) })),
+      nameAr: labelFor(effectiveActivityId, sec.id, sec.nameAr),
     }))
     .filter((sec) => sec.children.length > 0)
 
@@ -92,6 +102,37 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           <PanelTop size={14} />
         </button>
       </div>
+
+      {/* مبدّل الفرع النشط (عند تعدد الفروع): يصفي القائمة الجانبية حسب أقسام ونشاط الفرع المختار */}
+      {!collapsed && activeBranches.length > 0 && (
+        <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
+          {isLockedToUserBranch && effectiveBranch ? (
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-brand-700 dark:text-brand-300" data-sidebar-branch-locked={effectiveBranch.id}>
+              <GitBranch size={13} className="shrink-0" />
+              <span className="truncate">فرع العمل: {effectiveBranch.nameAr}</span>
+            </div>
+          ) : (
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+              <GitBranch size={13} className="shrink-0 text-brand-600" />
+              <span className="font-bold shrink-0">الفرع:</span>
+              <select
+                aria-label="تبديل الفرع النشط"
+                data-branch-switcher="sidebar"
+                value={effectiveBranchId ?? ''}
+                onChange={(e) => setActiveBranchId(e.target.value ? Number(e.target.value) : null)}
+                className="min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 text-[11px] font-bold text-slate-700 dark:text-slate-200"
+              >
+                <option value="">كل الفروع (شامل)</option>
+                {activeBranches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.nameAr}{b.customModulesMode === 'custom' ? ' (مخصص)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
 
       {/* الأقسام */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1">

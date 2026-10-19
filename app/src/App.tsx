@@ -76,12 +76,12 @@ import { NasqPage } from './ui/pages/NasqPage.tsx'
 import { StatementsPage } from './ui/pages/StatementsPage.tsx'
 import { LicensePage } from './ui/pages/LicensePage.tsx'
 import { BackupPage } from './ui/pages/BackupPage.tsx'
-import { TripsPage } from './ui/pages/TripsPage.tsx'
+import { TripsPage, TripExpensesPage } from './ui/pages/TripsPage.tsx'
 import { FleetPage } from './ui/pages/FleetPage.tsx'
 import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
-import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
+import { ProjectsPage, ProjectExpensesPage, ProjectExtractsPage } from './ui/pages/ContractingPages.tsx'
 import { ContractingReportsPage } from './ui/pages/ContractingReportsPage.tsx'
 import { EquipmentReportsPage } from './ui/pages/EquipmentReportsPage.tsx'
 import { RestaurantReportsPage } from './ui/pages/RestaurantReportsPage.tsx'
@@ -243,6 +243,8 @@ function Shell() {
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
         <Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
       <Route path="/contracting/projects" element={<ProjectsPage />} />
+      <Route path="/contracting/extracts" element={<ProjectExtractsPage />} />
+      <Route path="/contracting/expenses" element={<ProjectExpensesPage />} />
         <Route path="/contracting/quotations" element={<QuotationsPage />} />
         <Route path="/contracting/boq" element={<BoqPage />} />
         <Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />
@@ -265,6 +267,7 @@ function Shell() {
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
         <Route path="/cars" element={<CarsPage />} />
         <Route path="/logistics/trips" element={<TripsPage />} />
+        <Route path="/logistics/expenses" element={<TripExpensesPage />} />
         <Route path="/logistics/invoices" element={<LogisticsInvoicesPage />} />
         <Route path="/logistics/fleet" element={<FleetPage />} />
         <Route path="/accounting/journal" element={<JournalPage />} />

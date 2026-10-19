@@ -31,15 +31,19 @@ ok('رأس العمود «ملاحظات البند»', /<th[^>]*>ملاحظات
 ok('خلية الإدخال تكتب في notes السطر', /onPatch\(line\.key,\s*\{\s*notes:/.test(table))
 ok('الصف الفارغ (Ghost) فيه خلية ملاحظات', /showNotes\s*&&\s*<td/.test(table))
 
-// ── ③ الصفحتان: تشيك بوكس «ملاحظات البنود» بجانب النمط + تمرير showNotes ──
+// ── ③ الصفحتان: تشيك بوكس «ملاحظات البنود» بجانب النمط + تمرير showNotes + التفعيل التلقائي والحفظ ──
 for (const [label, file] of [['البيع', 'src/ui/pages/AdvancedSalesInvoicePage.tsx'], ['الشراء', 'src/ui/pages/AdvancedPurchaseInvoicePage.tsx']]) {
   const src = read(file)
   ok(`${label}: تشيك بوكس «ملاحظات البنود»`, /label="ملاحظات البنود"/.test(src))
   ok(`${label}: نص الخيار «إظهار عمود الملاحظات»`, /إظهار عمود الملاحظات/.test(src))
   ok(`${label}: حالة showLineNotes`, /showLineNotes,setShowLineNotes\]=useState\(false\)/.test(src))
   ok(`${label}: تمرير showNotes للجدول`, /showNotes=\{showLineNotes\}/.test(src))
+  ok(`${label}: التفعيل التلقائي عند وجود ملاحظات بالبنود (فتح/تعديل فاتورة أو مسودة)`, /lines\.some\(l=>Boolean\(l\.notes\?\.trim\(\)\)\)\)setShowLineNotes\(true\)/.test(src))
+  ok(`${label}: حفظ واسترجاع تفضيل إظهار عمود الملاحظات`, /shopsys-show-line-notes/.test(src))
 }
 ok('الشراء: سطر الشراء يحمل notes', /notes\?:\s*string/.test(read('src/ui/pages/AdvancedPurchaseInvoicePage.tsx')))
+const repoSrc = read('src/data/repo.ts')
+ok('مستودع البيانات: PurchaseLine يحفظ notes في الترحيل والتعديل', /export interface PurchaseLine[\s\S]*?notes\?:\s*string/.test(repoSrc) && /notes:\s*inv\.lines\[i\]\?\.notes\?\.trim\(\)/.test(repoSrc))
 
 // ── ④ الطباعة: الملاحظة تحت اسم الصنف (A4 + حراري) ───────────────────────
 const a4 = read('src/ui/print/printInvoiceA4.ts')

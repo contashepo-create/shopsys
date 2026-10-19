@@ -182,6 +182,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'logistics', nameAr: 'اللوجستيات', icon: Route, color: 'fuchsia', module: 'logistics',
     children: [
       { id: 'trips', nameAr: 'النقلات', icon: Route, path: '/logistics/trips' },
+      { id: 'trip-expenses', nameAr: 'مصاريف النقلات', icon: HandCoins, path: '/logistics/expenses' },
       { id: 'fleet', nameAr: 'الأسطول والسائقون', icon: Truck, path: '/logistics/fleet' },
       { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/logistics/invoices' },
     ],
@@ -199,6 +200,8 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'contracting', nameAr: 'المقاولات', icon: HardHat, color: 'orange', module: 'contracting',
     children: [
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
+      { id: 'project-extracts', nameAr: 'المستخلصات (فواتير الأعمال)', icon: Receipt, path: '/contracting/extracts' },
+      { id: 'project-expenses', nameAr: 'مصروفات المشروعات', icon: Banknote, path: '/contracting/expenses' },
       { id: 'contracting-invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/contracting/invoices' },
       { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
       { id: 'boq', nameAr: 'جداول الكميات BOQ', icon: ListChecks, path: '/contracting/boq' },
@@ -206,7 +209,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'bonds', nameAr: 'خطابات الضمان', icon: ShieldCheck, path: '/contracting/bonds' },
       { id: 'daily-workers', nameAr: 'عمال اليومية', icon: CalendarClock, path: '/contracting/daily-workers' },
       { id: 'material-issues', nameAr: 'أذون صرف المواد', icon: PackageMinus, path: '/contracting/material-issues' },
-      { id: 'collections', nameAr: 'تحصيلات العملاء', icon: HandCoins, path: '/contracting/collections' },
       { id: 'budget', nameAr: 'موازنة المشروع والانحرافات', icon: Scale, path: '/contracting/budget' },
       { id: 'tasks', nameAr: 'الجدول الزمني للمهام', icon: CalendarClock, path: '/contracting/tasks' },
       { id: 'evm', nameAr: 'القيمة المكتسبة EVM', icon: Gauge, path: '/contracting/evm' },

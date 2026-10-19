@@ -18,7 +18,7 @@ export type { PendingAttachment }
 export function DocumentAttachmentsBox({
   documentKind, documentId, pending, onPendingChange, addedBy,
 }: {
-  documentKind: 'sale' | 'purchase'
+  documentKind: 'sale' | 'purchase' | 'trip'
   /** رقم المستند المرحّل — null في المسودة فتُحفظ المرفقات مؤقتاً */
   documentId: number | null
   pending: PendingAttachment[]

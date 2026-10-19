@@ -13,6 +13,8 @@ export interface TreasuryDef {
   nameAr: string
   kind: 'cash' | 'bank'
   isDefault?: boolean // الخزينة الرئيسية — لا تُحذف
+  /** الفرع المالك لهذه الخزينة/البنك عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
   // ─── بيانات احترافية (طلب المالك — بمستوى البرامج العالمية) ───
   /** اسم إضافي/فرعي: «درج الكاشير 2» أو الاسم الإنجليزي للبنك */
   aliasAr?: string

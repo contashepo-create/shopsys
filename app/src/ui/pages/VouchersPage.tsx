@@ -2,6 +2,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
 import { monthLabelAr } from '../../core/payroll.ts'
 import { slipRemainingMinor } from '../../core/payrollSlips.ts'
 import { documentKindLabel } from '../../core/openPartyDocuments.ts'
+import { allocateClientPayment } from '../../core/projectOps.ts'
 import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, parseRateToPpm, validateFxLeg, type FxLeg } from '../../core/foreignCurrency.ts'
 /**
  * سندات القبض والصرف (المرحلة 4) —
@@ -37,7 +38,7 @@ const VEHICLE_COST_CATEGORIES = [
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
-  const { getCustomerBalance, getSupplierBalance, projects, settlements, partyOffsets, subContracts, subCertificates, subPayments, vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, costCenters, assets, getAssetDue, vehicles , employees, getEmployeeBalance, getUnpaidPayrollSlips, payrollSlips } = useDataStore()
+  const { getCustomerBalance, getSupplierBalance, projects, projectExtracts, settlements, partyOffsets, subContracts, subCertificates, subPayments, vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, costCenters, assets, getAssetDue, vehicles , employees, getEmployeeBalance, getUnpaidPayrollSlips, payrollSlips } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -407,6 +408,10 @@ export function VouchersPage() {
                     <div className="font-bold text-slate-800 dark:text-white">{v.voucherNumber}</div>
                     <div className="text-[11px] text-slate-400">{v.date.slice(0, 16).replace('T', ' ')}{v.description && ` · ${v.description}`}</div>
                     {v.purchaseExpensePayableId && <div className="text-[10px] font-bold text-violet-600">سداد استحقاق مصروف على فاتورة شراء</div>}
+                    {v.projectId != null && (() => {
+                      const prj = projects.find((p) => p.id === v.projectId)
+                      return prj ? <div className="text-[10px] font-bold text-amber-600">🏗️ مشروع: {prj.code} — {prj.nameAr}</div> : null
+                    })()}
                     {v.reversalEntryId && <div className="text-[10px] font-bold text-amber-600">معكوس بقيد #{v.reversalEntryId}</div>}
                   </td>
                   <td className="px-4 py-3">
@@ -609,10 +614,58 @@ export function VouchersPage() {
               </div>
             </section>}
 
-            {needsParty && partyId > 0 && partyInvoices.length > 0 && <section className="overflow-hidden rounded-xl doc-card doc-ring">
+            {needsParty && partyId > 0 && partyInvoices.length > 0 && <section className="overflow-hidden rounded-xl doc-card doc-ring" data-voucher-allocation-section>
               <div className="flex flex-wrap items-center justify-between gap-2 doc-band px-4 py-3">
-                <h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><ReceiptText size={18} className="doc-accent" /> جدول تخصيص وتسوية {kind === 'receipt' ? 'مستندات العميل' : 'مستندات الشراء'}</h3>
-                <button type="button" className="rounded doc-card px-3 py-1.5 text-[10px] font-bold doc-accent hover:doc-sheet" onClick={() => setAllocationDraft(Object.fromEntries(partyInvoices.map((invoice) => [invoice.docKey, fmt(invoice.dueMinor - invoice.settledMinor).replaceAll(',', '')])))}>تسوية تلقائية FIFO</button>
+                <div>
+                  <h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><ReceiptText size={18} className="doc-accent" /> جدول تخصيص وتسوية {kind === 'receipt' ? 'مستندات العميل (فواتير / مستخلصات / عقود)' : 'مستندات الشراء'}</h3>
+                  <p className="text-[10px] doc-muted mt-0.5">اختر فاتورة أو مستخلصاً بعينه، أو اتركه فارغاً ليوزعه النظام تلقائياً على الأقدم بالترتيب (FIFO){voucherProjectId ? ' مع أولوية للمشروع المختار' : ''}.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5" data-voucher-allocation-mode>
+                  <button
+                    type="button"
+                    className="rounded doc-card px-2.5 py-1.5 text-[10px] font-bold doc-accent hover:doc-sheet"
+                    onClick={() => {
+                      const targetAmount = parsedAmountMinor > 0 ? parsedAmountMinor : partyInvoices.reduce((s, inv) => s + (inv.dueMinor - inv.settledMinor), 0)
+                      const fifo = allocateClientPayment(targetAmount, partyInvoices)
+                      setAllocationDraft(Object.fromEntries(fifo.allocations.map((a) => [a.docKey, (a.appliedMinor / 10 ** cur.decimals).toFixed(cur.decimals)])))
+                    }}
+                  >
+                    توزيع على الأقدم بالترتيب (FIFO)
+                  </button>
+                  {kind === 'receipt' && voucherProjectId != null && (
+                    <button
+                      type="button"
+                      className="rounded bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/25"
+                      onClick={() => {
+                        const projInvoices = partyInvoices.filter((inv) => {
+                          if (inv.docKey.startsWith('extract:')) {
+                            const exId = Number(inv.docKey.split(':')[1])
+                            return projectExtracts.some((ex) => ex.id === exId && ex.projectId === voucherProjectId)
+                          }
+                          if (inv.docKey.startsWith('sale:')) {
+                            const sId = Number(inv.docKey.split(':')[1])
+                            return sales.some((s) => s.id === sId && s.projectId === voucherProjectId)
+                          }
+                          return false
+                        })
+                        const targetAmount = parsedAmountMinor > 0 ? parsedAmountMinor : projInvoices.reduce((s, inv) => s + (inv.dueMinor - inv.settledMinor), 0)
+                        const fifo = allocateClientPayment(targetAmount, projInvoices)
+                        setAllocationDraft(Object.fromEntries(fifo.allocations.map((a) => [a.docKey, (a.appliedMinor / 10 ** cur.decimals).toFixed(cur.decimals)])))
+                      }}
+                    >
+                      تخصيص لمستندات المشروع المختار
+                    </button>
+                  )}
+                  {hasManualAllocation && (
+                    <button
+                      type="button"
+                      className="rounded bg-slate-500/10 px-2 py-1.5 text-[10px] font-bold doc-muted hover:bg-slate-500/20"
+                      onClick={() => setAllocationDraft({})}
+                    >
+                      مسح التخصيص اليدوي (تلقائي للأقدم)
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="max-h-64 overflow-auto">
                 <table className="w-full min-w-[700px] border-collapse text-right text-[11px]">
@@ -621,13 +674,29 @@ export function VouchersPage() {
                     {partyInvoices.map((invoice) => {
                       const remaining = invoice.dueMinor - invoice.settledMinor
                       const applied = parseAllocationAmount(allocationDraft[invoice.docKey] || '')
-                      return <tr key={invoice.docKey} className="hover:opacity-90"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}<span className="ms-1.5 rounded doc-tint px-1.5 py-0.5 text-[9.5px] font-bold doc-muted">{documentKindLabel(invoice.docKey)}</span></td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
+                      const invProject = (() => {
+                        if (invoice.docKey.startsWith('extract:')) {
+                          const ex = projectExtracts.find((x) => x.id === Number(invoice.docKey.split(':')[1]))
+                          return ex ? projects.find((p) => p.id === ex.projectId) : undefined
+                        }
+                        if (invoice.docKey.startsWith('sale:')) {
+                          const s = sales.find((x) => x.id === Number(invoice.docKey.split(':')[1]))
+                          return s?.projectId ? projects.find((p) => p.id === s.projectId) : undefined
+                        }
+                        return undefined
+                      })()
+                      return <tr key={invoice.docKey} className={`hover:opacity-90 ${voucherProjectId && invProject?.id === voucherProjectId ? 'bg-amber-500/5' : ''}`}><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => {
+                        const autoFill = parsedAmountMinor > 0 ? Math.min(remaining, Math.max(0, parsedAmountMinor - (manualAllocatedMinor - applied))) || Math.min(remaining, parsedAmountMinor) : remaining
+                        setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(autoFill).replaceAll(',', '') : '' }))
+                      }} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}<span className="ms-1.5 rounded doc-tint px-1.5 py-0.5 text-[9.5px] font-bold doc-muted">{documentKindLabel(invoice.docKey)}</span>{invProject && <span className="ms-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300">🏗️ {invProject.code}</span>}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="تلقائي FIFO" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
                     })}
                   </tbody>
                   <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono doc-ink">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
                 </table>
               </div>
-              {hasManualAllocation && <div className={`px-4 py-2 text-[11px] font-bold ${manualAllocatedMinor > parsedAmountMinor ? 'text-rose-600' : 'doc-accent-deep'}`}>الموزع الآن: {fmt(manualAllocatedMinor)} {cur.symbol} — المتبقي تحت الحساب: {fmt(Math.max(0, parsedAmountMinor - manualAllocatedMinor))} {cur.symbol}</div>}
+              {hasManualAllocation
+                ? <div className={`px-4 py-2 text-[11px] font-bold ${manualAllocatedMinor > parsedAmountMinor ? 'text-rose-600' : 'doc-accent-deep'}`}>الموزع يدوياً الآن: {fmt(manualAllocatedMinor)} {cur.symbol} — المتبقي تحت الحساب: {fmt(Math.max(0, parsedAmountMinor - manualAllocatedMinor))} {cur.symbol}</div>
+                : <div className="px-4 py-2 text-[11px] font-bold doc-accent-deep">وضع التوزيع الحالي: تلقائي على الأقدم بالترتيب (FIFO){voucherProjectId ? ' مع أولوية لمستندات المشروع المختار' : ''} عند حفظ السند.</div>}
             </section>}
 
             {kind === 'payment' && counter === '2101' && partyId > 0 && (() => {
@@ -637,7 +706,14 @@ export function VouchersPage() {
             })()}
 
             {/* §95 (محاذاة pro-acc): ربط المشروع بالسند — أثر تحليلي على ربحية المشروع وتحصيلاته، ورصيد الطرف ينزل دائماً */}
-            {(kind === 'receipt' || kind === 'payment') && projects.length > 0 && <Field label="المشروع (اختياري — للربحية والتحصيلات)"><QuickSelect value={voucherProjectId ?? ''} onChange={(e) => setVoucherProjectId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card" data-voucher-project><option value="">بدون مشروع</option>{projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}</QuickSelect></Field>}
+            {(kind === 'receipt' || kind === 'payment') && projects.length > 0 && <Field label="المشروع (اختياري — للربحية وتخصيص تحصيلات المشروع)"><QuickSelect value={voucherProjectId ?? ''} onChange={(e) => {
+              const pid = e.target.value ? Number(e.target.value) : null
+              setVoucherProjectId(pid)
+              if (pid != null && kind === 'receipt' && counter === '1104' && !partyId) {
+                const prj = projects.find((p) => p.id === pid)
+                if (prj?.clientId) setPartyId(prj.clientId)
+              }
+            }} className="h-10 doc-line doc-card" data-voucher-project><option value="">بدون مشروع (تحصيل عام للعميل)</option>{projects.filter((p) => p.status === 'active' && (!partyId || kind !== 'receipt' || !p.clientId || p.clientId === partyId)).map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}{p.clientName ? ` (${p.clientName})` : ''}</option>)}</QuickSelect></Field>}
             {canLinkCostCenter && !canLinkVehicle && <Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field>}
             {canLinkVehicle && <div className="grid gap-3 rounded-xl border doc-line doc-card p-4 sm:grid-cols-3"><Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field><Field label="مركز تكلفة المركبة (اختياري)"><QuickSelect value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركبة</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}</QuickSelect></Field>{vehicleId != null && <Field label="نوع مصروف السيارة"><QuickSelect value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className="h-10 doc-line doc-card">{VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</QuickSelect></Field>}</div>}
 

@@ -27,6 +27,57 @@ export interface TripExpenseComputed extends TripExpenseInput {
   amountMinor: Minor // qty × unitAmount
 }
 
+/** سطر بند خدمة نقل في فاتورة النقلة (صنف خدمي من المخزن + مسار + عدد النقلات + سعر النقلة + أرقام الحاويات تحت السطر) */
+export interface TripServiceLine {
+  itemId?: number | null
+  serviceNameAr: string
+  fromLoc?: string
+  toLoc?: string
+  qty: number // عدد النقلات في هذا السطر
+  unitPriceMinor: Minor // سعر النقلة الواحدة
+  containerNumbers: string[] // أرقام الحاويات لهذا السطر بحد أقصى qty
+}
+
+/** جهة تحمّل مصروف النقلة المستقل (قسم مصاريف النقلات) */
+export type TripExpenseBearer = 'company' | 'customer'
+
+/** طريقة سداد مصروف النقلة المستقل */
+export type TripExpensePaymentSource = 'cash' | 'credit' | 'custody'
+
+export const TRIP_EXPENSE_BEARER_LABELS: Record<TripExpenseBearer, string> = {
+  company: 'داخلي على الشركة (5106 مصروفات نقلات — لا يظهر للعميل)',
+  customer: 'محمّل على العميل (1104 ذمم العملاء — يظهر في حسابه وفاتورته)',
+}
+
+export const TRIP_EXPENSE_PAYMENT_LABELS: Record<TripExpensePaymentSource, string> = {
+  cash: 'نقدي / بنكي الآن',
+  credit: 'آجل (مستحق لاحقاً 2113)',
+  custody: 'من عهدة موظف (1108)',
+}
+
+/** سجل مصروف نقلة مستقل في قسم «مصاريف النقلات» */
+export interface TripExpenseRecord {
+  id: number
+  expenseNumber: string // TRE-0001
+  tripId: number
+  tripNumber: string
+  vehicleId: number | null
+  driverId: number | null
+  customerId: number | null
+  date: string
+  nameAr: string
+  qty: number
+  unitAmountMinor: Minor
+  amountMinor: Minor
+  bearer: TripExpenseBearer
+  paymentSource: TripExpensePaymentSource
+  treasury: string
+  custodyFileId: number | null
+  journalEntryId: number
+  reversedByEntryId?: number | null
+  notes: string
+}
+
 export interface TripInput {
   fromLoc: string
   toLoc: string
@@ -36,6 +87,8 @@ export interface TripInput {
   payment: 'cash' | 'credit' // تحصيل من العميل: نقدي أو على حسابه
   vatPercent: number // ضريبة مضافة على الإيراد (B2B — تضاف فوق السعر)
   containerNumbers: string[] // بحد أقصى qty
+  /** بنود خدمات النقل (من أصناف المخزن الخدمية) — عند وجودها تُشتق منها القيم الإجمالية والحاويات */
+  lines?: TripServiceLine[]
 }
 
 export interface TripTotals {
@@ -56,14 +109,32 @@ const isPosInt = (n: number) => Number.isInteger(n) && n >= 0
 /** تحقق شامل قبل أي حساب — يعيد قائمة أخطاء عربية (فارغة = سليم) */
 export function validateTrip(input: TripInput): string[] {
   const errors: string[] = []
-  if (!input.fromLoc.trim()) errors.push('حدد جهة الانطلاق')
-  if (!input.toLoc.trim()) errors.push('حدد جهة الوصول')
-  if (!Number.isInteger(input.qty) || input.qty < 1 || input.qty > 1000) errors.push('عدد النقلات بين 1 و1000')
-  if (!isPosInt(input.unitPriceMinor) || input.unitPriceMinor <= 0) errors.push('سعر النقلة يجب أن يكون موجباً')
-  if (input.vatPercent < 0 || input.vatPercent > 100) errors.push('نسبة الضريبة بين 0 و100')
-  if (input.containerNumbers.filter((c) => c.trim()).length > input.qty) {
-    errors.push('أرقام الحاويات لا تتجاوز عدد النقلات')
+  if (input.lines && input.lines.length > 0) {
+    input.lines.forEach((line, idx) => {
+      const n = idx + 1
+      if (!line.serviceNameAr.trim() && !(line.fromLoc?.trim() && line.toLoc?.trim())) {
+        errors.push(`بند ${n}: اختر خدمة النقل أو حدد المسار`)
+      }
+      if (!Number.isInteger(line.qty) || line.qty < 1 || line.qty > 1000) {
+        errors.push(`بند ${n}: عدد النقلات بين 1 و1000`)
+      }
+      if (!isPosInt(line.unitPriceMinor) || line.unitPriceMinor <= 0) {
+        errors.push(`بند ${n}: سعر النقلة يجب أن يكون موجباً`)
+      }
+      if ((line.containerNumbers ?? []).filter((c) => c.trim()).length > line.qty) {
+        errors.push(`بند ${n}: أرقام الحاويات لا تتجاوز عدد النقلات (${line.qty})`)
+      }
+    })
+  } else {
+    if (!input.fromLoc.trim()) errors.push('حدد جهة الانطلاق')
+    if (!input.toLoc.trim()) errors.push('حدد جهة الوصول')
+    if (!Number.isInteger(input.qty) || input.qty < 1 || input.qty > 1000) errors.push('عدد النقلات بين 1 و1000')
+    if (!isPosInt(input.unitPriceMinor) || input.unitPriceMinor <= 0) errors.push('سعر النقلة يجب أن يكون موجباً')
+    if (input.containerNumbers.filter((c) => c.trim()).length > input.qty) {
+      errors.push('أرقام الحاويات لا تتجاوز عدد النقلات')
+    }
   }
+  if (input.vatPercent < 0 || input.vatPercent > 100) errors.push('نسبة الضريبة بين 0 و100')
   input.expenses.forEach((e, i) => {
     if (!e.nameAr.trim()) errors.push(`مصروف ${i + 1}: حدد البيان`)
     if (!(e.qty > 0)) errors.push(`مصروف ${i + 1}: العدد يجب أن يكون موجباً`)
@@ -76,11 +147,13 @@ export function validateTrip(input: TripInput): string[] {
 
 /** حساب إجماليات النقلة — أموال صحيحة (Minor) وتقريب نصف-لأعلى للضريبة */
 export function computeTripTotals(input: TripInput): TripTotals {
-  const expenses: TripExpenseComputed[] = input.expenses.map((e) => ({
+  const expenses: TripExpenseComputed[] = (input.expenses ?? []).map((e) => ({
     ...e,
     amountMinor: Math.round(e.unitAmountMinor * e.qty),
   }))
-  const baseMinor = Math.round(input.unitPriceMinor * input.qty)
+  const baseMinor = input.lines && input.lines.length > 0
+    ? input.lines.reduce((sum, l) => sum + Math.round(l.unitPriceMinor * l.qty), 0)
+    : Math.round(input.unitPriceMinor * input.qty)
   const billableMinor = expenses.filter((e) => e.source === 'customer').reduce((a, e) => a + e.amountMinor, 0)
   const directCashMinor = expenses.filter((e) => e.source === 'cash').reduce((a, e) => a + e.amountMinor, 0)
   const creditMinor = expenses.filter((e) => e.source === 'credit').reduce((a, e) => a + e.amountMinor, 0)
@@ -221,3 +294,38 @@ export function buildDriverSettlementEntry(totalMinor: Minor, driverName: string
   assertBalanced(lines)
   return lines
 }
+
+/**
+ * قيد مصروف نقلة مستقل من قسم «مصاريف النقلات»:
+ * - إذا كان داخلياً على الشركة (bearer === 'company'): مدين 5106 مصروفات نقلات
+ * - إذا كان محمّلاً على العميل (bearer === 'customer'): مدين 1104 العملاء (يظهر في كشف حسابه وفاتورته)
+ * والدائن حسب طريقة الدفع: الخزينة/البنك (cash) أو مصروفات نقلات مستحقة 2113 (credit) أو عهدة موظف 1108 (custody).
+ */
+export function buildStandaloneTripExpenseEntry(args: {
+  amountMinor: Minor
+  bearer: TripExpenseBearer
+  paymentSource: TripExpensePaymentSource
+  treasury?: string
+  tripNumber: string
+  expenseNameAr: string
+}): JournalLine[] {
+  const { amountMinor, bearer, paymentSource, treasury = '1101', tripNumber, expenseNameAr } = args
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة مصروف النقلة يجب أن تكون موجبة')
+  const debitAccount = bearer === 'customer' ? '1104' : '5106'
+  const debitNote = bearer === 'customer'
+    ? `مصروف نقلة محمّل على العميل (${expenseNameAr}) — ${tripNumber}`
+    : `مصروف نقلة داخلي (${expenseNameAr}) — ${tripNumber}`
+  const creditAccount = paymentSource === 'cash' ? treasury : paymentSource === 'credit' ? '2113' : '1108'
+  const creditNote = paymentSource === 'cash'
+    ? `سداد نقدي لمصروف نقلة ${tripNumber}`
+    : paymentSource === 'credit'
+      ? `مصروف نقلة مستحق الدفع لاحقاً — ${tripNumber}`
+      : `مصروف نقلة من عهدة موظف — ${tripNumber}`
+  const lines: JournalLine[] = [
+    { accountCode: debitAccount, debit: amountMinor, credit: 0, note: debitNote },
+    { accountCode: creditAccount, debit: 0, credit: amountMinor, note: creditNote },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+

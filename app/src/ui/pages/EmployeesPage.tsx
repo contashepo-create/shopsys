@@ -386,7 +386,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [phone, setPhone] = useState('')
   const [jobTitle, setJobTitle] = useState('')
   /* المسمى الوظيفي يتبع مجال النشاط (طلب المالك) */
-  const jobTitleSuggestions = jobTitlesFor(setup.activityId)
+  const jobTitleSuggestions = jobTitlesFor(setup.activityId, setup.modules)
   const jobFieldLabel = jobTitleLabel(setup.activityId)
   const [roleId, setRoleId] = useState('')
   const [hireDate, setHireDate] = useState('')

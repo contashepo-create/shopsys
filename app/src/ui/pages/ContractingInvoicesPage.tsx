@@ -100,7 +100,9 @@ export function ContractingInvoicesPage() {
   const [edOpen, setEdOpen] = useState(false)
   const [edProjectId, setEdProjectId] = useState(0)
   const [edCustomerId, setEdCustomerId] = useState(0)
-  const [edPayment, setEdPayment] = useState<'cash' | 'credit'>('cash')
+  const [edPayment, setEdPayment] = useState<'cash' | 'credit'>('credit')
+  const [edWithTax, setEdWithTax] = useState(() => taxPolicy.effectivePercent > 0)
+  const [edPartialPct, setEdPartialPct] = useState('100')
   const [edPaid, setEdPaid] = useState('')
   const [edNotes, setEdNotes] = useState('')
   interface FreeLine { key: string; nameAr: string; qty: string; unitAr: string; price: string }
@@ -109,22 +111,34 @@ export function ContractingInvoicesPage() {
   const openFreeEditor = (projectId = 0) => {
     setEdProjectId(projectId)
     const prj = projects.find((x) => x.id === projectId)
-    setEdCustomerId(prj?.clientId ?? 0)
-    setEdPayment('cash'); setEdPaid(''); setEdNotes('')
+    const cid = prj?.clientId ?? 0
+    setEdCustomerId(cid)
+    setEdPayment(cid > 0 ? 'credit' : 'cash')
+    setEdWithTax(taxPolicy.effectivePercent > 0)
+    setEdPartialPct('100')
+    setEdPaid(''); setEdNotes('')
     setEdLines([{ key: crypto.randomUUID(), nameAr: '', qty: '1', unitAr: 'مقطوعية', price: '' }])
     setEdOpen(true)
   }
+  const edEffectiveTaxPct = edWithTax ? (taxPolicy.effectivePercent || setup.vatPercent || 14) : 0
   const edParsed = edLines
     .filter((l) => l.nameAr.trim() && Number(l.qty) > 0)
     .map((l) => ({ nameAr: l.nameAr.trim(), qty: Number(l.qty), unitAr: l.unitAr, unitPriceMinor: (() => { try { return toMinor(l.price || '0', cur.decimals) } catch { return 0 } })() }))
   const edNet = edParsed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
-  const edTax = Math.round(edNet * taxPolicy.effectivePercent / 100)
+  const edTax = Math.round(edNet * edEffectiveTaxPct / 100)
   const edGross = edNet + edTax
-  const fillFromBoq = () => {
+  const fillFromBoq = (pctOverride?: number) => {
     const boq = boqItems.filter((b) => b.projectId === edProjectId)
     if (!boq.length) { toast.show('لا بنود كميات لهذا المشروع — اكتب البنود حرة', 'error'); return }
-    setEdLines(boq.map((b) => ({ key: crypto.randomUUID(), nameAr: b.descriptionAr, qty: String(b.qty), unitAr: b.unit, price: String(b.unitPriceMinor / 10 ** cur.decimals) })))
-    toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع ✓`)
+    const pct = Math.min(100, Math.max(1, pctOverride ?? (Number(edPartialPct) || 100)))
+    setEdLines(boq.map((b) => ({
+      key: crypto.randomUUID(),
+      nameAr: pct < 100 ? `${b.descriptionAr} (${pct}٪ جزئي)` : b.descriptionAr,
+      qty: String(Number(((b.qty * pct) / 100).toFixed(3)) || b.qty),
+      unitAr: b.unit,
+      price: String(b.unitPriceMinor / 10 ** cur.decimals),
+    })))
+    toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع (${pct}٪) ✓`)
   }
   const edPrintModel = () => buildSimpleDocModel({
     docTitle: 'فاتورة مقاولات',
@@ -135,11 +149,11 @@ export function ContractingInvoicesPage() {
     paymentLabel: edPayment === 'cash' ? 'نقدي' : 'آجل',
     rows: edParsed.map((l) => ({ nameAr: l.nameAr, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
     totalMinor: edGross,
-    paidMinor: edGross,
+    paidMinor: edPayment === 'cash' ? edGross : 0,
     operatorName: setup.ownerName ?? 'المالك',
     settings: receipt,
     extraFooter: edNotes.trim() || undefined,
-    tax: { label: 'الضريبة', minor: edTax, baseMinor: edNet },
+    tax: edTax > 0 ? { label: 'الضريبة', minor: edTax, baseMinor: edNet } : undefined,
   })
   const postFreeInvoice = () => {
     if (!edParsed.length) { toast.show('أضف بنداً واحداً على الأقل بكمية موجبة', 'error'); return }
@@ -152,7 +166,7 @@ export function ContractingInvoicesPage() {
         payment: edPayment,
         paidMinor,
         invoiceDiscountPercent: 0,
-        taxPercent: taxPolicy.effectivePercent,
+        taxPercent: edEffectiveTaxPct,
         taxInclusive: false,
         notes: edNotes.trim() || undefined,
         lines: edParsed.map((l) => ({
@@ -167,7 +181,7 @@ export function ContractingInvoicesPage() {
         })),
       })
       setEdOpen(false)
-      toast.show(`رُحِّلت فاتورة المقاولات ${sale.invoiceNumber} — الإجمالي بالضريبة ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✅`)
+      toast.show(`رُحِّلت فاتورة المقاولات ${sale.invoiceNumber} — الإجمالي ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✅`)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -347,33 +361,46 @@ export function ContractingInvoicesPage() {
               headerFields={
                 <>
                   <Field label="المشروع (اختياري)">
-                    <QuickSelect className={inputCls} value={edProjectId} onChange={(e) => { const id = Number(e.target.value); setEdProjectId(id); const prj = projects.find((x) => x.id === id); if (prj?.clientId && !edCustomerId) setEdCustomerId(prj.clientId) }} aria-label="مشروع فاتورة المقاولات">
+                    <QuickSelect className={inputCls} value={edProjectId} onChange={(e) => { const id = Number(e.target.value); setEdProjectId(id); const prj = projects.find((x) => x.id === id); if (prj?.clientId && !edCustomerId) { setEdCustomerId(prj.clientId); setEdPayment('credit') } }} aria-label="مشروع فاتورة المقاولات">
                       <option value={0}>بدون مشروع</option>
                       {projects.filter((x) => x.status === 'active').map((x) => <option key={x.id} value={x.id}>{x.code} — {x.nameAr}</option>)}
                     </QuickSelect>
                   </Field>
                   <Field label="العميل المسجَّل *">
                     <div className="invoice-doc-infield flex gap-1">
-                      <PartyQuickPicker parties={customers} value={edCustomerId} onChange={(id) => setEdCustomerId(id ?? 0)} label="بحث العميل" cashValue={0} cashLabel="عميل نقدي" />
+                      <PartyQuickPicker parties={customers} value={edCustomerId} onChange={(id) => { const cid = id ?? 0; setEdCustomerId(cid); if (cid > 0) setEdPayment('credit') }} label="بحث العميل" cashValue={0} cashLabel="عميل نقدي" />
                       <span className="text-[11px] text-slate-400 self-center">{customers.find((c) => c.id === edCustomerId)?.nameAr ?? '—'}</span>
                     </div>
                   </Field>
                   <Field label="التحصيل">
                     <QuickSelect className={inputCls} value={edPayment} onChange={(e) => setEdPayment(e.target.value as 'cash' | 'credit')} aria-label="طريقة التحصيل">
+                      <option value="credit">آجل (مدين على العميل)</option>
                       <option value="cash">نقدي</option>
-                      <option value="credit">آجل</option>
                     </QuickSelect>
                   </Field>
-                  <Field label={`المحصل (${cur.symbol})`} hint="اتركه فارغاً = كامل الإجمالي للنقدي">
+                  <Field label="الضريبة">
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer h-6 px-1">
+                      <input type="checkbox" checked={edWithTax} onChange={(e) => setEdWithTax(e.target.checked)} className="w-3.5 h-3.5 shrink-0 accent-emerald-600" />
+                      <span>{edWithTax ? `بالضريبة (${edEffectiveTaxPct}٪)` : 'بدون ضريبة (0٪)'}</span>
+                    </label>
+                  </Field>
+                  <Field label={`المحصل (${cur.symbol})`} hint="اتركه فارغاً = 0 للآجل أو كامل الإجمالي للنقدي">
                     <input className={inputCls} value={edPaid} onChange={(e) => setEdPaid(e.target.value)} inputMode="decimal" dir="ltr" />
                   </Field>
-                  {edProjectId > 0 && <Btn variant="soft" onClick={fillFromBoq}><Download size={14} /> تعبئة من بنود المشروع</Btn>}
+                  {edProjectId > 0 && (
+                    <div className="flex items-end gap-1">
+                      <Btn variant="soft" onClick={() => fillFromBoq()}><Download size={14} /> تعبئة من بنود المشروع ({edPartialPct}٪)</Btn>
+                      {[25, 50, 100].map((p) => (
+                        <button key={p} type="button" onClick={() => { setEdPartialPct(String(p)); fillFromBoq(p) }} className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${Number(edPartialPct) === p ? 'border-orange-500 bg-orange-500/10 text-orange-600' : 'border-slate-200 dark:border-slate-700 text-slate-500'}`}>{p}٪</button>
+                      ))}
+                    </div>
+                  )}
                 </>
               }
               partyMeta={
                 <div className="invoice-doc-partymeta">
                   <span>البنود: <b>{edParsed.length}</b></span>
-                  <span>ضريبة المستند: <b>{taxPolicy.effectivePercent}٪</b></span>
+                  <span>ضريبة المستند: <b>{edEffectiveTaxPct}٪</b></span>
                   {edProjectId > 0 && <span>المشروع: <b>{projects.find((x) => x.id === edProjectId)?.code}</b></span>}
                 </div>
               }

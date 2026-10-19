@@ -54,14 +54,27 @@ import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryA
 import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
-import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
-import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalPaymentMode, type RentalTotals } from '../core/rental.ts'
+import {
+  validateTrip, computeTripTotals, buildTripEntry, buildDriverCommissionEntry, buildDriverSettlementEntry,
+  buildStandaloneTripExpenseEntry,
+  type TripInput, type TripTotals, type TripServiceLine, type TripExpenseRecord, type TripExpenseBearer, type TripExpensePaymentSource,
+} from '../core/logistics.ts'
+import {
+  validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry,
+  buildReferenceDepositEntry, buildRentalInvoiceEntry, DEFAULT_RENTAL_RESPONSIBILITY,
+  type RentalInput, type RentalPaymentMode, type RentalTotals, type RentalBillingMode,
+  type ExpenseBearer, type EquipmentCostLayer, type RentalResponsibilityMatrix, type RentalInvoice,
+} from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateBooking, bookingConflicts, type Booking, type BookingStatus } from '../core/booking.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
-import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
+import {
+  validateBranch, canRemoveBranch, belongsToBranch, filterByBranch,
+  filterWarehousesByBranch, filterTreasuriesByBranch,
+  type Branch, type BranchInput, type BranchScopedRecord,
+} from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction, type TerminalDocumentType } from '../core/paymentTerminalTransactions.ts'
 import { buildTerminalCharge } from '../core/paymentTerminalCharge.ts'
@@ -95,7 +108,8 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
-  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask } from '../core/contracting.ts'
+  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask,
+  computeProjectExpenseInvoice, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
   buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry,
@@ -136,6 +150,8 @@ export interface Warehouse {
   id: number
   nameAr: string
   isMain: boolean
+  /** الفرع المالك لهذا المخزن عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
 }
 
 /**
@@ -151,6 +167,8 @@ export interface PartyExtended {
   postalCode: string
   buildingNo: string // رقم المبنى (العنوان الوطني السعودي)
   nationalId: string // هوية/إقامة (للأفراد)
+  /** الفرع المالك لهذا الطرف (عميل/مورد/موظف) عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
 }
 
 export const EMPTY_EXTENDED: PartyExtended = {
@@ -251,6 +269,8 @@ export interface Trip {
   paidMinor?: number
   vatPercent: number
   containerNumbers: string[]
+  /** بنود خدمات النقل (أصناف خدمية من المخزن) */
+  lines?: TripServiceLine[]
   expenses: { nameAr: string; qty: number; unitAmountMinor: number; source: 'cash' | 'customer' | 'credit' | 'custody'; amountMinor: number }[]
   /** ملف العهدة الذي صُرفت منه مصاريف source='custody' (إن وجدت) */
   custodyFileId?: number | null
@@ -261,6 +281,7 @@ export interface Trip {
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
   notes: string
+  updatedAt?: string
 }
 
 /** استحقاق عمولة سائق عن رحلة — يتجمع حتى التسوية */
@@ -291,9 +312,11 @@ export interface Equipment {
   /** قراءة العدّاد عند آخر خدمة */
   lastServiceReading: number
   notes: string
+  /** السائق / المشغّل الأساسي للمعدة من سجل الموظفين (اختياري) */
+  driverEmployeeId?: number | null
 }
 
-/** مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) — يقيد 5105/خزينة ويغذي ربحية المعدة */
+/** مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) — يقيد 5105/خزينة (أو 1104 عند التحميل على المستأجر) ويغذي ربحية المعدة والعقد */
 export interface EquipmentCost {
   id: number
   equipmentId: number
@@ -303,6 +326,16 @@ export interface EquipmentCost {
   description: string
   treasury: string
   journalEntryId: number
+  /** العقد المرتبط بالمصروف (اختياري) */
+  contractId?: number | null
+  /** العميل المستأجر عند التحميل على المستأجر */
+  customerId?: number | null
+  /** طبقة التكلفة: مباشر على المعدة / غير مباشر / مصاريف السائق */
+  costLayer?: EquipmentCostLayer
+  /** من يتحمل المصروف: المالك أم المستأجر */
+  borneBy?: ExpenseBearer
+  /** السائق المرتبط بالمصروف من سجل الموظفين */
+  driverEmployeeId?: number | null
 }
 
 /** عقد إيجار معدة — مربوط بقيد الفتح، وقيد الإقفال عند ردّ التأمين */
@@ -336,6 +369,14 @@ export interface RentalContract {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
+  /** نمط العقد: reference (عقد مرجعي — الفوترة دورية لاحقاً) أو upfront (مسبق الاستحقاق/الدفع) */
+  billingMode?: RentalBillingMode
+  /** هل العقد خاضع للضريبة أم بدون ضريبة */
+  withTax?: boolean
+  /** السائق / المشغّل المعيّن على العقد من سجل الموظفين */
+  driverEmployeeId?: number | null
+  /** مصفوفة تحمل المصاريف المتفق عليها في العقد */
+  responsibility?: RentalResponsibilityMatrix
 }
 
 /* ─── معامل التحاليل (القرار 26) ─── */
@@ -432,16 +473,33 @@ export interface ProjectExtract {
   editReversalEntryId?: number
 }
 
-/** تكلفة مسجلة على مشروع ببند */
+export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed }
+
+/** تكلفة مسجلة على مشروع ببند أو كفاتورة مصروفات متعددة البنود */
 export interface ProjectCost {
   id: number
+  /** رقم مستند المصروف (مثل PEX-0001) */
+  expenseNumber?: string
+  /** رقم فاتورة المورد أو المرجع الخارجي */
+  invoiceRef?: string
   projectId: number
   /** مركز التكلفة العام؛ يبقى projectId كربط مشروع مستقل */
   costCenterId?: number | null
   date: string
   kind: CostKind
   description: string
+  /** الصافي قبل الضريبة — يُقيد على 5110 تكاليف المشروعات ويُخصم من ربح المشروع */
   amountMinor: number
+  /** ضريبة القيمة المضافة للمدخلات — تُقيد على 2102 عند وجودها */
+  vatMinor?: number
+  /** الإجمالي الشامل للضريبة (amountMinor + vatMinor) */
+  grossMinor?: number
+  /** بنود الفاتورة التفصيلية (كل بند بسعره وهل هو شامل الضريبة أم لا) */
+  lines?: ProjectExpenseLineComputed[]
+  /** الخزينة أو البنك المصروف منه */
+  treasury?: string | null
+  /** ملف العهدة المصروف منه إن وجد */
+  custodyFileId?: number | null
   payment: 'cash' | 'credit' | 'mixed'
   /** ما دُفع الآن من خزينة/بنك/عهدة */
   paidMinor?: number
@@ -979,6 +1037,8 @@ export interface PurchaseLine {
   inputVatMinor?: number
   /** المخزن الذي استلم هذا السطر — يستخدم عند فاتورة مختلطة المخازن */
   warehouseId?: number | null
+  /** ملاحظة البند (مواصفة/ملاحظة المنتج في السطر) */
+  notes?: string
 }
 
 export interface PurchaseExpense {
@@ -1231,7 +1291,7 @@ export interface EmployeeAdvance {
  */
 export interface DocumentFile {
   id: number
-  documentKind: 'sale' | 'purchase'
+  documentKind: 'sale' | 'purchase' | 'trip'
   documentId: number
   name: string
   mime: string // image/jpeg | application/pdf
@@ -1389,6 +1449,8 @@ interface DataState {
   warehouses: Warehouse[]
   /** الفروع الحقيقية (سد فجوة التدقيق): فرع = مخزن + خزينة + هوية — فارغة = وضع الفرع الواحد */
   branches: Branch[]
+  /** الفرع المختار حالياً في الواجهة (للمالك/المدير العام: null = كل الفروع شامل؛ أو معرّف فرع محدد لتصفية أقسامه ونشاطه) */
+  activeBranchId: number | null
   paymentTerminals: PaymentTerminal[]
   paymentTerminalTransactions: PaymentTerminalTransaction[]
   paymentTerminalSettlements: PaymentTerminalSettlement[]
@@ -1406,8 +1468,10 @@ interface DataState {
   /** دفتر تكاليف/تحميلات مركبات الأسطول (منفصل عن سيارات المعرض) */
   vehicleCostEntries: VehicleCostCenterEntry[]
   trips: Trip[]
+  tripExpenses: TripExpenseRecord[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
+  rentalInvoices: RentalInvoice[]
   operatorShifts: OperatorShift[] // وردانيات المشغلين (ترقية القرار 25)
   labTests: LabTest[] // كتالوج فحوصات المعمل (القرار 26)
   labReferrers: Referrer[] // الأطباء المُحيلون
@@ -1696,8 +1760,8 @@ interface DataState {
    * بياناته المالية والوظيفية في سجل الموظفين، وحسابه هنا للدخول والصلاحيات.
    * initialPin يُعرض للمدير حتى يغيّره الموظف عند أول دخول (mustChangePin).
    */
-  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
-  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'requireOpenShiftForSales' | 'employeeId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin' | 'treasuryAccess' | 'paymentTerminalAccess'>>) => void
+  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; branchId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
+  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'requireOpenShiftForSales' | 'employeeId' | 'branchId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin' | 'treasuryAccess' | 'paymentTerminalAccess'>>) => void
   /** الموظف يغيّر رقمه بنفسه (أول دخول الإجباري): يمسح initialPin فلا يعود أحد يعرفه */
   changeOwnPin: (userId: number, newPinHash: string) => void
   removeAppUser: (id: number) => void
@@ -1745,7 +1809,7 @@ interface DataState {
     dueDate?: string
     approvedBy?: string | null
     date: string
-    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string; notes?: string }[]
     expenses: PurchaseExpense[]
     /** خصم الفاتورة المطبق على أسعار السطور قبل landed cost */
     discountMinor?: number
@@ -2074,7 +2138,7 @@ interface DataState {
     purchaseId: number
     /** المورد المحدد داخل نفس محرر الفاتورة؛ 0 = شراء نقدي */
     supplierId?: number
-    lines: { itemId: number; qty: number; unitPriceMinor: number; warehouseId?: number | null; vatPercent?: number }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; warehouseId?: number | null; vatPercent?: number; notes?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury: TreasuryAccount
@@ -2100,6 +2164,8 @@ interface DataState {
   updateBranch: (id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>) => void
   /** حذف فرع (فك الربط التنظيمي فقط — المخزن والخزينة وتاريخهما باقيان) */
   removeBranch: (id: number) => void
+  /** تبديل الفرع النشط في الواجهة (null = عرض شامل لكل الفروع وأقسام الشركة) */
+  setActiveBranchId: (id: number | null) => void
   addPaymentTerminal: (terminal: PaymentTerminal) => void
   updatePaymentTerminal: (id: string, patch: Partial<Omit<PaymentTerminal, 'id'>>) => void
   removePaymentTerminal: (id: string) => void
@@ -2222,6 +2288,33 @@ interface DataState {
     /** تحصيل بطاقة للنقلة (كامل أو جزئي) يُحفظ مع المستند والقيد. */
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => Trip
+  /** تعديل نقلة مسجلة مع عكس القيد القديم وإعادة بناء القيد الجديد */
+  updateTrip: (args: {
+    tripId: number
+    customerId: number | null
+    vehicleId: number | null
+    driverId: number | null
+    input: TripInput
+    notes: string
+    treasury?: string
+    paidMinor?: number
+    driverCommissionMinor?: number
+    creditLimitOverrideBy?: string | null
+  }) => Trip
+  /** تسجيل مصروف نقلة مستقل من قسم «مصاريف النقلات» (داخلي على الشركة 5106 أو محمّل على العميل 1104) */
+  addTripExpense: (args: {
+    tripId: number
+    nameAr: string
+    qty?: number
+    unitAmountMinor: number
+    bearer: TripExpenseBearer
+    paymentSource: TripExpensePaymentSource
+    treasury?: string
+    custodyFileId?: number | null
+    notes?: string
+  }) => TripExpenseRecord
+  /** عكس / إلغاء مصروف نقلة مستقل وتوليد قيد عاكس متوازن */
+  reverseTripExpense: (expenseId: number) => TripExpenseRecord
   /** إجمالي غير المسوى لسائق */
   getDriverDueBalance: (driverId: number) => number
   /** تسوية كل مستحقات سائق دفعة واحدة من خزينة/بنك */
@@ -2264,7 +2357,31 @@ interface DataState {
     /** تجاوز حد ائتمان العميل بموافقة مدير */
     creditLimitOverrideBy?: string | null
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+    /** نمط الفوترة: reference (عقد مرجعي تُصدر له فواتير دورية) أو upfront (إثبات كامل الإيجار عند الفتح) */
+    billingMode?: RentalBillingMode
+    /** خيار الضريبة: بالضريبة أو بدون ضريبة */
+    withTax?: boolean
+    /** السائق المعيّن على العقد من سجل الموظفين */
+    driverEmployeeId?: number | null
+    /** مصفوفة تحمل المصاريف (الوقود، السائق، النقل، الصيانة، التلفيات) */
+    responsibility?: RentalResponsibilityMatrix
   }) => RentalContract
+  /** إصدار فاتورة إيجار دورية/شهرية مرتبطة بعقد إيجار وتُقيَّد على ذمة العميل (1104) وإيراد الإيجار (4104) */
+  issueRentalInvoice: (args: {
+    contractId: number
+    periodLabel: string
+    qty?: number
+    unitRateMinor?: number
+    netMinor?: number
+    withTax?: boolean
+    vatPercent?: number
+    payment?: RentalPaymentMode
+    paidNowMinor?: number
+    treasury?: string
+    dueDate?: string
+    notes?: string
+    creditLimitOverrideBy?: string | null
+  }) => RentalInvoice
   /**
    * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
    * ترقية القرار 25: قراءة عدّاد الإرجاع (ساعي) أو تاريخ الإرجاع (يومي/شهري)
@@ -2275,10 +2392,30 @@ interface DataState {
   addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
   /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
   recordEquipmentService: (equipmentId: number) => void
-  /** مصروف تشغيل معدة بقيده (5105/خزينة) — وقود/صيانة/إصلاح/مشغل */
-  addEquipmentCost: (args: { equipmentId: number; kind: EquipmentCostKind; amountMinor: number; description?: string; treasury?: string }) => EquipmentCost
-  /** ربحية معدة: إيراد عقودها − تكاليفها، وربح الساعة من الساعات الموثقة */
-  getEquipmentProfit: (equipmentId: number) => { revenueMinor: number; costsMinor: number; profitMinor: number; hours: number; profitPerHourMinor: number | null }
+  /** مصروف تشغيل معدة بقيده (5105/خزينة للمالك أو 1104/خزينة عند التحميل على المستأجر) */
+  addEquipmentCost: (args: {
+    equipmentId: number
+    kind: EquipmentCostKind
+    amountMinor: number
+    description?: string
+    treasury?: string
+    contractId?: number | null
+    costLayer?: EquipmentCostLayer
+    borneBy?: ExpenseBearer
+    driverEmployeeId?: number | null
+  }) => EquipmentCost
+  /** ربحية معدة: إيراد عقودها وفواتيرها الدورية − تكاليف المالك (مباشر + غير مباشر + سائق)، وربح الساعة */
+  getEquipmentProfit: (equipmentId: number) => {
+    revenueMinor: number
+    costsMinor: number
+    profitMinor: number
+    hours: number
+    profitPerHourMinor: number | null
+    directCostsMinor: number
+    indirectCostsMinor: number
+    driverCostsMinor: number
+    customerBorneCostsMinor: number
+  }
   /* ─── معامل التحاليل (القرار 26) ─── */
   addLabTest: (t: Omit<LabTest, 'id' | 'isActive'>) => LabTest
   updateLabTest: (id: number, patch: Partial<Omit<LabTest, 'id'>>) => void
@@ -2336,7 +2473,7 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -3060,13 +3197,489 @@ function assertTreasuryNotNegative(
   }
 }
 
-export const useDataStore = create<DataState>()(
+/** الفرع الفعال حالياً (فرع الموظف المربوط أو الفرع الذي اختاره المالك) — null = العرض الشامل لكل الفروع */
+export function getEffectiveActiveBranch(state: DataState): Branch | null {
+  const activeUser = state.appUsers.find((u) => u.id === state.currentUserId) ?? null
+  const userBranchId = activeUser?.branchId != null && state.branches.some((b) => b.id === activeUser.branchId && b.active)
+    ? activeUser.branchId
+    : null
+  const effectiveBranchId = userBranchId ?? state.activeBranchId
+  if (effectiveBranchId == null) return null
+  return state.branches.find((b) => b.id === effectiveBranchId && b.active) ?? null
+}
+
+const BRANCH_STAMP_ID_KEYS = [
+  'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
+  'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
+  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectExtracts',
+  'projectCosts', 'retentionReleases', 'projectBudgets', 'projectTasks', 'changeOrders',
+  'clientAdvances', 'boqItems', 'subContracts', 'subCertificates', 'subPayments',
+  'subAdvances', 'bonds', 'dailyWorkers', 'dailyWorkRecords', 'materialRequisitions',
+  'clientSettlements', 'equipment', 'rentalContracts', 'rentalInvoices', 'equipmentCosts',
+  'operatorShifts', 'vehicles', 'vehicleCostEntries', 'trips', 'tripExpenses', 'driverDues',
+  'cars', 'carPrepCosts', 'carPurchaseInvoices', 'consignmentCars', 'properties',
+  'propertyUnits', 'propertySales', 'leases', 'ownerTxns', 'clinicPatients', 'clinicVisits',
+  'treatmentPlans', 'clinicCollections', 'clinicAppointments', 'labTests', 'labReferrers',
+  'labPatients', 'labOrders', 'tickets', 'maintenanceServices', 'laundryOrders', 'bookings',
+  'walletOps', 'journal', 'installmentPlans', 'quotations', 'assets', 'payrollRuns',
+  'payrollSlips', 'employeeAdvances', 'employeeDeductions', 'advanceRepayments',
+  'attendanceRecords', 'leaveRequests', 'staffCommissions', 'stocktakes', 'wastages',
+  'consumptions', 'settlements', 'partyOffsets', 'exchanges', 'restaurantOrders',
+  'goldTradeIns', 'shifts', 'recipes', 'productionOrders', 'processingOrders', 'scrapLots',
+  'scrapSales', 'costCenters', 'costCenterBudgets', 'expenseTemplates', 'externalCommissions',
+  'commissionParties', 'priceLists', 'promotions', 'purchaseExpensePayables',
+] as const
+
+const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
+
+/**
+ * تصفية حالة البيانات حسب الفرع النشط (عندما يعمل كل فرع كشركة مستقلة بعملائها ومخازنها وخزائنها وفواتيرها):
+ * - عندما يكون العرض شاملاً (`activeBranch == null`) تُعاد `state` الأصلية كما هي بلا أي نسخ.
+ * - عندما يُختار فرع محدد، تُعاد نسخة معزولة ومخزنة في `WeakMap` لضمان ثبات المراجع في React 19.
+ */
+export function getBranchScopedDataState(state: DataState): DataState {
+  const activeBranch = getEffectiveActiveBranch(state)
+  if (!activeBranch) return state
+
+  let byBranch = scopedStateCache.get(state)
+  if (!byBranch) {
+    byBranch = new Map<number, DataState>()
+    scopedStateCache.set(state, byBranch)
+  }
+  const cached = byBranch.get(activeBranch.id)
+  if (cached) return cached
+
+  const scopedWarehouses = filterWarehousesByBranch(state.warehouses, activeBranch, state.branches).map((w) =>
+    w.id === activeBranch.warehouseId && !w.isMain ? { ...w, isMain: true } : w,
+  )
+  const scopedWhIds = new Set(scopedWarehouses.map((w) => w.id))
+  const scopedTreasuries = filterTreasuriesByBranch(state.treasuries, activeBranch, state.branches)
+  const scopedTrCodes = new Set(scopedTreasuries.map((t) => t.code))
+  const otherBranchTrCodes = new Set(
+    state.treasuries.filter((t) => !scopedTrCodes.has(t.code)).map((t) => t.code),
+  )
+
+  const inBranch = <T extends object>(rows: readonly T[]): T[] =>
+    filterByBranch(rows, activeBranch, state.branches)
+
+  // الأصناف: أصناف الفرع + أي صنف له تحويل مخزني من/إلى مخزن الفرع
+  const transferredItemIds = new Set<number>()
+  for (const trf of state.transfers) {
+    if (scopedWhIds.has(trf.toWarehouseId) || scopedWhIds.has(trf.fromWarehouseId)) {
+      for (const l of trf.lines) transferredItemIds.add(l.itemId)
+    }
+  }
+  const scopedItems = state.items.filter(
+    (it) => belongsToBranch(it, activeBranch, state.branches) || transferredItemIds.has(it.id),
+  )
+  const scopedItemIds = new Set(scopedItems.map((it) => it.id))
+  const scopedItemCatIds = new Set(scopedItems.map((it) => it.categoryId))
+  const scopedCategories = state.categories.filter(
+    (cat) => belongsToBranch(cat, activeBranch, state.branches) || scopedItemCatIds.has(cat.id),
+  )
+
+  const scopedCustomers = inBranch(state.customers)
+  const scopedCustomerIds = new Set(scopedCustomers.map((c) => c.id))
+  const scopedSuppliers = inBranch(state.suppliers)
+  const scopedSupplierIds = new Set(scopedSuppliers.map((s) => s.id))
+  const scopedEmployees = inBranch(state.employees)
+  const scopedEmployeeIds = new Set(scopedEmployees.map((e) => e.id))
+
+  const scopedSales = state.sales.filter((s) =>
+    belongsToBranch(s, activeBranch, state.branches) ||
+    (s.warehouseId != null && scopedWhIds.has(s.warehouseId)) ||
+    (s.customerId != null && scopedCustomerIds.has(s.customerId)),
+  )
+  const scopedSaleIds = new Set(scopedSales.map((s) => s.id))
+  const scopedSaleReturns = state.saleReturns.filter(
+    (r) => scopedSaleIds.has(r.saleId) || belongsToBranch(r, activeBranch, state.branches),
+  )
+  const scopedSaleReturnIds = new Set(scopedSaleReturns.map((r) => r.id))
+
+  const scopedPurchases = state.purchases.filter((p) =>
+    belongsToBranch(p, activeBranch, state.branches) ||
+    (p.warehouseId != null && scopedWhIds.has(p.warehouseId)) ||
+    (p.supplierId !== 0 && scopedSupplierIds.has(p.supplierId)),
+  )
+  const scopedPurchaseIds = new Set(scopedPurchases.map((p) => p.id))
+  const scopedPurchaseReturns = state.purchaseReturns.filter(
+    (r) => scopedPurchaseIds.has(r.purchaseId) || belongsToBranch(r, activeBranch, state.branches),
+  )
+  const scopedPurchaseReturnIds = new Set(scopedPurchaseReturns.map((r) => r.id))
+  const scopedPurchaseOrders = state.purchaseOrders.filter((po) =>
+    belongsToBranch(po, activeBranch, state.branches) ||
+    (po.warehouseId != null && scopedWhIds.has(po.warehouseId)) ||
+    (po.supplierId != null && scopedSupplierIds.has(po.supplierId)),
+  )
+
+  const scopedVouchers = state.vouchers.filter((v) =>
+    belongsToBranch(v, activeBranch, state.branches) ||
+    scopedTrCodes.has(v.treasury) ||
+    (v.counterAccountCode != null && scopedTrCodes.has(v.counterAccountCode)),
+  )
+  const scopedVoucherIds = new Set(scopedVouchers.map((v) => v.id))
+  const scopedCheques = inBranch(state.cheques)
+  const scopedCustodyFiles = inBranch(state.custodyFiles)
+  const scopedCustodyFileIds = new Set(scopedCustodyFiles.map((f) => f.id))
+  const scopedCustodyTxs = state.custodyTxs.filter(
+    (tx) => scopedCustodyFileIds.has(tx.fileId) || belongsToBranch(tx, activeBranch, state.branches),
+  )
+  const scopedProjects = state.projects.filter(
+    (p) => belongsToBranch(p, activeBranch, state.branches) || (p.clientId != null && scopedCustomerIds.has(p.clientId)),
+  )
+  const scopedProjectIds = new Set(scopedProjects.map((p) => p.id))
+  const scopedProjectExtracts = state.projectExtracts.filter(
+    (ex) => scopedProjectIds.has(ex.projectId) || belongsToBranch(ex, activeBranch, state.branches),
+  )
+  const scopedProjectCosts = state.projectCosts.filter(
+    (c) => scopedProjectIds.has(c.projectId) || belongsToBranch(c, activeBranch, state.branches),
+  )
+  const scopedRetentionReleases = state.retentionReleases.filter(
+    (r) => scopedProjectIds.has(r.projectId) || belongsToBranch(r, activeBranch, state.branches),
+  )
+  const scopedProjectBudgets = state.projectBudgets.filter(
+    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b, activeBranch, state.branches),
+  )
+  const scopedProjectTasks = state.projectTasks.filter(
+    (t) => scopedProjectIds.has(t.projectId) || belongsToBranch(t, activeBranch, state.branches),
+  )
+  const scopedChangeOrders = state.changeOrders.filter(
+    (co) => scopedProjectIds.has(co.projectId) || belongsToBranch(co, activeBranch, state.branches),
+  )
+  const scopedClientAdvances = state.clientAdvances.filter(
+    (ca) => scopedProjectIds.has(ca.projectId) || belongsToBranch(ca, activeBranch, state.branches),
+  )
+  const scopedMaterialRequisitions = state.materialRequisitions.filter(
+    (mr) => scopedProjectIds.has(mr.projectId) || belongsToBranch(mr, activeBranch, state.branches),
+  )
+  const scopedBoqItems = state.boqItems.filter(
+    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b, activeBranch, state.branches),
+  )
+  const scopedSubContracts = state.subContracts.filter(
+    (sc) => scopedProjectIds.has(sc.projectId) || belongsToBranch(sc, activeBranch, state.branches),
+  )
+  const scopedSubContractIds = new Set(scopedSubContracts.map((sc) => sc.id))
+  const scopedSubCertificates = state.subCertificates.filter(
+    (cert) => scopedSubContractIds.has(cert.contractId) || belongsToBranch(cert, activeBranch, state.branches),
+  )
+  const scopedSubPayments = state.subPayments.filter(
+    (sp) => scopedSubContractIds.has(sp.contractId) || belongsToBranch(sp, activeBranch, state.branches),
+  )
+  const scopedSubAdvances = state.subAdvances.filter(
+    (sa) => scopedSubContractIds.has(sa.contractId) || belongsToBranch(sa, activeBranch, state.branches),
+  )
+  const scopedBonds = inBranch(state.bonds)
+  const scopedDailyWorkers = inBranch(state.dailyWorkers)
+  const scopedDailyWorkRecords = inBranch(state.dailyWorkRecords)
+  const scopedClientSettlements = state.clientSettlements.filter(
+    (cs) => scopedCustomerIds.has(cs.customerId) || belongsToBranch(cs, activeBranch, state.branches),
+  )
+  const scopedQuotations = inBranch(state.quotations)
+  const scopedEquipment = inBranch(state.equipment)
+  const scopedEquipmentIds = new Set(scopedEquipment.map((eq) => eq.id))
+  const scopedRentalContracts = state.rentalContracts.filter(
+    (c) => belongsToBranch(c, activeBranch, state.branches) || (c.equipmentId != null && scopedEquipmentIds.has(c.equipmentId)),
+  )
+  const scopedRentalContractIds = new Set(scopedRentalContracts.map((c) => c.id))
+  const scopedRentalInvoices = state.rentalInvoices.filter(
+    (inv) => scopedRentalContractIds.has(inv.contractId) || belongsToBranch(inv, activeBranch, state.branches),
+  )
+  const scopedEquipmentCosts = state.equipmentCosts.filter(
+    (ec) => scopedEquipmentIds.has(ec.equipmentId) || belongsToBranch(ec, activeBranch, state.branches),
+  )
+  const scopedOperatorShifts = state.operatorShifts.filter(
+    (os) => scopedEquipmentIds.has(os.equipmentId) || belongsToBranch(os, activeBranch, state.branches),
+  )
+  const scopedVehicles = inBranch(state.vehicles)
+  const scopedVehicleIds = new Set(scopedVehicles.map((v) => v.id))
+  const scopedVehicleCostEntries = state.vehicleCostEntries.filter(
+    (vce) => scopedVehicleIds.has(vce.vehicleId) || belongsToBranch(vce, activeBranch, state.branches),
+  )
+  const scopedTrips = state.trips.filter(
+    (t) => belongsToBranch(t, activeBranch, state.branches) || (t.vehicleId != null && scopedVehicleIds.has(t.vehicleId)),
+  )
+  const scopedTripIds = new Set(scopedTrips.map((t) => t.id))
+  const scopedTripExpenses = state.tripExpenses.filter(
+    (te) => scopedTripIds.has(te.tripId) || belongsToBranch(te, activeBranch, state.branches),
+  )
+  const scopedDriverDues = state.driverDues.filter(
+    (dd) => scopedEmployeeIds.has(dd.driverId) || belongsToBranch(dd, activeBranch, state.branches),
+  )
+  const scopedCars = inBranch(state.cars)
+  const scopedCarIds = new Set(scopedCars.map((c) => c.id))
+  const scopedCarPrepCosts = state.carPrepCosts.filter(
+    (cp) => scopedCarIds.has(cp.carId) || belongsToBranch(cp, activeBranch, state.branches),
+  )
+  const scopedCarPurchaseInvoices = inBranch(state.carPurchaseInvoices)
+  const scopedConsignmentCars = inBranch(state.consignmentCars)
+  const scopedProperties = inBranch(state.properties)
+  const scopedPropertyIds = new Set(scopedProperties.map((p) => p.id))
+  const scopedPropertyUnits = state.propertyUnits.filter(
+    (u) => scopedPropertyIds.has(u.propertyId) || belongsToBranch(u, activeBranch, state.branches),
+  )
+  const scopedPropertySales = state.propertySales.filter(
+    (ps) => scopedPropertyIds.has(ps.propertyId) || belongsToBranch(ps, activeBranch, state.branches),
+  )
+  const scopedLeases = inBranch(state.leases)
+  const scopedOwnerTxns = state.ownerTxns.filter(
+    (ot) => scopedPropertyIds.has(ot.propertyId) || belongsToBranch(ot, activeBranch, state.branches),
+  )
+  const scopedClinicPatients = inBranch(state.clinicPatients)
+  const scopedClinicVisits = inBranch(state.clinicVisits)
+  const scopedTreatmentPlans = inBranch(state.treatmentPlans)
+  const scopedClinicCollections = inBranch(state.clinicCollections)
+  const scopedClinicAppointments = inBranch(state.clinicAppointments)
+  const scopedLabTests = inBranch(state.labTests)
+  const scopedLabReferrers = inBranch(state.labReferrers)
+  const scopedLabPatients = inBranch(state.labPatients)
+  const scopedLabOrders = inBranch(state.labOrders)
+  const scopedTickets = inBranch(state.tickets)
+  const scopedMaintenanceServices = inBranch(state.maintenanceServices)
+  const scopedLaundryOrders = inBranch(state.laundryOrders)
+  const scopedBookings = inBranch(state.bookings)
+  const scopedWalletOps = inBranch(state.walletOps)
+  const scopedInstallmentPlans = state.installmentPlans.filter(
+    (p) => belongsToBranch(p, activeBranch, state.branches) || (p.saleId != null && scopedSaleIds.has(p.saleId)),
+  )
+  const scopedAssets = inBranch(state.assets)
+  const scopedPayrollRuns = inBranch(state.payrollRuns)
+  const scopedPayrollSlips = state.payrollSlips.filter(
+    (ps) => scopedEmployeeIds.has(ps.employeeId) || belongsToBranch(ps, activeBranch, state.branches),
+  )
+  const scopedEmployeeAdvances = state.employeeAdvances.filter(
+    (ea) => scopedEmployeeIds.has(ea.employeeId) || belongsToBranch(ea, activeBranch, state.branches),
+  )
+  const scopedEmployeeDeductions = state.employeeDeductions.filter(
+    (ed) => scopedEmployeeIds.has(ed.employeeId) || belongsToBranch(ed, activeBranch, state.branches),
+  )
+  const scopedAdvanceRepayments = state.advanceRepayments.filter(
+    (ar) => scopedEmployeeIds.has(ar.employeeId) || belongsToBranch(ar, activeBranch, state.branches),
+  )
+  const scopedAttendanceRecords = state.attendanceRecords.filter(
+    (ar) => scopedEmployeeIds.has(ar.employeeId) || belongsToBranch(ar, activeBranch, state.branches),
+  )
+  const scopedLeaveRequests = state.leaveRequests.filter(
+    (lr) => scopedEmployeeIds.has(lr.employeeId) || belongsToBranch(lr, activeBranch, state.branches),
+  )
+  const scopedStaffCommissions = state.staffCommissions.filter(
+    (sc) => scopedEmployeeIds.has(sc.employeeId) || belongsToBranch(sc, activeBranch, state.branches),
+  )
+  const scopedStocktakes = inBranch(state.stocktakes)
+  const scopedWastages = inBranch(state.wastages)
+  const scopedConsumptions = inBranch(state.consumptions)
+  const scopedSettlements = inBranch(state.settlements)
+  const scopedPartyOffsets = inBranch(state.partyOffsets)
+  const scopedExchanges = inBranch(state.exchanges)
+  const scopedRestaurantOrders = inBranch(state.restaurantOrders)
+  const scopedGoldTradeIns = inBranch(state.goldTradeIns)
+  const scopedShifts = inBranch(state.shifts)
+  const scopedRecipes = inBranch(state.recipes)
+  const scopedProductionOrders = inBranch(state.productionOrders)
+  const scopedProcessingOrders = inBranch(state.processingOrders)
+  const scopedScrapLots = inBranch(state.scrapLots)
+  const scopedScrapSales = inBranch(state.scrapSales)
+  const scopedCostCenters = inBranch(state.costCenters)
+  const scopedCostCenterBudgets = inBranch(state.costCenterBudgets)
+  const scopedExpenseTemplates = inBranch(state.expenseTemplates)
+  const scopedExternalCommissions = inBranch(state.externalCommissions)
+  const scopedCommissionParties = inBranch(state.commissionParties)
+  const scopedPriceLists = inBranch(state.priceLists)
+  const scopedPromotions = inBranch(state.promotions)
+  const scopedPurchaseExpensePayables = inBranch(state.purchaseExpensePayables)
+  const scopedTerminals = state.paymentTerminals.filter(
+    (t) => !t.branchId || t.branchId === String(activeBranch.id),
+  )
+
+  const scopedEntryIds = new Set<number>()
+  const scopedJournal = state.journal.filter((e) => {
+    const rec = e as BranchScopedRecord
+    let match = false
+    if (rec.branchId != null) {
+      match = rec.branchId === activeBranch.id
+    } else if (e.sourceType === 'sale' && e.sourceId != null) {
+      match = scopedSaleIds.has(e.sourceId)
+    } else if (e.sourceType === 'sale_return' && e.sourceId != null) {
+      match = scopedSaleReturnIds.has(e.sourceId)
+    } else if (e.sourceType === 'purchase' && e.sourceId != null) {
+      match = scopedPurchaseIds.has(e.sourceId)
+    } else if (e.sourceType === 'purchase_return' && e.sourceId != null) {
+      match = scopedPurchaseReturnIds.has(e.sourceId)
+    } else if ((e.sourceType === 'receipt_voucher' || e.sourceType === 'payment_voucher') && e.sourceId != null) {
+      match = scopedVoucherIds.has(e.sourceId)
+    } else if (e.sourceType === 'opening' && e.sourceId != null) {
+      match = scopedItemIds.has(e.sourceId)
+    } else if (e.sourceType === 'reversal' && e.reversesEntryId != null) {
+      match = scopedEntryIds.has(e.reversesEntryId)
+    } else if (e.lines.some((l) => scopedTrCodes.has(l.accountCode))) {
+      match = true
+    } else if (e.lines.some((l) => otherBranchTrCodes.has(l.accountCode))) {
+      match = false
+    } else {
+      match = Boolean(activeBranch.isMain)
+    }
+    if (match) scopedEntryIds.add(e.id)
+    return match
+  })
+
+  const scoped: DataState = {
+    ...state,
+    warehouses: scopedWarehouses,
+    treasuries: scopedTreasuries,
+    customers: scopedCustomers,
+    suppliers: scopedSuppliers,
+    employees: scopedEmployees,
+    items: scopedItems,
+    categories: scopedCategories,
+    sales: scopedSales,
+    saleReturns: scopedSaleReturns,
+    purchases: scopedPurchases,
+    purchaseReturns: scopedPurchaseReturns,
+    purchaseOrders: scopedPurchaseOrders,
+    vouchers: scopedVouchers,
+    cheques: scopedCheques,
+    custodyFiles: scopedCustodyFiles,
+    custodyTxs: scopedCustodyTxs,
+    projects: scopedProjects,
+    projectExtracts: scopedProjectExtracts,
+    projectCosts: scopedProjectCosts,
+    retentionReleases: scopedRetentionReleases,
+    projectBudgets: scopedProjectBudgets,
+    projectTasks: scopedProjectTasks,
+    changeOrders: scopedChangeOrders,
+    clientAdvances: scopedClientAdvances,
+    materialRequisitions: scopedMaterialRequisitions,
+    boqItems: scopedBoqItems,
+    subContracts: scopedSubContracts,
+    subCertificates: scopedSubCertificates,
+    subPayments: scopedSubPayments,
+    subAdvances: scopedSubAdvances,
+    bonds: scopedBonds,
+    dailyWorkers: scopedDailyWorkers,
+    dailyWorkRecords: scopedDailyWorkRecords,
+    clientSettlements: scopedClientSettlements,
+    quotations: scopedQuotations,
+    equipment: scopedEquipment,
+    rentalContracts: scopedRentalContracts,
+    rentalInvoices: scopedRentalInvoices,
+    equipmentCosts: scopedEquipmentCosts,
+    operatorShifts: scopedOperatorShifts,
+    vehicles: scopedVehicles,
+    vehicleCostEntries: scopedVehicleCostEntries,
+    trips: scopedTrips,
+    tripExpenses: scopedTripExpenses,
+    driverDues: scopedDriverDues,
+    cars: scopedCars,
+    carPrepCosts: scopedCarPrepCosts,
+    carPurchaseInvoices: scopedCarPurchaseInvoices,
+    consignmentCars: scopedConsignmentCars,
+    properties: scopedProperties,
+    propertyUnits: scopedPropertyUnits,
+    propertySales: scopedPropertySales,
+    leases: scopedLeases,
+    ownerTxns: scopedOwnerTxns,
+    clinicPatients: scopedClinicPatients,
+    clinicVisits: scopedClinicVisits,
+    treatmentPlans: scopedTreatmentPlans,
+    clinicCollections: scopedClinicCollections,
+    clinicAppointments: scopedClinicAppointments,
+    labTests: scopedLabTests,
+    labReferrers: scopedLabReferrers,
+    labPatients: scopedLabPatients,
+    labOrders: scopedLabOrders,
+    tickets: scopedTickets,
+    maintenanceServices: scopedMaintenanceServices,
+    laundryOrders: scopedLaundryOrders,
+    bookings: scopedBookings,
+    walletOps: scopedWalletOps,
+    installmentPlans: scopedInstallmentPlans,
+    assets: scopedAssets,
+    payrollRuns: scopedPayrollRuns,
+    payrollSlips: scopedPayrollSlips,
+    employeeAdvances: scopedEmployeeAdvances,
+    employeeDeductions: scopedEmployeeDeductions,
+    advanceRepayments: scopedAdvanceRepayments,
+    attendanceRecords: scopedAttendanceRecords,
+    leaveRequests: scopedLeaveRequests,
+    staffCommissions: scopedStaffCommissions,
+    stocktakes: scopedStocktakes,
+    wastages: scopedWastages,
+    consumptions: scopedConsumptions,
+    settlements: scopedSettlements,
+    partyOffsets: scopedPartyOffsets,
+    exchanges: scopedExchanges,
+    restaurantOrders: scopedRestaurantOrders,
+    goldTradeIns: scopedGoldTradeIns,
+    shifts: scopedShifts,
+    recipes: scopedRecipes,
+    productionOrders: scopedProductionOrders,
+    processingOrders: scopedProcessingOrders,
+    scrapLots: scopedScrapLots,
+    scrapSales: scopedScrapSales,
+    costCenters: scopedCostCenters,
+    costCenterBudgets: scopedCostCenterBudgets,
+    expenseTemplates: scopedExpenseTemplates,
+    externalCommissions: scopedExternalCommissions,
+    commissionParties: scopedCommissionParties,
+    priceLists: scopedPriceLists,
+    promotions: scopedPromotions,
+    purchaseExpensePayables: scopedPurchaseExpensePayables,
+    paymentTerminals: scopedTerminals,
+    journal: scopedJournal,
+  }
+  byBranch.set(activeBranch.id, scoped)
+  return scoped
+}
+
+export const useRawDataStore = create<DataState>()(
   persist(
     (rawSet, get) => {
       // كل كتابة تمر عبر الحارس أولاً — تُرفض بأكملها لو خالفت شرط الرصيد السالب
       const set = ((partial: unknown, replace?: boolean) => {
         const state = get()
         const patch = typeof partial === 'function' ? (partial as (s: DataState) => Partial<DataState>)(state) : partial as Partial<DataState>
+        // ختم الفرع النشط تلقائياً على أي سجل جديد يُنشأ أثناء تفعيل فرع مستقل
+        const activeBranch = patch ? getEffectiveActiveBranch(state) : null
+        if (activeBranch && patch) {
+          const patchRec = patch as Record<string, unknown>
+          const stateRec = state as unknown as Record<string, unknown>
+          const remapDefaultTreasury = !activeBranch.isMain && Boolean(activeBranch.treasuryCode) && activeBranch.treasuryCode !== '1101'
+          for (const key of BRANCH_STAMP_ID_KEYS) {
+            const nextArr = patchRec[key]
+            const prevArr = stateRec[key]
+            if (Array.isArray(nextArr) && Array.isArray(prevArr) && nextArr.length > prevArr.length) {
+              const prevIds = new Set(prevArr.map((r: { id?: unknown }) => r?.id))
+              patchRec[key] = nextArr.map((r: Record<string, unknown>) => {
+                if (r && !prevIds.has(r.id)) {
+                  const isTransferVoucher = key === 'vouchers' && r.kind === 'transfer'
+                  return {
+                    ...r,
+                    ...(r.branchId === undefined ? { branchId: activeBranch.id } : {}),
+                    ...(key === 'items' && !activeBranch.isMain && r.warehouseId === undefined
+                      ? { warehouseId: activeBranch.warehouseId }
+                      : {}),
+                    ...(remapDefaultTreasury && !isTransferVoucher && r.treasury === '1101'
+                      ? { treasury: activeBranch.treasuryCode }
+                      : {}),
+                    ...(remapDefaultTreasury && key === 'journal' && Array.isArray(r.lines) && !(r.lines as { accountCode?: string }[]).some((l) => l.accountCode === activeBranch.treasuryCode)
+                      ? {
+                          lines: (r.lines as { accountCode?: string }[]).map((l) =>
+                            l.accountCode === '1101' ? { ...l, accountCode: activeBranch.treasuryCode } : l,
+                          ),
+                        }
+                      : {}),
+                  }
+                }
+                return r
+              })
+            }
+          }
+          if (Array.isArray(patch.treasuries) && patch.treasuries.length > state.treasuries.length) {
+            const prevCodes = new Set(state.treasuries.map((t) => t.code))
+            patch.treasuries = patch.treasuries.map((t) =>
+              !prevCodes.has(t.code) && t.branchId === undefined ? { ...t, branchId: activeBranch.id } : t,
+            )
+          }
+        }
         if (patch && (patch as Partial<DataState>).journal) {
           // توحيد التاريخ أولاً: كل قيد بصيغة YYYY-MM-DD مهما أرسل المسار
           const rawJournal = (patch as Partial<DataState>).journal!
@@ -3103,6 +3716,7 @@ export const useDataStore = create<DataState>()(
       categories: [],
       warehouses: [],
       branches: [],
+      activeBranchId: null,
       paymentTerminals: [],
       paymentTerminalTransactions: [],
       paymentTerminalSettlements: [],
@@ -3479,8 +4093,10 @@ export const useDataStore = create<DataState>()(
       vehicles: [],
       vehicleCostEntries: [],
       trips: [],
+      tripExpenses: [],
       equipment: [],
       rentalContracts: [],
+      rentalInvoices: [],
       operatorShifts: [],
       labTests: [],
       labReferrers: [],
@@ -3779,7 +4395,8 @@ export const useDataStore = create<DataState>()(
         const name = args.nameAr.trim()
         if (!name) throw new Error('اسم البند الحر مطلوب')
         const state0 = get()
-        const existing = state0.items.find((it) => it.isActive && it.isService === true && it.nameAr.trim() === name)
+        const scopedItems = getBranchScopedDataState(state0).items
+        const existing = scopedItems.find((it) => it.isActive && it.isService === true && it.nameAr.trim() === name)
         if (existing) return existing.id
         const draft = draftFromCategory(undefined, nextSku(state0.items))
         const item: Omit<Item, 'id'> = {
@@ -3806,7 +4423,7 @@ export const useDataStore = create<DataState>()(
         // باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
         // يفسد خصم المخزون بالوحدة الأساسية. التحذيرات (سعر صفر/خسارة) قرار شاشة.
         const guardState = get()
-        const blockers = itemBlockers(item, guardState.items)
+        const blockers = itemBlockers(item, getBranchScopedDataState(guardState).items)
         if (blockers.length) throw new Error(blockers[0])
         // AUDIT-005: الرصيد الابتدائي للصنف (كمية × تكلفة) كان يدخل المخزون **بلا قيد**
         // فينكسر ثابت «1103 = Σ كمية×متوسط» من اليوم الأول (وأبرز مسار: استيراد CSV).
@@ -3956,7 +4573,7 @@ export const useDataStore = create<DataState>()(
       addCostCenter: (input) => {
         const state = get()
         const normalized = { code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim(), parentId: input.parentId ?? null }
-        const errors = validateCostCenter(normalized, state.costCenters)
+        const errors = validateCostCenter(normalized, getBranchScopedDataState(state).costCenters)
         if (errors.length) throw new Error(errors.join(' — '))
         const center: CostCenter = { id: nextId(state.costCenters), ...normalized, isActive: true, notes: input.notes?.trim() ?? '' }
         set({ costCenters: [...state.costCenters, center] })
@@ -3967,7 +4584,7 @@ export const useDataStore = create<DataState>()(
         const current = state.costCenters.find((center) => center.id === id)
         if (!current) throw new Error('مركز التكلفة غير موجود')
         const next = { ...current, ...patch, parentId: patch.parentId === undefined ? (current.parentId ?? null) : patch.parentId, code: (patch.code ?? current.code).trim().toUpperCase(), nameAr: (patch.nameAr ?? current.nameAr).trim(), notes: patch.notes === undefined ? current.notes : patch.notes.trim() }
-        const errors = validateCostCenter(next, state.costCenters, id)
+        const errors = validateCostCenter(next, getBranchScopedDataState(state).costCenters, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ costCenters: state.costCenters.map((center) => center.id === id ? next : center) })
       },
@@ -4007,7 +4624,7 @@ export const useDataStore = create<DataState>()(
       addExpenseTemplate: (input) => {
         const state = get()
         const normalized = { ...input, code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim(), accountCode: input.accountCode.trim(), notes: input.notes.trim(), isActive: input.isActive ?? true }
-        const errors = validateExpenseTemplate(normalized, state.expenseTemplates)
+        const errors = validateExpenseTemplate(normalized, getBranchScopedDataState(state).expenseTemplates)
         if (errors.length) throw new Error(errors.join(' — '))
         const template: ExpenseTemplate = { id: nextId(state.expenseTemplates), ...normalized }
         set({ expenseTemplates: [...state.expenseTemplates, template] })
@@ -4018,14 +4635,27 @@ export const useDataStore = create<DataState>()(
         const current = state.expenseTemplates.find((row) => row.id === id)
         if (!current) throw new Error('بند المصروف غير موجود')
         const next = { ...current, ...patch, code: (patch.code ?? current.code).trim().toUpperCase(), nameAr: (patch.nameAr ?? current.nameAr).trim(), accountCode: (patch.accountCode ?? current.accountCode).trim(), notes: (patch.notes ?? current.notes).trim() }
-        const errors = validateExpenseTemplate(next, state.expenseTemplates, id)
+        const errors = validateExpenseTemplate(next, getBranchScopedDataState(state).expenseTemplates, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ expenseTemplates: state.expenseTemplates.map((row) => row.id === id ? next : row) })
       },
       removeExpenseTemplate: (id) => set((state) => ({ expenseTemplates: state.expenseTemplates.filter((row) => row.id !== id) })),
 
-      postPurchase: (inv) => {
+      postPurchase: (rawInv) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
+        const inv = activeBranch && !activeBranch.isMain
+          ? {
+              ...rawInv,
+              warehouseId: rawInv.warehouseId == null || rawInv.warehouseId === mainWhId ? activeBranch.warehouseId : rawInv.warehouseId,
+              treasury: !rawInv.treasury || rawInv.treasury === '1101' ? activeBranch.treasuryCode : rawInv.treasury,
+              lines: rawInv.lines.map((l) => ({
+                ...l,
+                warehouseId: l.warehouseId == null || l.warehouseId === mainWhId ? activeBranch.warehouseId : l.warehouseId,
+              })),
+            }
+          : rawInv
         // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!inv.__approvalBypass) {
           const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
@@ -4280,6 +4910,7 @@ export const useDataStore = create<DataState>()(
             vatPercent: inv.lines[i]?.vatPercent,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
             warehouseId: inv.lines[i]?.warehouseId ?? effectivePurchaseWarehouseId,
+            notes: inv.lines[i]?.notes?.trim() || undefined,
           })),
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,
@@ -4581,8 +5212,21 @@ export const useDataStore = create<DataState>()(
         return updatedInvoice
       },
 
-      postSale: (args) => {
+      postSale: (rawArgs) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
+        const args = activeBranch && !activeBranch.isMain
+          ? {
+              ...rawArgs,
+              warehouseId: rawArgs.warehouseId == null || rawArgs.warehouseId === mainWhId ? activeBranch.warehouseId : rawArgs.warehouseId,
+              treasury: !rawArgs.treasury || rawArgs.treasury === '1101' ? activeBranch.treasuryCode : rawArgs.treasury,
+              lines: rawArgs.lines.map((l) => ({
+                ...l,
+                warehouseId: l.warehouseId == null || l.warehouseId === mainWhId ? activeBranch.warehouseId : l.warehouseId,
+              })),
+            }
+          : rawArgs
         // بوابة اعتماد المستندات (خطة ③): بيع خاضع للنظام ⇒ يُخزَّن طلباً كاملاً
         // ولا يُخصم مخزون ولا يُنشأ قيد حتى يعتمده صاحب الصلاحية.
         if (!args.__approvalBypass) {
@@ -4598,7 +5242,7 @@ export const useDataStore = create<DataState>()(
         // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
         // إعداد الكاشير، وبقية الأدوار ملزمة في سياق البيع. نفس القرار تستخدمه الواجهة.
         const shiftPolicy = salesShiftPolicyForState(state)
-        if (shiftPolicy.required && !currentOpenShift(state.shifts)) {
+        if (shiftPolicy.required && !currentOpenShift(getBranchScopedDataState(state).shifts)) {
           throw new Error(`لا توجد وردية مفتوحة — ${shiftPolicy.messageAr}`)
         }
         // 0) ثبّت مخزن كل سطر لحظة الترحيل. السطر يعلو على مخزن الرأس،
@@ -5095,7 +5739,7 @@ export const useDataStore = create<DataState>()(
 
         // موافقة المشرف + سياق الوردية (المرتجع العابر للورديات يُحتسب في الوردية الحالية)
         const requesterName = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
-        const currentShift = currentOpenShift(state.shifts)
+        const currentShift = currentOpenShift(getBranchScopedDataState(state).shifts)
         const saleShift = sale.shiftId != null ? state.shifts.find((sh) => sh.id === sale.shiftId) ?? null : null
         const shiftCtx = describeShiftContext({
           saleShiftId: sale.shiftId ?? null,
@@ -6100,8 +6744,12 @@ export const useDataStore = create<DataState>()(
         return sale
       },
 
-      postVoucher: (args) => {
+      postVoucher: (rawArgs) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        const args = activeBranch && !activeBranch.isMain && rawArgs.kind !== 'transfer' && (!rawArgs.treasury || rawArgs.treasury === '1101')
+          ? { ...rawArgs, treasury: activeBranch.treasuryCode }
+          : rawArgs
         // بوابة اعتماد المستندات (خطة ③): سندات القبض والصرف الخاضعة للنظام تقف
         // بطلب اعتماد — التحويل بين الخزائن ليس مستند طرف خارجي فلا يخضع للنطاق.
         if (!args.__approvalBypass && (args.kind === 'receipt' || args.kind === 'payment')) {
@@ -6172,10 +6820,31 @@ export const useDataStore = create<DataState>()(
         let partyAllocations: FifoAllocation[] | undefined
         let partyUnallocatedMinor: number | undefined
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && args.partyId != null) {
-          const openInvoices = get().getOpenClientInvoices(args.partyId)
-          const result = args.allocations ? validatePaymentAllocations(args.amountMinor, openInvoices, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
-          partyAllocations = result.allocations
-          partyUnallocatedMinor = result.unallocatedMinor
+          const rawOpen = get().getOpenClientInvoices(args.partyId)
+          if (args.allocations) {
+            const result = validatePaymentAllocations(args.amountMinor, rawOpen, args.allocations)
+            partyAllocations = result.allocations
+            partyUnallocatedMinor = result.unallocatedMinor
+          } else if (args.projectId != null) {
+            // عند ربط السند بمشروع محدد (وبدون تخصيص يدوي)، نُعطي الأولوية لمستخلصات وفواتير هذا المشروع بالأقدم أولاً ثم بقية مستندات العميل
+            const projExtractIds = new Set(state.projectExtracts.filter((ex) => ex.projectId === args.projectId).map((ex) => `extract:${ex.id}`))
+            const projSaleIds = new Set(state.sales.filter((s) => s.projectId === args.projectId).map((s) => `sale:${s.id}`))
+            const inProj = rawOpen.filter((inv) => projExtractIds.has(inv.docKey) || projSaleIds.has(inv.docKey))
+            const rest = rawOpen.filter((inv) => !projExtractIds.has(inv.docKey) && !projSaleIds.has(inv.docKey))
+            const firstPass = allocateClientPayment(args.amountMinor, inProj)
+            if (firstPass.unallocatedMinor > 0 && rest.length > 0) {
+              const secondPass = allocateClientPayment(firstPass.unallocatedMinor, rest)
+              partyAllocations = [...firstPass.allocations, ...secondPass.allocations]
+              partyUnallocatedMinor = secondPass.unallocatedMinor
+            } else {
+              partyAllocations = firstPass.allocations
+              partyUnallocatedMinor = firstPass.unallocatedMinor
+            }
+          } else {
+            const result = allocateClientPayment(args.amountMinor, rawOpen)
+            partyAllocations = result.allocations
+            partyUnallocatedMinor = result.unallocatedMinor
+          }
         } else if (args.kind === 'payment' && args.counterAccountCode === '2101' && args.partyId != null) {
           const openInvoices = get().getOpenSupplierInvoices(args.partyId)
           const result = args.allocations ? validatePaymentAllocations(args.amountMinor, openInvoices, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
@@ -6538,7 +7207,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         // AUDIT-010: اسم فاتح الوردية نص فقط (استدعاء خاطئ بكائن كان يُحفظ كما هو)
         if (typeof openedBy !== 'string') throw new Error('اسم فاتح الوردية مطلوب')
-        const errors = validateOpenShift(openingCashMinor, state.shifts)
+        const errors = validateOpenShift(openingCashMinor, getBranchScopedDataState(state).shifts)
         if (errors.length) throw new Error(errors.join('، '))
         const shift: Shift = {
           id: nextId(state.shifts),
@@ -6555,7 +7224,7 @@ export const useDataStore = create<DataState>()(
 
       closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null) => {
         const state = get()
-        const open = currentOpenShift(state.shifts)
+        const open = currentOpenShift(getBranchScopedDataState(state).shifts)
         if (!open) throw new Error('لا وردية مفتوحة')
         // AUDIT-010: المعدود عدد صحيح بالقرش — لا undefined ولا كسر
         if (!Number.isInteger(countedCashMinor)) throw new Error('النقدية المعدودة مطلوبة بالقرش الصحيح')
@@ -7024,6 +7693,7 @@ export const useDataStore = create<DataState>()(
             vatPercent: args.lines[i]?.vatPercent ?? inv.lines[i]?.vatPercent ?? 0,
             orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
+            notes: args.lines[i]?.notes !== undefined ? (args.lines[i]?.notes?.trim() || undefined) : inv.lines[i]?.notes,
           })),
           warehouseId: newHeaderWarehouseId,
           expenses: args.expenses,
@@ -7090,13 +7760,16 @@ export const useDataStore = create<DataState>()(
           if (!knownRoles.some((r) => r.id === u.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
         }
         // ربط الموظف (طلب المالك): حساب واحد لكل موظف — التكرار يعني خطأ إدخال
+        const linkedEmployee = u.employeeId != null ? state.employees.find((e) => e.id === u.employeeId && e.active) : undefined
         if (u.employeeId != null) {
-          if (!state.employees.some((e) => e.id === u.employeeId && e.active)) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
+          if (!linkedEmployee) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
           if (state.appUsers.some((x) => x.active && x.employeeId === u.employeeId)) throw new Error('لهذا الموظف حساب دخول نشط بالفعل')
         }
+        const resolvedBranchId = u.branchId !== undefined ? u.branchId : (linkedEmployee?.branchId ?? null)
         const user: AppUser = {
           id: nextId(state.appUsers), nameAr, roleId: u.roleId, pinHash: u.pinHash, active: true,
           employeeId: u.employeeId ?? null,
+          ...(resolvedBranchId != null ? { branchId: resolvedBranchId } : {}),
           phone: sanitizeText(u.phone ?? '', 30), email: sanitizeText(u.email ?? '', 80),
           mustChangePin: u.mustChangePin ?? true,
           initialPin: u.initialPin ?? null,
@@ -7498,8 +8171,9 @@ export const useDataStore = create<DataState>()(
           throw new Error(`خطتك تسمح بـ${maxBranchesAllowed} ${maxBranchesAllowed === 1 ? 'فرع' : 'فروع'} — لزيادة الحد تواصل مع المطوّر من صفحة «حول التطبيق»`)
         }
         let warehouseId = input.warehouseId
+        const newBranchId = nextId(branches)
         if (input.createWarehouse) {
-          const wh = { id: nextId(warehouses), nameAr: `مخزن ${input.nameAr.trim()}`, isMain: false }
+          const wh: Warehouse = { id: nextId(warehouses), nameAr: `مخزن ${input.nameAr.trim()}`, isMain: false, branchId: newBranchId }
           warehouses = [...warehouses, wh]
           warehouseId = wh.id
         }
@@ -7507,18 +8181,21 @@ export const useDataStore = create<DataState>()(
         if (input.createTreasury) {
           const errs = validateTreasury(`خزينة ${input.nameAr.trim()}`, treasuries)
           if (errs.length) throw new Error(errs.join(' — '))
-          const t: TreasuryDef = { code: nextTreasuryCode(treasuries), nameAr: `خزينة ${input.nameAr.trim()}`, kind: input.createTreasury }
+          const t: TreasuryDef = { code: nextTreasuryCode(treasuries), nameAr: `خزينة ${input.nameAr.trim()}`, kind: input.createTreasury, branchId: newBranchId }
           treasuries = [...treasuries, t]
           treasuryCode = t.code
         }
         const errors = validateBranch({ ...input, warehouseId, treasuryCode }, branches, warehouses, treasuries)
         if (errors.length) throw new Error(errors.join(' — '))
         const branch: Branch = {
-          id: nextId(branches), nameAr: input.nameAr.trim(), isMain: false, active: true,
+          id: newBranchId, nameAr: input.nameAr.trim(), isMain: false, active: true,
           warehouseId, treasuryCode,
           address: input.address?.trim() || undefined,
           phone: input.phone?.trim() || undefined,
           managerName: input.managerName?.trim() || undefined,
+          customModulesMode: input.customModulesMode ?? 'all',
+          enabledModules: input.customModulesMode === 'custom' ? [...(input.enabledModules ?? [])] : undefined,
+          activityId: input.activityId || null,
         }
         set({ warehouses, treasuries, branches: [...branches, branch] })
         return branch
@@ -7528,7 +8205,14 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const b = state.branches.find((x) => x.id === id)
         if (!b) throw new Error('الفرع غير موجود')
-        const next = { ...b, ...patch, nameAr: (patch.nameAr ?? b.nameAr).trim() }
+        const next: Branch = {
+          ...b,
+          ...patch,
+          nameAr: (patch.nameAr ?? b.nameAr).trim(),
+          enabledModules: (patch.customModulesMode ?? b.customModulesMode) === 'custom'
+            ? [...(patch.enabledModules ?? b.enabledModules ?? [])]
+            : undefined,
+        }
         const errors = validateBranch(next, state.branches, state.warehouses, state.treasuries, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ branches: state.branches.map((x) => (x.id === id ? next : x)) })
@@ -7541,8 +8225,23 @@ export const useDataStore = create<DataState>()(
         const blocked = canRemoveBranch(b, state.branches)
         if (blocked) throw new Error(blocked)
         const rest = state.branches.filter((x) => x.id !== id)
+        const nextBranches = rest.length === 1 && rest[0].isMain ? [] : rest
         // حذف آخر فرع غير الرئيسي يعيد وضع الفرع الواحد (الرئيسي وحده بلا معنى)
-        set({ branches: rest.length === 1 && rest[0].isMain ? [] : rest })
+        set({
+          branches: nextBranches,
+          warehouses: state.warehouses.map((w) => (w.branchId === id ? { ...w, branchId: null } : w)),
+          treasuries: state.treasuries.map((t) => (t.branchId === id ? { ...t, branchId: null } : t)),
+          activeBranchId: nextBranches.some((x) => x.id === state.activeBranchId) ? state.activeBranchId : null,
+        })
+      },
+
+      setActiveBranchId: (id) => {
+        const state = get()
+        if (id != null && !state.branches.some((x) => x.id === id && x.active)) {
+          set({ activeBranchId: null })
+          return
+        }
+        set({ activeBranchId: id })
       },
 
       addPaymentTerminal: (terminal) => {
@@ -7617,16 +8316,23 @@ export const useDataStore = create<DataState>()(
 
       addTreasury: (nameAr, kind, extra) => {
         const state = get()
-        const errors = validateTreasury(nameAr, state.treasuries)
+        const errors = validateTreasury(nameAr, getBranchScopedDataState(state).treasuries)
         if (errors.length) throw new Error(errors.join(' — '))
-        const t: TreasuryDef = { code: nextTreasuryCode(state.treasuries), nameAr: nameAr.trim(), kind, ...extra }
+        const activeBranch = getEffectiveActiveBranch(state)
+        const t: TreasuryDef = {
+          code: nextTreasuryCode(state.treasuries),
+          nameAr: nameAr.trim(),
+          kind,
+          ...(activeBranch ? { branchId: activeBranch.id } : {}),
+          ...extra,
+        }
         set({ treasuries: [...state.treasuries, t] })
         return t
       },
 
       renameTreasury: (code, nameAr, extra) => {
         const state = get()
-        const errors = validateTreasury(nameAr, state.treasuries, code)
+        const errors = validateTreasury(nameAr, getBranchScopedDataState(state).treasuries, code)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ treasuries: state.treasuries.map((t) => (t.code === code ? { ...t, ...extra, nameAr: nameAr.trim() } : t)) })
       },
@@ -7655,7 +8361,7 @@ export const useDataStore = create<DataState>()(
         const nameAr = c.nameAr.trim()
         if (!nameAr) throw new Error('اسم العميل مطلوب')
         if (c.priceListId != null && !get().priceLists.some((list) => list.id === c.priceListId && list.isActive)) throw new Error('فئة الخصم غير موجودة أو معطلة')
-        if (get().customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
+        if (getBranchScopedDataState(get()).customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
         set((s) => ({ customers: [...s.customers, { ...c, nameAr, id: nextId(s.customers) }] }))
       },
       updateCustomer: (id, patch) => {
@@ -7664,7 +8370,7 @@ export const useDataStore = create<DataState>()(
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم العميل مطلوب')
-          if (get().customers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل آخر بنفس الاسم «${nameAr}»`)
+          if (getBranchScopedDataState(get()).customers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
         set((s) => ({ customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
@@ -7700,14 +8406,14 @@ export const useDataStore = create<DataState>()(
       addSupplier: (sup) => {
         const nameAr = sup.nameAr.trim()
         if (!nameAr) throw new Error('اسم المورد مطلوب')
-        if (get().suppliers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
+        if (getBranchScopedDataState(get()).suppliers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
         set((s) => ({ suppliers: [...s.suppliers, { ...sup, nameAr, id: nextId(s.suppliers) }] }))
       },
       updateSupplier: (id, patch) => {
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم المورد مطلوب')
-          if (get().suppliers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد آخر بنفس الاسم «${nameAr}»`)
+          if (getBranchScopedDataState(get()).suppliers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
         set((s) => ({ suppliers: s.suppliers.map((x) => (x.id === id ? { ...x, ...patch } : x)) }))
@@ -7733,7 +8439,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const nameAr = e.nameAr.trim()
         if (!nameAr) throw new Error('اسم الموظف مطلوب')
-        if (state.employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
+        if (getBranchScopedDataState(state).employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
         if (e.roleId != null) {
           const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === e.roleId)
           if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
@@ -7774,7 +8480,7 @@ export const useDataStore = create<DataState>()(
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم الموظف مطلوب')
-          if (state.employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
+          if (getBranchScopedDataState(state).employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
         if (patch.roleId !== undefined && patch.roleId != null) {
@@ -7816,7 +8522,8 @@ export const useDataStore = create<DataState>()(
         // 2) تحقق شامل قبل أي كتابة
         // مسير راتب موظف واحد (طلب المالك): الشهر يقبل أكثر من مسير، والممنوع
         // هو تكرار صرف راتب الموظف نفسه في الشهر نفسه — برسالة باسمه لا برقمه.
-        const monthRuns = state.payrollRuns.filter((r) => r.month === args.month)
+        const scopedPayrollRuns = getBranchScopedDataState(state).payrollRuns
+        const monthRuns = scopedPayrollRuns.filter((r) => r.month === args.month)
         const alreadyPaid = computed
           .map((line) => line.employeeId)
           .filter((id) => monthRuns.some((run) => run.lines.some((line) => line.employeeId === id)))
@@ -7827,8 +8534,8 @@ export const useDataStore = create<DataState>()(
         const errors = validatePayrollRun({
           month: args.month,
           lines: computed,
-          existingMonths: state.payrollRuns.map((r) => r.month),
-          existingRuns: state.payrollRuns.map((r) => ({ month: r.month, employeeIds: r.lines.map((line) => line.employeeId) })),
+          existingMonths: scopedPayrollRuns.map((r) => r.month),
+          existingRuns: scopedPayrollRuns.map((r) => ({ month: r.month, employeeIds: r.lines.map((line) => line.employeeId) })),
         })
         if (errors.length) throw new Error(errors.join(' — '))
 
@@ -8329,6 +9036,9 @@ export const useDataStore = create<DataState>()(
           extraDocs: customerUnitDocs({
             customerId,
             trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
+            rentalInvoices: state.rentalInvoices,
+            customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
+            customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
             clinicVisits: state.clinicVisits, clinicCollections: state.clinicCollections,
             linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
             labOrders: state.labOrders, linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
@@ -8618,11 +9328,32 @@ export const useDataStore = create<DataState>()(
         const tripNumber = `TR-${String(tripId).padStart(4, '0')}`
         const entryLines = buildTripEntry(totals, args.input.payment, tripNumber, args.treasury ?? '1101', args.paidMinor)
 
+        const normalizedLines = args.input.lines && args.input.lines.length > 0
+          ? args.input.lines.map((l) => ({
+              itemId: l.itemId ?? null,
+              serviceNameAr: l.serviceNameAr.trim(),
+              fromLoc: l.fromLoc?.trim() ?? '',
+              toLoc: l.toLoc?.trim() ?? '',
+              qty: l.qty,
+              unitPriceMinor: l.unitPriceMinor,
+              containerNumbers: (l.containerNumbers ?? []).map((c) => c.trim()).filter(Boolean),
+            }))
+          : undefined
+        const effFrom = args.input.fromLoc.trim() || normalizedLines?.[0]?.fromLoc || normalizedLines?.[0]?.serviceNameAr || 'خدمة نقل'
+        const effTo = args.input.toLoc.trim() || normalizedLines?.[0]?.toLoc || (normalizedLines && normalizedLines.length > 1 ? `${normalizedLines.length} بنود نقل` : 'مقر العميل')
+        const effQty = normalizedLines ? normalizedLines.reduce((s2, l) => s2 + l.qty, 0) : args.input.qty
+        const effUnitPrice = normalizedLines
+          ? (normalizedLines.length === 1 ? normalizedLines[0].unitPriceMinor : Math.round(totals.baseMinor / Math.max(1, effQty)))
+          : args.input.unitPriceMinor
+        const effContainers = normalizedLines
+          ? normalizedLines.flatMap((l) => l.containerNumbers)
+          : args.input.containerNumbers.filter((c) => c.trim())
+
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `نقلة ${tripNumber} — ${args.input.fromLoc} ← ${args.input.toLoc}${args.notes ? ` — ${args.notes}` : ''}`,
+          description: `نقلة ${tripNumber} — ${effFrom} ← ${effTo}${args.notes ? ` — ${args.notes}` : ''}`,
           sourceType: 'logistics_trip',
           sourceId: tripId,
           lines: entryLines,
@@ -8639,13 +9370,14 @@ export const useDataStore = create<DataState>()(
           customerId: args.customerId,
           vehicleId: args.vehicleId,
           driverId: args.driverId,
-          fromLoc: args.input.fromLoc.trim(),
-          toLoc: args.input.toLoc.trim(),
-          qty: args.input.qty,
-          unitPriceMinor: args.input.unitPriceMinor,
+          fromLoc: effFrom,
+          toLoc: effTo,
+          qty: effQty,
+          unitPriceMinor: effUnitPrice,
           payment: args.input.payment,
           vatPercent: args.input.vatPercent,
-          containerNumbers: args.input.containerNumbers.filter((c) => c.trim()),
+          containerNumbers: effContainers,
+          lines: normalizedLines,
           expenses: args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
           paidMinor: args.paidMinor,
           custodyFileId: custodyTotal > 0 ? (custodyFile?.id ?? null) : null,
@@ -8700,6 +9432,392 @@ export const useDataStore = create<DataState>()(
         }
         set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues, custodyTxs: newCustodyTxs, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return trip
+      },
+      updateTrip: (args) => {
+        const state = get()
+        const existing = state.trips.find((t) => t.id === args.tripId)
+        if (!existing) throw new Error('النقلة غير موجودة')
+        const errors = validateTrip(args.input)
+        if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
+        if (args.input.payment === 'credit' && args.customerId == null) errors.push('النقلة الآجلة تتطلب عميلاً مسجلاً')
+        const totalsProbe = computeTripTotals(args.input)
+        if (args.paidMinor != null) {
+          if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0 || args.paidMinor > totalsProbe.grandMinor) errors.push('المحصَّل الآن بين صفر وإجمالي النقلة')
+          else if (args.paidMinor < totalsProbe.grandMinor && args.customerId == null) errors.push('التحصيل الجزئي يترك ديناً — يتطلب عميلاً مسجلاً')
+        }
+        if (errors.length) throw new Error(errors.join(' — '))
+        {
+          const oldPaid = existing.paidMinor ?? (existing.payment === 'cash' ? existing.totals.grandMinor : 0)
+          const oldDue = existing.customerId === args.customerId ? Math.max(0, existing.totals.grandMinor - oldPaid) : 0
+          const newPaid = args.paidMinor ?? (args.input.payment === 'cash' ? totalsProbe.grandMinor : 0)
+          const newDue = Math.max(0, totalsProbe.grandMinor - newPaid)
+          if (newDue > oldDue) {
+            guardCreditLimit(get(), args.customerId, newDue - oldDue, args.creditLimitOverrideBy)
+          }
+        }
+        const now = new Date().toISOString()
+        let nextJournal = [...state.journal]
+        // 1) عكس القيد القديم للنقلة
+        const oldEntry = nextJournal.find((e) => e.id === existing.journalEntryId)
+        if (oldEntry && !oldEntry.reversedByEntryId) {
+          const revId = nextId(nextJournal)
+          const revEntry: JournalEntry = {
+            id: revId,
+            entryNumber: revId,
+            date: now.slice(0, 10),
+            description: `عكس قيد النقلة ${existing.tripNumber} لتعديل البيانات`,
+            sourceType: 'reversal',
+            sourceId: oldEntry.id,
+            lines: buildReversalLines(oldEntry.lines),
+            createdBy: activeUserName(get()),
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: oldEntry.id,
+          }
+          nextJournal = nextJournal.map((e) => (e.id === oldEntry.id ? { ...e, reversedByEntryId: revId } : e)).concat(revEntry)
+        }
+        // 2) القيد الجديد للنقلة
+        const newEntryId = nextId(nextJournal)
+        const entryLines = buildTripEntry(totalsProbe, args.input.payment, existing.tripNumber, args.treasury ?? '1101', args.paidMinor)
+        const normalizedLines = args.input.lines && args.input.lines.length > 0
+          ? args.input.lines.map((l) => ({
+              itemId: l.itemId ?? null,
+              serviceNameAr: l.serviceNameAr.trim(),
+              fromLoc: l.fromLoc?.trim() ?? '',
+              toLoc: l.toLoc?.trim() ?? '',
+              qty: l.qty,
+              unitPriceMinor: l.unitPriceMinor,
+              containerNumbers: (l.containerNumbers ?? []).map((c) => c.trim()).filter(Boolean),
+            }))
+          : undefined
+        const effFrom = args.input.fromLoc.trim() || normalizedLines?.[0]?.fromLoc || normalizedLines?.[0]?.serviceNameAr || 'خدمة نقل'
+        const effTo = args.input.toLoc.trim() || normalizedLines?.[0]?.toLoc || (normalizedLines && normalizedLines.length > 1 ? `${normalizedLines.length} بنود نقل` : 'مقر العميل')
+        const effQty = normalizedLines ? normalizedLines.reduce((s2, l) => s2 + l.qty, 0) : args.input.qty
+        const effUnitPrice = normalizedLines
+          ? (normalizedLines.length === 1 ? normalizedLines[0].unitPriceMinor : Math.round(totalsProbe.baseMinor / Math.max(1, effQty)))
+          : args.input.unitPriceMinor
+        const effContainers = normalizedLines
+          ? normalizedLines.flatMap((l) => l.containerNumbers)
+          : args.input.containerNumbers.filter((c) => c.trim())
+        const newEntry: JournalEntry = {
+          id: newEntryId,
+          entryNumber: newEntryId,
+          date: existing.date.slice(0, 10),
+          description: `نقلة ${existing.tripNumber} (معدلة) — ${effFrom} ← ${effTo}${args.notes ? ` — ${args.notes}` : ''}`,
+          sourceType: 'logistics_trip',
+          sourceId: existing.id,
+          lines: entryLines,
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        nextJournal.push(newEntry)
+
+        // 3) دمج أي مصاريف نقلات مستقلة مسجلة على هذه النقلة من قسم «مصاريف النقلات» في إجماليات التكلفة والربح
+        const activeTripExpenses = state.tripExpenses.filter((x) => x.tripId === existing.id && !x.reversedByEntryId)
+        const standaloneCompanyCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const standaloneCashCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company' && x.paymentSource === 'cash')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const standaloneCreditCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company' && x.paymentSource === 'credit')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const standaloneCustodyCost = activeTripExpenses
+          .filter((x) => x.bearer === 'company' && x.paymentSource === 'custody')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const mergedTotals: TripTotals = {
+          ...totalsProbe,
+          directCashMinor: totalsProbe.directCashMinor + standaloneCashCost,
+          creditMinor: totalsProbe.creditMinor + standaloneCreditCost,
+          custodyMinor: totalsProbe.custodyMinor + standaloneCustodyCost,
+          costMinor: totalsProbe.costMinor + standaloneCompanyCost,
+          profitMinor: totalsProbe.revenueMinor - (totalsProbe.costMinor + standaloneCompanyCost),
+        }
+
+        const standaloneExpenseLines: Trip['expenses'] = activeTripExpenses
+          .map((x) => ({
+            nameAr: x.nameAr,
+            qty: x.qty,
+            unitAmountMinor: x.unitAmountMinor,
+            source: x.bearer === 'customer' ? ('customer' as const) : x.paymentSource,
+            amountMinor: x.amountMinor,
+          }))
+
+        const updatedTrip: Trip = {
+          ...existing,
+          customerId: args.customerId,
+          vehicleId: args.vehicleId,
+          driverId: args.driverId,
+          fromLoc: effFrom,
+          toLoc: effTo,
+          qty: effQty,
+          unitPriceMinor: effUnitPrice,
+          payment: args.input.payment,
+          vatPercent: args.input.vatPercent,
+          containerNumbers: effContainers,
+          lines: normalizedLines,
+          expenses: [
+            ...args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
+            ...standaloneExpenseLines,
+          ],
+          paidMinor: args.paidMinor,
+          totals: mergedTotals,
+          journalEntryId: newEntryId,
+          notes: args.notes,
+          updatedAt: now,
+        }
+
+        // تحديث عمولة السائق إن لم تُسوَّ بعد
+        let nextDues = [...state.driverDues]
+        if (args.driverCommissionMinor !== undefined) {
+          const oldDueRow = nextDues.find((d) => d.tripId === existing.id && !d.settled)
+          if (oldDueRow) {
+            const oldCommEntry = nextJournal.find((e) => e.id === oldDueRow.entryId)
+            if (oldCommEntry && !oldCommEntry.reversedByEntryId) {
+              const revCommId = nextId(nextJournal)
+              nextJournal = nextJournal.map((e) => (e.id === oldCommEntry.id ? { ...e, reversedByEntryId: revCommId } : e)).concat({
+                id: revCommId, entryNumber: revCommId, date: now.slice(0, 10),
+                description: `عكس عمولة سائق لتعديل النقلة ${existing.tripNumber}`,
+                sourceType: 'reversal', sourceId: oldCommEntry.id, lines: buildReversalLines(oldCommEntry.lines),
+                createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: oldCommEntry.id,
+              })
+            }
+            nextDues = nextDues.filter((d) => d.id !== oldDueRow.id)
+          }
+          const commission = args.driverCommissionMinor ?? 0
+          if (commission > 0) {
+            if (args.driverId == null) throw new Error('عمولة السائق تتطلب اختيار سائق')
+            const driver = state.employees.find((e) => e.id === args.driverId)
+            const commEntryId = nextId(nextJournal)
+            const commLines = buildDriverCommissionEntry(commission, driver?.nameAr ?? 'سائق', existing.tripNumber)
+            nextJournal.push({
+              id: commEntryId, entryNumber: commEntryId, date: now.slice(0, 10),
+              description: `استحقاق عمولة سائق ${driver?.nameAr ?? ''} — ${existing.tripNumber}`,
+              sourceType: 'driver_settlement', sourceId: existing.id, lines: commLines,
+              createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            })
+            nextDues.push({
+              id: nextId(nextDues), driverId: args.driverId, tripId: existing.id,
+              date: now.slice(0, 10), amountMinor: commission, settled: false, settlementEntryId: null, entryId: commEntryId,
+            })
+          }
+        }
+
+        set({
+          trips: state.trips.map((t) => (t.id === existing.id ? updatedTrip : t)),
+          journal: nextJournal,
+          driverDues: nextDues,
+        })
+        return updatedTrip
+      },
+      addTripExpense: (args) => {
+        const state = get()
+        const trip = state.trips.find((t) => t.id === args.tripId)
+        if (!trip) throw new Error('اختر النقلة المرتبط بها المصروف')
+        if (!args.nameAr.trim()) throw new Error('حدد بيان المصروف')
+        const qty = args.qty != null ? Math.round(args.qty) : 1
+        if (qty <= 0) throw new Error('عدد المصروف يجب أن يكون موجباً')
+        if (!Number.isInteger(args.unitAmountMinor) || args.unitAmountMinor <= 0) throw new Error('قيمة المصروف يجب أن تكون موجبة')
+        const amountMinor = Math.round(args.unitAmountMinor * qty)
+        if (args.bearer === 'customer' && trip.customerId == null) {
+          throw new Error('المصروف المحمّل على العميل يتطلب أن تكون النقلة مربوطة بعميل مسجل')
+        }
+        let custodyFile: CustodyFile | undefined
+        if (args.paymentSource === 'custody') {
+          custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId)
+          if (!custodyFile) throw new Error('اختر ملف العهدة الذي يُصرف منه المصروف')
+          if (custodyFile.status !== 'open') throw new Error('ملف العهدة مغلق')
+          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+          if (amountMinor > remaining) throw new Error(`قيمة المصروف (${amountMinor}) تتجاوز المتبقي في ملف العهدة (${remaining})`)
+        }
+        if (args.bearer === 'customer' && trip.customerId != null) {
+          guardCreditLimit(get(), trip.customerId, amountMinor)
+        }
+        const treasury = args.treasury ?? '1101'
+        const expId = nextId(state.tripExpenses)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const expenseNumber = `TRE-${String(expId).padStart(4, '0')}`
+        const lines = buildStandaloneTripExpenseEntry({
+          amountMinor,
+          bearer: args.bearer,
+          paymentSource: args.paymentSource,
+          treasury,
+          tripNumber: trip.tripNumber,
+          expenseNameAr: args.nameAr.trim(),
+        })
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `مصروف نقلة ${expenseNumber} (${args.bearer === 'customer' ? 'على العميل' : 'داخلي على الشركة'}) — ${args.nameAr.trim()} — ${trip.tripNumber}`,
+          sourceType: 'logistics_trip',
+          sourceId: trip.id,
+          lines,
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const record: TripExpenseRecord = {
+          id: expId,
+          expenseNumber,
+          tripId: trip.id,
+          tripNumber: trip.tripNumber,
+          vehicleId: trip.vehicleId,
+          driverId: trip.driverId,
+          customerId: trip.customerId,
+          date: now.slice(0, 10),
+          nameAr: args.nameAr.trim(),
+          qty,
+          unitAmountMinor: args.unitAmountMinor,
+          amountMinor,
+          bearer: args.bearer,
+          paymentSource: args.paymentSource,
+          treasury,
+          custodyFileId: custodyFile?.id ?? null,
+          journalEntryId: entryId,
+          notes: args.notes?.trim() ?? '',
+        }
+        let nextCustodyTxs = state.custodyTxs
+        if (args.paymentSource === 'custody' && custodyFile) {
+          nextCustodyTxs = [...state.custodyTxs, {
+            id: nextId(state.custodyTxs),
+            fileId: custodyFile.id,
+            type: 'expense' as const,
+            date: now.slice(0, 10),
+            amountMinor,
+            excessMinor: 0,
+            description: `مصروف نقلة ${trip.tripNumber} — ${args.nameAr.trim()}`,
+            treasury: null,
+            projectId: null,
+            purchaseId: null,
+            journalEntryId: entryId,
+          }]
+        }
+        // تحديث مصاريف وإجماليات النقلة (الداخلي يرفع التكلفة ويخفض الربح؛ والمحمّل على العميل يظهر في بنود العميل دون المساس بتكلفة الشركة)
+        const updatedTrips = state.trips.map((t) => {
+          if (t.id !== trip.id) return t
+          if (args.bearer === 'company') {
+            const nextCash = t.totals.directCashMinor + (args.paymentSource === 'cash' ? amountMinor : 0)
+            const nextCredit = t.totals.creditMinor + (args.paymentSource === 'credit' ? amountMinor : 0)
+            const nextCustody = t.totals.custodyMinor + (args.paymentSource === 'custody' ? amountMinor : 0)
+            const nextCost = t.totals.costMinor + amountMinor
+            return {
+              ...t,
+              expenses: [...t.expenses, { nameAr: args.nameAr.trim(), qty, unitAmountMinor: args.unitAmountMinor, source: args.paymentSource, amountMinor }],
+              totals: {
+                ...t.totals,
+                directCashMinor: nextCash,
+                creditMinor: nextCredit,
+                custodyMinor: nextCustody,
+                costMinor: nextCost,
+                profitMinor: t.totals.revenueMinor - nextCost,
+              },
+            }
+          }
+          // مصروف محمّل على العميل: يظهر ضمن مصاريف العميل (source='customer') للطباعة والاسترداد
+          return {
+            ...t,
+            expenses: [...t.expenses, { nameAr: args.nameAr.trim(), qty, unitAmountMinor: args.unitAmountMinor, source: 'customer' as const, amountMinor }],
+          }
+        })
+        const nextVehicleCostEntries = args.bearer === 'company' && trip.vehicleId != null
+          ? [...state.vehicleCostEntries, {
+              id: nextId(state.vehicleCostEntries),
+              vehicleId: trip.vehicleId,
+              date: now.slice(0, 10),
+              kind: 'cost' as const,
+              amountMinor,
+              description: `مصروف نقلة ${trip.tripNumber} — ${args.nameAr.trim()}`,
+              category: args.nameAr.trim(),
+              status: args.paymentSource === 'credit' ? ('accrued' as const) : ('paid' as const),
+              purchaseId: null,
+              payableId: null,
+              journalEntryId: entryId,
+              settlementEntryIds: [],
+            }]
+          : state.vehicleCostEntries
+        set({
+          tripExpenses: [...state.tripExpenses, record],
+          trips: updatedTrips,
+          journal: [...state.journal, entry],
+          custodyTxs: nextCustodyTxs,
+          vehicleCostEntries: nextVehicleCostEntries,
+        })
+        return record
+      },
+      reverseTripExpense: (expenseId) => {
+        const state = get()
+        const exp = state.tripExpenses.find((x) => x.id === expenseId)
+        if (!exp) throw new Error('مصروف النقلة غير موجود')
+        if (exp.reversedByEntryId) throw new Error('مصروف النقلة معكوس بالفعل')
+        const oldEntry = state.journal.find((e) => e.id === exp.journalEntryId)
+        if (!oldEntry) throw new Error('قيد المصروف غير موجود')
+        const revId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const revEntry: JournalEntry = {
+          id: revId,
+          entryNumber: revId,
+          date: now.slice(0, 10),
+          description: `عكس مصروف نقلة ${exp.expenseNumber} — ${exp.nameAr} (${exp.tripNumber})`,
+          sourceType: 'reversal',
+          sourceId: oldEntry.id,
+          lines: buildReversalLines(oldEntry.lines),
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: oldEntry.id,
+        }
+        const nextJournal = state.journal
+          .map((e) => (e.id === oldEntry.id ? { ...e, reversedByEntryId: revId } : e))
+          .concat(revEntry)
+        const updatedRecord: TripExpenseRecord = { ...exp, reversedByEntryId: revId }
+        const nextTripExpenses = state.tripExpenses.map((x) => (x.id === expenseId ? updatedRecord : x))
+        const nextCustodyTxs = exp.paymentSource === 'custody'
+          ? state.custodyTxs.filter((tx) => tx.journalEntryId !== exp.journalEntryId)
+          : state.custodyTxs
+        const nextVehicleCostEntries = state.vehicleCostEntries.filter((vc) => vc.journalEntryId !== exp.journalEntryId)
+
+        const updatedTrips = state.trips.map((t) => {
+          if (t.id !== exp.tripId) return t
+          const activeForTrip = nextTripExpenses.filter((x) => x.tripId === t.id && !x.reversedByEntryId)
+          const companyCost = activeForTrip.filter((x) => x.bearer === 'company').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const cashCost = activeForTrip.filter((x) => x.bearer === 'company' && x.paymentSource === 'cash').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const creditCost = activeForTrip.filter((x) => x.bearer === 'company' && x.paymentSource === 'credit').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const custodyCost = activeForTrip.filter((x) => x.bearer === 'company' && x.paymentSource === 'custody').reduce((s2, x) => s2 + x.amountMinor, 0)
+          const nextExpenses: Trip['expenses'] = activeForTrip.map((x) => ({
+            nameAr: x.nameAr,
+            qty: x.qty,
+            unitAmountMinor: x.unitAmountMinor,
+            source: x.bearer === 'customer' ? ('customer' as const) : x.paymentSource,
+            amountMinor: x.amountMinor,
+          }))
+          return {
+            ...t,
+            expenses: nextExpenses,
+            totals: {
+              ...t.totals,
+              directCashMinor: cashCost,
+              creditMinor: creditCost,
+              custodyMinor: custodyCost,
+              costMinor: companyCost,
+              profitMinor: t.totals.revenueMinor - companyCost,
+            },
+          }
+        })
+
+        set({
+          tripExpenses: nextTripExpenses,
+          trips: updatedTrips,
+          journal: nextJournal,
+          custodyTxs: nextCustodyTxs,
+          vehicleCostEntries: nextVehicleCostEntries,
+        })
+        return updatedRecord
       },
       getDriverDueBalance: (driverId) => {
         return get().driverDues.filter((d) => d.driverId === driverId && !d.settled).reduce((s2, d) => s2 + d.amountMinor, 0)
@@ -8975,10 +10093,12 @@ export const useDataStore = create<DataState>()(
       openRental: (args) => {
         const state = get()
         const rateType: RateType = args.rateType ?? 'daily'
+        const billingMode: RentalBillingMode = args.billingMode ?? 'upfront'
+        const effectiveInput: RentalInput = args.withTax === false ? { ...args.input, vatPercent: 0 } : args.input
         // 1) تحقق شامل قبل أي كتابة
-        const errors = validateRental(args.input)
+        const errors = validateRental(effectiveInput)
         if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
-        if (args.input.payment !== 'cash' && args.customerId == null) errors.push('الإيجار الآجل أو المختلط يتطلب عميلاً مسجلاً')
+        if (effectiveInput.payment !== 'cash' && args.customerId == null) errors.push('الإيجار الآجل أو المختلط يتطلب عميلاً مسجلاً')
         // ترقية القرار 25: العقد الساعي يتطلب قراءة عدّاد التسليم
         if (rateType === 'hourly') {
           if (args.startReading == null || !isValidMeterReading(args.startReading)) {
@@ -8993,27 +10113,45 @@ export const useDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
 
         // 2) الإجماليات وقيد الفتح بالنواة الخالصة
-        const totals = computeRentalTotals(args.input)
-        // حد الائتمان: الجزء الآجل من الإيجار دين على العميل
-        guardCreditLimit(get(), args.customerId, totals.collectCreditMinor, args.creditLimitOverrideBy)
+        const rawTotals = computeRentalTotals(effectiveInput)
+        const totals: RentalTotals = billingMode === 'reference'
+          ? {
+              ...rawTotals,
+              collectCashMinor: rawTotals.depositMinor,
+              collectCreditMinor: 0,
+            }
+          : rawTotals
+        // حد الائتمان: الجزء الآجل من الإيجار دين على العميل (في العقد المسبق فقط؛ العقد المرجعي يفحص الائتمان عند إصدار الفواتير الدورية)
+        if (totals.collectCreditMinor > 0) {
+          guardCreditLimit(get(), args.customerId, totals.collectCreditMinor, args.creditLimitOverrideBy)
+        }
         const contractId = nextId(state.rentalContracts)
-        const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const contractNumber = `RC-${String(contractId).padStart(4, '0')}`
-        const entryLines = buildRentalOpenEntry(totals, contractNumber, args.treasury ?? '1101')
+        const entryLines = billingMode === 'reference'
+          ? buildReferenceDepositEntry(totals.depositMinor, contractNumber, args.treasury ?? '1101')
+          : buildRentalOpenEntry(totals, contractNumber, args.treasury ?? '1101')
 
-        const entry: JournalEntry = {
-          id: entryId,
-          entryNumber: entryId,
-          date: now.slice(0, 10),
-          description: `عقد إيجار ${contractNumber} — ${args.input.equipmentName} × ${args.input.days} يوم${args.notes ? ` — ${args.notes}` : ''}`,
-          sourceType: 'rental_contract',
-          sourceId: contractId,
-          lines: entryLines,
-          createdBy: activeUserName(get()),
-          createdAt: now,
-          reversedByEntryId: null,
-          reversesEntryId: null,
+        let openEntryId = 0
+        let nextJournal = state.journal
+        if (entryLines && entryLines.length > 0) {
+          openEntryId = nextId(state.journal)
+          const entry: JournalEntry = {
+            id: openEntryId,
+            entryNumber: openEntryId,
+            date: now.slice(0, 10),
+            description: billingMode === 'reference'
+              ? `تأمين عقد إيجار مرجعي ${contractNumber} — ${effectiveInput.equipmentName}`
+              : `عقد إيجار ${contractNumber} — ${effectiveInput.equipmentName} × ${effectiveInput.days} يوم${args.notes ? ` — ${args.notes}` : ''}`,
+            sourceType: 'rental_contract',
+            sourceId: contractId,
+            lines: entryLines,
+            createdBy: activeUserName(get()),
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          }
+          nextJournal = [...state.journal, entry]
         }
 
         const contract: RentalContract = {
@@ -9022,22 +10160,26 @@ export const useDataStore = create<DataState>()(
           date: now,
           customerId: args.customerId,
           equipmentId: args.equipmentId,
-          equipmentName: args.input.equipmentName.trim(),
-          days: args.input.days,
-          dailyRateMinor: args.input.dailyRateMinor,
+          equipmentName: effectiveInput.equipmentName.trim(),
+          days: effectiveInput.days,
+          dailyRateMinor: effectiveInput.dailyRateMinor,
           rateType,
           startReading: rateType === 'hourly' ? (args.startReading ?? null) : null,
           endReading: null,
           extraMinor: 0,
           extraEntryId: null,
-          payment: args.input.payment,
-          vatPercent: args.input.vatPercent,
+          payment: effectiveInput.payment,
+          vatPercent: effectiveInput.vatPercent,
           totals,
           status: 'active',
-          openEntryId: entryId,
+          openEntryId,
           closeEntryId: null,
           deductMinor: 0,
           notes: args.notes,
+          billingMode,
+          withTax: args.withTax ?? effectiveInput.vatPercent > 0,
+          driverEmployeeId: args.driverEmployeeId ?? null,
+          responsibility: args.responsibility ?? { ...DEFAULT_RENTAL_RESPONSIBILITY },
         }
 
         let terminalTransaction: PaymentTerminalTransaction | null = null
@@ -9050,8 +10192,94 @@ export const useDataStore = create<DataState>()(
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.collectCashMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'rental', documentId: `equipment:${contractId}`, amountMinor: totals.collectCashMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ rentalContracts: [...state.rentalContracts, contract], journal: nextJournal, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return contract
+      },
+      issueRentalInvoice: (args) => {
+        const state = get()
+        const contract = state.rentalContracts.find((c) => c.id === args.contractId)
+        if (!contract) throw new Error('عقد الإيجار غير موجود')
+        const qty = args.qty ?? 1
+        if (!(qty > 0)) throw new Error('عدد الوحدات في الفاتورة الدورية يجب أن يكون أكبر من صفر')
+        const unitRateMinor = args.unitRateMinor ?? contract.dailyRateMinor
+        const netMinor = args.netMinor ?? Math.round(qty * unitRateMinor)
+        if (!(netMinor > 0)) throw new Error('صافي الفاتورة الدورية يجب أن يكون أكبر من صفر')
+        const withTax = args.withTax ?? (contract.withTax ?? contract.vatPercent > 0)
+        const vatPercent = withTax ? (args.vatPercent ?? (contract.vatPercent || 14)) : 0
+        const vatMinor = Math.round((netMinor * vatPercent) / 100)
+        const totalMinor = netMinor + vatMinor
+        const payment: RentalPaymentMode = args.payment ?? (contract.customerId != null ? 'credit' : 'cash')
+        if (payment !== 'cash' && contract.customerId == null) {
+          throw new Error('الفاتورة الآجلة تتطلب عميلاً مسجلاً على العقد')
+        }
+        const paidNowMinor = payment === 'cash'
+          ? totalMinor
+          : payment === 'credit'
+            ? 0
+            : Math.max(0, Math.min(totalMinor, args.paidNowMinor ?? 0))
+        const creditPart = totalMinor - paidNowMinor
+        if (creditPart > 0) {
+          guardCreditLimit(get(), contract.customerId, creditPart, args.creditLimitOverrideBy)
+        }
+        const invId = nextId(state.rentalInvoices)
+        const invoiceNumber = `RINV-${String(invId).padStart(4, '0')}`
+        const now = new Date().toISOString()
+        const customerName = (contract.customerId != null ? state.customers.find((c) => c.id === contract.customerId)?.nameAr : null) ?? 'عميل'
+        const periodLabel = args.periodLabel.trim() || `دفعة دورية #${state.rentalInvoices.filter((x) => x.contractId === contract.id).length + 1}`
+        const treasury = args.treasury ?? '1101'
+        const entryLines = buildRentalInvoiceEntry({
+          invoiceNumber,
+          contractNumber: contract.contractNumber,
+          equipmentName: contract.equipmentName,
+          customerName,
+          periodLabel,
+          netMinor,
+          vatMinor,
+          payment,
+          paidNowMinor,
+          treasuryAccount: treasury,
+        })
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `فاتورة إيجار دورية ${invoiceNumber} — عقد ${contract.contractNumber} (${periodLabel}) — ${customerName}`,
+          sourceType: 'rental_contract',
+          sourceId: contract.id,
+          lines: entryLines,
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const invoice: RentalInvoice = {
+          id: invId,
+          invoiceNumber,
+          contractId: contract.id,
+          equipmentId: contract.equipmentId,
+          customerId: contract.customerId,
+          customerName,
+          periodLabel,
+          date: now.slice(0, 10),
+          dueDate: args.dueDate,
+          qty,
+          unitRateMinor,
+          netMinor,
+          vatPercent,
+          vatMinor,
+          totalMinor,
+          payment,
+          paidNowMinor,
+          treasury,
+          journalEntryId: entryId,
+          notes: args.notes,
+        }
+        set({
+          rentalInvoices: [...state.rentalInvoices, invoice],
+          journal: [...state.journal, entry],
+        })
+        return invoice
       },
       closeRental: (contractId, deductMinor, usage, treasury = '1101') => {
         const state = get()
@@ -9180,16 +10408,24 @@ export const useDataStore = create<DataState>()(
         if (!eq) throw new Error('المعدة غير موجودة')
         if (!(args.amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
         const treasury = args.treasury ?? '1101'
+        const contract = args.contractId != null ? state.rentalContracts.find((c) => c.id === args.contractId) : null
+        const costLayer: EquipmentCostLayer = args.costLayer ?? (args.kind === 'operator' ? 'driver' : 'direct')
+        const borneBy: ExpenseBearer = args.borneBy ?? 'owner'
+        const customerId = borneBy === 'customer' ? (contract?.customerId ?? null) : null
+        if (borneBy === 'customer' && customerId == null) {
+          throw new Error('تحميل المصروف على المستأجر يتطلب ربط المصروف بعقد لعميل مسجل')
+        }
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const costId = nextId(state.equipmentCosts)
         const label = EQUIPMENT_COST_LABELS[args.kind]
+        const debitAccount = borneBy === 'customer' ? '1104' : '5105'
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `${label} — ${eq.nameAr}${args.description ? ` (${args.description})` : ''}`,
+          description: `${label} — ${eq.nameAr}${contract ? ` (عقد ${contract.contractNumber})` : ''}${borneBy === 'customer' ? ' [محمّل على المستأجر]' : ''}${args.description ? ` (${args.description})` : ''}`,
           sourceType: 'equipment_cost', sourceId: costId,
           lines: [
-            { accountCode: '5105', debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}` },
+            { accountCode: debitAccount, debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}${borneBy === 'customer' ? ' — على المستأجر' : ''}` },
             { accountCode: treasury, debit: 0, credit: args.amountMinor, note: 'دفع مصروف تشغيل' },
           ],
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -9197,6 +10433,11 @@ export const useDataStore = create<DataState>()(
         const cost: EquipmentCost = {
           id: costId, equipmentId: args.equipmentId, date: now.slice(0, 10), kind: args.kind,
           amountMinor: args.amountMinor, description: args.description ?? '', treasury, journalEntryId: entryId,
+          contractId: args.contractId ?? null,
+          customerId,
+          costLayer,
+          borneBy,
+          driverEmployeeId: args.driverEmployeeId ?? contract?.driverEmployeeId ?? eq.driverEmployeeId ?? null,
         }
         set({ equipmentCosts: [...state.equipmentCosts, cost], journal: [...state.journal, entry] })
         return cost
@@ -9207,15 +10448,35 @@ export const useDataStore = create<DataState>()(
         let rent = 0, extra = 0, contractHours = 0
         for (const c of state.rentalContracts) {
           if (c.equipmentId !== equipmentId) continue
-          rent += c.totals.rentMinor
+          if (c.billingMode === 'reference') {
+            const invRent = state.rentalInvoices
+              .filter((inv) => inv.contractId === c.id)
+              .reduce((sum, inv) => sum + inv.netMinor, 0)
+            rent += invRent - (c.refundedMinor ?? 0)
+          } else {
+            rent += c.totals.rentMinor - (c.refundedMinor ?? 0)
+          }
           extra += c.extraMinor
           if (c.rateType === 'hourly' && c.startReading != null && c.endReading != null && c.endReading > c.startReading) {
             contractHours += usageHours(c.startReading, c.endReading)
           }
         }
-        const costs = state.equipmentCosts.filter((c) => c.equipmentId === equipmentId).reduce((s2, c) => s2 + c.amountMinor, 0)
+        const eqCosts = state.equipmentCosts.filter((c) => c.equipmentId === equipmentId)
+        const ownerCosts = eqCosts.filter((c) => c.borneBy !== 'customer')
+        const customerBorneCostsMinor = eqCosts.filter((c) => c.borneBy === 'customer').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const directCostsMinor = ownerCosts.filter((c) => (c.costLayer ?? (c.kind === 'operator' ? 'driver' : 'direct')) === 'direct').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const driverCostsMinor = ownerCosts.filter((c) => (c.costLayer ?? (c.kind === 'operator' ? 'driver' : 'direct')) === 'driver').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const indirectCostsMinor = ownerCosts.filter((c) => c.costLayer === 'indirect').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const costs = ownerCosts.reduce((s2, c) => s2 + c.amountMinor, 0)
         const sh = shiftsSummary(state.operatorShifts, equipmentId)
-        return equipmentProfitability({ rentMinor: rent, extraMinor: extra, costsMinor: costs, contractHours, shiftHours: sh.totalHours })
+        const base = equipmentProfitability({ rentMinor: rent, extraMinor: extra, costsMinor: costs, contractHours, shiftHours: sh.totalHours })
+        return {
+          ...base,
+          directCostsMinor,
+          indirectCostsMinor,
+          driverCostsMinor,
+          customerBorneCostsMinor,
+        }
       },
 
       /* ─── معامل التحاليل (القرار 26) ─── */
@@ -9830,7 +11091,16 @@ export const useDataStore = create<DataState>()(
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
         if (args.extractLines && args.extractLines.length > 0) {
-          const projBoq = state.boqItems.filter((b) => b.projectId === project.id)
+          const priorExtracts = state.projectExtracts.filter((e) => e.projectId === project.id)
+          const projBoq = state.boqItems
+            .filter((b) => b.projectId === project.id)
+            .map((b) => {
+              const billedPct = priorExtracts.reduce((max, ex) => {
+                const l = ex.lines?.find((x) => x.boqItemId === b.id)
+                return l && l.newProgressPercent > max ? l.newProgressPercent : max
+              }, 0)
+              return { ...b, progressPercent: billedPct }
+            })
           const r = computeExtractLines(args.extractLines, projBoq)
           extractLinesComputed = r.computed
           gross = r.grossMinor
@@ -10038,7 +11308,13 @@ export const useDataStore = create<DataState>()(
         const state = get()
         return budgetVarianceReport(
           state.projectBudgets.filter((b) => b.projectId === projectId),
-          state.projectCosts.filter((c) => c.projectId === projectId),
+          state.projectCosts
+            .filter((c) => c.projectId === projectId)
+            .flatMap((c) =>
+              c.lines && c.lines.length > 0
+                ? c.lines.map((l) => ({ kind: l.kind, amountMinor: l.netMinor }))
+                : [{ kind: c.kind, amountMinor: c.amountMinor }],
+            ),
         )
       },
       addProjectTask: (args) => {
@@ -10508,6 +11784,20 @@ export const useDataStore = create<DataState>()(
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
         if (args.costCenterId != null && !state.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
+        // دعم فاتورة مصروفات متعددة البنود (شامل/غير شامل/بدون ضريبة) مع توافق كامل مع البند المفرد
+        let netCostMinor = args.amountMinor ?? 0
+        let vatCostMinor = args.inputVatMinor ?? 0
+        let resolvedKind: CostKind = args.kind ?? 'other'
+        let resolvedDescription = args.description?.trim() ?? ''
+        let computedLines: ProjectExpenseLineComputed[] | undefined
+        if (args.lines && args.lines.length > 0) {
+          const inv = computeProjectExpenseInvoice(args.lines, args.defaultVatPercent ?? 14)
+          netCostMinor = inv.netMinor
+          vatCostMinor = inv.vatMinor
+          resolvedKind = args.kind ?? inv.primaryKind
+          resolvedDescription = resolvedDescription || inv.summaryDescription
+          computedLines = inv.lines
+        }
         // الدفع من عهدة موظف (طلب المالك): تُفحص وتُخصم من ملفه بدل الخزينة
         let custodyFile: CustodyFile | null = null
         if (args.payment === 'cash' && args.custodyFileId != null) {
@@ -10515,29 +11805,38 @@ export const useDataStore = create<DataState>()(
           if (!custodyFile) throw new Error('ملف العهدة غير موجود')
           assertFileOpen(custodyFile)
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
-          if (args.amountMinor + (args.inputVatMinor ?? 0) > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
+          if (netCostMinor + vatCostMinor > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
         }
         const payAccount = custodyFile ? CUSTODY_ACCOUNT : (args.treasury ?? '1101')
         // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102
-        const grossCostMinor = args.amountMinor + (args.inputVatMinor ?? 0)
+        const grossCostMinor = netCostMinor + vatCostMinor
         const paidCostMinor = args.paidMinor ?? (args.payment === 'cash' ? grossCostMinor : 0)
         const dueCostMinor = grossCostMinor - paidCostMinor
         // الجزء الآجل يُحمَّل على مورد/مقاول باطن مسجل ليظهر في كشف حسابه (قاعدة موحدة لكل الأنشطة)
         if (args.supplierId != null && !state.suppliers.some((row) => row.id === args.supplierId)) throw new Error('المورد غير موجود في سجل الموردين')
         if (custodyFile && dueCostMinor > 0) throw new Error('الدفع من العهدة لا يقبل جزءاً آجلاً — افصل المستند')
-        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount, args.inputVatMinor ?? 0, paidCostMinor).map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
+        const lines = buildProjectCostEntry(netCostMinor, args.payment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor).map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
+        const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `تكلفة على ${project.nameAr}: ${args.description || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
+          description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cost: ProjectCost = {
-          id, projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: args.kind,
-          description: args.description, amountMinor: args.amountMinor,
+          id,
+          expenseNumber,
+          ...(args.invoiceRef?.trim() ? { invoiceRef: args.invoiceRef.trim() } : {}),
+          projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: resolvedKind,
+          description: resolvedDescription, amountMinor: netCostMinor,
+          ...(vatCostMinor > 0 ? { vatMinor: vatCostMinor } : {}),
+          grossMinor: grossCostMinor,
+          ...(computedLines ? { lines: computedLines } : {}),
+          treasury: custodyFile ? null : payAccount,
+          custodyFileId: custodyFile ? custodyFile.id : null,
           payment: dueCostMinor === 0 ? 'cash' : paidCostMinor === 0 ? 'credit' : 'mixed',
           paidMinor: paidCostMinor, dueMinor: dueCostMinor, supplierId: args.supplierId ?? null,
           journalEntryId: entryId,
@@ -10547,7 +11846,7 @@ export const useDataStore = create<DataState>()(
           custodyTxs = [...custodyTxs, {
             id: nextId(custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
             date: now.slice(0, 10), amountMinor: grossCostMinor, excessMinor: 0,
-            description: `تكلفة مشروع ${project.nameAr}: ${args.description || '—'}`,
+            description: `تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]
         }
@@ -10624,7 +11923,13 @@ export const useDataStore = create<DataState>()(
            عكست 5110 بالدفتر — فتطابق البطاقة صافي 5110 بلا جمع مزدوج */
         const bd = get().getProjectCostBreakdown(projectId)
         const costs = [
-          ...state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          ...state.projectCosts
+            .filter((c) => c.projectId === projectId)
+            .flatMap((c) =>
+              c.lines && c.lines.length > 0
+                ? c.lines.map((l) => ({ kind: l.kind, amountMinor: l.netMinor }))
+                : [{ kind: c.kind, amountMinor: c.amountMinor }],
+            ),
           ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
         ]
         return projectProfit(
@@ -11175,6 +12480,9 @@ export const useDataStore = create<DataState>()(
           clinicCollections: state.clinicCollections,
           linkedPatientIds: state.clinicPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
           rentals: state.rentalContracts,
+          rentalInvoices: state.rentalInvoices,
+          customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
+          customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
           trips: state.trips,
           tickets: state.tickets,
           walletOps: state.walletOps,
@@ -13877,6 +15185,8 @@ export const useDataStore = create<DataState>()(
             extraMinor: c.extraMinor ?? 0,
             extraEntryId: c.extraEntryId ?? null,
           })),
+          rentalInvoices: s.rentalInvoices ?? [],
+          tripExpenses: s.tripExpenses ?? [],
           operatorShifts: s.operatorShifts ?? [],
           // الإصدار 10 (أوامر التعديل): ربط إداري بالعملاء وبنود موسعة ومستندات جديدة
           projects: (s.projects ?? []).map((x) => ({ ...x, clientId: x.clientId ?? null })),
@@ -14021,3 +15331,15 @@ export const useDataStore = create<DataState>()(
     },
   ),
 )
+
+function useScopedDataStore(): DataState
+function useScopedDataStore<T>(selector: (state: DataState) => T): T
+function useScopedDataStore<T>(selector?: (state: DataState) => T): T | DataState {
+  return useRawDataStore((rawState) => {
+    const scoped = getBranchScopedDataState(rawState)
+    return selector ? selector(scoped) : scoped
+  })
+}
+
+export const useDataStore: typeof useRawDataStore = Object.assign(useScopedDataStore, useRawDataStore)
+

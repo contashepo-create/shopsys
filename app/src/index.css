@@ -1670,7 +1670,12 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-doc-fields { gap: .18rem .3rem; }
 .invoice-doc .invoice-doc-fields > .form-field { display: grid; min-width: 0; align-content: start; gap: .06rem; grid-template-rows: 1.02rem 1.9rem; margin: 0; }
 .invoice-doc .invoice-doc-fields > .form-field > * { min-width: 0; max-width: 100%; }
-.invoice-doc .invoice-doc-fields input, .invoice-doc .invoice-doc-fields select { box-sizing: border-box; width: 100%; min-width: 0; }
+.invoice-doc .invoice-doc-fields input:not([type=checkbox]):not([type=radio]), .invoice-doc .invoice-doc-fields select { box-sizing: border-box; width: 100%; min-width: 0; }
+.invoice-doc .invoice-doc-fields input[type=checkbox],
+.invoice-doc .invoice-doc-fields input[type=radio] {
+  width: .8rem !important; height: .8rem !important; min-width: .8rem !important; min-height: .8rem !important;
+  flex: 0 0 .8rem; margin: 0; cursor: pointer; accent-color: var(--doc-accent);
+}
 .invoice-doc .invoice-doc-fields .field-head { align-items: center; gap: .22rem; margin: 0; }
 .invoice-doc .invoice-doc-fields .field-head > label,
 .invoice-doc .invoice-doc-fields > .form-field > label { display: flex; align-items: center; gap: .18rem; color: var(--doc-muted); font-size: .56rem; font-weight: 800; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: anywhere; line-height: 1.15; }

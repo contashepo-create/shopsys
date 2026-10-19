@@ -49,7 +49,7 @@ const css = read('index.css')
   assert.ok(contracting.includes('مهندس موقع') && contracting.includes('مساح كميات'), 'مسميات المقاولات ناقصة')
   assert.notDeepEqual(supermarket, contracting, 'المسميات لا تتغير بين الأنشطة')
   assert.equal(jobTitleLabel('contracting'), 'الوظيفة في الموقع', 'تسمية الحقل لا تتبع النشاط')
-  assert.ok(/list="job-titles-by-activity"/.test(employees) && /jobTitlesFor\(setup\.activityId\)/.test(employees),
+  assert.ok(/list="job-titles-by-activity"/.test(employees) && /jobTitlesFor\(setup\.activityId/.test(employees),
     'شاشة الموظف لا تستعمل مسميات النشاط')
   R.ok('المسميات الوظيفية تتغيّر من نشاط لآخر والحقل يبقى حراً')
 }
