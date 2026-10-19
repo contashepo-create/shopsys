@@ -31,7 +31,7 @@ function downloadCsv(rows: readonly Record<string, unknown>[], filename: string)
 }
 
 export function EquipmentReportsPage() {
-  const { equipment, rentalContracts, equipmentCosts, operatorShifts, customers, getOpenClientInvoices } = useDataStore()
+  const { equipment, rentalContracts, rentalInvoices, equipmentCosts, operatorShifts, customers, employees, journal, getOpenClientInvoices } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -44,51 +44,85 @@ export function EquipmentReportsPage() {
     printHtml(renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint }))
   }
   const sectionHtml = (label: string) => `<p class="sec" style="margin:12px 0 4px;padding:6px 10px">${escHtml(label)}</p>`
-  const [tab, setTab] = usePersistedSectionView('equipment-reports', 'fleet', ['fleet', 'equipment', 'dues'] as const)
+  const [tab, setTab] = usePersistedSectionView('equipment-reports', 'fleet', ['fleet', 'equipment', 'pnl', 'dues'] as const)
   const [equipmentId, setEquipmentId] = useState('')
 
-  /** بطاقة التقرير الخالصة لكل معدة — من النواة مباشرة */
+  /** بطاقة التقرير الخالصة لكل معدة — تشمل عقودها وفواتيرها الدورية وتفصل مصاريف المالك عن المستأجر */
   const cards = useMemo(() => equipment.map((eq) => {
     const contracts = rentalContracts.filter((c) => c.equipmentId === eq.id)
-    const costs = equipmentCosts.filter((c) => c.equipmentId === eq.id)
+    const allCosts = equipmentCosts.filter((c) => c.equipmentId === eq.id)
+    const ownerCosts = allCosts.filter((c) => c.borneBy !== 'customer')
+    const customerBorneMinor = allCosts.filter((c) => c.borneBy === 'customer').reduce((a, c) => a + c.amountMinor, 0)
+    const directMinor = ownerCosts.filter((c) => (c.costLayer ?? (c.kind === 'operator' ? 'driver' : 'direct')) === 'direct').reduce((a, c) => a + c.amountMinor, 0)
+    const driverMinor = ownerCosts.filter((c) => (c.costLayer ?? (c.kind === 'operator' ? 'driver' : 'direct')) === 'driver').reduce((a, c) => a + c.amountMinor, 0)
+    const indirectMinor = ownerCosts.filter((c) => c.costLayer === 'indirect').reduce((a, c) => a + c.amountMinor, 0)
     const shiftHours = operatorShifts
       .filter((s) => s.equipmentId === eq.id && s.startReading != null && s.endReading != null)
       .reduce((a, s) => a + usageHours(s.startReading, s.endReading), 0)
     const report = equipmentReportCard({
-      contracts: contracts.map((c) => ({
-        days: c.days, status: c.status, extraMinor: c.extraMinor,
-        rateType: c.rateType ?? 'daily', startReading: c.startReading, endReading: c.endReading,
-        totals: { rentMinor: c.totals.rentMinor, depositMinor: c.totals.depositMinor },
-      })),
-      costs: costs.map((c) => ({ amountMinor: c.amountMinor })),
+      contracts: contracts.map((c) => {
+        const realizedRent = c.billingMode === 'reference'
+          ? rentalInvoices.filter((inv) => inv.contractId === c.id).reduce((s, inv) => s + inv.netMinor, 0) + (c.deductMinor ?? 0) - (c.refundedMinor ?? 0)
+          : c.totals.rentMinor + (c.deductMinor ?? 0) - (c.refundedMinor ?? 0)
+        return {
+          days: c.days, status: c.status, extraMinor: c.extraMinor,
+          rateType: c.rateType ?? 'daily', startReading: c.startReading, endReading: c.endReading,
+          totals: { rentMinor: realizedRent, depositMinor: c.totals.depositMinor },
+        }
+      }),
+      costs: ownerCosts.map((c) => ({ amountMinor: c.amountMinor })),
       shiftHours,
     })
-    return { equipment: eq, report, contracts, costs }
-  }), [equipment, rentalContracts, equipmentCosts, operatorShifts])
+    return {
+      equipment: eq,
+      report,
+      contracts,
+      costs: ownerCosts,
+      allCosts,
+      directMinor,
+      driverMinor,
+      indirectMinor,
+      customerBorneMinor,
+    }
+  }), [equipment, rentalContracts, rentalInvoices, equipmentCosts, operatorShifts])
 
-  /** المفتوح من عقود الإيجار لكل معدة: من دفتر التوزيع (docKey = rental:<id>) */
+  /** المفتوح من عقود الإيجار وفواتيرها الدورية لكل معدة */
   const openByEquipment = useMemo(() => {
     const settled = new Map<string, number>()
-    for (const c of rentalContracts) {
-      if (c.customerId == null) continue
-      for (const inv of getOpenClientInvoices(c.customerId)) {
-        if (inv.docKey === `rental:${c.id}`) settled.set(`rental:${c.id}`, inv.settledMinor)
-      }
+    const custIds = new Set<number>()
+    for (const c of rentalContracts) if (c.customerId != null) custIds.add(c.customerId)
+    for (const inv of rentalInvoices) if (inv.customerId != null) custIds.add(inv.customerId)
+    for (const cid of custIds) {
+      for (const doc of getOpenClientInvoices(cid)) settled.set(doc.docKey, doc.settledMinor)
     }
     return new Map(equipment.map((eq) => {
-      const open = rentalContracts
-        .filter((c) => c.equipmentId === eq.id && c.customerId != null)
+      const openContracts = rentalContracts
+        .filter((c) => c.equipmentId === eq.id && c.customerId != null && c.billingMode !== 'reference')
         .reduce((sum, c) => {
           const due = c.totals.collectCreditMinor - (c.refundedMinor ?? 0)
           return sum + Math.max(0, due - (settled.get(`rental:${c.id}`) ?? 0))
         }, 0)
-      return [eq.id, open]
+      const openInvoices = rentalInvoices
+        .filter((inv) => inv.equipmentId === eq.id && inv.customerId != null)
+        .reduce((sum, inv) => {
+          const paid = inv.payment === 'cash' ? inv.totalMinor : inv.paidNowMinor
+          const due = inv.totalMinor - paid
+          return sum + Math.max(0, due - (settled.get(`rentinv:${inv.id}`) ?? 0))
+        }, 0)
+      const openCustCosts = equipmentCosts
+        .filter((cost) => cost.equipmentId === eq.id && cost.borneBy === 'customer' && cost.customerId != null)
+        .reduce((sum, cost) => sum + Math.max(0, cost.amountMinor - (settled.get(`eqcost:${cost.id}`) ?? 0)), 0)
+      return [eq.id, openContracts + openInvoices + openCustCosts]
     }))
-  }, [equipment, rentalContracts, getOpenClientInvoices])
+  }, [equipment, rentalContracts, rentalInvoices, equipmentCosts, getOpenClientInvoices])
 
   const totals = useMemo(() => ({
     revenue: cards.reduce((a, r) => a + r.report.revenueMinor, 0),
     costs: cards.reduce((a, r) => a + r.report.costsMinor, 0),
+    directCosts: cards.reduce((a, r) => a + r.directMinor, 0),
+    driverCosts: cards.reduce((a, r) => a + r.driverMinor, 0),
+    indirectCosts: cards.reduce((a, r) => a + r.indirectMinor, 0),
+    customerBorneCosts: cards.reduce((a, r) => a + r.customerBorneMinor, 0),
     profit: cards.reduce((a, r) => a + r.report.profitMinor, 0),
     hours: cards.reduce((a, r) => a + r.report.hours, 0),
     deposits: cards.reduce((a, r) => a + r.report.depositsHeldMinor, 0),
@@ -96,13 +130,91 @@ export function EquipmentReportsPage() {
     active: cards.reduce((a, r) => a + r.report.activeContracts, 0),
   }), [cards, openByEquipment])
 
+  /* ═══ القوائم الربحية على مستوى كل عقد + قطاع الإيجارات + الشركة ككل ═══ */
+  const contractPnlRows = useMemo(() => rentalContracts.map((c) => {
+    const cInvs = rentalInvoices.filter((inv) => inv.contractId === c.id)
+    const revMinor = c.billingMode === 'reference'
+      ? cInvs.reduce((s, inv) => s + inv.netMinor, 0) + c.extraMinor + (c.deductMinor ?? 0) - (c.refundedMinor ?? 0)
+      : c.totals.rentMinor + c.extraMinor + (c.deductMinor ?? 0) - (c.refundedMinor ?? 0)
+    const cCosts = equipmentCosts.filter((cost) => cost.contractId === c.id)
+    const ownerC = cCosts.filter((cost) => cost.borneBy !== 'customer')
+    const directMinor = ownerC.filter((cost) => (cost.costLayer ?? (cost.kind === 'operator' ? 'driver' : 'direct')) === 'direct').reduce((s, x) => s + x.amountMinor, 0)
+    const driverMinor = ownerC.filter((cost) => (cost.costLayer ?? (cost.kind === 'operator' ? 'driver' : 'direct')) === 'driver').reduce((s, x) => s + x.amountMinor, 0)
+    const indirectMinor = ownerC.filter((cost) => cost.costLayer === 'indirect').reduce((s, x) => s + x.amountMinor, 0)
+    const ownerTotalMinor = directMinor + driverMinor + indirectMinor
+    const customerBorneMinor = cCosts.filter((cost) => cost.borneBy === 'customer').reduce((s, x) => s + x.amountMinor, 0)
+    const driverName = employees.find((e) => e.id === c.driverEmployeeId)?.nameAr ?? '—'
+    const customerName = c.customerId != null ? (customers.find((cu) => cu.id === c.customerId)?.nameAr ?? '—') : 'نقدي'
+    return {
+      contract: c,
+      customerName,
+      driverName,
+      invoicesCount: cInvs.length,
+      revMinor,
+      directMinor,
+      driverMinor,
+      indirectMinor,
+      ownerTotalMinor,
+      customerBorneMinor,
+      netProfitMinor: revMinor - ownerTotalMinor,
+    }
+  }), [rentalContracts, rentalInvoices, equipmentCosts, employees, customers])
+
+  const companyVsRentalPnl = useMemo(() => {
+    let totalRev4xxx = 0
+    let rentalRev4104 = 0
+    let contractingRev4107 = 0
+    let totalExp5xxx = 0
+    let rentalExp5105 = 0
+    let contractingExp5106 = 0
+    for (const entry of journal) {
+      for (const l of entry.lines) {
+        if (l.accountCode.startsWith('4')) {
+          const net = l.credit - l.debit
+          totalRev4xxx += net
+          if (l.accountCode === '4104') rentalRev4104 += net
+          if (l.accountCode === '4107') contractingRev4107 += net
+        } else if (l.accountCode.startsWith('5')) {
+          const net = l.debit - l.credit
+          totalExp5xxx += net
+          if (l.accountCode === '5105') rentalExp5105 += net
+          if (l.accountCode === '5106') contractingExp5106 += net
+        }
+      }
+    }
+    const otherRev = totalRev4xxx - rentalRev4104 - contractingRev4107
+    const otherExp = totalExp5xxx - rentalExp5105 - contractingExp5106
+    return {
+      rentalRev4104,
+      rentalExp5105,
+      rentalNet: rentalRev4104 - rentalExp5105,
+      contractingRev4107,
+      contractingExp5106,
+      contractingNet: contractingRev4107 - contractingExp5106,
+      otherRev,
+      otherExp,
+      companyRev: totalRev4xxx,
+      companyExp: totalExp5xxx,
+      companyNet: totalRev4xxx - totalExp5xxx,
+    }
+  }, [journal])
+
   /* ═══ تبويب: معدة بعينه ═══ */
   const selected = cards.find((r) => r.equipment.id === Number(equipmentId)) ?? null
   const selectedShifts = selected ? operatorShifts.filter((s) => s.equipmentId === selected.equipment.id) : []
   const selectedOpenDocs = selected
-    ? rentalContracts
-        .filter((c) => c.equipmentId === selected.equipment.id && c.customerId != null)
-        .flatMap((c) => getOpenClientInvoices(c.customerId!).filter((inv) => inv.docKey === `rental:${c.id}` && inv.dueMinor - inv.settledMinor > 0))
+    ? (() => {
+        const custIds = new Set<number>()
+        for (const c of selected.contracts) if (c.customerId != null) custIds.add(c.customerId)
+        const contractIds = new Set(selected.contracts.map((c) => `rental:${c.id}`))
+        const invIds = new Set(rentalInvoices.filter((inv) => inv.equipmentId === selected.equipment.id).map((inv) => `rentinv:${inv.id}`))
+        const costIds = new Set(equipmentCosts.filter((cost) => cost.equipmentId === selected.equipment.id && cost.borneBy === 'customer').map((cost) => `eqcost:${cost.id}`))
+        return [...custIds].flatMap((cid) =>
+          getOpenClientInvoices(cid).filter(
+            (doc) => (contractIds.has(doc.docKey) || invIds.has(doc.docKey) || costIds.has(doc.docKey)) && doc.dueMinor - doc.settledMinor > 0,
+          ),
+        )
+      })()
     : []
 
   /* ═══ تبويب: ذمم عملاء التأجير ═══ */
@@ -112,16 +224,21 @@ export function EquipmentReportsPage() {
       if (c.customerId == null) continue
       const row = byClient.get(c.customerId) ?? { nameAr: customers.find((x) => x.id === c.customerId)?.nameAr ?? '—', contractsCount: 0, revenueMinor: 0, openMinor: 0 }
       row.contractsCount += 1
-      row.revenueMinor += c.totals.rentMinor + c.extraMinor
+      const cRev = c.billingMode === 'reference'
+        ? rentalInvoices.filter((inv) => inv.contractId === c.id).reduce((s, inv) => s + inv.netMinor, 0) + c.extraMinor
+        : c.totals.rentMinor + c.extraMinor
+      row.revenueMinor += cRev
       byClient.set(c.customerId, row)
     }
     for (const [customerId, row] of byClient) {
       for (const inv of getOpenClientInvoices(customerId)) {
-        if (inv.docKey.startsWith('rental:')) row.openMinor += inv.dueMinor - inv.settledMinor
+        if (inv.docKey.startsWith('rental:') || inv.docKey.startsWith('rentinv:') || inv.docKey.startsWith('rentalextra:') || inv.docKey.startsWith('eqcost:')) {
+          row.openMinor += inv.dueMinor - inv.settledMinor
+        }
       }
     }
     return [...byClient.entries()].map(([customerId, row]) => ({ customerId, ...row })).sort((a, b) => b.openMinor - a.openMinor)
-  }, [rentalContracts, customers, getOpenClientInvoices])
+  }, [rentalContracts, rentalInvoices, customers, getOpenClientInvoices])
 
   /* ═══ §99: مطبوعات الأسطول / بطاقة المعدة / الذمم — كل جدول قابل للطباعة PDF ═══ */
   const printFleet = () => printDoc('لوحة أسطول المعدات', 'ربحية كل معدة — الأرقام من العقود والقيود المرحّلة', htmlTableHtml({
@@ -202,8 +319,13 @@ export function EquipmentReportsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><BarChart3 className="w-6 h-6 text-teal-500" /> وحدة تقارير المعدات</h1>
-        <div className="flex gap-1.5">
-          {([['fleet', 'لوحة الأسطول'], ['equipment', 'معدة بعينها'], ['dues', 'ذمم عملاء التأجير']] as const).map(([id, label]) => (
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            ['fleet', 'لوحة الأسطول'],
+            ['equipment', 'معدة بعينها'],
+            ['pnl', 'القوائم الربحية (٤ مستويات)'],
+            ['dues', 'ذمم عملاء التأجير'],
+          ] as const).map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all ${tab === id ? 'bg-teal-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>{label}</button>
           ))}
         </div>
@@ -393,7 +515,103 @@ export function EquipmentReportsPage() {
             </div>
           )}
 
-          {/* ═══ ③ ذمم عملاء التأجير ═══ */}
+          {/* ═══ ③ القوائم الربحية رباعية المستويات (عقد · معدة · قطاع الإيجارات · الشركة ككل) ═══ */}
+          {tab === 'pnl' && (
+            <div className="anim-up space-y-4" data-equipment-4level-pnl>
+              {/* المستوى ٣ و٤: قطاع الإيجارات كاملاً مقارنة بالشركة ككل */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className={`${card} p-4 space-y-2.5`}>
+                  <div className="text-[13px] font-black text-teal-700 dark:text-teal-300 flex items-center justify-between">
+                    <span>🏢 المستوى ٣: قائمة دخل قطاع الإيجارات كاملاً (Rental Division P&L)</span>
+                    <span className={totals.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmt(totals.profit)} {cur.symbol}</span>
+                  </div>
+                  <div className="space-y-1 text-[12px]">
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>إجمالي إيراد عقود وفواتير التأجير (4104)</span><b className="text-emerald-600 font-mono">{fmt(totals.revenue)}</b></div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>(−) مصاريف تشغيل وصيانة مباشرة للمالك</span><b className="text-rose-500 font-mono">{fmt(totals.directCosts)}</b></div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>(−) أجور ومصاريف السائقين والمشغلين</span><b className="text-amber-600 font-mono">{fmt(totals.driverCosts)}</b></div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>(−) مصاريف غير مباشرة / عامة على الأسطول</span><b className="text-rose-400 font-mono">{fmt(totals.indirectCosts)}</b></div>
+                    <div className="flex justify-between py-1.5 font-black text-[13px] bg-teal-500/5 px-2 rounded-lg"><span>(=) صافي ربح قطاع تأجير المعدات</span><b className={totals.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmt(totals.profit)} {cur.symbol}</b></div>
+                    <div className="flex justify-between pt-1 text-[11px] text-sky-600"><span>مصاريف سُدِّدت وحُمِّلت على المستأجرين (1104)</span><b className="font-mono">{fmt(totals.customerBorneCosts)}</b></div>
+                  </div>
+                </div>
+
+                <div className={`${card} p-4 space-y-2.5`}>
+                  <div className="text-[13px] font-black text-indigo-700 dark:text-indigo-300 flex items-center justify-between">
+                    <span>🏛️ المستوى ٤: قائمة الدخل الكلية للشركة (Company-Wide P&L)</span>
+                    <span className={companyVsRentalPnl.companyNet >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmt(companyVsRentalPnl.companyNet)} {cur.symbol}</span>
+                  </div>
+                  <div className="space-y-1 text-[12px]">
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>صافي ربح قطاع الإيجارات (4104 − 5105)</span><b className="text-teal-600 font-mono">{fmt(companyVsRentalPnl.rentalNet)}</b></div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>صافي ربح قطاع المقاولات والمشروعات (4107 − 5106)</span><b className="text-orange-600 font-mono">{fmt(companyVsRentalPnl.contractingNet)}</b></div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>إيرادات الأنشطة والمبيعات الأخرى</span><b className="text-emerald-600 font-mono">{fmt(companyVsRentalPnl.otherRev)}</b></div>
+                    <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800"><span>(−) المصروفات العمومية والإدارية والتشغيلية الأخرى</span><b className="text-rose-500 font-mono">{fmt(companyVsRentalPnl.otherExp)}</b></div>
+                    <div className="flex justify-between py-1.5 font-black text-[13px] bg-indigo-500/5 px-2 rounded-lg"><span>(=) صافي ربح الشركة الكلي (كافة القطاعات)</span><b className={companyVsRentalPnl.companyNet >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmt(companyVsRentalPnl.companyNet)} {cur.symbol}</b></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* المستوى ٢: قائمة دخل كل معدة منفردة */}
+              <div className={`${card} overflow-x-auto`}>
+                <div className="px-4 py-3 text-[12.5px] font-black text-slate-700 dark:text-slate-200 border-b border-slate-100 dark:border-slate-800">
+                  🚜 المستوى ٢: قائمة دخل كل معدة منفردة (Equipment Unit P&L)
+                </div>
+                <table className="w-full text-[12px]">
+                  <thead className="bg-teal-500/10 text-teal-700 dark:text-teal-300">
+                    <tr>{['المعدة', 'السائق الأساسي', 'إيراد الإيجار', '(−) مباشر', '(−) سائق', '(−) غير مباشر', '(=) صافي ربح المعدة', 'مصاريف على المستأجر'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {cards.map((r) => (
+                      <tr key={r.equipment.id} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="px-3 py-2 font-black">{r.equipment.nameAr}</td>
+                        <td className="px-3 py-2 text-slate-500">{employees.find((e) => e.id === r.equipment.driverEmployeeId)?.nameAr ?? '—'}</td>
+                        <td className="px-3 py-2 font-bold text-emerald-600 font-mono">{fmt(r.report.revenueMinor)}</td>
+                        <td className="px-3 py-2 text-rose-500 font-mono">{fmt(r.directMinor)}</td>
+                        <td className="px-3 py-2 text-amber-600 font-mono">{fmt(r.driverMinor)}</td>
+                        <td className="px-3 py-2 text-rose-400 font-mono">{fmt(r.indirectMinor)}</td>
+                        <td className={`px-3 py-2 font-black font-mono ${r.report.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(r.report.profitMinor)}</td>
+                        <td className="px-3 py-2 text-sky-600 font-mono">{fmt(r.customerBorneMinor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* المستوى ١: قائمة دخل كل عقد إيجار منفرداً */}
+              <div className={`${card} overflow-x-auto`}>
+                <div className="px-4 py-3 text-[12.5px] font-black text-slate-700 dark:text-slate-200 border-b border-slate-100 dark:border-slate-800">
+                  📋 المستوى ١: قائمة دخل كل عقد إيجار منفرداً (Contract P&L)
+                </div>
+                {contractPnlRows.length === 0 ? (
+                  <div className="p-6 text-center text-[12px] text-slate-400">لا عقود إيجار بعد</div>
+                ) : (
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-indigo-500/10 text-indigo-700 dark:text-indigo-300">
+                      <tr>{['العقد', 'المعدة', 'العميل', 'السائق', 'الفواتير', 'الإيراد المحقق', '(−) مباشر', '(−) سائق', '(−) غير مباشر', '(=) صافي ربح العقد', 'مصاريف على المستأجر'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold whitespace-nowrap">{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {contractPnlRows.map((row) => (
+                        <tr key={row.contract.id} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="px-3 py-2 font-bold text-teal-600">{row.contract.contractNumber}</td>
+                          <td className="px-3 py-2 font-bold">{row.contract.equipmentName}</td>
+                          <td className="px-3 py-2">{row.customerName}</td>
+                          <td className="px-3 py-2 text-slate-500">{row.driverName}</td>
+                          <td className="px-3 py-2">{row.contract.billingMode === 'reference' ? `${row.invoicesCount} دورية` : 'مسبق'}</td>
+                          <td className="px-3 py-2 font-bold text-emerald-600 font-mono">{fmt(row.revMinor)}</td>
+                          <td className="px-3 py-2 text-rose-500 font-mono">{fmt(row.directMinor)}</td>
+                          <td className="px-3 py-2 text-amber-600 font-mono">{fmt(row.driverMinor)}</td>
+                          <td className="px-3 py-2 text-rose-400 font-mono">{fmt(row.indirectMinor)}</td>
+                          <td className={`px-3 py-2 font-black font-mono ${row.netProfitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(row.netProfitMinor)}</td>
+                          <td className="px-3 py-2 text-sky-600 font-mono">{fmt(row.customerBorneMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ═══ ④ ذمم عملاء التأجير ═══ */}
           {tab === 'dues' && (
             <div className="anim-up space-y-3">
               <div className="text-[12px] text-slate-500">

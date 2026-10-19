@@ -176,11 +176,29 @@ export function ProjectsPage() {
   const [editingExtract, setEditingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
   const [exReason, setExReason] = useState('')
   const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
-  /** النسبة السابقة لبند: في التعديل تُقرأ من المستخلص (قبل إصداره) لا من BOQ الحي الذي يحمل نتيجة إصداره */
-  const exPrevPct = (b: { id: number; progressPercent: number }) => editingExtract?.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? b.progressPercent
+  /** النسبة المفوترة سابقاً لبند: تُقرأ من المستخلصات السابقة للمشروع (أو من المستخلص الجاري تعديله) حتى لا يمنع شريط تقدم الموقع إصدار مستخلص جزئي */
+  const exPrevPct = (b: { id: number; progressPercent: number }) => {
+    if (editingExtract) return editingExtract.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? 0
+    if (!extractFor) return 0
+    return projectExtracts
+      .filter((ex) => ex.projectId === extractFor.id)
+      .reduce((max, ex) => {
+        const l = ex.lines?.find((x) => x.boqItemId === b.id)
+        return l && l.newProgressPercent > max ? l.newProgressPercent : max
+      }, 0)
+  }
   const exLinesPreview = useMemo(() => {
     const rows = extractBoq.map((b) => {
-      const prev = editingExtract?.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? b.progressPercent
+      const prev = editingExtract
+        ? (editingExtract.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? 0)
+        : !extractFor
+          ? 0
+          : projectExtracts
+              .filter((ex) => ex.projectId === extractFor.id)
+              .reduce((max, ex) => {
+                const l = ex.lines?.find((x) => x.boqItemId === b.id)
+                return l && l.newProgressPercent > max ? l.newProgressPercent : max
+              }, 0)
       const raw = exLines[b.id]
       const np = raw === undefined || raw === '' ? null : Number(raw)
       const total = Math.round(b.qty * b.unitPriceMinor)
@@ -188,7 +206,29 @@ export function ProjectsPage() {
       return { boq: b, prevPercent: prev, newPercent: np, sliceMinor: slice }
     })
     return { rows, grossMinor: rows.reduce((sum, row) => sum + row.sliceMinor, 0) }
-  }, [extractBoq, exLines, editingExtract])
+  }, [extractBoq, exLines, editingExtract, extractFor, projectExtracts])
+  const applyPartialSlicePercent = (slicePct: number) => {
+    if (!extractFor) return
+    if (exMode === 'lines' && extractBoq.length > 0) {
+      const next: Record<number, string> = {}
+      for (const b of extractBoq) {
+        const prev = exPrevPct(b)
+        if (prev < 100) {
+          const target = slicePct >= 100 ? 100 : Math.min(100, Math.round((prev + slicePct) * 100) / 100)
+          if (target > prev) next[b.id] = String(target)
+        }
+      }
+      setExLines(next)
+      setExFinal(slicePct >= 100)
+    } else {
+      const pr = getProjectProfit(extractFor.id)
+      const remaining = Math.max(0, extractFor.contractValueMinor - pr.extractedMinor)
+      const base = remaining > 0 ? remaining : extractFor.contractValueMinor
+      const sliceMinor = slicePct >= 100 ? base : Math.round(( extractFor.contractValueMinor * slicePct) / 100)
+      setExGross(formatMinor(Math.min(base > 0 ? base : sliceMinor, sliceMinor), cur, false))
+      setExFinal(slicePct >= 100)
+    }
+  }
   /** فتح محرر المستخلص محمّلاً بقيمه الصادرة — التعديل يعكس قيده ويعيد البناء بنفس الرقم */
   const openExtractEditor = (ex: (typeof projectExtracts)[number]) => {
     const prj = projects.find((p) => p.id === ex.projectId)
@@ -659,7 +699,7 @@ export function ProjectsPage() {
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
           documentNumber={editingExtract ? `${editingExtract.extractNumber} (تعديل)` : `PRX-${extractFor.code}`}
-          onBack={() => { setEditingExtract(null); setExtractFor(null) }}
+          onBack={() => { setEditingExtract(null); setExtractFor(null); setExFinal(false) }}
           onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
           onPartySearch={() => document.getElementById('extract-desc-field')?.focus()}
           onItemSearch={() => document.getElementById('extract-first-percent')?.focus()}
@@ -707,11 +747,20 @@ export function ProjectsPage() {
                   <input value={exRecovery} onChange={(e) => setExRecovery(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0 = لا استرداد" />
                 </Field>
               )}
-              <Field label="طبيعة المستخلص">
-                <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-rose-300 dark:border-rose-800 cursor-pointer">
-                  <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="accent-rose-600" />
-                  <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">ختامي — لا مستخلصات بعده</span>
-                </label>
+              <Field label="طبيعة المستخلص (جزئي / ختامي)">
+                <div className="grid grid-cols-2 gap-1.5" data-extract-nature-toggle>
+                  <button
+                    type="button"
+                    onClick={() => setExFinal(false)}
+                    className={`py-2 px-2 rounded-xl text-[11px] font-bold border-2 transition-all ${!exFinal ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+                  >
+                    مستخلص جاري / جزئي
+                  </button>
+                  <label className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-[11px] font-bold border-2 cursor-pointer transition-all ${exFinal ? 'border-rose-500/60 bg-rose-500/10 text-rose-700 dark:text-rose-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                    <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="w-3.5 h-3.5 shrink-0 accent-rose-600" />
+                    <span>ختامي — لا مستخلصات بعده</span>
+                  </label>
+                </div>
               </Field>
             </>
           }
@@ -736,49 +785,94 @@ export function ProjectsPage() {
                   <div className="invoice-kpi"><small>مستحق متوقع</small><b className="text-orange-600">{fmt((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) + Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * (exVat ? setup.vatPercent : 0)) / 100) - Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * extractFor.retentionPercent) / 100) - (exRecovery ? toMinor(exRecovery, cur.decimals) : 0))}</b></div>
                 </div>
               </div>
-              {extractBoq.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 p-3 border-b border-slate-200 dark:border-slate-700">
-                  {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي']] as const).map(([m, label]) => (
-                    <button key={m} onClick={() => setExMode(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border-2 transition-all ${exMode === m ? 'border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-b border-slate-200 dark:border-slate-700">
+                {extractBoq.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي (جزئي أو كامل)']] as const).map(([m, label]) => (
+                      <button key={m} onClick={() => setExMode(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border-2 transition-all ${exMode === m ? 'border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : <span className="text-[11px] font-bold text-slate-500">نسب سريعة للمستخلص الجزئي:</span>}
+                <div className="flex flex-wrap items-center gap-1" data-extract-quick-slices>
+                  <span className="text-[11px] text-slate-400 font-bold ml-1">تعبئة دفعة جزئية:</span>
+                  {[
+                    [10, '+10٪ جزئي'],
+                    [25, '+25٪ جزئي'],
+                    [50, '+50٪ جزئي'],
+                    [100, '100٪ المتبقي (ختامي)'],
+                  ].map(([pct, label]) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => applyPartialSlicePercent(Number(pct))}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-orange-500/30 bg-orange-500/5 text-orange-700 dark:text-orange-300 hover:bg-orange-500/15 transition-all"
+                    >
                       {label}
                     </button>
                   ))}
                 </div>
-              )}
+              </div>
               {exMode === 'lines' && extractBoq.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
                       <tr>
                         <th className="p-2 text-right font-bold">البند</th>
-                        <th className="p-2 text-center font-bold">سابق ٪</th>
+                        <th className="p-2 text-center font-bold">مفوتر سابقاً ٪</th>
+                        <th className="p-2 text-center font-bold">كمية هذا المستخلص</th>
                         <th className="p-2 text-center font-bold">جديد ٪ (تراكمي)</th>
                         <th className="p-2 text-left font-bold">قيمة الشريحة</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {exLinesPreview.rows.map(({ boq: b, newPercent, sliceMinor }, idx) => (
-                        <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
-                          <td className="p-2 font-bold text-slate-700 dark:text-slate-200">{b.code} — {b.descriptionAr}</td>
-                          <td className="p-2 text-center text-slate-500">{b.progressPercent}٪</td>
-                          <td className="p-2">
-                            <input
-                              id={idx === 0 ? 'extract-first-percent' : undefined}
-                              value={exLines[b.id] ?? ''} inputMode="decimal" placeholder={`${b.progressPercent}`}
-                              onChange={(e) => setExLines((s) => ({ ...s, [b.id]: e.target.value }))}
-                              className="w-20 mx-auto block text-center rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent py-1 text-[12px] font-bold"
-                            />
-                            {newPercent !== null && (newPercent < b.progressPercent || newPercent > 100) && (
-                              <div className="text-[10px] text-red-500 text-center font-bold mt-0.5">{newPercent > 100 ? 'أقصاها 100' : 'لا تقل عن السابق'}</div>
-                            )}
-                          </td>
-                          <td className="p-2 text-left font-bold tabular-nums text-emerald-600">{sliceMinor > 0 ? fmt(sliceMinor) : '—'}</td>
-                        </tr>
-                      ))}
+                      {exLinesPreview.rows.map(({ boq: b, prevPercent, newPercent, sliceMinor }, idx) => {
+                        const slicePct = newPercent !== null && newPercent > prevPercent ? newPercent - prevPercent : 0
+                        const sliceQty = slicePct > 0 ? Number(((b.qty * slicePct) / 100).toFixed(3)) : ''
+                        return (
+                          <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
+                            <td className="p-2 font-bold text-slate-700 dark:text-slate-200">
+                              {b.code} — {b.descriptionAr}
+                              <span className="block text-[10px] font-normal text-slate-400">إجمالي البند: {b.qty} {b.unit} × {fmt(b.unitPriceMinor)}</span>
+                            </td>
+                            <td className="p-2 text-center text-slate-500">{prevPercent}٪</td>
+                            <td className="p-2">
+                              <input
+                                value={sliceQty}
+                                inputMode="decimal"
+                                placeholder={`من ${Math.max(0, Number(((b.qty * (100 - prevPercent)) / 100).toFixed(2)))} ${b.unit}`}
+                                onChange={(e) => {
+                                  const q = Number(e.target.value)
+                                  if (!e.target.value.trim() || !Number.isFinite(q) || q <= 0 || b.qty <= 0) {
+                                    setExLines((s) => ({ ...s, [b.id]: '' }))
+                                    return
+                                  }
+                                  const pct = Math.min(100, Math.round((prevPercent + (q / b.qty) * 100) * 100) / 100)
+                                  setExLines((s) => ({ ...s, [b.id]: String(pct) }))
+                                }}
+                                className="w-24 mx-auto block text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent py-1 text-[11px] font-bold"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                id={idx === 0 ? 'extract-first-percent' : undefined}
+                                value={exLines[b.id] ?? ''} inputMode="decimal" placeholder={`${prevPercent}`}
+                                onChange={(e) => setExLines((s) => ({ ...s, [b.id]: e.target.value }))}
+                                className="w-20 mx-auto block text-center rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent py-1 text-[12px] font-bold"
+                              />
+                              {newPercent !== null && (newPercent < prevPercent || newPercent > 100) && (
+                                <div className="text-[10px] text-red-500 text-center font-bold mt-0.5">{newPercent > 100 ? 'أقصاها 100' : 'لا تقل عن السابق'}</div>
+                              )}
+                            </td>
+                            <td className="p-2 text-left font-bold tabular-nums text-emerald-600">{sliceMinor > 0 ? fmt(sliceMinor) : '—'}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                     <tfoot className="bg-orange-500/10">
                       <tr>
-                        <td colSpan={3} className="p-2 font-bold text-orange-700 dark:text-orange-300">إجمالي أعمال هذا المستخلص</td>
+                        <td colSpan={4} className="p-2 font-bold text-orange-700 dark:text-orange-300">إجمالي أعمال هذا المستخلص</td>
                         <td className="p-2 text-left font-black tabular-nums text-orange-700 dark:text-orange-300">{fmt(exLinesPreview.grossMinor)}</td>
                       </tr>
                     </tfoot>
@@ -786,7 +880,7 @@ export function ProjectsPage() {
                 </div>
               ) : (
                 <div className="p-4">
-                  <Field label={`قيمة الأعمال المنفذة (${cur.symbol}) *`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                  <Field label={`قيمة الأعمال المنفذة في هذا المستخلص (${cur.symbol}) *`} hint={`قيمة العقد: ${fmt(extractFor.contractValueMinor)} · مفوتر سابقاً: ${fmt(getProjectProfit(extractFor.id).extractedMinor)}`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
                 </div>
               )}
             </div>
@@ -844,7 +938,7 @@ export function ProjectsPage() {
                       <div className="flex gap-1 justify-end">
                         {p.status === 'active' && (
                           <>
-                            <button onClick={() => { setExtractFor(p); setExGross(''); setExDesc(''); setExLines({}); setExMode(boqItems.some((b) => b.projectId === p.id) ? 'lines' : 'gross') }} title="مستخلص جديد" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
+                            <button onClick={() => { setEditingExtract(null); setExtractFor(p); setExFinal(false); setExGross(''); setExDesc(''); setExLines({}); setExMode(boqItems.some((b) => b.projectId === p.id) ? 'lines' : 'gross') }} title="مستخلص جديد" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
                             <button onClick={() => { setCostFor(p); setCostAmount(''); setCostDesc('') }} title="تسجيل تكلفة" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Hammer className="w-4 h-4" /></button>
                             <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => setCoFor(p)} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>

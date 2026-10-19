@@ -141,7 +141,7 @@ const ruleOf = (selector) => {
    */
   const ENGINE = {
     'PaymentTerminalsPage.tsx': ['5112', '5113'], // recordPaymentTerminalSettlement: بنك/حساب تسوية الماكينة + عمولة + فروق
-    'RentalContractsPage.tsx': ['1104', '2103', '2109', '4104'], // rental.ts: إيجار + تأمين + إقفال
+    'RentalContractsPage.tsx': ['1104', '2102', '2103', '2109', '4104'], // rental.ts: إيجار + ضريبة + تأمين + إقفال + فواتير دورية
     'EmployeesPage.tsx': ['1107', '2104', '2107', '2111', '2116', '5102', '5117'], // payroll.ts + staffCommissions.ts + مستحقات سائقي النقلات
     'ClinicPages.tsx': ['1104', '2102', '4102', '4108'], // clinic.ts (زيارة) + serviceRefund.ts (مرتجع)
     'LabPages.tsx': ['1104', '2105', '4106', '5109'], // lab.ts: 4106 إيراد تحاليل + عمولة المحيلين
@@ -152,7 +152,7 @@ const ruleOf = (selector) => {
     'RestaurantOrdersPage.tsx': ['1103', '1104', '2102', '4101', '5101'], // settleRestaurantOrder ⇒ postSale
     'LaundryPage.tsx': ['2109', '4103'], // laundry.ts: عربون 2109 ثم 4103 خدمات
     'CarsPage.tsx': ['1103', '1104', '2101', '2102', '2110', '4101', '4104', '4109', '5101'],
-    'EquipmentPage.tsx': ['1201', '1202', '4104', '5105', '5107'], // assets.ts + مصروف تشغيل المعدة
+    'EquipmentPage.tsx': ['1104', '1201', '1202', '4104', '5105', '5107'], // assets.ts + مصروف تشغيل المعدة (على المالك 5105 أو المستأجر 1104)
     'TripsPage.tsx': ['1104', '4105', '5106'], // logistics.ts
     'JewelryPage.tsx': ['1103', '4101', '5101'], // jewelry.ts: كسر بالتكلفة والفرق ربحاً أو خسارة
     'MaintenancePage.tsx': ['1103', '1104', '2102', '2109', '4102', '4103', '5101'], // maintenance.ts + مرتجع خدمة

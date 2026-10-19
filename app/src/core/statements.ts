@@ -277,7 +277,9 @@ export function customerUnitDocs(args: {
   customerId: number
   trips?: readonly { tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   tickets?: readonly { ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { grandMinor: Minor; paidMinor: Minor; creditMinor: Minor } | null; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
-  rentals?: readonly { contractNumber: string; date: string; customerId: number | null; totals: { grandMinor: Minor; collectCreditMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  rentals?: readonly { contractNumber: string; date: string; closedAt?: string | null; customerId: number | null; billingMode?: string; payment?: string; vatPercent?: number; extraMinor?: number; totals: { grandMinor: Minor; collectCreditMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  rentalInvoices?: readonly { invoiceNumber: string; periodLabel: string; date: string; customerId?: number | null; payment: string; totalMinor: Minor; paidNowMinor: Minor }[]
+  customerEquipmentCosts?: readonly { date: string; description: string; customerId?: number | null; amountMinor: Minor; vatMinor?: Minor }[]
   /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
   clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor } }[]
   clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor; viaVoucherId?: number | null }[]
@@ -417,13 +419,52 @@ export function customerUnitDocs(args: {
     }
   }
   for (const rc of args.rentals ?? []) {
-    if (rc.customerId !== args.customerId || rc.totals.grandMinor <= 0) continue
-    const paid = Math.max(0, rc.totals.grandMinor - rc.totals.collectCreditMinor)
-    const status = paid >= rc.totals.grandMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
-    rows.push({ docLabel: `إيجار ${rc.contractNumber} (${status})`, date: rc.date, operationMinor: rc.totals.grandMinor, debitMinor: rc.totals.grandMinor, creditMinor: paid })
+    if (rc.customerId !== args.customerId) continue
+    if (rc.billingMode !== 'reference' && rc.totals.grandMinor > 0) {
+      const paid = Math.max(0, rc.totals.grandMinor - rc.totals.collectCreditMinor)
+      const status = paid >= rc.totals.grandMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
+      rows.push({ docLabel: `إيجار ${rc.contractNumber} (${status})`, date: rc.date, operationMinor: rc.totals.grandMinor, debitMinor: rc.totals.grandMinor, creditMinor: paid })
+    }
+    if ((rc.extraMinor ?? 0) > 0) {
+      const extraVat = Math.round(((rc.extraMinor ?? 0) * (rc.vatPercent ?? 0)) / 100)
+      const extraGross = (rc.extraMinor ?? 0) + extraVat
+      const extraPaid = rc.payment === 'cash' ? extraGross : 0
+      const extraStatus = extraPaid >= extraGross ? 'نقدي/مسدد' : 'آجل'
+      rows.push({
+        docLabel: `تجاوز استخدام إيجار ${rc.contractNumber} (${extraStatus})`,
+        date: (rc.closedAt ?? rc.date).slice(0, 10),
+        operationMinor: extraGross,
+        debitMinor: extraGross,
+        creditMinor: extraPaid,
+      })
+    }
     for (const r of rc.refunds ?? []) {
       if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع إيجار ${rc.contractNumber} (على الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.amountMinor })
     }
+  }
+  for (const inv of args.rentalInvoices ?? []) {
+    if (inv.customerId !== args.customerId || inv.totalMinor <= 0) continue
+    const paid = inv.payment === 'cash' ? inv.totalMinor : Math.min(inv.totalMinor, Math.max(0, inv.paidNowMinor ?? 0))
+    const status = paid >= inv.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
+    rows.push({
+      docLabel: `فاتورة إيجار ${inv.invoiceNumber} — ${inv.periodLabel} (${status})`,
+      date: inv.date,
+      operationMinor: inv.totalMinor,
+      debitMinor: inv.totalMinor,
+      creditMinor: paid,
+    })
+  }
+  for (const cost of args.customerEquipmentCosts ?? []) {
+    if (cost.customerId !== args.customerId) continue
+    const gross = cost.amountMinor + (cost.vatMinor ?? 0)
+    if (gross <= 0) continue
+    rows.push({
+      docLabel: `مصروف معدة على المستأجر — ${cost.description}`,
+      date: cost.date,
+      operationMinor: gross,
+      debitMinor: gross,
+      creditMinor: 0,
+    })
   }
   return rows
 }

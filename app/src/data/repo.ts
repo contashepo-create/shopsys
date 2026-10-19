@@ -55,7 +55,12 @@ import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, 
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
-import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalPaymentMode, type RentalTotals } from '../core/rental.ts'
+import {
+  validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry,
+  buildReferenceDepositEntry, buildRentalInvoiceEntry, DEFAULT_RENTAL_RESPONSIBILITY,
+  type RentalInput, type RentalPaymentMode, type RentalTotals, type RentalBillingMode,
+  type ExpenseBearer, type EquipmentCostLayer, type RentalResponsibilityMatrix, type RentalInvoice,
+} from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
@@ -291,9 +296,11 @@ export interface Equipment {
   /** قراءة العدّاد عند آخر خدمة */
   lastServiceReading: number
   notes: string
+  /** السائق / المشغّل الأساسي للمعدة من سجل الموظفين (اختياري) */
+  driverEmployeeId?: number | null
 }
 
-/** مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) — يقيد 5105/خزينة ويغذي ربحية المعدة */
+/** مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) — يقيد 5105/خزينة (أو 1104 عند التحميل على المستأجر) ويغذي ربحية المعدة والعقد */
 export interface EquipmentCost {
   id: number
   equipmentId: number
@@ -303,6 +310,16 @@ export interface EquipmentCost {
   description: string
   treasury: string
   journalEntryId: number
+  /** العقد المرتبط بالمصروف (اختياري) */
+  contractId?: number | null
+  /** العميل المستأجر عند التحميل على المستأجر */
+  customerId?: number | null
+  /** طبقة التكلفة: مباشر على المعدة / غير مباشر / مصاريف السائق */
+  costLayer?: EquipmentCostLayer
+  /** من يتحمل المصروف: المالك أم المستأجر */
+  borneBy?: ExpenseBearer
+  /** السائق المرتبط بالمصروف من سجل الموظفين */
+  driverEmployeeId?: number | null
 }
 
 /** عقد إيجار معدة — مربوط بقيد الفتح، وقيد الإقفال عند ردّ التأمين */
@@ -336,6 +353,14 @@ export interface RentalContract {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
+  /** نمط العقد: reference (عقد مرجعي — الفوترة دورية لاحقاً) أو upfront (مسبق الاستحقاق/الدفع) */
+  billingMode?: RentalBillingMode
+  /** هل العقد خاضع للضريبة أم بدون ضريبة */
+  withTax?: boolean
+  /** السائق / المشغّل المعيّن على العقد من سجل الموظفين */
+  driverEmployeeId?: number | null
+  /** مصفوفة تحمل المصاريف المتفق عليها في العقد */
+  responsibility?: RentalResponsibilityMatrix
 }
 
 /* ─── معامل التحاليل (القرار 26) ─── */
@@ -1408,6 +1433,7 @@ interface DataState {
   trips: Trip[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
+  rentalInvoices: RentalInvoice[]
   operatorShifts: OperatorShift[] // وردانيات المشغلين (ترقية القرار 25)
   labTests: LabTest[] // كتالوج فحوصات المعمل (القرار 26)
   labReferrers: Referrer[] // الأطباء المُحيلون
@@ -2264,7 +2290,31 @@ interface DataState {
     /** تجاوز حد ائتمان العميل بموافقة مدير */
     creditLimitOverrideBy?: string | null
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+    /** نمط الفوترة: reference (عقد مرجعي تُصدر له فواتير دورية) أو upfront (إثبات كامل الإيجار عند الفتح) */
+    billingMode?: RentalBillingMode
+    /** خيار الضريبة: بالضريبة أو بدون ضريبة */
+    withTax?: boolean
+    /** السائق المعيّن على العقد من سجل الموظفين */
+    driverEmployeeId?: number | null
+    /** مصفوفة تحمل المصاريف (الوقود، السائق، النقل، الصيانة، التلفيات) */
+    responsibility?: RentalResponsibilityMatrix
   }) => RentalContract
+  /** إصدار فاتورة إيجار دورية/شهرية مرتبطة بعقد إيجار وتُقيَّد على ذمة العميل (1104) وإيراد الإيجار (4104) */
+  issueRentalInvoice: (args: {
+    contractId: number
+    periodLabel: string
+    qty?: number
+    unitRateMinor?: number
+    netMinor?: number
+    withTax?: boolean
+    vatPercent?: number
+    payment?: RentalPaymentMode
+    paidNowMinor?: number
+    treasury?: string
+    dueDate?: string
+    notes?: string
+    creditLimitOverrideBy?: string | null
+  }) => RentalInvoice
   /**
    * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
    * ترقية القرار 25: قراءة عدّاد الإرجاع (ساعي) أو تاريخ الإرجاع (يومي/شهري)
@@ -2275,10 +2325,30 @@ interface DataState {
   addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
   /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
   recordEquipmentService: (equipmentId: number) => void
-  /** مصروف تشغيل معدة بقيده (5105/خزينة) — وقود/صيانة/إصلاح/مشغل */
-  addEquipmentCost: (args: { equipmentId: number; kind: EquipmentCostKind; amountMinor: number; description?: string; treasury?: string }) => EquipmentCost
-  /** ربحية معدة: إيراد عقودها − تكاليفها، وربح الساعة من الساعات الموثقة */
-  getEquipmentProfit: (equipmentId: number) => { revenueMinor: number; costsMinor: number; profitMinor: number; hours: number; profitPerHourMinor: number | null }
+  /** مصروف تشغيل معدة بقيده (5105/خزينة للمالك أو 1104/خزينة عند التحميل على المستأجر) */
+  addEquipmentCost: (args: {
+    equipmentId: number
+    kind: EquipmentCostKind
+    amountMinor: number
+    description?: string
+    treasury?: string
+    contractId?: number | null
+    costLayer?: EquipmentCostLayer
+    borneBy?: ExpenseBearer
+    driverEmployeeId?: number | null
+  }) => EquipmentCost
+  /** ربحية معدة: إيراد عقودها وفواتيرها الدورية − تكاليف المالك (مباشر + غير مباشر + سائق)، وربح الساعة */
+  getEquipmentProfit: (equipmentId: number) => {
+    revenueMinor: number
+    costsMinor: number
+    profitMinor: number
+    hours: number
+    profitPerHourMinor: number | null
+    directCostsMinor: number
+    indirectCostsMinor: number
+    driverCostsMinor: number
+    customerBorneCostsMinor: number
+  }
   /* ─── معامل التحاليل (القرار 26) ─── */
   addLabTest: (t: Omit<LabTest, 'id' | 'isActive'>) => LabTest
   updateLabTest: (id: number, patch: Partial<Omit<LabTest, 'id'>>) => void
@@ -3481,6 +3551,7 @@ export const useDataStore = create<DataState>()(
       trips: [],
       equipment: [],
       rentalContracts: [],
+      rentalInvoices: [],
       operatorShifts: [],
       labTests: [],
       labReferrers: [],
@@ -8329,6 +8400,8 @@ export const useDataStore = create<DataState>()(
           extraDocs: customerUnitDocs({
             customerId,
             trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
+            rentalInvoices: state.rentalInvoices,
+            customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
             clinicVisits: state.clinicVisits, clinicCollections: state.clinicCollections,
             linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
             labOrders: state.labOrders, linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
@@ -8975,10 +9048,12 @@ export const useDataStore = create<DataState>()(
       openRental: (args) => {
         const state = get()
         const rateType: RateType = args.rateType ?? 'daily'
+        const billingMode: RentalBillingMode = args.billingMode ?? 'upfront'
+        const effectiveInput: RentalInput = args.withTax === false ? { ...args.input, vatPercent: 0 } : args.input
         // 1) تحقق شامل قبل أي كتابة
-        const errors = validateRental(args.input)
+        const errors = validateRental(effectiveInput)
         if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
-        if (args.input.payment !== 'cash' && args.customerId == null) errors.push('الإيجار الآجل أو المختلط يتطلب عميلاً مسجلاً')
+        if (effectiveInput.payment !== 'cash' && args.customerId == null) errors.push('الإيجار الآجل أو المختلط يتطلب عميلاً مسجلاً')
         // ترقية القرار 25: العقد الساعي يتطلب قراءة عدّاد التسليم
         if (rateType === 'hourly') {
           if (args.startReading == null || !isValidMeterReading(args.startReading)) {
@@ -8993,27 +9068,45 @@ export const useDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
 
         // 2) الإجماليات وقيد الفتح بالنواة الخالصة
-        const totals = computeRentalTotals(args.input)
-        // حد الائتمان: الجزء الآجل من الإيجار دين على العميل
-        guardCreditLimit(get(), args.customerId, totals.collectCreditMinor, args.creditLimitOverrideBy)
+        const rawTotals = computeRentalTotals(effectiveInput)
+        const totals: RentalTotals = billingMode === 'reference'
+          ? {
+              ...rawTotals,
+              collectCashMinor: rawTotals.depositMinor,
+              collectCreditMinor: 0,
+            }
+          : rawTotals
+        // حد الائتمان: الجزء الآجل من الإيجار دين على العميل (في العقد المسبق فقط؛ العقد المرجعي يفحص الائتمان عند إصدار الفواتير الدورية)
+        if (totals.collectCreditMinor > 0) {
+          guardCreditLimit(get(), args.customerId, totals.collectCreditMinor, args.creditLimitOverrideBy)
+        }
         const contractId = nextId(state.rentalContracts)
-        const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const contractNumber = `RC-${String(contractId).padStart(4, '0')}`
-        const entryLines = buildRentalOpenEntry(totals, contractNumber, args.treasury ?? '1101')
+        const entryLines = billingMode === 'reference'
+          ? buildReferenceDepositEntry(totals.depositMinor, contractNumber, args.treasury ?? '1101')
+          : buildRentalOpenEntry(totals, contractNumber, args.treasury ?? '1101')
 
-        const entry: JournalEntry = {
-          id: entryId,
-          entryNumber: entryId,
-          date: now.slice(0, 10),
-          description: `عقد إيجار ${contractNumber} — ${args.input.equipmentName} × ${args.input.days} يوم${args.notes ? ` — ${args.notes}` : ''}`,
-          sourceType: 'rental_contract',
-          sourceId: contractId,
-          lines: entryLines,
-          createdBy: activeUserName(get()),
-          createdAt: now,
-          reversedByEntryId: null,
-          reversesEntryId: null,
+        let openEntryId = 0
+        let nextJournal = state.journal
+        if (entryLines && entryLines.length > 0) {
+          openEntryId = nextId(state.journal)
+          const entry: JournalEntry = {
+            id: openEntryId,
+            entryNumber: openEntryId,
+            date: now.slice(0, 10),
+            description: billingMode === 'reference'
+              ? `تأمين عقد إيجار مرجعي ${contractNumber} — ${effectiveInput.equipmentName}`
+              : `عقد إيجار ${contractNumber} — ${effectiveInput.equipmentName} × ${effectiveInput.days} يوم${args.notes ? ` — ${args.notes}` : ''}`,
+            sourceType: 'rental_contract',
+            sourceId: contractId,
+            lines: entryLines,
+            createdBy: activeUserName(get()),
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          }
+          nextJournal = [...state.journal, entry]
         }
 
         const contract: RentalContract = {
@@ -9022,22 +9115,26 @@ export const useDataStore = create<DataState>()(
           date: now,
           customerId: args.customerId,
           equipmentId: args.equipmentId,
-          equipmentName: args.input.equipmentName.trim(),
-          days: args.input.days,
-          dailyRateMinor: args.input.dailyRateMinor,
+          equipmentName: effectiveInput.equipmentName.trim(),
+          days: effectiveInput.days,
+          dailyRateMinor: effectiveInput.dailyRateMinor,
           rateType,
           startReading: rateType === 'hourly' ? (args.startReading ?? null) : null,
           endReading: null,
           extraMinor: 0,
           extraEntryId: null,
-          payment: args.input.payment,
-          vatPercent: args.input.vatPercent,
+          payment: effectiveInput.payment,
+          vatPercent: effectiveInput.vatPercent,
           totals,
           status: 'active',
-          openEntryId: entryId,
+          openEntryId,
           closeEntryId: null,
           deductMinor: 0,
           notes: args.notes,
+          billingMode,
+          withTax: args.withTax ?? effectiveInput.vatPercent > 0,
+          driverEmployeeId: args.driverEmployeeId ?? null,
+          responsibility: args.responsibility ?? { ...DEFAULT_RENTAL_RESPONSIBILITY },
         }
 
         let terminalTransaction: PaymentTerminalTransaction | null = null
@@ -9050,8 +9147,94 @@ export const useDataStore = create<DataState>()(
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.collectCashMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'rental', documentId: `equipment:${contractId}`, amountMinor: totals.collectCashMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ rentalContracts: [...state.rentalContracts, contract], journal: nextJournal, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return contract
+      },
+      issueRentalInvoice: (args) => {
+        const state = get()
+        const contract = state.rentalContracts.find((c) => c.id === args.contractId)
+        if (!contract) throw new Error('عقد الإيجار غير موجود')
+        const qty = args.qty ?? 1
+        if (!(qty > 0)) throw new Error('عدد الوحدات في الفاتورة الدورية يجب أن يكون أكبر من صفر')
+        const unitRateMinor = args.unitRateMinor ?? contract.dailyRateMinor
+        const netMinor = args.netMinor ?? Math.round(qty * unitRateMinor)
+        if (!(netMinor > 0)) throw new Error('صافي الفاتورة الدورية يجب أن يكون أكبر من صفر')
+        const withTax = args.withTax ?? (contract.withTax ?? contract.vatPercent > 0)
+        const vatPercent = withTax ? (args.vatPercent ?? (contract.vatPercent || 14)) : 0
+        const vatMinor = Math.round((netMinor * vatPercent) / 100)
+        const totalMinor = netMinor + vatMinor
+        const payment: RentalPaymentMode = args.payment ?? (contract.customerId != null ? 'credit' : 'cash')
+        if (payment !== 'cash' && contract.customerId == null) {
+          throw new Error('الفاتورة الآجلة تتطلب عميلاً مسجلاً على العقد')
+        }
+        const paidNowMinor = payment === 'cash'
+          ? totalMinor
+          : payment === 'credit'
+            ? 0
+            : Math.max(0, Math.min(totalMinor, args.paidNowMinor ?? 0))
+        const creditPart = totalMinor - paidNowMinor
+        if (creditPart > 0) {
+          guardCreditLimit(get(), contract.customerId, creditPart, args.creditLimitOverrideBy)
+        }
+        const invId = nextId(state.rentalInvoices)
+        const invoiceNumber = `RINV-${String(invId).padStart(4, '0')}`
+        const now = new Date().toISOString()
+        const customerName = (contract.customerId != null ? state.customers.find((c) => c.id === contract.customerId)?.nameAr : null) ?? 'عميل'
+        const periodLabel = args.periodLabel.trim() || `دفعة دورية #${state.rentalInvoices.filter((x) => x.contractId === contract.id).length + 1}`
+        const treasury = args.treasury ?? '1101'
+        const entryLines = buildRentalInvoiceEntry({
+          invoiceNumber,
+          contractNumber: contract.contractNumber,
+          equipmentName: contract.equipmentName,
+          customerName,
+          periodLabel,
+          netMinor,
+          vatMinor,
+          payment,
+          paidNowMinor,
+          treasuryAccount: treasury,
+        })
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `فاتورة إيجار دورية ${invoiceNumber} — عقد ${contract.contractNumber} (${periodLabel}) — ${customerName}`,
+          sourceType: 'rental_contract',
+          sourceId: contract.id,
+          lines: entryLines,
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const invoice: RentalInvoice = {
+          id: invId,
+          invoiceNumber,
+          contractId: contract.id,
+          equipmentId: contract.equipmentId,
+          customerId: contract.customerId,
+          customerName,
+          periodLabel,
+          date: now.slice(0, 10),
+          dueDate: args.dueDate,
+          qty,
+          unitRateMinor,
+          netMinor,
+          vatPercent,
+          vatMinor,
+          totalMinor,
+          payment,
+          paidNowMinor,
+          treasury,
+          journalEntryId: entryId,
+          notes: args.notes,
+        }
+        set({
+          rentalInvoices: [...state.rentalInvoices, invoice],
+          journal: [...state.journal, entry],
+        })
+        return invoice
       },
       closeRental: (contractId, deductMinor, usage, treasury = '1101') => {
         const state = get()
@@ -9180,16 +9363,24 @@ export const useDataStore = create<DataState>()(
         if (!eq) throw new Error('المعدة غير موجودة')
         if (!(args.amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
         const treasury = args.treasury ?? '1101'
+        const contract = args.contractId != null ? state.rentalContracts.find((c) => c.id === args.contractId) : null
+        const costLayer: EquipmentCostLayer = args.costLayer ?? (args.kind === 'operator' ? 'driver' : 'direct')
+        const borneBy: ExpenseBearer = args.borneBy ?? 'owner'
+        const customerId = borneBy === 'customer' ? (contract?.customerId ?? null) : null
+        if (borneBy === 'customer' && customerId == null) {
+          throw new Error('تحميل المصروف على المستأجر يتطلب ربط المصروف بعقد لعميل مسجل')
+        }
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const costId = nextId(state.equipmentCosts)
         const label = EQUIPMENT_COST_LABELS[args.kind]
+        const debitAccount = borneBy === 'customer' ? '1104' : '5105'
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `${label} — ${eq.nameAr}${args.description ? ` (${args.description})` : ''}`,
+          description: `${label} — ${eq.nameAr}${contract ? ` (عقد ${contract.contractNumber})` : ''}${borneBy === 'customer' ? ' [محمّل على المستأجر]' : ''}${args.description ? ` (${args.description})` : ''}`,
           sourceType: 'equipment_cost', sourceId: costId,
           lines: [
-            { accountCode: '5105', debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}` },
+            { accountCode: debitAccount, debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}${borneBy === 'customer' ? ' — على المستأجر' : ''}` },
             { accountCode: treasury, debit: 0, credit: args.amountMinor, note: 'دفع مصروف تشغيل' },
           ],
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -9197,6 +9388,11 @@ export const useDataStore = create<DataState>()(
         const cost: EquipmentCost = {
           id: costId, equipmentId: args.equipmentId, date: now.slice(0, 10), kind: args.kind,
           amountMinor: args.amountMinor, description: args.description ?? '', treasury, journalEntryId: entryId,
+          contractId: args.contractId ?? null,
+          customerId,
+          costLayer,
+          borneBy,
+          driverEmployeeId: args.driverEmployeeId ?? contract?.driverEmployeeId ?? eq.driverEmployeeId ?? null,
         }
         set({ equipmentCosts: [...state.equipmentCosts, cost], journal: [...state.journal, entry] })
         return cost
@@ -9207,15 +9403,35 @@ export const useDataStore = create<DataState>()(
         let rent = 0, extra = 0, contractHours = 0
         for (const c of state.rentalContracts) {
           if (c.equipmentId !== equipmentId) continue
-          rent += c.totals.rentMinor
+          if (c.billingMode === 'reference') {
+            const invRent = state.rentalInvoices
+              .filter((inv) => inv.contractId === c.id)
+              .reduce((sum, inv) => sum + inv.netMinor, 0)
+            rent += invRent - (c.refundedMinor ?? 0)
+          } else {
+            rent += c.totals.rentMinor - (c.refundedMinor ?? 0)
+          }
           extra += c.extraMinor
           if (c.rateType === 'hourly' && c.startReading != null && c.endReading != null && c.endReading > c.startReading) {
             contractHours += usageHours(c.startReading, c.endReading)
           }
         }
-        const costs = state.equipmentCosts.filter((c) => c.equipmentId === equipmentId).reduce((s2, c) => s2 + c.amountMinor, 0)
+        const eqCosts = state.equipmentCosts.filter((c) => c.equipmentId === equipmentId)
+        const ownerCosts = eqCosts.filter((c) => c.borneBy !== 'customer')
+        const customerBorneCostsMinor = eqCosts.filter((c) => c.borneBy === 'customer').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const directCostsMinor = ownerCosts.filter((c) => (c.costLayer ?? (c.kind === 'operator' ? 'driver' : 'direct')) === 'direct').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const driverCostsMinor = ownerCosts.filter((c) => (c.costLayer ?? (c.kind === 'operator' ? 'driver' : 'direct')) === 'driver').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const indirectCostsMinor = ownerCosts.filter((c) => c.costLayer === 'indirect').reduce((s2, c) => s2 + c.amountMinor, 0)
+        const costs = ownerCosts.reduce((s2, c) => s2 + c.amountMinor, 0)
         const sh = shiftsSummary(state.operatorShifts, equipmentId)
-        return equipmentProfitability({ rentMinor: rent, extraMinor: extra, costsMinor: costs, contractHours, shiftHours: sh.totalHours })
+        const base = equipmentProfitability({ rentMinor: rent, extraMinor: extra, costsMinor: costs, contractHours, shiftHours: sh.totalHours })
+        return {
+          ...base,
+          directCostsMinor,
+          indirectCostsMinor,
+          driverCostsMinor,
+          customerBorneCostsMinor,
+        }
       },
 
       /* ─── معامل التحاليل (القرار 26) ─── */
@@ -9830,7 +10046,16 @@ export const useDataStore = create<DataState>()(
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
         if (args.extractLines && args.extractLines.length > 0) {
-          const projBoq = state.boqItems.filter((b) => b.projectId === project.id)
+          const priorExtracts = state.projectExtracts.filter((e) => e.projectId === project.id)
+          const projBoq = state.boqItems
+            .filter((b) => b.projectId === project.id)
+            .map((b) => {
+              const billedPct = priorExtracts.reduce((max, ex) => {
+                const l = ex.lines?.find((x) => x.boqItemId === b.id)
+                return l && l.newProgressPercent > max ? l.newProgressPercent : max
+              }, 0)
+              return { ...b, progressPercent: billedPct }
+            })
           const r = computeExtractLines(args.extractLines, projBoq)
           extractLinesComputed = r.computed
           gross = r.grossMinor
@@ -11175,6 +11400,8 @@ export const useDataStore = create<DataState>()(
           clinicCollections: state.clinicCollections,
           linkedPatientIds: state.clinicPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
           rentals: state.rentalContracts,
+          rentalInvoices: state.rentalInvoices,
+          customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
           trips: state.trips,
           tickets: state.tickets,
           walletOps: state.walletOps,
@@ -13877,6 +14104,7 @@ export const useDataStore = create<DataState>()(
             extraMinor: c.extraMinor ?? 0,
             extraEntryId: c.extraEntryId ?? null,
           })),
+          rentalInvoices: s.rentalInvoices ?? [],
           operatorShifts: s.operatorShifts ?? [],
           // الإصدار 10 (أوامر التعديل): ربط إداري بالعملاء وبنود موسعة ومستندات جديدة
           projects: (s.projects ?? []).map((x) => ({ ...x, clientId: x.clientId ?? null })),

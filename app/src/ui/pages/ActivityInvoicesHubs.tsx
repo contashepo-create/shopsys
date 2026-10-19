@@ -58,7 +58,7 @@ const HUBS: Record<'logistics' | 'rental' | 'realestate', HubConfig> = {
 
 function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   const cfg = HUBS[activity]
-  const { sales, customers } = useDataStore()
+  const { sales, customers, rentalInvoices, rentalContracts } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const Icon = cfg.icon
@@ -193,6 +193,44 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-[12px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
         <b>دليل الصفحة:</b> {cfg.guideAr}
       </div>
+
+      {activity === 'rental' && rentalInvoices.length > 0 && (
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden" data-rental-periodic-invoices-hub>
+          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Tractor size={16} className="text-teal-600" />
+              <b className="text-[13px]">الفواتير الدورية / الشهرية الصادرة على عقود الإيجار ({rentalInvoices.length})</b>
+            </div>
+            <span className="text-[11px] text-slate-400">مقيدة في ملفات العقود وكشوف حسابات العملاء (1104)</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]">
+              <thead className="bg-teal-500/10 text-teal-700 dark:text-teal-300">
+                <tr>{['الفاتورة', 'العقد المرجعي', 'الفترة', 'العميل', 'الصافي', 'الضريبة', 'الإجمالي', 'المتبقي على العميل'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {[...rentalInvoices].reverse().map((inv) => {
+                  const contract = rentalContracts.find((c) => c.id === inv.contractId)
+                  const paid = inv.payment === 'cash' ? inv.totalMinor : inv.paidNowMinor
+                  const remain = Math.max(0, inv.totalMinor - paid)
+                  return (
+                    <tr key={inv.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-3 py-2 font-bold text-teal-600">{inv.invoiceNumber}</td>
+                      <td className="px-3 py-2 font-bold">{contract?.contractNumber ?? `#${inv.contractId}`}</td>
+                      <td className="px-3 py-2">{inv.periodLabel} <span className="text-[10px] text-slate-400">({inv.date})</span></td>
+                      <td className="px-3 py-2">{inv.customerName}</td>
+                      <td className="px-3 py-2 font-mono">{fmt(inv.netMinor)}</td>
+                      <td className="px-3 py-2 font-mono">{inv.vatMinor > 0 ? `${fmt(inv.vatMinor)} (${inv.vatPercent}٪)` : 'بدون ضريبة'}</td>
+                      <td className="px-3 py-2 font-bold text-emerald-600 font-mono">{fmt(inv.totalMinor)}</td>
+                      <td className={`px-3 py-2 font-bold font-mono ${remain > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{remain > 0 ? fmt(remain) : 'مسددة'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
