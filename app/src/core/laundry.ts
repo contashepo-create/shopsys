@@ -61,6 +61,10 @@ export interface LaundryLine {
   service: LaundryService
   qty: number
   unitPriceMinor: Minor
+  /** سد فجوة عالمية (CleanCloud/Enlite «Weight Scale Support»): غسيل وكي بالوزن
+   * (كجم) لغسيل الجملة — بدلاً من حصر التسعير في القطعة فقط. عند true فـ qty
+   * كجم (يسمح بكسور) وunitPriceMinor سعر الكيلو الواحد. */
+  byWeight?: boolean
 }
 
 export function validateLaundryOrder(args: { lines: LaundryLine[]; prepaidMinor: Minor }): string[] {
@@ -69,7 +73,11 @@ export function validateLaundryOrder(args: { lines: LaundryLine[]; prepaidMinor:
   if (lines.length === 0) errors.push('أضف قطعة واحدة على الأقل')
   for (const l of lines) {
     if (!l.desc.trim()) errors.push('كل قطعة تحتاج وصفاً (قميص، بدلة…)')
-    if (!Number.isInteger(l.qty) || l.qty <= 0) errors.push(`كمية «${l.desc || '؟'}» يجب أن تكون عدداً موجباً`)
+    if (l.byWeight) {
+      if (!(l.qty > 0) || l.qty > 500) errors.push(`وزن «${l.desc || '؟'}» يجب أن يكون بين 0 و500 كجم`)
+    } else if (!Number.isInteger(l.qty) || l.qty <= 0) {
+      errors.push(`كمية «${l.desc || '؟'}» يجب أن تكون عدداً موجباً`)
+    }
     if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) errors.push(`سعر «${l.desc || '؟'}» غير صالح`)
   }
   if (!Number.isInteger(args.prepaidMinor) || args.prepaidMinor < 0) errors.push('العربون لا يكون سالباً')
@@ -78,8 +86,10 @@ export function validateLaundryOrder(args: { lines: LaundryLine[]; prepaidMinor:
   return [...new Set(errors)]
 }
 
+/** الإجمالي بعدد صحيح دوماً (Minor) — تدوير كل بند لتفادي كسور الهللة عند
+ * التسعير بالوزن (كمية كسرية × سعر). */
 export function laundryTotal(lines: LaundryLine[]): Minor {
-  return lines.reduce((a, l) => a + l.unitPriceMinor * l.qty, 0)
+  return lines.reduce((a, l) => a + Math.round(l.unitPriceMinor * l.qty), 0)
 }
 
 /* ─── القيود ─── */
@@ -148,34 +158,69 @@ export function buildLaundryCancelEntry(prepaidMinor: Minor, note: string, treas
   return lines
 }
 
+/* ─── سد الفجوة العالمية (نمط CleanCloud/RepairShopr SMS): إشعار العميل
+   بحالة أمر الغسيل — نفس نمط إشعار الصيانة المطبَّق فعلاً (core/maintenance.ts
+   buildTicketStatusMessage) لكن لم يكن له مقابل في المغسلة رغم أنه ميزة
+   أساسية موثَّقة في كل برامج إدارة المغاسل العالمية («جاهز للاستلام» فوراً). */
+export function buildLaundryStatusMessage(
+  order: { orderNumber: string; customerName: string; status: LaundryStatus; totalMinor: Minor; prepaidMinor: Minor; promisedAt?: string; rackNumber?: string },
+  shopName: string,
+): string {
+  const remaining = order.totalMinor - order.prepaidMinor
+  const remainingTxt = remaining > 0
+    ? ` المتبقي التقريبي ${(remaining / 100).toLocaleString('en-US')} ج.م.`
+    : order.prepaidMinor > 0 ? ' تم سداد كامل القيمة مقدماً.' : ''
+  const rackTxt = order.rackNumber ? ` (رف ${order.rackNumber})` : ''
+  const promisedTxt = order.promisedAt ? ` موعد التسليم المتوقع: ${order.promisedAt}.` : ''
+  const statusLine: Record<LaundryStatus, string> = {
+    received: `استلمنا قطعك لأمر الغسيل ${order.orderNumber}.${promisedTxt} سنبلغك فور الجاهزية.`,
+    processing: `أمر الغسيل ${order.orderNumber} الآن تحت التجهيز.${promisedTxt}`,
+    ready: `✅ أمر الغسيل ${order.orderNumber} جاهز للاستلام${rackTxt}.${remainingTxt} نتشرف بزيارتك.`,
+    delivered: `تم تسليم أمر الغسيل ${order.orderNumber} بالكامل. شكراً لثقتكم بـ${shopName} 🌟`,
+    cancelled: `أُلغي أمر الغسيل ${order.orderNumber}. إن كان ذلك بالخطأ تواصل معنا.`,
+  }
+  return `عميلنا العزيز ${order.customerName}،\n${statusLine[order.status]}\n— ${shopName}`
+}
+
+/** رابط واتساب جاهز برقم العميل ورسالة الحالة — رقم مصري 01xxxxxxxxx أو دولي بلا + */
+export function laundryWhatsappLink(phone: string, message: string): string {
+  const digits = phone.replace(/\D/g, '')
+  const intl = digits.startsWith('0') ? `2${digits}` : digits // مصر: 20 + الرقم بلا الصفر
+  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
+}
+
 /* ─── تقرير ─── */
 
 export interface LaundryReportRow {
   service: LaundryService
   pieces: number
+  /** كجم (التسعير بالوزن) — منفصل عن pieces حتى لا تختلط الوحدتان في التقرير */
+  weightKg: number
   revenueMinor: Minor
 }
 
 export function laundryReport(
   orders: { status: LaundryStatus; lines: LaundryLine[] }[],
-): { rows: LaundryReportRow[]; totalPieces: number; totalRevenueMinor: Minor; openOrders: number } {
-  const map = new Map<LaundryService, { pieces: number; rev: Minor }>()
+): { rows: LaundryReportRow[]; totalPieces: number; totalWeightKg: number; totalRevenueMinor: Minor; openOrders: number } {
+  const map = new Map<LaundryService, { pieces: number; weightKg: number; rev: Minor }>()
   let open = 0
   for (const o of orders) {
     if (o.status === 'cancelled') continue
     if (o.status !== 'delivered') { open++; continue }
     for (const l of o.lines) {
-      const cur = map.get(l.service) ?? { pieces: 0, rev: 0 }
-      cur.pieces += l.qty
-      cur.rev += l.unitPriceMinor * l.qty
+      const cur = map.get(l.service) ?? { pieces: 0, weightKg: 0, rev: 0 }
+      if (l.byWeight) cur.weightKg += l.qty
+      else cur.pieces += l.qty
+      cur.rev += Math.round(l.unitPriceMinor * l.qty)
       map.set(l.service, cur)
     }
   }
-  const rows = [...map.entries()].map(([service, v]) => ({ service, pieces: v.pieces, revenueMinor: v.rev }))
+  const rows = [...map.entries()].map(([service, v]) => ({ service, pieces: v.pieces, weightKg: Math.round(v.weightKg * 100) / 100, revenueMinor: v.rev }))
     .sort((a, b) => b.revenueMinor - a.revenueMinor)
   return {
     rows,
     totalPieces: rows.reduce((a, r) => a + r.pieces, 0),
+    totalWeightKg: Math.round(rows.reduce((a, r) => a + r.weightKg, 0) * 100) / 100,
     totalRevenueMinor: rows.reduce((a, r) => a + r.revenueMinor, 0),
     openOrders: open,
   }

@@ -5,13 +5,14 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * حالات: مستلَم ← جاري التجهيز ← جاهز ← مُسلَّم / ملغي (يرد العربون).
  */
 import { useMemo, useState } from 'react'
-import { Plus, Shirt, TrendingUp, Trash2, Printer, BookOpenText } from 'lucide-react'
+import { Plus, Shirt, TrendingUp, Trash2, Printer, BookOpenText, MessageCircle } from 'lucide-react'
 import { useDataStore, type LaundryOrder } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   LAUNDRY_SERVICE_LABELS, LAUNDRY_STATUS_LABELS, LAUNDRY_TRANSITIONS, laundryTotal, laundryReport,
+  buildLaundryStatusMessage, laundryWhatsappLink,
   type LaundryService, type LaundryStatus,
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -32,10 +33,10 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
   cancelled: 'bg-slate-500/10 text-slate-500',
 }
 
-interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
+interface DraftLine { desc: string; service: LaundryService; qty: string; price: string; byWeight?: boolean }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
+  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack, logLaundryNotificationSent } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -70,7 +71,13 @@ export function LaundryPage() {
   const parsedLines = useMemo(
     () => dLines
       .filter((l) => l.desc.trim())
-      .map((l) => ({ desc: l.desc.trim(), service: l.service, qty: Math.max(1, Math.round(Number(l.qty) || 1)), unitPriceMinor: toM(l.price) })),
+      .map((l) => ({
+        desc: l.desc.trim(), service: l.service,
+        // سد فجوة التسعير بالوزن (نمط CleanCloud Weight Scale): كسور كجم مسموحة، غير ذلك عدد صحيح قطع
+        qty: l.byWeight ? Math.min(500, Math.max(0.01, Math.round((Number(l.qty) || 0) * 100) / 100)) : Math.max(1, Math.round(Number(l.qty) || 1)),
+        unitPriceMinor: toM(l.price),
+        byWeight: l.byWeight || undefined,
+      })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dLines, cur.decimals],
   )
@@ -129,7 +136,7 @@ export function LaundryPage() {
       logoDataUrl: receipt.logoDataUrl,
       settings: reportPrint,
       bodyHtml: `<table><thead><tr><th>القطعة</th><th>الخدمة</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody>
-        ${o.lines.map((l) => `<tr><td>${esc(l.desc)}</td><td>${LAUNDRY_SERVICE_LABELS[l.service].icon} ${LAUNDRY_SERVICE_LABELS[l.service].nameAr}</td><td class="num">${l.qty}</td><td class="num">${fmt(l.unitPriceMinor)}</td><td class="num">${fmt(l.unitPriceMinor * l.qty)}</td></tr>`).join('')}
+        ${o.lines.map((l) => `<tr><td>${esc(l.desc)}</td><td>${LAUNDRY_SERVICE_LABELS[l.service].icon} ${LAUNDRY_SERVICE_LABELS[l.service].nameAr}</td><td class="num">${l.qty}${l.byWeight ? ' كجم' : ''}</td><td class="num">${fmt(l.unitPriceMinor)}${l.byWeight ? '/كجم' : ''}</td><td class="num">${fmt(Math.round(l.unitPriceMinor * l.qty))}</td></tr>`).join('')}
         <tr class="total"><td colspan="4">الإجمالي</td><td class="num">${fmt(o.totalMinor)}</td></tr>
         ${o.prepaidMinor > 0 ? `<tr><td colspan="4">العربون المدفوع</td><td class="num">${fmt(o.prepaidMinor)}</td></tr><tr class="total"><td colspan="4">المتبقي عند الاستلام</td><td class="num">${fmt(o.totalMinor - o.prepaidMinor)}</td></tr>` : ''}
       </tbody></table>`,
@@ -180,7 +187,15 @@ export function LaundryPage() {
                         <div className="text-slate-600 dark:text-slate-300">{o.customerName}</div>
                         {o.phone && <div className="text-[10px] text-slate-400" dir="ltr">{o.phone}</div>}
                       </td>
-                      <td className="px-4 py-3 text-slate-500">{o.lines.reduce((a, l) => a + l.qty, 0)} قطعة{o.rackNumber ? <span className="mr-1 text-[10px] font-bold text-violet-500">📍 {o.rackNumber}</span> : null}</td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {(() => {
+                          const pieces = o.lines.filter((l) => !l.byWeight).reduce((a, l) => a + l.qty, 0)
+                          const weight = o.lines.filter((l) => l.byWeight).reduce((a, l) => a + l.qty, 0)
+                          const parts = [pieces > 0 ? `${pieces} قطعة` : '', weight > 0 ? `${weight} كجم` : ''].filter(Boolean)
+                          return parts.join(' + ') || '—'
+                        })()}
+                        {o.rackNumber ? <span className="mr-1 text-[10px] font-bold text-violet-500">📍 {o.rackNumber}</span> : null}
+                      </td>
                       <td className="px-4 py-3 font-black">{fmt(o.totalMinor)}</td>
                       <td className="px-4 py-3 text-emerald-600">{o.prepaidMinor > 0 ? fmt(o.prepaidMinor) : '—'}</td>
                       <td className={`px-4 py-3 text-[12px] ${overdue ? 'text-rose-500 font-bold' : 'text-slate-500'}`} dir="ltr">{o.promisedAt || '—'}{overdue ? ' ⚠' : ''}</td>
@@ -198,7 +213,11 @@ export function LaundryPage() {
         <div className={`anim-up ${card} overflow-hidden`}>
           <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
             <div className="text-[12px] font-extrabold text-slate-600 dark:text-slate-300">إيراد الأوامر المُسلَّمة حسب الخدمة — {report.openOrders} أمر مفتوح</div>
-            <div className="text-[12px] font-black text-emerald-600">{fmt(report.totalRevenueMinor)} {cur.symbol} · {report.totalPieces} قطعة</div>
+            <div className="text-[12px] font-black text-emerald-600">
+              {fmt(report.totalRevenueMinor)} {cur.symbol}
+              {report.totalPieces > 0 ? ` · ${report.totalPieces} قطعة` : ''}
+              {report.totalWeightKg > 0 ? ` · ${report.totalWeightKg} كجم` : ''}
+            </div>
           </div>
           {report.rows.length === 0 ? (
             <div className="text-center text-slate-400 text-[12px] py-8">لا أوامر مُسلَّمة بعد</div>
@@ -208,7 +227,7 @@ export function LaundryPage() {
                 {report.rows.map((r) => (
                   <tr key={r.service} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-4 py-2.5 font-bold text-slate-700 dark:text-slate-200">{LAUNDRY_SERVICE_LABELS[r.service].icon} {LAUNDRY_SERVICE_LABELS[r.service].nameAr}</td>
-                    <td className="px-4 py-2.5 text-slate-500">{r.pieces} قطعة</td>
+                    <td className="px-4 py-2.5 text-slate-500">{[r.pieces > 0 ? `${r.pieces} قطعة` : '', r.weightKg > 0 ? `${r.weightKg} كجم` : ''].filter(Boolean).join(' + ') || '—'}</td>
                     <td className="px-4 py-2.5 font-black text-emerald-600 text-left">{fmt(r.revenueMinor)}</td>
                   </tr>
                 ))}
@@ -242,19 +261,33 @@ export function LaundryPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="grid grid-cols-[1fr_9rem_4.5rem_6rem_2rem] gap-2 px-3 py-2 text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-slate-900/40">
-              <span>القطعة</span><span>الخدمة</span><span className="text-center">كمية</span><span className="text-center">سعر القطعة</span><span></span>
+            <div className="grid grid-cols-[1fr_9rem_5.5rem_6rem_2rem] gap-2 px-3 py-2 text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-slate-900/40">
+              <span>القطعة</span><span>الخدمة</span><span className="text-center">الكمية</span><span className="text-center">{'سعر الوحدة'}</span><span></span>
             </div>
             {dLines.map((l, i) => (
-              <div key={i} className="grid grid-cols-[1fr_9rem_4.5rem_6rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
-                <input value={l.desc} onChange={(e) => setLine(i, { desc: e.target.value })} className={`${inputCls} py-1.5`} placeholder="قميص، بدلة، سجادة 2×3…" />
+              <div key={i} className="grid grid-cols-[1fr_9rem_5.5rem_6rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
+                <input value={l.desc} onChange={(e) => setLine(i, { desc: e.target.value })} className={`${inputCls} py-1.5`} placeholder="قميص، بدلة، سجادة 2×3… (أو «غسيل بالوزن» لكيس جملة)" />
                 <QuickSelect value={l.service} onChange={(e) => setLine(i, { service: e.target.value as LaundryService })} className={`${inputCls} py-1.5 text-[12px]`}>
                   {(Object.keys(LAUNDRY_SERVICE_LABELS) as LaundryService[]).map((sv) => (
                     <option key={sv} value={sv}>{LAUNDRY_SERVICE_LABELS[sv].icon} {LAUNDRY_SERVICE_LABELS[sv].nameAr}</option>
                   ))}
                 </QuickSelect>
-                <input value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" />
-                <input value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" placeholder="0" />
+                <div className="flex flex-col gap-0.5">
+                  <input
+                    value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })}
+                    type="number" step={l.byWeight ? '0.1' : '1'} min={0}
+                    className={`${inputCls} py-1.5 text-center`} dir="ltr"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setLine(i, { byWeight: !l.byWeight, qty: l.byWeight ? '1' : '1' })}
+                    title="بدّل التسعير بين القطعة والوزن (كجم) — نمط غسيل الجملة بالكيلو"
+                    className={`text-[9px] font-bold rounded-md px-1 py-0.5 transition-colors ${l.byWeight ? 'bg-violet-500/10 text-violet-600' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    {l.byWeight ? '⚖️ بالكجم' : 'بالقطعة ⇄'}
+                  </button>
+                </div>
+                <input value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" placeholder={l.byWeight ? 'سعر الكجم' : '0'} />
                 <button onClick={() => setDLines((ls) => ls.filter((_, j) => j !== i))} disabled={dLines.length <= 1} className="text-slate-300 hover:text-rose-500 disabled:opacity-30 transition-colors justify-self-center">
                   <Trash2 size={14} />
                 </button>
@@ -295,10 +328,31 @@ export function LaundryPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className={`text-[12px] px-3 py-1 rounded-full font-bold ${STATUS_STYLE[viewing.status]}`}>{LAUNDRY_STATUS_LABELS[viewing.status]}</span>
-              <button onClick={() => printTicket(viewing)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5">
-                <Printer size={13} /> طباعة إيصال الاستلام
-              </button>
+              <div className="flex items-center gap-2">
+                {viewing.phone.trim() && (
+                  <button
+                    onClick={() => {
+                      window.open(laundryWhatsappLink(viewing.phone, buildLaundryStatusMessage(viewing, setup.shopName || 'المغسلة')), '_blank', 'noopener')
+                      try { logLaundryNotificationSent(viewing.id, viewing.status) } catch { /* لا يمنع الإرسال */ }
+                    }}
+                    title="إبلاغ العميل بحالة أمر الغسيل عبر واتساب — يُسجَّل في سجل الأمر أنه أُرسل"
+                    className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5"
+                  >
+                    <MessageCircle size={13} /> إبلاغ العميل واتساب
+                  </button>
+                )}
+                <button onClick={() => printTicket(viewing)} className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5">
+                  <Printer size={13} /> طباعة إيصال الاستلام
+                </button>
+              </div>
             </div>
+            {(viewing.notifications ?? []).length > 0 && (
+              <div className="text-[11px] text-slate-400">
+                📨 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
+                  <span key={i}>{i > 0 ? ' · ' : ''}{LAUNDRY_STATUS_LABELS[n.status]} ({n.at.slice(0, 16).replace('T', ' ')})</span>
+                ))}
+              </div>
+            )}
 
             {viewing.status !== 'delivered' && viewing.status !== 'cancelled' && (
               <div className="flex items-center gap-2">
@@ -324,8 +378,8 @@ export function LaundryPage() {
                     <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-3 py-2 font-bold text-slate-700 dark:text-slate-200">{l.desc}</td>
                       <td className="px-3 py-2 text-slate-500">{LAUNDRY_SERVICE_LABELS[l.service].icon} {LAUNDRY_SERVICE_LABELS[l.service].nameAr}</td>
-                      <td className="px-3 py-2 text-slate-500">× {l.qty}</td>
-                      <td className="px-3 py-2 font-bold text-left">{fmt(l.unitPriceMinor * l.qty)}</td>
+                      <td className="px-3 py-2 text-slate-500">× {l.qty}{l.byWeight ? ' كجم' : ''}</td>
+                      <td className="px-3 py-2 font-bold text-left">{fmt(Math.round(l.unitPriceMinor * l.qty))}</td>
                     </tr>
                   ))}
                   <tr className="bg-slate-50 dark:bg-slate-900/40">

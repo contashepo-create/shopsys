@@ -860,6 +860,8 @@ export interface LaundryOrder {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: { date: string; amountMinor: number; taxShareMinor: number; mode: 'cash' | 'customer_credit'; reason: string; journalEntryId: number }[]
+  /** سجل إشعارات واتساب المرسلة للعميل بالحالة (نمط logTicketNotificationSent) */
+  notifications?: { status: LaundryStatus; at: string }[]
 }
 
 /** عمولة خارجية مستحقة للمنشأة لدى الغير (طلب المالك — طبيب له عمولة عند مركز أشعة مثلاً) */
@@ -3023,6 +3025,7 @@ interface DataState {
    * لا مخزون يتحرك (خدمة). تراكمي بسقف إجمالي الأمر المُسلَّم.
    */
   refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => LaundryOrder
+  logLaundryNotificationSent: (orderId: number, status: LaundryStatus) => LaundryOrder
   /** مرتجع خدمة صيانة بعد التسليم: يعكس 4102+2102 نسبياً — القطع المركبة لها مرتجع بيع مستقل إن أعيدت */
   refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; returnParts?: { itemId: number; qty: number }[]; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => MaintenanceTicket
   /** مرتجع نقلة (خصم/تعويض للعميل بعد الترحيل): يعكس 4102+2102 نسبياً — مصاريف النقلة تبقى (تكبدناها فعلاً) */
@@ -14045,6 +14048,15 @@ export const useDataStore = create<DataState>()(
         if (status === 'delivered') throw new Error('التسليم من زر «تسليم وتحصيل» — يولّد قيد الإيراد')
         if (status === 'cancelled') throw new Error('الإلغاء من زر الإلغاء — يرد العربون إن وُجد')
         const updated: LaundryOrder = { ...order, status, statusHistory: [...order.statusHistory, { status, at: new Date().toISOString() }] }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === orderId ? updated : o)) })
+        return updated
+      },
+
+      logLaundryNotificationSent: (orderId, status) => {
+        const state = get()
+        const order = state.laundryOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        const updated: LaundryOrder = { ...order, notifications: [...(order.notifications ?? []), { status, at: new Date().toISOString() }] }
         set({ laundryOrders: state.laundryOrders.map((o) => (o.id === orderId ? updated : o)) })
         return updated
       },
