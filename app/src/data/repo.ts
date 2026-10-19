@@ -6278,19 +6278,30 @@ export const useDataStore = create<DataState>()(
         let partyUnallocatedMinor: number | undefined
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && args.partyId != null) {
           const rawOpen = get().getOpenClientInvoices(args.partyId)
-          // عند ربط السند بمشروع محدد (وبدون تخصيص يدوي)، نُعطي الأولوية لمستخلصات وفواتير هذا المشروع بالأقدم أولاً ثم بقية مستندات العميل
-          const openInvoices = !args.allocations && args.projectId != null
-            ? (() => {
-                const projExtractIds = new Set(state.projectExtracts.filter((ex) => ex.projectId === args.projectId).map((ex) => `extract:${ex.id}`))
-                const projSaleIds = new Set(state.sales.filter((s) => s.projectId === args.projectId).map((s) => `sale:${s.id}`))
-                const inProj = rawOpen.filter((inv) => projExtractIds.has(inv.docKey) || projSaleIds.has(inv.docKey))
-                const rest = rawOpen.filter((inv) => !projExtractIds.has(inv.docKey) && !projSaleIds.has(inv.docKey))
-                return [...inProj, ...rest]
-              })()
-            : rawOpen
-          const result = args.allocations ? validatePaymentAllocations(args.amountMinor, rawOpen, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
-          partyAllocations = result.allocations
-          partyUnallocatedMinor = result.unallocatedMinor
+          if (args.allocations) {
+            const result = validatePaymentAllocations(args.amountMinor, rawOpen, args.allocations)
+            partyAllocations = result.allocations
+            partyUnallocatedMinor = result.unallocatedMinor
+          } else if (args.projectId != null) {
+            // عند ربط السند بمشروع محدد (وبدون تخصيص يدوي)، نُعطي الأولوية لمستخلصات وفواتير هذا المشروع بالأقدم أولاً ثم بقية مستندات العميل
+            const projExtractIds = new Set(state.projectExtracts.filter((ex) => ex.projectId === args.projectId).map((ex) => `extract:${ex.id}`))
+            const projSaleIds = new Set(state.sales.filter((s) => s.projectId === args.projectId).map((s) => `sale:${s.id}`))
+            const inProj = rawOpen.filter((inv) => projExtractIds.has(inv.docKey) || projSaleIds.has(inv.docKey))
+            const rest = rawOpen.filter((inv) => !projExtractIds.has(inv.docKey) && !projSaleIds.has(inv.docKey))
+            const firstPass = allocateClientPayment(args.amountMinor, inProj)
+            if (firstPass.unallocatedMinor > 0 && rest.length > 0) {
+              const secondPass = allocateClientPayment(firstPass.unallocatedMinor, rest)
+              partyAllocations = [...firstPass.allocations, ...secondPass.allocations]
+              partyUnallocatedMinor = secondPass.unallocatedMinor
+            } else {
+              partyAllocations = firstPass.allocations
+              partyUnallocatedMinor = firstPass.unallocatedMinor
+            }
+          } else {
+            const result = allocateClientPayment(args.amountMinor, rawOpen)
+            partyAllocations = result.allocations
+            partyUnallocatedMinor = result.unallocatedMinor
+          }
         } else if (args.kind === 'payment' && args.counterAccountCode === '2101' && args.partyId != null) {
           const openInvoices = get().getOpenSupplierInvoices(args.partyId)
           const result = args.allocations ? validatePaymentAllocations(args.amountMinor, openInvoices, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
