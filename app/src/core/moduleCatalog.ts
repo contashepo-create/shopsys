@@ -60,6 +60,7 @@ export const MODULE_REPORT_LINKS: Record<BusinessModule, ModuleReportCenter> = {
   ] },
   logistics: { labelAr: 'اللوجستيات', links: [
     { path: '/logistics/trips', labelAr: 'ربحية كل نقلة' },
+    { path: '/logistics/expenses', labelAr: 'مصاريف النقلات' },
     { path: '/logistics/fleet', labelAr: 'الأسطول والسائقون' },
     { path: '/logistics/invoices', labelAr: 'فواتير النقل' },
   ] },
@@ -72,7 +73,7 @@ export const MODULE_REPORT_LINKS: Record<BusinessModule, ModuleReportCenter> = {
     { path: '/contracting/reports', labelAr: 'مركز تقارير المقاولات' },
     { path: '/contracting/evm', labelAr: 'القيمة المكتسبة (EVM)' },
     { path: '/contracting/budget', labelAr: 'الموازنة مقابل الفعلي' },
-    { path: '/contracting/collections', labelAr: 'التحصيلات والمحتجزات' },
+    { path: '/accounting/vouchers', labelAr: 'سندات القبض وتحصيلات المشاريع' },
   ] },
   clinic: { labelAr: 'العيادة', links: [
     { path: '/clinic/appointments', labelAr: 'مواعيد اليوم' },

@@ -54,7 +54,11 @@ import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryA
 import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
-import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
+import {
+  validateTrip, computeTripTotals, buildTripEntry, buildDriverCommissionEntry, buildDriverSettlementEntry,
+  buildStandaloneTripExpenseEntry,
+  type TripInput, type TripTotals, type TripServiceLine, type TripExpenseRecord, type TripExpenseBearer, type TripExpensePaymentSource,
+} from '../core/logistics.ts'
 import {
   validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry,
   buildReferenceDepositEntry, buildRentalInvoiceEntry, DEFAULT_RENTAL_RESPONSIBILITY,
@@ -256,6 +260,8 @@ export interface Trip {
   paidMinor?: number
   vatPercent: number
   containerNumbers: string[]
+  /** بنود خدمات النقل (أصناف خدمية من المخزن) */
+  lines?: TripServiceLine[]
   expenses: { nameAr: string; qty: number; unitAmountMinor: number; source: 'cash' | 'customer' | 'credit' | 'custody'; amountMinor: number }[]
   /** ملف العهدة الذي صُرفت منه مصاريف source='custody' (إن وجدت) */
   custodyFileId?: number | null
@@ -266,6 +272,7 @@ export interface Trip {
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
   notes: string
+  updatedAt?: string
 }
 
 /** استحقاق عمولة سائق عن رحلة — يتجمع حتى التسوية */
@@ -1256,7 +1263,7 @@ export interface EmployeeAdvance {
  */
 export interface DocumentFile {
   id: number
-  documentKind: 'sale' | 'purchase'
+  documentKind: 'sale' | 'purchase' | 'trip'
   documentId: number
   name: string
   mime: string // image/jpeg | application/pdf
@@ -1431,6 +1438,7 @@ interface DataState {
   /** دفتر تكاليف/تحميلات مركبات الأسطول (منفصل عن سيارات المعرض) */
   vehicleCostEntries: VehicleCostCenterEntry[]
   trips: Trip[]
+  tripExpenses: TripExpenseRecord[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
   rentalInvoices: RentalInvoice[]
@@ -2248,6 +2256,31 @@ interface DataState {
     /** تحصيل بطاقة للنقلة (كامل أو جزئي) يُحفظ مع المستند والقيد. */
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => Trip
+  /** تعديل نقلة مسجلة مع عكس القيد القديم وإعادة بناء القيد الجديد */
+  updateTrip: (args: {
+    tripId: number
+    customerId: number | null
+    vehicleId: number | null
+    driverId: number | null
+    input: TripInput
+    notes: string
+    treasury?: string
+    paidMinor?: number
+    driverCommissionMinor?: number
+    creditLimitOverrideBy?: string | null
+  }) => Trip
+  /** تسجيل مصروف نقلة مستقل من قسم «مصاريف النقلات» (داخلي على الشركة 5106 أو محمّل على العميل 1104) */
+  addTripExpense: (args: {
+    tripId: number
+    nameAr: string
+    qty?: number
+    unitAmountMinor: number
+    bearer: TripExpenseBearer
+    paymentSource: TripExpensePaymentSource
+    treasury?: string
+    custodyFileId?: number | null
+    notes?: string
+  }) => TripExpenseRecord
   /** إجمالي غير المسوى لسائق */
   getDriverDueBalance: (driverId: number) => number
   /** تسوية كل مستحقات سائق دفعة واحدة من خزينة/بنك */
@@ -3549,6 +3582,7 @@ export const useDataStore = create<DataState>()(
       vehicles: [],
       vehicleCostEntries: [],
       trips: [],
+      tripExpenses: [],
       equipment: [],
       rentalContracts: [],
       rentalInvoices: [],
@@ -6243,8 +6277,18 @@ export const useDataStore = create<DataState>()(
         let partyAllocations: FifoAllocation[] | undefined
         let partyUnallocatedMinor: number | undefined
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && args.partyId != null) {
-          const openInvoices = get().getOpenClientInvoices(args.partyId)
-          const result = args.allocations ? validatePaymentAllocations(args.amountMinor, openInvoices, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
+          const rawOpen = get().getOpenClientInvoices(args.partyId)
+          // عند ربط السند بمشروع محدد (وبدون تخصيص يدوي)، نُعطي الأولوية لمستخلصات وفواتير هذا المشروع بالأقدم أولاً ثم بقية مستندات العميل
+          const openInvoices = !args.allocations && args.projectId != null
+            ? (() => {
+                const projExtractIds = new Set(state.projectExtracts.filter((ex) => ex.projectId === args.projectId).map((ex) => `extract:${ex.id}`))
+                const projSaleIds = new Set(state.sales.filter((s) => s.projectId === args.projectId).map((s) => `sale:${s.id}`))
+                const inProj = rawOpen.filter((inv) => projExtractIds.has(inv.docKey) || projSaleIds.has(inv.docKey))
+                const rest = rawOpen.filter((inv) => !projExtractIds.has(inv.docKey) && !projSaleIds.has(inv.docKey))
+                return [...inProj, ...rest]
+              })()
+            : rawOpen
+          const result = args.allocations ? validatePaymentAllocations(args.amountMinor, rawOpen, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
           partyAllocations = result.allocations
           partyUnallocatedMinor = result.unallocatedMinor
         } else if (args.kind === 'payment' && args.counterAccountCode === '2101' && args.partyId != null) {
@@ -8402,6 +8446,7 @@ export const useDataStore = create<DataState>()(
             trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
             rentalInvoices: state.rentalInvoices,
             customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
+            customerTripExpenses: state.tripExpenses.filter((e) => e.bearer === 'customer' && e.customerId != null),
             clinicVisits: state.clinicVisits, clinicCollections: state.clinicCollections,
             linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
             labOrders: state.labOrders, linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
@@ -8691,11 +8736,32 @@ export const useDataStore = create<DataState>()(
         const tripNumber = `TR-${String(tripId).padStart(4, '0')}`
         const entryLines = buildTripEntry(totals, args.input.payment, tripNumber, args.treasury ?? '1101', args.paidMinor)
 
+        const normalizedLines = args.input.lines && args.input.lines.length > 0
+          ? args.input.lines.map((l) => ({
+              itemId: l.itemId ?? null,
+              serviceNameAr: l.serviceNameAr.trim(),
+              fromLoc: l.fromLoc?.trim() ?? '',
+              toLoc: l.toLoc?.trim() ?? '',
+              qty: l.qty,
+              unitPriceMinor: l.unitPriceMinor,
+              containerNumbers: (l.containerNumbers ?? []).map((c) => c.trim()).filter(Boolean),
+            }))
+          : undefined
+        const effFrom = args.input.fromLoc.trim() || normalizedLines?.[0]?.fromLoc || normalizedLines?.[0]?.serviceNameAr || 'خدمة نقل'
+        const effTo = args.input.toLoc.trim() || normalizedLines?.[0]?.toLoc || (normalizedLines && normalizedLines.length > 1 ? `${normalizedLines.length} بنود نقل` : 'مقر العميل')
+        const effQty = normalizedLines ? normalizedLines.reduce((s2, l) => s2 + l.qty, 0) : args.input.qty
+        const effUnitPrice = normalizedLines
+          ? (normalizedLines.length === 1 ? normalizedLines[0].unitPriceMinor : Math.round(totals.baseMinor / Math.max(1, effQty)))
+          : args.input.unitPriceMinor
+        const effContainers = normalizedLines
+          ? normalizedLines.flatMap((l) => l.containerNumbers)
+          : args.input.containerNumbers.filter((c) => c.trim())
+
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `نقلة ${tripNumber} — ${args.input.fromLoc} ← ${args.input.toLoc}${args.notes ? ` — ${args.notes}` : ''}`,
+          description: `نقلة ${tripNumber} — ${effFrom} ← ${effTo}${args.notes ? ` — ${args.notes}` : ''}`,
           sourceType: 'logistics_trip',
           sourceId: tripId,
           lines: entryLines,
@@ -8712,13 +8778,14 @@ export const useDataStore = create<DataState>()(
           customerId: args.customerId,
           vehicleId: args.vehicleId,
           driverId: args.driverId,
-          fromLoc: args.input.fromLoc.trim(),
-          toLoc: args.input.toLoc.trim(),
-          qty: args.input.qty,
-          unitPriceMinor: args.input.unitPriceMinor,
+          fromLoc: effFrom,
+          toLoc: effTo,
+          qty: effQty,
+          unitPriceMinor: effUnitPrice,
           payment: args.input.payment,
           vatPercent: args.input.vatPercent,
-          containerNumbers: args.input.containerNumbers.filter((c) => c.trim()),
+          containerNumbers: effContainers,
+          lines: normalizedLines,
           expenses: args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
           paidMinor: args.paidMinor,
           custodyFileId: custodyTotal > 0 ? (custodyFile?.id ?? null) : null,
@@ -8773,6 +8840,293 @@ export const useDataStore = create<DataState>()(
         }
         set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues, custodyTxs: newCustodyTxs, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return trip
+      },
+      updateTrip: (args) => {
+        const state = get()
+        const existing = state.trips.find((t) => t.id === args.tripId)
+        if (!existing) throw new Error('النقلة غير موجودة')
+        const errors = validateTrip(args.input)
+        if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
+        if (args.input.payment === 'credit' && args.customerId == null) errors.push('النقلة الآجلة تتطلب عميلاً مسجلاً')
+        const totalsProbe = computeTripTotals(args.input)
+        if (args.paidMinor != null) {
+          if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0 || args.paidMinor > totalsProbe.grandMinor) errors.push('المحصَّل الآن بين صفر وإجمالي النقلة')
+          else if (args.paidMinor < totalsProbe.grandMinor && args.customerId == null) errors.push('التحصيل الجزئي يترك ديناً — يتطلب عميلاً مسجلاً')
+        }
+        if (errors.length) throw new Error(errors.join(' — '))
+        {
+          const oldPaid = existing.paidMinor ?? (existing.payment === 'cash' ? existing.totals.grandMinor : 0)
+          const oldDue = existing.customerId === args.customerId ? Math.max(0, existing.totals.grandMinor - oldPaid) : 0
+          const newPaid = args.paidMinor ?? (args.input.payment === 'cash' ? totalsProbe.grandMinor : 0)
+          const newDue = Math.max(0, totalsProbe.grandMinor - newPaid)
+          if (newDue > oldDue) {
+            guardCreditLimit(get(), args.customerId, newDue - oldDue, args.creditLimitOverrideBy)
+          }
+        }
+        const now = new Date().toISOString()
+        let nextJournal = [...state.journal]
+        // 1) عكس القيد القديم للنقلة
+        const oldEntry = nextJournal.find((e) => e.id === existing.journalEntryId)
+        if (oldEntry && !oldEntry.reversedByEntryId) {
+          const revId = nextId(nextJournal)
+          const revEntry: JournalEntry = {
+            id: revId,
+            entryNumber: revId,
+            date: now.slice(0, 10),
+            description: `عكس قيد النقلة ${existing.tripNumber} لتعديل البيانات`,
+            sourceType: 'reversal',
+            sourceId: oldEntry.id,
+            lines: buildReversalLines(oldEntry.lines),
+            createdBy: activeUserName(get()),
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: oldEntry.id,
+          }
+          nextJournal = nextJournal.map((e) => (e.id === oldEntry.id ? { ...e, reversedByEntryId: revId } : e)).concat(revEntry)
+        }
+        // 2) القيد الجديد للنقلة
+        const newEntryId = nextId(nextJournal)
+        const entryLines = buildTripEntry(totalsProbe, args.input.payment, existing.tripNumber, args.treasury ?? '1101', args.paidMinor)
+        const normalizedLines = args.input.lines && args.input.lines.length > 0
+          ? args.input.lines.map((l) => ({
+              itemId: l.itemId ?? null,
+              serviceNameAr: l.serviceNameAr.trim(),
+              fromLoc: l.fromLoc?.trim() ?? '',
+              toLoc: l.toLoc?.trim() ?? '',
+              qty: l.qty,
+              unitPriceMinor: l.unitPriceMinor,
+              containerNumbers: (l.containerNumbers ?? []).map((c) => c.trim()).filter(Boolean),
+            }))
+          : undefined
+        const effFrom = args.input.fromLoc.trim() || normalizedLines?.[0]?.fromLoc || normalizedLines?.[0]?.serviceNameAr || 'خدمة نقل'
+        const effTo = args.input.toLoc.trim() || normalizedLines?.[0]?.toLoc || (normalizedLines && normalizedLines.length > 1 ? `${normalizedLines.length} بنود نقل` : 'مقر العميل')
+        const effQty = normalizedLines ? normalizedLines.reduce((s2, l) => s2 + l.qty, 0) : args.input.qty
+        const effUnitPrice = normalizedLines
+          ? (normalizedLines.length === 1 ? normalizedLines[0].unitPriceMinor : Math.round(totalsProbe.baseMinor / Math.max(1, effQty)))
+          : args.input.unitPriceMinor
+        const effContainers = normalizedLines
+          ? normalizedLines.flatMap((l) => l.containerNumbers)
+          : args.input.containerNumbers.filter((c) => c.trim())
+        const newEntry: JournalEntry = {
+          id: newEntryId,
+          entryNumber: newEntryId,
+          date: existing.date.slice(0, 10),
+          description: `نقلة ${existing.tripNumber} (معدلة) — ${effFrom} ← ${effTo}${args.notes ? ` — ${args.notes}` : ''}`,
+          sourceType: 'logistics_trip',
+          sourceId: existing.id,
+          lines: entryLines,
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        nextJournal.push(newEntry)
+
+        // 3) دمج أي مصاريف نقلات مستقلة مسجلة على هذه النقلة من قسم «مصاريف النقلات» في إجماليات التكلفة والربح
+        const standaloneCompanyCost = state.tripExpenses
+          .filter((x) => x.tripId === existing.id && x.bearer === 'company')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const standaloneCashCost = state.tripExpenses
+          .filter((x) => x.tripId === existing.id && x.bearer === 'company' && x.paymentSource === 'cash')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const standaloneCreditCost = state.tripExpenses
+          .filter((x) => x.tripId === existing.id && x.bearer === 'company' && x.paymentSource === 'credit')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const standaloneCustodyCost = state.tripExpenses
+          .filter((x) => x.tripId === existing.id && x.bearer === 'company' && x.paymentSource === 'custody')
+          .reduce((s2, x) => s2 + x.amountMinor, 0)
+        const mergedTotals: TripTotals = {
+          ...totalsProbe,
+          directCashMinor: totalsProbe.directCashMinor + standaloneCashCost,
+          creditMinor: totalsProbe.creditMinor + standaloneCreditCost,
+          custodyMinor: totalsProbe.custodyMinor + standaloneCustodyCost,
+          costMinor: totalsProbe.costMinor + standaloneCompanyCost,
+          profitMinor: totalsProbe.revenueMinor - (totalsProbe.costMinor + standaloneCompanyCost),
+        }
+
+        const updatedTrip: Trip = {
+          ...existing,
+          customerId: args.customerId,
+          vehicleId: args.vehicleId,
+          driverId: args.driverId,
+          fromLoc: effFrom,
+          toLoc: effTo,
+          qty: effQty,
+          unitPriceMinor: effUnitPrice,
+          payment: args.input.payment,
+          vatPercent: args.input.vatPercent,
+          containerNumbers: effContainers,
+          lines: normalizedLines,
+          expenses: args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
+          paidMinor: args.paidMinor,
+          totals: mergedTotals,
+          journalEntryId: newEntryId,
+          notes: args.notes,
+          updatedAt: now,
+        }
+
+        // تحديث عمولة السائق إن لم تُسوَّ بعد
+        let nextDues = [...state.driverDues]
+        if (args.driverCommissionMinor !== undefined) {
+          const oldDueRow = nextDues.find((d) => d.tripId === existing.id && !d.settled)
+          if (oldDueRow) {
+            const oldCommEntry = nextJournal.find((e) => e.id === oldDueRow.entryId)
+            if (oldCommEntry && !oldCommEntry.reversedByEntryId) {
+              const revCommId = nextId(nextJournal)
+              nextJournal = nextJournal.map((e) => (e.id === oldCommEntry.id ? { ...e, reversedByEntryId: revCommId } : e)).concat({
+                id: revCommId, entryNumber: revCommId, date: now.slice(0, 10),
+                description: `عكس عمولة سائق لتعديل النقلة ${existing.tripNumber}`,
+                sourceType: 'reversal', sourceId: oldCommEntry.id, lines: buildReversalLines(oldCommEntry.lines),
+                createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: oldCommEntry.id,
+              })
+            }
+            nextDues = nextDues.filter((d) => d.id !== oldDueRow.id)
+          }
+          const commission = args.driverCommissionMinor ?? 0
+          if (commission > 0) {
+            if (args.driverId == null) throw new Error('عمولة السائق تتطلب اختيار سائق')
+            const driver = state.employees.find((e) => e.id === args.driverId)
+            const commEntryId = nextId(nextJournal)
+            const commLines = buildDriverCommissionEntry(commission, driver?.nameAr ?? 'سائق', existing.tripNumber)
+            nextJournal.push({
+              id: commEntryId, entryNumber: commEntryId, date: now.slice(0, 10),
+              description: `استحقاق عمولة سائق ${driver?.nameAr ?? ''} — ${existing.tripNumber}`,
+              sourceType: 'driver_settlement', sourceId: existing.id, lines: commLines,
+              createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            })
+            nextDues.push({
+              id: nextId(nextDues), driverId: args.driverId, tripId: existing.id,
+              date: now.slice(0, 10), amountMinor: commission, settled: false, settlementEntryId: null, entryId: commEntryId,
+            })
+          }
+        }
+
+        set({
+          trips: state.trips.map((t) => (t.id === existing.id ? updatedTrip : t)),
+          journal: nextJournal,
+          driverDues: nextDues,
+        })
+        return updatedTrip
+      },
+      addTripExpense: (args) => {
+        const state = get()
+        const trip = state.trips.find((t) => t.id === args.tripId)
+        if (!trip) throw new Error('اختر النقلة المرتبط بها المصروف')
+        if (!args.nameAr.trim()) throw new Error('حدد بيان المصروف')
+        const qty = args.qty != null ? Math.round(args.qty) : 1
+        if (qty <= 0) throw new Error('عدد المصروف يجب أن يكون موجباً')
+        if (!Number.isInteger(args.unitAmountMinor) || args.unitAmountMinor <= 0) throw new Error('قيمة المصروف يجب أن تكون موجبة')
+        const amountMinor = Math.round(args.unitAmountMinor * qty)
+        if (args.bearer === 'customer' && trip.customerId == null) {
+          throw new Error('المصروف المحمّل على العميل يتطلب أن تكون النقلة مربوطة بعميل مسجل')
+        }
+        let custodyFile: CustodyFile | undefined
+        if (args.paymentSource === 'custody') {
+          custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId)
+          if (!custodyFile) throw new Error('اختر ملف العهدة الذي يُصرف منه المصروف')
+          if (custodyFile.status !== 'open') throw new Error('ملف العهدة مغلق')
+          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+          if (amountMinor > remaining) throw new Error(`قيمة المصروف (${amountMinor}) تتجاوز المتبقي في ملف العهدة (${remaining})`)
+        }
+        if (args.bearer === 'customer' && trip.customerId != null) {
+          guardCreditLimit(get(), trip.customerId, amountMinor)
+        }
+        const treasury = args.treasury ?? '1101'
+        const expId = nextId(state.tripExpenses)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const expenseNumber = `TRE-${String(expId).padStart(4, '0')}`
+        const lines = buildStandaloneTripExpenseEntry({
+          amountMinor,
+          bearer: args.bearer,
+          paymentSource: args.paymentSource,
+          treasury,
+          tripNumber: trip.tripNumber,
+          expenseNameAr: args.nameAr.trim(),
+        })
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `مصروف نقلة ${expenseNumber} (${args.bearer === 'customer' ? 'على العميل' : 'داخلي على الشركة'}) — ${args.nameAr.trim()} — ${trip.tripNumber}`,
+          sourceType: 'logistics_trip',
+          sourceId: trip.id,
+          lines,
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const record: TripExpenseRecord = {
+          id: expId,
+          expenseNumber,
+          tripId: trip.id,
+          tripNumber: trip.tripNumber,
+          vehicleId: trip.vehicleId,
+          driverId: trip.driverId,
+          customerId: trip.customerId,
+          date: now.slice(0, 10),
+          nameAr: args.nameAr.trim(),
+          qty,
+          unitAmountMinor: args.unitAmountMinor,
+          amountMinor,
+          bearer: args.bearer,
+          paymentSource: args.paymentSource,
+          treasury,
+          custodyFileId: custodyFile?.id ?? null,
+          journalEntryId: entryId,
+          notes: args.notes?.trim() ?? '',
+        }
+        let nextCustodyTxs = state.custodyTxs
+        if (args.paymentSource === 'custody' && custodyFile) {
+          nextCustodyTxs = [...state.custodyTxs, {
+            id: nextId(state.custodyTxs),
+            fileId: custodyFile.id,
+            type: 'expense' as const,
+            date: now.slice(0, 10),
+            amountMinor,
+            excessMinor: 0,
+            description: `مصروف نقلة ${trip.tripNumber} — ${args.nameAr.trim()}`,
+            treasury: null,
+            projectId: null,
+            purchaseId: null,
+            journalEntryId: entryId,
+          }]
+        }
+        // تحديث مصاريف وإجماليات النقلة (الداخلي يرفع التكلفة ويخفض الربح؛ والمحمّل على العميل يظهر في بنود العميل دون المساس بتكلفة الشركة)
+        const updatedTrips = state.trips.map((t) => {
+          if (t.id !== trip.id) return t
+          if (args.bearer === 'company') {
+            const nextCash = t.totals.directCashMinor + (args.paymentSource === 'cash' ? amountMinor : 0)
+            const nextCredit = t.totals.creditMinor + (args.paymentSource === 'credit' ? amountMinor : 0)
+            const nextCustody = t.totals.custodyMinor + (args.paymentSource === 'custody' ? amountMinor : 0)
+            const nextCost = t.totals.costMinor + amountMinor
+            return {
+              ...t,
+              expenses: [...t.expenses, { nameAr: args.nameAr.trim(), qty, unitAmountMinor: args.unitAmountMinor, source: args.paymentSource, amountMinor }],
+              totals: {
+                ...t.totals,
+                directCashMinor: nextCash,
+                creditMinor: nextCredit,
+                custodyMinor: nextCustody,
+                costMinor: nextCost,
+                profitMinor: t.totals.revenueMinor - nextCost,
+              },
+            }
+          }
+          // مصروف محمّل على العميل: يظهر ضمن مصاريف العميل (source='customer') للطباعة والاسترداد
+          return {
+            ...t,
+            expenses: [...t.expenses, { nameAr: args.nameAr.trim(), qty, unitAmountMinor: args.unitAmountMinor, source: 'customer' as const, amountMinor }],
+          }
+        })
+        set({
+          tripExpenses: [...state.tripExpenses, record],
+          trips: updatedTrips,
+          journal: [...state.journal, entry],
+          custodyTxs: nextCustodyTxs,
+        })
+        return record
       },
       getDriverDueBalance: (driverId) => {
         return get().driverDues.filter((d) => d.driverId === driverId && !d.settled).reduce((s2, d) => s2 + d.amountMinor, 0)
@@ -11402,6 +11756,7 @@ export const useDataStore = create<DataState>()(
           rentals: state.rentalContracts,
           rentalInvoices: state.rentalInvoices,
           customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
+          customerTripExpenses: state.tripExpenses.filter((e) => e.bearer === 'customer' && e.customerId != null),
           trips: state.trips,
           tickets: state.tickets,
           walletOps: state.walletOps,
@@ -14105,6 +14460,7 @@ export const useDataStore = create<DataState>()(
             extraEntryId: c.extraEntryId ?? null,
           })),
           rentalInvoices: s.rentalInvoices ?? [],
+          tripExpenses: s.tripExpenses ?? [],
           operatorShifts: s.operatorShifts ?? [],
           // الإصدار 10 (أوامر التعديل): ربط إداري بالعملاء وبنود موسعة ومستندات جديدة
           projects: (s.projects ?? []).map((x) => ({ ...x, clientId: x.clientId ?? null })),

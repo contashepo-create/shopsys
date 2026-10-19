@@ -76,7 +76,7 @@ import { NasqPage } from './ui/pages/NasqPage.tsx'
 import { StatementsPage } from './ui/pages/StatementsPage.tsx'
 import { LicensePage } from './ui/pages/LicensePage.tsx'
 import { BackupPage } from './ui/pages/BackupPage.tsx'
-import { TripsPage } from './ui/pages/TripsPage.tsx'
+import { TripsPage, TripExpensesPage } from './ui/pages/TripsPage.tsx'
 import { FleetPage } from './ui/pages/FleetPage.tsx'
 import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
@@ -265,6 +265,7 @@ function Shell() {
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
         <Route path="/cars" element={<CarsPage />} />
         <Route path="/logistics/trips" element={<TripsPage />} />
+        <Route path="/logistics/expenses" element={<TripExpensesPage />} />
         <Route path="/logistics/invoices" element={<LogisticsInvoicesPage />} />
         <Route path="/logistics/fleet" element={<FleetPage />} />
         <Route path="/accounting/journal" element={<JournalPage />} />

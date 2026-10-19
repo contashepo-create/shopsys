@@ -280,6 +280,7 @@ export function customerUnitDocs(args: {
   rentals?: readonly { contractNumber: string; date: string; closedAt?: string | null; customerId: number | null; billingMode?: string; payment?: string; vatPercent?: number; extraMinor?: number; totals: { grandMinor: Minor; collectCreditMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   rentalInvoices?: readonly { invoiceNumber: string; periodLabel: string; date: string; customerId?: number | null; payment: string; totalMinor: Minor; paidNowMinor: Minor }[]
   customerEquipmentCosts?: readonly { date: string; description: string; customerId?: number | null; amountMinor: Minor; vatMinor?: Minor }[]
+  customerTripExpenses?: readonly { expenseNumber?: string; tripNumber: string; nameAr: string; date: string; customerId?: number | null; amountMinor: Minor }[]
   /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
   clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor } }[]
   clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor; viaVoucherId?: number | null }[]
@@ -463,6 +464,16 @@ export function customerUnitDocs(args: {
       date: cost.date,
       operationMinor: gross,
       debitMinor: gross,
+      creditMinor: 0,
+    })
+  }
+  for (const exp of args.customerTripExpenses ?? []) {
+    if (exp.customerId !== args.customerId || exp.amountMinor <= 0) continue
+    rows.push({
+      docLabel: `مصروف نقلة ${exp.tripNumber} على العميل — ${exp.nameAr}`,
+      date: exp.date,
+      operationMinor: exp.amountMinor,
+      debitMinor: exp.amountMinor,
       creditMinor: 0,
     })
   }

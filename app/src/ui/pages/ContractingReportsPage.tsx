@@ -668,7 +668,7 @@ export function ContractingReportsPage() {
                         <td className={`px-3 py-2.5 font-black ${row.openMinor > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{row.openMinor > 0 ? fmt(row.openMinor) : '✓ مسددة'}</td>
                         <td className="px-3 py-2.5">{row.openDocs}</td>
                         <td className="px-3 py-2.5 text-left">
-                          <button onClick={() => window.location.hash = `#/contracting/collections`} title="التحصيل من قسم تحصيلات العملاء" className="text-[11px] font-bold text-emerald-600 hover:underline">تحصيل ←</button>
+                          <button onClick={() => window.location.hash = `#/accounting/vouchers`} title="التحصيل من قسم سندات القبض" className="text-[11px] font-bold text-emerald-600 hover:underline">سند قبض ←</button>
                         </td>
                       </tr>
                     ))}

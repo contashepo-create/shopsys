@@ -6,17 +6,18 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  */
 import { useMemo, useState } from 'react'
 import { Plus, Truck, Pencil, Trash2, UserRound, Route } from 'lucide-react'
-import { useDataStore, type Vehicle } from '../../data/repo.ts'
+import { useDataStore, EMPTY_EXTENDED, type Vehicle } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { formatMinor } from '../../core/money.ts'
+import { formatMinor, toMinor } from '../../core/money.ts'
+import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { buildVehicleReport, vehicleReportCategories, type VehicleReportKind } from '../../core/vehicleReports.ts'
 
 const VEHICLE_TYPES = ['تريلا', 'قلاب', 'دينا', 'سطحة', 'براد', 'صهريج', 'أخرى']
 
 export function FleetPage() {
-  const { vehicles, employees, trips, vehicleCostEntries, addVehicle, updateVehicle, removeVehicle } = useDataStore()
+  const { vehicles, employees, trips, vehicleCostEntries, addVehicle, updateVehicle, removeVehicle, addEmployee } = useDataStore()
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -27,7 +28,32 @@ export function FleetPage() {
   const [reportKind, setReportKind] = useState<VehicleReportKind>('all')
   const [reportCategory, setReportCategory] = useState('all')
 
-  const drivers = useMemo(() => employees.filter((e) => e.active), [employees])
+  const drivers = useMemo(
+    () => [...employees.filter((e) => e.active)].sort((a, b) => Number(isDriverEmployee(b)) - Number(isDriverEmployee(a))),
+    [employees],
+  )
+  const [quickDrvOpen, setQuickDrvOpen] = useState(false)
+  const [quickDrvName, setQuickDrvName] = useState('')
+  const [quickDrvPhone, setQuickDrvPhone] = useState('')
+  const [quickDrvSalary, setQuickDrvSalary] = useState('')
+  const saveQuickDriver = () => {
+    if (!quickDrvName.trim()) return
+    addEmployee({
+      ...EMPTY_EXTENDED,
+      nameAr: quickDrvName.trim(),
+      phone: quickDrvPhone.trim(),
+      jobTitle: 'سائق نقل ثقيل',
+      hireDate: new Date().toISOString().slice(0, 10),
+      baseSalaryMinor: quickDrvSalary.trim() ? toMinor(quickDrvSalary, cur.decimals) : 0,
+      allowancesMinor: 0,
+      active: true,
+      notes: 'سُجّل كسائق من شاشة الأسطول',
+    })
+    const newest = useDataStore.getState().employees.at(-1)
+    if (newest) setDriverId(String(newest.id))
+    setQuickDrvName(''); setQuickDrvPhone(''); setQuickDrvSalary(''); setQuickDrvOpen(false)
+    toast.show(`سُجّل السائق «${newest?.nameAr ?? ''}» في الموظفين ورُبط بالمركبة ✅`)
+  }
   const driverName = (id: number | null) => (id == null ? '—' : employees.find((e) => e.id === id)?.nameAr ?? '—')
   const reportCategories = useMemo(() => vehicleReportCategories(vehicleCostEntries), [vehicleCostEntries])
   const reportRows = useMemo(() => buildVehicleReport(vehicles, trips, vehicleCostEntries, {
@@ -174,8 +200,36 @@ export function FleetPage() {
               {VEHICLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </QuickSelect>
           </Field>
-          <Field label="السائق الافتراضي" hint="يُقترح تلقائياً عند تسجيل نقلة بهذه المركبة">
-            <PartyQuickPicker parties={drivers.map((driver) => ({ ...driver, nameAr: driver.jobTitle ? `${driver.nameAr} — ${driver.jobTitle}` : driver.nameAr }))} value={driverId ? Number(driverId) : 0} onChange={(id) => setDriverId(id ? String(id) : '')} cashLabel="بلا سائق افتراضي" label="بحث السائق" cashValue={0} />
+          <Field label="السائق الافتراضي (من الموظفين)" hint="يُربط بالمركبة ويُقترح تلقائياً عند تسجيل فاتورة نقل بها">
+            <div className="space-y-2" data-vehicle-driver-picker>
+              <PartyQuickPicker
+                parties={drivers.map((driver) => ({
+                  ...driver,
+                  nameAr: `${isDriverEmployee(driver) ? '👨‍✈️ ' : ''}${driver.nameAr}${driver.jobTitle ? ` — ${driver.jobTitle}` : ''}`,
+                }))}
+                value={driverId ? Number(driverId) : 0}
+                onChange={(id) => setDriverId(id ? String(id) : '')}
+                cashLabel="بلا سائق افتراضي"
+                label="بحث السائق من الموظفين"
+                cashValue={0}
+              />
+              <button type="button" onClick={() => setQuickDrvOpen((v) => !v)} className="text-[11px] font-bold text-fuchsia-600 hover:underline">
+                {quickDrvOpen ? 'إخفاء نموذج السائق السريع' : '+ تسجيل سائق جديد في الموظفين وربطه بالمركبة'}
+              </button>
+              {quickDrvOpen && (
+                <div className="rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/5 p-2.5 space-y-2">
+                  <div className="text-[11px] font-bold text-fuchsia-700 dark:text-fuchsia-300">تسجيل موظف جديد بمسمى «سائق نقل ثقيل»</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input value={quickDrvName} onChange={(e) => setQuickDrvName(e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="اسم السائق *" />
+                    <input value={quickDrvPhone} onChange={(e) => setQuickDrvPhone(e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="رقم الهاتف" dir="ltr" />
+                    <input value={quickDrvSalary} onChange={(e) => setQuickDrvSalary(e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder={`الراتب (${cur.symbol})`} dir="ltr" inputMode="decimal" />
+                  </div>
+                  <div className="flex justify-end">
+                    <Btn onClick={saveQuickDriver} disabled={!quickDrvName.trim()}>حفظ السائق وربطه</Btn>
+                  </div>
+                </div>
+              )}
+            </div>
           </Field>
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />

@@ -43,6 +43,7 @@ export interface CustomerSpecializedInput {
   rentals?: readonly { id: number; contractNumber: string; date: string; closedAt?: string | null; customerId: number | null; billingMode?: string; payment?: string; vatPercent?: number; extraMinor?: number; totals: { grandMinor: Minor; collectCreditMinor: Minor }; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   rentalInvoices?: readonly { id: number; invoiceNumber: string; periodLabel: string; date: string; customerId?: number | null; payment: string; totalMinor: Minor; paidNowMinor: Minor }[]
   customerEquipmentCosts?: readonly { id: number; date: string; description: string; customerId?: number | null; amountMinor: Minor; vatMinor?: Minor }[]
+  customerTripExpenses?: readonly { id: number; tripNumber: string; nameAr: string; date: string; customerId?: number | null; amountMinor: Minor }[]
   trips?: readonly { id: number; tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor }; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   tickets?: readonly { id: number; ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { grandMinor: Minor; paidMinor: Minor } | null; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   walletOps?: readonly { id: number; opNumber: string; date: string; customerId: number | null; status: string; chargeMinor: Minor; paidMinor: Minor }[]
@@ -123,6 +124,11 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
     push(`trip:${trip.id}`, `نقلة ${trip.tripNumber}`, trip.date, trip.totals.grandMinor - positive(paid) - creditRefunds(trip.refunds))
   }
 
+  for (const exp of input.customerTripExpenses ?? []) {
+    if (exp.customerId !== input.customerId || exp.amountMinor <= 0) continue
+    push(`tripexp:${exp.id}`, `مصروف نقلة ${exp.tripNumber} على العميل — ${exp.nameAr}`, exp.date, positive(exp.amountMinor))
+  }
+
   for (const ticket of input.tickets ?? []) {
     // التذكرة لا تصير ذمة قبل التسليم — إيرادها لم يُعترف به بعد (نفس قاعدة الكشف)
     if (ticket.customerId !== input.customerId || !ticket.deliveredAt || !ticket.totals || ticket.totals.grandMinor <= 0) continue
@@ -199,6 +205,7 @@ export function documentKindLabel(docKey: string): string {
     rentinv: 'فاتورة إيجار دورية',
     eqcost: 'مصروف معدة على المستأجر',
     trip: 'نقل ورحلات',
+    tripexp: 'مصروف نقلة على العميل',
     ticket: 'صيانة',
     wallet: 'محافظ إلكترونية',
     carsale: 'معرض سيارات',
