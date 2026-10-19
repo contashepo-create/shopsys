@@ -31,7 +31,7 @@ import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, ty
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, purchaseExpenseTaxParts, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
-import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
+import { validateProcessing, validateProcessingOutputExpiry, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, validateCategoryRule, resolvePrice, type PriceList, type PriceListEntry, type PriceListCategoryRule } from '../core/priceLists.ts'
 import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
@@ -12164,19 +12164,33 @@ export const useDataStore = create<DataState>()(
         if (args.overheadMinor > 0 && !state.treasuries.some((t) => t.code === treasury)) {
           throw new Error('خزينة مصاريف التجهيز غير موجودة')
         }
+        const now = new Date().toISOString()
+        const orderDate = now.slice(0, 10)
+        // سد فجوة تتبع الصلاحية العالمية (Batch & Lot Traceability — أهم ميزة
+        // مُجمَع عليها في كل برامج الجزارة/التعبئة المتخصصة): أي ناتج يتتبع
+        // الصلاحية يجب أن يدخل بتاريخ انتهاء صحيح، وإلا دخل المخزون بلا دفعة
+        // فتفشل تنبيهات الصلاحية ويضيع التتبع عند أي بلاغ صحي أو سحب منتج.
+        const expiryErrors = validateProcessingOutputExpiry(
+          args.outputs,
+          (id) => !!state.items.find((it) => it.id === id)?.trackExpiry,
+          orderDate,
+          (id) => state.items.find((it) => it.id === id)?.nameAr ?? '؟',
+        )
+        if (expiryErrors.length) throw new Error(expiryErrors[0])
         // تكلفة الخام المستهلك بالمتوسط المرجح لحظة التنفيذ
         const sourceCost = Math.round(source.costMinor * args.sourceQty)
         const totalCost = sourceCost + args.overheadMinor
         const priceOf = (id: number) => state.items.find((it) => it.id === id)?.priceMinor ?? 0
         const outputs = allocateProcessingCost(args.outputs, totalCost, priceOf)
         const lines = buildProcessingEntry(sourceCost, args.overheadMinor, treasury)
-        const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const orderId = nextId(state.processingOrders)
         const prefix = PROCESSING_KIND_LABELS[args.kind].orderPrefix
         const orderNumber = `${prefix}-${String(orderId).padStart(4, '0')}`
+        const lotNumber = args.lotNumber?.trim() || orderNumber
+        if (lotNumber.length > 80) throw new Error('رقم التشغيلة طويل جداً')
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: orderDate,
           description: `${PROCESSING_KIND_LABELS[args.kind].nameAr} ${orderNumber} — ${source.nameAr} (${args.sourceQty})`,
           sourceType: 'processing', sourceId: orderId, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -12187,7 +12201,7 @@ export const useDataStore = create<DataState>()(
           sourceWarehouseId, outputWarehouseId,
           sourceCostMinor: sourceCost, overheadMinor: args.overheadMinor,
           treasury: args.overheadMinor > 0 ? treasury : null,
-          outputs, wasteQty: args.wasteQty ?? 0,
+          outputs, wasteQty: args.wasteQty ?? 0, lotNumber,
           compliance: { ...EMPTY_COMPLIANCE, ...(args.compliance ?? {}) },
           journalEntryId: entryId, notes: args.notes ?? '',
         }
@@ -12198,6 +12212,14 @@ export const useDataStore = create<DataState>()(
         let procBatches = state.batches
         if (source.trackExpiry) {
           procBatches = applyFefo(procBatches, planFefo(procBatches, source.id, args.sourceQty, now, sourceWarehouseId))
+        }
+        // كل ناتج يتتبع الصلاحية يفتح دفعة جديدة بلوط الأمر وتاريخ انتهائه
+        // الخاص — بنفس نمط postProduction تماماً (لا كود مكرر، نفس العقد).
+        for (const out of outputs) {
+          const outItem = state.items.find((it) => it.id === out.itemId)
+          if (outItem?.trackExpiry && out.expiryDate) {
+            procBatches = [...procBatches, { id: nextId(procBatches), itemId: out.itemId, warehouseId: outputWarehouseId, lotNumber, expiryDate: out.expiryDate, qty: out.qty, purchaseId: null, receivedAt: now }]
+          }
         }
         const outMap = new Map(outputs.map((o) => [o.itemId, o]))
         const updatedItems2 = state.items.map((it) => {
@@ -14869,7 +14891,9 @@ export const useDataStore = create<DataState>()(
           dailyWorkers: s.dailyWorkers ?? [],
           dailyWorkRecords: s.dailyWorkRecords ?? [],
           recipes: s.recipes ?? [],
-          processingOrders: s.processingOrders ?? [],
+          // ترقية بيانات قديمة: أوامر تجهيز محفوظة قبل إضافة رقم التشغيلة
+          // تأخذ رقم الأمر نفسه كلوط افتراضي — لا تُفقد ولا تُعرض بلا قيمة.
+          processingOrders: (s.processingOrders ?? []).map((o: ProcessingOrder) => ({ ...o, lotNumber: o.lotNumber ?? o.orderNumber })),
           productionOrders: s.productionOrders ?? [],
           gramPrices: s.gramPrices ?? EMPTY_GRAM_PRICES,
           jewelryProfiles: s.jewelryProfiles ?? [],

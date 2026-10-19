@@ -63,7 +63,9 @@ describe('postProduction — مسار المستودع المباشر', () => {
 
   it('يعمم مخزن الصرف والمخزن المستلم على أوامر التجهيز', () => {
     useDataStore.setState({ transfers: [{ id: 1, transferNumber: 'TR-1', date: '2026-09-24', fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 8 }], status: 'posted', notes: '' }] as never })
-    const order = useDataStore.getState().postProcessing({ kind: 'butcher', sourceItemId: 1, sourceQty: 3, sourceWarehouseId: 2, outputWarehouseId: 1, outputs: [{ itemId: 2, qty: 3 }], overheadMinor: 0 })
-    expect(order).toMatchObject({ sourceWarehouseId: 2, outputWarehouseId: 1 })
+    const order = useDataStore.getState().postProcessing({ kind: 'butcher', sourceItemId: 1, sourceQty: 3, sourceWarehouseId: 2, outputWarehouseId: 1, outputs: [{ itemId: 2, qty: 3, expiryDate: relDays(400) }], overheadMinor: 0 })
+    expect(order).toMatchObject({ sourceWarehouseId: 2, outputWarehouseId: 1, lotNumber: order.orderNumber })
+    // سد فجوة تتبع الصلاحية: الناتج المتتبع (productItem) فتح دفعة بتاريخ انتهائه
+    expect(useDataStore.getState().batches.find((b) => b.itemId === 2)).toMatchObject({ warehouseId: 1, qty: 3, expiryDate: relDays(400), lotNumber: order.orderNumber })
   })
 })

@@ -14,7 +14,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
-  allocateProcessingCost, processingYieldPercent, PROCESSING_KIND_LABELS,
+  allocateProcessingCost, processingYieldPercent, PROCESSING_KIND_LABELS, validateProcessingOutputExpiry,
   type ProcessingKind, type ProcessingOrder,
 } from '../../core/processing.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
@@ -47,8 +47,11 @@ export function ProcessingPage() {
   const [sourceWarehouseId, setSourceWarehouseId] = useState(String(mainWarehouseId))
   const [outputWarehouseId, setOutputWarehouseId] = useState(String(mainWarehouseId))
   const [allowNegativeSource, setAllowNegativeSource] = useState(() => localStorage.getItem('shopsys:manufacturing:allow-negative-stock') === 'true')
-  const [outs, setOuts] = useState<{ itemId: string; qty: string }[]>([{ itemId: '', qty: '' }])
+  const [outs, setOuts] = useState<{ itemId: string; qty: string; expiry: string }[]>([{ itemId: '', qty: '', expiry: '' }])
   const [waste, setWaste] = useState('')
+  /** رقم تشغيلة/لوط مشترك لكل نواتج الأمر — سد فجوة تتبع الصلاحية العالمية
+   * (Batch & Lot Traceability): يُسجَّل تلقائياً كرقم الأمر لو تُرك فارغاً. */
+  const [lotNumber, setLotNumber] = useState('')
   /** مصاريف التشغيل ببنود مسماة (عمالة/كراتين/نقل) — تُجمع في overheadMinor وتفصيلها يُحفظ في الملاحظات */
   const [overheadLines, setOverheadLines] = useState<{ label: string; amount: string }[]>([{ label: '', amount: '' }])
   const [treasury, setTreasury] = useState('1101')
@@ -62,7 +65,7 @@ export function ProcessingPage() {
   const [season, setSeason] = useState('')
 
   const openNew = () => {
-    setSourceId(''); setSourceQty(''); setSourceWarehouseId(String(mainWarehouseId)); setOutputWarehouseId(String(mainWarehouseId)); setOuts([{ itemId: '', qty: '' }]); setWaste('')
+    setSourceId(''); setSourceQty(''); setSourceWarehouseId(String(mainWarehouseId)); setOutputWarehouseId(String(mainWarehouseId)); setOuts([{ itemId: '', qty: '', expiry: '' }]); setWaste(''); setLotNumber('')
     setOverheadLines([{ label: '', amount: '' }]); setTreasury('1101'); setNotes(''); setDocsOpen(false)
     setOrigin(isSA ? 'السعودية' : ''); setFacility(''); setHalal(''); setProdDate(''); setSeason('')
     setOpen(true)
@@ -70,7 +73,7 @@ export function ProcessingPage() {
 
   const source = items.find((it) => String(it.id) === sourceId)
   const sourceAvailable = source && sourceWarehouseId ? warehouseStock.get(Number(sourceWarehouseId))?.get(source.id) ?? 0 : 0
-  const parsedOuts = outs.filter((o) => o.itemId && Number(o.qty) > 0).map((o) => ({ itemId: Number(o.itemId), qty: Number(o.qty) }))
+  const parsedOuts = outs.filter((o) => o.itemId && Number(o.qty) > 0).map((o) => ({ itemId: Number(o.itemId), qty: Number(o.qty), expiryDate: o.expiry || null }))
   const outQtySum = parsedOuts.reduce((a, o) => a + o.qty, 0)
   const srcQtyNum = Number(sourceQty) || 0
   const previewYield = srcQtyNum > 0 ? Math.round((outQtySum / srcQtyNum) * 1000) / 10 : 0
@@ -86,7 +89,13 @@ export function ProcessingPage() {
 
   /** القيمة البيعية المتوقعة لكل النواتج — تقيس جدوى الأمر قبل ترحيله */
   const expectedSalesMinor = parsedOuts.reduce((sum, out) => sum + Math.round((items.find((item) => item.id === out.itemId)?.priceMinor ?? 0) * out.qty), 0)
-  const canPost = !!sourceId && !!sourceWarehouseId && !!outputWarehouseId && srcQtyNum > 0 && parsedOuts.length > 0
+  // تحقق صلاحية النواتج قبل الترحيل — نفس دالة الـ repo بالضبط فلا يفاجأ
+  // المستخدم برسالة خطأ بعد الضغط لم تظهر كتحذير مسبق في الواجهة.
+  const expiryErrors = validateProcessingOutputExpiry(
+    parsedOuts, (id) => !!items.find((it) => it.id === id)?.trackExpiry,
+    new Date().toISOString().slice(0, 10), (id) => items.find((it) => it.id === id)?.nameAr ?? '؟',
+  )
+  const canPost = !!sourceId && !!sourceWarehouseId && !!outputWarehouseId && srcQtyNum > 0 && parsedOuts.length > 0 && expiryErrors.length === 0
 
   const run = () => {
     try {
@@ -94,6 +103,7 @@ export function ProcessingPage() {
         kind, sourceItemId: Number(sourceId), sourceQty: srcQtyNum, sourceWarehouseId: Number(sourceWarehouseId) || null, outputWarehouseId: Number(outputWarehouseId) || null, allowNegativeSource,
         outputs: parsedOuts, overheadMinor, treasury,
         wasteQty: waste ? Number(waste) : 0,
+        lotNumber: lotNumber.trim() || undefined,
         compliance: { originCountry: origin.trim(), facilityNo: facility.trim(), halalCert: halal.trim(), productionDate: prodDate, season: season.trim() },
         notes: [notes.trim(), overheadNote && `تفصيل المصاريف — ${overheadNote}`].filter(Boolean).join(' | '),
       })
@@ -162,12 +172,15 @@ export function ProcessingPage() {
                   const hasDocs = !!(o.compliance.originCountry || o.compliance.halalCert || o.compliance.facilityNo)
                   return (
                     <tr key={o.id} className="border-t border-slate-100 dark:border-slate-800 align-top">
-                      <td className="px-4 py-2 font-black">{o.orderNumber}</td>
+                      <td className="px-4 py-2 font-black">
+                        {o.orderNumber}
+                        <div className="text-[10px] font-normal text-slate-400" title="رقم التشغيلة/اللوط">لوط: {o.lotNumber}</div>
+                      </td>
                       <td className="px-4 py-2">{nameOf(o.sourceItemId)} × {o.sourceQty}</td>
                       <td className="px-4 py-2 text-[12px]">
                         {o.outputs.map((out) => (
                           <div key={out.itemId} className="flex justify-between gap-3">
-                            <span>{nameOf(out.itemId)} × {out.qty}</span>
+                            <span>{nameOf(out.itemId)} × {out.qty}{out.expiryDate && <span className="text-[10px] text-slate-400"> (ص.ا. {out.expiryDate})</span>}</span>
                             <span className="tabular-nums text-slate-400">{fmt(out.allocatedCostMinor)}</span>
                           </div>
                         ))}
@@ -240,7 +253,7 @@ export function ProcessingPage() {
                 <h3 className="flex items-center gap-2 text-sm font-bold text-[#0f2042] dark:text-slate-100"><Boxes size={17} className="text-[#3f5f92]" /> ① الخام المستهلك والمخازن</h3>
                 {source && <span className="rounded bg-[#eff4ff] px-2.5 py-1 text-[10.5px] font-bold text-[#254778] dark:bg-slate-800 dark:text-slate-300">متاح {sourceAvailable} · تكلفة الوحدة {fmt(source.costMinor)}</span>}
               </div>
-              <div className="grid gap-2.5 md:grid-cols-4">
+              <div className="grid gap-2.5 md:grid-cols-5">
                 <Field label={`${L.sourceLabel} *`} hint="ابحث بالاسم أو الباركود ثم Enter">
                   <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => setSourceId(String(id))} placeholder="ابحث عن الخام ثم Enter" />
                 </Field>
@@ -255,6 +268,9 @@ export function ProcessingPage() {
                 </Field>
                 <Field label="مخزن استلام النواتج *">
                   <QuickSelect value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} className={inputCls}>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect>
+                </Field>
+                <Field label="رقم التشغيلة/اللوط" hint="سد فجوة التتبع العالمية — افتراضي رقم الأمر لو تُرك فارغاً">
+                  <input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} className={inputCls} placeholder={`تلقائي (${L.orderPrefix}-####)`} />
                 </Field>
               </div>
               {source && srcQtyNum > sourceAvailable && !allowNegativeSource && (
@@ -274,6 +290,7 @@ export function ProcessingPage() {
                     <tr>
                       <th className="px-3 py-2 text-right font-black">الصنف الناتج</th>
                       <th className="px-2 py-2 font-black">الكمية</th>
+                      <th className="px-2 py-2 font-black">تاريخ الانتهاء</th>
                       <th className="px-2 py-2 font-black">سعر البيع/وحدة</th>
                       <th className="px-2 py-2 font-black">القيمة البيعية</th>
                       <th className="px-2 py-2 font-black">نصيبه من التكلفة</th>
@@ -297,12 +314,17 @@ export function ProcessingPage() {
                               : <ItemQuickPicker items={items.filter((item) => item.isActive && String(item.id) !== sourceId)} onPick={(id) => setOuts(outs.map((row, j) => (j === i ? { ...row, itemId: String(id) } : row)))} placeholder="ابحث عن الناتج ثم Enter" />}
                           </td>
                           <td className="px-2 py-2 text-center"><input value={o.qty} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} inputMode="decimal" placeholder="0" aria-label="كمية الناتج" className="h-9 w-24 rounded-lg border border-[#c5c6cf] bg-transparent px-2 text-center font-mono font-bold outline-none focus:border-[#3f5f92] dark:border-slate-700" /></td>
+                          <td className="px-2 py-2 text-center">
+                            {outItem?.trackExpiry
+                              ? <input type="date" value={o.expiry} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, expiry: e.target.value } : x)))} aria-label="تاريخ انتهاء الناتج" className={`h-9 w-36 rounded-lg border bg-transparent px-2 text-center font-mono text-[11px] outline-none focus:border-[#3f5f92] dark:border-slate-700 ${!o.expiry ? 'border-rose-400' : 'border-[#c5c6cf]'}`} />
+                              : <span className="text-[10px] text-slate-400">لا يُتتبع</span>}
+                          </td>
                           <td className="px-2 py-2 text-center font-mono text-[#45464e] dark:text-slate-300">{outItem ? fmt(outItem.priceMinor) : '—'}</td>
                           <td className="px-2 py-2 text-center font-mono text-[#45464e] dark:text-slate-300">{salesValue ? fmt(salesValue) : '—'}</td>
                           <td className="px-2 py-2 text-center font-mono font-black text-[#0f2042] dark:text-slate-100">{costed ? fmt(costed.allocatedCostMinor) : '—'}</td>
                           <td className="px-2 py-2 text-center font-mono text-[#254778] dark:text-slate-300">{costed ? fmt(costed.unitCostMinor) : '—'}</td>
                           <td className={`px-2 py-2 text-center font-mono font-bold ${margin === null ? 'text-slate-400' : margin >= 0 ? 'text-[#009c6b]' : 'text-rose-600'}`}>{margin === null ? '—' : fmt(margin)}</td>
-                          <td className="px-1 py-2"><button onClick={() => setOuts(outs.length === 1 ? [{ itemId: '', qty: '' }] : outs.filter((_, j) => j !== i))} aria-label="حذف الناتج" className="rounded p-1 text-slate-400 transition hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></td>
+                          <td className="px-1 py-2"><button onClick={() => setOuts(outs.length === 1 ? [{ itemId: '', qty: '', expiry: '' }] : outs.filter((_, j) => j !== i))} aria-label="حذف الناتج" className="rounded p-1 text-slate-400 transition hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></td>
                         </tr>
                       )
                     })}
@@ -311,6 +333,7 @@ export function ProcessingPage() {
                     <tr className="border-t-2 border-[#dce9ff] bg-[#eff4ff] text-[11px] font-black dark:border-slate-700 dark:bg-slate-800/60">
                       <td className="px-3 py-2">الإجمالي ({parsedOuts.length} ناتج)</td>
                       <td className="px-2 py-2 text-center font-mono">{Math.round(outQtySum * 1000) / 1000}</td>
+                      <td className="px-2 py-2" />
                       <td className="px-2 py-2" />
                       <td className="px-2 py-2 text-center font-mono">{fmt(expectedSalesMinor)}</td>
                       <td className="px-2 py-2 text-center font-mono">{fmt(preview ? preview.reduce((a, row) => a + row.allocatedCostMinor, 0) : 0)}</td>
@@ -322,8 +345,9 @@ export function ProcessingPage() {
                 </table>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#dce9ff] px-4 py-2.5 dark:border-slate-800">
-                <Btn variant="soft" onClick={() => setOuts([...outs, { itemId: '', qty: '' }])}><Plus className="h-4 w-4" /> ناتج آخر</Btn>
+                <Btn variant="soft" onClick={() => setOuts([...outs, { itemId: '', qty: '', expiry: '' }])}><Plus className="h-4 w-4" /> ناتج آخر</Btn>
                 {srcQtyNum > 0 && outQtySum > srcQtyNum && <span className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600"><AlertTriangle size={14} /> مجموع النواتج ({outQtySum}) أكبر من الخام ({srcQtyNum}) — راجع الكميات</span>}
+                {expiryErrors.length > 0 && <span className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600"><AlertTriangle size={14} /> {expiryErrors[0]}</span>}
               </div>
             </section>
 

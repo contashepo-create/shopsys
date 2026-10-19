@@ -22,6 +22,7 @@
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
 import type { Minor } from './money.ts'
+import { isValidExpiryDate } from './batches.ts'
 
 /* ─── الأنواع ─── */
 
@@ -32,6 +33,11 @@ export interface ProcessingOutput {
   itemId: number
   /** الكمية الناتجة (كجم عادةً) */
   qty: number
+  /** تاريخ صلاحية هذا الناتج تحديداً — مطلوب لو الصنف يتتبع الصلاحية (سد
+   * فجوة التتبع العالمية: المفروم مدة صلاحيته أقصر من الريش رغم نفس الذبيحة
+   * ونفس يوم التقطيع، فالتاريخ لكل ناتج لا للأمر كله). null/undefined لصنف
+   * لا يتتبع الصلاحية إطلاقاً. */
+  expiryDate?: string | null
 }
 
 export interface ProcessingOutputCosted extends ProcessingOutput {
@@ -79,6 +85,10 @@ export interface ProcessingOrder {
   outputs: ProcessingOutputCosted[]
   /** الفاقد الموثق كمياً (عظم مستبعد/نوى/تالف) — لا يحمل تكلفة */
   wasteQty: number
+  /** رقم التشغيلة/اللوط المشترك لكل نواتج هذا الأمر — سد فجوة تتبع عالمية
+   * (Batch & Lot Traceability): كل النواتج من نفس الذبيحة/المحصول تحمل نفس
+   * الرقم فيُعاد اقتفاؤها لمصدرها الواحد عند أي سحب/بلاغ (افتراضي = رقم الأمر). */
+  lotNumber: string
   compliance: ProcessingCompliance
   journalEntryId: number
   notes: string
@@ -95,9 +105,12 @@ export interface ProcessingInput {
   overheadMinor: Minor
   treasury?: string
   wasteQty?: number
+  /** رقم تشغيلة مخصَّص لكل نواتج الأمر — افتراضي رقم الأمر نفسه لو تُرك فارغاً */
+  lotNumber?: string | null
   compliance?: Partial<ProcessingCompliance>
   notes?: string
 }
+
 
 /* ─── التحقق ─── */
 
@@ -112,6 +125,29 @@ export function validateProcessing(
   if (new Set(ids).size !== ids.length) errors.push('لا يتكرر نفس الصنف الناتج في الأمر الواحد')
   if (!Number.isInteger(input.overheadMinor) || input.overheadMinor < 0) errors.push('مصاريف التجهيز يجب أن تكون صفراً أو أكثر')
   if ((input.wasteQty ?? 0) < 0) errors.push('الفاقد لا يكون سالباً')
+  return errors
+}
+
+/** سد فجوة تتبع الصلاحية (Batch & Lot Traceability — أهم ميزة متفق عليها
+ * بإجماع في كل برامج الجزارة/التعبئة المتخصصة): كل ناتج يتتبع الصلاحية
+ * (عظم فخذ طازج، مفروم…) يجب أن يُدخَل له تاريخ انتهاء صالح لا يسبق تاريخ
+ * التجهيز نفسه — وإلا يدخل المخزون بلا أي دفعة صلاحية فتفشل تنبيهات
+ * «قارب على الانتهاء» وتضيع إمكانية السحب عند بلاغ صحي. */
+export function validateProcessingOutputExpiry(
+  outputs: readonly ProcessingOutput[],
+  trackExpiryOf: (itemId: number) => boolean,
+  orderDate: string,
+  nameOf: (itemId: number) => string = () => 'الناتج',
+): string[] {
+  const errors: string[] = []
+  for (const o of outputs) {
+    if (!trackExpiryOf(o.itemId)) continue
+    if (!o.expiryDate || !isValidExpiryDate(o.expiryDate)) {
+      errors.push(`«${nameOf(o.itemId)}» يتتبع الصلاحية — أدخل تاريخ انتهاء صحيحاً`)
+      continue
+    }
+    if (o.expiryDate < orderDate) errors.push(`تاريخ انتهاء «${nameOf(o.itemId)}» لا يسبق تاريخ أمر التجهيز`)
+  }
   return errors
 }
 
