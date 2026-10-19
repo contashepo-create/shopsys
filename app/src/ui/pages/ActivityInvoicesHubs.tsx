@@ -58,7 +58,7 @@ const HUBS: Record<'logistics' | 'rental' | 'realestate', HubConfig> = {
 
 function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   const cfg = HUBS[activity]
-  const { sales, customers, rentalInvoices, rentalContracts } = useDataStore()
+  const { sales, customers, rentalInvoices, rentalContracts, trips, tripExpenses, vehicles, employees } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const Icon = cfg.icon
@@ -193,6 +193,130 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       <div className="rounded-2xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-[12px] text-emerald-700 dark:text-emerald-300 leading-relaxed">
         <b>دليل الصفحة:</b> {cfg.guideAr}
       </div>
+
+      {activity === 'logistics' && trips.length > 0 && (
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden" data-logistics-trips-invoices-hub>
+          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Route size={16} className="text-fuchsia-600" />
+              <b className="text-[13px]">فواتير النقلات المسجلة ({trips.length})</b>
+            </div>
+            <div className="flex items-center gap-2 text-[11px]">
+              <a href="#/logistics/trips" className="font-bold text-fuchsia-600 hover:underline">إدارة وتعديل النقلات ←</a>
+              <span className="text-slate-300">|</span>
+              <a href="#/logistics/expenses" className="font-bold text-amber-600 hover:underline">قسم مصاريف النقلات ←</a>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]">
+              <thead className="bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300">
+                <tr>{['النقلة', 'التاريخ', 'العميل', 'بنود خدمة النقل / المسار', 'الحاويات', 'الإجمالي للعميل', 'المتبقي', 'طباعة فاتورة للعميل'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {[...trips].reverse().map((t) => {
+                  const cust = t.customerId ? customers.find((c) => c.id === t.customerId) : undefined
+                  const customerStandaloneMinor = tripExpenses
+                    .filter((x) => x.tripId === t.id && x.bearer === 'customer')
+                    .reduce((s, x) => s + x.amountMinor, 0)
+                  const totalForCustomer = t.totals.grandMinor + customerStandaloneMinor
+                  const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)
+                  const remain = Math.max(0, totalForCustomer - paid)
+                  const printTripInvoice = (tpl: 'a4' | 'a5' | 'thermal') => {
+                    const veh = vehicles.find((v) => v.id === t.vehicleId)
+                    const drv = employees.find((e) => e.id === t.driverId)
+                    const tripLines = t.lines && t.lines.length > 0
+                      ? t.lines
+                      : [{
+                          itemId: null,
+                          serviceNameAr: `خدمة نقل: ${t.fromLoc} ← ${t.toLoc}`,
+                          fromLoc: t.fromLoc,
+                          toLoc: t.toLoc,
+                          qty: t.qty,
+                          unitPriceMinor: t.unitPriceMinor,
+                          containerNumbers: t.containerNumbers,
+                        }]
+                    const customerBorneExpenses = t.expenses.filter((e) => e.source === 'customer')
+                    const lines = [
+                      ...tripLines.map((line, idx) => ({
+                        itemId: line.itemId ?? -(idx + 1),
+                        nameAr: line.serviceNameAr || `نقل ${line.fromLoc} ← ${line.toLoc}`,
+                        qty: line.qty,
+                        unitPriceMinor: line.unitPriceMinor,
+                        unitCostMinor: 0,
+                        discountPercent: 0,
+                        soldByWeight: false,
+                        notes: [
+                          line.fromLoc && line.toLoc ? `المسار: ${line.fromLoc} ← ${line.toLoc}` : '',
+                          line.containerNumbers?.length ? `الحاويات: ${line.containerNumbers.join(' ، ')}` : '',
+                        ].filter(Boolean).join(' | ') || undefined,
+                      })),
+                      ...customerBorneExpenses.map((exp, idx) => ({
+                        itemId: -(1000 + idx),
+                        nameAr: `${exp.nameAr} (مصروف على حساب العميل)`,
+                        qty: exp.qty,
+                        unitPriceMinor: exp.unitAmountMinor,
+                        unitCostMinor: 0,
+                        discountPercent: 0,
+                        soldByWeight: false,
+                      })),
+                    ]
+                    const subtotalMinor = t.totals.baseMinor + customerBorneExpenses.reduce((s, e) => s + e.amountMinor, 0)
+                    const extraContext = [
+                      veh ? `المركبة: ${veh.plateNumber}` : '',
+                      drv ? `السائق: ${drv.nameAr}` : '',
+                    ].filter(Boolean).join(' — ')
+                    const model = buildReceiptModel({
+                      invoiceNumber: t.tripNumber,
+                      refCode: t.tripNumber,
+                      dateIso: t.date,
+                      lines,
+                      totals: {
+                        grossMinor: subtotalMinor,
+                        discountMinor: 0,
+                        netMinor: subtotalMinor,
+                        taxBaseMinor: subtotalMinor,
+                        taxMinor: t.totals.vatMinor,
+                        totalMinor: totalForCustomer,
+                        cogsMinor: 0,
+                      },
+                      payment: t.payment,
+                      paidMinor: paid,
+                      operatorName: setup.ownerName || 'المالك',
+                      customerName: cust ? `${cust.nameAr}${extraContext ? ` (${extraContext})` : ''}` : `عميل نقدي${extraContext ? ` (${extraContext})` : ''}`,
+                      taxPercent: t.vatPercent,
+                      taxInclusive: false,
+                      settings: receipt,
+                    })
+                    printModelWithTemplate(model, cur, receipt, tpl)
+                  }
+                  return (
+                    <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
+                      <td className="px-3 py-2 font-bold text-fuchsia-600">{t.tripNumber}</td>
+                      <td className="px-3 py-2 font-mono text-[11.5px]">{t.date.slice(0, 10)}</td>
+                      <td className="px-3 py-2">{cust?.nameAr ?? 'عميل نقدي'}</td>
+                      <td className="px-3 py-2 font-bold">
+                        {t.lines && t.lines.length > 0
+                          ? t.lines.map((l) => `${l.serviceNameAr} (×${l.qty})`).join(' + ')
+                          : `${t.fromLoc} ← ${t.toLoc} (×${t.qty})`}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">{t.containerNumbers.length ? t.containerNumbers.join(', ') : '—'}</td>
+                      <td className="px-3 py-2 font-bold font-mono text-emerald-600">{fmt(totalForCustomer)}</td>
+                      <td className={`px-3 py-2 font-bold font-mono ${remain > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{remain > 0 ? fmt(remain) : 'مسددة'}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => printTripInvoice('a4')} className="px-2 py-1 rounded-md text-[10.5px] font-black bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20">فاتورة A4</button>
+                          <button onClick={() => printTripInvoice('a5')} className="px-2 py-1 rounded-md text-[10.5px] font-black bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20">A5</button>
+                          <button onClick={() => printTripInvoice('thermal')} className="p-1.5 rounded-md text-slate-400 hover:text-fuchsia-600 hover:bg-fuchsia-500/10" title="حراري"><Printer size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {activity === 'rental' && rentalInvoices.length > 0 && (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden" data-rental-periodic-invoices-hub>

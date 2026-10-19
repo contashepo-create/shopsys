@@ -150,7 +150,7 @@ export function TripsPage() {
           unitCostMinor: 0, // لا تكلفة داخلية في فاتورة العميل
           discountPercent: 0,
           soldByWeight: false,
-          note: metaNote || undefined,
+          notes: metaNote || undefined,
         }
       }),
       ...customerBorneExpenses.map((exp, idx) => ({
