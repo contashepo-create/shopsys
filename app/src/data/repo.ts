@@ -8955,6 +8955,16 @@ export const useDataStore = create<DataState>()(
           profitMinor: totalsProbe.revenueMinor - (totalsProbe.costMinor + standaloneCompanyCost),
         }
 
+        const standaloneExpenseLines: Trip['expenses'] = state.tripExpenses
+          .filter((x) => x.tripId === existing.id)
+          .map((x) => ({
+            nameAr: x.nameAr,
+            qty: x.qty,
+            unitAmountMinor: x.unitAmountMinor,
+            source: x.bearer === 'customer' ? ('customer' as const) : x.paymentSource,
+            amountMinor: x.amountMinor,
+          }))
+
         const updatedTrip: Trip = {
           ...existing,
           customerId: args.customerId,
@@ -8968,7 +8978,10 @@ export const useDataStore = create<DataState>()(
           vatPercent: args.input.vatPercent,
           containerNumbers: effContainers,
           lines: normalizedLines,
-          expenses: args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
+          expenses: [
+            ...args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
+            ...standaloneExpenseLines,
+          ],
           paidMinor: args.paidMinor,
           totals: mergedTotals,
           journalEntryId: newEntryId,

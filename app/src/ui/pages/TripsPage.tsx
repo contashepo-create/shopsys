@@ -18,7 +18,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   computeTripTotals, tripProfitReport, EXPENSE_SOURCE_LABELS,
   TRIP_EXPENSE_BEARER_LABELS, TRIP_EXPENSE_PAYMENT_LABELS,
-  type TripServiceLine, type TripExpenseBearer, type TripExpensePaymentSource,
+  type TripServiceLine, type TripExpenseBearer, type TripExpensePaymentSource, type TripExpenseRecord,
 } from '../../core/logistics.ts'
 import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { summarizeCustody } from '../../core/custody.ts'
@@ -413,14 +413,14 @@ export function TripsPage() {
       toLoc: first?.toLoc || (computedLines.length > 1 ? `${computedLines.length} بنود نقل` : 'مقر العميل'),
       qty: totalQty || 1,
       unitPriceMinor: computedLines.length === 1 ? (first?.unitPriceMinor ?? 0) : Math.round(totalBase / Math.max(1, totalQty)),
-      // لا يُسمح بتسجيل مصاريف من داخل فاتورة النقل — تُسجل من قسم «مصاريف النقلات»
-      expenses: editingTrip ? editingTrip.expenses.map((e) => ({ nameAr: e.nameAr, qty: e.qty, unitAmountMinor: e.unitAmountMinor, source: e.source })) : [],
+      // لا يُسمح بتسجيل مصاريف من داخل فاتورة النقل — تُسجل من قسم «مصاريف النقلات» المستقل
+      expenses: [],
       payment,
       vatPercent: withVat ? setup.vatPercent : 0,
       containerNumbers: computedLines.flatMap((l) => l.containerNumbers),
       lines: computedLines,
     }
-  }, [computedLines, editingTrip, payment, withVat, setup.vatPercent])
+  }, [computedLines, payment, withVat, setup.vatPercent])
 
   const draftTotals = useMemo(() => {
     try { return computeTripTotals(draftInput) } catch { return null }
@@ -973,6 +973,9 @@ export function TripsPage() {
                 <Btn variant="ghost" onClick={() => { const t = viewing; setViewing(null); openEdit(t) }}>
                   <span className="flex items-center gap-1.5"><Pencil size={14} /> تعديل النقلة</span>
                 </Btn>
+                <a href={`#/logistics/expenses`} onClick={() => setViewing(null)} className="px-3 py-1.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[12px] font-bold hover:bg-amber-500/20 flex items-center gap-1.5">
+                  <Coins size={13} /> تسجيل مصروف على النقلة
+                </a>
               </div>
               <DocumentAttachmentsBox
                 documentKind="trip"
@@ -1143,7 +1146,7 @@ const QUICK_TRIP_EXPENSE_NAMES = [
 ]
 
 export function TripExpensesPage() {
-  const { trips, tripExpenses, vehicles, employees, customers, custodyFiles, custodyTxs, addTripExpense } = useDataStore()
+  const { trips, tripExpenses, vehicles, employees, customers, custodyFiles, custodyTxs, journal, addTripExpense } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -1157,6 +1160,7 @@ export function TripExpensesPage() {
 
   const [filterTripId, setFilterTripId] = useState('')
   const [filterBearer, setFilterBearer] = useState<'all' | TripExpenseBearer>('all')
+  const [viewingExp, setViewingExp] = useState<TripExpenseRecord | null>(null)
   const [open, setOpen] = useState(false)
   const [tripId, setTripId] = useState('')
   const [bearer, setBearer] = useState<TripExpenseBearer>('company')
@@ -1287,6 +1291,7 @@ export function TripExpensesPage() {
                 <th className="px-4 py-3 text-right font-bold">طريقة الصرف</th>
                 <th className="px-4 py-3 text-right font-bold">المركبة / السائق</th>
                 <th className="px-4 py-3 text-left font-bold">المبلغ</th>
+                <th className="px-4 py-3 text-left font-bold">القيد</th>
               </tr>
             </thead>
             <tbody>
@@ -1303,12 +1308,50 @@ export function TripExpensesPage() {
                   <td className="px-4 py-2.5 text-slate-500 text-[11.5px]">{TRIP_EXPENSE_PAYMENT_LABELS[exp.paymentSource]}</td>
                   <td className="px-4 py-2.5 text-slate-500 text-[11.5px]"><div dir="ltr">{vehName(exp.vehicleId)}</div><div className="text-[10px] text-slate-400">{drvName(exp.driverId)}</div></td>
                   <td className="px-4 py-2.5 text-left font-mono font-black">{fmt(exp.amountMinor)}</td>
+                  <td className="px-4 py-2.5 text-left">
+                    <button onClick={() => setViewingExp(exp)} title="عرض القيد المحاسبي" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10"><Eye size={14} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <Modal open={!!viewingExp} onClose={() => setViewingExp(null)} title={viewingExp ? `قيد مصروف النقلة ${viewingExp.expenseNumber}` : ''}>
+        {viewingExp && (() => {
+          const expEntry = journal.find((e) => e.id === viewingExp.journalEntryId)
+          return (
+            <div className="space-y-3 text-[12.5px]">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 space-y-1">
+                <div><span className="text-slate-400">النقلة: </span><b>{viewingExp.tripNumber}</b> ({custName(viewingExp.customerId)})</div>
+                <div><span className="text-slate-400">البيان: </span><b>{viewingExp.nameAr}</b> ({viewingExp.qty} × {fmt(viewingExp.unitAmountMinor)} = {fmt(viewingExp.amountMinor)} {cur.symbol})</div>
+                <div><span className="text-slate-400">جهة التحمّل: </span><b>{TRIP_EXPENSE_BEARER_LABELS[viewingExp.bearer]}</b></div>
+              </div>
+              {expEntry && (
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">
+                  <div className="px-4 py-2 text-[12px] font-bold text-rose-600 dark:text-rose-400 border-b border-rose-500/10 flex items-center gap-1.5">
+                    <BookOpenText size={13} /> القيد المتولد #{expEntry.entryNumber}
+                  </div>
+                  <table className="w-full text-[12px]">
+                    <tbody>
+                      {expEntry.lines.map((l, i) => (
+                        <tr key={i} className="border-t border-rose-500/5">
+                          <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">
+                            {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
+                          </td>
+                          <td className="px-4 py-1.5 w-28 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
+                          <td className="px-4 py-1.5 w-28 font-bold text-slate-400">{l.credit > 0 ? fmt(l.credit) : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )
+        })()}
+      </Modal>
 
       <Modal open={open} onClose={() => setOpen(false)} title="تسجيل مصروف على فاتورة نقلة" wide subtitle="حدد النقلة وبيان المصروف وهل يُحمّل داخلياً على الشركة أم على حساب العميل">
         <div className="space-y-4">
