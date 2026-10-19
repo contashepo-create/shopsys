@@ -5,7 +5,7 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, ShoppingCart, Truck, Users2, Trash2, FileText } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import type { Project } from '../../core/contracting.ts'
@@ -972,6 +972,8 @@ export function ProjectsPage() {
                       <div className="flex gap-1 justify-end">
                         {p.status === 'active' && (
                           <>
+                            <button onClick={() => navigate(`/contracting/extracts?projectId=${p.id}`)} title="إصدار مستخلص / فاتورة أعمال للعميل" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
+                            <button onClick={() => navigate(`/contracting/expenses?projectId=${p.id}`)} title="تسجيل مصروفات على المشروع" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Hammer className="w-4 h-4" /></button>
                             <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => setCoFor(p)} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
@@ -1488,8 +1490,9 @@ export function ProjectExpensesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const vatEnabled = setup.vatPercent > 0
   const defaultVat = vatEnabled ? setup.vatPercent : 14
+  const [searchParams] = useSearchParams()
 
-  const [filterProjectId, setFilterProjectId] = useState<string>('')
+  const [filterProjectId, setFilterProjectId] = useState<string>(() => searchParams.get('projectId') ?? '')
   const [filterKind, setFilterKind] = useState<string>('')
   const [search, setSearch] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
@@ -2162,8 +2165,9 @@ export function ProjectExtractsPage() {
   const cur = getCountry(setup.countryCode ?? 'EG')!.currency
   const fmt = (m: number) => formatMinor(m, cur, false)
   const vatEnabled = setup.vatPercent > 0
+  const [searchParams] = useSearchParams()
 
-  const [filterProjectId, setFilterProjectId] = useState<string>('')
+  const [filterProjectId, setFilterProjectId] = useState<string>(() => searchParams.get('projectId') ?? '')
   const [search, setSearch] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editingExtractId, setEditingExtractId] = useState<number | null>(null)
