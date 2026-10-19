@@ -9,7 +9,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useMemo, useState } from 'react'
 import { GitBranch, Plus, Trash2, Star, PenLine, BarChart3, Wallet2, Package, ArrowLeftRight, Phone, MapPin, UserCircle2, Layers, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useDataStore } from '../../data/repo.ts'
+import { useRawDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { compareBranches, type Branch } from '../../core/branches.ts'
 import { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS, type BusinessModule } from '../../core/activities.ts'
@@ -24,7 +24,7 @@ export function BranchesPage() {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
     activeBranchId, setActiveBranchId,
     sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
-  } = useDataStore()
+  } = useRawDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
 
@@ -159,6 +159,32 @@ export function BranchesPage() {
           <Btn onClick={openCreate}><Plus size={15} /> فرع جديد</Btn>
         </div>
       </div>
+
+      {branches.length > 0 && (
+        <div className="anim-up rounded-2xl border border-teal-500/25 bg-teal-500/5 p-3.5 flex items-center justify-between flex-wrap gap-3 text-[12px]">
+          <div className="space-y-0.5">
+            <div className="font-bold text-teal-800 dark:text-teal-200 flex items-center gap-1.5">
+              🏢 نظام الشركات والفروع المستقلة بالكامل
+            </div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              عند تفعيل أي فرع يعمل كشركة مستقلة تماماً (عملاؤه، موردوه، موظفوه، أصنافه، مخازنه، خزائنه وبنوكه، فواتيره، أقسامه، وميزانه مستقل عن بقية الفروع). وعند اختيار «كل الفروع (شامل)» ترى المنشأة مجمَّعة.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { setActiveBranchId(null); toast.show('تم التبديل إلى العرض الشامل لكل الفروع والشركات ✓') }}
+              className={`px-3 py-1.5 rounded-xl text-[11.5px] font-bold transition-all ${
+                activeBranchId == null
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              🌐 كل الفروع (عرض شامل)
+            </button>
+          </div>
+        </div>
+      )}
 
       {!branches.length && (
         <div className="anim-up">

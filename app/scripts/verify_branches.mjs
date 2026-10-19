@@ -28,7 +28,7 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
 const st = () => useDataStore.getState()
@@ -200,6 +200,90 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   )
   assert.ok(emptyCustomErrs.some((e) => e.includes('اختر قسماً واحداً على الأقل')))
   ok('تخصيص الأقسام والأنشطة لكل فرع: شامل أو مخصص (مقاولات/لوجستيات) + تبديل الفرع النشط')
+
+  console.log('\n═══ 7) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
+  // تفعيل فرع اللوجستيات كشركة مستقلة
+  st().setActiveBranchId(logisticsBranch.id)
+  let scoped = getBranchScopedDataState(st())
+  assert.equal(scoped.customers.length, 0, 'الشركة/الفرع الجديد يبدأ بلا عملاء من الفرع الرئيسي')
+  assert.equal(scoped.suppliers.length, 0, 'الشركة/الفرع الجديد يبدأ بلا موردين من الفرع الرئيسي')
+  assert.equal(scoped.employees.length, 0, 'الشركة/الفرع الجديد يبدأ بلا موظفين من الفرع الرئيسي')
+  assert.equal(scoped.items.length, 0, 'الشركة/الفرع الجديد يبدأ بلا أصناف من الفرع الرئيسي')
+  assert.equal(scoped.warehouses.length, 1, 'يرى مخزنه الخاص فقط')
+  assert.equal(scoped.warehouses[0].id, logisticsBranch.warehouseId)
+  assert.equal(scoped.treasuries.length, 1, 'يرى خزينته الخاصة فقط')
+  assert.equal(scoped.treasuries[0].code, logisticsBranch.treasuryCode)
+
+  // إضافة عميل ومورد وموظف وبنك وصنف وفاتورة شراء وبيع داخل الفرع الثاني
+  st().addCustomer({ nameAr: 'عميل الشركة الثانية', phone: '01099999999', creditLimitMinor: 0, notes: '', ...EXT })
+  st().addSupplier({ nameAr: 'مورد الشركة الثانية', phone: '01188888888', notes: '', ...EXT })
+  st().addEmployee({ nameAr: 'موظف الشركة الثانية', phone: '01277777777', jobTitle: 'مدير تشغيل', hireDate: '2026-10-01', baseSalaryMinor: 800000, allowancesMinor: 0, active: true, notes: '', ...EXT })
+  const branch2Bank = st().addTreasury('بنك الشركة الثانية', 'bank')
+  st().addItem({ nameAr: 'صنف خاص بالشركة الثانية', barcodes: ['100'], baseUnit: 'قطعة', extraUnits: [], priceMinor: 2000, ...ITEM })
+
+  scoped = getBranchScopedDataState(st())
+  assert.equal(scoped.customers.length, 1)
+  assert.equal(scoped.customers[0].branchId, logisticsBranch.id)
+  assert.equal(scoped.suppliers.length, 1)
+  assert.equal(scoped.suppliers[0].branchId, logisticsBranch.id)
+  assert.equal(scoped.employees.length, 1)
+  assert.equal(scoped.employees[0].branchId, logisticsBranch.id)
+  assert.equal(scoped.treasuries.length, 2, 'خزينة الفرع + البنك المضاف داخله')
+  assert.equal(branch2Bank.branchId, logisticsBranch.id)
+  assert.equal(scoped.items.length, 1, 'صنف الفرع الثاني مستقل حتى بنفس الباركود 100')
+  assert.equal(scoped.items[0].branchId, logisticsBranch.id)
+
+  // شراء وبيع داخل الفرع الثاني يتوجهان تلقائياً لمخزن وخزينة الفرع الثاني
+  const b2SupplierId = scoped.suppliers[0].id
+  const b2CustomerId = scoped.customers[0].id
+  const b2ItemId = scoped.items[0].id
+  const pur2 = st().postPurchase({
+    supplierId: b2SupplierId,
+    date: '2026-10-01',
+    lines: [{ itemId: b2ItemId, qty: 20, unitPriceMinor: 1000 }],
+    expenses: [],
+    paidMinor: 20000,
+    treasury: '1101', // يُوجَّه تلقائياً لخزينة الفرع النشط
+    einvoiceActive: false,
+  })
+  assert.equal(pur2.warehouseId, logisticsBranch.warehouseId)
+  assert.equal(pur2.treasury, logisticsBranch.treasuryCode)
+
+  const sale2 = st().postSale({
+    lines: [{ itemId: b2ItemId, nameAr: 'صنف خاص بالشركة الثانية', qty: 5, unitPriceMinor: 2000, discountPercent: 0, costMinor: 1000 }],
+    customerId: b2CustomerId,
+    payment: 'cash',
+    invoiceDiscountPercent: 0,
+    taxPercent: 0,
+    taxInclusive: true,
+    treasury: '1101', // يُوجَّه تلقائياً لخزينة الفرع النشط
+  })
+  assert.equal(sale2.warehouseId, logisticsBranch.warehouseId)
+  assert.equal(sale2.treasury, logisticsBranch.treasuryCode)
+
+  scoped = getBranchScopedDataState(st())
+  assert.equal(scoped.purchases.length, 1)
+  assert.equal(scoped.sales.length, 1)
+  // ميزان الفرع الثاني وحده متزن 100%
+  const b2Debit = scoped.journal.reduce((s, e) => s + e.lines.reduce((x, l) => x + l.debit, 0), 0)
+  const b2Credit = scoped.journal.reduce((s, e) => s + e.lines.reduce((x, l) => x + l.credit, 0), 0)
+  assert.ok(b2Debit > 0 && b2Debit === b2Credit, 'يومية وميزان الشركة الثانية متزنان ومستقلان تماماً')
+
+  // التبديل للفرع الرئيسي: لا يرى بيانات الشركة الثانية
+  st().setActiveBranchId(hqBranch.id)
+  const hqScoped = getBranchScopedDataState(st())
+  assert.ok(!hqScoped.customers.some((c) => c.id === b2CustomerId), 'الفرع الرئيسي لا يرى عملاء الشركة الثانية')
+  assert.ok(!hqScoped.suppliers.some((s) => s.id === b2SupplierId), 'الفرع الرئيسي لا يرى موردي الشركة الثانية')
+  assert.ok(!hqScoped.items.some((i) => i.id === b2ItemId), 'الفرع الرئيسي لا يرى أصناف الشركة الثانية')
+  assert.ok(!hqScoped.sales.some((s) => s.id === sale2.id), 'الفرع الرئيسي لا يرى مبيعات الشركة الثانية')
+
+  // التبديل للعرض الشامل (كل الفروع): المالك يرى الشركتين معاً
+  st().setActiveBranchId(null)
+  const allScoped = getBranchScopedDataState(st())
+  assert.ok(allScoped.customers.some((c) => c.id === b2CustomerId))
+  assert.ok(allScoped.suppliers.some((s) => s.id === b2SupplierId))
+  assert.equal(allScoped.items.length, 2)
+  ok('عزل كامل لكل فرع كشركة مستقلة: عملاء وموردون وموظفون وأصناف ومخازن وخزائن وبنوك وفواتير ويومية متزنة')
 }
 
 console.log(`\n✅ فحص الفروع الحقيقية: ${pass} محطات — كلها خضراء\n`)

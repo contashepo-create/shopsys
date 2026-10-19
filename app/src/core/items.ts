@@ -14,6 +14,8 @@ export interface Category {
   parentId: number | null
   /** الخصائص المفعّلة لهذا القسم — تصبح الافتراضي لأصنافه، والفرعي يرث من أبيه عند الإنشاء */
   features: ItemFeature[]
+  /** الفرع المالك لهذا التصنيف عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
 }
 
 /** المسار الكامل للقسم: أغذية ← ألبان ← أجبان */
@@ -61,6 +63,10 @@ export interface Item {
   sku: string
   barcodes: string[]
   categoryId: number
+  /** الفرع المالك لهذا الصنف عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
+  /** المخزن الأساسي للصنف (عند إنشائه داخل فرع مستقل) */
+  warehouseId?: number | null
   baseUnit: string // الوحدة الأساسية: قطعة / كجم / علبة
   extraUnits: ItemUnit[] // عند تفعيل multi_unit
   /**

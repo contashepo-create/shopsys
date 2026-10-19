@@ -70,7 +70,11 @@ import { validateDocumentCharges, type DocumentCharge } from '../core/documentCh
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateBooking, bookingConflicts, type Booking, type BookingStatus } from '../core/booking.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
-import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
+import {
+  validateBranch, canRemoveBranch, belongsToBranch, filterByBranch,
+  filterWarehousesByBranch, filterTreasuriesByBranch,
+  type Branch, type BranchInput, type BranchScopedRecord,
+} from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction, type TerminalDocumentType } from '../core/paymentTerminalTransactions.ts'
 import { buildTerminalCharge } from '../core/paymentTerminalCharge.ts'
@@ -145,6 +149,8 @@ export interface Warehouse {
   id: number
   nameAr: string
   isMain: boolean
+  /** الفرع المالك لهذا المخزن عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
 }
 
 /**
@@ -160,6 +166,8 @@ export interface PartyExtended {
   postalCode: string
   buildingNo: string // رقم المبنى (العنوان الوطني السعودي)
   nationalId: string // هوية/إقامة (للأفراد)
+  /** الفرع المالك لهذا الطرف (عميل/مورد/موظف) عند عزل الفروع كشركات مستقلة */
+  branchId?: number | null
 }
 
 export const EMPTY_EXTENDED: PartyExtended = {
@@ -3171,13 +3179,274 @@ function assertTreasuryNotNegative(
   }
 }
 
-export const useDataStore = create<DataState>()(
+/** الفرع الفعال حالياً (فرع الموظف المربوط أو الفرع الذي اختاره المالك) — null = العرض الشامل لكل الفروع */
+export function getEffectiveActiveBranch(state: DataState): Branch | null {
+  const activeUser = state.appUsers.find((u) => u.id === state.currentUserId) ?? null
+  const userBranchId = activeUser?.branchId != null && state.branches.some((b) => b.id === activeUser.branchId && b.active)
+    ? activeUser.branchId
+    : null
+  const effectiveBranchId = userBranchId ?? state.activeBranchId
+  if (effectiveBranchId == null) return null
+  return state.branches.find((b) => b.id === effectiveBranchId && b.active) ?? null
+}
+
+const BRANCH_STAMP_ID_KEYS = [
+  'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
+  'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
+  'vouchers', 'cheques', 'custodyFiles', 'projects', 'boqItems', 'subContracts',
+  'equipment', 'rentalContracts', 'vehicles', 'trips', 'cars', 'consignmentCars',
+  'properties', 'leases', 'clinicPatients', 'clinicVisits', 'clinicAppointments',
+  'labPatients', 'labOrders', 'tickets', 'laundryOrders', 'bookings', 'walletOps',
+  'journal', 'installmentPlans', 'quotations', 'assets',
+] as const
+
+const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
+
+/**
+ * تصفية حالة البيانات حسب الفرع النشط (عندما يعمل كل فرع كشركة مستقلة بعملائها ومخازنها وخزائنها وفواتيرها):
+ * - عندما يكون العرض شاملاً (`activeBranch == null`) تُعاد `state` الأصلية كما هي بلا أي نسخ.
+ * - عندما يُختار فرع محدد، تُعاد نسخة معزولة ومخزنة في `WeakMap` لضمان ثبات المراجع في React 19.
+ */
+export function getBranchScopedDataState(state: DataState): DataState {
+  const activeBranch = getEffectiveActiveBranch(state)
+  if (!activeBranch) return state
+
+  let byBranch = scopedStateCache.get(state)
+  if (!byBranch) {
+    byBranch = new Map<number, DataState>()
+    scopedStateCache.set(state, byBranch)
+  }
+  const cached = byBranch.get(activeBranch.id)
+  if (cached) return cached
+
+  const scopedWarehouses = filterWarehousesByBranch(state.warehouses, activeBranch, state.branches).map((w) =>
+    w.id === activeBranch.warehouseId && !w.isMain ? { ...w, isMain: true } : w,
+  )
+  const scopedWhIds = new Set(scopedWarehouses.map((w) => w.id))
+  const scopedTreasuries = filterTreasuriesByBranch(state.treasuries, activeBranch, state.branches)
+  const scopedTrCodes = new Set(scopedTreasuries.map((t) => t.code))
+  const otherBranchTrCodes = new Set(
+    state.treasuries.filter((t) => !scopedTrCodes.has(t.code)).map((t) => t.code),
+  )
+
+  const inBranch = <T extends object>(rows: readonly T[]): T[] =>
+    filterByBranch(rows, activeBranch, state.branches)
+
+  // الأصناف: أصناف الفرع + أي صنف له تحويل مخزني من/إلى مخزن الفرع
+  const transferredItemIds = new Set<number>()
+  for (const trf of state.transfers) {
+    if (scopedWhIds.has(trf.toWarehouseId) || scopedWhIds.has(trf.fromWarehouseId)) {
+      for (const l of trf.lines) transferredItemIds.add(l.itemId)
+    }
+  }
+  const scopedItems = state.items.filter(
+    (it) => belongsToBranch(it, activeBranch, state.branches) || transferredItemIds.has(it.id),
+  )
+  const scopedItemIds = new Set(scopedItems.map((it) => it.id))
+  const scopedItemCatIds = new Set(scopedItems.map((it) => it.categoryId))
+  const scopedCategories = state.categories.filter(
+    (cat) => belongsToBranch(cat, activeBranch, state.branches) || scopedItemCatIds.has(cat.id),
+  )
+
+  const scopedCustomers = inBranch(state.customers)
+  const scopedCustomerIds = new Set(scopedCustomers.map((c) => c.id))
+  const scopedSuppliers = inBranch(state.suppliers)
+  const scopedSupplierIds = new Set(scopedSuppliers.map((s) => s.id))
+  const scopedEmployees = inBranch(state.employees)
+
+  const scopedSales = state.sales.filter((s) =>
+    belongsToBranch(s, activeBranch, state.branches) ||
+    (s.warehouseId != null && scopedWhIds.has(s.warehouseId)) ||
+    (s.customerId != null && scopedCustomerIds.has(s.customerId)),
+  )
+  const scopedSaleIds = new Set(scopedSales.map((s) => s.id))
+  const scopedSaleReturns = state.saleReturns.filter(
+    (r) => scopedSaleIds.has(r.saleId) || belongsToBranch(r, activeBranch, state.branches),
+  )
+  const scopedSaleReturnIds = new Set(scopedSaleReturns.map((r) => r.id))
+
+  const scopedPurchases = state.purchases.filter((p) =>
+    belongsToBranch(p, activeBranch, state.branches) ||
+    (p.warehouseId != null && scopedWhIds.has(p.warehouseId)) ||
+    (p.supplierId !== 0 && scopedSupplierIds.has(p.supplierId)),
+  )
+  const scopedPurchaseIds = new Set(scopedPurchases.map((p) => p.id))
+  const scopedPurchaseReturns = state.purchaseReturns.filter(
+    (r) => scopedPurchaseIds.has(r.purchaseId) || belongsToBranch(r, activeBranch, state.branches),
+  )
+  const scopedPurchaseReturnIds = new Set(scopedPurchaseReturns.map((r) => r.id))
+  const scopedPurchaseOrders = state.purchaseOrders.filter((po) =>
+    belongsToBranch(po, activeBranch, state.branches) ||
+    (po.warehouseId != null && scopedWhIds.has(po.warehouseId)) ||
+    (po.supplierId != null && scopedSupplierIds.has(po.supplierId)),
+  )
+
+  const scopedVouchers = state.vouchers.filter((v) =>
+    belongsToBranch(v, activeBranch, state.branches) ||
+    scopedTrCodes.has(v.treasury) ||
+    (v.counterAccountCode != null && scopedTrCodes.has(v.counterAccountCode)),
+  )
+  const scopedVoucherIds = new Set(scopedVouchers.map((v) => v.id))
+  const scopedCheques = inBranch(state.cheques)
+  const scopedCustodyFiles = inBranch(state.custodyFiles)
+  const scopedProjects = state.projects.filter(
+    (p) => belongsToBranch(p, activeBranch, state.branches) || (p.clientId != null && scopedCustomerIds.has(p.clientId)),
+  )
+  const scopedProjectIds = new Set(scopedProjects.map((p) => p.id))
+  const scopedBoqItems = state.boqItems.filter(
+    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b as BranchScopedRecord, activeBranch, state.branches),
+  )
+  const scopedSubContracts = state.subContracts.filter(
+    (sc) => scopedProjectIds.has(sc.projectId) || belongsToBranch(sc as BranchScopedRecord, activeBranch, state.branches),
+  )
+  const scopedQuotations = inBranch(state.quotations)
+  const scopedEquipment = inBranch(state.equipment)
+  const scopedEquipmentIds = new Set(scopedEquipment.map((eq) => eq.id))
+  const scopedRentalContracts = state.rentalContracts.filter(
+    (c) => belongsToBranch(c, activeBranch, state.branches) || (c.equipmentId != null && scopedEquipmentIds.has(c.equipmentId)),
+  )
+  const scopedVehicles = inBranch(state.vehicles)
+  const scopedVehicleIds = new Set(scopedVehicles.map((v) => v.id))
+  const scopedTrips = state.trips.filter(
+    (t) => belongsToBranch(t, activeBranch, state.branches) || (t.vehicleId != null && scopedVehicleIds.has(t.vehicleId)),
+  )
+  const scopedCars = inBranch(state.cars)
+  const scopedConsignmentCars = inBranch(state.consignmentCars)
+  const scopedProperties = inBranch(state.properties)
+  const scopedLeases = inBranch(state.leases)
+  const scopedClinicPatients = inBranch(state.clinicPatients)
+  const scopedClinicVisits = inBranch(state.clinicVisits)
+  const scopedClinicAppointments = inBranch(state.clinicAppointments)
+  const scopedLabPatients = inBranch(state.labPatients)
+  const scopedLabOrders = inBranch(state.labOrders)
+  const scopedTickets = inBranch(state.tickets)
+  const scopedLaundryOrders = inBranch(state.laundryOrders)
+  const scopedBookings = inBranch(state.bookings)
+  const scopedWalletOps = inBranch(state.walletOps)
+  const scopedInstallmentPlans = state.installmentPlans.filter(
+    (p) => belongsToBranch(p, activeBranch, state.branches) || (p.saleId != null && scopedSaleIds.has(p.saleId)),
+  )
+  const scopedAssets = inBranch(state.assets)
+  const scopedTerminals = state.paymentTerminals.filter(
+    (t) => !t.branchId || t.branchId === String(activeBranch.id),
+  )
+
+  const scopedEntryIds = new Set<number>()
+  const scopedJournal = state.journal.filter((e) => {
+    const rec = e as BranchScopedRecord
+    let match = false
+    if (rec.branchId != null) {
+      match = rec.branchId === activeBranch.id
+    } else if (e.sourceType === 'sale' && e.sourceId != null) {
+      match = scopedSaleIds.has(e.sourceId)
+    } else if (e.sourceType === 'sale_return' && e.sourceId != null) {
+      match = scopedSaleReturnIds.has(e.sourceId)
+    } else if (e.sourceType === 'purchase' && e.sourceId != null) {
+      match = scopedPurchaseIds.has(e.sourceId)
+    } else if (e.sourceType === 'purchase_return' && e.sourceId != null) {
+      match = scopedPurchaseReturnIds.has(e.sourceId)
+    } else if ((e.sourceType === 'receipt_voucher' || e.sourceType === 'payment_voucher') && e.sourceId != null) {
+      match = scopedVoucherIds.has(e.sourceId)
+    } else if (e.sourceType === 'opening' && e.sourceId != null) {
+      match = scopedItemIds.has(e.sourceId)
+    } else if (e.sourceType === 'reversal' && e.reversesEntryId != null) {
+      match = scopedEntryIds.has(e.reversesEntryId)
+    } else if (e.lines.some((l) => scopedTrCodes.has(l.accountCode))) {
+      match = true
+    } else if (e.lines.some((l) => otherBranchTrCodes.has(l.accountCode))) {
+      match = false
+    } else {
+      match = Boolean(activeBranch.isMain)
+    }
+    if (match) scopedEntryIds.add(e.id)
+    return match
+  })
+
+  const scoped: DataState = {
+    ...state,
+    warehouses: scopedWarehouses,
+    treasuries: scopedTreasuries,
+    customers: scopedCustomers,
+    suppliers: scopedSuppliers,
+    employees: scopedEmployees,
+    items: scopedItems,
+    categories: scopedCategories,
+    sales: scopedSales,
+    saleReturns: scopedSaleReturns,
+    purchases: scopedPurchases,
+    purchaseReturns: scopedPurchaseReturns,
+    purchaseOrders: scopedPurchaseOrders,
+    vouchers: scopedVouchers,
+    cheques: scopedCheques,
+    custodyFiles: scopedCustodyFiles,
+    projects: scopedProjects,
+    boqItems: scopedBoqItems,
+    subContracts: scopedSubContracts,
+    quotations: scopedQuotations,
+    equipment: scopedEquipment,
+    rentalContracts: scopedRentalContracts,
+    vehicles: scopedVehicles,
+    trips: scopedTrips,
+    cars: scopedCars,
+    consignmentCars: scopedConsignmentCars,
+    properties: scopedProperties,
+    leases: scopedLeases,
+    clinicPatients: scopedClinicPatients,
+    clinicVisits: scopedClinicVisits,
+    clinicAppointments: scopedClinicAppointments,
+    labPatients: scopedLabPatients,
+    labOrders: scopedLabOrders,
+    tickets: scopedTickets,
+    laundryOrders: scopedLaundryOrders,
+    bookings: scopedBookings,
+    walletOps: scopedWalletOps,
+    installmentPlans: scopedInstallmentPlans,
+    assets: scopedAssets,
+    paymentTerminals: scopedTerminals,
+    journal: scopedJournal,
+  }
+  byBranch.set(activeBranch.id, scoped)
+  return scoped
+}
+
+export const useRawDataStore = create<DataState>()(
   persist(
     (rawSet, get) => {
       // كل كتابة تمر عبر الحارس أولاً — تُرفض بأكملها لو خالفت شرط الرصيد السالب
       const set = ((partial: unknown, replace?: boolean) => {
         const state = get()
         const patch = typeof partial === 'function' ? (partial as (s: DataState) => Partial<DataState>)(state) : partial as Partial<DataState>
+        // ختم الفرع النشط تلقائياً على أي سجل جديد يُنشأ أثناء تفعيل فرع مستقل
+        const activeBranch = patch ? getEffectiveActiveBranch(state) : null
+        if (activeBranch && patch) {
+          const patchRec = patch as Record<string, unknown>
+          const stateRec = state as unknown as Record<string, unknown>
+          for (const key of BRANCH_STAMP_ID_KEYS) {
+            const nextArr = patchRec[key]
+            const prevArr = stateRec[key]
+            if (Array.isArray(nextArr) && Array.isArray(prevArr) && nextArr.length > prevArr.length) {
+              const prevIds = new Set(prevArr.map((r: { id?: unknown }) => r?.id))
+              patchRec[key] = nextArr.map((r: Record<string, unknown>) => {
+                if (r && !prevIds.has(r.id) && r.branchId === undefined) {
+                  return {
+                    ...r,
+                    branchId: activeBranch.id,
+                    ...(key === 'items' && !activeBranch.isMain && r.warehouseId === undefined
+                      ? { warehouseId: activeBranch.warehouseId }
+                      : {}),
+                  }
+                }
+                return r
+              })
+            }
+          }
+          if (Array.isArray(patch.treasuries) && patch.treasuries.length > state.treasuries.length) {
+            const prevCodes = new Set(state.treasuries.map((t) => t.code))
+            patch.treasuries = patch.treasuries.map((t) =>
+              !prevCodes.has(t.code) && t.branchId === undefined ? { ...t, branchId: activeBranch.id } : t,
+            )
+          }
+        }
         if (patch && (patch as Partial<DataState>).journal) {
           // توحيد التاريخ أولاً: كل قيد بصيغة YYYY-MM-DD مهما أرسل المسار
           const rawJournal = (patch as Partial<DataState>).journal!
@@ -3920,7 +4189,7 @@ export const useDataStore = create<DataState>()(
         // باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
         // يفسد خصم المخزون بالوحدة الأساسية. التحذيرات (سعر صفر/خسارة) قرار شاشة.
         const guardState = get()
-        const blockers = itemBlockers(item, guardState.items)
+        const blockers = itemBlockers(item, getBranchScopedDataState(guardState).items)
         if (blockers.length) throw new Error(blockers[0])
         // AUDIT-005: الرصيد الابتدائي للصنف (كمية × تكلفة) كان يدخل المخزون **بلا قيد**
         // فينكسر ثابت «1103 = Σ كمية×متوسط» من اليوم الأول (وأبرز مسار: استيراد CSV).
@@ -4138,8 +4407,21 @@ export const useDataStore = create<DataState>()(
       },
       removeExpenseTemplate: (id) => set((state) => ({ expenseTemplates: state.expenseTemplates.filter((row) => row.id !== id) })),
 
-      postPurchase: (inv) => {
+      postPurchase: (rawInv) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
+        const inv = activeBranch && !activeBranch.isMain
+          ? {
+              ...rawInv,
+              warehouseId: rawInv.warehouseId == null || rawInv.warehouseId === mainWhId ? activeBranch.warehouseId : rawInv.warehouseId,
+              treasury: !rawInv.treasury || rawInv.treasury === '1101' ? activeBranch.treasuryCode : rawInv.treasury,
+              lines: rawInv.lines.map((l) => ({
+                ...l,
+                warehouseId: l.warehouseId == null || l.warehouseId === mainWhId ? activeBranch.warehouseId : l.warehouseId,
+              })),
+            }
+          : rawInv
         // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!inv.__approvalBypass) {
           const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
@@ -4696,8 +4978,21 @@ export const useDataStore = create<DataState>()(
         return updatedInvoice
       },
 
-      postSale: (args) => {
+      postSale: (rawArgs) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
+        const args = activeBranch && !activeBranch.isMain
+          ? {
+              ...rawArgs,
+              warehouseId: rawArgs.warehouseId == null || rawArgs.warehouseId === mainWhId ? activeBranch.warehouseId : rawArgs.warehouseId,
+              treasury: !rawArgs.treasury || rawArgs.treasury === '1101' ? activeBranch.treasuryCode : rawArgs.treasury,
+              lines: rawArgs.lines.map((l) => ({
+                ...l,
+                warehouseId: l.warehouseId == null || l.warehouseId === mainWhId ? activeBranch.warehouseId : l.warehouseId,
+              })),
+            }
+          : rawArgs
         // بوابة اعتماد المستندات (خطة ③): بيع خاضع للنظام ⇒ يُخزَّن طلباً كاملاً
         // ولا يُخصم مخزون ولا يُنشأ قيد حتى يعتمده صاحب الصلاحية.
         if (!args.__approvalBypass) {
@@ -6215,8 +6510,12 @@ export const useDataStore = create<DataState>()(
         return sale
       },
 
-      postVoucher: (args) => {
+      postVoucher: (rawArgs) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        const args = activeBranch && !activeBranch.isMain && rawArgs.kind !== 'transfer' && (!rawArgs.treasury || rawArgs.treasury === '1101')
+          ? { ...rawArgs, treasury: activeBranch.treasuryCode }
+          : rawArgs
         // بوابة اعتماد المستندات (خطة ③): سندات القبض والصرف الخاضعة للنظام تقف
         // بطلب اعتماد — التحويل بين الخزائن ليس مستند طرف خارجي فلا يخضع للنطاق.
         if (!args.__approvalBypass && (args.kind === 'receipt' || args.kind === 'payment')) {
@@ -7635,8 +7934,9 @@ export const useDataStore = create<DataState>()(
           throw new Error(`خطتك تسمح بـ${maxBranchesAllowed} ${maxBranchesAllowed === 1 ? 'فرع' : 'فروع'} — لزيادة الحد تواصل مع المطوّر من صفحة «حول التطبيق»`)
         }
         let warehouseId = input.warehouseId
+        const newBranchId = nextId(branches)
         if (input.createWarehouse) {
-          const wh = { id: nextId(warehouses), nameAr: `مخزن ${input.nameAr.trim()}`, isMain: false }
+          const wh: Warehouse = { id: nextId(warehouses), nameAr: `مخزن ${input.nameAr.trim()}`, isMain: false, branchId: newBranchId }
           warehouses = [...warehouses, wh]
           warehouseId = wh.id
         }
@@ -7644,14 +7944,14 @@ export const useDataStore = create<DataState>()(
         if (input.createTreasury) {
           const errs = validateTreasury(`خزينة ${input.nameAr.trim()}`, treasuries)
           if (errs.length) throw new Error(errs.join(' — '))
-          const t: TreasuryDef = { code: nextTreasuryCode(treasuries), nameAr: `خزينة ${input.nameAr.trim()}`, kind: input.createTreasury }
+          const t: TreasuryDef = { code: nextTreasuryCode(treasuries), nameAr: `خزينة ${input.nameAr.trim()}`, kind: input.createTreasury, branchId: newBranchId }
           treasuries = [...treasuries, t]
           treasuryCode = t.code
         }
         const errors = validateBranch({ ...input, warehouseId, treasuryCode }, branches, warehouses, treasuries)
         if (errors.length) throw new Error(errors.join(' — '))
         const branch: Branch = {
-          id: nextId(branches), nameAr: input.nameAr.trim(), isMain: false, active: true,
+          id: newBranchId, nameAr: input.nameAr.trim(), isMain: false, active: true,
           warehouseId, treasuryCode,
           address: input.address?.trim() || undefined,
           phone: input.phone?.trim() || undefined,
@@ -7692,6 +7992,8 @@ export const useDataStore = create<DataState>()(
         // حذف آخر فرع غير الرئيسي يعيد وضع الفرع الواحد (الرئيسي وحده بلا معنى)
         set({
           branches: nextBranches,
+          warehouses: state.warehouses.map((w) => (w.branchId === id ? { ...w, branchId: null } : w)),
+          treasuries: state.treasuries.map((t) => (t.branchId === id ? { ...t, branchId: null } : t)),
           activeBranchId: nextBranches.some((x) => x.id === state.activeBranchId) ? state.activeBranchId : null,
         })
       },
@@ -7779,7 +8081,14 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const errors = validateTreasury(nameAr, state.treasuries)
         if (errors.length) throw new Error(errors.join(' — '))
-        const t: TreasuryDef = { code: nextTreasuryCode(state.treasuries), nameAr: nameAr.trim(), kind, ...extra }
+        const activeBranch = getEffectiveActiveBranch(state)
+        const t: TreasuryDef = {
+          code: nextTreasuryCode(state.treasuries),
+          nameAr: nameAr.trim(),
+          kind,
+          ...(activeBranch ? { branchId: activeBranch.id } : {}),
+          ...extra,
+        }
         set({ treasuries: [...state.treasuries, t] })
         return t
       },
@@ -14749,3 +15058,15 @@ export const useDataStore = create<DataState>()(
     },
   ),
 )
+
+function useScopedDataStore(): DataState
+function useScopedDataStore<T>(selector: (state: DataState) => T): T
+function useScopedDataStore<T>(selector?: (state: DataState) => T): T | DataState {
+  return useRawDataStore((rawState) => {
+    const scoped = getBranchScopedDataState(rawState)
+    return selector ? selector(scoped) : scoped
+  })
+}
+
+export const useDataStore: typeof useRawDataStore = Object.assign(useScopedDataStore, useRawDataStore)
+

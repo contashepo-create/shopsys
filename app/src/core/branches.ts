@@ -71,6 +71,85 @@ export function resolveBranchActivityId(
   return companyActivityId ?? null
 }
 
+export interface BranchScopedRecord {
+  branchId?: number | null
+  warehouseId?: number | null
+  treasury?: string | null
+  treasuryCode?: string | null
+}
+
+/**
+ * عزل السجلات حسب الفرع النشط (عندما يعمل كل فرع كشركة مستقلة تماماً):
+ * - إن لم يكن هناك فرع نشط (`!activeBranch` = العرض الشامل لكل الفروع) ⇒ `true` (تظهر كل السجلات).
+ * - إن كان للسجل `branchId` صريح ⇒ يظهر فقط إن طابق `activeBranch.id`.
+ * - إن لم يكن للسجل `branchId`:
+ *   1) إن كان يحمل `warehouseId` مربوطاً بفرع ⇒ يتبع ذلك الفرع.
+ *   2) إن كان يحمل `treasury` أو `treasuryCode` مربوطاً بفرع ⇒ يتبع ذلك الفرع.
+ *   3) السجلات القديمة بلا `branchId` تتبع الفرع الرئيسي (`activeBranch.isMain === true`)
+ *      ولا تظهر في الفروع الجديدة المستقلة كي يبدأ كل فرع جديد كشركة مستقلة نظيفة.
+ */
+export function belongsToBranch(
+  record: object,
+  activeBranch: Branch | null | undefined,
+  allBranches: readonly Branch[] = [],
+): boolean {
+  if (!activeBranch) return true
+  const rec = record as BranchScopedRecord
+  if (rec.branchId != null) return rec.branchId === activeBranch.id
+  if (rec.warehouseId != null) {
+    const whBranch = allBranches.find((b) => b.warehouseId === rec.warehouseId)
+    if (whBranch) return whBranch.id === activeBranch.id
+  }
+  const trCode = rec.treasury ?? rec.treasuryCode ?? null
+  if (trCode) {
+    const trBranch = allBranches.find((b) => b.treasuryCode === trCode)
+    if (trBranch) return trBranch.id === activeBranch.id
+  }
+  return Boolean(activeBranch.isMain)
+}
+
+export function filterByBranch<T extends object>(
+  rows: readonly T[] | undefined | null,
+  activeBranch: Branch | null | undefined,
+  allBranches: readonly Branch[] = [],
+): T[] {
+  if (!Array.isArray(rows)) return []
+  if (!activeBranch) return [...rows]
+  return rows.filter((row) => belongsToBranch(row, activeBranch, allBranches))
+}
+
+/** مخازن الفرع النشط فقط (مخزنه الأساسي + أي مخزن إضافي أُنشئ داخل هذا الفرع) */
+export function filterWarehousesByBranch<T extends { id: number; branchId?: number | null }>(
+  warehouses: readonly T[],
+  activeBranch: Branch | null | undefined,
+  allBranches: readonly Branch[] = [],
+): T[] {
+  if (!activeBranch) return [...warehouses]
+  const otherBranchWhIds = new Set(allBranches.filter((b) => b.id !== activeBranch.id).map((b) => b.warehouseId))
+  return warehouses.filter((w) => {
+    if (w.id === activeBranch.warehouseId) return true
+    if (w.branchId != null) return w.branchId === activeBranch.id
+    if (otherBranchWhIds.has(w.id)) return false
+    return Boolean(activeBranch.isMain)
+  })
+}
+
+/** خزائن وبنوك الفرع النشط فقط (خزينته الأساسية + أي خزينة/بنك إضافي أُنشئ داخل هذا الفرع) */
+export function filterTreasuriesByBranch<T extends { code: string; branchId?: number | null }>(
+  treasuries: readonly T[],
+  activeBranch: Branch | null | undefined,
+  allBranches: readonly Branch[] = [],
+): T[] {
+  if (!activeBranch) return [...treasuries]
+  const otherBranchTrCodes = new Set(allBranches.filter((b) => b.id !== activeBranch.id).map((b) => b.treasuryCode))
+  return treasuries.filter((t) => {
+    if (t.code === activeBranch.treasuryCode) return true
+    if (t.branchId != null) return t.branchId === activeBranch.id
+    if (otherBranchTrCodes.has(t.code)) return false
+    return Boolean(activeBranch.isMain)
+  })
+}
+
 /** تحقق قبل الإنشاء/التعديل — يعيد أخطاء عربية (فارغة = سليم) */
 export function validateBranch(
   input: BranchInput,

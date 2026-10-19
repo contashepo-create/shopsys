@@ -97,6 +97,11 @@ export function PurchaseOrdersPage() {
   useEffect(() => {
     if (lines.some((l) => Boolean(l.notes?.trim()))) setShowLineNotes(true)
   }, [lines])
+  useEffect(() => {
+    if (warehouses.length > 0 && (warehouseId == null || !warehouses.some((w) => w.id === warehouseId))) {
+      setWarehouseId(warehouses[0].id)
+    }
+  }, [warehouses, warehouseId])
   const [applyTax, setApplyTax] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseOrderStatus>('all')
   const [activeItemId, setActiveItemId] = useState<number | null>(null)
