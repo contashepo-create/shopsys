@@ -215,16 +215,19 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.equal(scoped.treasuries[0].code, logisticsBranch.treasuryCode)
 
   // إضافة عميل ومورد وموظف وبنك وصنف وفاتورة شراء وبيع داخل الفرع الثاني
+  // (بما في ذلك اختبار قبول نفس الاسم المسجل بالفرع الأول دون تعارض بين الشركتين)
   st().addCustomer({ nameAr: 'عميل الشركة الثانية', phone: '01099999999', creditLimitMinor: 0, notes: '', ...EXT })
+  st().addCustomer({ nameAr: 'عميل الفرع الرئيسي', phone: '01088888888', creditLimitMinor: 0, notes: '', ...EXT })
   st().addSupplier({ nameAr: 'مورد الشركة الثانية', phone: '01188888888', notes: '', ...EXT })
+  st().addSupplier({ nameAr: 'مورد الفرع الرئيسي', phone: '01177777777', notes: '', ...EXT })
   st().addEmployee({ nameAr: 'موظف الشركة الثانية', phone: '01277777777', jobTitle: 'مدير تشغيل', hireDate: '2026-10-01', baseSalaryMinor: 800000, allowancesMinor: 0, active: true, notes: '', ...EXT })
   const branch2Bank = st().addTreasury('بنك الشركة الثانية', 'bank')
   st().addItem({ nameAr: 'صنف خاص بالشركة الثانية', barcodes: ['100'], baseUnit: 'قطعة', extraUnits: [], priceMinor: 2000, ...ITEM })
 
   scoped = getBranchScopedDataState(st())
-  assert.equal(scoped.customers.length, 1)
+  assert.equal(scoped.customers.length, 2, 'عميلان في الشركة الثانية (شامل اسم متطابق مع الشركة الأولى بلا تعارض)')
   assert.equal(scoped.customers[0].branchId, logisticsBranch.id)
-  assert.equal(scoped.suppliers.length, 1)
+  assert.equal(scoped.suppliers.length, 2)
   assert.equal(scoped.suppliers[0].branchId, logisticsBranch.id)
   assert.equal(scoped.employees.length, 1)
   assert.equal(scoped.employees[0].branchId, logisticsBranch.id)
@@ -232,6 +235,38 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.equal(branch2Bank.branchId, logisticsBranch.id)
   assert.equal(scoped.items.length, 1, 'صنف الفرع الثاني مستقل حتى بنفس الباركود 100')
   assert.equal(scoped.items[0].branchId, logisticsBranch.id)
+
+  // مشروع مقاولات + معدة إيجار + مركبة ونقلة داخل الشركة الثانية تتوجه تلقائياً لخزينة الشركة الثانية
+  const proj2 = st().addProject({
+    nameAr: 'مشروع الشركة الثانية',
+    clientName: 'عميل الشركة الثانية',
+    clientId: scoped.customers[0].id,
+    contractValueMinor: 50000,
+    retentionPercent: 0,
+    startDate: '2026-10-01',
+    notes: '',
+  })
+  const ext2 = st().addProjectExtract({
+    projectId: proj2.id,
+    grossMinor: 10000,
+    vatPercent: 0,
+    payment: 'cash',
+    description: 'مستخلص أول للشركة الثانية',
+  })
+  scoped = getBranchScopedDataState(st())
+  assert.equal(scoped.projects.length, 1)
+  assert.equal(scoped.projectExtracts.length, 1)
+  assert.equal(scoped.projectExtracts[0].id, ext2.id)
+
+  // ربط حساب دخول موظف الشركة الثانية يقفل الجلسة على الشركة الثانية تلقائياً
+  st().setOwnerPin('hashed-owner-pin')
+  const b2User = st().addAppUser({
+    nameAr: 'موظف الشركة الثانية',
+    roleId: 'accountant',
+    pinHash: 'hashed-user-pin',
+    employeeId: scoped.employees[0].id,
+  })
+  assert.equal(b2User.branchId, logisticsBranch.id, 'حساب المستخدم يرث فرع الموظف تلقائياً')
 
   // شراء وبيع داخل الفرع الثاني يتوجهان تلقائياً لمخزن وخزينة الفرع الثاني
   const b2SupplierId = scoped.suppliers[0].id

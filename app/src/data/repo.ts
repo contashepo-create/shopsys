@@ -1742,8 +1742,8 @@ interface DataState {
    * بياناته المالية والوظيفية في سجل الموظفين، وحسابه هنا للدخول والصلاحيات.
    * initialPin يُعرض للمدير حتى يغيّره الموظف عند أول دخول (mustChangePin).
    */
-  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
-  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'requireOpenShiftForSales' | 'employeeId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin' | 'treasuryAccess' | 'paymentTerminalAccess'>>) => void
+  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; branchId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
+  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'requireOpenShiftForSales' | 'employeeId' | 'branchId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin' | 'treasuryAccess' | 'paymentTerminalAccess'>>) => void
   /** الموظف يغيّر رقمه بنفسه (أول دخول الإجباري): يمسح initialPin فلا يعود أحد يعرفه */
   changeOwnPin: (userId: number, newPinHash: string) => void
   removeAppUser: (id: number) => void
@@ -3193,11 +3193,23 @@ export function getEffectiveActiveBranch(state: DataState): Branch | null {
 const BRANCH_STAMP_ID_KEYS = [
   'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
   'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
-  'vouchers', 'cheques', 'custodyFiles', 'projects', 'boqItems', 'subContracts',
-  'equipment', 'rentalContracts', 'vehicles', 'trips', 'cars', 'consignmentCars',
-  'properties', 'leases', 'clinicPatients', 'clinicVisits', 'clinicAppointments',
-  'labPatients', 'labOrders', 'tickets', 'laundryOrders', 'bookings', 'walletOps',
-  'journal', 'installmentPlans', 'quotations', 'assets',
+  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectExtracts',
+  'projectCosts', 'retentionReleases', 'projectBudgets', 'projectTasks', 'changeOrders',
+  'clientAdvances', 'boqItems', 'subContracts', 'subCertificates', 'subPayments',
+  'subAdvances', 'bonds', 'dailyWorkers', 'dailyWorkRecords', 'materialRequisitions',
+  'clientSettlements', 'equipment', 'rentalContracts', 'rentalInvoices', 'equipmentCosts',
+  'operatorShifts', 'vehicles', 'vehicleCostEntries', 'trips', 'tripExpenses', 'driverDues',
+  'cars', 'carPrepCosts', 'carPurchaseInvoices', 'consignmentCars', 'properties',
+  'propertyUnits', 'propertySales', 'leases', 'ownerTxns', 'clinicPatients', 'clinicVisits',
+  'treatmentPlans', 'clinicCollections', 'clinicAppointments', 'labTests', 'labReferrers',
+  'labPatients', 'labOrders', 'tickets', 'maintenanceServices', 'laundryOrders', 'bookings',
+  'walletOps', 'journal', 'installmentPlans', 'quotations', 'assets', 'payrollRuns',
+  'payrollSlips', 'employeeAdvances', 'employeeDeductions', 'advanceRepayments',
+  'attendanceRecords', 'leaveRequests', 'staffCommissions', 'stocktakes', 'wastages',
+  'consumptions', 'settlements', 'partyOffsets', 'exchanges', 'restaurantOrders',
+  'goldTradeIns', 'shifts', 'recipes', 'productionOrders', 'processingOrders', 'scrapLots',
+  'scrapSales', 'costCenters', 'costCenterBudgets', 'expenseTemplates', 'externalCommissions',
+  'commissionParties', 'priceLists', 'promotions', 'purchaseExpensePayables',
 ] as const
 
 const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
@@ -3253,6 +3265,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedSuppliers = inBranch(state.suppliers)
   const scopedSupplierIds = new Set(scopedSuppliers.map((s) => s.id))
   const scopedEmployees = inBranch(state.employees)
+  const scopedEmployeeIds = new Set(scopedEmployees.map((e) => e.id))
 
   const scopedSales = state.sales.filter((s) =>
     belongsToBranch(s, activeBranch, state.branches) ||
@@ -3289,15 +3302,59 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedVoucherIds = new Set(scopedVouchers.map((v) => v.id))
   const scopedCheques = inBranch(state.cheques)
   const scopedCustodyFiles = inBranch(state.custodyFiles)
+  const scopedCustodyFileIds = new Set(scopedCustodyFiles.map((f) => f.id))
+  const scopedCustodyTxs = state.custodyTxs.filter(
+    (tx) => scopedCustodyFileIds.has(tx.fileId) || belongsToBranch(tx, activeBranch, state.branches),
+  )
   const scopedProjects = state.projects.filter(
     (p) => belongsToBranch(p, activeBranch, state.branches) || (p.clientId != null && scopedCustomerIds.has(p.clientId)),
   )
   const scopedProjectIds = new Set(scopedProjects.map((p) => p.id))
+  const scopedProjectExtracts = state.projectExtracts.filter(
+    (ex) => scopedProjectIds.has(ex.projectId) || belongsToBranch(ex, activeBranch, state.branches),
+  )
+  const scopedProjectCosts = state.projectCosts.filter(
+    (c) => scopedProjectIds.has(c.projectId) || belongsToBranch(c, activeBranch, state.branches),
+  )
+  const scopedRetentionReleases = state.retentionReleases.filter(
+    (r) => scopedProjectIds.has(r.projectId) || belongsToBranch(r, activeBranch, state.branches),
+  )
+  const scopedProjectBudgets = state.projectBudgets.filter(
+    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b, activeBranch, state.branches),
+  )
+  const scopedProjectTasks = state.projectTasks.filter(
+    (t) => scopedProjectIds.has(t.projectId) || belongsToBranch(t, activeBranch, state.branches),
+  )
+  const scopedChangeOrders = state.changeOrders.filter(
+    (co) => scopedProjectIds.has(co.projectId) || belongsToBranch(co, activeBranch, state.branches),
+  )
+  const scopedClientAdvances = state.clientAdvances.filter(
+    (ca) => scopedProjectIds.has(ca.projectId) || belongsToBranch(ca, activeBranch, state.branches),
+  )
+  const scopedMaterialRequisitions = state.materialRequisitions.filter(
+    (mr) => scopedProjectIds.has(mr.projectId) || belongsToBranch(mr, activeBranch, state.branches),
+  )
   const scopedBoqItems = state.boqItems.filter(
-    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b as BranchScopedRecord, activeBranch, state.branches),
+    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b, activeBranch, state.branches),
   )
   const scopedSubContracts = state.subContracts.filter(
-    (sc) => scopedProjectIds.has(sc.projectId) || belongsToBranch(sc as BranchScopedRecord, activeBranch, state.branches),
+    (sc) => scopedProjectIds.has(sc.projectId) || belongsToBranch(sc, activeBranch, state.branches),
+  )
+  const scopedSubContractIds = new Set(scopedSubContracts.map((sc) => sc.id))
+  const scopedSubCertificates = state.subCertificates.filter(
+    (cert) => scopedSubContractIds.has(cert.contractId) || belongsToBranch(cert, activeBranch, state.branches),
+  )
+  const scopedSubPayments = state.subPayments.filter(
+    (sp) => scopedSubContractIds.has(sp.contractId) || belongsToBranch(sp, activeBranch, state.branches),
+  )
+  const scopedSubAdvances = state.subAdvances.filter(
+    (sa) => scopedSubContractIds.has(sa.contractId) || belongsToBranch(sa, activeBranch, state.branches),
+  )
+  const scopedBonds = inBranch(state.bonds)
+  const scopedDailyWorkers = inBranch(state.dailyWorkers)
+  const scopedDailyWorkRecords = inBranch(state.dailyWorkRecords)
+  const scopedClientSettlements = state.clientSettlements.filter(
+    (cs) => scopedCustomerIds.has(cs.customerId) || belongsToBranch(cs, activeBranch, state.branches),
   )
   const scopedQuotations = inBranch(state.quotations)
   const scopedEquipment = inBranch(state.equipment)
@@ -3305,21 +3362,61 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedRentalContracts = state.rentalContracts.filter(
     (c) => belongsToBranch(c, activeBranch, state.branches) || (c.equipmentId != null && scopedEquipmentIds.has(c.equipmentId)),
   )
+  const scopedRentalContractIds = new Set(scopedRentalContracts.map((c) => c.id))
+  const scopedRentalInvoices = state.rentalInvoices.filter(
+    (inv) => scopedRentalContractIds.has(inv.contractId) || belongsToBranch(inv, activeBranch, state.branches),
+  )
+  const scopedEquipmentCosts = state.equipmentCosts.filter(
+    (ec) => scopedEquipmentIds.has(ec.equipmentId) || belongsToBranch(ec, activeBranch, state.branches),
+  )
+  const scopedOperatorShifts = state.operatorShifts.filter(
+    (os) => scopedEquipmentIds.has(os.equipmentId) || belongsToBranch(os, activeBranch, state.branches),
+  )
   const scopedVehicles = inBranch(state.vehicles)
   const scopedVehicleIds = new Set(scopedVehicles.map((v) => v.id))
+  const scopedVehicleCostEntries = state.vehicleCostEntries.filter(
+    (vce) => scopedVehicleIds.has(vce.vehicleId) || belongsToBranch(vce, activeBranch, state.branches),
+  )
   const scopedTrips = state.trips.filter(
     (t) => belongsToBranch(t, activeBranch, state.branches) || (t.vehicleId != null && scopedVehicleIds.has(t.vehicleId)),
   )
+  const scopedTripIds = new Set(scopedTrips.map((t) => t.id))
+  const scopedTripExpenses = state.tripExpenses.filter(
+    (te) => scopedTripIds.has(te.tripId) || belongsToBranch(te, activeBranch, state.branches),
+  )
+  const scopedDriverDues = state.driverDues.filter(
+    (dd) => scopedEmployeeIds.has(dd.driverId) || belongsToBranch(dd, activeBranch, state.branches),
+  )
   const scopedCars = inBranch(state.cars)
+  const scopedCarIds = new Set(scopedCars.map((c) => c.id))
+  const scopedCarPrepCosts = state.carPrepCosts.filter(
+    (cp) => scopedCarIds.has(cp.carId) || belongsToBranch(cp, activeBranch, state.branches),
+  )
+  const scopedCarPurchaseInvoices = inBranch(state.carPurchaseInvoices)
   const scopedConsignmentCars = inBranch(state.consignmentCars)
   const scopedProperties = inBranch(state.properties)
+  const scopedPropertyIds = new Set(scopedProperties.map((p) => p.id))
+  const scopedPropertyUnits = state.propertyUnits.filter(
+    (u) => scopedPropertyIds.has(u.propertyId) || belongsToBranch(u, activeBranch, state.branches),
+  )
+  const scopedPropertySales = state.propertySales.filter(
+    (ps) => scopedPropertyIds.has(ps.propertyId) || belongsToBranch(ps, activeBranch, state.branches),
+  )
   const scopedLeases = inBranch(state.leases)
+  const scopedOwnerTxns = state.ownerTxns.filter(
+    (ot) => scopedPropertyIds.has(ot.propertyId) || belongsToBranch(ot, activeBranch, state.branches),
+  )
   const scopedClinicPatients = inBranch(state.clinicPatients)
   const scopedClinicVisits = inBranch(state.clinicVisits)
+  const scopedTreatmentPlans = inBranch(state.treatmentPlans)
+  const scopedClinicCollections = inBranch(state.clinicCollections)
   const scopedClinicAppointments = inBranch(state.clinicAppointments)
+  const scopedLabTests = inBranch(state.labTests)
+  const scopedLabReferrers = inBranch(state.labReferrers)
   const scopedLabPatients = inBranch(state.labPatients)
   const scopedLabOrders = inBranch(state.labOrders)
   const scopedTickets = inBranch(state.tickets)
+  const scopedMaintenanceServices = inBranch(state.maintenanceServices)
   const scopedLaundryOrders = inBranch(state.laundryOrders)
   const scopedBookings = inBranch(state.bookings)
   const scopedWalletOps = inBranch(state.walletOps)
@@ -3327,6 +3424,50 @@ export function getBranchScopedDataState(state: DataState): DataState {
     (p) => belongsToBranch(p, activeBranch, state.branches) || (p.saleId != null && scopedSaleIds.has(p.saleId)),
   )
   const scopedAssets = inBranch(state.assets)
+  const scopedPayrollRuns = inBranch(state.payrollRuns)
+  const scopedPayrollSlips = state.payrollSlips.filter(
+    (ps) => scopedEmployeeIds.has(ps.employeeId) || belongsToBranch(ps, activeBranch, state.branches),
+  )
+  const scopedEmployeeAdvances = state.employeeAdvances.filter(
+    (ea) => scopedEmployeeIds.has(ea.employeeId) || belongsToBranch(ea, activeBranch, state.branches),
+  )
+  const scopedEmployeeDeductions = state.employeeDeductions.filter(
+    (ed) => scopedEmployeeIds.has(ed.employeeId) || belongsToBranch(ed, activeBranch, state.branches),
+  )
+  const scopedAdvanceRepayments = state.advanceRepayments.filter(
+    (ar) => scopedEmployeeIds.has(ar.employeeId) || belongsToBranch(ar, activeBranch, state.branches),
+  )
+  const scopedAttendanceRecords = state.attendanceRecords.filter(
+    (ar) => scopedEmployeeIds.has(ar.employeeId) || belongsToBranch(ar, activeBranch, state.branches),
+  )
+  const scopedLeaveRequests = state.leaveRequests.filter(
+    (lr) => scopedEmployeeIds.has(lr.employeeId) || belongsToBranch(lr, activeBranch, state.branches),
+  )
+  const scopedStaffCommissions = state.staffCommissions.filter(
+    (sc) => scopedEmployeeIds.has(sc.employeeId) || belongsToBranch(sc, activeBranch, state.branches),
+  )
+  const scopedStocktakes = inBranch(state.stocktakes)
+  const scopedWastages = inBranch(state.wastages)
+  const scopedConsumptions = inBranch(state.consumptions)
+  const scopedSettlements = inBranch(state.settlements)
+  const scopedPartyOffsets = inBranch(state.partyOffsets)
+  const scopedExchanges = inBranch(state.exchanges)
+  const scopedRestaurantOrders = inBranch(state.restaurantOrders)
+  const scopedGoldTradeIns = inBranch(state.goldTradeIns)
+  const scopedShifts = inBranch(state.shifts)
+  const scopedRecipes = inBranch(state.recipes)
+  const scopedProductionOrders = inBranch(state.productionOrders)
+  const scopedProcessingOrders = inBranch(state.processingOrders)
+  const scopedScrapLots = inBranch(state.scrapLots)
+  const scopedScrapSales = inBranch(state.scrapSales)
+  const scopedCostCenters = inBranch(state.costCenters)
+  const scopedCostCenterBudgets = inBranch(state.costCenterBudgets)
+  const scopedExpenseTemplates = inBranch(state.expenseTemplates)
+  const scopedExternalCommissions = inBranch(state.externalCommissions)
+  const scopedCommissionParties = inBranch(state.commissionParties)
+  const scopedPriceLists = inBranch(state.priceLists)
+  const scopedPromotions = inBranch(state.promotions)
+  const scopedPurchaseExpensePayables = inBranch(state.purchaseExpensePayables)
   const scopedTerminals = state.paymentTerminals.filter(
     (t) => !t.branchId || t.branchId === String(activeBranch.id),
   )
@@ -3379,29 +3520,91 @@ export function getBranchScopedDataState(state: DataState): DataState {
     vouchers: scopedVouchers,
     cheques: scopedCheques,
     custodyFiles: scopedCustodyFiles,
+    custodyTxs: scopedCustodyTxs,
     projects: scopedProjects,
+    projectExtracts: scopedProjectExtracts,
+    projectCosts: scopedProjectCosts,
+    retentionReleases: scopedRetentionReleases,
+    projectBudgets: scopedProjectBudgets,
+    projectTasks: scopedProjectTasks,
+    changeOrders: scopedChangeOrders,
+    clientAdvances: scopedClientAdvances,
+    materialRequisitions: scopedMaterialRequisitions,
     boqItems: scopedBoqItems,
     subContracts: scopedSubContracts,
+    subCertificates: scopedSubCertificates,
+    subPayments: scopedSubPayments,
+    subAdvances: scopedSubAdvances,
+    bonds: scopedBonds,
+    dailyWorkers: scopedDailyWorkers,
+    dailyWorkRecords: scopedDailyWorkRecords,
+    clientSettlements: scopedClientSettlements,
     quotations: scopedQuotations,
     equipment: scopedEquipment,
     rentalContracts: scopedRentalContracts,
+    rentalInvoices: scopedRentalInvoices,
+    equipmentCosts: scopedEquipmentCosts,
+    operatorShifts: scopedOperatorShifts,
     vehicles: scopedVehicles,
+    vehicleCostEntries: scopedVehicleCostEntries,
     trips: scopedTrips,
+    tripExpenses: scopedTripExpenses,
+    driverDues: scopedDriverDues,
     cars: scopedCars,
+    carPrepCosts: scopedCarPrepCosts,
+    carPurchaseInvoices: scopedCarPurchaseInvoices,
     consignmentCars: scopedConsignmentCars,
     properties: scopedProperties,
+    propertyUnits: scopedPropertyUnits,
+    propertySales: scopedPropertySales,
     leases: scopedLeases,
+    ownerTxns: scopedOwnerTxns,
     clinicPatients: scopedClinicPatients,
     clinicVisits: scopedClinicVisits,
+    treatmentPlans: scopedTreatmentPlans,
+    clinicCollections: scopedClinicCollections,
     clinicAppointments: scopedClinicAppointments,
+    labTests: scopedLabTests,
+    labReferrers: scopedLabReferrers,
     labPatients: scopedLabPatients,
     labOrders: scopedLabOrders,
     tickets: scopedTickets,
+    maintenanceServices: scopedMaintenanceServices,
     laundryOrders: scopedLaundryOrders,
     bookings: scopedBookings,
     walletOps: scopedWalletOps,
     installmentPlans: scopedInstallmentPlans,
     assets: scopedAssets,
+    payrollRuns: scopedPayrollRuns,
+    payrollSlips: scopedPayrollSlips,
+    employeeAdvances: scopedEmployeeAdvances,
+    employeeDeductions: scopedEmployeeDeductions,
+    advanceRepayments: scopedAdvanceRepayments,
+    attendanceRecords: scopedAttendanceRecords,
+    leaveRequests: scopedLeaveRequests,
+    staffCommissions: scopedStaffCommissions,
+    stocktakes: scopedStocktakes,
+    wastages: scopedWastages,
+    consumptions: scopedConsumptions,
+    settlements: scopedSettlements,
+    partyOffsets: scopedPartyOffsets,
+    exchanges: scopedExchanges,
+    restaurantOrders: scopedRestaurantOrders,
+    goldTradeIns: scopedGoldTradeIns,
+    shifts: scopedShifts,
+    recipes: scopedRecipes,
+    productionOrders: scopedProductionOrders,
+    processingOrders: scopedProcessingOrders,
+    scrapLots: scopedScrapLots,
+    scrapSales: scopedScrapSales,
+    costCenters: scopedCostCenters,
+    costCenterBudgets: scopedCostCenterBudgets,
+    expenseTemplates: scopedExpenseTemplates,
+    externalCommissions: scopedExternalCommissions,
+    commissionParties: scopedCommissionParties,
+    priceLists: scopedPriceLists,
+    promotions: scopedPromotions,
+    purchaseExpensePayables: scopedPurchaseExpensePayables,
     paymentTerminals: scopedTerminals,
     journal: scopedJournal,
   }
@@ -3421,18 +3624,30 @@ export const useRawDataStore = create<DataState>()(
         if (activeBranch && patch) {
           const patchRec = patch as Record<string, unknown>
           const stateRec = state as unknown as Record<string, unknown>
+          const remapDefaultTreasury = !activeBranch.isMain && Boolean(activeBranch.treasuryCode) && activeBranch.treasuryCode !== '1101'
           for (const key of BRANCH_STAMP_ID_KEYS) {
             const nextArr = patchRec[key]
             const prevArr = stateRec[key]
             if (Array.isArray(nextArr) && Array.isArray(prevArr) && nextArr.length > prevArr.length) {
               const prevIds = new Set(prevArr.map((r: { id?: unknown }) => r?.id))
               patchRec[key] = nextArr.map((r: Record<string, unknown>) => {
-                if (r && !prevIds.has(r.id) && r.branchId === undefined) {
+                if (r && !prevIds.has(r.id)) {
+                  const isTransferVoucher = key === 'vouchers' && r.kind === 'transfer'
                   return {
                     ...r,
-                    branchId: activeBranch.id,
+                    ...(r.branchId === undefined ? { branchId: activeBranch.id } : {}),
                     ...(key === 'items' && !activeBranch.isMain && r.warehouseId === undefined
                       ? { warehouseId: activeBranch.warehouseId }
+                      : {}),
+                    ...(remapDefaultTreasury && !isTransferVoucher && r.treasury === '1101'
+                      ? { treasury: activeBranch.treasuryCode }
+                      : {}),
+                    ...(remapDefaultTreasury && key === 'journal' && Array.isArray(r.lines) && !(r.lines as { accountCode?: string }[]).some((l) => l.accountCode === activeBranch.treasuryCode)
+                      ? {
+                          lines: (r.lines as { accountCode?: string }[]).map((l) =>
+                            l.accountCode === '1101' ? { ...l, accountCode: activeBranch.treasuryCode } : l,
+                          ),
+                        }
                       : {}),
                   }
                 }
@@ -4162,7 +4377,8 @@ export const useRawDataStore = create<DataState>()(
         const name = args.nameAr.trim()
         if (!name) throw new Error('اسم البند الحر مطلوب')
         const state0 = get()
-        const existing = state0.items.find((it) => it.isActive && it.isService === true && it.nameAr.trim() === name)
+        const scopedItems = getBranchScopedDataState(state0).items
+        const existing = scopedItems.find((it) => it.isActive && it.isService === true && it.nameAr.trim() === name)
         if (existing) return existing.id
         const draft = draftFromCategory(undefined, nextSku(state0.items))
         const item: Omit<Item, 'id'> = {
@@ -4339,7 +4555,7 @@ export const useRawDataStore = create<DataState>()(
       addCostCenter: (input) => {
         const state = get()
         const normalized = { code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim(), parentId: input.parentId ?? null }
-        const errors = validateCostCenter(normalized, state.costCenters)
+        const errors = validateCostCenter(normalized, getBranchScopedDataState(state).costCenters)
         if (errors.length) throw new Error(errors.join(' — '))
         const center: CostCenter = { id: nextId(state.costCenters), ...normalized, isActive: true, notes: input.notes?.trim() ?? '' }
         set({ costCenters: [...state.costCenters, center] })
@@ -4350,7 +4566,7 @@ export const useRawDataStore = create<DataState>()(
         const current = state.costCenters.find((center) => center.id === id)
         if (!current) throw new Error('مركز التكلفة غير موجود')
         const next = { ...current, ...patch, parentId: patch.parentId === undefined ? (current.parentId ?? null) : patch.parentId, code: (patch.code ?? current.code).trim().toUpperCase(), nameAr: (patch.nameAr ?? current.nameAr).trim(), notes: patch.notes === undefined ? current.notes : patch.notes.trim() }
-        const errors = validateCostCenter(next, state.costCenters, id)
+        const errors = validateCostCenter(next, getBranchScopedDataState(state).costCenters, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ costCenters: state.costCenters.map((center) => center.id === id ? next : center) })
       },
@@ -4390,7 +4606,7 @@ export const useRawDataStore = create<DataState>()(
       addExpenseTemplate: (input) => {
         const state = get()
         const normalized = { ...input, code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim(), accountCode: input.accountCode.trim(), notes: input.notes.trim(), isActive: input.isActive ?? true }
-        const errors = validateExpenseTemplate(normalized, state.expenseTemplates)
+        const errors = validateExpenseTemplate(normalized, getBranchScopedDataState(state).expenseTemplates)
         if (errors.length) throw new Error(errors.join(' — '))
         const template: ExpenseTemplate = { id: nextId(state.expenseTemplates), ...normalized }
         set({ expenseTemplates: [...state.expenseTemplates, template] })
@@ -4401,7 +4617,7 @@ export const useRawDataStore = create<DataState>()(
         const current = state.expenseTemplates.find((row) => row.id === id)
         if (!current) throw new Error('بند المصروف غير موجود')
         const next = { ...current, ...patch, code: (patch.code ?? current.code).trim().toUpperCase(), nameAr: (patch.nameAr ?? current.nameAr).trim(), accountCode: (patch.accountCode ?? current.accountCode).trim(), notes: (patch.notes ?? current.notes).trim() }
-        const errors = validateExpenseTemplate(next, state.expenseTemplates, id)
+        const errors = validateExpenseTemplate(next, getBranchScopedDataState(state).expenseTemplates, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ expenseTemplates: state.expenseTemplates.map((row) => row.id === id ? next : row) })
       },
@@ -5008,7 +5224,7 @@ export const useRawDataStore = create<DataState>()(
         // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
         // إعداد الكاشير، وبقية الأدوار ملزمة في سياق البيع. نفس القرار تستخدمه الواجهة.
         const shiftPolicy = salesShiftPolicyForState(state)
-        if (shiftPolicy.required && !currentOpenShift(state.shifts)) {
+        if (shiftPolicy.required && !currentOpenShift(getBranchScopedDataState(state).shifts)) {
           throw new Error(`لا توجد وردية مفتوحة — ${shiftPolicy.messageAr}`)
         }
         // 0) ثبّت مخزن كل سطر لحظة الترحيل. السطر يعلو على مخزن الرأس،
@@ -5505,7 +5721,7 @@ export const useRawDataStore = create<DataState>()(
 
         // موافقة المشرف + سياق الوردية (المرتجع العابر للورديات يُحتسب في الوردية الحالية)
         const requesterName = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
-        const currentShift = currentOpenShift(state.shifts)
+        const currentShift = currentOpenShift(getBranchScopedDataState(state).shifts)
         const saleShift = sale.shiftId != null ? state.shifts.find((sh) => sh.id === sale.shiftId) ?? null : null
         const shiftCtx = describeShiftContext({
           saleShiftId: sale.shiftId ?? null,
@@ -6973,7 +7189,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         // AUDIT-010: اسم فاتح الوردية نص فقط (استدعاء خاطئ بكائن كان يُحفظ كما هو)
         if (typeof openedBy !== 'string') throw new Error('اسم فاتح الوردية مطلوب')
-        const errors = validateOpenShift(openingCashMinor, state.shifts)
+        const errors = validateOpenShift(openingCashMinor, getBranchScopedDataState(state).shifts)
         if (errors.length) throw new Error(errors.join('، '))
         const shift: Shift = {
           id: nextId(state.shifts),
@@ -6990,7 +7206,7 @@ export const useRawDataStore = create<DataState>()(
 
       closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null) => {
         const state = get()
-        const open = currentOpenShift(state.shifts)
+        const open = currentOpenShift(getBranchScopedDataState(state).shifts)
         if (!open) throw new Error('لا وردية مفتوحة')
         // AUDIT-010: المعدود عدد صحيح بالقرش — لا undefined ولا كسر
         if (!Number.isInteger(countedCashMinor)) throw new Error('النقدية المعدودة مطلوبة بالقرش الصحيح')
@@ -7526,13 +7742,16 @@ export const useRawDataStore = create<DataState>()(
           if (!knownRoles.some((r) => r.id === u.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
         }
         // ربط الموظف (طلب المالك): حساب واحد لكل موظف — التكرار يعني خطأ إدخال
+        const linkedEmployee = u.employeeId != null ? state.employees.find((e) => e.id === u.employeeId && e.active) : undefined
         if (u.employeeId != null) {
-          if (!state.employees.some((e) => e.id === u.employeeId && e.active)) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
+          if (!linkedEmployee) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
           if (state.appUsers.some((x) => x.active && x.employeeId === u.employeeId)) throw new Error('لهذا الموظف حساب دخول نشط بالفعل')
         }
+        const resolvedBranchId = u.branchId !== undefined ? u.branchId : (linkedEmployee?.branchId ?? null)
         const user: AppUser = {
           id: nextId(state.appUsers), nameAr, roleId: u.roleId, pinHash: u.pinHash, active: true,
           employeeId: u.employeeId ?? null,
+          ...(resolvedBranchId != null ? { branchId: resolvedBranchId } : {}),
           phone: sanitizeText(u.phone ?? '', 30), email: sanitizeText(u.email ?? '', 80),
           mustChangePin: u.mustChangePin ?? true,
           initialPin: u.initialPin ?? null,
@@ -8079,7 +8298,7 @@ export const useRawDataStore = create<DataState>()(
 
       addTreasury: (nameAr, kind, extra) => {
         const state = get()
-        const errors = validateTreasury(nameAr, state.treasuries)
+        const errors = validateTreasury(nameAr, getBranchScopedDataState(state).treasuries)
         if (errors.length) throw new Error(errors.join(' — '))
         const activeBranch = getEffectiveActiveBranch(state)
         const t: TreasuryDef = {
@@ -8095,7 +8314,7 @@ export const useRawDataStore = create<DataState>()(
 
       renameTreasury: (code, nameAr, extra) => {
         const state = get()
-        const errors = validateTreasury(nameAr, state.treasuries, code)
+        const errors = validateTreasury(nameAr, getBranchScopedDataState(state).treasuries, code)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ treasuries: state.treasuries.map((t) => (t.code === code ? { ...t, ...extra, nameAr: nameAr.trim() } : t)) })
       },
@@ -8124,7 +8343,7 @@ export const useRawDataStore = create<DataState>()(
         const nameAr = c.nameAr.trim()
         if (!nameAr) throw new Error('اسم العميل مطلوب')
         if (c.priceListId != null && !get().priceLists.some((list) => list.id === c.priceListId && list.isActive)) throw new Error('فئة الخصم غير موجودة أو معطلة')
-        if (get().customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
+        if (getBranchScopedDataState(get()).customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
         set((s) => ({ customers: [...s.customers, { ...c, nameAr, id: nextId(s.customers) }] }))
       },
       updateCustomer: (id, patch) => {
@@ -8133,7 +8352,7 @@ export const useRawDataStore = create<DataState>()(
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم العميل مطلوب')
-          if (get().customers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل آخر بنفس الاسم «${nameAr}»`)
+          if (getBranchScopedDataState(get()).customers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
         set((s) => ({ customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
@@ -8169,14 +8388,14 @@ export const useRawDataStore = create<DataState>()(
       addSupplier: (sup) => {
         const nameAr = sup.nameAr.trim()
         if (!nameAr) throw new Error('اسم المورد مطلوب')
-        if (get().suppliers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
+        if (getBranchScopedDataState(get()).suppliers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
         set((s) => ({ suppliers: [...s.suppliers, { ...sup, nameAr, id: nextId(s.suppliers) }] }))
       },
       updateSupplier: (id, patch) => {
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم المورد مطلوب')
-          if (get().suppliers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد آخر بنفس الاسم «${nameAr}»`)
+          if (getBranchScopedDataState(get()).suppliers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
         set((s) => ({ suppliers: s.suppliers.map((x) => (x.id === id ? { ...x, ...patch } : x)) }))
@@ -8202,7 +8421,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const nameAr = e.nameAr.trim()
         if (!nameAr) throw new Error('اسم الموظف مطلوب')
-        if (state.employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
+        if (getBranchScopedDataState(state).employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
         if (e.roleId != null) {
           const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === e.roleId)
           if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
@@ -8243,7 +8462,7 @@ export const useRawDataStore = create<DataState>()(
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم الموظف مطلوب')
-          if (state.employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
+          if (getBranchScopedDataState(state).employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
         if (patch.roleId !== undefined && patch.roleId != null) {
@@ -8285,7 +8504,8 @@ export const useRawDataStore = create<DataState>()(
         // 2) تحقق شامل قبل أي كتابة
         // مسير راتب موظف واحد (طلب المالك): الشهر يقبل أكثر من مسير، والممنوع
         // هو تكرار صرف راتب الموظف نفسه في الشهر نفسه — برسالة باسمه لا برقمه.
-        const monthRuns = state.payrollRuns.filter((r) => r.month === args.month)
+        const scopedPayrollRuns = getBranchScopedDataState(state).payrollRuns
+        const monthRuns = scopedPayrollRuns.filter((r) => r.month === args.month)
         const alreadyPaid = computed
           .map((line) => line.employeeId)
           .filter((id) => monthRuns.some((run) => run.lines.some((line) => line.employeeId === id)))
@@ -8296,8 +8516,8 @@ export const useRawDataStore = create<DataState>()(
         const errors = validatePayrollRun({
           month: args.month,
           lines: computed,
-          existingMonths: state.payrollRuns.map((r) => r.month),
-          existingRuns: state.payrollRuns.map((r) => ({ month: r.month, employeeIds: r.lines.map((line) => line.employeeId) })),
+          existingMonths: scopedPayrollRuns.map((r) => r.month),
+          existingRuns: scopedPayrollRuns.map((r) => ({ month: r.month, employeeIds: r.lines.map((line) => line.employeeId) })),
         })
         if (errors.length) throw new Error(errors.join(' — '))
 
