@@ -9144,11 +9144,28 @@ export const useDataStore = create<DataState>()(
             expenses: [...t.expenses, { nameAr: args.nameAr.trim(), qty, unitAmountMinor: args.unitAmountMinor, source: 'customer' as const, amountMinor }],
           }
         })
+        const nextVehicleCostEntries = args.bearer === 'company' && trip.vehicleId != null
+          ? [...state.vehicleCostEntries, {
+              id: nextId(state.vehicleCostEntries),
+              vehicleId: trip.vehicleId,
+              date: now.slice(0, 10),
+              kind: 'cost' as const,
+              amountMinor,
+              description: `مصروف نقلة ${trip.tripNumber} — ${args.nameAr.trim()}`,
+              category: args.nameAr.trim(),
+              status: args.paymentSource === 'credit' ? ('accrued' as const) : ('paid' as const),
+              purchaseId: null,
+              payableId: null,
+              journalEntryId: entryId,
+              settlementEntryIds: [],
+            }]
+          : state.vehicleCostEntries
         set({
           tripExpenses: [...state.tripExpenses, record],
           trips: updatedTrips,
           journal: [...state.journal, entry],
           custodyTxs: nextCustodyTxs,
+          vehicleCostEntries: nextVehicleCostEntries,
         })
         return record
       },
