@@ -54,17 +54,15 @@ export function seedDeveloperDefaults(): void {
   })
 
   const data = useDataStore.getState()
-  data.seed(activity.features)
-  useDataStore.setState({
-    ownerPinHash: DEV_PIN_HASH,
-    ownerProfile: {
-      ...data.ownerProfile,
-      nameAr: DEV_TEST_CREDENTIALS.ownerName,
-      phone: DEV_TEST_CREDENTIALS.phone,
-      email: DEV_TEST_CREDENTIALS.email,
-    },
-    currentUserId: null,
-    loggedOut: false,
+  // بيانات المطور تُزرع كحساب المالك على نطاق شامل، لا داخل الفرع الذي كان محدداً سابقاً.
+  if (data.currentUserId == null) data.setActiveBranchId(null)
+  const seedData = useDataStore.getState()
+  seedData.seed(activity.features)
+  seedData.setOwnerPin(DEV_PIN_HASH)
+  seedData.updateOwnerProfile({
+    nameAr: DEV_TEST_CREDENTIALS.ownerName,
+    phone: DEV_TEST_CREDENTIALS.phone,
+    email: DEV_TEST_CREDENTIALS.email,
   })
 }
 

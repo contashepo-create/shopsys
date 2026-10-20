@@ -1694,7 +1694,12 @@ tr:hover .invoice-line-taxcheck, tr:focus-within .invoice-line-taxcheck { opacit
 .invoice-doc .invoice-doc-fields { gap: .18rem .3rem; }
 .invoice-doc .invoice-doc-fields > .form-field { display: grid; min-width: 0; align-content: start; gap: .06rem; grid-template-rows: 1.02rem 1.9rem; margin: 0; }
 .invoice-doc .invoice-doc-fields > .form-field > * { min-width: 0; max-width: 100%; }
-.invoice-doc .invoice-doc-fields input, .invoice-doc .invoice-doc-fields select { box-sizing: border-box; width: 100%; min-width: 0; }
+.invoice-doc .invoice-doc-fields input:not([type=checkbox]):not([type=radio]), .invoice-doc .invoice-doc-fields select { box-sizing: border-box; width: 100%; min-width: 0; }
+.invoice-doc .invoice-doc-fields input[type=checkbox],
+.invoice-doc .invoice-doc-fields input[type=radio] {
+  width: .8rem !important; height: .8rem !important; min-width: .8rem !important; min-height: .8rem !important;
+  flex: 0 0 .8rem; margin: 0; cursor: pointer; accent-color: var(--doc-accent);
+}
 .invoice-doc .invoice-doc-fields .field-head { align-items: center; gap: .22rem; margin: 0; }
 .invoice-doc .invoice-doc-fields .field-head > label,
 .invoice-doc .invoice-doc-fields > .form-field > label { display: flex; align-items: center; gap: .18rem; color: var(--doc-muted); font-size: .56rem; font-weight: 800; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: anywhere; line-height: 1.15; }
@@ -2778,3 +2783,83 @@ input, textarea, select, option,
 .invoice-doc-fx-edit, .invoice-doc-fx-clear { border: none; border-radius: .4rem; padding: .15rem .5rem; font-size: .56rem; font-weight: 800; cursor: pointer; }
 .invoice-doc-fx-edit { background: color-mix(in srgb, var(--doc-accent) 15%, transparent); color: var(--doc-accent); }
 .invoice-doc-fx-clear { background: color-mix(in srgb, #e11d48 12%, transparent); color: #e11d48; }
+
+/* نموذج تسجيل المشروع: ترويسة مستقلة وتسميات واضحة فوق الحقول. */
+[data-project-doc-editor] .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr); }
+[data-project-doc-editor] .invoice-doc-side:empty { display: none; }
+/* محرر المشروع: حقول طبيعية الارتفاع حتى لا تتداخل التسمية/التلميح مع الإدخال.
+   القالب المضغوط مشترك مع الفواتير ولا يناسب حقول المشروع الطويلة متعددة الصفوف. */
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  gap: .55rem .65rem;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields > .form-field {
+  display: flex;
+  min-width: 0;
+  height: auto;
+  flex-direction: column;
+  align-content: initial;
+  gap: .22rem;
+  margin: 0;
+  padding: .22rem .3rem;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > label,
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields .field-head > label {
+  min-width: 0;
+  min-height: 1.2rem;
+  height: auto;
+  align-items: flex-start;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: .68rem;
+  line-height: 1.3;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields .field-head {
+  min-width: 0;
+  min-height: 1.2rem;
+  height: auto;
+  align-items: flex-start;
+  overflow: visible;
+  margin: 0;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > p {
+  min-height: 0;
+  margin: 0;
+  font-size: .62rem;
+  line-height: 1.35;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields > .form-field > *:not(label):not(.field-head) {
+  height: auto !important;
+  min-height: 0 !important;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields input:not([type=checkbox]):not([type=radio]),
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 2.35rem !important;
+  min-height: 2.35rem !important;
+  padding: .4rem .65rem !important;
+  font-size: .78rem !important;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields .invoice-doc-infield {
+  height: auto !important;
+  min-height: 2.35rem !important;
+  align-items: stretch;
+}
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields [data-party-picker],
+[data-project-doc-editor] .invoice-doc .invoice-doc-fields [data-party-picker] > input {
+  height: 2.35rem !important;
+  min-height: 2.35rem !important;
+}
+@media (max-width: 1100px) {
+  [data-project-doc-editor] .invoice-doc .invoice-doc-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  [data-project-doc-editor] .invoice-doc .invoice-doc-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  [data-project-doc-editor] .invoice-doc .invoice-doc-fields { grid-template-columns: minmax(0, 1fr); }
+}

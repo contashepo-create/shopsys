@@ -388,10 +388,13 @@ export function quotationTotal(lines: readonly QuotationLine[]): Minor {
   return lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
 }
 
-export function validateQuotation(q: Pick<Quotation, 'titleAr' | 'clientName' | 'lines'>): string[] {
+export function validateQuotation(q: Pick<Quotation, 'titleAr' | 'clientName' | 'lines'> & { clientId?: number | null }): string[] {
   const errors: string[] = []
   if (!q.titleAr.trim()) errors.push('عنوان العرض مطلوب')
   if (!q.clientName.trim()) errors.push('اسم العميل/الجهة مطلوب')
+  /* طلب المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل في سجل العملاء —
+     الربط كان اختيارياً «بلا ربط» فيضيع تتبع العرض وعميله عند الفوز والتحويل. */
+  if (!q.clientId || q.clientId <= 0) errors.push('عرض السعر دائماً لعميل مسجَّل — اختر العميل من سجل العملاء')
   const meaningful = q.lines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
   if (meaningful.length === 0) errors.push('بند واحد على الأقل بكمية موجبة')
   for (const l of meaningful) {
@@ -989,3 +992,97 @@ export function clientContractingCard(rows: readonly ClientProjectRow[]): Client
     netDueMinor: openDocsMinor - advancesRemainingMinor,
   }
 }
+
+/* ═══ §96: فواتير مصروفات المشروعات متعددة البنود (شامل / غير شامل / بدون ضريبة) ═══ */
+
+export type ExpenseTaxMode = 'none' | 'exclusive' | 'inclusive'
+
+export interface ProjectExpenseLineInput {
+  description: string
+  kind: CostKind
+  qty: number
+  unitPriceMinor: Minor
+  taxMode: ExpenseTaxMode
+  vatPercent?: number
+  boqItemId?: number | null
+}
+
+export interface ProjectExpenseLineComputed {
+  description: string
+  kind: CostKind
+  qty: number
+  unitPriceMinor: Minor
+  taxMode: ExpenseTaxMode
+  vatPercent: number
+  /** الصافي قبل الضريبة — يدخل حساب 5110 ويُخصم من ربح المشروع */
+  netMinor: Minor
+  /** ضريبة القيمة المضافة للمدخلات — تُسجَّل في حساب 2102 عند وجودها */
+  vatMinor: Minor
+  /** الإجمالي الشامل للسطر (netMinor + vatMinor) */
+  grossMinor: Minor
+  boqItemId?: number | null
+}
+
+export function computeProjectExpenseLine(
+  input: ProjectExpenseLineInput,
+  defaultVatPercent = 14,
+): ProjectExpenseLineComputed {
+  const qty = Number.isFinite(input.qty) && input.qty > 0 ? input.qty : 0
+  const unitPriceMinor = Number.isInteger(input.unitPriceMinor) && input.unitPriceMinor > 0 ? input.unitPriceMinor : 0
+  const lineRaw = Math.round(qty * unitPriceMinor)
+  const taxMode: ExpenseTaxMode = input.taxMode ?? 'none'
+  const vatPercent = taxMode === 'none' ? 0 : (input.vatPercent ?? defaultVatPercent)
+  let netMinor = lineRaw
+  let vatMinor = 0
+  let grossMinor = lineRaw
+  if (taxMode === 'exclusive' && vatPercent > 0) {
+    netMinor = lineRaw
+    vatMinor = Math.round((lineRaw * vatPercent) / 100)
+    grossMinor = netMinor + vatMinor
+  } else if (taxMode === 'inclusive' && vatPercent > 0) {
+    grossMinor = lineRaw
+    netMinor = Math.round((grossMinor * 100) / (100 + vatPercent))
+    vatMinor = grossMinor - netMinor
+  }
+  return {
+    description: input.description.trim(),
+    kind: input.kind,
+    qty,
+    unitPriceMinor,
+    taxMode,
+    vatPercent,
+    netMinor,
+    vatMinor,
+    grossMinor,
+    boqItemId: input.boqItemId ?? null,
+  }
+}
+
+export function computeProjectExpenseInvoice(
+  lines: readonly ProjectExpenseLineInput[],
+  defaultVatPercent = 14,
+): {
+  lines: ProjectExpenseLineComputed[]
+  netMinor: Minor
+  vatMinor: Minor
+  grossMinor: Minor
+  primaryKind: CostKind
+  summaryDescription: string
+} {
+  const computed = lines
+    .map((l) => computeProjectExpenseLine(l, defaultVatPercent))
+    .filter((l) => l.grossMinor > 0 && l.description.length > 0)
+  if (computed.length === 0) {
+    throw new Error('أدخل بند مصروف واحداً على الأقل ببيان وقيمة موجبة')
+  }
+  const netMinor = computed.reduce((s, l) => s + l.netMinor, 0)
+  const vatMinor = computed.reduce((s, l) => s + l.vatMinor, 0)
+  const grossMinor = computed.reduce((s, l) => s + l.grossMinor, 0)
+  const primaryKind = computed[0].kind
+  const summaryDescription =
+    computed.length === 1
+      ? computed[0].description
+      : `${computed[0].description} (+${computed.length - 1} بنود أخرى)`
+  return { lines: computed, netMinor, vatMinor, grossMinor, primaryKind, summaryDescription }
+}
+

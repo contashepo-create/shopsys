@@ -78,9 +78,10 @@ assertInvariants('قبل المزامنة', c)
   assert.ok(RUNNER.includes('assertIncomingLedgerSafe'), 'لا حارس للوارد من السحابة')
   assert.ok(RUNNER.includes('assertJournalIntegrity'), 'الحارس لا يستدعي فحص سلامة الدفتر')
   assert.ok(/rejected|رُفضت حالة السحابة/.test(RUNNER), 'لا رسالة رفض عربية للحالة السحابية المختلة')
-  const applyIdx = RUNNER.indexOf('useDataStore.setState(parsed)')
-  const guardIdx = RUNNER.indexOf('assertIncomingLedgerSafe(parsed)')
-  assert.ok(guardIdx > 0 && guardIdx < applyIdx, 'الحارس يجب أن يسبق التطبيق')
+  const pullIdx = RUNNER.indexOf("outcome.action === 'pulled'")
+  const guardIdx = RUNNER.indexOf('assertIncomingLedgerSafe(parsed)', pullIdx)
+  const applyIdx = RUNNER.indexOf('useRawDataStore.setState(parsed)', pullIdx)
+  assert.ok(pullIdx > 0 && guardIdx > pullIdx && guardIdx < applyIdx, 'الحارس يجب أن يسبق التطبيق')
   R.ok('AUDIT-016: كل دفتر وارد من السحابة يمر بحارس الدفتر **قبل** تطبيقه — لا باب خلفي للقيود')
 
   // محاكاة الحارس على دفعة مسمومة

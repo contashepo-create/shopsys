@@ -32,8 +32,8 @@ check('① الاستعادة تكتب عبر نفس الطبقة (SQLite في �
 const sidebar = read('src/ui/layout/Sidebar.tsx')
 const menubar = read('src/ui/layout/MenuBar.tsx')
 const lock = read('src/ui/LockScreen.tsx')
-check('② شعار الشريط الجانبي بمسار نسبي (يعمل عبر file://)', sidebar.includes('src="./app-icon.png'))
-check('② شعار شريط القوائم بمسار نسبي', menubar.includes('src="./app-icon.png'))
+check('② شعار الشريط الجانبي بمسار نسبي (يعمل عبر file://)', sidebar.includes('src="./app-mark.png'))
+check('② شعار شريط القوائم بمسار نسبي', menubar.includes('src="./app-mark.png'))
 check('② شعار شاشة القفل بمسار نسبي', lock.includes('src="./dev-logo.png'))
 
 const builder = read('electron-builder.yml')

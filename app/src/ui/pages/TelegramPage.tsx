@@ -19,7 +19,7 @@ import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { sanitizeHour, hourLabelAr } from '../../core/schedule.ts'
 import { salesSummary, stockAlerts, type Period } from '../../core/reports.ts'
 import { buildBackup, backupFileName } from '../../core/backup.ts'
-import { decryptForDevice } from '../../data/secureStorage.ts'
+import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
 
@@ -114,10 +114,8 @@ export function TelegramPage() {
   })
 
   const sendBackup = () => run('أُرسلت النسخة الاحتياطية', async () => {
-    const appRaw = localStorage.getItem('shopsys-app')
-    const storeEnc = localStorage.getItem('shopsys-data')
-    // قاعدة البيانات مشفرة على القرص (القرار 28) — نفكها قبل بناء ملف النسخة
-    const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+    const appRaw = await settingsAppStorage().getItem('shopsys-app')
+    const storeRaw = await appStorage().getItem('shopsys-data')
     if (!storeRaw) throw new Error('لا بيانات للنسخ بعد')
     const backup = buildBackup({
       appState: appRaw ? JSON.parse(appRaw) : null,

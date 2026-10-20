@@ -40,6 +40,9 @@ const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts
 const { trialBalance, incomeStatement, balanceSheet } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 
 const st = () => useDataStore.getState()
+/* سياسة المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل — تُبذَر clientela واحدة */
+useDataStore.setState((s) => ({ customers: [...s.customers, { id: 9901, nameAr: 'عميل البوابة', phone: '01000000002', creditLimitMinor: 0, notes: '', openingMinor: 0 }] }))
+
 const P = { from: '2000-01-01', to: '2099-12-31' }
 let pass = 0, checkpoints = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
@@ -306,11 +309,11 @@ throws('حذف مركبة لها نقلات يُرفض', () => st().removeVehicl
 console.log('\n🏗️ T5: مقاولات — عرضان ← مشروع ← موازنة ← تغيير ← مستخلص ← باطن ← يوميات ← مواد ← WIP/EVM')
 
 // عرضان: فائز يتحول لمشروع، وخاسر يبقى مستنداً
-const winQ = st().addQuotation({ kind: 'tender', clientName: 'شركة التطوير العمراني', titleAr: 'تشطيب برج إداري', validUntil: '2026-12-31', lines: [{ descriptionAr: 'أعمال تشطيب', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 5_000_000 }], notes: '', winProbability: 70, bidBondMinor: 100_000 })
-const loseQ = st().addQuotation({ kind: 'quotation', clientName: 'عميل متردد', titleAr: 'ترميم فيلا', validUntil: '2026-10-01', lines: [{ descriptionAr: 'ترميم', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 900_000 }], notes: '' })
+const winQ = st().addQuotation({ kind: 'tender', clientName: 'شركة التطوير العمراني', clientId: 9901, titleAr: 'تشطيب برج إداري', validUntil: '2026-12-31', lines: [{ descriptionAr: 'أعمال تشطيب', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 5_000_000 }], notes: '', winProbability: 70, bidBondMinor: 100_000 })
+const loseQ = st().addQuotation({ kind: 'quotation', clientName: 'عميل متردد', clientId: 9901, titleAr: 'ترميم فيلا', validUntil: '2026-10-01', lines: [{ descriptionAr: 'ترميم', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 900_000 }], notes: '' })
 st().setQuotationStatus(loseQ.id, 'submitted')
 st().setQuotationStatus(loseQ.id, 'lost')
-throws('قفزة draft→won تُرفض (دورة حالات مشروعة فقط)', () => { const q3 = st().addQuotation({ kind: 'quotation', clientName: 'ع', titleAr: 'ت', validUntil: '2026-12-31', lines: [{ descriptionAr: 'ب', qty: 1, unitAr: 'م', unitPriceMinor: 1000 }], notes: '' }); st().setQuotationStatus(q3.id, 'won') }, 'الانتقال')
+throws('قفزة draft→won تُرفض (دورة حالات مشروعة فقط)', () => { const q3 = st().addQuotation({ kind: 'quotation', clientName: 'ع', clientId: 9901, titleAr: 'ت', validUntil: '2026-12-31', lines: [{ descriptionAr: 'ب', qty: 1, unitAr: 'م', unitPriceMinor: 1000 }], notes: '' }); st().setQuotationStatus(q3.id, 'won') }, 'الانتقال')
 const journalBeforeQ = st().journal.length
 assert.equal(st().journal.length, journalBeforeQ, 'العروض لا تلمس الدفاتر')
 st().setQuotationStatus(winQ.id, 'submitted')

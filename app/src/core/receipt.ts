@@ -137,6 +137,8 @@ export interface ReceiptRow {
   vatPercent: number | null
   /** سيريالات/IMEI القطع المعيّنة — تُطبع تحت اسم الصنف (نمط موبايل شوب) */
   serials: string[]
+  /** ملاحظة البند (عمود الملاحظات) — تُطبع تحت اسم الصنف */
+  notes?: string
 }
 
 export interface ReceiptModel {
@@ -198,6 +200,7 @@ export function buildReceiptModel(args: {
       discountPercent: l.discountPercent,
       vatPercent: l.vatPercentOverride ?? args.taxPercent,
       serials: l.serials ?? [],
+      notes: l.notes ?? '',
     }
   })
   const totalQty = Math.round(lines.reduce((a, l) => a + l.qty, 0) * 1000) / 1000
@@ -248,7 +251,7 @@ export function buildSimpleDocModel(args: {
   dateIso: string
   partyLabel: string // اسم المورد
   paymentLabel: string
-  rows: { nameAr: string; qty: number; unitPriceMinor: Minor; totalMinor: Minor }[]
+  rows: { nameAr: string; qty: number; unitPriceMinor: Minor; totalMinor: Minor; notes?: string }[]
   totalMinor: Minor
   paidMinor: Minor
   /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
@@ -256,6 +259,12 @@ export function buildSimpleDocModel(args: {
   settings: ReceiptSettings
   /** سطر ملخص إضافي يُبرز في الحاشية (مثلاً «مصاريف شحن وجمارك: …») */
   extraFooter?: string
+  /**
+   * ضريبة المستند (طلب المالك لعروض الأسعار): تُطبع بثلاثة أسطر بترتيب ثابت —
+   * الإجمالي (قبل الضريبة) ثم الضريبة ثم الإجمالي بالضريبة. بلاها يبقى المستند
+   * بلا ضريبة كما كان (فواتير المشتريات المبسطة).
+   */
+  tax?: { label: string; minor: Minor; baseMinor: Minor }
 }): ReceiptModel {
   const rows: ReceiptRow[] = args.rows.map((r) => ({
     nameAr: r.nameAr,
@@ -265,6 +274,7 @@ export function buildSimpleDocModel(args: {
     discountPercent: 0,
     vatPercent: null,
     serials: [],
+    notes: r.notes ?? '',
   }))
   const totalQty = Math.round(args.rows.reduce((a, r) => a + r.qty, 0) * 1000) / 1000
   return {
@@ -280,11 +290,11 @@ export function buildSimpleDocModel(args: {
     rows,
     itemCount: rows.length,
     totalQty,
-    grossMinor: args.totalMinor,
-    taxBaseMinor: args.totalMinor,
+    grossMinor: args.tax ? args.tax.baseMinor : args.totalMinor,
+    taxBaseMinor: args.tax ? args.tax.baseMinor : args.totalMinor,
     discountMinor: 0,
-    taxLabel: null,
-    taxMinor: 0,
+    taxLabel: args.tax ? args.tax.label : null,
+    taxMinor: args.tax ? args.tax.minor : 0,
     totalMinor: args.totalMinor,
     paidMinor: args.paidMinor,
     remainingMinor: args.totalMinor - args.paidMinor,

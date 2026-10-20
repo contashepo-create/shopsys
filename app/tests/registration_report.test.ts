@@ -158,7 +158,7 @@ describe('① بناء البلاغ وتعقيمه', () => {
       expect(text).toContain(item) // كل حقل مُرسل معلن بالاسم
     }
     expect(text).toContain('reg:') // مكان الحفظ معلن
-    expect(text).toMatch(/لا أصناف ولا فواتير|ما لا يُرسل أبداً/)
+    expect(text).toMatch(/لا تصل بيانات الأصناف أو الفواتير|ما لا يُرسل أبداً/)
     expect(LEGAL_VERSION).not.toBe('2026-10-08') // تغيير جوهري ⇒ تُطلب الموافقة مجدداً
   })
 })

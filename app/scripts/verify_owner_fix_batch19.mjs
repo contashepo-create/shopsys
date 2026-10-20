@@ -27,7 +27,7 @@ const css = read('index.css')
   assert.ok(/line\.taxIncluded \? Math\.round\(gross \* 100 \/ \(100 \+ percent\)\) : gross/.test(contracting),
     'السعر الشامل لا يُستخرج منه الصافي بالطريقة الصحيحة')
   assert.ok(/vat: string; incl: boolean/.test(quotes), 'شاشة العرض بلا حقلي ضريبة/شامل')
-  assert.ok(/الإجمالي شامل الضريبة/.test(quotes) && /draftTax\.netMinor/.test(quotes), 'العرض لا يعرض صافياً وضريبة وإجمالياً')
+  assert.ok(/الإجمالي بالضريبة/.test(quotes) && /draftTax\.netMinor/.test(quotes) && /data-quotation-sum-tax/.test(quotes), 'العرض لا يعرض إجمالياً وضريبة وإجمالياً بالضريبة')
   R.ok('بنود عرض السعر بكميات وأسعار وضريبة — شامل أو مضاف — كالفاتورة')
 }
 {

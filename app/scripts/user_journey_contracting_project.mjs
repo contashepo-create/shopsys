@@ -35,8 +35,11 @@ const acctBal = (code) => st().journal.flatMap((e) => e.lines).filter((l) => l.a
 
 console.log('\n═══ 1) عرض سعر → مشروع بعقد 500,000 ومحتجز 10% ═══')
 {
+  /* سياسة المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل — يُنشأ العميل أولاً */
+  st().addCustomer({ nameAr: 'شركة النور', phone: '01000000001', creditLimitMinor: 0, notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
+  const quoteClientId = st().customers.at(-1).id
   const q = st().addQuotation({
-    kind: 'quotation', clientName: 'شركة النور', clientId: null, titleAr: 'تشطيب فيلا', validUntil: '2026-12-31', notes: '',
+    kind: 'quotation', clientName: 'شركة النور', clientId: quoteClientId, titleAr: 'تشطيب فيلا', validUntil: '2026-12-31', notes: '',
     lines: [
       { nameAr: 'محارة', descriptionAr: 'أعمال محارة', qty: 1000, unitAr: 'م2', unitPriceMinor: 30000, estCostMinor: 20000 },
       { nameAr: 'دهانات', descriptionAr: 'أعمال دهانات', qty: 1000, unitAr: 'م2', unitPriceMinor: 20000, estCostMinor: 14000 },

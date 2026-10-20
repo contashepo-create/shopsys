@@ -42,7 +42,11 @@ const settings = readFileSync(new URL('../src/ui/pages/GeneralSettingsPage.tsx',
    من الإعدادات يجوز إيقاف/إعادة إظهار الوحدات الممنوحة (granted = نشاط ∪ مفتاح) —
    لا زر فتح ذاتي لأي وحدة غير ممنوحة. */
 ok(!settings.includes('>تفعيل<') && !settings.includes(">{'تفعيل'}"), 'لا زر فتح ذاتي للوحدات من الإعدادات')
-ok(settings.includes('granted.includes(m)'), 'التبديل محصور بالوحدات الممنوحة (افتراضيات النشاط ∪ مفتاح الدعم الموقّع)')
+/* طلب المالك (2026-10-17): «لا أريد لكل الأقسام أن يظهر اسماؤها — عند العميل فقط أقسامه»
+   ⇒ القائمة تُرسم من granted فقط (أقسام نشاطه + ما مُنح له بمفتاح) — وهو تضييق أضيق
+   من الفحص old: لا اسم لقسم غير ممنوح أصلاً، والتبديل محصور بها بنيوياً. */
+ok(settings.includes('granted.map(') && !settings.includes('ALL_MODULES.map('), 'القائمة مقصورة على الأقسام الممنوحة (granted) — لا أسماء أقسام غيره')
+ok(settings.includes('granted.includes(m)') || settings.includes('granted.map('), 'التبديل محصور بالوحدات الممنوحة (افتراضيات النشاط ∪ مفتاح الدعم الموقّع)')
 ok(!settings.includes('resetSetup'), 'أُزيل زر تغيير البلد/النشاط (البلد مقفول)')
 ok(settings.includes('مقفولان'), 'رسالة القفل ظاهرة للمستخدم')
 ok(settings.includes('الدعم الفني'), 'الإرشاد: التفعيل الإضافي عبر الدعم الفني (المطوّر)')

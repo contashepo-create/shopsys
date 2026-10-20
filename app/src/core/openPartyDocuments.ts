@@ -40,7 +40,10 @@ export interface CustomerSpecializedInput {
   /** كل تحصيلات العيادة (بسند أو بدونه) — دفتر تسوية الزيارات الوحيد */
   clinicCollections?: readonly { patientId: number; date: string; amountMinor: Minor }[]
   linkedPatientIds?: readonly number[]
-  rentals?: readonly { id: number; contractNumber: string; date: string; customerId: number | null; totals: { grandMinor: Minor; collectCreditMinor: Minor }; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
+  rentals?: readonly { id: number; contractNumber: string; date: string; closedAt?: string | null; customerId: number | null; billingMode?: string; payment?: string; vatPercent?: number; extraMinor?: number; totals: { grandMinor: Minor; collectCreditMinor: Minor }; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
+  rentalInvoices?: readonly { id: number; invoiceNumber: string; periodLabel: string; date: string; customerId?: number | null; payment: string; totalMinor: Minor; paidNowMinor: Minor }[]
+  customerEquipmentCosts?: readonly { id: number; date: string; description: string; customerId?: number | null; amountMinor: Minor; vatMinor?: Minor }[]
+  customerTripExpenses?: readonly { id: number; tripNumber: string; nameAr: string; date: string; customerId?: number | null; amountMinor: Minor }[]
   trips?: readonly { id: number; tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor }; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   tickets?: readonly { id: number; ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { grandMinor: Minor; paidMinor: Minor } | null; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   walletOps?: readonly { id: number; opNumber: string; date: string; customerId: number | null; status: string; chargeMinor: Minor; paidMinor: Minor }[]
@@ -94,13 +97,36 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
 
   for (const rental of input.rentals ?? []) {
     if (rental.customerId !== input.customerId) continue
-    push(`rental:${rental.id}`, `عقد إيجار ${rental.contractNumber}`, rental.date, positive(rental.totals.collectCreditMinor) - creditRefunds(rental.refunds))
+    if (rental.billingMode !== 'reference') {
+      push(`rental:${rental.id}`, `عقد إيجار ${rental.contractNumber}`, rental.date, positive(rental.totals.collectCreditMinor) - creditRefunds(rental.refunds))
+    }
+    if ((rental.extraMinor ?? 0) > 0 && rental.payment !== 'cash') {
+      const extraVat = Math.round(((rental.extraMinor ?? 0) * (rental.vatPercent ?? 0)) / 100)
+      push(`rentalextra:${rental.id}`, `تجاوز استخدام عقد إيجار ${rental.contractNumber}`, rental.closedAt ?? rental.date, (rental.extraMinor ?? 0) + extraVat)
+    }
+  }
+
+  for (const inv of input.rentalInvoices ?? []) {
+    if (inv.customerId !== input.customerId || inv.totalMinor <= 0) continue
+    const paid = inv.payment === 'cash' ? inv.totalMinor : Math.min(inv.totalMinor, positive(inv.paidNowMinor))
+    push(`rentinv:${inv.id}`, `فاتورة إيجار ${inv.invoiceNumber} (${inv.periodLabel})`, inv.date, inv.totalMinor - paid)
+  }
+
+  for (const cost of input.customerEquipmentCosts ?? []) {
+    if (cost.customerId !== input.customerId) continue
+    const gross = positive(cost.amountMinor) + positive(cost.vatMinor)
+    push(`eqcost:${cost.id}`, `مصروف معدة على المستأجر — ${cost.description}`, cost.date, gross)
   }
 
   for (const trip of input.trips ?? []) {
     if (trip.customerId !== input.customerId || trip.totals.grandMinor <= 0) continue
     const paid = trip.paidMinor ?? (trip.payment === 'cash' ? trip.totals.grandMinor : 0)
     push(`trip:${trip.id}`, `نقلة ${trip.tripNumber}`, trip.date, trip.totals.grandMinor - positive(paid) - creditRefunds(trip.refunds))
+  }
+
+  for (const exp of input.customerTripExpenses ?? []) {
+    if (exp.customerId !== input.customerId || exp.amountMinor <= 0) continue
+    push(`tripexp:${exp.id}`, `مصروف نقلة ${exp.tripNumber} على العميل — ${exp.nameAr}`, exp.date, positive(exp.amountMinor))
   }
 
   for (const ticket of input.tickets ?? []) {
@@ -175,7 +201,11 @@ export function documentKindLabel(docKey: string): string {
     lab: 'معمل تحاليل',
     visit: 'عيادة',
     rental: 'تأجير',
+    rentalextra: 'تجاوز إيجار',
+    rentinv: 'فاتورة إيجار دورية',
+    eqcost: 'مصروف معدة على المستأجر',
     trip: 'نقل ورحلات',
+    tripexp: 'مصروف نقلة على العميل',
     ticket: 'صيانة',
     wallet: 'محافظ إلكترونية',
     carsale: 'معرض سيارات',

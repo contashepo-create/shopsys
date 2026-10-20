@@ -22,7 +22,7 @@ const check = (name, cond) => {
 
 check('الإغلاق يمر عبر gracefulShutdown المستوردة من shutdown.ts', /import \{ gracefulShutdown \} from '\.\/shutdown\.ts'/.test(main) && /gracefulShutdown\(\{/.test(main))
 check('الإغلاق له مهلة للنسخة الاحتياطية (لا يتعلّق)', /timeoutMs:\s*8_000/.test(main))
-check('الإغلاق ينتهي بـ exit دائماً (exit في الوحدة بعد إغلاق القاعدة)', /closeDb\(\)[\s\S]*deps\.exit\(0\)/.test(shutdown) && /closeDb:\s*\(\)\s*=>\s*closing\.close\(\)/.test(main))
+check('الإغلاق ينتهي بـ exit دائماً (exit في الوحدة بعد إغلاق القاعدة)', /closeDb\(\)[\s\S]*deps\.exit\(0\)/.test(shutdown) && /closeDb:\s*\(\)\s*=>\s*\{\s*closing\.close\(\);\s*database = null/.test(main))
 check('لا app.quit() داخل سلسلة وعود الإغلاق (كان سبب العملية المعلّقة)', !/rotateBackups\(closing\)[\s\S]{0,200}app\.quit\(\)/.test(main))
 check('المحاولة الثانية تعيد النافذة إن كانت مغلقة', /second-instance'[\s\S]*?else if \(database\)[\s\S]*?createMainWindow\(\)/.test(main))
 check('المحاولة الثانية لا تعمل أثناء الإغلاق', /second-instance'[\s\S]*?if \(shuttingDown\) return/.test(main))

@@ -9,7 +9,6 @@
  * نقية تماماً: تُوصل بأي قناة (WebSocket في التطبيق، قناة ذاكرة في البوابات)
  * وتُغرس فوق أي متجر يشبه عقد LanStoreLike — لا تعتمد على Electron إطلاقاً.
  */
-import { randomUUID, timingSafeEqual } from 'node:crypto'
 import {
   LAN_SESSION_FNS,
   LAN_SESSION_KEYS,
@@ -40,6 +39,16 @@ export const PAIR_MAX_FAILURES = 5
 /** مدة إغلاق الاقتران بعد تجاوز المحاولات (10 دقائق) */
 export const PAIR_LOCK_MS = 10 * 60_000
 
+/** UUID عشوائي آمن باستخدام Web Crypto حتى يعمل المضيف في المتصفح دون اعتماد على node:crypto. */
+function secureRandomUUID(): string {
+  const bytes = new Uint8Array(16)
+  globalThis.crypto.getRandomValues(bytes)
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 /**
  * عمليات إدارية لا تُنفَّذ عبر الشبكة أبداً: إدارة المستخدمين والأدوار والصلاحيات
  * ورموز PIN والفروع والترحيل. لو وُجد جهاز مقترن ومسجّل دخوله بحساب عادي لا يصل
@@ -59,10 +68,13 @@ export const LAN_FORBIDDEN_FNS: ReadonlySet<string> = new Set([
 /** مقارنة رمز الاقتران بزمن ثابت (لا تسرّب من توقيت المقارنة) */
 export function pairingCodesMatch(given: unknown, expected: string): boolean {
   if (typeof given !== 'string') return false
-  const a = Buffer.from(given, 'utf8')
-  const b = Buffer.from(expected, 'utf8')
+  const encoder = new TextEncoder()
+  const a = encoder.encode(given)
+  const b = encoder.encode(expected)
   if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
+  let mismatch = 0
+  for (let i = 0; i < a.length; i++) mismatch |= a[i] ^ b[i]
+  return mismatch === 0
 }
 
 export interface LanHostEvents {
@@ -99,7 +111,7 @@ export class LanHostCore {
     pairingCode: string,
     hostName: string,
     events: LanHostEvents = {},
-    generateToken: () => string = () => randomUUID(),
+    generateToken: () => string = secureRandomUUID,
     options: { now?: () => number } = {},
   ) {
     this.store = store

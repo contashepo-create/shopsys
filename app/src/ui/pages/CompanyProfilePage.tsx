@@ -20,8 +20,12 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 const isValidEmail = (v: string) => !v.trim() || /^\S+@\S+\.\S+$/.test(v.trim())
 
 export function CompanyProfilePage() {
-  const { setup, updateCompanyProfile, einvoice, updateEinvoice, receipt } = useAppStore()
+  const { setup, updateCompanyProfile, einvoice, updateEinvoice, receipt, activeBranchContext } = useAppStore()
   const toast = useToast()
+  // بيانات المنشأة (الاسم/العنوان/السجل التجاري...) عامة للشركة كلها — لا تُعدَّل من داخل فرع مستقل
+  // (نفس قاعدة الإعدادات العامة الأخرى في app.store.ts/companySetupPatch). الرقم الضريبي وحده قد
+  // يختلف بالفرع فيبقى قابلاً للتعديل دائماً.
+  const canEditCompanyWideSettings = !activeBranchContext || activeBranchContext.isMain
 
   const [shopName, setShopName] = useState(setup.shopName)
   const [ownerName, setOwnerName] = useState(setup.ownerName)
@@ -42,21 +46,27 @@ export function CompanyProfilePage() {
   const save = () => {
     if (!shopName.trim()) return toast.show('اسم المنشأة مطلوب', 'error')
     if (!isValidEmail(email)) return toast.show('صيغة البريد الإلكتروني غير صحيحة', 'error')
-    updateCompanyProfile({
-      shopName: shopName.trim(),
-      ownerName: ownerName.trim(),
-      phone: phone.trim(),
-      email: email.trim(),
-      website: website.trim(),
-      city: city.trim(),
-      street: street.trim(),
-      buildingNo: buildingNo.trim(),
-      postalCode: postalCode.trim(),
-      poBox: poBox.trim(),
-      commercialRegister: commercialRegister.trim(),
-    })
-    updateEinvoice({ taxNumber: taxNumber.trim() })
-    toast.show('حُفظت بيانات المنشأة ✓')
+    try {
+      if (canEditCompanyWideSettings) {
+        updateCompanyProfile({
+          shopName: shopName.trim(),
+          ownerName: ownerName.trim(),
+          phone: phone.trim(),
+          email: email.trim(),
+          website: website.trim(),
+          city: city.trim(),
+          street: street.trim(),
+          buildingNo: buildingNo.trim(),
+          postalCode: postalCode.trim(),
+          poBox: poBox.trim(),
+          commercialRegister: commercialRegister.trim(),
+        })
+      }
+      updateEinvoice({ taxNumber: taxNumber.trim() })
+      toast.show('حُفظت بيانات المنشأة ✓')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+    }
   }
 
   return (
@@ -69,16 +79,21 @@ export function CompanyProfilePage() {
         كل بيانات منشأتك في مكان واحد — قابلة للتعديل متى شئت. اسم الإيصال المطبوع له حقل مستقل في
         «إعدادات الطباعة» لو أردت اسماً مختلفاً عن اسم المنشأة الرسمي.
       </p>
+      {!canEditCompanyWideSettings && (
+        <p className="text-[12px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400 rounded-xl px-3 py-2">
+          أنت داخل فرع «{activeBranchContext?.nameAr}» — بيانات المنشأة عامة للشركة كلها وتُعدَّل من الفرع الرئيسي فقط (الرقم الضريبي وحده يمكن تخصيصه بالفرع).
+        </p>
+      )}
 
       {/* ① هوية المنشأة */}
       <section className={card}>
         <h3 className={h3}><Building2 size={17} className="text-brand-500" /> هوية المنشأة</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="اسم المنشأة *">
-            <input value={shopName} onChange={(e) => setShopName(e.target.value)} className={inputCls} placeholder="اسم منشأتك" />
+            <input value={shopName} onChange={(e) => setShopName(e.target.value)} className={inputCls} placeholder="اسم منشأتك" disabled={!canEditCompanyWideSettings} />
           </Field>
           <Field label="اسم المالك" icon={<User size={13} className="ml-1 inline" />}>
-            <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} className={inputCls} placeholder="اسم صاحب المنشأة" />
+            <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} className={inputCls} placeholder="اسم صاحب المنشأة" disabled={!canEditCompanyWideSettings} />
           </Field>
         </div>
       </section>
@@ -87,9 +102,9 @@ export function CompanyProfilePage() {
       <section className={card}>
         <h3 className={h3}><Phone size={17} className="text-sky-500" /> بيانات التواصل</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01xxxxxxxxx" /></Field>
-          <Field label="البريد الإلكتروني"><input value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} dir="ltr" placeholder="name@example.com" /></Field>
-          <Field label="الموقع الإلكتروني"><input value={website} onChange={(e) => setWebsite(e.target.value)} className={inputCls} dir="ltr" placeholder="www.example.com" /></Field>
+          <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01xxxxxxxxx" disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="البريد الإلكتروني"><input value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} dir="ltr" placeholder="name@example.com" disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="الموقع الإلكتروني"><input value={website} onChange={(e) => setWebsite(e.target.value)} className={inputCls} dir="ltr" placeholder="www.example.com" disabled={!canEditCompanyWideSettings} /></Field>
         </div>
       </section>
 
@@ -97,11 +112,11 @@ export function CompanyProfilePage() {
       <section className={card}>
         <h3 className={h3}><MapPin size={17} className="text-emerald-500" /> العنوان</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="المدينة"><input value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} /></Field>
-          <Field label="الشارع / الحي"><input value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} /></Field>
-          <Field label="رقم المبنى"><input value={buildingNo} onChange={(e) => setBuildingNo(e.target.value)} className={inputCls} dir="ltr" /></Field>
-          <Field label="الرمز البريدي"><input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} className={inputCls} dir="ltr" /></Field>
-          <Field label="صندوق البريد"><input value={poBox} onChange={(e) => setPoBox(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          <Field label="المدينة"><input value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="الشارع / الحي"><input value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="رقم المبنى"><input value={buildingNo} onChange={(e) => setBuildingNo(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="الرمز البريدي"><input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="صندوق البريد"><input value={poBox} onChange={(e) => setPoBox(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} /></Field>
         </div>
       </section>
 
@@ -110,7 +125,7 @@ export function CompanyProfilePage() {
         <h3 className={h3}><Landmark size={17} className="text-violet-500" /> البيانات الرسمية</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="السجل التجاري" icon={<Hash size={13} className="ml-1 inline" />}>
-            <input value={commercialRegister} onChange={(e) => setCommercialRegister(e.target.value)} className={inputCls} dir="ltr" />
+            <input value={commercialRegister} onChange={(e) => setCommercialRegister(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} />
           </Field>
           <Field label="الرقم الضريبي" hint="نفس الرقم المستخدم في الفاتورة الإلكترونية (إن فُعّلت) — مصدر واحد لا يتكرر">
             <input value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} className={inputCls} dir="ltr" />

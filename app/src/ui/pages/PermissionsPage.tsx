@@ -21,9 +21,9 @@ import { Btn, DecimalInput, Field, inputCls, Modal, useToast, PinInput } from '.
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, renameCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
+  const { appUsers, currentUserId, branches, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, renameCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
-  const setup = useAppStore.getState().setup
+  const setup = useAppStore((s) => s.setup)
   const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
   const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
   // فلترة حسب النشاط (أمر المالك): «كاشير» لا يظهر لنشاط بلا كاشير،
@@ -42,6 +42,7 @@ export function PermissionsPage() {
   const [uPin, setUPin] = useState('')
   // سياسة المالك: الحساب يُبنى على موظف مسجل — بياناته وماليته في شاشة الموظفين
   const [uEmployeeId, setUEmployeeId] = useState(0)
+  const [uBranchId, setUBranchId] = useState<number>(0)
   // 🔐 رقم المالك + إعادة تعيين أرقام الموظفين (استعادة كلمة السر)
   const [ownerPinModal, setOwnerPinModal] = useState(false)
   const [oPin, setOPin] = useState('')
@@ -100,11 +101,12 @@ export function PermissionsPage() {
       const pinHash = await hashPin(uPin)
       addAppUser({
         nameAr: emp.nameAr, roleId: uRole, pinHash,
-        employeeId: emp.id, phone: emp.phone, email: emp.email,
+        employeeId: emp.id, branchId: uBranchId > 0 ? uBranchId : null,
+        phone: emp.phone, email: emp.email,
         initialPin: uPin, mustChangePin: true,
       })
       toast.show(`أُنشئ حساب «${emp.nameAr}» — سيُجبر على تغيير الرقم عند أول دخول ✓`)
-      setUserModal(false); setUPin(''); setURole('cashier'); setUEmployeeId(0)
+      setUserModal(false); setUPin(''); setURole('cashier'); setUEmployeeId(0); setUBranchId(0)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -405,6 +407,27 @@ export function PermissionsPage() {
                   title="تغيير دور هذا المستخدم — ترقية لمشرف أو تخصيص دور آخر"
                   className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-brand-500/15 hover:text-brand-600 font-bold transition-colors"
                 >{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId} ▾</button>
+                {branches.length > 0 && (
+                  <select
+                    aria-label={`فرع المستخدم ${u.nameAr}`}
+                    value={u.branchId ?? 0}
+                    onChange={(e) => {
+                      const nextBranchId = Number(e.target.value)
+                      try {
+                        updateAppUser(u.id, { branchId: nextBranchId > 0 ? nextBranchId : null })
+                        const bName = branches.find((b) => b.id === nextBranchId)?.nameAr
+                        toast.show(bName ? `رُبط «${u.nameAr}» بفرع/شركة «${bName}» ✓` : `فُتح وصول «${u.nameAr}» لكل الفروع ✓`)
+                      } catch (err) { toast.show((err as Error).message, 'error') }
+                    }}
+                    title="تحديد الفرع/الشركة المستقلة التي يعمل عليها هذا المستخدم"
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/25 font-bold cursor-pointer"
+                  >
+                    <option value={0}>🌐 كل الفروع</option>
+                    {branches.filter((b) => b.active).map((b) => (
+                      <option key={b.id} value={b.id}>🏢 {b.nameAr}</option>
+                    ))}
+                  </select>
+                )}
                 {u.mustChangePin && u.initialPin && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold" title="الرقم المبدئي — سيختفي فور تغييره بأول دخول">
                     🔑 {u.initialPin}
@@ -737,6 +760,7 @@ export function PermissionsPage() {
                 const emp = employees.find((x) => x.id === id)
                 if (emp?.roleId) setURole(emp.roleId)
                 else if (emp?.jobTitle) setURole(suggestRoleForJobTitle(emp.jobTitle))
+                if (emp?.branchId != null) setUBranchId(emp.branchId)
               }}
               className={inputCls}
             >
@@ -746,6 +770,16 @@ export function PermissionsPage() {
                 .map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` — ${e.jobTitle}` : ''}</option>)}
             </QuickSelect>
           </Field>
+          {branches.length > 0 && (
+            <Field label="الفرع / الشركة المستقلة" hint="ربط المستخدم بفرع يحصر شاشاته وعملياته وأقسامه على هذا الفرع فقط">
+              <QuickSelect value={uBranchId} onChange={(e) => setUBranchId(Number(e.target.value))} className={inputCls}>
+                <option value={0}>🌐 كل الفروع (وصول شامل)</option>
+                {branches.filter((b) => b.active).map((b) => (
+                  <option key={b.id} value={b.id}>🏢 {b.nameAr}</option>
+                ))}
+              </QuickSelect>
+            </Field>
+          )}
           <Field label="الدور" hint="اقتُرح تلقائياً من فئة الموظف — يمكنك مراجعته من الإعدادات قبل إنشاء الحساب">
             <QuickSelect value={uRole} onChange={(e) => setURole(e.target.value)} className={inputCls}>
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}

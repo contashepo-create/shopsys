@@ -100,6 +100,7 @@ export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date
   const soon = []
   let total = 0
   let lifetime = 0
+  let trial = 0
   let malformed = 0
   let skipped = 0
   let viaMetadata = 0
@@ -130,7 +131,11 @@ export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date
       }
       if (!device || typeof device !== 'object') { malformed++; continue }
       const deviceId = key.name.slice(4)
-      if (!device.expiresAt) { lifetime++; continue } // دائم — لا تذكير
+      if (!device.expiresAt) {
+        /* مسجَّل بلا مفتاح (خطة فارغة) — ليس «مدى الحياة» ولا يستحق تذكيراً */
+        if (!String(device.plan ?? '').trim()) { trial++; continue }
+        lifetime++; continue // دائم — لا تذكير
+      }
       const at = Date.parse(String(device.expiresAt).slice(0, 10) + 'T00:00:00Z')
       if (Number.isNaN(at)) { malformed++; continue }
       const days = Math.ceil((at - now) / 86_400_000)
@@ -151,7 +156,7 @@ export async function subscriptionDigest(cfg, { soonDays = SOON_DAYS, now = Date
   // الأخطر أولاً: الأقرب انتهاءً فوق القائمة (القريبة) والأقدم انتهاءً (المنتهية)
   expired.sort((a, b) => a.days - b.days)
   soon.sort((a, b) => a.days - b.days)
-  return { total, lifetime, malformed, expired, soon, soonDays, skipped, viaMetadata }
+  return { total, lifetime, trial, malformed, expired, soon, soonDays, skipped, viaMetadata }
 }
 
 const PLAN_AR = { trial: 'تجريبي', basic: 'أساسي', pro: 'احترافي', lifetime: 'مدى الحياة' }
@@ -185,13 +190,14 @@ export function formatDigestAr(digest, { daily = false } = {}) {
       ? `\n⛔ منتهية حالياً: ${digest.expired.length} — لا يُرسل عنها تنبيه يومي (التفاصيل في «📊 إحصائيات»)`
       : ''
     const tail = digest.skipped ? `\n${scanWarningAr(digest.skipped)}` : ''
-    return `${head}\n✅ لا اشتراكات تنتهي خلال ${window}.\n📊 المسجل: ${digest.total} جهاز (منها ${digest.lifetime} مدى الحياة)${expiredNote}${tail}`
+    const trialNote = digest.trial ? ` · ${digest.trial} تجريبي بلا مفتاح` : ''
+    return `${head}\n✅ لا اشتراكات تنتهي خلال ${window}.\n📊 المسجل: ${digest.total} جهاز (منها ${digest.lifetime} مدى الحياة${trialNote})${expiredNote}${tail}`
   }
   const lines = [head, '', `⏳ <b>تنتهي خلال ${window} (${digest.soon.length})</b>`]
   lines.push(...digest.soon.slice(0, 40).map(rowAr))
   if (digest.soon.length > 40) lines.push(`   … و${digest.soon.length - 40} غيرها`)
   lines.push('')
-  lines.push(`📊 المسجل: ${digest.total} جهاز · مدى الحياة: ${digest.lifetime}`)
+  lines.push(`📊 المسجل: ${digest.total} جهاز · مدى الحياة: ${digest.lifetime}${digest.trial ? ` · تجريبي بلا مفتاح: ${digest.trial}` : ''}`)
   if (digest.skipped) lines.push(scanWarningAr(digest.skipped))
   lines.push('💡 التجديد: افتح العميل من «👥 العملاء» ← «🔑 إصدار أو تجديد الرخصة»')
   return lines.join('\n')
@@ -203,6 +209,7 @@ export function formatStatsAr(digest, extra = {}) {
     '📊 <b>إحصائيات المركز</b>',
     `👥 أجهزة مسجلة: ${digest.total}`,
     `♾️ مدى الحياة: ${digest.lifetime}`,
+    ...(digest.trial ? [`🧪 تجريبي بلا مفتاح: ${digest.trial}`] : []),
     `⏳ تنتهي خلال ${daysWordAr(digest.soonDays, true)}: ${digest.soon.length}`,
     `⛔ منتهية: ${digest.expired.length}`,
     ...(extra.revoked != null ? [`🔥 مفاتيح محروقة: ${extra.revoked}`] : []),

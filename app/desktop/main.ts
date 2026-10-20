@@ -2,8 +2,9 @@
  * عملية Electron الرئيسية — تنفيذ «مرحلة القاعدة المحلية» (وثيقة §101):
  *   • القاعدة: userData/shopsys.db عبر better-sqlite3 (WAL) — كاتب واحد
  *   • الجسور: shopsysDesktop.database (عقد المُصيّر القائم) + shopsysPrint
- *     وshopsysPrinters (§102 تعدد الطابعات) + shopsysUpdater
- *   • التحديث: electron-updater من GitHub Releases — فحص عند الإقلاع وزر يدوي
+ *     وshopsysPrinters (§102 تعدد الطابعات) — التحديث يعمل تلقائياً بلا جسر UI
+ *   • التحديث: electron-updater يفحص وينزّل بصمت عند الإقلاع؛ يثبّت ويعيد التشغيل بصمت عند الإغلاق
+ *   • مفتاح الجهاز محفوظ للتوافق مع لقطات enc:v1 القديمة فقط؛ اللقطات الجديدة نص SQLite
  *   • النسخ الدوّارة: ساعي 24 فقط = يوم واحد (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
@@ -16,6 +17,7 @@ import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type Snap
 import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
 import { KEY_RECOVERY_MAX_FILE_BYTES, keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
+import { generateDeviceIdFromBytes, mergeDeviceIdentity } from './deviceIdentity.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import Database from 'better-sqlite3'
 import {
@@ -26,8 +28,14 @@ import {
 import { isInAppNavigation, isExternalOpenable, isWhatsAppChatLink } from './navigationPolicy.ts'
 import { shieldDatabaseAt, type ShieldOutcome } from './dbShield.ts'
 import { gracefulShutdown } from './shutdown.ts'
+import { isUnsafeDatabaseLocation, protectDatabaseAt, recoverMissingDatabaseAt, recoveryBackupDirs, rememberDatabaseIdentity, assertSafeUpdateLocation, changedDrivePaths } from './databaseSafety.ts'
+import { freshStartCutoffAt, freshStartEligibleFilesAt, isCurrentFreshStartDataAt, readFreshStartMarkerAt, startFreshDatabaseAt, startFreshWithoutDatabaseAt } from './freshStart.ts'
+import { probeSnapshotKey } from './snapshotKeyProbe.ts'
+import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
+import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, decideManualCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
+import { CHROMIUM_ERR_ABORTED, MAIN_FRAME_ABORT_RETRY_LIMIT, classifyMainFrameLoadFailure, type MainFrameLoadState } from './mainLoad.ts'
 import {
-  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate, latestBackup,
+  ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
   type CustomLocationStatus, type ExistingDataCandidate,
   type RotationKind,
 } from './storagePolicy.ts'
@@ -37,17 +45,44 @@ type DeleteSnapshotInput = { storeName: string; expectedRevision: number }
 type EnqueueOutboxInput = Parameters<ShopsysDatabase['enqueueOutbox']>[0]
 type CompleteOutboxInput = Parameters<ShopsysDatabase['completeOutbox']>[0]
 
+class DatabaseKeyMismatchError extends Error {
+  readonly dbPath: string
+  readonly stores: string[]
+
+  constructor(dbPath: string, stores: string[], keyAvailable: boolean) {
+    super(`تعذّر فتح لقطات SQLite القديمة enc:v1 (${stores.join('، ')}). ${keyAvailable ? 'المفتاح الحالي لا يطابق اللقطة أو بياناتها تالفة.' : 'مفتاحها الأصلي غير متاح.'} لم تُكتب فوق القاعدة؛ استعد المفتاح الأصلي أو ملف .tkey ثم أعد المحاولة.`)
+    this.name = 'DatabaseKeyMismatchError'
+    this.dbPath = dbPath
+    this.stores = stores
+  }
+}
+
+/* عند فشل فحص مفتاح اللقطة: نعرض واجهة الاسترداد، ولا نفتح SQLite بمسار الكتابة. */
+let databaseInitializationFailure: string | null = null
+let databaseInitializationFailureDbPath: string | null = null
+let recoveryRestartScheduled = false
+
 /* eslint-disable no-console */
 
 let mainWindow: BrowserWindow | null = null
 let database: ShopsysDatabase | null = null
+let activeDatabasePath: string | null = null
+let updateLaunchInProgress = false
 let deviceEncryptionKey: Buffer = Buffer.alloc(0)
 let printWindow: BrowserWindow | null = null
 
 const isDev = !!process.env.ELECTRON_START_URL
+// قبل قفل العملية وأي قراءة: هوية ثابتة مستقلة عن اسم package وإصدار البرنامج.
+const currentUserData = app.getPath('userData')
+app.setName(DESKTOP_APP_NAME)
+const stableUserData = selectRuntimeUserData(app.getPath('appData'), currentUserData)
+mkdirSync(stableUserData, { recursive: true })
+app.setPath('userData', stableUserData)
+app.setPath('sessionData', stableUserData)
+const installationDir = (): string => dirname(app.getPath('exe'))
 
-/* ── سجل تشخيصي ملفي (بلاغ v1.0.0: شاشة بيضاء بلا أثر) — كل حدث مهم يُكتب
-      في userData/main.log ليتحقق منه الدعم الفني على جهاز العميل ── */
+/* ── سجل تشغيلي ملفي: تُكتب الأحداث المهمة محلياً في userData/main.log للفحص الداخلي؛
+      لا يُرسل الملف ولا قاعدة البيانات تلقائياً أو يُطلب من المستخدم رفعهما. ── */
 function logLine(tag: string, message: string): void {
   const stamp = new Date().toISOString()
   const line = `[${stamp}] [${tag}] ${message}\n`
@@ -59,6 +94,12 @@ function logLine(tag: string, message: string): void {
     /* مجلد المستخدم غير جاهز بعد — السطر طُبع على المخرجات فقط */
   }
 }
+
+type MainWindowLoadState = MainFrameLoadState & {
+  retryScheduled: boolean
+  retryTimer: NodeJS.Timeout | null
+}
+const mainWindowLoadStates = new WeakMap<BrowserWindow, MainWindowLoadState>()
 
 /** صفحة خطأ عربية مضمّنة بدل الشاشة البيضاء — تعرض سبب الفشل ومسار السجل */
 function errorPageHtml(reason: string, logPath: string): string {
@@ -72,18 +113,67 @@ code{background:#0f172a;padding:2px 8px;border-radius:6px;font-size:12px;color:#
 .hint{color:#94a3b8;font-size:12px}</style></head><body><div class="card">
 <h1>⚠ تعذّر تحميل واجهة التطبيق</h1>
 <p>السبب المسجَّل: <b>${esc(reason)}</b></p>
-<p>تفاصيل التشخيص محفوظة في ملف السجل:<br><code>${esc(logPath)}</code></p>
-<p class="hint">أرسل ملف السجل هذا للدعم الفني وسيتابع فوراً — بياناتك المحلية سليمة ولم تتأثر.</p>
+<p>حُفظت تفاصيل الخطأ محلياً في:<br><code>${esc(logPath)}</code></p>
+<p class="hint">لم تُحذف بياناتك. لا تشارك ملف القاعدة أو السجل؛ أغلق التطبيق وأعد تشغيله بعد التأكد من بقاء ملفات البيانات كما هي.</p>
 </div></body></html>`
 }
 
 function showLoadError(win: BrowserWindow, reason: string): void {
+  if (win.isDestroyed()) return
+  const state = mainWindowLoadStates.get(win)
+  if (state?.errorPageShowing) return
+  if (state) {
+    state.errorPageShowing = true
+    state.retryScheduled = false
+    if (state.retryTimer) clearTimeout(state.retryTimer)
+    state.retryTimer = null
+  }
   const logPath = join(app.getPath('userData'), 'main.log')
   logLine('load-error', reason)
   const html = errorPageHtml(reason, logPath)
-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => undefined)
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch((error: unknown) => {
+    logLine('load-error-page', `تعذّر عرض صفحة الخطأ المضمّنة: ${(error as Error).message}`)
+  })
   // النافذة مخفية حتى ready-to-show: صفحة الخطأ يجب أن تظهر حتماً
-  if (!win.isDestroyed() && !win.isVisible()) win.show()
+  if (!win.isVisible()) win.show()
+}
+
+function handleMainFrameLoadFailure(win: BrowserWindow, state: MainWindowLoadState, code: number, description: string, failedUrl: string): void {
+  if (win.isDestroyed() || state.errorPageShowing) return
+  // did-fail-load والرفض من loadFile قد يصفان الإلغاء نفسه؛ لا نكرر المحاولة أو السجل.
+  if (code === CHROMIUM_ERR_ABORTED && state.retryScheduled) return
+  const action = classifyMainFrameLoadFailure(code, state)
+  if (action === 'ignore') {
+    if (code === CHROMIUM_ERR_ABORTED && !state.appLoaded) logLine('load-cancelled', `أُلغي تحميل إطار رئيسي قبل ظهوره: ${failedUrl}`)
+    return
+  }
+  if (action === 'retry') {
+    state.retriesUsed += 1
+    state.retryScheduled = true
+    logLine('load-retry', `إعادة تحميل واجهة التطبيق بعد إلغاء عابر (${state.retriesUsed}/${MAIN_FRAME_ABORT_RETRY_LIMIT}): ${failedUrl}`)
+    state.retryTimer = setTimeout(() => {
+      state.retryScheduled = false
+      state.retryTimer = null
+      loadMainDocument(win, state)
+    }, 400)
+    state.retryTimer.unref()
+    return
+  }
+  const suffix = code === CHROMIUM_ERR_ABORTED ? ' — انتهت محاولات إعادة التحميل' : ''
+  showLoadError(win, `فشل تحميل الصفحة (${code}): ${description}${suffix} — ${failedUrl}`)
+}
+
+function loadMainDocument(win: BrowserWindow, state: MainWindowLoadState): void {
+  if (win.isDestroyed() || state.errorPageShowing) return
+  const pending = isDev ? win.loadURL(process.env.ELECTRON_START_URL!) : win.loadFile(join(__dirname, '../dist/index.html'))
+  void pending.catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/ERR_ABORTED/.test(message)) {
+      handleMainFrameLoadFailure(win, state, CHROMIUM_ERR_ABORTED, message, win.webContents.getURL() || APP_INDEX_FILE_URL)
+    } else {
+      showLoadError(win, `loadFile: ${message}`)
+    }
+  })
 }
 
 /* ── النافذة ── */
@@ -115,10 +205,9 @@ p{margin:0 0 18px;font-size:12.5px;line-height:1.7;color:#475569}
 </body></html>`
 }
 
-function showSplash(afterUpdateFrom: string | null): void {
-  const headline = afterUpdateFrom
-    ? `تم تحديث تَحَكَّم من ${afterUpdateFrom} إلى ${app.getVersion()} — جارٍ فتح بياناتك كما هي، لا شيء يُحذف.`
-    : 'جارٍ فتح بياناتك…'
+function showSplash(): void {
+  // شاشة بدء موحدة بلا إعلان/حوار تحديث؛ التحديث الصامت لا يطلب أي تفاعل.
+  const headline = 'جارٍ فتح بياناتك…'
   splashWindow = new BrowserWindow({
     width: 440, height: 250, frame: false, resizable: false, minimizable: false, maximizable: false,
     center: true, skipTaskbar: true, backgroundColor: '#f1f5f9', title: 'تَحَكَّم',
@@ -158,14 +247,6 @@ function closeSplash(): void {
 function lastRunVersionPath(): string {
   return join(app.getPath('userData'), 'last-run.json')
 }
-function readLastRunVersion(): string | null {
-  try {
-    const value = JSON.parse(readFileSync(lastRunVersionPath(), 'utf8'))
-    return typeof value?.version === 'string' ? value.version : null
-  } catch {
-    return null
-  }
-}
 function writeLastRunVersion(): void {
   try {
     writeFileSync(lastRunVersionPath(), JSON.stringify({ version: app.getVersion(), at: new Date().toISOString() }), 'utf8')
@@ -199,6 +280,8 @@ function createMainWindow(): BrowserWindow {
       spellcheck: false,
     },
   })
+  const loadState: MainWindowLoadState = { appLoaded: false, errorPageShowing: false, retriesUsed: 0, retryScheduled: false, retryTimer: null }
+  mainWindowLoadStates.set(win, loadState)
   win.webContents.setWindowOpenHandler(({ url }) => {
     /* ح9 (مراجعة ③): مخططات محددة فقط تُمرَّر إلى نظام التشغيل — لا file: ولا مخططات
        تطبيقات أخرى قد تفتح برامج محلية. الرفض دائماً داخل النافذة نفسها. */
@@ -216,9 +299,16 @@ function createMainWindow(): BrowserWindow {
   })
   /* قنوات التشخيص الميداني: فشل التحميل يعرض صفحة خطأ عربية بدل شاشة بيضاء،
      وأخطاء المُصيّر تُسجَّل في main.log — أين المشكلة يصبح معروفاً فوراً */
+  win.webContents.on('did-finish-load', () => {
+    if (loadState.errorPageShowing) return
+    loadState.appLoaded = true
+    loadState.retryScheduled = false
+    if (loadState.retryTimer) clearTimeout(loadState.retryTimer)
+    loadState.retryTimer = null
+  })
   win.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
     if (!isMainFrame) return
-    showLoadError(win, `فشل تحميل الصفحة (${code}): ${desc} — ${failedUrl}`)
+    handleMainFrameLoadFailure(win, loadState, code, desc, failedUrl)
   })
   win.webContents.on('render-process-gone', (_e, details) => {
     logLine('renderer-gone', `reason=${details.reason} exitCode=${details.exitCode}`)
@@ -230,23 +320,22 @@ function createMainWindow(): BrowserWindow {
   win.webContents.on('preload-error', (_e, preloadPath, error) => {
     logLine('preload-error', `${preloadPath}: ${error}`)
   })
+  win.on('close', (event) => {
+    if (database && !shuttingDown) {
+      // أبقِ المُصيّر حياً حتى تُحفظ طوابير الكتابة ويُؤخذ آخر backup.
+      event.preventDefault()
+      app.quit()
+    }
+  })
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) win.show()
   })
-  if (isDev) void win.loadURL(process.env.ELECTRON_START_URL!)
-  else {
-    void win.loadFile(join(__dirname, '../dist/index.html')).catch((err: unknown) => {
-      showLoadError(win, `loadFile: ${(err as Error).message}`)
-    })
-  }
+  loadMainDocument(win, loadState)
   return win
 }
 
-/* ── مفتاح تشفير الجهاز (v1.0.7 — تشفير قاعدة البيانات بمفتاح الجهاز) ──
-   يولَّد مرة واحدة في userData/device.key (32 بايت عشوائية). لقطات المتاجر
-   تُشفَّر بـ AES-GCM في المُصيّر قبل وصولها إلى SQLite عبر IPC، فتُقرأ القاعدة
-   على هذا الجهاز فقط — نسخ shopsys.db إلى جهاز آخر يعطي بيانات غير قابلة
-   للفك. اللقطات النصية القديمة تُقرأ كما هي وتُرحَّل مشفرة عند أول حفظ. */
+/* مفتاح التوافق القديم: لا تعتمد عليه اللقطات الجديدة. يُقرأ فقط لفك
+   لقطات enc:v1 التي كُتبت في إصدارات سابقة، ثم تُرحّل إلى نص SQLite عادي. */
 /** مدخل قرص مفتاح الجهاز — مشترك بين الإقلاع واستيراد مفتاح الاسترداد */
 function buildDeviceKeyIo(): DeviceKeyIo {
   const dir = app.getPath('userData')
@@ -279,14 +368,21 @@ function readKeyRecoveryExportedAt(): string | null {
 }
 
 function ensureDeviceEncryptionKey(): Buffer {
-  /* ث2 (تدقيق 2026-10-08): المفتاح يُخزَّن مشفّراً عبر safeStorage (DPAPI/
-     Keychain/libsecret) في device.key.enc، والملف الصريح device.key يُرحَّل
-     ثم يُحذف — ولا يُحذف قبل فكّ النسخة المشفّرة والتحقق منها بايت‑ببايت.
-     القرار كله في وحدة خالصة (desktop/deviceKeyStore.ts) مختبَرة بلا Electron. */
+  /* يُستخدم فقط لفك لقطات enc:v1 القديمة. المفتاح نفسه يُحفظ كما كان
+     عبر safeStorage، مع عدم حذف أو استبدال أي نسخة قديمة غير قابلة للقراءة. */
   const outcome = resolveDeviceKey(buildDeviceKeyIo())
   for (const warning of outcome.warnings) logLine('device-key', `تحذير: ${warning}`)
   logLine('device-key', describeDeviceKeyOutcome(outcome))
   return outcome.key
+}
+
+/** تعذّر مفتاح قديم لا يمنع تشغيل قواعد النص العادي الجديدة. إذا عثرنا على
+ * لقطة مشفرة، يفشل فحصها قبل الكتابة وتظهر شاشة استرداد بدلاً من فقدها. */
+function loadLegacySnapshotKey(): Buffer {
+  try { return ensureDeviceEncryptionKey() } catch (error) {
+    logLine('device-key', `مفتاح اللقطات القديمة غير متاح؛ يستمر الإقلاع للبيانات النصية: ${(error as Error).message}`)
+    return Buffer.alloc(0)
+  }
 }
 
 /* ═══ v1.0.8 (طلب المالك): قاعدة بيانات قابلة للنقل + نسخ احتياطية مزدوجة ═══
@@ -315,6 +411,10 @@ function pickValidatedDatabaseFile(): string | null {
   })
   const file = picked?.[0]
   if (!file) return null
+  if (isUnsafeDatabaseLocation(file, installationDir(), userDataDir())) {
+    dialog.showErrorBox('مكان غير آمن لقاعدة البيانات', 'المكان داخل مجلد التثبيت أو مجلد databases الذي يحذفه Chromium. اختر ملفاً في مجلد مستقل لحماية بياناتك.')
+    return null
+  }
   const verdict = isAbsoluteDbPath(file) ? probeShopsysDatabase(file) : 'unreadable'
   if (verdict === 'ok') return file
   const why = verdict === 'not-shopsys' ? 'ليس ملف قاعدة بيانات تَحَكَّم'
@@ -330,6 +430,8 @@ function pickValidatedDatabaseFile(): string | null {
  * المطلق في المؤشر. التثبيت الجديد بلا دليل لا يرى هذا الحوار.
  */
 async function askForExistingDatabaseIfNeeded(): Promise<void> {
+  // البدء النظيف قرار صريح محفوظ؛ غياب القاعدة بعده يعني إنشاء الجديدة المقصودة.
+  if (freshStartCutoffAt(userDataDir()) !== null) return
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const { dbPath } = resolveDbPath()
     const need = shouldAskForExistingDatabase({
@@ -353,7 +455,10 @@ async function askForExistingDatabaseIfNeeded(): Promise<void> {
       throw new Error('أُغلق البرنامج: لم تُختر قاعدة بيانات')
     }
     if (choice === 1) {
-      logLine('db-recovery', 'بدأ المستخدم قاعدة جديدة باختياره')
+      const result = await startFreshWithoutDatabaseAt({
+        userData: userDataDir(), installDir: installationDir(), excludedPaths: knownOldDatabasePaths(dbPath),
+      })
+      logLine('db-recovery', `بدأ المستخدم قاعدة جديدة باختياره؛ بدأ=${result.startedAt}`)
       return
     }
     const file = pickValidatedDatabaseFile()
@@ -379,7 +484,7 @@ function resolveDbPath(): { dbPath: string; isCustom: boolean } {
 /** المكان الثاني الافتراضي للنسخ: مجلد مستندات المستخدم (يبقى مع ملفاته عند إعادة تثبيت الويندوز إن نُقلت المستندات) */
 function resolveSecondaryBackupDir(): { dir: string; isDefault: boolean } {
   const cfg = readDbLocation()
-  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir)) return { dir: cfg.secondaryBackupDir, isDefault: false }
+  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir) && !isUnsafeDatabaseLocation(cfg.secondaryBackupDir, installationDir(), userDataDir())) return { dir: cfg.secondaryBackupDir, isDefault: false }
   return { dir: join(app.getPath('documents'), 'Tahakom-Backups'), isDefault: true }
 }
 
@@ -398,7 +503,9 @@ async function backupDatabaseFile(tag: 'manual' | 'auto', database: ShopsysDatab
       if (database) await database.raw.backup(dest)
       else copyFileSync(dbPath, dest)
       // تنظيف: أحدث 20 نسخة لكل مكان (لا امتلاء قرص بلا نهاية)
-      const files = readdirSync(dir).filter((f) => f.endsWith('.db')).sort()
+      const files = freshStartEligibleFilesAt(userDataDir(), readdirSync(dir)
+        .filter((file) => file.endsWith('.db')).map((file) => ({ file, path: join(dir, file) })))
+        .map(({ file }) => file).sort()
       for (const old of files.slice(0, Math.max(0, files.length - 20))) unlinkSync(join(dir, old))
       written.push(dest)
     } catch (error) {
@@ -448,19 +555,13 @@ function quickCheck(dbPath: string): boolean {
 /** كل ملفات النسخ: المكانان (يدوي/تلقائي) + الأجيال الساعية/اليومية/قبل التحديث في المكان الافتراضي — الأحدث أولاً */
 function candidateBackups(dbPath: string): string[] {
   const ud = app.getPath('userData')
-  const dirs = [
-    join(dirname(dbPath), 'backups', 'manual'),
-    join(dirname(dbPath), 'backups', 'auto'),
-    join(resolveSecondaryBackupDir().dir, 'manual'),
-    join(resolveSecondaryBackupDir().dir, 'auto'),
-    join(ud, 'backups', 'hourly'),
-    join(ud, 'backups', 'pre-update'),
-  ]
+  const dirs = recoveryBackupDirs({ userData: ud, installDir: installationDir(), documentsBackupDir: join(app.getPath('documents'), 'Tahakom-Backups') }, dbPath)
   const out: { path: string; mtimeMs: number }[] = []
   for (const dir of dirs) {
     try {
       for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
         const full = join(dir, f)
+        if (!isCurrentFreshStartDataAt(ud, full)) continue
         out.push({ path: full, mtimeMs: statSync(full).mtimeMs })
       }
     } catch { /* مجلد غير موجود */ }
@@ -489,74 +590,50 @@ function shieldDamagedDatabase(dbPath: string): ShieldOutcome {
 
 /* ── القاعدة ── */
 
-/** أحدث نسخة متاحة من أي مكان (للاستعادة إلى مكان جديد) — الافتراضي أولاً ثم الحيّ */
-function latestBackupAnywhere(): string | null {
-  const ud = app.getPath('userData')
-  const dirs = ['hourly', 'pre-update'].map((k) => join(ud, 'backups', k))
-  const files: { path: string; mtimeMs: number }[] = []
-  for (const dir of dirs) {
-    try {
-      for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
-        const full = join(dir, f)
-        files.push({ path: full, mtimeMs: statSync(full).mtimeMs })
-      }
-    } catch { /* لا مجلد */ }
-  }
-  const latest = latestBackup(files)
-  if (latest) return latest.path
-  const fallback = join(ud, 'shopsys.db')
-  return existsSync(fallback) ? fallback : null
-}
-
-/** الحالة المفقودة: المكان المخصص غير متاح أو ملفه اختفى ⇒ نسأل، ولا نفتح فارغاً */
+/** الاسترداد التلقائي يسبق هذا الحوار؛ هنا فقط اختيار الأصل عند عدم وجود نسخة موثوقة. */
 async function resolveMissingLocation(): Promise<void> {
   for (let guard = 0; guard < 1000; guard += 1) {
     const { status, path } = customDbStatus()
     if (status === 'none' || status === 'ok' || !path) return
     logLine('db-location', `المكان المخصص (${status}): ${path}`)
-    const folderMissing = status === 'folder-missing'
     const choice = dialog.showMessageBoxSync({
-      type: 'error',
-      title: 'تَحَكَّم — مكان قاعدة البيانات غير متاح',
-      message: folderMissing
-        ? `مكان قاعدة البيانات المحفوظ غير متاح الآن:\n${dirname(path)}\n\nغالباً القرص أو الفلاشة غير موصولة، أو تغيّر حرف الدرايف. بياناتك لم تُحذف.`
-        : `ملف قاعدة البيانات في المكان المحفوظ غير موجود الآن:\n${path}\n\nلم يُنشأ ملف فارغ مكانه. بياناتك لم تُحذف من النسخ الاحتياطية.`,
-      detail: folderMissing
-        ? 'وصّل القرص ثم اختر «إعادة المحاولة». أو اختر «اختيار مكان آخر» لاستعادة آخر نسخة احتياطية إلى مكان جديد (قد تفقد التغييرات بعد آخر نسخة ساعية).'
-        : 'إن نُقل الملف أو حُذف بالخطأ فأعده إلى مكانه ثم اختر «إعادة المحاولة». أو اختر «اختيار مكان آخر» لاستعادة آخر نسخة احتياطية إلى مكان جديد.',
-      buttons: ['إعادة المحاولة', 'اختيار مكان آخر', 'إغلاق البرنامج'],
-      defaultId: 0,
-      cancelId: 2,
+      type: 'warning',
+      title: 'تَحَكَّم — تعذّر العثور على قاعدة البيانات',
+      message: `لم نجد القاعدة أو نسخة سليمة مؤكدة الهوية:\n${path}\n\nلم تُنشأ قاعدة فارغة ولم يُستبدل أي ملف.`,
+      detail: 'وصّل القرص وأعد المحاولة، أو اختر ملف القاعدة الموجود بالفعل. لا حاجة لاختيار مجلد جديد.',
+      buttons: ['إعادة المحاولة', 'اختيار ملف القاعدة الموجود', 'إغلاق البرنامج'],
+      defaultId: 0, cancelId: 2,
     })
-    if (choice === 0) continue
+    if (choice === 0) {
+      await recoverDatabaseSilently()
+      continue
+    }
     if (choice === 2) {
       app.exit(0)
-      throw new Error('مكان قاعدة البيانات المخصص غير متاح — أُغلق البرنامج بطلب المستخدم')
+      throw new Error('أُغلق البرنامج دون إنشاء قاعدة بديلة')
     }
-    const picked = dialog.showOpenDialogSync({ properties: ['openDirectory', 'createDirectory'], title: 'اختر مجلد قاعدة البيانات الجديد' })
-    const dir = picked?.[0]
-    if (!dir) continue
-    const source = latestBackupAnywhere()
-    if (!source) {
-      dialog.showErrorBox('تَحَكَّم — لا توجد نسخة احتياطية', 'لم نجد أي نسخة احتياطية لاستعادتها. أعد توصيل المكان القديم ثم حاول مرة أخرى.')
-      continue
-    }
-    const dest = join(dir, 'shopsys.db')
-    if (existsSync(dest)) {
-      dialog.showErrorBox('تَحَكَّم — يوجد ملف بهذا الاسم', `يوجد ملف shopsys.db في المجلد المختار، ولن نستبدله تلقائياً. اختر مجلداً آخر.`)
-      continue
-    }
-    mkdirSync(dir, { recursive: true })
-    copyFileSync(source, dest)
-    writeDbLocation({ ...readDbLocation(), customDbPath: dest, customDbOpenedAt: null })
-    logLine('db-location', `استُعيدت آخر نسخة (${source}) إلى المكان الجديد ${dest}`)
+    const file = pickValidatedDatabaseFile()
+    if (file) writeDbLocation({ ...readDbLocation(), customDbPath: file, customDbOpenedAt: null })
   }
+}
+
+async function recoverDatabaseSilently(): Promise<void> {
+  const source = await recoverMissingDatabaseAt({
+    userData: userDataDir(), installDir: installationDir(),
+    documentsBackupDir: join(app.getPath('documents'), 'Tahakom-Backups'),
+    minimumMtimeMs: freshStartCutoffAt(userDataDir()),
+    isCandidateAllowed: (file) => isCurrentFreshStartDataAt(userDataDir(), file),
+    deviceKey: deviceEncryptionKey,
+  })
+  if (source) logLine('db-recovery', `استُعيدت القاعدة المفقودة تلقائياً من ${source} إلى ${resolveDbPath().dbPath}`)
 }
 
 /** كل مرشّحات البيانات السابقة: نسخ الاحتياطي في المكان الافتراضي/المستندات + قاعدة حيّة على الأقراص (Tahakom\shopsys.db) */
 function discoverExistingData(): ExistingDataCandidate[] {
   const ud = app.getPath('userData')
   const out: ExistingDataCandidate[] = []
+  const installedDb = join(installationDir(), 'shopsys.db')
+  if (existsSync(installedDb) && isCurrentFreshStartDataAt(ud, installedDb)) out.push({ path: installedDb, mtimeMs: statSync(installedDb).mtimeMs, kind: 'live', whereAr: installedDb })
   const backupDirs = [
     ...(['hourly', 'pre-update'] as const).map((k) => join(ud, 'backups', k)),
     join(app.getPath('documents'), 'Tahakom-Backups', 'manual'),
@@ -566,6 +643,7 @@ function discoverExistingData(): ExistingDataCandidate[] {
     try {
       for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
         const full = join(dir, f)
+        if (!isCurrentFreshStartDataAt(ud, full)) continue
         out.push({ path: full, mtimeMs: statSync(full).mtimeMs, kind: 'backup', whereAr: full })
       }
     } catch { /* لا مجلد */ }
@@ -574,18 +652,37 @@ function discoverExistingData(): ExistingDataCandidate[] {
     for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
       const live = `${letter}:\\Tahakom\\shopsys.db`
       try {
-        if (existsSync(live)) out.push({ path: live, mtimeMs: statSync(live).mtimeMs, kind: 'live', whereAr: live })
+        if (existsSync(live) && isCurrentFreshStartDataAt(ud, live)) out.push({ path: live, mtimeMs: statSync(live).mtimeMs, kind: 'live', whereAr: live })
       } catch { /* درايف غير موصول */ }
     }
   }
   return out
 }
 
+/** كل ملفات البيانات المعروفة لحظة إقرار البدء النظيف؛ لا نعتمد على mtime وحده. */
+function knownOldDatabasePaths(activePath: string): string[] {
+  const ud = userDataDir()
+  const previouslyExcluded = readFreshStartMarkerAt(ud)?.excludedPaths ?? []
+  const live = [join(ud, 'shopsys.db'), join(installationDir(), 'shopsys.db')]
+  for (const folder of ['Tahakom-Data', 'databases']) {
+    try {
+      for (const name of readdirSync(join(ud, folder))) if (name.endsWith('.db')) live.push(join(ud, folder, name))
+    } catch { /* مجلد حماية غير موجود */ }
+  }
+  return [...new Set([
+    activePath, ...live, ...previouslyExcluded, ...changedDrivePaths(activePath), ...candidateBackups(activePath),
+    ...discoverExistingData().map((candidate) => candidate.path),
+  ])]
+}
+
 /** أول تشغيل بلا مؤشر ولا قاعدة افتراضية: إن وُجدت بيانات سابقة نعرضها ونسأل قبل أي معالج */
 async function offerExistingData(): Promise<void> {
+  const ud = userDataDir()
   const cfg = readDbLocation()
+  // اختار المالك قاعدة نظيفة صراحةً؛ لا نعيد عرض/نسخ ملفات ما قبل الاختيار.
+  if (freshStartCutoffAt(ud) !== null) return
   if (cfg.customDbPath) return
-  if (existsSync(join(app.getPath('userData'), 'shopsys.db'))) return
+  if (existsSync(join(ud, 'shopsys.db'))) return
   // نتحقق من السلامة للمرشّح الأفضل فقط (الفحص مكلف على ملفات كبيرة)
   const ranked = newestFirst(discoverExistingData())
   const valid: ExistingDataCandidate[] = []
@@ -615,6 +712,14 @@ async function offerExistingData(): Promise<void> {
     if (!file) return
     const isBackup = /[\\/]backups[\\/]|Tahakom-Backups/.test(file)
     adoptExistingData({ path: file, mtimeMs: 0, kind: isBackup ? 'backup' : 'live', whereAr: file })
+    return
+  }
+  if (choice === 2) {
+    const result = await startFreshWithoutDatabaseAt({
+      userData: ud, installDir: installationDir(), archiveSource: best.path,
+      excludedPaths: knownOldDatabasePaths(resolveDbPath().dbPath),
+    })
+    logLine('db-recovery', `اختير بدء نظيف بدلاً من البيانات المكتشفة؛ الأرشيف=${result.archivePath ?? 'لا يوجد'} بدأ=${result.startedAt}`)
   }
 }
 
@@ -633,11 +738,27 @@ function adoptExistingData(c: ExistingDataCandidate): void {
 
 async function openDatabase(): Promise<ShopsysDatabase> {
   restoreLocationPointerIfMissing()
+  await recoverDatabaseSilently()
   await resolveMissingLocation()
   await offerExistingData()
   await askForExistingDatabaseIfNeeded()
+  /* فحص تشفيري قبل الحماية أو فتح SQLite بمسار الكتابة أو تشغيل migrations.
+     سلامة SQLite وحدها لا تكفي: قد يكون الملف سليماً لكن مفتاح الجهاز تغيّر بعد
+     تحديث/نقل profile. في هذه الحالة نترك الملف كما هو ونُظهر شاشة الاسترداد. */
+  const selectedDatabasePath = resolveDbPath().dbPath
+  if (existsSync(selectedDatabasePath)) {
+    // قاعدة البيانات النصية لا تعتمد على المفتاح. وجود لقطة enc:v1 قديمة
+    // بلا مفتاح مطابق يوقف الفتح قبل أي كتابة أو نقل، حفاظاً على الأصل.
+    const keyProbe = probeSnapshotKey(selectedDatabasePath, deviceEncryptionKey)
+    if (keyProbe.status === 'mismatch') throw new DatabaseKeyMismatchError(selectedDatabasePath, keyProbe.stores, deviceEncryptionKey.length === 32)
+  }
+  // حماية القاعدة الفعلية الموجودة فقط؛ لا ترحيل جماعي لعملاء. الأصل يبقى نسخة أمان.
+  const beforeProtection = resolveDbPath().dbPath
+  const protectedPath = await protectDatabaseAt(userDataDir(), installationDir())
+  if (beforeProtection !== protectedPath) logLine('db-protection', `حُميت القاعدة خارج التثبيت: ${beforeProtection} → ${protectedPath}`)
   // v1.0.22: عند فشل الفتح يعرض حوار الخطأ خيار «اختيار ملف القاعدة يدوياً»، ثم يُعاد الفتح من الملف المعتمد
   for (let attempt = 1; ; attempt += 1) {
+    await protectDatabaseAt(userDataDir(), installationDir())
     const { dbPath, isCustom } = resolveDbPath()
     // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة. v1.0.22: بلا نسخة سليمة ⇒ يوقف الإقلاع بحوار
     let shield: ShieldOutcome = 'ok'
@@ -646,6 +767,8 @@ async function openDatabase(): Promise<ShopsysDatabase> {
       if (shield === 'corrupt-no-backup') throw new Error('قاعدة البيانات تالفة ولم يُعثر على نسخة سليمة في أي مكان')
       const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
       logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
+      activeDatabasePath = dbPath
+      rememberDatabaseIdentity(userDataDir(), db.origin.device)
       if (isCustom) {
         const cfg = readDbLocation()
         if (!cfg.customDbOpenedAt) writeDbLocation({ ...cfg, customDbOpenedAt: new Date().toISOString() })
@@ -666,8 +789,8 @@ async function openDatabase(): Promise<ShopsysDatabase> {
         type: 'error',
         title: 'تَحَكَّم — فشل تشغيل القاعدة',
         message: `تعذّر فتح قاعدة البيانات:\n${dbPath}`,
-        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}).\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`,
-        buttons: ['اختيار ملف القاعدة يدوياً...', 'إظهار ملف القاعدة في المجلد (لإرساله للدعم)', 'إغلاق البرنامج'],
+        detail: `${message}\n\nإن كانت بياناتك في ملف آخر فاختره يدوياً. الملف يجب أن يكون قاعدة تَحَكَّم سليمة.\nاختيار ملف آخر لا يحذف القاعدة الحالية (${dbPath}). لا تشارك ملف القاعدة؛ يحتوي بياناتك المحلية.`,
+        buttons: ['اختيار ملف القاعدة يدوياً...', 'إظهار ملف القاعدة في المجلد', 'إغلاق البرنامج'],
         defaultId: 0,
         cancelId: 2,
       })
@@ -776,7 +899,7 @@ async function exportPdfShare(html: string, fileName: string, waLink?: string): 
   }
 }
 
-/* ── التحديث التلقائي: فحص إقلاعي + يدوي + تثبيت عند الإغلاق ── */
+/* ── التحديث التلقائي بصمت: فحص/تنزيل في الخلفية + تثبيت وإعادة تشغيل عند الإغلاق ── */
 type UpdaterState =
   | { status: 'idle' }
   | { status: 'checking' }
@@ -787,40 +910,209 @@ type UpdaterState =
   | { status: 'error'; message: string }
 
 let updaterState: UpdaterState = { status: 'idle' }
+let downloadedUpdateVersion: string | null = null
+let downloadedInstallerPath: string | null = null
+/** نسبة آخر تقدم تنزيل معروفة — تُعرض في شريط التنزيل */
+let updateDownloadPercent = 0
 
-function pushUpdaterState(state: UpdaterState): void {
+function recordUpdaterState(state: UpdaterState): void {
   updaterState = state
   if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
+  if (state.status === 'available') logLine('updater', `يتوفر تحديث ${state.version}؛ بدأ التنزيل في الخلفية`)
+  if (state.status === 'not-available') logLine('updater', `لا يوجد تحديث أحدث من ${state.version}`)
+  if (state.status === 'downloading') updateDownloadPercent = state.percent
   if (state.status === 'downloaded') {
-    logLine('updater', `جاهز للتثبيت عند الإغلاق: ${state.version}`)
-    // v1.0.22: نسخة قبل التثبيت تُؤخذ فوراً — أي مسار للتثبيت (إغلاق/زر) يجدها جاهزة
+    downloadedUpdateVersion = state.version
+    updateDownloadPercent = 100
+    logLine('updater', `اكتمل تنزيل ${state.version}؛ سيُثبّت بصمت عند الإغلاق`)
     preUpdateBackup = backupBeforeUpdate(state.version).catch((error) => {
       logLine('backup', `تعذّرت نسخة ما قبل التحديث: ${(error as Error).message}`)
       return null
     })
   }
-  mainWindow?.webContents.send('updater:state', state)
+  /* واجهة التحديث اليدوية: زر «فحص التحديثات» + شريط التنزيل —
+     الحالة تصل للواجهة فوراً؛ الفحص الدوري والتثبيت الصامت يبقيان كما هما. */
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:state', state)
+}
+
+function reportUpdaterError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error)
+  if (updaterState.status === 'error' && updaterState.message === message) return
+  recordUpdaterState({ status: 'error', message })
+}
+
+function ensureUpdaterFeed(autoUpdater: typeof import('electron-updater').autoUpdater): void {
+  const configPath = join(process.resourcesPath, 'app-update.yml')
+  if (existsSync(configPath)) return
+  // بعض المثبتات القديمة/المتضررة فقدت metadata. استخدم الرف العام المعروف
+  // كحل احتياطي بدلاً من ترك ENOENT غير معالج أو تعطيل التطبيق كله.
+  logLine('updater', `ملف ${configPath} غير موجود؛ استخدام إعداد التحديث العام المضمّن`)
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'contashepo-create',
+    repo: 'tahakam-releases',
+    releaseType: 'release',
+  })
+}
+
+let updateCheckTimer: NodeJS.Timeout | null = null
+let updateCheckTimerIsRetry = false
+let updateCheckInFlight = false
+let updateCheckFailedDuringFlight = false
+let updateDownloadInProgress = false
+let updateCheckRetryAttempt = 0
+
+function clearUpdateCheckTimer(): void {
+  if (updateCheckTimer) clearTimeout(updateCheckTimer)
+  updateCheckTimer = null
+  updateCheckTimerIsRetry = false
+}
+
+function scheduleUpdateCheck(autoUpdater: typeof import('electron-updater').autoUpdater, delayMs: number, isRetry = false): void {
+  clearUpdateCheckTimer()
+  if (!app.isPackaged || shuttingDown || updateLaunchInProgress || updateDownloadInProgress || downloadedUpdateVersion) return
+  updateCheckTimerIsRetry = isRetry
+  updateCheckTimer = setTimeout(() => {
+    updateCheckTimer = null
+    updateCheckTimerIsRetry = false
+    checkUpdatesQuietly(autoUpdater)
+  }, delayMs)
+  updateCheckTimer.unref()
+}
+
+function scheduleUpdateRetry(autoUpdater: typeof import('electron-updater').autoUpdater): void {
+  if (downloadedUpdateVersion || shuttingDown || updateLaunchInProgress || (updateCheckTimer && updateCheckTimerIsRetry)) return
+  const delayMs = updateCheckRetryDelay(updateCheckRetryAttempt)
+  updateCheckRetryAttempt += 1
+  logLine('updater', `ستُعاد محاولة فحص التحديث تلقائياً بعد ${Math.round(delayMs / 1000)} ثانية`)
+  scheduleUpdateCheck(autoUpdater, delayMs, true)
+}
+
+function checkUpdatesQuietly(autoUpdater: typeof import('electron-updater').autoUpdater): void {
+  if (!app.isPackaged || updateDownloadInProgress || downloadedUpdateVersion || shuttingDown || updateLaunchInProgress) return
+  if (updateCheckInFlight) {
+    scheduleUpdateRetry(autoUpdater)
+    return
+  }
+  clearUpdateCheckTimer()
+  updateCheckInFlight = true
+  updateCheckFailedDuringFlight = false
+  observeUpdateCheck(
+    () => autoUpdater.checkForUpdates(),
+    (error) => {
+      updateCheckInFlight = false
+      updateCheckFailedDuringFlight = false
+      updateDownloadInProgress = false
+      reportUpdaterError(error)
+      scheduleUpdateRetry(autoUpdater)
+    },
+    () => {
+      updateCheckInFlight = false
+      if (updateCheckFailedDuringFlight) {
+        updateCheckFailedDuringFlight = false
+        scheduleUpdateRetry(autoUpdater)
+        return
+      }
+      updateCheckRetryAttempt = 0
+      if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
+    },
+  )
+}
+
+/** فحص يدوي من زر «فحص التحديثات»: يبدأ الفحص فوراً بلا انتظار الفحص الدوري.
+    لا يغيّر مسار التنزيل الخلفي ولا التثبيت الصامت عند الإغلاق — نفس المحرك (electron-updater). */
+function checkUpdatesManually(autoUpdater: typeof import('electron-updater').autoUpdater): UpdaterState {
+  if (!app.isPackaged) return updaterState
+  const decision = decideManualCheck({
+    packaged: app.isPackaged,
+    inFlight: updateCheckInFlight,
+    downloading: updateDownloadInProgress,
+    downloaded: downloadedUpdateVersion !== null,
+  })
+  if (decision.kind === 'downloaded') {
+    recordUpdaterState({ status: 'downloaded', version: downloadedUpdateVersion! })
+    return updaterState
+  }
+  if (decision.kind === 'downloading') {
+    recordUpdaterState({ status: 'downloading', percent: updateDownloadPercent })
+    return updaterState
+  }
+  if (decision.kind === 'in_flight') return updaterState
+  if (decision.kind === 'unavailable') return updaterState
+  // فحص جديد: نوقف المؤقّت الدوري المجدول كي لا يتكرر فحصان، ونعيد جدولته بعد انتهائه.
+  clearUpdateCheckTimer()
+  updateCheckInFlight = true
+  updateCheckFailedDuringFlight = false
+  recordUpdaterState({ status: 'checking' })
+  observeUpdateCheck(
+    () => autoUpdater.checkForUpdates(),
+    (error) => {
+      updateCheckInFlight = false
+      updateCheckFailedDuringFlight = false
+      updateDownloadInProgress = false
+      reportUpdaterError(error)
+      scheduleUpdateRetry(autoUpdater)
+    },
+    () => {
+      updateCheckInFlight = false
+      if (updateCheckFailedDuringFlight) {
+        updateCheckFailedDuringFlight = false
+        scheduleUpdateRetry(autoUpdater)
+        return
+      }
+      updateCheckRetryAttempt = 0
+      if (!updateDownloadInProgress && !downloadedUpdateVersion) scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)
+    },
+  )
+  return updaterState
 }
 
 function wireUpdater(): void {
   if (!app.isPackaged) {
-    pushUpdaterState({ status: 'not-available', version: app.getVersion() })
+    recordUpdaterState({ status: 'not-available', version: app.getVersion() })
     return
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
     autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
-    autoUpdater.on('checking-for-update', () => pushUpdaterState({ status: 'checking' }))
-    autoUpdater.on('update-available', (info) => pushUpdaterState({ status: 'available', version: info.version }))
-    autoUpdater.on('update-not-available', (info) => pushUpdaterState({ status: 'not-available', version: info.version }))
-    autoUpdater.on('download-progress', (progress) => pushUpdaterState({ status: 'downloading', percent: Math.round(progress.percent) }))
-    autoUpdater.on('update-downloaded', (info) => pushUpdaterState({ status: 'downloaded', version: info.version }))
-    autoUpdater.on('error', (error) => pushUpdaterState({ status: 'error', message: error.message }))
-    void autoUpdater.checkForUpdatesAndNotify()
+    // نُدير الإغلاق والحفظ يدوياً ثم نطلق المثبّت الصامت؛ لا نكرر معالج quit.
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.autoRunAppAfterInstall = true
+    if (process.platform === 'win32') (autoUpdater as import('electron-updater').NsisUpdater).installDirectory = installationDir()
+    ensureUpdaterFeed(autoUpdater)
+    autoUpdater.on('checking-for-update', () => recordUpdaterState({ status: 'checking' }))
+    autoUpdater.on('update-available', (info) => {
+      updateDownloadInProgress = true
+      clearUpdateCheckTimer()
+      recordUpdaterState({ status: 'available', version: info.version })
+    })
+    autoUpdater.on('update-not-available', (info) => {
+      updateDownloadInProgress = false
+      recordUpdaterState({ status: 'not-available', version: info.version })
+    })
+    autoUpdater.on('download-progress', (progress) => {
+      updateDownloadInProgress = true
+      recordUpdaterState({ status: 'downloading', percent: Math.round(progress.percent) })
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      updateDownloadInProgress = false
+      clearUpdateCheckTimer()
+      updateCheckRetryAttempt = 0
+      downloadedInstallerPath = info.downloadedFile
+      recordUpdaterState({ status: 'downloaded', version: info.version })
+    })
+    autoUpdater.on('error', (error) => {
+      reportUpdaterError(error)
+      if (updateCheckInFlight) updateCheckFailedDuringFlight = true
+      if (!downloadedUpdateVersion) {
+        updateDownloadInProgress = false
+        scheduleUpdateRetry(autoUpdater)
+      }
+    })
+    checkUpdatesQuietly(autoUpdater)
   } catch (error) {
-    pushUpdaterState({ status: 'error', message: (error as Error).message })
+    reportUpdaterError(error)
   }
 }
 
@@ -836,7 +1128,8 @@ function pruneGeneration(kind: RotationKind): void {
   const files = readdirSync(dir).filter((file) => file.endsWith('.db')).map((file) => ({
     path: join(dir, file), mtimeMs: statSync(join(dir, file)).mtimeMs,
   }))
-  for (const file of filesToPrune(files, ROTATION[kind].keep)) {
+  const currentFiles = freshStartEligibleFilesAt(userDataDir(), files)
+  for (const file of filesToPrune(currentFiles, ROTATION[kind].keep)) {
     try {
       unlinkSync(file.path)
     } catch {
@@ -879,7 +1172,8 @@ async function backupBeforeUpdate(version: string): Promise<string | null> {
   const files = readdirSync(dir).filter((f) => f.endsWith('.db')).map((f) => ({
     path: join(dir, f), mtimeMs: statSync(join(dir, f)).mtimeMs,
   }))
-  for (const old of filesToPrune(files, PRE_UPDATE_KEEP)) {
+  const currentFiles = freshStartEligibleFilesAt(userDataDir(), files)
+  for (const old of filesToPrune(currentFiles, PRE_UPDATE_KEEP)) {
     try { unlinkSync(old.path) } catch { /* مشغول — الجولة القادمة */ }
   }
   logLine('backup', `نسخة قبل التحديث إلى ${version}: ${dest}`)
@@ -887,12 +1181,56 @@ async function backupBeforeUpdate(version: string): Promise<string | null> {
 }
 
 /* ── IPC ── */
+/* ── بند 5 (طلب المالك): قناة الدعم عبر العملية الرئيسية ─────────────────────
+   نسخة سطح المكتب تعمل من file:// ⇒ المتصفح يرسل Origin: null ⇒ يرفضه العامل
+   (403) فيظهر للمستخدم «تعذّر الإرسال — تأكد من اتصال الإنترنت» بلا سبب.
+   الطلب من العملية الرئيسية يذهب **بلا Origin** (سياسة المصدر حماية متصفح،
+   والحماية الحقيقية هنا هي اعتماد HMAC + TOFU). والمضيفون مسموحون بقائمة
+   صريحة (لا جلب عشوائي من العملية الرئيسية). */
+const SUPPORT_ALLOWED_HOSTS = new Set([
+  'shopsys-control.contashepo.workers.dev',
+  'shopsys-control.mobileshop2026.workers.dev',
+])
+const SUPPORT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
+
+function supportTokenPath(): string {
+  return join(app.getPath('userData'), 'support-token.json')
+}
+
+/* ── بند 2 (طلب المالك): هوية الجهاز خارج القاعدة ───────────────────────────
+   كان معرّف الجهاز يعيش في مرساة localStorage وداخل القاعدة نفسها؛ فمسح
+   القاعدة (أو فقد مرساة Chromium) كان يُنشئ معرّفاً جديداً ⇒ يخرج العميل من
+   لوحة المطوّر «عميلاً جديداً» ويُفقد الترخيص المرتبط بالجهاز.
+   الآن: userData/device-identity.json هو المرجع (خارج القاعدة)، ولا يتغيّر
+   معرّف ثابت أبداً (الدمج في desktop/deviceIdentity.ts — دالة خالصة). */
+function resolveDeviceIdentity(candidate: unknown): { deviceId: string; firstTrialAt: string | null } {
+  const path = join(app.getPath('userData'), 'device-identity.json')
+  let saved: unknown = null
+  try { saved = JSON.parse(readFileSync(path, 'utf8')) } catch { /* أول مرة أو ملف تالف — يُعاد بناؤه */ }
+  const merged = mergeDeviceIdentity(saved, candidate)
+  let deviceId = merged.identity.deviceId
+  if (!deviceId) {
+    /* لا مرشّح ولا محفوظ: أول تشغيل ⇒ نولّد معرّفاً (نفس خوارزمية core/license.ts) */
+    deviceId = generateDeviceIdFromBytes(randomBytes(12))
+    merged.identity.deviceId = deviceId
+    merged.changed = true
+  }
+  if (merged.changed) {
+    try {
+      writeFileSync(path, JSON.stringify(merged.identity), 'utf8')
+    } catch (error) {
+      logLine('identity', `تعذّر حفظ هوية الجهاز: ${(error as Error).message}`)
+    }
+  }
+  return { deviceId, firstTrialAt: merged.identity.firstTrialAt }
+}
+
 function wireIpc(): void {
   const db = () => {
-    if (!database) throw new Error('قاعدة البيانات غير مهيأة بعد')
+    if (!database) throw new Error(databaseInitializationFailure ?? 'قاعدة البيانات غير مهيأة بعد')
     return database
   }
-  ipcMain.handle('device:getEncryptionKey', (): Uint8Array => new Uint8Array(deviceEncryptionKey))
+  ipcMain.handle('device:getEncryptionKey', (): Uint8Array | null => deviceEncryptionKey.length === 32 ? new Uint8Array(deviceEncryptionKey) : null)
 
   /* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
      يُعرض عبر Electron Notification (مركز الإشعارات في ويندوز/ماك) — ويعيد false
@@ -935,25 +1273,24 @@ function wireIpc(): void {
   /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
   initLanHostIpc(() => mainWindow)
 
+  /* واجهة التحديث اليدوية (نسخة سطح المكتب): زر «فحص التحديثات» + شريط التنزيل.
+     الفحص الدوري الخلفي والتثبيت الصامت عند الإغلاق يبقيان كما هما بلا تغيير. */
   ipcMain.handle('updater:state', () => updaterState)
   ipcMain.handle('updater:check', () => {
     if (!app.isPackaged) return updaterState
     try {
       const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
-      void autoUpdater.checkForUpdates()
+      return checkUpdatesManually(autoUpdater)
     } catch (error) {
-      pushUpdaterState({ status: 'error', message: (error as Error).message })
+      reportUpdaterError(error)
+      return updaterState
     }
-    return updaterState
   })
   ipcMain.handle('updater:install', async () => {
     if (!app.isPackaged) return
-    // v1.0.22: ننتظر النسخة قبل التحديث، ثم نثبّت ونعيد التشغيل تلقائياً — يفتح البرنامج
-    // ببياناتك كما كانت (لا معالج إعداد). وإن فشلت النسخة نُبلغ ولا نثبّت بلا نسخة.
-    const backed = preUpdateBackup ? await preUpdateBackup : null
-    if (preUpdateBackup && !backed) throw new Error('تعذّرت النسخة الاحتياطية قبل التحديث — لم يُثبَّت التحديث. راجع صلاحيات المجلد وأعد المحاولة.')
-    const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
-    autoUpdater.quitAndInstall(false, true)
+    if (!downloadedUpdateVersion) throw new Error('لم يكتمل تنزيل التحديث بعد')
+    // نفس مسار الإغلاق الصامت بالضبط: حفظ الواجهة ثم حماية القاعدة ونسخها ثم التثبيت.
+    await shutdownApplication(true)
   })
 
   ipcMain.handle('app:info', () => ({
@@ -990,6 +1327,55 @@ function wireIpc(): void {
      التصدير لا يكشف المفتاح الخام أبداً؛ الاستيراد يحتفظ بالنسخة الحالية ثم يعيد التشغيل. */
   ipcMain.handle('keyRecovery:status', () => ({ exportedAt: readKeyRecoveryExportedAt() }))
 
+  /* إعادة محاولة حقيقية: عند فشل فحص المفتاح لم تُفتح قاعدة الكتابة، لذا يلزم
+     إعادة العملية الرئيسية بعد توصيل القرص/استعادة profile؛ إعادة تحميل React وحدها لا تكفي. */
+  ipcMain.handle('keyRecovery:retry-startup', () => {
+    if (!databaseInitializationFailure || database || recoveryRestartScheduled) return false
+    recoveryRestartScheduled = true
+    logLine('db-recovery', 'طلب المستخدم إعادة محاولة الإقلاع من شاشة استرداد البيانات')
+    setTimeout(() => { app.relaunch(); app.exit(0) }, 250)
+    return true
+  })
+
+  /* بدء نظيف اختياري لمختبر بلا بيانات عمل: أرشفة القاعدة القديمة أولاً،
+     ثم التحويل إلى قاعدة فارغة. لا يمسح المفتاح أو هوية الجهاز/التجربة. */
+  ipcMain.handle('keyRecovery:start-fresh', async (event) => {
+    if (event.sender !== mainWindow?.webContents) return { ok: false as const, reason: 'طلب غير موثوق' }
+    if (!databaseInitializationFailure || !databaseInitializationFailureDbPath || database || recoveryRestartScheduled) {
+      return { ok: false as const, reason: 'لا توجد حالة استرداد تسمح ببدء قاعدة جديدة' }
+    }
+    recoveryRestartScheduled = true
+    try {
+      const confirmation = await dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: 'بدء قاعدة جديدة — للجهاز التجريبي',
+        message: 'هل تريد بدء قاعدة أعمال فارغة؟',
+        detail: 'سيُحفظ ملف القاعدة الحالي كما هو داخل أرشيف تَحَكَّم، ولن تُحذف النسخ السابقة. إذا احتوى الملف لقطات enc:v1 فالأرشيف وحده لا يفكّها دون المفتاح الأصلي. بعد ذلك سيبدأ معالج الإعداد من جديد، ولن تُستعاد النسخ القديمة تلقائياً. هذا يمسح بيانات العمل الظاهرة في التطبيق؛ لا تستخدمه على جهاز عميل به بيانات حقيقية. لا يعيد هذا الخيار ضبط هوية الجهاز أو مدة التجربة/الترخيص.',
+        buttons: ['إلغاء', 'بدء جديد مع حفظ الأرشيف'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      if (confirmation.response !== 1) {
+        recoveryRestartScheduled = false
+        return { ok: false as const, canceled: true as const }
+      }
+      const result = await startFreshDatabaseAt({
+        userData: userDataDir(),
+        databasePath: databaseInitializationFailureDbPath,
+        installDir: installationDir(),
+        excludedPaths: knownOldDatabasePaths(databaseInitializationFailureDbPath),
+      })
+      logLine('db-recovery', `اختار المستخدم بدءاً نظيفاً؛ أُرشف ملف القاعدة في ${result.archivePath}، بدأ=${result.startedAt}`)
+      setTimeout(() => { app.relaunch(); app.exit(0) }, 300)
+      return { ok: true as const, archivePath: result.archivePath, relaunching: true as const }
+    } catch (error) {
+      recoveryRestartScheduled = false
+      const reason = (error as Error).message
+      logLine('db-recovery', `تعذّر بدء قاعدة جديدة بأمان: ${reason}`)
+      return { ok: false as const, reason }
+    }
+  })
+
   ipcMain.handle('keyRecovery:export', async (_event, args: { passphrase?: unknown; deviceId?: unknown }) => {
     const passphrase = typeof args?.passphrase === 'string' ? args.passphrase : ''
     const deviceId = typeof args?.deviceId === 'string' ? args.deviceId : 'unknown'
@@ -997,7 +1383,7 @@ function wireIpc(): void {
     if (problem) return { ok: false as const, reason: problem }
     if (deviceEncryptionKey.length !== 32) return { ok: false as const, reason: 'مفتاح الجهاز غير مهيأ' }
     const options = {
-      title: 'حفظ مفتاح الاسترداد — احفظه على USB أو مكان آمن خارج هذا الجهاز',
+      title: 'حفظ مفتاح الاسترداد — اختر مكاناً آمناً',
       defaultPath: join(app.getPath('documents'), keyRecoveryFileName()),
       filters: [{ name: 'مفتاح استرداد تَحَكَّم', extensions: ['tkey'] }],
     }
@@ -1049,6 +1435,62 @@ function wireIpc(): void {
     return merged.anchor
   })
 
+  /* بند 2 (طلب المالك): هوية الجهاز — مزامنة (sendSync) لأن الإقلاع يحتاجها
+     قبل أي فحص ترخيص؛ العملية الرئيسية هي المرجع (ملف خارج القاعدة). */
+  ipcMain.on('device:identity', (event, candidate: unknown) => {
+    event.returnValue = resolveDeviceIdentity(candidate)
+  })
+
+  /* بند 5 (طلب المالك): طلب دعم — من العملية_main (بلا Origin) + قائمة مضيفين */
+  ipcMain.handle('support:request', async (_event, args: { url?: unknown; method?: unknown; headers?: unknown; body?: unknown }) => {
+    const rawUrl = typeof args?.url === 'string' ? args.url : ''
+    let parsed: URL
+    try { parsed = new URL(rawUrl) } catch { return { ok: false, status: 0, body: '', error: 'invalid-url' } }
+    if (parsed.protocol !== 'https:' || !SUPPORT_ALLOWED_HOSTS.has(parsed.hostname)) {
+      return { ok: false, status: 0, body: '', error: 'host-not-allowed' }
+    }
+    const method = args?.method === 'POST' ? 'POST' : 'GET'
+    const headers: Record<string, string> = {}
+    if (args?.headers && typeof args.headers === 'object') {
+      for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
+        if (typeof value === 'string') headers[key] = value
+      }
+    }
+    const body = typeof args?.body === 'string' ? args.body : undefined
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 20_000)
+    try {
+      const res = await fetch(parsed.toString(), { method, headers, body, signal: controller.signal })
+      const text = await res.text()
+      return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
+    } catch (error) {
+      return { ok: false, status: 0, body: '', error: (error as Error).message }
+    } finally {
+      clearTimeout(timer)
+    }
+  })
+
+  /* بند 5: اعتماد قناة الدعم خارج القاعدة (يبقى ثابتاً بعد مسحها ⇒ لا رفض 401) */
+  ipcMain.handle('support:tokenGet', () => {
+    try {
+      const parsed = JSON.parse(readFileSync(supportTokenPath(), 'utf8')) as { token?: unknown }
+      const token = typeof parsed?.token === 'string' ? parsed.token : ''
+      return SUPPORT_TOKEN_RE.test(token) ? token : null
+    } catch { return null }
+  })
+
+  ipcMain.handle('support:tokenSet', (_event, token: unknown) => {
+    const value = typeof token === 'string' ? token : ''
+    if (!SUPPORT_TOKEN_RE.test(value)) return false
+    try {
+      writeFileSync(supportTokenPath(), JSON.stringify({ token: value }), { encoding: 'utf8', mode: 0o600 })
+      return true
+    } catch (error) {
+      logLine('support', `تعذّر حفظ اعتماد الدعم: ${(error as Error).message}`)
+      return false
+    }
+  })
+
   /* ── v1.0.8: إدارة مكان القاعدة والنسخ (طلب المالك) ── */
   ipcMain.handle('database:getStorageInfo', () => {
     const { dbPath, isCustom } = resolveDbPath()
@@ -1087,6 +1529,7 @@ function wireIpc(): void {
       try {
         for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
           const full = join(dir, f)
+          if (!isCurrentFreshStartDataAt(userDataDir(), full)) continue
           const st = statSync(full)
           out.push({ path: full, where, kind: f.startsWith('manual') ? 'يدوية' : 'تلقائية', size: st.size, at: new Date(st.mtimeMs).toISOString() })
         }
@@ -1130,6 +1573,7 @@ function wireIpc(): void {
   ipcMain.handle('database:chooseSecondaryBackupDir', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد النسخة الاحتياطية الثانية' })
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true as const }
+    if (isUnsafeDatabaseLocation(result.filePaths[0], installationDir(), userDataDir())) throw new Error('اختر مكاناً للنسخة الاحتياطية خارج مجلد تثبيت البرنامج')
     const cfg = readDbLocation()
     writeDbLocation({ ...cfg, secondaryBackupDir: result.filePaths[0] })
     mkdirSync(result.filePaths[0], { recursive: true })
@@ -1143,6 +1587,11 @@ function wireIpc(): void {
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد حفظ قاعدة البيانات (خارج قرص C إن أمكن)' })
     if (result.canceled || !result.filePaths[0]) return { ok: false as const, canceled: true as const }
     const dir = result.filePaths[0]
+    if (isUnsafeDatabaseLocation(join(dir, 'shopsys.db'), installationDir(), userDataDir())) {
+      const error = 'لا يمكن حفظ قاعدة البيانات داخل مجلد التثبيت أو مجلد databases التابع لChromium؛ قد تُحذف محتوياته. اختر مجلداً مستقلاً للبيانات.'
+      dialog.showErrorBox('مكان قاعدة البيانات غير آمن', error)
+      return { ok: false as const, error }
+    }
     const { dbPath } = resolveDbPath()
     const dest = join(dir, 'shopsys.db')
     if (dest === dbPath) return { ok: false as const, canceled: true as const }
@@ -1175,6 +1624,90 @@ function wireIpc(): void {
       return { ok: false as const, error: message }
     }
   })
+}
+
+let flushRequest: { token: string; resolve: () => void; reject: (error: Error) => void } | null = null
+ipcMain.handle('persistence:flushed', (event, token: unknown, error: unknown) => {
+  if (!flushRequest || event.sender !== mainWindow?.webContents || token !== flushRequest.token) return
+  if (typeof error === 'string' && error) flushRequest.reject(new Error(error))
+  else flushRequest.resolve()
+  flushRequest = null
+})
+
+async function flushRenderer(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('تعذّر التأكد من حفظ بيانات الواجهة — لم يبدأ التحديث')
+  const token = randomBytes(16).toString('hex')
+  try {
+    await withDeadline(new Promise<void>((resolve, reject) => {
+      flushRequest = { token, resolve, reject }
+      mainWindow!.webContents.send('persistence:flush', token)
+    }), 15_000, 'تعذّر إتمام حفظ البيانات قبل الإغلاق — أعد المحاولة')
+  } finally { flushRequest = null }
+}
+
+let shutdownWork: Promise<void> | null = null
+function shutdownApplication(update: boolean): Promise<void> {
+  if (shutdownWork) return shutdownWork
+  shuttingDown = true
+  mainWindow?.setEnabled(false)
+  shutdownWork = (async () => {
+    const closing = database
+    if (!closing) return
+    if (update) {
+      await installSilentUpdate({
+        flush: flushRenderer,
+        protect: async () => {
+          if (!activeDatabasePath) throw new Error('تعذّر معرفة مسار قاعدة التشغيل')
+          // حماية المسار تمت قبل فتح SQLite؛ لا نحرّك المؤشر تحت اتصال حي. نتحقق هنا
+          // بعد flush من أن الاتصال الحي ما زال يشير إلى الملف المحمي خارج مجلد التثبيت.
+          assertSafeUpdateLocation(userDataDir(), installationDir(), activeDatabasePath)
+          try { assertDownloadedInstaller(downloadedInstallerPath) } catch (error) {
+            downloadedUpdateVersion = null
+            downloadedInstallerPath = null
+            recordUpdaterState({ status: 'error', message: (error as Error).message })
+            throw error
+          }
+        },
+        backup: async () => {
+          if (preUpdateBackup) await withDeadline(preUpdateBackup, 30_000, 'لم تنتهِ نسخة ما قبل التحديث — لم يُثبَّت التحديث')
+          // نسخة حديثة بعد تفريغ طوابير الواجهة، لا نسخة وقت التنزيل فقط.
+          const backed = await withDeadline(backupBeforeUpdate(downloadedUpdateVersion!), 30_000, 'تجاوزت النسخة قبل التحديث مهلة الانتظار — لم يُثبَّت التحديث')
+          if (!backed) throw new Error('تعذّرت النسخة الاحتياطية قبل التحديث — لم يُثبَّت التحديث')
+        },
+        close: () => { closing.close(); database = null; if (backupTimer) clearInterval(backupTimer) },
+        install: async () => {
+          const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+          updateLaunchInProgress = true
+          try { await requestSilentInstall(autoUpdater) } finally { updateLaunchInProgress = false }
+        },
+        exit: () => app.exit(0),
+      })
+    } else {
+      await flushRenderer()
+      await gracefulShutdown({
+        backup: () => rotateBackups(closing),
+        closeDb: () => { closing.close(); database = null; if (backupTimer) clearInterval(backupTimer) },
+        exit: (code) => app.exit(code), log: logLine, timeoutMs: 8_000,
+      })
+    }
+  })().catch(async (error: unknown) => {
+    if (!database && activeDatabasePath) {
+      // فشل إطلاق المثبت بعد close: افتح الاتصال مجدداً قبل استئناف طوابير الواجهة.
+      database = await openDatabase()
+      backupTimer = setInterval(() => { void rotateBackups() }, 60 * 60 * 1000)
+      downloadedUpdateVersion = null
+      downloadedInstallerPath = null
+      preUpdateBackup = null
+      recordUpdaterState({ status: 'error', message: `لم يبدأ التحديث: ${(error as Error).message}. أعد تشغيل البرنامج قبل إعادة المحاولة.` })
+    }
+    // لا تثبيت عند فشل الحفظ/الحماية/النسخة؛ يستأنف المُصيّر العمل.
+    shuttingDown = false
+    shutdownWork = null
+    mainWindow?.setEnabled(true)
+    mainWindow?.webContents.send('persistence:resume')
+    throw error
+  })
+  return shutdownWork
 }
 
 /* ── دورة الحياة ── */
@@ -1215,37 +1748,42 @@ if (!gotLock) {
 
   void app.whenReady().then(async () => {
     try {
+      await preserveCurrentUserData(currentUserData, stableUserData)
+      if (currentUserData !== stableUserData) logLine('userData', `الهوية الثابتة: ${stableUserData} — مجلد التشغيل السابق: ${currentUserData}`)
       logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
-      const previousVersion = readLastRunVersion()
-      showSplash(previousVersion && previousVersion !== app.getVersion() ? previousVersion : null)
-      setSplashProgress(15, 'تهيئة مفتاح الجهاز…')
-      try {
-        deviceEncryptionKey = ensureDeviceEncryptionKey()
-      } catch (error) {
-        closeSplash()
-        logLine('device-key-fatal', (error as Error).message)
-        dialog.showErrorBox('تَحَكَّم — تعذّر تهيئة مفتاح الجهاز', `${(error as Error).message}\n\nلم تُفقد أي بيانات. أغلق البرنامج وأعد تشغيله، وإن تكرر الخطأ فتواصل مع الدعم.`)
-        app.exit(1)
-        return
-      }
+      showSplash()
+      setSplashProgress(15, 'فحص توافق البيانات القديمة…')
+      deviceEncryptionKey = loadLegacySnapshotKey()
       setSplashProgress(40, 'فتح قاعدة البيانات…')
-      database = await openDatabase()
+      try {
+        database = await openDatabase()
+      } catch (error) {
+        if (!(error instanceof DatabaseKeyMismatchError)) throw error
+        databaseInitializationFailure = error.message
+        databaseInitializationFailureDbPath = error.dbPath
+        logLine('db-key-mismatch', `${error.message} المسار=${error.dbPath} المتاجر=${error.stores.join(',')}`)
+        setSplashProgress(75, 'تعذّر التحقق من مفتاح البيانات — افتح شاشة الاسترداد')
+      }
       setSplashProgress(75, 'تجهيز الواجهة…')
       wireIpc()
       mainWindow = createMainWindow()
       mainWindow.once('ready-to-show', () => {
         setSplashProgress(100, 'جاهز')
-        writeLastRunVersion()
+        if (database) writeLastRunVersion()
         closeSplash()
       })
       mainWindow.on('closed', () => {
         mainWindow = null
       })
-      wireUpdater()
-      await rotateBackups()
-      backupTimer = setInterval(() => {
-        void rotateBackups()
-      }, 60 * 60 * 1000)
+      if (database) {
+        wireUpdater()
+        await rotateBackups()
+        backupTimer = setInterval(() => {
+          void rotateBackups()
+        }, 60 * 60 * 1000)
+      } else {
+        recordUpdaterState({ status: 'error', message: 'أُوقف التحديث مؤقتاً حتى استرداد مفتاح البيانات' })
+      }
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) mainWindow = createMainWindow()
       })
@@ -1254,7 +1792,7 @@ if (!gotLock) {
       closeSplash()
       logLine('boot-fatal', `فشل الإقلاع: ${(error as Error).stack ?? (error as Error).message}`)
       try {
-        dialog.showErrorBox('تَحَكَّم — تعذّر بدء البرنامج', `${(error as Error).message}\n\nلم تُحذف أي بيانات. أعد تشغيل البرنامج، وإن تكرر الخطأ فأرسل محتوى سجل البرنامج (main.log) للدعم.`)
+        dialog.showErrorBox('تَحَكَّم — تعذّر بدء البرنامج', `${(error as Error).message}\n\nلم تُحذف أي بيانات. اترك ملفات القاعدة والنسخ كما هي، ثم أعد تشغيل البرنامج.`)
       } catch { /* السجل كتب بالفعل */ }
       try { database?.close() } catch { /* لا شيء */ }
       database = null
@@ -1266,26 +1804,14 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  /* إغلاق مضمون (بلاغ المالك): لا تبقى العملية حية بلا نافذة. انظر shutdown.ts */
   app.on('before-quit', (event) => {
-    if (backupTimer) clearInterval(backupTimer)
-    if (printWindow && !printWindow.isDestroyed()) printWindow.destroy()
-    if (shuttingDown) {
-      event.preventDefault()
-      return
-    }
-    if (database) {
-      event.preventDefault()
-      shuttingDown = true
-      const closing = database
-      database = null
-      void gracefulShutdown({
-        backup: () => rotateBackups(closing),
-        closeDb: () => closing.close(),
-        exit: (code) => app.exit(code),
-        log: logLine,
-        timeoutMs: 8_000,
-      })
-    }
+    if (updateLaunchInProgress) { event.preventDefault(); return }
+    if (!database) return
+    event.preventDefault()
+    if (shuttingDown) return
+    void shutdownApplication(!!downloadedUpdateVersion).catch((error) => {
+      logLine('shutdown', (error as Error).message)
+      dialog.showErrorBox(downloadedUpdateVersion ? 'تَحَكَّم — لم يُثبَّت التحديث' : 'تَحَكَّم — تعذّر حفظ البيانات قبل الإغلاق', (error as Error).message)
+    })
   })
 }

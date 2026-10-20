@@ -3,9 +3,10 @@
  * البيانات (userData) صراحةً، فيُختبر على ملفات حقيقية. main.ts يغلّفها بنفس
  * الأسماء القديمة ويمرّر app.getPath('userData') — لا تغيير في السلوك.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { dirname, join, posix, win32 } from 'node:path'
 import Database from 'better-sqlite3'
+import { randomUUID } from 'node:crypto'
 import { customLocationStatus, decodeLocationPointer, encodeLocationPointer, type CustomLocationStatus } from './storagePolicy.ts'
 
 export interface DbLocationConfig {
@@ -56,17 +57,24 @@ export function readDbLocationAt(ud: string): DbLocationConfig {
   }
 }
 
+function atomicWrite(file: string, text: string): void {
+  const temp = `${file}.${randomUUID()}.tmp`
+  writeFileSync(temp, text, 'utf8')
+  renameSync(temp, file)
+}
+
 /** الكتابة تُرآى في كل مكان للمؤشر. فشل مرآة لا يوقف الكتابة الأساسية. */
 export function writeDbLocationAt(ud: string, cfg: DbLocationConfig, onMirrorError?: (message: string) => void): void {
   if (cfg.customDbPath !== null && !isAbsoluteDbPath(cfg.customDbPath)) {
     throw new Error(`مسار قاعدة البيانات يجب أن يكون مطلقاً: ${cfg.customDbPath}`)
   }
   const text = encodeLocationPointer(cfg as DbLocationConfig & Record<string, unknown>)
-  writeFileSync(dbLocationFileAt(ud), text, 'utf8')
+  mkdirSync(ud, { recursive: true })
+  atomicWrite(dbLocationFileAt(ud), text)
   for (const mirror of locationPointerMirrorsAt(ud, cfg)) {
     try {
       mkdirSync(dirname(mirror), { recursive: true })
-      writeFileSync(mirror, text, 'utf8')
+      atomicWrite(mirror, text)
     } catch (error) {
       onMirrorError?.(`تعذّرت مرآة المؤشر في ${mirror}: ${(error as Error).message}`)
     }
@@ -81,7 +89,8 @@ export function writeDbLocationAt(ud: string, cfg: DbLocationConfig, onMirrorErr
 /** المؤشر موجود وقابل للقراءة كمؤشر صالح (JSON سليم) */
 function pointerIsReadableAt(ud: string): boolean {
   try {
-    return decodeLocationPointer(readFileSync(dbLocationFileAt(ud), 'utf8')) !== null
+    const cfg = decodeLocationPointer(readFileSync(dbLocationFileAt(ud), 'utf8'))
+    return cfg !== null && (cfg.customDbPath === null || isAbsoluteDbPath(cfg.customDbPath))
   } catch {
     return false
   }

@@ -20,6 +20,8 @@ export interface AuditEvent {
   kind: string // journal | add | remove | edit | auth | system
   title: string // وصف عربي جاهز للعرض
   refKey?: string // مرجع اختياري: sale:12 / entry:55 ...
+  /** الفرع الذي وقع فيه الحدث؛ غيابه في السجلات القديمة يعني الشركة/الفرع الرئيسي. */
+  branchId?: number | null
 }
 
 /** الحد الأقصى للأحداث المحفوظة — حلقة: الأقدم يُحذف تلقائياً */
@@ -243,6 +245,8 @@ export interface AppUser {
    * undefined/null = حساب قديم قبل الربط (يبقى صالحاً للتوافق الخلفي).
    */
   employeeId?: number | null
+  /** الفرع التابع له المستخدم (اختياري — يقيد قوائم المستخدم على أقسام ونشاط هذا الفرع) */
+  branchId?: number | null
   /** هاتف الدخول (من سجل الموظف) — يُدخل به بدل الاسم */
   phone?: string
   /** بريد الدخول (من سجل الموظف) — يُدخل به بدل الاسم */

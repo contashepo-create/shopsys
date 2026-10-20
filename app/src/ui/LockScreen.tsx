@@ -19,7 +19,7 @@ import { LOCK_REASON_LABELS, toCsv, type LockReason } from '../core/security.ts'
 import { FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../core/cloud.ts'
 import { buildBackup, backupFileName } from '../core/backup.ts'
 import { buildFullExportSheets, sheetsToExcelXml, downloadTextFile, exportFileName } from '../core/fullExport.ts'
-import { desktopDatabaseStorage } from '../data/desktopBridge.ts'
+import { desktopDatabaseStorage, isElectronRuntime } from '../data/desktopBridge.ts'
 import { Btn, inputCls, useToast } from './components/ui.tsx'
 import { DeveloperMessage } from './components/DeveloperMessage.tsx'
 
@@ -231,7 +231,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
           </div>
         </div>
 
-        <p className="text-center text-[11px] text-slate-400">بياناتك محفوظة ومشفرة على جهازك — لن تفقد شيئاً عند التفعيل</p>
+        <p className="text-center text-[11px] text-slate-400">{isElectronRuntime() ? 'بيانات SQLite محفوظة محلياً؛ لقطاتها نص JSON غير مشفّر على مستوى التطبيق. احمِ حساب Windows والقرص.' : 'بياناتك محفوظة محلياً ومشفرة في تخزين المتصفح؛ احتفظ بنسخة احتياطية.'}</p>
       </div>
     </div>
   )

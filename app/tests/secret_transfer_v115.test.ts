@@ -1,6 +1,6 @@
 /**
- * جولة v1.0.15 — المرحلة ⑤: نسخة سر التشفير بكلمة سر (نقل بين الأجهزة).
- * القاعدة مشفرة بسر الجهاز؛ الملف المغلّف ينقل السر بكلمة سر يختارها المالك.
+ * جولة v1.0.15 — نقل سر localStorage المشفّر في نسخة المتصفح.
+ * لا يخص قاعدة SQLite في نسخة Electron؛ الملف المغلّف ينقل سر المتصفح فقط.
  */
 import { describe, it, expect, vi } from 'vitest'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))

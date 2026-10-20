@@ -66,8 +66,11 @@ export interface CustodyTx {
 /** ملخص ملف عهدة — كل الأرقام محسوبة من الحركات (مصدر حقيقة واحد) */
 export interface CustodySummary {
   fundedMinor: Minor // مجموع التعزيزات
-  spentMinor: Minor // مصروفات + فواتير (الجزء المحمَّل على العهدة فقط — بلا الزيادة)
+  spentMinor: Minor // مصروفات + فواتير (الجزء المحمَّل على العهدة فقط — بلا الزيادة والمرتجع والعجز)
+  expenseTotalMinor: Minor // كامل المصروفات الفعلية، شاملاً الجزء الذي دفعه الموظف من جيبه
   excessMinor: Minor // زيادة المصاريف المستحقة للموظف (2107)
+  returnedMinor: Minor // المبالغ التي عادت للخزينة عند التسوية
+  shortageMinor: Minor // عجز التسوية الذي تحوّل إلى سلفة (1107)
   remainingMinor: Minor // المتبقي بعهدة الموظف
   txCount: number
 }
@@ -83,17 +86,98 @@ export function validateCustodyFile(args: { employeeId: number; reason: string }
   return errors
 }
 
-/** ملخص الملف من حركاته — الزيادة لا تُحسب على العهدة (محمّلة على 2107) */
+/** ملخص الملف من حركاته — الإقفال النقدي والعجز ليسا مصروفاً فعلياً. */
 export function summarizeCustody(txs: CustodyTx[]): CustodySummary {
-  let funded = 0, spent = 0, excess = 0
+  let funded = 0, spent = 0, excess = 0, returned = 0, shortage = 0
   for (const t of txs) {
     if (t.type === 'fund') funded += t.amountMinor
     else if (t.type === 'expense' || t.type === 'invoice') {
       spent += t.amountMinor - t.excessMinor
       excess += t.excessMinor
-    } else if (t.type === 'return' || t.type === 'shortage') spent += t.amountMinor
+    } else if (t.type === 'return') returned += t.amountMinor
+    else if (t.type === 'shortage') shortage += t.amountMinor
   }
-  return { fundedMinor: funded, spentMinor: spent, excessMinor: excess, remainingMinor: funded - spent, txCount: txs.length }
+  return {
+    fundedMinor: funded,
+    spentMinor: spent,
+    expenseTotalMinor: spent + excess,
+    excessMinor: excess,
+    returnedMinor: returned,
+    shortageMinor: shortage,
+    remainingMinor: funded - spent - returned - shortage,
+    txCount: txs.length,
+  }
+}
+
+export interface CustodyExcessFileBalance {
+  fileId: number
+  employeeId: number
+  accruedMinor: Minor
+  paidMinor: Minor
+  remainingMinor: Minor
+}
+
+/** الحد الأدنى المطلوب من مسير الرواتب لحساب توزيع مستحقات العهد. */
+export interface CustodyExcessPayrollRun {
+  id: number
+  date: string
+  lines: readonly { employeeId: number; excessPaidMinor?: Minor }[]
+}
+
+/**
+ * يوزّع ما صُرف من مستحقات الزيادة بالمسيرات على ملفات الموظف الأقدم استحقاقاً
+ * أولاً. بقيت المدفوعات في المسير مرتبطة بالموظف لأسباب توافقية؛ هذا الملخص
+ * يربطها بالملف الصحيح حتى بعد إغلاقه، ويعرض المتبقي لكل ملف دون تكرار إجمالي
+ * الموظف على كل ملف.
+ */
+export function summarizeCustodyExcessByFile(
+  files: readonly Pick<CustodyFile, 'id' | 'employeeId'>[],
+  txs: readonly Pick<CustodyTx, 'id' | 'fileId' | 'date' | 'excessMinor'>[],
+  payrollRuns: readonly CustodyExcessPayrollRun[],
+): Map<number, CustodyExcessFileBalance> {
+  const fileById = new Map(files.map((file) => [file.id, file]))
+  const balances = new Map<number, CustodyExcessFileBalance>(files.map((file) => [file.id, {
+    fileId: file.id, employeeId: file.employeeId, accruedMinor: 0, paidMinor: 0, remainingMinor: 0,
+  }]))
+  const chargeRows = txs
+    .filter((tx) => tx.excessMinor > 0 && fileById.has(tx.fileId))
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+    .map((tx) => ({ fileId: tx.fileId, employeeId: fileById.get(tx.fileId)!.employeeId, remainingMinor: tx.excessMinor }))
+  const chargesByEmployee = new Map<number, typeof chargeRows>()
+  for (const charge of chargeRows) {
+    const rows = chargesByEmployee.get(charge.employeeId) ?? []
+    rows.push(charge)
+    chargesByEmployee.set(charge.employeeId, rows)
+    const balance = balances.get(charge.fileId)!
+    balance.accruedMinor += charge.remainingMinor
+    balance.remainingMinor += charge.remainingMinor
+  }
+
+  const runCursorByEmployee = new Map<number, number>()
+  const orderedRuns = payrollRuns.slice().sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+  for (const run of orderedRuns) {
+    for (const line of run.lines) {
+      let toApply = line.excessPaidMinor ?? 0
+      if (!Number.isInteger(toApply) || toApply <= 0) continue
+      const charges = chargesByEmployee.get(line.employeeId)
+      if (!charges) continue
+      let cursor = runCursorByEmployee.get(line.employeeId) ?? 0
+      while (toApply > 0 && cursor < charges.length) {
+        const charge = charges[cursor]
+        if (charge.remainingMinor <= 0) { cursor++; continue }
+        const take = Math.min(charge.remainingMinor, toApply)
+        charge.remainingMinor -= take
+        toApply -= take
+        const balance = balances.get(charge.fileId)!
+        balance.paidMinor += take
+        balance.remainingMinor -= take
+        if (charge.remainingMinor === 0) cursor++
+      }
+      runCursorByEmployee.set(line.employeeId, cursor)
+    }
+  }
+  return balances
 }
 
 /** قيد تمويل/تعزيز العهدة: مدين 1108 ← دائن الخزينة المختارة */

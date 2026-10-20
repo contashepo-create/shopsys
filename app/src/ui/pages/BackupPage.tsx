@@ -79,8 +79,8 @@ export function BackupPage() {
 
   const download = async () => {
     try {
-      // نقرأ من طبقة التخزين الحقيقية ويفك التشفير تلقائياً حيث يلزم (القرار 28) —
-      // النسخة تُحفظ نصاً صريحاً كي تُستعاد على أي جهاز (تشفير القاعدة مربوط بمفتاح الجهاز نفسه)
+      // نقرأ الحالة المفكوكة من طبقة التخزين الفعلية؛ ملف JSON الاحتياطي نص عادي
+      // وقابل للقراءة لمن يصل إليه، لكنه مستقل عن تنسيق لقطة SQLite المحلية.
       const appRaw = await settingsAppStorage().getItem('shopsys-app')
       const storeRaw = await appStorage().getItem('shopsys-data')
       if (!storeRaw) return toast.show('لا بيانات للنسخ بعد', 'error')
@@ -202,9 +202,9 @@ export function BackupPage() {
           <DatabaseBackup size={17} className="text-slate-500" /> نسخة احتياطية كاملة
         </div>
         <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
-          ملف واحد يحوي كل شيء: الأصناف، الفواتير، القيود، الأطراف، الإعدادات، والترخيص —
-          ببصمة تحقق تكشف أي تلف. احفظه خارج الجهاز (فلاشة/سحابة)،
-          ولاحقاً سيُرسل يومياً تلقائياً إلى بوت التليجرام.
+          ملف واحد يحوي كل شيء: الأصناف، الفواتير، القيود، الأطراف، الإعدادات، والترخيص، وأي بيانات اعتماد محفوظة فيها —
+          ببصمة تحقق تكشف التلف فقط ولا تشفّر المحتوى. ملف JSON نص عادي؛ أي شخص يحصل عليه يستطيع قراءة بياناتك،
+          فاحفظه في مجلد محمي ولا تشاركه. النسخ اليومية إلى بوت التليجرام تُرسل فقط إذا فعّلتها.
         </div>
         <div className="grid grid-cols-3 gap-2 text-center text-[12px]">
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="font-black text-lg">{counts.items}</div><div className="text-slate-400">صنفاً</div></div>
@@ -216,25 +216,22 @@ export function BackupPage() {
         {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص ناجح: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
       </div>
 
-      {/* v1.0.22: على سطح المكتب يحلّ مفتاح الاسترداد محلّ «نقل السر» القديم، لأن سر المتصفح لا يفكّ لقطات SQLite */}
+      {/* على سطح المكتب: مفتاح استرداد للقطات القديمة المشفرة فقط؛ نسخة المتصفح تستخدم سرها المحلي */}
       {desktopKeyRecoveryBridge() ? <DesktopKeyRecoveryCard deviceId={deviceId} /> : (
-      /* v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة — القاعدة المنقولة لا تُقرأ بلا سرها (المتصفح فقط) */
       <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '30ms' }}>
         <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
-          <KeyRound size={17} className="text-amber-500" /> نقل سر التشفير بين الأجهزة
+          <KeyRound size={17} className="text-amber-500" /> نقل سر التخزين المشفّر للمتصفح
         </div>
         <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
-          قاعدة البيانات مشفرة بسر خاص بهذا الجهاز — نسخ ملف القاعدة وحده إلى جهاز آخر
-          يعطي شفرة لا تُقرأ. صَدّر نسخة السر <b>مغلّفة بكلمة سر تختارها</b> وانقلها مع ملف
-          القاعدة، ثم استوردها على الجهاز الجديد فتصبح قاعدته مقروءة.
-          <b> كلمة السر لا تُحفظ في التطبيق إطلاقاً</b> — من يملك الملف بلا كلمتها لا يملك شيئاً، فاحفظها بعيداً عن الملف.
+          هذه الميزة تخص نسخة المتصفح التي تحفظ البيانات مشفّرة في localStorage، ولا تخص قاعدة SQLite في نسخة سطح المكتب.
+          صَدّر السر <b>مغلّفاً بكلمة مرور تختارها</b> وانقله مع بيانات المتصفح المشفّرة. كلمة المرور لا تُحفظ في التطبيق.
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <Btn onClick={() => setKeyExportOpen(true)} className="w-full"><KeyRound size={15} /> تصدير نسخة السر بكلمة سر</Btn>
           <Btn variant="ghost" onClick={() => { setKeyImportFile(null); setKeyImportPass(''); setKeyImportShop(''); setKeyImportOpen(true) }} className="w-full"><Upload size={15} /> استيراد نسخة سر على هذا الجهاز</Btn>
         </div>
         <div className="text-[11px] text-slate-400 leading-relaxed">
-          متى تحتاجها؟ نقلت القاعدة لجهاز جديد بملف shopsys.db (أو نسخة SQLite الملفية) وظهرت البيانات فارغة/غير مقروءة — استورد سر الجهاز الأصلي. نسخ JSON الاحتياطية لا تحتاج هذا (تُعاد تشفيرها بسر الجهاز الجديد تلقائياً).
+          نسخة JSON الاحتياطية العادية تحتوي بيانات مقروءة ولا تحتاج هذا المفتاح. لا تستخدم سر المتصفح لفتح لقطات SQLite القديمة؛ لها ملف استرداد سطح المكتب ومفتاحها الأصلي.
         </div>
       </div>
       )}
@@ -245,8 +242,8 @@ export function BackupPage() {
           <CalendarClock size={17} className="text-violet-500" /> جدولة النسخ التلقائي
         </div>
         <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
-          التطبيق يأخذ لقطة كاملة مشفرة على هذا الجهاز تلقائياً (حلقة من 3 لقطات — الأقدم يُستبدل)
-          حسب الفاصل الذي تختاره. النسخة اليومية إلى تليجرام تُضبط من «بوت التليجرام».
+          التطبيق يحتفظ بلقطات مساعدة مشفّرة داخل ملف تعريفه (حلقة من 3 لقطات — الأقدم يُستبدل) حسب الفاصل الذي تختاره.
+          هذه ليست تشفيراً لقاعدة SQLite الرئيسية: لقطاتها الجديدة نصية ويمكن قراءتها ممن يصل إلى ملفات الجهاز. النسخة اليومية إلى تليجرام تُضبط من «بوت التليجرام».
         </div>
         <div className="flex flex-wrap gap-2">
           {BACKUP_INTERVAL_CHOICES.map((c) => (

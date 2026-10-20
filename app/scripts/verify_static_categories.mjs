@@ -83,6 +83,14 @@ for (let k = 0; k < starts.length; k++) {
   const settxt = setBlocks.join(' ')
   for (const [v, field] of reassigned) {
     if (singularWhitelist.has(`${name}:${v}`)) continue
+    /* setOpeningBalance يحمل كائناً متداخلاً بشرط الفرع؛ regex غير متوازن الأقواس
+       كان يقتطع set قبل حقل employeeAdvances رغم تمريره فعلياً. افحص جسم هذا
+       الإجراء من set( حتى نهاية الإجراء بدلاً من الاعتماد على التقاط الأقواس. */
+    if (name === 'setOpeningBalance' && field === 'employeeAdvances') {
+      const setStart = body.indexOf('set({')
+      const setBody = setStart < 0 ? '' : body.slice(setStart)
+      if (/\{\s*employeeAdvances\s*\}/.test(setBody)) continue
+    }
     if (!new RegExp(`\\b${field}\\s*[:,}]`).test(settxt)) flagged.push(`${name}: عدّل ${v} (=${field}) ولم يمرره إلى set()`)
   }
 }

@@ -273,7 +273,11 @@ describe('② اللوحة: القائمة والبطاقة الكاملة وا�
     await pressAsAdmin(`panel:regdelok:${DEVICE}`, 999)
     await pressAsAdmin(`panel:issuereg:${DEVICE}`, 999)
     expect(await kv.get(`reg:${DEVICE}`)).not.toBeNull()
-    expect(await kv.get(`dev:${DEVICE}`)).toBeNull()
+    // سجل الجهاز موجود (تسجيل بلا مفتاح ⇒ يظهر العميل في لوحة المطوّر) لكن بلا رخصة
+    const devRecord = JSON.parse((await kv.get(`dev:${DEVICE}`)) ?? 'null')
+    expect(devRecord).not.toBeNull()
+    expect(devRecord.plan).toBe('')
+    expect(devRecord.fingerprint).toBe('')
     expect(sentMessages().filter((m) => m.text.includes('SHOPSYS1.'))).toHaveLength(0)
   })
 

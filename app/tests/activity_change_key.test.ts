@@ -63,6 +63,47 @@ describe('تغيير النشاط بمفتاح الدعم الموقّع (v1.0.7
     expect(activityMatches(licensePayload, 'pharmacy')).toBe(false)
   })
 
+  it('يرفض تغيير النشاط داخل سياق فرع مستقل حتى لو كان المفتاح موقّعاً', async () => {
+    const A = () => useAppStore.getState()
+    const setupBefore = A().companySetup
+    const fromActivityId = setupBefore.activityId!
+    const toActivityId = ACTIVITY_TEMPLATES.find((template) => template.id !== fromActivityId)!.id
+    const key = await sign({ v: 1, deviceId: A().deviceId, fromActivityId, toActivityId, issuedAt: '2026-10-05' })
+    A().setActiveBranchContext({
+      id: 99, nameAr: 'فرع اختبار', isMain: false, warehouseId: 99,
+      customModulesMode: 'inherit', enabledModules: [], activityId: null,
+    })
+    try {
+      await expect(A().applyActivityChangeKey(key, PUB)).rejects.toThrow(/المنشأة الأساسية فقط/)
+      expect(A().companySetup).toEqual(setupBefore)
+    } finally {
+      A().setActiveBranchContext(null)
+      A().removeBranchBusinessProfile(99)
+    }
+  })
+
+  it('يعيد فحص سياق الفرع بعد التحقق غير المتزامن قبل كتابة النشاط العام', async () => {
+    const A = () => useAppStore.getState()
+    const previousChangeAt = A().companySetup.lastActivityChangeAt
+    A().updateSetup({ lastActivityChangeAt: null })
+    const fromActivityId = A().companySetup.activityId!
+    const toActivityId = ACTIVITY_TEMPLATES.find((template) => template.id !== fromActivityId)!.id
+    const key = await sign({ v: 1, deviceId: A().deviceId, fromActivityId, toActivityId, issuedAt: '2026-10-05' })
+    const pending = A().applyActivityChangeKey(key, PUB)
+    A().setActiveBranchContext({
+      id: 100, nameAr: 'فرع اختبار متزامن', isMain: false, warehouseId: 100,
+      customModulesMode: 'inherit', enabledModules: [], activityId: null,
+    })
+    try {
+      await expect(pending).rejects.toThrow(/المنشأة الأساسية فقط/)
+      expect(A().companySetup.activityId).toBe(fromActivityId)
+    } finally {
+      A().setActiveBranchContext(null)
+      A().removeBranchBusinessProfile(100)
+      A().updateSetup({ lastActivityChangeAt: previousChangeAt })
+    }
+  })
+
   it('التقييد: تغيير ثانٍ خلال 30 يوماً يُرفض برسالة الأيام المتبقية', async () => {
     const A = () => useAppStore.getState()
     const key = await sign({ v: 1, deviceId: A().deviceId, fromActivityId: A().setup.activityId!, toActivityId: 'grocery', issuedAt: '2026-10-05' })

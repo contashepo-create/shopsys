@@ -10,6 +10,68 @@ import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
 export type RentalPaymentMode = 'cash' | 'credit' | 'mixed'
+export type RentalBillingMode = 'reference' | 'upfront'
+export type ExpenseBearer = 'owner' | 'customer'
+export type EquipmentCostLayer = 'direct' | 'indirect' | 'driver'
+
+export interface RentalResponsibilityMatrix {
+  fuel: ExpenseBearer
+  operator: ExpenseBearer
+  transport: ExpenseBearer
+  maintenance: ExpenseBearer
+  damage: ExpenseBearer
+}
+
+export const DEFAULT_RENTAL_RESPONSIBILITY: RentalResponsibilityMatrix = {
+  fuel: 'customer',
+  operator: 'owner',
+  transport: 'customer',
+  maintenance: 'owner',
+  damage: 'customer',
+}
+
+export const RENTAL_RESPONSIBILITY_LABELS: Record<keyof RentalResponsibilityMatrix, string> = {
+  fuel: 'الوقود والسولار',
+  operator: 'أجر السائق / المشغّل',
+  transport: 'نقل المعدة (ذهاب وعودة)',
+  maintenance: 'الصيانة الدورية والطارئة',
+  damage: 'التلفيات وسوء الاستخدام',
+}
+
+export const EXPENSE_BEARER_LABELS: Record<ExpenseBearer, string> = {
+  owner: 'على المالك (الشركة)',
+  customer: 'على المستأجر (العميل)',
+}
+
+export const COST_LAYER_LABELS: Record<EquipmentCostLayer, string> = {
+  direct: 'مباشر على المعدة',
+  indirect: 'غير مباشر / عام',
+  driver: 'أجور ومصاريف السائق',
+}
+
+/** فاتورة إيجار دورية/شهرية مرتبطة بعقد إيجار مرجعي */
+export interface RentalInvoice {
+  id: number
+  invoiceNumber: string
+  contractId: number
+  equipmentId: number | null
+  customerId: number | null
+  customerName: string
+  periodLabel: string
+  date: string
+  dueDate?: string
+  qty: number
+  unitRateMinor: Minor
+  netMinor: Minor
+  vatPercent: number
+  vatMinor: Minor
+  totalMinor: Minor
+  payment: RentalPaymentMode
+  paidNowMinor: Minor
+  treasury?: string
+  journalEntryId: number
+  notes?: string
+}
 
 export interface RentalInput {
   equipmentName: string
@@ -317,4 +379,91 @@ export function rentalInvoiceDoc(contract: {
     dueMinor,
     depositMinor: contract.totals.depositMinor,
   }
+}
+
+/**
+ * قيد تحصيل تأمين مسترد فقط عند فتح عقد إيجار مرجعي (بدون إثبات إيراد مسبق — الإيراد يُثبت بالفواتير الدورية).
+ * يعيد null إذا كان التأمين صفراً.
+ */
+export function buildReferenceDepositEntry(depositMinor: Minor, label: string, treasury = '1101'): JournalLine[] | null {
+  if (!isPosInt(depositMinor)) throw new Error('التأمين لا يكون سالباً')
+  if (depositMinor === 0) return null
+  const lines: JournalLine[] = [
+    { accountCode: treasury, debit: depositMinor, credit: 0, note: `تحصيل تأمين عقد مرجعي ${label}` },
+    { accountCode: '2103', debit: 0, credit: depositMinor, note: `تأمين مسترد ${label}` },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/**
+ * قيد فاتورة إيجار دورية/شهرية مرتبطة بعقد مرجعي:
+ * - الإيراد على 4104 + الضريبة (إن وجدت) على 2102
+ * - المدين: 1104 العملاء (آجل) أو الخزينة (نقدي) أو مختلط
+ */
+export function buildRentalInvoiceEntry(args: {
+  invoiceNumber: string
+  contractNumber: string
+  equipmentName: string
+  customerName: string
+  periodLabel: string
+  netMinor: Minor
+  vatMinor: Minor
+  payment: RentalPaymentMode
+  paidNowMinor: Minor
+  treasuryAccount: string
+}): JournalLine[] {
+  if (args.netMinor <= 0) throw new Error('صافي الفاتورة الدورية يجب أن يكون أكبر من صفر')
+  const totalMinor = args.netMinor + args.vatMinor
+  const lines: JournalLine[] = []
+  if (args.payment === 'cash') {
+    lines.push({
+      accountCode: args.treasuryAccount,
+      debit: totalMinor,
+      credit: 0,
+      note: `تحصيل فاتورة إيجار ${args.invoiceNumber} (${args.periodLabel})`,
+    })
+  } else if (args.payment === 'credit') {
+    lines.push({
+      accountCode: '1104',
+      debit: totalMinor,
+      credit: 0,
+      note: `استحقاق فاتورة إيجار ${args.invoiceNumber} (${args.periodLabel}) على ${args.customerName}`,
+    })
+  } else {
+    const paid = Math.max(0, Math.min(totalMinor, args.paidNowMinor))
+    const creditPart = totalMinor - paid
+    if (paid > 0) {
+      lines.push({
+        accountCode: args.treasuryAccount,
+        debit: paid,
+        credit: 0,
+        note: `تحصيل فوري من فاتورة إيجار ${args.invoiceNumber}`,
+      })
+    }
+    if (creditPart > 0) {
+      lines.push({
+        accountCode: '1104',
+        debit: creditPart,
+        credit: 0,
+        note: `المتبقي الآجل من فاتورة إيجار ${args.invoiceNumber} على ${args.customerName}`,
+      })
+    }
+  }
+  lines.push({
+    accountCode: '4104',
+    debit: 0,
+    credit: args.netMinor,
+    note: `إيراد إيجار معدة ${args.equipmentName} — عقد ${args.contractNumber} (${args.periodLabel})`,
+  })
+  if (args.vatMinor > 0) {
+    lines.push({
+      accountCode: '2102',
+      debit: 0,
+      credit: args.vatMinor,
+      note: `ض.ق.م فاتورة إيجار ${args.invoiceNumber}`,
+    })
+  }
+  assertBalanced(lines)
+  return lines
 }

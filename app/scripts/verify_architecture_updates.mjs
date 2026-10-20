@@ -5,7 +5,7 @@
  * ③ مقارنة الإصدارات وقرار التحديث (اختياري/إجباري) وتنقية استجابة GitHub.
  * ④ خطة التحديث الآمن: نسخة احتياطية أولاً + تراجع كامل عند الفشل.
  * ⑤ ترحيلات المخطط المتسلسلة بلا فقد بيانات.
- * ⑥ فحص آخر إصدار من GitHub والهيدر يعرض المؤشر.
+ * ⑥ تحليل إصدارات GitHub المستقلة عن واجهة التحديث الصامت في Electron.
  * تشغيل: node --experimental-strip-types scripts/verify_architecture_updates.mjs
  */
 import { readFileSync } from 'node:fs'
@@ -91,8 +91,14 @@ const header = readFileSync(new URL('../src/ui/layout/Header.tsx', import.meta.u
 ok(header.includes('connectivityStatus'), 'الهيدر يشتق حالة الاتصال من النواة')
 ok(header.includes("addEventListener('online'"), 'يستمع لأحداث الشبكة الحقيقية')
 const aboutPage = readFileSync(new URL('../src/ui/pages/AboutPage.tsx', import.meta.url), 'utf8')
-ok(aboutPage.includes('فحص التحديثات') && aboutPage.includes('APP_VERSION'), 'زر فحص التحديثات في «حول» بالإصدار الحالي')
-ok(aboutPage.includes('buildUpdatePlan'), 'خطة التحديث الآمن معروضة للمستخدم')
+const desktopMain = readFileSync(new URL('../desktop/main.ts', import.meta.url), 'utf8')
+const desktopPreload = readFileSync(new URL('../desktop/preload.ts', import.meta.url), 'utf8')
+ok(aboutPage.includes('DesktopUpdater') && aboutPage.includes('فحص التحديثات'), 'زر فحص التحديثات وواجهة التنزيل في «حول» (يدوي فوق الصامت)')
+ok(desktopMain.includes('autoUpdater.autoDownload = true') && desktopMain.includes('observeUpdateCheck') && desktopMain.includes('autoUpdater.autoInstallOnAppQuit = false'), 'الفحص والتنزيل في الخلفية مع التقاط أخطاء الفحص')
+ok(desktopMain.includes('scheduleUpdateRetry(autoUpdater)') && desktopMain.includes('UPDATE_CHECK_INTERVAL_MS') && desktopMain.includes('updateCheckInFlight'), 'إعادة فحص التحديث بصمت بعد أخطاء الشبكة وبفاصل دوري مع منع التداخل')
+ok(desktopPreload.includes('shopsysUpdater') && /ipcMain\.handle\('updater:state'/.test(desktopMain) && /ipcMain\.handle\('updater:check'/.test(desktopMain), 'جسر IPC لحالة وفحص التحديث متاح للواجهة')
+ok(desktopMain.includes('checkUpdatesManually') && desktopMain.includes('decideManualCheck') && desktopMain.includes('scheduleUpdateCheck(autoUpdater, UPDATE_CHECK_INTERVAL_MS)'), 'الفحص اليدوي يبدأ فحصاً فورياً فوق نفس المحرك ولا يلغي الفحص الدوري')
+ok(desktopMain.includes('installSilentUpdate') && desktopMain.includes('flush: flushRenderer') && desktopMain.includes('backupBeforeUpdate(downloadedUpdateVersion!)') && desktopMain.includes('requestSilentInstall(autoUpdater)'), 'الإغلاق يفرغ الواجهة ويحمي/ينسخ القاعدة ثم يثبت ويعيد التشغيل بصمت')
 
 console.log(`\nPASS=${PASS} FAIL=${FAIL}`)
 if (FAIL > 0) process.exit(1)

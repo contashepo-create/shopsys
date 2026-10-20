@@ -124,7 +124,8 @@ describe('التفعيل: تأكيد الخادم قبل الحفظ', () => {
 
   it('توقيع فاسد يُرفض قبل أي اتصال بالشبكة', async () => {
     const { key, pubB64u } = await signedKey()
-    const tampered = key.slice(0, -3) + (key.endsWith('A') ? 'B' : 'A') + key.slice(-2)
+    // غيّر الحرف المستهدف نفسه؛ فحص الحرف الأخير كان يترك التوقيع دون تغيير أحياناً.
+    const tampered = key.slice(0, -3) + (key.at(-3) === 'A' ? 'B' : 'A') + key.slice(-2)
     const f = fakeFetch(() => jsonResponse(200, { ok: true, plan: 'pro', expiresAt: null }))
     await expect(activateOnline({
       key: tampered, deviceId: DEVICE, revokedKeys: [], activityId: 'retail', baseUrl: BASE, fetchImpl: f.fn, pubB64u,
@@ -261,7 +262,9 @@ describe('الاتفاقية: إفصاح صريح عن الإرسال الإلز
 
   it('تُفصح الاتفاقية عن مسؤولية ملف مفتاح الاسترداد وكلمة مروره', () => {
     expect(eulaText).toContain('ملف مفتاح الاسترداد (.tkey)')
-    expect(eulaText).toContain('أنت وحدك مسؤول عن حفظه')
+    expect(eulaText).toContain('لا تُرحّل إلا بالمفتاح الأصلي')
+    expect(eulaText).toContain('إذا احتجت إلى هذا الملف')
+    expect(eulaText).toContain('لا يلزم للبيانات النصية الجديدة')
   })
 
   it('شاشة القبول: موافقات منفصلة (الاتفاقية، بيانات التسجيل، مفتاح الاسترداد) — ولا خانة مدمجة', () => {

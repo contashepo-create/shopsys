@@ -19,6 +19,11 @@ on:
   # محفز الطوارئ: يُستدعى من auto-release بعد وسم الإصدار، أو يدوياً:
   #   gh workflow run desktop-release --ref v1.0.21
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'بناء وفحص فقط — بلا إصدار أو نشر، يسمح باختبار فرع العمل'
+        type: boolean
+        default: false
 
 # بناء واحد في كل مرة: وسمان متلاحقان يبنيان بالترتيب لا بالسباق
 concurrency:
@@ -31,27 +36,54 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: حارس المحفز — وسم إصدار v(X.Y.Z) حصراً (مدفوع أو مُطلق يدوياً)
         shell: bash
         run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "✓ بناء تجريبي فقط — لا نشر ولا تعديل لقناة التحديث"
+            exit 0
+          fi
           if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "✗ السير أُنشئ على «${GITHUB_REF_NAME}» وليس وسم إصدار v(X.Y.Z) — لا بناء ولا نشر"
             exit 1
           fi
           echo "✓ وسم إصدار ${GITHUB_REF_NAME}"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
+
+
+      - name: تطابق الوسم مع الإصدار ووجهة النشر قبل البناء
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          LOCK_VER=$(node -p "require('./package-lock.json').packages[''].version")
+          if [ "${GITHUB_REF_NAME}" != "v${VER}" ] || [ "${LOCK_VER}" != "${VER}" ]; then
+            echo "::error::الوسم وpackage.json وpackage-lock.json غير متطابقة — لا بناء لإصدار ملتبس"
+            exit 1
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::RELEASES_REPO_TOKEN غير مضبوط — لا بناء نشر بلا وجهة"
+            exit 1
+          fi
+          gh api repos/contashepo-create/tahakam-releases --jq '.permissions.push' > ../publish-permission.txt
+          if ! grep -qx true ../publish-permission.txt; then
+            echo "::error::توكن رف النشر لا يملك صلاحية الكتابة"
+            exit 1
+          fi
 
       - name: تثبيت الاعتماديات
         run: npm ci
@@ -82,7 +114,7 @@ jobs:
 
       - name: رفع سجلات السلسلة (للتشخيص — حتى عند النجاح)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: chain-logs
           retention-days: 7
@@ -132,7 +164,7 @@ jobs:
       # ── v1.0.16: ترحيل التحديث لرف الإصدارات العام ──────────────────────
       # المعمارية: البناء هنا (بلا توكن) → app-update.yml داخل المثبت يشير
       # لtahakam-releases → نشر صريح للرف العام بتوكن محصور → مرآة هنا
-      # للعملاء القدامى (تُزال بعد اكتمال الترحيل وخصخصة المستودع).
+      # مرآة مصدر للتشخيص فقط؛ لا ترحيل مفترض لمستخدمين غير موجودين.
       # راجع docs/الترحيل-لمستودع-خاص.md
 
       - name: بناء المثبت (بلا نشر — النشر خطوات صريحة أدناه)
@@ -151,58 +183,123 @@ jobs:
           fi
           echo "✓ التحديث داخل المثبت موجه للرف العام tahakam-releases"
 
-      - name: نشر الإصدار إلى رف الإصدارات العام (tahakam-releases)
+      - name: تحقق من حجم وبصمة المثبت وملفات التحديث
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER=$(node -p "require('./package.json').version")
-          REL="contashepo-create/tahakam-releases"
-          # حارس الوسم: لا نشر إلا لوسم إصدار v(X.Y.Z) — يحمي من أي تشغيل
-          # مستقبلي خارج قصدنا (محفز يدوي قديم أو وسم غير إصداري)
-          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "✗ \${TAG} ليس وسماً بإصدار vX.Y.Z — لا نشر (طلب المالك: الإصدار بوسم مقصود حصراً)"
-            exit 1
-          fi
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "✗ سر RELEASES_REPO_TOKEN غير مضبوط — لا نشر بلا رف التحديث (إصدار بلا رف = عملاء معطلون عن التحديث)"
-            exit 1
-          fi
-          # سلامة مخرجات البناء قبل الرفع
-          if [ ! -f release/latest.yml ]; then echo "✗ release/latest.yml مفقود"; exit 1; fi
-          ls release/tahakom-setup-*.exe >/dev/null || { echo "✗ المثبت مفقود"; exit 1; }
-          if ! grep -q "version: ${VER}" release/latest.yml; then echo "✗ latest.yml بإصدار مختلف عن package.json"; exit 1; fi
-          # إصدار جديد أو تحديث نفس الوسم (إعادة تشغيل) — clobber يستبدل الأصول
-          gh release view "${TAG}" --repo "${REL}" >/dev/null 2>&1 \
-            || gh release create "${TAG}" --repo "${REL}" --title "تَحَكَّم ${VER}" --notes "تحديث تلقائي — الإصدار ${VER}"
-          gh release upload "${TAG}" --repo "${REL}" release/tahakom-setup-*.exe release/latest.yml --clobber
-          if compgen -G "release/*.blockmap" > /dev/null; then
-            gh release upload "${TAG}" --repo "${REL}" release/*.blockmap --clobber
-          fi
-          echo "✓ نُشر ${TAG} إلى رف الإصدارات العام — أجهزة العملاء ستراه"
+          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; const version=JSON.parse(readFileSync('package.json','utf8')).version; console.log(validateDesktopArtifacts('release',version));"
 
-      - name: مرآة إصدار الترحيل في هذا المستودع (للعملاء القدامى — تُزال بعد اكتمال الترحيل)
-        # الجهاز على 1.0.12/1.0.15 ينظر إلى shopsys: يجد هذه المرآة فيثبّت
-        # 1.0.16 فينتقل لرف الإصدارات (app-update.yml الجديد). بعد خصخصة
-        # shopsys لا فائدة منها — تُحذف الخطوة بتعليمات دليل الترحيل.
+      - name: حفظ حزمة البناء المفحوصة (بما فيها البناء التجريبي)
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: desktop-installer-${{ github.run_id }}
+          retention-days: 7
+          path: |
+            app/release/*.exe
+            app/release/*.blockmap
+            app/release/latest.yml
+
+      - name: تنزيل EXE v23 المنشور لاختبار أول انتقال قبل النشر
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER=$(node -p "require('./package.json').version")
-          gh release view "${TAG}" >/dev/null 2>&1 \
-            || gh release create "${TAG}" --title "تَحَكَّم ${VER}" --notes "إصدار الترحيل لرف الإصدارات العام — التنزيل اليدوي والعملاء القدامى"
-          gh release upload "${TAG}" release/tahakom-setup-*.exe release/latest.yml --clobber
-          if compgen -G "release/*.blockmap" > /dev/null; then
-            gh release upload "${TAG}" release/*.blockmap --clobber
-          fi
-          echo "✓ مُرآء ${TAG} هنا للعملاء القدامى (1.0.12/1.0.15)"
-          # تحقق نهائي: exe + latest.yml معاً في إصدار واحد
-          ASSETS=$(gh release view "${TAG}" --json assets --jq '[.assets[].name] | join(" ")')
-          echo "أصول الإصدار: ${ASSETS}"
-          case "${ASSETS}" in
-            *latest.yml*) echo "✓ latest.yml مرفوع مع المثبت" ;;
-            *) echo "✗ latest.yml مفقود من الإصدار — العملاء القدامى لن يجدوا التحديث"; exit 1 ;;
-          esac
+          gh release download v1.0.23 --repo contashepo-create/shopsys --pattern latest.yml --pattern tahakom-setup-1.0.23.exe --pattern tahakom-setup-1.0.23.exe.blockmap --dir release-previous
+          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous','1.0.23'));"
+
+      - name: حاجز النشر — EXE القديم ثم المرشح ونفس profile/key وآخر عمل
+        shell: pwsh
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 -FromPublished23 } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Pre-publication old-binary upgrade::$detail"
+            throw
+          }
+
+      - name: تحديد آخر إصدار منشور أقدم لاختبار ترقية العميل
+        id: public_baseline
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tags="$(gh api repos/contashepo-create/tahakam-releases/releases --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"
+          previous="$(printf '%s\n' "$tags" | node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { versionOf, compareReleaseVersions } from "./scripts/releaseVersion.mjs";
+            const current = process.env.GITHUB_REF_NAME;
+            versionOf(current);
+            const releases = readFileSync(0, "utf8").trim().split(/\r?\n/).filter(Boolean);
+            const earlier = releases.filter(tag => {
+              try { return compareReleaseVersions(tag, current) < 0; } catch { return false; }
+            });
+            earlier.sort(compareReleaseVersions);
+            if (!earlier.length) throw new Error(`No published stable release precedes ${current}`);
+            console.log(earlier.at(-1).slice(1));
+          ')"
+          echo "version=${previous}" >> "$GITHUB_OUTPUT"
+          echo "✓ Public update probe baseline: ${previous}"
+
+      - name: نشر الإصدار إلى رف الإصدارات العام — draft ثم نشر بعد التحقق
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPO: contashepo-create/tahakam-releases
+          RELEASE_SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/publish_desktop_release.mjs
+
+      - name: مرآة حزمة المصدر — draft ثم نشر بعد التحقق
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/publish_desktop_release.mjs
+
+      - name: اختبار اكتشاف وتنزيل الإصدار العام الجديد كترقية صامتة
+        if: inputs.dry_run != true
+        shell: pwsh
+        env:
+          EXPECTED_RELEASE_TAG: ${{ github.ref_name }}
+          PUBLIC_UPDATE_FROM_VERSION: ${{ steps.public_baseline.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            if ($env:EXPECTED_RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid expected release tag' }
+            if ($env:PUBLIC_UPDATE_FROM_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid previous public version' }
+            $version = $env:EXPECTED_RELEASE_TAG.Substring(1)
+            $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+            $probe = (Resolve-Path 'scripts/windows_public_update_probe.cjs').Path
+            $out = Join-Path $env:RUNNER_TEMP 'public-update-readback.json'
+            $arguments = @("`"$probe`"", $version, "`"$out`"")
+            $process = Start-Process -FilePath $electron -ArgumentList $arguments -PassThru
+            if (-not $process.WaitForExit(330000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw 'Public updater probe hung'
+            }
+            if (-not (Test-Path $out)) { throw 'Public updater probe produced no evidence' }
+            $result = Get-Content $out -Raw | ConvertFrom-Json
+            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Public updater probe failed: $($result.error)" }
+            if ($result.fromVersion -ne $env:PUBLIC_UPDATE_FROM_VERSION -or $result.detectedVersion -ne $version -or $result.authenticated -or $result.installAttempted) {
+              throw 'Public updater evidence does not prove the expected anonymous, download-only upgrade'
+            }
+            Write-Output "::notice title=Public update verified::Anonymous ElectronHttpExecutor detected $($result.fromVersion) -> $($result.detectedVersion), downloaded $($result.size) bytes, SHA512 matched; installer was not run"
+            Get-Content $out
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Public update download::$detail"
+            throw
+          }
+
+      - name: حفظ دليل التحديث العام بعد النشر
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: public-update-readback-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/public-update-readback.json

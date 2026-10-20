@@ -4,7 +4,7 @@
  * يرمي أخطاء عربية مفهومة — من يستدعيه يقرر العرض أو الصمت.
  */
 import { useAppStore } from '../stores/app.store.ts'
-import { useDataStore } from '../data/repo.ts'
+import { DATA_VERSION, useDataStore } from '../data/repo.ts'
 import { getCountry } from '../core/countries.ts'
 import {
   isValidBotToken, isValidChatId, apiUrl,
@@ -12,9 +12,7 @@ import {
 } from '../core/telegram.ts'
 import { salesSummary, stockAlerts, type Period } from '../core/reports.ts'
 import { buildBackup, backupFileName } from '../core/backup.ts'
-import { decryptForDevice } from '../data/secureStorage.ts'
-
-const DATA_VERSION = 7 // إصدار persist لمخزن shopsys-data
+import { appStorage, settingsAppStorage } from '../data/persistentStorage.ts'
 
 /** استدعاء Bot API برسائل خطأ عربية */
 export async function callBot(token: string, method: string, body: FormData | Record<string, unknown>): Promise<void> {
@@ -77,10 +75,8 @@ export async function sendDailyReportNow(): Promise<void> {
 /** إرسال نسخة احتياطية كاملة كملف مستند */
 export async function sendBackupNow(): Promise<void> {
   const app = useAppStore.getState()
-  const appRaw = localStorage.getItem('shopsys-app')
-  const storeEnc = localStorage.getItem('shopsys-data')
-  // قاعدة البيانات مشفرة على القرص (القرار 28) — نفكها قبل بناء ملف النسخة
-  const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+  const appRaw = await settingsAppStorage().getItem('shopsys-app')
+  const storeRaw = await appStorage().getItem('shopsys-data')
   if (!storeRaw) throw new Error('لا بيانات للنسخ بعد')
   const backup = buildBackup({
     appState: appRaw ? JSON.parse(appRaw) : null,

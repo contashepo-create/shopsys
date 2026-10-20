@@ -50,8 +50,12 @@ console.log('بوابة السنة المالية بمقاييس عالمية (v
 
 console.log('═══ ① التجهيز: سنتان منتهيتان + حركة حقيقية ═══')
 {
-  app().addFiscalYear({ nameAr: '2024', startDate: '2024-01-01', endDate: '2024-12-31' })
-  app().addFiscalYear({ nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31' })
+  /* setup مباشر: البوابة تفحص منطق الإقفال، وحارس «سنة واحدة مفتوحة» (طلب المالك)
+     يُفحص في scripts/verify_owner_batch8_settings.mjs — فلا نستخدم addFiscalYear هنا. */
+  useAppStore.setState({ fiscalYears: [
+    { id: 1, nameAr: '2024', startDate: '2024-01-01', endDate: '2024-12-31', status: 'open' },
+    { id: 2, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' },
+  ] })
   assert.equal(app().fiscalYears.length, 2)
   st().postManualEntry({ date: '2024-01-05', description: 'رأس مال نقدي', lines: [
     { accountCode: '1101', debit: 1_000_000, credit: 0, note: '' },

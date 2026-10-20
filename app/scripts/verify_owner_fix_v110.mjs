@@ -34,7 +34,7 @@ check('② لا فتح ذاتياً: غير الممنوحة بشارة «بكو
 check('② الممنوحة المتوقفة: زر «إعادة إظهار» يعيدها ببياناتها', settings.includes('إعادة إظهار') && settings.includes('عاد قسم'))
 check('② إيقاف القسم يخفي الشاشات فقط — نص صريح بحفظ البيانات', settings.includes('شاشاته مختفية وبياناته محفوظة بالكامل'))
 const store = read('src/stores/app.store.ts')
-check('② حماية المتجر: لا إيقاف آخر وحدة مفعّلة (في المنطق لا الواجهة فقط)', store.includes('s.setup.modules.includes(m) && s.setup.modules.length <= 1'))
+check('② حماية المتجر: لا إيقاف آخر وحدة مفعّلة (في المنطق لا الواجهة فقط)', store.includes('setup.modules.includes(m) && setup.modules.length <= 1'))
 const wizard = read('src/ui/setup/FirstRunWizard.tsx')
 check('② نص المعالج موحّد مع القرار: الإضافي بمفتاح موقّع من الدعم', wizard.includes('بمفتاح موقّع من الدعم الفني'))
 

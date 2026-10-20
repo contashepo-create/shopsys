@@ -3,13 +3,13 @@
  *   • window.shopsysDesktop.database — عقد SQLite الكامل
  *     (مطابق حرفياً لـ src/data/desktopBridge.ts — المصدر: المُصيّر)
  *   • globalThis.shopsysPrint / shopsysPrinters — تعدد الطابعات (§102)
- *   • globalThis.shopsysUpdater — فحص وتثبيت التحديثات
- * لا يُكشف أي شيء من Node/Electron خارج هذه الواجهات الثلاث.
+ *   • globalThis.shopsysUpdater — فحص التحديثات يدوياً وحالة التنزيل (شريط التقدم)
+ * لا يُكشف أي شيء من Node/Electron خارج هذه الواجهات.
  */
 import { contextBridge, ipcRenderer } from 'electron'
 
 const database = {
-  getEncryptionKey: (): Promise<Uint8Array> => ipcRenderer.invoke('device:getEncryptionKey'),
+  getEncryptionKey: (): Promise<Uint8Array | null> => ipcRenderer.invoke('device:getEncryptionKey'),
   getSnapshot: (storeName: string) => ipcRenderer.invoke('database:getSnapshot', storeName),
   saveSnapshot: (input: unknown) => ipcRenderer.invoke('database:saveSnapshot', input),
   deleteSnapshot: (input: unknown) => ipcRenderer.invoke('database:deleteSnapshot', input),
@@ -44,9 +44,22 @@ const keyRecovery = {
   status: () => ipcRenderer.invoke('keyRecovery:status'),
   export: (args: { passphrase: string; deviceId: string }) => ipcRenderer.invoke('keyRecovery:export', args),
   import: (args: { passphrase: string }) => ipcRenderer.invoke('keyRecovery:import', args),
+  retryStartup: (): Promise<boolean> => ipcRenderer.invoke('keyRecovery:retry-startup'),
+  startFresh: () => ipcRenderer.invoke('keyRecovery:start-fresh'),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery })
+const persistence = {
+  onFlush: (listener: () => Promise<void>): void => {
+    ipcRenderer.on('persistence:flush', (_event, token: string) => {
+      void Promise.resolve().then(listener).then(
+        () => ipcRenderer.invoke('persistence:flushed', token, null),
+        (error: unknown) => ipcRenderer.invoke('persistence:flushed', token, error instanceof Error ? error.message : String(error)),
+      )
+    })
+  },
+  onResume: (listener: () => void): void => { ipcRenderer.on('persistence:resume', () => listener()) },
+}
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))
@@ -57,6 +70,8 @@ contextBridge.exposeInMainWorld('shopsysPrinters', () => ipcRenderer.invoke('pri
 contextBridge.exposeInMainWorld('shopsysPdfShare', (html: string, fileName: string, waLink?: string) =>
   ipcRenderer.invoke('pdf:export-share', html, fileName, waLink))
 
+/* واجهة التحديث اليدوية: زر «فحص التحديثات» + شريط التنزيل (كما كان قبل التحديث الصامت).
+   الفحص الدوري الخلفي والتثبيت الصامت عند الإغلاق يبقيان في العملية الرئيسية بلا تغيير. */
 contextBridge.exposeInMainWorld('shopsysUpdater', {
   state: () => ipcRenderer.invoke('updater:state'),
   check: () => ipcRenderer.invoke('updater:check'),
@@ -73,6 +88,20 @@ contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('ap
 
 /* v1.0.8: مرساة التجربة خارج القاعدة — تمنع إعادة التجربة بمسح البيانات */
 contextBridge.exposeInMainWorld('shopsysTrialAnchor', (args: { firstTrialAt?: string; lastSeenAt?: string }) => ipcRenderer.invoke('trial:anchor', args ?? {}))
+
+/* بند 2 (طلب المالك): هوية الجهاز خارج القاعدة — تُقرأ تزامنياً عند الإقلاع
+   (قبل فحص الترخيص) ⇒ معرّف الجهاز لا يتغيّر بمسح القاعدة ولا بفقد مرساة Chromium. */
+contextBridge.exposeInMainWorld('shopsysDeviceIdentity', (candidate?: { deviceId?: string; firstTrialAt?: string }) =>
+  ipcRenderer.sendSync('device:identity', candidate))
+
+/* بند 5 (طلب المالك): قناة الدعم — الطلب من العملية الرئيسية (بلا Origin ⇒ لا
+   رفض من سياسة المصدر في نسخة سطح المكتب file://)، والاعتماد يُحفظ خارج القاعدة
+   ليبقى ثابتاً (الخادم يربط الاعتماد بالجهاز مرة واحدة ⇒ اعتماد جديد = رفض دائم). */
+contextBridge.exposeInMainWorld('shopsysSupport', {
+  request: (args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }) => ipcRenderer.invoke('support:request', args),
+  getToken: () => ipcRenderer.invoke('support:tokenGet'),
+  setToken: (token: string) => ipcRenderer.invoke('support:tokenSet', token),
+})
 
 /* §102 — مضيف شبكة المحل: تشغيل خادم ws + أحداث الأجهزة (المنطق في المُصيّر) */
 contextBridge.exposeInMainWorld('shopsysLanHost', {

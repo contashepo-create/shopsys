@@ -225,7 +225,7 @@ ok('v1.0.22 الإلزام: لا خانة موافقة في المعالج + ا�
   assert.match(gateSrc, /setDeclined\(true\)/)
   assert.match(gateSrc, /window\.close\(\)/)
   assert.match(gateSrc, /ألغِ تثبيته/)
-  assert.match(legalSrc, /LEGAL_VERSION = '2026-10-11'/) // تغيير جوهري ⇒ إعادة طلب القبول
+  assert.match(legalSrc, /LEGAL_VERSION = '2026-10-15'/) // وضوح تخزين SQLite المحلي وتوافق enc:v1 القديم ⇒ إعادة طلب القبول
   assert.match(appSrc, /legalCurrent\.version === LEGAL_VERSION/)
 })
 

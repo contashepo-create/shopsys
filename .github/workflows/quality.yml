@@ -21,10 +21,10 @@ jobs:
         working-directory: app
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -55,3 +55,151 @@ jobs:
 
       - name: Business invariants, security and accounting journeys
         run: npm run verify:all
+
+  windows-database-update:
+    name: Windows database and silent-update safety
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Real SQLite, WAL, directory replacement and updater arguments
+        run: npx vitest run tests/database_update_safety.test.ts tests/desktop_storage.test.ts tests/db_location_update_v1022.test.ts tests/db_recovery_v1022.test.ts tests/desktop_shutdown.test.ts tests/release_pipeline.test.ts
+      - name: Runtime wiring guard
+        run: node --experimental-strip-types scripts/verify_database_update_safety.mjs
+
+  windows-installer-smoke:
+    name: Native NSIS installation and database preservation (no publication)
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Build actual Windows NSIS installer without publishing
+        shell: pwsh
+        run: |
+          npm run desktop:dist 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/native-build.log"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Get-Content "$env:RUNNER_TEMP/native-build.log" | Where-Object { $_ -match 'Error|ERR_|error|Cannot|failed' } | Select-Object -Last 15 | ForEach-Object {
+              $detail = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=Native installer build::$detail"
+            }
+            exit $code
+          }
+      - name: Verify installer metadata and bytes
+        run: node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; import {readFileSync} from 'node:fs'; console.log(validateDesktopArtifacts('release',JSON.parse(readFileSync('package.json','utf8')).version));"
+      - name: Native install, update-mode reinstall, forced restart and encrypted SQLite
+        shell: pwsh
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Native NSIS smoke::$detail"
+            throw
+          }
+      - name: Published update discovery and real anonymous download (no installation)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $tag = gh api repos/contashepo-create/tahakam-releases/releases/latest --jq '.tag_name'
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read the published release tag' }
+            if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid public release tag' }
+            if ($tag -eq 'v1.0.23') {
+              Write-Output 'No release newer than probe baseline 1.0.23 yet — skip download detection'
+              exit 0
+            }
+            $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
+            $probe = (Resolve-Path 'scripts/windows_public_update_probe.cjs').Path
+            $out = Join-Path $env:RUNNER_TEMP 'public-update-readback.json'
+            $arguments = @("`"$probe`"", $tag.Substring(1), "`"$out`"")
+            $process = Start-Process -FilePath $electron -ArgumentList $arguments -PassThru
+            if (-not $process.WaitForExit(330000)) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              throw 'Public updater probe hung'
+            }
+            if (-not (Test-Path $out)) { throw 'Public updater probe produced no evidence' }
+            $result = Get-Content $out -Raw | ConvertFrom-Json
+            if ($process.ExitCode -ne 0 -or -not $result.ok) { throw "Public updater probe failed: $($result.error)" }
+            Write-Output "::notice title=Public update verified::Anonymous ElectronHttpExecutor detected $($result.fromVersion) -> $($result.detectedVersion), downloaded $($result.size) bytes, SHA512 matched; no installer executed"
+            Get-Content $out
+          } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Public update download::$detail"
+            throw
+          }
+      - name: Save native smoke evidence and installer
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: native-installer-smoke
+          retention-days: 7
+          path: |
+            app/release/*.exe
+            app/release/*.blockmap
+            app/release/latest.yml
+            ${{ runner.temp }}/public-update-readback.json
+            ${{ runner.temp }}/native-build.log
+            ${{ runner.temp }}/native-smoke-results.json
+            ${{ runner.temp }}/db-probe-*.json
+
+  windows-previous-release-upgrade:
+    name: Published v23 to candidate — actual profile, key and first-upgrade backup
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Build candidate NSIS (no publication)
+        shell: pwsh
+        run: npm run desktop:dist
+      - name: Download original v23 installer from source repository (not mocked)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download v1.0.23 --repo contashepo-create/shopsys --pattern latest.yml --pattern tahakom-setup-1.0.23.exe --pattern tahakom-setup-1.0.23.exe.blockmap --dir release-previous
+          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous','1.0.23'));"
+      - name: Real old binary to candidate — same Chromium profile and encrypted data
+        shell: pwsh
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 -FromPublished23 } catch {
+            $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Published v23 upgrade::$detail"
+            throw
+          }
+      - name: Preserve first-upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: published-v23-to-candidate
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/previous-release-upgrade.json
+            ${{ runner.temp }}/db-probe-*.json

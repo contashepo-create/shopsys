@@ -3,16 +3,15 @@
  * Cloudflare Worker (نقطة /about) — تتحدث تلقائياً عند توفر الإنترنت
  * وتعمل بآخر نسخة محفوظة أوفلاين.
  */
-import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale, Mail, MapPin, Clock } from 'lucide-react'
+import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale, Mail, MapPin, Clock, DownloadCloud, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { fetchAbout, fetchAccountMessage, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../../core/cloud.ts'
 import { DeveloperMessage } from '../components/DeveloperMessage.tsx'
-import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
-import { DownloadCloud, ShieldCheck } from 'lucide-react'
-import { PLAN_LABELS } from '../../core/license.ts'
 import { DesktopUpdater } from '../components/DesktopUpdater.tsx'
 import { isElectronRuntime } from '../../data/desktopBridge.ts'
+import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
+import { PLAN_LABELS } from '../../core/license.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
 export function AboutPage() {
@@ -133,6 +132,7 @@ export function AboutPage() {
           <Btn variant="ghost" onClick={refresh} disabled={busy}><RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} /> تحديث من السحابة</Btn>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
+          <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">إصدار التطبيق</div><div className="font-mono font-bold" dir="ltr">v{APP_VERSION}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">معرف الجهاز</div><div className="font-mono font-bold" dir="ltr">{deviceId}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">الباقة</div><div className="font-black">{activatedPayload ? PLAN_LABELS[activatedPayload.plan] : 'تجريبي'}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">النشاط</div><div className="font-black">{setup.activityId ?? '—'}</div></div>

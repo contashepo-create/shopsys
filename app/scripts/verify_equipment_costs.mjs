@@ -67,6 +67,90 @@ ok('الخدمة القادمة عند 1450 والمتبقي 235 (العداد 1
 S().recordEquipmentService(eq.id)
 ok('تسجيل الخدمة صفّر الفترة عند 1215', S().equipment.find((e) => e.id === eq.id).lastServiceReading === 1215)
 
+console.log('👨‍✈️ السائقون في الموظفين + العقد المرجعي + الفواتير الدورية (بالضريبة وبدون ضريبة) + تحميل المصاريف + المستخلص الجزئي')
+const { jobTitlesFor, isDriverEmployee } = await import('../src/core/jobTitles.ts')
+const titles = jobTitlesFor('contracting', ['equipment_rental'])
+ok('مسميات السائق والمشغل متاحة في المقاولات + تأجير المعدات', titles.includes('سائق معدة') && titles.includes('مشغّل معدة'))
+S().addEmployee({ nameAr: 'كابتن حسن سائق الحفار', phone: '01011112222', role: 'technician', jobTitle: 'سائق معدة', baseSalaryMinor: 600000 })
+const driverEmp = S().employees.at(-1)
+ok('تصنيف الموظف كسائق معدة يعمل', isDriverEmployee(driverEmp))
+
+S().addCustomer({ nameAr: 'شركة النيل للمقاولات (مستأجر)', phone: '01233334444', notes: '' })
+const tenant = S().customers.at(-1)
+S().addEquipment({
+  nameAr: 'لودر كاتربيلر 966', code: 'LD-966',
+  dailyRateMinor: 400000, hourlyRateMinor: 60000, monthlyRateMinor: 8000000,
+  meterReading: 500, serviceEveryHours: 250, lastServiceReading: 500,
+  driverEmployeeId: driverEmp.id, notes: '',
+})
+const eqRef = S().equipment.at(-1)
+
+// 1) فتح عقد مرجعي مع تأمين 5000 ج.م (500,000 قرش) ومصفوفة تحمل مصاريف
+const refContract = S().openRental({
+  customerId: tenant.id,
+  equipmentId: eqRef.id,
+  input: { equipmentName: eqRef.nameAr, days: 3, dailyRateMinor: 8000000, depositMinor: 500000, payment: 'credit', vatPercent: 14 },
+  notes: 'عقد مرجعي لمدة 3 أشهر',
+  rateType: 'monthly',
+  billingMode: 'reference',
+  withTax: true,
+  driverEmployeeId: driverEmp.id,
+  responsibility: { fuel: 'customer', operator: 'owner', transport: 'customer', maintenance: 'owner', damage: 'customer' },
+})
+ok('العقد المرجعي لا يثبت مديونية إيجار مسبقة عند الفتح (رصيد العميل = 0)', S().getCustomerBalance(tenant.id) === 0)
+ok('التأمين فقط قُيّد على 2103', bal('2103') === -500000)
+
+// 2) إصدار فاتورة دورية للشهر الأول بدون ضريبة (8,000,000 قرش آجل)
+const inv1 = S().issueRentalInvoice({
+  contractId: refContract.id,
+  periodLabel: 'الشهر الأول',
+  qty: 1,
+  unitRateMinor: 8000000,
+  withTax: false,
+  payment: 'credit',
+})
+ok('الفاتورة الدورية الأولى بدون ضريبة (الإجمالي = الصافي 8,000,000)', inv1.totalMinor === 8000000 && inv1.vatMinor === 0)
+ok('رصيد العميل المستأجر زاد بقيمة الفاتورة الأولى (8,000,000)', S().getCustomerBalance(tenant.id) === 8000000)
+
+// 3) إصدار فاتورة دورية للشهر الثاني بالضريبة 14% (صافي 8,000,000 + ضريبة 1,120,000 = 9,120,000)
+const inv2 = S().issueRentalInvoice({
+  contractId: refContract.id,
+  periodLabel: 'الشهر الثاني',
+  qty: 1,
+  unitRateMinor: 8000000,
+  withTax: true,
+  vatPercent: 14,
+  payment: 'credit',
+})
+ok('الفاتورة الدورية الثانية بالضريبة 14% (الإجمالي 9,120,000)', inv2.totalMinor === 9120000 && inv2.vatMinor === 1120000)
+ok('رصيد العميل المستأجر أصبح 17,120,000', S().getCustomerBalance(tenant.id) === 17120000)
+
+// 4) مصاريف على العقد: أجر سائق على المالك (driver) + سولار محمّل على المستأجر (customer)
+S().addEquipmentCost({
+  equipmentId: eqRef.id, kind: 'operator', amountMinor: 600000,
+  contractId: refContract.id, costLayer: 'driver', borneBy: 'owner', driverEmployeeId: driverEmp.id,
+  description: 'أجر السائق للشهر الأول',
+})
+S().addEquipmentCost({
+  equipmentId: eqRef.id, kind: 'fuel', amountMinor: 250000,
+  contractId: refContract.id, costLayer: 'direct', borneBy: 'customer',
+  description: 'سولار ممول من الشركة على حساب المستأجر',
+})
+ok('المصروف المحمّل على المستأجر زاد مديونية العميل في 1104 وكشف الحساب إلى 17,370,000', S().getCustomerBalance(tenant.id) === 17370000)
+const eqRefProfit = S().getEquipmentProfit(eqRef.id)
+ok('ربحية المعدة تحسب إيراد الفواتير الدورية الصافي (16,000,000) وتخصم تكلفة المالك فقط (600,000)', eqRefProfit.revenueMinor === 16000000 && eqRefProfit.costsMinor === 600000 && eqRefProfit.driverCostsMinor === 600000 && eqRefProfit.customerBorneCostsMinor === 250000)
+
+// 5) المستخلص الجزئي للمشروع لا يتعطل بتحريك شريط تقدم الموقع (updateBoqProgress)
+const prj = S().addProject({ nameAr: 'مشروع طرق', clientName: tenant.nameAr, clientId: tenant.id, contractValueMinor: 10000000, retentionPercent: 10, startDate: '2026-10-01', notes: '' })
+const boq1 = S().addBoqItem({ projectId: prj.id, code: 'B-01', descriptionAr: 'تمهيد وتسوية', unit: 'م2', qty: 100, unitPriceMinor: 100000 })
+S().updateBoqProgress(boq1.id, 100) // تحريك شريط الموقع إلى 100% قبل إصدار أي مستخلص
+const partialEx = S().addProjectExtract({
+  projectId: prj.id,
+  extractLines: [{ boqItemId: boq1.id, newProgressPercent: 25 }],
+  vatPercent: 0, payment: 'credit', description: 'مستخلص جاري أول 25%', isFinal: false,
+})
+ok('المستخلص الجزئي 25% صدر بنجاح رغم أن شريط تقدم الموقع كان 100%', partialEx.totals.grossMinor === 2500000 && !partialEx.isFinal)
+
 console.log('⚖️ الميزان')
 ok('الدفتر متوازن', balanced())
 

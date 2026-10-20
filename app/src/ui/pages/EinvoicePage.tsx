@@ -34,6 +34,14 @@ export function EinvoicePage() {
 
   const [address, setAddress] = useState(einvoice.address)
 
+  /* بند 4 (طلب المالك): مزامنة حقل العنوان مع المخزن — بلاها بقي الحقل القديم
+     معروضاً إذا تغيّرت الإعدادات من موضع آخر أو أُعيد فتح الصفحة. الرقم الضريبي
+     لا حقل محلياً له هنا أصلاً (يُقرأ مباشرة من einvoice.taxNumber للعرض فقط —
+     تعديله الآن من صفحة «بيانات المنشأة» الموحّدة فلا حاجة لمزامنته هنا).
+     النمط: تعديل الحالة أثناء العرض (كما في VouchersPage) — بلا useEffect. */
+  const [syncedAddress, setSyncedAddress] = useState(einvoice.address)
+  if (syncedAddress !== einvoice.address) { setSyncedAddress(einvoice.address); setAddress(einvoice.address) }
+
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
 
   /* ─── شاشة القفل: الميزة غير مفعلة بالمفتاح ─── */
@@ -168,6 +176,7 @@ export function EinvoicePage() {
         {/* إعدادات الممول — ثلاث مجموعات مرئية واضحة بدل حقول متناثرة بلا تجميع:
             ① تفعيل المنظومة ② بيانات الممول (جنباً لجنب) ③ تفضيلات الطباعة */}
         <div className={`anim-up ${card} space-y-3`}>
+
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <FileCheck2 size={17} className="text-slate-500" /> بيانات الممول
           </div>
