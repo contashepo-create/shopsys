@@ -97,7 +97,7 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
-  buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry,
+  buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry, validateUnitMaintenanceMaterials,
   type Property, type PropertyUnit, type Lease, type RentFrequency, type UnitStatus, buildPropertyUnitsSaleEntry, allocatePriceOverUnits, type PropertySaleLine, type LeaseUnitLine } from '../core/realestate.ts'
 import {
   buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, validatePaymentAllocations, buildClientReceiptEntry, computeProjectEvm,
@@ -2652,8 +2652,15 @@ interface DataState {
   getOwnerBalance: (propertyId: number) => number
   /** إنهاء/إخلاء عقد: رد التأمين بخصم أضرار اختياري وإخلاء الوحدة */
   endLease: (args: { leaseId: number; deductionMinor?: number; evicted?: boolean; treasury?: string }) => void
-  /** صيانة وحدة: على المكتب (5108) أو خصماً من مستحق المالك (2115) */
-  addUnitMaintenance: (args: { unitId: number; amountMinor: number; bearer: 'office' | 'owner'; description: string; treasury?: string }) => void
+  /**
+   * صيانة وحدة: على المكتب (5108) أو خصماً من مستحق المالك (2115).
+   * سد فجوة النشاط #21: `materials` اختياري — مستلزمات حقيقية (دهان،
+   * مواسير…) تُسحب من مخزون `inventory` الفعلي بتكلفتها المرجحة وتُخصم
+   * من الرصيد، فتُرسم في نفس قيد الصيانة دائناً على 1103 بدل بند نقدي
+   * وهمي. `amountMinor` يبقى الجزء النقدي فقط (أجرة عامل مثلاً) ويقبل صفراً
+   * إن كانت الصيانة كلها مستلزمات.
+   */
+  addUnitMaintenance: (args: { unitId: number; amountMinor: number; bearer: 'office' | 'owner'; description: string; treasury?: string; materials?: { itemId: number; qty: number }[] }) => void
   /** بيع عقار مملوك بالكامل: إيراد 4115 وتكلفة 5116 وإقفال السجل */
   sellProperty: (args: { propertyId: number; salePriceMinor: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; buyerCustomerId?: number | null; buyerName?: string; vatPercent?: number; treasury?: string }) => void
   /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
@@ -11051,7 +11058,18 @@ export const useDataStore = create<DataState>()(
         if (unit.status === 'sold') throw new Error('الوحدة مباعة — لا صيانة جديدة')
         const property = state.properties.find((p) => p.id === unit.propertyId)!
         if (args.bearer === 'owner' && property.ownership !== 'managed') throw new Error('العقار مملوك لك — الصيانة على المكتب')
-        if (args.bearer === 'owner' && args.amountMinor > get().getOwnerBalance(property.id)) throw new Error('الصيانة أكبر من مستحق المالك — حصّل أولاً أو حمّلها على المكتب')
+        // سد فجوة النشاط #21: مستلزمات صيانة حقيقية من المخزون (دهان/مواسير…) —
+        // تُثرى بالتكلفة المرجحة الحالية ثم تُتحقق قبل أي كتابة (رفض ذري)
+        const materialRows = (args.materials ?? []).map((m) => {
+          const item = state.items.find((it) => it.id === m.itemId)
+          if (!item) throw new Error('صنف مستلزمات غير موجود بالمخزون')
+          return { itemId: m.itemId, nameAr: item.nameAr, qty: m.qty, unitCostMinor: item.costMinor }
+        })
+        const materialErrors = validateUnitMaintenanceMaterials(materialRows, (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0)
+        if (materialErrors.length) throw new Error(materialErrors.join(' — '))
+        const materialsCostMinor = materialRows.reduce((sum, m) => sum + Math.round(m.qty * m.unitCostMinor), 0)
+        const totalCostMinor = args.amountMinor + materialsCostMinor
+        if (args.bearer === 'owner' && totalCostMinor > get().getOwnerBalance(property.id)) throw new Error('الصيانة أكبر من مستحق المالك — حصّل أولاً أو حمّلها على المكتب')
         const treasury = args.treasury ?? '1101'
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
@@ -11059,12 +11077,32 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `صيانة وحدة ${unit.code} — ${property.nameAr}: ${args.description}`,
           sourceType: 'unit_maintenance', sourceId: unit.id,
-          lines: buildUnitMaintenanceEntry(args.amountMinor, args.bearer, treasury, unit.code),
+          lines: buildUnitMaintenanceEntry({ cashMinor: args.amountMinor, materials: materialRows, bearer: args.bearer, treasury, label: unit.code }),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        // خصم كميات المستلزمات المستهلكة من المخزون + استهلاك دفعات الصلاحية الأقدم أولاً (نفس نمط الإتلاف/الصرف الداخلي)
+        const qtyBy = new Map(materialRows.map((m) => [m.itemId, m.qty]))
+        const updatedItems = qtyBy.size === 0 ? state.items : state.items.map((it) =>
+          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
+        )
+        let batches = state.batches
+        for (const m of materialRows) {
+          let rest = m.qty
+          batches = batches
+            .slice()
+            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
+            .map((b) => {
+              if (b.itemId !== m.itemId || rest <= 0 || b.qty <= 0) return b
+              const take = Math.min(b.qty, rest)
+              rest -= take
+              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
+            })
+        }
         set({
+          items: updatedItems,
+          batches,
           ownerTxns: args.bearer === 'owner'
-            ? [...state.ownerTxns, { id: nextId(state.ownerTxns), propertyId: property.id, kind: 'maintenance', amountMinor: args.amountMinor, date: now.slice(0, 10), note: args.description, journalEntryId: entryId }]
+            ? [...state.ownerTxns, { id: nextId(state.ownerTxns), propertyId: property.id, kind: 'maintenance', amountMinor: totalCostMinor, date: now.slice(0, 10), note: args.description, journalEntryId: entryId }]
             : state.ownerTxns,
           journal: [...state.journal, entry],
         })

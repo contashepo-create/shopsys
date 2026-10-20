@@ -248,7 +248,10 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     id: 'realestate', nameAr: 'عقارات وإدارة أملاك', icon: '🏘️',
     description: 'عقارات ووحدات، عقود إيجار بأقساط وتأمين مسترد وتوثيق إيجار، سعي أملاك الغير، وبيع عقارات، ومستلزمات صيانة الوحدات في المخزن (بلا كاشير)',
     features: [],
-    modules: ['realestate'],
+    // سد فجوة النشاط #21: الوصف أعلاه يَعِد بمخزن مستلزمات صيانة فعلي —
+    // inventory/purchases بلا pos (بلا كاشير بيع للجمهور)، بنفس نمط
+    // contracting (#11) الذي يتتبع مواد المقاولة بلا كاشير أيضاً.
+    modules: ['realestate', 'inventory', 'purchases'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {

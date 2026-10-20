@@ -288,17 +288,65 @@ export function buildPropertyAcquisitionEntry(costMinor: Minor, payment: 'cash' 
 /**
  * قيد صيانة وحدة: مصروف على المكتب (5108) أو خصماً من مستحق المالك (2115) عند إدارة الأملاك —
  * معيار «الوسيط»: صيانة العقار المدار على مالكه ما لم يتحملها المكتب.
+ *
+ * سد فجوة النشاط #21 (عقارات وإدارة أملاك): وصف النشاط نفسه يَعِد بـ
+ * "مستلزمات صيانة الوحدات في المخزن" — أي أن الصيانة قد تستهلك مواد
+ * حقيقية (دهان، مواسير، لمبات) من مخزون فعلي بتكلفتها المرجحة، لا مبلغاً
+ * نقدياً مكتوباً يدوياً فقط. الدالة الآن تقبل جزءاً نقدياً (أجرة عامل
+ * مثلاً) وجزءاً من مستلزمات مخزون معاً في نفس القيد: الطرف المدين (مصروف
+ * المكتب أو مستحق المالك) = مجموع الاثنين، والطرف الدائن يتوزع بين
+ * الخزينة (الجزء النقدي) و1103 المخزون (قيمة كل مستلزم بسطر مستقل
+ * للتدقيق لاحقاً).
  */
-export function buildUnitMaintenanceEntry(amountMinor: Minor, bearer: 'office' | 'owner', treasury: string, label: string): JournalLine[] {
-  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الصيانة يجب أن تكون موجبة')
+export interface UnitMaintenanceMaterial {
+  itemId: number
+  nameAr: string
+  qty: number
+  unitCostMinor: Minor // التكلفة المرجحة وقت الاستهلاك
+}
+
+export function buildUnitMaintenanceEntry(args: {
+  cashMinor: Minor
+  materials: readonly UnitMaintenanceMaterial[]
+  bearer: 'office' | 'owner'
+  treasury: string
+  label: string
+}): JournalLine[] {
+  const { cashMinor, materials, bearer, treasury, label } = args
+  if (!Number.isInteger(cashMinor) || cashMinor < 0) throw new Error('القيمة النقدية للصيانة لا تكون سالبة')
+  const materialsCostMinor = materials.reduce((sum, m) => sum + Math.round(m.qty * m.unitCostMinor), 0)
+  const total = cashMinor + materialsCostMinor
+  if (total <= 0) throw new Error('قيمة الصيانة يجب أن تكون موجبة — أضف مبلغاً نقدياً أو مستلزمات')
   const debitAccount = bearer === 'office' ? '5108' : '2115'
   const lines: JournalLine[] = [
-    { accountCode: debitAccount, debit: amountMinor, credit: 0, note: `صيانة ${label}${bearer === 'owner' ? ' (على المالك)' : ''}` },
-    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'المنصرف' },
+    { accountCode: debitAccount, debit: total, credit: 0, note: `صيانة ${label}${bearer === 'owner' ? ' (على المالك)' : ''}` },
   ]
+  if (cashMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: cashMinor, note: 'المنصرف نقداً' })
+  for (const m of materials) {
+    const cost = Math.round(m.qty * m.unitCostMinor)
+    if (cost <= 0) continue
+    lines.push({ accountCode: '1103', debit: 0, credit: cost, note: `مستلزم صيانة: ${m.nameAr} × ${m.qty}` })
+  }
   assertBalanced(lines)
   return lines
 }
+
+/** تحقق مستلزمات الصيانة المسحوبة من المخزون — قائمة أخطاء عربية (فارغة = سليم) */
+export function validateUnitMaintenanceMaterials(
+  materials: readonly { itemId: number; nameAr: string; qty: number }[],
+  availableQty: (itemId: number) => number,
+): string[] {
+  const errors: string[] = []
+  const seen = new Set<number>()
+  materials.forEach((m, i) => {
+    if (seen.has(m.itemId)) errors.push(`سطر ${i + 1}: الصنف مكرر — اجمع الكمية في سطر واحد`)
+    seen.add(m.itemId)
+    if (!(m.qty > 0)) errors.push(`سطر ${i + 1}: الكمية يجب أن تكون موجبة`)
+    else if (m.qty > availableQty(m.itemId)) errors.push(`سطر ${i + 1}: الكمية تتجاوز رصيد «${m.nameAr}» (المتاح ${availableQty(m.itemId)})`)
+  })
+  return errors
+}
+
 
 /* ─── تنبيهات العقود (نمط «سمات»: عقود منتهية وأقساط متأخرة) ─── */
 
