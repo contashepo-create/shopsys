@@ -51,7 +51,7 @@ import { proportionalCommissionReturnMinor } from '../core/invoiceCommissions.ts
 import { fullCoa } from '../core/treasury.ts'
 import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../core/treasuryAccess.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
-import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
+import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals, type PayrollCarryItem } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry, type VehicleCostKind, VEHICLE_COST_LABELS } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalPaymentMode, type RentalTotals } from '../core/rental.ts'
@@ -8403,6 +8403,15 @@ export const useDataStore = create<DataState>()(
           ...(args.deductionOverrideBy ? { deductionOverrideBy: args.deductionOverrideBy } : {}),
         }
 
+        // بنود «مُرحَّل من شهر سابق» (بلاغ المالك): كل سلفة/خصم نشأ في شهر غير شهر
+        // هذا المسير ويُستقطع منه الآن — تُسجَّل كبند توثيقي على سطر الموظف فيظهر
+        // صراحةً في مستند المسير نفسه «مُرحَّل من كذا وسببه كذا» بدل تتبّع صامت للرصيد.
+        const carryItemsByEmployee = new Map<number, PayrollCarryItem[]>()
+        const pushCarry = (employeeId: number, item: PayrollCarryItem) => {
+          const list = carryItemsByEmployee.get(employeeId) ?? []
+          list.push(item)
+          carryItemsByEmployee.set(employeeId, list)
+        }
         // توزيع المخصوم على سلف كل موظف — الأقدم أولاً (تتبع السلفة عبر عدة أشهر)
         let employeeAdvances = state.employeeAdvances
         for (const l of computed) {
@@ -8414,6 +8423,13 @@ export const useDataStore = create<DataState>()(
             if (open <= 0) return a
             const take = Math.min(open, toRecover)
             toRecover -= take
+            const originMonth = a.date.slice(0, 7)
+            if (take > 0 && originMonth !== args.month) {
+              pushCarry(l.employeeId, {
+                kind: 'advance', number: a.advanceNumber, reason: a.notes || undefined,
+                originMonth, carriedOverMinor: open, takenMinor: take,
+              })
+            }
             return { ...a, recoveredMinor: a.recoveredMinor + take }
           })
         }
@@ -8429,7 +8445,20 @@ export const useDataStore = create<DataState>()(
             if (open <= 0) return d
             const take = Math.min(open, toRecover)
             toRecover -= take
+            const originMonth = d.date.slice(0, 7)
+            if (take > 0 && originMonth !== args.month) {
+              pushCarry(l.employeeId, {
+                kind: 'deduction', number: d.dedNumber, reason: d.reason || undefined,
+                originMonth, carriedOverMinor: open, takenMinor: take,
+              })
+            }
             return { ...d, recoveredMinor: d.recoveredMinor + take }
+          })
+        }
+        if (carryItemsByEmployee.size) {
+          run.lines = run.lines.map((l) => {
+            const items = carryItemsByEmployee.get(l.employeeId)
+            return items && items.length ? { ...l, carryItems: items } : l
           })
         }
         // المسير المصروف من عهدة → حركة في ملف العهدة (طلب المالك)

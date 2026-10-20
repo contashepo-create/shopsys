@@ -36,6 +36,17 @@ export function GeneralSettingsPage() {
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
+  /* اسم المنشأة (طلب المالك): كان يُكتب مرة واحدة فقط عند الإعداد الأول بلا أي
+     شاشة لتعديله لاحقاً — يظهر في كل الشاشات وشاشة الدخول والطباعة الافتراضية */
+  const [shopNameDraft, setShopNameDraft] = useState(setup.shopName)
+  const saveShopName = () => {
+    const trimmed = shopNameDraft.trim()
+    if (!trimmed) return toast.show('اسم المنشأة مطلوب', 'error')
+    useAppStore.setState((s) => ({ setup: { ...s.setup, shopName: trimmed } }))
+    toast.show('حُفظ اسم المنشأة الجديد ✓')
+  }
+
+
   /* ─── إقفال السنة المالية (منهجية QuickBooks/Xero — طلب المالك) ─── */
   const [closeTarget, setCloseTarget] = useState<(typeof fiscalYears)[number] | null>(null)
   /* ─── إعادة فتح سنة مقفلة (نمط عالمي Reopen books): عكس قيد الإقفال + فتح الفترة للتصحيح ─── */
@@ -109,6 +120,19 @@ export function GeneralSettingsPage() {
           </div>
         </section>
       )}
+
+      {/* اسم المنشأة (طلب المالك): حق التعديل بعد الإعداد الأول — يظهر فوراً في كل
+          الشاشات وشاشة الدخول؛ اسم الإيصال المطبوع له حقل مستقل في «إعدادات الطباعة» */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5">
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          🏢 اسم المنشأة
+        </h3>
+        <p className="text-[11px] text-slate-400 mb-3">يظهر في الشريط الجانبي وشاشة الدخول وكل المستندات ما لم تخصص اسماً مختلفاً لطباعة الإيصال من «إعدادات الطباعة».</p>
+        <div className="flex gap-2">
+          <input value={shopNameDraft} onChange={(e) => setShopNameDraft(e.target.value)} className={inputCls} placeholder="اسم منشأتك" />
+          <Btn onClick={saveShopName} disabled={!shopNameDraft.trim() || shopNameDraft.trim() === setup.shopName}>💾 حفظ</Btn>
+        </div>
+      </section>
 
       {/* البلد والعملة */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5">

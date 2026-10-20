@@ -722,6 +722,26 @@ function ShiftsTab() {
         <input type="checkbox" checked={hrRules.overtimePaid} onChange={(e) => updateHrRules({ overtimePaid: e.target.checked })} className="size-4 accent-teal-600" />
         احتساب أجر الإضافي في مسار الرواتب
       </label>
+      {/* مكافأة «يوم إضافي» (طلب المالك): حضور وعمل في عطلة رسمية (جمعة/عيد/مناسبة
+          وطنية) يُسجَّل بحالة «يوم إضافي» في شبكة الحضور، ويُحتسب بالسعر الذي تختاره هنا */}
+      <Field label="سعر مكافأة «يوم إضافي» (عطلة يُعمل فيها)" hint="يُطبَّق على كل يوم تسجّله بحالة «يوم إضافي» في شبكة الحضور">
+        <QuickSelect className={inputCls} value={hrRules.holidayWorkRateMode} onChange={(e) => updateHrRules({ holidayWorkRateMode: e.target.value as 'day' | 'day_and_half' | 'percent' | 'fixed' })} aria-label="سعر يوم العطلة الإضافي">
+          <option value="day">يوم كامل (100٪ من اليومية)</option>
+          <option value="day_and_half">يوم ونصف (150٪ من اليومية)</option>
+          <option value="percent">نسبة مخصصة من اليومية</option>
+          <option value="fixed">مبلغ ثابت لليوم</option>
+        </QuickSelect>
+      </Field>
+      {hrRules.holidayWorkRateMode === 'percent' && (
+        <Field label="النسبة من اليومية (٪)" hint="100 = يومية كاملة، 200 = ضعف اليومية">
+          <input type="number" min={1} className={inputCls} value={hrRules.holidayWorkPercent} onChange={(e) => updateHrRules({ holidayWorkPercent: Number(e.target.value) })} />
+        </Field>
+      )}
+      {hrRules.holidayWorkRateMode === 'fixed' && (
+        <Field label={`مبلغ ثابت لليوم (${cur.symbol})`}>
+          <input className={inputCls} value={hrRules.holidayWorkFixedMinor / 10 ** cur.decimals} onChange={(e) => { const v = toMinor(e.target.value || '0', cur.decimals); if (Number.isFinite(v)) updateHrRules({ holidayWorkFixedMinor: Math.max(0, v) }) }} />
+        </Field>
+      )}
     </div>
   )
 
@@ -829,19 +849,22 @@ function HrReportsTab() {
     absent: sum.absent + (row.impact?.summary.absentDays ?? 0),
     late: sum.late + row.late,
     ot: sum.ot + row.ot,
+    holidayWorked: sum.holidayWorked + (row.impact?.summary.holidayWorkedDays ?? 0),
     overtime: sum.overtime + (row.impact?.overtimeAllowanceMinor ?? 0),
+    holidayBonus: sum.holidayBonus + (row.impact?.holidayWorkBonusMinor ?? 0),
     deductions: sum.deductions + (row.impact ? row.impact.absenceDeductionMinor + row.impact.unpaidLeaveDeductionMinor + row.impact.lateDeductionMinor : 0),
     net: sum.net + (row.impact?.netAdjustmentMinor ?? 0),
-  }), { present: 0, absent: 0, late: 0, ot: 0, overtime: 0, deductions: 0, net: 0 }), [rows])
+  }), { present: 0, absent: 0, late: 0, ot: 0, holidayWorked: 0, overtime: 0, holidayBonus: 0, deductions: 0, net: 0 }), [rows])
 
   const exportCsv = () => {
-    const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'دقائق تأخير', 'ساعات إضافي', `بدل إضافي (${cur.code})`, `خصم غياب (${cur.code})`, `خصم إجازة بلا أجر (${cur.code})`, `خصم تأخير (${cur.code})`, `صافي الأثر (${cur.code})`]
+    const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'يوم إضافي', 'دقائق تأخير', 'ساعات إضافي', `بدل إضافي (${cur.code})`, `مكافأة يوم إضافي (${cur.code})`, `خصم غياب (${cur.code})`, `خصم إجازة بلا أجر (${cur.code})`, `خصم تأخير (${cur.code})`, `صافي الأثر (${cur.code})`]
     const body = rows.map(({ employee, impact, late, ot }) => [
       partyCode('EMP', employee.id), employee.nameAr,
       impact?.summary.presentDays ?? 0, impact?.summary.absentDays ?? 0, impact?.summary.paidLeaveDays ?? 0, impact?.summary.unpaidLeaveDays ?? 0,
-      impact?.summary.permissionDays ?? 0, impact?.summary.holidayDays ?? 0, impact?.summary.missionDays ?? 0,
+      impact?.summary.permissionDays ?? 0, impact?.summary.holidayDays ?? 0, impact?.summary.missionDays ?? 0, impact?.summary.holidayWorkedDays ?? 0,
       late, (ot / 60).toFixed(2),
       (impact?.overtimeAllowanceMinor ?? 0) / 10 ** cur.decimals,
+      (impact?.holidayWorkBonusMinor ?? 0) / 10 ** cur.decimals,
       (impact?.absenceDeductionMinor ?? 0) / 10 ** cur.decimals,
       (impact?.unpaidLeaveDeductionMinor ?? 0) / 10 ** cur.decimals,
       (impact?.lateDeductionMinor ?? 0) / 10 ** cur.decimals,
@@ -853,14 +876,15 @@ function HrReportsTab() {
     a.download = `حضور-${month}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
+
   }
 
   const print = () => {
     const body = rows.map(({ employee, impact, late, ot }) => `<tr>
       <td>${employee.nameAr}</td><td class="n">${impact?.summary.presentDays ?? 0}</td><td class="n">${impact?.summary.absentDays ?? 0}</td>
       <td class="n">${impact?.summary.paidLeaveDays ?? 0}</td><td class="n">${impact?.summary.unpaidLeaveDays ?? 0}</td>
-      <td class="n">${impact?.summary.permissionDays ?? 0}</td><td class="n">${late}</td><td class="n">${(ot / 60).toFixed(1)}</td>
-      <td class="n">${fmt(impact?.overtimeAllowanceMinor ?? 0)}</td><td class="n">${fmt((impact?.absenceDeductionMinor ?? 0) + (impact?.unpaidLeaveDeductionMinor ?? 0) + (impact?.lateDeductionMinor ?? 0))}</td>
+      <td class="n">${impact?.summary.permissionDays ?? 0}</td><td class="n">${late}</td><td class="n">${(ot / 60).toFixed(1)}</td><td class="n">${impact?.summary.holidayWorkedDays ?? 0}</td>
+      <td class="n">${fmt(impact?.overtimeAllowanceMinor ?? 0)}</td><td class="n">${fmt(impact?.holidayWorkBonusMinor ?? 0)}</td><td class="n">${fmt((impact?.absenceDeductionMinor ?? 0) + (impact?.unpaidLeaveDeductionMinor ?? 0) + (impact?.lateDeductionMinor ?? 0))}</td>
       <td class="n">${fmt(impact?.netAdjustmentMinor ?? 0)}</td>
     </tr>`).join('')
     printHtml(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>كشف الحضور ${month}</title>
@@ -868,11 +892,12 @@ function HrReportsTab() {
       table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:center}th{background:#f1f5f9}
       td:first-child{text-align:right;font-weight:700}.n{font-variant-numeric:tabular-nums}tfoot td{font-weight:800;background:#f8fafc}</style></head><body>
       <h1>كشف الحضور والانصراف — ${monthLabelAr(month)}</h1><p>${setup.shopName ?? ''} · تاريخ الطباعة ${new Date().toISOString().slice(0, 10)}</p>
-      <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>بدل إضافي</th><th>إجمالي الخصومات</th><th>صافي الأثر</th></tr></thead>
+      <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>يوم إضافي</th><th>بدل إضافي</th><th>مكافأة يوم إضافي</th><th>إجمالي الخصومات</th><th>صافي الأثر</th></tr></thead>
       <tbody>${body}</tbody>
-      <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.deductions)}</td><td class="n">${fmt(totals.net)}</td></tr></tfoot></table>
+      <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${totals.holidayWorked}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.holidayBonus)}</td><td class="n">${fmt(totals.deductions)}</td><td class="n">${fmt(totals.net)}</td></tr></tfoot></table>
       </body></html>`)
   }
+
 
   return (
     <div className="space-y-4" data-hr-reports>
@@ -897,8 +922,8 @@ function HrReportsTab() {
                 <tr>
                   <th className="p-1.5 text-right">الموظف</th><th className="p-1.5">حاضر</th><th className="p-1.5">غياب</th>
                   <th className="p-1.5">إجازة مدفوعة</th><th className="p-1.5">إجازة بلا أجر</th><th className="p-1.5">إذن</th><th className="p-1.5">مأمورية</th>
-                  <th className="p-1.5">دقائق تأخير</th><th className="p-1.5">ساعات إضافي</th>
-                  <th className="p-1.5">بدل إضافي</th><th className="p-1.5">خصم غياب</th><th className="p-1.5">خصم بلا أجر</th><th className="p-1.5">خصم تأخير</th><th className="p-1.5">صافي الأثر</th>
+                  <th className="p-1.5">دقائق تأخير</th><th className="p-1.5">ساعات إضافي</th><th className="p-1.5">يوم إضافي</th>
+                  <th className="p-1.5">بدل إضافي</th><th className="p-1.5">مكافأة يوم إضافي</th><th className="p-1.5">خصم غياب</th><th className="p-1.5">خصم بلا أجر</th><th className="p-1.5">خصم تأخير</th><th className="p-1.5">صافي الأثر</th>
                 </tr>
               </thead>
               <tbody>
@@ -913,11 +938,13 @@ function HrReportsTab() {
                     <td className="p-1.5 text-center font-mono">{impact?.summary.missionDays ?? 0}</td>
                     <td className="p-1.5 text-center font-mono text-amber-600">{late}</td>
                     <td className="p-1.5 text-center font-mono text-violet-600">{(ot / 60).toFixed(1)}</td>
+                    <td className="p-1.5 text-center font-mono text-lime-600">{impact?.summary.holidayWorkedDays ?? 0}</td>
                     <td className="p-1.5 text-center font-mono text-violet-600">{fmt(impact?.overtimeAllowanceMinor ?? 0)}</td>
+                    <td className="p-1.5 text-center font-mono text-lime-600">{fmt(impact?.holidayWorkBonusMinor ?? 0)}</td>
                     <td className="p-1.5 text-center font-mono text-rose-600">{fmt(impact?.absenceDeductionMinor ?? 0)}</td>
                     <td className="p-1.5 text-center font-mono text-rose-600">{fmt(impact?.unpaidLeaveDeductionMinor ?? 0)}</td>
                     <td className="p-1.5 text-center font-mono text-rose-600">{fmt(impact?.lateDeductionMinor ?? 0)}</td>
-                    <td className="p-1.5 text-center font-mono font-black {(impact?.netAdjustmentMinor ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600'}">{fmt(impact?.netAdjustmentMinor ?? 0)}</td>
+                    <td className={`p-1.5 text-center font-mono font-black ${(impact?.netAdjustmentMinor ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(impact?.netAdjustmentMinor ?? 0)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -929,7 +956,9 @@ function HrReportsTab() {
                   <td colSpan={4} />
                   <td className="p-1.5 text-center font-mono">{totals.late}</td>
                   <td className="p-1.5 text-center font-mono">{(totals.ot / 60).toFixed(1)}</td>
+                  <td className="p-1.5 text-center font-mono">{totals.holidayWorked}</td>
                   <td className="p-1.5 text-center font-mono">{fmt(totals.overtime)}</td>
+                  <td className="p-1.5 text-center font-mono">{fmt(totals.holidayBonus)}</td>
                   <td className="p-1.5 text-center font-mono" colSpan={3}>{fmt(totals.deductions)}</td>
                   <td className="p-1.5 text-center font-mono font-black">{fmt(totals.net)}</td>
                 </tr>

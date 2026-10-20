@@ -209,7 +209,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       /* §93: يستبدل نصيبه المحسوب سابقاً فقط — فلا يضاعف بالضغط مرتين
          ولا يطمس الجزاءات المسجلة التي حمّلها زر «السلف والجزاءات» */
       const attDed = impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor
-      const attAllw = impact.overtimeAllowanceMinor
+      // مكافأة «يوم إضافي» (حضور عطلة رسمية) تُضاف هنا مع بدل الإضافي — نفس منطق «زيادة فوق الأساسي»
+      const attAllw = impact.overtimeAllowanceMinor + impact.holidayWorkBonusMinor
       return {
         ...row,
         attDed, attAllw,
@@ -1676,7 +1677,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     .at(-1)
                   const priorLine = priorRun?.lines.find((pl) => pl.employeeId === employee.id)
                   const attDeductionMinor = impact ? impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor : 0
-                  const attOvertimeMinor = impact?.overtimeAllowanceMinor ?? 0
+                  // مكافأة «يوم إضافي» (عمل في عطلة رسمية) تُضاف هنا مع بدل الإضافي — بند واحد قابل للتعديل
+                  const attOvertimeMinor = (impact?.overtimeAllowanceMinor ?? 0) + (impact?.holidayWorkBonusMinor ?? 0)
                   const cashOutMinor = leaves.reduce((sum, lv) => {
                     if (!lv.paid) return sum
                     const days = Math.max(0, Math.min(lv.remainingDays, Number(leaveCashDays[lv.typeId] || 0) || 0))
@@ -1798,7 +1800,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             <button type="button" onClick={() => patchDraft(employee.id, {
                               deductions: String(attDeductionMinor / 10 ** cur.decimals),
                               overtime: String(attOvertimeMinor / 10 ** cur.decimals),
-                            })} className="rounded-lg bg-teal-500/10 px-2.5 py-1 text-[11px] font-bold text-teal-600 hover:bg-teal-500/20">📋 استخدام أثر الحضور (خصم {fmt(attDeductionMinor)} + إضافي {fmt(attOvertimeMinor)})</button>
+                            })} className="rounded-lg bg-teal-500/10 px-2.5 py-1 text-[11px] font-bold text-teal-600 hover:bg-teal-500/20">📋 استخدام أثر الحضور (خصم {fmt(attDeductionMinor)} + إضافي {fmt(attOvertimeMinor)}{(impact?.holidayWorkBonusMinor ?? 0) > 0 ? ` منه مكافأة يوم إضافي ${fmt(impact?.holidayWorkBonusMinor ?? 0)}` : ''})</button>
                           )}
                         </div>
                         {monthlyAtt.recordedDays > 0 || monthlyAtt.paidLeaveDays > 0 || monthlyAtt.unpaidLeaveDays > 0 ? (
@@ -1810,6 +1812,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             <span>مأمورية <b>{monthlyAtt.missionDays}</b></span>
                             <span>تأخير <b>{monthlyAtt.totalLateMinutes}</b> د</span>
                             <span>إضافي <b>{monthlyAtt.totalOvertimeMinutes}</b> د</span>
+                            {monthlyAtt.holidayWorkedDays > 0 && <span>يوم إضافي (عطلة) <b className="text-lime-600">{monthlyAtt.holidayWorkedDays}</b></span>}
                           </div>
                         ) : (
                           <div className="text-[11.5px] text-slate-400">لا سجلات حضور هذا الشهر — يُرحَّل الراتب كاملاً ما لم تُسجَّل الغيابات من «الحضور والإجازات»</div>
@@ -2056,6 +2059,29 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 </tbody>
               </table>
             </div>
+
+            {/* ملاحظات «مُرحَّل من شهر سابق» (بلاغ المالك ㉙): تُعرض صراحةً داخل مستند
+                المسير نفسه — رقم المستند الأصلي وشهر نشأته وسببه — بدل تتبّع صامت للرصيد */}
+            {viewingRun.lines.some((l) => (l.carryItems?.length ?? 0) > 0) && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-500/5 p-3 space-y-2 dark:border-amber-900/50" data-run-carry-notes>
+                <b className="block text-[12px] text-amber-700 dark:text-amber-400">⏮️ بنود مُرحَّلة من أشهر سابقة ضمن هذا المسير</b>
+                <div className="space-y-1.5">
+                  {viewingRun.lines.filter((l) => (l.carryItems?.length ?? 0) > 0).map((l) => (
+                    <div key={l.employeeId} className="text-[11.5px]">
+                      <b className="text-slate-700 dark:text-slate-200">{empName(l.employeeId)}</b>
+                      <ul className="mt-0.5 list-inside list-disc space-y-0.5 text-slate-500">
+                        {l.carryItems!.map((c, i) => (
+                          <li key={i}>
+                            {c.kind === 'advance' ? 'سلفة' : 'خصم'} <span className="font-mono">{c.number}</span> مُرحَّل من {monthLabelAr(c.originMonth)}
+                            {c.reason ? ` — السبب: ${c.reason}` : ''} — استُقطع منه الآن <b className="text-amber-700 dark:text-amber-400">{fmt(c.takenMinor)}</b> من أصل متبقٍ وقتها {fmt(c.carriedOverMinor)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-between text-[13px] px-1">
               <span className="text-slate-500">الصرف: {viewingRun.payMode === 'cash' ? `نقدي من ${ACCOUNT_NAMES[viewingRun.treasury]}` : 'استحقاق على رواتب مستحقة'}</span>
