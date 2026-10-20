@@ -3,7 +3,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * الإعدادات العامة — البلد والعملة والضريبة وطريقة الاحتساب
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -30,17 +30,6 @@ export function GeneralSettingsPage() {
   /* v1.0.10: الممنوحة = افتراضيات النشاط + ما منحه مفتاح الترخيص (extraModules الموقّعة) —
      هذه فقط قابلة للإظهار من هنا؛ ما دونها يُطلب من الدعم */
   const granted = effectiveModules(setup.activityId, activatedPayload?.extraModules)
-  const [companyName, setCompanyName] = useState(setup.shopName)
-  const [vat, setVat] = useState(String(setup.vatPercent))
-  const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
-  const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
-  useEffect(() => {
-    // oxlint-disable-next-line -- عند تبديل الفرع تتغير إعداداته من المتجر؛ نعيد مزامنة المسودات كي لا تظهر بيانات الفرع السابق.
-    setCompanyName(setup.shopName)
-    setVat(String(setup.vatPercent))
-    setTaxInclusive(setup.taxInclusive)
-    setTaxStatus(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
-  }, [setup.shopName, setup.taxInclusive, setup.taxRegistrationStatus, setup.vatPercent])
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const canEditCompanyWideSettings = !activeBranchContext || activeBranchContext.isMain
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -101,26 +90,6 @@ export function GeneralSettingsPage() {
     toast.show('تم حفظ تخصص العيادة ✅')
   }
 
-  const saveCompanyName = () => {
-    try {
-      updateCompanyName(companyName)
-      toast.show('تم حفظ اسم المنشأة لهذا النطاق ✅')
-    } catch (err) {
-      toast.show((err as Error).message, 'error')
-    }
-  }
-
-  const saveTax = () => {
-    try {
-      const vatPercent = taxStatus === 'registered' ? Number(vat) : 0
-      resolveBusinessTax(taxStatus, vatPercent)
-      updateTaxSettings({ vatPercent, taxInclusive, taxRegistrationStatus: taxStatus })
-      toast.show('تم حفظ إعدادات الضريبة لهذا النطاق ✅')
-    } catch (err) {
-      toast.show((err as Error).message, 'error')
-    }
-  }
-
   return (
     <div className="max-w-3xl space-y-5">
       {/* تخصص العيادة — نشاط العيادة فقط (طلب المالك: التخصص يختاره المالك لا يُفرض) */}
@@ -173,53 +142,14 @@ export function GeneralSettingsPage() {
         <FxRatesManager />
       </section>
 
-      {/* اسم المنشأة: الاسم الأول كان إعداداً محفوظاً بلا محرر لاحق؛ أصبح قابلاً للتصحيح والتغيير. */}
-      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '75ms' }}>
-        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
-          🏢 اسم المنشأة والفاتورة
-        </h3>
-        <p className="text-[11.5px] text-slate-400 mb-3">
-          الاسم الذي أُدخل عند التسجيل الأول حُفظ كإعداد ثابت ولم تكن له شاشة تعديل. يمكنك الآن تصحيح الخطأ الإملائي أو تحديث الاسم التجاري؛ تغيير الاسم لا يبدّل معرّفات السجلات ولا يمحو القيود السابقة.
-          {activeBranchContext && !activeBranchContext.isMain ? ` التعديل هنا خاص بفرع «${activeBranchContext.nameAr}».` : ' التعديل هنا يخص المنشأة الأساسية.'}
-        </p>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <Field label="الاسم الظاهر على الفواتير والإيصالات">
-            <input value={companyName} onChange={(event) => setCompanyName(event.target.value)} className={inputCls} maxLength={120} placeholder="اسم المنشأة" />
-          </Field>
-          <div className="sm:self-end"><Btn onClick={saveCompanyName}>حفظ الاسم</Btn></div>
-        </div>
-      </section>
-
-      {/* الضريبة */}
-      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '80ms' }}>
-        <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-          <Percent size={17} className="text-emerald-500" /> الضريبة ({country?.taxName ?? 'ضريبة القيمة المضافة'})
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="حالة تسجيل المنشأة"><QuickSelect className={inputCls} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as BusinessTaxStatus)}><option value="registered">مسجلة ضريبياً</option><option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option><option value="exempt">منشأة معفاة</option></QuickSelect></Field>
-          <Field label="النسبة ٪" hint="قابلة للتعديل دائماً — الضرائب تتغير بقرارات حكومية">
-            <input value={taxStatus === 'registered' ? vat : '0'} onChange={(e) => setVat(e.target.value)} disabled={taxStatus !== 'registered'} type="number" inputMode="decimal" step="any" min={0} max={50} className={inputCls} />
-          </Field>
-          <Field label="طريقة الاحتساب في الأسعار (القرار 6)">
-            <div className="flex gap-2">
-              {([[true, 'شامل الضريبة'], [false, 'تُضاف في الفاتورة']] as const).map(([val, label]) => (
-                <button
-                  key={String(val)}
-                  onClick={() => setTaxInclusive(val)}
-                  className={`flex-1 px-3 py-2.5 rounded-xl text-[13px] font-bold border-2 transition-all duration-200 hover:scale-[1.02] ${
-                    taxInclusive === val
-                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                      : 'border-slate-200 dark:border-slate-700 text-slate-400'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </Field>
-        </div>
-        <div className="mt-3 text-xs text-slate-500">{resolveBusinessTax(taxStatus, Number(vat) || 0).disclosureAr} — ضريبة المدخلات {resolveBusinessTax(taxStatus, Number(vat) || 0).canRecoverInputTax ? 'قابلة للمعالجة حسب المستند' : 'لا تُسترد وتدخل التكلفة'}</div><div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
-      </section>
+      <BranchBusinessSettingsDraft
+        key={[activeBranchContext?.id ?? 'company', setup.shopName, setup.vatPercent, setup.taxInclusive, setup.taxRegistrationStatus ?? ''].join(':')}
+        setup={setup}
+        branchName={activeBranchContext && !activeBranchContext.isMain ? activeBranchContext.nameAr : null}
+        taxName={country?.taxName ?? 'ضريبة القيمة المضافة'}
+        updateCompanyName={updateCompanyName}
+        updateTaxSettings={updateTaxSettings}
+      />
 
       {/* الأرصدة السالبة (طلب المالك) — النظام كله يحترم هذين المفتاحين */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '120ms' }}>
@@ -708,5 +638,101 @@ export function GeneralSettingsPage() {
         })()}
       </section>
     </div>
+  )
+}
+
+
+type GeneralSettingsAppState = ReturnType<typeof useAppStore.getState>
+
+type BranchBusinessSettingsDraftProps = {
+  setup: Pick<GeneralSettingsAppState['setup'], 'shopName' | 'vatPercent' | 'taxInclusive' | 'taxRegistrationStatus'>
+  branchName: string | null
+  taxName: string
+  updateCompanyName: GeneralSettingsAppState['updateCompanyName']
+  updateTaxSettings: GeneralSettingsAppState['updateTaxSettings']
+}
+
+/** تبقى مسودات الهوية والضريبة محلية، وتُعاد تهيئتها بتبديل الفرع/الإعداد عبر مفتاح React بدلاً من setState داخل effect. */
+function BranchBusinessSettingsDraft({ setup, branchName, taxName, updateCompanyName, updateTaxSettings }: BranchBusinessSettingsDraftProps) {
+  const toast = useToast()
+  const [companyName, setCompanyName] = useState(setup.shopName)
+  const [vat, setVat] = useState(String(setup.vatPercent))
+  const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
+  const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
+
+  const saveCompanyName = () => {
+    try {
+      updateCompanyName(companyName)
+      toast.show('تم حفظ اسم المنشأة لهذا النطاق ✅')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+    }
+  }
+  const saveTax = () => {
+    try {
+      const vatPercent = taxStatus === 'registered' ? Number(vat) : 0
+      resolveBusinessTax(taxStatus, vatPercent)
+      updateTaxSettings({ vatPercent, taxInclusive, taxRegistrationStatus: taxStatus })
+      toast.show('تم حفظ إعدادات الضريبة لهذا النطاق ✅')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+    }
+  }
+
+  return (
+    <>
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '75ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">🏢 اسم المنشأة والفاتورة</h3>
+        <p className="text-[11.5px] text-slate-400 mb-3">
+          الاسم الذي أُدخل عند التسجيل الأول حُفظ كإعداد ثابت ولم تكن له شاشة تعديل. يمكنك الآن تصحيح الخطأ الإملائي أو تحديث الاسم التجاري؛ تغيير الاسم لا يبدّل معرّفات السجلات ولا يمحو القيود السابقة.
+          {branchName ? ` التعديل هنا خاص بفرع «${branchName}».` : ' التعديل هنا يخص المنشأة الأساسية.'}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Field label="الاسم الظاهر على الفواتير والإيصالات">
+            <input value={companyName} onChange={(event) => setCompanyName(event.target.value)} className={inputCls} maxLength={120} placeholder="اسم المنشأة" />
+          </Field>
+          <div className="sm:self-end"><Btn onClick={saveCompanyName}>حفظ الاسم</Btn></div>
+        </div>
+      </section>
+
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '80ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+          <Percent size={17} className="text-emerald-500" /> الضريبة ({taxName})
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="حالة تسجيل المنشأة">
+            <QuickSelect className={inputCls} value={taxStatus} onChange={(event) => setTaxStatus(event.target.value as BusinessTaxStatus)}>
+              <option value="registered">مسجلة ضريبياً</option>
+              <option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option>
+              <option value="exempt">منشأة معفاة</option>
+            </QuickSelect>
+          </Field>
+          <Field label="النسبة ٪" hint="قابلة للتعديل دائماً — الضرائب تتغير بقرارات حكومية">
+            <input value={taxStatus === 'registered' ? vat : '0'} onChange={(event) => setVat(event.target.value)} disabled={taxStatus !== 'registered'} type="number" inputMode="decimal" step="any" min={0} max={50} className={inputCls} />
+          </Field>
+          <Field label="طريقة الاحتساب في الأسعار (القرار 6)">
+            <div className="flex gap-2">
+              {([[true, 'شامل الضريبة'], [false, 'تُضاف في الفاتورة']] as const).map(([value, label]) => (
+                <button
+                  key={String(value)}
+                  onClick={() => setTaxInclusive(value)}
+                  className={`flex-1 px-3 py-2.5 rounded-xl text-[13px] font-bold border-2 transition-all duration-200 hover:scale-[1.02] ${
+                    taxInclusive === value
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Field>
+        </div>
+        <div className="mt-3 text-xs text-slate-500">
+          {resolveBusinessTax(taxStatus, Number(vat) || 0).disclosureAr} — ضريبة المدخلات {resolveBusinessTax(taxStatus, Number(vat) || 0).canRecoverInputTax ? 'قابلة للمعالجة حسب المستند' : 'لا تُسترد وتدخل التكلفة'}
+        </div>
+        <div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
+      </section>
+    </>
   )
 }

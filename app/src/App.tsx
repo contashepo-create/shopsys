@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
 import { useDataStore } from './data/repo.ts'
@@ -27,104 +27,122 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionF
 import { pathAllowedForSetup } from './core/coaVisibility.ts'
 import { labelFor } from './core/activityLabels.ts'
 import { useEffectiveBranchScope } from './ui/hooks/useNavSections.ts'
-import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
 import { LEGAL_VERSION } from './core/legal.ts'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
-import { Dashboard } from './ui/pages/Dashboard.tsx'
-import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
-import { ItemsPage } from './ui/pages/ItemsPage.tsx'
-import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
-import { BranchesPage } from './ui/pages/BranchesPage.tsx'
-import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
-import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
 
-import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
-import { PurchaseOrdersPage } from './ui/pages/PurchaseOrdersPage.tsx'
-import { ApprovalsPage as DocApprovalsPage } from './ui/pages/ApprovalsPage.tsx'
-import { StocktakePage } from './ui/pages/StocktakePage.tsx'
-import { RecipesPage } from './ui/pages/RecipesPage.tsx'
-import { ProcessingPage } from './ui/pages/ProcessingPage.tsx'
-import { JewelryPage } from './ui/pages/JewelryPage.tsx'
-import { PriceListsPage } from './ui/pages/PriceListsPage.tsx'
-import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
-import { PosPage } from './ui/pages/PosPage.tsx'
-import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
-import { InvoiceDocumentRoute } from './ui/pages/InvoiceDocumentRoute.tsx'
-import { ContractingInvoicesPage } from './ui/pages/ContractingInvoicesPage.tsx'
-import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
-import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
-import { JournalPage } from './ui/pages/JournalPage.tsx'
-import { CoaPage } from './ui/pages/CoaPage.tsx'
-import { TrialBalancePage } from './ui/pages/TrialBalancePage.tsx'
-import { VouchersPage } from './ui/pages/VouchersPage.tsx'
-import { TreasuryPage } from './ui/pages/TreasuryPage.tsx'
-import { PaymentTerminalsPage } from './ui/pages/PaymentTerminalsPage.tsx'
-import { ChequesPage } from './ui/pages/ChequesPage.tsx'
-import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
-import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
-import { LanSettingsPage } from './ui/pages/LanSettingsPage.tsx'
 import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
 import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
-import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
-import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
-import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
-import { HrPage } from './ui/pages/HrPage.tsx'
-import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
-import { ReportsPage } from './ui/pages/ReportsPage.tsx'
-import { NasqPage } from './ui/pages/NasqPage.tsx'
-import { StatementsPage } from './ui/pages/StatementsPage.tsx'
-import { LicensePage } from './ui/pages/LicensePage.tsx'
-import { BackupPage } from './ui/pages/BackupPage.tsx'
-import { TripsPage, TripExpensesPage } from './ui/pages/TripsPage.tsx'
-import { FleetPage } from './ui/pages/FleetPage.tsx'
-import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
-import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
-import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
-import { ProjectsPage, ProjectExpensesPage, ProjectExtractsPage } from './ui/pages/ContractingPages.tsx'
-import { ContractingReportsPage } from './ui/pages/ContractingReportsPage.tsx'
-import { EquipmentReportsPage } from './ui/pages/EquipmentReportsPage.tsx'
-import { RestaurantReportsPage } from './ui/pages/RestaurantReportsPage.tsx'
-import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
-import { BoqPage, SubcontractorsPage, BondsPage, DailyWorkersPage } from './ui/pages/ContractingDepthPages.tsx'
-import { MaterialIssuesPage, ClientCollectionsPage, EvmDashboardPage, ApprovalsPage } from './ui/pages/ProjectOpsPages.tsx'
-import { ProjectBudgetPage, ProjectTasksPage } from './ui/pages/ContractingPlanPages.tsx'
-import { PropertiesPage, LeasesPage } from './ui/pages/RealEstatePages.tsx'
-import { LogisticsInvoicesPage, RentalInvoicesPage, RealestateInvoicesPage } from './ui/pages/ActivityInvoicesHubs.tsx'
-import { CustodyPage } from './ui/pages/CustodyPage.tsx'
-import { SyncPage } from './ui/pages/SyncPage.tsx'
-import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
-import { CarsPage } from './ui/pages/CarsPage.tsx'
-import { AboutPage } from './ui/pages/AboutPage.tsx'
-import { ProfilePage } from './ui/pages/ProfilePage.tsx'
-import { AuditLogPage } from './ui/pages/AuditLogPage.tsx'
-import { IssuesPage } from './ui/pages/IssuesPage.tsx'
-import { SupportPage } from './ui/pages/SupportPage.tsx'
-import { GuidesPage } from './ui/pages/GuidesPage.tsx'
-import { WalletServicesPage } from './ui/pages/WalletServicesPage.tsx'
-import { WastagePage } from './ui/pages/WastagePage.tsx'
-import { ConsumptionPage } from './ui/pages/ConsumptionPage.tsx'
-import { BarcodeCenterPage } from './ui/pages/BarcodeCenterPage.tsx'
-import { ScaleSettingsPage } from './ui/pages/ScaleSettingsPage.tsx'
-import { OpeningBalancesPage } from './ui/pages/OpeningBalancesPage.tsx'
-import { SerialsPage } from './ui/pages/SerialsPage.tsx'
-import { SettlementsPage } from './ui/pages/SettlementsPage.tsx'
-import { ExchangePage } from './ui/pages/ExchangePage.tsx'
-import { RestaurantOrdersPage } from './ui/pages/RestaurantOrdersPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
-import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
-import { LaundryPage } from './ui/pages/LaundryPage.tsx'
-import { BookingsPage } from './ui/pages/BookingsPage.tsx'
-import { TransfersPage } from './ui/pages/TransfersPage.tsx'
-import { AppearancePage } from './ui/pages/AppearancePage.tsx'
-import { TelegramPage } from './ui/pages/TelegramPage.tsx'
-import { AssetsPage } from './ui/pages/AssetsPage.tsx'
-import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
 import { ToastHost, useToast } from './ui/components/ui.tsx'
 import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
+
+const Dashboard = lazy(() => import('./ui/pages/Dashboard.tsx').then((module) => ({ default: module.Dashboard })))
+const PermissionsPage = lazy(() => import('./ui/pages/PermissionsPage.tsx').then((module) => ({ default: module.PermissionsPage })))
+const ItemsPage = lazy(() => import('./ui/pages/ItemsPage.tsx').then((module) => ({ default: module.ItemsPage })))
+const WarehousesPage = lazy(() => import('./ui/pages/WarehousesPage.tsx').then((module) => ({ default: module.WarehousesPage })))
+const BranchesPage = lazy(() => import('./ui/pages/BranchesPage.tsx').then((module) => ({ default: module.BranchesPage })))
+const CustomersPage = lazy(() => import('./ui/pages/PartiesPages.tsx').then((module) => ({ default: module.CustomersPage })))
+const SuppliersPage = lazy(() => import('./ui/pages/PartiesPages.tsx').then((module) => ({ default: module.SuppliersPage })))
+const PurchasesPage = lazy(() => import('./ui/pages/PurchasesPage.tsx').then((module) => ({ default: module.PurchasesPage })))
+const PurchaseReturnsPage = lazy(() => import('./ui/pages/PurchaseReturnsPage.tsx').then((module) => ({ default: module.PurchaseReturnsPage })))
+const PurchaseOrdersPage = lazy(() => import('./ui/pages/PurchaseOrdersPage.tsx').then((module) => ({ default: module.PurchaseOrdersPage })))
+const DocApprovalsPage = lazy(() => import('./ui/pages/ApprovalsPage.tsx').then((module) => ({ default: module.ApprovalsPage })))
+const StocktakePage = lazy(() => import('./ui/pages/StocktakePage.tsx').then((module) => ({ default: module.StocktakePage })))
+const RecipesPage = lazy(() => import('./ui/pages/RecipesPage.tsx').then((module) => ({ default: module.RecipesPage })))
+const ProcessingPage = lazy(() => import('./ui/pages/ProcessingPage.tsx').then((module) => ({ default: module.ProcessingPage })))
+const JewelryPage = lazy(() => import('./ui/pages/JewelryPage.tsx').then((module) => ({ default: module.JewelryPage })))
+const PriceListsPage = lazy(() => import('./ui/pages/PriceListsPage.tsx').then((module) => ({ default: module.PriceListsPage })))
+const PromotionsPage = lazy(() => import('./ui/pages/PromotionsPage.tsx').then((module) => ({ default: module.PromotionsPage })))
+const PosPage = lazy(() => import('./ui/pages/PosPage.tsx').then((module) => ({ default: module.PosPage })))
+const SalesInvoicesPage = lazy(() => import('./ui/pages/SalesInvoicesPage.tsx').then((module) => ({ default: module.SalesInvoicesPage })))
+const InvoiceDocumentRoute = lazy(() => import('./ui/pages/InvoiceDocumentRoute.tsx').then((module) => ({ default: module.InvoiceDocumentRoute })))
+const ContractingInvoicesPage = lazy(() => import('./ui/pages/ContractingInvoicesPage.tsx').then((module) => ({ default: module.ContractingInvoicesPage })))
+const SaleReturnsPage = lazy(() => import('./ui/pages/SaleReturnsPage.tsx').then((module) => ({ default: module.SaleReturnsPage })))
+const ShiftsPage = lazy(() => import('./ui/pages/ShiftsPage.tsx').then((module) => ({ default: module.ShiftsPage })))
+const JournalPage = lazy(() => import('./ui/pages/JournalPage.tsx').then((module) => ({ default: module.JournalPage })))
+const CoaPage = lazy(() => import('./ui/pages/CoaPage.tsx').then((module) => ({ default: module.CoaPage })))
+const TrialBalancePage = lazy(() => import('./ui/pages/TrialBalancePage.tsx').then((module) => ({ default: module.TrialBalancePage })))
+const VouchersPage = lazy(() => import('./ui/pages/VouchersPage.tsx').then((module) => ({ default: module.VouchersPage })))
+const TreasuryPage = lazy(() => import('./ui/pages/TreasuryPage.tsx').then((module) => ({ default: module.TreasuryPage })))
+const PaymentTerminalsPage = lazy(() => import('./ui/pages/PaymentTerminalsPage.tsx').then((module) => ({ default: module.PaymentTerminalsPage })))
+const ChequesPage = lazy(() => import('./ui/pages/ChequesPage.tsx').then((module) => ({ default: module.ChequesPage })))
+const EinvoicePage = lazy(() => import('./ui/pages/EinvoicePage.tsx').then((module) => ({ default: module.EinvoicePage })))
+const GeneralSettingsPage = lazy(() => import('./ui/pages/GeneralSettingsPage.tsx').then((module) => ({ default: module.GeneralSettingsPage })))
+const LanSettingsPage = lazy(() => import('./ui/pages/LanSettingsPage.tsx').then((module) => ({ default: module.LanSettingsPage })))
+const CostCentersPage = lazy(() => import('./ui/pages/CostCentersPage.tsx').then((module) => ({ default: module.CostCentersPage })))
+const PrintSettingsPage = lazy(() => import('./ui/pages/PrintSettingsPage.tsx').then((module) => ({ default: module.PrintSettingsPage })))
+const EmployeesPage = lazy(() => import('./ui/pages/EmployeesPage.tsx').then((module) => ({ default: module.EmployeesPage })))
+const HrPage = lazy(() => import('./ui/pages/HrPage.tsx').then((module) => ({ default: module.HrPage })))
+const InstallmentsPage = lazy(() => import('./ui/pages/InstallmentsPage.tsx').then((module) => ({ default: module.InstallmentsPage })))
+const ReportsPage = lazy(() => import('./ui/pages/ReportsPage.tsx').then((module) => ({ default: module.ReportsPage })))
+const NasqPage = lazy(() => import('./ui/pages/NasqPage.tsx').then((module) => ({ default: module.NasqPage })))
+const StatementsPage = lazy(() => import('./ui/pages/StatementsPage.tsx').then((module) => ({ default: module.StatementsPage })))
+const LicensePage = lazy(() => import('./ui/pages/LicensePage.tsx').then((module) => ({ default: module.LicensePage })))
+const BackupPage = lazy(() => import('./ui/pages/BackupPage.tsx').then((module) => ({ default: module.BackupPage })))
+const TripsPage = lazy(() => import('./ui/pages/TripsPage.tsx').then((module) => ({ default: module.TripsPage })))
+const TripExpensesPage = lazy(() => import('./ui/pages/TripsPage.tsx').then((module) => ({ default: module.TripExpensesPage })))
+const FleetPage = lazy(() => import('./ui/pages/FleetPage.tsx').then((module) => ({ default: module.FleetPage })))
+const EquipmentPage = lazy(() => import('./ui/pages/EquipmentPage.tsx').then((module) => ({ default: module.EquipmentPage })))
+const RentalContractsPage = lazy(() => import('./ui/pages/RentalContractsPage.tsx').then((module) => ({ default: module.RentalContractsPage })))
+const LabOrdersPage = lazy(() => import('./ui/pages/LabPages.tsx').then((module) => ({ default: module.LabOrdersPage })))
+const LabTestsPage = lazy(() => import('./ui/pages/LabPages.tsx').then((module) => ({ default: module.LabTestsPage })))
+const LabPatientsPage = lazy(() => import('./ui/pages/LabPages.tsx').then((module) => ({ default: module.LabPatientsPage })))
+const LabReferrersPage = lazy(() => import('./ui/pages/LabPages.tsx').then((module) => ({ default: module.LabReferrersPage })))
+const ProjectsPage = lazy(() => import('./ui/pages/ContractingPages.tsx').then((module) => ({ default: module.ProjectsPage })))
+const ProjectExpensesPage = lazy(() => import('./ui/pages/ContractingPages.tsx').then((module) => ({ default: module.ProjectExpensesPage })))
+const ProjectExtractsPage = lazy(() => import('./ui/pages/ContractingPages.tsx').then((module) => ({ default: module.ProjectExtractsPage })))
+const ContractingReportsPage = lazy(() => import('./ui/pages/ContractingReportsPage.tsx').then((module) => ({ default: module.ContractingReportsPage })))
+const EquipmentReportsPage = lazy(() => import('./ui/pages/EquipmentReportsPage.tsx').then((module) => ({ default: module.EquipmentReportsPage })))
+const RestaurantReportsPage = lazy(() => import('./ui/pages/RestaurantReportsPage.tsx').then((module) => ({ default: module.RestaurantReportsPage })))
+const QuotationsPage = lazy(() => import('./ui/pages/QuotationsPage.tsx').then((module) => ({ default: module.QuotationsPage })))
+const BoqPage = lazy(() => import('./ui/pages/ContractingDepthPages.tsx').then((module) => ({ default: module.BoqPage })))
+const SubcontractorsPage = lazy(() => import('./ui/pages/ContractingDepthPages.tsx').then((module) => ({ default: module.SubcontractorsPage })))
+const BondsPage = lazy(() => import('./ui/pages/ContractingDepthPages.tsx').then((module) => ({ default: module.BondsPage })))
+const DailyWorkersPage = lazy(() => import('./ui/pages/ContractingDepthPages.tsx').then((module) => ({ default: module.DailyWorkersPage })))
+const MaterialIssuesPage = lazy(() => import('./ui/pages/ProjectOpsPages.tsx').then((module) => ({ default: module.MaterialIssuesPage })))
+const ClientCollectionsPage = lazy(() => import('./ui/pages/ProjectOpsPages.tsx').then((module) => ({ default: module.ClientCollectionsPage })))
+const EvmDashboardPage = lazy(() => import('./ui/pages/ProjectOpsPages.tsx').then((module) => ({ default: module.EvmDashboardPage })))
+const ApprovalsPage = lazy(() => import('./ui/pages/ProjectOpsPages.tsx').then((module) => ({ default: module.ApprovalsPage })))
+const ProjectBudgetPage = lazy(() => import('./ui/pages/ContractingPlanPages.tsx').then((module) => ({ default: module.ProjectBudgetPage })))
+const ProjectTasksPage = lazy(() => import('./ui/pages/ContractingPlanPages.tsx').then((module) => ({ default: module.ProjectTasksPage })))
+const PropertiesPage = lazy(() => import('./ui/pages/RealEstatePages.tsx').then((module) => ({ default: module.PropertiesPage })))
+const LeasesPage = lazy(() => import('./ui/pages/RealEstatePages.tsx').then((module) => ({ default: module.LeasesPage })))
+const LogisticsInvoicesPage = lazy(() => import('./ui/pages/ActivityInvoicesHubs.tsx').then((module) => ({ default: module.LogisticsInvoicesPage })))
+const RentalInvoicesPage = lazy(() => import('./ui/pages/ActivityInvoicesHubs.tsx').then((module) => ({ default: module.RentalInvoicesPage })))
+const RealestateInvoicesPage = lazy(() => import('./ui/pages/ActivityInvoicesHubs.tsx').then((module) => ({ default: module.RealestateInvoicesPage })))
+const CustodyPage = lazy(() => import('./ui/pages/CustodyPage.tsx').then((module) => ({ default: module.CustodyPage })))
+const SyncPage = lazy(() => import('./ui/pages/SyncPage.tsx').then((module) => ({ default: module.SyncPage })))
+const ClinicPatientsPage = lazy(() => import('./ui/pages/ClinicPages.tsx').then((module) => ({ default: module.ClinicPatientsPage })))
+const ClinicAppointmentsPage = lazy(() => import('./ui/pages/ClinicPages.tsx').then((module) => ({ default: module.ClinicAppointmentsPage })))
+const CarsPage = lazy(() => import('./ui/pages/CarsPage.tsx').then((module) => ({ default: module.CarsPage })))
+const AboutPage = lazy(() => import('./ui/pages/AboutPage.tsx').then((module) => ({ default: module.AboutPage })))
+const ProfilePage = lazy(() => import('./ui/pages/ProfilePage.tsx').then((module) => ({ default: module.ProfilePage })))
+const AuditLogPage = lazy(() => import('./ui/pages/AuditLogPage.tsx').then((module) => ({ default: module.AuditLogPage })))
+const IssuesPage = lazy(() => import('./ui/pages/IssuesPage.tsx').then((module) => ({ default: module.IssuesPage })))
+const SupportPage = lazy(() => import('./ui/pages/SupportPage.tsx').then((module) => ({ default: module.SupportPage })))
+const GuidesPage = lazy(() => import('./ui/pages/GuidesPage.tsx').then((module) => ({ default: module.GuidesPage })))
+const WalletServicesPage = lazy(() => import('./ui/pages/WalletServicesPage.tsx').then((module) => ({ default: module.WalletServicesPage })))
+const WastagePage = lazy(() => import('./ui/pages/WastagePage.tsx').then((module) => ({ default: module.WastagePage })))
+const ConsumptionPage = lazy(() => import('./ui/pages/ConsumptionPage.tsx').then((module) => ({ default: module.ConsumptionPage })))
+const BarcodeCenterPage = lazy(() => import('./ui/pages/BarcodeCenterPage.tsx').then((module) => ({ default: module.BarcodeCenterPage })))
+const ScaleSettingsPage = lazy(() => import('./ui/pages/ScaleSettingsPage.tsx').then((module) => ({ default: module.ScaleSettingsPage })))
+const OpeningBalancesPage = lazy(() => import('./ui/pages/OpeningBalancesPage.tsx').then((module) => ({ default: module.OpeningBalancesPage })))
+const SerialsPage = lazy(() => import('./ui/pages/SerialsPage.tsx').then((module) => ({ default: module.SerialsPage })))
+const SettlementsPage = lazy(() => import('./ui/pages/SettlementsPage.tsx').then((module) => ({ default: module.SettlementsPage })))
+const ExchangePage = lazy(() => import('./ui/pages/ExchangePage.tsx').then((module) => ({ default: module.ExchangePage })))
+const RestaurantOrdersPage = lazy(() => import('./ui/pages/RestaurantOrdersPage.tsx').then((module) => ({ default: module.RestaurantOrdersPage })))
+const MaintenancePage = lazy(() => import('./ui/pages/MaintenancePage.tsx').then((module) => ({ default: module.MaintenancePage })))
+const LaundryPage = lazy(() => import('./ui/pages/LaundryPage.tsx').then((module) => ({ default: module.LaundryPage })))
+const BookingsPage = lazy(() => import('./ui/pages/BookingsPage.tsx').then((module) => ({ default: module.BookingsPage })))
+const TransfersPage = lazy(() => import('./ui/pages/TransfersPage.tsx').then((module) => ({ default: module.TransfersPage })))
+const AppearancePage = lazy(() => import('./ui/pages/AppearancePage.tsx').then((module) => ({ default: module.AppearancePage })))
+const TelegramPage = lazy(() => import('./ui/pages/TelegramPage.tsx').then((module) => ({ default: module.TelegramPage })))
+const AssetsPage = lazy(() => import('./ui/pages/AssetsPage.tsx').then((module) => ({ default: module.AssetsPage })))
+const ExternalCommissionsPage = lazy(() => import('./ui/pages/ExternalCommissionsPage.tsx').then((module) => ({ default: module.ExternalCommissionsPage })))
 
 function usePageTitle(): string {
   const { pathname } = useLocation()
@@ -206,6 +224,7 @@ function Shell() {
   return (
     <MainLayout title={title}>
       <KeyboardNavigation />
+      <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>}>
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />
@@ -324,6 +343,7 @@ function Shell() {
         <Route path="/sales/restaurant-orders" element={<RestaurantOrdersPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
+      </Suspense>
     </MainLayout>
   )
 }

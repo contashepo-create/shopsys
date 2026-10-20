@@ -72,7 +72,7 @@
         ├── ui/pages/            ← 77 صفحة
         ├── ui/components/       ← ui.tsx (Modal/Field/Btn/EmptyState/useToast/inputCls) + TreasuryPicker + PaymentMethodPicker + PaySourcePicker
         ├── ui/navCatalog.tsx    ← شجرة القائمة الجانبية (مجموعات بألوان، فلترة بالموديولات المفعلة)
-        └── App.tsx              ← المسارات
+        └── App.tsx              ← المسارات (صفحات React.lazy داخل Suspense لتجزئة التحميل)
 ```
 
 - **4 طبقات جاهزة للـElectron** (core نقي / data / ui / منصة)؛ تطبيق سطح المكتب ومثبّت NSIS موجودان.
@@ -85,11 +85,12 @@
 
 ```bash
 cd /home/user/shopsys/app
-npx tsc -b                                             # يجب أن يمر صفر أخطاء (شغّله من app/ حصراً)
-npx oxlint src                                         # صفر errors (warnings مقبولة)
+npm run typecheck                                      # يجب أن يمر صفر أخطاء (شغّله من app/ حصراً)
+npm run lint:strict                                    # Oxlint صارم: صفر تحذيرات وأخطاء
 node --experimental-strip-types scripts/verify_<x>.mjs # سكربت الميزة الجديدة
 npm run verify:all                                     # 298 بوابة + 20 رحلة مستخدم = 318 فحصاً (يجب 0 فشل)
-npm test                                               # Vitest (172 ملفاً / 1183 اختباراً في تحقق 2026-10-20)
+npm run test:e2e                                       # Vitest (172 ملفاً / 1185 اختباراً في تحقق 2026-10-20)
+npm run build                                          # فحص TypeScript ثم حزم الإنتاج
 ```
 
 **الوضع الحالي (2026-10-20): 318/318 تحققاً ناجحاً (298 بوابة + 20 رحلة مستخدم)، و172 ملف Vitest تضم 1185 اختباراً ناجحاً، وصفر فشل في آخر تشغيل مكتمل.** `npm run verify:all` يكتشف سكربتات `verify_*.mjs` **ورحلات `user_journey_*.mjs`** تلقائياً عبر `scripts/run_verify_all.mjs` — **لا تستعمل حلقة `for` يدوية**: تبتلع المخرجات وتخفي سبب الفشل ولا تشمل رحلات `user_journey_*.mjs`. أي ميزة جديدة = سكربت تحقق جديد يغطي القيود والرفض والتوازن.
@@ -7521,5 +7522,12 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - **إغلاق ملف العهدة وتتبع الزيادة** (`core/custody.ts` + `CustodyPage.tsx`): `spentMinor` هو الخارج من 1108 فقط، و`expenseTotalMinor` المصروف الفعلي شاملاً ما دفعه الموظف من جيبه، بينما المرتجع والعجز حقول/حركات منفصلة لا تُحسب مصروفاً. تعرض القائمة عمود «زيادة مستحقة» بين المصروف والمتبقي؛ وتعرض تفاصيل الملف المغلق التعزيز والمصروف الفعلي/المحمّل على العهدة والمرتجع والعجز الأصلي والمتبقي. `summarizeCustodyExcessByFile` يوزع ما صُرف من 2107 بالرواتب FIFO على ملفات الموظف الأقدم، لتظل الزيادة المسجلة/المصروفة/المتبقية ظاهرة على ملفها حتى بعد الإغلاق؛ شاشة المسير ما زالت تصرف مستحق 2107 وتحرس الرصيد والتكرار.
 - **اختبارات الانحدار**: `verify_custody.mjs` يختبر فصل المصروف والمرتجع والعجز وتوزيع FIFO متعدد الملفات؛ `verify_custody_payroll_project_pl.mjs` يختبر إغلاق ملف الزيادة ثم صرفها مرة واحدة بالمسير واستمرار تتبعها، وحواجز إعادة الصرف؛ `verify_contracting_expenses_extracts.mjs` و`tests/contracting_expenses_extracts.test.tsx` يغطيان الإدخال المبسّط، الضريبة التفصيلية الاختيارية، الدفع الجزئي من العهدة، وتسوية الملف المغلق في الواجهة.
 
+### (ط) تحميل الصفحات والحزم ووحدات بيئة التشغيل (2026-10-20)
+- **تحميل المسارات**: كل صفحات `App.tsx` تُحمّل عبر `React.lazy` وتُعرض داخل `Suspense`؛ لا تعِد استيراد صفحة المسار استيراداً ساكناً كي لا يعود حجم الحزمة الأولية إلى الحجم السابق. بعد التجزئة، أكبر صفحة منفردة `GuidesPage` نحو 212KB خاماً، وصفحات `FxRatesManager` أصبحت 9.5KB بدلاً من حزمة تتجاوز الميغابايت.
+- **ميزانية أحجام Vite**: حد التحذير مضبوط على 900KB فقط بعد التجزئة الفعلية؛ الحزمة المشتركة الأكبر `repo` هي 867.2KB خاماً / 221.95KB gzip، و`index` 617.98KB / 185.30KB gzip. هذا الحد قريب من القياس الحالي ويبقي تحذير النمو فوق 900KB، وليس إلغاءً عاماً للتقرير. إعادة تقسيم `repo.ts` نفسها تتطلب تجزئة مستودع Zustand المركزي، ولا تُجرى كتغيير تجميلي لحجب التحذير.
+- **نواة المتصفح**: `data/lan/hostCore.ts` تعمل في المتصفح وElectron؛ استخدم Web Crypto و`TextEncoder` ولا تستورد `node:crypto` أو `Buffer` في هذا المسار.
+- **قاعدة SQLite التجريبية**: `demo-db/vitePlugin.mjs` يحمّل `node:sqlite` عند طلب middleware فقط، ويحمّل `build.mjs` برابط `file://` ديناميكي؛ لا تضف استيراد SQLite ساكناً إلى إضافة Vite حتى لا يُحمّل أثناء بناء الواجهة.
+- **Actions**: ثبّتت workflows على `actions/checkout@v7.0.1` و`actions/setup-node@v7.1.0` و`actions/upload-artifact@v7.0.2` و`cloudflare/wrangler-action@v4.1.3` (كلها Node 24).
+
 ### التحقق
-`npm run build` ✓ (ويتضمن `tsc -b --force`) · `npx oxlint src` (٠ أخطاء، تحذير واحد في `GeneralSettingsPage.tsx:38`) ✓ · `npm run verify:all` **318/318** ✓ (٢٩٨ بوابة + ٢٠ رحلة) · `npm run test:e2e` **١٧٢ ملفاً / ١١٨٣ اختباراً** ✓ · `node --experimental-strip-types scripts/verify_branches.mjs` **١٠/١٠ محطات** ✓.
+`npm run typecheck` ✓ · `npm run lint:strict` **٠ تحذير / ٠ خطأ على 369 ملفاً** ✓ · `npm run verify:all` **318/318** ✓ (٢٩٨ بوابة + ٢٠ رحلة) · `npm run test:e2e` **١٧٢ ملفاً / ١١٨٥ اختباراً** ✓ · smoke إضافة قاعدة SQLite **HTTP 200 / 7 أنشطة** ✓. `npm run build` يمر؛ يطبع Node تحذير `node:sqlite` التجريبي فقط في سكربتات التحقق التي تستخدم SQLite، بينما لم يعد بناء Vite يحمله عبر إعداد الإضافة.

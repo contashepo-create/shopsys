@@ -11,9 +11,8 @@
  * لا شيء من هذا يدخل نسخة الإنتاج: الإضافة تعمل داخل configureServer فقط،
  * ونداءات المتصفح محروسة بـ import.meta.env.DEV.
  */
-import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -21,8 +20,9 @@ const DB_PATH = join(here, 'demo.sqlite')
 
 const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'sale_returns', 'sale_return_lines', 'purchase_returns', 'purchase_return_lines', 'vouchers', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
 
-function openDb() {
+async function openDb() {
   if (!existsSync(DB_PATH)) return null
+  const { DatabaseSync } = await import('node:sqlite')
   return new DatabaseSync(DB_PATH)
 }
 
@@ -171,7 +171,7 @@ export function demoDatabasePlugin() {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/__demo/')) return next()
         const url = new URL(req.url, 'http://localhost')
-        const db = openDb()
+        const db = await openDb()
         if (!db) return json(res, 503, { error: 'قاعدة البيانات التجريبية غير مبنية — شغّل: npm run demo:build' })
         try {
           if (url.pathname === '/__demo/activities' && req.method === 'GET')
@@ -186,7 +186,7 @@ export function demoDatabasePlugin() {
           }
           if (url.pathname === '/__demo/reset' && req.method === 'POST') {
             db.close()
-            const { buildDemoDatabase } = await import('./build.mjs')
+            const { buildDemoDatabase } = await import(pathToFileURL(join(here, 'build.mjs')).href)
             return json(res, 200, { ok: true, counts: buildDemoDatabase() })
           }
           return json(res, 404, { error: 'مسار غير معروف' })
