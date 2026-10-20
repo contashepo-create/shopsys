@@ -264,6 +264,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
+      { id: 'company', nameAr: 'بيانات المنشأة', icon: Building2, path: '/settings/company' },
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
       { id: 'lan', nameAr: 'شبكة المحل (عدة أجهزة)', icon: Network, path: '/settings/lan' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },

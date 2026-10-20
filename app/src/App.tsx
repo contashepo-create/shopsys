@@ -64,6 +64,7 @@ import { PaymentTerminalsPage } from './ui/pages/PaymentTerminalsPage.tsx'
 import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
+import { CompanyProfilePage } from './ui/pages/CompanyProfilePage.tsx'
 import { LanSettingsPage } from './ui/pages/LanSettingsPage.tsx'
 import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
 import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
@@ -199,6 +200,7 @@ function Shell() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />
         <Route path="/settings/general" element={<GeneralSettingsPage />} />
+        <Route path="/settings/company" element={<CompanyProfilePage />} />
         <Route path="/settings/lan" element={<LanSettingsPage />} />
         <Route path="/settings/cost-centers" element={<CostCentersPage />} />
         <Route path="/inventory/items" element={<ItemsPage />} />

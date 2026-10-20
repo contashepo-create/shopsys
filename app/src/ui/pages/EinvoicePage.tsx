@@ -2,9 +2,11 @@
  * الفاتورة الإلكترونية (القرار 30) — ميزة بمفتاح ترخيص فقط:
  * - السعودية (einvoice_sa): رمز QR زاتكا TLV يُطبع تلقائياً على كل فاتورة.
  * - مصر (einvoice_eg): تصدير مستند JSON بصيغة بوابة الضرائب المصرية للرفع.
- * إعدادات الممول هنا (الرقم الضريبي + العنوان) — والحقول تبقى اختيارية حتى التفعيل.
+ * إعدادات الممول هنا: العنوان (محلي لمستند مصر) — أما الرقم الضريبي فيُحرَّر
+ * من صفحة «بيانات المنشأة» الموحّدة (مصدر واحد) ويُعرض هنا للقراءة فقط.
  */
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { FileCheck2, Lock, QrCode, FileJson, Download, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
@@ -30,7 +32,6 @@ export function EinvoicePage() {
   const saActive = hasFeature(lic, 'einvoice_sa')
   const egActive = hasFeature(lic, 'einvoice_eg')
 
-  const [taxNumber, setTaxNumber] = useState(einvoice.taxNumber)
   const [address, setAddress] = useState(einvoice.address)
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
@@ -56,11 +57,8 @@ export function EinvoicePage() {
   }
 
   const saveSettings = () => {
-    const t = taxNumber.trim()
-    if (saActive && t && !isValidSaVatNumber(t)) return toast.show('الرقم الضريبي السعودي: 15 رقماً يبدأ وينتهي بـ3', 'error')
-    if (egActive && !saActive && t && !isValidEgTaxNumber(t)) return toast.show('رقم التسجيل المصري: 9 أرقام', 'error')
-    updateEinvoice({ taxNumber: t, address: address.trim() })
-    toast.show('حُفظت إعدادات الممول ✅')
+    updateEinvoice({ address: address.trim() })
+    toast.show('حُفظ عنوان المنشأة ✅')
   }
 
   const exportEgJson = (s: SaleInvoice) => {
@@ -180,8 +178,14 @@ export function EinvoicePage() {
           </label>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
-            <Field label={saActive ? 'الرقم الضريبي (زاتكا: 15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (مصر: 9 أرقام)'}>
-              <input value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} placeholder={saActive ? '310122393500003' : '123456789'} className={inputCls} dir="ltr" />
+            <Field
+              label={saActive ? 'الرقم الضريبي (زاتكا: 15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (مصر: 9 أرقام)'}
+              hint="يُحرَّر من صفحة «بيانات المنشأة» — مصدر واحد لا يتكرر"
+            >
+              <div className="flex items-center gap-2">
+                <input value={einvoice.taxNumber} readOnly placeholder={saActive ? '310122393500003' : '123456789'} className={`${inputCls} opacity-70 cursor-not-allowed`} dir="ltr" />
+                <Link to="/settings/company" className="shrink-0 text-[11px] font-bold text-brand-600 hover:underline whitespace-nowrap">تعديل ←</Link>
+              </div>
             </Field>
             <Field label="عنوان المنشأة" hint="يظهر في مستند البوابة المصرية">
               <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="شارع، مدينة" className={inputCls} />
@@ -203,7 +207,7 @@ export function EinvoicePage() {
             </label>
           )}
 
-          <Btn onClick={saveSettings}>💾 حفظ البيانات</Btn>
+          <Btn onClick={saveSettings}>💾 حفظ العنوان</Btn>
         </div>
 
         {/* معاينة الرمز الضريبي */}
