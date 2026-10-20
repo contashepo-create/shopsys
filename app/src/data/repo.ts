@@ -71,7 +71,7 @@ import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliv
 import { validateBooking, bookingConflicts, type Booking, type BookingStatus } from '../core/booking.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import {
-  validateBranch, canRemoveBranch, belongsToBranch, filterByBranch,
+  validateBranch, canRemoveBranch, belongsToBranch, filterByBranch, resolveBranchActivityId,
   filterWarehousesByBranch, filterTreasuriesByBranch,
   type Branch, type BranchInput, type BranchScopedRecord,
 } from '../core/branches.ts'
@@ -870,6 +870,8 @@ export interface StockTransfer {
   id: number
   transferNumber: string // TRF-0001
   date: string // ISO
+  /** الفرع الذي أنشأ التحويل؛ السجلات القديمة تُستنتج من المخازن. */
+  branchId?: number | null
   fromWarehouseId: number
   toWarehouseId: number
   lines: { itemId: number; nameAr: string; qty: number }[]
@@ -1565,6 +1567,8 @@ interface DataState {
   leaveTypes: LeaveTypeDef[]
   /** قواعد الاحتساب: الوردية · سماح التأخير · خصم الغياب · أجر الإضافي */
   hrRules: HrRules
+  /** إعدادات الموارد البشرية المستقلة للفرع؛ تُنشأ افتراضياً عند عدم وجود ملف. */
+  branchHrSettings: Record<number, { hrRules: HrRules; leaveTypes: LeaveTypeDef[] }>
   /** ورديات خاصة لكل موظف تتجاوز وردية المنشأة الافتراضية */
   employeeShifts: { employeeId: number; startMin: number; endMin: number; graceMinutes: number }[]
   /** سجل عمليات استيراد البصمة — يمنع التكرار ويوثق المصدر */
@@ -1651,6 +1655,8 @@ interface DataState {
   consumptions: ConsumptionDoc[] // مستندات الصرف الداخلي (استهلاك تشغيل) — مصروف/1103
   /** الأرصدة الافتتاحية المثبتة: key = kind:refId → آخر رصيد مرحّل (Minor) — التعديل يرحّل الفرق فقط */
   openingBalances: Record<string, number>
+  /** الأرصدة الافتتاحية المنفصلة للفروع؛ يحتفظ المفتاح القديم بأرصدة الشركة/الفرع الرئيسي. */
+  branchOpeningBalances: Record<number, { openingBalances: Record<string, number>; openingItems: Record<number, OpeningItemDetail>; declaredCapitalMinor: number | null }>
   /**
    * التقييم المادي للمخزون الافتتاحي (v1.0.4): الكمية والتكلفة المسجلتان لكل صنف —
    * القيمة الدفترية (1103) تُحسب منهما فلا يتباعد الرصيد الفعلي عن الدفتر أبداً.
@@ -1693,9 +1699,11 @@ interface DataState {
   userPrefs: Record<string, UserPreferences>
   /** تعديلات الأدوار المحفوظة (البند 4): roleId → قائمة صلاحيات — تعلو على الافتراضي (owner لا يُعدل أبداً) */
   roleOverrides: Record<string, string[]>
+  /** تجاوزات صلاحيات الأدوار مستقلة لكل فرع؛ roleOverrides يبقى افتراضات الشركة العامة. */
+  branchRoleOverrides: Record<number, Record<string, string[]>>
   setRolePermissions: (roleId: string, permissions: string[]) => void
-  /** أدوار مخصصة أنشأها المالك (نمط Square permission sets): صلاحياتها في roleOverrides */
-  customRoles: { id: string; nameAr: string }[]
+  /** أدوار مخصصة: branchId=null/غائب للأدوار العامة القديمة، أو معرف الفرع لدور محلي. */
+  customRoles: { id: string; nameAr: string; branchId?: number | null }[]
   addCustomRole: (nameAr: string, basedOnRoleId?: string) => string
   renameCustomRole: (id: string, nameAr: string) => void
   removeCustomRole: (id: string) => void
@@ -2971,8 +2979,9 @@ function enforceApprovalGate(
   const state = get()
   const settings = useAppStore.getState().approvals
   if (!settings.enabled) return
-  const activeUser = state.appUsers.find((u) => u.id === state.currentUserId) ?? null
-  const roles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+  const scopedState = getBranchScopedDataState(state)
+  const activeUser = scopedState.appUsers.find((u) => u.id === scopedState.currentUserId) ?? null
+  const roles = rolesWithOverrides(scopedState.roleOverrides, scopedState.customRoles, appSetupForState(state).activityId)
   const userPermissions = effectivePermissionsFor(activeUser, roles)
   if (!needsApproval({ settings, kind, amountMinor, userId: state.currentUserId, userPermissions })) return
   get().submitDocForApproval({
@@ -3130,19 +3139,60 @@ function readCurrencyDecimals(): number {
   return 2
 }
 
-function salesShiftPolicyForState(state: Pick<DataState, 'appUsers' | 'currentUserId'>) {
-  let setup: { activityId?: string | null; requireOpenShiftForSales?: boolean } | undefined
-  try {
-    const raw = localStorage.getItem('shopsys-app')
-    setup = raw ? JSON.parse(raw)?.state?.setup : undefined
-  } catch { /* الافتراضي الآمن أدناه */ }
+type OperationalSetup = {
+  completed?: boolean
+  countryCode?: string | null
+  activityId?: string | null
+  vatPercent?: number
+  taxInclusive?: boolean
+  requireOpenShiftForSales?: boolean
+  allowNegativeTreasury?: boolean
+  allowNegativeStock?: boolean
+}
+
+type PersistedAppState = {
+  setup?: OperationalSetup
+  companySetup?: OperationalSetup
+  branchBusinessProfiles?: Record<string, Partial<OperationalSetup>>
+}
+
+function appSetupForState(state: DataState): OperationalSetup {
+  const appState = useAppStore.getState()
+  const companySetup = appState.companySetup ?? appState.setup
+  const activeBranch = getEffectiveActiveBranch(state)
+  let persisted: PersistedAppState | undefined
+
+  // قبل اكتمال ترطيب إعداد المنشأة، تُقرأ اللقطة المحفوظة صراحةً: Zustand قد
+  // يعلن انتهاء الترطيب بعد دمج لقطة قديمة/جزئية مع افتراضيات المتجر.
+  if (!companySetup.completed) {
+    try {
+      const raw = localStorage.getItem('shopsys-app')
+      persisted = (raw ? JSON.parse(raw)?.state : undefined) as PersistedAppState | undefined
+    } catch { /* الافتراضي الآمن أدناه */ }
+  }
+
+  if (activeBranch && !activeBranch.isMain) {
+    if (companySetup.completed) return appState.setup
+    const baseSetup = persisted?.companySetup ?? persisted?.setup ?? companySetup
+    const profile = persisted?.branchBusinessProfiles?.[activeBranch.id]
+    return {
+      ...baseSetup,
+      ...(profile ?? {}),
+      activityId: resolveBranchActivityId(activeBranch, baseSetup.activityId),
+    }
+  }
+  return persisted?.companySetup ?? persisted?.setup ?? appState.setup
+}
+
+function salesShiftPolicyForState(state: DataState) {
+  const setup = appSetupForState(state)
   const activeUser = state.appUsers.find((user) => user.id === state.currentUserId) ?? null
   return salesShiftPolicy({
     roleId: activeUser?.roleId,
     isOwner: state.currentUserId == null || activeUser?.roleId === 'owner',
-    requireOpenShiftForSales: setup?.requireOpenShiftForSales !== false,
+    requireOpenShiftForSales: setup.requireOpenShiftForSales !== false,
     userOverride: activeUser?.requireOpenShiftForSales,
-    invoiceFirst: isInvoiceFirst(setup?.activityId ?? null),
+    invoiceFirst: isInvoiceFirst(setup.activityId ?? null),
   })
 }
 
@@ -3150,24 +3200,15 @@ function assertTreasuryNotNegative(
   prevJournal: JournalEntry[],
   nextJournal: JournalEntry[],
   treasuries: TreasuryDef[],
+  state?: DataState,
 ): void {
   if (nextJournal === prevJournal || nextJournal.length <= prevJournal.length) return
-  /* الإعداد من متجر التطبيق مباشرة — قراءة حية في كل عملية.
-     بلاغ المالك v1.0.4 (النسخة المثبتة): القراءة القديمة من localStorage النصي
-     كانت ترجع false دائماً في نسخة سطح المكتب لأن persist يكتب إلى SQLite
-     (settingsAppStorage §101) لا إلى localStorage — فالمفتاح «مفعّل» عند
-     المستخدم والحارس لا يراه. المتجر الحي هو مصدر الحقيقة بعد الاسترجاع. */
+  // يقرأ الإعداد الفعال للفرع، مع تراجع إلى اللقطة المحفوظة قبل اكتمال الترطيب.
   let allow = false
   try {
-    allow = useAppStore.getState().setup.allowNegativeTreasury === true
+    const currentState = state ?? useRawDataStore.getState()
+    allow = appSetupForState(currentState).allowNegativeTreasury === true
   } catch { /* المتجر غير مهيأ بعد — الافتراضي الآمن: ممنوع */ }
-  if (!allow) {
-    // تراجع خلفي للبيئات التي لم تُسترجع بعد (الواجهة الحية تسجّل دائماً)
-    try {
-      const raw = localStorage.getItem('shopsys-app')
-      if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true
-    } catch { /* الافتراضي: ممنوع */ }
-  }
   if (allow) return
   const codes = new Set(treasuries.map((t) => t.code))
   const balances = new Map<string, number>()
@@ -3200,12 +3241,103 @@ function assertTreasuryNotNegative(
 /** الفرع الفعال حالياً (فرع الموظف المربوط أو الفرع الذي اختاره المالك) — null = العرض الشامل لكل الفروع */
 export function getEffectiveActiveBranch(state: DataState): Branch | null {
   const activeUser = state.appUsers.find((u) => u.id === state.currentUserId) ?? null
-  const userBranchId = activeUser?.branchId != null && state.branches.some((b) => b.id === activeUser.branchId && b.active)
-    ? activeUser.branchId
+  const linkedEmployee = activeUser?.employeeId != null
+    ? state.employees.find((employee) => employee.id === activeUser.employeeId)
     : null
-  const effectiveBranchId = userBranchId ?? state.activeBranchId
-  if (effectiveBranchId == null) return null
-  return state.branches.find((b) => b.id === effectiveBranchId && b.active) ?? null
+  const assignedBranchId = activeUser?.branchId ?? linkedEmployee?.branchId ?? null
+  // المالك وحده يملك نطاق «كل الفروع». الحساب المرتبط بفرع متوقف/مفقود يُحجب؛
+  // والحساب غير المربوط يُحصر في الرئيسي النشط بدلاً من كشف قاعدة البيانات كلها.
+  const activeMain = state.branches.find((branch) => branch.isMain && branch.active) ?? null
+  const assignedBranch = assignedBranchId == null
+    ? null
+    : state.branches.find((branch) => branch.id === assignedBranchId && branch.active) ?? null
+  const userBranch = activeUser && activeUser.roleId !== 'owner'
+    ? assignedBranchId == null ? activeMain : assignedBranch
+    : null
+  if (activeUser && activeUser.roleId !== 'owner') return userBranch
+  if (state.activeBranchId == null) return null
+  return state.branches.find((branch) => branch.id === state.activeBranchId && branch.active) ?? null
+}
+
+function syncAppBranchContext(state: DataState): void {
+  const branch = getEffectiveActiveBranch(state)
+  useAppStore.getState().setActiveBranchContext(branch ? {
+    id: branch.id,
+    nameAr: branch.nameAr,
+    isMain: branch.isMain,
+    warehouseId: branch.warehouseId,
+    customModulesMode: branch.customModulesMode,
+    enabledModules: branch.enabledModules,
+    activityId: branch.activityId,
+  } : null)
+}
+
+function appUserBelongsToBranch(user: AppUser, state: DataState, branch: Branch): boolean {
+  if (user.roleId === 'owner') return true
+  if (user.branchId != null) return user.branchId === branch.id
+  if (user.employeeId != null) {
+    const employee = state.employees.find((row) => row.id === user.employeeId)
+    if (employee?.branchId != null) return employee.branchId === branch.id
+  }
+  return branch.isMain
+}
+
+function assertAppUserInActiveBranch(state: DataState, user: AppUser): void {
+  const activeUser = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
+  if (user.roleId === 'owner' && activeUser && activeUser.roleId !== 'owner') {
+    throw new Error('لا يمكن لمستخدم فرع إدارة حساب المالك')
+  }
+  const branch = getEffectiveActiveBranch(state)
+  if (branch && !appUserBelongsToBranch(user, state, branch)) {
+    throw new Error('لا يمكن إدارة مستخدم تابع لفرع آخر من هذا الفرع')
+  }
+}
+
+function assertCanManageBranches(state: DataState): void {
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  if (activeUser && activeUser.roleId !== 'owner') throw new Error('إدارة الفروع العامة متاحة للمالك فقط')
+}
+
+function assertCustomRoleManagementScope(state: DataState, role: { id: string; nameAr: string; branchId?: number | null }): void {
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  const activeBranch = getEffectiveActiveBranch(state)
+  if (role.branchId != null) {
+    if (activeBranch && activeBranch.id === role.branchId) return
+    if (!activeBranch && (!activeUser || activeUser.roleId === 'owner')) return
+    throw new Error('لا يمكن إدارة دور مخصص تابع لفرع آخر')
+  }
+  if (activeBranch) throw new Error('الدور عام على الشركة — انتقل إلى عرض كل الفروع لتعديله')
+}
+
+function assertCanManageUsers(state: DataState): void {
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  if (!activeUser || activeUser.roleId === 'owner') return
+  const scoped = getBranchScopedDataState(state)
+  const scopedUser = scoped.appUsers.find((user) => user.id === state.currentUserId)
+  const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+  if (!scopedUser || !effectivePermissionsFor(scopedUser, roles).has('set.users')) {
+    throw new Error('إدارة المستخدمين والصلاحيات تتطلب صلاحية «المستخدمون والصلاحيات» في هذا الفرع')
+  }
+}
+
+function assertCanManageCustomAccounts(state: DataState): void {
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  if (activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0) {
+    throw new Error('إدارة دليل الحسابات العام متاحة للمالك فقط')
+  }
+}
+
+function assertCanUpdateBranch(state: DataState, id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>): void {
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  if (!activeUser || activeUser.roleId === 'owner') return
+  const activeBranch = getEffectiveActiveBranch(state)
+  if (!activeBranch || activeBranch.id !== id) throw new Error('لا يمكن تعديل فرع آخر')
+  if ((patch.warehouseId != null && patch.warehouseId !== activeBranch.warehouseId)
+    || (patch.treasuryCode != null && patch.treasuryCode !== activeBranch.treasuryCode)
+    || (patch.active != null && patch.active !== activeBranch.active)
+    || ('isMain' in patch)) {
+    throw new Error('تغيير مخزن الفرع أو خزينته أو حالته يحتاج صلاحية المالك')
+  }
 }
 
 const BRANCH_STAMP_ID_KEYS = [
@@ -3228,9 +3360,89 @@ const BRANCH_STAMP_ID_KEYS = [
   'goldTradeIns', 'shifts', 'recipes', 'productionOrders', 'processingOrders', 'scrapLots',
   'scrapSales', 'costCenters', 'costCenterBudgets', 'expenseTemplates', 'externalCommissions',
   'commissionParties', 'priceLists', 'promotions', 'purchaseExpensePayables',
+  'docApprovals', 'stockMoves', 'approvalFlows', 'approvalRequests', 'fxConversions',
+  'attendanceImports', 'patientAttachments', 'documentFiles', 'insuranceProviders', 'insuranceClaims',
+  'loyaltyRedemptions', 'batches', 'serials', 'advancedInvoiceDrafts', 'partyNotes', 'issues', 'transfers',
+  'appUsers', 'pinResetRequests',
 ] as const
 
 const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
+const deniedBranchScopeCache = new WeakMap<DataState, DataState>()
+const NOTIFICATION_READ_KEY_PREFIX = 'notification-read:v1:'
+
+function notificationReadScopePrefix(state: DataState): string {
+  const branch = getEffectiveActiveBranch(state)
+  const user = state.currentUserId == null ? 'owner' : `user-${state.currentUserId}`
+  return `${NOTIFICATION_READ_KEY_PREFIX}${user}:branch-${branch?.id ?? 'all'}:`
+}
+
+function scopedNotificationReadIds(state: DataState): string[] {
+  const prefix = notificationReadScopePrefix(state)
+  const scoped = state.readNotificationIds
+    .filter((id) => id.startsWith(prefix))
+    .map((id) => id.slice(prefix.length))
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  // حافظ على العلامات القديمة للمالك فقط؛ لا ترثها حسابات الفروع ولا تتداخل فروعها.
+  if (state.currentUserId == null || activeUser?.roleId === 'owner') {
+    scoped.push(...state.readNotificationIds.filter((id) => !id.startsWith(NOTIFICATION_READ_KEY_PREFIX)))
+  }
+  return [...new Set(scoped)]
+}
+
+function notificationReadIdsForStorage(state: DataState, ids: readonly string[]): string[] {
+  const prefix = notificationReadScopePrefix(state)
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  const isOwner = state.currentUserId == null || activeUser?.roleId === 'owner'
+  const otherScopes = state.readNotificationIds.filter((id) =>
+    !id.startsWith(prefix) && !(isOwner && !id.startsWith(NOTIFICATION_READ_KEY_PREFIX)),
+  )
+  const scoped = [...new Set(ids)].slice(-500).map((id) => `${prefix}${id}`)
+  return [...otherScopes, ...scoped]
+}
+
+function clearNotificationReadScope(state: DataState): string[] {
+  const prefix = notificationReadScopePrefix(state)
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+  const isOwner = state.currentUserId == null || activeUser?.roleId === 'owner'
+  return state.readNotificationIds.filter((id) =>
+    !id.startsWith(prefix) && !(isOwner && !id.startsWith(NOTIFICATION_READ_KEY_PREFIX)),
+  )
+}
+
+function deniedBranchScope(state: DataState): DataState {
+  const cached = deniedBranchScopeCache.get(state)
+  if (cached) return cached
+  const denied = { ...state } as DataState
+  for (const key of Object.keys(denied) as (keyof DataState)[]) {
+    if (Array.isArray(denied[key])) (denied as unknown as Record<string, unknown>)[key] = []
+  }
+  const currentUserId = state.currentUserId
+  denied.appUsers = state.appUsers.filter((user) => user.id === currentUserId)
+  denied.branches = []
+  denied.warehouses = []
+  denied.treasuries = []
+  denied.paymentTerminals = []
+  denied.paymentTerminalTransactions = []
+  denied.paymentTerminalSettlements = []
+  denied.roleOverrides = {}
+  denied.branchRoleOverrides = {}
+  denied.branchHrSettings = {}
+  denied.branchOpeningBalances = {}
+  denied.openingBalances = {}
+  denied.openingItems = {}
+  denied.openingDeclaredCapitalMinor = null
+  denied.customRoles = []
+  denied.readNotificationIds = scopedNotificationReadIds(state)
+  denied.ownerPinHash = null
+  denied.ownerProfile = DEFAULT_OWNER_PROFILE
+  denied.ownerTempPin = null
+  denied.loginGuard = EMPTY_GUARD
+  denied.activeBranchId = null
+  denied.hrRules = DEFAULT_HR_RULES
+  denied.leaveTypes = DEFAULT_LEAVE_TYPES
+  deniedBranchScopeCache.set(state, denied)
+  return denied
+}
 
 /**
  * تصفية حالة البيانات حسب الفرع النشط (عندما يعمل كل فرع كشركة مستقلة بعملائها ومخازنها وخزائنها وفواتيرها):
@@ -3239,7 +3451,10 @@ const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
  */
 export function getBranchScopedDataState(state: DataState): DataState {
   const activeBranch = getEffectiveActiveBranch(state)
-  if (!activeBranch) return state
+  if (!activeBranch) {
+    const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+    return activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0 ? deniedBranchScope(state) : state
+  }
 
   let byBranch = scopedStateCache.get(state)
   if (!byBranch) {
@@ -3261,22 +3476,59 @@ export function getBranchScopedDataState(state: DataState): DataState {
 
   const inBranch = <T extends object>(rows: readonly T[]): T[] =>
     filterByBranch(rows, activeBranch, state.branches)
+  // الرابط البديل لا يتجاوز أبداً branchId الصريح؛ يمنع سجل فرعٍ من الظهور عبر عميل/مورد أو مستند مرتبط بفرع آخر.
+  const inBranchOrRelated = <T extends object>(record: T, related: boolean): boolean => {
+    const branchRecord = record as BranchScopedRecord
+    if (branchRecord.branchId != null) return branchRecord.branchId === activeBranch.id
+    if (branchRecord.warehouseId != null) {
+      const owner = state.branches.find((branch) => branch.warehouseId === branchRecord.warehouseId)
+      if (owner) return owner.id === activeBranch.id
+    }
+    const treasuryCode = branchRecord.treasury ?? branchRecord.treasuryCode ?? null
+    if (treasuryCode) {
+      const owner = state.branches.find((branch) => branch.treasuryCode === treasuryCode)
+      if (owner) return owner.id === activeBranch.id
+    }
+    return related || belongsToBranch(record, activeBranch, state.branches)
+  }
 
   // الأصناف: أصناف الفرع + أي صنف له تحويل مخزني من/إلى مخزن الفرع
   const transferredItemIds = new Set<number>()
   for (const trf of state.transfers) {
-    if (scopedWhIds.has(trf.toWarehouseId) || scopedWhIds.has(trf.fromWarehouseId)) {
+    const touchesBranch = scopedWhIds.has(trf.toWarehouseId) || scopedWhIds.has(trf.fromWarehouseId)
+    if (inBranchOrRelated(trf, touchesBranch)) {
       for (const l of trf.lines) transferredItemIds.add(l.itemId)
     }
   }
-  const scopedItems = state.items.filter(
-    (it) => belongsToBranch(it, activeBranch, state.branches) || transferredItemIds.has(it.id),
+  const scopedItemRows = state.items.filter(
+    (it) => inBranchOrRelated(it, transferredItemIds.has(it.id)),
   )
+  const localWarehouseStock = state.warehouses.some((warehouse) => warehouse.isMain)
+    ? computeWarehouseStock(
+        state.items,
+        state.warehouses,
+        state.transfers,
+        buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+      )
+    : null
+  // صنفاً محوّلاً يمكن عرضه كمرجع في الفرع المستقبل، لكن كمية المخزون الظاهرة له هي كمية مخازن هذا الفرع فقط.
+  const scopedItems = scopedItemRows.map((item) => localWarehouseStock
+    ? {
+        ...item,
+        stockQty: [...scopedWhIds].reduce((sum, warehouseId) => sum + (localWarehouseStock.get(warehouseId)?.get(item.id) ?? 0), 0),
+      }
+    : item)
   const scopedItemIds = new Set(scopedItems.map((it) => it.id))
+  const scopedOwnedItemIds = new Set(scopedItemRows
+    .filter((item) => belongsToBranch(item, activeBranch, state.branches))
+    .map((item) => item.id))
   const scopedItemCatIds = new Set(scopedItems.map((it) => it.categoryId))
   const scopedCategories = state.categories.filter(
-    (cat) => belongsToBranch(cat, activeBranch, state.branches) || scopedItemCatIds.has(cat.id),
+    (cat) => inBranchOrRelated(cat, scopedItemCatIds.has(cat.id)),
   )
+  // هذه دفاتر خصائص/توزيع مخزون تابعة لمالك الصنف؛ لا تُكشف لفرع آخر لمجرد وصوله إليه بتحويل.
+  const scopedVariantStocks = state.variantStocks.filter((row) => scopedOwnedItemIds.has(row.itemId))
+  const scopedJewelryProfiles = state.jewelryProfiles.filter((row) => scopedOwnedItemIds.has(row.itemId))
 
   const scopedCustomers = inBranch(state.customers)
   const scopedCustomerIds = new Set(scopedCustomers.map((c) => c.id))
@@ -3284,147 +3536,173 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedSupplierIds = new Set(scopedSuppliers.map((s) => s.id))
   const scopedEmployees = inBranch(state.employees)
   const scopedEmployeeIds = new Set(scopedEmployees.map((e) => e.id))
+  const scopedHrSettings = activeBranch.isMain
+    ? { hrRules: state.hrRules, leaveTypes: state.leaveTypes }
+    : (state.branchHrSettings?.[activeBranch.id] ?? { hrRules: DEFAULT_HR_RULES, leaveTypes: DEFAULT_LEAVE_TYPES })
+  const emptyBranchOpening = { openingBalances: {}, openingItems: {}, declaredCapitalMinor: null }
+  const scopedOpeningProfile = activeBranch.isMain
+    ? { openingBalances: state.openingBalances, openingItems: state.openingItems, declaredCapitalMinor: state.openingDeclaredCapitalMinor }
+    : (state.branchOpeningBalances?.[activeBranch.id] ?? emptyBranchOpening)
+  const scopedEmployeeShifts = state.employeeShifts.filter((shift) => scopedEmployeeIds.has(shift.employeeId))
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId) ?? null
+  const isOwnerSession = !activeUser || activeUser.roleId === 'owner'
+  const scopedAppUsers = state.appUsers.filter((user) =>
+    (isOwnerSession || user.roleId !== 'owner')
+      && appUserBelongsToBranch(user, state, activeBranch),
+  )
+  const scopedBranches = isOwnerSession ? state.branches : [activeBranch]
+  const scopedAppUserIds = new Set(scopedAppUsers.map((user) => user.id))
+  const scopedUserPrefs = Object.fromEntries(Object.entries(state.userPrefs).filter(([userId]) =>
+    (userId === 'owner' && state.currentUserId == null) || Number(userId) === state.currentUserId,
+  ))
+  const scopedRoleOverrides = { ...state.roleOverrides, ...(state.branchRoleOverrides?.[activeBranch.id] ?? {}) }
+  const scopedBranchRoleOverrides = {
+    [activeBranch.id]: state.branchRoleOverrides?.[activeBranch.id] ?? {},
+  }
+  const scopedCustomRoles = state.customRoles.filter((role) => role.branchId == null || role.branchId === activeBranch.id)
+  const scopedReadNotificationIds = scopedNotificationReadIds(state)
 
-  const scopedSales = state.sales.filter((s) =>
-    belongsToBranch(s, activeBranch, state.branches) ||
+  const scopedSales = state.sales.filter((s) => inBranchOrRelated(s,
     (s.warehouseId != null && scopedWhIds.has(s.warehouseId)) ||
     (s.customerId != null && scopedCustomerIds.has(s.customerId)),
+  ),
   )
   const scopedSaleIds = new Set(scopedSales.map((s) => s.id))
   const scopedSaleReturns = state.saleReturns.filter(
-    (r) => scopedSaleIds.has(r.saleId) || belongsToBranch(r, activeBranch, state.branches),
+    (r) => inBranchOrRelated(r, scopedSaleIds.has(r.saleId)),
   )
   const scopedSaleReturnIds = new Set(scopedSaleReturns.map((r) => r.id))
 
-  const scopedPurchases = state.purchases.filter((p) =>
-    belongsToBranch(p, activeBranch, state.branches) ||
+  const scopedPurchases = state.purchases.filter((p) => inBranchOrRelated(p,
     (p.warehouseId != null && scopedWhIds.has(p.warehouseId)) ||
     (p.supplierId !== 0 && scopedSupplierIds.has(p.supplierId)),
+  ),
   )
   const scopedPurchaseIds = new Set(scopedPurchases.map((p) => p.id))
   const scopedPurchaseReturns = state.purchaseReturns.filter(
-    (r) => scopedPurchaseIds.has(r.purchaseId) || belongsToBranch(r, activeBranch, state.branches),
+    (r) => inBranchOrRelated(r, scopedPurchaseIds.has(r.purchaseId)),
   )
   const scopedPurchaseReturnIds = new Set(scopedPurchaseReturns.map((r) => r.id))
-  const scopedPurchaseOrders = state.purchaseOrders.filter((po) =>
-    belongsToBranch(po, activeBranch, state.branches) ||
+  const scopedPurchaseOrders = state.purchaseOrders.filter((po) => inBranchOrRelated(po,
     (po.warehouseId != null && scopedWhIds.has(po.warehouseId)) ||
     (po.supplierId != null && scopedSupplierIds.has(po.supplierId)),
+  ),
   )
 
-  const scopedVouchers = state.vouchers.filter((v) =>
-    belongsToBranch(v, activeBranch, state.branches) ||
+  const scopedVouchers = state.vouchers.filter((v) => inBranchOrRelated(v,
     scopedTrCodes.has(v.treasury) ||
     (v.counterAccountCode != null && scopedTrCodes.has(v.counterAccountCode)),
+  ),
   )
   const scopedVoucherIds = new Set(scopedVouchers.map((v) => v.id))
   const scopedCheques = inBranch(state.cheques)
   const scopedCustodyFiles = inBranch(state.custodyFiles)
   const scopedCustodyFileIds = new Set(scopedCustodyFiles.map((f) => f.id))
   const scopedCustodyTxs = state.custodyTxs.filter(
-    (tx) => scopedCustodyFileIds.has(tx.fileId) || belongsToBranch(tx, activeBranch, state.branches),
+    (tx) => inBranchOrRelated(tx, scopedCustodyFileIds.has(tx.fileId)),
   )
   const scopedProjects = state.projects.filter(
-    (p) => belongsToBranch(p, activeBranch, state.branches) || (p.clientId != null && scopedCustomerIds.has(p.clientId)),
+    (p) => inBranchOrRelated(p, p.clientId != null && scopedCustomerIds.has(p.clientId)),
   )
   const scopedProjectIds = new Set(scopedProjects.map((p) => p.id))
   const scopedProjectExtracts = state.projectExtracts.filter(
-    (ex) => scopedProjectIds.has(ex.projectId) || belongsToBranch(ex, activeBranch, state.branches),
+    (ex) => inBranchOrRelated(ex, scopedProjectIds.has(ex.projectId)),
   )
   const scopedProjectCosts = state.projectCosts.filter(
-    (c) => scopedProjectIds.has(c.projectId) || belongsToBranch(c, activeBranch, state.branches),
+    (c) => inBranchOrRelated(c, scopedProjectIds.has(c.projectId)),
   )
   const scopedRetentionReleases = state.retentionReleases.filter(
-    (r) => scopedProjectIds.has(r.projectId) || belongsToBranch(r, activeBranch, state.branches),
+    (r) => inBranchOrRelated(r, scopedProjectIds.has(r.projectId)),
   )
   const scopedProjectBudgets = state.projectBudgets.filter(
-    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b, activeBranch, state.branches),
+    (b) => inBranchOrRelated(b, scopedProjectIds.has(b.projectId)),
   )
   const scopedProjectTasks = state.projectTasks.filter(
-    (t) => scopedProjectIds.has(t.projectId) || belongsToBranch(t, activeBranch, state.branches),
+    (t) => inBranchOrRelated(t, scopedProjectIds.has(t.projectId)),
   )
   const scopedChangeOrders = state.changeOrders.filter(
-    (co) => scopedProjectIds.has(co.projectId) || belongsToBranch(co, activeBranch, state.branches),
+    (co) => inBranchOrRelated(co, scopedProjectIds.has(co.projectId)),
   )
   const scopedClientAdvances = state.clientAdvances.filter(
-    (ca) => scopedProjectIds.has(ca.projectId) || belongsToBranch(ca, activeBranch, state.branches),
+    (ca) => inBranchOrRelated(ca, scopedProjectIds.has(ca.projectId)),
   )
   const scopedMaterialRequisitions = state.materialRequisitions.filter(
-    (mr) => scopedProjectIds.has(mr.projectId) || belongsToBranch(mr, activeBranch, state.branches),
+    (mr) => inBranchOrRelated(mr, scopedProjectIds.has(mr.projectId)),
   )
   const scopedBoqItems = state.boqItems.filter(
-    (b) => scopedProjectIds.has(b.projectId) || belongsToBranch(b, activeBranch, state.branches),
+    (b) => inBranchOrRelated(b, scopedProjectIds.has(b.projectId)),
   )
   const scopedSubContracts = state.subContracts.filter(
-    (sc) => scopedProjectIds.has(sc.projectId) || belongsToBranch(sc, activeBranch, state.branches),
+    (sc) => inBranchOrRelated(sc, scopedProjectIds.has(sc.projectId)),
   )
   const scopedSubContractIds = new Set(scopedSubContracts.map((sc) => sc.id))
   const scopedSubCertificates = state.subCertificates.filter(
-    (cert) => scopedSubContractIds.has(cert.contractId) || belongsToBranch(cert, activeBranch, state.branches),
+    (cert) => inBranchOrRelated(cert, scopedSubContractIds.has(cert.contractId)),
   )
   const scopedSubPayments = state.subPayments.filter(
-    (sp) => scopedSubContractIds.has(sp.contractId) || belongsToBranch(sp, activeBranch, state.branches),
+    (sp) => inBranchOrRelated(sp, scopedSubContractIds.has(sp.contractId)),
   )
   const scopedSubAdvances = state.subAdvances.filter(
-    (sa) => scopedSubContractIds.has(sa.contractId) || belongsToBranch(sa, activeBranch, state.branches),
+    (sa) => inBranchOrRelated(sa, scopedSubContractIds.has(sa.contractId)),
   )
   const scopedBonds = inBranch(state.bonds)
   const scopedDailyWorkers = inBranch(state.dailyWorkers)
   const scopedDailyWorkRecords = inBranch(state.dailyWorkRecords)
   const scopedClientSettlements = state.clientSettlements.filter(
-    (cs) => scopedCustomerIds.has(cs.customerId) || belongsToBranch(cs, activeBranch, state.branches),
+    (cs) => inBranchOrRelated(cs, scopedCustomerIds.has(cs.customerId)),
   )
   const scopedQuotations = inBranch(state.quotations)
   const scopedEquipment = inBranch(state.equipment)
   const scopedEquipmentIds = new Set(scopedEquipment.map((eq) => eq.id))
   const scopedRentalContracts = state.rentalContracts.filter(
-    (c) => belongsToBranch(c, activeBranch, state.branches) || (c.equipmentId != null && scopedEquipmentIds.has(c.equipmentId)),
+    (c) => inBranchOrRelated(c, c.equipmentId != null && scopedEquipmentIds.has(c.equipmentId)),
   )
   const scopedRentalContractIds = new Set(scopedRentalContracts.map((c) => c.id))
   const scopedRentalInvoices = state.rentalInvoices.filter(
-    (inv) => scopedRentalContractIds.has(inv.contractId) || belongsToBranch(inv, activeBranch, state.branches),
+    (inv) => inBranchOrRelated(inv, scopedRentalContractIds.has(inv.contractId)),
   )
   const scopedEquipmentCosts = state.equipmentCosts.filter(
-    (ec) => scopedEquipmentIds.has(ec.equipmentId) || belongsToBranch(ec, activeBranch, state.branches),
+    (ec) => inBranchOrRelated(ec, scopedEquipmentIds.has(ec.equipmentId)),
   )
   const scopedOperatorShifts = state.operatorShifts.filter(
-    (os) => scopedEquipmentIds.has(os.equipmentId) || belongsToBranch(os, activeBranch, state.branches),
+    (os) => inBranchOrRelated(os, scopedEquipmentIds.has(os.equipmentId)),
   )
   const scopedVehicles = inBranch(state.vehicles)
   const scopedVehicleIds = new Set(scopedVehicles.map((v) => v.id))
   const scopedVehicleCostEntries = state.vehicleCostEntries.filter(
-    (vce) => scopedVehicleIds.has(vce.vehicleId) || belongsToBranch(vce, activeBranch, state.branches),
+    (vce) => inBranchOrRelated(vce, scopedVehicleIds.has(vce.vehicleId)),
   )
   const scopedTrips = state.trips.filter(
-    (t) => belongsToBranch(t, activeBranch, state.branches) || (t.vehicleId != null && scopedVehicleIds.has(t.vehicleId)),
+    (t) => inBranchOrRelated(t, t.vehicleId != null && scopedVehicleIds.has(t.vehicleId)),
   )
   const scopedTripIds = new Set(scopedTrips.map((t) => t.id))
   const scopedTripExpenses = state.tripExpenses.filter(
-    (te) => scopedTripIds.has(te.tripId) || belongsToBranch(te, activeBranch, state.branches),
+    (te) => inBranchOrRelated(te, scopedTripIds.has(te.tripId)),
   )
   const scopedDriverDues = state.driverDues.filter(
-    (dd) => scopedEmployeeIds.has(dd.driverId) || belongsToBranch(dd, activeBranch, state.branches),
+    (dd) => inBranchOrRelated(dd, scopedEmployeeIds.has(dd.driverId)),
   )
   const scopedCars = inBranch(state.cars)
   const scopedCarIds = new Set(scopedCars.map((c) => c.id))
   const scopedCarPrepCosts = state.carPrepCosts.filter(
-    (cp) => scopedCarIds.has(cp.carId) || belongsToBranch(cp, activeBranch, state.branches),
+    (cp) => inBranchOrRelated(cp, scopedCarIds.has(cp.carId)),
   )
   const scopedCarPurchaseInvoices = inBranch(state.carPurchaseInvoices)
   const scopedConsignmentCars = inBranch(state.consignmentCars)
   const scopedProperties = inBranch(state.properties)
   const scopedPropertyIds = new Set(scopedProperties.map((p) => p.id))
   const scopedPropertyUnits = state.propertyUnits.filter(
-    (u) => scopedPropertyIds.has(u.propertyId) || belongsToBranch(u, activeBranch, state.branches),
+    (u) => inBranchOrRelated(u, scopedPropertyIds.has(u.propertyId)),
   )
   const scopedPropertySales = state.propertySales.filter(
-    (ps) => scopedPropertyIds.has(ps.propertyId) || belongsToBranch(ps, activeBranch, state.branches),
+    (ps) => inBranchOrRelated(ps, scopedPropertyIds.has(ps.propertyId)),
   )
   const scopedLeases = inBranch(state.leases)
   const scopedOwnerTxns = state.ownerTxns.filter(
-    (ot) => scopedPropertyIds.has(ot.propertyId) || belongsToBranch(ot, activeBranch, state.branches),
+    (ot) => inBranchOrRelated(ot, scopedPropertyIds.has(ot.propertyId)),
   )
   const scopedClinicPatients = inBranch(state.clinicPatients)
+  const scopedClinicPatientIds = new Set(scopedClinicPatients.map((patient) => patient.id))
   const scopedClinicVisits = inBranch(state.clinicVisits)
   const scopedTreatmentPlans = inBranch(state.treatmentPlans)
   const scopedClinicCollections = inBranch(state.clinicCollections)
@@ -3433,36 +3711,78 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedLabReferrers = inBranch(state.labReferrers)
   const scopedLabPatients = inBranch(state.labPatients)
   const scopedLabOrders = inBranch(state.labOrders)
+  const scopedLabOrderIds = new Set(scopedLabOrders.map((order) => order.id))
+  const scopedPatientAttachments = state.patientAttachments.filter((attachment) => inBranchOrRelated(attachment, scopedClinicPatientIds.has(attachment.patientId)))
+  const scopedDocumentFiles = state.documentFiles.filter((file) => inBranchOrRelated(file,
+    (file.documentKind === 'sale' && scopedSaleIds.has(file.documentId)) ||
+    (file.documentKind === 'purchase' && scopedPurchaseIds.has(file.documentId)) ||
+    (file.documentKind === 'trip' && scopedTripIds.has(file.documentId)),
+  ))
+  const scopedInsuranceProviders = inBranch(state.insuranceProviders)
+  const scopedInsuranceProviderIds = new Set(scopedInsuranceProviders.map((provider) => provider.id))
+  const scopedInsuranceClaims = state.insuranceClaims.filter((claim) => inBranchOrRelated(claim,
+    scopedInsuranceProviderIds.has(claim.providerId) ||
+    (claim.source === 'sale' && scopedSaleIds.has(claim.sourceId)) ||
+    (claim.source === 'lab_order' && scopedLabOrderIds.has(claim.sourceId)),
+  ))
+  const scopedDocApprovals = inBranch(state.docApprovals)
+  const scopedApprovalFlows = inBranch(state.approvalFlows)
+  const scopedApprovalRequests = inBranch(state.approvalRequests)
+  const scopedFxConversions = state.fxConversions.filter((conversion) => inBranchOrRelated(conversion,
+    scopedTrCodes.has(conversion.fromTreasury) || scopedTrCodes.has(conversion.toTreasury),
+  ))
+  const scopedIssues = inBranch(state.issues)
+  const scopedPinResetRequests = state.pinResetRequests.filter((request) => inBranchOrRelated(request, scopedAppUserIds.has(request.userId)))
+  const scopedAttendanceImports = inBranch(state.attendanceImports)
+  const scopedAdvancedInvoiceDrafts = inBranch(state.advancedInvoiceDrafts)
+  const scopedPartyNotes = state.partyNotes.filter((note) => inBranchOrRelated(note,
+    note.partyKind === 'customer' ? scopedCustomerIds.has(note.partyId) : scopedSupplierIds.has(note.partyId),
+  ))
+  const scopedLoyaltyRedemptions = state.loyaltyRedemptions.filter((redemption) => inBranchOrRelated(redemption, scopedCustomerIds.has(redemption.customerId)))
+  const scopedBatches = state.batches.filter((batch) => inBranchOrRelated(batch,
+    (batch.purchaseId != null && scopedPurchaseIds.has(batch.purchaseId)) || scopedItemIds.has(batch.itemId),
+  ))
+  const scopedSerials = state.serials.filter((serial) => inBranchOrRelated(serial,
+    (serial.purchaseId != null && scopedPurchaseIds.has(serial.purchaseId)) ||
+    (serial.saleId != null && scopedSaleIds.has(serial.saleId)),
+  ))
+  const scopedStockMoves = state.stockMoves.filter((move) => inBranchOrRelated(move,
+    (move.docType === 'sale' && scopedSaleIds.has(move.docId)) ||
+    (move.docType === 'purchase' && scopedPurchaseIds.has(move.docId)) ||
+    (move.docType === 'sale_return' && scopedSaleReturnIds.has(move.docId)) ||
+    (move.docType === 'purchase_return' && scopedPurchaseReturnIds.has(move.docId)) ||
+    scopedItemIds.has(move.itemId),
+  ))
   const scopedTickets = inBranch(state.tickets)
   const scopedMaintenanceServices = inBranch(state.maintenanceServices)
   const scopedLaundryOrders = inBranch(state.laundryOrders)
   const scopedBookings = inBranch(state.bookings)
   const scopedWalletOps = inBranch(state.walletOps)
   const scopedInstallmentPlans = state.installmentPlans.filter(
-    (p) => belongsToBranch(p, activeBranch, state.branches) || (p.saleId != null && scopedSaleIds.has(p.saleId)),
+    (p) => inBranchOrRelated(p, p.saleId != null && scopedSaleIds.has(p.saleId)),
   )
   const scopedAssets = inBranch(state.assets)
   const scopedPayrollRuns = inBranch(state.payrollRuns)
   const scopedPayrollSlips = state.payrollSlips.filter(
-    (ps) => scopedEmployeeIds.has(ps.employeeId) || belongsToBranch(ps, activeBranch, state.branches),
+    (ps) => inBranchOrRelated(ps, scopedEmployeeIds.has(ps.employeeId)),
   )
   const scopedEmployeeAdvances = state.employeeAdvances.filter(
-    (ea) => scopedEmployeeIds.has(ea.employeeId) || belongsToBranch(ea, activeBranch, state.branches),
+    (ea) => inBranchOrRelated(ea, scopedEmployeeIds.has(ea.employeeId)),
   )
   const scopedEmployeeDeductions = state.employeeDeductions.filter(
-    (ed) => scopedEmployeeIds.has(ed.employeeId) || belongsToBranch(ed, activeBranch, state.branches),
+    (ed) => inBranchOrRelated(ed, scopedEmployeeIds.has(ed.employeeId)),
   )
   const scopedAdvanceRepayments = state.advanceRepayments.filter(
-    (ar) => scopedEmployeeIds.has(ar.employeeId) || belongsToBranch(ar, activeBranch, state.branches),
+    (ar) => inBranchOrRelated(ar, scopedEmployeeIds.has(ar.employeeId)),
   )
   const scopedAttendanceRecords = state.attendanceRecords.filter(
-    (ar) => scopedEmployeeIds.has(ar.employeeId) || belongsToBranch(ar, activeBranch, state.branches),
+    (ar) => inBranchOrRelated(ar, scopedEmployeeIds.has(ar.employeeId)),
   )
   const scopedLeaveRequests = state.leaveRequests.filter(
-    (lr) => scopedEmployeeIds.has(lr.employeeId) || belongsToBranch(lr, activeBranch, state.branches),
+    (lr) => inBranchOrRelated(lr, scopedEmployeeIds.has(lr.employeeId)),
   )
   const scopedStaffCommissions = state.staffCommissions.filter(
-    (sc) => scopedEmployeeIds.has(sc.employeeId) || belongsToBranch(sc, activeBranch, state.branches),
+    (sc) => inBranchOrRelated(sc, scopedEmployeeIds.has(sc.employeeId)),
   )
   const scopedStocktakes = inBranch(state.stocktakes)
   const scopedWastages = inBranch(state.wastages)
@@ -3486,9 +3806,21 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedPriceLists = inBranch(state.priceLists)
   const scopedPromotions = inBranch(state.promotions)
   const scopedPurchaseExpensePayables = inBranch(state.purchaseExpensePayables)
-  const scopedTerminals = state.paymentTerminals.filter(
-    (t) => !t.branchId || t.branchId === String(activeBranch.id),
+  const scopedPriceListIds = new Set(scopedPriceLists.map((list) => list.id))
+  const scopedPriceListEntries = state.priceListEntries.filter((entry) => scopedPriceListIds.has(entry.listId) && scopedItemIds.has(entry.itemId))
+  const scopedPriceListCategoryRules = state.priceListCategoryRules.filter((rule) => scopedPriceListIds.has(rule.listId) && scopedCategories.some((category) => category.id === rule.categoryId))
+  const scopedTransfers = state.transfers.filter((transfer) =>
+    inBranchOrRelated(transfer, scopedWhIds.has(transfer.fromWarehouseId) || scopedWhIds.has(transfer.toWarehouseId)),
   )
+  const scopedTerminals = state.paymentTerminals.filter(
+    (t) => t.branchId === String(activeBranch.id) || (activeBranch.isMain && !t.branchId),
+  )
+  const scopedTerminalIds = new Set(scopedTerminals.map((terminal) => terminal.id))
+  const scopedTerminalTransactions = state.paymentTerminalTransactions.filter((transaction) =>
+    scopedTerminalIds.has(transaction.terminalId)
+      && (transaction.branchId === String(activeBranch.id) || (activeBranch.isMain && !transaction.branchId)),
+  )
+  const scopedTerminalSettlements = state.paymentTerminalSettlements.filter((settlement) => scopedTerminalIds.has(settlement.terminalId))
 
   const scopedEntryIds = new Set<number>()
   const scopedJournal = state.journal.filter((e) => {
@@ -3523,11 +3855,54 @@ export function getBranchScopedDataState(state: DataState): DataState {
 
   const scoped: DataState = {
     ...state,
+    branches: scopedBranches,
     warehouses: scopedWarehouses,
     treasuries: scopedTreasuries,
     customers: scopedCustomers,
     suppliers: scopedSuppliers,
     employees: scopedEmployees,
+    docApprovals: scopedDocApprovals,
+    approvalFlows: scopedApprovalFlows,
+    approvalRequests: scopedApprovalRequests,
+    fxConversions: scopedFxConversions,
+    attendanceImports: scopedAttendanceImports,
+    patientAttachments: scopedPatientAttachments,
+    documentFiles: scopedDocumentFiles,
+    insuranceProviders: scopedInsuranceProviders,
+    insuranceClaims: scopedInsuranceClaims,
+    issues: scopedIssues,
+    pinResetRequests: scopedPinResetRequests,
+    advancedInvoiceDrafts: scopedAdvancedInvoiceDrafts,
+    partyNotes: scopedPartyNotes,
+    loyaltyRedemptions: scopedLoyaltyRedemptions,
+    batches: scopedBatches,
+    serials: scopedSerials,
+    stockMoves: scopedStockMoves,
+    variantStocks: scopedVariantStocks,
+    jewelryProfiles: scopedJewelryProfiles,
+    priceListEntries: scopedPriceListEntries,
+    priceListCategoryRules: scopedPriceListCategoryRules,
+    transfers: scopedTransfers,
+    auditLog: inBranch(state.auditLog),
+    hrRules: normalizeHrRules(scopedHrSettings.hrRules),
+    leaveTypes: scopedHrSettings.leaveTypes,
+    employeeShifts: scopedEmployeeShifts,
+    branchHrSettings: { [activeBranch.id]: scopedHrSettings },
+    appUsers: scopedAppUsers,
+    userPrefs: scopedUserPrefs,
+    roleOverrides: scopedRoleOverrides,
+    branchRoleOverrides: scopedBranchRoleOverrides,
+    customRoles: scopedCustomRoles,
+    readNotificationIds: scopedReadNotificationIds,
+    activeBranchId: activeBranch.id,
+    ownerPinHash: isOwnerSession ? state.ownerPinHash : null,
+    ownerProfile: isOwnerSession ? state.ownerProfile : DEFAULT_OWNER_PROFILE,
+    ownerTempPin: isOwnerSession ? state.ownerTempPin : null,
+    loginGuard: isOwnerSession ? state.loginGuard : EMPTY_GUARD,
+    openingBalances: scopedOpeningProfile.openingBalances,
+    openingItems: scopedOpeningProfile.openingItems,
+    openingDeclaredCapitalMinor: scopedOpeningProfile.declaredCapitalMinor,
+    branchOpeningBalances: { [activeBranch.id]: scopedOpeningProfile },
     items: scopedItems,
     categories: scopedCategories,
     sales: scopedSales,
@@ -3624,10 +3999,20 @@ export function getBranchScopedDataState(state: DataState): DataState {
     promotions: scopedPromotions,
     purchaseExpensePayables: scopedPurchaseExpensePayables,
     paymentTerminals: scopedTerminals,
+    paymentTerminalTransactions: scopedTerminalTransactions,
+    paymentTerminalSettlements: scopedTerminalSettlements,
     journal: scopedJournal,
   }
   byBranch.set(activeBranch.id, scoped)
   return scoped
+}
+
+function assertEmployeeInActiveBranch(state: DataState, employeeId: number): void {
+  // ميّز الموظف الشبح عن الموظف الحقيقي التابع لفرع آخر، مع بقاء الفحص fail-closed.
+  if (!state.employees.some((employee) => employee.id === employeeId)) throw new Error('الموظف غير موجود')
+  if (!getBranchScopedDataState(state).employees.some((employee) => employee.id === employeeId)) {
+    throw new Error('لا يمكن إدارة سجل موظف تابع لفرع آخر من هذا الفرع')
+  }
 }
 
 export const useRawDataStore = create<DataState>()(
@@ -3638,10 +4023,263 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const patch = typeof partial === 'function' ? (partial as (s: DataState) => Partial<DataState>)(state) : partial as Partial<DataState>
         // ختم الفرع النشط تلقائياً على أي سجل جديد يُنشأ أثناء تفعيل فرع مستقل
-        const activeBranch = patch ? getEffectiveActiveBranch(state) : null
+        const branchSessionOnlyKeys = new Set(['currentUserId', 'loggedOut', 'loginGuard', 'auditLog', 'userPrefs'])
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        const effectiveBranch = getEffectiveActiveBranch(state)
+        const activeBranch = patch ? effectiveBranch : null
+        const isBranchUser = Boolean(activeUser && activeUser.roleId !== 'owner')
+        const isOwnerSession = !activeUser || activeUser.roleId === 'owner'
+        const patchKeys = patch ? Object.keys(patch as Record<string, unknown>) : []
+        const patchRec = patch as Record<string, unknown> | null
+        if (patchRec && Object.prototype.hasOwnProperty.call(patchRec, 'readNotificationIds')) {
+          const nextIds = Array.isArray(patchRec.readNotificationIds) ? patchRec.readNotificationIds as string[] : []
+          const previousIds = new Set(state.readNotificationIds)
+          const nextIdSet = new Set(nextIds)
+          const readPrefix = notificationReadScopePrefix(state)
+          for (const id of nextIdSet) {
+            if (!previousIds.has(id) && !id.startsWith(readPrefix)) throw new Error('لا يمكن تغيير علامات قراءة إشعارات مستخدم أو فرع آخر')
+          }
+          for (const id of previousIds) {
+            if (nextIdSet.has(id)) continue
+            if (id.startsWith(readPrefix) || (isOwnerSession && !id.startsWith(NOTIFICATION_READ_KEY_PREFIX))) continue
+            throw new Error('لا يمكن تغيير علامات قراءة إشعارات مستخدم أو فرع آخر')
+          }
+        }
+        if (isBranchUser && effectiveBranch && patchRec) {
+          if (Object.prototype.hasOwnProperty.call(patchRec, 'userPrefs')) {
+            const previousPrefs = state.userPrefs ?? {}
+            const nextPrefs = patchRec.userPrefs as Record<string, unknown> | undefined
+            const ownKey = userPrefsKey(state.currentUserId)
+            if (!nextPrefs) throw new Error('لا يمكن استبدال تفضيلات المستخدمين')
+            for (const key of new Set([...Object.keys(previousPrefs), ...Object.keys(nextPrefs)])) {
+              if (key !== ownKey && previousPrefs[key] !== nextPrefs[key]) throw new Error('لا يمكن تعديل تفضيلات مستخدم آخر')
+            }
+          }
+          for (const key of ['activeBranchId', 'seeded', 'roleOverrides', 'customAccounts', 'gramPrices', 'ownerPinHash', 'ownerProfile', 'ownerTempPin'] as const) {
+            if (Object.prototype.hasOwnProperty.call(patchRec, key) && patchRec[key] !== (state as unknown as Record<string, unknown>)[key]) {
+              throw new Error(`إعداد الشركة العام «${key}» لا يُعدّل من داخل فرع`)
+            }
+          }
+          const onlyActiveBranchEntry = (key: 'branchRoleOverrides' | 'branchHrSettings' | 'branchOpeningBalances') => {
+            if (!Object.prototype.hasOwnProperty.call(patchRec, key)) return
+            const previous = (state as unknown as Record<string, Record<string, unknown>>)[key] ?? {}
+            const next = patchRec[key] as Record<string, unknown> | undefined
+            if (!next) throw new Error(`لا يمكن استبدال إعدادات فروع أخرى في «${key}»`)
+            for (const branchId of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+              if (Number(branchId) !== effectiveBranch.id && previous[branchId] !== next[branchId]) {
+                throw new Error(`لا يمكن تعديل إعداد «${key}» لفرع آخر`)
+              }
+            }
+          }
+          onlyActiveBranchEntry('branchRoleOverrides')
+          onlyActiveBranchEntry('branchHrSettings')
+          onlyActiveBranchEntry('branchOpeningBalances')
+          if (!effectiveBranch.isMain) {
+            for (const key of ['hrRules', 'leaveTypes', 'openingBalances', 'openingItems', 'openingDeclaredCapitalMinor'] as const) {
+              if (Object.prototype.hasOwnProperty.call(patchRec, key) && patchRec[key] !== (state as unknown as Record<string, unknown>)[key]) {
+                throw new Error(`لا يمكن تعديل الإعداد العام «${key}» من فرع غير رئيسي`)
+              }
+            }
+          }
+          if (Object.prototype.hasOwnProperty.call(patchRec, 'branches')) {
+            const previous = state.branches
+            const next = Array.isArray(patchRec.branches) ? patchRec.branches as Branch[] : []
+            const nextById = new Map(next.map((branch) => [branch.id, branch]))
+            if (next.length !== previous.length || previous.some((branch) => !nextById.has(branch.id))) {
+              throw new Error('إضافة الفروع أو حذفها متاحة للمالك فقط')
+            }
+            for (const branch of previous) {
+              const updated = nextById.get(branch.id)!
+              if (branch.id !== effectiveBranch.id && updated !== branch) throw new Error('لا يمكن تعديل بيانات فرع آخر')
+              if (branch.id === effectiveBranch.id && (
+                updated.isMain !== branch.isMain || updated.warehouseId !== branch.warehouseId
+                || updated.treasuryCode !== branch.treasuryCode || updated.active !== branch.active
+              )) throw new Error('تغيير مخزن الفرع أو خزينته أو حالته يحتاج صلاحية المالك')
+            }
+          }
+          if (Object.prototype.hasOwnProperty.call(patchRec, 'customRoles')) {
+            const nextRoles = Array.isArray(patchRec.customRoles)
+              ? patchRec.customRoles as { id: string; nameAr: string; branchId?: number | null }[]
+              : []
+            const visibleRoleIds = new Set(state.customRoles
+              .filter((role) => role.branchId == null || role.branchId === effectiveBranch.id)
+              .map((role) => role.id))
+            const nextById = new Map(nextRoles.map((role) => [role.id, role]))
+            for (const role of state.customRoles) {
+              const nextRole = nextById.get(role.id)
+              if (!visibleRoleIds.has(role.id) || role.branchId == null) {
+                if (nextRole !== role) throw new Error('لا يمكن تعديل أو حذف دور عام أو دور تابع لفرع آخر')
+                continue
+              }
+              if (nextRole && nextRole.branchId !== effectiveBranch.id) throw new Error('لا يمكن نقل دور مخصص إلى فرع آخر')
+            }
+            for (const role of nextRoles) {
+              if (!state.customRoles.some((previous) => previous.id === role.id) && role.branchId !== effectiveBranch.id) {
+                throw new Error('الدور الجديد يجب أن يكون خاصاً بهذا الفرع')
+              }
+            }
+          }
+        }
+        if (isBranchUser && state.branches.length > 0 && !effectiveBranch
+          && patchKeys.some((key) => !branchSessionOnlyKeys.has(key))) {
+          throw new Error('لا يوجد فرع نشط مرتبط بهذا الحساب — اطلب من المالك تصحيح ربط المستخدم')
+        }
+        if (isBranchUser && activeBranch && !activeBranch.active
+          && patchKeys.some((key) => !branchSessionOnlyKeys.has(key))) {
+          throw new Error('فرع الحساب متوقف — لا يمكن إجراء تغييرات حتى يعيد المالك تفعيله')
+        }
         if (activeBranch && patch) {
           const patchRec = patch as Record<string, unknown>
           const stateRec = state as unknown as Record<string, unknown>
+          const scopedState = getBranchScopedDataState(state) as unknown as Record<string, unknown>
+          const scopedTerminalIds = new Set(((scopedState.paymentTerminals ?? []) as { id: string }[]).map((terminal) => terminal.id))
+          const removingActiveBranch = Array.isArray(patchRec.branches)
+            && !patchRec.branches.some((branch: Branch) => branch.id === activeBranch.id)
+            && state.appUsers.find((user) => user.id === state.currentUserId)?.roleId === 'owner'
+          // حارس كتابة مركزي: الإجراء لا يستطيع تغيير/حذف سجل لم يكن مرئياً في نطاق الفرع،
+          // حتى لو استُدعيت أفعال Zustand مباشرة وتجاوزت واجهة القراءة المفلترة.
+          for (const key of BRANCH_STAMP_ID_KEYS) {
+            const nextRows = patchRec[key]
+            const previousRows = stateRec[key]
+            const visibleRows = scopedState[key]
+            if (!Array.isArray(nextRows) || !Array.isArray(previousRows) || !Array.isArray(visibleRows)) continue
+            const visibleIds = new Set(visibleRows.map((row: { id?: unknown }) => row?.id))
+            const nextById = new Map(nextRows.map((row: { id?: unknown }) => [row?.id, row]))
+            for (const previousRow of previousRows as { id?: unknown; branchId?: number | null; warehouseId?: number | null; treasury?: string | null; treasuryCode?: string | null }[]) {
+              const nextRow = nextById.get(previousRow?.id) as typeof previousRow | undefined
+              if (!visibleIds.has(previousRow?.id)) {
+                if (nextRow !== previousRow) throw new Error(`لا يمكن تعديل أو حذف سجل من مجموعة «${key}» تابع لفرع آخر`)
+                continue
+              }
+              if (!nextRow || nextRow === previousRow) continue
+              if (removingActiveBranch && previousRow.branchId === activeBranch.id && nextRow.branchId == null) continue
+              if (nextRow.branchId != null && nextRow.branchId !== activeBranch.id) throw new Error(`لا يمكن نقل سجل من مجموعة «${key}» إلى فرع آخر`)
+              if (previousRow.branchId != null && nextRow.branchId !== previousRow.branchId) throw new Error(`لا يمكن تغيير ملكية سجل من مجموعة «${key}» إلى فرع آخر`)
+              if (nextRow.warehouseId != null) {
+                const owner = state.branches.find((branch) => branch.warehouseId === nextRow.warehouseId)
+                if (owner && owner.id !== activeBranch.id) throw new Error(`لا يمكن ربط سجل من مجموعة «${key}» بمخزن تابع لفرع آخر`)
+              }
+              const treasuryCode = nextRow.treasury ?? nextRow.treasuryCode ?? null
+              if (treasuryCode) {
+                const owner = state.branches.find((branch) => branch.treasuryCode === treasuryCode)
+                if (owner && owner.id !== activeBranch.id) throw new Error(`لا يمكن ربط سجل من مجموعة «${key}» بخزينة تابعة لفرع آخر`)
+              }
+            }
+          }
+          const scopedItems = (scopedState.items ?? []) as { id: number; branchId?: number | null; warehouseId?: number | null }[]
+          const branchItemIds = new Set(scopedItems.map((row) => row.id))
+          const branchOwnedItemIds = new Set(scopedItems
+            .filter((row) => belongsToBranch(row, activeBranch, state.branches))
+            .map((row) => row.id))
+          const branchCategoryIds = new Set(((scopedState.categories ?? []) as { id: number }[]).map((row) => row.id))
+          const branchEmployeeIds = new Set(((scopedState.employees ?? []) as { id: number }[]).map((row) => row.id))
+          const branchPriceListIds = new Set(((scopedState.priceLists ?? []) as { id: number }[]).map((row) => row.id))
+          const branchWarehouseIds = new Set(((scopedState.warehouses ?? []) as { id: number }[]).map((row) => row.id))
+          const assertParentScopedArray = (
+            key: string,
+            identity: (row: Record<string, unknown>) => string,
+            belongsToActiveBranch: (row: Record<string, unknown>) => boolean,
+          ) => {
+            const nextRows = patchRec[key]
+            const previousRows = stateRec[key]
+            const visibleRows = scopedState[key]
+            if (!Array.isArray(nextRows) || !Array.isArray(previousRows) || !Array.isArray(visibleRows)) return
+            const rowKey = (row: unknown) => identity(row as Record<string, unknown>)
+            const visibleKeys = new Set(visibleRows.map(rowKey))
+            const previousByKey = new Map(previousRows.map((row: unknown) => [rowKey(row), row]))
+            const nextByKey = new Map(nextRows.map((row: unknown) => [rowKey(row), row]))
+            for (const previousRow of previousRows as unknown[]) {
+              const id = rowKey(previousRow)
+              const nextRow = nextByKey.get(id)
+              if (!visibleKeys.has(id)) {
+                if (nextRow !== previousRow) throw new Error(`لا يمكن تعديل أو حذف سجل من مجموعة «${key}» تابع لفرع آخر`)
+                continue
+              }
+              if (nextRow && !belongsToActiveBranch(nextRow as Record<string, unknown>)) {
+                throw new Error(`لا يمكن ربط سجل من مجموعة «${key}» ببيانات فرع آخر`)
+              }
+            }
+            for (const nextRow of nextRows as unknown[]) {
+              if (!previousByKey.has(rowKey(nextRow)) && !belongsToActiveBranch(nextRow as Record<string, unknown>)) {
+                throw new Error(`لا يمكن إضافة سجل من مجموعة «${key}» لبيانات فرع آخر`)
+              }
+            }
+          }
+          assertParentScopedArray('employeeShifts', (row) => String(row.employeeId), (row) => branchEmployeeIds.has(Number(row.employeeId)))
+          assertParentScopedArray('jewelryProfiles', (row) => String(row.itemId), (row) => branchOwnedItemIds.has(Number(row.itemId)))
+          assertParentScopedArray('variantStocks', (row) => JSON.stringify([row.itemId, row.color, row.size]), (row) => branchOwnedItemIds.has(Number(row.itemId)))
+          assertParentScopedArray('priceListEntries', (row) => JSON.stringify([row.listId, row.itemId]), (row) =>
+            branchPriceListIds.has(Number(row.listId)) && branchItemIds.has(Number(row.itemId)))
+          assertParentScopedArray('priceListCategoryRules', (row) => JSON.stringify([row.listId, row.categoryId]), (row) =>
+            branchPriceListIds.has(Number(row.listId)) && branchCategoryIds.has(Number(row.categoryId)))
+          if (Array.isArray(patchRec.transfers) && Array.isArray(stateRec.transfers)) {
+            const previousTransfers = stateRec.transfers as { id: number }[]
+            const nextTransfers = patchRec.transfers as { id: number; fromWarehouseId: number; toWarehouseId: number; lines: { itemId: number }[] }[]
+            const previousById = new Map(previousTransfers.map((transfer) => [transfer.id, transfer]))
+            const nextById = new Map(nextTransfers.map((transfer) => [transfer.id, transfer]))
+            for (const transfer of previousTransfers) {
+              if (nextById.get(transfer.id) !== transfer) throw new Error('تحويلات المخزون لا تُحذف ولا تُعدّل من داخل الفرع')
+            }
+            for (const transfer of nextTransfers) {
+              if (previousById.has(transfer.id)) continue
+              if (!branchWarehouseIds.has(transfer.fromWarehouseId) || !branchWarehouseIds.has(transfer.toWarehouseId)
+                || !Array.isArray(transfer.lines) || !transfer.lines.every((line) => branchItemIds.has(line.itemId))) {
+                throw new Error('التحويل الجديد يجب أن يبقى داخل مخازن وأصناف هذا الفرع')
+              }
+            }
+          }
+          if (Array.isArray(patchRec.auditLog) && Array.isArray(stateRec.auditLog) && Array.isArray(scopedState.auditLog)) {
+            const nextEvents = new Set(patchRec.auditLog)
+            const existingEvents = new Set(stateRec.auditLog)
+            for (const event of stateRec.auditLog as { branchId?: number | null }[]) {
+              if (!nextEvents.has(event)) throw new Error('سجل النشاطات لا يُحذف ولا يُستبدل')
+            }
+            for (const event of patchRec.auditLog as { branchId?: number | null }[]) {
+              if (!existingEvents.has(event) && event.branchId != null && event.branchId !== activeBranch.id) {
+                throw new Error('لا يمكن إضافة حدث نشاط تابع لفرع آخر')
+              }
+            }
+          }
+          if (!removingActiveBranch) {
+            const nextTreasuries = patchRec.treasuries
+            const previousTreasuries = stateRec.treasuries
+            const visibleTreasuries = scopedState.treasuries
+            if (Array.isArray(nextTreasuries) && Array.isArray(previousTreasuries) && Array.isArray(visibleTreasuries)) {
+              const visibleCodes = new Set(visibleTreasuries.map((row: { code?: unknown }) => row?.code))
+              const nextByCode = new Map(nextTreasuries.map((row: { code?: unknown }) => [row?.code, row]))
+              for (const previousTreasury of previousTreasuries as { code?: unknown; branchId?: number | null }[]) {
+                const nextTreasury = nextByCode.get(previousTreasury.code) as typeof previousTreasury | undefined
+                if (!visibleCodes.has(previousTreasury.code)) {
+                  if (nextTreasury !== previousTreasury) throw new Error('لا يمكن تعديل أو حذف خزينة تابعة لفرع آخر')
+                  continue
+                }
+                if (nextTreasury && nextTreasury !== previousTreasury
+                  && (nextTreasury.branchId != null && nextTreasury.branchId !== activeBranch.id
+                    || previousTreasury.branchId != null && nextTreasury.branchId !== previousTreasury.branchId)) {
+                  throw new Error('لا يمكن نقل خزينة أو تغيير ملكيتها إلى فرع آخر')
+                }
+              }
+            }
+          }
+          for (const key of ['paymentTerminals', 'paymentTerminalTransactions', 'paymentTerminalSettlements'] as const) {
+            const nextRows = patchRec[key]
+            const previousRows = stateRec[key]
+            const visibleRows = scopedState[key]
+            if (!Array.isArray(nextRows) || !Array.isArray(previousRows) || !Array.isArray(visibleRows)) continue
+            const visibleIds = new Set(visibleRows.map((row: { id?: unknown }) => row?.id))
+            const nextById = new Map(nextRows.map((row: { id?: unknown }) => [row?.id, row]))
+            for (const previousRow of previousRows as { id?: unknown; branchId?: string | null; terminalId?: string; status?: string }[]) {
+              const nextRow = nextById.get(previousRow.id) as typeof previousRow | undefined
+              if (!visibleIds.has(previousRow.id)) {
+                if (nextRow !== previousRow) throw new Error(`لا يمكن تعديل أو حذف سجل «${key}» تابع لفرع آخر`)
+                continue
+              }
+              if (!nextRow || nextRow === previousRow) continue
+              if (key === 'paymentTerminals' && nextRow.branchId !== String(activeBranch.id)) throw new Error('لا يمكن نقل ماكينة دفع إلى فرع آخر')
+              if (key === 'paymentTerminalTransactions' && nextRow.branchId !== String(activeBranch.id)) throw new Error('لا يمكن نقل عملية دفع إلى فرع آخر')
+              if (key === 'paymentTerminalSettlements' && !scopedTerminalIds.has(nextRow.terminalId ?? '')) throw new Error('لا يمكن تغيير تسوية إلى ماكينة تابعة لفرع آخر')
+            }
+          }
           const remapDefaultTreasury = !activeBranch.isMain && Boolean(activeBranch.treasuryCode) && activeBranch.treasuryCode !== '1101'
           for (const key of BRANCH_STAMP_ID_KEYS) {
             const nextArr = patchRec[key]
@@ -3653,7 +4291,7 @@ export const useRawDataStore = create<DataState>()(
                   const isTransferVoucher = key === 'vouchers' && r.kind === 'transfer'
                   return {
                     ...r,
-                    ...(r.branchId === undefined ? { branchId: activeBranch.id } : {}),
+                    ...(r.branchId !== activeBranch.id ? { branchId: activeBranch.id } : {}),
                     ...(key === 'items' && !activeBranch.isMain && r.warehouseId === undefined
                       ? { warehouseId: activeBranch.warehouseId }
                       : {}),
@@ -3676,7 +4314,7 @@ export const useRawDataStore = create<DataState>()(
           if (Array.isArray(patch.treasuries) && patch.treasuries.length > state.treasuries.length) {
             const prevCodes = new Set(state.treasuries.map((t) => t.code))
             patch.treasuries = patch.treasuries.map((t) =>
-              !prevCodes.has(t.code) && t.branchId === undefined ? { ...t, branchId: activeBranch.id } : t,
+              !prevCodes.has(t.code) && t.branchId !== activeBranch.id ? { ...t, branchId: activeBranch.id } : t,
             )
           }
         }
@@ -3685,6 +4323,19 @@ export const useRawDataStore = create<DataState>()(
           const rawJournal = (patch as Partial<DataState>).journal!
           const nextJournal = normalizeJournalDates(rawJournal) as JournalEntry[]
           if (nextJournal !== rawJournal) (patch as Partial<DataState>).journal = nextJournal
+          if (activeBranch) {
+            const foreignTreasuryCodes = new Set(state.treasuries.filter((treasury) => {
+              const owner = state.branches.find((branch) => branch.treasuryCode === treasury.code)
+              return (owner && owner.id !== activeBranch.id) || (treasury.branchId != null && treasury.branchId !== activeBranch.id)
+            }).map((treasury) => treasury.code))
+            const previousEntryIds = new Set(state.journal.map((entry) => entry.id))
+            for (const entry of nextJournal) {
+              if (previousEntryIds.has(entry.id)) continue
+              if (entry.lines.some((line) => foreignTreasuryCodes.has(line.accountCode))) {
+                throw new Error('لا يمكن ترحيل قيد على خزينة أو بنك تابع لفرع آخر')
+              }
+            }
+          }
           const nextTreasuries = (patch as Partial<DataState>).treasuries ?? state.treasuries
           // الحارس المركزي للدفتر (AUDIT-002/003): توازن + نظافة سطر + مصدر + سنة مفتوحة
           // + لا تعديل صامت — يُرفض القيد المختل قبل أي كتابة فلا يبقى أثر جزئي أبداً.
@@ -3692,11 +4343,18 @@ export const useRawDataStore = create<DataState>()(
             coa: [...fullCoa(STANDARD_COA, nextTreasuries), ...customAsAccounts((patch as Partial<DataState>).customAccounts ?? state.customAccounts ?? [])],
             fiscalYears: useAppStore.getState().fiscalYears,
           })
-          assertTreasuryNotNegative(state.journal, nextJournal, nextTreasuries)
+          assertTreasuryNotNegative(state.journal, nextJournal, nextTreasuries, state)
         }
         // سجل النشاطات (طلب المالك): كل كتابة تولد أحداث تدقيق تلقائياً —
         // «من فعل ماذا ومتى» بلا اعتماد على تسجيل يدوي في كل إجراء
         let finalPatch = patch as Partial<DataState>
+        if (patch && Array.isArray((patch as Partial<DataState>).auditLog) && activeBranch) {
+          const existingAuditEvents = new Set(state.auditLog)
+          const auditLog = ((patch as Partial<DataState>).auditLog ?? []).map((event) =>
+            existingAuditEvents.has(event) || event.branchId != null ? event : { ...event, branchId: activeBranch.id },
+          )
+          finalPatch = { ...finalPatch, auditLog }
+        }
         if (patch && !(patch as Partial<DataState>).auditLog) {
           const activeUser = state.appUsers.find((u) => u.id === state.currentUserId)
           const events = auditFromPatch(
@@ -3704,8 +4362,8 @@ export const useRawDataStore = create<DataState>()(
             patch as Record<string, unknown>,
             activeUser?.nameAr ?? 'المالك',
             new Date().toISOString(),
-          )
-          if (events.length) finalPatch = { ...(patch as Partial<DataState>), auditLog: appendAudit(state.auditLog ?? [], events) }
+          ).map((event) => activeBranch ? { ...event, branchId: activeBranch.id } : event)
+          if (events.length) finalPatch = { ...finalPatch, auditLog: appendAudit(state.auditLog ?? [], events) }
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ;(rawSet as any)(finalPatch, replace)
@@ -3925,7 +4583,7 @@ export const useRawDataStore = create<DataState>()(
           employeeDeductions,
         })
       },
-      getUnpaidPayrollSlips: (employeeId) => get().payrollSlips
+      getUnpaidPayrollSlips: (employeeId) => getBranchScopedDataState(get()).payrollSlips
         .filter((slip) => slip.status === 'accrued' && (employeeId == null || slip.employeeId === employeeId)),
 
       /* ─── شؤون الموظفين: حضور وإجازات وبصمة (طلب المالك ㉘) — لا قيود هنا؛
@@ -3934,11 +4592,12 @@ export const useRawDataStore = create<DataState>()(
       leaveRequests: [],
       leaveTypes: DEFAULT_LEAVE_TYPES,
       hrRules: DEFAULT_HR_RULES,
+      branchHrSettings: {},
       employeeShifts: [],
       attendanceImports: [],
       setAttendanceDay: (args) => {
         const state = get()
-        if (!state.employees.some((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
+        assertEmployeeInActiveBranch(state, args.employeeId)
         if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ غير سليم (YYYY-MM-DD)')
         const existing = state.attendanceRecords.find((r) => r.employeeId === args.employeeId && r.date === args.date)
         if (existing) {
@@ -3951,18 +4610,20 @@ export const useRawDataStore = create<DataState>()(
       },
       clearAttendanceDay: (employeeId, date) => {
         const state = get()
+        assertEmployeeInActiveBranch(state, employeeId)
         set({ attendanceRecords: state.attendanceRecords.filter((r) => !(r.employeeId === employeeId && r.date === date)) })
       },
       importAttendance: (args) => {
         const state = get()
         if (!args.rows.length) throw new Error('لا صفوف للاستيراد — راجع المعاينة')
+        const allowedEmployeeIds = new Set(getBranchScopedDataState(state).employees.map((employee) => employee.id))
         const byDate = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
         let inserted = 0
         let updated = 0
         const importId = nextId(state.attendanceImports)
         const nextRecords = [...state.attendanceRecords]
         for (const row of args.rows) {
-          if (!state.employees.some((e) => e.id === row.employeeId)) throw new Error(`موظف رقم ${row.employeeId} غير موجود — أعد المطابقة`)
+          if (!allowedEmployeeIds.has(row.employeeId)) throw new Error(`موظف رقم ${row.employeeId} غير موجود في هذا الفرع — أعد المطابقة`)
           if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) throw new Error(`تاريخ غير سليم في الاستيراد: ${row.date}`)
           const existing = byDate.get(`${row.employeeId}|${row.date}`)
           if (existing) {
@@ -3984,10 +4645,11 @@ export const useRawDataStore = create<DataState>()(
       },
       addLeaveRequest: (args) => {
         const state = get()
-        // إصلاح §83: إجازة لموظف شبح كانت تُسجَّل وتعتمد وتلوث الأرصدة والتقارير
-        if (!state.employees.some((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        // لا نسجل إجازة لموظف شبح أو تابع لفرع آخر في هذا النطاق.
+        assertEmployeeInActiveBranch(state, args.employeeId)
         const days = leaveDaysBetween(args.from, args.to)
-        const errors = validateLeaveRequest({ employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, leaves: state.leaveRequests, types: state.leaveTypes })
+        const errors = validateLeaveRequest({ employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, leaves: scoped.leaveRequests, types: scoped.leaveTypes })
         if (errors.length) throw new Error(errors.join(' — '))
         if (days <= 0) throw new Error('نطاق التاريخ غير سليم')
         const request: LeaveRequest = {
@@ -4000,7 +4662,7 @@ export const useRawDataStore = create<DataState>()(
       },
       decideLeaveRequest: (id, approve, by) => {
         const state = get()
-        const request = state.leaveRequests.find((l) => l.id === id)
+        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
         if (!request) throw new Error('طلب الإجازة غير موجود')
         if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
         const now = new Date().toISOString()
@@ -4027,14 +4689,20 @@ export const useRawDataStore = create<DataState>()(
       },
       deleteLeaveRequest: (id) => {
         const state = get()
-        const request = state.leaveRequests.find((l) => l.id === id)
+        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
         if (!request) throw new Error('طلب الإجازة غير موجود')
         if (request.status === 'approved') throw new Error('لا يُحذف طلب معتمد — راسل طلباً معاكساً أو عدّل شبكة الحضور')
         set({ leaveRequests: state.leaveRequests.filter((l) => l.id !== id) })
       },
       updateHrRules: (patch) => {
         const state = get()
-        set({ hrRules: normalizeHrRules({ ...state.hrRules, ...patch }) })
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && !activeBranch.isMain) {
+          const current = state.branchHrSettings[activeBranch.id] ?? { hrRules: DEFAULT_HR_RULES, leaveTypes: DEFAULT_LEAVE_TYPES }
+          set({ branchHrSettings: { ...state.branchHrSettings, [activeBranch.id]: { ...current, hrRules: normalizeHrRules({ ...current.hrRules, ...patch }) } } })
+        } else {
+          set({ hrRules: normalizeHrRules({ ...state.hrRules, ...patch }) })
+        }
       },
       updateLeaveTypes: (types) => {
         if (!types.length) throw new Error('لا تُفرَّغ أنواع الإجازات — نوع واحد على الأقل')
@@ -4044,10 +4712,18 @@ export const useRawDataStore = create<DataState>()(
         }
         const ids = new Set(types.map((t) => t.id))
         if (ids.size !== types.length) throw new Error('أكواد الإجازات مكررة')
-        set({ leaveTypes: types })
+        const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && !activeBranch.isMain) {
+          const current = state.branchHrSettings[activeBranch.id] ?? { hrRules: DEFAULT_HR_RULES, leaveTypes: DEFAULT_LEAVE_TYPES }
+          set({ branchHrSettings: { ...state.branchHrSettings, [activeBranch.id]: { ...current, leaveTypes: [...types] } } })
+        } else {
+          set({ leaveTypes: [...types] })
+        }
       },
       setEmployeeShift: (employeeId, shift) => {
         const state = get()
+        assertEmployeeInActiveBranch(state, employeeId)
         if (shift) {
           const clean = {
             employeeId,
@@ -4065,16 +4741,16 @@ export const useRawDataStore = create<DataState>()(
         }
       },
       getLeaveBalances: (employeeId, year) => {
-        const state = get()
-        return leaveBalances(state.leaveRequests, state.leaveTypes, employeeId, year)
+        const scoped = getBranchScopedDataState(get())
+        return leaveBalances(scoped.leaveRequests, scoped.leaveTypes, employeeId, year)
       },
       getMonthlyAttendance: (employeeId, month) => {
-        const state = get()
-        return monthlySummary({ employeeId, month, records: state.attendanceRecords, leaves: state.leaveRequests, types: state.leaveTypes })
+        const scoped = getBranchScopedDataState(get())
+        return monthlySummary({ employeeId, month, records: scoped.attendanceRecords, leaves: scoped.leaveRequests, types: scoped.leaveTypes })
       },
       getAttendancePayrollImpact: (month, employeeIds) => {
-        const state = get()
-        const targets = state.employees.filter((e) => e.active && (employeeIds == null || employeeIds.includes(e.id)))
+        const scoped = getBranchScopedDataState(get())
+        const targets = scoped.employees.filter((e) => e.active && (employeeIds == null || employeeIds.includes(e.id)))
         return targets.map((employee) => attendancePayrollImpact({
           employeeId: employee.id,
           month,
@@ -4082,10 +4758,10 @@ export const useRawDataStore = create<DataState>()(
           /* جسر الحضور ① (جولة «اكمل ونفذ»): وردية الموظف الفردية تُحترم في
              مسار الرواتب كما تحترمها شاشة HR — لا يُحتسب التأخير/الإضافي
              للوردية الليلية على وردية المنشأة الافتراضية */
-          rules: { ...state.hrRules, shift: state.employeeShifts.find((s) => s.employeeId === employee.id) ?? state.hrRules.shift },
-          records: state.attendanceRecords,
-          leaves: state.leaveRequests,
-          types: state.leaveTypes,
+          rules: { ...scoped.hrRules, shift: scoped.employeeShifts.find((s) => s.employeeId === employee.id) ?? scoped.hrRules.shift },
+          records: scoped.attendanceRecords,
+          leaves: scoped.leaveRequests,
+          types: scoped.leaveTypes,
         }))
       },
 
@@ -4124,16 +4800,19 @@ export const useRawDataStore = create<DataState>()(
       },
       decideDocApproval: (id, decision) => {
         const state = get()
-        const target = state.docApprovals.find((row) => row.id === id)
-        if (!target) throw new Error('طلب الاعتماد غير موجود')
+        const scopedState = getBranchScopedDataState(state)
+        const target = scopedState.docApprovals.find((row) => row.id === id)
+        if (!target) throw new Error('طلب الاعتماد غير موجود في هذا الفرع')
         if (target.status !== 'pending') throw new Error('هذا الطلب مُقرَّر فيه بالفعل')
         if (decision.status === 'rejected' && !(decision.reason ?? '').trim()) throw new Error('سبب الرفض مطلوب')
-        // صلاحية القرار: لا يعتمد/يرفض إلا صاحب docs.approve أو المالك أو من أُضيف صراحة
-        const decider = state.appUsers.find((u) => u.id === decision.by) ?? null
-        const deciderRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
-        if (!canApprove({ settings: useAppStore.getState().approvals, userId: decision.by, userPermissions: effectivePermissionsFor(decider, deciderRoles) })) {
+        if (decision.by !== state.currentUserId) throw new Error('لا يمكن اعتماد الطلب باسم مستخدم آخر')
+        // هوية المعتمِد والصلاحية تؤخذان من جلسة الدخول الفعلية، لا من بيانات يرسلها المستدعي.
+        const decider = scopedState.appUsers.find((user) => user.id === state.currentUserId) ?? null
+        const deciderRoles = rolesWithOverrides(scopedState.roleOverrides, scopedState.customRoles, appSetupForState(state).activityId)
+        if (!canApprove({ settings: useAppStore.getState().approvals, userId: state.currentUserId, userPermissions: effectivePermissionsFor(decider, deciderRoles) })) {
           throw new Error('لا تملك صلاحية اعتماد المستندات — القرار لصاحب docs.approve أو المالك')
         }
+        const deciderName = decider?.nameAr ?? state.ownerProfile.nameAr ?? 'المالك'
         /* الاعتماد ينفّذ الترحيل الفعلي (pending → approved → posted): أي فشل
          * (مخزون تغيّر، حد ائتمان…) يُبلَّغ للمعتمِد ويبقى الطلب معلقاً كما هو. */
         let postedId: number | null = null
@@ -4146,8 +4825,8 @@ export const useRawDataStore = create<DataState>()(
         const updated: DocApprovalRequest = {
           ...target,
           status: decision.status,
-          decidedBy: decision.by,
-          decidedByName: decision.byName,
+          decidedBy: state.currentUserId,
+          decidedByName: deciderName,
           decidedAt: new Date().toISOString(),
           reason: decision.reason?.trim() || undefined,
           postedDocumentId: postedId,
@@ -4330,6 +5009,7 @@ export const useRawDataStore = create<DataState>()(
       wastages: [],
       consumptions: [],
       openingBalances: {},
+      branchOpeningBalances: {},
       openingItems: {},
       openingDeclaredCapitalMinor: null,
       settlements: [],
@@ -4371,6 +5051,7 @@ export const useRawDataStore = create<DataState>()(
       appUsers: [],
       userPrefs: {},
       roleOverrides: {},
+      branchRoleOverrides: {},
       customRoles: [],
       currentUserId: null,
       issues: [],
@@ -4520,16 +5201,17 @@ export const useRawDataStore = create<DataState>()(
       },
       removeItem: (id, approval) => {
         const s = get()
-        const it = s.items.find((x) => x.id === id)
+        const scoped = getBranchScopedDataState(s)
+        const it = scoped.items.find((x) => x.id === id)
         if (!it) return
-        const activeUser = s.appUsers.find((user) => user.id === s.currentUserId) ?? null
-        const roles = rolesWithOverrides(s.roleOverrides, s.customRoles, useAppStore.getState().setup.activityId)
-        const requesterPerms = effectivePermissionsFor(activeUser, roles)
+        const activeUser = scoped.appUsers.find((user) => user.id === s.currentUserId) ?? null
+        const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(s).activityId)
+        const requesterPerms = effectivePermissionsFor(scoped.appUsers.find((user) => user.id === s.currentUserId) ?? null, roles)
         const requesterAllowed = s.currentUserId == null || activeUser?.roleId === 'owner' || requesterPerms.has('inv.item.delete')
         if (!requesterAllowed) throw new Error('حذف الأصناف متاح للمالك أو لفئة موظفين مُنحت صلاحية حذف الأصناف فقط')
         if (!approval?.approvedBy?.trim()) throw new Error('لا يمكن حذف الصنف دون تأكيد الرقم السري للمالك أو الموظف المخوّل')
         const approverIsOwner = approval.approvedBy.trim() === 'المالك'
-        const approverIsAuthorizedUser = s.appUsers.some((user) => {
+        const approverIsAuthorizedUser = scoped.appUsers.some((user) => {
           if (!user.active || user.nameAr !== approval.approvedBy.trim()) return false
           return effectivePermissionsFor(user, roles).has('inv.item.delete')
         })
@@ -4537,12 +5219,12 @@ export const useRawDataStore = create<DataState>()(
         // V1 (مراجعة المخزون): صنف له تاريخ حركة لا يُحذف — الحذف يفقد كروت الأصناف
         // والتقارير مرجعيتها ويترك 1103 بقيمة صنف شبح. البديل: تعطيل (أرشفة).
         const reasons: string[] = []
-        if (s.purchases.some((p) => p.lines.some((l) => l.itemId === id))) reasons.push('فواتير شراء')
-        if (s.sales.some((sl) => sl.lines.some((l) => l.itemId === id))) reasons.push('فواتير بيع')
-        if (s.stocktakes.some((st) => st.result.variances.some((v) => v.itemId === id))) reasons.push('تسويات جرد')
-        if (s.wastages.some((w) => w.lines.some((l) => l.itemId === id))) reasons.push('مستندات إتلاف')
-        if (s.consumptions.some((c) => c.lines.some((l) => l.itemId === id))) reasons.push('مستندات صرف داخلي')
-        if (s.transfers.some((t) => t.lines.some((l) => l.itemId === id))) reasons.push('تحويلات مخزنية')
+        if (scoped.purchases.some((p) => p.lines.some((l) => l.itemId === id))) reasons.push('فواتير شراء')
+        if (scoped.sales.some((sl) => sl.lines.some((l) => l.itemId === id))) reasons.push('فواتير بيع')
+        if (scoped.stocktakes.some((st) => st.result.variances.some((v) => v.itemId === id))) reasons.push('تسويات جرد')
+        if (scoped.wastages.some((w) => w.lines.some((l) => l.itemId === id))) reasons.push('مستندات إتلاف')
+        if (scoped.consumptions.some((c) => c.lines.some((l) => l.itemId === id))) reasons.push('مستندات صرف داخلي')
+        if (scoped.transfers.some((t) => t.lines.some((l) => l.itemId === id))) reasons.push('تحويلات مخزنية')
         if (reasons.length) throw new Error(`«${it.nameAr}» له ${reasons.join(' و')} — لا يُحذف حفاظاً على السجل؛ عطّله بدلاً من الحذف`)
         if ((it.stockQty ?? 0) !== 0) throw new Error(`«${it.nameAr}» رصيده ${it.stockQty} — صفّره أولاً (بيع/إتلاف/جرد) ثم احذفه، وإلا بقيت قيمة 1103 بلا صنف`)
         set({
@@ -6282,13 +6964,18 @@ export const useRawDataStore = create<DataState>()(
 
       setOpeningBalance: (args) => {
         const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const activeBranch = getEffectiveActiveBranch(state)
+        const openingState = activeBranch && !activeBranch.isMain
+          ? state.branchOpeningBalances[activeBranch.id] ?? { openingBalances: {}, openingItems: {}, declaredCapitalMinor: null }
+          : { openingBalances: state.openingBalances, openingItems: state.openingItems, declaredCapitalMinor: state.openingDeclaredCapitalMinor }
         const errors = validateOpening(args.kind, args.amountMinor)
-        // تحقق وجود المرجع قبل أي كتابة (فخ mobileshop: نجاح صامت لمعرّف شبح)
-        if (args.kind === 'customer' && !state.customers.some((c) => c.id === Number(args.refId))) errors.push('العميل غير موجود')
-        if (args.kind === 'supplier' && !state.suppliers.some((x) => x.id === Number(args.refId))) errors.push('المورد غير موجود')
-        if (args.kind === 'treasury' && !state.treasuries.some((t) => t.code === String(args.refId))) errors.push('الخزينة/البنك غير موجود')
-        if (args.kind === 'employee_advance' && !state.employees.some((e) => e.id === Number(args.refId))) errors.push('الموظف غير موجود')
-        if (args.kind === 'item_stock' && !state.items.some((it) => it.id === Number(args.refId))) errors.push('الصنف غير موجود')
+        // تحقق وجود المرجع في الفرع الحالي قبل أي كتابة (فخ mobileshop: نجاح صامت لمعرّف شبح)
+        if (args.kind === 'customer' && !scoped.customers.some((c) => c.id === Number(args.refId))) errors.push('العميل غير موجود في هذا الفرع')
+        if (args.kind === 'supplier' && !scoped.suppliers.some((x) => x.id === Number(args.refId))) errors.push('المورد غير موجود في هذا الفرع')
+        if (args.kind === 'treasury' && !scoped.treasuries.some((t) => t.code === String(args.refId))) errors.push('الخزينة/البنك غير موجودة في هذا الفرع')
+        if (args.kind === 'employee_advance' && !scoped.employees.some((e) => e.id === Number(args.refId))) errors.push('الموظف غير موجود في هذا الفرع')
+        if (args.kind === 'item_stock' && !scoped.items.some((it) => it.id === Number(args.refId))) errors.push('الصنف غير موجود في هذا الفرع')
         if (args.kind === 'account') {
           const acc = STANDARD_COA.find((a) => a.code === String(args.refId))
           if (!acc || !acc.isPostable) errors.push('الحساب غير موجود أو غير قابل للترحيل')
@@ -6297,7 +6984,7 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
 
         const key = openingKey(args.kind, args.refId)
-        const previous = state.openingBalances[key] ?? 0
+        const previous = openingState.openingBalances[key] ?? 0
         const delta = args.amountMinor - previous
         if (delta === 0) return // لا تغيير — لا قيد بلا أثر
 
@@ -6349,7 +7036,12 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         set({
-          openingBalances: { ...state.openingBalances, [key]: args.amountMinor },
+          ...(activeBranch && !activeBranch.isMain
+            ? { branchOpeningBalances: {
+                ...state.branchOpeningBalances,
+                [activeBranch.id]: { ...openingState, openingBalances: { ...openingState.openingBalances, [key]: args.amountMinor } },
+              } }
+            : { openingBalances: { ...state.openingBalances, [key]: args.amountMinor } }),
           journal: [...state.journal, entry],
           ...(args.kind === 'employee_advance' ? { employeeAdvances } : {}),
         })
@@ -6357,12 +7049,17 @@ export const useRawDataStore = create<DataState>()(
 
       setOpeningItemStock: (args) => {
         const state = get()
-        const item = state.items.find((it) => it.id === args.itemId)
-        if (!item) throw new Error('الصنف غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        const item = scoped.items.find((it) => it.id === args.itemId)
+        if (!item) throw new Error('الصنف غير موجود في هذا الفرع')
         if (item.isService) throw new Error('الخدمات لا تدخل المخزون — سجّل قيمتها من تبويب «حسابات عامة» (مصاريف مترحلة/أصول)')
         if (!Number.isFinite(args.qty) || args.qty < 0) throw new Error('الكمية الافتتاحية لا تكون سالبة')
         if (!Number.isInteger(args.unitCostMinor) || args.unitCostMinor < 0) throw new Error('تكلفة الوحدة لا تكون سالبة')
-        const prev = state.openingItems[args.itemId] ?? { qty: 0, unitCostMinor: 0 }
+        const activeBranch = getEffectiveActiveBranch(state)
+        const openingItems = activeBranch && !activeBranch.isMain
+          ? state.branchOpeningBalances[activeBranch.id]?.openingItems ?? {}
+          : state.openingItems
+        const prev = openingItems[args.itemId] ?? { qty: 0, unitCostMinor: 0 }
         const amountMinor = Math.round(args.qty * args.unitCostMinor)
         // الكمية الفعلية تعدَّل بالفرق من المرجع الافتتاحي — لا تُستبدل (المبيعات قد تكون استهلكت جزءاً)
         const deltaQty = Math.round((args.qty - prev.qty) * 1000) / 1000
@@ -6373,23 +7070,42 @@ export const useRawDataStore = create<DataState>()(
         // القيمة الدفترية بنفس مسار الافتتاحي المتوازن (1103/3101 بفرق القيمة)
         get().setOpeningBalance({ kind: 'item_stock', refId: args.itemId, amountMinor, label: item.nameAr })
         // التقييم المادي: تثبيت الكمية والتكلفة المرجعية للصنف + سجل الافتتاحي المادي
-        set((s) => ({
-          items: s.items.map((it) => (it.id === args.itemId ? { ...it, stockQty: newStockQty, costMinor: args.unitCostMinor } : it)),
-          openingItems: { ...s.openingItems, [args.itemId]: { qty: args.qty, unitCostMinor: args.unitCostMinor } },
-        }))
+        set((s) => {
+          const branch = getEffectiveActiveBranch(s)
+          if (branch && !branch.isMain) {
+            const current = s.branchOpeningBalances[branch.id] ?? { openingBalances: {}, openingItems: {}, declaredCapitalMinor: null }
+            return {
+              items: s.items.map((it) => (it.id === args.itemId ? { ...it, stockQty: newStockQty, costMinor: args.unitCostMinor } : it)),
+              branchOpeningBalances: { ...s.branchOpeningBalances, [branch.id]: { ...current, openingItems: { ...current.openingItems, [args.itemId]: { qty: args.qty, unitCostMinor: args.unitCostMinor } } } },
+            }
+          }
+          return {
+            items: s.items.map((it) => (it.id === args.itemId ? { ...it, stockQty: newStockQty, costMinor: args.unitCostMinor } : it)),
+            openingItems: { ...s.openingItems, [args.itemId]: { qty: args.qty, unitCostMinor: args.unitCostMinor } },
+          }
+        })
       },
 
       declareOpeningCapital: (declaredMinor) => {
         if (!Number.isInteger(declaredMinor) || declaredMinor < 0) throw new Error('رأس المال المعلن لا يكون سالباً')
         const state = get()
-        // رصيد 3101 الدفتري الحقيقي (يشمل إعلانات سابقة) — حقوق الملكية طبيعتها دائنة
+        const activeBranch = getEffectiveActiveBranch(state)
+        const scoped = getBranchScopedDataState(state)
+        const openingState = activeBranch && !activeBranch.isMain
+          ? state.branchOpeningBalances[activeBranch.id] ?? { openingBalances: {}, openingItems: {}, declaredCapitalMinor: null }
+          : { openingBalances: state.openingBalances, openingItems: state.openingItems, declaredCapitalMinor: state.openingDeclaredCapitalMinor }
+        // رصيد 3101 الدفتري الحقيقي في الفرع الحالي (يشمل إعلانات سابقة) — حقوق الملكية طبيعتها دائنة
         let capitalBalance = 0
-        for (const e of state.journal) for (const l of e.lines) {
+        for (const e of scoped.journal) for (const l of e.lines) {
           if (l.accountCode === '3101') capitalBalance += l.credit - l.debit
         }
         const lines = buildCapitalDeclarationEntry(declaredMinor, capitalBalance)
         if (lines.length === 0) {
-          set({ openingDeclaredCapitalMinor: declaredMinor })
+          if (activeBranch && !activeBranch.isMain) {
+            set({ branchOpeningBalances: { ...state.branchOpeningBalances, [activeBranch.id]: { ...openingState, declaredCapitalMinor: declaredMinor } } })
+          } else {
+            set({ openingDeclaredCapitalMinor: declaredMinor })
+          }
           return
         }
         const entryId = nextId(state.journal)
@@ -6409,7 +7125,9 @@ export const useRawDataStore = create<DataState>()(
         }
         set({
           journal: [...state.journal, entry],
-          openingDeclaredCapitalMinor: declaredMinor,
+          ...(activeBranch && !activeBranch.isMain
+            ? { branchOpeningBalances: { ...state.branchOpeningBalances, [activeBranch.id]: { ...openingState, declaredCapitalMinor: declaredMinor } } }
+            : { openingDeclaredCapitalMinor: declaredMinor }),
         })
       },
 
@@ -6623,7 +7341,7 @@ export const useRawDataStore = create<DataState>()(
           return doc
         } catch (e) {
           // استرجاع كامل — لا مرتجع يتيم بلا بيعه المقابل
-          useDataStore.setState(snapshot, true)
+          useRawDataStore.setState(snapshot, true)
           throw e
         }
       },
@@ -7744,6 +8462,7 @@ export const useRawDataStore = create<DataState>()(
       /* ─── المستخدمون وسجل النشاطات والبلاغات (طلب المالك) ─── */
       addAppUser: (u) => {
         const state = get()
+        assertCanManageUsers(state)
         // أمان: لا مستخدمين فرعيين قبل تحصين حساب المالك برقم سري — وإلا صار «المالك» باباً مفتوحاً بشاشة الدخول
         if (state.ownerPinHash == null) throw new Error('عيّن رقماً سرياً لحساب المالك أولاً (من نفس الشاشة) ثم أضف المستخدمين')
         const nameAr = sanitizeText(u.nameAr, 60)
@@ -7756,7 +8475,8 @@ export const useRawDataStore = create<DataState>()(
         // حماية بنيوية: الدور يجب أن يكون من كتالوج الأدوار (نظامية أو مخصصة) —
         // دور غير موجود يعني مستخدماً بلا صلاحيات بصمت، وهذا خطأ إدخال يُرفض مبكراً
         {
-          const knownRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+          const scoped = getBranchScopedDataState(state)
+          const knownRoles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
           if (!knownRoles.some((r) => r.id === u.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
         }
         // ربط الموظف (طلب المالك): حساب واحد لكل موظف — التكرار يعني خطأ إدخال
@@ -7765,7 +8485,12 @@ export const useRawDataStore = create<DataState>()(
           if (!linkedEmployee) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
           if (state.appUsers.some((x) => x.active && x.employeeId === u.employeeId)) throw new Error('لهذا الموظف حساب دخول نشط بالفعل')
         }
-        const resolvedBranchId = u.branchId !== undefined ? u.branchId : (linkedEmployee?.branchId ?? null)
+        const activeBranch = getEffectiveActiveBranch(state)
+        let resolvedBranchId = u.branchId !== undefined ? u.branchId : (linkedEmployee?.branchId ?? null)
+        if (activeBranch) {
+          if (resolvedBranchId != null && resolvedBranchId !== activeBranch.id) throw new Error('لا يمكن إنشاء مستخدم تابع لفرع آخر من هذا الفرع')
+          resolvedBranchId = activeBranch.id
+        }
         const user: AppUser = {
           id: nextId(state.appUsers), nameAr, roleId: u.roleId, pinHash: u.pinHash, active: true,
           employeeId: u.employeeId ?? null,
@@ -7781,6 +8506,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const user = state.appUsers.find((u) => u.id === userId)
         if (!user) throw new Error('المستخدم غير موجود')
+        if (state.currentUserId !== userId) throw new Error('يمكن للمستخدم تغيير رقمه السري لحسابه الحالي فقط')
         if (!newPinHash) throw new Error('الرقم الجديد مطلوب')
         if (newPinHash === user.pinHash) throw new Error('الرقم الجديد يطابق القديم — اختر رقماً مختلفاً')
         set({
@@ -7790,14 +8516,27 @@ export const useRawDataStore = create<DataState>()(
       },
       updateAppUser: (id, patch) => {
         const state = get()
+        assertCanManageUsers(state)
         const user = state.appUsers.find((u) => u.id === id)
         if (!user) throw new Error('المستخدم غير موجود')
-        if (user.roleId === 'owner' && patch.roleId && patch.roleId !== 'owner') {
-          throw new Error('حساب المالك لا يُخفَّض دوره — محمي بنيوياً')
+        if (user.roleId === 'owner' && patch.roleId && patch.roleId !== 'owner') throw new Error('حساب المالك لا يُخفَّض دوره — محمي بنيوياً')
+        assertAppUserInActiveBranch(state, user)
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && patch.branchId !== undefined && patch.branchId !== activeBranch.id) throw new Error('لا يمكن نقل مستخدم إلى فرع آخر من هذا الفرع')
+        if (patch.roleId === 'owner' && user.roleId !== 'owner') throw new Error('لا يمكن ترقية حساب مستخدم إلى المالك — حساب المالك يُنشأ بإجراء محمي')
+        if (patch.extraPerms !== undefined || patch.deniedPerms !== undefined) {
+          throw new Error('عدّل الاستثناءات عبر إجراء صلاحيات المستخدم المخصص')
+        }
+        if (patch.employeeId !== undefined && patch.employeeId != null) {
+          const employee = state.employees.find((row) => row.id === patch.employeeId && row.active)
+          if (!employee) throw new Error('الموظف المرتبط غير موجود أو غير نشط')
+          if (activeBranch && employee.branchId != null && employee.branchId !== activeBranch.id) throw new Error('لا يمكن ربط المستخدم بموظف من فرع آخر')
+          if (state.appUsers.some((row) => row.id !== id && row.active && row.employeeId === patch.employeeId)) throw new Error('لهذا الموظف حساب دخول نشط بالفعل')
         }
         // نفس حماية الإضافة: تغيير الدور إلى دور غير موجود في الكتالوج مرفوض
         if (patch.roleId && patch.roleId !== user.roleId) {
-          const knownRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+          const scoped = getBranchScopedDataState(state)
+          const knownRoles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
           if (!knownRoles.some((r) => r.id === patch.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
         }
         if (patch.treasuryAccess) {
@@ -7822,60 +8561,108 @@ export const useRawDataStore = create<DataState>()(
           refKey: `user:${user.id}:payment_terminal_access`,
         }]) : treasuryAudit
         set({ appUsers: nextUsers, auditLog: accessAudit })
+        syncAppBranchContext(get())
       },
       setRolePermissions: (roleId, permissions) => {
         // دور المالك محمي بنيوياً — أي محاولة تعديل تُرفض (صفر تجاوز)
         if (roleId === 'owner') throw new Error('دور المالك محمي — كل الصلاحيات دائماً')
         const state = get()
-        set({ roleOverrides: { ...state.roleOverrides, [roleId]: [...new Set(permissions)] } })
+        assertCanManageUsers(state)
+        const scoped = getBranchScopedDataState(state)
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (!rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId).some((role) => role.id === roleId)) {
+          throw new Error('الدور غير موجود في نطاق هذا الفرع')
+        }
+        const cleanPermissions = [...new Set(permissions)]
+        if (activeBranch) {
+          const current = state.branchRoleOverrides[activeBranch.id] ?? {}
+          set({ branchRoleOverrides: { ...state.branchRoleOverrides, [activeBranch.id]: { ...current, [roleId]: cleanPermissions } } })
+        } else {
+          set({ roleOverrides: { ...state.roleOverrides, [roleId]: cleanPermissions } })
+        }
       },
-      /* ─── أدوار مخصصة (نمط Square «Create permission set» — مراجعة المالك) ─── */
+      /* ─── أدوار مخصصة (محلية للفرع أو عامة في نطاق كل الفروع) ─── */
       addCustomRole: (nameAr, basedOnRoleId) => {
         const state = get()
+        assertCanManageUsers(state)
         const name = sanitizeText(nameAr, 40)
         if (!name) throw new Error('اكتب اسم الدور')
-        const allRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
-        if (allRoles.some((r) => r.nameAr === name)) throw new Error('يوجد دور بهذا الاسم بالفعل')
-        const seq = state.customRoles.reduce((m, r) => Math.max(m, Number(r.id.replace('custom_', '')) || 0), 0) + 1
+        const scopedRoles = getBranchScopedDataState(state)
+        const allRoles = rolesWithOverrides(scopedRoles.roleOverrides, scopedRoles.customRoles, appSetupForState(state).activityId)
+        if (allRoles.some((role) => role.nameAr === name)) throw new Error('يوجد دور بهذا الاسم بالفعل')
+        const seq = state.customRoles.reduce((m, role) => Math.max(m, Number(role.id.replace('custom_', '')) || 0), 0) + 1
         const id = `custom_${seq}`
-        // «ابدأ من دور موجود»: انسخ صلاحيات الدور الأساس ثم عدّل بحرية (أفضل ممارسة Toast/Square)
+        // «ابدأ من دور موجود»: انسخ صلاحيات الدور الأساس ثم عدّل بحرية.
         const base = basedOnRoleId && basedOnRoleId !== 'owner'
-          ? allRoles.find((r) => r.id === basedOnRoleId)?.permissions ?? []
+          ? allRoles.find((role) => role.id === basedOnRoleId)?.permissions ?? []
           : []
-        const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const requester = state.appUsers.find((user) => user.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const activeBranch = getEffectiveActiveBranch(state)
+        const customRole = { id, nameAr: name, ...(activeBranch ? { branchId: activeBranch.id } : {}) }
         set({
-          customRoles: [...state.customRoles, { id, nameAr: name }],
-          roleOverrides: { ...state.roleOverrides, [id]: [...new Set(base)] },
+          customRoles: [...state.customRoles, customRole],
+          ...(activeBranch
+            ? { branchRoleOverrides: { ...state.branchRoleOverrides, [activeBranch.id]: { ...(state.branchRoleOverrides[activeBranch.id] ?? {}), [id]: [...new Set(base)] } } }
+            : { roleOverrides: { ...state.roleOverrides, [id]: [...new Set(base)] } }),
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: requester, kind: 'auth', title: `أُنشئ دور مخصص «${name}»${basedOnRoleId ? ' نسخاً من دور موجود' : ''}` }]),
         })
         return id
       },
       renameCustomRole: (id, nameAr) => {
         const state = get()
+        assertCanManageUsers(state)
         const name = sanitizeText(nameAr, 40)
         if (!name) throw new Error('اكتب اسم الدور')
-        if (!state.customRoles.some((r) => r.id === id)) throw new Error('الدور غير موجود')
-        set({ customRoles: state.customRoles.map((r) => (r.id === id ? { ...r, nameAr: name } : r)) })
+        const role = state.customRoles.find((candidate) => candidate.id === id)
+        if (!role) throw new Error('الدور غير موجود')
+        assertCustomRoleManagementScope(state, role)
+        const scoped = getBranchScopedDataState(state)
+        if (rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+          .some((candidate) => candidate.id !== id && candidate.nameAr === name)) {
+          throw new Error('يوجد دور بهذا الاسم بالفعل في هذا النطاق')
+        }
+        set({ customRoles: state.customRoles.map((candidate) => (candidate.id === id ? { ...candidate, nameAr: name } : candidate)) })
       },
       removeCustomRole: (id) => {
         const state = get()
-        if (!state.customRoles.some((r) => r.id === id)) throw new Error('الدور غير موجود')
-        // حماية بنيوية: لا حذف لدور معيّن على مستخدم نشط — عيّن دوراً آخر أولاً
-        const holder = state.appUsers.find((u) => u.active && u.roleId === id)
+        assertCanManageUsers(state)
+        const role = state.customRoles.find((candidate) => candidate.id === id)
+        if (!role) throw new Error('الدور غير موجود')
+        assertCustomRoleManagementScope(state, role)
+        // لا حذف لدور معيّن على مستخدم نشط داخل نطاقه — عيّن دوراً آخر أولاً.
+        const roleBranch = role.branchId == null ? null : state.branches.find((branch) => branch.id === role.branchId) ?? null
+        const holder = state.appUsers.find((user) => user.active && user.roleId === id
+          && (roleBranch == null || appUserBelongsToBranch(user, state, roleBranch)))
         if (holder) throw new Error(`لا يمكن حذف الدور — «${holder.nameAr}» معيّن عليه. غيّر دوره أولاً`)
+        const requester = state.appUsers.find((user) => user.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const roleName = role.nameAr
+        if (role.branchId != null) {
+          const { [id]: _branchDrop, ...rest } = state.branchRoleOverrides[role.branchId] ?? {}
+          set({
+            customRoles: state.customRoles.filter((candidate) => candidate.id !== id),
+            branchRoleOverrides: { ...state.branchRoleOverrides, [role.branchId]: rest },
+            auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: requester, kind: 'auth', title: `حُذف الدور المخصص «${roleName}»` }]),
+          })
+          return
+        }
         const { [id]: _drop, ...restOverrides } = state.roleOverrides
-        const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
-        const roleName = state.customRoles.find((r) => r.id === id)?.nameAr ?? id
+        const branchRoleOverrides = Object.fromEntries(Object.entries(state.branchRoleOverrides).map(([branchId, overrides]) => {
+          const { [id]: _branchDrop, ...rest } = overrides
+          return [branchId, rest]
+        })) as DataState['branchRoleOverrides']
         set({
-          customRoles: state.customRoles.filter((r) => r.id !== id),
+          customRoles: state.customRoles.filter((candidate) => candidate.id !== id),
           roleOverrides: restOverrides,
+          branchRoleOverrides,
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: requester, kind: 'auth', title: `حُذف الدور المخصص «${roleName}»` }]),
         })
       },
       setUserPermExceptions: (id, extraPerms, deniedPerms) => {
         const state = get()
+        assertCanManageUsers(state)
         const user = state.appUsers.find((u) => u.id === id)
         if (!user) throw new Error('المستخدم غير موجود')
+        assertAppUserInActiveBranch(state, user)
         if (user.roleId === 'owner') throw new Error('حساب المالك لا تُحجب عنه صلاحية')
         set({
           appUsers: state.appUsers.map((u) => (u.id === id
@@ -7885,14 +8672,18 @@ export const useRawDataStore = create<DataState>()(
       },
       removeAppUser: (id) => {
         const state = get()
+        assertCanManageUsers(state)
         const user = state.appUsers.find((u) => u.id === id)
         if (!user) return
         if (user.roleId === 'owner') throw new Error('حساب المالك لا يُحذف')
+        assertAppUserInActiveBranch(state, user)
+        if (state.currentUserId === id) throw new Error('لا يمكن تعطيل حسابك النشط — سجّل الخروج واطلب من المالك إيقافه')
         // لا حذف فعلياً — تعطيل فقط ليبقى اسمه في سجل النشاطات القديم صحيحاً
         set({
           appUsers: state.appUsers.map((u) => (u.id === id ? { ...u, active: false } : u)),
           ...(state.currentUserId === id ? { currentUserId: null } : {}),
         })
+        syncAppBranchContext(get())
       },
       setCurrentUser: (id) => {
         const state = get()
@@ -7902,8 +8693,12 @@ export const useRawDataStore = create<DataState>()(
           throw new Error('تبديل المستخدم يتم من شاشة الدخول بالرقم السري — سجّل خروجاً ثم ادخل بالحساب الآخر')
         }
         set({ currentUserId: id })
+        syncAppBranchContext(get())
       },
       setOwnerPin: (pinHash) => {
+        const state = get()
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        if (activeUser && activeUser.roleId !== 'owner') throw new Error('تعديل رقم المالك متاح للمالك فقط')
         if (!pinHash) throw new Error('الرقم السري مطلوب')
         set({ ownerPinHash: pinHash, ownerTempPin: null })
       },
@@ -7972,7 +8767,7 @@ export const useRawDataStore = create<DataState>()(
           (phone && u.phone && u.phone.trim() === phone.trim())
           || (email && u.email && u.email.trim().toLowerCase() === email.trim().toLowerCase())
         ))
-        if (clash) throw new Error(`البيانات تتصادم مع حساب «${clash.nameAr}»`)
+        if (clash) throw new Error('البيانات تتصادم مع حساب آخر')
         const op = state.ownerProfile
         if ((phone && op.phone && op.phone.trim() === phone.trim()) || (email && op.email && op.email.trim().toLowerCase() === email.trim().toLowerCase())) {
           throw new Error('البيانات محجوزة — اختر هاتفاً/بريداً مختلفاً')
@@ -8002,6 +8797,11 @@ export const useRawDataStore = create<DataState>()(
         } else {
           const user = state.appUsers.find((u) => u.id === id && u.active)
           if (!user) throw new Error('مستخدم غير موجود أو معطل')
+          if (user.roleId !== 'owner' && state.branches.length > 0) {
+            const linkedEmployee = user.employeeId != null ? state.employees.find((employee) => employee.id === user.employeeId) : undefined
+            const branchId = user.branchId ?? linkedEmployee?.branchId ?? state.branches.find((branch) => branch.isMain)?.id
+            if (branchId == null || !state.branches.some((branch) => branch.id === branchId && branch.active)) throw new Error('فرع الحساب غير موجود أو متوقف — تواصل مع المالك')
+          }
           if (await verifyPin(pin, user.pinHash)) ok = true
           if (ok && user.mustChangePin) mustChangePin = true // أول دخول: تغيير الرقم إجباري
         }
@@ -8021,6 +8821,7 @@ export const useRawDataStore = create<DataState>()(
           ...(usedTempPin ? { ownerTempPin: null } : {}),
           auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: userName, kind: 'auth', title: usedTempPin ? 'دخول المالك برقم مؤقت (استعادة تليجرام)' : `تسجيل دخول «${userName}»` }]),
         })
+        syncAppBranchContext(get())
         return { usedTempPin, mustChangePin }
       },
       logout: () => {
@@ -8042,9 +8843,10 @@ export const useRawDataStore = create<DataState>()(
           set({ loginGuard: EMPTY_GUARD })
           return { approvedBy: 'المالك' }
         }
-        // 2) رقم أي مستخدم نشط مؤهل (owner أو يملك الصلاحية المطلوبة)
-        const roles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
-        for (const u of state.appUsers) {
+        // 2) رقم مستخدم نشط مؤهل من النطاق نفسه؛ لا يُقبل اعتماد مستخدم من فرع آخر.
+        const scopedState = getBranchScopedDataState(state)
+        const roles = rolesWithOverrides(scopedState.roleOverrides, scopedState.customRoles, appSetupForState(state).activityId)
+        for (const u of scopedState.appUsers) {
           if (!u.active) continue
           const perms = effectivePermissionsFor(u, roles)
           if (!isEligibleApprover(u, perms, permId)) continue
@@ -8066,18 +8868,25 @@ export const useRawDataStore = create<DataState>()(
       },
       markNotificationRead: (id) => {
         const state = get()
-        if (state.readNotificationIds.includes(id)) return
-        // سقف صيانة: أقدم المعرفات تُطوى بعد 500 (لا تضخم بلا حدود)
-        set({ readNotificationIds: [...state.readNotificationIds, id].slice(-500) })
+        if (scopedNotificationReadIds(state).includes(id)) return
+        set({ readNotificationIds: notificationReadIdsForStorage(state, [...scopedNotificationReadIds(state), id]) })
       },
       markAllNotificationsRead: (ids) => {
         const state = get()
-        set({ readNotificationIds: [...new Set([...state.readNotificationIds, ...ids])].slice(-500) })
+        set({ readNotificationIds: notificationReadIdsForStorage(state, [...scopedNotificationReadIds(state), ...ids]) })
       },
-      restoreNotifications: () => set({ readNotificationIds: [] }),
+      restoreNotifications: () => {
+        const state = get()
+        set({ readNotificationIds: clearNotificationReadScope(state) })
+      },
       requestPinReset: (userId) => {
         const state = get()
+        const activeUser = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
         const user = state.appUsers.find((u) => u.id === userId && u.active)
+        if (activeUser && activeUser.roleId !== 'owner') {
+          if (activeUser.id !== userId) throw new Error('لا يمكن طلب استعادة رقم مستخدم آخر')
+          if (user) assertAppUserInActiveBranch(state, user)
+        }
         const errors = validateResetRequest(state.pinResetRequests, userId, !!user)
         if (errors.length) throw new Error(errors.join(' — '))
         const req: PinResetRequest = {
@@ -8095,8 +8904,10 @@ export const useRawDataStore = create<DataState>()(
       },
       resolvePinReset: (requestId, action, newPinHash) => {
         const state = get()
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        if (activeUser && activeUser.roleId !== 'owner') throw new Error('اعتماد طلبات الاستعادة متاح للمالك فقط')
         const req = state.pinResetRequests.find((r) => r.id === requestId)
-        if (!req) throw new Error('الطلب غير موجود')
+        if (!req || !getBranchScopedDataState(state).pinResetRequests.some((row) => row.id === requestId)) throw new Error('الطلب غير موجود في هذا الفرع')
         if (req.status !== 'open') throw new Error('الطلب محسوم بالفعل')
         if (action === 'done') {
           if (!newPinHash) throw new Error('عيّن الرقم السري الجديد أولاً')
@@ -8111,7 +8922,12 @@ export const useRawDataStore = create<DataState>()(
           set({ pinResetRequests: state.pinResetRequests.map((r) => (r.id === requestId ? { ...r, status: 'cancelled' as const, resolvedAt: new Date().toISOString() } : r)) })
         }
       },
-      setOwnerTempPin: (t) => set({ ownerTempPin: t }),
+      setOwnerTempPin: (t) => {
+        const state = get()
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        if (activeUser && activeUser.roleId !== 'owner') throw new Error('إدارة رقم المالك المؤقت متاحة للمالك فقط')
+        set({ ownerTempPin: t })
+      },
       reportIssue: (input) => {
         const state = get()
         const errors = validateIssue(input)
@@ -8153,6 +8969,7 @@ export const useRawDataStore = create<DataState>()(
 
       addBranch: (input, maxBranchesAllowed) => {
         const state = get()
+        assertCanManageBranches(state)
         let warehouses = state.warehouses
         let treasuries = state.treasuries
         let branches = state.branches
@@ -8198,11 +9015,13 @@ export const useRawDataStore = create<DataState>()(
           activityId: input.activityId || null,
         }
         set({ warehouses, treasuries, branches: [...branches, branch] })
+        syncAppBranchContext(get())
         return branch
       },
 
       updateBranch: (id, patch) => {
         const state = get()
+        assertCanUpdateBranch(state, id, patch)
         const b = state.branches.find((x) => x.id === id)
         if (!b) throw new Error('الفرع غير موجود')
         const next: Branch = {
@@ -8216,14 +9035,27 @@ export const useRawDataStore = create<DataState>()(
         const errors = validateBranch(next, state.branches, state.warehouses, state.treasuries, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ branches: state.branches.map((x) => (x.id === id ? next : x)) })
+        syncAppBranchContext(get())
       },
 
       removeBranch: (id) => {
         const state = get()
+        assertCanManageBranches(state)
         const b = state.branches.find((x) => x.id === id)
         if (!b) throw new Error('الفرع غير موجود')
         const blocked = canRemoveBranch(b, state.branches)
         if (blocked) throw new Error(blocked)
+        const hasLinkedData = BRANCH_STAMP_ID_KEYS.some((key) => {
+          if (key === 'warehouses') return false // المخزن الافتراضي بنية للفرع، لا سجل تشغيل يمنع حذف فرع فارغ
+          const rows = (state as unknown as Record<string, unknown>)[key]
+          return Array.isArray(rows) && rows.some((row: { branchId?: number | string | null; warehouseId?: number | null }) =>
+            row.branchId === id || row.branchId === String(id) || (row.warehouseId != null && row.warehouseId === b.warehouseId),
+          )
+        }) || state.journal.some((entry) => entry.lines.some((line) => line.accountCode === b.treasuryCode))
+          || state.paymentTerminals.some((terminal) => terminal.branchId === String(id))
+          || state.paymentTerminalTransactions.some((transaction) => transaction.branchId === String(id))
+          || Boolean(state.branchOpeningBalances?.[id])
+        if (hasLinkedData) throw new Error('لا يمكن حذف فرع له مستخدمون أو سجلات تشغيلية — عطّله بدلاً من ذلك للحفاظ على تاريخه')
         const rest = state.branches.filter((x) => x.id !== id)
         const nextBranches = rest.length === 1 && rest[0].isMain ? [] : rest
         // حذف آخر فرع غير الرئيسي يعيد وضع الفرع الواحد (الرئيسي وحده بلا معنى)
@@ -8233,19 +9065,31 @@ export const useRawDataStore = create<DataState>()(
           treasuries: state.treasuries.map((t) => (t.branchId === id ? { ...t, branchId: null } : t)),
           activeBranchId: nextBranches.some((x) => x.id === state.activeBranchId) ? state.activeBranchId : null,
         })
+        useAppStore.getState().removeBranchBusinessProfile(id)
+        syncAppBranchContext(get())
       },
 
       setActiveBranchId: (id) => {
         const state = get()
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        if (activeUser && activeUser.roleId !== 'owner') {
+          const assignedBranch = getEffectiveActiveBranch(state)
+          if (id != null && id !== assignedBranch?.id) throw new Error('لا يمكن التبديل إلى فرع آخر')
+          return
+        }
         if (id != null && !state.branches.some((x) => x.id === id && x.active)) {
           set({ activeBranchId: null })
+          syncAppBranchContext(get())
           return
         }
         set({ activeBranchId: id })
+        syncAppBranchContext(get())
       },
 
       addPaymentTerminal: (terminal) => {
         const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && terminal.branchId !== String(activeBranch.id)) throw new Error('لا يمكن إنشاء ماكينة دفع مرتبطة بفرع آخر')
         const errors = validatePaymentTerminal(terminal, state.paymentTerminals, state.branches.length > 0)
         if (errors.length) throw new Error(errors.join(' — '))
         if (state.branches.length > 0 && !state.branches.some((branch) => String(branch.id) === terminal.branchId && branch.active)) throw new Error('فرع ماكينة الدفع غير موجود أو غير نشط')
@@ -8253,9 +9097,11 @@ export const useRawDataStore = create<DataState>()(
         set({ paymentTerminals: [...state.paymentTerminals, terminal] })
       },
       updatePaymentTerminal: (id, patch) => {
-        const state = get(); const current = state.paymentTerminals.find((row) => row.id === id)
-        if (!current) throw new Error('ماكينة الدفع غير موجودة')
+        const state = get(); const current = getBranchScopedDataState(state).paymentTerminals.find((row) => row.id === id)
+        if (!current) throw new Error('ماكينة الدفع غير موجودة في هذا الفرع')
+        const activeBranch = getEffectiveActiveBranch(state)
         const next = { ...current, ...patch }
+        if (activeBranch && next.branchId !== String(activeBranch.id)) throw new Error('لا يمكن نقل ماكينة دفع إلى فرع آخر')
         const errors = validatePaymentTerminal(next, state.paymentTerminals, state.branches.length > 0)
         if (errors.length) throw new Error(errors.join(' — '))
         if (state.branches.length > 0 && !state.branches.some((branch) => String(branch.id) === next.branchId && branch.active)) throw new Error('فرع ماكينة الدفع غير موجود أو غير نشط')
@@ -8264,14 +9110,19 @@ export const useRawDataStore = create<DataState>()(
       },
       removePaymentTerminal: (id) => {
         const state = get()
-        if (state.paymentTerminalTransactions.some((row) => row.terminalId === id)) throw new Error('لا يمكن حذف ماكينة لها عمليات؛ أوقفها بدلاً من ذلك')
-        const assigned = state.appUsers.filter((user) => user.active && user.paymentTerminalAccess?.grants.some((grant) => grant.terminalId === id)).map((user) => user.nameAr)
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.paymentTerminals.some((terminal) => terminal.id === id)) throw new Error('ماكينة الدفع غير موجودة في هذا الفرع')
+        if (scoped.paymentTerminalTransactions.some((row) => row.terminalId === id)) throw new Error('لا يمكن حذف ماكينة لها عمليات؛ أوقفها بدلاً من ذلك')
+        const assigned = scoped.appUsers.filter((user) => user.active && user.paymentTerminalAccess?.grants.some((grant) => grant.terminalId === id)).map((user) => user.nameAr)
         if (assigned.length) throw new Error(`لا يمكن حذف ماكينة مخصصة لمستخدم نشط: ${assigned.join('، ')}`)
         set({ paymentTerminals: state.paymentTerminals.filter((row) => row.id !== id) })
       },
       recordPaymentTerminalTransaction: (transaction) => {
-        const state = get(); const terminal = state.paymentTerminals.find((row) => row.id === transaction.terminalId)
-        if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+        const state = get()
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && transaction.branchId !== String(activeBranch.id)) throw new Error('لا يمكن تسجيل عملية دفع في فرع آخر')
+        const terminal = getBranchScopedDataState(state).paymentTerminals.find((row) => row.id === transaction.terminalId)
+        if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة في هذا الفرع')
         if (terminal.branchId !== transaction.branchId) throw new Error('فرع العملية لا يطابق فرع ماكينة الدفع')
         if (state.paymentTerminalTransactions.some((row) => row.id === transaction.id || row.idempotencyKey === transaction.idempotencyKey)) throw new Error('عملية الدفع مسجلة مسبقاً')
         if (state.paymentTerminalTransactions.some((row) => row.terminalId === transaction.terminalId && row.providerReference === transaction.providerReference && row.kind === transaction.kind)) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
@@ -8284,8 +9135,8 @@ export const useRawDataStore = create<DataState>()(
         set({ paymentTerminalTransactions: [...state.paymentTerminalTransactions, transaction] })
       },
       recordPaymentTerminalSettlement: (input) => {
-        const state = get(); const terminal = state.paymentTerminals.find((row) => row.id === input.terminalId)
-        if (!terminal) throw new Error('ماكينة الدفع غير موجودة')
+        const state = get(); const terminal = getBranchScopedDataState(state).paymentTerminals.find((row) => row.id === input.terminalId)
+        if (!terminal) throw new Error('ماكينة الدفع غير موجودة في هذا الفرع')
         if (state.paymentTerminalSettlements.some((row) => row.id === input.id)) throw new Error('التسوية مسجلة مسبقاً')
         const linkErrors = validateSettlementTransactions(input.transactionIds); if (linkErrors.length) throw new Error(linkErrors.join(' — '))
         const alreadySettled = new Set(state.paymentTerminalSettlements.flatMap((row) => row.transactionIds))
@@ -8332,6 +9183,7 @@ export const useRawDataStore = create<DataState>()(
 
       renameTreasury: (code, nameAr, extra) => {
         const state = get()
+        if (!getBranchScopedDataState(state).treasuries.some((treasury) => treasury.code === code)) throw new Error('الخزينة غير موجودة في هذا الفرع')
         const errors = validateTreasury(nameAr, getBranchScopedDataState(state).treasuries, code)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ treasuries: state.treasuries.map((t) => (t.code === code ? { ...t, ...extra, nameAr: nameAr.trim() } : t)) })
@@ -8339,6 +9191,7 @@ export const useRawDataStore = create<DataState>()(
 
       removeTreasury: (code) => {
         const state = get()
+        if (!getBranchScopedDataState(state).treasuries.some((treasury) => treasury.code === code)) throw new Error('الخزينة غير موجودة في هذا الفرع')
         const t = state.treasuries.find((x) => x.code === code)
         if (!t) throw new Error('الخزينة غير موجودة')
         if (t.code === '1101' || t.code === '1102') throw new Error('الخزينة الرئيسية والبنك الرئيسي لا يُحذفان')
@@ -8349,8 +9202,11 @@ export const useRawDataStore = create<DataState>()(
         set({ treasuries: state.treasuries.filter((x) => x.code !== code) })
       },
       removeWarehouse: (id) => {
+        const state = get()
+        if (!getBranchScopedDataState(state).warehouses.some((warehouse) => warehouse.id === id)) throw new Error('المخزن غير موجود في هذا الفرع')
+        if (state.branches.some((branch) => branch.warehouseId === id)) throw new Error('مخزن الفرع الأساسي لا يُحذف — غيّر ربط الفرع أولاً بصلاحية المالك')
         // حارس §80: الرئيسي لا يُحذف — كان الفلتر يبتلع الطلب بصمت فيوهم المستخدم بالحذف
-        if (get().warehouses.some((w) => w.id === id && w.isMain)) throw new Error('المخزن الرئيسي لا يُحذف — أنشئ مخزناً آخر وحوّل الأدوار إن أردت')
+        if (state.warehouses.some((w) => w.id === id && w.isMain)) throw new Error('المخزن الرئيسي لا يُحذف — أنشئ مخزناً آخر وحوّل الأدوار إن أردت')
         const used = get().transfers.some((t) => t.fromWarehouseId === id || t.toWarehouseId === id)
         if (used) throw new Error('لا يمكن حذف مخزن له تحويلات مسجلة — احتفظ به للسجل')
         set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id) }))
@@ -8441,7 +9297,8 @@ export const useRawDataStore = create<DataState>()(
         if (!nameAr) throw new Error('اسم الموظف مطلوب')
         if (getBranchScopedDataState(state).employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
         if (e.roleId != null) {
-          const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === e.roleId)
+          const scoped = getBranchScopedDataState(state)
+          const role = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId).find((r) => r.id === e.roleId)
           if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
         }
         /* تحصين: أي حقل مبلغ ناقص يصير صفراً بدل NaN يكسر شاشة الموظفين لاحقاً */
@@ -8484,7 +9341,8 @@ export const useRawDataStore = create<DataState>()(
           patch = { ...patch, nameAr }
         }
         if (patch.roleId !== undefined && patch.roleId != null) {
-          const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === patch.roleId)
+          const scoped = getBranchScopedDataState(state)
+          const role = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId).find((r) => r.id === patch.roleId)
           if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
         }
         const linkedUser = state.appUsers.find((user) => user.active && user.employeeId === id)
@@ -8715,7 +9573,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getEmployeeAdvanceBalance: (employeeId) => {
-        const advances = get().employeeAdvances.filter((a) => a.employeeId === employeeId)
+        const advances = getBranchScopedDataState(get()).employeeAdvances.filter((a) => a.employeeId === employeeId)
         const totalMinor = advances.reduce((s2, a) => s2 + a.amountMinor, 0)
         const remainingMinor = advances.reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
         return { totalMinor, remainingMinor, advances }
@@ -8739,7 +9597,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getEmployeeDeductionBalance: (employeeId) => {
-        const deductions = get().employeeDeductions.filter((d) => d.employeeId === employeeId)
+        const deductions = getBranchScopedDataState(get()).employeeDeductions.filter((d) => d.employeeId === employeeId)
         const totalMinor = deductions.reduce((s2, d) => s2 + d.amountMinor, 0)
         // المتبقي يستثني المعفو عنه (المعفو لا يُخصم أبداً)
         const remainingMinor = deductions.reduce((s2, d) => s2 + (d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)), 0)
@@ -8870,7 +9728,7 @@ export const useRawDataStore = create<DataState>()(
 
       getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),
       getEmployeeStatementRows: (employeeId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const rows: { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[] = []
         /* ── §91: فواتير البيع الآجلة للموظف (على جاريه 1107) — تُسترد من مسير رواتبه ── */
         for (const sale of state.sales.filter((sl) => sl.partyKind === 'employee' && sl.partyId === employeeId)) {
@@ -8999,7 +9857,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getCustomerStatementRows: (customerId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         return customerStatement({
           customerId,
           openingMinor: state.openingBalances[`customer:${customerId}`] ?? 0,
@@ -9054,7 +9912,7 @@ export const useRawDataStore = create<DataState>()(
       getSupplierBalance: (supplierId) => statementBalance(get().getSupplierStatementRows(supplierId)),
 
       getSupplierStatementRows: (supplierId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         return supplierStatement({
           supplierId,
           openingMinor: state.openingBalances[`supplier:${supplierId}`] ?? 0,
@@ -9130,7 +9988,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getEmployeeExcessDue: (employeeId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         // المستحق = زيادات مصاريف عهد الموظف (2107) − ما صُرف له بالمسيرات
         const fileIds = new Set(state.custodyFiles.filter((f) => f.employeeId === employeeId).map((f) => f.id))
         const accrued = state.custodyTxs.filter((t) => fileIds.has(t.fileId)).reduce((s2, t) => s2 + t.excessMinor, 0)
@@ -9820,7 +10678,7 @@ export const useRawDataStore = create<DataState>()(
         return updatedRecord
       },
       getDriverDueBalance: (driverId) => {
-        return get().driverDues.filter((d) => d.driverId === driverId && !d.settled).reduce((s2, d) => s2 + d.amountMinor, 0)
+        return getBranchScopedDataState(get()).driverDues.filter((d) => d.driverId === driverId && !d.settled).reduce((s2, d) => s2 + d.amountMinor, 0)
       },
       settleDriverDues: (driverId, treasury = '1101') => {
         const state = get()
@@ -10025,7 +10883,7 @@ export const useRawDataStore = create<DataState>()(
         return order
       },
       getClaimBalance: (providerId) => {
-        return get().insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
+        return getBranchScopedDataState(get()).insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
       },
       settleInsuranceClaims: (providerId, treasury = '1101', terminalPayment) => {
         const state = get()
@@ -10063,12 +10921,15 @@ export const useRawDataStore = create<DataState>()(
       /* ─── مصفوفة المتغيرات لون×مقاس (ملابس) ─── */
       setVariantStock: (itemId, color, size, qty) => {
         const state = get()
-        const item = state.items.find((it) => it.id === itemId)
-        if (!item) throw new Error('الصنف غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        const item = scoped.items.find((it) => it.id === itemId)
+        if (!item) throw new Error('الصنف غير موجود في هذا الفرع')
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && !belongsToBranch(item, activeBranch, state.branches)) throw new Error('لا يمكن تعديل متغيرات صنف تابع لفرع آخر')
         const errors = validateVariantAssignment({
           color, size, qty,
           itemColors: item.variantColors, itemSizes: item.variantSizes,
-          itemStockQty: item.stockQty ?? 0, currentStocks: state.variantStocks, itemId,
+          itemStockQty: item.stockQty ?? 0, currentStocks: scoped.variantStocks, itemId,
         })
         if (errors.length) throw new Error(errors.join('، '))
         const key = variantKey(color, size)
@@ -10077,7 +10938,7 @@ export const useRawDataStore = create<DataState>()(
         set({ variantStocks: next })
       },
       getUndistributedQty: (itemId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const item = state.items.find((it) => it.id === itemId)
         if (!item) throw new Error('الصنف غير موجود')
         return undistributedQty(item.stockQty ?? 0, state.variantStocks, itemId)
@@ -10443,7 +11304,7 @@ export const useRawDataStore = create<DataState>()(
         return cost
       },
       getEquipmentProfit: (equipmentId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         if (!state.equipment.some((e) => e.id === equipmentId)) throw new Error('المعدة غير موجودة')
         let rent = 0, extra = 0, contractHours = 0
         for (const c of state.rentalContracts) {
@@ -10969,11 +11830,11 @@ export const useRawDataStore = create<DataState>()(
         return settled
       },
 
-      getCustodySummary: (fileId) => summarizeCustody(get().custodyTxs.filter((t) => t.fileId === fileId)),
+      getCustodySummary: (fileId) => summarizeCustody(getBranchScopedDataState(get()).custodyTxs.filter((t) => t.fileId === fileId)),
 
       /* ═══ §93: خزائن العملات الأجنبية — أرصدة مذكرة مشتقة من المستندات (طلب المالك) ═══ */
       getFxFlows: () => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const book = bookCurrencyOf()
         const flows: FxFlow[] = []
         /* مبيعات حُصّلت بعملة أجنبية — دخول بسعر التحصيل (قيمته الدفترية يومها) */
@@ -11305,7 +12166,7 @@ export const useRawDataStore = create<DataState>()(
         set({ projectBudgets: [...others, ...fresh] })
       },
       getProjectBudgetVariance: (projectId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         return budgetVarianceReport(
           state.projectBudgets.filter((b) => b.projectId === projectId),
           state.projectCosts
@@ -11609,7 +12470,7 @@ export const useRawDataStore = create<DataState>()(
         if (amount > remaining) throw new Error(`المبلغ أكبر من متبقي القسط (${remaining})`)
         const property = state.properties.find((p) => p.id === lease.propertyId)!
         // السعودية: أجرة السكني معفاة من ض.ق.م — السعي (العمولة) خاضع دوماً عند التسجيل
-        const vatPercent = useAppStore.getState().setup.vatPercent
+        const vatPercent = appSetupForState(state).vatPercent ?? 0
         const commissionBase = property.ownership === 'managed' ? Math.round(amount * property.commissionPercent / 100) : 0
         const vatOnCommission = property.ownership === 'managed' && vatPercent > 0 ? Math.round(commissionBase * vatPercent / 100) : 0
         const vatOnRent = property.ownership === 'owned' && args.vatOnRent ? Math.round(amount * vatPercent / 100) : 0
@@ -11648,7 +12509,7 @@ export const useRawDataStore = create<DataState>()(
         return { paidMinor: amount, commissionMinor, ownerShareMinor }
       },
       getOwnerBalance: (propertyId) => {
-        return get().ownerTxns.filter((t) => t.propertyId === propertyId)
+        return getBranchScopedDataState(get()).ownerTxns.filter((t) => t.propertyId === propertyId)
           .reduce((s, t) => s + (t.kind === 'collection' ? t.amountMinor : -t.amountMinor), 0)
       },
       payPropertyOwner: (args) => {
@@ -11780,10 +12641,11 @@ export const useRawDataStore = create<DataState>()(
       },
       addProjectCost: (args) => {
         const state = get()
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
+        const branchState = getBranchScopedDataState(state)
+        const project = branchState.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
-        if (args.costCenterId != null && !state.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
+        if (args.costCenterId != null && !branchState.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
         // دعم فاتورة مصروفات متعددة البنود (شامل/غير شامل/بدون ضريبة) مع توافق كامل مع البند المفرد
         let netCostMinor = args.amountMinor ?? 0
         let vatCostMinor = args.inputVatMinor ?? 0
@@ -11798,31 +12660,48 @@ export const useRawDataStore = create<DataState>()(
           resolvedDescription = resolvedDescription || inv.summaryDescription
           computedLines = inv.lines
         }
-        // الدفع من عهدة موظف (طلب المالك): تُفحص وتُخصم من ملفه بدل الخزينة
-        let custodyFile: CustodyFile | null = null
-        if (args.payment === 'cash' && args.custodyFileId != null) {
-          custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
-          if (!custodyFile) throw new Error('ملف العهدة غير موجود')
-          assertFileOpen(custodyFile)
-          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
-          if (netCostMinor + vatCostMinor > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
-        }
-        const payAccount = custodyFile ? CUSTODY_ACCOUNT : (args.treasury ?? '1101')
-        // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102
+        // مبلغ السداد صريح؛ إذا لم يصل من عميل قديم تبقى قاعدة التوافق النقدي/الآجل.
         const grossCostMinor = netCostMinor + vatCostMinor
         const paidCostMinor = args.paidMinor ?? (args.payment === 'cash' ? grossCostMinor : 0)
+        if (!Number.isInteger(paidCostMinor) || paidCostMinor < 0 || paidCostMinor > grossCostMinor) {
+          throw new Error('المبلغ المدفوع يجب أن يكون بين صفر وإجمالي المصروف')
+        }
         const dueCostMinor = grossCostMinor - paidCostMinor
-        // الجزء الآجل يُحمَّل على مورد/مقاول باطن مسجل ليظهر في كشف حسابه (قاعدة موحدة لكل الأنشطة)
-        if (args.supplierId != null && !state.suppliers.some((row) => row.id === args.supplierId)) throw new Error('المورد غير موجود في سجل الموردين')
-        if (custodyFile && dueCostMinor > 0) throw new Error('الدفع من العهدة لا يقبل جزءاً آجلاً — افصل المستند')
-        const lines = buildProjectCostEntry(netCostMinor, args.payment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor).map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
+
+        // الجهة التي تتحمل المتبقي إلزامية؛ لا نرحّل ذمة 2101 بلا مورد ظاهر في كشفه.
+        const supplier = args.supplierId == null ? null : branchState.suppliers.find((row) => row.id === args.supplierId)
+        if (args.supplierId != null && !supplier) throw new Error('المورد غير موجود في سجل هذا الفرع')
+        if (dueCostMinor > 0 && !supplier) throw new Error('المتبقي الآجل يتطلب اختيار المورد أو الجهة التي تتحمله ليظهر في كشف حسابها')
+
+        // ملف العهدة يسدد الجزء المدفوع فقط، لا كامل الفاتورة؛ وما تبقى يظل دائناً للمورد.
+        let custodyFile: CustodyFile | null = null
+        if (paidCostMinor > 0 && args.custodyFileId != null) {
+          custodyFile = branchState.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
+          if (!custodyFile) throw new Error('ملف العهدة غير موجود في هذا الفرع')
+          assertFileOpen(custodyFile)
+          const remaining = summarizeCustody(branchState.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+          if (paidCostMinor > remaining) throw new Error(`المبلغ المدفوع من العهدة أكبر من المتبقي في ملفها (${remaining})`)
+        }
+
+        const treasuryCode = args.treasury ?? '1101'
+        if (paidCostMinor > 0 && !custodyFile) {
+          if (!branchState.treasuries.some((treasury) => treasury.code === treasuryCode)) throw new Error('خزينة الدفع غير موجودة في هذا الفرع')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          const accessErrors = validateTreasuryAccess(activeUser?.treasuryAccess, treasuryCode, 'payment', paidCostMinor)
+          if (accessErrors.length) throw new Error(accessErrors.join(' — '))
+        }
+        const payAccount = custodyFile ? CUSTODY_ACCOUNT : treasuryCode
+        const resolvedPayment = dueCostMinor === 0 ? 'cash' : paidCostMinor === 0 ? 'credit' : 'mixed'
+        // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102.
+        const lines = buildProjectCostEntry(netCostMinor, resolvedPayment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor)
+          .map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
         const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
+          description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — دفع من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -11835,18 +12714,18 @@ export const useRawDataStore = create<DataState>()(
           ...(vatCostMinor > 0 ? { vatMinor: vatCostMinor } : {}),
           grossMinor: grossCostMinor,
           ...(computedLines ? { lines: computedLines } : {}),
-          treasury: custodyFile ? null : payAccount,
+          treasury: custodyFile || paidCostMinor === 0 ? null : payAccount,
           custodyFileId: custodyFile ? custodyFile.id : null,
-          payment: dueCostMinor === 0 ? 'cash' : paidCostMinor === 0 ? 'credit' : 'mixed',
+          payment: resolvedPayment,
           paidMinor: paidCostMinor, dueMinor: dueCostMinor, supplierId: args.supplierId ?? null,
           journalEntryId: entryId,
         }
         let custodyTxs = state.custodyTxs
-        if (custodyFile) {
-          custodyTxs = [...custodyTxs, {
-            id: nextId(custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
-            date: now.slice(0, 10), amountMinor: grossCostMinor, excessMinor: 0,
-            description: `تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
+        if (custodyFile && paidCostMinor > 0) {
+          custodyTxs = [...state.custodyTxs, {
+            id: nextId(state.custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
+            date: now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
+            description: `المدفوع من تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]
         }
@@ -11887,7 +12766,7 @@ export const useRawDataStore = create<DataState>()(
         return { amount: remaining }
       },
       getProjectCostBreakdown: (projectId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         /* تصنيف بنود projectCosts بوسم المصدر — لا جمع فوقها (التدفقات الآلية
            تُنشئ بندها هنا مباشرة منذ نشأتها) */
         const rows = state.projectCosts.filter((c) => c.projectId === projectId)
@@ -11912,7 +12791,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getProjectProfit: (projectId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
@@ -12045,7 +12924,7 @@ export const useRawDataStore = create<DataState>()(
         })
       },
       getAdvanceBalance: (projectId) => {
-        return get().clientAdvances.filter((a) => a.projectId === projectId).reduce((s, a) => s + a.amountMinor - a.recoveredMinor, 0)
+        return getBranchScopedDataState(get()).clientAdvances.filter((a) => a.projectId === projectId).reduce((s, a) => s + a.amountMinor - a.recoveredMinor, 0)
       },
 
       addSubContract: (args) => {
@@ -12426,7 +13305,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getOpenClientInvoices: (customerId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         // المُحصَّل سابقاً لكل مستند من سجلات التحصيل
         const settled = new Map<string, number>()
         for (const st of state.clientSettlements) {
@@ -12493,7 +13372,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getOpenSupplierInvoices: (supplierId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const settled = new Map<string, number>()
         for (const voucher of state.vouchers) {
           if (voucher.reversalEntryId || voucher.kind !== 'payment' || voucher.partyKind !== 'supplier' || voucher.partyId !== supplierId) continue
@@ -12597,7 +13476,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getSubAdvanceBalance: (contractId) => {
-        return get().subAdvances.filter((a) => a.contractId === contractId).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
+        return getBranchScopedDataState(get()).subAdvances.filter((a) => a.contractId === contractId).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
       },
 
       remitWithholdingTax: (treasury) => {
@@ -12623,7 +13502,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getProjectEvm: (projectId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
         const evmLines = state.boqItems
@@ -12635,12 +13514,13 @@ export const useRawDataStore = create<DataState>()(
 
       setApprovalFlow: (action, steps, active) => {
         const state = get()
+        const scoped = getBranchScopedDataState(state)
         const errors = validateApprovalFlow(steps)
         if (errors.length) throw new Error(errors.join(' — '))
         for (const st of steps) {
-          if (st.employeeId != null && !state.employees.find((e) => e.id === st.employeeId)) throw new Error(`موظف المستوى «${st.roleAr}» غير موجود`)
+          if (st.employeeId != null && !scoped.employees.find((e) => e.id === st.employeeId)) throw new Error(`موظف المستوى «${st.roleAr}» غير موجود في هذا الفرع`)
         }
-        const existing = state.approvalFlows.find((f) => f.action === action)
+        const existing = scoped.approvalFlows.find((f) => f.action === action)
         const flow: ApprovalFlow = {
           id: existing?.id ?? nextId(state.approvalFlows),
           action,
@@ -12653,9 +13533,10 @@ export const useRawDataStore = create<DataState>()(
 
       requestApproval: (action, subject, refId) => {
         const state = get()
-        const flow = state.approvalFlows.find((f) => f.action === action && f.active)
+        const scoped = getBranchScopedDataState(state)
+        const flow = scoped.approvalFlows.find((f) => f.action === action && f.active)
         if (!flow) throw new Error(`لا مسار موافقات نشطاً للإجراء «${APPROVAL_ACTION_LABELS[action]}»`)
-        const duplicate = state.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'pending')
+        const duplicate = scoped.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'pending')
         if (duplicate) throw new Error('يوجد طلب اعتماد معلق لنفس المستند')
         const req: ApprovalRequest = {
           id: nextId(state.approvalRequests), action, subject, refId,
@@ -12720,7 +13601,7 @@ export const useRawDataStore = create<DataState>()(
         set({ recipes: state.recipes.filter((r) => r.id !== id) })
       },
       getRecipeUnitCost: (recipeId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const r = state.recipes.find((x) => x.id === recipeId)
         if (!r) throw new Error('الوصفة غير موجودة')
         return recipeUnitCostMinor(r, (id) => state.items.find((it) => it.id === id)?.costMinor ?? 0)
@@ -12918,9 +13799,16 @@ export const useRawDataStore = create<DataState>()(
       repriceJewelry: () => {
         const state = get()
         if (!state.gramPrices.updatedAt) throw new Error('حدّث أسعار الجرام أولاً')
+        const scoped = getBranchScopedDataState(state)
+        const activeBranch = getEffectiveActiveBranch(state)
+        const ownedItemIds = new Set(scoped.items
+          .filter((item) => !activeBranch || belongsToBranch(item, activeBranch, state.branches))
+          .map((item) => item.id))
+        const profiles = state.jewelryProfiles.filter((profile) => ownedItemIds.has(profile.itemId))
         let count = 0
         const updated = state.items.map((it) => {
-          const prof = state.jewelryProfiles.find((p) => p.itemId === it.id)
+          if (!ownedItemIds.has(it.id)) return it
+          const prof = profiles.find((p) => p.itemId === it.id)
           if (!prof) return it
           const newPrice = jewelryPriceMinor(prof, state.gramPrices)
           if (newPrice === it.priceMinor) return it
@@ -12932,8 +13820,11 @@ export const useRawDataStore = create<DataState>()(
       },
       setJewelryProfile: (profile) => {
         const state = get()
-        const item = state.items.find((it) => it.id === profile.itemId)
-        if (!item) throw new Error('الصنف غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        const item = scoped.items.find((it) => it.id === profile.itemId)
+        if (!item) throw new Error('الصنف غير موجود في هذا الفرع')
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && !belongsToBranch(item, activeBranch, state.branches)) throw new Error('لا يمكن تعديل وصف صنف تابع لفرع آخر')
         const errors = validateProfile(profile)
         if (errors.length) throw new Error(errors.join('، '))
         const exists = state.jewelryProfiles.some((p) => p.itemId === profile.itemId)
@@ -12946,7 +13837,15 @@ export const useRawDataStore = create<DataState>()(
           : state.items
         set({ jewelryProfiles: profiles, items })
       },
-      removeJewelryProfile: (itemId) => set((s) => ({ jewelryProfiles: s.jewelryProfiles.filter((p) => p.itemId !== itemId) })),
+      removeJewelryProfile: (itemId) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const item = scoped.items.find((row) => row.id === itemId)
+        if (!item) throw new Error('الصنف غير موجود في هذا الفرع')
+        const activeBranch = getEffectiveActiveBranch(state)
+        if (activeBranch && !belongsToBranch(item, activeBranch, state.branches)) throw new Error('لا يمكن حذف وصف صنف تابع لفرع آخر')
+        set({ jewelryProfiles: state.jewelryProfiles.filter((profile) => profile.itemId !== itemId) })
+      },
       buyScrap: (args) => {
         const state = get()
         if (!(args.weightGrams > 0)) throw new Error('الوزن يجب أن يكون أكبر من صفر')
@@ -13048,7 +13947,7 @@ export const useRawDataStore = create<DataState>()(
           set({ goldTradeIns: [...afterState.goldTradeIns, doc] })
           return doc
         } catch (e) {
-          useDataStore.setState(snapshot, true)
+          useRawDataStore.setState(snapshot, true)
           throw e
         }
       },
@@ -13056,7 +13955,8 @@ export const useRawDataStore = create<DataState>()(
       /* ─── قوائم الأسعار (جملة/نصف جملة/VIP) ─── */
       addPriceList: (nameAr, defaultDiscountPercent) => {
         const state = get()
-        const errors = validatePriceList(nameAr, defaultDiscountPercent, state.priceLists)
+        const scoped = getBranchScopedDataState(state)
+        const errors = validatePriceList(nameAr, defaultDiscountPercent, scoped.priceLists)
         if (errors.length) throw new Error(errors.join('، '))
         const list: PriceList = { id: nextId(state.priceLists), nameAr: nameAr.trim(), defaultDiscountPercent, isActive: true }
         set({ priceLists: [...state.priceLists, list] })
@@ -13064,15 +13964,23 @@ export const useRawDataStore = create<DataState>()(
       },
       updatePriceList: (id, nameAr, defaultDiscountPercent) => {
         const state = get()
-        if (!state.priceLists.some((l) => l.id === id)) throw new Error('القائمة غير موجودة')
-        const errors = validatePriceList(nameAr, defaultDiscountPercent, state.priceLists, id)
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.priceLists.some((l) => l.id === id)) throw new Error('القائمة غير موجودة في هذا الفرع')
+        const errors = validatePriceList(nameAr, defaultDiscountPercent, scoped.priceLists, id)
         if (errors.length) throw new Error(errors.join('، '))
         set({ priceLists: state.priceLists.map((l) => (l.id === id ? { ...l, nameAr: nameAr.trim(), defaultDiscountPercent } : l)) })
       },
-      togglePriceList: (id) => set((s) => ({ priceLists: s.priceLists.map((l) => (l.id === id ? { ...l, isActive: !l.isActive } : l)) })),
+      togglePriceList: (id) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.priceLists.some((l) => l.id === id)) throw new Error('القائمة غير موجودة في هذا الفرع')
+        set({ priceLists: state.priceLists.map((l) => (l.id === id ? { ...l, isActive: !l.isActive } : l)) })
+      },
       removePriceList: (id) => {
         const state = get()
-        if (state.customers.some((c) => c.priceListId === id)) throw new Error('عملاء مربوطون بهذه القائمة — انقلهم أولاً أو عطّلها')
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.priceLists.some((l) => l.id === id)) throw new Error('القائمة غير موجودة في هذا الفرع')
+        if (scoped.customers.some((c) => c.priceListId === id)) throw new Error('عملاء مربوطون بهذه القائمة — انقلهم أولاً أو عطّلها')
         set({
           priceLists: state.priceLists.filter((l) => l.id !== id),
           priceListEntries: state.priceListEntries.filter((e) => e.listId !== id),
@@ -13081,8 +13989,9 @@ export const useRawDataStore = create<DataState>()(
       },
       setPriceListEntry: (listId, itemId, priceMinor) => {
         const state = get()
-        if (!state.priceLists.some((l) => l.id === listId)) throw new Error('القائمة غير موجودة')
-        if (!state.items.some((it) => it.id === itemId)) throw new Error('الصنف غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.priceLists.some((l) => l.id === listId)) throw new Error('القائمة غير موجودة في هذا الفرع')
+        if (!scoped.items.some((it) => it.id === itemId)) throw new Error('الصنف غير موجود في هذا الفرع')
         const rest = state.priceListEntries.filter((e) => !(e.listId === listId && e.itemId === itemId))
         if (priceMinor == null) { set({ priceListEntries: rest }); return }
         if (!(priceMinor > 0)) throw new Error('السعر يجب أن يكون أكبر من صفر')
@@ -13090,8 +13999,9 @@ export const useRawDataStore = create<DataState>()(
       },
       setPriceListCategoryRule: (listId, categoryId, discountPercent) => {
         const state = get()
-        if (!state.priceLists.some((l) => l.id === listId)) throw new Error('القائمة غير موجودة')
-        if (!state.categories.some((category) => category.id === categoryId)) throw new Error('الفئة غير موجودة')
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.priceLists.some((l) => l.id === listId)) throw new Error('القائمة غير موجودة في هذا الفرع')
+        if (!scoped.categories.some((category) => category.id === categoryId)) throw new Error('الفئة غير موجودة في هذا الفرع')
         const rest = state.priceListCategoryRules.filter((rule) => !(rule.listId === listId && rule.categoryId === categoryId))
         if (discountPercent == null) { set({ priceListCategoryRules: rest }); return }
         const errors = validateCategoryRule(discountPercent)
@@ -13099,22 +14009,24 @@ export const useRawDataStore = create<DataState>()(
         set({ priceListCategoryRules: [...rest, { listId, categoryId, discountPercent }] })
       },
       getEffectivePrice: (itemId, listId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const item = state.items.find((it) => it.id === itemId)
         const retail = item?.priceMinor ?? 0
         return resolvePrice(itemId, retail, listId, state.priceLists, state.priceListEntries, state.priceListCategoryRules, item?.categoryId ?? null)
       },
       setCustomerPriceList: (customerId, listId) => {
         const state = get()
-        if (!state.customers.some((c) => c.id === customerId)) throw new Error('العميل غير موجود')
-        if (listId != null && !state.priceLists.some((l) => l.id === listId && l.isActive)) throw new Error('القائمة غير موجودة أو معطلة')
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.customers.some((c) => c.id === customerId)) throw new Error('العميل غير موجود في هذا الفرع')
+        if (listId != null && !scoped.priceLists.some((l) => l.id === listId && l.isActive)) throw new Error('القائمة غير موجودة أو معطلة في هذا الفرع')
         set({ customers: state.customers.map((c) => (c.id === customerId ? { ...c, priceListId: listId } : c)) })
       },
 
       /* ─── العروض الترويجية/الباقات (سد فجوة السوق المصرية/السعودية) ─── */
       addPromotion: (input) => {
         const state = get()
-        const errors = validatePromotion(input, state.promotions, state.items, (iid) => hasVariantStock(state.variantStocks, iid))
+        const scoped = getBranchScopedDataState(state)
+        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid))
         if (errors.length) throw new Error(errors.join('، '))
         const promo: Promotion = { ...input, nameAr: input.nameAr.trim(), id: nextId(state.promotions) }
         set({ promotions: [...state.promotions, promo] })
@@ -13122,15 +14034,26 @@ export const useRawDataStore = create<DataState>()(
       },
       updatePromotion: (id, input) => {
         const state = get()
-        if (!state.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود')
-        const errors = validatePromotion(input, state.promotions, state.items, (iid) => hasVariantStock(state.variantStocks, iid), id)
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود في هذا الفرع')
+        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), id)
         if (errors.length) throw new Error(errors.join('، '))
         set({ promotions: state.promotions.map((p) => (p.id === id ? { ...p, ...input, nameAr: input.nameAr.trim() } : p)) })
       },
-      togglePromotion: (id) => set((s) => ({ promotions: s.promotions.map((p) => (p.id === id ? { ...p, isActive: !p.isActive } : p)) })),
-      removePromotion: (id) => set((s) => ({ promotions: s.promotions.filter((p) => p.id !== id) })),
-      getPromotionCartLines: (promotionId, count) => {
+      togglePromotion: (id) => {
         const state = get()
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود في هذا الفرع')
+        set({ promotions: state.promotions.map((p) => (p.id === id ? { ...p, isActive: !p.isActive } : p)) })
+      },
+      removePromotion: (id) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود في هذا الفرع')
+        set({ promotions: state.promotions.filter((p) => p.id !== id) })
+      },
+      getPromotionCartLines: (promotionId, count) => {
+        const state = getBranchScopedDataState(get())
         const promo = state.promotions.find((p) => p.id === promotionId)
         if (!promo) throw new Error('العرض غير موجود')
         if (!promotionActiveOn(promo, new Date().toISOString())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
@@ -13138,7 +14061,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getProjectWip: (projectId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
         const contractMinor = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === projectId))
@@ -13290,7 +14213,7 @@ export const useRawDataStore = create<DataState>()(
         return collection
       },
       getPatientBalance: (patientId) => {
-        const state = get()
+        const state = getBranchScopedDataState(get())
         // مرتجعات الزيارات «على حساب المريض» تخفض ذمته مثل التحصيلات (مراجعة المرتجعات)
         const creditRefunds = state.clinicVisits
           .filter((v) => v.patientId === patientId)
@@ -13684,7 +14607,7 @@ export const useRawDataStore = create<DataState>()(
             sourceType: 'maintenance_ticket', sourceId: id, lines: pLines,
             createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
-          assertTreasuryNotNegative(state.journal, journal, state.treasuries)
+          assertTreasuryNotNegative(state.journal, journal, state.treasuries, state)
         }
         const ticket: MaintenanceTicket = {
           id,
@@ -13937,8 +14860,9 @@ export const useRawDataStore = create<DataState>()(
 
       postTransfer: (args) => {
         const state = get()
-        if (!state.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود')
-        if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if (!scoped.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود في هذا الفرع')
+        if (!scoped.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود في هذا الفرع')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
         const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
@@ -14079,7 +15003,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getAssetDue: (assetId) => {
-        const asset = get().assets.find((a) => a.id === assetId)
+        const asset = getBranchScopedDataState(get()).assets.find((a) => a.id === assetId)
         if (!asset) return { totalDueMinor: 0, paidMinor: 0, remainingMinor: 0, nextInstallment: null }
         const funding = asset.funding ?? 'cash'
         const totalDue = funding === 'supplier_credit' ? asset.costMinor : funding === 'cash' ? asset.costMinor - (asset.paidMinor ?? 0) : 0
@@ -14348,12 +15272,13 @@ export const useRawDataStore = create<DataState>()(
       },
 
       getStaffCommissionsDue: (employeeId) => {
-        const commissions = get().staffCommissions.filter((c) => c.employeeId === employeeId && c.status === 'accrued')
+        const commissions = getBranchScopedDataState(get()).staffCommissions.filter((c) => c.employeeId === employeeId && c.status === 'accrued')
         return { totalMinor: commissions.reduce((a, c) => a + c.amountMinor, 0), commissions }
       },
 
       addCustomAccount: (args) => {
         const state = get()
+        assertCanManageCustomAccounts(state)
         const coa = fullCoa(STANDARD_COA, state.treasuries)
         const errors = validateCustomAccount(args, coa, state.customAccounts)
         if (errors.length) throw new Error(errors.join('، '))
@@ -14371,6 +15296,7 @@ export const useRawDataStore = create<DataState>()(
 
       deleteCustomAccount: (code) => {
         const state = get()
+        assertCanManageCustomAccounts(state)
         const acc = state.customAccounts.find((a) => a.code === code)
         if (!acc) throw new Error('الحساب غير موجود')
         // حماية سلامة الدفاتر: لا حذف لحساب عليه حركة
@@ -14441,7 +15367,9 @@ export const useRawDataStore = create<DataState>()(
         const order = state.laundryOrders.find((o) => o.id === args.orderId)
         if (!order) throw new Error('الأمر غير موجود')
         assertLaundryTransition(order.status, 'delivered')
-        const { vatPercent, taxInclusive } = useAppStore.getState().setup
+        const deliverySetup = appSetupForState(state)
+        const vatPercent = deliverySetup.vatPercent ?? 0
+        const taxInclusive = deliverySetup.taxInclusive ?? true
         const now = new Date().toISOString()
         const built = buildLaundryDeliverEntry({
           totalMinor: order.totalMinor, prepaidMinor: order.prepaidMinor,
@@ -15104,6 +16032,7 @@ export const useRawDataStore = create<DataState>()(
           assets: (s.assets ?? []).map((a) => ({ ...a, funding: a.funding ?? 'cash', supplierId: a.supplierId ?? null, paidMinor: a.paidMinor ?? a.costMinor, installments: a.installments ?? [], payments: a.payments ?? [] })),
           appUsers: s.appUsers ?? [],
           roleOverrides: s.roleOverrides ?? {},
+          branchRoleOverrides: s.branchRoleOverrides ?? {},
           customRoles: s.customRoles ?? [],
           currentUserId: s.currentUserId ?? null,
           issues: s.issues ?? [],
@@ -15309,6 +16238,7 @@ export const useRawDataStore = create<DataState>()(
           leaveRequests: (s.leaveRequests ?? []).map((l) => ({ ...l, decidedBy: l.decidedBy ?? null, decidedAt: l.decidedAt ?? null })),
           leaveTypes: s.leaveTypes && s.leaveTypes.length ? s.leaveTypes : DEFAULT_LEAVE_TYPES,
           hrRules: normalizeHrRules(s.hrRules),
+          branchHrSettings: s.branchHrSettings ?? {},
           employeeShifts: s.employeeShifts ?? [],
           attendanceImports: s.attendanceImports ?? [],
           transfers: s.transfers ?? [],
@@ -15317,6 +16247,7 @@ export const useRawDataStore = create<DataState>()(
           stocktakes: s.stocktakes ?? [],
           wastages: s.wastages ?? [],
           openingBalances: s.openingBalances ?? {},
+          branchOpeningBalances: s.branchOpeningBalances ?? {},
           openingItems: s.openingItems ?? {},
           openingDeclaredCapitalMinor: s.openingDeclaredCapitalMinor ?? null,
           settlements: s.settlements ?? [],
@@ -15341,5 +16272,23 @@ function useScopedDataStore<T>(selector?: (state: DataState) => T): T | DataStat
   })
 }
 
-export const useDataStore: typeof useRawDataStore = Object.assign(useScopedDataStore, useRawDataStore)
+const scopedStoreApi = {
+  getState: () => getBranchScopedDataState(useRawDataStore.getState()),
+  subscribe: (listener: (state: DataState, previousState: DataState) => void) =>
+    useRawDataStore.subscribe((state, previousState) => listener(getBranchScopedDataState(state), getBranchScopedDataState(previousState))),
+  // حافظ على واجهة Zustand persist التي يعتمد عليها انتظار hydration في التطبيق والاختبارات.
+  persist: useRawDataStore.persist,
+  // الاستيراد/المزامنة الشاملة تستخدم useRawDataStore داخلياً. لا نسمح لواجهة الفرع باستبدال
+  // الحالة الكاملة عبر setState؛ أفعال المستودع هي المسار الوحيد للكتابة ضمن فرع محدد.
+  setState: ((partial: unknown, replace?: boolean) => {
+    const state = useRawDataStore.getState()
+    const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+    if (getEffectiveActiveBranch(state) || (activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0)) {
+      throw new Error('تحديث الحالة الكاملة غير مسموح أثناء العمل داخل نطاق فرع محدد')
+    }
+    useRawDataStore.setState(partial as never, replace as never)
+  }) as typeof useRawDataStore.setState,
+}
+
+export const useDataStore = Object.assign(useScopedDataStore, scopedStoreApi) as typeof useRawDataStore
 

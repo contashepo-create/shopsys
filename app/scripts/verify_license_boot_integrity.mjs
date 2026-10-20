@@ -130,7 +130,7 @@ ok('المتجر يعيد التحقق من التوقيع في كل إقلاع'
 
 ok('الحمولة وحالة الفحص لا تُكتبان في التخزين (partialize)', () => {
   assert.match(storeSrc, /partialize:\s*\(state\)\s*=>/, 'partialize معرّف')
-  assert.match(storeSrc, /activatedPayload:\s*_payload,\s*licenseAudit:\s*_audit,\s*\.\.\.rest/, 'يستثني الحمولة وحالة الفحص ويُبقي الباقي')
+  assert.match(storeSrc, /activatedPayload:\s*_payload,\s*licenseAudit:\s*_audit,\s*activeBranchContext:\s*_branchContext,\s*\.\.\.rest/, 'يستثني الحمولة وحالة الفحص وسياق الفرع العابر ويُبقي الباقي')
 })
 
 ok('الترطيب يسقط أي حمولة محفوظة قبل الحكم', () => {

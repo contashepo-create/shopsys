@@ -4,7 +4,7 @@
  */
 import {
   CUSTODY_ACCOUNT, CUSTODY_EXCESS_ACCOUNT, CUSTODY_SHORTAGE_ACCOUNT,
-  custodyFileNumber, validateCustodyFile, summarizeCustody,
+  custodyFileNumber, validateCustodyFile, summarizeCustody, summarizeCustodyExcessByFile,
   buildCustodyFundEntry, splitCustodyExpense, buildCustodyExpenseEntry,
   buildCustodySettleEntry, assertFileOpen, paySourceAccount, CUSTODY_TX_LABELS,
 } from '../src/core/custody.ts'
@@ -54,7 +54,22 @@ console.log('🧮 ملخص الملف: تعزيزات مقابل منصرفات'
   ok('المتبقي = الممول − المنصرف', s.remainingMinor === 75000)
   // مصروف بزيادة: الزيادة لا تنقص العهدة (تُحمَّل على 2107)
   const s2 = summarizeCustody([tx(1, 'fund', 100000), tx(1, 'expense', 120000, 20000)])
-  ok('الزيادة لا تُخصم من العهدة', s2.remainingMinor === 0 && s2.excessMinor === 20000)
+  ok('الزيادة لا تُخصم من العهدة', s2.remainingMinor === 0 && s2.excessMinor === 20000 && s2.expenseTotalMinor === 120000)
+  const closed = summarizeCustody([tx(1, 'fund', 100000), tx(1, 'expense', 20000), tx(1, 'return', 50000), tx(1, 'shortage', 30000)])
+  ok('المرتجع والعجز لا يُعرضان كمصروف: المصروف 20000، المرتجع 50000، العجز 30000، والمتبقي صفر', closed.spentMinor === 20000 && closed.returnedMinor === 50000 && closed.shortageMinor === 30000 && closed.remainingMinor === 0)
+}
+
+console.log('🧾 توزيع مستحق الزيادة على الملف الصحيح بعد الرواتب')
+{
+  const files = [{ id: 1, employeeId: 7 }, { id: 2, employeeId: 7 }, { id: 3, employeeId: 8 }]
+  const txs = [
+    { ...tx(1, 'expense', 50000, 20000), id: 1, date: '2026-09-01' },
+    { ...tx(2, 'expense', 40000, 30000), id: 2, date: '2026-09-02' },
+    { ...tx(3, 'expense', 70000, 50000), id: 3, date: '2026-09-03' },
+  ]
+  const runs = [{ id: 1, date: '2026-09-30', lines: [{ employeeId: 7, excessPaidMinor: 25000 }] }]
+  const balances = summarizeCustodyExcessByFile(files, txs, runs)
+  ok('المسير يسدد أقدم زيادة أولاً وينسب الرصيد لكل ملف دون تكرار إجمالي الموظف', balances.get(1)?.accruedMinor === 20000 && balances.get(1)?.paidMinor === 20000 && balances.get(1)?.remainingMinor === 0 && balances.get(2)?.accruedMinor === 30000 && balances.get(2)?.paidMinor === 5000 && balances.get(2)?.remainingMinor === 25000 && balances.get(3)?.remainingMinor === 50000)
 }
 
 console.log('🧾 المصروف من العهدة والزيادة عنها')

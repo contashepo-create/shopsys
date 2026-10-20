@@ -53,7 +53,7 @@ export interface BranchInput {
  * - إن كان وضع الفرع 'custom' ⇒ تقاطع أقسام الفرع مع أقسام الشركة المرخصة/المفعلة.
  */
 export function resolveBranchModules(
-  branch: Branch | null | undefined,
+  branch: Pick<Branch, 'customModulesMode' | 'enabledModules'> | null | undefined,
   companyModules: readonly BusinessModule[],
 ): BusinessModule[] {
   if (!branch || branch.customModulesMode !== 'custom' || !Array.isArray(branch.enabledModules)) {
@@ -64,7 +64,7 @@ export function resolveBranchModules(
 
 /** النشاط الفعال للفرع النشط (يعود لنشاط الشركة إن لم يُخصص للفرع نشاط مستقل) */
 export function resolveBranchActivityId(
-  branch: Branch | null | undefined,
+  branch: Pick<Branch, 'activityId'> | null | undefined,
   companyActivityId: string | null | undefined,
 ): string | null {
   if (branch?.activityId) return branch.activityId

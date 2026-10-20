@@ -29,6 +29,9 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
 const { useDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
+useAppStore.getState().updateSetup({ allowNegativeTreasury: true, shopName: 'المنشأة الأساسية', vatPercent: 14, taxInclusive: true, taxRegistrationStatus: 'registered' })
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
 const st = () => useDataStore.getState()
@@ -38,9 +41,14 @@ const EXT = { taxNumber: '', commercialReg: '', email: '', address: '', city: ''
 const ITEM = { categoryId: 1, minQty: 0, warrantyMonths: 0, variantColors: [], variantSizes: [], sku: '', isActive: true, trackExpiry: false, trackSerial: false, soldByWeight: false, isService: false, minSalePriceMinor: 0, costMinor: 0, stockQty: 0 }
 
 st().seed([])
+st().addCustomer({ nameAr: 'عميل الفرع الرئيسي', phone: '01010000000', creditLimitMinor: 0, notes: '', ...EXT })
+const mainCustomerId = st().customers[0].id
 st().addSupplier({ nameAr: 'مورد الفروع', phone: '', notes: '', ...EXT })
 st().addItem({ nameAr: 'مياه معدنية', barcodes: ['100'], baseUnit: 'قطعة', extraUnits: [], priceMinor: 1000, ...ITEM })
 const itemId = st().items[0].id
+st().addEmployee({ nameAr: 'موظف الفرع الرئيسي', phone: '01211111111', jobTitle: 'محاسب', hireDate: '2026-09-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, notes: '', ...EXT })
+const mainEmployeeId = st().employees[0].id
+const mainPriceList = st().addPriceList('قائمة أسعار الرئيسي', 0)
 
 console.log('\n═══ 1) إنشاء أول فرع: الرئيسي يتولد + الجديد بمخزنه وخزينته ═══')
 {
@@ -81,7 +89,14 @@ console.log('\n═══ 3) بيع من كل فرع → المقارنة تعك�
   const stock = computeWarehouseStock(st().items, st().warehouses, st().transfers, buildWarehouseDocs(st().purchases, st().sales, st().saleReturns, st().purchaseReturns))
   assert.equal(stock.get(whMain).get(itemId), 60)
   assert.equal(stock.get(whNew).get(itemId), 40)
-  ok('تحويل البضاعة بين الفروع: 60 بالرئيسي و40 بالمعادي')
+  st().setActiveBranchId(branchNew.id)
+  assert.equal(getBranchScopedDataState(st()).items.find((item) => item.id === itemId)?.stockQty, 40,
+    'الفرع المستقبل يرى رصيده المحلي لا إجمالي مخزون الشركة')
+  st().setActiveBranchId(mainBranch.id)
+  assert.equal(getBranchScopedDataState(st()).items.find((item) => item.id === itemId)?.stockQty, 60,
+    'الرئيسي يرى رصيد مخازنه المحلي فقط')
+  st().setActiveBranchId(null)
+  ok('تحويل البضاعة بين الفروع: 60 بالرئيسي و40 بالمعادي مع عزل كمية المخزون المعروضة')
 
   // بيع 10 من الرئيسي على خزينته + بيع 5 من المعادي على خزينته
   st().postSale({ lines: [{ itemId, nameAr: 'مياه معدنية', qty: 10, unitPriceMinor: 1000, discountPercent: 0, costMinor: 600 }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: mainBranch.treasuryCode, warehouseId: whMain })
@@ -136,12 +151,12 @@ console.log('\n═══ 5) قواعد الصحة ═══')
   assert.equal(branchOfWarehouse(null, st().branches).id, mainBranch.id, 'بلا مخزن = الفرع الرئيسي')
   // حذف الرئيسي وغيره قائم مرفوض
   assert.throws(() => st().removeBranch(mainBranch.id), /الرئيسي لا يُحذف/)
-  // حذف الفرع الأخير غير الرئيسي يعيد وضع الفرع الواحد — والمخزن والخزينة باقيان
-  st().removeBranch(branchNew.id)
-  assert.equal(st().branches.length, 0, 'عاد وضع الفرع الواحد')
-  assert.ok(st().warehouses.some((w) => w.id === whNew), 'مخزن الفرع المحذوف باقٍ بتاريخه')
-  assert.ok(st().treasuries.some((t) => t.code === branchNew.treasuryCode), 'خزينة الفرع المحذوف باقية')
-  ok('قواعد الصحة: منع التكرار + حماية الرئيسي + الحذف يفك الربط فقط')
+  // فرع له حركة تشغيلية لا يُحذف كي لا تُفقد نسبة مستنداته التاريخية؛ يُعطّل بدلاً منه.
+  assert.throws(() => st().removeBranch(branchNew.id), /لا يمكن حذف فرع له مستخدمون أو سجلات تشغيلية/)
+  assert.equal(st().branches.length, 2, 'الفرع ذو التاريخ التشغيلي باقٍ')
+  assert.ok(st().warehouses.some((w) => w.id === whNew), 'مخزن الفرع محفوظ')
+  assert.ok(st().treasuries.some((t) => t.code === branchNew.treasuryCode), 'خزينة الفرع محفوظة')
+  ok('قواعد الصحة: منع التكرار + حماية الرئيسي + منع حذف الفرع ذي التاريخ التشغيلي')
 }
 
 console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
@@ -166,6 +181,29 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
     activityId: 'contracting',
   })
   const updatedHq = st().branches.find((x) => x.id === hqBranch.id)
+
+  // الاسم والضريبة ورقم التسجيل الإلكتروني إعدادات منفصلة لكل فرع؛ الملف القديم يُنسخ عند أول تفعيل فقط.
+  const baseEinvoice = { ...useAppStore.getState().einvoice }
+  st().setActiveBranchId(logisticsBranch.id)
+  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'الملف الأول يرث الاسم الحالي حفاظاً على التوافق')
+  useAppStore.getState().updateCompanyName('اسم فرع اللوجستيات')
+  useAppStore.getState().updateTaxSettings({ vatPercent: 5, taxInclusive: false, taxRegistrationStatus: 'registered' })
+  useAppStore.getState().updateSetup({ allowNegativeTreasury: false })
+  useAppStore.getState().updateEinvoice({ taxNumber: '123456789', address: 'عنوان فرع اللوجستيات' })
+  assert.equal(useAppStore.getState().setup.shopName, 'اسم فرع اللوجستيات')
+  assert.equal(useAppStore.getState().setup.vatPercent, 5)
+  assert.equal(useAppStore.getState().setup.allowNegativeTreasury, false)
+  assert.equal(useAppStore.getState().einvoice.taxNumber, '123456789')
+  st().setActiveBranchId(hqBranch.id)
+  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'اسم الفرع لا يغير المنشأة الأساسية')
+  assert.equal(useAppStore.getState().setup.vatPercent, 14, 'ضريبة الفرع لا تغير ضريبة المنشأة الأساسية')
+  assert.equal(useAppStore.getState().setup.allowNegativeTreasury, true, 'سياسة الخزينة الخاصة بالفرع لا تغير سياسة المنشأة')
+  assert.deepEqual(useAppStore.getState().einvoice, baseEinvoice, 'رقم الضريبة الإلكترونية لا ينتقل بين الفروع')
+  st().setActiveBranchId(logisticsBranch.id)
+  assert.equal(useAppStore.getState().setup.shopName, 'اسم فرع اللوجستيات', 'إعدادات فرع اللوجستيات محفوظة عند العودة إليه')
+  useAppStore.getState().updateSetup({ allowNegativeTreasury: true })
+  st().setActiveBranchId(null)
+  ok('عزل إعدادات الاسم والضريبة ورقم التسجيل الإلكتروني لكل فرع مع بقاء قيم المنشأة الأساسية')
 
   // العرض الشامل (null) يعيد كل أقسام الشركة
   assert.deepEqual(resolveBranchModules(null, companyModules), companyModules)
@@ -223,6 +261,7 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   st().addEmployee({ nameAr: 'موظف الشركة الثانية', phone: '01277777777', jobTitle: 'مدير تشغيل', hireDate: '2026-10-01', baseSalaryMinor: 800000, allowancesMinor: 0, active: true, notes: '', ...EXT })
   const branch2Bank = st().addTreasury('بنك الشركة الثانية', 'bank')
   st().addItem({ nameAr: 'صنف خاص بالشركة الثانية', barcodes: ['100'], baseUnit: 'قطعة', extraUnits: [], priceMinor: 2000, ...ITEM })
+  const branch2PriceList = st().addPriceList('قائمة أسعار الشركة الثانية', 0)
 
   scoped = getBranchScopedDataState(st())
   assert.equal(scoped.customers.length, 2, 'عميلان في الشركة الثانية (شامل اسم متطابق مع الشركة الأولى بلا تعارض)')
@@ -258,15 +297,95 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.equal(scoped.projectExtracts.length, 1)
   assert.equal(scoped.projectExtracts[0].id, ext2.id)
 
-  // ربط حساب دخول موظف الشركة الثانية يقفل الجلسة على الشركة الثانية تلقائياً
-  st().setOwnerPin('hashed-owner-pin')
+  // مستند حقيقي في الرئيسي لكشف أي getter يتجاوز مصفوفات الحالة المعزولة.
+  st().setActiveBranchId(hqBranch.id)
+  const mainSale = st().postSale({
+    lines: [{ itemId, nameAr: 'مياه معدنية', qty: 1, unitPriceMinor: 1000, discountPercent: 0, costMinor: 600 }],
+    customerId: mainCustomerId, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0,
+    taxInclusive: true, treasury: hqBranch.treasuryCode, warehouseId: hqBranch.warehouseId,
+  })
+
+  // حسابات الدخول بفرعين؛ الموظف في الفرع الثاني يجب ألا يرى/يعدل مستخدم الفرع الرئيسي أو بياناته.
+  st().setActiveBranchId(null)
+  const globalRoleId = st().addCustomRole('دور عام للشركة', 'accountant')
+  st().updateOwnerProfile({ nameAr: 'هوية المالك السرية', phone: '01012345678' })
+  const ownerPinHash = await hashPin('owner-123')
+  const branchPinHash = await hashPin('branch-123')
+  st().setOwnerPin(ownerPinHash)
+  const mainUser = st().addAppUser({ nameAr: 'محاسب الرئيسي', roleId: 'accountant', pinHash: await hashPin('main-123'), branchId: hqBranch.id })
   const b2User = st().addAppUser({
     nameAr: 'موظف الشركة الثانية',
     roleId: 'accountant',
-    pinHash: 'hashed-user-pin',
+    pinHash: branchPinHash,
     employeeId: scoped.employees[0].id,
   })
   assert.equal(b2User.branchId, logisticsBranch.id, 'حساب المستخدم يرث فرع الموظف تلقائياً')
+  st().setActiveBranchId(logisticsBranch.id)
+  await st().login(b2User.id, 'branch-123')
+  scoped = getBranchScopedDataState(st())
+  assert.ok(scoped.appUsers.some((user) => user.id === b2User.id))
+  assert.ok(!scoped.appUsers.some((user) => user.id === mainUser.id), 'مستخدم الرئيسي غير مرئي لفرع اللوجستيات')
+  assert.ok(!scoped.appUsers.some((user) => user.roleId === 'owner'), 'حساب المالك وتجزئة رقمه لا يخرجان إلى مستخدم الفرع')
+  assert.equal(scoped.ownerPinHash, null)
+  assert.equal(scoped.ownerTempPin, null)
+  assert.notEqual(scoped.ownerProfile.nameAr, 'هوية المالك السرية')
+  assert.ok(scoped.customRoles.some((role) => role.id === globalRoleId), 'الدور العام ظاهر للقراءة فقط')
+  assert.ok(!scoped.customers.some((customer) => customer.id === mainCustomerId), 'عميل الرئيسي غير مرئي لفرع اللوجستيات')
+  assert.deepEqual(scoped.priceLists.map((list) => list.id), [branch2PriceList.id], 'قائمة الأسعار محصورة بفرعها')
+  const branch2ItemForIsolation = scoped.items[0].id
+  assert.throws(() => st().setPriceListEntry(mainPriceList.id, branch2ItemForIsolation, 1200), /القائمة غير موجودة في هذا الفرع/)
+  assert.throws(() => st().setPriceListEntry(branch2PriceList.id, itemId, 1200), /الصنف غير موجود في هذا الفرع/)
+  assert.throws(() => st().setPriceListCategoryRule(mainPriceList.id, 1, 5), /القائمة غير موجودة في هذا الفرع/)
+  assert.throws(() => st().setCustomerPriceList(mainCustomerId, branch2PriceList.id), /العميل غير موجود في هذا الفرع/)
+  assert.throws(() => st().setEmployeeShift(mainEmployeeId, { startMin: 480, endMin: 960, graceMinutes: 10 }), /تابع لفرع آخر/)
+  assert.throws(() => st().setVariantStock(itemId, 'أحمر', 'M', 1), /الصنف غير موجود في هذا الفرع/)
+  assert.throws(() => st().setJewelryProfile({ itemId }), /الصنف غير موجود في هذا الفرع/)
+  assert.throws(() => st().removeJewelryProfile(itemId), /الصنف غير موجود في هذا الفرع/)
+  assert.throws(() => st().addPromotion({
+    nameAr: 'عرض عابر للفروع', components: [{ itemId, qty: 1 }, { itemId: branch2ItemForIsolation, qty: 1 }],
+    bundlePriceMinor: 1000, startIso: '', endIso: '', isActive: true,
+  }), /مكوّن غير موجود/)
+  st().setPriceListEntry(branch2PriceList.id, branch2ItemForIsolation, 1800)
+  assert.equal(getBranchScopedDataState(st()).priceListEntries.find((entry) => entry.listId === branch2PriceList.id)?.priceMinor, 1800,
+    'تظل كتابة قائمة أسعار الفرع نفسه مسموحة')
+  const { canManageConflictSnapshots, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } = await import(pathToFileURL(join(root, 'src/data/syncRunner.ts')).href)
+  const testSnapshotAt = '2026-10-20T12:00:00.000Z'
+  mem.set('shopsys-conflict-snapshots', JSON.stringify([{ at: testSnapshotAt, data: '{}' }]))
+  assert.equal(canManageConflictSnapshots(), false, 'مستخدم الفرع لا يملك صلاحية التعامل مع لقطات المتجر الكاملة')
+  assert.deepEqual(listConflictSnapshots(), [])
+  assert.equal(getConflictSnapshotData(testSnapshotAt), null)
+  const deniedRestore = restoreConflictSnapshot(testSnapshotAt)
+  assert.equal(deniedRestore.ok, false)
+  assert.match(deniedRestore.message, /للمالك فقط/)
+  assert.equal(st().getCustomerBalance(mainCustomerId), 0, 'رصيد العميل الرئيسي لا يتسرب عبر getter')
+  assert.deepEqual(st().getCustomerStatementRows(mainCustomerId), [], 'كشف العميل الرئيسي لا يتسرب عبر getter')
+  assert.deepEqual(st().getOpenClientInvoices(mainCustomerId), [], 'الفواتير المفتوحة للرئيسي لا تتسرب عبر getter')
+  st().markNotificationRead('branch-only-notification')
+  assert.ok(st().readNotificationIds.includes('branch-only-notification'))
+  assert.throws(() => st().addCustomRole('دور بلا صلاحية', 'accountant'), /تتطلب صلاحية «المستخدمون والصلاحيات»/)
+  st().logout()
+  await st().login(null, 'owner-123')
+  st().setUserPermExceptions(b2User.id, ['set.users'], [])
+  st().setActiveBranchId(logisticsBranch.id)
+  await st().login(b2User.id, 'branch-123')
+  scoped = getBranchScopedDataState(st())
+  const branchRoleId = st().addCustomRole('دور خاص باللوجستيات', 'accountant')
+  st().setRolePermissions(branchRoleId, ['inv.view', 'set.users'])
+  assert.equal(scoped.customRoles.find((role) => role.id === branchRoleId), undefined, 'اللقطة السابقة لا تتغير بعد الإضافة')
+  scoped = getBranchScopedDataState(st())
+  assert.equal(scoped.customRoles.find((role) => role.id === branchRoleId)?.branchId, logisticsBranch.id)
+  assert.throws(() => st().renameCustomRole(globalRoleId, 'تعديل عام من الفرع'), /الدور عام على الشركة/)
+  assert.throws(() => st().removeCustomRole(globalRoleId), /الدور عام على الشركة/)
+  assert.throws(() => st().addCustomAccount({}), /دليل الحسابات العام متاحة للمالك فقط/)
+  assert.throws(() => st().setRolePermissions('custom_9999', ['owner']), /الدور غير موجود في نطاق هذا الفرع/)
+  assert.throws(() => useDataStore.setState({ loggedOut: false }), /تحديث الحالة الكاملة غير مسموح/)
+  assert.throws(() => st().updateCustomer(mainCustomerId, { notes: 'تعديل عابر للفروع' }), /فرع آخر/)
+  assert.throws(() => st().updateAppUser(mainUser.id, { nameAr: 'تعديل عابر للفروع' }), /فرع آخر/)
+  assert.throws(() => st().renameTreasury(hqBranch.treasuryCode, 'خزينة مخترقة'), /غير موجودة في هذا الفرع/)
+  assert.throws(() => st().postTransfer({ fromWarehouseId: logisticsBranch.warehouseId, toWarehouseId: hqBranch.warehouseId, lines: [], notes: '' }), /المخزن المستقبل غير موجود في هذا الفرع/)
+  assert.throws(() => st().setOwnerPin('new-owner-pin'), /متاح للمالك فقط/)
+  assert.throws(() => useAppStore.getState().updateSetup({ shopName: 'تغيير عام من فرع' }), /لا تُعدّل من داخل فرع مستقل/)
+  ok('حساب الفرع لا يقرأ أو يعدل عملاء/مستخدمين/خزائن/مخازن الفرع الآخر ولا إعدادات الشركة العامة')
 
   // شراء وبيع داخل الفرع الثاني يتوجهان تلقائياً لمخزن وخزينة الفرع الثاني
   const b2SupplierId = scoped.suppliers[0].id
@@ -304,9 +423,24 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   const b2Credit = scoped.journal.reduce((s, e) => s + e.lines.reduce((x, l) => x + l.credit, 0), 0)
   assert.ok(b2Debit > 0 && b2Debit === b2Credit, 'يومية وميزان الشركة الثانية متزنان ومستقلان تماماً')
 
+  // بعد فحص حراسة المستخدم الفرعي، نعود إلى المالك لعرض مقارنة الفروع.
+  st().logout()
+  await st().login(null, 'owner-123')
+  assert.equal(canManageConflictSnapshots(), true, 'المالك وحده يدير لقطات التعارض')
+  assert.ok(listConflictSnapshots().some((snapshot) => snapshot.at === testSnapshotAt))
+  assert.equal(getConflictSnapshotData(testSnapshotAt), '{}')
+  const ownerRestore = restoreConflictSnapshot(testSnapshotAt)
+  assert.equal(ownerRestore.ok, true, 'استعادة لقطة المتجر تبقى متاحة للمالك')
+  st().logout()
+  assert.equal(canManageConflictSnapshots(), false, 'لا تُتاح اللقطة بعد تسجيل خروج المالك')
+  await st().login(null, 'owner-123')
   // التبديل للفرع الرئيسي: لا يرى بيانات الشركة الثانية
   st().setActiveBranchId(hqBranch.id)
   const hqScoped = getBranchScopedDataState(st())
+  assert.ok(!hqScoped.customRoles.some((role) => role.id === branchRoleId), 'الدور المخصص للوجستيات غير مرئي في الرئيسي')
+  assert.ok(hqScoped.customRoles.some((role) => role.id === globalRoleId), 'الدور العام يظل متاحاً للقراءة في الفروع')
+  assert.ok(!hqScoped.readNotificationIds.includes('branch-only-notification'), 'علامة قراءة إشعار الفرع لا تتداخل مع الرئيسي')
+  assert.equal(st().getOpenClientInvoices(mainCustomerId).filter((invoice) => invoice.docKey === `sale:${mainSale.id}`).length, 1, 'المالك يرى فاتورة العميل في الفرع الرئيسي')
   assert.ok(!hqScoped.customers.some((c) => c.id === b2CustomerId), 'الفرع الرئيسي لا يرى عملاء الشركة الثانية')
   assert.ok(!hqScoped.suppliers.some((s) => s.id === b2SupplierId), 'الفرع الرئيسي لا يرى موردي الشركة الثانية')
   assert.ok(!hqScoped.items.some((i) => i.id === b2ItemId), 'الفرع الرئيسي لا يرى أصناف الشركة الثانية')
@@ -315,6 +449,9 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   // التبديل للعرض الشامل (كل الفروع): المالك يرى الشركتين معاً
   st().setActiveBranchId(null)
   const allScoped = getBranchScopedDataState(st())
+  assert.ok(allScoped.customRoles.some((role) => role.id === globalRoleId))
+  assert.ok(allScoped.customRoles.some((role) => role.id === branchRoleId))
+  assert.ok(!allScoped.readNotificationIds.includes('branch-only-notification'), 'علامة القراءة تظل خاصة بمستخدم الفرع')
   assert.ok(allScoped.customers.some((c) => c.id === b2CustomerId))
   assert.ok(allScoped.suppliers.some((s) => s.id === b2SupplierId))
   assert.equal(allScoped.items.length, 2)

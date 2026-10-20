@@ -110,7 +110,7 @@ ok('ح8 — applyActivityChangeKey يرفض المفتاح المطبَّق سا
   const start = appStore.indexOf('applyActivityChangeKey: async')
   const body = appStore.slice(start, appStore.indexOf('touchLastSeen: () =>', start))
   const replayAt = body.indexOf('استُخدم من قبل')
-  const setAt = body.indexOf('set((s) => ({')
+  const setAt = body.search(/set\(\(s\)\s*=>\s*[{(]/)
   assert.ok(replayAt > 0 && setAt > replayAt, 'فحص إعادة الاستخدام يجب أن يسبق التطبيق')
 })
 

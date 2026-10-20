@@ -3,7 +3,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * الإعدادات العامة — البلد والعملة والضريبة وطريقة الاحتساب
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -18,7 +18,7 @@ import { accountName } from './accountNames.ts'
 import { FxRatesManager } from '../components/FxRatesManager.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload } = useAppStore()
+  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload, updateSetup, updateCompanyName, updateTaxSettings, activeBranchContext } = useAppStore()
   const { warehouses, closeFiscalYear, reopenFiscalYear, journal } = useDataStore()
   const toast = useToast()
   /* v1.0.7: تغيير النشاط بمفتاح الدعم الفني فقط (موافقة المالك) */
@@ -30,10 +30,18 @@ export function GeneralSettingsPage() {
   /* v1.0.10: الممنوحة = افتراضيات النشاط + ما منحه مفتاح الترخيص (extraModules الموقّعة) —
      هذه فقط قابلة للإظهار من هنا؛ ما دونها يُطلب من الدعم */
   const granted = effectiveModules(setup.activityId, activatedPayload?.extraModules)
+  const [companyName, setCompanyName] = useState(setup.shopName)
   const [vat, setVat] = useState(String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
   const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
+  useEffect(() => {
+    setCompanyName(setup.shopName)
+    setVat(String(setup.vatPercent))
+    setTaxInclusive(setup.taxInclusive)
+    setTaxStatus(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
+  }, [setup.shopName, setup.taxInclusive, setup.taxRegistrationStatus, setup.vatPercent])
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const canEditCompanyWideSettings = !activeBranchContext || activeBranchContext.isMain
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   /* ─── إقفال السنة المالية (منهجية QuickBooks/Xero — طلب المالك) ─── */
@@ -88,15 +96,28 @@ export function GeneralSettingsPage() {
 
   const [specialty, setSpecialty] = useState(setup.doctorSpecialty ?? '')
   const saveSpecialty = () => {
-    useAppStore.setState((s) => ({ setup: { ...s.setup, doctorSpecialty: specialty.trim() } }))
+    updateSetup({ doctorSpecialty: specialty.trim() })
     toast.show('تم حفظ تخصص العيادة ✅')
   }
 
+  const saveCompanyName = () => {
+    try {
+      updateCompanyName(companyName)
+      toast.show('تم حفظ اسم المنشأة لهذا النطاق ✅')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+    }
+  }
+
   const saveTax = () => {
-    useAppStore.setState((s) => ({
-      setup: { ...s.setup, vatPercent: Number(vat) || 0, taxInclusive, taxRegistrationStatus: taxStatus },
-    }))
-    toast.show('تم حفظ إعدادات الضريبة')
+    try {
+      const vatPercent = taxStatus === 'registered' ? Number(vat) : 0
+      resolveBusinessTax(taxStatus, vatPercent)
+      updateTaxSettings({ vatPercent, taxInclusive, taxRegistrationStatus: taxStatus })
+      toast.show('تم حفظ إعدادات الضريبة لهذا النطاق ✅')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+    }
   }
 
   return (
@@ -144,11 +165,28 @@ export function GeneralSettingsPage() {
       </section>
 
       {/* أسعار الصرف (طلب المالك 2026-10-01): يدوي أو API — المالك فقط وبالرقم السري */}
-      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '70ms' }} data-settings-fx-rates>
+      <section hidden={!canEditCompanyWideSettings} className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '70ms' }} data-settings-fx-rates>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
           <Coins size={17} className="text-amber-500" /> أسعار الصرف (تحصيل/سداد بعملة أجنبية)
         </h3>
         <FxRatesManager />
+      </section>
+
+      {/* اسم المنشأة: الاسم الأول كان إعداداً محفوظاً بلا محرر لاحق؛ أصبح قابلاً للتصحيح والتغيير. */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '75ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          🏢 اسم المنشأة والفاتورة
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-3">
+          الاسم الذي أُدخل عند التسجيل الأول حُفظ كإعداد ثابت ولم تكن له شاشة تعديل. يمكنك الآن تصحيح الخطأ الإملائي أو تحديث الاسم التجاري؛ تغيير الاسم لا يبدّل معرّفات السجلات ولا يمحو القيود السابقة.
+          {activeBranchContext && !activeBranchContext.isMain ? ` التعديل هنا خاص بفرع «${activeBranchContext.nameAr}».` : ' التعديل هنا يخص المنشأة الأساسية.'}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Field label="الاسم الظاهر على الفواتير والإيصالات">
+            <input value={companyName} onChange={(event) => setCompanyName(event.target.value)} className={inputCls} maxLength={120} placeholder="اسم المنشأة" />
+          </Field>
+          <div className="sm:self-end"><Btn onClick={saveCompanyName}>حفظ الاسم</Btn></div>
+        </div>
       </section>
 
       {/* الضريبة */}
@@ -200,7 +238,7 @@ export function GeneralSettingsPage() {
               <button
                 key={key}
                 onClick={() => {
-                  useAppStore.setState((s) => ({ setup: { ...s.setup, [key]: !s.setup[key] } }))
+                  updateSetup(key === 'allowNegativeTreasury' ? { allowNegativeTreasury: !on } : { allowNegativeStock: !on })
                   toast.show(!on ? '⚠️ سُمح بالرصيد السالب — استخدمه بوعي' : 'مُنع الرصيد السالب — النظام يرفض أي عملية تكسره ✓')
                 }}
                 className={`text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
@@ -235,7 +273,7 @@ export function GeneralSettingsPage() {
           return (
             <button
               onClick={() => {
-                useAppStore.setState((s) => ({ setup: { ...s.setup, requireOpenShiftForSales: !s.setup.requireOpenShiftForSales } }))
+                updateSetup({ requireOpenShiftForSales: !on })
                 toast.show(!on ? 'أصبح فتح الوردية إلزامياً افتراضياً للكاشير قبل البيع والدفع ✓' : '⚠️ سُمح للكاشير بالبيع بلا وردية — يمكنك إجبار أي مستخدم منفرداً من شاشة الصلاحيات')
               }}
               className={`w-full sm:w-auto text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
@@ -260,7 +298,7 @@ export function GeneralSettingsPage() {
       </section>
 
       {/* برنامج نقاط الولاء (نمط Lightspeed Loyalty / Square) */}
-      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '135ms' }}>
+      <section hidden={!canEditCompanyWideSettings} className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '135ms' }}>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
           <Gift size={17} className="text-pink-500" /> برنامج نقاط الولاء
         </h3>
@@ -366,10 +404,11 @@ export function GeneralSettingsPage() {
             value={setup.defaultWarehouseId ?? warehouses.find((w) => w.isMain)?.id ?? ''}
             onChange={(e) => {
               const v = e.target.value === '' ? null : Number(e.target.value)
-              useAppStore.setState((s) => ({ setup: { ...s.setup, defaultWarehouseId: v } }))
+              updateSetup({ defaultWarehouseId: v })
               toast.show('حُفظ المخزن الافتراضي ✓')
             }}
             className={inputCls}
+            disabled={Boolean(activeBranchContext && !activeBranchContext.isMain)}
           >
             {warehouses.length === 0 && <option value="">لا توجد مخازن</option>}
             {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
@@ -388,6 +427,7 @@ export function GeneralSettingsPage() {
           </div>
           {/* v1.0.7: النشاط مقفول — التغيير بمفتاح موقّع من الدعم الفني فقط */}
           <button
+            disabled={!canEditCompanyWideSettings}
             onClick={() => { setActivityKeyOpen(true); setActivityKeyInput('') }}
             className="px-3 py-2 rounded-xl text-[11.5px] font-bold border-2 border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition-colors"
           >تغيير النشاط بمفتاح الدعم</button>
@@ -455,7 +495,7 @@ export function GeneralSettingsPage() {
                 </span>
                 {on ? (
                   <button
-                    disabled={lastOn}
+                    disabled={!canEditCompanyWideSettings || lastOn}
                     onClick={() => {
                       if (lastOn) { toast.show('لا يمكن إيقاف آخر قسم مفعّل', 'error'); return }
                       toast.show(`أُوقف قسم «${info.nameAr}» — شاشاته مختفية وبياناته محفوظة بالكامل`)
@@ -467,6 +507,7 @@ export function GeneralSettingsPage() {
                   </button>
                 ) : (
                   <button
+                    disabled={!canEditCompanyWideSettings}
                     onClick={() => { toast.show(`عاد قسم «${info.nameAr}» للظهور — بياناته كاملة كما تركتها ✓`); toggleModule(m) }}
                     className="shrink-0 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg transition-colors bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
                   >
@@ -477,6 +518,7 @@ export function GeneralSettingsPage() {
             )
           })}
         </div>
+        {!canEditCompanyWideSettings && <div className="mb-3 text-[11px] font-bold text-amber-600">تعديل أقسام الشركة العامة متوقف داخل الفرع. خصّص أقسام هذا الفرع من شاشة «الفروع» بصلاحية المالك.</div>}
         <div className="flex items-center gap-2 p-3 rounded-xl bg-sky-500/5 border border-sky-500/15 mb-4">
           <span className="text-lg">ℹ️</span>
           <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400">
@@ -497,7 +539,7 @@ export function GeneralSettingsPage() {
       </section>
 
       {/* السنوات المالية والإقفال السنوي (طلب المالك — منهجية عالمية) */}
-      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '200ms' }}>
+      <section hidden={!canEditCompanyWideSettings} className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '200ms' }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-extrabold text-slate-800 dark:text-white text-sm flex items-center gap-2"><CalendarCheck2 size={16} className="text-emerald-500" /> السنوات المالية</h3>
           <Btn variant="ghost" onClick={() => setNewYearOpen(true)}>+ فتح سنة جديدة</Btn>

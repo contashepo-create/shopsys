@@ -91,6 +91,8 @@ await S().login(u1.id, '123456')
 ok('الدخول بالرقم الصحيح يفعّل المستخدم', S().currentUserId === u1.id)
 S().addCustomer({ ...party('عميل من الكاشير'), creditLimitMinor: 0 })
 ok('الحدث باسم المستخدم النشط', S().auditLog.at(-1).user === 'كاشير أحمد')
+throws('الكاشير لا يدير حسابات المستخدمين', () => S().addAppUser({ nameAr: 'المالك الحقيقي', roleId: 'owner', pinHash }), 'تتطلب صلاحية')
+await S().login(null, '123456') // رجوع للمالك قبل إدارة المستخدمين
 const uOwner = S().addAppUser({ nameAr: 'المالك الحقيقي', roleId: 'owner', pinHash })
 throws('مالك ثانٍ يُرفض', () => S().addAppUser({ nameAr: 'مالك آخر', roleId: 'owner', pinHash }), 'مالك')
 throws('تخفيض دور المالك يُرفض', () => S().updateAppUser(uOwner.id, { roleId: 'cashier' }), 'محمي')

@@ -20,6 +20,8 @@ export interface AuditEvent {
   kind: string // journal | add | remove | edit | auth | system
   title: string // وصف عربي جاهز للعرض
   refKey?: string // مرجع اختياري: sale:12 / entry:55 ...
+  /** الفرع الذي وقع فيه الحدث؛ غيابه في السجلات القديمة يعني الشركة/الفرع الرئيسي. */
+  branchId?: number | null
 }
 
 /** الحد الأقصى للأحداث المحفوظة — حلقة: الأقدم يُحذف تلقائياً */

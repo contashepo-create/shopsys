@@ -6,7 +6,7 @@
  * - تطبيق المسحوب يتم دفعة واحدة setState ولا يلمس المحلي إلا بعد نجاح كل التحقق
  * - كل الدورات متسلسلة (قفل داخلي) — لا دورتان متوازيتان من نفس الجهاز
  */
-import { useDataStore } from './repo.ts'
+import { useRawDataStore } from './repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { syncOnce, validateSyncConfig, type SyncConfig } from './syncClient.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
@@ -26,7 +26,7 @@ const LOCAL_SESSION_KEYS = ['currentUserId'] as const
 
 /** تسلسل حالة المتجر: JSON.stringify يتجاهل الدوال فتبقى البيانات فقط — بلا مفاتيح الجلسة المحلية */
 function serializeStore(): string {
-  const state = { ...useDataStore.getState() } as Record<string, unknown>
+  const state = { ...useRawDataStore.getState() } as Record<string, unknown>
   for (const k of LOCAL_SESSION_KEYS) delete state[k]
   return JSON.stringify(state)
 }
@@ -34,7 +34,7 @@ function serializeStore(): string {
 /**
  * AUDIT-016 — حارس الوارد من السحابة.
  *
- * حالة السحابة تُطبَّق بـ`useDataStore.setState` مباشرةً، وهذا **يتجاوز** غلاف `set` المركزي
+ * حالة السحابة تُطبَّق بـ`useRawDataStore.setState` مباشرةً، وهذا **يتجاوز** غلاف `set` المركزي
  * في `repo.ts` الذي يحرس كل قيد محلي (توازن، نظافة سطر، حساب موجود، سنة مفتوحة، لا تعديل صامت).
  * فجهاز مخترَق أو صف تالف كان يستطيع زرع قيد غير متزن في دفتر بقية الأجهزة بلا أي فحص.
  * هنا نمرّ الدفتر الوارد على نفس الحارس قبل تطبيقه: إن سقط، تُرفض الدفعة كاملة
@@ -45,8 +45,8 @@ function assertIncomingLedgerSafe(parsed: Record<string, unknown>): void {
   if (!Array.isArray(incoming)) return // دفعة بلا دفتر — لا شيء يُحرس
   const normalized = normalizeJournalDates(incoming as JournalEntry[]) as JournalEntry[]
   parsed.journal = normalized
-  const treasuries = (Array.isArray(parsed.treasuries) ? parsed.treasuries : useDataStore.getState().treasuries) as Parameters<typeof fullCoa>[1]
-  const customAccounts = (Array.isArray(parsed.customAccounts) ? parsed.customAccounts : useDataStore.getState().customAccounts) as { code: string; nameAr: string; rootType: string; parentCode: string }[]
+  const treasuries = (Array.isArray(parsed.treasuries) ? parsed.treasuries : useRawDataStore.getState().treasuries) as Parameters<typeof fullCoa>[1]
+  const customAccounts = (Array.isArray(parsed.customAccounts) ? parsed.customAccounts : useRawDataStore.getState().customAccounts) as { code: string; nameAr: string; rootType: string; parentCode: string }[]
   const coa = [
     ...fullCoa(STANDARD_COA, treasuries),
     ...customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr, rootType: a.rootType, parentCode: a.parentCode, isPostable: true } as never)),
@@ -59,7 +59,7 @@ function assertIncomingLedgerSafe(parsed: Record<string, unknown>): void {
 export function watchLocalChanges(): void {
   if (subscribed) return
   subscribed = true
-  useDataStore.subscribe(() => {
+  useRawDataStore.subscribe(() => {
     if (applyingPull) return
     const app = useAppStore.getState()
     if (app.sync.enabled && !app.sync.dirty) app.updateSync({ dirty: true })
@@ -90,8 +90,17 @@ function saveConflictSnapshot(data: string): void {
   } catch { /* تخزين ممتلئ — المزامنة نفسها لا تتعطل */ }
 }
 
+/** لقطات التعارض تحتوي نسخة كاملة من المتجر؛ لا يطّلع عليها أو يسترجعها إلا المالك. */
+export function canManageConflictSnapshots(): boolean {
+  const state = useRawDataStore.getState()
+  if (state.loggedOut) return false
+  if (state.currentUserId == null) return true // جلسة المالك الافتراضية
+  return state.appUsers.find((user) => user.id === state.currentUserId)?.roleId === 'owner'
+}
+
 /** قائمة لقطات التعارض المحفوظة (للعرض في شاشة المزامنة) */
 export function listConflictSnapshots(): { at: string; size: number }[] {
+  if (!canManageConflictSnapshots()) return []
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
@@ -101,6 +110,7 @@ export function listConflictSnapshots(): { at: string; size: number }[] {
 
 /** نص لقطة تعارض بعينها (للتنزيل كملف JSON) — null إن لم توجد */
 export function getConflictSnapshotData(at: string): string | null {
+  if (!canManageConflictSnapshots()) return null
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
@@ -114,6 +124,7 @@ export function getConflictSnapshotData(at: string): string | null {
  * وبعده يُرفع علم dirty كي تُدفع الحالة المسترجعة للسحابة في الدورة التالية.
  */
 export function restoreConflictSnapshot(at: string): { ok: boolean; message: string } {
+  if (!canManageConflictSnapshots()) return { ok: false, message: 'تنزيل لقطات التعارض واستعادتها متاح للمالك فقط' }
   const data = getConflictSnapshotData(at)
   if (!data) return { ok: false, message: 'اللقطة غير موجودة' }
   let parsed: Record<string, unknown>
@@ -130,7 +141,7 @@ export function restoreConflictSnapshot(at: string): { ok: boolean; message: str
   } catch (e) {
     return { ok: false, message: `اللقطة مرفوضة — دفترها غير سليم: ${e instanceof Error ? e.message : ''}` }
   }
-  useDataStore.setState(parsed)
+  useRawDataStore.setState(parsed)
   const app = useAppStore.getState()
   if (app.sync.enabled && !app.sync.dirty) app.updateSync({ dirty: true })
   return { ok: true, message: 'استُرجعت اللقطة ✅ — ستُدفع للسحابة في المزامنة التالية' }
@@ -180,7 +191,7 @@ export async function runSyncCycle(): Promise<CycleResult> {
       }
       applyingPull = true
       try {
-        useDataStore.setState(parsed)
+        useRawDataStore.setState(parsed)
       } finally {
         applyingPull = false
       }

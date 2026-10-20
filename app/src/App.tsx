@@ -26,6 +26,7 @@ import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrenc
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
 import { pathAllowedForSetup } from './core/coaVisibility.ts'
 import { labelFor } from './core/activityLabels.ts'
+import { useEffectiveBranchScope } from './ui/hooks/useNavSections.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
@@ -127,7 +128,7 @@ import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
 function usePageTitle(): string {
   const { pathname } = useLocation()
-  const activityId = useAppStore((s) => s.setup.activityId)
+  const { effectiveActivityId: activityId } = useEffectiveBranchScope()
   for (const sec of NAV_SECTIONS) {
     const child = sec.children.find((c) => c.path === pathname)
     if (child) {
@@ -143,6 +144,21 @@ function usePageTitle(): string {
 function Shell() {
   const title = usePageTitle()
   const location = useLocation()
+  const { effectiveBranch, effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
+  const setActiveBranchContext = useAppStore((s) => s.setActiveBranchContext)
+  const setupState = useAppStore((s) => s.setup)
+  useEffect(() => {
+    setActiveBranchContext(effectiveBranch ? {
+      id: effectiveBranch.id,
+      nameAr: effectiveBranch.nameAr,
+      isMain: effectiveBranch.isMain,
+      warehouseId: effectiveBranch.warehouseId,
+      customModulesMode: effectiveBranch.customModulesMode,
+      enabledModules: effectiveBranch.enabledModules,
+      activityId: effectiveBranch.activityId,
+    } : null)
+  }, [effectiveBranch, setActiveBranchContext])
+  const effectiveFeatures = ACTIVITY_TEMPLATES.find((activity) => activity.id === effectiveActivityId)?.features ?? setupState.features
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
   const { appUsers, currentUserId, roleOverrides, customRoles, ownerPinHash, loggedOut } = useDataStore()
@@ -154,9 +170,8 @@ function Shell() {
     return <LoginScreen />
   }
   // ─── حراسة الوحدات (سد ثغرة الرابط المباشر): شاشة وحدة غير مفعلة للنشاط ───
-  // لا تُفتح حتى بكتابة المسار يدوياً — القائمة تخفيها والحارس يمنعها (دفاع مزدوج)
-  const setupState = useAppStore.getState().setup
-  if (!pathAllowedForSetup(location.pathname, setupState.modules, setupState.features, setupState.activityId)) {
+  // يُستخدم نفس النشاط والوحدات الفعالة للقائمة، بما فيها تخصيص الفرع، منعاً لاختلاف الرابط المباشر.
+  if (!pathAllowedForSetup(location.pathname, effectiveModules, effectiveFeatures, effectiveActivityId)) {
     return (
       <MainLayout title="غير متاح لنشاطك">
         <div className="max-w-lg mx-auto mt-16 text-center space-y-4 p-10 rounded-3xl bg-white dark:bg-card-dark border border-amber-500/25 anim-pop">
@@ -170,7 +185,7 @@ function Shell() {
       </MainLayout>
     )
   }
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setupState.activityId))
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
   if (!canAccessPath(location.pathname, perms)) {
     const needed = permissionForPath(location.pathname)
     const permName = PERMISSIONS.find((p) => p.id === needed)?.nameAr ?? needed

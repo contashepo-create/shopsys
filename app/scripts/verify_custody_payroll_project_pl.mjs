@@ -20,6 +20,7 @@ globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) 
 globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpenShiftForSales: false, allowNegativeTreasury: true, vatPercent: 14, taxInclusive: true, activityId: 'general', countryCode: 'EG' }, license: { plan: 'pro' } } }))
 const { useDataStore } = await import('../src/data/repo.ts')
+const { summarizeCustodyExcessByFile } = await import('../src/core/custody.ts')
 const st = () => useDataStore.getState()
 
 /* بذرة: عميل + موظف (المسير والعهدة يتحققان من وجودهما في السجلات — §83) */
@@ -76,6 +77,9 @@ const excessEntry = entryOf('payment_voucher', excessTx.id)
 ok('① الزيادة بموافقة: 5110 بكامل 300000 ← 1108 (250000) + 2107 مستحق للموظف (50000)', lineSum(excessEntry, '5110', 'debit') === 300000 && lineSum(excessEntry, '1108', 'credit') === 250000 && lineSum(excessEntry, '2107', 'credit') === 50000)
 ok('① الزيادة لا تُنقص رصيد العهدة تحت الصفر (المتبقي 0) وتُسجل excessMinor على الحركة', st().getCustodySummary(fileA.id).remainingMinor === 0 && excessTx.excessMinor === 50000)
 ok('② مستحق الموظف من زيادات العهد (2107) = 50000', st().getEmployeeExcessDue(6001) === 50000)
+const overageClosed = st().settleCustodyFile({ fileId: fileA.id, returnedMinor: 0, treasury: '1101' })
+let overageBalance = summarizeCustodyExcessByFile(st().custodyFiles, st().custodyTxs, st().payrollRuns).get(fileA.id)
+ok('① إغلاق ملف زادت مصروفاته بلا عجز نقدي لا يمحو زيادة 2107 ولا ينشئ قيد تسوية وهمياً', overageClosed.status === 'settled' && overageClosed.shortageMinor === 0 && st().getEmployeeExcessDue(6001) === 50000 && overageBalance?.accruedMinor === 50000 && overageBalance.remainingMinor === 50000 && !st().journal.some((e) => e.description.includes(`تسوية عهدة ${fileA.fileNumber}`)))
 ok('③ مصروف العهدة المرتبط بالمشروع دخل بطاقة تكاليفه (يدوي/other = 500000)', st().getProjectCostBreakdown(project.id).manual.filter((c) => c.kind === 'other').reduce((a, c) => a + c.amountMinor, 0) === 500000)
 
 /* ملف عام: تسوية بمرتجع + عجز ← سلفة على الموظف */
@@ -101,6 +105,8 @@ const runEntry = entryOf('payroll', run.id)
 ok('② قيد المسير: 5102 بالإجمالي 450000 + 2107 مدين 50000 ← 1101 صافي+زيادة 470000 + 1107 سلفة 30000', lineSum(runEntry, '5102', 'debit') === 450000 && lineSum(runEntry, '2107', 'debit') === 50000 && lineSum(runEntry, '1101', 'credit') === 470000 && lineSum(runEntry, '1107', 'credit') === 30000)
 ok('② زيادة العهدة المصروفة لا تدخل مصروف الرواتب (5102 = الإجمالي فقط)', lineSum(runEntry, '5102', 'debit') === 450000)
 ok('② بعد المسير: مستحق 2107 صُفّر ومتبقي السلف صُفر والسلفة FIFO مستردة', st().getEmployeeExcessDue(6001) === 0 && st().getEmployeeAdvanceBalance(6001).remainingMinor === 0 && st().employeeAdvances.find((a) => a.id === shortageAdv.id).recoveredMinor === 30000)
+const paidClosedFileExcess = summarizeCustodyExcessByFile(st().custodyFiles, st().custodyTxs, st().payrollRuns).get(fileA.id)
+ok('② زيادة الملف المغلق صُرفت من 2107 بالمسير وبقي تتبعها على الملف: مستحق 50000، مصروف 50000، باقٍ صفر', paidClosedFileExcess?.accruedMinor === 50000 && paidClosedFileExcess.paidMinor === 50000 && paidClosedFileExcess.remainingMinor === 0)
 throws('② لا يتكرر راتب الموظف نفسه في الشهر نفسه', () => st().postPayroll({ month: '2026-09', payMode: 'cash', treasury: '1101', lines: [{ employeeId: 6001, baseMinor: 100000, allowancesMinor: 0, overtimeMinor: 0, deductionsMinor: 0, advancesMinor: 0 }], notes: '' }), 'مرحّل بالفعل')
 
 /* صرف مسير من ملف عهدة مفتوح برصيد كافٍ */

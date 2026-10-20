@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react'
 import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
+import { useRawDataStore } from '../../data/repo.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { validateSyncConfig, fetchRemote, generateSyncSecret, generateStoreAccessToken, rotateStoreAccessToken, rotateSyncEncryptionSecret } from '../../data/syncClient.ts'
 import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
@@ -19,6 +20,10 @@ const MIGRATION_PATH = 'supabase/migrations/202609220001_secure_store_rls.sql'
 
 export function SyncPage() {
   const { sync, updateSync, activatedPayload, trialStartedAt, lastSeenAt, deviceId, deviceFlags } = useAppStore()
+  const canManageSnapshots = useRawDataStore((state) =>
+    !state.loggedOut && (state.currentUserId == null
+      || state.appUsers.find((user) => user.id === state.currentUserId)?.roleId === 'owner'),
+  )
   const toast = useToast()
 
   const licensed = useMemo(() => {
@@ -303,8 +308,14 @@ export function SyncPage() {
         <div className="text-[11px] text-slate-400">معرف هذا الجهاز: <code dir="ltr">{deviceId}</code></div>
       </div>
 
+      {!canManageSnapshots && (
+        <div className={`anim-up ${card} text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400`}>
+          المزامنة الخلفية مستمرة على هذا الجهاز. لقطات التعارض تحتوي بيانات المتجر كاملة؛ لذلك تنزيلها أو استعادتها متاح للمالك فقط.
+        </div>
+      )}
+
       {/* لقطات أمان التعارض: حالة الجهاز قبل تطبيق سحابي فوق تغييرات معلقة */}
-      {snapshots.length > 0 && (
+      {canManageSnapshots && snapshots.length > 0 && (
         <div className={`anim-up ${card} space-y-3`} style={{ animationDelay: '90ms' }}>
           <div className="font-bold text-[13px] flex items-center gap-2"><History size={15} className="text-amber-500" /> لقطات أمان التعارض ({snapshots.length})</div>
           <p className="text-[11.5px] text-slate-400 leading-relaxed">

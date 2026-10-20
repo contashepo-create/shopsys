@@ -4,7 +4,7 @@ import { allocateJournalLine } from '../src/core/ledger.ts'
 import { validateExpenseTemplate } from '../src/core/expenseCatalog.ts'
 import { invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter } from '../src/core/expenseReports.ts'
 import { buildInternalExpenseLines } from '../src/core/advancedInvoice.ts'
-import { useDataStore } from '../src/data/repo.ts'
+import { EMPTY_EXTENDED, useDataStore } from '../src/data/repo.ts'
 
 const original = useDataStore.getState()
 
@@ -69,7 +69,9 @@ describe('المراكز العامة وبنود المصروف القابلة �
   it('يربط تكلفة مشروع المقاولات بالمركز العام مع إبقاء projectId منفصلاً', () => {
     const center = useDataStore.getState().addCostCenter({ code: 'PRJ', nameAr: 'مركز المشاريع' })
     const project = useDataStore.getState().addProject({ nameAr: 'مشروع اختبار', clientName: 'عميل اختبار', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-09-25', notes: '' })
-    const cost = useDataStore.getState().addProjectCost({ projectId: project.id, kind: 'materials', amountMinor: 1000, payment: 'credit', description: 'حديد', costCenterId: center.id })
+    useDataStore.getState().addSupplier({ ...EMPTY_EXTENDED, nameAr: 'مورد المشروع', phone: '', notes: '' })
+    const supplier = useDataStore.getState().suppliers.at(-1)!
+    const cost = useDataStore.getState().addProjectCost({ projectId: project.id, kind: 'materials', amountMinor: 1000, payment: 'credit', supplierId: supplier.id, description: 'حديد', costCenterId: center.id })
     expect(cost).toMatchObject({ projectId: project.id, costCenterId: center.id })
     const entry = useDataStore.getState().journal.find(row => row.id === cost.journalEntryId)
     expect(entry?.lines.find(line => line.accountCode === '5110')).toMatchObject({ costCenterId: center.id, debit: 1000 })

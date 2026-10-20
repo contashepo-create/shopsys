@@ -35,15 +35,22 @@ const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts
 const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
 const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const { pendingForUser } = await import(pathToFileURL(join(root, 'src/core/approvals.ts')).href)
+const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
 
 const st = () => useDataStore.getState()
 const app = () => useAppStore.getState()
 const bal = (code) => st().journal.flatMap((e) => e.lines).filter((l) => l.accountCode === code).reduce((s, l) => s + l.debit - l.credit, 0)
+const loginCashier = () => useDataStore.setState({ currentUserId: 1 })
+const loginOwner = async () => {
+  if (st().currentUserId != null) st().logout()
+  await st().login(null, '999999')
+}
 
 console.log('\n🛡️ رحلة نظام اعتماد المستندات — لا قيد قبل الاعتماد\n')
 
 /* ═══ 0) التجهيز (النظام موقوف): مورد + صنف بمخزون + عميل + كاشير ═══ */
 {
+  st().setOwnerPin(await hashPin('999999'))
   st().addSupplier({ nameAr: 'مورد الجملة', phone: '0100', address: '', notes: '', openingMinor: 0 })
   st().addItem({
     nameAr: 'سخان كهربائي', sku: 'HT-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
@@ -104,6 +111,7 @@ const saleArgs = () => ({
   /* صلاحية القرار: الكاشير يُرفض حتى لو حاول من المتجر مباشرة */
   assert.throws(() => st().decideDocApproval(request.id, { status: 'approved', by: 1, byName: 'كاشير محمد' }), /صلاحية/)
   assert.equal(request.status, 'pending', 'الطلب لم يتغيّر بعد محاولة الكاشير')
+  await loginOwner() // الاعتماد يُنفّذ في جلسة المالك؛ لا تُقبل هوية يرسلها نموذج المستند
   const decided = st().decideDocApproval(request.id, { status: 'approved', by: null, byName: 'المالك' })
   assert.equal(decided.status, 'approved')
   const sale = st().sales.find((row) => row.id === decided.postedDocumentId)
@@ -126,6 +134,7 @@ const saleArgs = () => ({
   }), /للاعتماد/)
   const request = st().docApprovals.at(-1)
   assert.equal(request.kind, 'purchase')
+  await loginOwner()
   assert.throws(() => st().decideDocApproval(request.id, { status: 'rejected', by: null, byName: 'المالك' }), /سبب الرفض/, 'الرفض بلا سبب مرفوض')
   const decided = st().decideDocApproval(request.id, { status: 'rejected', by: null, byName: 'المالك', reason: 'السعر أعلى من المتفق عليه' })
   assert.equal(decided.status, 'rejected')
@@ -137,12 +146,14 @@ const saleArgs = () => ({
 
 /* ═══ 4) سند قبض الكاشير ⇒ معلّق ثم معتمد يظهر بسجل السندات ═══ */
 {
+  loginCashier()
   const before = { vouchers: st().vouchers.length, treasury: bal('1101') }
   assert.throws(() => st().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 50000, description: 'دفعة من العميل', partyKind: 'customer', partyId: customer.id }), /للاعتماد/)
   assert.equal(bal('1101'), before.treasury, 'السند المعلّق لا يمسّ الخزينة')
   const request = st().docApprovals.at(-1)
   assert.equal(request.kind, 'receipt')
   assert.equal(request.partyName, 'عميل النور')
+  await loginOwner()
   const decided = st().decideDocApproval(request.id, { status: 'approved', by: null, byName: 'المالك' })
   const voucher = st().vouchers.find((row) => row.id === decided.postedDocumentId)
   assert.ok(voucher, 'سند القبض وُلد بالاعتماد')
@@ -154,6 +165,7 @@ const saleArgs = () => ({
 
 /* ═══ 5) حد المبلغ: ما دونه يُرحَّل فوراً بلا انتظار ═══ */
 {
+  loginCashier()
   app().updateApprovals({ thresholdMinor: 10000000 })
   const before = st().docApprovals.length
   const sale = st().postSale(saleArgs())
@@ -182,6 +194,7 @@ const saleArgs = () => ({
   const request = st().docApprovals.at(-1)
   assert.equal(request.kind, 'sale_return')
   assert.ok(request.title.includes(firstSale.invoiceNumber), 'عنوان الطلب يذكر الفاتورة الأصلية')
+  await loginOwner()
   const decided = st().decideDocApproval(request.id, { status: 'approved', by: null, byName: 'المالك' })
   const ret = st().saleReturns.find((row) => row.id === decided.postedDocumentId)
   assert.ok(ret, 'المرتجع وُلد بالاعتماد')
@@ -193,6 +206,7 @@ const saleArgs = () => ({
 
 /* ═══ 8) تضييق النطاق لشراء فقط ⇒ البيع يمر مباشرة ═══ */
 {
+  loginCashier()
   app().updateApprovals({ scope: ['purchase'] })
   const before = st().docApprovals.length
   const sale = st().postSale(saleArgs())
@@ -204,7 +218,7 @@ const saleArgs = () => ({
 
 /* ═══ 9) المالك نفسه لا يقف على البوابة (كل الصلاحيات) ═══ */
 {
-  useDataStore.setState({ currentUserId: null })
+  await loginOwner()
   const before = st().docApprovals.length
   const sale = st().postSale(saleArgs())
   assert.ok(sale.id > 0)
@@ -214,7 +228,7 @@ const saleArgs = () => ({
 
 /* ═══ 10) قوائم المعتمِد + إيقاف النظام + ميزان متزن ═══ */
 {
-  useDataStore.setState({ currentUserId: 1 })
+  loginCashier()
   assert.throws(() => st().postSale(saleArgs()), /للاعتماد/)
   const pending = st().docApprovals.filter((row) => row.status === 'pending')
   assert.equal(pending.length, 1)

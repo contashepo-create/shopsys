@@ -18,6 +18,7 @@ const root = join(__dirname, '..')
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpenShiftForSales: false, allowNegativeTreasury: true, vatPercent: 14, taxInclusive: true, activityId: 'contracting', countryCode: 'EG' }, license: { plan: 'pro' } } }))
 
 let pass = 0
 const ok = (msg) => {
@@ -214,6 +215,32 @@ console.log('\n═══ ② فحص المستودع والقيود: خصم صا
   assert.equal(profitAfter.costsByKind.materials, 10000000, 'توزيع المواد = 100,000')
   assert.equal(profitAfter.costsByKind.labor, 5000000, 'توزيع العمالة = 50,000')
   assert.equal(profitAfter.costsByKind.other, 2000000, 'توزيع أخرى = 20,000')
+
+  S().addEmployee({
+    nameAr: 'موظف مصروف مشروع جزئي', phone: '', jobTitle: 'محاسب موقع', roleId: null,
+    hireDate: '2026-10-01', baseSalaryMinor: 0, allowancesMinor: 0, active: true, notes: '',
+    taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '',
+  })
+  const custodyEmployee = S().employees.at(-1)
+  const custodyFile = S().openCustodyFile({ employeeId: custodyEmployee.id, projectId: prj.id, reason: 'مصروف مشروع جزئي', notes: '' })
+  S().fundCustodyFile({ fileId: custodyFile.id, amountMinor: 600000, treasury: '1101', description: 'تعزيز اختبار المصروف الجزئي' })
+  const partiallyPaidCost = S().addProjectCost({
+    projectId: prj.id, kind: 'materials', amountMinor: 1000000, inputVatMinor: 140000,
+    payment: 'mixed', paidMinor: 500000, supplierId: supplier.id, description: 'توريد جزئي من العهدة',
+    custodyFileId: custodyFile.id,
+  })
+  const partialCostEntry = S().journal.find((entry) => entry.sourceType === 'project_cost' && entry.sourceId === partiallyPaidCost.id)
+  const entryAmount = (code, side) => partialCostEntry?.lines.filter((line) => line.accountCode === code).reduce((sum, line) => sum + line[side], 0) ?? 0
+  assert.equal(partiallyPaidCost.grossMinor, 1140000)
+  assert.equal(partiallyPaidCost.paidMinor, 500000)
+  assert.equal(partiallyPaidCost.dueMinor, 640000)
+  assert.equal(partiallyPaidCost.custodyFileId, custodyFile.id)
+  assert.equal(entryAmount('1108', 'credit'), 500000, 'العهدة تُحمّل المدفوع فقط')
+  assert.equal(entryAmount('2101', 'credit'), 640000, 'الباقي الدائن على المورد')
+  assert.equal(entryAmount('1101', 'credit'), 0, 'لا خصم من الخزينة عند اختيار العهدة')
+  assert.equal(S().getCustodySummary(custodyFile.id).spentMinor, 500000)
+  assert.equal(S().getCustodySummary(custodyFile.id).remainingMinor, 100000)
+  ok('السداد الجزئي من العهدة: يُخصم المدفوع فقط من 1108، والمتبقي الآجل على 2101 للمورد')
 
   for (const entry of S().journal) {
     const d = entry.lines.reduce((s, l) => s + l.debit, 0)

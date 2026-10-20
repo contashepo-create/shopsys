@@ -30,10 +30,10 @@ const check = (name, ok) => {
 
 /* ─── ① علة الخزينة السالبة: القراءة الحية من المتجر ─── */
 const repo = read('src/data/repo.ts')
-check('① حارس الخزينة يقرأ useAppStore.getState() الحي', repo.includes("useAppStore.getState().setup.allowNegativeTreasury === true"))
+check('① حارس الخزينة يقرأ الإعداد الفعّال للفرع من التطبيق', repo.includes('allow = appSetupForState(currentState).allowNegativeTreasury === true'))
 check('① الحارس يقارن بالرصيد القبلي (يرفض ما يُعمّق السالبية فقط)', repo.includes('bal < 0 && bal < (prevBalances.get(code) ?? 0)'))
 check('① رسالة الرفض تسمّي مفتاح الخزائن وتفصله عن مفتاح المخزون', repo.includes('السماح بالرصيد السالب في الخزائن والبنوك'))
-check('① القراءة النصية القديمة تراجع فقط إن لم يوجد متجر حي', !repo.includes("if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true\n  } catch { /* الافتراضي: ممنوع */ }\n  if (allow) return"))
+check('① fallback التخزين يُستخدم قبل اكتمال الترطيب فقط ويعتمد companySetup/setup', repo.includes('if (!companySetup.completed)') && repo.includes('persisted?.companySetup ?? persisted?.setup'))
 
 /* ─── ② علة المخزون في الفاتورة المتقدمة: قراءة حية لا نسخة منتهية ─── */
 const adv = read('src/ui/pages/AdvancedSalesInvoicePage.tsx')

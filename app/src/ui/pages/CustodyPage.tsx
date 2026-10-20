@@ -11,15 +11,15 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { summarizeCustody, CUSTODY_TX_LABELS, type CustodyFile } from '../../core/custody.ts'
+import { summarizeCustody, summarizeCustodyExcessByFile, CUSTODY_TX_LABELS, type CustodyFile } from '../../core/custody.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 
 export function CustodyPage() {
   const {
-    custodyFiles, custodyTxs, employees, projects, journal,
-    openCustodyFile, fundCustodyFile, postCustodyExpense, settleCustodyFile, getEmployeeExcessDue,
+    custodyFiles, custodyTxs, employeeAdvances, payrollRuns, employees, projects, journal,
+    openCustodyFile, fundCustodyFile, postCustodyExpense, settleCustodyFile,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -54,6 +54,18 @@ export function CustodyPage() {
   const viewing: CustodyFile | null = viewingId != null ? custodyFiles.find((f) => f.id === viewingId) ?? null : null
   const viewTxs = useMemo(() => custodyTxs.filter((t) => t.fileId === viewingId), [custodyTxs, viewingId])
   const viewSummary = useMemo(() => summarizeCustody(viewTxs), [viewTxs])
+  const excessByFile = useMemo(
+    () => summarizeCustodyExcessByFile(custodyFiles, custodyTxs, payrollRuns),
+    [custodyFiles, custodyTxs, payrollRuns],
+  )
+  const viewingExcess = viewing ? excessByFile.get(viewing.id) : undefined
+  const viewingExcessRemaining = viewingExcess?.remainingMinor ?? 0
+  const viewingShortageAdvance = viewing
+    ? employeeAdvances.find((advance) => advance.source === 'custody_shortage' && advance.custodyFileId === viewing.id)
+    : undefined
+  const viewingShortageRemaining = viewingShortageAdvance
+    ? Math.max(0, viewingShortageAdvance.amountMinor - (viewingShortageAdvance.recoveredMinor ?? 0))
+    : viewing?.shortageMinor ?? 0
 
   /* قيم مشتقة لنوافذ العهدة: المبالغ بالقروش وأثرها المحاسبي قبل الترحيل */
   const toMinorSafe = (v: string) => { try { return v.trim() ? toMinor(v, cur.decimals) : 0 } catch { return 0 } }
@@ -101,9 +113,8 @@ export function CustodyPage() {
     if (!viewing) return
     try {
       const f = settleCustodyFile({ fileId: viewing.id, returnedMinor: toMinor(returnAmount || '0', cur.decimals), treasury: settleTreasury })
-      toast.show(f.shortageMinor > 0
-        ? `سُوّي ${f.fileNumber}: مرتجع ${fmt(f.returnedMinor)} + عجز ${fmt(f.shortageMinor)} سلفة تُخصم من راتبه بحريتك ✓`
-        : `سُوّي ${f.fileNumber} وأُغلق — المرتجع ${fmt(f.returnedMinor)} عاد للخزينة 🎉`)
+      const excessDue = excessByFile.get(viewing.id)?.remainingMinor ?? 0
+      toast.show(`سُوّي ${f.fileNumber}: مرتجع ${fmt(f.returnedMinor)} · عجز ${fmt(f.shortageMinor)}${f.shortageMinor > 0 ? ' (سلفة تُخصم من الراتب)' : ''} · زيادة مصروفات مستحقة ${fmt(excessDue)}${excessDue > 0 ? ' ستظهر في مسير الرواتب' : ''} ✓`)
       setSettleOpen(false); setReturnAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -135,12 +146,14 @@ export function CustodyPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                {['الملف', 'الموظف', 'المشروع', 'التعزيزات', 'المنصرف', 'المتبقي', 'الحالة', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
+                {['الملف', 'الموظف', 'المشروع', 'التعزيزات', 'مصروف من العهدة', 'زيادة مستحقة', 'المتبقي', 'الحالة', ''].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
               </tr>
             </thead>
             <tbody>
               {[...custodyFiles].reverse().map((f, i) => {
                 const sum = summarizeCustody(custodyTxs.filter((t) => t.fileId === f.id))
+                const excess = excessByFile.get(f.id)
+                const excessRemaining = excess?.remainingMinor ?? 0
                 return (
                   <tr key={f.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-orange-500/5 transition-colors">
                     <td className="px-4 py-3">
@@ -150,12 +163,13 @@ export function CustodyPage() {
                     <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{empName(f.employeeId)}</td>
                     <td className="px-4 py-3 text-[12px] text-slate-500">{projName(f.projectId) ?? '—'}</td>
                     <td className="px-4 py-3 font-black text-emerald-600">{fmt(sum.fundedMinor)}</td>
-                    <td className="px-4 py-3 font-black text-rose-500">{fmt(sum.spentMinor)}</td>
+                    <td className="px-4 py-3 font-black text-rose-500" title={`إجمالي المصروف ${fmt(sum.expenseTotalMinor)}، منه زيادة مستحقة ${fmt(sum.excessMinor)}`}>{fmt(sum.spentMinor)}</td>
+                    <td className="px-4 py-3 font-black text-amber-600" data-custody-excess-due={f.id}>{fmt(excess?.remainingMinor ?? 0)}</td>
                     <td className="px-4 py-3 font-black">{f.status === 'open' ? fmt(sum.remainingMinor) : '0'}</td>
                     <td className="px-4 py-3">
                       {f.status === 'open'
                         ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 font-bold">📂 مفتوح</span>
-                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">✓ مُسوَّى{f.shortageMinor > 0 ? ` — عجز ${fmt(f.shortageMinor)}` : ''}</span>}
+                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">✓ مُسوَّى{f.returnedMinor > 0 ? ` — مرتجع ${fmt(f.returnedMinor)}` : ''}{f.shortageMinor > 0 ? ` — عجز ${fmt(f.shortageMinor)}` : ''}{excessRemaining > 0 ? ` — زيادة مستحقة ${fmt(excessRemaining)}` : ''}</span>}
                     </td>
                     <td className="px-4 py-3 text-left">
                       <button onClick={() => setViewingId(f.id)} title="فتح الملف" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye size={16} /></button>
@@ -203,11 +217,13 @@ export function CustodyPage() {
       <Modal open={!!viewing} onClose={() => setViewingId(null)} title={viewing ? `${viewing.fileNumber} — ${empName(viewing.employeeId)}` : ''} wide>
         {viewing && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 text-center">
               <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/15 p-3"><div className="text-[11px] text-slate-500">التعزيزات</div><div className="font-black text-emerald-600">{fmt(viewSummary.fundedMinor)}</div></div>
-              <div className="rounded-xl bg-rose-500/5 border border-rose-500/15 p-3"><div className="text-[11px] text-slate-500">المنصرف والفواتير</div><div className="font-black text-rose-500">{fmt(viewSummary.spentMinor)}</div></div>
+              <div className="rounded-xl bg-rose-500/5 border border-rose-500/15 p-3"><div className="text-[11px] text-slate-500">إجمالي المصروف الفعلي</div><div className="font-black text-rose-500">{fmt(viewSummary.expenseTotalMinor)}</div><div className="text-[10px] text-slate-400">منه {fmt(viewSummary.spentMinor)} من العهدة</div></div>
               <div className="rounded-xl bg-slate-500/5 border border-slate-500/15 p-3"><div className="text-[11px] text-slate-500">المتبقي بالعهدة</div><div className="font-black">{fmt(viewing.status === 'open' ? viewSummary.remainingMinor : 0)}</div></div>
-              <div className="rounded-xl bg-amber-500/5 border border-amber-500/15 p-3"><div className="text-[11px] text-slate-500">زيادة مستحقة للموظف</div><div className="font-black text-amber-600">{fmt(getEmployeeExcessDue(viewing.employeeId))}</div></div>
+              <div className="rounded-xl bg-sky-500/5 border border-sky-500/15 p-3"><div className="text-[11px] text-slate-500">المرتجع للخزينة</div><div className="font-black text-sky-600">{fmt(viewSummary.returnedMinor)}</div></div>
+              <div className="rounded-xl bg-orange-500/5 border border-orange-500/15 p-3"><div className="text-[11px] text-slate-500">العجز الأصلي / المتبقي</div><div className="font-black text-orange-600">{fmt(viewing.shortageMinor)} / {fmt(viewingShortageRemaining)}</div></div>
+              <div className="rounded-xl bg-amber-500/5 border border-amber-500/15 p-3" data-custody-excess-summary><div className="text-[11px] text-slate-500">زيادة هذا الملف: مسجل / مصروف / باقٍ</div><div className="font-black text-amber-600">{fmt(viewingExcess?.accruedMinor ?? 0)} / {fmt(viewingExcess?.paidMinor ?? 0)} / {fmt(viewingExcess?.remainingMinor ?? 0)}</div></div>
             </div>
             {viewing.status === 'open' ? (
               <div className="flex gap-2 flex-wrap">
@@ -216,8 +232,10 @@ export function CustodyPage() {
                 <Btn variant="ghost" onClick={() => { setReturnAmount(String(viewSummary.remainingMinor / 10 ** cur.decimals)); setSettleTreasury('1101'); setSettleOpen(true) }}><Scale size={14} /> تسوية وإغلاق</Btn>
               </div>
             ) : (
-              <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-[12.5px] font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 size={15} /> ملف مُسوَّى ومغلق في {viewing.settledAt} — مرتجع {fmt(viewing.returnedMinor)}{viewing.shortageMinor > 0 ? ` / عجز ${fmt(viewing.shortageMinor)} (سلفة تُخصم من الراتب)` : ''} — لا حركات جديدة عليه
+              <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-[12.5px] font-bold text-emerald-700 dark:text-emerald-300" data-custody-settlement-status>
+                <div className="flex items-center gap-2"><CheckCircle2 size={15} /> ملف مُسوَّى ومغلق في {viewing.settledAt} — مرتجع {fmt(viewing.returnedMinor)} · عجز {fmt(viewing.shortageMinor)} (سلفة أصلية) · متبقي السلفة {fmt(viewingShortageRemaining)}</div>
+                <div className="mt-1 text-[11.5px]">زيادة المصروفات المسجلة {fmt(viewingExcess?.accruedMinor ?? 0)} · صُرف منها بالمسيرات {fmt(viewingExcess?.paidMinor ?? 0)} · المتبقي للموظف على 2107 هو {fmt(viewingExcess?.remainingMinor ?? 0)}.</div>
+                <div className="mt-1 text-[11px]">لا حركات عهدة جديدة على الملف؛ يستمر تتبع مستحق الزيادة والسلفة بعد الإغلاق حتى تسويتهما.</div>
               </div>
             )}
 
@@ -231,20 +249,26 @@ export function CustodyPage() {
                   <table className="w-full text-[12.5px]">
                     <thead>
                       <tr className="text-right text-[10.5px] text-slate-400 bg-slate-50 dark:bg-slate-800/50">
-                        {['التاريخ', 'الحركة', 'البيان', 'له (تعزيز)', 'عليه (منصرف)'].map((h) => <th key={h} className="px-3 py-2 font-bold">{h}</th>)}
+                        {['التاريخ', 'الحركة', 'البيان', 'تعزيز نقدي', 'مصروف فعلي', 'منه زيادة مستحقة', 'مرتجع للخزينة', 'عجز / سلفة'].map((h) => <th key={h} className="px-3 py-2 font-bold">{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {viewTxs.map((t) => {
                         const lbl = CUSTODY_TX_LABELS[t.type]
-                        const isCredit = t.type === 'fund'
+                        const isFund = t.type === 'fund'
+                        const isExpense = t.type === 'expense' || t.type === 'invoice'
+                        const isReturn = t.type === 'return'
+                        const isShortage = t.type === 'shortage'
                         return (
                           <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
                             <td className="px-3 py-2 text-slate-400">{t.date}</td>
                             <td className="px-3 py-2 font-bold">{lbl.icon} {lbl.nameAr}</td>
                             <td className="px-3 py-2">{t.description || '—'}{t.projectId != null && <span className="text-[10px] text-orange-500 font-bold"> · 🏗️ {projName(t.projectId)}</span>}{t.excessMinor > 0 && <span className="text-[10px] text-amber-600 font-bold"> · زيادة {fmt(t.excessMinor)} للموظف</span>}</td>
-                            <td className="px-3 py-2 font-black text-emerald-600">{isCredit ? fmt(t.amountMinor) : ''}</td>
-                            <td className="px-3 py-2 font-black text-rose-500">{!isCredit ? fmt(t.amountMinor) : ''}</td>
+                            <td className="px-3 py-2 font-black text-emerald-600">{isFund ? fmt(t.amountMinor) : ''}</td>
+                            <td className="px-3 py-2 font-black text-rose-500">{isExpense ? fmt(t.amountMinor) : ''}</td>
+                            <td className="px-3 py-2 font-black text-amber-600">{isExpense && t.excessMinor > 0 ? fmt(t.excessMinor) : ''}</td>
+                            <td className="px-3 py-2 font-black text-sky-600">{isReturn ? fmt(t.amountMinor) : ''}</td>
+                            <td className="px-3 py-2 font-black text-orange-600">{isShortage ? fmt(t.amountMinor) : ''}</td>
                           </tr>
                         )
                       })}
@@ -421,6 +445,11 @@ export function CustodyPage() {
                       ? <><AlertTriangle size={12} className="mt-0.5 shrink-0" /><span>العجز {fmt(shortage)} يصير سلفة على {empName(viewing.employeeId)} تخصمها من راتبه كلها أو على دفعات.</span></>
                       : <><CheckCircle2 size={12} className="mt-0.5 shrink-0" /><span>تسوية كاملة بلا عجز — يُغلق الملف بعد الترحيل.</span></>}
                   </div>
+                  {viewingExcessRemaining > 0 && (
+                    <div className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700 dark:text-amber-300" data-settlement-excess-due>
+                      الزيادة المستحقة للموظف من هذا الملف {fmt(viewingExcessRemaining)} لا تُخصم من رصيد العهدة ولا تُلغى عند الإغلاق؛ تبقى على 2107 وتظهر في خانة «زيادة عهدة مستحقة» بمسير الرواتب.
+                    </div>
+                  )}
                 </DocOutcome>
               </div>
               <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">

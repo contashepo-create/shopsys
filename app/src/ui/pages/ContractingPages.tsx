@@ -972,8 +972,6 @@ export function ProjectsPage() {
                       <div className="flex gap-1 justify-end">
                         {p.status === 'active' && (
                           <>
-                            <button onClick={() => navigate(`/contracting/extracts?projectId=${p.id}`)} title="إصدار مستخلص / فاتورة أعمال للعميل" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
-                            <button onClick={() => navigate(`/contracting/expenses?projectId=${p.id}`)} title="تسجيل مصروفات على المشروع" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Hammer className="w-4 h-4" /></button>
                             <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => setCoFor(p)} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
@@ -1499,13 +1497,17 @@ export function ProjectExpensesPage() {
   const [viewCostId, setViewCostId] = useState<number | null>(null)
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
-  const [paymentMode, setPaymentMode] = useState<'cash' | 'credit' | 'mixed'>('cash')
   const [paidNow, setPaidNow] = useState('')
   const [supplierId, setSupplierId] = useState<number>(0)
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [invoiceRef, setInvoiceRef] = useState('')
   const [generalNotes, setGeneralNotes] = useState('')
   const [costCenterId, setCostCenterId] = useState<number | null>(null)
+  const [detailedExpense, setDetailedExpense] = useState(false)
+  const [simpleDescription, setSimpleDescription] = useState('')
+  const [simpleKind, setSimpleKind] = useState<CostKind>('materials')
+  const [simpleAmount, setSimpleAmount] = useState('')
+  const [simpleBoqItemId, setSimpleBoqItemId] = useState('')
   const [lines, setLines] = useState<ExpenseLineDraft[]>(() => [
     { id: 1, description: '', kind: 'materials', qty: '1', unitPrice: '', taxMode: 'none', vatPercent: String(defaultVat), boqItemId: '' },
   ])
@@ -1514,13 +1516,17 @@ export function ProjectExpensesPage() {
     const activeProjects = projects.filter((p) => p.status === 'active')
     const defaultProjId = preselectProjectId ?? (filterProjectId ? Number(filterProjectId) : activeProjects[0]?.id ?? 0)
     setSelectedProjectId(defaultProjId ? String(defaultProjId) : '')
-    setPaymentMode('cash')
     setPaidNow('')
     setSupplierId(0)
     setPaySource(DEFAULT_PAY_SOURCE)
     setInvoiceRef('')
     setGeneralNotes('')
     setCostCenterId(null)
+    setDetailedExpense(false)
+    setSimpleDescription('')
+    setSimpleKind('materials')
+    setSimpleAmount('')
+    setSimpleBoqItemId('')
     setLines([
       { id: 1, description: '', kind: 'materials', qty: '1', unitPrice: '', taxMode: vatEnabled ? 'exclusive' : 'none', vatPercent: String(defaultVat), boqItemId: '' },
     ])
@@ -1557,8 +1563,13 @@ export function ProjectExpensesPage() {
     [boqItems, selectedProject],
   )
 
+  const expenseLineDrafts: ExpenseLineDraft[] = detailedExpense ? lines : [{
+    id: 0, description: simpleDescription, kind: simpleKind, qty: '1', unitPrice: simpleAmount,
+    taxMode: 'none', vatPercent: '0', boqItemId: simpleBoqItemId,
+  }]
+
   const computedPreview = (() => {
-    const rows = lines.map((l) => {
+    const rows = expenseLineDrafts.map((l) => {
       const qtyNum = Number(l.qty) || 0
       const unitMinor = toMinor(l.unitPrice || '0', cur.decimals)
       const vatPct = Number(l.vatPercent) || 0
@@ -1577,11 +1588,18 @@ export function ProjectExpensesPage() {
       return { draft: l, computed: c }
     })
     const valid = rows.filter((r) => r.computed.grossMinor > 0 && r.computed.description.length > 0)
-    const netMinor = rows.reduce((s, r) => s + r.computed.netMinor, 0)
-    const vatMinor = rows.reduce((s, r) => s + r.computed.vatMinor, 0)
-    const grossMinor = rows.reduce((s, r) => s + r.computed.grossMinor, 0)
+    const netMinor = valid.reduce((s, r) => s + r.computed.netMinor, 0)
+    const vatMinor = valid.reduce((s, r) => s + r.computed.vatMinor, 0)
+    const grossMinor = valid.reduce((s, r) => s + r.computed.grossMinor, 0)
     return { rows, valid, netMinor, vatMinor, grossMinor }
   })()
+
+  const paidNowMinor = (() => {
+    try { return paidNow.trim() ? toMinor(paidNow, cur.decimals) : 0 }
+    catch { return Number.NaN }
+  })()
+  const paidNowValid = Number.isInteger(paidNowMinor) && paidNowMinor >= 0 && paidNowMinor <= computedPreview.grossMinor
+  const dueNowMinor = paidNowValid ? computedPreview.grossMinor - paidNowMinor : Math.max(0, computedPreview.grossMinor - (Number.isFinite(paidNowMinor) ? paidNowMinor : 0))
 
   const selectedProjectProfit = selectedProject ? getProjectProfit(selectedProject.id) : null
 
@@ -1596,24 +1614,23 @@ export function ProjectExpensesPage() {
     }
     try {
       const grossMinor = computedPreview.grossMinor
-      const paidMinor =
-        paymentMode === 'cash'
-          ? grossMinor
-          : paymentMode === 'credit'
-          ? 0
-          : toMinor(paidNow || '0', cur.decimals)
-      if (grossMinor - paidMinor > 0 && !supplierId) {
-        throw new Error('الجزء الآجل يتطلب اختيار المورد أو مقاول الباطن ليظهر في كشف حسابه')
+      const paidMinor = paidNowMinor
+      if (!Number.isInteger(paidMinor) || paidMinor < 0 || paidMinor > grossMinor) {
+        throw new Error('المبلغ المدفوع يجب أن يكون بين صفر وإجمالي المصروف')
+      }
+      const dueMinor = grossMinor - paidMinor
+      if (dueMinor > 0 && !supplierId) {
+        throw new Error('المتبقي الآجل يتطلب اختيار المورد أو الجهة التي تتحمله ليظهر في كشف حسابها')
       }
       const created = addProjectCost({
         projectId: selectedProject.id,
-        payment: paymentMode,
+        payment: dueMinor === 0 ? 'cash' : paidMinor === 0 ? 'credit' : 'mixed',
         paidMinor,
         supplierId: supplierId || null,
         description: generalNotes.trim() || undefined,
         invoiceRef: invoiceRef.trim() || undefined,
-        treasury: paySource.kind === 'treasury' ? paySource.treasury : undefined,
-        custodyFileId: paymentMode === 'cash' && paySource.kind === 'custody' ? paySource.custodyFileId : null,
+        treasury: paidMinor > 0 && paySource.kind === 'treasury' ? paySource.treasury : undefined,
+        custodyFileId: paidMinor > 0 && paySource.kind === 'custody' ? paySource.custodyFileId : null,
         costCenterId,
         defaultVatPercent: defaultVat,
         lines: computedPreview.valid.map((r) => ({
@@ -1627,7 +1644,7 @@ export function ProjectExpensesPage() {
         })),
       })
       toast.show(
-        `سُجلت فاتورة مصروفات المشروع ${created.expenseNumber ?? `#${created.id}`} — الصافي على المشروع ${fmt(created.amountMinor)} والإجمالي الشامل ${fmt(created.grossMinor ?? created.amountMinor)} ✅`,
+        `سُجلت فاتورة مصروفات المشروع ${created.expenseNumber ?? `#${created.id}`} — إجمالي ${fmt(created.grossMinor ?? created.amountMinor)}، مدفوع ${fmt(created.paidMinor ?? 0)}، وآجل ${fmt(created.dueMinor ?? 0)} ✅`,
       )
       setModalOpen(false)
     } catch (e) {
@@ -1797,11 +1814,11 @@ export function ProjectExpensesPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title="تسجيل فاتورة مصروفات على مشروع"
-        subtitle="اختر المشروع وأدخل بنود المصروفات الحرة (كل بند بسعره وهل هو شامل الضريبة أم لا) ليُسجل الصافي على المشروع ويُخصم من أرباحه"
+        subtitle="سجّل بنود المصروف، ثم أدخل المبلغ المدفوع ومصدره؛ أي فرق يصبح آجلًا تلقائياً على الجهة المختارة"
         wide
       >
         <div className="space-y-4" data-project-expense-modal>
-          <DocSectionHead step="١" title="المشروع وطريقة السداد والطرف" hint="الصافي قبل الضريبة يُحمَّل على مركز تكلفة المشروع (5110) والضريبة تُعزل في حساب ضريبة المدخلات (2102)" />
+          <DocSectionHead step="١" title="المشروع ومصدر الدفع والجهة الدائنة" hint="المبلغ المدفوع يُخصم من الخزينة أو ملف العهدة المختار؛ أي فرق يُقيَّد تلقائياً على الجهة الدائنة (2101)" />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Field label="المشروع *">
               <select
@@ -1838,48 +1855,82 @@ export function ProjectExpensesPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="طريقة السداد">
-              <div className="flex gap-2">
-                {([
-                  ['cash', 'نقدي / بنكي / عهدة'],
-                  ['mixed', 'مدفوع جزئياً + آجل'],
-                  ['credit', 'آجل على مورد'],
-                ] as const).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setPaymentMode(mode)}
-                    className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${paymentMode === mode ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-project-expense-payment>
+            <Field label={`إجمالي المصروف (${cur.symbol})`} hint="الإجمالي شامل الضريبة؛ المتبقي يُحسب تلقائياً">
+              <div className="flex h-10 items-center justify-between rounded-xl border-2 border-rose-500/25 bg-rose-500/5 px-3 font-black text-rose-600" data-expense-payment-total>
+                <span>{fmt(computedPreview.grossMinor)}</span><span className="text-[11px]">{cur.symbol}</span>
               </div>
-              {paymentMode !== 'credit' && (
-                <div className="mt-2">
-                  <PaySourcePicker value={paySource} onChange={setPaySource} />
-                </div>
-              )}
-              {paymentMode === 'mixed' && (
-                <div className="mt-2">
-                  <Field label={`المدفوع الآن (${cur.symbol}) *`} hint="الباقي يُسجَّل في ذمة المورد (2101)">
-                    <input value={paidNow} onChange={(e) => setPaidNow(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" />
-                  </Field>
-                </div>
-              )}
             </Field>
-            <Field label={paymentMode === 'cash' ? 'المورد / مقاول الباطن (اختياري للنقدي)' : 'المورد / مقاول الباطن *'} hint="يُربط المصروف بسجل المورد ليظهر في كشف حسابه">
-              <PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashLabel="بدون مورد محدد" label="بحث المورد" cashValue={0} showCash={paymentMode === 'cash'} />
-              <div className="mt-2">
-                <Field label="بيان عام للفاتورة (اختياري)">
-                  <input value={generalNotes} onChange={(e) => setGeneralNotes(e.target.value)} className={inputCls} placeholder="توريد مواد ومصنعيات موقع…" />
-                </Field>
-              </div>
+            <Field label={`المبلغ المدفوع الآن (${cur.symbol})`} hint="اتركه فارغاً أو أدخل صفراً إذا كان المصروف آجلاً بالكامل">
+              <input
+                type="number"
+                min={0}
+                max={computedPreview.grossMinor / 10 ** cur.decimals}
+                step="any"
+                value={paidNow}
+                onChange={(e) => setPaidNow(e.target.value)}
+                inputMode="decimal"
+                className={inputCls}
+                dir="ltr"
+                placeholder="0 = آجل بالكامل"
+                data-expense-paid-now
+              />
+            </Field>
+            <Field label="مصدر المبلغ المدفوع">
+              <PaySourcePicker value={paySource} onChange={setPaySource} layout="dependent" />
             </Field>
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field
+              label={dueNowMinor > 0 ? 'المورد / الجهة التي تتحمل المتبقي *' : 'المورد / مقاول الباطن (اختياري)'}
+              hint={dueNowMinor > 0 ? `المتبقي الآجل ${fmt(dueNowMinor)} ${cur.symbol} سيظهر في كشف حساب الجهة المختارة` : 'يُربط المصروف بسجل المورد إن وُجد'}
+            >
+              <PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashLabel="بدون جهة دائنة" label="بحث المورد / الجهة" cashValue={0} showCash={dueNowMinor === 0} />
+            </Field>
+            <Field label="بيان عام للفاتورة (اختياري)">
+              <input value={generalNotes} onChange={(e) => setGeneralNotes(e.target.value)} className={inputCls} placeholder="توريد مواد ومصنعيات موقع…" />
+            </Field>
+          </div>
+          {!paidNowValid && (
+            <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] font-bold text-rose-700 dark:text-rose-300" data-expense-paid-error>
+              المبلغ المدفوع يجب أن يكون بين صفر وإجمالي المصروف.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[12px]" data-expense-settlement-preview>
+            <span>يُحمَّل الآن على مصدر الدفع: <b>{fmt(paidNowValid ? paidNowMinor : 0)} {cur.symbol}</b></span>
+            <span>المتبقي الآجل تلقائياً: <b className="text-amber-700 dark:text-amber-300">{fmt(dueNowMinor)} {cur.symbol}</b></span>
+          </div>
 
-          <DocSectionHead step="٢" title="بنود المصروفات الحرة (السعر وحالة الضريبة لكل بند)" hint="حدّد لكل بند سعره وما إذا كان شاملاً الضريبة أو غير شامل أو بدون ضريبة" />
+          <DocSectionHead step="٢" title={detailedExpense ? 'تفصيل بنود المصروف والضريبة' : 'مصروف بإجمالي واحد'} hint={detailedExpense ? 'أدخل كمية وسعر كل بند، وحدّد طريقة احتساب الضريبة' : 'أدخل بيان المصروف وفئته وإجماليه فقط؛ لا تُفصل الضريبة في هذا المسار المبسّط'} />
+          <div className="flex justify-end">
+            <Btn variant="ghost" type="button" onClick={() => setDetailedExpense((value) => !value)} data-toggle-expense-detail>
+              {detailedExpense ? 'العودة إلى الإدخال المبسّط' : 'تفصيل البنود والضريبة (اختياري)'}
+            </Btn>
+          </div>
+          {!detailedExpense ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3" data-expense-simple-entry>
+              <Field label="بيان المصروف *">
+                <input value={simpleDescription} onChange={(e) => setSimpleDescription(e.target.value)} className={inputCls} placeholder="مواد، أجور، نقل…" data-expense-simple-description />
+              </Field>
+              <Field label="فئة التكلفة">
+                <select value={simpleKind} onChange={(e) => setSimpleKind(e.target.value as CostKind)} className={inputCls} data-expense-simple-kind>
+                  {(Object.keys(COST_KIND_LABELS) as CostKind[]).map((kind) => <option key={kind} value={kind}>{COST_KIND_LABELS[kind].icon} {COST_KIND_LABELS[kind].nameAr}</option>)}
+                </select>
+              </Field>
+              {projectBoq.length > 0 && (
+                <Field label="بند جدول الكميات (اختياري)">
+                  <select value={simpleBoqItemId} onChange={(e) => setSimpleBoqItemId(e.target.value)} className={inputCls} data-expense-simple-boq>
+                    <option value="">— عام —</option>
+                    {projectBoq.map((item) => <option key={item.id} value={item.id}>{item.code} — {item.descriptionAr}</option>)}
+                  </select>
+                </Field>
+              )}
+              <Field label={`إجمالي المصروف (${cur.symbol}) *`} hint="أدخل الإجمالي؛ عند الحاجة لفصل ضريبة المدخلات استخدم التفصيل الاختياري">
+                <input type="number" min={0} step="any" inputMode="decimal" dir="ltr" value={simpleAmount} onChange={(e) => setSimpleAmount(e.target.value)} className={inputCls} placeholder="0.00" data-expense-simple-total />
+              </Field>
+            </div>
+          ) : (
+            <>
           <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
             <table className="w-full text-[12px]" data-expense-lines-table>
               <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
@@ -2015,6 +2066,8 @@ export function ProjectExpensesPage() {
               عدد البنود الفعالة: <b>{computedPreview.valid.length}</b>
             </span>
           </div>
+            </>
+          )}
 
           {/* شريط الإجمالي الفوري وأثره على ربح المشروع */}
           <div className="rounded-2xl border-2 border-rose-500/30 bg-rose-500/5 p-4 space-y-3" data-expense-summary-box>
@@ -2032,7 +2085,7 @@ export function ProjectExpensesPage() {
               <div className="rounded-xl bg-rose-600 text-white p-3">
                 <div className="text-[11px] opacity-90">إجمالي الفاتورة / المصروف الشامل</div>
                 <div className="text-xl font-black" data-expense-total-gross>{fmt(computedPreview.grossMinor)} {cur.symbol}</div>
-                <div className="text-[10px] opacity-85">{paymentMode === 'cash' ? 'يُصرف كاملاً الآن' : paymentMode === 'credit' ? 'يُقيد آجلاً على المورد' : 'سداد مختلط'}</div>
+                <div className="text-[10px] opacity-85">مدفوع {fmt(paidNowValid ? paidNowMinor : 0)} · آجل {fmt(dueNowMinor)}</div>
               </div>
             </div>
 
@@ -2051,11 +2104,11 @@ export function ProjectExpensesPage() {
             )}
           </div>
 
-          <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بصافي البنود على مركز تكلفة المشروع فيُخصم من ربحه · <b>2102</b> مديناً بضريبة المدخلات · <b>الخزينة</b> دائنة بالمدفوع نقداً و<b>2101 موردون ومقاولون</b> دائناً بالآجل.</DocOutcome>
+          <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بالصافي {fmt(computedPreview.netMinor)} · <b>2102</b> مديناً بالضريبة {fmt(computedPreview.vatMinor)}{paidNowValid && paidNowMinor > 0 ? <> · <b>{paySource.kind === 'custody' ? '1108 عهد الموظف' : `الخزينة/البنك ${paySource.treasury}`}</b> دائناً بالمدفوع {fmt(paidNowMinor)}</> : null}{dueNowMinor > 0 ? <> · <b>2101 المورد/الجهة المختارة</b> دائناً بالمتبقي الآجل {fmt(dueNowMinor)}</> : null}.</DocOutcome>
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setModalOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveExpenseInvoice} shortcut="F9" data-save-project-expense disabled={!selectedProjectId || computedPreview.valid.length === 0}>
+            <Btn onClick={saveExpenseInvoice} shortcut="F9" data-save-project-expense disabled={!selectedProjectId || computedPreview.valid.length === 0 || !paidNowValid || (dueNowMinor > 0 && !supplierId)}>
               <Hammer className="w-4 h-4" /> حفظ الفاتورة وتحميل المصروف على المشروع
             </Btn>
           </div>
