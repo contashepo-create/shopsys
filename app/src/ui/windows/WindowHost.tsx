@@ -119,12 +119,18 @@ export function WindowHost() {
   }, [minimizeWindow, requestCloseWindow, toggleMaximizeWindow])
 
   if (windows.length === 0) return null
+  /* إصلاح بلاغ المالك: «تصغير فاتورة بيع يفقد البنود المكتوبة بداخلها».
+     السبب أن النوافذ المصغَّرة كانت تُستبعد هنا بالكامل من شجرة العرض،
+     فيُفكَّك (unmount) محرر الفاتورة وتضيع حالته الداخلية غير المحفوظة.
+     الآن تبقى كل النوافذ المفتوحة في الشجرة دائماً، والتصغير إخفاء بصري
+     فقط عبر CSS (data-window-mode="minimized")، فتحافظ كل نافذة على حالتها
+     كاملة حتى تُستعاد — تماماً كما تنص تعليقات windowStore.ts الأصلية. */
   const visible = windows.filter((win) => win.mode !== 'minimized')
   const topId = visible.reduce<AppWindow | null>((top, win) => (!top || win.z > top.z ? win : top), null)?.id ?? null
 
   return (
     <OverlayPortal>
-      {visible.map((win) => (
+      {windows.map((win) => (
         <FloatingWindow key={win.id} win={win} active={win.id === topId}>
           <WindowHostProvider windowId={win.id} props={win.props}>
             <Suspense fallback={<div className="grid h-full place-items-center p-10 text-sm text-slate-500">جارٍ فتح النافذة…</div>}>

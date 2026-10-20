@@ -85,7 +85,7 @@ useEffect(()=>{if(mode!=='advanced'&&fxOn){setFxOn(false);setFxAmount('');setFxR
  const selectPartyKind=(kind:'customer'|'supplier'|'employee')=>{if(kind===partyKind)return;setPartyKind(kind);setCustomerId(0);setLines(previous=>previous.map(line=>({...line,unitPriceMinor:getEffectivePrice(line.itemId,0)})))}
  const customerPickerInfo=(party:{id:number;active?:boolean})=>{const balance=getCustomerBalance(party.id);return{code:partyCode('CUS',party.id),balance:`الرصيد ${formatMinor(Math.abs(balance),cur,false)} ${cur.symbol} ${balance>0?'عليه':balance<0?'له':''}`}}
  /* الإدخال الذكي (الموجة ①): «أرز*3@65-5%» يملأ الكمية والسعر والخصم دفعة واحدة */
- const addItem=(id:number,smart?:{qty?:number;price?:number;discount?:number})=>{const item=items.find(x=>x.id===id);if(!item)return;setLines(previous=>[...previous,{key:crypto.randomUUID(),itemId:item.id,nameAr:item.nameAr,qty:smart?.qty&&smart.qty>0?smart.qty:1,unitPriceMinor:smart?.price!==undefined?toMinor(String(smart.price),cur.decimals):getEffectivePrice(item.id,customerPriceListId(customerId)),unitCostMinor:item.costMinor,discountPercent:smart?.discount??0,soldByWeight:item.soldByWeight,warehouseId,warehouseSource:'default'}]);requestAnimationFrame(()=>document.querySelector<HTMLElement>('.invoice-editor tbody tr:last-child td[tabindex="0"]')?.focus())}
+ const addItem=(id:number,smart?:{qty?:number;price?:number;discount?:number})=>{const item=items.find(x=>x.id===id);if(!item)return;setLines(previous=>[...previous,{key:crypto.randomUUID(),itemId:item.id,nameAr:item.nameAr,qty:smart?.qty&&smart.qty>0?smart.qty:1,unitPriceMinor:smart?.price!==undefined?toMinor(String(smart.price),cur.decimals):getEffectivePrice(item.id,customerPriceListId(customerId)),unitCostMinor:item.costMinor,discountPercent:smart?.discount??0,soldByWeight:item.soldByWeight,/* خانة ضريبة مستقلة لكل بند (طلب المالك): البند الجديد يتبع إعداد الضريبة العام تلقائياً، وتبقى خانته قابلة للتغيير وحدها لاحقاً دون أثر على باقي البنود */vatPercentOverride:taxPolicy.effectivePercent>0?taxPolicy.effectivePercent:0,warehouseId,warehouseSource:'default'}]);requestAnimationFrame(()=>document.querySelector<HTMLElement>('.invoice-editor tbody tr:last-child td[tabindex="0"]')?.focus())}
  const patch=(key:string,p:Partial<DraftLine>)=>setLines(lines.map(l=>l.key===key?{...l,...p}:l));
  /* نقرتان على صنف داخل الجدول = استبداله من نافذة اختيار الصنف (بلاغ المالك) */
  const replaceLineItem=(key:string,id:number)=>{const item=items.find(x=>x.id===id);if(!item)return;setLines(previous=>previous.map(line=>line.key===key?{...line,itemId:item.id,nameAr:item.nameAr,unitPriceMinor:getEffectivePrice(item.id,customerPriceListId(customerId)),unitCostMinor:item.costMinor,soldByWeight:item.soldByWeight}:line))};const changeWarehouse=(id:number|null)=>{setWarehouseId(id);setLines(lines.map(l=>l.warehouseSource==='default'?{...l,warehouseId:id}:l))}
@@ -454,6 +454,7 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
    currencyDecimals={cur.decimals}
    currencySymbol={cur.symbol}
    canViewCost={canViewCost}
+   taxEnabled={taxPolicy.effectivePercent > 0}
    warnings={new Map(stockWarnings.map(w => [w.lineId, { message: w.message, severity: w.severity }]))}
    belowCostKeys={new Set(belowCostLines.map(line => line.key))}
    onPick={addItem}

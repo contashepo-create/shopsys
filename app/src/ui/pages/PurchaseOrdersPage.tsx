@@ -92,7 +92,6 @@ export function PurchaseOrdersPage() {
   const openMaintenanceTickets = useMemo(() => tickets.filter((t) => t.status !== 'delivered' && t.status !== 'cancelled'), [tickets])
   /** يبدأ الجدول بلا سطور: أول سطر ظاهر يحمل خانة البحث — كما في فاتورة الشراء حرفياً */
   const [lines, setLines] = useState<DraftLine[]>([])
-  const [applyTax, setApplyTax] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseOrderStatus>('all')
   const [activeItemId, setActiveItemId] = useState<number | null>(null)
   const [partyNote, setPartyNote] = useState('')
@@ -133,7 +132,8 @@ export function PurchaseOrdersPage() {
     setLines((current) => [...current, {
       key: crypto.randomUUID(), itemId: item.id, nameAr: item.nameAr, qty, receivedQty: 0,
       unitAr: item.baseUnit ?? 'قطعة', unitPriceMinor,
-      vatPercent: applyTax ? taxPolicy.effectivePercent : 0, notes: '', warehouseId,
+      /* خانة ضريبة مستقلة لكل بند (طلب المالك): البند الجديد يتبع إعداد الضريبة العام تلقائياً */
+      vatPercent: taxPolicy.effectivePercent, notes: '', warehouseId,
     }])
   }
   /* نقرتان على اسم السطر ⇒ استبدال الصنف (نفس سلوك جدول الفاتورة) */
@@ -144,7 +144,7 @@ export function PurchaseOrdersPage() {
   }
 
   const reset = () => {
-    setLines([]); setNotes(''); setReference(''); setSupplierId(null); setSupplierName(''); setApplyTax(false); setLastSavedAt(null)
+    setLines([]); setNotes(''); setReference(''); setSupplierId(null); setSupplierName(''); setLastSavedAt(null)
     setActiveItemId(null); setPartyNote(''); setCategoryFilter(0); setLinkedTicketId('')
   }
   const openNew = () => {
@@ -169,7 +169,7 @@ export function PurchaseOrdersPage() {
     upsertAdvancedInvoiceDraft({
       id: draftId, kind: 'purchase_order',
       name: `مسودة أمر شراء — ${supplierId ? selectedSupplier?.nameAr ?? 'مورد' : supplierName.trim() || 'مورد نقدي'}`,
-      payload: JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, applyTax, lines }),
+      payload: JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, lines }),
     })
     unsaved.markClean()
     setLastSavedAt(new Date().toLocaleString('ar-EG'))
@@ -181,7 +181,7 @@ export function PurchaseOrdersPage() {
       setSupplierId(data.supplierId ?? null); setSupplierName(data.supplierName ?? '')
       setDate(data.date ?? new Date().toISOString().slice(0, 10)); setExpectedDate(data.expectedDate ?? '')
       setWarehouseId(data.warehouseId ?? null); setNotes(data.notes ?? ''); setReference(data.reference ?? '')
-      setApplyTax(data.applyTax ?? false); setLines(data.lines ?? [])
+      setLines(data.lines ?? [])
       toast.show(`استُعيدت «${draft.name}» ✓`)
     } catch { toast.show('تعذر قراءة المسودة', 'error') }
   }
@@ -276,7 +276,7 @@ export function PurchaseOrdersPage() {
   }
 
   /* حارس التغييرات غير المحفوظة — نفس نمط فاتورة الشراء */
-  const signature = JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, applyTax, lines, linkedTicketId })
+  const signature = JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, lines, linkedTicketId })
   const unsaved = useUnsavedChangesGuard(signature)
   const closeEditor = () => setOpen(false)
   useEffect(() => {
@@ -376,13 +376,12 @@ export function PurchaseOrdersPage() {
               <span>مخزن الاستلام: <b>{warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'كل المخازن'}</b></span>
               <span>الأصناف: <b>{cleanLines.length}</b></span>
               <span>الإجمالي: <b className="font-mono">{fmt(totals.totalMinor)} {cur.symbol}</b></span>
-              <label className="invoice-doc-stripcheck" title="خضوع أمر الشراء للضريبة — يُنقل إلى الفاتورة عند التعبئة">
-                <input type="checkbox" checked={applyTax} onChange={(e) => {
-                  const enabled = e.target.checked
-                  setApplyTax(enabled)
-                  setLines((previous) => previous.map((line) => ({ ...line, vatPercent: enabled ? taxPolicy.effectivePercent : 0 })))
-                }} /> خاضعة للضريبة {applyTax ? `${taxPolicy.effectivePercent}%` : ''}
-              </label>
+              {/* إصلاح بلاغ المالك: كان هنا تشيك بوكس واحد يفرض نفس حالة الضريبة على
+                  كل البنود دفعة واحدة. حُذف — لكل بند الآن خانة ضريبة مستقلة في جدول
+                  البنود (عمود «خاضع للضريبة»)، والبند الجديد يتبع نسبة الإعدادات تلقائياً. */}
+              {taxPolicy.effectivePercent > 0 && (
+                <span className="invoice-doc-stripfield" title="نسبة الضريبة من الإعدادات — لكل بند خانة مستقلة في الجدول لتطبيقها أو إعفائه">ضريبة الإعدادات {taxPolicy.effectivePercent}%</span>
+              )}
               <span className="invoice-doc-stripfield">أمر بلا قيد
                 <b className="invoice-doc-strip-v">لا يُحرّك المخزون ولا «الموردون» — يُرحَّل مع فاتورة الشراء</b>
               </span>
@@ -435,8 +434,8 @@ export function PurchaseOrdersPage() {
                   currencyDecimals={cur.decimals}
                   currencySymbol={cur.symbol}
                   canViewCost={canViewCost}
-                  taxEnabled={applyTax && taxPolicy.effectivePercent > 0}
-                  documentTaxPercent={applyTax ? taxPolicy.effectivePercent : 0}
+                  taxEnabled={taxPolicy.effectivePercent > 0}
+                  documentTaxPercent={taxPolicy.effectivePercent}
                   onPick={addItem}
                   onActiveItem={setActiveItemId}
                   onPatch={(key, value) => patch(key, value as Partial<DraftLine>)}

@@ -33,6 +33,11 @@ export type InvoiceTableLine = {
   unitCostMinor?: number
   discountPercent?: number
   vatPercent?: number
+  /** نسبة ضريبة فاتورة البيع لهذا السطر وحده — undefined يعني «يتبع نسبة المستند»
+   *  (القيمة التاريخية الافتراضية)؛ 0 إعفاء صريح لهذا البند فقط. يُقرأ من
+   *  core/pos.ts وcore/receipt.ts بنفس المعنى — لا تغيير في منطق الحساب هنا،
+   *  فقط checkbox مستقل لكل بند بدل تشيك بوكس واحد يفرض نفس القيمة على الكل. */
+  vatPercentOverride?: number
   warehouseId: number | null
   warehouseSource?: 'default' | 'manual'
   orderedQty?: number
@@ -233,6 +238,22 @@ export function InvoiceLinesTable({
      (قرار المالك): البيع المباشر والمبسط بلا عمود ضريبة أصلاً. */
   const showTaxColumn = columns.tax && taxEnabled && (mode === 'profit' || mode === 'advanced')
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
+  /**
+   * إصلاح بلاغ المالك: «تشيك بوكس واحد يطبّق الضريبة على كل البنود دفعة واحدة».
+   * الآن لكل سطر خانة ضريبة مستقلة تماماً عن باقي السطور. مصدر النسبة نفسها
+   * واحد فقط دائماً: نسبة الضريبة في الإعدادات (documentTaxPercent) — لا اختيار
+   * نسبة حرة هنا، فقط «خاضع لهذه النسبة أم معفى» لكل بند.
+   * القراءة تحترم المعنى التاريخي لكل حقل حتى لا يتغير أي حساب قديم:
+   *  - الشراء (vatPercent): undefined/0 = معفى، أي رقم أكبر من صفر = خاضع.
+   *  - البيع (vatPercentOverride): undefined = يتبع نسبة المستند (خاضع افتراضياً
+   *    كما كان الحساب دائماً)، 0 = إعفاء صريح لهذا البند، رقم آخر = خاضع.
+   */
+  const lineTaxOn = (line: InvoiceTableLine) => kind === 'purchase'
+    ? (line.vatPercent ?? 0) > 0
+    : (line.vatPercentOverride ?? documentTaxPercent) > 0
+  const setLineTax = (line: InvoiceTableLine, on: boolean) => {
+    onPatch(line.key, kind === 'purchase' ? { vatPercent: on ? documentTaxPercent : 0 } : { vatPercentOverride: on ? documentTaxPercent : 0 })
+  }
   const windowHost = useWindowHost()
   /**
    * نقرتان على اسم الصنف تفتحان نافذة اختيار الصنف لاستبداله (بلاغ المالك).
@@ -354,7 +375,6 @@ export function InvoiceLinesTable({
     if (columns.unit) plan.push({ key: 'unit', base: COLW.unit })
     plan.push({ key: 'price', base: COLW.price })
     if (kind === 'sale') plan.push({ key: 'discount', base: COLW.percent })
-    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'vat', base: COLW.percent })
     if (kind === 'sale' && mode === 'profit' && canViewCost) plan.push({ key: 'cost', base: COLW.money }, { key: 'margin', base: COLW.money })
     if (kind === 'purchase' && mode === 'profit' && canViewCost) plan.push({ key: 'expenseShare', base: COLW.money })
     if (showTaxColumn) plan.push({ key: 'tax', base: COLW.tax })
@@ -420,7 +440,6 @@ export function InvoiceLinesTable({
     + (columns.unit ? 1 : 0)
     + 1
     + (kind === 'sale' ? 1 : 0)
-    + (kind === 'purchase' && mode !== 'simple' ? 1 : 0)
     + (kind === 'sale' && mode === 'profit' && canViewCost ? 2 : 0)
     + (kind === 'purchase' && mode === 'profit' && canViewCost ? 1 : 0)
     + (showTaxColumn ? 1 : 0)
@@ -482,10 +501,10 @@ export function InvoiceLinesTable({
               {columns.unit && <th className={`p-2 ${COL.unit}`} scope="col">الوحدة</th>}
               <th className={`p-2 ${COL.price}`} scope="col">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
               {kind === 'sale' && <th className={`p-2 ${COL.percent}`} scope="col">خصم %</th>}
-              {kind === 'purchase' && mode !== 'simple' && <th className={`p-2 ${COL.percent}`} scope="col">ضريبة %</th>}
+
               {kind === 'sale' && mode === 'profit' && canViewCost && <><th className={`p-2 ${COL.money}`} scope="col">التكلفة</th><th className={`p-2 ${COL.money}`} scope="col">الهامش</th></>}
               {kind === 'purchase' && mode === 'profit' && canViewCost && <th className={`p-2 ${COL.money}`} scope="col">نصيبه من المصروفات</th>}
-              {showTaxColumn && <th className={`p-2 ${COL.tax}`} scope="col">الضريبة</th>}
+              {showTaxColumn && <th className={`p-2 ${COL.tax}`} scope="col" title="لكل بند خانة ضريبة مستقلة — تفعيلها أو إلغاؤها هنا لا يؤثر على باقي البنود">خاضع للضريبة</th>}
               <th className={`p-2 ${COL.total}`} scope="col">الإجمالي</th>
               <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
@@ -547,10 +566,28 @@ export function InvoiceLinesTable({
                   {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
                   <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value), true)} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
-                  {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
+
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}>{(line.vatPercent ?? documentTaxPercent) > 0 ? <span className="invoice-doc-taxchip">{`${line.vatPercent ?? documentTaxPercent}% ض.ق.م`}</span> : null}</td>}
+                  {showTaxColumn && (() => {
+                    const on = lineTaxOn(line)
+                    return (
+                      <td className={`p-1 text-center ${COL.tax}`}>
+                        <label
+                          className="invoice-line-taxcheck"
+                          title={`خانة ضريبة مستقلة لهذا البند فقط — ${on ? `تُطبَّق حالياً نسبة ${documentTaxPercent}% من إعدادات الشركة على هذا البند وحده` : 'هذا البند غير خاضع للضريبة حالياً'}. تغييرها لا يؤثر على أي بند آخر.`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            aria-label={`خضوع بند ${line.nameAr || ''} للضريبة`}
+                            onChange={(event) => setLineTax(line, event.target.checked)}
+                          />
+                          {on && <span className="invoice-doc-taxchip">{`${documentTaxPercent}% ض.ق.م`}</span>}
+                        </label>
+                      </td>
+                    )
+                  })()}
                   <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                   <td className={`p-1 ${COL.tools}`}>
                     <div className="invoice-doc-rowtools">

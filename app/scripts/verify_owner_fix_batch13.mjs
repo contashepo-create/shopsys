@@ -21,8 +21,13 @@ const purchase = read('ui/pages/AdvancedPurchaseInvoicePage.tsx')
 {
   for (const [name, src] of [['جدول البنود', table], ['الإيصال الحراري', receiptTpl], ['فاتورة A4', a4], ['نموذج الإيصال', receiptModel]])
     assert.ok(!/['"`>]\s*معف[يى]/.test(strip(src)), `ما زالت كلمة «معفى» تُطبع في ${name}`)
-  assert.ok(/vatPercent \?\? documentTaxPercent\) > 0 \? <span className="invoice-doc-taxchip">/.test(table),
+  /* ⑬→بلاغ لاحق: خانة ضريبة مستقلة لكل بند (lineTaxOn) حلّت محل الشرط الموحّد
+     القديم على مستوى المستند — لكن الشرط «لا شريحة بلا ضريبة فعلية» باقٍ بذات
+     الضمان: on تُشتق من (vatPercent أو vatPercentOverride) > 0 دائماً. */
+  assert.ok(/const on = lineTaxOn\(line\)/.test(table) && /\{on && <span className="invoice-doc-taxchip">/.test(table),
     'شريحة الضريبة تظهر حتى بلا ضريبة')
+  assert.ok(/\(line\.vatPercent \?\? 0\) > 0\s*\n\s*: \(line\.vatPercentOverride \?\? documentTaxPercent\) > 0/.test(table),
+    'منطق تحديد الخضوع للضريبة لكل بند مفقود أو غير متطابق مع المعنى التاريخي للحقلين')
   assert.ok(/r\.vatPercent != null && r\.vatPercent > 0 \? ` · ض\. \$\{r\.vatPercent\}٪` : ''/.test(receiptTpl),
     'الإيصال يطبع وصف ضريبة لسطر بلا ضريبة')
   assert.ok(/const vatLabel = vatSet\.filter\(\(p\) => p > 0\)/.test(receiptModel),
