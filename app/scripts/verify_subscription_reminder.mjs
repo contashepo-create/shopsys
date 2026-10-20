@@ -147,7 +147,7 @@ ok('المتجر يحفظ يوم الإسكات (يبقى بعد الإقلاع)
   assert.match(storeSrc, /renewalDismissedDay: string \| null/)
   assert.match(storeSrc, /dismissRenewalNotice/)
   // partialize يُسقط الحمولة فقط — فيوم الإسكات يُحفظ
-  assert.match(storeSrc, /const \{ activatedPayload: _payload, licenseAudit: _audit, \.\.\.rest \} = state/)
+  assert.match(storeSrc, /const \{ activatedPayload: _payload, licenseAudit: _audit, activeBranchContext: _branchContext, \.\.\.rest \} = state/)
 })
 
 console.log(`\nالنتيجة: ${passed} فحوص ناجحة${process.exitCode ? ' — مع فشل أعلاه' : ' ✅'}`)

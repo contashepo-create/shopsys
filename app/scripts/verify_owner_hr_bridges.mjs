@@ -30,7 +30,7 @@ const hr = read('ui/pages/HrPage.tsx')
 
 console.log('① وردية الموظف الفردية في مسار الرواتب (المصدر)')
 {
-  assert.ok(/rules: \{ \.\.\.state\.hrRules, shift: state\.employeeShifts\.find\(\(s\) => s\.employeeId === employee\.id\) \?\? state\.hrRules\.shift \}/.test(repo),
+  assert.ok(/rules: \{ \.\.\.scoped\.hrRules, shift: scoped\.employeeShifts\.find\(\(s\) => s\.employeeId === employee\.id\) \?\? scoped\.hrRules\.shift \}/.test(repo),
     'getAttendancePayrollImpact ما زال يحتسب على وردية المنشأة للجميع — تناقض شاشة HR مع الرواتب')
   ok('المخزن يحل وردية كل موظف قبل حساب التأخير/الإضافي')
 }

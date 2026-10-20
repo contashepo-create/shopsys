@@ -20,6 +20,7 @@ globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) 
 globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpenShiftForSales: false, allowNegativeTreasury: true, vatPercent: 14, taxInclusive: true, activityId: 'general', countryCode: 'EG' }, license: { plan: 'pro' } } }))
 const { useDataStore } = await import('../src/data/repo.ts')
+const { summarizeCustodyExcessByFile } = await import('../src/core/custody.ts')
 const st = () => useDataStore.getState()
 
 /* بذرة: عميل + موظف (المسير والعهدة يتحققان من وجودهما في السجلات — §83) */
@@ -48,6 +49,29 @@ ok('① الزيادة عن الرصيد مرفوضة بلا موافقة صري
 /* ── ② دورة العهدة الحية: فتح ← تعزيز ← مصروف مشروع/عام ← زيادة ← تسوية ── */
 const project = st().addProject({ nameAr: 'مشروع بوابة العهد', clientName: 'عميل بوابة العهد', clientId: 77001, contractValueMinor: 10000000, retentionPercent: 5, startDate: '2026-01-01', notes: '' })
 ok('④ ربط المشروع بعميل إداري بحت — رصيد العميل 0 (لا ذمة بلا مستند)', st().getCustomerBalance(77001) === 0)
+
+/* السداد الجزئي من العهدة: المدفوع وحده ينقص الملف، والآجل يُحمّل على المورد */
+st().addSupplier({ nameAr: 'مورد بوابة السداد الجزئي', phone: '', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
+const partialSupplier = st().suppliers.at(-1)
+const paymentProject = st().addProject({ nameAr: 'مشروع اختبار السداد الجزئي', clientName: '', contractValueMinor: 1000000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+const partialFile = st().openCustodyFile({ employeeId: 6001, projectId: paymentProject.id, reason: 'اختبار دفع جزئي', notes: '' })
+st().fundCustodyFile({ fileId: partialFile.id, amountMinor: 50000, treasury: '1101', description: 'تمويل اختبار الدفع الجزئي' })
+const noSupplierJournal = st().journal.length
+const noSupplierCosts = st().projectCosts.length
+throws('مصروف مشروع آجل بلا جهة يتحملها مرفوض', () => st().addProjectCost({ projectId: paymentProject.id, amountMinor: 10000, payment: 'credit', paidMinor: 0, description: 'آجل بلا جهة' }), 'يتطلب اختيار المورد')
+ok('رفض الآجل بلا جهة ذري — لا قيد ولا تكلفة نصف مسجلة', st().journal.length === noSupplierJournal && st().projectCosts.length === noSupplierCosts)
+const partialCost = st().addProjectCost({ projectId: paymentProject.id, kind: 'materials', amountMinor: 150000, payment: 'mixed', paidMinor: 40000, supplierId: partialSupplier.id, custodyFileId: partialFile.id, description: 'حديد مدفوع جزئياً من العهدة', treasury: '1101' })
+const partialEntry = entryOf('project_cost', partialCost.id)
+const partialTx = st().custodyTxs.find((tx) => tx.fileId === partialFile.id && tx.type === 'expense')
+ok('الدفع الجزئي من العهدة: 40,000 فقط خُصمت من الملف رغم أن الفاتورة 150,000', partialCost.custodyFileId === partialFile.id && partialCost.paidMinor === 40000 && st().getCustodySummary(partialFile.id).remainingMinor === 10000 && partialTx?.amountMinor === 40000)
+ok('قيد الفاتورة: 5110 مدين 150,000 ← 1108 دائن بالمدفوع 40,000 + 2101 دائن بالآجل 110,000', lineSum(partialEntry, '5110', 'debit') === 150000 && lineSum(partialEntry, '1108', 'credit') === 40000 && lineSum(partialEntry, '2101', 'credit') === 110000)
+ok('الآجل ظاهر على المورد في كشفه ورصيده 110,000', partialCost.dueMinor === 110000 && st().getSupplierBalance(partialSupplier.id) === 110000 && st().getSupplierStatementRows(partialSupplier.id).some((row) => row.docLabel.includes('تكلفة مشروع')))
+const allCreditCost = st().addProjectCost({ projectId: paymentProject.id, kind: 'other', amountMinor: 20000, payment: 'credit', paidMinor: 0, supplierId: partialSupplier.id, custodyFileId: partialFile.id, description: 'فاتورة كاملة آجلة' })
+ok('مدفوع صفر = كامل الإجمالي آجل ولا حركة على العهدة', allCreditCost.payment === 'credit' && allCreditCost.paidMinor === 0 && allCreditCost.dueMinor === 20000 && allCreditCost.custodyFileId == null && st().getCustodySummary(partialFile.id).remainingMinor === 10000)
+const failedPartialJournal = st().journal.length
+throws('مدفوع من العهدة أكبر من رصيدها يُرفض ولو بقي جزء آجل', () => st().addProjectCost({ projectId: paymentProject.id, amountMinor: 30000, payment: 'mixed', paidMinor: 15000, supplierId: partialSupplier.id, custodyFileId: partialFile.id, description: 'مدفوع أكبر من العهدة' }), 'المتبقي في ملفها')
+ok('رفض تجاوز رصيد العهدة ذري — لا قيد إضافي', st().journal.length === failedPartialJournal && st().getCustodySummary(partialFile.id).remainingMinor === 10000)
+
 const journalBefore = st().journal.length
 const fileA = st().openCustodyFile({ employeeId: 6001, projectId: project.id, reason: 'عهدة موقع', notes: '' })
 ok('① فتح ملف العهدة لا ينشئ قيداً (استلام إداري حتى التمويل)', st().journal.length === journalBefore && fileA.status === 'open')
@@ -76,6 +100,9 @@ const excessEntry = entryOf('payment_voucher', excessTx.id)
 ok('① الزيادة بموافقة: 5110 بكامل 300000 ← 1108 (250000) + 2107 مستحق للموظف (50000)', lineSum(excessEntry, '5110', 'debit') === 300000 && lineSum(excessEntry, '1108', 'credit') === 250000 && lineSum(excessEntry, '2107', 'credit') === 50000)
 ok('① الزيادة لا تُنقص رصيد العهدة تحت الصفر (المتبقي 0) وتُسجل excessMinor على الحركة', st().getCustodySummary(fileA.id).remainingMinor === 0 && excessTx.excessMinor === 50000)
 ok('② مستحق الموظف من زيادات العهد (2107) = 50000', st().getEmployeeExcessDue(6001) === 50000)
+const overageClosed = st().settleCustodyFile({ fileId: fileA.id, returnedMinor: 0, treasury: '1101' })
+let overageBalance = summarizeCustodyExcessByFile(st().custodyFiles, st().custodyTxs, st().payrollRuns).get(fileA.id)
+ok('① إغلاق ملف زادت مصروفاته بلا عجز نقدي لا يمحو زيادة 2107 ولا ينشئ قيد تسوية وهمياً', overageClosed.status === 'settled' && overageClosed.shortageMinor === 0 && st().getEmployeeExcessDue(6001) === 50000 && overageBalance?.accruedMinor === 50000 && overageBalance.remainingMinor === 50000 && !st().journal.some((e) => e.description.includes(`تسوية عهدة ${fileA.fileNumber}`)))
 ok('③ مصروف العهدة المرتبط بالمشروع دخل بطاقة تكاليفه (يدوي/other = 500000)', st().getProjectCostBreakdown(project.id).manual.filter((c) => c.kind === 'other').reduce((a, c) => a + c.amountMinor, 0) === 500000)
 
 /* ملف عام: تسوية بمرتجع + عجز ← سلفة على الموظف */
@@ -101,6 +128,8 @@ const runEntry = entryOf('payroll', run.id)
 ok('② قيد المسير: 5102 بالإجمالي 450000 + 2107 مدين 50000 ← 1101 صافي+زيادة 470000 + 1107 سلفة 30000', lineSum(runEntry, '5102', 'debit') === 450000 && lineSum(runEntry, '2107', 'debit') === 50000 && lineSum(runEntry, '1101', 'credit') === 470000 && lineSum(runEntry, '1107', 'credit') === 30000)
 ok('② زيادة العهدة المصروفة لا تدخل مصروف الرواتب (5102 = الإجمالي فقط)', lineSum(runEntry, '5102', 'debit') === 450000)
 ok('② بعد المسير: مستحق 2107 صُفّر ومتبقي السلف صُفر والسلفة FIFO مستردة', st().getEmployeeExcessDue(6001) === 0 && st().getEmployeeAdvanceBalance(6001).remainingMinor === 0 && st().employeeAdvances.find((a) => a.id === shortageAdv.id).recoveredMinor === 30000)
+const paidClosedFileExcess = summarizeCustodyExcessByFile(st().custodyFiles, st().custodyTxs, st().payrollRuns).get(fileA.id)
+ok('② زيادة الملف المغلق صُرفت من 2107 بالمسير وبقي تتبعها على الملف: مستحق 50000، مصروف 50000، باقٍ صفر', paidClosedFileExcess?.accruedMinor === 50000 && paidClosedFileExcess.paidMinor === 50000 && paidClosedFileExcess.remainingMinor === 0)
 throws('② لا يتكرر راتب الموظف نفسه في الشهر نفسه', () => st().postPayroll({ month: '2026-09', payMode: 'cash', treasury: '1101', lines: [{ employeeId: 6001, baseMinor: 100000, allowancesMinor: 0, overtimeMinor: 0, deductionsMinor: 0, advancesMinor: 0 }], notes: '' }), 'مرحّل بالفعل')
 
 /* صرف مسير من ملف عهدة مفتوح برصيد كافٍ */
@@ -113,7 +142,8 @@ ok('② الصرف من العهدة: القيد يدين 5108؟ لا — 5102 �
 ok('② حركة المصروف نزلت بملف العهدة (المتبقي 50000)', st().getCustodySummary(fileC.id).remainingMinor === 50000 && st().custodyTxs.some((t) => t.fileId === fileC.id && t.type === 'expense' && t.amountMinor === 150000))
 
 /* ── ③ ربحية المشروع ─────────────────────────────────────────────────────── */
-ok('③ بطاقة التكاليف تطابق صافي 5110 بالدفتر (§95 — بلا جمع مزدوج)', st().getProjectCostBreakdown(project.id).totals.allMinor === netAccount('5110'), `البطاقة ${st().getProjectCostBreakdown(project.id).totals.allMinor} مقابل 5110 ${netAccount('5110')}`)
+const allProjectCosts = st().projects.reduce((sum, row) => sum + st().getProjectCostBreakdown(row.id).totals.allMinor, 0)
+ok('③ مجموع بطاقات تكاليف كل المشروعات يطابق صافي 5110 بالدفتر (§95 — بلا جمع مزدوج)', allProjectCosts === netAccount('5110'), `البطاقات ${allProjectCosts} مقابل 5110 ${netAccount('5110')}`)
 
 /* ── ④ ذمة العميل: دفعة مقدمة ← مستخلص آجل ← تحصيل حر ← فائض دائن ───────── */
 st().receiveClientAdvance({ projectId: project.id, amountMinor: 1000000, treasury: '1101' })
@@ -141,6 +171,23 @@ ok('④ كشف العميل يعرض المستخلص مديناً بالمست�
 const profit = st().getProjectProfit(project.id)
 ok('③ الربحية: مستخلصات 2000000 (صافي بلا ضريبة) − تكاليف 500000 (تشمل مصاريف العهدة) = ربح 1500000 وهامش 75٪', profit.extractedMinor === 2000000 && profit.costsMinor === 500000 && profit.profitMinor === 1500000 && profit.marginPercent === 75, JSON.stringify(profit))
 ok('③ المحتجزات الممسوكة 100000 تظهر بتقرير الربحية (لم تُفرج بعد)', profit.retentionHeldMinor === 100000)
+
+/* مراجعة واجهات البلاغ: سجل المشروع، المصروف، ملف الإغلاق، ومسير الرواتب */
+const contractingUi = readFileSync(new URL('../src/ui/pages/ContractingPages.tsx', import.meta.url), 'utf8')
+const expenseStart = contractingUi.indexOf('export function ProjectExpensesPage()')
+const extractsStart = contractingUi.indexOf('export function ProjectExtractsPage()')
+const projectsUi = contractingUi.slice(0, contractingUi.indexOf('/* ═══════════════════════════════════════════════════════════════════════════════\n   §96-أ'))
+const expensesUi = contractingUi.slice(expenseStart, extractsStart)
+const paySourceUi = readFileSync(new URL('../src/ui/components/PaySourcePicker.tsx', import.meta.url), 'utf8')
+const projectCss = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
+const custodyUi = readFileSync(new URL('../src/ui/pages/CustodyPage.tsx', import.meta.url), 'utf8')
+const payrollUi = readFileSync(new URL('../src/ui/pages/EmployeesPage.tsx', import.meta.url), 'utf8')
+ok('واجهة قائمة المشروعات لا تعرض زرّي المستخلص وتسجيل المصروف بجوار اسم المشروع', !projectsUi.includes('navigate(`/contracting/extracts?projectId=${p.id}`)') && !projectsUi.includes('navigate(`/contracting/expenses?projectId=${p.id}`)'))
+ok('واجهة المصروف مبسطة: مدفوع واحد والباقي آجل آلياً بلا أزرار نقدي/جزئي/آجل', expensesUi.includes('data-project-expense-paid') && expensesUi.includes('dueNowMinor') && !expensesUi.includes('paymentMode') && !expensesUi.includes('مدفوع جزئياً + آجل'))
+ok('مصدر الدفع قائمتان مترابطتان للخزينة/البنك أو العهدة ثم الحساب/الملف المحدد', expensesUi.includes('<PaySourcePicker linked') && paySourceUi.includes('data-pay-source-linked') && paySourceUi.includes('نوع مصدر السداد'))
+ok('ترويسة نموذج المشروع تعرض التسميات والحقول دون ضغط صفوف متداخلة', projectCss.includes('[data-project-doc-editor] .invoice-doc .invoice-doc-fields') && projectCss.includes('white-space: normal;') && projectCss.includes('height: 2.35rem !important'))
+ok('ملف العهدة يعرض مرتجع التسوية والعجز والزيادة المسجلة والمدفوعة والمتبقية', custodyUi.includes('data-custody-settlement-status') && custodyUi.includes('viewing.returnedMinor') && custodyUi.includes('viewing.shortageMinor') && custodyUi.includes('viewingExcess?.accruedMinor') && custodyUi.includes('viewingExcess?.remainingMinor'))
+ok('مسير الرواتب يعرض مستحق الزيادة (2107) وخصم سلفة عجز العهدة', payrollUi.includes('data-custody-excess-pay') && payrollUi.includes('data-custody-shortage-deduction') && payrollUi.includes('عجز عهدة'))
 
 ok('⑥ الدفتر كله متوازن بعد الدورة الكاملة', balanced())
 if (fails.length) { console.error(`\nفشل ${fails.length} فحصاً:\n  - ${fails.join('\n  - ')}`); process.exit(1) }

@@ -27,6 +27,11 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(appPackage.version) },
   base: './',
   plugins: [react(), tailwindcss(), demoDatabasePlugin(), devStripsCsp],
+  build: {
+    // التحميل الكسول خفّض حزم الصفحات؛ أكبر حزمة مشتركة الآن repo عند 867KB خاماً / 222KB gzip.
+    // ميزانية 900KB ضيقة فوق القياس الحالي: لا تُعطّل التحذير، وأي نمو يتجاوزها يبقى ظاهراً.
+    chunkSizeWarningLimit: 900,
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,

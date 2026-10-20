@@ -528,6 +528,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       employee: employees.find((e) => e.id === line.employeeId),
       gross, cut, net, commissionsDue, salesCommissionsDue, driverDuesDue, excessDue, advanceBalance, deductionBalance,
       payout: net + toM(line.excessPaid) + (line.payCommissions ? commissionsDue : 0),
+      custodyShortageDue: advanceBalance.advances
+        .filter((a) => a.source === 'custody_shortage')
+        .reduce((sum, a) => sum + Math.max(0, a.amountMinor - a.recoveredMinor), 0),
       advanceReasons: advanceBalance.advances.filter((a) => a.amountMinor > a.recoveredMinor)
         .map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`)
         .join('\n'),
@@ -1660,8 +1663,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       <th className="px-2 py-2 font-black text-emerald-700 dark:text-emerald-300">إضافي</th>
                       <th className="px-2 py-2 font-black">الإجمالي</th>
                       <th className="px-2 py-2 font-black text-rose-600">خصومات</th>
-                      <th className="px-2 py-2 font-black text-rose-600">سلف</th>
-                      <th className="px-2 py-2 font-black text-sky-600">مستحق عهدة</th>
+                      <th className="px-2 py-2 font-black text-rose-600">سلف / عجز عهدة</th>
+                      <th className="px-2 py-2 font-black text-sky-600">مستحق عهدة (2107)</th>
                       <th className="px-2 py-2 font-black text-violet-600">عمولات</th>
                       <th className="px-2 py-2 font-black">المصروف للموظف</th>
                       <th className="px-1 py-2" />
@@ -1694,15 +1697,18 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             )}
                           </td>
                           <td className="px-1 py-2 text-center">
-                            <input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" title={row.advanceReasons || 'لا سلف على الموظف'} disabled={row.advanceBalance.remainingMinor === 0} />
+                            <input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" title={row.advanceReasons || 'لا سلف على الموظف'} disabled={row.advanceBalance.remainingMinor === 0} data-custody-shortage-deduction />
                             {row.advanceBalance.remainingMinor > 0 && (
-                              <button type="button" onClick={() => patchDraft(l.employeeId, { advances: String(row.advanceBalance.remainingMinor / 10 ** cur.decimals) })} title={`إجمالي السلف ${fmt(row.advanceBalance.totalMinor)}\n${row.advanceReasons}`} className={`${quick} text-amber-600`}>متبقٍ {fmt(row.advanceBalance.remainingMinor)}</button>
+                              <>
+                                <button type="button" onClick={() => patchDraft(l.employeeId, { advances: String(row.advanceBalance.remainingMinor / 10 ** cur.decimals) })} title={`إجمالي السلف ${fmt(row.advanceBalance.totalMinor)}\n${row.advanceReasons}`} className={`${quick} text-amber-600`}>متبقٍ {fmt(row.advanceBalance.remainingMinor)}</button>
+                                {row.custodyShortageDue > 0 && <span className="block text-[8.5px] font-bold text-rose-500" data-custody-shortage-balance>منه عجز عهدة {fmt(row.custodyShortageDue)}</span>}
+                              </>
                             )}
                           </td>
                           <td className="px-1 py-2 text-center">
-                            <input value={l.excessPaid} onChange={(e) => patchDraft(l.employeeId, { excessPaid: e.target.value })} className={cell} dir="ltr" placeholder="0" disabled={row.excessDue === 0} title={row.excessDue > 0 ? `مستحق الموظف من زيادات مصاريف عهده: ${fmt(row.excessDue)}` : 'لا مستحقات عهد'} />
+                            <input value={l.excessPaid} onChange={(e) => patchDraft(l.employeeId, { excessPaid: e.target.value })} className={cell} dir="ltr" placeholder="0" disabled={row.excessDue === 0} title={row.excessDue > 0 ? `مستحق الموظف من زيادات مصاريف عهده: ${fmt(row.excessDue)}` : 'لا مستحقات عهد'} data-custody-excess-pay />
                             {row.excessDue > 0 && (
-                              <button type="button" onClick={() => patchDraft(l.employeeId, { excessPaid: String(row.excessDue / 10 ** cur.decimals) })} className={`${quick} text-emerald-600`}>له {fmt(row.excessDue)}</button>
+                              <button type="button" onClick={() => patchDraft(l.employeeId, { excessPaid: String(row.excessDue / 10 ** cur.decimals) })} className={`${quick} text-emerald-600`} data-custody-excess-settle>له {fmt(row.excessDue)}</button>
                             )}
                           </td>
                           <td className="px-1 py-2 text-center">

@@ -7,7 +7,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  */
 import { useMemo, useState } from 'react'
 import { Plus, ArrowLeftRight, Eye, Warehouse, Trash2 } from 'lucide-react'
-import { useRawDataStore, type StockTransfer } from '../../data/repo.ts'
+import { useDataStore, type StockTransfer } from '../../data/repo.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
@@ -15,7 +15,7 @@ import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useRawDataStore()
+  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 

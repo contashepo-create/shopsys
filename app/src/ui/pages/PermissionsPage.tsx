@@ -9,7 +9,7 @@ import { useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark, CreditCard, Pencil } from 'lucide-react'
 import { ApprovalSettingsCard } from '../components/ApprovalSettingsCard.tsx'
 import { crudMatrixForModules, rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules, type CrudOperation } from '../../core/permissions.ts'
-import { useRawDataStore } from '../../data/repo.ts'
+import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
 import { hashPin, suggestRoleForJobTitle, matchesOwnerIdentity, findUserByIdentifier } from '../../core/audit.ts'
@@ -22,9 +22,9 @@ import { Btn, DecimalInput, Field, inputCls, Modal, useToast, PinInput } from '.
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, branches, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, renameCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useRawDataStore()
+  const { appUsers, currentUserId, branches, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, renameCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
-  const setup = useAppStore.getState().setup
+  const setup = useAppStore((s) => s.setup)
   const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
   const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
   // فلترة حسب النشاط (أمر المالك): «كاشير» لا يظهر لنشاط بلا كاشير،

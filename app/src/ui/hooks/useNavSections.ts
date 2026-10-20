@@ -9,7 +9,7 @@ import { NAV_SECTIONS, type NavSection } from '../navCatalog.tsx'
 import { labelFor } from '../../core/activityLabels.ts'
 import { canAccessPath, effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { resolveBranchActivityId, resolveBranchModules, type Branch } from '../../core/branches.ts'
-import type { BusinessModule } from '../../core/activities.ts'
+import { ACTIVITY_TEMPLATES, type BusinessModule, type ItemFeature } from '../../core/activities.ts'
 
 export interface EffectiveBranchScope {
   branches: Branch[]
@@ -28,7 +28,9 @@ export interface EffectiveBranchScope {
  */
 export function useEffectiveBranchScope(): EffectiveBranchScope {
   const setup = useAppStore((s) => s.setup)
+  const companySetup = useAppStore((s) => s.companySetup)
   const appUsers = useDataStore((s) => s.appUsers)
+  const employees = useDataStore((s) => s.employees)
   const currentUserId = useDataStore((s) => s.currentUserId)
   const branches = useDataStore((s) => s.branches)
   const activeBranchId = useDataStore((s) => s.activeBranchId)
@@ -37,14 +39,19 @@ export function useEffectiveBranchScope(): EffectiveBranchScope {
   return useMemo(() => {
     const activeBranches = branches.filter((b) => b.active)
     const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
-    const userBranchId = activeUser?.branchId ?? null
-    const isLockedToUserBranch = userBranchId != null && activeBranches.some((b) => b.id === userBranchId)
-    const effectiveBranchId = isLockedToUserBranch ? userBranchId : activeBranchId
-    const effectiveBranch = effectiveBranchId != null
-      ? (activeBranches.find((b) => b.id === effectiveBranchId) ?? null)
+    const linkedEmployee = activeUser?.employeeId != null ? employees.find((employee) => employee.id === activeUser.employeeId) : null
+    const assignedBranchId = activeUser?.branchId ?? linkedEmployee?.branchId ?? null
+    const isOwner = activeUser?.roleId === 'owner'
+    const userBranch = !isOwner
+      ? (assignedBranchId != null ? branches.find((branch) => branch.id === assignedBranchId) ?? null : activeBranches.find((branch) => branch.isMain) ?? null)
       : null
-    const effectiveModules = resolveBranchModules(effectiveBranch, setup.modules)
-    const effectiveActivityId = resolveBranchActivityId(effectiveBranch, setup.activityId)
+    const isLockedToUserBranch = !isOwner && userBranch != null
+    const effectiveBranchId = isOwner ? activeBranchId : (userBranch?.id ?? activeBranchId)
+    const effectiveBranch = effectiveBranchId != null
+      ? (branches.find((branch) => branch.id === effectiveBranchId) ?? activeBranches.find((branch) => branch.id === effectiveBranchId) ?? null)
+      : null
+    const effectiveModules = resolveBranchModules(effectiveBranch, (companySetup ?? setup).modules)
+    const effectiveActivityId = resolveBranchActivityId(effectiveBranch, (companySetup ?? setup).activityId)
     return {
       branches: activeBranches,
       effectiveBranch,
@@ -54,7 +61,7 @@ export function useEffectiveBranchScope(): EffectiveBranchScope {
       effectiveActivityId,
       setActiveBranchId,
     }
-  }, [activeBranchId, appUsers, branches, currentUserId, setActiveBranchId, setup.activityId, setup.modules])
+  }, [activeBranchId, appUsers, branches, companySetup, currentUserId, employees, setActiveBranchId, setup])
 }
 
 export function useNavSections(): NavSection[] {
@@ -67,6 +74,7 @@ export function useNavSections(): NavSection[] {
 
   return useMemo(() => {
     const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+    const effectiveFeatures = (ACTIVITY_TEMPLATES.find((a) => a.id === effectiveActivityId)?.features ?? setup.features) as readonly ItemFeature[]
     const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
     return NAV_SECTIONS
       .filter((sec) => (!sec.module || effectiveModules.includes(sec.module)) && (!sec.accountingOnly || setup.accountingMode === 'full'))
@@ -75,7 +83,7 @@ export function useNavSections(): NavSection[] {
         nameAr: labelFor(effectiveActivityId, sec.id, sec.nameAr),
         children: sec.children
           .filter((c) => !c.module || effectiveModules.includes(c.module))
-          .filter((c) => !c.feature || setup.features.includes(c.feature))
+          .filter((c) => !c.feature || effectiveFeatures.includes(c.feature))
           .filter((c) => !c.activities || c.activities.includes(effectiveActivityId ?? ''))
           .filter((c) => !c.hideForActivities || !c.hideForActivities.includes(effectiveActivityId ?? ''))
           .filter((c) => canAccessPath(c.path, perms))

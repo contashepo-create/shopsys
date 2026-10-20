@@ -21,6 +21,8 @@ import { LEGAL_VERSION } from '../core/legal.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
+import { resolveBranchActivityId, resolveBranchModules, type Branch } from '../core/branches.ts'
+import { resolveBusinessTax, type BusinessTaxStatus } from '../core/taxRegistration.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
 import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
@@ -42,7 +44,7 @@ interface SetupState {
   taxInclusive: boolean
   vatPercent: number
   /** الصفة القانونية منفصلة عن النسبة: المسجل بنسبة صفر ليس معفى */
-  taxRegistrationStatus?: 'registered' | 'exempt' | 'zero_rated'
+  taxRegistrationStatus?: BusinessTaxStatus
   accountingMode: 'simple' | 'full'
   /** السماح بالرصيد السالب في الخزائن والبنوك (طلب المالك — الافتراضي: ممنوع) */
   allowNegativeTreasury: boolean
@@ -77,6 +79,24 @@ interface SetupState {
   coreModulesMigratedAt?: string | null
 }
 
+/** سياق الفرع النشط الذي يمرره مخزن البيانات إلى إعدادات التطبيق العامة. */
+export type AppBranchContext = Pick<Branch, 'id' | 'nameAr' | 'isMain' | 'warehouseId' | 'customModulesMode' | 'enabledModules' | 'activityId'>
+
+/** بيانات هوية وضريبة مستقلة لكل فرع غير رئيسي؛ القيم الأولى تُنسخ من المنشأة الحالية. */
+interface BranchBusinessProfile {
+  shopName: string
+  vatPercent: number
+  taxInclusive: boolean
+  taxRegistrationStatus?: BusinessTaxStatus
+  doctorSpecialty: string
+  allowNegativeTreasury: boolean
+  allowNegativeStock: boolean
+  requireOpenShiftForSales: boolean
+  receiptShopName: string
+  einvoice: EinvoiceSettings
+  approvals: ApprovalSettings
+}
+
 /**
  * تفضيلات أعمدة جدول البنود — أعمدة **عرضية** فقط (لا تحمل إدخالاً):
  * كود الصنف · الوحدة · عمود الضريبة. (سطر التفاصيل أسفل الاسم أُلغي نهائياً
@@ -103,7 +123,16 @@ interface AppState {
   /** v1.0.8: موافقة الاتفاقية والخصوصية (الإصدار والتاريخ) — null = لم يوافق بعد */
   legal: { version: string; acceptedAt: string } | null
   acceptLegal: () => void
+  /** الإعدادات العامة الأساسية؛ setup في الواجهة هو النسخة الفعالة بعد تراكب إعداد الفرع. */
   setup: SetupState
+  companySetup: SetupState
+  activeBranchContext: AppBranchContext | null
+  branchBusinessProfiles: Record<number, BranchBusinessProfile>
+  setActiveBranchContext: (branch: AppBranchContext | null) => void
+  removeBranchBusinessProfile: (branchId: number) => void
+  updateSetup: (patch: Partial<SetupState>) => void
+  updateCompanyName: (name: string) => void
+  updateTaxSettings: (patch: Pick<SetupState, 'vatPercent' | 'taxInclusive' | 'taxRegistrationStatus'>) => void
   fiscalYears: FiscalYear[]
   completeSetup: (data: {
     country: Country
@@ -123,12 +152,14 @@ interface AppState {
   toggleModule: (m: BusinessModule) => void
   resetSetup: () => void
   receipt: ReceiptSettings
+  baseReceipt: ReceiptSettings
   /** §102 (تعدد الطابعات): مسار لكل نسخة مطبوعة — اسم الطابعة + طباعة آلية */
   printerProfiles: PrinterProfiles
   setPrinterProfile: (route: PrintRoute, patch: Partial<PrinterProfile>) => void
   /** برنامج نقاط الولاء (نمط Lightspeed Loyalty) — الكسب والاستبدال من الكاشير */
   loyalty: LoyaltySettings
   approvals: ApprovalSettings
+  baseApprovals: ApprovalSettings
   updateApprovals: (patch: Partial<ApprovalSettings>) => void
   updateLoyalty: (patch: Partial<LoyaltySettings>) => void
   /** إعدادات طباعة التقارير المعممة (طلب المالك): كل تقارير النظام لا الفواتير فقط */
@@ -174,6 +205,7 @@ interface AppState {
   updateTelegram: (patch: Partial<TelegramSettings>) => void
   // ─── الفاتورة الإلكترونية (القرار 30 — ميزة بمفتاح ترخيص فقط) ───
   einvoice: EinvoiceSettings
+  baseEinvoice: EinvoiceSettings
   updateEinvoice: (patch: Partial<EinvoiceSettings>) => void
   // ─── الإرسال المجدول عبر التليجرام (القرار 32) ───
   schedule: ScheduleSettings
@@ -365,6 +397,112 @@ const bootIdentity = (): { deviceId: string; now: string; firstTrialAt: string }
 }
 const BOOT = bootIdentity()
 
+const DEFAULT_SETUP_STATE: SetupState = {
+  completed: false,
+  countryCode: null,
+  activityId: null,
+  shopName: '',
+  ownerName: '',
+  features: [],
+  modules: [],
+  taxInclusive: true,
+  vatPercent: 14,
+  taxRegistrationStatus: 'registered',
+  accountingMode: 'simple',
+  allowNegativeTreasury: false,
+  allowNegativeStock: false,
+  requireOpenShiftForSales: true,
+  defaultWarehouseId: null,
+  phone: '', email: '', city: '', street: '',
+  doctorSpecialty: '',
+  lastActivityChangeAt: null,
+  activityKeyHistory: [],
+  activityKeyFingerprints: [],
+  coreModulesMigratedAt: null,
+}
+
+function branchProfileFromBase(
+  setup: SetupState,
+  receipt: ReceiptSettings,
+  einvoice: EinvoiceSettings,
+  approvals: ApprovalSettings,
+  branchName = '',
+): BranchBusinessProfile {
+  return {
+    shopName: setup.shopName || branchName,
+    vatPercent: setup.vatPercent,
+    taxInclusive: setup.taxInclusive,
+    taxRegistrationStatus: setup.taxRegistrationStatus,
+    doctorSpecialty: setup.doctorSpecialty ?? '',
+    allowNegativeTreasury: setup.allowNegativeTreasury,
+    allowNegativeStock: setup.allowNegativeStock,
+    requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    receiptShopName: receipt.shopName || setup.shopName || branchName,
+    einvoice: { ...einvoice },
+    approvals: { ...approvals, scope: [...approvals.scope], approverUserIds: [...approvals.approverUserIds], autoApprovedUserIds: [...approvals.autoApprovedUserIds] },
+  }
+}
+
+function effectiveBranchAppSettings(
+  companySetup: SetupState,
+  branch: AppBranchContext | null,
+  profiles: Record<number, BranchBusinessProfile>,
+  baseReceipt: ReceiptSettings,
+  baseEinvoice: EinvoiceSettings,
+  baseApprovals: ApprovalSettings,
+): Pick<AppState, 'setup' | 'receipt' | 'einvoice' | 'approvals'> {
+  if (!branch || branch.isMain) {
+    return { setup: companySetup, receipt: baseReceipt, einvoice: baseEinvoice, approvals: baseApprovals }
+  }
+  const profile = profiles[branch.id] ?? branchProfileFromBase(companySetup, baseReceipt, baseEinvoice, baseApprovals, branch.nameAr)
+  const activityId = resolveBranchActivityId(branch, companySetup.activityId)
+  const activity = ACTIVITY_TEMPLATES.find((candidate) => candidate.id === activityId)
+  return {
+    setup: {
+      ...companySetup,
+      shopName: profile.shopName,
+      vatPercent: profile.vatPercent,
+      taxInclusive: profile.taxInclusive,
+      taxRegistrationStatus: profile.taxRegistrationStatus,
+      doctorSpecialty: profile.doctorSpecialty,
+      allowNegativeTreasury: profile.allowNegativeTreasury,
+      allowNegativeStock: profile.allowNegativeStock,
+      requireOpenShiftForSales: profile.requireOpenShiftForSales,
+      activityId,
+      defaultWarehouseId: branch.warehouseId,
+      modules: resolveBranchModules(branch, companySetup.modules),
+      features: activity?.features ?? companySetup.features,
+    },
+    receipt: { ...baseReceipt, shopName: profile.receiptShopName },
+    einvoice: profile.einvoice,
+    approvals: profile.approvals,
+  }
+}
+
+function companySetupPatch(state: AppState, patch: Partial<SetupState>): Partial<AppState> {
+  const branch = state.activeBranchContext
+  if (branch && !branch.isMain) {
+    const branchSettingKeys = new Set<keyof SetupState>([
+      'doctorSpecialty', 'allowNegativeTreasury', 'allowNegativeStock', 'requireOpenShiftForSales',
+    ])
+    const unsupported = Object.keys(patch).filter((key) => !branchSettingKeys.has(key as keyof SetupState))
+    if (unsupported.length) throw new Error('الإعدادات العامة للشركة لا تُعدّل من داخل فرع مستقل — غيّر الفرع إلى الرئيسي أولاً')
+    const current = state.branchBusinessProfiles[branch.id]
+      ?? branchProfileFromBase(state.companySetup ?? state.setup, state.baseReceipt, state.baseEinvoice, state.baseApprovals, branch.nameAr)
+    const branchBusinessProfiles = { ...state.branchBusinessProfiles, [branch.id]: { ...current, ...patch } }
+    const companySetup = state.companySetup ?? state.setup
+    return {
+      branchBusinessProfiles,
+      ...effectiveBranchAppSettings(companySetup, branch, branchBusinessProfiles, state.baseReceipt, state.baseEinvoice, state.baseApprovals),
+    }
+  }
+  const companySetup = { ...(state.companySetup ?? state.setup), ...patch }
+  return {
+    companySetup,
+    ...effectiveBranchAppSettings(companySetup, branch, state.branchBusinessProfiles, state.baseReceipt, state.baseEinvoice, state.baseApprovals),
+  }
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -373,39 +511,77 @@ export const useAppStore = create<AppState>()(
       legal: null as { version: string; acceptedAt: string } | null,
       acceptLegal: () => set({ legal: { version: LEGAL_VERSION, acceptedAt: new Date().toISOString() } }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
-      setup: {
-        completed: false,
-        countryCode: null,
-        activityId: null,
-        shopName: '',
-        ownerName: '',
-        features: [],
-        modules: [],
-        taxInclusive: true,
-        vatPercent: 14,
-        taxRegistrationStatus: 'registered',
-        accountingMode: 'simple',
-        allowNegativeTreasury: false,
-        allowNegativeStock: false,
-        requireOpenShiftForSales: true,
-        defaultWarehouseId: null,
-        phone: '', email: '', city: '', street: '',
-        doctorSpecialty: '',
-        lastActivityChangeAt: null,
-        activityKeyHistory: [],
-        activityKeyFingerprints: [],
-        coreModulesMigratedAt: null,
-      },
+      setup: DEFAULT_SETUP_STATE,
+      companySetup: DEFAULT_SETUP_STATE,
+      activeBranchContext: null,
+      branchBusinessProfiles: {},
+      setActiveBranchContext: (branch) => set((s) => {
+        const nextBranch = branch ? { ...branch } : null
+        if (s.activeBranchContext?.id === nextBranch?.id
+          && s.activeBranchContext?.nameAr === nextBranch?.nameAr
+          && s.activeBranchContext?.isMain === nextBranch?.isMain
+          && s.activeBranchContext?.warehouseId === nextBranch?.warehouseId
+          && s.activeBranchContext?.customModulesMode === nextBranch?.customModulesMode
+          && s.activeBranchContext?.activityId === nextBranch?.activityId
+          && JSON.stringify(s.activeBranchContext?.enabledModules ?? []) === JSON.stringify(nextBranch?.enabledModules ?? [])) return {}
+        let branchBusinessProfiles = s.branchBusinessProfiles ?? {}
+        if (nextBranch && !nextBranch.isMain && !branchBusinessProfiles[nextBranch.id]) {
+          branchBusinessProfiles = {
+            ...branchBusinessProfiles,
+            [nextBranch.id]: branchProfileFromBase(s.companySetup ?? s.setup, s.baseReceipt ?? s.receipt, s.baseEinvoice ?? s.einvoice, s.baseApprovals ?? s.approvals, nextBranch.nameAr),
+          }
+        }
+        const companySetup = s.companySetup ?? s.setup
+        return {
+          activeBranchContext: nextBranch,
+          branchBusinessProfiles,
+          ...effectiveBranchAppSettings(companySetup, nextBranch, branchBusinessProfiles, s.baseReceipt ?? s.receipt, s.baseEinvoice ?? s.einvoice, s.baseApprovals ?? s.approvals),
+        }
+      }),
+      removeBranchBusinessProfile: (branchId) => set((s) => {
+        if (!s.branchBusinessProfiles?.[branchId]) return {}
+        const { [branchId]: _removed, ...branchBusinessProfiles } = s.branchBusinessProfiles
+        return { branchBusinessProfiles }
+      }),
+      updateSetup: (patch) => set((s) => companySetupPatch(s, patch)),
+      updateCompanyName: (name) => set((s) => {
+        const shopName = name.trim()
+        if (!shopName) throw new Error('اسم المنشأة مطلوب')
+        const branch = s.activeBranchContext
+        if (branch && !branch.isMain) {
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, shopName, receiptShopName: shopName } }
+          return {
+            branchBusinessProfiles,
+            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals),
+          }
+        }
+        const companySetup = { ...s.companySetup, shopName }
+        const baseReceipt = { ...s.baseReceipt, shopName }
+        return {
+          companySetup,
+          baseReceipt,
+          ...effectiveBranchAppSettings(companySetup, branch, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals),
+        }
+      }),
+      updateTaxSettings: (patch) => set((s) => {
+        resolveBusinessTax(patch.taxRegistrationStatus, patch.vatPercent)
+        const branch = s.activeBranchContext
+        if (branch && !branch.isMain) {
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, ...patch } }
+          return {
+            branchBusinessProfiles,
+            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals),
+          }
+        }
+        const companySetup = { ...s.companySetup, ...patch }
+        return { companySetup, ...effectiveBranchAppSettings(companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals) }
+      }),
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
-        set((s) => ({
-          fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
-          // الهوية اللونية حسب النشاط (بعد نقاش المالك) — قابلة للتغيير لاحقاً من المظهر
-          appearance: { ...s.appearance, accentId: activityAccentId(activity.id) },
-          // اسم المحل على الإيصال + قالب الفاتورة الافتراضي من النشاط
-          // (بقالة = حراري سريع، خدمات وعقود = A4 احترافية)
-          receipt: { ...s.receipt, shopName, defaultTemplate: activity.defaultInvoiceTemplate },
-          setup: {
+        set((s) => {
+          const companySetup: SetupState = {
             completed: true,
             countryCode: country.code,
             activityId: activity.id,
@@ -415,6 +591,7 @@ export const useAppStore = create<AppState>()(
             modules: activity.modules,
             taxInclusive: activity.taxInclusiveDefault,
             vatPercent: country.vatPercent,
+            taxRegistrationStatus: 'registered',
             accountingMode: 'simple',
             allowNegativeTreasury: false,
             allowNegativeStock: false,
@@ -425,8 +602,24 @@ export const useAppStore = create<AppState>()(
             lastActivityChangeAt: null,
             activityKeyHistory: [],
             activityKeyFingerprints: [],
-          },
-        })),
+            coreModulesMigratedAt: null,
+          }
+          const baseReceipt = { ...s.baseReceipt, shopName, defaultTemplate: activity.defaultInvoiceTemplate }
+          const baseEinvoice = { ...s.baseEinvoice }
+          const baseApprovals = { ...s.baseApprovals }
+          return {
+            fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
+            // الهوية اللونية حسب النشاط (بعد نقاش المالك) — قابلة للتغيير لاحقاً من المظهر
+            appearance: { ...s.appearance, accentId: activityAccentId(activity.id) },
+            companySetup,
+            activeBranchContext: null,
+            branchBusinessProfiles: {},
+            baseReceipt,
+            baseEinvoice,
+            baseApprovals,
+            ...effectiveBranchAppSettings(companySetup, null, {}, baseReceipt, baseEinvoice, baseApprovals),
+          }
+        }),
       /* سنة مالية واحدة مفتوحة فقط (طلب المالك) — الحارس هنا في المتجر لا في
          الشاشة وحدها: أي مسار آخر (استيراد حالة، ترحيل قديم) لا يفتح سنتين. */
       addFiscalYear: (fy) =>
@@ -442,28 +635,39 @@ export const useAppStore = create<AppState>()(
       /** إعادة فتح سنة مقفلة (نمط عالمي — تُستدعى من مسار reopenFiscalYear بجوار عكس قيد الإقفال) */
       reopenFiscalYear: (id) =>
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'open' as const } : y)) })),
-      setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
+      setAccountingMode: (m) => set((s) => companySetupPatch(s, { accountingMode: m })),
       toggleModule: (m) =>
         /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له.
            حارس الترخيص: لا إظهار لوحدة خارج الممنوح (افتراضيات النشاط + extraModules
            الموقّعة) — الواجهة تمنع ذلك، والمتجر لا يعتمد عليها وحدها. */
         set((s) => {
-          if (s.setup.modules.includes(m) && s.setup.modules.length <= 1) return {}
-          if (!s.setup.modules.includes(m) && !effectiveModules(s.setup.activityId, s.activatedPayload?.extraModules).includes(m)) return {}
-          return { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } }
+          const setup = s.companySetup ?? s.setup
+          if (setup.modules.includes(m) && setup.modules.length <= 1) return {}
+          if (!setup.modules.includes(m) && !effectiveModules(setup.activityId, s.activatedPayload?.extraModules).includes(m)) return {}
+          return companySetupPatch(s, { modules: toggleModuleList(setup.modules, m) })
         }),
-      resetSetup: () =>
-        set((s) => ({
-          setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
-        })),
+      resetSetup: () => set((s) => companySetupPatch(s, { completed: false, countryCode: null, activityId: null })),
+
       receipt: DEFAULT_RECEIPT_SETTINGS,
+      baseReceipt: DEFAULT_RECEIPT_SETTINGS,
       printerProfiles: DEFAULT_PRINTER_PROFILES,
       setPrinterProfile: (route, patch) => set((s) => ({
         printerProfiles: { ...s.printerProfiles, [route]: { ...s.printerProfiles[route], ...patch } },
       })),
       loyalty: DEFAULT_LOYALTY,
       approvals: DEFAULT_APPROVALS,
-      updateApprovals: (patch) => set((s) => ({ approvals: { ...s.approvals, ...patch } })),
+      baseApprovals: DEFAULT_APPROVALS,
+      updateApprovals: (patch) => set((s) => {
+        const branch = s.activeBranchContext
+        if (branch && !branch.isMain) {
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const approvals = { ...current.approvals, ...patch }
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, approvals } }
+          return { branchBusinessProfiles, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals) }
+        }
+        const baseApprovals = { ...s.baseApprovals, ...patch }
+        return { baseApprovals, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, baseApprovals) }
+      }),
       updateLoyalty: (patch) => set((s) => ({ loyalty: { ...s.loyalty, ...patch } })),
       reportPrint: DEFAULT_REPORT_PRINT,
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
@@ -517,14 +721,39 @@ export const useAppStore = create<AppState>()(
       warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT,
       updateWarehouseReceipt: (patch) => set((s) => ({ warehouseReceipt: { ...s.warehouseReceipt, ...patch } })),
       resetWarehouseReceipt: () => set({ warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT }),
-      updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
+      updateReceipt: (patch) => set((s) => {
+        const branch = s.activeBranchContext
+        if (branch && !branch.isMain) {
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const branchBusinessProfiles = {
+            ...s.branchBusinessProfiles,
+            [branch.id]: { ...current, receiptShopName: patch.shopName ?? current.receiptShopName },
+          }
+          const sharedPatch = { ...patch }
+          delete sharedPatch.shopName
+          const baseReceipt = { ...s.baseReceipt, ...sharedPatch }
+          return { baseReceipt, branchBusinessProfiles, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals) }
+        }
+        const baseReceipt = { ...s.baseReceipt, ...patch }
+        return { baseReceipt, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals) }
+      }),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
       appearance: DEFAULT_APPEARANCE,
       updateAppearance: (patch) => set((s) => ({ appearance: sanitizeAppearance({ ...s.appearance, ...patch }) })),
       telegram: DEFAULT_TELEGRAM_SETTINGS,
       updateTelegram: (patch) => set((s) => ({ telegram: { ...s.telegram, ...patch } })),
       einvoice: DEFAULT_EINVOICE_SETTINGS,
-      updateEinvoice: (patch) => set((s) => ({ einvoice: { ...s.einvoice, ...patch } })),
+      baseEinvoice: DEFAULT_EINVOICE_SETTINGS,
+      updateEinvoice: (patch) => set((s) => {
+        const branch = s.activeBranchContext
+        if (branch && !branch.isMain) {
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, einvoice: { ...current.einvoice, ...patch } } }
+          return { branchBusinessProfiles, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals) }
+        }
+        const baseEinvoice = { ...s.baseEinvoice, ...patch }
+        return { baseEinvoice, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, baseEinvoice, s.baseApprovals) }
+      }),
       schedule: DEFAULT_SCHEDULE_SETTINGS,
       updateSchedule: (patch) => set((s) => ({ schedule: { ...s.schedule, ...patch } })),
       lanHost: DEFAULT_LAN_HOST_SETTINGS,
@@ -557,9 +786,10 @@ export const useAppStore = create<AppState>()(
       reverifyActivation: async () => {
         const before = get()
         /** الوحدات المسموح بظهورها لحمولة معيّنة (بلا إضافة — حذف فقط) */
+        const companySetup = before.companySetup ?? before.setup
         const clamp = (payload: LicensePayload | null) => clampModulesToLicense({
-          stored: before.setup.modules,
-          activityId: before.setup.activityId,
+          stored: companySetup.modules,
+          activityId: companySetup.activityId,
           licensedExtra: payload?.extraModules,
         })
         const commit = (next: {
@@ -568,9 +798,9 @@ export const useAppStore = create<AppState>()(
           licenseAudit: AppState['licenseAudit']
           modules: BusinessModule[]
         }) => {
-          const modulesChanged = before.setup.completed
-            && (next.modules.length !== before.setup.modules.length
-              || next.modules.some((m, i) => m !== before.setup.modules[i]))
+          const modulesChanged = companySetup.completed
+            && (next.modules.length !== companySetup.modules.length
+              || next.modules.some((m, i) => m !== companySetup.modules[i]))
           const unchanged = before.activatedKey === next.activatedKey
             && JSON.stringify(before.activatedPayload ?? null) === JSON.stringify(next.activatedPayload)
             && before.licenseAudit.status === next.licenseAudit.status
@@ -580,7 +810,7 @@ export const useAppStore = create<AppState>()(
             activatedKey: next.activatedKey,
             activatedPayload: next.activatedPayload,
             licenseAudit: next.licenseAudit,
-            setup: s.setup.completed && modulesChanged ? { ...s.setup, modules: next.modules } : s.setup,
+            ...(s.companySetup.completed && modulesChanged ? companySetupPatch(s, { modules: next.modules }) : {}),
           }))
         }
 
@@ -648,23 +878,26 @@ export const useAppStore = create<AppState>()(
       markRegistrationReported: (at) =>
         set((s) => (s.registrationReportedAt ? s : { registrationReportedAt: at ?? new Date().toISOString() })),
       setActivated: (key, payload) =>
-        set((s) => ({
-          activatedKey: key,
-          activatedPayload: payload,
-          licenseAudit: { status: 'verified', at: new Date().toISOString() },
-          // سياسة الأقسام: الوحدات = افتراضيات النشاط + ما فعّله المطوّر في المفتاح فقط
-          setup: s.setup.completed
-            ? {
-                ...s.setup,
-                modules: effectiveModules(s.setup.activityId, payload.extraModules),
-                /* v1.0.7: أول تفعيل على هذا الجهاز يثبّت النشاط المرخّص —
-                   التغيير بعده بمفتاح SHOPSYS2 موقّع فقط (activityKeyHistory) */
-                activityKeyHistory: s.setup.activityKeyHistory.length > 0
-                  ? s.setup.activityKeyHistory
-                  : [payload.activityId ?? s.setup.activityId ?? ''].filter(Boolean),
-              }
-            : s.setup,
-        })),
+        set((s) => {
+          const setup = s.companySetup ?? s.setup
+          if (!setup.completed) {
+            return { activatedKey: key, activatedPayload: payload, licenseAudit: { status: 'verified', at: new Date().toISOString() } }
+          }
+          const modules = effectiveModules(setup.activityId, payload.extraModules)
+          return {
+            activatedKey: key,
+            activatedPayload: payload,
+            licenseAudit: { status: 'verified', at: new Date().toISOString() },
+            ...companySetupPatch(s, {
+              modules,
+              /* v1.0.7: أول تفعيل على هذا الجهاز يثبّت النشاط المرخّص —
+                 التغيير بعده بمفتاح SHOPSYS2 موقّع فقط (activityKeyHistory) */
+              activityKeyHistory: setup.activityKeyHistory.length > 0
+                ? setup.activityKeyHistory
+                : [payload.activityId ?? setup.activityId ?? ''].filter(Boolean),
+            }),
+          }
+        }),
       clearActivation: () => set({ activatedKey: null, activatedPayload: null, licenseAudit: { status: 'no_key', at: new Date().toISOString() } }),
       /* ═══ v1.0.7 (موافقة المالك): تغيير النشاط بمفتاح الدعم الفني فقط ═══
          SHOPSYS2 موقّع من المطوّر لهذا الجهاز تحديداً، من النشاط الحالي إلى
@@ -674,42 +907,55 @@ export const useAppStore = create<AppState>()(
          يدوياً من الإعدادات إن لزم). */
       applyActivityChangeKey: async (key, pubB64u) => {
         const state = get()
-        if (!state.setup.completed) throw new Error('أكمل الإعداد الأول أولاً')
-        if (!state.setup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
+        if (state.activeBranchContext && !state.activeBranchContext.isMain) {
+          throw new Error('تغيير نشاط المنشأة العامة متاح من المنشأة الأساسية فقط')
+        }
+        const companySetup = state.companySetup ?? state.setup
+        if (!companySetup.completed) throw new Error('أكمل الإعداد الأول أولاً')
+        if (!companySetup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
         const payload = await verifyActivityChangeKey(key, state.deviceId, pubB64u)
         /* ح8 (مراجعة ③): مفتاح التحويل يُطبَّق مرة واحدة. التحقق السابق يمنع المفتاح إن لم
            يطابق النشاط الحالي فقط — فمفتاح A→B الموقّع يُعاد تطبيقه بعد عودة الجهاز إلى A
            بمفتاح B→A دون طلب جديد من الدعم. */
         const fingerprint = keyFingerprint(key)
-        if ((state.setup.activityKeyFingerprints ?? []).includes(fingerprint)) {
+        if ((companySetup.activityKeyFingerprints ?? []).includes(fingerprint)) {
           throw new Error('مفتاح تحويل النشاط هذا استُخدم من قبل — اطلب مفتاحاً جديداً من الدعم')
         }
-        if (payload.fromActivityId !== state.setup.activityId) {
-          throw new Error(`المفتاح صادر للتحويل من نشاط «${payload.fromActivityId}» — نشاطك الحالي «${state.setup.activityId}». اطلب مفتاحاً محدّثاً من الدعم`)
+        if (payload.fromActivityId !== companySetup.activityId) {
+          throw new Error(`المفتاح صادر للتحويل من نشاط «${payload.fromActivityId}» — نشاطك الحالي «${companySetup.activityId}». اطلب مفتاحاً محدّثاً من الدعم`)
         }
-        if (payload.toActivityId === state.setup.activityId) throw new Error('المفتاح يحوّل إلى نشاطك الحالي نفسه — لا حاجة لأي تغيير')
+        if (payload.toActivityId === companySetup.activityId) throw new Error('المفتاح يحوّل إلى نشاطك الحالي نفسه — لا حاجة لأي تغيير')
         const template = ACTIVITY_TEMPLATES.find((t) => t.id === payload.toActivityId)
         if (!template) throw new Error(`نشاط غير معروف في هذه النسخة («${payload.toActivityId}») — حدّث التطبيق أولاً`)
-        if (state.setup.lastActivityChangeAt) {
-          const since = daysBetween(state.setup.lastActivityChangeAt.slice(0, 10), new Date().toISOString().slice(0, 10))
+        if (companySetup.lastActivityChangeAt) {
+          const since = daysBetween(companySetup.lastActivityChangeAt.slice(0, 10), new Date().toISOString().slice(0, 10))
           if (since < ACTIVITY_CHANGE_COOLDOWN_DAYS) {
             throw new Error(`مضى ${since} يوماً فقط على آخر تغيير نشاط — التغيير مسموح كل ${ACTIVITY_CHANGE_COOLDOWN_DAYS} يوماً (باقٍ ${ACTIVITY_CHANGE_COOLDOWN_DAYS - since} يوماً)`)
           }
         }
         const now = new Date().toISOString()
-        set((s) => ({
-          appearance: { ...s.appearance, accentId: activityAccentId(template.id) },
-          receipt: { ...s.receipt, defaultTemplate: template.defaultInvoiceTemplate },
-          setup: {
-            ...s.setup,
+        set((s) => {
+          if (s.activeBranchContext && !s.activeBranchContext.isMain) {
+            throw new Error('تغيير نشاط المنشأة العامة متاح من المنشأة الأساسية فقط')
+          }
+          const companySetup = s.companySetup ?? s.setup
+          const nextCompanySetup: SetupState = {
+            ...companySetup,
             activityId: template.id,
             features: template.features,
             modules: template.modules,
             lastActivityChangeAt: now,
-            activityKeyHistory: [...s.setup.activityKeyHistory, template.id],
-            activityKeyFingerprints: [...(s.setup.activityKeyFingerprints ?? []), fingerprint],
-          },
-        }))
+            activityKeyHistory: [...companySetup.activityKeyHistory, template.id],
+            activityKeyFingerprints: [...(companySetup.activityKeyFingerprints ?? []), fingerprint],
+          }
+          const baseReceipt = { ...s.baseReceipt, defaultTemplate: template.defaultInvoiceTemplate }
+          return {
+            appearance: { ...s.appearance, accentId: activityAccentId(template.id) },
+            companySetup: nextCompanySetup,
+            baseReceipt,
+            ...effectiveBranchAppSettings(nextCompanySetup, s.activeBranchContext, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals),
+          }
+        })
         return template.nameAr
       },
       touchLastSeen: () =>
@@ -759,20 +1005,81 @@ export const useAppStore = create<AppState>()(
       name: 'shopsys-app',
       /* §101 التنفيذية: SQLite داخل نسخة سطح المكتب — وlocalStorage الخام في الويب كما هو */
       storage: createJSONStorage(settingsAppStorage),
+      /* ترحيل بنيوي بعد فصل companySetup عن setup الفعال: لقطات الإصدارات السابقة
+         لا تحمل companySetup/baseReceipt/baseEinvoice/baseApprovals، وكانت قيمة
+         الافتراضية في الحالة الحالية تحجب البيانات القديمة عند الدمج السطحي. */
+      merge: (persistedState, currentState) => {
+        const saved = persistedState as Partial<AppState> | undefined
+        if (!saved) return currentState
+        const merged = { ...currentState, ...saved }
+        const savedSetup = saved.companySetup ?? saved.setup
+        if (savedSetup) {
+          const companySetup = { ...DEFAULT_SETUP_STATE, ...savedSetup }
+          merged.companySetup = companySetup
+          merged.setup = companySetup
+        }
+        if (!saved.baseReceipt && saved.receipt) merged.baseReceipt = saved.receipt
+        if (!saved.receipt && saved.baseReceipt) merged.receipt = saved.baseReceipt
+        if (!saved.baseEinvoice && saved.einvoice) merged.baseEinvoice = saved.einvoice
+        if (!saved.einvoice && saved.baseEinvoice) merged.einvoice = saved.baseEinvoice
+        if (!saved.baseApprovals && saved.approvals) merged.baseApprovals = saved.approvals
+        if (!saved.approvals && saved.baseApprovals) merged.approvals = saved.baseApprovals
+        return merged
+      },
       /**
        * ث1 (تدقيق 2026-10-08): الحمولة لا تُخزَّن ولا تُقرأ من التخزين —
        * تُشتق من المفتاح الموقّع في كل إقلاع (`reverifyActivation`). وحالة
        * الفحص نفسها جلسة فقط. ما عدا ذلك يُحفظ كما هو حرفياً.
        */
       partialize: (state) => {
-        const { activatedPayload: _payload, licenseAudit: _audit, ...rest } = state
-        return rest
+        const { activatedPayload: _payload, licenseAudit: _audit, activeBranchContext: _branchContext, ...rest } = state
+        return {
+          ...rest,
+          // تبقى أسماء المفاتيح القديمة متوافقة، لكن التخزين يحمل دائماً قيم الشركة الأساسية لا تراكب فرع عابر.
+          setup: state.companySetup,
+          companySetup: state.companySetup,
+          receipt: state.baseReceipt,
+          baseReceipt: state.baseReceipt,
+          einvoice: state.baseEinvoice,
+          baseEinvoice: state.baseEinvoice,
+          approvals: state.baseApprovals,
+          baseApprovals: state.baseApprovals,
+        }
       },
       onRehydrateStorage: () => (state) => {
         /* ث1: أي حمولة محفوظة تُسقط فوراً — لا تُعتمد قبل إعادة التحقق من
            التوقيع. تُعلَّم الحالة `checking` كي لا تُعرض شاشة القفل في نافذة
            الفحص (وإلا ومضت لعميل مفعّل) — `App.tsx` ينتظرها قبل الحكم. */
         if (state) {
+          // ترحيل متوافق: الإعداد المحفوظ سابقاً هو ملف الشركة الرئيسي، لا نغير قيمه ولا نفرض ترحيلاً على الفروع القديمة.
+          state.companySetup = state.companySetup ?? state.setup
+          state.activeBranchContext = null
+          state.baseReceipt = { ...DEFAULT_RECEIPT_SETTINGS, ...(state.baseReceipt ?? state.receipt ?? {}) }
+          state.baseEinvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...(state.baseEinvoice ?? state.einvoice ?? {}) }
+          state.baseApprovals = { ...DEFAULT_APPROVALS, ...(state.baseApprovals ?? state.approvals ?? {}) }
+          const savedBranchProfiles = state.branchBusinessProfiles ?? {}
+          state.branchBusinessProfiles = Object.fromEntries(Object.entries(savedBranchProfiles).map(([branchId, saved]) => {
+            const defaults = branchProfileFromBase(state.companySetup, state.baseReceipt, state.baseEinvoice, state.baseApprovals)
+            return [Number(branchId), {
+              ...defaults,
+              ...saved,
+              shopName: saved.shopName ?? defaults.shopName,
+              vatPercent: saved.vatPercent ?? defaults.vatPercent,
+              taxInclusive: saved.taxInclusive ?? defaults.taxInclusive,
+              taxRegistrationStatus: saved.taxRegistrationStatus ?? defaults.taxRegistrationStatus,
+              doctorSpecialty: saved.doctorSpecialty ?? defaults.doctorSpecialty,
+              allowNegativeTreasury: saved.allowNegativeTreasury ?? defaults.allowNegativeTreasury,
+              allowNegativeStock: saved.allowNegativeStock ?? defaults.allowNegativeStock,
+              requireOpenShiftForSales: saved.requireOpenShiftForSales ?? defaults.requireOpenShiftForSales,
+              receiptShopName: saved.receiptShopName ?? defaults.receiptShopName,
+              einvoice: { ...defaults.einvoice, ...(saved.einvoice ?? {}) },
+              approvals: saved.approvals ?? defaults.approvals,
+            }]
+          }))
+          state.setup = state.companySetup
+          state.receipt = state.baseReceipt
+          state.einvoice = state.baseEinvoice
+          state.approvals = state.baseApprovals
           // آخر أعلام محفوظة (وضع الأوفلاين) تسري من أول لحظة قبل أي جلب جديد
           setActiveDeviceFlags(state.deviceFlags ?? null)
           state.activatedPayload = null
@@ -884,7 +1191,45 @@ export const useAppStore = create<AppState>()(
         if (state && state.setup && !Array.isArray(state.setup.activityKeyFingerprints)) {
           state.setup = { ...state.setup, activityKeyFingerprints: [] }
         }
+        if (state) {
+          // تُحفظ الترحيلات السابقة على الإعدادات الأساسية، ثم يبدأ التطبيق بلا فرع محدد.
+          state.companySetup = state.setup
+          state.baseReceipt = state.receipt
+          state.baseEinvoice = state.einvoice
+          state.baseApprovals = { ...DEFAULT_APPROVALS, ...state.approvals }
+          state.setup = state.companySetup
+          state.receipt = state.baseReceipt
+          state.einvoice = state.baseEinvoice
+          state.approvals = state.baseApprovals
+        }
       },
     },
   ),
 )
+
+/* التوافق مع اختبارات/أدوات قديمة تستدعي Zustand setState مباشرةً: اعتبر تعديلات الإعدادات القديمة تعديلات للملف الأساسي عند عدم تحديد فرع. */
+const rawAppSetState = useAppStore.setState.bind(useAppStore)
+useAppStore.setState = ((partial, replace) => {
+  const current = useAppStore.getState()
+  const value = typeof partial === 'function' ? partial(current) : partial
+  if (!value || typeof value !== 'object') return rawAppSetState(value as never, replace as never)
+  const patch = { ...value } as Partial<AppState>
+  const branchContextChanged = 'activeBranchContext' in patch
+    && JSON.stringify(patch.activeBranchContext) !== JSON.stringify(current.activeBranchContext)
+  const branchProfilesChanged = 'branchBusinessProfiles' in patch
+    && JSON.stringify(patch.branchBusinessProfiles) !== JSON.stringify(current.branchBusinessProfiles)
+  if (branchContextChanged || branchProfilesChanged) {
+    throw new Error('سياق الفروع وملفاتها تُحدَّث عبر إجراءاتها المخصصة فقط')
+  }
+  if (current.activeBranchContext && !current.activeBranchContext.isMain
+    && ['setup', 'companySetup', 'receipt', 'baseReceipt', 'einvoice', 'baseEinvoice', 'approvals', 'baseApprovals'].some((key) => key in patch)) {
+    throw new Error('لا يمكن تعديل إعدادات المنشأة العامة من داخل فرع مستقل')
+  }
+  if (patch.setup && (!patch.companySetup || patch.companySetup === current.companySetup || JSON.stringify(patch.companySetup) === JSON.stringify(current.companySetup))) {
+    patch.companySetup = patch.setup
+  }
+  if (patch.receipt && (!patch.baseReceipt || patch.baseReceipt === current.baseReceipt)) patch.baseReceipt = patch.receipt
+  if (patch.einvoice && (!patch.baseEinvoice || patch.baseEinvoice === current.baseEinvoice)) patch.baseEinvoice = patch.einvoice
+  if (patch.approvals && (!patch.baseApprovals || patch.baseApprovals === current.baseApprovals)) patch.baseApprovals = patch.approvals
+  return rawAppSetState(patch as never, replace as never)
+}) as typeof useAppStore.setState

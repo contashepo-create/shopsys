@@ -6,10 +6,10 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * - التحويل بين الفروع: بضاعةً عبر «التحويلات» (مستند TRF) ونقداً عبر سند تحويل
  * - حد الفروع من الرخصة الموقعة (القرار 24) — الزيادة بمفتاح من المطوّر
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { GitBranch, Plus, Trash2, Star, PenLine, BarChart3, Wallet2, Package, ArrowLeftRight, Phone, MapPin, UserCircle2, Layers, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useRawDataStore } from '../../data/repo.ts'
+import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { compareBranches, type Branch } from '../../core/branches.ts'
 import { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS, type BusinessModule } from '../../core/activities.ts'
@@ -22,9 +22,14 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
-    activeBranchId, setActiveBranchId,
+    activeBranchId, setActiveBranchId, currentUserId, appUsers,
     sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
-  } = useRawDataStore()
+  } = useDataStore()
+  const canManageAllBranches = currentUserId == null || appUsers.find((user) => user.id === currentUserId)?.roleId === 'owner'
+  useEffect(() => {
+    // المقارنة تحتاج لقطة شاملة لا بيانات الفرع الذي كان المالك يستعرضه قبل فتح الصفحة.
+    if (canManageAllBranches && activeBranchId != null) setActiveBranchId(null)
+  }, [activeBranchId, canManageAllBranches, setActiveBranchId])
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
 
@@ -156,7 +161,7 @@ export function BranchesPage() {
           <span className="text-[11px] px-3 py-1 rounded-full bg-teal-500/10 text-teal-600 font-bold">
             {branches.filter((b) => b.active).length || 1} / {maxBranches} حسب خطتك
           </span>
-          <Btn onClick={openCreate}><Plus size={15} /> فرع جديد</Btn>
+          {canManageAllBranches && <Btn onClick={openCreate}><Plus size={15} /> فرع جديد</Btn>}
         </div>
       </div>
 
@@ -261,10 +266,10 @@ export function BranchesPage() {
                   <button onClick={() => openEdit(b)} className="p-2 rounded-lg text-slate-300 hover:text-teal-500 hover:bg-teal-500/10 transition-all">
                     <PenLine size={15} />
                   </button>
-                  {!b.isMain && (
+                  {!b.isMain && canManageAllBranches && (
                     <button
                       onClick={() => {
-                        if (!window.confirm(`حذف فرع «${b.nameAr}»؟ مخزنه وخزينته وتاريخهما تبقى كلها — يُفك الربط التنظيمي فقط.`)) return
+                        if (!window.confirm(`حذف فرع «${b.nameAr}»؟ لا يُسمح بحذف فرع له مستخدمون أو سجلات تشغيلية؛ عطّله للحفاظ على تاريخه.`)) return
                         try { removeBranch(b.id); toast.show('حُذف الفرع (المخزن والخزينة باقيان)') }
                         catch (err) { toast.show((err as Error).message, 'error') }
                       }}
@@ -311,7 +316,7 @@ export function BranchesPage() {
                   </div>
                 )}
                 <div className="flex items-center justify-between gap-2 pt-1">
-                  <button
+                  {canManageAllBranches && <button
                     type="button"
                     data-branch-card-switch={b.id}
                     onClick={() => {
@@ -327,7 +332,7 @@ export function BranchesPage() {
                   >
                     <CheckCircle2 size={13} />
                     {activeBranchId === b.id ? 'الفرع النشط حالياً (إلغاء التخصيص)' : 'تفعيل قوائم هذا الفرع'}
-                  </button>
+                  </button>}
                   <button
                     type="button"
                     onClick={() => openEdit(b)}

@@ -141,7 +141,10 @@ st().restoreNotifications()
 eq(st().readNotificationIds.length, 0, 'الاسترجاع يمسح الكل')
 
 /* ═══ ط) صلاحيات المجموعة والاستثناءات الفردية ═══ */
-// المستخدم «أحمد» دوره cashier — نضيف له استثناء فردياً ثم نغير صلاحيات الدور
+// المستخدم «أحمد» دوره cashier — إدارة استثناءات المستخدمين محمية لـ«المستخدمون والصلاحيات» فقط
+throws(() => st().setUserPermExceptions(user.id, ['rep.sales'], ['sales.return.create']))
+st().logout()
+await st().login(null, '999999')
 st().setUserPermExceptions(user.id, ['rep.sales'], ['sales.return.create'])
 const rolesBefore = rolesWithOverrides(st().roleOverrides)
 const permsBefore = effectivePermissionsFor(st().appUsers.find((u) => u.id === user.id), rolesBefore)
