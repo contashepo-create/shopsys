@@ -21,6 +21,7 @@ import { LockScreen } from './ui/LockScreen.tsx'
 import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
+import { isSessionAuthenticated } from './data/sessionAuth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
@@ -151,7 +152,9 @@ function Shell() {
   // بوابة الدخول + إصلاح باج «إجبار تغيير الرقم أول دخول»: login() كان يرفع loggedOut
   // فتختفي شاشة الدخول قبل ظهور مودال التغيير الإجباري — الآن من عليه mustChangePin
   // يبقى محتجزاً في LoginScreen (بمودالها الإجباري) حتى يعيّن رقمه الخاص
-  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || activeUser?.mustChangePin)) {
+  // + جلسة جديدة (إغلاق التطبيق فعلياً وإعادة فتحه) تُفرض من جديد دوماً حتى لو لم
+  // يُسجَّل خروج صريح — عبر isSessionAuthenticated المحصور بعمر النافذة (طلب المالك)
+  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || !isSessionAuthenticated() || activeUser?.mustChangePin)) {
     return <LoginScreen />
   }
   // ─── حراسة الوحدات (سد ثغرة الرابط المباشر): شاشة وحدة غير مفعلة للنشاط ───

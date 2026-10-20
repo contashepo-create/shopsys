@@ -18,6 +18,7 @@ import { NOTICE_LEVEL_ICONS, noticeSeverity, shouldAnnounceToast } from '../../c
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
 import { serviceStatus, equipmentComplianceWarnings } from '../../core/rentalMeter.ts'
 import { vehicleComplianceWarnings, unsettledDriverDues } from '../../core/logistics.ts'
+import { clearSessionAuthenticated } from '../../data/sessionAuth.ts'
 import { criticalUnacknowledgedResults } from '../../core/lab.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { bondComplianceWarnings, retentionDueWarnings, COST_KIND_LABELS } from '../../core/contracting.ts'
@@ -369,7 +370,7 @@ export function Header({ title }: { title: string }) {
         </button>
         {authOn && (
           <button
-            onClick={logout}
+            onClick={() => { logout(); clearSessionAuthenticated() }}
             title="تسجيل خروج — العودة لشاشة الدخول"
             className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-rose-500/10 hover:text-rose-500 transition-all duration-200 hover:scale-110"
           >
