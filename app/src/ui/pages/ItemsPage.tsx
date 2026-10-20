@@ -1045,7 +1045,11 @@ function ItemForm({
     { key: 'trackSerial' as const, label: '🔢 تتبع السيريال والضمان', on: draft.trackSerial, relevant: activityFeatures.has('serial_warranty') },
     { key: 'soldByWeight' as const, label: '⚖️ يُباع بالوزن', on: draft.soldByWeight, relevant: activityFeatures.has('weight_scale') },
     // صنف خدمة (Square/Lightspeed): حلاقة/غسيل سيارة/اشتراك جيم — يُباع بلا مخزون ولا تكلفة
-    { key: 'isService' as const, label: '🛎️ صنف خدمة (بلا مخزون)', on: draft.isService ?? false, relevant: setup.activityId === 'salon' },
+    // سد فجوة (تدقيق الأنشطة 29): كان مربوطاً بـ activityId==='salon' فقط،
+    // فيختفي تحت «خيارات أكثر» لصاحب نشاط «شركة خدمات» (كل أصنافه خدمات
+    // بالتعريف) ولصاحب المكتبة (خدمات التصوير/الطباعة) — الآن يتبع خاصية
+    // النشاط الصريحة مثل بقية الحقول.
+    { key: 'isService' as const, label: '🛎️ صنف خدمة (بلا مخزون)', on: draft.isService ?? false, relevant: activityFeatures.has('service_items') },
   ]
   const mainProps = allProps.filter((x) => x.relevant || x.on)
   const extraProps = allProps.filter((x) => !x.relevant && !x.on)

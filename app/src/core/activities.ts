@@ -12,6 +12,16 @@ export type ItemFeature =
   | 'weight_scale' // بيع بالوزن + باركود ميزان
   | 'multi_unit' // وحدات متعددة
   | 'price_lists' // قوائم أسعار
+  /**
+   * أصناف خدمة (isService) بلا مخزون (سد فجوة — تدقيق الأنشطة 29):
+   * ثلاثة أنشطة فقط بُنيت أصلاً حول صنف الخدمة في تعليقاتها الداخلية
+   * (صالون، شركة خدمات، مكتبة) — لكن مفتاح إظهاره بارزاً في نموذج
+   * الصنف كان مربوطاً بنص activityId==='salon' فقط، فبقي "صنف خدمة"
+   * (الحقل الذي يقوم عليه نشاط «شركة خدمات» بالكامل) مخفياً تحت «خيارات
+   * أكثر» لصاحب هذا النشاط ولصاحب المكتبة، رغم أن كل صنف سيضيفه فعلياً
+   * هو صنف خدمة. الحل: خاصية صريحة بنفس نمط بقية الخصائص.
+   */
+  | 'service_items' // صنف خدمة بلا مخزون (Square/Lightspeed)
 
 export type BusinessModule =
   | 'pos' // الكاشير
@@ -230,7 +240,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     // من المخزون + مواعيد وعمولات موظفين. المرجع العالمي: Fresha / Booksy.
     id: 'salon', nameAr: 'صالون حلاقة وتجميل', icon: '💈',
     description: 'خدمات بلا مخزون + منتجات عناية، مواعيد وعمولات موظفين',
-    features: ['price_lists'],
+    features: ['price_lists', 'service_items'],
     modules: ['pos', 'inventory', 'purchases', 'booking'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
@@ -279,7 +289,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     // فواتير خدمات آجلة وعقود ومقبوضات. المرجع العالمي: FreshBooks / Zoho Invoice.
     id: 'services', nameAr: 'شركة خدمات', icon: '🧾',
     description: 'بيع خدمات بلا مخزون: فواتير آجلة ونقدية، عملاء بحدود ائتمان، مصروفات وأرباح لكل فترة',
-    features: ['price_lists'],
+    features: ['price_lists', 'service_items'],
     // inventory ضرورية: شاشة «الأصناف» فيها هي مكان تعريف الخدمات (isService) نفسها
     modules: ['pos', 'inventory', 'purchases'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
@@ -290,7 +300,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     // منتشر جداً في مصر — المرجع: تجربة المكتبات المحلية + نمط Square hybrid.
     id: 'stationery', nameAr: 'مكتبة وخدمة طالب', icon: '📚',
     description: 'منتجات مكتبية + خدمات تصوير وطباعة وتغليف في كاشير واحد — بيع سريع بالقطعة',
-    features: ['multi_unit', 'price_lists'],
+    features: ['multi_unit', 'price_lists', 'service_items'],
     modules: ['pos', 'inventory', 'purchases'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
@@ -464,6 +474,7 @@ export const FEATURE_LABELS: Record<ItemFeature, { nameAr: string; icon: string;
   weight_scale: { nameAr: 'بيع بالوزن', icon: '⚖️', desc: 'أصناف موزونة وباركود ميزان' },
   multi_unit: { nameAr: 'وحدات متعددة', icon: '📦', desc: 'قطعة / علبة / كرتونة بمعاملات تحويل' },
   price_lists: { nameAr: 'قوائم أسعار', icon: '🏷️', desc: 'جملة / قطاعي / VIP' },
+  service_items: { nameAr: 'أصناف خدمة', icon: '🛎️', desc: 'صنف بلا مخزون ولا تكلفة — يُباع كخدمة فقط' },
 }
 
 export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: string; desc: string }> = {
