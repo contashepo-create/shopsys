@@ -35,6 +35,7 @@ export function GeneralSettingsPage() {
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
   const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
   useEffect(() => {
+    // oxlint-disable-next-line -- عند تبديل الفرع تتغير إعداداته من المتجر؛ نعيد مزامنة المسودات كي لا تظهر بيانات الفرع السابق.
     setCompanyName(setup.shopName)
     setVat(String(setup.vatPercent))
     setTaxInclusive(setup.taxInclusive)
