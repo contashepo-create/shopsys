@@ -76,7 +76,13 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
       { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'restaurant', activities: ['restaurant'] },
       { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'restaurant', activities: ['restaurant'] },
-      { id: 'delivery-tasks', nameAr: 'مهام التوصيل (مندوب)', icon: Truck, path: '/sales/delivery-tasks', activities: ['electronics'] },
+      // سد فجوة (تدقيق الأنشطة 29 — النشاط #27): وصف «مواد بناء وحدايد
+      // وبويات» يَعِد صراحة بـ«تسليم ونقل» — والمحرك (scheduleDelivery/
+      // DeliveryJob) عام بالفعل بلا أي قيد نشاط، وشاشة جدولة التوصيل في
+      // التقارير ظاهرة لكل الأنشطة أصلاً؛ الناقص كان فقط شاشة طاقم
+      // التوصيل نفسها (مهامه اليوم + تأكيد بتوقيع) محصورة بالأجهزة
+      // الكهربائية، رغم أن توصيل مواد البناء الثقيلة يحتاجها أكثر لا أقل.
+      { id: 'delivery-tasks', nameAr: 'مهام التوصيل (مندوب)', icon: Truck, path: '/sales/delivery-tasks', activities: ['electronics', 'building_materials'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },
       { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange', hideForActivities: INVOICE_FIRST_ACTIVITIES },
