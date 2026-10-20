@@ -366,6 +366,8 @@ export function SuppliersPage() {
   const [paymentTerms, setPaymentTerms] = useState('')
   const [bankName, setBankName] = useState('')
   const [iban, setIban] = useState('')
+  /* سد فجوة النشاط #5 (صيدلية): نافذة إرجاع الأصناف قريبة الانتهاء بالأيام */
+  const [returnWindowDays, setReturnWindowDays] = useState('')
 
   const filtered = useMemo(
     () => suppliers.filter((s) => !query.trim() || s.nameAr.includes(query) || s.phone.includes(query) || (s.category ?? '').includes(query) || matchesPartyCode(query, 'SUP', s.id)),
@@ -378,6 +380,7 @@ export function SuppliersPage() {
       nameAr: name.trim(), phone: phone.trim(), notes: notes.trim(), ...ext,
       contactPerson: contactPerson.trim(), category: category.trim(), paymentTermsDays: Number(paymentTerms) || 0,
       bankName: bankName.trim(), iban: iban.trim(), active: true,
+      returnWindowDays: Number(returnWindowDays) || 0,
     }
     try {
       if (editing) { updateSupplier(editing.id, data); toast.show('تم تعديل المورد') }
@@ -394,7 +397,7 @@ export function SuppliersPage() {
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث بالاسم أو الهاتف أو الكود (SUP-0001)…" className={`${inputCls} pr-10`} />
         </div>
         <ViewToggle view={view} setView={setView} />
-        <Btn onClick={() => { setEditing(null); setName(''); setPhone(''); setNotes(''); setExt(EMPTY_EXTENDED); setContactPerson(''); setCategory(''); setPaymentTerms(''); setBankName(''); setIban(''); setOpen(true) }}>
+        <Btn onClick={() => { setEditing(null); setName(''); setPhone(''); setNotes(''); setExt(EMPTY_EXTENDED); setContactPerson(''); setCategory(''); setPaymentTerms(''); setBankName(''); setIban(''); setReturnWindowDays(''); setOpen(true) }}>
           <span className="flex items-center gap-1.5"><Plus size={15} /> مورد جديد</span>
         </Btn>
       </div>
@@ -418,12 +421,13 @@ export function SuppliersPage() {
                     <BalanceBadge balance={balances.get(s.id) ?? 0} fmt={fmt} positive="مستحق له" negative="لك عنده" />
                     {s.category && <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 font-bold">{s.category}</span>}
                     {(s.paymentTermsDays ?? 0) > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold">سداد {s.paymentTermsDays} يوماً</span>}
+                    {(s.returnWindowDays ?? 0) > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold">إرجاع {s.returnWindowDays} يوماً قبل الانتهاء</span>}
                   </div>
                 </div>
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   {/* كشف حساب فوري بجانب كل مورد (طلب المالك) */}
                   <button title="كشف حساب المورد" onClick={() => navigate(`/reports/statements?kind=supplier&id=${s.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
-                  <button title="تعديل بيانات المورد" onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
+                  <button title="تعديل بيانات المورد" onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setReturnWindowDays(s.returnWindowDays ? String(s.returnWindowDays) : ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
                   <button title="حذف المورد" onClick={() => { try { removeSupplier(s.id); toast.show('تم حذف المورد') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                 </div>
               </div>
@@ -461,7 +465,7 @@ export function SuppliersPage() {
                     <td className="px-4 py-2.5 text-left">
                       <span className="flex gap-0.5 justify-end">
                         <button title="كشف حساب المورد" onClick={() => navigate(`/reports/statements?kind=supplier&id=${s.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
-                        <button title="تعديل" onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
+                        <button title="تعديل" onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setReturnWindowDays(s.returnWindowDays ? String(s.returnWindowDays) : ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
                         <button title="حذف" onClick={() => { try { removeSupplier(s.id); toast.show('تم حذف المورد') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                       </span>
                     </td>
@@ -500,6 +504,9 @@ export function SuppliersPage() {
             </Field>
             <Field label="شروط السداد (أيام)" hint="0 أو فارغ = نقدي؛ 30 = فاتورة تستحق بعد شهر">
               <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} inputMode="numeric" className={inputCls} dir="ltr" />
+            </Field>
+            <Field label="نافذة إرجاع الأصناف قريبة الانتهاء (أيام)" hint="0 أو فارغ = غير مسجَّلة؛ تُستخدم في تقرير مرشحات إرجاع المورد (صيدلية)">
+              <input value={returnWindowDays} onChange={(e) => setReturnWindowDays(e.target.value)} inputMode="numeric" className={inputCls} dir="ltr" />
             </Field>
             <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
             <Field label="اسم البنك"><input value={bankName} onChange={(e) => setBankName(e.target.value)} className={inputCls} /></Field>

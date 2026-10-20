@@ -14,7 +14,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerStatement, patientResultHistory, resultDeltaPercent, type RefRange, type Gender, type TestStatus } from '../../core/lab.ts'
+import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerStatement, patientResultHistory, resultDeltaPercent, isCriticalFlag, testTurnaroundReport, criticalUnacknowledgedResults, type RefRange, type Gender, type TestStatus } from '../../core/lab.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderLabReportHtml } from '../print/printLabReport.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -26,6 +26,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { InsuranceProvidersSection } from '../components/InsuranceProvidersSection.tsx'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -47,12 +48,13 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
   collected: { label: 'العينة مسحوبة', next: 'resulted', nextLabel: 'إدخال النتيجة' },
   resulted: { label: 'نتيجة مُدخلة', next: 'approved', nextLabel: 'اعتماد' },
   approved: { label: 'معتمد ✔', next: null, nextLabel: '' },
+  rejected: { label: 'عينة مرفوضة 🚫', next: 'pending', nextLabel: 'إعادة سحب العينة' },
 }
 
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, paymentTerminalTransactions, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, paymentTerminalTransactions, registerLabOrder, advanceLabTest, acknowledgeCriticalLabResult, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -125,11 +127,36 @@ export function LabOrdersPage() {
   const [working, setWorking] = useState<LabOrder | null>(null)
   const workingLive = working ? labOrders.find((o) => o.id === working.id) ?? null : null
   const [resultDraft, setResultDraft] = useState<Record<number, string>>({})
+  /* رفض العينة (سد فجوة تقرير النشاط #10 Immediate #1): سبب إلزامي قبل التأكيد */
+  const [rejecting, setRejecting] = useState<{ orderId: number; testId: number } | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  /* توثيق إبلاغ قيمة حرجة (سد فجوة تقرير النشاط #10 Immediate #3) */
+  const [acking, setAcking] = useState<{ orderId: number; testId: number } | null>(null)
+  const [ackBy, setAckBy] = useState('')
+  const [ackNote, setAckNote] = useState('')
 
   const advance = (orderId: number, testId: number, to: TestStatus) => {
     try {
       advanceLabTest(orderId, testId, to, to === 'resulted' ? resultDraft[testId] : undefined)
-      toast.show(to === 'approved' ? 'اعتُمدت النتيجة ✔' : to === 'resulted' ? 'سُجلت النتيجة' : 'سُجل سحب العينة 🧪')
+      toast.show(to === 'approved' ? 'اعتُمدت النتيجة ✔' : to === 'resulted' ? 'سُجلت النتيجة' : to === 'pending' ? 'بدأت دورة سحب عينة جديدة' : 'سُجل سحب العينة 🧪')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const confirmReject = () => {
+    if (!rejecting) return
+    try {
+      advanceLabTest(rejecting.orderId, rejecting.testId, 'rejected', undefined, rejectReason)
+      toast.show('سُجل رفض العينة 🚫 — أعد السحب من نفس الشاشة')
+      setRejecting(null); setRejectReason('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const confirmAck = () => {
+    if (!acking) return
+    try {
+      acknowledgeCriticalLabResult(acking.orderId, acking.testId, ackBy, ackNote)
+      toast.show('وُثِّق إبلاغ القيمة الحرجة ✅')
+      setAcking(null); setAckBy(''); setAckNote('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -146,6 +173,11 @@ export function LabOrdersPage() {
     toast.show(`أُرسل تقرير ${o.orderNumber} للطباعة 📄`)
   }
 
+  /* تقرير زمن التنفيذ (سد فجوة تقرير النشاط #10 Immediate #5) — أبطأ 5 فحوصات */
+  const turnaround = useMemo(() => testTurnaroundReport(labOrders).slice(0, 5), [labOrders])
+  /* قيم حرجة غير مُبلَّغة بعد (سد فجوة تقرير النشاط #10 Immediate #3) */
+  const criticalAlerts = useMemo(() => criticalUnacknowledgedResults(labOrders), [labOrders])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -154,6 +186,32 @@ export function LabOrdersPage() {
           <Plus className="w-4 h-4" /> طلب جديد
         </Btn>
       </div>
+
+      {/* قيم حرجة غير موثَّقة الإبلاغ (سد فجوة تقرير النشاط #10 Immediate #3) */}
+      {criticalAlerts.length > 0 && (
+        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-3 space-y-1.5">
+          <div className="font-black text-rose-600 dark:text-rose-400 text-sm flex items-center gap-1.5">🚨 قيم حرجة بانتظار توثيق إبلاغ الطبيب ({criticalAlerts.length})</div>
+          <div className="text-[12px] text-rose-700 dark:text-rose-300 space-y-0.5">
+            {criticalAlerts.slice(0, 5).map((a) => (
+              <div key={`${a.orderId}:${a.testId}`}>{a.orderNumber} — {a.patientName} — {a.testNameAr}: {a.resultValue} {a.unit}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* تقرير زمن التنفيذ (Turnaround Time) — سد فجوة تقرير النشاط #10 Immediate #5 */}
+      {turnaround.length > 0 && (
+        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/5 p-3">
+          <div className="font-black text-sky-700 dark:text-sky-400 text-sm mb-1.5">⏱️ أبطأ الفحوصات تنفيذاً (من السحب حتى الاعتماد)</div>
+          <div className="flex flex-wrap gap-2 text-[11.5px]">
+            {turnaround.map((t) => (
+              <div key={t.testId} className="rounded-lg bg-white/60 dark:bg-slate-800/60 px-2.5 py-1.5">
+                <b>{t.nameAr}</b>: متوسط {t.avgMinutes >= 60 ? `${Math.round(t.avgMinutes / 60)} ساعة` : `${t.avgMinutes} دقيقة`} ({t.count} حالة)
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {labOrders.length === 0 ? (
         <EmptyState icon="🧪" title="لا طلبات بعد"
@@ -209,7 +267,7 @@ export function LabOrdersPage() {
             <Field label="الطبيب المُحيل (اختياري)" hint="تُستحق عمولته تلقائياً بقيد منفصل">
               <QuickSelect value={referrerId} onChange={(e) => setReferrerId(e.target.value)} className={inputCls}>
                 <option value="">بدون إحالة</option>
-                {labReferrers.map((r) => <option key={r.id} value={r.id}>د. {r.nameAr} — {r.commissionPercent}٪</option>)}
+                {labReferrers.filter((r) => r.isActive).map((r) => <option key={r.id} value={r.id}>د. {r.nameAr} — {r.commissionPercent}٪</option>)}
               </QuickSelect>
             </Field>
           </div>
@@ -293,8 +351,13 @@ export function LabOrdersPage() {
                       <span className="font-black">{t.nameAr}</span>
                       <span className="text-[11px] text-slate-400 font-mono mr-2">{t.code}</span>
                     </div>
-                    <span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${t.status === 'approved' ? STATUS_BADGE.emerald : t.status === 'resulted' ? STATUS_BADGE.sky : t.status === 'collected' ? STATUS_BADGE.amber : STATUS_BADGE.slate}`}>{step.label}</span>
+                    <span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${t.status === 'approved' ? STATUS_BADGE.emerald : t.status === 'resulted' ? STATUS_BADGE.sky : t.status === 'collected' ? STATUS_BADGE.amber : t.status === 'rejected' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400' : STATUS_BADGE.slate}`}>{step.label}</span>
                   </div>
+                  {t.status === 'rejected' && (
+                    <div className="text-[11.5px] rounded-lg bg-rose-500/5 border border-rose-500/20 px-2.5 py-1.5 text-rose-600 dark:text-rose-400">
+                      سبب الرفض: {t.rejectionReason || '—'}
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-[12px] text-slate-500">
                     <span>النطاق: {t.refLow ?? '—'} – {t.refHigh ?? '—'} {t.unit}</span>
                     {t.resultValue && (
@@ -303,6 +366,18 @@ export function LabOrdersPage() {
                       </span>
                     )}
                   </div>
+                  {/* توثيق إبلاغ القيمة الحرجة (سد فجوة تقرير النشاط #10 Immediate #3) — لا يكفي الشارة البصرية فقط */}
+                  {isCriticalFlag(t.resultFlag) && (
+                    t.criticalAckAt ? (
+                      <div className="text-[11px] rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-2.5 py-1.5 text-emerald-700 dark:text-emerald-400">
+                        ✅ أُبلغ: {t.criticalAckBy} — {new Date(t.criticalAckAt).toLocaleString('ar-EG')}{t.criticalAckNote ? ` — ${t.criticalAckNote}` : ''}
+                      </div>
+                    ) : (
+                      <Btn variant="soft" onClick={() => { setAcking({ orderId: workingLive.id, testId: t.testId }); setAckBy(''); setAckNote('') }}>
+                        🚨 توثيق إبلاغ الطبيب بالقيمة الحرجة
+                      </Btn>
+                    )
+                  )}
                   {/* جولة المعمل: السجل التراكمي — النتائج السابقة لنفس الفحص مع نسبة التغير (Delta Check) */}
                   {(() => {
                     const hist = patientResultHistory(labOrders, workingLive.patientId, t.testId)
@@ -330,6 +405,12 @@ export function LabOrdersPage() {
                       <Btn onClick={() => advance(workingLive.id, t.testId, step.next!)}>
                         {step.next === 'approved' ? <CheckCircle2 className="w-4 h-4" /> : <Microscope className="w-4 h-4" />} {step.nextLabel}
                       </Btn>
+                      {/* رفض العينة (سد فجوة تقرير النشاط #10 Immediate #1) — متاح فقط بعد السحب وقبل إدخال نتيجة */}
+                      {t.status === 'collected' && (
+                        <Btn variant="ghost" onClick={() => { setRejecting({ orderId: workingLive.id, testId: t.testId }); setRejectReason('') }}>
+                          🚫 رفض العينة
+                        </Btn>
+                      )}
                     </div>
                   )}
                 </div>
@@ -342,6 +423,32 @@ export function LabOrdersPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* رفض عينة — سبب إلزامي (سد فجوة تقرير النشاط #10 Immediate #1) */}
+      <Modal open={!!rejecting} onClose={() => setRejecting(null)} title="رفض العينة" subtitle="سبب الرفض يُسجَّل في ملف الفحص — إعادة السحب تبدأ دورة جديدة">
+        <div className="space-y-3">
+          <Field label="سبب الرفض *" hint="انحلال دموي، عينة متجلطة، كمية غير كافية، عبوة غير مناسبة…">
+            <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={inputCls} placeholder="انحلال دموي (Hemolyzed)" />
+          </Field>
+          <DocOutcome>الأثر: <b>لا قيد</b> — الفحص يعود لحالة «رفض» ثم «إعادة سحب» بلا احتساب رسوم إضافية.</DocOutcome>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setRejecting(null)}>إلغاء</Btn>
+            <Btn onClick={confirmReject} disabled={!rejectReason.trim()}>تأكيد الرفض</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      {/* توثيق إبلاغ قيمة حرجة — متطلب امتثال CAP/CLIA (سد فجوة تقرير النشاط #10 Immediate #3) */}
+      <Modal open={!!acking} onClose={() => setAcking(null)} title="توثيق إبلاغ القيمة الحرجة" subtitle="سجل رسمي: من استلم الإبلاغ ومتى — لا يكفي الاكتفاء بالشارة البصرية">
+        <div className="space-y-3">
+          <Field label="أُبلغ من؟ (الطبيب المعالج أو من ناب عنه) *"><input value={ackBy} onChange={(e) => setAckBy(e.target.value)} className={inputCls} placeholder="د. أحمد — هاتفياً" /></Field>
+          <Field label="ملاحظة (اختياري)"><input value={ackNote} onChange={(e) => setAckNote(e.target.value)} className={inputCls} /></Field>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setAcking(null)}>إلغاء</Btn>
+            <Btn onClick={confirmAck} disabled={!ackBy.trim()}>تأكيد التوثيق</Btn>
+          </div>
+        </div>
       </Modal>
 
       {/* ─── التفاصيل والقيود ─── */}
@@ -636,7 +743,7 @@ export function LabPatientsPage() {
 /* ═══════════════ 4) الأطباء المُحيلون ═══════════════ */
 
 export function LabReferrersPage() {
-  const { labReferrers, labOrders, paymentTerminals, addLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
+  const { labReferrers, labOrders, addLabReferrer, toggleLabReferrer, payReferrerCommissions } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -669,27 +776,6 @@ export function LabReferrersPage() {
   const [payoutFor, setPayoutFor] = useState<{ id: number; name: string } | null>(null)
   const [payoutTreasury, setPayoutTreasury] = useState('1101')
 
-  /* جهات التأمين والتعاقد */
-  const [insOpen, setInsOpen] = useState(false)
-  const [insName, setInsName] = useState('')
-  const [insPercent, setInsPercent] = useState('80')
-  const [insPhone, setInsPhone] = useState('')
-  const saveIns = () => {
-    try {
-      addInsuranceProvider({ nameAr: insName, coveragePercent: Number(insPercent) || 0, phone: insPhone.trim() })
-      toast.show('أُضيفت الجهة — ستظهر في نموذج الطلب كخيار تغطية ✅')
-      setInsOpen(false); setInsName(''); setInsPercent('80'); setInsPhone('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
-  }
-  const [claimTreasury, setClaimTreasury] = useState('1101')
-  const [claimTerminal, setClaimTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
-  const doSettleClaims = (id: number, name: string) => {
-    try {
-      const terminal = paymentTerminals.find((row) => row.id === claimTerminal.terminalId)
-      const r = settleInsuranceClaims(id, terminal?.settlementAccountCode ?? claimTreasury, terminal ? { terminalId: terminal.id, providerReference: claimTerminal.providerReference.trim(), cardLast4: claimTerminal.cardLast4 || undefined } : undefined)
-      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`); setClaimTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
-    } catch (e) { toast.show((e as Error).message, 'error') }
-  }
   const doPayout = () => {
     if (!payoutFor) return
     try {
@@ -720,18 +806,20 @@ export function LabReferrersPage() {
               {labReferrers.map((r) => {
                 const unpaid = unpaidFor(r.id)
                 return (
-                  <tr key={r.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-violet-500/5 transition-colors">
+                  <tr key={r.id} className={`border-t border-slate-100 dark:border-slate-800 hover:bg-violet-500/5 transition-colors ${!r.isActive ? 'opacity-50' : ''}`}>
                     <td className="px-3 py-2.5 font-bold">د. {r.nameAr}</td>
                     <td className="px-3 py-2.5" dir="ltr">{r.phone || '—'}</td>
                     <td className="px-3 py-2.5 font-bold">{r.commissionPercent}٪</td>
                     <td className="px-3 py-2.5">{labOrders.filter((o) => o.referrerId === r.id).length}</td>
                     <td className="px-3 py-2.5 font-black text-amber-600 dark:text-amber-400">{unpaid ? `${fmt(unpaid)} ${cur.symbol}` : '—'}</td>
                     <td className="px-3 py-2.5">
-                      <div className="flex gap-1 justify-end">
+                      <div className="flex gap-1 justify-end items-center">
                         <button onClick={() => { setStmtRef(r.id); setMonth(thisMonth) }} title="كشف شهري" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><BookOpenText className="w-4 h-4" /></button>
                         {unpaid > 0 && (
                           <button onClick={() => setPayoutFor({ id: r.id, name: r.nameAr })} title="صرف العمولات المستحقة" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                         )}
+                        {/* تفعيل/أرشفة (سد فجوة تقرير النشاط #10 Immediate #4) — لا حذف، فقط إخفاء من اختيار الطلبات الجديدة */}
+                        <button onClick={() => toggleLabReferrer(r.id)} className="text-[11px] font-bold text-slate-400 hover:text-amber-600 px-2">{r.isActive ? 'تعطيل' : 'تفعيل'}</button>
                       </div>
                     </td>
                   </tr>
@@ -813,56 +901,8 @@ export function LabReferrersPage() {
         )}
       </Modal>
 
-      {/* ═══ جهات التأمين والتعاقد ═══ */}
-      <div className="flex items-center justify-between pt-2">
-        <h2 className="font-black flex items-center gap-2">🏥 جهات التأمين والتعاقد</h2>
-        <div className="flex items-center gap-2">
-          {insuranceProviders.length > 0 && <div className="space-y-1"><PaymentMethodPicker value={{treasury:claimTreasury,terminalPayment:claimTerminal}} onChange={value=>{setClaimTreasury(value.treasury);setClaimTerminal(value.terminalPayment)}} operation="receipt"/></div>}
-          <Btn variant="soft" onClick={() => setInsOpen(true)}><Plus className="w-4 h-4" /> جهة جديدة</Btn>
-        </div>
-      </div>
-      {insuranceProviders.length === 0 ? (
-        <div className="text-[12px] text-slate-400 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-4 text-center">
-          أضف شركة تأمين أو جهة تعاقد بنسبة تحملها — المريض يدفع نصيبه فقط، ونصيب الجهة يتجمع كمطالبات تُحصَّل دفعة واحدة
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <tbody>
-              {insuranceProviders.map((pv) => {
-                const balance = getClaimBalance(pv.id)
-                const count = insuranceClaims.filter((c) => c.providerId === pv.id && !c.settled).length
-                return (
-                  <tr key={pv.id} className={`border-t border-slate-100 dark:border-slate-800 ${!pv.isActive ? 'opacity-50' : ''}`}>
-                    <td className="px-4 py-2.5 font-bold">{pv.nameAr}</td>
-                    <td className="px-4 py-2.5 text-[12px]">تتحمل {pv.coveragePercent}٪</td>
-                    <td className="px-4 py-2.5 font-black text-violet-600 tabular-nums">{balance > 0 ? `${fmt(balance)} (${count} مطالبة)` : 'لا مطالبات'}</td>
-                    <td className="px-4 py-2.5 text-left">
-                      <div className="flex gap-1 justify-end">
-                        {balance > 0 && <Btn variant="soft" onClick={() => doSettleClaims(pv.id, pv.nameAr)}>تحصيل الكل</Btn>}
-                        <button onClick={() => toggleInsuranceProvider(pv.id)} className="text-[11px] font-bold text-slate-400 hover:text-amber-600 px-2">{pv.isActive ? 'تعطيل' : 'تفعيل'}</button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* نافذة جهة جديدة */}
-      <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة" subtitle="ملف تعاقد: نسبة تحمّل الجهة وما يدفعه المريض نقداً">
-        <div className="space-y-3"><DocSectionHead step="١" title="الجهة ونسبة تحمّلها وشروط التحصيل" hint="حصة الجهة ذمة عليها لا نقدية في الخزينة" />
-          <Field label="اسم الجهة *"><input value={insName} onChange={(e) => setInsName(e.target.value)} placeholder="شركة مصر للتأمين…" className={inputCls} /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="نسبة التحمل ٪ *" hint="ما تتحمله الجهة من الفاتورة"><input value={insPercent} onChange={(e) => setInsPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="هاتف"><input value={insPhone} onChange={(e) => setInsPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
-          </div>
-          <DocOutcome>الأثر: <b>لا قيد</b> عند التعاقد — ومع كل طلب مؤمَّن يتوزع الإيراد <b>4106</b>: حصة المريض تحصيلاً نقدياً وحصة الجهة ذمةً على <b>1104 ذمم العملاء</b> باسمها حتى التحصيل.</DocOutcome>
-          <Btn onClick={saveIns} className="w-full" disabled={!insName.trim() || !insPercent}>إضافة الجهة</Btn>
-        </div>
-      </Modal>
+      {/* جهات التأمين والتعاقد — مكوّن مشترك (سد فجوة النشاط #12: نفس القسم يصل الآن لشاشة العيادة أيضاً) */}
+      <InsuranceProvidersSection />
     </div>
   )
 }

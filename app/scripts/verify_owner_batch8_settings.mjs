@@ -53,16 +53,19 @@ useAppStore.getState().addFiscalYear({ nameAr: '2027', startDate: '2027-01-01', 
 ok('بعد إقفال السنة يُفتح سنة جديدة (سنة واحدة مفتوحة)', useAppStore.getState().fiscalYears.filter((y) => y.status === 'open').length === 1)
 
 // ── ④ ترتيب حقول صفحة الفاتورة الإلكترونية ──────────────────────────────
+// ملاحظة (دمج main↔HEAD): الرقم الضريبي أصبح مصدره الوحيد صفحة «بيانات المنشأة»
+// الموحّدة (قرار تصميم ملزم) — فحُرِّر حقل القراءة هنا بدل التحرير المباشر،
+// وزال زر «حفظ البيانات» العام لصالح «حفظ العنوان» فقط (العنوان وحده محلي).
 const einvoiceSrc = read('src/ui/pages/EinvoicePage.tsx')
 const taxIdx = einvoiceSrc.indexOf('الرقم الضريبي (زاتكا')
-const addrIdx = einvoiceSrc.indexOf('عنوان المنشأة')
-const saveIdx = einvoiceSrc.indexOf('حفظ البيانات')
-const optsIdx = einvoiceSrc.indexOf('خيارات الإصدار')
+const addrIdx = einvoiceSrc.indexOf('<Field label="عنوان المنشأة"')
+const saveIdx = einvoiceSrc.indexOf('حفظ العنوان')
+const optionsIdx = einvoiceSrc.indexOf('طباعة الرمز الضريبي')
 ok('ترتيب: الرقم الضريبي قبل العنوان', taxIdx > 0 && addrIdx > taxIdx)
-ok('ترتيب: زر الحفظ بعد الحقول مباشرة', saveIdx > addrIdx)
-ok('ترتيب: الخيارات بعد زر الحفظ (لا تحجب الحفظ)', optsIdx > saveIdx)
-ok('مزامنة الحقول مع المخزن', /setTaxNumber\(einvoice\.taxNumber\)/.test(einvoiceSrc))
-ok('الخيارات موضوعة في مجموعة «خيارات الإصدار»', /خيارات الإصدار/.test(einvoiceSrc))
+ok('ترتيب: زر حفظ العنوان بعد الحقول مباشرة', saveIdx > addrIdx)
+ok('ترتيب: خيار طباعة الرمز قبل زر الحفظ (ضمن نفس البطاقة)', optionsIdx > 0 && optionsIdx < saveIdx)
+ok('الرقم الضريبي للقراءة فقط هنا — مصدره الوحيد «بيانات المنشأة»', /readOnly/.test(einvoiceSrc) && /to="\/settings\/company"/.test(einvoiceSrc))
+ok('لا تحرير محلي مكرر للرقم الضريبي (لا setTaxNumber هنا)', !/setTaxNumber/.test(einvoiceSrc))
 
 // ── ⑦ الصنف: منتج أم خدمة (بلا مخزون) في كل الأنشطة ─────────────────────
 const itemsPageSrc = read('src/ui/pages/ItemsPage.tsx')

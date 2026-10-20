@@ -11,15 +11,18 @@ import { useDataStore, type MaintenanceTicket } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeTicketTotals, maintenanceReport, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
+import { computeTicketTotals, maintenanceReport, maintenanceRepairTimeReport, ticketWorkMinutes, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
+import { warrantyLookup } from '../../core/serials.ts'
+import { SignaturePad } from '../components/SignaturePad.tsx'
 import { buildTicketStatusMessage, ticketWhatsappLink } from '../../core/maintenance.ts'
+import { PURCHASE_ORDER_STATUS_AR } from '../../core/purchaseOrders.ts'
 import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { periodPresets, type Period } from '../../core/reports.ts'
-import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, inputCls, Modal, useToast, EmptyState, OverlayPortal } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
@@ -39,7 +42,7 @@ interface DraftPart { itemId: string; qty: string; unitPrice: string }
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
+  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, setTicketTechnician, logTicketNotificationSent, setTicketSignature, startTicketWork, stopTicketWork, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService, employees, purchaseOrders, serials, sales } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -92,12 +95,32 @@ export function MaintenancePage() {
   const [prepaidTreasury, setPrepaidTreasury] = useState('1101')
   const [promisedAt, setPromisedAt] = useState('') // موعد التسليم الموعود (جولة المغسلة)
   const [notes, setNotes] = useState('')
+  const [technicianId, setTechnicianId] = useState('') // الفني المسؤول (سد فجوة النشاط #3)
+  const activeTechnicians = useMemo(() => employees.filter((e) => e.active), [employees])
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
+  /**
+   * سد فجوة فورية — النشاط #6 (أجهزة كهربائية): ربط حقل السيريال الموجود
+   * فعلاً في تذكرة الصيانة باستدعاء warrantyLookup تلقائياً — بدل بحث يدوي
+   * منفصل زمنياً في شاشة السيريالات المستقلة.
+   */
+  const deviceWarranty = useMemo(() => {
+    if (!deviceSerial.trim()) return null
+    const info = warrantyLookup(serials, deviceSerial, new Date().toISOString())
+    if (!info) return null
+    const originalCustomerName = info.saleId != null
+      ? (() => {
+          const sale = sales.find((s) => s.id === info.saleId)
+          if (!sale) return null
+          return sale.customerId != null ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : (sale.partyName ?? 'عميل نقدي')
+        })()
+      : null
+    return { info, originalCustomerName }
+  }, [deviceSerial, serials, sales, customers])
 
   const openNew = () => {
     setCustomerId(''); setCustomerName(''); setCustomerPhone(''); setDeviceName('')
     setDeviceSerial(''); setDeviceCondition(''); setPrepaid(''); setPrepaidTreasury('1101')
-    setIssue(''); setEstimate(''); setPromisedAt(''); setNotes(''); setOpen(true)
+    setIssue(''); setEstimate(''); setPromisedAt(''); setNotes(''); setTechnicianId(''); setOpen(true)
   }
   const saveTicket = () => {
     try {
@@ -108,6 +131,7 @@ export function MaintenancePage() {
         deviceSerial: deviceSerial.trim() || undefined,
         deviceCondition: deviceCondition.trim() || undefined,
         estimateMinor: toM(estimate),
+        technicianId: technicianId ? Number(technicianId) : null,
         prepaidMinor: toM(prepaid) || undefined,
         treasury: prepaidTreasury as '1101',
         promisedAt: promisedAt ? new Date(promisedAt).toISOString() : undefined,
@@ -222,6 +246,13 @@ export function MaintenancePage() {
 
   /* ─── عرض ─── */
   const [viewing, setViewing] = useState<MaintenanceTicket | null>(null)
+  const [signing, setSigning] = useState<'received' | 'delivered' | null>(null)
+  /** عرض لوحي (Kanban) اختياري بجانب الجدول الحالي (سد فجوة النشاط #3) — نفس حالات TICKET_STATUS_LABELS */
+  const [listView, setListView] = usePersistedSectionView('maintenance-list-view', 'table', ['table', 'kanban'] as const)
+  const kanbanColumns: TicketStatus[] = ['received', 'in_progress', 'ready', 'delivered', 'cancelled']
+  /** شاشة عرض حية مبسطة لتلفزيون الورشة (سد فجوة مستقبلية — النشاط #3) — تُظهر التذاكر النشطة فقط بترميز لوني وخط كبير */
+  const [tvMode, setTvMode] = useState(false)
+  const tvColumns: TicketStatus[] = ['received', 'in_progress', 'ready']
   const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(viewing.id)) : undefined
   const viewEntry = viewing?.journalEntryId != null ? journal.find((e) => e.id === viewing.journalEntryId) : null
 
@@ -230,6 +261,8 @@ export function MaintenancePage() {
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const report = useMemo(() => maintenanceReport(tickets, period), [tickets, period])
+  /** تقرير متوسط زمن الإصلاح لكل نوع عطل (سد فجوة النشاط #3) — فوق statusHistory الموجود فعلاً */
+  const repairTimeReport = useMemo(() => maintenanceRepairTimeReport(tickets), [tickets])
 
   const listed = useMemo(() => [...tickets].reverse(), [tickets])
   const tabCls = (t: 'list' | 'report') =>
@@ -243,12 +276,83 @@ export function MaintenancePage() {
           <button onClick={() => setTab('report')} className={tabCls('report')}><TrendingUp size={14} className="inline -mt-0.5 me-1" /> تقرير الصيانة</button>
         </div>
         <div className="flex gap-2">
+          {tab === 'list' && (
+            <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800">
+              <button onClick={() => setListView('table')} className={`px-3 py-2 text-[12px] font-bold ${listView === 'table' ? 'bg-orange-600 text-white' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>📋 جدول</button>
+              <button onClick={() => setListView('kanban')} className={`px-3 py-2 text-[12px] font-bold ${listView === 'kanban' ? 'bg-orange-600 text-white' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>🗂️ لوحي</button>
+            </div>
+          )}
+          <Btn variant="ghost" onClick={() => setTvMode(true)} title="شاشة عرض حية لتلفزيون الورشة"><span className="flex items-center gap-1.5">🖥️ شاشة الورشة</span></Btn>
           <Btn variant="ghost" onClick={() => setCatalogOpen(true)}><span className="flex items-center gap-1.5"><Settings2 size={15} /> كتالوج الخدمات</span></Btn>
           <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> تذكرة جديدة</span></Btn>
         </div>
       </div>
 
-      {tab === 'list' && (
+      {tvMode && (
+        <OverlayPortal>
+        <div className="fixed inset-0 layer-modal bg-slate-950 text-white overflow-y-auto p-6" dir="rtl">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-black">🔧 شاشة متابعة الصيانة — {setup.shopName || 'الورشة'}</h2>
+            <button onClick={() => setTvMode(false)} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 font-bold">✕ إغلاق</button>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {tvColumns.map((col) => {
+              const colTickets = tickets.filter((t) => t.status === col)
+              return (
+                <div key={col} className="rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
+                  <div className={`px-4 py-3 text-lg font-black ${STATUS_COLORS[col]}`}>{TICKET_STATUS_LABELS[col]} ({colTickets.length})</div>
+                  <div className="p-3 space-y-3 max-h-[75vh] overflow-y-auto">
+                    {colTickets.map((t) => (
+                      <div key={t.id} className={`rounded-xl p-3 ${isTicketOverdue(t, new Date().toISOString()) ? 'bg-rose-500/20 border border-rose-500/40' : 'bg-white/10'}`}>
+                        <div className="text-xl font-black text-amber-400">{t.ticketNumber}</div>
+                        <div className="text-lg font-bold">{t.deviceName}</div>
+                        <div className="text-sm text-slate-300 truncate">{t.issue}</div>
+                        {t.technicianId != null && <div className="text-sm text-indigo-300 mt-1">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? ''}</div>}
+                        {isTicketOverdue(t, new Date().toISOString()) && <div className="text-sm font-black text-rose-300 mt-1">⏰ متأخرة</div>}
+                      </div>
+                    ))}
+                    {colTickets.length === 0 && <div className="text-center text-slate-500 py-6">لا تذاكر</div>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        </OverlayPortal>
+      )}
+
+      {tab === 'list' && listView === 'kanban' && (
+        listed.length === 0 ? (
+          <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
+            <EmptyState icon="🔧" title="لا تذاكر بعد" sub="استلم الجهاز بتذكرة، وعند التسليم يتولّد قيد الإيراد وقطع الغيار تلقائياً" />
+          </div>
+        ) : (
+          <div className="anim-up grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3" style={{ animationDelay: '60ms' }}>
+            {kanbanColumns.map((col) => {
+              const colTickets = listed.filter((t) => t.status === col)
+              return (
+                <div key={col} className="rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <div className={`px-3 py-2 text-[11.5px] font-black border-b border-slate-200 dark:border-slate-800 ${STATUS_COLORS[col]}`}>{TICKET_STATUS_LABELS[col]} ({colTickets.length})</div>
+                  <div className="p-2 space-y-2 min-h-[80px] max-h-[520px] overflow-y-auto">
+                    {colTickets.map((t) => (
+                      <button key={t.id} onClick={() => setViewing(t)} className="w-full text-right rounded-xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700 p-2.5 hover:shadow-md transition-shadow">
+                        <div className="font-bold text-orange-600 text-[12px]">{t.ticketNumber}</div>
+                        <div className="text-[12px] font-bold text-slate-700 dark:text-slate-200 truncate">{t.deviceName}</div>
+                        <div className="text-[10.5px] text-slate-400 truncate">{t.issue}</div>
+                        {t.technicianId != null && <div className="text-[10px] text-indigo-500 mt-0.5">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? ''}</div>}
+                        {isTicketOverdue(t, new Date().toISOString()) && <div className="text-[9.5px] text-rose-600 font-bold mt-0.5">⏰ متأخرة</div>}
+                      </button>
+                    ))}
+                    {colTickets.length === 0 && <div className="text-center text-[11px] text-slate-300 py-4">—</div>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )
+      )}
+
+      {tab === 'list' && listView === 'table' && (
         listed.length === 0 ? (
           <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
             <EmptyState icon="🔧" title="لا تذاكر بعد" sub="استلم الجهاز بتذكرة، وعند التسليم يتولّد قيد الإيراد وقطع الغيار تلقائياً" />
@@ -276,6 +380,7 @@ export function MaintenancePage() {
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-700 dark:text-slate-200">{t.deviceName}</div>
                       <div className="text-[11px] text-slate-400 truncate max-w-[220px]">{t.issue}</div>
+                      {t.technicianId != null && <div className="text-[10px] text-indigo-500 mt-0.5">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? `#${t.technicianId}`}</div>}
                     </td>
                     <td className="px-4 py-3 text-slate-500">{custLabel(t)}</td>
                     <td className="px-4 py-3">
@@ -298,8 +403,8 @@ export function MaintenancePage() {
                       )}
                       {t.customerPhone && (
                         <button
-                          onClick={() => { window.open(ticketWhatsappLink(t.customerPhone, buildTicketStatusMessage(t, setup.shopName || 'تَحَكَّم')), '_blank', 'noopener') }}
-                          title="إبلاغ العميل بحالة الجهاز عبر واتساب"
+                          onClick={() => { window.open(ticketWhatsappLink(t.customerPhone, buildTicketStatusMessage(t, setup.shopName || 'تَحَكَّم')), '_blank', 'noopener'); try { logTicketNotificationSent(t.id, t.status) } catch { /* لا يمنع الإرسال */ } }}
+                          title="إبلاغ العميل بحالة الجهاز عبر واتساب — يُسجَّل في سجل التذكرة أنه أُرسل"
                           className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"
                         >📹</button>
                       )}
@@ -365,6 +470,37 @@ export function MaintenancePage() {
               </table>
             )}
           </div>
+          <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+              ⏱️ متوسط زمن الإصلاح لكل نوع عطل <span className="text-[10px] font-normal text-slate-400">— للتذاكر المُسلَّمة فعلياً، من استلام الجهاز حتى تسليمه</span>
+            </div>
+            {repairTimeReport.length === 0 ? (
+              <div className="text-center text-slate-400 text-[12px] py-8">لا توجد تذاكر مُسلَّمة بعد لحساب زمن الإصلاح</div>
+            ) : (
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-2 text-right font-bold">نوع العطل</th>
+                    <th className="px-4 py-2 text-right font-bold">عدد التذاكر</th>
+                    <th className="px-4 py-2 text-right font-bold">متوسط الساعات</th>
+                    <th className="px-4 py-2 text-right font-bold">أسرع إصلاح</th>
+                    <th className="px-4 py-2 text-right font-bold">أبطأ إصلاح</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repairTimeReport.map((r) => (
+                    <tr key={r.issueKey} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.issueLabel}</td>
+                      <td className="px-4 py-2">{r.ticketCount}</td>
+                      <td className="px-4 py-2 font-black text-orange-600">{r.avgHours} ساعة</td>
+                      <td className="px-4 py-2 text-emerald-600">{r.minHours} ساعة</td>
+                      <td className="px-4 py-2 text-rose-500">{r.maxHours} ساعة</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 
@@ -398,6 +534,21 @@ export function MaintenancePage() {
               <input value={deviceCondition} onChange={(e) => setDeviceCondition(e.target.value)} className={inputCls} placeholder="اختياري" />
             </Field>
           </div>
+          {deviceWarranty && (
+            <div className={`p-3 rounded-xl text-[12px] border ${deviceWarranty.info.active ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300' : 'bg-rose-500/10 border-rose-500/25 text-rose-700 dark:text-rose-400'}`}>
+              {deviceWarranty.info.active
+                ? `✅ الضمان سارٍ — متبقٍ ${deviceWarranty.info.daysLeft} يوماً (حتى ${deviceWarranty.info.warrantyUntil})`
+                : `⛔ الضمان منتهٍ منذ ${deviceWarranty.info.warrantyUntil}`}
+              {deviceWarranty.originalCustomerName && <span className="mr-2 text-slate-500"> — العميل الأصلي: {deviceWarranty.originalCustomerName}</span>}
+              {deviceWarranty.info.extendedWarrantyProvider && <span className="mr-2 text-slate-500"> — ضمان ممتد عبر: {deviceWarranty.info.extendedWarrantyProvider}</span>}
+            </div>
+          )}
+          <Field label="الفني المسؤول" hint="اختياري عند الفتح — يمكن تعيينه/تغييره لاحقاً من عرض التذكرة">
+            <QuickSelect className={inputCls} value={technicianId} onChange={(e) => setTechnicianId(e.target.value)}>
+              <option value="">— بلا تعيين —</option>
+              {activeTechnicians.map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` (${e.jobTitle})` : ''}</option>)}
+            </QuickSelect>
+          </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label={`عربون مقبوض الآن (${cur.symbol})`} hint="يتولد قيد فوراً (خزينة/دفعات مقدمة) ويُخصم عند التسليم">
               <input value={prepaid} onChange={(e) => setPrepaid(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -575,12 +726,91 @@ export function MaintenancePage() {
               {viewing.issue}
             </div>
 
+            <Field label="الفني المسؤول" hint="قابل للتعيين أو التغيير في أي وقت">
+              <QuickSelect
+                className={inputCls}
+                value={viewing.technicianId != null ? String(viewing.technicianId) : ''}
+                onChange={(e) => {
+                  try {
+                    const updated = setTicketTechnician(viewing.id, e.target.value ? Number(e.target.value) : null)
+                    setViewing(updated)
+                  } catch (err) { toast.show((err as Error).message, 'error') }
+                }}
+              >
+                <option value="">— بلا تعيين —</option>
+                {activeTechnicians.map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` (${e.jobTitle})` : ''}</option>)}
+              </QuickSelect>
+            </Field>
+
             <div className="flex flex-wrap gap-1.5">
               {viewing.statusHistory.map((h, i) => (
                 <span key={i} className={`px-2 py-1 rounded-lg text-[10.5px] font-bold ${STATUS_COLORS[h.status]}`}>
                   {TICKET_STATUS_LABELS[h.status]} <span className="opacity-60" dir="ltr">{h.at.slice(0, 16).replace('T', ' ')}</span>
                 </span>
               ))}
+            </div>
+
+            {(viewing.notifications ?? []).length > 0 && (
+              <div className="text-[10.5px] text-slate-400">
+                📹 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
+                  <span key={i} className="me-2">«{TICKET_STATUS_LABELS[n.status]}» <span dir="ltr" className="opacity-70">{n.at.slice(0, 16).replace('T', ' ')}</span></span>
+                ))}
+              </div>
+            )}
+
+            {purchaseOrders.filter((po) => po.linkedTicketId === viewing.id).length > 0 && (
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-[12px]">
+                <div className="text-[10px] text-indigo-500 font-bold mb-1">🧩 طلبات قطع غيار خاصة مرتبطة بهذه التذكرة</div>
+                {purchaseOrders.filter((po) => po.linkedTicketId === viewing.id).map((po) => (
+                  <div key={po.id} className="flex items-center justify-between py-0.5">
+                    <span className="font-bold">{po.orderNumber} — {po.supplierName}</span>
+                    <span className="text-slate-400">{PURCHASE_ORDER_STATUS_AR[po.status]}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* تتبع وقت عمل الفني (سد فجوة مستقبلية — النشاط #3) */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 flex items-center justify-between flex-wrap gap-2">
+              <div className="text-[12px]">
+                <span className="text-slate-400 text-[10px] font-bold me-1">⏱️ إجمالي وقت العمل المسجَّل:</span>
+                <b>{ticketWorkMinutes(viewing.workSessions ?? [])} دقيقة</b>
+                {(viewing.workSessions ?? []).some((s) => s.endedAt == null) && <span className="ms-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 text-[10px] font-bold animate-pulse">جارية الآن</span>}
+              </div>
+              {(viewing.workSessions ?? []).some((s) => s.endedAt == null) ? (
+                <button onClick={() => { try { setViewing(stopTicketWork(viewing.id)) } catch (err) { toast.show((err as Error).message, 'error') } }} className="px-3 py-1.5 rounded-lg text-[11.5px] font-bold bg-rose-500/10 text-rose-600">⏹ إنهاء الجلسة</button>
+              ) : (
+                <button onClick={() => { try { setViewing(startTicketWork(viewing.id)) } catch (err) { toast.show((err as Error).message, 'error') } }} className="px-3 py-1.5 rounded-lg text-[11.5px] font-bold bg-emerald-500/10 text-emerald-600">▶ بدء جلسة عمل</button>
+              )}
+            </div>
+
+            {/* توقيع رقمي للعميل (سد فجوة مستقبلية — النشاط #3) */}
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+              <div className="text-[10px] text-slate-400 font-bold">✍️ توقيع العميل</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="text-center">
+                  <div className="text-[10.5px] text-slate-400 mb-1">عند الاستلام</div>
+                  {viewing.receivedSignatureDataUrl ? (
+                    <img src={viewing.receivedSignatureDataUrl} alt="توقيع الاستلام" className="w-full h-16 object-contain border rounded-lg bg-white" />
+                  ) : signing === 'received' ? (
+                    <SignaturePad onCancel={() => setSigning(null)} onSave={(dataUrl) => { try { setViewing(setTicketSignature(viewing.id, 'received', dataUrl)); setSigning(null) } catch (err) { toast.show((err as Error).message, 'error') } }} />
+                  ) : (
+                    <button onClick={() => setSigning('received')} className="w-full h-16 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-400 hover:text-brand-500 hover:border-brand-400">+ توقيع الاستلام</button>
+                  )}
+                </div>
+                <div className="text-center">
+                  <div className="text-[10.5px] text-slate-400 mb-1">عند التسليم</div>
+                  {viewing.deliveredSignatureDataUrl ? (
+                    <img src={viewing.deliveredSignatureDataUrl} alt="توقيع التسليم" className="w-full h-16 object-contain border rounded-lg bg-white" />
+                  ) : signing === 'delivered' ? (
+                    <SignaturePad onCancel={() => setSigning(null)} onSave={(dataUrl) => { try { setViewing(setTicketSignature(viewing.id, 'delivered', dataUrl)); setSigning(null) } catch (err) { toast.show((err as Error).message, 'error') } }} />
+                  ) : viewing.status === 'delivered' ? (
+                    <button onClick={() => setSigning('delivered')} className="w-full h-16 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-400 hover:text-brand-500 hover:border-brand-400">+ توقيع التسليم</button>
+                  ) : (
+                    <div className="w-full h-16 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-[10.5px] text-slate-300 flex items-center justify-center">بعد التسليم</div>
+                  )}
+                </div>
+              </div>
             </div>
 
             {(viewing.services ?? []).length > 0 && (

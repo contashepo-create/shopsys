@@ -103,6 +103,8 @@ export function applyFefo(batches: StockBatch[], plan: FefoPlan): StockBatch[] {
 export interface ExpiryAlertRow {
   itemId: number
   nameAr: string
+  /** رقم التشغيلة/الدفعة التجاري — null إن لم يُسجَّل وقت الاستلام */
+  lotNumber: string | null
   expiryDate: string
   qty: number
   daysLeft: number // سالب = منتهٍ
@@ -129,6 +131,7 @@ export function expiryAlerts(
     rows.push({
       itemId: b.itemId,
       nameAr: itemName(b.itemId),
+      lotNumber: b.lotNumber ?? null,
       expiryDate: b.expiryDate,
       qty: b.qty,
       daysLeft,
@@ -139,6 +142,50 @@ export function expiryAlerts(
   return rows
 }
 
+/* ─── اقتراح تسعير تصاعدي قرب الانتهاء (سد فجوة «مستقبلية»: تسعير ديناميكي) ───
+   اقتراح استرشادي فقط — لا يُغيّر سعر الصنف تلقائياً، يعرضه المالك ليقرر
+   تفعيله يدوياً (عبر قائمة أسعار أو عرض). نسبة الخصم تتصاعد خطياً كلما
+   قرب موعد الانتهاء، من 10٪ عند أفق الرصد إلى 50٪ يوم الانتهاء. */
+
+export interface MarkdownSuggestionRow {
+  itemId: number
+  nameAr: string
+  lotNumber: string | null
+  expiryDate: string
+  qty: number
+  daysLeft: number
+  currentPriceMinor: number
+  suggestedDiscountPercent: number
+  suggestedPriceMinor: number
+}
+
+export function markdownSuggestions(
+  batches: StockBatch[],
+  items: readonly { id: number; nameAr: string; priceMinor: number }[],
+  today: string,
+  horizonDays = 7,
+): MarkdownSuggestionRow[] {
+  const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`
+  // لا نقترح خصماً على المنتهي فعلاً (status='expired') — ذاك مرشح للإتلاف لا للبيع
+  const soon = expiryAlerts(batches, itemName, today, horizonDays).filter((a) => a.status === 'soon')
+  return soon.map((a) => {
+    const priceMinor = items.find((it) => it.id === a.itemId)?.priceMinor ?? 0
+    const ratio = 1 - Math.max(0, Math.min(horizonDays, a.daysLeft)) / horizonDays
+    const suggestedDiscountPercent = Math.round(10 + ratio * 40)
+    return {
+      itemId: a.itemId,
+      nameAr: a.nameAr,
+      lotNumber: a.lotNumber,
+      expiryDate: a.expiryDate,
+      qty: a.qty,
+      daysLeft: a.daysLeft,
+      currentPriceMinor: priceMinor,
+      suggestedDiscountPercent,
+      suggestedPriceMinor: Math.max(0, Math.round(priceMinor * (1 - suggestedDiscountPercent / 100))),
+    }
+  })
+}
+
 /** إجمالي الكمية المنتهية لصنف (تُعرض في الكاشير والتقارير) */
 export function expiredQty(batches: StockBatch[], itemId: number, today: string): number {
   const day = today.slice(0, 10)
@@ -147,4 +194,123 @@ export function expiredQty(batches: StockBatch[], itemId: number, today: string)
       .filter((b) => b.itemId === itemId && b.expiryDate !== null && b.expiryDate < day)
       .reduce((a, b) => a + b.qty, 0),
   )
+}
+
+/* ─── أقرب انتهاء لكل صنف (سد فجوة: شارة استباقية في شبكة/بحث الكاشير) ───
+   خلافاً لتنبيهات التقارير (بعد البيع)، هذه تُستخدم قبل الإضافة للسلة —
+   تعرض أقرب تاريخ انتهاء معروف لكل صنف (قد يكون سالباً = منتهٍ فعلاً) */
+
+export interface NearestExpiry {
+  daysLeft: number // سالب = منتهٍ
+  expiryDate: string
+}
+
+/** أقرب تاريخ انتهاء لكل صنف من بين دفعاته ذات الرصيد الموجب */
+export function nearestExpiryByItem(batches: StockBatch[], today: string): Map<number, NearestExpiry> {
+  const day = today.slice(0, 10)
+  const dayMs = Date.parse(`${day}T00:00:00Z`)
+  const map = new Map<number, NearestExpiry>()
+  for (const b of batches) {
+    if (b.expiryDate === null || b.qty <= 0) continue
+    const daysLeft = Math.floor((Date.parse(`${b.expiryDate}T00:00:00Z`) - dayMs) / 86_400_000)
+    const cur = map.get(b.itemId)
+    if (!cur || daysLeft < cur.daysLeft) map.set(b.itemId, { daysLeft, expiryDate: b.expiryDate })
+  }
+  return map
+}
+
+/* ─── قيمة المخزون المعرَّض لخطر الانتهاء بالعملة (سد فجوة تقرير #5 الفوري) ───
+   التنبيهات التفصيلية (expiryAlerts) تعرض الكمية والتاريخ فقط لكل دفعة؛
+   هذه تجمعها في مؤشر مالي واحد لكل أفق زمني — نمط لوحات التحكم في البرامج
+   العالمية المتخصصة (ShelfLifePro وغيره) */
+
+export interface ExpiryValueAtRiskRow {
+  horizonDays: number
+  qty: number
+  valueMinor: number
+  batchCount: number
+}
+
+/** تجميع كمية/قيمة الدفعات المنتهية أو التي تنتهي خلال كل أفق من الآفاق المطلوبة */
+export function expiryValueAtRisk(
+  batches: StockBatch[],
+  items: readonly { id: number; costMinor: number }[],
+  today: string,
+  horizons: readonly number[] = [30, 60, 90],
+): ExpiryValueAtRiskRow[] {
+  const day = today.slice(0, 10)
+  const dayMs = Date.parse(`${day}T00:00:00Z`)
+  const costOf = (itemId: number) => items.find((it) => it.id === itemId)?.costMinor ?? 0
+  return horizons.map((horizonDays) => {
+    let qty = 0
+    let valueMinor = 0
+    let batchCount = 0
+    for (const b of batches) {
+      if (b.expiryDate === null || b.qty <= 0) continue
+      const daysLeft = Math.floor((Date.parse(`${b.expiryDate}T00:00:00Z`) - dayMs) / 86_400_000)
+      if (daysLeft > horizonDays) continue
+      qty = round3(qty + b.qty)
+      valueMinor += Math.round(b.qty * costOf(b.itemId))
+      batchCount += 1
+    }
+    return { horizonDays, qty, valueMinor, batchCount }
+  })
+}
+
+/* ─── دفعات داخل نافذة إرجاع موردها (سد فجوة الدليل الداخلي: "جهّز مرتجعات
+   الموردين قبل فوات موعد الإرجاع") ───
+   النافذة تُقرأ من `supplier.returnWindowDays` (عدد الأيام قبل الانتهاء
+   التي يقبل المورد خلالها استرجاع الدفعة): دفعة «داخل النافذة» إن كانت لم
+   تنتهِ بعد (daysLeft >= 0) وباقي أيامها حتى الانتهاء ≤ هذه النافذة.
+   مورد بلا نافذة مسجَّلة (0/undefined) لا تظهر دفعاته هنا إطلاقاً — لا
+   نخمّن سياسة إرجاع غير موثَّقة. */
+
+export interface SupplierReturnCandidateRow {
+  itemId: number
+  nameAr: string
+  lotNumber: string | null
+  expiryDate: string
+  qty: number
+  daysLeft: number
+  supplierId: number
+  supplierName: string
+  returnWindowDays: number
+}
+
+export function supplierReturnCandidates(
+  batches: StockBatch[],
+  items: readonly { id: number; nameAr: string }[],
+  purchases: readonly { id: number; supplierId: number }[],
+  suppliers: readonly { id: number; nameAr: string; returnWindowDays?: number }[],
+  today: string,
+): SupplierReturnCandidateRow[] {
+  const day = today.slice(0, 10)
+  const dayMs = Date.parse(`${day}T00:00:00Z`)
+  const purchaseSupplier = new Map(purchases.map((p) => [p.id, p.supplierId]))
+  const supplierById = new Map(suppliers.map((s) => [s.id, s]))
+  const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`
+  const rows: SupplierReturnCandidateRow[] = []
+  for (const b of batches) {
+    if (b.expiryDate === null || b.qty <= 0 || b.purchaseId === null) continue
+    const supplierId = purchaseSupplier.get(b.purchaseId)
+    if (supplierId == null) continue
+    const supplier = supplierById.get(supplierId)
+    const windowDays = supplier?.returnWindowDays ?? 0
+    if (!supplier || windowDays <= 0) continue
+    const daysLeft = Math.floor((Date.parse(`${b.expiryDate}T00:00:00Z`) - dayMs) / 86_400_000)
+    if (daysLeft < 0 || daysLeft > windowDays) continue
+    rows.push({
+      itemId: b.itemId,
+      nameAr: itemName(b.itemId),
+      lotNumber: b.lotNumber ?? null,
+      expiryDate: b.expiryDate,
+      qty: b.qty,
+      daysLeft,
+      supplierId,
+      supplierName: supplier.nameAr,
+      returnWindowDays: windowDays,
+    })
+  }
+  rows.sort((a, b) => a.daysLeft - b.daysLeft)
+  return rows
 }

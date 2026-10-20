@@ -93,8 +93,12 @@ export function JewelryPage() {
   const saveTrade = () => {
     if (!tradeItem) return
     try {
+      // سد فجوة فورية (النشاط #15): الضريبة على المشغول المباع تُحسب على
+      // المصنعية فقط لا على كامل السعر — بروتوكول مصلحة الضرائب مع شعبة الذهب
+      const tradeProfile = jewelryProfiles.find((p) => p.itemId === tradeItem.id)
+      const tradeExemptMinor = tradeProfile && gramPrices.updatedAt ? jewelryBreakdown(tradeProfile, gramPrices).goldMinor : 0
       const doc = postGoldTradeIn({
-        lines: [{ itemId: tradeItem.id, nameAr: tradeItem.nameAr, qty: 1, unitPriceMinor: tradeItem.priceMinor, unitCostMinor: tradeItem.costMinor, discountPercent: 0, soldByWeight: false }],
+        lines: [{ itemId: tradeItem.id, nameAr: tradeItem.nameAr, qty: 1, unitPriceMinor: tradeItem.priceMinor, unitCostMinor: tradeItem.costMinor, discountPercent: 0, soldByWeight: false, vatExemptPerUnitMinor: tradeExemptMinor }],
         customerId: trCustomer ? Number(trCustomer) : null,
         scrapKarat: trKarat,
         scrapWeightGrams: Number(trWeight),
@@ -214,11 +218,14 @@ export function JewelryPage() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-yellow-500/10 text-yellow-700 dark:text-yellow-300">
-              <tr>{['الصنف', 'العيار', 'الوزن', 'قيمة الذهب', 'المصنعية', 'السعر الحالي'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+              <tr>{['الصنف', 'العيار', 'الوزن', 'قيمة الذهب (معفاة)', 'المصنعية', 'ض.ق.م المصنعية', 'السعر الحالي'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
             </thead>
             <tbody>
               {profiled.map(({ p, item }) => {
                 const bd = jewelryBreakdown(p, gramPrices)
+                // سد فجوة فورية (النشاط #15): الضريبة قانوناً على المصنعية فقط —
+                // تُعرض هنا توضيحاً لا احتساباً مزدوجاً (المحسوبة فعلياً تخرج من computeTotals)
+                const workVat = Math.round(bd.workmanshipMinor * (setup.vatPercent / 100))
                 return (
                   <tr key={p.itemId} className="border-t border-slate-100 dark:border-slate-800 hover:bg-yellow-500/5 transition-colors cursor-pointer"
                     onClick={() => { setProfItem(String(p.itemId)); setProfKarat(p.karat); setProfWeight(String(p.weightGrams)); setProfWork(String(p.workmanshipMinor / 10 ** cur.decimals)); setProfileOpen(true) }}>
@@ -227,6 +234,7 @@ export function JewelryPage() {
                     <td className="px-3 py-2.5 tabular-nums">{p.weightGrams} جم</td>
                     <td className="px-3 py-2.5 tabular-nums">{fmt(bd.goldMinor)}</td>
                     <td className="px-3 py-2.5 tabular-nums">{fmt(bd.workmanshipMinor)}</td>
+                    <td className="px-3 py-2.5 tabular-nums text-amber-600">{setup.vatPercent > 0 ? fmt(workVat) : '—'}</td>
                     <td className="px-3 py-2.5 font-black text-yellow-600 tabular-nums">{fmt(item!.priceMinor)}</td>
                   </tr>
                 )

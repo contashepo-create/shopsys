@@ -12,6 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
+import { purchaseWeightDiscrepancy, moistureRiskLevel } from '../../core/purchases.ts'
 import { effectiveVatPercent } from '../../core/items.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
@@ -39,7 +40,7 @@ import { openItemPricesWindow } from '../windows/windowStore.ts'
  * «الكمية» و«السعر» المدخلين بهذه الوحدة — وعند الترحيل يتحولان تلقائياً
  * للوحدة الأساسية (كمية×المعامل، السعر÷المعامل) فيبقى المخزون بالقطعة دائماً.
  */
-interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string; vatPercent: number; warehouseId: number | null }
+interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; lotNumber: string; serialsRaw: string; unitName: string; vatPercent: number; warehouseId: number | null; shippedQty: string; moisturePercent: string; /** توزيع تركيبات لون/مقاس مباشرة في سطر الشراء (فجوة فورية ① — نشاط الملابس) */ variantBreakdown: { color: string; size: string; qty: string }[] }
 interface DraftExpense {
   nameAr: string
   amount: string
@@ -94,7 +95,7 @@ export function PurchasesPage() {
   const defaultPurchaseWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => taxPolicy.effectivePercent === 0 ? 0 : effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, effectiveCountryVatPercent)
   const makeDraftLine = (itemId: number = items[0]?.id ?? 0, patch: Partial<DraftLine> = {}): DraftLine => ({
-    itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
+    itemId, qty: '', unitPrice: '', expiryDate: '', lotNumber: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, shippedQty: '', moisturePercent: '', variantBreakdown: [], ...patch,
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
   const supplierLabel = (id: number) => id === 0 ? 'مورد نقدي' : suppliers.find((supplier) => supplier.id === id)?.nameAr ?? `مورد #${id}`
@@ -209,12 +210,12 @@ export function PurchasesPage() {
   const [warehouseId, setWarehouseId] = useState<number | null>(defaultPurchaseWarehouseId)
   const [notes, setNotes] = useState('')
   const [lineOptionsOpen, setLineOptionsOpen] = useState(false)
-  const [lineOptions, setLineOptions] = useState({ expiry: false, serials: false })
+  const [lineOptions, setLineOptions] = useState({ expiry: false, serials: false, weight: false, variants: false })
   const [expensesOpen, setExpensesOpen] = useState(false)
   const lineWarehouseMode = warehouses.length > 1 && warehouseId == null
   const lineGridClass = lineWarehouseMode
-    ? (lineOptions.expiry ? 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_130px_36px]' : 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_36px]')
-    : (lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]')
+    ? (lineOptions.expiry ? 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_150px_36px]' : 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_36px]')
+    : (lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_160px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]')
   // مصروف لاحق على فاتورة مرحّلة (طلب المالك — «يمكن لاحقاً تسجيل مصروفات أخرى»)
   const [lateName, setLateName] = useState('')
   const [lateAmount, setLateAmount] = useState('')
@@ -417,7 +418,13 @@ export function PurchasesPage() {
           inputVatMinor: d ? lineVatMinor(d) : 0,
           warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : undefined,
           expiryDate: d?.expiryDate || null,
+          lotNumber: d?.lotNumber?.trim() || null,
           serialsRaw: d?.serialsRaw || undefined,
+          shippedQty: d?.shippedQty?.trim() ? Number(d.shippedQty) : undefined,
+          moisturePercent: d?.moisturePercent?.trim() ? Number(d.moisturePercent) : undefined,
+          variantBreakdown: d?.variantBreakdown?.length
+            ? d.variantBreakdown.filter((b) => (Number(b.qty) || 0) > 0).map((b) => ({ color: b.color, size: b.size, qty: Number(b.qty) }))
+            : undefined,
         }
       }),
       expenses: expenses
@@ -616,10 +623,10 @@ export function PurchasesPage() {
                   type="button"
                   onClick={() => setLineOptionsOpen((v) => !v)}
                   title="خيارات إضافية تظهر كخانات بجانب كل سطر عند تفعيلها"
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-2 text-[11px] font-black transition-all hover:scale-[1.02] ${lineOptionsOpen || lineOptions.expiry || lineOptions.serials ? 'border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-400/50'}`}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-2 text-[11px] font-black transition-all hover:scale-[1.02] ${lineOptionsOpen || lineOptions.expiry || lineOptions.serials || lineOptions.weight || lineOptions.variants ? 'border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-400/50'}`}
                 >
                   <MoreHorizontal size={15} /> خيارات أكثر
-                  {(lineOptions.expiry || lineOptions.serials) && <span className="w-2 h-2 rounded-full bg-violet-500" />}
+                  {(lineOptions.expiry || lineOptions.serials || lineOptions.weight || lineOptions.variants) && <span className="w-2 h-2 rounded-full bg-violet-500" />}
                 </button>
                 <Btn variant="ghost" onClick={() => setQuickOpen(true)}>⚡ صنف جديد سريع</Btn>
                 <Btn variant="soft" onClick={() => setLines((l) => [...l, makeDraftLine()])}>+ سطر</Btn>
@@ -643,6 +650,20 @@ export function PurchasesPage() {
                       <span className="text-[10.5px] text-slate-400">تظهر خانة السيريالات أسفل السطر عند الحاجة فقط.</span>
                     </span>
                   </label>
+                  <label className="flex items-start gap-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-violet-500/10 p-2.5 cursor-pointer hover:border-violet-400 transition-colors">
+                    <input type="checkbox" checked={lineOptions.weight} onChange={(e) => setLineOptions((o) => ({ ...o, weight: e.target.checked }))} className="mt-1 accent-violet-600" />
+                    <span>
+                      <b className="block text-[12px] text-slate-700 dark:text-slate-200">فرق الوزن المرسَل ونسبة الرطوبة (أعلاف/حبوب)</b>
+                      <span className="text-[10.5px] text-slate-400">يقارن وزن فاتورة المورد بالمستلم فعلياً وينبّه عند تجاوز 2%، مع تسجيل اختياري لنسبة الرطوبة.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-violet-500/10 p-2.5 cursor-pointer hover:border-violet-400 transition-colors">
+                    <input type="checkbox" checked={lineOptions.variants} onChange={(e) => setLineOptions((o) => ({ ...o, variants: e.target.checked }))} className="mt-1 accent-violet-600" />
+                    <span>
+                      <b className="block text-[12px] text-slate-700 dark:text-slate-200">توزيع تركيبات لون/مقاس (ملابس)</b>
+                      <span className="text-[10.5px] text-slate-400">وزّع كمية السطر على الألوان والمقاسات فور الاستلام بدل زيارة شاشة «مصفوفة المقاسات» لاحقاً.</span>
+                    </span>
+                  </label>
                 </div>
               </div>
             )}
@@ -659,7 +680,7 @@ export function PurchasesPage() {
             </div>
             {/* رؤوس أعمدة واضحة — الضريبة بجانب كل بند، والصلاحية لا تظهر إلا من «خيارات أكثر» */}
             <div className={`hidden sm:grid ${lineGridClass} gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400`}>
-              <span>الصنف</span>{lineWarehouseMode && <span>المخزن</span>}<span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية</span>}<span />
+              <span>الصنف</span>{lineWarehouseMode && <span>المخزن</span>}<span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية / رقم التشغيلة</span>}<span />
             </div>
             <div className="space-y-2">
               {lines.map((l, i) => {
@@ -723,11 +744,18 @@ export function PurchasesPage() {
                     <span className="text-[9px] text-sky-500/80">{fmt(lineVatMinor(l))}</span>
                   </div>
                   {lineOptions.expiry && (lineItem?.trackExpiry ? (
-                    <input
-                      value={l.expiryDate}
-                      onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
-                      type="date" title="تاريخ الصلاحية (FEFO)" className={inputCls} dir="ltr"
-                    />
+                    <div className="flex flex-col gap-1">
+                      <input
+                        value={l.expiryDate}
+                        onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
+                        type="date" title="تاريخ الصلاحية (FEFO)" className={inputCls} dir="ltr"
+                      />
+                      <input
+                        value={l.lotNumber}
+                        onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, lotNumber: e.target.value } : x)))}
+                        type="text" placeholder="رقم التشغيلة (اختياري)" title="رقم التشغيلة/الدفعة التجاري — لتتبع السحب عند استدعاء منتج" className={`${inputCls} text-[11px] py-1.5`} dir="ltr"
+                      />
+                    </div>
                   ) : <span className="hidden sm:flex h-11 items-center justify-center rounded-xl border-2 border-slate-100 dark:border-slate-800 text-slate-300 dark:text-slate-700 text-[11px]">لا يتتبع</span>)}
                   <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                     <Trash2 size={15} />
@@ -759,6 +787,75 @@ export function PurchasesPage() {
                     className={`${inputCls} mt-1.5 font-mono text-[12px]`}
                   />
                 )}
+                {/* فرق وزن الاستلام ونسبة الرطوبة (سد فجوة النشاط #2: تجارة الأعلاف والحبوب) — اختياري بالكامل */}
+                {lineOptions.weight && (() => {
+                  const shipped = Number(l.shippedQty) || 0
+                  const received = Number(l.qty) || 0
+                  const [disc] = shipped > 0 ? purchaseWeightDiscrepancy([{ itemId: l.itemId, nameAr: '', shippedQty: shipped, receivedQty: received }]) : []
+                  const moisture = l.moisturePercent.trim() ? Number(l.moisturePercent) : null
+                  const risk = moistureRiskLevel(moisture)
+                  return (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <input
+                        value={l.shippedQty}
+                        onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, shippedQty: e.target.value } : x)))}
+                        type="number" inputMode="decimal" step="any" min={0}
+                        placeholder="الوزن/الكمية المرسَل بفاتورة المورد" title="الوزن المفوتَر من المورد — يُقارَن بالكمية المستلمة أعلاه"
+                        className={`${inputCls} text-[11px] py-1.5 max-w-[220px]`}
+                      />
+                      <input
+                        value={l.moisturePercent}
+                        onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, moisturePercent: e.target.value } : x)))}
+                        type="number" inputMode="decimal" step="any" min={0} max={100}
+                        placeholder="نسبة الرطوبة ٪ (اختياري)" title="نسبة الرطوبة عند الاستلام — إدخال يدوي" dir="ltr"
+                        className={`${inputCls} text-[11px] py-1.5 max-w-[170px]`}
+                      />
+                      {disc && (
+                        <span className={`text-[10.5px] font-bold ${disc.exceedsThreshold ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {disc.exceedsThreshold ? '⚠️' : '✓'} فرق الاستلام {disc.diffPercent}٪ ({disc.diffQty > 0 ? `نقص ${disc.diffQty}` : disc.diffQty < 0 ? `زيادة ${Math.abs(disc.diffQty)}` : 'مطابق'})
+                        </span>
+                      )}
+                      {risk === 'high' && <span className="text-[10.5px] font-bold text-amber-600 dark:text-amber-400">⚠️ رطوبة مرتفعة — خطر تلف أثناء التخزين</span>}
+                    </div>
+                  )
+                })()}
+                {/* توزيع تركيبات لون/مقاس مباشرة وقت الاستلام (فجوة فورية ① — نشاط الملابس) */}
+                {lineOptions.variants && lineItem && (lineItem.variantColors.length > 0 || lineItem.variantSizes.length > 0) && (() => {
+                  const colors = lineItem.variantColors.length ? lineItem.variantColors : ['']
+                  const sizes = lineItem.variantSizes.length ? lineItem.variantSizes : ['']
+                  const breakdown = l.variantBreakdown
+                  const qtyOf = (c: string, sz: string) => breakdown.find((b) => b.color === c && b.size === sz)?.qty ?? ''
+                  const setQty = (c: string, sz: string, v: string) => {
+                    setLines((arr) => arr.map((x, j) => {
+                      if (j !== i) return x
+                      const rest = x.variantBreakdown.filter((b) => !(b.color === c && b.size === sz))
+                      return { ...x, variantBreakdown: v.trim() ? [...rest, { color: c, size: sz, qty: v }] : rest }
+                    }))
+                  }
+                  const total = breakdown.reduce((s, b) => s + (Number(b.qty) || 0), 0)
+                  const purchasedQty = Number(l.qty) || 0
+                  const over = total > purchasedQty + 1e-9
+                  return (
+                    <div className="mt-1.5 rounded-xl border border-violet-500/15 bg-violet-500/[0.04] p-2">
+                      <div className={`text-[10.5px] font-bold mb-1.5 ${over ? 'text-rose-600 dark:text-rose-400' : 'text-violet-600 dark:text-violet-300'}`}>
+                        🎨 توزيع التركيبات — موزَّع {total} من {purchasedQty}{over ? ' ⚠️ يتجاوز كمية السطر' : ''}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {colors.flatMap((c) => sizes.map((sz) => (
+                          <div key={`${c}-${sz}`} className="flex items-center gap-1 rounded-lg bg-white/70 dark:bg-slate-900/50 border border-violet-500/10 px-1.5 py-1">
+                            <span className="text-[10px] font-bold text-slate-500">{[c, sz].filter(Boolean).join('/') || 'افتراضي'}</span>
+                            <input
+                              value={qtyOf(c, sz)}
+                              onChange={(e) => setQty(c, sz, e.target.value)}
+                              type="number" inputMode="decimal" step="any" min={0} placeholder="0"
+                              className="w-14 text-center rounded-md border border-slate-200 dark:border-slate-700 bg-transparent py-0.5 text-[11px] font-bold outline-none focus:border-violet-400"
+                            />
+                          </div>
+                        )))}
+                      </div>
+                    </div>
+                  )
+                })()}
                 </div>
               )})}
             </div>

@@ -44,7 +44,7 @@ export interface InsuranceClaim {
   id: number
   providerId: number
   /** مصدر المطالبة */
-  source: 'sale' | 'lab_order'
+  source: 'sale' | 'lab_order' | 'clinic_visit'
   sourceId: number
   date: string
   totalMinor: Minor // إجمالي الفاتورة
@@ -65,7 +65,7 @@ export function buildInsuredEntry(args: {
   patientShareMinor: Minor
   providerShareMinor: Minor
   revenueMinor: Minor
-  revenueAccount: '4101' | '4106'
+  revenueAccount: '4101' | '4106' | '4108'
   vatMinor: Minor
   cogsMinor: Minor
   treasury: string

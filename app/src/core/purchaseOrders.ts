@@ -40,6 +40,8 @@ export interface PurchaseOrder {
   warehouseId: number | null
   status: PurchaseOrderStatus
   lines: PurchaseOrderLine[]
+  /** تذكرة صيانة مرتبطة (سد فجوة النشاط #3: موبايلات وصيانة) — طلب قطعة غيار خاصة لجهاز عميل بعينه بدل طلب منفصل تماماً */
+  linkedTicketId?: number | null
   notes: string
   /** فواتير الشراء التي عُبِّئت من هذا الأمر */
   invoiceIds: number[]
@@ -65,6 +67,43 @@ export function purchaseOrderTotals(lines: PurchaseOrderLine[]): { netMinor: Min
 /** ما تبقّى من الأمر بعد ما استُلم — أساس «تعبئة من» في الفاتورة */
 export const poRemainingQty = (line: PurchaseOrderLine): number => Math.max(0, line.qty - (line.receivedQty || 0))
 export const poIsFulfilled = (order: PurchaseOrder): boolean => order.lines.every((line) => poRemainingQty(line) <= 0)
+
+/* ─── اقتراح أمر شراء تلقائي من حد الطلب (سد فجوة مشتركة: بقالة وأعلاف) ───
+   كانت تنبيهات نقص المخزون (stockAlerts) تُعرض للقراءة فقط بلا أي طريق
+   مباشر لتحويلها لأمر شراء — فيعيد المالك كتابتها يدوياً صنفاً صنفاً. */
+
+export interface ReorderSuggestionRow {
+  itemId: number
+  nameAr: string
+  baseUnit: string
+  stockQty: number
+  minQty: number
+  costMinor: Minor
+  /** الكمية المقترحة لإعادة الرصيد إلى حد الطلب على الأقل — قابلة للتعديل قبل الاعتماد */
+  suggestedQty: number
+}
+
+/**
+ * الأصناف تحت حد الطلب (نفس شرط stockAlerts) مع كمية مقترحة لإعادة التعبئة —
+ * لا تُنشئ شيئاً من تلقاء نفسها، فقط تُحضِّر سطور أمر شراء جاهزة للمراجعة.
+ */
+export function suggestReorderLines(
+  items: readonly { id: number; nameAr: string; baseUnit: string; stockQty?: number; minQty: number; costMinor: Minor; isActive: boolean; isService?: boolean }[],
+): ReorderSuggestionRow[] {
+  return items
+    .filter((it) => it.isActive && !it.isService && it.minQty > 0 && (it.stockQty ?? 0) <= it.minQty)
+    .map((it) => ({
+      itemId: it.id,
+      nameAr: it.nameAr,
+      baseUnit: it.baseUnit,
+      stockQty: it.stockQty ?? 0,
+      minQty: it.minQty,
+      costMinor: it.costMinor,
+      // نعيد الرصيد لضعف حد الطلب تقريباً بدل حده بالضبط — يتجنب تكرار أمر شراء فوري
+      suggestedQty: Math.max(1, Math.round((it.minQty * 2 - (it.stockQty ?? 0)) * 1000) / 1000),
+    }))
+    .sort((a, b) => a.stockQty / Math.max(1, a.minQty) - b.stockQty / Math.max(1, b.minQty))
+}
 
 export function validatePurchaseOrder(input: { supplierName: string; date: string; lines: PurchaseOrderLine[] }): string[] {
   const errors: string[] = []

@@ -7,7 +7,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  *   تحصيل الأقساط، تنبيهات الانتهاء والتأخير، وإنهاء/إخلاء برد التأمين.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Building2, HandCoins, Wrench, Tag, Eye, DoorOpen, KeyRound, BellRing, ReceiptText } from 'lucide-react'
+import { Plus, Building2, HandCoins, Wrench, Tag, Eye, DoorOpen, KeyRound, BellRing, ReceiptText, Trash2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -38,7 +38,7 @@ function useCur() {
 
 /* ─────────────────────────── العقارات والملاك ─────────────────────────── */
 export function PropertiesPage() {
-  const { properties, propertyUnits, employees, customers, addProperty, addPropertyUnit, sellPropertyUnits, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, employees, customers, items, addProperty, addPropertyUnit, sellPropertyUnits, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
 
@@ -118,11 +118,22 @@ export function PropertiesPage() {
   const [mBearer, setMBearer] = useState<'office' | 'owner'>('office')
   const [mDesc, setMDesc] = useState('')
   const [mTreasury, setMTreasury] = useState('1101')
+  /** سد فجوة النشاط #21: مستلزمات صيانة حقيقية من مخزون الشركة (دهان/مواسير…) */
+  const [mMaterials, setMMaterials] = useState<{ itemId: string; qty: string }[]>([])
+  const activeItems = useMemo(() => items.filter((it) => it.isActive), [items])
+  const materialsCostPreview = useMemo(
+    () => mMaterials.reduce((sum, m) => {
+      const it = items.find((x) => x.id === Number(m.itemId))
+      return sum + (it ? Math.round((Number(m.qty) || 0) * it.costMinor) : 0)
+    }, 0),
+    [mMaterials, items],
+  )
   const saveMaint = () => {
     if (!maintFor || mUnitId === '') return
     try {
-      addUnitMaintenance({ unitId: mUnitId, amountMinor: toMinor(mAmount, cur.decimals), bearer: mBearer, description: mDesc.trim() || 'صيانة', treasury: mTreasury })
-      toast.show('سُجلت الصيانة ✅'); setMaintFor(null); setMAmount(''); setMDesc('')
+      const materials = mMaterials.filter((m) => m.itemId && Number(m.qty) > 0).map((m) => ({ itemId: Number(m.itemId), qty: Number(m.qty) }))
+      addUnitMaintenance({ unitId: mUnitId, amountMinor: toMinor(mAmount || '0', cur.decimals), bearer: mBearer, description: mDesc.trim() || 'صيانة', treasury: mTreasury, materials })
+      toast.show('سُجلت الصيانة ✅'); setMaintFor(null); setMAmount(''); setMDesc(''); setMMaterials([])
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -375,8 +386,33 @@ export function PropertiesPage() {
                 {propertyUnits.filter((u) => u.propertyId === maintFor.id).map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
               </QuickSelect>
             </Field>
-            <Field label={`القيمة (${cur.symbol})`}><input value={mAmount} onChange={(e) => setMAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`القيمة النقدية (${cur.symbol})`} hint="أجرة عامل مثلاً — اتركها صفراً لو الصيانة كلها مستلزمات من المخزون">
+              <input value={mAmount} onChange={(e) => setMAmount(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" />
+            </Field>
             <Field label="الوصف"><input value={mDesc} onChange={(e) => setMDesc(e.target.value)} className={inputCls} placeholder="سباكة، كهرباء…" /></Field>
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-bold text-slate-500">مستلزمات من المخزون (دهان، مواسير، لمبات…) — بمتوسط التكلفة المرجح</span>
+                <button onClick={() => setMMaterials((ms) => [...ms, { itemId: '', qty: '1' }])} className="text-[11px] font-bold text-teal-600 hover:underline">+ إضافة مستلزم</button>
+              </div>
+              {mMaterials.map((m, i) => {
+                const it = items.find((x) => x.id === Number(m.itemId))
+                return (
+                  <div key={i} className="grid grid-cols-[1fr_70px_110px_28px] gap-1.5 items-center">
+                    <QuickSelect value={m.itemId} onChange={(e) => setMMaterials((ms) => ms.map((row, j) => (j === i ? { ...row, itemId: e.target.value } : row)))} className={`${inputCls} !py-1.5 !text-[12px]`}>
+                      <option value="">— اختر الصنف —</option>
+                      {activeItems.map((x) => <option key={x.id} value={x.id}>{x.nameAr} (متاح {x.stockQty ?? 0})</option>)}
+                    </QuickSelect>
+                    <input value={m.qty} onChange={(e) => setMMaterials((ms) => ms.map((row, j) => (j === i ? { ...row, qty: e.target.value } : row)))} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
+                    <div className="text-[11px] text-slate-400 text-center">{it ? `${fmt(Math.round((Number(m.qty) || 0) * it.costMinor))} ${cur.symbol}` : '—'}</div>
+                    <button onClick={() => setMMaterials((ms) => ms.filter((_, j) => j !== i))} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
+                  </div>
+                )
+              })}
+              {materialsCostPreview > 0 && (
+                <div className="text-[11px] text-teal-600 font-bold text-left" dir="ltr">إجمالي المستلزمات: {fmt(materialsCostPreview)} {cur.symbol}</div>
+              )}
+            </div>
             {maintFor.ownership === 'managed' && (
               <Field label="على حساب من؟" hint="نمط الوسيط: صيانة العقار المدار على مالكه ما لم يتحملها المكتب">
                 <div className="flex gap-2">
@@ -386,8 +422,8 @@ export function PropertiesPage() {
               </Field>
             )}
             <TreasuryPicker value={mTreasury} onChange={setMTreasury} />
-            <DocOutcome>الأثر: على حساب المالك ⇒ <b>2115 نصيب ملاك العقارات</b> مديناً فيقل مستحقه · على المكتب ⇒ <b>5108 مصروفات عمومية</b> مديناً · والدائن في الحالتين <b>الخزينة/البنك</b>.</DocOutcome>
-            <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
+            <DocOutcome>الأثر: على حساب المالك ⇒ <b>2115 نصيب ملاك العقارات</b> مديناً فيقل مستحقه · على المكتب ⇒ <b>5108 مصروفات عمومية</b> مديناً بإجمالي (النقدية + المستلزمات) · والدائن <b>الخزينة/البنك</b> للجزء النقدي و<b>1103 المخزون</b> لقيمة كل مستلزم مستهلك.</DocOutcome>
+            <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={mUnitId === '' || ((!mAmount || Number(mAmount) <= 0) && materialsCostPreview <= 0)}>تسجيل الصيانة وقيدها</Btn>
           </div>
         )}
       </Modal>

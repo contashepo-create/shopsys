@@ -105,15 +105,17 @@ export function WastagePage() {
           <div className="overflow-x-auto">
             <table className="w-full text-[12px]">
               <thead className="text-[10px] text-slate-400">
-                <tr><th className="px-2 py-1 text-right">الصنف</th><th className="px-2 py-1">الكمية</th><th className="px-2 py-1">انتهت في</th><th className="px-2 py-1">القيمة بالتكلفة</th><th className="px-2 py-1">القرار</th></tr>
+                <tr><th className="px-2 py-1 text-right">الصنف</th><th className="px-2 py-1">الكمية</th><th className="px-2 py-1">انتهت في</th><th className="px-2 py-1">رقم التشغيلة</th><th className="px-2 py-1">القيمة بالتكلفة</th><th className="px-2 py-1">القرار</th></tr>
               </thead>
               <tbody>
                 {(() => {
                   /* تجميع الدفعات المنتهية لكل صنف */
-                  const agg = new Map<number, { qty: number; expiryDate: string }>()
+                  const agg = new Map<number, { qty: number; expiryDate: string; lotNumbers: Set<string> }>()
                   for (const a of expiredNow) {
                     const prev = agg.get(a.itemId)
-                    agg.set(a.itemId, { qty: (prev?.qty ?? 0) + a.qty, expiryDate: prev ? (prev.expiryDate < a.expiryDate ? prev.expiryDate : a.expiryDate) : a.expiryDate })
+                    const lotNumbers = prev?.lotNumbers ?? new Set<string>()
+                    if (a.lotNumber) lotNumbers.add(a.lotNumber)
+                    agg.set(a.itemId, { qty: (prev?.qty ?? 0) + a.qty, expiryDate: prev ? (prev.expiryDate < a.expiryDate ? prev.expiryDate : a.expiryDate) : a.expiryDate, lotNumbers })
                   }
                   return [...agg].map(([itemId, row]) => {
                     const item = items.find((it) => it.id === itemId)
@@ -124,6 +126,7 @@ export function WastagePage() {
                         <td className="px-2 py-1.5 text-right font-bold text-slate-700 dark:text-slate-200">{item?.nameAr ?? `صنف #${itemId}`}</td>
                         <td className="px-2 py-1.5 text-center font-mono">{row.qty}</td>
                         <td className="px-2 py-1.5 text-center font-mono text-[11px] text-rose-500" dir="ltr">{row.expiryDate}</td>
+                        <td className="px-2 py-1.5 text-center font-mono text-[11px] text-slate-500" dir="ltr">{row.lotNumbers.size ? [...row.lotNumbers].join('، ') : '—'}</td>
                         <td className="px-2 py-1.5 text-center font-mono text-rose-600">{fmt(Math.round(row.qty * (item?.costMinor ?? 0)))}</td>
                         <td className="px-2 py-1.5">
                           <div className="flex flex-wrap items-center justify-center gap-1">

@@ -31,7 +31,7 @@ import { QuickSelect, PartyQuickPicker, ItemQuickPicker } from '../components/Ke
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { getCountry } from '../../core/countries.ts'
 import {
-  PURCHASE_ORDER_STATUS_AR, poRemainingQty, purchaseOrderTotals,
+  PURCHASE_ORDER_STATUS_AR, poRemainingQty, purchaseOrderTotals, suggestReorderLines,
   type PurchaseOrderLine, type PurchaseOrderStatus,
 } from '../../core/purchaseOrders.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
@@ -68,7 +68,7 @@ export function PurchaseOrdersPage() {
   const {
     purchaseOrders, addPurchaseOrder, setPurchaseOrderStatus, deletePurchaseOrder, suppliers, items, warehouses, branches, categories,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
-    partyNotes, addPartyNote, appUsers, currentUserId, userPrefs, roleOverrides, customRoles, getSupplierBalance,
+    partyNotes, addPartyNote, appUsers, currentUserId, userPrefs, roleOverrides, customRoles, getSupplierBalance, tickets,
   } = useDataStore()
   const setup = useAppStore((s) => s.setup)
   const warehouseReceipt = useAppStore((s) => s.warehouseReceipt)
@@ -89,6 +89,9 @@ export function PurchaseOrdersPage() {
   const [showLineNotes, setShowLineNotes] = useState(false)
   /** مرجع داخلي (رقم عرض/طلبية) — يُحفظ مع ملاحظات الأمر كأول سطر */
   const [reference, setReference] = useState('')
+  /** ربط أمر الشراء بتذكرة صيانة محددة (سد فجوة النشاط #3: طلب قطعة غيار خاصة لجهاز عميل بعينه) */
+  const [linkedTicketId, setLinkedTicketId] = useState('')
+  const openMaintenanceTickets = useMemo(() => tickets.filter((t) => t.status !== 'delivered' && t.status !== 'cancelled'), [tickets])
   /** يبدأ الجدول بلا سطور: أول سطر ظاهر يحمل خانة البحث — كما في فاتورة الشراء حرفياً */
   const [lines, setLines] = useState<DraftLine[]>([])
   useEffect(() => {
@@ -102,7 +105,6 @@ export function PurchaseOrdersPage() {
       setWarehouseId(warehouses[0].id)
     }
   }, [warehouses, warehouseId])
-  const [applyTax, setApplyTax] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseOrderStatus>('all')
   const [activeItemId, setActiveItemId] = useState<number | null>(null)
   const [partyNote, setPartyNote] = useState('')
@@ -121,6 +123,8 @@ export function PurchaseOrdersPage() {
     () => purchaseOrders.filter((order) => statusFilter === 'all' || order.status === statusFilter).slice().reverse(),
     [purchaseOrders, statusFilter],
   )
+  // اقتراح أمر شراء تلقائي من حد الطلب (سد فجوة مشتركة: بقالة وأعلاف — طلب يدوي صنفاً صنفاً سابقاً)
+  const reorderSuggestions = useMemo(() => suggestReorderLines(items), [items])
   const selectedSupplier = suppliers.find((s) => s.id === supplierId) ?? null
   const selectedSupplierBalance = selectedSupplier ? getSupplierBalance(selectedSupplier.id) : 0
   const focusedItem = (activeItemId != null ? items.find((item) => item.id === activeItemId) : null)
@@ -141,7 +145,8 @@ export function PurchaseOrdersPage() {
     setLines((current) => [...current, {
       key: crypto.randomUUID(), itemId: item.id, nameAr: item.nameAr, qty, receivedQty: 0,
       unitAr: item.baseUnit ?? 'قطعة', unitPriceMinor,
-      vatPercent: applyTax ? taxPolicy.effectivePercent : 0, notes: '', warehouseId,
+      /* خانة ضريبة مستقلة لكل بند (طلب المالك): البند الجديد يتبع إعداد الضريبة العام تلقائياً */
+      vatPercent: taxPolicy.effectivePercent, notes: '', warehouseId,
     }])
   }
   /* نقرتان على اسم السطر ⇒ استبدال الصنف (نفس سلوك جدول الفاتورة) */
@@ -152,11 +157,24 @@ export function PurchaseOrdersPage() {
   }
 
   const reset = () => {
-    setLines([]); setNotes(''); setReference(''); setSupplierId(null); setSupplierName(''); setApplyTax(false); setLastSavedAt(null)
-    setActiveItemId(null); setPartyNote(''); setCategoryFilter(0)
+    setLines([]); setNotes(''); setReference(''); setSupplierId(null); setSupplierName(''); setLastSavedAt(null)
+    setActiveItemId(null); setPartyNote(''); setCategoryFilter(0); setLinkedTicketId('')
   }
   const openNew = () => {
     reset(); setDate(new Date().toISOString().slice(0, 10)); setExpectedDate(new Date().toISOString().slice(0, 10)); setOpen(true)
+  }
+  /** يفتح أمراً جديداً مُعبَّأً تلقائياً بكل الأصناف تحت حد الطلب — يبقى المورد والكميات والأسعار قابلة للمراجعة قبل الاعتماد */
+  const openAutoReorder = () => {
+    reset()
+    const today = new Date().toISOString().slice(0, 10)
+    setDate(today); setExpectedDate(today)
+    setLines(reorderSuggestions.map((row) => ({
+      key: crypto.randomUUID(), itemId: row.itemId, nameAr: row.nameAr, qty: row.suggestedQty, receivedQty: 0,
+      unitAr: row.baseUnit, unitPriceMinor: row.costMinor, vatPercent: 0, notes: '', warehouseId,
+    })))
+    setNotes('أمر مُولَّد تلقائياً من تنبيه نقص المخزون (حد الطلب) — راجع الكميات والمورد قبل الاعتماد')
+    setOpen(true)
+    toast.show(`جُهِّز أمر شراء بـ ${reorderSuggestions.length} صنف تحت حد الطلب — راجعه قبل الاعتماد`)
   }
 
   /* ════ المسودات: نفس مخزن مسودات الفواتير بنوع مستقل (طلب المالك: تسهيلات الفاتورة كاملة) ════ */
@@ -164,7 +182,7 @@ export function PurchaseOrdersPage() {
     upsertAdvancedInvoiceDraft({
       id: draftId, kind: 'purchase_order',
       name: `مسودة أمر شراء — ${supplierId ? selectedSupplier?.nameAr ?? 'مورد' : supplierName.trim() || 'مورد نقدي'}`,
-      payload: JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, applyTax, lines }),
+      payload: JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, lines }),
     })
     unsaved.markClean()
     setLastSavedAt(new Date().toLocaleString('ar-EG'))
@@ -176,7 +194,7 @@ export function PurchaseOrdersPage() {
       setSupplierId(data.supplierId ?? null); setSupplierName(data.supplierName ?? '')
       setDate(data.date ?? new Date().toISOString().slice(0, 10)); setExpectedDate(data.expectedDate ?? '')
       setWarehouseId(data.warehouseId ?? null); setNotes(data.notes ?? ''); setReference(data.reference ?? '')
-      setApplyTax(data.applyTax ?? false); setLines(data.lines ?? [])
+      setLines(data.lines ?? [])
       toast.show(`استُعيدت «${draft.name}» ✓`)
     } catch { toast.show('تعذر قراءة المسودة', 'error') }
   }
@@ -259,6 +277,7 @@ export function PurchaseOrdersPage() {
         warehouseId,
         notes: [reference.trim(), notes.trim()].filter(Boolean).join('\n'),
         lines: clean,
+        linkedTicketId: linkedTicketId ? Number(linkedTicketId) : null,
       })
       const text = partyNote.trim()
       if (text && selectedSupplier) { try { addPartyNote({ partyKind: 'supplier', partyId: selectedSupplier.id, text, userName: currentUser?.nameAr ?? setup.ownerName ?? 'المالك', source: order.orderNumber }) } catch { /* الملاحظة لا تمنع اعتماد الأمر */ } }
@@ -270,7 +289,7 @@ export function PurchaseOrdersPage() {
   }
 
   /* حارس التغييرات غير المحفوظة — نفس نمط فاتورة الشراء */
-  const signature = JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, applyTax, lines })
+  const signature = JSON.stringify({ supplierId, supplierName, date, expectedDate, warehouseId, notes, reference, lines, linkedTicketId })
   const unsaved = useUnsavedChangesGuard(signature)
   const closeEditor = () => setOpen(false)
   useEffect(() => {
@@ -344,6 +363,14 @@ export function PurchaseOrdersPage() {
               <Field label="المرجع" icon={<Link2 size={11} />}>
                 <input className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="مرجع داخلي أو رقم عرض المورد — اختياري" aria-label="مرجع أمر الشراء" />
               </Field>
+              {setup.modules.includes('maintenance') && (
+                <Field label="تذكرة صيانة مرتبطة" hint="لطلب قطعة غيار خاصة لجهاز عميل بعينه — اختياري">
+                  <QuickSelect className={inputCls} value={linkedTicketId} onChange={(e) => setLinkedTicketId(e.target.value)}>
+                    <option value="">— بلا ربط —</option>
+                    {openMaintenanceTickets.map((t) => <option key={t.id} value={t.id}>{t.ticketNumber} — {t.deviceName}</option>)}
+                  </QuickSelect>
+                </Field>
+              )}
             </>
           }
           partyProfile={
@@ -362,13 +389,12 @@ export function PurchaseOrdersPage() {
               <span>مخزن الاستلام: <b>{warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'كل المخازن'}</b></span>
               <span>الأصناف: <b>{cleanLines.length}</b></span>
               <span>الإجمالي: <b className="font-mono">{fmt(totals.totalMinor)} {cur.symbol}</b></span>
-              <label className="invoice-doc-stripcheck" title="خضوع أمر الشراء للضريبة — يُنقل إلى الفاتورة عند التعبئة">
-                <input type="checkbox" checked={applyTax} onChange={(e) => {
-                  const enabled = e.target.checked
-                  setApplyTax(enabled)
-                  setLines((previous) => previous.map((line) => ({ ...line, vatPercent: enabled ? taxPolicy.effectivePercent : 0 })))
-                }} /> خاضعة للضريبة {applyTax ? `${taxPolicy.effectivePercent}%` : ''}
-              </label>
+              {/* إصلاح بلاغ المالك: كان هنا تشيك بوكس واحد يفرض نفس حالة الضريبة على
+                  كل البنود دفعة واحدة. حُذف — لكل بند الآن خانة ضريبة مستقلة في جدول
+                  البنود (عمود «خاضع للضريبة»)، والبند الجديد يتبع نسبة الإعدادات تلقائياً. */}
+              {taxPolicy.effectivePercent > 0 && (
+                <span className="invoice-doc-stripfield" title="نسبة الضريبة من الإعدادات — لكل بند خانة مستقلة في الجدول لتطبيقها أو إعفائه">ضريبة الإعدادات {taxPolicy.effectivePercent}%</span>
+              )}
               <label className="invoice-doc-stripcheck" title="إظهار عمود ملاحظات بجانب كل بند في جدول الأصناف">
                 <input type="checkbox" checked={showLineNotes} onChange={(e) => { const v = e.target.checked; setShowLineNotes(v); try { localStorage.setItem('shopsys-show-line-notes', v ? '1' : '0') } catch { /* ignore */ } }} /> إظهار عمود الملاحظات
               </label>
@@ -424,8 +450,8 @@ export function PurchaseOrdersPage() {
                   currencyDecimals={cur.decimals}
                   currencySymbol={cur.symbol}
                   canViewCost={canViewCost}
-                  taxEnabled={applyTax && taxPolicy.effectivePercent > 0}
-                  documentTaxPercent={applyTax ? taxPolicy.effectivePercent : 0}
+                  taxEnabled={taxPolicy.effectivePercent > 0}
+                  documentTaxPercent={taxPolicy.effectivePercent}
                   onPick={addItem}
                   onActiveItem={setActiveItemId}
                   onPatch={(key, value) => patch(key, value as Partial<DraftLine>)}
@@ -521,6 +547,15 @@ export function PurchaseOrdersPage() {
         </div>
       </div>
 
+      {reorderSuggestions.length > 0 && (
+        <div className="anim-up rounded-2xl border-2 border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 text-[12.5px] font-bold text-amber-700 dark:text-amber-400">
+            ⚠️ {reorderSuggestions.length} صنف تحت حد الطلب — يمكن توليد أمر شراء مقترح بكمياته تلقائياً
+          </div>
+          <Btn variant="soft" onClick={openAutoReorder}>⚡ إنشاء أمر شراء تلقائي</Btn>
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-8 text-center text-[13px] text-slate-400">
           لا أوامر شراء بعد — سجّل أمراً جديداً ثم عبّئ منه فاتورة الشراء عند الاستلام.
@@ -548,6 +583,9 @@ export function PurchaseOrdersPage() {
                     <td className="px-4 py-2.5">
                       <div className="font-black text-slate-800 dark:text-white">{order.orderNumber}</div>
                       <div className="text-[11px] text-slate-400 font-mono">{order.date}</div>
+                      {order.linkedTicketId != null && (
+                        <div className="text-[10px] text-indigo-500 mt-0.5">🧩 {tickets.find((t) => t.id === order.linkedTicketId)?.ticketNumber ?? `#${order.linkedTicketId}`}</div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{order.supplierName}</td>
                     <td className="px-4 py-2.5 text-[12px] text-slate-400 font-mono">{order.expectedDate}</td>

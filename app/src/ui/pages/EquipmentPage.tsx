@@ -4,12 +4,12 @@
  * كل N ساعة + وردانيات المشغلين. حذف المعدة ممنوع إن ارتبطت بعقود.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Tractor, Pencil, Trash2, FileSpreadsheet, Gauge, Wrench, Users, Fuel } from 'lucide-react'
-import { useDataStore, type Equipment } from '../../data/repo.ts'
+import { Plus, Tractor, Pencil, Trash2, FileSpreadsheet, Gauge, Wrench, Users, Fuel, Package, ShieldCheck } from 'lucide-react'
+import { useDataStore, type Equipment, type EquipmentPart } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { serviceStatus, shiftsSummary, EQUIPMENT_COST_LABELS, type EquipmentCostKind } from '../../core/rentalMeter.ts'
+import { serviceStatus, shiftsSummary, equipmentStatus, EQUIPMENT_STATUS_LABELS, equipmentComplianceWarnings, EQUIPMENT_COST_LABELS, type EquipmentCostKind } from '../../core/rentalMeter.ts'
 import { COST_LAYER_LABELS, EXPENSE_BEARER_LABELS, type EquipmentCostLayer, type ExpenseBearer } from '../../core/rental.ts'
 import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -18,8 +18,18 @@ import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const EQUIPMENT_KINDS = ['حفار', 'لودر', 'بلدوزر', 'ونش', 'رافعة شوكية', 'مولد', 'ضاغط هواء', 'أخرى']
 
+const EQUIPMENT_STATUS_CLS: Record<'rented' | 'under_maintenance' | 'available', string> = {
+  rented: 'bg-sky-500/10 text-sky-600',
+  under_maintenance: 'bg-rose-500/10 text-rose-600',
+  available: 'bg-emerald-500/10 text-emerald-600',
+}
+
 export function EquipmentPage() {
-  const { equipment, employees, customers, rentalContracts, operatorShifts, equipmentCosts, addEquipment, updateEquipment, removeEquipment, addOperatorShift, recordEquipmentService, addEquipmentCost, getEquipmentProfit } = useDataStore()
+  const {
+    equipment, employees, customers, rentalContracts, operatorShifts, equipmentCosts, equipmentParts,
+    addEquipment, updateEquipment, removeEquipment, addOperatorShift, recordEquipmentService,
+    addEquipmentCost, getEquipmentProfit, addEquipmentPart, updateEquipmentPart, removeEquipmentPart,
+  } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -43,6 +53,9 @@ export function EquipmentPage() {
   const [serviceEvery, setServiceEvery] = useState('')
   const [driverEmployeeId, setDriverEmployeeId] = useState<number>(0)
   const [notes, setNotes] = useState('')
+  // سجل امتثال بسيط (سد فجوة تقرير النشاط #8 — Future #3)
+  const [insuranceExpiry, setInsuranceExpiry] = useState('')
+  const [nextInspection, setNextInspection] = useState('')
 
   // وردية مشغل
   const [shiftFor, setShiftFor] = useState<Equipment | null>(null)
@@ -57,7 +70,8 @@ export function EquipmentPage() {
 
   const openNew = () => {
     setEditing(null); setNameAr(''); setCode(''); setDailyRate(''); setHourlyRate(''); setMonthlyRate('')
-    setMeter(''); setServiceEvery(''); setDriverEmployeeId(0); setNotes(''); setOpen(true)
+    setMeter(''); setServiceEvery(''); setDriverEmployeeId(0); setNotes('')
+    setInsuranceExpiry(''); setNextInspection(''); setOpen(true)
   }
   const openEdit = (e: Equipment) => {
     setEditing(e); setNameAr(e.nameAr); setCode(e.code)
@@ -67,7 +81,10 @@ export function EquipmentPage() {
     setMeter(String(e.meterReading || ''))
     setServiceEvery(e.serviceEveryHours ? String(e.serviceEveryHours) : '')
     setDriverEmployeeId(e.driverEmployeeId ?? 0)
-    setNotes(e.notes); setOpen(true)
+    setNotes(e.notes)
+    setInsuranceExpiry(e.insuranceExpiryDate ?? '')
+    setNextInspection(e.nextInspectionDate ?? '')
+    setOpen(true)
   }
   const save = () => {
     if (!nameAr.trim()) { toast.show('حدد اسم المعدة', 'error'); return }
@@ -82,6 +99,8 @@ export function EquipmentPage() {
       lastServiceReading: editing?.lastServiceReading ?? 0,
       driverEmployeeId: driverEmployeeId || null,
       notes: notes.trim(),
+      insuranceExpiryDate: insuranceExpiry || null,
+      nextInspectionDate: nextInspection || null,
     }
     if (editing) { updateEquipment(editing.id, payload); toast.show('عُدّلت المعدة ✅') }
     else { addEquipment(payload); toast.show('أُضيفت المعدة ✅') }
@@ -122,7 +141,7 @@ export function EquipmentPage() {
     toast.show(`سُجلت خدمة صيانة «${e.nameAr}» عند قراءة ${e.meterReading} — بدأت فترة وقائية جديدة 🔧`)
   }
 
-  /* مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) مع تصنيف (مباشر/غير مباشر/سائق) وتحمل (مالك/مستأجر) */
+  /* مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) مع تصنيف (مباشر/غير مباشر/سائق)، تحمل (مالك/مستأجر)، وربط اختياري بقطعة غيار */
   const [costFor, setCostFor] = useState<Equipment | null>(null)
   const [costKind, setCostKind] = useState<EquipmentCostKind>('fuel')
   const [costAmount, setCostAmount] = useState('')
@@ -132,6 +151,10 @@ export function EquipmentPage() {
   const [costLayer, setCostLayer] = useState<EquipmentCostLayer>('direct')
   const [costBorneBy, setCostBorneBy] = useState<ExpenseBearer>('owner')
   const [costDriverId, setCostDriverId] = useState<number>(0)
+  // ربط اختياري بقطعة غيار (سد فجوة تقرير النشاط #8 — Future #1)
+  const [costPartId, setCostPartId] = useState('')
+  const [costPartQty, setCostPartQty] = useState('1')
+  const costPart = equipmentParts.find((p) => p.id === Number(costPartId))
   const openCostModal = (e: Equipment) => {
     const activeContract = rentalContracts.find((c) => c.equipmentId === e.id && c.status === 'active')
     const defContractId = activeContract?.id ?? 0
@@ -144,6 +167,7 @@ export function EquipmentPage() {
     setCostDriverId(defDriver)
     setCostAmount('')
     setCostDesc('')
+    setCostPartId(''); setCostPartQty('1')
   }
   const saveCost = () => {
     if (!costFor) return
@@ -151,21 +175,56 @@ export function EquipmentPage() {
       const c = addEquipmentCost({
         equipmentId: costFor.id,
         kind: costKind,
-        amountMinor: toMinor(costAmount, cur.decimals),
+        amountMinor: costAmount.trim() ? toMinor(costAmount, cur.decimals) : 0,
         description: costDesc.trim(),
         treasury: costTreasury,
         contractId: costContractId || null,
         costLayer,
         borneBy: costBorneBy,
         driverEmployeeId: costDriverId || null,
+        partId: costPartId ? Number(costPartId) : undefined,
+        partQty: costPartId ? Number(costPartQty) || 0 : undefined,
       })
       toast.show(
         c.borneBy === 'customer'
           ? 'حُمِّل المصروف على ذمة العميل المستأجر (1104) وفي ملف العقد ✅'
           : 'قُيد المصروف على 5105 ودخل ربحية المعدة والعقد ✅'
       )
-      setCostFor(null); setCostAmount(''); setCostDesc('')
+      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostPartId(''); setCostPartQty('1')
     } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* قطع غيار/مستهلكات معدات مبسَّطة (سد فجوة تقرير النشاط #8 — Future #1) */
+  const [partOpen, setPartOpen] = useState(false)
+  const [editingPart, setEditingPart] = useState<EquipmentPart | null>(null)
+  const [partName, setPartName] = useState('')
+  const [partQty, setPartQty] = useState('')
+  const [partCost, setPartCost] = useState('')
+  const [partMinQty, setPartMinQty] = useState('')
+  const openNewPart = () => { setEditingPart(null); setPartName(''); setPartQty(''); setPartCost(''); setPartMinQty(''); setPartOpen(true) }
+  const openEditPart = (p: EquipmentPart) => {
+    setEditingPart(p); setPartName(p.nameAr); setPartQty(String(p.qty))
+    setPartCost(p.unitCostMinor ? formatMinor(p.unitCostMinor, cur, false).replace(/,/g, '') : '')
+    setPartMinQty(p.minQty ? String(p.minQty) : ''); setPartOpen(true)
+  }
+  const savePart = () => {
+    if (!partName.trim()) { toast.show('اسم القطعة مطلوب', 'error'); return }
+    const payload = {
+      nameAr: partName.trim(),
+      qty: Math.max(0, Number(partQty) || 0),
+      unitCostMinor: partCost.trim() ? toMinor(partCost, cur.decimals) : 0,
+      minQty: Math.max(0, Number(partMinQty) || 0),
+      notes: '',
+    }
+    try {
+      if (editingPart) { updateEquipmentPart(editingPart.id, payload); toast.show('عُدّلت القطعة ✅') }
+      else { addEquipmentPart(payload); toast.show('أُضيفت القطعة ✅') }
+      setPartOpen(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const removePart = (p: EquipmentPart) => {
+    try { removeEquipmentPart(p.id); toast.show('حُذفت القطعة') }
+    catch (e) { toast.show((e as Error).message, 'error') }
   }
 
   return (
@@ -186,14 +245,23 @@ export function EquipmentPage() {
           {equipment.map((e) => {
             const svc = serviceStatus(e.lastServiceReading, e.serviceEveryHours, e.meterReading)
             const summary = shiftsSummary(operatorShifts, e.id)
+            // شارة الحالة الصريحة (سد فجوة تقرير النشاط #8 — Immediate #3): مشتقة تلقائياً من عقد نشط/الصيانة المتأخرة
+            const hasActiveContract = rentalContracts.some((c) => c.equipmentId === e.id && c.status === 'active')
+            const status = equipmentStatus({ hasActiveContract, service: svc })
+            const activeContract = hasActiveContract ? rentalContracts.find((c) => c.equipmentId === e.id && c.status === 'active') : undefined
+            const compliance = equipmentComplianceWarnings([e], new Date().toISOString(), 30)
             return (
               <div key={e.id} className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 hover:shadow-md transition-all duration-200 group">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2.5">
                     <div className="w-10 h-10 rounded-xl bg-teal-500/10 text-teal-600 flex items-center justify-center"><Tractor size={18} /></div>
                     <div>
-                      <div className="font-black text-slate-800 dark:text-slate-100">{e.nameAr}</div>
+                      <div className="font-black text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                        {e.nameAr}
+                        <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${EQUIPMENT_STATUS_CLS[status]}`}>{EQUIPMENT_STATUS_LABELS[status]}</span>
+                      </div>
                       {e.code && <div className="text-[11px] text-slate-400 font-mono" dir="ltr">{e.code}</div>}
+                      {activeContract?.siteName && <div className="text-[10.5px] text-slate-400">📍 {activeContract.siteName}</div>}
                     </div>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -201,6 +269,17 @@ export function EquipmentPage() {
                     <button onClick={() => remove(e)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"><Trash2 size={14} /></button>
                   </div>
                 </div>
+
+                {/* سجل امتثال بسيط: تأمين/فحص دوري يقترب أو انتهى (سد فجوة تقرير النشاط #8 — Future #3) */}
+                {compliance.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {compliance.map((c) => (
+                      <div key={c.kind} className={`flex items-center gap-1 text-[10.5px] font-bold ${c.daysLeft < 0 ? 'text-rose-500' : 'text-amber-600'}`}>
+                        <ShieldCheck size={11} /> {c.kind === 'insurance' ? 'تأمين' : 'فحص دوري'} {c.daysLeft < 0 ? `منتهٍ منذ ${-c.daysLeft} يوماً` : `خلال ${c.daysLeft} يوماً`} ({c.dueDate})
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* الأسعار الثلاثة */}
                 <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
@@ -291,6 +370,33 @@ export function EquipmentPage() {
         </div>
       )}
 
+      {/* قطع غيار/مستهلكات معدات مبسَّطة (سد فجوة تقرير النشاط #8 — Future #1): عداد رصيد بسيط لا وحدة مخزون كاملة */}
+      <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2 text-[12.5px] font-black text-slate-600 dark:text-slate-300"><Package size={14} className="text-amber-600" /> قطع غيار ومستهلكات المعدات ({equipmentParts.length})</div>
+          <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={openNewPart}><Plus size={13} className="inline -mt-0.5 me-1" /> قطعة جديدة</Btn>
+        </div>
+        {equipmentParts.length === 0 ? (
+          <div className="px-4 py-6 text-center text-[12px] text-slate-400">لا قطع مسجَّلة — أضِفها هنا لتُخصم تلقائياً عند تسجيل مصروف صيانة/إصلاح بدل الوصف النصي الحر</div>
+        ) : (
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {equipmentParts.map((p) => (
+                <tr key={p.id} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
+                  <td className="px-4 py-2 font-bold">{p.nameAr}</td>
+                  <td className={`px-4 py-2 ${p.minQty > 0 && p.qty <= p.minQty ? 'text-rose-500 font-bold' : 'text-slate-500'}`}>الرصيد: {p.qty}</td>
+                  <td className="px-4 py-2 text-slate-500">{fmtRate(p.unitCostMinor)} / وحدة</td>
+                  <td className="px-4 py-2 text-left whitespace-nowrap">
+                    <button onClick={() => openEditPart(p)} className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all"><Pencil size={13} /></button>
+                    <button onClick={() => removePart(p)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"><Trash2 size={13} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       {/* نافذة معدة جديدة/تعديل */}
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل ${editing.nameAr}` : 'معدة جديدة'} subtitle="بطاقة معدة: أصل يُؤجَّر ويُهلك">
         <div className="space-y-3"><DocSectionHead step="١" title="بيانات المعدة وتكلفتها" hint="المعدة أصل ثابت — إهلاكها مصروف دوري لا تكلفة بيع" />
@@ -336,6 +442,14 @@ export function EquipmentPage() {
                   </option>
                 ))}
               </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="انتهاء التأمين (اختياري)" hint="تنبيه مركزي عند الاقتراب — سد فجوة الامتثال">
+              <input value={insuranceExpiry} onChange={(e) => setInsuranceExpiry(e.target.value)} className={inputCls} dir="ltr" type="date" />
+            </Field>
+            <Field label="الفحص الدوري القادم (اختياري)">
+              <input value={nextInspection} onChange={(e) => setNextInspection(e.target.value)} className={inputCls} dir="ltr" type="date" />
             </Field>
           </div>
           <Field label="ملاحظات">
@@ -403,7 +517,7 @@ export function EquipmentPage() {
       </Modal>
 
       {/* مصروف تشغيل معدة */}
-      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `مصروف تشغيل — ${costFor.nameAr}` : ''} subtitle="مستند مصروف: وقود أو صيانة أو أجور سائق — يُربط بالعقد ويُحدَّد متحمله (المالك أو المستأجر)">
+      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `مصروف تشغيل — ${costFor.nameAr}` : ''} subtitle="مستند مصروف: وقود أو صيانة أو أجور سائق أو قطع غيار — يُربط بالعقد ويُحدَّد متحمله (المالك أو المستأجر)">
         {costFor && (
           <div className="space-y-3"><DocSectionHead step="١" title="نوع المصروف وتصنيفه ومن يتحمله" hint="يمكن ربط المصروف بعقد الإيجار وتحميله على المالك (5105) أو على المستأجر (1104)" />
             <Field label="نوع المصروف">
@@ -427,6 +541,18 @@ export function EquipmentPage() {
                 ))}
               </div>
             </Field>
+            {/* ربط اختياري بقطعة غيار من المستودع المبسَّط (سد فجوة تقرير النشاط #8 — Future #1) */}
+            {(costKind === 'maintenance' || costKind === 'repair') && equipmentParts.length > 0 && (
+              <Field label="قطعة غيار من المستودع (اختياري)" hint="اختيارها يخصم الرصيد تلقائياً ويملأ المبلغ من تكلفة الوحدة">
+                <div className="grid grid-cols-2 gap-2">
+                  <select value={costPartId} onChange={(e) => setCostPartId(e.target.value)} className={inputCls}>
+                    <option value="">— بلا قطعة (وصف نصي فقط) —</option>
+                    {equipmentParts.map((p) => <option key={p.id} value={p.id}>{p.nameAr} (متاح {p.qty})</option>)}
+                  </select>
+                  {costPartId && <input value={costPartQty} onChange={(e) => setCostPartQty(e.target.value)} className={inputCls} dir="ltr" type="number" min={1} max={costPart?.qty} placeholder="الكمية" />}
+                </div>
+              </Field>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="تصنيف التكلفة (للقوائم الربحية)">
                 <select value={costLayer} onChange={(e) => setCostLayer(e.target.value as EquipmentCostLayer)} className={inputCls}>
@@ -488,7 +614,7 @@ export function EquipmentPage() {
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label={`المبلغ (${cur.symbol}) *`}><input value={costAmount} onChange={(e) => setCostAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+              <Field label={`المبلغ (${cur.symbol})${costPartId ? '' : ' *'}`} hint={costPartId ? 'اتركه فارغاً ليُحسب تلقائياً من تكلفة القطعة' : undefined}><input value={costAmount} onChange={(e) => setCostAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
               <Field label="بيان (اختياري)"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="سولار 100 لتر…" /></Field>
             </div>
             <Field label="الدفع من"><TreasuryPicker value={costTreasury} onChange={setCostTreasury} /></Field>
@@ -498,18 +624,44 @@ export function EquipmentPage() {
               ) : (
                 <>📒 القيد: <b>5105 مصروفات تشغيل المعدات</b> مدين / الخزينة دائن — ويُخصم من ربحية «{costFor.nameAr}» والعقد</>
               )}
+              {costPartId ? ' · ورصيد قطعة الغيار ينخفض تلقائياً' : ''}
               {equipmentCosts.filter((c) => c.equipmentId === costFor.id).length > 0 && ` (مصاريف سابقة: ${equipmentCosts.filter((c) => c.equipmentId === costFor.id).length})`}
             </div>
             <DocOutcome>
               {costBorneBy === 'customer' ? (
-                <>الأثر: <b>1104 العملاء</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — يظهر في كشف حساب العميل وملف العقد.</>
+                <>الأثر: <b>1104 العملاء</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — يظهر في كشف حساب العميل وملف العقد{costPartId ? ' · ورصيد قطعة الغيار ينخفض تلقائياً' : ''}.</>
               ) : (
-                <>الأثر: <b>5105 مصروفات تشغيل المعدات</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — ويُخصم من ربحية هذه المعدة والعقد.</>
+                <>الأثر: <b>5105 مصروفات تشغيل المعدات</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — ويُخصم من ربحية هذه المعدة والعقد{costPartId ? ' · ورصيد قطعة الغيار ينخفض تلقائياً' : ''}.</>
               )}
             </DocOutcome>
-            <Btn onClick={saveCost} shortcut="F9" className="w-full" disabled={!costAmount}>قيد المصروف</Btn>
+            <Btn onClick={saveCost} shortcut="F9" className="w-full" disabled={!costAmount && !costPartId}>قيد المصروف</Btn>
           </div>
         )}
+      </Modal>
+
+      {/* نافذة قطعة غيار جديدة/تعديل */}
+      <Modal open={partOpen} onClose={() => setPartOpen(false)} title={editingPart ? `تعديل ${editingPart.nameAr}` : 'قطعة غيار جديدة'} subtitle="عداد رصيد بسيط — يُخصم تلقائياً عند الربط بمصروف صيانة/إصلاح">
+        <div className="space-y-3">
+          <Field label="اسم القطعة *">
+            <input value={partName} onChange={(e) => setPartName(e.target.value)} className={inputCls} placeholder="فلتر زيت، إطار، زيت هيدروليك…" autoFocus />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="الرصيد الحالي">
+              <input value={partQty} onChange={(e) => setPartQty(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} placeholder="0" />
+            </Field>
+            <Field label={`تكلفة الوحدة (${cur.symbol})`}>
+              <input value={partCost} onChange={(e) => setPartCost(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+          </div>
+          <Field label="حد إعادة الطلب (اختياري)">
+            <input value={partMinQty} onChange={(e) => setPartMinQty(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} placeholder="0" />
+          </Field>
+          <DocOutcome>بلا قيد محاسبي مباشر — عداد كمية فقط يُخصم عند تسجيل مصروف صيانة/إصلاح مرتبط بهذه القطعة.</DocOutcome>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setPartOpen(false)}>إلغاء</Btn>
+            <Btn onClick={savePart} shortcut="F9">💾 حفظ</Btn>
+          </div>
+        </div>
       </Modal>
     </div>
   )

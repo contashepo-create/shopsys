@@ -23,6 +23,8 @@ import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/au
 import { hashPin } from '../../core/audit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
+import { markSessionAuthenticated } from '../../data/sessionAuth.ts'
+import { rememberRecentLogin } from '../../data/recentLogins.ts'
 import { desktopDatabaseStorage, isElectronRuntime } from '../../data/desktopBridge.ts'
 import { HardDrive, ShieldAlert, FolderOpen } from 'lucide-react'
 import { PinInput } from '../components/ui.tsx'
@@ -145,6 +147,10 @@ export function FirstRunWizard() {
       const data = useDataStore.getState()
       data.updateOwnerProfile({ nameAr: ownerName.trim(), phone: phone.trim(), email: email.trim() })
       data.setOwnerPin(pinHash)
+      // إنهاء التسجيل = دخول فعلي أول مرة بنفس الرقم السري الذي كتبه للتو
+      // (لا داعي لإعادة سؤاله فوراً) — ويُحفظ اسمه ضمن قائمة «آخر المستخدمين»
+      markSessionAuthenticated()
+      rememberRecentLogin(ownerName.trim(), ownerName.trim())
       completeSetup({
         country, activity, shopName: shopName.trim(), ownerName: ownerName.trim(),
         fiscalYear: { nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd },

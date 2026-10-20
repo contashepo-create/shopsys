@@ -19,17 +19,20 @@ import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, 
 import { matchesSearch, searchRank } from '../../core/search.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
-import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
+import { hasVariantStock, variantLabel, variantKey, resolveVariantBarcode } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
-import { ExpiredStockError } from '../../core/batches.ts'
+import { ExpiredStockError, nearestExpiryByItem } from '../../core/batches.ts'
+import { jewelryBreakdown } from '../../core/jewelry.ts'
+import { emptyRxLine, validateRxLines, doseText, type RxLine } from '../../core/prescription.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { userPrefsKey } from '../../core/userPreferences.ts'
 import { resolveShortcuts } from '../../core/keyboardShortcuts.ts'
-import { isInvoiceFirst } from '../../core/activities.ts'
+import { isInvoiceFirst, getActivity } from '../../core/activities.ts'
+import { calculateInvoiceCommissionMinor } from '../../core/invoiceCommissions.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
-import { maybeZatcaQr } from '../print/zatcaQr.ts'
+import { maybeTaxBarcode } from '../print/taxBarcode.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNavigation, OverlayPortal } from '../components/ui.tsx'
 import { useAnchoredMenu } from '../components/anchoredMenu.ts'
@@ -65,7 +68,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices, employees } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
@@ -96,6 +99,16 @@ export function PosPage() {
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
   const defaultSaleWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => taxPolicy.effectivePercent === 0 ? 0 : effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, effectiveCountryVatPercent)
+  /**
+   * جزء السعر معفى من الضريبة لصنف ذهبي (قيمة المعدن النفيس) — سد فجوة فورية
+   * (النشاط #15: ذهب ومجوهرات): بروتوكول مصلحة الضرائب المصرية مع شعبة الذهب
+   * يفرض 14% على «المصنعية» فقط لا على قيمة الذهب — صفر لأي صنف غير موصوف ذهبياً.
+   */
+  const itemVatExemptPerUnit = (itemId: number): number => {
+    const prof = jewelryProfiles.find((p) => p.itemId === itemId)
+    if (!prof || !gramPrices.updatedAt) return 0
+    return jewelryBreakdown(prof, gramPrices).goldMinor
+  }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
@@ -124,6 +137,17 @@ export function PosPage() {
   const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
+  /** سد فجوة عالمية (صالون/خدمات — إجماع Fresha/Booksy/Vagaro/Zenoti):
+   * عمولة الموظف المنفّذ للخدمة تُحسب وتُستحق من نفس شاشة الكاشير
+   * السريعة لحظة الدفع — لا حصراً عبر الفاتورة المتقدمة كما كانت. */
+  const [commissionEmployeeId, setCommissionEmployeeId] = useState<number | null>(null)
+  const [commissionPercent, setCommissionPercent] = useState('')
+  const showCommissionPicker = getActivity(setup.activityId)?.modules.includes('booking') && employees.some((e) => e.active)
+  const pickCommissionEmployee = (id: number) => {
+    setCommissionEmployeeId(id || null)
+    const emp = employees.find((e) => e.id === id)
+    if (emp?.defaultCommissionPercent) setCommissionPercent(String(emp.defaultCommissionPercent))
+  }
   /* v1.0.12: العميل المختار (نقاط الولاء وكشفه) */
   const selectedCustomer = useMemo(() => (customerId == null ? null : customers.find((x) => x.id === customerId) ?? null), [customerId, customers])
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
@@ -202,6 +226,8 @@ export function PosPage() {
   const searchResults = useMemo(() => filtered.slice(0, 8), [filtered])
   const searchOpen = query.trim().length > 0
   const searchMenuStyle = useAnchoredMenu(searchBoxRef, searchOpen, 420)
+  /** سد فجوة فورية — النشاط #5 (صيدلية): شارة استباقية لأقرب تاريخ انتهاء قبل الإضافة للسلة */
+  const nearestExpiry = useMemo(() => nearestExpiryByItem(batches, new Date().toISOString()), [batches])
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
@@ -216,7 +242,7 @@ export function PosPage() {
       if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${variantLabel(color, size)})`, qty: 1,
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
         discountPercent: 0, soldByWeight: false, variantColor: color, variantSize: size,
       }]
     })
@@ -243,7 +269,7 @@ export function PosPage() {
       }
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr, qty: 1,
-        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
+        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
         discountPercent: 0, soldByWeight: false, serials: [serial],
       }]
     })
@@ -289,7 +315,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr,
         qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
@@ -303,7 +329,7 @@ export function PosPage() {
       if (!it) return l
       const basePrice = getEffectivePrice(it.id, activePriceListId)
       if (unitName === it.baseUnit) {
-        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), unitFactor: undefined, unitLabel: undefined }
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id), unitFactor: undefined, unitLabel: undefined }
       }
       const u = it.extraUnits.find((x) => x.nameAr === unitName)
       if (!u) return l
@@ -311,7 +337,7 @@ export function PosPage() {
         ...l,
         nameAr: `${it.nameAr} (${u.nameAr})`,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: Math.round(itemVatExemptPerUnit(it.id) * u.factor),
         unitFactor: u.factor,
         unitLabel: u.nameAr,
       }
@@ -330,7 +356,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${u.nameAr})`, qty: 1,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: Math.round(itemVatExemptPerUnit(it.id) * u.factor),
         discountPercent: 0, soldByWeight: false, unitFactor: u.factor, unitLabel: u.nameAr,
       }]
     })
@@ -398,6 +424,25 @@ export function PosPage() {
       setQuery('')
       return
     }
+    // باركود تركيبة لون/مقاس مستقل (تطوير مستقبلي ① — نشاط الملابس): يحدد التركيبة
+    // تلقائياً بدل فتح نافذة الاختيار اليدوي، بعد التحقق من توفرها فعلياً فوق ما في السلة
+    const variantMatch = resolveVariantBarcode(q, sellable)
+    if (variantMatch) {
+      const it = sellable.find((x) => x.id === variantMatch.itemId)
+      if (it) {
+        const inCartQty = cart.reduce((s, l) => s + (l.itemId === variantMatch.itemId && (l.variantColor ?? '') === variantMatch.color && (l.variantSize ?? '') === variantMatch.size ? l.qty : 0), 0)
+        const stock = variantStocks.find((v) => v.itemId === variantMatch.itemId && variantKey(v.color, v.size) === variantKey(variantMatch.color, variantMatch.size))
+        const avail = Math.round(((stock?.qty ?? 0) - inCartQty) * 1000) / 1000
+        if (avail > 0) {
+          addVariantToCart(variantMatch.itemId, variantMatch.color, variantMatch.size)
+          setQuery('')
+          return
+        }
+        toast.show(`«${it.nameAr}» ${variantLabel(variantMatch.color, variantMatch.size)}: لا رصيد متاح`, 'error')
+        setQuery('')
+        return
+      }
+    }
     // باركود وحدة أكبر (شريط/علبة — جولة الصيدلية)؟ يضيف السطر بوحدته وسعره
     for (const it of sellable) {
       const u = it.extraUnits.find((x) => x.barcode === q)
@@ -426,6 +471,17 @@ export function PosPage() {
     } catch { return null }
   }, [cart, invoiceDiscount, effectiveCountryVatPercent, setup.taxInclusive])
 
+  // عمولة الموظف المنفّذ: نسبة % من صافي الفاتورة قبل الضريبة (نفس أساس
+  // 'net' في الفاتورة المتقدمة) — بلا موظف مختار أو بنسبة صفر = بلا عمولة
+  const commissionMinor = useMemo(() => {
+    if (!commissionEmployeeId || !totals) return 0
+    const pct = Number(commissionPercent) || 0
+    if (pct <= 0) return 0
+    try {
+      return calculateInvoiceCommissionMinor({ basis: 'net', value: pct, grossMinor: totals.grossMinor, netMinor: totals.netMinor, profitMinor: totals.netMinor - totals.cogsMinor })
+    } catch { return 0 }
+  }, [commissionEmployeeId, commissionPercent, totals])
+
   // عند فتح شاشة الدفع: المبلغ النقدي يتعبأ تلقائياً بالإجمالي (قابل للتعديل — طلب المالك)
   useEffect(() => {
     if (payOpen && totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals))
@@ -442,14 +498,17 @@ export function PosPage() {
   }, [paidCash, totals, cur.decimals])
   const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
 
-  /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
+  /** طباعة إيصال فاتورة (المرحلة 5) — مع الرمز الضريبي عند تفعيل إحدى ميزتي
+      الفاتورة الإلكترونية (زاتكا السعودية أو التحقق المحلي المصري) */
   const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
-    const qrDataUrl = await maybeZatcaQr({
-      featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
+    const qrDataUrl = await maybeTaxBarcode({
+      saFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
+      egFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_eg'),
       printEnabled: einvoice.printZatcaQr,
       sellerName: setup.shopName,
-      vatNumber: einvoice.taxNumber,
+      taxNumber: einvoice.taxNumber,
+      invoiceNumber: sale.invoiceNumber,
       dateIso: sale.date,
       totalMinor: sale.totals.totalMinor,
       taxMinor: sale.totals.taxMinor,
@@ -512,19 +571,51 @@ export function PosPage() {
   const discountApproval = useSupervisorApproval('sales.discount.grant')
   const [discountUnlockedBy, setDiscountUnlockedBy] = useState<string | null>(null)
   const discountLocked = discountApproval.willAskPin && discountUnlockedBy === null
+
+  /* ─── سد فجوة مستقبلية — النشاط #5 (صيدلية): أصناف خاضعة للرقابة/تستلزم روشتة ───
+     قبل إتمام أي بيع يحوي صنفاً من النوعين، نطلب بيانات المريض/الطبيب الواصف
+     مرة واحدة لكل سلة؛ للروشتة نعيد استخدام نفس نموذج core/prescription.ts
+     الجاهز في وحدة العيادة بدل بناء نموذج جديد. */
+  const cartControlledLines = useMemo(() => cart.filter((line) => items.find((it) => it.id === line.itemId)?.isControlled), [cart, items])
+  const cartRxLines = useMemo(() => cart.filter((line) => items.find((it) => it.id === line.itemId)?.requiresPrescription), [cart, items])
+  const needsPharmacyCompliance = cartControlledLines.length > 0 || cartRxLines.length > 0
+  const [pharmacyComplianceOpen, setPharmacyComplianceOpen] = useState(false)
+  const [pharmacyConfirmed, setPharmacyConfirmed] = useState(false)
+  const [pharmacyPatientName, setPharmacyPatientName] = useState('')
+  const [pharmacyPrescriberName, setPharmacyPrescriberName] = useState('')
+  const [pharmacyIdNumber, setPharmacyIdNumber] = useState('')
+  const [pharmacyRxLines, setPharmacyRxLines] = useState<RxLine[]>([])
+  const openPharmacyCompliance = () => {
+    setPharmacyRxLines(cartRxLines.map((line) => ({ ...emptyRxLine(), medication: line.nameAr })))
+    setPharmacyComplianceOpen(true)
+  }
+  const confirmPharmacyCompliance = () => {
+    if (!pharmacyPatientName.trim()) { toast.show('اسم المريض مطلوب', 'error'); return }
+    if (!pharmacyPrescriberName.trim()) { toast.show('اسم الطبيب الواصف مطلوب', 'error'); return }
+    if (cartRxLines.length > 0) {
+      const errors = validateRxLines(pharmacyRxLines)
+      if (errors.length) { toast.show(errors[0], 'error'); return }
+    }
+    setPharmacyConfirmed(true)
+    setPharmacyComplianceOpen(false)
+    const [expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy] = pendingFinishArgs ?? []
+    executeSale(expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy)
+  }
   const unlockDiscount = () => discountApproval.request((approvedBy) => {
     setDiscountUnlockedBy(approvedBy ?? 'المشرف')
     toast.show(`فُتحت الخصومات لهذه السلة — اعتمدها «${approvedBy ?? 'المشرف'}» ✓`)
   })
 
-  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
-    if (!cart.length) return
+  const [pendingFinishArgs, setPendingFinishArgs] = useState<[string?, string?, string?] | null>(null)
+
+  const executeSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     try {
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
       if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,
+        prescription: cartRxLines.length > 0 ? { patientName: pharmacyPatientName, prescriberName: pharmacyPrescriberName, rxLines: pharmacyRxLines } : null,
         // v1.0.12: العميل المختار يُسجل دائماً — كسب نقاط الولاء وكشف حسابه،
         // والقيد يتحدد بالمدفوع فقط (نقدي كامل = خزينة، لا ذمة) فلا أثر محاسبي
         customerId: customerId ?? null,
@@ -540,9 +631,14 @@ export function PosPage() {
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
         ...(selectedTerminal ? { terminalPayment: { terminalId: selectedTerminal.id, providerReference: terminalReference.trim(), ...(terminalCardLast4 ? { cardLast4: terminalCardLast4 } : {}) } } : {}),
+        ...(commissionEmployeeId && commissionMinor > 0 ? { staffCommission: { employeeId: commissionEmployeeId, amountMinor: commissionMinor } } : {}),
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
+      // سد فجوة مستقبلية — النشاط #5 (صيدلية): تسجيل صرف كل صنف خاضع للرقابة في سجل مستقل
+      for (const line of cartControlledLines) {
+        addControlledDispense({ itemId: line.itemId, qty: line.qty, patientName: pharmacyPatientName, prescriberName: pharmacyPrescriberName, idNumber: pharmacyIdNumber, saleId: sale.id })
+      }
       setCart([]); setQtyDrafts({}); setSelectedCartIndex(null)
       setDiscountUnlockedBy(null)
       setInvoiceDiscount(0)
@@ -552,6 +648,10 @@ export function PosPage() {
       setCustomerId(null)
       setPaidCash('')
       setExpiredBlock(null)
+      setPharmacyConfirmed(false)
+      setPharmacyPatientName(''); setPharmacyPrescriberName(''); setPharmacyIdNumber(''); setPharmacyRxLines([])
+      setPendingFinishArgs(null)
+      setCommissionEmployeeId(null); setCommissionPercent('')
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
       if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
@@ -574,6 +674,17 @@ export function PosPage() {
     }
   }
 
+  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
+    if (!cart.length) return
+    // سد فجوة مستقبلية — النشاط #5 (صيدلية): بيع يحوي صنفاً خاضعاً للرقابة أو يستلزم
+    // روشتة لا يتم حتى تُجمع بيانات المريض/الطبيب الواصف مرة واحدة لهذه السلة
+    if (needsPharmacyCompliance && !pharmacyConfirmed) {
+      setPendingFinishArgs([expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy])
+      openPharmacyCompliance()
+      return
+    }
+    executeSale(expiryOverrideBy, creditLimitOverrideBy, priceFloorOverrideBy)
+  }
 
   /* العروض/الباقات (سد فجوة السوق): زر 🎁 يضيف مكونات الباقة كسطور عادية */
 
@@ -703,7 +814,17 @@ export function PosPage() {
                       className={`w-full grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 rounded-lg text-right text-xs ${index === searchIndex ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'hover:bg-emerald-500/10'}`}
                     >
                       <span className="font-mono text-[10px] text-slate-500" dir="ltr">{item.sku || item.barcodes?.[0] || item.id}</span>
-                      <span className="truncate font-bold">{item.nameAr}<span className="mr-2 text-[10px] font-normal text-slate-400">رصيد {item.stockQty}</span></span>
+                      <span className="truncate font-bold">{item.nameAr}<span className="mr-2 text-[10px] font-normal text-slate-400">رصيد {item.stockQty}</span>
+                        {(() => {
+                          const ne = nearestExpiry.get(item.id)
+                          if (!ne) return null
+                          if (ne.daysLeft < 0) return <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-600">منتهٍ</span>
+                          if (ne.daysLeft <= 30) return <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600">⏳ ينتهي خلال {ne.daysLeft} يوم</span>
+                          return null
+                        })()}
+                        {item.isControlled && <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-600">☠️ خاضع للرقابة</span>}
+                        {item.requiresPrescription && <span className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600">📋 روشتة</span>}
+                      </span>
                       <span className="whitespace-nowrap font-black text-emerald-700 dark:text-emerald-300">{fmt(item.priceMinor)}</span>
                     </button>
                   ))}
@@ -883,6 +1004,45 @@ export function PosPage() {
                         ))}
                       </QuickSelect>
                     )}
+                    {/* ضمان ممتد (سد فجوة فورية — النشاط #6: أجهزة كهربائية): بند بيع
+                        اختياري يضاف فوق ضمان الصنف الأساسي — يُثبَّت على القطعة (السيريال)
+                        نفسها وقت البيع؛ ثمنه يُضاف يدوياً لحقل السعر أعلاه. */}
+                    {l.serials && l.serials.length > 0 && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="text-[10px] text-slate-400">🛡️ ضمان ممتد:</span>
+                        <QuickSelect
+                          value={String(l.extendedWarrantyMonths ?? 0)}
+                          onChange={(e) => {
+                            const months = Number(e.target.value)
+                            setCart((current) => current.map((line, index) => (
+                              index === i ? { ...line, extendedWarrantyMonths: months || undefined } : line
+                            )))
+                          }}
+                          className="text-[10px] font-bold rounded-md border border-emerald-200 dark:border-emerald-800 bg-transparent px-1 py-0.5 text-emerald-600 outline-none"
+                          title="أشهر إضافية فوق ضمان الصنف الأساسي — تُثبَّت على هذه القطعة بعينها"
+                        >
+                          <option value="0">بلا</option>
+                          <option value="3">+3 أشهر</option>
+                          <option value="6">+6 أشهر</option>
+                          <option value="12">+12 شهراً</option>
+                          <option value="24">+24 شهراً</option>
+                        </QuickSelect>
+                        {(l.extendedWarrantyMonths ?? 0) > 0 && (
+                          <input
+                            value={l.extendedWarrantyProvider ?? ''}
+                            onChange={(e) => {
+                              const provider = e.target.value
+                              setCart((current) => current.map((line, index) => (
+                                index === i ? { ...line, extendedWarrantyProvider: provider || undefined } : line
+                              )))
+                            }}
+                            placeholder="مزوّد خارجي (اختياري)"
+                            title="شركة تأمين/ضمان طرف ثالث — اتركه فارغاً لضمان ممتد مسجَّل داخلياً فقط"
+                            className="text-[10px] w-28 rounded-md border border-emerald-200 dark:border-emerald-800 bg-transparent px-1 py-0.5 text-emerald-600 outline-none"
+                          />
+                        )}
+                      </div>
+                    )}
                     {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
                     {l.serials && l.serials.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -1001,6 +1161,35 @@ export function PosPage() {
               className="w-16 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
             />
           </div>
+          {showCommissionPicker && (
+            <div className="flex items-center justify-between gap-2 text-[12px] text-slate-500" title="عمولة الموظف المنفّذ للخدمة — تُستحق تلقائياً عند الدفع (مصروف 5117 / مستحق 2116)">
+              <span className="shrink-0">💈 الموظف المنفّذ</span>
+              <select
+                value={commissionEmployeeId ?? ''}
+                onChange={(e) => pickCommissionEmployee(Number(e.target.value) || 0)}
+                className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent outline-none focus:border-brand-400"
+              >
+                <option value="">بلا عمولة</option>
+                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+              </select>
+              {commissionEmployeeId != null && (
+                <input
+                  value={commissionPercent}
+                  onChange={(e) => setCommissionPercent(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="٪"
+                  aria-label="نسبة عمولة الموظف"
+                  className="w-14 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
+                />
+              )}
+            </div>
+          )}
+          {commissionMinor > 0 && (
+            <div className="flex justify-between text-[11.5px] text-sky-600 dark:text-sky-300" title="تُستحق مع ترحيل الفاتورة — مصروف عمولات موظفين">
+              <span>عمولة {employees.find((e) => e.id === commissionEmployeeId)?.nameAr}</span>
+              <span>{fmt(commissionMinor)}</span>
+            </div>
+          )}
           {totals && (
             <>
               {totals.discountMinor > 0 && (
@@ -1185,6 +1374,44 @@ export function PosPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* سد فجوة مستقبلية — النشاط #5 (صيدلية): بيانات المريض/الطبيب الواصف
+          لأصناف خاضعة للرقابة أو تستلزم روشتة — نفس نموذج core/prescription.ts */}
+      <Modal open={pharmacyComplianceOpen} onClose={() => setPharmacyComplianceOpen(false)} title="بيانات الصرف الطبي">
+        <div className="space-y-4">
+          {cartControlledLines.length > 0 && (
+            <div className="p-3 rounded-2xl bg-violet-500/10 border border-violet-500/25 text-[12px] text-violet-700 dark:text-violet-300">
+              ☠️ السلة تحوي صنفاً خاضعاً للرقابة: {cartControlledLines.map((l) => l.nameAr).join('، ')} — يُسجَّل الصرف في سجل مستقل.
+            </div>
+          )}
+          {cartRxLines.length > 0 && (
+            <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/25 text-[12px] text-sky-700 dark:text-sky-300">
+              📋 السلة تحوي صنفاً يستلزم روشتة: {cartRxLines.map((l) => l.nameAr).join('، ')}
+            </div>
+          )}
+          <Field label="اسم المريض"><input value={pharmacyPatientName} onChange={(e) => setPharmacyPatientName(e.target.value)} className={inputCls} /></Field>
+          <Field label="اسم الطبيب الواصف"><input value={pharmacyPrescriberName} onChange={(e) => setPharmacyPrescriberName(e.target.value)} className={inputCls} /></Field>
+          <Field label="رقم إثبات الهوية (اختياري)"><input value={pharmacyIdNumber} onChange={(e) => setPharmacyIdNumber(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          {pharmacyRxLines.length > 0 && (
+            <div className="space-y-2">
+              {pharmacyRxLines.map((line, i) => (
+                <div key={i} className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
+                  <div className="text-[11px] font-bold text-slate-500">{line.medication}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="مرات يومياً"><input type="number" value={line.timesPerDay} onChange={(e) => setPharmacyRxLines((rows) => rows.map((r, idx) => idx === i ? { ...r, timesPerDay: Number(e.target.value) || 0 } : r))} className={inputCls} /></Field>
+                    <Field label="المدة (أيام)"><input type="number" value={line.durationDays} onChange={(e) => setPharmacyRxLines((rows) => rows.map((r, idx) => idx === i ? { ...r, durationDays: Number(e.target.value) || 0 } : r))} className={inputCls} /></Field>
+                  </div>
+                  <div className="text-[10px] text-slate-400">{doseText(line)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 justify-end">
+            <Btn variant="ghost" onClick={() => setPharmacyComplianceOpen(false)}>إلغاء</Btn>
+            <Btn onClick={confirmPharmacyCompliance}>تأكيد وإتمام البيع</Btn>
+          </div>
+        </div>
       </Modal>
 
       {/* اختيار القطعة بسيريالها/IMEI — نمط موبايل شوب (البيع بالقطعة المعيّنة) */}

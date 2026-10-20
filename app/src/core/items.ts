@@ -120,6 +120,28 @@ export interface Item {
    * 0/undefined = بلا حد.
    */
   minSalePriceMinor?: Minor
+  /**
+   * القيمة الغذائية اختيارية — سد فجوة النشاط #2 (تجارة الأعلاف والحبوب):
+   * تُدخَل يدوياً من بطاقة التحليل الغذائي للخامة (لا جهاز مختبر)، وتُستخدم
+   * فقط لحساب تقديري لنسبة البروتين/الطاقة الكلية لخلطة علف مركّبة عبر
+   * `computeRecipeNutrition` في core/recipes.ts — طبقة مبسطة فوق الوصفات،
+   * وليست محرك تركيب بأقل تكلفة (Least-Cost Formulation) كبرامج مثل BESTMIX.
+   */
+  proteinPercent?: number | null
+  /** طاقة الخامة بالكيلو كالوري لكل كيلوجرام — تقديري، إدخال يدوي اختياري */
+  energyKcalPerKg?: number | null
+  /**
+   * صنف خاضع للرقابة (مخدرات/مؤثرات عقلية — سد فجوة النشاط #5 صيدلية):
+   * يستلزم تسجيل بيانات المريض/الطبيب الواصف عند كل عملية صرف في سجل
+   * مستقل (`controlledDispenses`) — مطلب قانوني فعلي في معظم الأسواق.
+   */
+  isControlled?: boolean
+  /**
+   * يستلزم روشتة طبية عند الصرف (سد فجوة النشاط #5 صيدلية): يتيح للكاشير
+   * إرفاق روشتة منظَّمة (نفس نموذج `core/prescription.ts` المستخدم في
+   * وحدة العيادة) على فاتورة البيع قبل الإتمام.
+   */
+  requiresPrescription?: boolean
   isActive: boolean
 }
 
@@ -172,14 +194,28 @@ export const GRADE_LABELS: Record<NonNullable<Item['grade']>, { nameAr: string; 
  * بدائل الدواء بنفس المادة الفعالة (نمط ShelfLifePro): عند نفاد صنف،
  * اقترح الأصناف النشطة المتوفرة التي تشاركه المادة الفعالة — مرتبة بالسعر
  */
+/**
+ * تطبيع المادة الفعالة: توحيد الحالة وإزالة الفراغات الزائدة بين الكلمات،
+ * **وإزالة الفراغ الفاصل بين الرقم ووحدة الجرعة تحديداً** (سد فجوة: "500 mg"
+ * كانت لا تُطابق "500mg" رغم كونهما نفس الجرعة فعلياً) — الحساسية الكاملة
+ * لقيمة الجرعة نفسها تبقى محفوظة (لا تلمس الأرقام ذاتها، فقط الفراغ قبل
+ * الوحدة التالية لها مباشرة).
+ */
+function normalizeIngredient(x: string): string {
+  return x
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/(\d)\s+(?=[a-z%\u0600-\u06FF])/g, '$1')
+}
+
 export function sameIngredientAlternatives(item: Pick<Item, 'id' | 'activeIngredient'>, all: readonly Item[]): Item[] {
-  const ing = (item.activeIngredient ?? '').trim()
+  const ing = normalizeIngredient(item.activeIngredient ?? '')
   if (!ing) return []
-  const norm = (x: string) => x.trim().replace(/\s+/g, ' ')
   return all
     .filter((it) =>
       it.id !== item.id && it.isActive && !it.isService &&
-      norm(it.activeIngredient ?? '') !== '' && norm(it.activeIngredient ?? '') === norm(ing) &&
+      normalizeIngredient(it.activeIngredient ?? '') === ing &&
       (it.stockQty ?? 0) > 0,
     )
     .sort((a, b) => a.priceMinor - b.priceMinor)
@@ -189,11 +225,37 @@ export function normalizePartNumber(raw: string): string {
   return raw.replace(/[\s\-_./]/g, '').toUpperCase()
 }
 
+/**
+ * هل تقع سنة داخل أي نطاق سنوات مكتوب نصاً في هذا الجزء من التوافق؟
+ * (سد فجوة فورية #4 — النشاط #7: قطع غيار) — "2013-2017" يطابق فعلياً
+ * أي سنة مفردة بينهما (مثال: 2015) لا التضمين الحرفي فقط.
+ */
+function yearInAnyWrittenRange(segment: string, year: number): boolean {
+  for (const m of segment.matchAll(/(19|20)\d{2}\s*-\s*(19|20)\d{2}/g)) {
+    const [start, end] = m[0].split('-').map((x) => Number(x.trim()))
+    if (year >= Math.min(start, end) && year <= Math.max(start, end)) return true
+  }
+  return false
+}
+
 export function itemMatchesPartQuery(it: Item, rawQuery: string): boolean {
   const q = rawQuery.trim()
   if (!q) return false
   if (it.nameAr.includes(q) || it.sku === q || it.barcodes.includes(q)) return true
-  if (it.fitment && it.fitment.includes(q)) return true
+  if (it.fitment) {
+    if (it.fitment.includes(q)) return true
+    // سد فجوة فورية #4: استعلام يحوي سنة مفردة (موديل + سنة، أو سنة فقط) يُطابق
+    // أي جزء توافق يذكر اسم الموديل (إن وُجد بالاستعلام) ونطاق سنوات يشملها
+    const yearMatch = q.match(/\b(19|20)\d{2}\b/)
+    if (yearMatch) {
+      const year = Number(yearMatch[0])
+      const remainder = q.replace(yearMatch[0], '').trim()
+      for (const segment of it.fitment.split(/[،,;]/)) {
+        if (remainder && !segment.includes(remainder)) continue
+        if (yearInAnyWrittenRange(segment, year)) return true
+      }
+    }
+  }
   const nq = normalizePartNumber(q)
   if (nq.length < 3) return false
   return (it.oemNumbers ?? []).some((n) => normalizePartNumber(n).includes(nq))

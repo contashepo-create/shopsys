@@ -18,7 +18,7 @@ import type { Minor } from './money.ts'
 
 /* ───────────────────────── 1) الحضور اليومي ───────────────────────── */
 
-export type AttendanceStatus = 'present' | 'absent' | 'leave' | 'permission' | 'holiday' | 'mission'
+export type AttendanceStatus = 'present' | 'absent' | 'leave' | 'permission' | 'holiday' | 'mission' | 'holiday_worked'
 
 export const ATTENDANCE_STATUS_AR: Record<AttendanceStatus, string> = {
   present: 'حاضر',
@@ -27,6 +27,8 @@ export const ATTENDANCE_STATUS_AR: Record<AttendanceStatus, string> = {
   permission: 'إذن خروج',
   holiday: 'عطلة',
   mission: 'مأمورية',
+  /** حضر وعمل في عطلة رسمية (جمعة/عيد/مناسبة وطنية) — يستحق مكافأة يوم إضافي بالسعر الذي يحدده المالك */
+  holiday_worked: 'يوم إضافي',
 }
 
 /** ألوان الحالات في الشبكة الشهرية — نفس لغة ألوان التطبيق */
@@ -37,7 +39,9 @@ export const ATTENDANCE_STATUS_TONE: Record<AttendanceStatus, string> = {
   permission: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
   holiday: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
   mission: 'bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/30',
+  holiday_worked: 'bg-lime-500/15 text-lime-700 dark:text-lime-400 border-lime-500/30',
 }
+
 
 export const ATTENDANCE_STATUSES = Object.keys(ATTENDANCE_STATUS_AR) as AttendanceStatus[]
 
@@ -77,6 +81,16 @@ export interface HrRules {
   overtimeMinMinutes: number
   /** احتساب أجر الإضافي تلقائياً في مسار الرواتب (مطفأ = بنود استرشادية فقط) */
   overtimePaid: boolean
+  /**
+   * مكافأة «يوم إضافي» (طلب المالك): حضور وعمل في عطلة رسمية (جمعة/عيد/مناسبة
+   * وطنية) — تُحتسب بالسعر الذي يحدده المالك: يوم كامل، يوم ونصف، نسبة من
+   * اليومية، أو مبلغ ثابت لكل يوم عطلة يُعمل فيه.
+   */
+  holidayWorkRateMode: 'day' | 'day_and_half' | 'percent' | 'fixed'
+  /** النسبة المئوية من اليومية عند اختيار «نسبة من الراتب» (100 = يومية كاملة) */
+  holidayWorkPercent: number
+  /** مبلغ ثابت لكل يوم عطلة يُعمل فيه عند اختيار «مبلغ معيّن» */
+  holidayWorkFixedMinor: Minor
 }
 
 export const DEFAULT_HR_RULES: HrRules = {
@@ -88,6 +102,9 @@ export const DEFAULT_HR_RULES: HrRules = {
   overtimeMultiplier: 1.5,
   overtimeMinMinutes: 30,
   overtimePaid: false,
+  holidayWorkRateMode: 'day',
+  holidayWorkPercent: 100,
+  holidayWorkFixedMinor: 0,
 }
 
 export function normalizeHrRules(raw: Partial<HrRules> | null | undefined): HrRules {
@@ -105,6 +122,21 @@ export function normalizeHrRules(raw: Partial<HrRules> | null | undefined): HrRu
     overtimeMultiplier: Number.isFinite(raw?.overtimeMultiplier) && (raw?.overtimeMultiplier ?? 0) > 0 ? Number(raw?.overtimeMultiplier) : DEFAULT_HR_RULES.overtimeMultiplier,
     overtimeMinMinutes: clampInt(raw?.overtimeMinMinutes, 0, 240, DEFAULT_HR_RULES.overtimeMinMinutes),
     overtimePaid: raw?.overtimePaid ?? DEFAULT_HR_RULES.overtimePaid,
+    holidayWorkRateMode: raw?.holidayWorkRateMode === 'day_and_half' || raw?.holidayWorkRateMode === 'percent' || raw?.holidayWorkRateMode === 'fixed'
+      ? raw.holidayWorkRateMode : 'day',
+    holidayWorkPercent: clampInt(raw?.holidayWorkPercent, 1, 1000, DEFAULT_HR_RULES.holidayWorkPercent),
+    holidayWorkFixedMinor: Math.max(0, Math.round(raw?.holidayWorkFixedMinor ?? DEFAULT_HR_RULES.holidayWorkFixedMinor)),
+  }
+}
+
+/** مكافأة يوم العطلة الواحد بالوحدة الصغرى — حسب الوضع الذي يختاره المالك */
+export function holidayWorkBonusPerDayMinor(dayRateMinor: Minor, rules: HrRules): Minor {
+  switch (rules.holidayWorkRateMode) {
+    case 'day_and_half': return Math.round(dayRateMinor * 1.5)
+    case 'percent': return Math.round(dayRateMinor * (rules.holidayWorkPercent / 100))
+    case 'fixed': return rules.holidayWorkFixedMinor
+    case 'day':
+    default: return dayRateMinor
   }
 }
 
@@ -137,7 +169,7 @@ export function dayMetrics(
   rules: HrRules,
 ): { lateMinutes: number; earlyLeaveMinutes: number; overtimeMinutes: number; workedMinutes: number } {
   const none = { lateMinutes: 0, earlyLeaveMinutes: 0, overtimeMinutes: 0, workedMinutes: 0 }
-  if (record.status !== 'present' && record.status !== 'mission') return none
+  if (record.status !== 'present' && record.status !== 'mission' && record.status !== 'holiday_worked') return none
   const inMin = parseClock(record.checkIn)
   const outMin = parseClock(record.checkOut)
   if (inMin == null || outMin == null) return none
@@ -457,6 +489,8 @@ export interface MonthlyAttendanceSummary {
   totalEarlyLeaveMinutes: number
   totalOvertimeMinutes: number
   recordedDays: number
+  /** أيام العمل في عطلة رسمية (جمعة/عيد/مناسبة وطنية) — تستحق مكافأة «يوم إضافي» */
+  holidayWorkedDays: number
 }
 
 export function monthlySummary(args: {
@@ -471,6 +505,7 @@ export function monthlySummary(args: {
     presentDays: 0, absentDays: 0, leaveDays: 0, permissionDays: 0, holidayDays: 0, missionDays: 0,
     paidLeaveDays: 0, unpaidLeaveDays: 0,
     totalLateMinutes: 0, totalEarlyLeaveMinutes: 0, totalOvertimeMinutes: 0, recordedDays: 0,
+    holidayWorkedDays: 0,
   }
   for (const record of args.records) {
     if (record.employeeId !== args.employeeId || !record.date.startsWith(args.month)) continue
@@ -481,6 +516,7 @@ export function monthlySummary(args: {
     else if (record.status === 'permission') base.permissionDays += 1
     else if (record.status === 'holiday') base.holidayDays += 1
     else if (record.status === 'mission') base.missionDays += 1
+    else if (record.status === 'holiday_worked') base.holidayWorkedDays += 1
   }
   /* أيام الإجازات المعتمدة المتقاطعة مع الشهر — من سجل الإجازات لا من الشبكة
      (حتى لو لم تُعلَّم في الشبكة اليومية تبقى مستحقة الخصم من الرصيد) */
@@ -514,6 +550,8 @@ export interface AttendancePayrollImpact {
   unpaidLeaveDeductionMinor: Minor
   /** خصم تأخير (كل N دقيقة ⇒ مبلغ) */
   lateDeductionMinor: Minor
+  /** مكافأة أيام «يوم إضافي» (عمل في عطلة رسمية) — بسعر المالك المحدد في holidayWorkRateMode */
+  holidayWorkBonusMinor: Minor
   netAdjustmentMinor: Minor
   notes: string[]
 }
@@ -555,6 +593,7 @@ export function attendancePayrollImpact(args: {
   const overtimeAllowanceMinor = args.rules.overtimePaid
     ? Math.round((overtimeMinutes / 60) * hourRate * args.rules.overtimeMultiplier)
     : 0
+  const holidayWorkBonusMinor = summary.holidayWorkedDays * holidayWorkBonusPerDayMinor(dayRate, args.rules)
 
   const notes: string[] = []
   if (summary.absentDays) notes.push(`غياب ${summary.absentDays} يوم`)
@@ -562,6 +601,7 @@ export function attendancePayrollImpact(args: {
   if (lateMinutes) notes.push(`تأخير ${Math.round(lateMinutes)} دقيقة`)
   if (overtimeMinutes) notes.push(`إضافي ${(overtimeMinutes / 60).toFixed(1)} ساعة`)
   if (summary.paidLeaveDays) notes.push(`إجازة مدفوعة ${summary.paidLeaveDays} يوم`)
+  if (summary.holidayWorkedDays) notes.push(`يوم إضافي (عطلة) ${summary.holidayWorkedDays} يوم`)
 
   return {
     employeeId: args.employeeId,
@@ -571,7 +611,8 @@ export function attendancePayrollImpact(args: {
     absenceDeductionMinor,
     unpaidLeaveDeductionMinor,
     lateDeductionMinor,
-    netAdjustmentMinor: overtimeAllowanceMinor - absenceDeductionMinor - unpaidLeaveDeductionMinor - lateDeductionMinor,
+    holidayWorkBonusMinor,
+    netAdjustmentMinor: overtimeAllowanceMinor + holidayWorkBonusMinor - absenceDeductionMinor - unpaidLeaveDeductionMinor - lateDeductionMinor,
     notes,
   }
 }
@@ -586,10 +627,10 @@ export function attendanceSummaryCsv(rows: {
   lateMinutes: number
   overtimeMinutes: number
 }[]): string {
-  const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'دقائق تأخير', 'ساعات إضافي']
+  const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'يوم إضافي', 'دقائق تأخير', 'ساعات إضافي']
   const body = rows.map((r) => [
     r.code, r.name, r.summary.presentDays, r.summary.absentDays, r.summary.paidLeaveDays, r.summary.unpaidLeaveDays,
-    r.summary.permissionDays, r.summary.holidayDays, r.summary.missionDays,
+    r.summary.permissionDays, r.summary.holidayDays, r.summary.missionDays, r.summary.holidayWorkedDays,
     r.lateMinutes, (r.overtimeMinutes / 60).toFixed(2),
   ].join(','))
   return [head.join(','), ...body].join('\n')

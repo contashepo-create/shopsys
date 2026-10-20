@@ -21,6 +21,7 @@ import { LockScreen } from './ui/LockScreen.tsx'
 import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
+import { isSessionAuthenticated } from './data/sessionAuth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
@@ -63,6 +64,7 @@ const InvoiceDocumentRoute = lazy(() => import('./ui/pages/InvoiceDocumentRoute.
 const ContractingInvoicesPage = lazy(() => import('./ui/pages/ContractingInvoicesPage.tsx').then((module) => ({ default: module.ContractingInvoicesPage })))
 const SaleReturnsPage = lazy(() => import('./ui/pages/SaleReturnsPage.tsx').then((module) => ({ default: module.SaleReturnsPage })))
 const ShiftsPage = lazy(() => import('./ui/pages/ShiftsPage.tsx').then((module) => ({ default: module.ShiftsPage })))
+const DeliveryTasksPage = lazy(() => import('./ui/pages/DeliveryTasksPage.tsx').then((module) => ({ default: module.DeliveryTasksPage })))
 const JournalPage = lazy(() => import('./ui/pages/JournalPage.tsx').then((module) => ({ default: module.JournalPage })))
 const CoaPage = lazy(() => import('./ui/pages/CoaPage.tsx').then((module) => ({ default: module.CoaPage })))
 const TrialBalancePage = lazy(() => import('./ui/pages/TrialBalancePage.tsx').then((module) => ({ default: module.TrialBalancePage })))
@@ -72,6 +74,7 @@ const PaymentTerminalsPage = lazy(() => import('./ui/pages/PaymentTerminalsPage.
 const ChequesPage = lazy(() => import('./ui/pages/ChequesPage.tsx').then((module) => ({ default: module.ChequesPage })))
 const EinvoicePage = lazy(() => import('./ui/pages/EinvoicePage.tsx').then((module) => ({ default: module.EinvoicePage })))
 const GeneralSettingsPage = lazy(() => import('./ui/pages/GeneralSettingsPage.tsx').then((module) => ({ default: module.GeneralSettingsPage })))
+const CompanyProfilePage = lazy(() => import('./ui/pages/CompanyProfilePage.tsx').then((module) => ({ default: module.CompanyProfilePage })))
 const LanSettingsPage = lazy(() => import('./ui/pages/LanSettingsPage.tsx').then((module) => ({ default: module.LanSettingsPage })))
 const CostCentersPage = lazy(() => import('./ui/pages/CostCentersPage.tsx').then((module) => ({ default: module.CostCentersPage })))
 const PrintSettingsPage = lazy(() => import('./ui/pages/PrintSettingsPage.tsx').then((module) => ({ default: module.PrintSettingsPage })))
@@ -184,7 +187,9 @@ function Shell() {
   // بوابة الدخول + إصلاح باج «إجبار تغيير الرقم أول دخول»: login() كان يرفع loggedOut
   // فتختفي شاشة الدخول قبل ظهور مودال التغيير الإجباري — الآن من عليه mustChangePin
   // يبقى محتجزاً في LoginScreen (بمودالها الإجباري) حتى يعيّن رقمه الخاص
-  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || activeUser?.mustChangePin)) {
+  // + جلسة جديدة (إغلاق التطبيق فعلياً وإعادة فتحه) تُفرض من جديد دوماً حتى لو لم
+  // يُسجَّل خروج صريح — عبر isSessionAuthenticated المحصور بعمر النافذة (طلب المالك)
+  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || !isSessionAuthenticated() || activeUser?.mustChangePin)) {
     return <LoginScreen />
   }
   // ─── حراسة الوحدات (سد ثغرة الرابط المباشر): شاشة وحدة غير مفعلة للنشاط ───
@@ -229,6 +234,7 @@ function Shell() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />
         <Route path="/settings/general" element={<GeneralSettingsPage />} />
+        <Route path="/settings/company" element={<CompanyProfilePage />} />
         <Route path="/settings/lan" element={<LanSettingsPage />} />
         <Route path="/settings/cost-centers" element={<CostCentersPage />} />
         <Route path="/inventory/items" element={<ItemsPage />} />
@@ -266,6 +272,7 @@ function Shell() {
     <Route path="/hr/:tab" element={<HrPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
+        <Route path="/sales/delivery-tasks" element={<DeliveryTasksPage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />

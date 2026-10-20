@@ -63,6 +63,17 @@ interface SetupState {
   email: string
   city: string
   street: string
+  /**
+   * بيانات المنشأة الرسمية الإضافية (طلب المالك — صفحة «بيانات المنشأة» الموحّدة):
+   * كلها اختيارية ولا تمنع التشغيل، لكنها تظهر في المستندات الرسمية عند توفرها.
+   * الرقم الضريبي يبقى حقلاً واحداً في إعدادات الفاتورة الإلكترونية (einvoice.taxNumber)
+   * — صفحة بيانات المنشأة تحرّره مباشرة فلا يتكرر التخزين في مكانين.
+   */
+  commercialRegister?: string // رقم السجل التجاري
+  poBox?: string // صندوق البريد
+  postalCode?: string // الرمز البريدي
+  buildingNo?: string // رقم المبنى (العنوان الوطني)
+  website?: string // الموقع الإلكتروني
   /** تخصص الطبيب لنشاط العيادة (يختاره/يكتبه المالك في معالج أول تشغيل — لا يُفرض «أسنان») */
   doctorSpecialty: string
   /** v1.0.7: آخر تغيير نشاط بمفتاح الدعم — التقييد 30 يوماً بين تغييرين */
@@ -77,6 +88,12 @@ interface SetupState {
    * من إعادة إضافة وحدة أطفأها المالك بنفسه بعد التحديث.
    */
   coreModulesMigratedAt?: string | null
+  /**
+   * عتبة التحذير الاستباقي من حد الائتمان (سد فجوة النشاط #2: تجارة الأعلاف
+   * والحبوب) — كانت نسبة 85% ثابتة في الكود؛ الآن قابلة للتخصيص بالإعدادات.
+   * undefined/null = الافتراضي 85.
+   */
+  creditWarningThresholdPercent?: number | null
 }
 
 /** سياق الفرع النشط الذي يمرره مخزن البيانات إلى إعدادات التطبيق العامة. */
@@ -108,6 +125,10 @@ export interface InvoiceColumnPrefs {
   tax: boolean
 }
 
+/* عمود الضريبة مخفي افتراضياً (قرار المالك v1.0.3 ④) ويُعاد من «تخصيص الحقول».
+   خانة الضريبة المستقلة لكل بند تعيش داخل هذا العمود نفسه؛ إخفاؤه افتراضياً
+   لا يمنع الحساب التلقائي من نسبة الإعدادات — فقط يُخفي إمكانية استثناء بند
+   بعينه حتى يفتحها من يحتاجها عبر «تخصيص الحقول». */
 export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: false }
 
 /** أسماء الأعمدة كما تظهر في قائمة «تخصيص الحقول» */
@@ -151,6 +172,15 @@ interface AppState {
   /** تفعيل/إلغاء وحدة عمل من الإعدادات (طلب المالك: الوحدات حسب النشاط وقابلة للتبديل) */
   toggleModule: (m: BusinessModule) => void
   resetSetup: () => void
+  /**
+   * صفحة «بيانات المنشأة» الموحّدة (طلب المالك): تحديث حر لهوية المنشأة
+   * وبيانات التواصل والعنوان والسجل التجاري بعد الإعداد الأول — كانت تُكتب
+   * مرة واحدة فقط بالمعالج بلا أي شاشة لاحقة لتعديلها.
+   */
+  updateCompanyProfile: (patch: Partial<Pick<SetupState,
+    'shopName' | 'ownerName' | 'phone' | 'email' | 'city' | 'street' |
+    'commercialRegister' | 'poBox' | 'postalCode' | 'buildingNo' | 'website'
+  >>) => void
   receipt: ReceiptSettings
   baseReceipt: ReceiptSettings
   /** §102 (تعدد الطابعات): مسار لكل نسخة مطبوعة — اسم الطابعة + طباعة آلية */
@@ -414,6 +444,7 @@ const DEFAULT_SETUP_STATE: SetupState = {
   requireOpenShiftForSales: true,
   defaultWarehouseId: null,
   phone: '', email: '', city: '', street: '',
+  commercialRegister: '', poBox: '', postalCode: '', buildingNo: '', website: '',
   doctorSpecialty: '',
   lastActivityChangeAt: null,
   activityKeyHistory: [],
@@ -636,6 +667,7 @@ export const useAppStore = create<AppState>()(
       reopenFiscalYear: (id) =>
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'open' as const } : y)) })),
       setAccountingMode: (m) => set((s) => companySetupPatch(s, { accountingMode: m })),
+      updateCompanyProfile: (patch) => set((s) => companySetupPatch(s, patch)),
       toggleModule: (m) =>
         /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له.
            حارس الترخيص: لا إظهار لوحدة خارج الممنوح (افتراضيات النشاط + extraModules

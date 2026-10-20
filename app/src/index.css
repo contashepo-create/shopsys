@@ -905,6 +905,23 @@ select { line-height: 1.25rem; }
 .app-window.is-maximized[data-window-kind$="-invoice"] > .app-window-bar { display: none; }
 .app-window.is-maximized[data-window-kind$="-invoice"] > .app-window-body { overflow: hidden; background: var(--doc-surface); }
 .app-window.is-dragging { user-select: none; }
+/* النافذة المصغَّرة تبقى في الشجرة (تحافظ على حالتها الداخلية كاملة — راجع
+   WindowHost.tsx) وتُخفى بصرياً فقط؛ لا display:none حتى لا يُعاد ضبط
+   تمرير الحاويات الداخلية، بل إخراجها عن الشاشة مع تعطيل التفاعل والقراءة
+   الصوتية لها. */
+.app-window[data-window-mode="minimized"] {
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  animation: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
 /* تمييز النافذة النشطة كما في أنظمة سطح المكتب: الظل والحدّ أعمق، والخاملة
    تهدأ قليلاً فيعرف المستخدم أين هو التركيز دون أن تختفي خلفه. */
 .app-window.is-active {
@@ -1303,6 +1320,13 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 /* خانة الوحدة ورقاقة الضريبة وأدوات السطر — أعمدة المرجع الثلاثة الأخيرة */
 .invoice-doc .invoice-lines-table .unit-cell { color: var(--doc-faint); font-size: .62rem; font-weight: 700; text-align: center; }
 .invoice-doc-taxchip { display: inline-block; border-radius: .3rem; background: var(--doc-band); padding: .02rem .3rem; color: var(--doc-muted); font-family: ui-monospace, monospace; font-size: .55rem; font-weight: 700; white-space: nowrap; }
+/* خانة ضريبة مستقلة لكل بند (طلب المالك): باهتة ما لم يكن السطر أو الخانة
+   نفسها تحت التركيز/المرور، فيعرف المستخدم أنها عنصر تفاعلي لا مجرد علامة
+   ثابتة — وتعود باهتة فور ابتعاد المؤشر أو التركيز عنها. */
+.invoice-line-taxcheck { display: inline-flex; align-items: center; gap: .25rem; cursor: pointer; opacity: .35; transition: opacity .15s ease; }
+.invoice-line-taxcheck:hover, .invoice-line-taxcheck:focus-within { opacity: 1; }
+tr:hover .invoice-line-taxcheck, tr:focus-within .invoice-line-taxcheck { opacity: 1; }
+.invoice-line-taxcheck input[type="checkbox"] { accent-color: #059669; }
 .invoice-doc-rowtools { display: flex; align-items: center; justify-content: center; gap: .15rem; }
 .invoice-doc-rowtools > button { display: grid; width: 1.3rem; height: 1.3rem; place-items: center; border-radius: .3rem; color: var(--doc-faint); }
 .invoice-doc-rowtools > button:hover { background: var(--doc-tint-strong); color: var(--doc-accent); }

@@ -159,6 +159,7 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
       }}
       role="dialog"
       aria-label={win.title}
+      aria-hidden={win.mode === 'minimized' || undefined}
     >
       <header className="app-window-bar" onPointerDown={startDrag} onDoubleClick={() => toggleMaximizeWindow(win.id)}>
         <span className="app-window-grip" aria-hidden="true"><GripVertical size={14} /></span>

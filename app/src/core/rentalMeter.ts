@@ -258,6 +258,59 @@ export function serviceStatus(
 }
 
 
+/**
+ * حالة المعدة الظاهرة (سد فجوة تقرير النشاط #8 — Immediate #3): بدل الاستنتاج
+ * الضمني السابق (مجرد عدّ العقود)، شارة صريحة مُشتقة تلقائياً من أحداث
+ * فتح/إقفال العقد (عقد نشط ⇒ مؤجَّرة) ومن حالة الصيانة الوقائية الموجودة
+ * فعلاً (serviceStatus): صيانة متأخرة ولا عقد نشط ⇒ ينبغي سحبها للصيانة قبل
+ * تأجيرها مجدداً. لا حقل مخزَّن يمكن أن يَختل تزامنه — دالة خالصة محسوبة.
+ */
+export type EquipmentStatus = 'rented' | 'under_maintenance' | 'available'
+
+export const EQUIPMENT_STATUS_LABELS: Record<EquipmentStatus, string> = {
+  rented: 'مؤجَّرة الآن',
+  under_maintenance: 'صيانة متأخرة',
+  available: 'متاحة',
+}
+
+export function equipmentStatus(args: { hasActiveContract: boolean; service: ServiceStatus | null }): EquipmentStatus {
+  if (args.hasActiveContract) return 'rented'
+  if (args.service?.overdue) return 'under_maintenance'
+  return 'available'
+}
+
+/* ─── سجل الامتثال البسيط للمعدة (سد فجوة تقرير النشاط #8 — Future #3) ─── */
+
+export interface EquipmentComplianceWarning {
+  equipmentId: number
+  equipmentName: string
+  kind: 'insurance' | 'inspection'
+  dueDate: string // YYYY-MM-DD
+  daysLeft: number // سالب = منتهي فعلاً
+}
+
+/**
+ * تنبيهات تأمين/فحص دوري على وشك الانتهاء أو منتهية بالفعل — نفس نمط
+ * الصيانة الوقائية في serviceStatus أعلاه، بلا أي تكامل GPS/RFID حقيقي.
+ */
+export function equipmentComplianceWarnings(
+  equipment: readonly { id: number; nameAr: string; insuranceExpiryDate?: string | null; nextInspectionDate?: string | null }[],
+  todayIso: string,
+  warnDays = 30,
+): EquipmentComplianceWarning[] {
+  const today = todayIso.slice(0, 10)
+  const todayMs = Date.parse(`${today}T00:00:00Z`)
+  const out: EquipmentComplianceWarning[] = []
+  for (const e of equipment) {
+    for (const [kind, date] of [['insurance', e.insuranceExpiryDate], ['inspection', e.nextInspectionDate]] as const) {
+      if (!date) continue
+      const daysLeft = Math.round((Date.parse(`${date}T00:00:00Z`) - todayMs) / 86_400_000)
+      if (daysLeft <= warnDays) out.push({ equipmentId: e.id, equipmentName: e.nameAr, kind, dueDate: date, daysLeft })
+    }
+  }
+  return out.sort((a, b) => a.daysLeft - b.daysLeft)
+}
+
 /* ─── تكاليف تشغيل المعدة وربحيتها (سد فجوة Point of Rental/HCSS) ─── */
 
 export type EquipmentCostKind = 'fuel' | 'maintenance' | 'repair' | 'operator' | 'other'

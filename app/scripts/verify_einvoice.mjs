@@ -7,8 +7,10 @@ import {
   validateZatcaFields, tlvBytes, buildZatcaQr, decodeZatcaQr,
   bytesToBase64, base64ToBytes,
   validateEgInvoice, buildEgInvoiceDocument,
+  validateEgReceiptBarcodeFields, buildEgReceiptBarcodeText,
   DEFAULT_EINVOICE_SETTINGS,
 } from '../src/core/einvoice.ts'
+import { zatcaQrPolicy, egTaxBarcodePolicy } from '../src/core/invoiceEdit.ts'
 
 let pass = 0, fail = 0
 const ok = (cond, name) => { if (cond) { pass++ } else { fail++; console.error(`❌ ${name}`) } }
@@ -117,6 +119,25 @@ throws(() => buildEgInvoiceDocument({ ...egInput, issuerTaxNumber: '12' }), 'ر�
 throws(() => buildEgInvoiceDocument({ ...egInput, lines: [] }), 'بلا بنود يرمي')
 throws(() => buildEgInvoiceDocument({ ...egInput, lines: [{ ...egInput.lines[0], itemCode: '' }] }), 'بند بلا كود يرمي')
 ok(validateEgInvoice({ ...egInput, receiverTaxNumber: 'abc' }).length === 1, 'رقم مستلم فاسد يُكشف')
+
+/* ─── مصر: رمز التحقق المحلي على الإيصال (بلاغ المالك: الباركود الضريبي
+   لا يظهر أبداً في مصر — المفتاح لا يعيش إلا داخل قسم الفاتورة الإلكترونية) ─── */
+const egBarcodeFields = {
+  sellerName: 'محل تَحَكَّم', taxNumber: '123456789', invoiceNumber: 'INV-0042',
+  dateIso: '2026-10-20T12:00:00Z', totalMinor: 115000, decimals: 2,
+}
+ok(validateEgReceiptBarcodeFields(egBarcodeFields).length === 0, 'حقول رمز مصر سليمة')
+const egText = buildEgReceiptBarcodeText(egBarcodeFields)
+ok(egText === 'EGTAX1|123456789|INV-0042|2026-10-20T12:00:00|1150.00', 'نص رمز التحقق المصري بالصيغة الصحيحة')
+throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, taxNumber: '123' }), 'رقم ضريبي مصري قصير يرمي')
+throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, invoiceNumber: '' }), 'رقم فاتورة فارغ يرمي')
+ok(validateEgReceiptBarcodeFields({ ...egBarcodeFields, sellerName: ' ' }).length === 1, 'اسم بائع فارغ يُكشف')
+
+/* سياسة باركود مصر: ميزة + مفتاح طباعة فقط — بلا اشتراط اتصال (خلافاً لزاتكا) */
+ok(egTaxBarcodePolicy({ featureActive: true, printEnabled: true }).printQr === true, 'مصر: كل الشروط ⇒ يُطبع')
+ok(egTaxBarcodePolicy({ featureActive: false, printEnabled: true }).printQr === false, 'مصر: ميزة موقوفة ⇒ لا رمز')
+ok(egTaxBarcodePolicy({ featureActive: true, printEnabled: false }).printQr === false, 'مصر: خيار الطباعة موقوف ⇒ لا رمز')
+ok(zatcaQrPolicy({ featureActive: true, online: true, printEnabled: true }).printQr === true, 'السعودية: لم تتأثر سياستها بإضافة مصر')
 
 /* ─── الإعدادات الافتراضية ─── */
 ok(DEFAULT_EINVOICE_SETTINGS.taxNumber === '' && DEFAULT_EINVOICE_SETTINGS.printZatcaQr === true, 'الافتراضيات سليمة')

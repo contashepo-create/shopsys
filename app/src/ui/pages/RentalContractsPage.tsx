@@ -6,8 +6,9 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * يُعترف به إيراداً. تقرير بالفترات + التأمينات المحتجزة.
  */
 import { useMemo, useState } from 'react'
-import { Plus, FileSpreadsheet, BookOpenText, LockKeyhole, TrendingUp, Printer, ReceiptText, FolderKanban, Fuel } from 'lucide-react'
+import { Plus, FileSpreadsheet, BookOpenText, LockKeyhole, TrendingUp, Printer, ReceiptText, CalendarClock, FolderKanban, Fuel } from 'lucide-react'
 import { useDataStore, type RentalContract } from '../../data/repo.ts'
+import { SignaturePad } from '../components/SignaturePad.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -41,6 +42,7 @@ export function RentalContractsPage() {
     rentalContracts, rentalInvoices, equipment, equipmentCosts, employees, customers, journal,
     paymentTerminals, paymentTerminalTransactions,
     openRental, issueRentalInvoice, addEquipmentCost, closeRental, refundRental, getCustomerBalance,
+    setRentalSignature, createInstallmentPlan,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -199,6 +201,9 @@ export function RentalContractsPage() {
   // ترقية القرار 25: نوع العقد الزمني + قراءة عدّاد التسليم للساعي
   const [rateType, setRateType] = useState<RateType>('daily')
   const [startReading, setStartReading] = useState('')
+  // توثيق حالة المعدة عند التسليم وموقعها (سد فجوة تقرير النشاط #8 — Immediate #4 / Future #2)
+  const [deliveryConditionNote, setDeliveryConditionNote] = useState('')
+  const [siteName, setSiteName] = useState('')
 
   /* ─── إصدار فاتورة دورية لعقد ─── */
   const [invForContract, setInvForContract] = useState<RentalContract | null>(null)
@@ -264,7 +269,7 @@ export function RentalContractsPage() {
     setDays('1')
     setDailyRate(''); setDeposit(''); setPayment('cash'); setPaidRent(''); setWithVat(false); setNotes('')
     setTreasury('1101'); setTerminalPayment({ terminalId: '', providerReference: '', cardLast4: '' })
-    setRateType('daily'); setStartReading(''); setOpen(true)
+    setRateType('daily'); setStartReading(''); setDeliveryConditionNote(''); setSiteName(''); setOpen(true)
   }
   /** سعر الوحدة من سجل المعدة حسب نوع العقد */
   const rateFor = (eq: (typeof equipment)[number] | undefined, rt: RateType) => {
@@ -319,6 +324,8 @@ export function RentalContractsPage() {
         treasury: terminal?.settlementAccountCode ?? treasury,
         terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+        deliveryConditionNote: deliveryConditionNote.trim() || undefined,
+        siteName: siteName.trim() || undefined,
         billingMode,
         withTax: withVat,
         driverEmployeeId: driverEmployeeId || null,
@@ -342,6 +349,7 @@ export function RentalContractsPage() {
   const [endReading, setEndReading] = useState('')
   const [endDate, setEndDate] = useState('')
   const [closeTreasury, setCloseTreasury] = useState('1101')
+  const [returnConditionNote, setReturnConditionNote] = useState('')
   const doClose = () => {
     if (!closing) return
     try {
@@ -351,11 +359,11 @@ export function RentalContractsPage() {
           : endDate
             ? { endDate }
             : undefined
-      const c = closeRental(closing.id, toM(deduct), usage, closeTreasury)
+      const c = closeRental(closing.id, toM(deduct), usage, closeTreasury, returnConditionNote.trim() || undefined)
       const refund = c.totals.depositMinor - c.deductMinor
       const extraMsg = c.extraMinor > 0 ? ` — تجاوز استخدام ${fmt(c.extraMinor)} ${cur.symbol} بقيد منفصل` : ''
       toast.show(`أُقفل العقد ${c.contractNumber}${c.totals.depositMinor > 0 ? ` — يُرَدّ للعميل ${fmt(refund)} ${cur.symbol}` : ''}${extraMsg} ✅`)
-      setClosing(null); setDeduct(''); setEndReading(''); setEndDate('')
+      setClosing(null); setDeduct(''); setEndReading(''); setEndDate(''); setReturnConditionNote('')
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
@@ -383,6 +391,38 @@ export function RentalContractsPage() {
         (viewing.refunds ?? []).some((r) => r.journalEntryId === e.id),
     )
   }, [viewing, viewInvoices, viewCosts, journal])
+  // توقيع رقمي عند التسليم/الإرجاع (سد فجوة تقرير النشاط #8 — Immediate #4)
+  const [signing, setSigning] = useState<'delivery' | 'return' | null>(null)
+
+  /* ─── جدولة المتبقي الآجل كأقساط مباشرة من العقد (سد فجوة تقرير النشاط #8 — Immediate #2) ─── */
+  const [installmentFor, setInstallmentFor] = useState<RentalContract | null>(null)
+  const [insCount, setInsCount] = useState('3')
+  const [insIntervalMonths, setInsIntervalMonths] = useState('1')
+  const [insFirstDue, setInsFirstDue] = useState('')
+  const [insTreasury, setInsTreasury] = useState('1101')
+  const openInstallmentFor = (c: RentalContract) => {
+    setInstallmentFor(c); setInsCount('3'); setInsIntervalMonths('1')
+    const d = new Date(); d.setMonth(d.getMonth() + 1)
+    setInsFirstDue(d.toISOString().slice(0, 10)); setInsTreasury('1101'); setSigning(null)
+  }
+  const saveInstallment = () => {
+    if (!installmentFor || installmentFor.customerId == null) return
+    try {
+      const plan = createInstallmentPlan({
+        customerId: installmentFor.customerId,
+        saleId: null,
+        totalMinor: installmentFor.totals.collectCreditMinor,
+        downPaymentMinor: 0,
+        count: Math.max(1, Number(insCount) || 1),
+        intervalMonths: Math.max(1, Number(insIntervalMonths) || 1),
+        firstDueDate: insFirstDue,
+        treasury: insTreasury,
+        notes: `جدولة إيجار العقد ${installmentFor.contractNumber} — ${installmentFor.equipmentName}`,
+      })
+      toast.show(`أُنشئت خطة الأقساط ${plan.planNumber} من عقد الإيجار ✅`)
+      setInstallmentFor(null)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
 
   /* ─── تقرير ─── */
   const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
@@ -483,7 +523,7 @@ export function RentalContractsPage() {
                         <button onClick={() => printInvoice(c)} title="فاتورة إيجار للعميل (يسدّد منها)" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all duration-200 hover:scale-110"><ReceiptText size={15} /></button>
                         <button onClick={() => printContract(c)} title="طباعة العقد A4" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110"><Printer size={15} /></button>
                         {c.status === 'active' && (
-                          <button onClick={() => { setClosing(c); setDeduct('') }} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all duration-200 hover:scale-110" title="إقفال وردّ التأمين"><LockKeyhole size={15} /></button>
+                          <button onClick={() => { setClosing(c); setDeduct(''); setReturnConditionNote('') }} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all duration-200 hover:scale-110" title="إقفال وردّ التأمين"><LockKeyhole size={15} /></button>
                         )}
                       </td>
                     </tr>
@@ -725,8 +765,16 @@ export function RentalContractsPage() {
             </div>
           )}
 
-          <Field label="ملاحظات وشروط إضافية">
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="موقع التسليم (اختياري)" hint="اسم موقع المشروع/العميل — لا يحتاج GPS/RFID">
+              <input value={siteName} onChange={(e) => setSiteName(e.target.value)} className={inputCls} placeholder="موقع مشروع كذا…" />
+            </Field>
+            <Field label="ملاحظات وشروط إضافية">
+              <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
+            </Field>
+          </div>
+          <Field label="حالة المعدة عند التسليم (اختياري)" hint="يحمي الطرفين من نزاع حول حالتها الأصلية — وقّعها لاحقاً من شاشة عرض العقد">
+            <input value={deliveryConditionNote} onChange={(e) => setDeliveryConditionNote(e.target.value)} className={inputCls} placeholder="خدوش بسيطة في الهيكل، الإطارات بحالة جيدة…" />
           </Field>
 
           <DocOutcome>
@@ -881,10 +929,42 @@ export function RentalContractsPage() {
               <p className="text-[12.5px] text-slate-400">لا تأمين على هذا العقد — سيُقفل بلا قيد إضافي.</p>
             )}
             <Field label="خزينة التسوية (ردّ التأمين / تحصيل التجاوز)"><TreasuryPicker value={closeTreasury} onChange={setCloseTreasury} compact /></Field>
+            <Field label="حالة المعدة عند الإرجاع (اختياري)" hint="يُقارَن بملاحظة التسليم عند أي نزاع">
+              <input value={returnConditionNote} onChange={(e) => setReturnConditionNote(e.target.value)} className={inputCls} placeholder="أُعيدت بحالة جيدة، خدش جديد في الباب…" />
+            </Field>
             <DocOutcome>الأثر: <b>2103 تأمينات مستردة</b> مديناً بقيمة التأمين · <b>الخزينة</b> دائناً بالمردود للعميل · وما يُخصم مقابل تلفيات أو تأخير يُقيَّد إيراداً على <b>4104 إيراد التأجير</b> — ولا يبقى تأمين معلق بعد الإقفال.</DocOutcome>
               <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setClosing(null)}>إلغاء</Btn>
               <Btn onClick={doClose} shortcut="F9">إقفال العقد</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* جدولة كأقساط من عقد الإيجار */}
+      <Modal open={!!installmentFor} onClose={() => setInstallmentFor(null)} title={installmentFor ? `جدولة كأقساط — ${installmentFor.contractNumber}` : ''} subtitle="يملأ العميل والمبلغ تلقائياً من العقد — لا إعادة إدخال يدوي">
+        {installmentFor && (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12.5px] flex items-center justify-between">
+              <span className="text-slate-500">المبلغ المراد جدولته (المتبقي الآجل)</span>
+              <b className="text-amber-600">{fmt(installmentFor.totals.collectCreditMinor)} {cur.symbol}</b>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="عدد الأقساط">
+                <input value={insCount} onChange={(e) => setInsCount(e.target.value)} className={inputCls} dir="ltr" type="number" min={1} />
+              </Field>
+              <Field label="كل (أشهر)">
+                <input value={insIntervalMonths} onChange={(e) => setInsIntervalMonths(e.target.value)} className={inputCls} dir="ltr" type="number" min={1} />
+              </Field>
+            </div>
+            <Field label="أول استحقاق">
+              <input value={insFirstDue} onChange={(e) => setInsFirstDue(e.target.value)} className={inputCls} dir="ltr" type="date" />
+            </Field>
+            <Field label="خزينة أي تحصيل مقدم (لا يوجد هنا)"><TreasuryPicker value={insTreasury} onChange={setInsTreasury} compact /></Field>
+            <DocOutcome>بلا قيد جديد — الذمة مُثبَتة أصلاً بقيد فتح العقد؛ الخطة تُجدوِل سدادها فقط.</DocOutcome>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setInstallmentFor(null)}>إلغاء</Btn>
+              <Btn onClick={saveInstallment} shortcut="F9" disabled={!insFirstDue}>💾 إنشاء الخطة</Btn>
             </div>
           </div>
         )}
@@ -921,6 +1001,7 @@ export function RentalContractsPage() {
                   <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={() => printInvoice(viewing, 'a4', 'with_tax')}><ReceiptText size={14} /> فاتورة بالضريبة</Btn>
                   <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={() => printInvoice(viewing, 'a4', 'without_tax')}><ReceiptText size={14} /> فاتورة بدون ضريبة</Btn>
                   <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={() => printContract(viewing)}><BookOpenText size={14} /> طباعة العقد A4</Btn>
+
                 </div>
               </div>
 
@@ -937,6 +1018,43 @@ export function RentalContractsPage() {
                 <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">المدة × سعر ال{RATE_TYPE_LABELS[viewing.rateType ?? 'daily'].unitAr}</div><b>{viewing.days} × {fmt(viewing.dailyRateMinor)}</b></div>
                 <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">الحالة</div><b>{viewing.status === 'active' ? 'نشط' : `مُقفل${viewing.deductMinor > 0 ? ` (خصم ${fmt(viewing.deductMinor)})` : ''}`}</b></div>
               </div>
+
+              {/* توثيق حالة المعدة وتوقيع رقمي عند التسليم/الإرجاع (سد فجوة تقرير النشاط #8 — Immediate #4) */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-3">
+                <div className="text-[10px] text-slate-400 font-bold">✍️ توثيق حالة المعدة وتوقيع العميل</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <div className="text-[10.5px] text-slate-400">عند التسليم{viewing.deliveryConditionNote ? `: ${viewing.deliveryConditionNote}` : ''}</div>
+                    {viewing.deliverySignatureDataUrl ? (
+                      <img src={viewing.deliverySignatureDataUrl} alt="توقيع التسليم" className="w-full h-16 object-contain border rounded-lg bg-white" />
+                    ) : signing === 'delivery' ? (
+                      <SignaturePad onCancel={() => setSigning(null)} onSave={(dataUrl) => { try { setViewing(setRentalSignature(viewing.id, 'delivery', dataUrl)); setSigning(null) } catch (err) { toast.show((err as Error).message, 'error') } }} />
+                    ) : (
+                      <button onClick={() => setSigning('delivery')} className="w-full h-16 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-400 hover:text-brand-500 hover:border-brand-400">+ توقيع التسليم</button>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="text-[10.5px] text-slate-400">عند الإرجاع{viewing.returnConditionNote ? `: ${viewing.returnConditionNote}` : ''}</div>
+                    {viewing.returnSignatureDataUrl ? (
+                      <img src={viewing.returnSignatureDataUrl} alt="توقيع الإرجاع" className="w-full h-16 object-contain border rounded-lg bg-white" />
+                    ) : signing === 'return' ? (
+                      <SignaturePad onCancel={() => setSigning(null)} onSave={(dataUrl) => { try { setViewing(setRentalSignature(viewing.id, 'return', dataUrl)); setSigning(null) } catch (err) { toast.show((err as Error).message, 'error') } }} />
+                    ) : viewing.status === 'closed' ? (
+                      <button onClick={() => setSigning('return')} className="w-full h-16 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-400 hover:text-brand-500 hover:border-brand-400">+ توقيع الإرجاع</button>
+                    ) : (
+                      <div className="w-full h-16 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-[10.5px] text-slate-300 flex items-center justify-center">بعد الإقفال</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* جدولة المتبقي الآجل كأقساط (سد فجوة تقرير النشاط #8 — Immediate #2) */}
+              {viewing.customerId != null && viewing.totals.collectCreditMinor > 0 && (
+                <div className="rounded-xl border border-dashed border-amber-400/50 bg-amber-500/5 p-3 flex items-center justify-between flex-wrap gap-2">
+                  <div className="text-[12px] text-amber-700 dark:text-amber-400">المتبقي الآجل {fmt(viewing.totals.collectCreditMinor)} {cur.symbol} — جدوِله كأقساط بدل إعادة إدخاله يدوياً</div>
+                  <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5 !text-amber-600" onClick={() => openInstallmentFor(viewing)}><CalendarClock size={14} /> جدولة كأقساط</Btn>
+                </div>
+              )}
 
               {/* مصفوفة تحمّل المصاريف المتفق عليها في العقد */}
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3">

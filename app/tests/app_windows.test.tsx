@@ -81,14 +81,43 @@ describe('نظام النوافذ المستقلة', () => {
     const view = render(<MemoryRouter><WindowHost /></MemoryRouter>)
     expect(document.querySelector(`[data-app-window="${id}"]`)).toBeTruthy()
     fireEvent.click(document.querySelector('[data-window-minimize]') as HTMLElement)
-    expect(document.querySelector(`[data-app-window="${id}"]`)).toBeFalsy()
+    // إصلاح بلاغ المالك: النافذة المصغَّرة تبقى في الشجرة (حالتها الداخلية
+    // لا تُفقد) وتُخفى بصرياً فقط عبر data-window-mode="minimized"
+    const minimizedEl = document.querySelector(`[data-app-window="${id}"]`)
+    expect(minimizedEl).toBeTruthy()
+    expect(minimizedEl!.getAttribute('data-window-mode')).toBe('minimized')
+    expect(minimizedEl!.getAttribute('aria-hidden')).toBe('true')
     const task = document.querySelector(`[data-window-task="${id}"] button`) as HTMLElement
     expect(task).toBeTruthy()
     fireEvent.click(task)
     expect(document.querySelector(`[data-app-window="${id}"]`)).toBeTruthy()
+    expect(document.querySelector(`[data-app-window="${id}"]`)!.getAttribute('data-window-mode')).not.toBe('minimized')
     // التكبير والاستعادة
     fireEvent.click(document.querySelector('[data-window-maximize]') as HTMLElement)
     expect(document.querySelector(`[data-app-window="${id}"]`)!.getAttribute('data-window-mode')).toBe('maximized')
+    view.unmount()
+  })
+
+  it('بلاغ المالك: تصغير فاتورة بيع لا يفقد البنود والملاحظات المكتوبة بداخلها (لا يُفكَّك المحرر)', async () => {
+    const id = openSalesInvoiceWindow()
+    const view = render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    const notesField = await waitFor(() => {
+      const el = document.querySelector('[aria-label="ملاحظات وشروط المستند"]') as HTMLTextAreaElement
+      expect(el).toBeTruthy()
+      return el
+    })
+    fireEvent.change(notesField, { target: { value: 'ملاحظة لم تُحفظ بعد — يجب ألا تضيع عند التصغير' } })
+    expect((document.querySelector('[aria-label="ملاحظات وشروط المستند"]') as HTMLTextAreaElement).value)
+      .toBe('ملاحظة لم تُحفظ بعد — يجب ألا تضيع عند التصغير')
+    fireEvent.click(document.querySelector(`[data-app-window="${id}"] [data-window-minimize]`) as HTMLElement)
+    expect(W().windows.find((w) => w.id === id)!.mode).toBe('minimized')
+    // العنصر باقٍ في الشجرة (مخفي بصرياً فقط) — لم يُفكَّك محرر الفاتورة
+    expect(document.querySelector('[aria-label="ملاحظات وشروط المستند"]')).toBeTruthy()
+    const task = document.querySelector(`[data-window-task="${id}"] button`) as HTMLElement
+    fireEvent.click(task)
+    expect(W().windows.find((w) => w.id === id)!.mode).not.toBe('minimized')
+    expect((document.querySelector('[aria-label="ملاحظات وشروط المستند"]') as HTMLTextAreaElement).value)
+      .toBe('ملاحظة لم تُحفظ بعد — يجب ألا تضيع عند التصغير')
     view.unmount()
   })
 

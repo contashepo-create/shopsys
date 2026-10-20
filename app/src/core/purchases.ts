@@ -17,6 +17,102 @@ export interface PurchaseExpenseTaxInput {
   taxPercent?: number
 }
 
+/**
+ * فرق وزن/كمية الاستلام من المورد (سد فجوة النشاط #2 — تجارة الأعلاف والحبوب):
+ * يقارن الكمية/الوزن المذكور في فاتورة المورد (`shippedQty`) بالكمية الفعلية
+ * المستلمة فعلياً على الأرض (`qty`) — وهو فرق مختلف عن `orderedQty`/`rejectedQty`
+ * الموجودين أصلاً (هذان يقيسان طلبنا نحن مقابل الرفض الجودي، لا فرق وزن الشحن
+ * نفسه بين ما فوتره المورد وما وصل فعلياً، مثل فقد الرطوبة أو النقص أثناء النقل).
+ */
+export interface PurchaseWeightDiscrepancyLine {
+  itemId: number
+  nameAr: string
+  shippedQty: number
+  receivedQty: number
+}
+
+export interface PurchaseWeightDiscrepancyRow extends PurchaseWeightDiscrepancyLine {
+  /** موجب = نقص عند الاستلام عن المفوتَر، سالب = زيادة */
+  diffQty: number
+  diffPercent: number
+  exceedsThreshold: boolean
+}
+
+/**
+ * يحسب فرق الوزن/الكمية لكل سطر له `shippedQty` مُدخل فعلاً (> 0)؛ السطور بلا
+ * إدخال لحقل الوزن المرسل تُستبعد (تعني أن المستخدم لم يفعّل تتبع الفرق لهذا السطر).
+ * `thresholdPercent` نسبة التنبيه الافتراضية (2% معتاد في تجارة الحبوب للهالك الطبيعي).
+ */
+export interface PurchaseReceivingVarianceReportRow {
+  /** مفتاح التجميع: شهر (YYYY-MM) */
+  period: string
+  supplierId: number
+  supplierNameAr: string
+  invoicesCount: number
+  /** إجمالي النقص (موجب) أو الزيادة (سالب) عبر كل السطور المتتبَّعة في الفترة */
+  totalDiffQty: number
+  /** أكبر نسبة فرق فردية سُجِّلت — لإبراز أسوأ حالة للمتابعة السريعة */
+  maxDiffPercent: number
+  exceedsThresholdCount: number
+}
+
+/**
+ * تقرير مجمَّع لفرق وزن استلام المشتريات حسب المورد والفترة (شهرياً) — مكمل
+ * لتقرير فرق وزن التصنيع الداخلي (`productionVarianceReport` في core/recipes.ts)
+ * ومعاً يغطيان توصية «تقرير فرق الوزن/الهالك حسب المورد والفترة» من تقرير النشاط #2.
+ */
+export function purchaseReceivingVarianceReport(
+  invoices: readonly { date: string; supplierId: number; lines: readonly { itemId: number; qty: number; shippedQty?: number }[] }[],
+  suppliers: readonly { id: number; nameAr: string }[],
+  thresholdPercent = 2,
+): PurchaseReceivingVarianceReportRow[] {
+  const nameOf = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? (id === 0 ? 'مورد نقدي' : `#${id}`)
+  const groups = new Map<string, PurchaseReceivingVarianceReportRow>()
+  for (const inv of invoices) {
+    const tracked = inv.lines.filter((l) => l.shippedQty != null && l.shippedQty > 0)
+    if (!tracked.length) continue
+    const rows = purchaseWeightDiscrepancy(tracked.map((l) => ({ itemId: l.itemId, nameAr: '', shippedQty: l.shippedQty!, receivedQty: l.qty })), thresholdPercent)
+    if (!rows.length) continue
+    const period = (inv.date || '').slice(0, 7)
+    const key = `${period}|${inv.supplierId}`
+    let row = groups.get(key)
+    if (!row) {
+      row = { period, supplierId: inv.supplierId, supplierNameAr: nameOf(inv.supplierId), invoicesCount: 0, totalDiffQty: 0, maxDiffPercent: 0, exceedsThresholdCount: 0 }
+      groups.set(key, row)
+    }
+    row.invoicesCount += 1
+    for (const r of rows) {
+      row.totalDiffQty = Math.round((row.totalDiffQty + r.diffQty) * 1000) / 1000
+      row.maxDiffPercent = Math.max(row.maxDiffPercent, r.diffPercent)
+      if (r.exceedsThreshold) row.exceedsThresholdCount += 1
+    }
+  }
+  return [...groups.values()].sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : b.maxDiffPercent - a.maxDiffPercent))
+}
+
+/**
+ * تصنيف مبسط لمخاطر نسبة رطوبة الحبوب/الأعلاف عند الاستلام (سد فجوة النشاط #2):
+ * إدخال يدوي بلا جهاز، مجرد تصنيف إرشادي — 14% هي الحد المعتاد عالمياً للتخزين
+ * الآمن للحبوب (فوقها خطر تعفّن/احتراق ذاتي)، وقابل للتخصيص حسب نوع الحَبّة.
+ */
+export function moistureRiskLevel(moisturePercent: number | null | undefined, highThreshold = 14): 'ok' | 'high' | null {
+  if (moisturePercent == null || !Number.isFinite(moisturePercent)) return null
+  return moisturePercent > highThreshold ? 'high' : 'ok'
+}
+
+export function purchaseWeightDiscrepancy(
+  lines: readonly PurchaseWeightDiscrepancyLine[],
+  thresholdPercent = 2,
+): PurchaseWeightDiscrepancyRow[] {
+  return lines
+    .filter((l) => l.shippedQty > 0)
+    .map((l) => {
+      const diffQty = Math.round((l.shippedQty - l.receivedQty) * 1000) / 1000
+      const diffPercent = Math.round((Math.abs(diffQty) / l.shippedQty) * 10000) / 100
+      return { ...l, diffQty, diffPercent, exceedsThreshold: diffPercent > thresholdPercent }
+    })
+}
+
 /** يفصل مبلغ الدفع عن التكلفة وضريبة المدخلات وفق صفة المنشأة. */
 export function purchaseExpenseTaxParts(expense: PurchaseExpenseTaxInput, policy: BusinessTaxPolicy): { baseMinor: Minor; taxMinor: Minor; recoverableTaxMinor: Minor; costMinor: Minor; payableMinor: Minor } {
   if (!Number.isSafeInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('قيمة مصروف الشراء غير صالحة')

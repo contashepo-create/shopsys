@@ -295,6 +295,152 @@ export function buildDriverSettlementEntry(totalMinor: Minor, driverName: string
   return lines
 }
 
+/** مستحق واحد من دفتر مستحقات السائقين — صِنف خفيف يكفي لتجميع التنبيه المركزي */
+export interface DriverDueRow {
+  driverId: number
+  tripId: number
+  settled: boolean
+  amountMinor: number
+}
+
+export interface UnsettledDriverDueGroup {
+  driverId: number
+  totalMinor: number
+  tripCount: number
+}
+
+/**
+ * تجميع مستحقات سائقين غير مسواة لكل سائق — نفس حساب getDriverDueBalance
+ * بالضبط لكن كدالة خالصة قابلة لإعادة الاستخدام (سد فجوة تقرير النشاط #9 —
+ * Immediate #2): البيانات موجودة ومعروضة أصلاً في شاشة النقلات، والفجوة أنها
+ * غير مرفوعة لمركز التنبيهات المركزي — هذه الدالة تغذّي ذلك المركز فقط.
+ */
+export function unsettledDriverDues(dues: readonly DriverDueRow[]): UnsettledDriverDueGroup[] {
+  const byDriver = new Map<number, { totalMinor: number; tripCount: number }>()
+  for (const d of dues) {
+    if (d.settled) continue
+    const row = byDriver.get(d.driverId) ?? { totalMinor: 0, tripCount: 0 }
+    row.totalMinor += d.amountMinor
+    row.tripCount += 1
+    byDriver.set(d.driverId, row)
+  }
+  return [...byDriver.entries()]
+    .map(([driverId, row]) => ({ driverId, totalMinor: row.totalMinor, tripCount: row.tripCount }))
+    .filter((row) => row.totalMinor > 0)
+    .sort((a, b) => b.totalMinor - a.totalMinor)
+}
+
+/* ─── امتثال مركبات: رخصة/تأمين (سد فجوة تقرير النشاط #9 — Immediate #1) ─── */
+
+export interface VehicleComplianceWarning {
+  vehicleId: number
+  vehiclePlate: string
+  kind: 'license' | 'insurance'
+  dueDate: string // YYYY-MM-DD
+  daysLeft: number // سالب = منتهي فعلاً
+}
+
+/**
+ * تنبيهات تجديد رخصة/تأمين مركبة على وشك الانتهاء أو منتهية بالفعل — نفس
+ * نمط equipmentComplianceWarnings (core/rentalMeter.ts)، بلا أي تكامل GPS
+ * حقيقي؛ مجرد تاريخين يُنبَّه قبل اقترابهما. يسد التناقض المباشر بين دليل
+ * النشاط التشغيلي («تجديد التراخيص والتأمين له تنبيهات») وغياب أي حقل/تنبيه
+ * فعلي في الكود قبل هذه الدفعة.
+ */
+export function vehicleComplianceWarnings(
+  vehicles: readonly { id: number; plateNumber: string; licenseExpiryDate?: string | null; insuranceExpiryDate?: string | null }[],
+  todayIso: string,
+  warnDays = 30,
+): VehicleComplianceWarning[] {
+  const today = todayIso.slice(0, 10)
+  const todayMs = Date.parse(`${today}T00:00:00Z`)
+  const out: VehicleComplianceWarning[] = []
+  for (const v of vehicles) {
+    for (const [kind, date] of [['license', v.licenseExpiryDate], ['insurance', v.insuranceExpiryDate]] as const) {
+      if (!date) continue
+      const daysLeft = Math.round((Date.parse(`${date}T00:00:00Z`) - todayMs) / 86_400_000)
+      if (daysLeft <= warnDays) out.push({ vehicleId: v.id, vehiclePlate: v.plateNumber, kind, dueDate: date, daysLeft })
+    }
+  }
+  return out.sort((a, b) => a.daysLeft - b.daysLeft)
+}
+
+/* ─── تحليل استهلاك الوقود لكل مركبة (سد فجوة تقرير النشاط #9 — Future #2) ─── */
+
+/** كلمات مفتاحية تمييز مصروف الوقود ضمن مصاريف النقلة النصية الحرة (سولار/بنزين/ديزل) */
+const FUEL_EXPENSE_KEYWORDS = ['سولار', 'بنزين', 'ديزل', 'وقود']
+
+export function isFuelExpenseName(nameAr: string): boolean {
+  return FUEL_EXPENSE_KEYWORDS.some((k) => nameAr.includes(k))
+}
+
+export interface VehicleFuelStat {
+  vehicleId: number
+  fuelCostMinor: number
+  fuelTripCount: number // عدد النقلات التي بها مصروف وقود مسجَّل
+  avgFuelPerTripMinor: number
+}
+
+/**
+ * متوسط تكلفة الوقود لكل نقلة لكل مركبة — مبني على مصاريف «سولار» المسجَّلة
+ * فعلاً داخل النقلات (بلا أي حاجة لعداد مسافة أو تكامل GPS/تتبع).
+ */
+export function vehicleFuelStats(trips: readonly { vehicleId: number | null; expenses: readonly { nameAr: string; amountMinor: number }[] }[]): VehicleFuelStat[] {
+  const byVehicle = new Map<number, { fuelCostMinor: number; fuelTripCount: number }>()
+  for (const t of trips) {
+    if (t.vehicleId == null) continue
+    const fuelLines = t.expenses.filter((e) => isFuelExpenseName(e.nameAr))
+    if (fuelLines.length === 0) continue
+    const row = byVehicle.get(t.vehicleId) ?? { fuelCostMinor: 0, fuelTripCount: 0 }
+    row.fuelCostMinor += fuelLines.reduce((s, e) => s + e.amountMinor, 0)
+    row.fuelTripCount += 1
+    byVehicle.set(t.vehicleId, row)
+  }
+  return [...byVehicle.entries()].map(([vehicleId, row]) => ({
+    vehicleId,
+    fuelCostMinor: row.fuelCostMinor,
+    fuelTripCount: row.fuelTripCount,
+    avgFuelPerTripMinor: row.fuelTripCount > 0 ? Math.round(row.fuelCostMinor / row.fuelTripCount) : 0,
+  }))
+}
+
+export interface FuelDeviationWarning {
+  vehicleId: number
+  avgFuelPerTripMinor: number
+  fleetAvgMinor: number
+  deviationPercent: number
+}
+
+/**
+ * يرصد مركبات تنحرف تكلفة وقودها لكل نقلة بوضوح عن متوسط الأسطول — إشارة
+ * استهلاك غير طبيعي (تسريب/سرقة/سوء استخدام) دون أي عتاد تتبع إضافي.
+ * يتجاهل مركبات بأقل من 3 نقلات موقودة تفادياً لإنذارات كاذبة من عيّنة صغيرة.
+ */
+export function fuelDeviationWarnings(stats: readonly VehicleFuelStat[], thresholdPercent = 50): FuelDeviationWarning[] {
+  const eligible = stats.filter((s) => s.fuelTripCount >= 3)
+  if (eligible.length < 2) return []
+  const fleetAvgMinor = Math.round(eligible.reduce((s, r) => s + r.avgFuelPerTripMinor, 0) / eligible.length)
+  if (fleetAvgMinor <= 0) return []
+  const out: FuelDeviationWarning[] = []
+  for (const s of eligible) {
+    const deviationPercent = Math.round(((s.avgFuelPerTripMinor - fleetAvgMinor) / fleetAvgMinor) * 100)
+    if (deviationPercent >= thresholdPercent) out.push({ vehicleId: s.vehicleId, avgFuelPerTripMinor: s.avgFuelPerTripMinor, fleetAvgMinor, deviationPercent })
+  }
+  return out.sort((a, b) => b.deviationPercent - a.deviationPercent)
+}
+
+/* ─── مصروف مركبة مبسَّط مرتبط بمركز تكلفة (سد فجوة تقرير النشاط #9 — Immediate #3 + Future #1) ─── */
+
+export type VehicleCostKind = 'fuel' | 'maintenance' | 'parts' | 'tolls' | 'other'
+
+export const VEHICLE_COST_LABELS: Record<VehicleCostKind, string> = {
+  fuel: 'وقود',
+  maintenance: 'صيانة',
+  parts: 'قطع غيار',
+  tolls: 'نولون/رسوم طريق',
+  other: 'أخرى',
+}
+
 /**
  * قيد مصروف نقلة مستقل من قسم «مصاريف النقلات»:
  * - إذا كان داخلياً على الشركة (bearer === 'company'): مدين 5106 مصروفات نقلات

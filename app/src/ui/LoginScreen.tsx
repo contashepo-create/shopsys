@@ -1,23 +1,30 @@
 /**
  * شاشة تسجيل الدخول (طلب المالك — سد ثغرة انتحال الصلاحيات):
- * تحجب التطبيق كله حتى دخول صحيح بالرقم السري — لا تبديل مستخدم بدونها.
- * سياسة المالك (المراجعة الأمنية): **لا قائمة أسماء تُعرض** — كل مستخدم يكتب
- * معرّفه بنفسه (اسمه كاملاً أو هاتفه أو بريده) كالنظم العالمية.
+ * تحجب التطبيق كله حتى دخول صحيح بالرقم السري — لا تبديل مستخدم بدونها،
+ * وتُفرض من جديد في كل مرة يُفتح فيها التطبيق فعلياً (إغلاق وإعادة فتح)
+ * حتى لو لم يُسجَّل خروج صريح — عبر `sessionAuth` المحصور بعمر النافذة
+ * (مراجعة المالك الثالثة: جهاز POS مشترك يحتاج محاسبة دخول/خروج دقيقة).
+ * سياسة المالك المحدَّثة (عكَست «لا قائمة أسماء» السابقة): تُعرض بطاقات
+ * بأسماء من استخدموا هذا الجهاز من قبل للاختيار السريع، أو «مستخدم جديد»
+ * لكتابة معرّف غير مسجَّل بعد — الاسم فقط يُحفظ (لا كلمة سر إطلاقاً، تُكتب
+ * يدوياً كل مرة — طلب المالك الأمني الرابع).
  * **دخول موحّد بلا زر مالك مميز** (مراجعة المالك الثانية): المالك يدخل من نفس
  * النموذج بمعرفه الخاص — فلا يعرف الغريب أن للمالك مدخلاً خاصاً أصلاً.
  * + أول دخول لموظف برقم مبدئي من المدير ⇒ تغيير الرقم إجباري قبل المتابعة.
  * + استعادة كلمة السر: الموظف يسجل طلباً يصل المالك إشعاراً،
  *   والمالك يستلم رقماً مؤقتاً على تليجرام صالحاً 15 دقيقة.
  */
-import { useState, useEffect } from 'react'
-import { LogIn, KeyRound, LifeBuoy } from 'lucide-react'
+import { useState } from 'react'
+import { LogIn, KeyRound, LifeBuoy, UserPlus, X, ChevronRight } from 'lucide-react'
 import { useDataStore } from '../data/repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { hashPin, findUserByIdentifier, matchesOwnerIdentity } from '../core/audit.ts'
 import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft, validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../core/auth.ts'
 import { apiUrl, isValidBotToken, isValidChatId } from '../core/telegram.ts'
-import { loadSavedLogin, storeSavedLogin, clearSavedLogin } from '../data/savedLogin.ts'
+import { loadRecentLogins, rememberRecentLogin, forgetRecentLogin, purgeLegacySavedPin, type RecentLogin } from '../data/recentLogins.ts'
+import { markSessionAuthenticated } from '../data/sessionAuth.ts'
 import { Btn, Modal, inputCls, PinInput, useToast } from './components/ui.tsx'
+
 
 export function LoginScreen() {
   const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useDataStore()
@@ -28,21 +35,27 @@ export function LoginScreen() {
   const [identifier, setIdentifier] = useState('')
   const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
-  // عرض حفظ بيانات الدخول (طلب المالك): تُحفظ مشفرة بمفتاح الجهاز وتُملأ تلقائياً
-  const [rememberMe, setRememberMe] = useState(false)
-  useEffect(() => {
-    void loadSavedLogin().then((saved) => {
-      if (!saved) return
-      if (saved.identifier) setIdentifier(saved.identifier)
-      if (saved.pin) setPin(saved.pin)
-      setRememberMe(true)
-    })
-  }, [])
-  const persistLogin = async (id: string, p: string) => {
-    try {
-      if (rememberMe) await storeSavedLogin(id, p)
-      else clearSavedLogin()
-    } catch { /* لا يعطل الدخول */ }
+  // بطاقات «من استخدم هذا الجهاز من قبل» (طلب المالك): اختيار سريع للاسم
+  // فقط — كلمة السر تُكتب يدوياً دوماً ولا تُحفظ إطلاقاً. أول ظهور بلا
+  // بطاقات محفوظة ⇒ النموذج اليدوي مباشرة (لا شاشة اختيار فارغة).
+  const [recentLogins, setRecentLogins] = useState<RecentLogin[]>(() => {
+    purgeLegacySavedPin() // تنظيف ميراث كلمة السر المحفوظة من إصدار سابق
+    return loadRecentLogins()
+  })
+  const [picking, setPicking] = useState(() => recentLogins.length > 0)
+  const pickUser = (r: RecentLogin) => {
+    setIdentifier(r.identifier)
+    setPin('')
+    setPicking(false)
+  }
+  const pickNewUser = () => {
+    setIdentifier('')
+    setPin('')
+    setPicking(false)
+  }
+  const forgetUser = (r: RecentLogin) => {
+    forgetRecentLogin(r.identifier)
+    setRecentLogins((prev) => prev.filter((x) => x.identifier !== r.identifier))
   }
   // إجبار تعيين رقم جديد: للمالك بعد رقم مؤقت، وللموظف عند أول دخول
   const [mustSetNewPin, setMustSetNewPin] = useState<null | { kind: 'owner' } | { kind: 'employee'; userId: number }>(null)
@@ -69,7 +82,8 @@ export function LoginScreen() {
       const ownerByWizardName = !!setup.ownerName?.trim() && identifier.trim() === setup.ownerName.trim()
       if (matchesOwnerIdentity(ownerProfile, identifier) || ownerByWizardName) {
         const { usedTempPin } = await login(null, pin)
-        await persistLogin(identifier, pin)
+        markSessionAuthenticated()
+        rememberRecentLogin(identifier, ownerProfile.nameAr?.trim() || 'المالك')
         setPin('')
         if (usedTempPin) setMustSetNewPin({ kind: 'owner' })
         else toast.show('أهلاً بك — دخول موفق ✅')
@@ -78,7 +92,8 @@ export function LoginScreen() {
         // رسالة واحدة عامة سواء أخطأ المعرف أو الرقم — لا نكشف أي الاثنين خاطئ
         if (!user) throw new Error('بيانات الدخول غير صحيحة — تحقق من المعرف والرقم السري')
         const { mustChangePin } = await login(user.id, pin)
-        await persistLogin(identifier, pin)
+        markSessionAuthenticated()
+        rememberRecentLogin(identifier, user.nameAr)
         setPin('')
         if (mustChangePin) {
           setMustSetNewPin({ kind: 'employee', userId: user.id })
@@ -102,7 +117,6 @@ export function LoginScreen() {
       const hash = await hashPin(newPin)
       if (effectiveMustSet?.kind === 'employee') changeOwnPin(effectiveMustSet.userId, hash)
       else setOwnerPin(hash)
-      await persistLogin(identifier, newPin) // تحديث كلمة السر المحفوظة إن كان الحفظ مفعلاً
       setMustSetNewPin(null)
       setNewPin(''); setNewPin2('')
       toast.show('حُفظت كلمة سرك الجديدة — لا يعرفها أحد غيرك الآن ✅')
@@ -172,65 +186,101 @@ export function LoginScreen() {
         </div>
 
         <div className="rounded-3xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4">
-          {/* دخول موحد (مراجعة المالك): لا زر «دخول المالك» مميز ولا قائمة أسماء —
-              المالك والموظفون يدخلون من نفس الحقلين، فلا يُكشف للغريب أي شيء عن الحسابات */}
-          <input
-            type="text"
-            name="tahakam-login-id"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            value={identifier}
-            disabled={lockLeft > 0}
-            onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="الاسم الكامل أو رقم الهاتف أو البريد"
-            className={inputCls}
-          />
-
-          {/* كلمة السر — بعين إظهار/إخفاء (طلب المالك) */}
-          <div className="space-y-2">
-            <PinInput
-              value={pin}
-              onChange={setPin}
-              disabled={lockLeft > 0}
-              onEnter={() => { if (canSubmit) void doLogin() }}
-              placeholder="كلمة السر"
-              name="tahakam-login-pin"
-              centered
-            />
-            {lockLeft > 0 && (
-              <p className="text-[11px] text-rose-500 font-bold text-center">
-                ⛔ محاولات كثيرة خاطئة — انتظر {lockLeft} دقيقة ثم أعد المحاولة
-              </p>
-            )}
-            {/* عرض حفظ بيانات الدخول (طلب المالك) — مشفرة بمفتاح الجهاز */}
-            <label className="flex items-center gap-2 text-[12px] font-bold text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+          {picking ? (
+            /* بطاقات «من استخدم هذا الجهاز من قبل» — اختيار سريع للاسم فقط،
+               كلمة السر دوماً تُكتب يدوياً بعد الاختيار (لا تُحفظ إطلاقاً) */
+            <div className="space-y-2">
+              {recentLogins.map((r) => (
+                <button
+                  key={r.identifier}
+                  type="button"
+                  onClick={() => pickUser(r)}
+                  className="w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl border-2 border-slate-200 dark:border-slate-700 hover:border-brand-500/50 hover:bg-brand-500/5 transition-colors text-right"
+                >
+                  <span className="w-9 h-9 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-300 flex items-center justify-center font-black text-sm shrink-0">
+                    {r.displayName.trim().charAt(0) || '؟'}
+                  </span>
+                  <span className="flex-1 min-w-0 font-bold text-[13px] text-slate-800 dark:text-white truncate">{r.displayName}</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => { e.stopPropagation(); forgetUser(r) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); forgetUser(r) } }}
+                    title="إزالة هذا الاسم من قائمة الجهاز"
+                    className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"
+                  >
+                    <X size={14} />
+                  </span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={pickNewUser}
+                className="w-full flex items-center justify-center gap-2 px-3.5 py-3 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-brand-500/50 hover:text-brand-600 transition-colors font-bold text-[13px]"
+              >
+                <UserPlus size={15} /> مستخدم جديد
+              </button>
+            </div>
+          ) : (
+            <>
+              {recentLogins.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setPicking(true); setIdentifier(''); setPin('') }}
+                  className="inline-flex items-center gap-1 text-[11.5px] font-bold text-slate-400 hover:text-brand-600 transition-colors"
+                >
+                  <ChevronRight size={13} /> عودة لاختيار مستخدم
+                </button>
+              )}
+              {/* دخول موحد (مراجعة المالك): لا زر «دخول المالك» مميز —
+                  المالك والموظفون يدخلون من نفس الحقلين */}
               <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => {
-                  setRememberMe(e.target.checked)
-                  if (!e.target.checked) clearSavedLogin()
-                }}
-                className="w-4 h-4 rounded accent-brand-600"
+                type="text"
+                name="tahakam-login-id"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                value={identifier}
+                disabled={lockLeft > 0}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="الاسم الكامل أو رقم الهاتف أو البريد"
+                className={inputCls}
+                autoFocus={identifier === ''}
               />
-              حفظ بيانات الدخول على هذا الجهاز (مشفرة)
-            </label>
-            <Btn className="w-full !py-3 !text-sm" onClick={() => void doLogin()} disabled={busy || !canSubmit || lockLeft > 0}>
-              <LogIn size={16} /> {busy ? 'جارٍ التحقق…' : 'دخول'}
-            </Btn>
-          </div>
 
-          {/* نسيت رقمي — موحد: المعرف يحدد المسار (مالك ⇒ تليجرام، موظف ⇒ إبلاغ المالك) */}
-          <div className="pt-1 border-t border-slate-100 dark:border-slate-800 text-center">
-            <button
-              onClick={forgotUnified}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 text-[12px] font-bold text-brand-600 dark:text-brand-400 hover:underline disabled:opacity-50"
-            >
-              <LifeBuoy size={13} /> نسيت رقمي السري
-            </button>
-          </div>
+              {/* كلمة السر — بعين إظهار/إخفاء، تُكتب يدوياً دوماً ولا تُحفظ أبداً (طلب المالك) */}
+              <div className="space-y-2 mt-3">
+                <PinInput
+                  value={pin}
+                  onChange={setPin}
+                  disabled={lockLeft > 0}
+                  onEnter={() => { if (canSubmit) void doLogin() }}
+                  placeholder="كلمة السر"
+                  name="tahakam-login-pin"
+                  centered
+                />
+                {lockLeft > 0 && (
+                  <p className="text-[11px] text-rose-500 font-bold text-center">
+                    ⛔ محاولات كثيرة خاطئة — انتظر {lockLeft} دقيقة ثم أعد المحاولة
+                  </p>
+                )}
+                <Btn className="w-full !py-3 !text-sm" onClick={() => void doLogin()} disabled={busy || !canSubmit || lockLeft > 0}>
+                  <LogIn size={16} /> {busy ? 'جارٍ التحقق…' : 'دخول'}
+                </Btn>
+              </div>
+
+              {/* نسيت رقمي — موحد: المعرف يحدد المسار (مالك ⇒ تليجرام، موظف ⇒ إبلاغ المالك) */}
+              <div className="pt-1 border-t border-slate-100 dark:border-slate-800 text-center mt-3">
+                <button
+                  onClick={forgotUnified}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-bold text-brand-600 dark:text-brand-400 hover:underline disabled:opacity-50"
+                >
+                  <LifeBuoy size={13} /> نسيت رقمي السري
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         <p className="text-center text-[10.5px] text-slate-400">

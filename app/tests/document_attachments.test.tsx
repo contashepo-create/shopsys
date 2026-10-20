@@ -75,28 +75,29 @@ describe('تخصيص أعمدة جدول البنود', () => {
     />,
   )
 
-  it('الكود والوحدة ظاهران افتراضياً — الضريبة مخفية افتراضياً (بلاغ v1.0.3: الإجماليات فقط)', () => {
+  it('الكود والوحدة ظاهران افتراضياً — الضريبة مخفية افتراضياً (قرار المالك v1.0.3 ④: الإجماليات فقط)', () => {
     const view = table()
     expect(view.getByText('كود الصنف')).toBeTruthy()
     expect(view.getByText('الوحدة')).toBeTruthy()
     // طلب المالك: حقل الضريبة لا يظهر إلا بإعادته من «تخصيص الحقول» داخل الفاتورة
-    expect(view.queryByText('الضريبة')).toBeNull()
+    expect(view.queryByText('خاضع للضريبة')).toBeNull()
     expect(view.queryByText('14% ض.ق.م')).toBeNull()
     cleanup()
     // الإعادة من زر التخصيص تعيده فوراً — الإخفاء الافتراضي لا يقفل الباب
     A().toggleInvoiceColumn('tax')
     const taxed = table()
-    expect(taxed.getByText('الضريبة')).toBeTruthy()
+    expect(taxed.getByText('خاضع للضريبة')).toBeTruthy()
     expect(taxed.getByText('14% ض.ق.م')).toBeTruthy()
   })
 
+
   it('عمود الضريبة يختفي في البيع المباشر أو عند إلغاء تفعيل الضريبة (قرار المالك ⑩ي)', () => {
     const direct = table({ mode: 'simple' })
-    expect(direct.queryByText('الضريبة')).toBeNull()
+    expect(direct.queryByText('خاضع للضريبة')).toBeNull()
     expect(direct.queryByText('14% ض.ق.م')).toBeNull()
     cleanup()
     const noTax = table({ taxEnabled: false })
-    expect(noTax.queryByText('الضريبة')).toBeNull()
+    expect(noTax.queryByText('خاضع للضريبة')).toBeNull()
     expect(noTax.queryByText('14% ض.ق.م')).toBeNull()
   })
 
@@ -108,14 +109,14 @@ describe('تخصيص أعمدة جدول البنود', () => {
   })
 
   it('يخفي الأعمدة المطفأة ولا يغيّر إجمالي السطر — إخفاء عرضٍ لا حساب', () => {
-    A().toggleInvoiceColumn('tax') // الضريبة الآن مخفية افتراضياً — نشغلها لبيانات المقارنة
+    A().toggleInvoiceColumn('tax') // الضريبة مخفية افتراضياً — نشغلها لبيانات المقارنة
     const before = table().container.querySelector('.invoice-table-total')?.textContent
     cleanup()
     A().toggleInvoiceColumn('code'); A().toggleInvoiceColumn('unit'); A().toggleInvoiceColumn('tax')
     const view = table()
     expect(view.queryByText('كود الصنف')).toBeNull()
     expect(view.queryByText('الوحدة')).toBeNull()
-    expect(view.queryByText('الضريبة')).toBeNull()
+    expect(view.queryByText('خاضع للضريبة')).toBeNull()
     expect(view.queryByText('14% ض.ق.م')).toBeNull()
     expect(view.container.querySelector('.invoice-doc-linesub')).toBeNull()
     expect(view.container.querySelector('.invoice-table-total')?.textContent).toBe(before)

@@ -97,7 +97,9 @@ describe('محرر أمر الشراء — تسهيلات الفاتورة', () 
     const text = document.body.textContent ?? ''
     expect(document.querySelector('[data-po-lines]'), 'جدول البنود بلا معرّف').toBeTruthy()
     expect(document.querySelector('[aria-label="تصفية الأصناف بالتصنيف"]'), 'تصفية التصنيف غائبة').toBeTruthy()
-    expect(document.querySelector('input[type="checkbox"]'), 'مفتاح «خاضعة للضريبة» غائب').toBeTruthy()
+    /* إصلاح بلاغ المالك: لم يعد هناك تشيك بوكس واحد يفرض الضريبة على كل البنود —
+       نسبة الإعدادات تظهر كشارة، ولكل بند خانته المستقلة في الجدول بعد إضافته */
+    expect(text, 'نسبة ضريبة الإعدادات غائبة').toContain('ضريبة الإعدادات')
     expect(text).toContain('شروط التوريد')
     expect(text).toContain('السداد بعد المطابقة والاستلام')
     expect(text).toContain('الرصيد السابق')
@@ -119,17 +121,41 @@ describe('محرر أمر الشراء — تسهيلات الفاتورة', () 
     view.unmount()
   })
 
-  it('الضريبة تُفعَّل على السطور وتظهر في الإجماليات', () => {
+  it('الضريبة تُفعَّل تلقائياً على البند الجديد تبعاً لإعدادات الشركة، وتظهر في الإجماليات', () => {
     const view = openEditor()
     const input = rows()[0].querySelector('.invoice-line-entry-cell input') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'شاي' } })
     const search = document.querySelector('.invoice-search-overlay input') as HTMLInputElement
     fireEvent.focus(search)
     fireEvent.keyDown(search, { key: 'Enter' })
-    const taxBox = document.querySelector('label.invoice-doc-stripcheck input[type="checkbox"]') as HTMLInputElement
-    fireEvent.click(taxBox)
+    /* الإعدادات هنا: ضريبة مسجَّلة 14% — فالبند الجديد يُفعَّل تلقائياً بلا أي نقرة */
     const totalsPanel = document.querySelector('[data-po-totals]')!
-    expect(totalsPanel.textContent, 'الضريبة لم تظهر في الإجماليات رغم تفعيلها').toContain('ضريبة القيمة المضافة')
+    expect(totalsPanel.textContent, 'الضريبة لم تظهر تلقائياً في الإجماليات رغم تسجيل الشركة ضريبياً').toContain('ضريبة القيمة المضافة')
+    cleanup()
+    view.unmount()
+  })
+
+  it('بلاغ المالك: خانة ضريبة كل بند مستقلة تماماً — إلغاؤها لبند لا يمس بنداً آخر', () => {
+    // عمود الضريبة مخفي افتراضياً (قرار المالك v1.0.3) — نظهره هنا لفحص خانة كل بند
+    useAppStore.getState().toggleInvoiceColumn('tax')
+    const view = openEditor()
+    const input1 = rows()[0].querySelector('.invoice-line-entry-cell input') as HTMLInputElement
+    fireEvent.change(input1, { target: { value: 'شاي' } })
+    let search = document.querySelector('.invoice-search-overlay input') as HTMLInputElement
+    fireEvent.focus(search)
+    fireEvent.keyDown(search, { key: 'Enter' })
+    const input2 = document.querySelector('.invoice-line-entry-cell input') as HTMLInputElement
+    fireEvent.change(input2, { target: { value: 'شاي' } })
+    search = document.querySelector('.invoice-search-overlay input') as HTMLInputElement
+    fireEvent.focus(search)
+    fireEvent.keyDown(search, { key: 'Enter' })
+    const taxBoxes = [...document.querySelectorAll('.invoice-line-taxcheck input[type="checkbox"]')] as HTMLInputElement[]
+    expect(taxBoxes.length, 'خانات ضريبة البنود غائبة من الجدول').toBe(2)
+    expect(taxBoxes[0].checked, 'البند الأول لم يُفعَّل تلقائياً تبعاً للإعدادات').toBe(true)
+    expect(taxBoxes[1].checked, 'البند الثاني لم يُفعَّل تلقائياً تبعاً للإعدادات').toBe(true)
+    fireEvent.click(taxBoxes[0])
+    expect(taxBoxes[0].checked, 'لم يُلغَ تفعيل البند الأول').toBe(false)
+    expect(taxBoxes[1].checked, 'إلغاء ضريبة البند الأول أثّر خطأً على البند الثاني').toBe(true)
     cleanup()
     view.unmount()
   })

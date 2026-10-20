@@ -38,9 +38,27 @@ export interface PayrollLineInput {
   driverDuesPaidMinor?: Minor
 }
 
+/**
+ * بند «مُرحَّل من شهر سابق» — توثيق تلقائي يُعرض داخل مستند المسير نفسه (بلاغ
+ * المالك: لا يكفي تتبّع الرصيد بصمت، لازم المستند يوضّح إنه مُرحَّل ومن أي شهر
+ * ولسبب إيه). يُبنى وقت الترحيل في `postPayroll` من سجلات السلف/الخصومات التي
+ * لم تُسدَّد بالكامل هذا الشهر وكان أصلها من شهر سابق (أو أقدم من شهر الإنشاء
+ * الحالي)، فلا يشمل خصماً/سلفة نشأت وطُبِّقت جزئياً في نفس شهرها.
+ */
+export interface PayrollCarryItem {
+  kind: 'advance' | 'deduction' // سلفة أو خصم/جزاء
+  number: string // رقم المستند الأصلي (مثل ADV-0003 أو DED-0007)
+  reason?: string // السبب الأصلي كما سُجِّل وقت الإنشاء
+  originMonth: string // الشهر الذي نشأ فيه المستند الأصلي (YYYY-MM)
+  carriedOverMinor: Minor // المتبقي الذي تَرحَّل لهذا الشهر قبل أي استقطاع فيه
+  takenMinor: Minor // ما استُقطع منه فعلياً في مسير هذا الشهر
+}
+
 export interface PayrollLineComputed extends PayrollLineInput {
   grossMinor: Minor // أساسي + بدلات + إضافي
   netMinor: Minor // الإجمالي − خصومات − سلف
+  /** بنود السلف/الخصومات المُرحَّلة من أشهر سابقة ضمن استقطاع هذا الشهر — للعرض فقط */
+  carryItems?: PayrollCarryItem[]
 }
 
 export interface PayrollTotals {

@@ -4,7 +4,8 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins, Building2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
@@ -105,6 +106,15 @@ export function GeneralSettingsPage() {
           </div>
         </section>
       )}
+
+      {/* اسم المنشأة وكل بياناتها الرسمية (المالك/الهاتف/البريد/العنوان/السجل التجاري)
+          انتقلت لصفحة موحّدة واحدة — بدل تكرار نفس الحقل في أكثر من مكان */}
+      <Link to="/settings/company" className="anim-up flex items-center justify-between gap-2 rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 hover:border-brand-400 transition-colors">
+        <span className="flex items-center gap-2 font-extrabold text-slate-800 dark:text-white">
+          <Building2 size={18} className="text-brand-500" /> بيانات المنشأة (الاسم والمالك والعنوان والسجل التجاري…)
+        </span>
+        <span className="text-[12px] font-bold text-brand-600">فتح الصفحة ←</span>
+      </Link>
 
       {/* البلد والعملة */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5">
@@ -226,6 +236,29 @@ export function GeneralSettingsPage() {
             </button>
           )
         })()}
+      </section>
+
+      {/* عتبة التحذير الاستباقي من حد الائتمان (سد فجوة النشاط #2: تجارة الأعلاف والحبوب) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '132ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <ShieldAlert size={17} className="text-amber-500" /> عتبة التحذير الاستباقي من حد الائتمان
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          في فاتورة البيع المتقدمة، يظهر تحذير مبكر «اقتراب من حد الائتمان» قبل الوصول للحد الفعلي —
+          كانت النسبة 85% ثابتة، والآن يمكنك تخصيصها حسب طبيعة عملائك (مثلاً: المزارعون الكبار يحتاجون تحذيراً أبكر).
+        </p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number" min={1} max={99} step={1}
+            value={setup.creditWarningThresholdPercent ?? 85}
+            onChange={(e) => {
+              const v = Math.min(99, Math.max(1, Number(e.target.value) || 85))
+              useAppStore.setState((s) => ({ setup: { ...s.setup, creditWarningThresholdPercent: v } }))
+            }}
+            className="w-24 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent px-3 py-2 text-center font-black"
+          />
+          <span className="text-[12px] font-bold text-slate-500">% من حد الائتمان — التحذير يظهر عند تجاوز هذه النسبة من المكشوف المتوقع</span>
+        </div>
       </section>
 
       {/* برنامج نقاط الولاء (نمط Lightspeed Loyalty / Square) */}

@@ -33,7 +33,7 @@ export function ActivityWidgets() {
     const build = (w: ActivityWidget): { rows: Row[]; count: number } => {
       switch (w) {
         case 'today_appointments': {
-          const list = store.clinicAppointments.filter((a) => a.date === today && !a.done).sort((a, b) => a.time.localeCompare(b.time))
+          const list = store.clinicAppointments.filter((a) => a.date === today && a.status === 'scheduled').sort((a, b) => a.time.localeCompare(b.time))
           return {
             count: list.length,
             rows: list.slice(0, 4).map((a) => ({

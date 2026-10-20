@@ -11,18 +11,28 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
-  salesSummary, topItems, dailySales, stagnantItems, activityRevenueRows,
-  stockAlerts, inventoryValue, periodPresets, type Period,
+  salesSummary, topItems, dailySales, stagnantItems, stagnantVariants, sizeCurveAnalysis, activityRevenueRows,
+  stockAlerts, inventoryValue, periodPresets, returnReasonsSummary, abcAnalysis, demandForecast, gradeProfitReport, type Period,
 } from '../../core/reports.ts'
+import { GRADE_LABELS } from '../../core/items.ts'
+import { PENDING_PART_ORDER_STATUS_AR, buildPartArrivedMessage } from '../../core/partOrders.ts'
+import { waChatLink } from '../../core/whatsapp.ts'
+import { returnReasonName } from '../../core/returns.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
-import { expiryAlerts } from '../../core/batches.ts'
+import { expiryAlerts, markdownSuggestions, expiryValueAtRisk, supplierReturnCandidates } from '../../core/batches.ts'
+import { warrantyAttachRate, warrantyClaimRateByItem } from '../../core/warrantyReports.ts'
+import { deliveryOnTimeRate } from '../../core/deliveryReports.ts'
+import { variantLowStockAlerts } from '../../core/variants.ts'
+import { purchaseReceivingVarianceReport } from '../../core/purchases.ts'
+import { productionVarianceReport } from '../../core/recipes.ts'
+import { wastageRatioReport, wastageByItemReport } from '../../core/wastage.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
-import { inputCls } from '../components/ui.tsx'
+import { inputCls, useToast } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
 import { FxTreasuryTab } from './FxTreasuryTab.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -47,7 +57,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets } = useDataStore()
+  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets, productionOrders, variantStocks, deliveryJobs, scheduleDelivery, setDeliveryStatus, serials, tickets, pendingPartOrders, addPendingPartOrder, setPendingPartOrderStatus, deletePendingPartOrder, purchaseOrders, wastages } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -55,6 +65,7 @@ export function ReportsPage() {
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
   const today = new Date().toISOString()
+  const toast = useToast()
 
   const presets = useMemo(() => periodPresets(today), [today])
   const [presetId, setPresetId] = useState('month')
@@ -74,8 +85,51 @@ export function ReportsPage() {
   const summary = useMemo(() => salesSummary(sales, saleReturns, period), [sales, saleReturns, period])
   const daily = useMemo(() => dailySales(sales, period), [sales, period])
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
-  // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع 30+ يوماً = رأس مال محبوس
-  const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
+  // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع — عتبة قابلة للتعديل (سد فجوة
+  // فورية #1 — النشاط #7: قطع غيار): الدالة كانت تقبل عتبة فعلياً لكن الواجهة
+  // تستدعيها بقيمة ثابتة 30 دائماً؛ الافتراضي يختلف حسب طبيعة النشاط (قطع
+  // الغيار: ركودها الطبيعي أطول بكثير من بقالة سريعة الدوران فتوصية الدليل
+  // الداخلي لها تحديداً 6 أشهر لا شهر واحد).
+  const defaultStagnantDays = setup.activityId === 'spare_parts' ? 180 : 30
+  const [stagnantThresholdDays, setStagnantThresholdDays] = useState(defaultStagnantDays)
+  const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), stagnantThresholdDays), [items, sales, stagnantThresholdDays])
+
+  /**
+   * تقرير الربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار):
+   * يفصل الهامش بين الأصلي/البديل التجاري/المستعمل — الهدف المعلَن من حقل
+   * `grade` أصلاً. يظهر فقط حين توجد أصناف عليها درجة مسجَّلة فعلياً.
+   */
+  const gradeProfit = useMemo(() => gradeProfitReport(sales, saleReturns, items, period), [sales, saleReturns, items, period])
+  const hasGradedItems = useMemo(() => items.some((it) => it.grade), [items])
+  // ركود التركيبات لون×مقاس (فجوة فورية ③ — نشاط الملابس): مكمِّل لتقرير ركود الصنف أعلاه
+  const stagnantVariantRows = useMemo(
+    () => (variantStocks.length ? stagnantVariants(items, variantStocks, sales, new Date().toISOString(), 30) : []),
+    [items, variantStocks, sales],
+  )
+  // منحنى المقاسات (تطوير مستقبلي ② — نشاط الملابس): نسبة كل مقاس من مبيعات الصنف بالفترة المحددة
+  const sizeCurveRows = useMemo(() => sizeCurveAnalysis(items, sales, period.from, period.to), [items, sales, period])
+  const sizeCurveByItem = useMemo(() => {
+    const m = new Map<number, { nameAr: string; rows: typeof sizeCurveRows }>()
+    for (const r of sizeCurveRows) {
+      if (!m.has(r.itemId)) m.set(r.itemId, { nameAr: r.nameAr, rows: [] })
+      m.get(r.itemId)!.rows.push(r)
+    }
+    return Array.from(m.values())
+  }, [sizeCurveRows])
+  // أسباب الإرجاع (سد فجوة التوثيق — دليل الأغذية كان يَعِد بهذا التقرير دون وجوده فعلياً)
+  const returnReasons = useMemo(() => returnReasonsSummary(saleReturns, period, returnReasonName), [saleReturns, period])
+  // تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95)
+  const abcRows = useMemo(() => abcAnalysis(sales, saleReturns, period), [sales, saleReturns, period])
+  // توقع طلب إحصائي (سد فجوة مستقبلية: تنبؤ ذكاء اصطناعي — نسخة إحصائية محلية بلا سحابة)
+  const forecastRows = useMemo(() => demandForecast(sales, new Date().toISOString(), 8), [sales])
+  // اقتراح تسعير تصاعدي قرب الانتهاء (سد فجوة مستقبلية: تسعير ديناميكي)
+  const markdowns = useMemo(() => markdownSuggestions(batches, items, new Date().toISOString(), 7), [batches, items])
+  /** سد فجوة النشاط #2 (تجارة الأعلاف والحبوب): تقرير مجمَّع لفرق الوزن — استلام من موردين + تصنيع داخلي */
+  const receivingVariance = useMemo(() => purchaseReceivingVarianceReport(purchases, suppliers), [purchases, suppliers])
+  const productionVariance = useMemo(() => productionVarianceReport(productionOrders, items), [productionOrders, items])
+  // نسبة الهالك الأسبوعية + أكثر الأصناف هالكاً (سد فجوة النشاط #20 — مخبز وحلويات)
+  const wastageRatio = useMemo(() => wastageRatioReport(wastages, sales.map((s) => ({ date: s.date, cogsMinor: s.totals.cogsMinor }))), [wastages, sales])
+  const wastageByItem = useMemo(() => wastageByItemReport(wastages), [wastages])
   // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
   // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
   const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
@@ -115,6 +169,8 @@ export function ReportsPage() {
     [suppRows, getSupplierStatementRows, todayYmd],
   )
   const alerts = useMemo(() => stockAlerts(items), [items])
+  // نقص مخزون على مستوى تركيبة لون/مقاس (فجوة فورية ② — نشاط الملابس)
+  const variantLowStockRows = useMemo(() => variantLowStockAlerts(variantStocks, items), [variantStocks, items])
   const invValue = useMemo(() => inventoryValue(items), [items])
 
   /* ─── إيراد الفترة من دفتر اليومية — مصدر واحد لكل الأنشطة (تدقيق 2026-10-11) ───
@@ -148,6 +204,99 @@ export function ReportsPage() {
     () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
     [batches, items],
   )
+  // قيمة المخزون المعرَّض لخطر الانتهاء بالعملة لكل أفق (سد فجوة فورية — النشاط #5: صيدلية)
+  const expiryValueRows = useMemo(() => expiryValueAtRisk(batches, items, new Date().toISOString(), [30, 60, 90]), [batches, items])
+  // مرشحات إرجاع المورد: دفعات لا تزال داخل نافذة إرجاع موردها المسجَّلة (سد فجوة فورية — النشاط #5: صيدلية)
+  const returnCandidates = useMemo(
+    () => supplierReturnCandidates(batches, items, purchases, suppliers, new Date().toISOString()),
+    [batches, items, purchases, suppliers],
+  )
+  const returnCandidatesBySupplier = useMemo(() => {
+    const m = new Map<number, { supplierName: string; rows: typeof returnCandidates }>()
+    for (const r of returnCandidates) {
+      if (!m.has(r.supplierId)) m.set(r.supplierId, { supplierName: r.supplierName, rows: [] })
+      m.get(r.supplierId)!.rows.push(r)
+    }
+    return Array.from(m.entries()).map(([supplierId, v]) => ({ supplierId, ...v }))
+  }, [returnCandidates])
+
+  /**
+   * سد فجوة فورية — النشاط #6 (أجهزة كهربائية): طلبات التوصيل/التركيب
+   * المجدولة — بديل منظَّم لبند رسوم «شحن وتوصيل» النصي الحر على الفاتورة.
+   */
+  const [deliveryInvoiceQuery, setDeliveryInvoiceQuery] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState('')
+  const [deliveryAssignee, setDeliveryAssignee] = useState('')
+  const pendingDeliveries = useMemo(
+    () => deliveryJobs
+      .filter((j) => j.status !== 'done')
+      .map((j) => ({ job: j, sale: sales.find((s) => s.id === j.saleId) }))
+      .sort((a, b) => a.job.scheduledAt.localeCompare(b.job.scheduledAt)),
+    [deliveryJobs, sales],
+  )
+  const scheduleDeliveryFromInvoice = () => {
+    const sale = sales.find((s) => s.invoiceNumber === deliveryInvoiceQuery.trim() || s.refCode === deliveryInvoiceQuery.trim())
+    if (!sale) { toast.show('رقم فاتورة غير موجود', 'error'); return }
+    if (!deliveryDate) { toast.show('اختر تاريخ التوصيل', 'error'); return }
+    try {
+      scheduleDelivery({ saleId: sale.id, scheduledAt: deliveryDate, assignedTo: deliveryAssignee })
+      setDeliveryInvoiceQuery(''); setDeliveryDate(''); setDeliveryAssignee('')
+      toast.show(`جُدول توصيل الفاتورة ${sale.invoiceNumber} ✓`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /**
+   * سد فجوة فورية — النشاط #6 (أجهزة كهربائية): معدل إقران الضمان الممتد
+   * خلال الفترة المختارة + معدل تكرار مطالبات الضمان لكل صنف (كل الفترات —
+   * مؤشر جودة طويل المدى لا يُقيَّد بنطاق تاريخ التقرير).
+   */
+  /**
+   * سد فجوة مستقبلية #3 — النشاط #6 (أجهزة كهربائية): نسبة التزام مواعيد
+   * التوصيل/التركيب خلال الفترة المختارة — مبنية فوق scheduledAt/completedAt.
+   */
+  const deliveryOnTime = useMemo(() => deliveryOnTimeRate(deliveryJobs, period.from, period.to), [deliveryJobs, period])
+  const warrantyAttach = useMemo(() => warrantyAttachRate(serials, period.from, period.to), [serials, period])
+  const warrantyClaims = useMemo(
+    () => warrantyClaimRateByItem(serials, tickets).filter((r) => r.soldUnderWarranty > 0),
+    [serials, tickets],
+  )
+  const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`
+
+  /**
+   * طلبات العملاء المعلّقة (سد فجوة فورية #2 — النشاط #7: قطع غيار):
+   * طلب خاص لقطعة غير متوفرة بالمخزون — أول مهمة يومية بدليل تشغيل محلات
+   * قطع الغيار. تتحول تلقائياً إلى «وصلت» عند اكتمال استلام أمر الشراء
+   * المرتبط (إن وُجد)، وتظهر عندها كتنبيه في لوحة التحكم.
+   */
+  const [newPartOrderItemId, setNewPartOrderItemId] = useState('')
+  const [newPartOrderCustomerId, setNewPartOrderCustomerId] = useState('')
+  const [newPartOrderCustomerName, setNewPartOrderCustomerName] = useState('')
+  const [newPartOrderCustomerPhone, setNewPartOrderCustomerPhone] = useState('')
+  const [newPartOrderQty, setNewPartOrderQty] = useState('1')
+  const [newPartOrderPoId, setNewPartOrderPoId] = useState('')
+  const sortedPartOrders = useMemo(
+    () => [...pendingPartOrders].sort((a, b) => (a.status === b.status ? b.orderedAt.localeCompare(a.orderedAt) : a.status === 'pending' ? -1 : b.status === 'pending' ? 1 : a.status === 'arrived' ? -1 : 1)),
+    [pendingPartOrders],
+  )
+  const openPurchaseOrders = useMemo(() => purchaseOrders.filter((o) => o.status !== 'closed' && o.status !== 'cancelled'), [purchaseOrders])
+  const submitPartOrder = () => {
+    const itemId = Number(newPartOrderItemId)
+    if (!itemId) { toast.show('اختر الصنف المطلوب', 'error'); return }
+    try {
+      addPendingPartOrder({
+        itemId,
+        itemNameAr: itemName(itemId),
+        customerId: newPartOrderCustomerId ? Number(newPartOrderCustomerId) : null,
+        customerName: newPartOrderCustomerId ? custName(Number(newPartOrderCustomerId)) : newPartOrderCustomerName,
+        customerPhone: newPartOrderCustomerPhone,
+        qty: Number(newPartOrderQty) || 1,
+        orderedAt: new Date().toISOString(),
+        linkedPurchaseOrderId: newPartOrderPoId ? Number(newPartOrderPoId) : null,
+      })
+      setNewPartOrderItemId(''); setNewPartOrderCustomerId(''); setNewPartOrderCustomerName(''); setNewPartOrderCustomerPhone(''); setNewPartOrderQty('1'); setNewPartOrderPoId('')
+      toast.show('سُجِّل طلب العميل ✓')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   /* ─── تقارير المصروفات (طلب المالك): مجمّع + تفصيلي بفلترة محترفة ─── */
   const customExpenseCodes = useMemo(() => new Set(customAccounts.filter((a) => a.rootType === 'expenses').map((a) => a.code)), [customAccounts])
@@ -202,6 +351,26 @@ export function ReportsPage() {
     const body = `<table><thead><tr><th>المركز العام</th><th>المشروع</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>${costCenterExpenses.rows.map((row) => `<tr><td>${esc(costCenterName(row.costCenterId ?? null))}</td><td>${esc(projectName(row.projectId))}</td><td class="num">${row.txCount}</td><td class="num">${fmt(row.paidMinor)}</td><td class="num">${fmt(row.accruedMinor)}</td><td class="num">${fmt(row.totalMinor)}</td></tr>`).join('')}<tr class="total"><td colspan="5">الإجمالي</td><td class="num">${fmt(costCenterExpenses.totalMinor)}</td></tr></tbody></table>`
     const { reportPrint, receipt } = useAppStore.getState()
     printHtml(renderReportShell({ title: 'تحليل مصروفات الفواتير حسب مركز التكلفة', subtitle: `الفترة ${period.from} → ${period.to} · ${costSettlement === 'paid_now' ? 'مدفوع' : costSettlement === 'payable_later' ? 'مستحق' : 'كل حالات السداد'}`, companyName: setup.shopName || '', logoDataUrl: receipt.logoDataUrl, settings: reportPrint, bodyHtml: body }))
+  }
+
+  /**
+   * مستند مطالبة إرجاع للمورد (سد فجوة مستقبلية — النشاط #5: صيدلية):
+   * يُصدَّر مباشرة من مرشحات إرجاع المورد (supplierReturnCandidates) —
+   * مستند جاهز للطباعة/الإرسال بدل تجميع الدفعات يدوياً عند كل مطالبة.
+   */
+  const printSupplierReturnClaim = (supplierId: number, supplierName: string, rows: typeof returnCandidates) => {
+    const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const body = `<table><thead><tr><th>الصنف</th><th>التشغيلة</th><th>تاريخ الانتهاء</th><th>الكمية</th><th>المتبقي لنهاية نافذة الإرجاع</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.nameAr)}</td><td class="num">${esc(r.lotNumber ?? '—')}</td><td class="num">${r.expiryDate}</td><td class="num">${r.qty}</td><td class="num">${r.daysLeft} يوم</td></tr>`).join('')}</tbody></table>`
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({
+      title: `مطالبة إرجاع — ${esc(supplierName)}`,
+      subtitle: `${rows.length} بند — نافذة الإرجاع ${rows[0]?.returnWindowDays ?? ''} يوماً قبل الانتهاء`,
+      companyName: setup.shopName || '',
+      logoDataUrl: receipt.logoDataUrl,
+      settings: reportPrint,
+      bodyHtml: body,
+    }))
+    void supplierId
   }
 
   const printExpenseCategories = () => {
@@ -417,8 +586,223 @@ export function ReportsPage() {
         </div>
       )}
 
-      {tab === 'items' && (
+      {tab === 'sales' && (
         <div className={`anim-up ${card} overflow-hidden`}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            🚚 طلبات التوصيل/التركيب <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (أجهزة كهربائية): بديل منظَّم لبند رسوم «شحن وتوصيل» النصي الحر</span>
+          </div>
+          {deliveryOnTime.completedCount > 0 && (
+            <div className="px-4 py-2 flex items-center gap-3 text-[11px] font-bold border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+              <span className="text-slate-400">معدل الالتزام بالموعد (الفترة المختارة):</span>
+              <span className={deliveryOnTime.onTimeRatePercent >= 80 ? 'text-emerald-600' : 'text-amber-600'}>{deliveryOnTime.onTimeRatePercent}%</span>
+              <span className="text-slate-400">({deliveryOnTime.onTimeCount} في الموعد / {deliveryOnTime.lateCount} متأخر من {deliveryOnTime.completedCount} مكتمل)</span>
+            </div>
+          )}
+          <div className="p-4 grid md:grid-cols-[1fr_10rem_10rem_auto] gap-2 items-end border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">رقم الفاتورة</label>
+              <input value={deliveryInvoiceQuery} onChange={(e) => setDeliveryInvoiceQuery(e.target.value)} className={inputCls} dir="ltr" placeholder="SAL-… أو رقم الفاتورة" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">تاريخ التوصيل</label>
+              <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className={inputCls} dir="ltr" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">المندوب/الفريق (اختياري)</label>
+              <input value={deliveryAssignee} onChange={(e) => setDeliveryAssignee(e.target.value)} className={inputCls} />
+            </div>
+            <button type="button" onClick={scheduleDeliveryFromInvoice} className="h-9 px-3 rounded-lg bg-brand-600 text-white text-[12px] font-bold hover:bg-brand-700">جدولة</button>
+          </div>
+          {pendingDeliveries.length === 0 ? (
+            <div className="text-center text-slate-400 text-[12px] py-8">لا طلبات توصيل معلَّقة ✅</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الفاتورة</th>
+                  <th className="px-4 py-2 text-right font-bold">تاريخ التوصيل</th>
+                  <th className="px-4 py-2 text-right font-bold">المندوب</th>
+                  <th className="px-4 py-2 text-right font-bold">الحالة</th>
+                  <th className="px-4 py-2 text-left font-bold">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingDeliveries.map(({ job, sale }) => (
+                  <tr key={job.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{sale?.invoiceNumber ?? `#${job.saleId}`}</td>
+                    <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{job.scheduledAt}</td>
+                    <td className="px-4 py-2 text-slate-400 text-[11px]">{job.assignedTo ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${job.status === 'scheduled' ? 'bg-sky-500/10 text-sky-600' : 'bg-amber-500/10 text-amber-600'}`}>
+                        {job.status === 'scheduled' ? 'مجدوَل' : 'جارٍ التنفيذ'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-left">
+                      {job.status === 'scheduled' && <button type="button" onClick={() => setDeliveryStatus(job.id, 'in_progress')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 ml-1">بدء التنفيذ</button>}
+                      <button type="button" onClick={() => setDeliveryStatus(job.id, 'done')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20">تم التسليم</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'sales' && (
+        <div className={`anim-up ${card} overflow-hidden`}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            🛡️ الضمان الممتد ومعدل المطالبات <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (أجهزة كهربائية): معدل الإقران خلال الفترة + معدل تكرار مطالبات الضمان لكل صنف</span>
+          </div>
+          <div className="p-4 grid sm:grid-cols-2 gap-3 border-b border-slate-100 dark:border-slate-800 text-center">
+            <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 py-3">
+              <div className="text-[11px] font-bold text-slate-400">قطع مباعة في الفترة</div>
+              <div className="text-xl font-black text-slate-700 dark:text-slate-200">{warrantyAttach.totalSold}</div>
+            </div>
+            <div className="rounded-xl bg-sky-500/5 border border-sky-500/20 py-3">
+              <div className="text-[11px] font-bold text-slate-400">معدل إقران الضمان الممتد (Attach Rate)</div>
+              <div className="text-xl font-black text-sky-600">{warrantyAttach.overallAttachRatePercent}% <span className="text-[11px] font-bold text-slate-400">({warrantyAttach.totalExtended} قطعة)</span></div>
+            </div>
+          </div>
+          {warrantyAttach.rows.length > 0 && (
+            <table className="w-full text-[12.5px] border-b border-slate-100 dark:border-slate-800">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                  <th className="px-4 py-2 text-right font-bold">قطع مباعة</th>
+                  <th className="px-4 py-2 text-right font-bold">بضمان ممتد</th>
+                  <th className="px-4 py-2 text-right font-bold">معدل الإقران</th>
+                </tr>
+              </thead>
+              <tbody>
+                {warrantyAttach.rows.map((r) => (
+                  <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{itemName(r.itemId)}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.soldCount}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.extendedCount}</td>
+                    <td className="px-4 py-2 font-bold text-sky-600">{r.attachRatePercent}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="px-4 py-2 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">معدل تكرار مطالبات الضمان لكل صنف (كل الفترات — مؤشر جودة)</div>
+          {warrantyClaims.length === 0 ? (
+            <div className="text-center text-slate-400 text-[12px] py-6">لا بيانات كافية (قطع مباعة مرتبطة بسيريال وضمان)</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                  <th className="px-4 py-2 text-right font-bold">قطع مباعة</th>
+                  <th className="px-4 py-2 text-right font-bold">قطع فُتحت لها تذكرة ضمن الضمان</th>
+                  <th className="px-4 py-2 text-right font-bold">معدل المطالبات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {warrantyClaims.map((r) => (
+                  <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{itemName(r.itemId)}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.soldUnderWarranty}</td>
+                    <td className="px-4 py-2 text-slate-400">{r.claimsCount}</td>
+                    <td className={`px-4 py-2 font-bold ${r.claimRatePercent >= 15 ? 'text-rose-600' : 'text-slate-600 dark:text-slate-300'}`}>{r.claimRatePercent}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'sales' && (
+        <div className={`anim-up ${card} overflow-hidden`}>
+          <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+            📦 طلبات العملاء المعلّقة <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (قطع غيار): طلب خاص لقطعة غير متوفرة، يُربط اختيارياً بأمر شراء فيتحول تلقائياً إلى «وصلت» عند اكتمال استلامه</span>
+          </div>
+          <div className="p-4 grid md:grid-cols-6 gap-2 items-end border-b border-slate-100 dark:border-slate-800">
+            <div className="md:col-span-2">
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">الصنف</label>
+              <select value={newPartOrderItemId} onChange={(e) => setNewPartOrderItemId(e.target.value)} className={inputCls}>
+                <option value="">اختر الصنف…</option>
+                {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">عميل مسجّل (اختياري)</label>
+              <select value={newPartOrderCustomerId} onChange={(e) => setNewPartOrderCustomerId(e.target.value)} className={inputCls}>
+                <option value="">— بلا —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+              </select>
+            </div>
+            {!newPartOrderCustomerId && (
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 block mb-1">اسم العميل</label>
+                <input value={newPartOrderCustomerName} onChange={(e) => setNewPartOrderCustomerName(e.target.value)} className={inputCls} />
+              </div>
+            )}
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">جوال العميل (لواتساب)</label>
+              <input value={newPartOrderCustomerPhone} onChange={(e) => setNewPartOrderCustomerPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01x…" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">الكمية</label>
+              <input type="number" min={1} value={newPartOrderQty} onChange={(e) => setNewPartOrderQty(e.target.value)} className={inputCls} dir="ltr" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500 block mb-1">أمر شراء مرتبط (اختياري)</label>
+              <select value={newPartOrderPoId} onChange={(e) => setNewPartOrderPoId(e.target.value)} className={inputCls}>
+                <option value="">— بلا —</option>
+                {openPurchaseOrders.map((o) => <option key={o.id} value={o.id}>{o.orderNumber} — {o.supplierName}</option>)}
+              </select>
+            </div>
+            <button type="button" onClick={submitPartOrder} className="px-4 py-2 rounded-xl bg-sky-600 text-white text-[12.5px] font-bold hover:bg-sky-700 md:col-span-6 w-fit justify-self-start">+ تسجيل طلب عميل</button>
+          </div>
+          {sortedPartOrders.length === 0 ? (
+            <div className="text-center text-slate-400 text-[12px] py-6">لا طلبات عملاء معلّقة مسجّلة</div>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2 text-right font-bold">الأمر</th>
+                  <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                  <th className="px-4 py-2 text-right font-bold">العميل</th>
+                  <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                  <th className="px-4 py-2 text-right font-bold">الحالة</th>
+                  <th className="px-4 py-2 text-left font-bold">إجراء</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedPartOrders.map((o) => (
+                  <tr key={o.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200" dir="ltr">{o.orderNumber}</td>
+                    <td className="px-4 py-2">{o.itemNameAr}</td>
+                    <td className="px-4 py-2">{o.customerName}</td>
+                    <td className="px-4 py-2">{o.qty}</td>
+                    <td className="px-4 py-2">
+                      <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${o.status === 'pending' ? 'bg-amber-500/10 text-amber-600' : o.status === 'arrived' ? 'bg-sky-500/10 text-sky-600' : o.status === 'delivered' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-500/10 text-slate-500'}`}>
+                        {PENDING_PART_ORDER_STATUS_AR[o.status]}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-left whitespace-nowrap">
+                      {o.status === 'pending' && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'arrived')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 ml-1">وصلت</button>}
+                      {o.status === 'arrived' && o.customerPhone && (
+                        <a href={waChatLink(o.customerPhone, buildPartArrivedMessage(o, setup.shopName || ''))} target="_blank" rel="noreferrer" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1">📲 إخطار واتساب</a>
+                      )}
+                      {o.status === 'arrived' && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'delivered')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 ml-1">تم التسليم</button>}
+                      {(o.status === 'pending' || o.status === 'arrived') && <button type="button" onClick={() => setPendingPartOrderStatus(o.id, 'cancelled')} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 ml-1">إلغاء</button>}
+                      <button type="button" onClick={() => deletePendingPartOrder(o.id)} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 hover:bg-slate-500/20">حذف</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {tab === 'items' && (
+        <div className="anim-up space-y-4">
+        <div className={`${card} overflow-hidden`}>
           {top.length === 0 ? (
             <div className="text-center text-slate-400 text-[13px] py-10">
               {setup.modules.includes('pos') ? 'لا مبيعات أصناف في هذه الفترة' : 'نشاطك لا يبيع بالكاشير — الأصناف هنا تُعرض عند البيع عبر الفاتورة أو المحرك التخصصي'}
@@ -433,6 +817,7 @@ export function ReportsPage() {
                   <th className="px-4 py-3 text-right font-bold">الإيراد</th>
                   <th className="px-4 py-3 text-right font-bold">التكلفة</th>
                   <th className="px-4 py-3 text-right font-bold">الربح</th>
+                  <th className="px-4 py-3 text-right font-bold">هامش الربح</th>
                 </tr>
               </thead>
               <tbody>
@@ -444,15 +829,130 @@ export function ReportsPage() {
                     <td className="px-4 py-2.5 font-bold">{fmt(r.revenueMinor)}</td>
                     <td className="px-4 py-2.5 text-slate-500">{fmt(r.cogsMinor)}</td>
                     <td className={`px-4 py-2.5 font-black ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(r.profitMinor)}</td>
+                    <td className={`px-4 py-2.5 font-bold ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {r.revenueMinor > 0 ? `${Math.round((r.profitMinor / r.revenueMinor) * 1000) / 10}٪` : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+          {/* تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95) */}
+          {abcRows.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between flex-wrap gap-2">
+                <span>🔠 تحليل ABC — تصنيف الأصناف بمساهمتها بالإيراد</span>
+                <span className="flex items-center gap-2 text-[10.5px] font-bold">
+                  <span className="text-emerald-600">A: {abcRows.filter((r) => r.class === 'A').length}</span>
+                  <span className="text-amber-600">B: {abcRows.filter((r) => r.class === 'B').length}</span>
+                  <span className="text-rose-500">C: {abcRows.filter((r) => r.class === 'C').length}</span>
+                </span>
+              </div>
+              <div className="px-4 pb-2 text-[10.5px] text-slate-400">A = أول أصناف تشكّل 80٪ من الإيراد (تستحق أعلى عناية ومتابعة مخزون) · B = حتى 95٪ · C = الباقي (أثر محدود على الإيراد)</div>
+              <div className="max-h-96 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">الفئة</th>
+                      <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-2 text-right font-bold">الإيراد</th>
+                      <th className="px-4 py-2 text-right font-bold">% من الإيراد</th>
+                      <th className="px-4 py-2 text-right font-bold">% تراكمية</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {abcRows.map((r) => (
+                      <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2">
+                          <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black text-white ${r.class === 'A' ? 'bg-emerald-500' : r.class === 'B' ? 'bg-amber-500' : 'bg-rose-400'}`}>{r.class}</span>
+                        </td>
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 font-bold">{fmt(r.revenueMinor)}</td>
+                        <td className="px-4 py-2">{r.sharePercent}٪</td>
+                        <td className="px-4 py-2 text-slate-400">{r.cumulativeSharePercent}٪</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {/* ربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار) */}
+          {hasGradedItems && gradeProfit.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300">⚙️ الربح حسب درجة القطعة (أصلي/بديل تجاري/مستعمل)</div>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-2 text-right font-bold">الدرجة</th>
+                    <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                    <th className="px-4 py-2 text-right font-bold">الإيراد</th>
+                    <th className="px-4 py-2 text-right font-bold">الربح</th>
+                    <th className="px-4 py-2 text-right font-bold">هامش الربح</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gradeProfit.map((r) => (
+                    <tr key={r.grade} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">
+                        {r.grade === 'unspecified' ? '— غير محددة' : `${GRADE_LABELS[r.grade].icon} ${GRADE_LABELS[r.grade].nameAr}`}
+                      </td>
+                      <td className="px-4 py-2">{r.qty}</td>
+                      <td className="px-4 py-2 font-bold">{fmt(r.revenueMinor)}</td>
+                      <td className={`px-4 py-2 font-black ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(r.profitMinor)}</td>
+                      <td className={`px-4 py-2 font-bold ${r.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{r.marginPercent}٪</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {/* توقع طلب إحصائي (سد فجوة مستقبلية: تنبؤ ذكاء اصطناعي — نسخة إحصائية محلية، ليست تعلّماً آلياً حقيقياً) */}
+          {forecastRows.length > 0 && (
+            <div className="border-t border-slate-100 dark:border-slate-800">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300">📈 توقع الطلب الأسبوعي (إحصائي — متوسط متحرك باتجاه)</div>
+              <div className="px-4 pb-2 text-[10.5px] text-slate-400">أداة استرشادية محلية بلا اتصال سحابي: تقارن متوسط آخر 8 أسابيع بنصفها الأحدث لتقدير اتجاه الطلب — ليست تنبؤاً بالذكاء الاصطناعي، والقرار النهائي للمالك.</div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-2 text-right font-bold">متوسط أسبوعي</th>
+                      <th className="px-4 py-2 text-right font-bold">الاتجاه</th>
+                      <th className="px-4 py-2 text-right font-bold">توقع الأسبوع القادم</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecastRows.slice(0, 15).map((r) => (
+                      <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2">{r.avgWeeklyQty}</td>
+                        <td className={`px-4 py-2 font-bold ${r.trendPercent > 0 ? 'text-emerald-600' : r.trendPercent < 0 ? 'text-rose-500' : 'text-slate-400'}`}>
+                          {r.trendPercent > 0 ? '▲' : r.trendPercent < 0 ? '▼' : '—'} {r.trendPercent}٪
+                        </td>
+                        <td className="px-4 py-2 font-black">{r.forecastNextWeekQty}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {/* الراكد — نمط DEXEF «تقرير الراكد وحد الطلب»: رأس المال المحبوس أولاً */}
           <div className="border-t border-slate-100 dark:border-slate-800">
-            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between">
-              <span>🐢 الأصناف الراكدة (لم تُبع منذ 30+ يوماً وعليها مخزون)</span>
+            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                🐢 الأصناف الراكدة (لم تُبع منذ {stagnantThresholdDays}+ يوماً وعليها مخزون)
+                <span className="flex items-center gap-1 font-normal">
+                  <label className="text-[10px] text-slate-400">عتبة الركود (أيام):</label>
+                  <input
+                    type="number" min={1} value={stagnantThresholdDays}
+                    onChange={(e) => setStagnantThresholdDays(Math.max(1, Number(e.target.value) || defaultStagnantDays))}
+                    className="w-16 h-6 text-center text-[11px] rounded-md border border-slate-200 dark:border-slate-700 bg-transparent outline-none"
+                    dir="ltr"
+                  />
+                </span>
+              </span>
               {stagnant.length > 0 && <span className="text-rose-500">رأس مال محبوس: {fmt(stagnant.reduce((a, r) => a + r.stockValueMinor, 0))} {cur.symbol}</span>}
             </div>
             {stagnant.length === 0 ? (
@@ -479,7 +979,78 @@ export function ReportsPage() {
                 </tbody>
               </table>
             )}
+            {/* تفصيل الركود على مستوى التركيبة لون×مقاس — نشاط الملابس: صنف "متحرك" ككل
+                قد يُخفي لوناً/مقاساً راكداً تماماً لا يظهر في الجدول أعلاه */}
+            {stagnantVariantRows.length > 0 && (
+              <div className="border-t border-slate-100 dark:border-slate-800">
+                <div className="px-4 py-2.5 text-[11.5px] font-black text-slate-500 dark:text-slate-400">🎨 تفصيل الركود حسب التركيبة (لون/مقاس) — قد تكون راكدة حتى لو الصنف ككل "متحرك"</div>
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-1.5 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-1.5 text-right font-bold">التركيبة</th>
+                      <th className="px-4 py-1.5 text-right font-bold">الرصيد</th>
+                      <th className="px-4 py-1.5 text-right font-bold">قيمة المخزون</th>
+                      <th className="px-4 py-1.5 text-right font-bold">آخر بيع</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stagnantVariantRows.slice(0, 15).map((r) => (
+                      <tr key={`${r.itemId}-${r.color}-${r.size}`} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-1.5 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-1.5 text-slate-500">{[r.color, r.size].filter(Boolean).join(' / ') || '—'}</td>
+                        <td className="px-4 py-1.5">{r.qty}</td>
+                        <td className="px-4 py-1.5 font-bold text-rose-600">{fmt(r.stockValueMinor)}</td>
+                        <td className="px-4 py-1.5 text-slate-500">{r.idleDays === -1 ? 'لم يُبع قط' : `${r.lastSoldDate} (${r.idleDays} يوماً)`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
+          {/* أسباب الإرجاع — سد فجوة توثيق (الدليل الداخلي يوصي بمراقبته) */}
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between">
+              <span>↩️ تحليل أسباب الإرجاع (الفترة المحددة)</span>
+              {returnReasons.length > 0 && <span className="text-slate-400">{returnReasons.reduce((a, r) => a + r.count, 0)} مرتجعاً</span>}
+            </div>
+            {returnReasons.length === 0 ? (
+              <div className="text-center text-emerald-500 text-[12px] pb-4 font-bold">لا مرتجعات في هذه الفترة ✓</div>
+            ) : (
+              <>
+                {returnReasons[0].reasonCode === 'expired' && returnReasons[0].count >= 3 && (
+                  <div className="mx-4 mb-2 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[11.5px] font-bold px-3 py-2">
+                    ⚠️ «منتهي الصلاحية» هو السبب الأكثر تكراراً ({returnReasons[0].count} مرتجعاً) — يشير غالباً لخلل في تدوير الأرفف (الأقدم صلاحية يُباع أولاً).
+                  </div>
+                )}
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">السبب</th>
+                      <th className="px-4 py-2 text-right font-bold">عدد المرتجعات</th>
+                      <th className="px-4 py-2 text-right font-bold">القيمة الإجمالية</th>
+                      <th className="px-4 py-2 text-right font-bold">تالف</th>
+                      <th className="px-4 py-2 text-right font-bold">سليم (يعود للرف)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {returnReasons.map((r) => (
+                      <tr key={r.reasonCode} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2">{r.count}</td>
+                        <td className="px-4 py-2 font-bold text-amber-600">{fmt(r.totalValueMinor)}</td>
+                        <td className="px-4 py-2 text-rose-500">{r.damagedLines || '—'}</td>
+                        <td className="px-4 py-2 text-emerald-600">{r.resellableLines || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                 </table>
+               </>
+             )}
+           </div>
+         </div>
+         <MarketPriceReferenceCard card={card} />
         </div>
       )}
 
@@ -639,7 +1210,7 @@ export function ReportsPage() {
                   <tbody>
                     {expAlerts.map((r, i) => (
                       <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}{r.lotNumber && <span className="mr-1.5 font-mono font-normal text-[10px] text-slate-400" dir="ltr">(تشغيلة {r.lotNumber})</span>}</td>
                         <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.expiryDate} — كمية {r.qty}</td>
                         <td className="px-4 py-2 text-left">
                           {r.status === 'expired'
@@ -653,6 +1224,277 @@ export function ReportsPage() {
               </div>
             )}
           </div>
+          {markdowns.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                🏷️ اقتراح تخفيض قرب الانتهاء ({markdowns.length}) <span className="text-[10px] font-normal text-slate-400">— استرشادي، لا يُغيّر السعر تلقائياً</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                      <th className="px-4 py-2 text-right font-bold">ينتهي خلال</th>
+                      <th className="px-4 py-2 text-right font-bold">السعر الحالي</th>
+                      <th className="px-4 py-2 text-right font-bold">خصم مقترح</th>
+                      <th className="px-4 py-2 text-right font-bold">السعر المقترح</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {markdowns.map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 text-amber-600 text-[11px]">{r.daysLeft} يوم</td>
+                        <td className="px-4 py-2 text-slate-400">{fmt(r.currentPriceMinor)}</td>
+                        <td className="px-4 py-2 font-bold text-rose-500">{r.suggestedDiscountPercent}٪</td>
+                        <td className="px-4 py-2 font-black text-emerald-600">{fmt(r.suggestedPriceMinor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {expiryValueRows.some((r) => r.qty > 0) && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                💰 قيمة المخزون المعرَّض لخطر الانتهاء <span className="text-[10px] font-normal text-slate-400">— سد فجوة فورية (صيدلية): تجميع مالي لتنبيهات الصلاحية حسب الأفق الزمني</span>
+              </div>
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-2 text-right font-bold">الأفق</th>
+                    <th className="px-4 py-2 text-right font-bold">عدد الدفعات</th>
+                    <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                    <th className="px-4 py-2 text-right font-bold">القيمة المعرَّضة للخطر</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expiryValueRows.map((r) => (
+                    <tr key={r.horizonDays} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">خلال {r.horizonDays} يوم{r.horizonDays === 30 ? ' (شامل المنتهي فعلاً)' : ''}</td>
+                      <td className="px-4 py-2 text-slate-400 text-[11px]">{r.batchCount}</td>
+                      <td className="px-4 py-2 text-slate-400 text-[11px]">{r.qty}</td>
+                      <td className="px-4 py-2 font-black text-rose-600">{fmt(r.valueMinor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {returnCandidatesBySupplier.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                ↩️ مرشحات إرجاع المورد ({returnCandidates.length}) <span className="text-[10px] font-normal text-slate-400">— دفعات لا تزال داخل نافذة إرجاع موردها المسجَّلة قبل الانتهاء</span>
+              </div>
+              <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                {returnCandidatesBySupplier.map((group) => (
+                  <div key={group.supplierId} className="px-4 py-2">
+                    <div className="text-[11px] font-extrabold text-brand-600 mb-1 flex items-center justify-between">
+                      <span>{group.supplierName} ({group.rows.length})</span>
+                      <button type="button" onClick={() => printSupplierReturnClaim(group.supplierId, group.supplierName, group.rows)} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 hover:bg-brand-500/20">🖨️ طباعة مطالبة الإرجاع</button>
+                    </div>
+                    <table className="w-full text-[12.5px]">
+                      <tbody>
+                        {group.rows.map((r, i) => (
+                          <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                            <td className="px-2 py-1.5 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}{r.lotNumber && <span className="mr-1.5 font-mono font-normal text-[10px] text-slate-400" dir="ltr">(تشغيلة {r.lotNumber})</span>}</td>
+                            <td className="px-2 py-1.5 text-slate-400 text-[11px]" dir="ltr">{r.expiryDate} — كمية {r.qty}</td>
+                            <td className="px-2 py-1.5 text-left"><span className="text-[10px] font-bold text-sky-600 bg-sky-500/10 px-2 py-0.5 rounded-full">متبقٍ {r.daysLeft} يوم — نافذة {r.returnWindowDays} يوم</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {variantLowStockRows.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                <AlertTriangle size={14} className="text-amber-500" /> نقص مخزون التركيبات لون/مقاس ({variantLowStockRows.length}) <span className="text-[10px] font-normal text-slate-400">— سد فجوة نشاط الملابس: نفاد تركيبة بعينها قد لا يظهر في تنبيه الصنف العام</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <tbody>
+                    {variantLowStockRows.map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.itemName}</td>
+                        <td className="px-4 py-2 text-slate-400 text-[11px]">{[r.color, r.size].filter(Boolean).join(' / ') || '—'} — المتاح {r.qty}{r.impliedMinQty > 0 ? ` (حد تناسبي ${r.impliedMinQty})` : ''}</td>
+                        <td className="px-4 py-2 text-left">
+                          {r.kind === 'out'
+                            ? <span className="text-[10px] font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded-full">نافدة</span>
+                            : <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full">منخفضة</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {sizeCurveByItem.length > 0 && (
+            <div className={`${card} overflow-hidden lg:col-span-2`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                📐 منحنى المقاسات (Size Curve) <span className="text-[10px] font-normal text-slate-400">— نسبة مبيعات كل مقاس بالفترة المحددة؛ استرشد به لتوزيع كمية الشراء القادمة على المقاسات (نشاط الملابس)</span>
+              </div>
+              <div className="max-h-80 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x md:divide-x-reverse divide-slate-100 dark:divide-slate-800">
+                {sizeCurveByItem.map((g) => (
+                  <div key={g.nameAr + g.rows[0]?.itemId} className="p-3 border-b border-slate-50 dark:border-slate-800/50">
+                    <div className="text-[11.5px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{g.nameAr}</div>
+                    <div className="space-y-1">
+                      {g.rows.map((r) => (
+                        <div key={r.size} className="flex items-center gap-2">
+                          <span className="w-14 text-[10.5px] text-slate-400 shrink-0">{r.size}</span>
+                          <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                            <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.min(100, r.sharePercent)}%` }} />
+                          </div>
+                          <span className="w-16 text-left text-[10.5px] font-bold text-violet-600 dark:text-violet-300">{r.sharePercent}٪ ({r.soldQty})</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {(receivingVariance.length > 0 || productionVariance.length > 0) && (
+            <div className={`${card} overflow-hidden lg:col-span-2`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                ⚖️ تقرير فرق الوزن/الهالك <span className="text-[10px] font-normal text-slate-400">— استلام من الموردين + تصنيع داخلي (سد فجوة تجارة الأعلاف والحبوب)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x md:divide-x-reverse divide-slate-100 dark:divide-slate-800">
+                <div>
+                  <div className="px-4 pt-3 pb-1 text-[11px] font-bold text-slate-500">فرق استلام المشتريات حسب المورد والشهر</div>
+                  {receivingVariance.length === 0 ? (
+                    <div className="text-center text-slate-400 text-[12px] py-6">لا بيانات وزن مرسَل مسجَّلة بعد</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                            <th className="px-4 py-2 text-right font-bold">المورد</th>
+                            <th className="px-4 py-2 text-right font-bold">الشهر</th>
+                            <th className="px-4 py-2 text-right font-bold">فواتير</th>
+                            <th className="px-4 py-2 text-right font-bold">أسوأ فرق</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {receivingVariance.map((r, i) => (
+                            <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.supplierNameAr}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.period}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{r.invoicesCount}</td>
+                              <td className={`px-4 py-2 font-black ${r.exceedsThresholdCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{r.maxDiffPercent}٪{r.exceedsThresholdCount > 0 && <span className="text-[10px] font-normal text-rose-400"> ({r.exceedsThresholdCount} تجاوز العتبة)</span>}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="px-4 pt-3 pb-1 text-[11px] font-bold text-slate-500">فرق هالك التصنيع الداخلي حسب المنتج والشهر</div>
+                  {productionVariance.length === 0 ? (
+                    <div className="text-center text-slate-400 text-[12px] py-6">لا فروق تصنيع مسجَّلة بعد</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                            <th className="px-4 py-2 text-right font-bold">المنتج</th>
+                            <th className="px-4 py-2 text-right font-bold">الشهر</th>
+                            <th className="px-4 py-2 text-right font-bold">أوامر</th>
+                            <th className="px-4 py-2 text-right font-bold">إجمالي الفرق</th>
+                            <th className="px-4 py-2 text-right font-bold">أبرز سبب</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {productionVariance.map((r, i) => (
+                            <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.productNameAr}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.period}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{r.ordersCount}</td>
+                              <td className="px-4 py-2 font-black text-amber-600">{r.totalVarianceQty}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{[...r.byReason].sort((a, b) => b.count - a.count)[0]?.labelAr ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {(wastageRatio.length > 0 || wastageByItem.length > 0) && (
+            <div className={`${card} overflow-hidden lg:col-span-2`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                🥐 نسبة الهالك الأسبوعية <span className="text-[10px] font-normal text-slate-400">— سد فجوة مخبز وحلويات (نمط BakeSmart/Fournil: أقل من 5٪ ممتاز، 5-10٪ مقبول، أكثر من 10٪ إنتاج زائد)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-0 md:divide-x md:divide-x-reverse divide-slate-100 dark:divide-slate-800">
+                <div>
+                  <div className="px-4 pt-3 pb-1 text-[11px] font-bold text-slate-500">الهالك مقابل تكلفة المبيعات حسب أسبوع ISO</div>
+                  {wastageRatio.length === 0 ? (
+                    <div className="text-center text-slate-400 text-[12px] py-6">لا هالك مسجَّل بعد</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                            <th className="px-4 py-2 text-right font-bold">الأسبوع</th>
+                            <th className="px-4 py-2 text-right font-bold">هالك</th>
+                            <th className="px-4 py-2 text-right font-bold">تكلفة مبيعات</th>
+                            <th className="px-4 py-2 text-right font-bold">النسبة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {wastageRatio.map((r) => (
+                            <tr key={r.period} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.period}</td>
+                              <td className="px-4 py-2 text-rose-500">{fmt(r.wastageCostMinor)}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{fmt(r.salesCogsMinor)}</td>
+                              <td className={`px-4 py-2 font-black ${r.ratioPercent == null ? 'text-slate-300' : r.ratioPercent > 10 ? 'text-rose-600' : r.ratioPercent > 5 ? 'text-amber-600' : 'text-emerald-600'}`}>{r.ratioPercent == null ? '—' : `${r.ratioPercent}٪`}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="px-4 pt-3 pb-1 text-[11px] font-bold text-slate-500">أكثر الأصناف هالكاً (الإجمالي الكلي)</div>
+                  {wastageByItem.length === 0 ? (
+                    <div className="text-center text-slate-400 text-[12px] py-6">لا هالك مسجَّل بعد</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="text-slate-400 text-[10.5px] border-b border-slate-100 dark:border-slate-800">
+                            <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                            <th className="px-4 py-2 text-right font-bold">مستندات</th>
+                            <th className="px-4 py-2 text-right font-bold">الكمية</th>
+                            <th className="px-4 py-2 text-right font-bold">القيمة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {wastageByItem.map((r) => (
+                            <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                              <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{r.docsCount}</td>
+                              <td className="px-4 py-2 text-slate-400 text-[11px]">{r.totalQty}</td>
+                              <td className="px-4 py-2 font-black text-rose-600">{fmt(r.totalCostMinor)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <span className="flex items-center gap-1.5"><Boxes size={14} className="text-emerald-500" /> قيمة المخزون (بالتكلفة)</span>
@@ -818,6 +1660,63 @@ export function ReportsPage() {
         <FxTreasuryTab cur={cur} companyName={setup.shopName || 'المنشأة'} />
       )}
 
+    </div>
+  )
+}
+
+/**
+ * مرجع سعر السوق اليومي (سد فجوة مستقبلية — تقرير النشاط #2: تجارة الأعلاف
+ * والحبوب): إدخال يدوي سريع لسعر سلعة (ذرة/صويا/دريس...) من نشرة السوق
+ * اليومية، لمساعدة المالك على ضبط سعر اليوم أول الصباح — استرشادي بحت،
+ * لا يُغيّر سعر أي صنف تلقائياً. بديل خفيف عن تكامل بورصة حبوب كامل.
+ */
+function MarketPriceReferenceCard({ card }: { card: string }) {
+  const { marketPrices, addMarketPrice, deleteMarketPrice } = useDataStore()
+  const { setup } = useAppStore()
+  const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
+  const [commodityName, setCommodityName] = useState('')
+  const [unit, setUnit] = useState('طن')
+  const [price, setPrice] = useState('')
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [error, setError] = useState('')
+  const sorted = useMemo(() => [...marketPrices].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)), [marketPrices])
+  const submit = () => {
+    try {
+      addMarketPrice({ date, commodityName, unit, pricePerUnitMinor: Math.round((Number(price) || 0) * 10 ** cur.decimals) })
+      setCommodityName(''); setPrice(''); setError('')
+    } catch (e) { setError((e as Error).message) }
+  }
+  return (
+    <div className={`${card} overflow-hidden`}>
+      <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+        📈 مرجع سعر السوق اليومي <span className="text-[10px] font-normal text-slate-400">— إدخال يدوي استرشادي، لا يُغيّر أسعار الأصناف تلقائياً</span>
+      </div>
+      <div className="p-3 flex flex-wrap gap-2 items-end border-b border-slate-100 dark:border-slate-800">
+        <input value={commodityName} onChange={(e) => setCommodityName(e.target.value)} placeholder="اسم السلعة (مثال: ذرة صفراء)" className={inputCls} />
+        <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="الوحدة" className={`${inputCls} !w-20`} />
+        <input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" step="any" min={0} placeholder={`السعر (${cur.symbol})`} className={`${inputCls} !w-32`} dir="ltr" />
+        <input value={date} onChange={(e) => setDate(e.target.value)} type="date" className={`${inputCls} !w-40`} dir="ltr" />
+        <button onClick={submit} disabled={!commodityName.trim() || !(Number(price) > 0)} className="px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-[12px] font-bold disabled:opacity-40">+ تسجيل</button>
+        {error && <span className="text-[11px] text-rose-500 font-bold">{error}</span>}
+      </div>
+      {sorted.length === 0 ? (
+        <div className="text-center text-slate-400 text-[12px] py-6">لا أسعار سوق مسجَّلة بعد</div>
+      ) : (
+        <div className="max-h-56 overflow-y-auto">
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {sorted.slice(0, 30).map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{entry.date}</td>
+                  <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{entry.commodityName}</td>
+                  <td className="px-4 py-2 font-black text-emerald-600">{formatMinor(entry.pricePerUnitMinor, cur, false)} {cur.symbol} / {entry.unit}</td>
+                  <td className="px-4 py-2 text-left"><button onClick={() => deleteMarketPrice(entry.id)} className="text-[10px] text-rose-400 hover:text-rose-600">حذف</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

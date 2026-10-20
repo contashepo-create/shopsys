@@ -12,6 +12,16 @@ export type ItemFeature =
   | 'weight_scale' // بيع بالوزن + باركود ميزان
   | 'multi_unit' // وحدات متعددة
   | 'price_lists' // قوائم أسعار
+  /**
+   * أصناف خدمة (isService) بلا مخزون (سد فجوة — تدقيق الأنشطة 29):
+   * ثلاثة أنشطة فقط بُنيت أصلاً حول صنف الخدمة في تعليقاتها الداخلية
+   * (صالون، شركة خدمات، مكتبة) — لكن مفتاح إظهاره بارزاً في نموذج
+   * الصنف كان مربوطاً بنص activityId==='salon' فقط، فبقي "صنف خدمة"
+   * (الحقل الذي يقوم عليه نشاط «شركة خدمات» بالكامل) مخفياً تحت «خيارات
+   * أكثر» لصاحب هذا النشاط ولصاحب المكتبة، رغم أن كل صنف سيضيفه فعلياً
+   * هو صنف خدمة. الحل: خاصية صريحة بنفس نمط بقية الخصائص.
+   */
+  | 'service_items' // صنف خدمة بلا مخزون (Square/Lightspeed)
 
 export type BusinessModule =
   | 'pos' // الكاشير
@@ -24,6 +34,8 @@ export type BusinessModule =
   | 'contracting' // محاسبة المقاولات (القرار 27)
   | 'clinic' // عيادات الأطباء وملفات المرضى (القرار 27)
   | 'cars' // معارض بيع وإيجار السيارات (القرار 27)
+  | 'restaurant' // شاشات صالة المطعم (أوامر الطاولات/الصالة وتقاريرها) — مستقلة عن
+                  // «recipes» المشتركة مع مخبز/مصنع/بقالة ليس لها شاشات طاولات
   | 'installments' // الأقساط
   | 'recipes' // الوصفات والتصنيع (مطاعم/مخابز)
   | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
@@ -84,7 +96,7 @@ function withCoreModules(tpl: ActivityTemplate): ActivityTemplate {
 
 /** ترتيب الوحدات المعياري (يُستخدم للتطبيع والعرض) — القائمة الكاملة في نهاية الملف */
 const ALL_MODULES_ORDER: readonly BusinessModule[] = [
-  'pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry',
+  'pos', 'inventory', 'purchases', 'installments', 'recipes', 'restaurant', 'processing', 'jewelry',
   'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab',
   'contracting', 'clinic', 'cars', 'wallet_services', 'realestate',
 ]
@@ -191,7 +203,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     id: 'restaurant', nameAr: 'مطعم / كافيه', icon: '🍽️',
     description: 'بيع سريع بالكاشير، وصفات أطباق تخصم الخامات آلياً، مشتريات يومية',
     features: ['expiry_batches', 'multi_unit', 'weight_scale'],
-    modules: ['pos', 'inventory', 'purchases', 'recipes'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes', 'restaurant'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -228,7 +240,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     // من المخزون + مواعيد وعمولات موظفين. المرجع العالمي: Fresha / Booksy.
     id: 'salon', nameAr: 'صالون حلاقة وتجميل', icon: '💈',
     description: 'خدمات بلا مخزون + منتجات عناية، مواعيد وعمولات موظفين',
-    features: ['price_lists'],
+    features: ['price_lists', 'service_items'],
     modules: ['pos', 'inventory', 'purchases', 'booking'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
@@ -246,7 +258,10 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     id: 'realestate', nameAr: 'عقارات وإدارة أملاك', icon: '🏘️',
     description: 'عقارات ووحدات، عقود إيجار بأقساط وتأمين مسترد وتوثيق إيجار، سعي أملاك الغير، وبيع عقارات، ومستلزمات صيانة الوحدات في المخزن (بلا كاشير)',
     features: [],
-    modules: ['realestate'],
+    // سد فجوة النشاط #21: الوصف أعلاه يَعِد بمخزن مستلزمات صيانة فعلي —
+    // inventory/purchases بلا pos (بلا كاشير بيع للجمهور)، بنفس نمط
+    // contracting (#11) الذي يتتبع مواد المقاولة بلا كاشير أيضاً.
+    modules: ['realestate', 'inventory', 'purchases'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
@@ -274,7 +289,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     // فواتير خدمات آجلة وعقود ومقبوضات. المرجع العالمي: FreshBooks / Zoho Invoice.
     id: 'services', nameAr: 'شركة خدمات', icon: '🧾',
     description: 'بيع خدمات بلا مخزون: فواتير آجلة ونقدية، عملاء بحدود ائتمان، مصروفات وأرباح لكل فترة',
-    features: ['price_lists'],
+    features: ['price_lists', 'service_items'],
     // inventory ضرورية: شاشة «الأصناف» فيها هي مكان تعريف الخدمات (isService) نفسها
     modules: ['pos', 'inventory', 'purchases'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
@@ -285,7 +300,7 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     // منتشر جداً في مصر — المرجع: تجربة المكتبات المحلية + نمط Square hybrid.
     id: 'stationery', nameAr: 'مكتبة وخدمة طالب', icon: '📚',
     description: 'منتجات مكتبية + خدمات تصوير وطباعة وتغليف في كاشير واحد — بيع سريع بالقطعة',
-    features: ['multi_unit', 'price_lists'],
+    features: ['multi_unit', 'price_lists', 'service_items'],
     modules: ['pos', 'inventory', 'purchases'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
@@ -317,9 +332,16 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
+    // سد فجوة (تدقيق الأنشطة 29 — النشاط #29): خصائص الصنف (صلاحية/سيريال/
+    // وزن/خدمة/متغيرات) متاحة فعلياً لأي نشاط عبر «خيارات أكثر» في شاشة
+    // الأصناف (القرار 5) مهما كانت قائمة features — لكن «قوائم الأسعار»
+    // ميزة استثناء: بوابتها في كتالوج التنقل تتحقق من setup.features مباشرة
+    // بلا أي مسار بديل لتفعيلها لاحقاً. نشاط «عام/آخر» وحده يَعِد صراحة
+    // بـ«فعّل ما تحتاجه لاحقاً» بلا نموذج عمل محدد يبرر استبعادها (خلافاً
+    // لأنشطة مثل الصيدلية/العيادة التي لا تحتاجها فعلاً) — فأُضيفت هنا.
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
-    features: ['multi_unit'],
+    features: ['multi_unit', 'price_lists'],
     modules: ['pos', 'inventory', 'purchases', 'installments'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
@@ -459,6 +481,7 @@ export const FEATURE_LABELS: Record<ItemFeature, { nameAr: string; icon: string;
   weight_scale: { nameAr: 'بيع بالوزن', icon: '⚖️', desc: 'أصناف موزونة وباركود ميزان' },
   multi_unit: { nameAr: 'وحدات متعددة', icon: '📦', desc: 'قطعة / علبة / كرتونة بمعاملات تحويل' },
   price_lists: { nameAr: 'قوائم أسعار', icon: '🏷️', desc: 'جملة / قطاعي / VIP' },
+  service_items: { nameAr: 'أصناف خدمة', icon: '🛎️', desc: 'صنف بلا مخزون ولا تكلفة — يُباع كخدمة فقط' },
 }
 
 export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: string; desc: string }> = {
@@ -474,6 +497,7 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   cars: { nameAr: 'معرض السيارات', icon: '🚗', desc: 'سيارات بتكلفة وربحية لكل واحدة، تجهيزات ترسمل، بيع وإيجار' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
   recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },
+  restaurant: { nameAr: 'صالة المطعم', icon: '🍽️', desc: 'أوامر الطاولات والتيك أواي والدليفري، بون المطبخ، وتقارير أداء الصالة' },
   jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
   wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
   laundry: { nameAr: 'المغسلة', icon: '🧺', desc: 'أوامر غسيل بقطع وخدمات وعربون — استلام وتجهيز وتسليم بقيود سليمة' },
@@ -483,7 +507,7 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'restaurant', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
 
 /* حراسة تحميل: القائمة أعلاه هي المرجع لترتيب الوحدات، وقائمة الترتيب المستخدمة
  * داخل `withCoreModules` يجب أن تطابقها حرفياً — وإلا اختلف ترتيب الشاشات.

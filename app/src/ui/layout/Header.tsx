@@ -16,7 +16,16 @@ import { collectNotifications, visibleNotifications } from '../../core/notificat
 import { renewalReminder, reminderAsNotification } from '../../core/subscriptionReminder.ts'
 import { NOTICE_LEVEL_ICONS, noticeSeverity, shouldAnnounceToast } from '../../core/devNotice.ts'
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { serviceStatus, equipmentComplianceWarnings } from '../../core/rentalMeter.ts'
+import { vehicleComplianceWarnings, unsettledDriverDues } from '../../core/logistics.ts'
+import { clearSessionAuthenticated } from '../../data/sessionAuth.ts'
+import { criticalUnacknowledgedResults } from '../../core/lab.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
+import { bondComplianceWarnings, retentionDueWarnings, COST_KIND_LABELS } from '../../core/contracting.ts'
+import { pendingApprovalAging, APPROVAL_ACTION_LABELS } from '../../core/projectOps.ts'
+import { todaysUnfinishedAppointments, overduePatientBalances } from '../../core/clinic.ts'
+import { agingInventoryCars } from '../../core/cars.ts'
+import { staleOpenOrders } from '../../core/restaurant.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
@@ -37,7 +46,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases, shifts } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -94,6 +103,27 @@ export function Header({ title }: { title: string }) {
       overdueRentals: rentalContracts
         .filter((c) => isRentalOverdue(c, new Date().toISOString()))
         .map((c) => ({ id: c.id, contractNumber: c.contractNumber, equipmentName: c.equipmentName, expectedEnd: rentalExpectedEnd(c.date, c.days, c.rateType ?? 'daily') })),
+      // معدات تجاوزت صيانتها الوقائية (سد فجوة تقرير النشاط #8 — Immediate #1): نفس تصميم overdueRentals، الحساب جاهز بالفعل في serviceStatus
+      overdueMaintenanceEquipment: equipment
+        .map((e) => ({ e, svc: serviceStatus(e.lastServiceReading, e.serviceEveryHours, e.meterReading) }))
+        .filter((x) => x.svc?.overdue)
+        .map((x) => ({ id: x.e.id, nameAr: x.e.nameAr, overdueHours: Math.abs(x.svc!.remainingHours) })),
+      // امتثال معدات: تأمين/فحص دوري يقترب أو انتهى (سد فجوة تقرير النشاط #8 — Future #3)
+      complianceDueEquipment: equipmentComplianceWarnings(equipment, new Date().toISOString(), 30),
+      // امتثال مركبات: رخصة/تأمين يقترب أو انتهى (سد فجوة تقرير النشاط #9 — Immediate #1)
+      complianceDueVehicles: vehicleComplianceWarnings(vehicles, new Date().toISOString(), 30),
+      // مستحقات سائقين غير مسواة مجمعة — مرفوعة لمركز التنبيهات (سد فجوة تقرير النشاط #9 — Immediate #2)
+      unsettledDriverDues: unsettledDriverDues(driverDues).map((d) => ({
+        driverId: d.driverId,
+        driverName: employees.find((e) => e.id === d.driverId)?.nameAr ?? 'سائق',
+        totalMinor: d.totalMinor,
+        tripCount: d.tripCount,
+      })),
+      // قيم تحاليل حرجة غير موثَّقة الإبلاغ (سد فجوة تقرير النشاط #10 — Immediate #3)
+      criticalLabResults: criticalUnacknowledgedResults(labOrders).map((c) => ({
+        orderId: c.orderId, orderNumber: c.orderNumber, testNameAr: c.testNameAr,
+        patientName: c.patientName, resultValue: c.resultValue, unit: c.unit,
+      })),
       overduePromises: [
         ...tickets
           .filter((t) => (t.status === 'received' || t.status === 'in_progress' || t.status === 'ready') && t.promisedAt && t.promisedAt < new Date().toISOString())
@@ -104,6 +134,48 @@ export function Header({ title }: { title: string }) {
       ],
       // عقود إيجار العقارات: انتهاء قريب (60 يوماً) أو أقساط متأخرة (نمط سمات)
       leaseAlerts: collectLeaseAlerts(leases, new Date().toISOString().slice(0, 10), 60),
+      // خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء (سد فجوة تقرير النشاط #11 — Immediate #3)
+      complianceDueBonds: bondComplianceWarnings(bonds, new Date().toISOString(), 30),
+      // بنود موازنة مشروعات نشطة تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)
+      projectBudgetOverruns: projects
+        .filter((p) => p.status === 'active')
+        .flatMap((p) => getProjectBudgetVariance(p.id).rows
+          .filter((r) => r.status === 'over')
+          .map((r) => ({ projectId: p.id, projectNameAr: p.nameAr, kindAr: COST_KIND_LABELS[r.kind].nameAr, overrunMinor: r.actualMinor - r.budgetMinor }))),
+      // طلبات اعتماد مقاولات معلّقة تجاوزت 3 أيام بلا قرار (سد فجوة تقرير النشاط #11 — Immediate #3)
+      pendingApprovalsAging: pendingApprovalAging(approvalRequests, new Date().toISOString(), 3).map((a) => ({
+        requestId: a.requestId, subject: a.subject, actionLabel: APPROVAL_ACTION_LABELS[a.action], daysPending: a.daysPending,
+      })),
+      // مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
+      retentionDueProjects: retentionDueWarnings(projects, (projectId) => getRemainingRetention(projectId), new Date().toISOString(), 30).map((r) => ({
+        projectId: r.projectId, projectNameAr: r.projectNameAr, dueDate: r.dueDate, daysLeft: r.daysLeft, remainingMinor: r.remainingRetentionMinor,
+      })),
+      // مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)
+      clinicAppointmentsToday: todaysUnfinishedAppointments(
+        clinicAppointments,
+        (id) => clinicPatients.find((p) => p.id === id)?.nameAr ?? `مريض #${id}`,
+        new Date().toISOString(),
+      ),
+      // مرضى عيادة برصيد مستحق تجاوز مدة معقولة (سد فجوة تقرير النشاط #12 — Immediate #3)
+      overduePatientBalances: overduePatientBalances(
+        clinicPatients,
+        clinicVisits.map((v) => ({ patientId: v.patientId, date: v.date, dueMinor: v.totals.dueMinor })),
+        getPatientBalance,
+        new Date().toISOString(),
+        7,
+      ),
+      // سيارات معرض متقادمة بالمخزون 60 يوماً فأكثر بلا بيع (سد فجوة تقرير النشاط #13 — Gap 3)
+      agingCars: agingInventoryCars(
+        cars,
+        (entryId) => journal.find((e) => e.id === entryId)?.date ?? null,
+        new Date().toISOString(),
+        60,
+      ),
+      // أوامر مطعم مفتوحة تجاوزت 45 دقيقة بلا إغلاق (سد فجوة تقرير النشاط #14 — Gap 3)
+      staleRestaurantOrders: staleOpenOrders(restaurantOrders, new Date().toISOString(), 45),
+      // سعر جرام الذهب لم يُحدَّث اليوم — فقط لو الصاغة مفعّلة فعلاً بوصف ذهبي واحد على الأقل
+      // (سد فجوة تقرير النشاط #15 — Gap 2)
+      staleGoldPrices: jewelryProfiles.length > 0 ? { updatedAt: gramPrices.updatedAt } : null,
       openIssues: issues.filter((i) => i.status !== 'resolved').map((i) => ({ id: i.id, title: i.title, reportedBy: i.reportedBy })),
       // طلبات استعادة كلمة السر — تظهر للمالك فقط (الموظف لا يرى الجرس المالي أصلاً بحكم الصلاحيات)
       openPinResets: currentUserId == null
@@ -119,7 +191,7 @@ export function Header({ title }: { title: string }) {
       todayIso: new Date().toISOString(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases, activatedPayload],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)
@@ -298,7 +370,7 @@ export function Header({ title }: { title: string }) {
         </button>
         {authOn && (
           <button
-            onClick={logout}
+            onClick={() => { logout(); clearSessionAuthenticated() }}
             title="تسجيل خروج — العودة لشاشة الدخول"
             className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-rose-500/10 hover:text-rose-500 transition-all duration-200 hover:scale-110"
           >

@@ -22,7 +22,7 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { saleWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
-import { maybeZatcaQr } from '../print/zatcaQr.ts'
+import { maybeTaxBarcode } from '../print/taxBarcode.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive, saleEditBlocks } from '../../core/invoiceEdit.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -192,11 +192,13 @@ export function SalesInvoicesPage() {
   /** نموذج الطباعة لفاتورة مبيعات — يُستعمل للطباعة وللإرسال عبر واتساب */
   const buildSaleModel = async (s: SaleInvoice) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
-    const qrDataUrl = await maybeZatcaQr({
-      featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
+    const qrDataUrl = await maybeTaxBarcode({
+      saFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
+      egFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_eg'),
       printEnabled: einvoice.printZatcaQr,
       sellerName: setup.shopName,
-      vatNumber: einvoice.taxNumber,
+      taxNumber: einvoice.taxNumber,
+      invoiceNumber: s.invoiceNumber,
       dateIso: s.date,
       totalMinor: s.totals.totalMinor,
       taxMinor: s.totals.taxMinor,

@@ -146,6 +146,8 @@ const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
     notes: 'ذبيحة الصباح',
   })
   ok(order.orderNumber.startsWith('CUT-'), 'رقم الأمر CUT-')
+  eq(order.lotNumber, order.orderNumber, 'لوط الأمر الافتراضي = رقم الأمر لو لم يُحدَّد')
+  ok(!st().batches.some((b) => b.itemId === leg.id), 'الأصناف غير المتتبعة للصلاحية لا تفتح دفعة')
   eq(order.sourceCostMinor, 270000, 'تكلفة الخام 270000')
   eq(order.outputs.reduce((a, o) => a + o.allocatedCostMinor, 0), 273000, 'التوزيع = خام + مصاريف بالقرش')
   eq(processingYieldPercent(order), 83.3, 'تصافي 15/18 = 83.3٪')
@@ -212,11 +214,32 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
   // فرز: 100 كجم → 40 فاخر + 35 وسط + 15 تصنيع + 10 فاقد، تعبئة 8000 هللة من الخزينة
   const order = st().postProcessing({
     kind: 'dates', sourceItemId: raw.id, sourceQty: 100,
-    outputs: [{ itemId: premium.id, qty: 40 }, { itemId: mid.id, qty: 35 }, { itemId: factory.id, qty: 15 }],
+    outputs: [
+      { itemId: premium.id, qty: 40, expiryDate: '2027-06-01' },
+      { itemId: mid.id, qty: 35, expiryDate: '2027-05-01' },
+      { itemId: factory.id, qty: 15, expiryDate: '2027-03-01' },
+    ],
     overheadMinor: 8000, treasury: '1101', wasteQty: 10,
+    lotNumber: 'موسم-1448-ق1',
     compliance: { originCountry: 'السعودية — القصيم', facilityNo: 'PKG-772', productionDate: '2026-08-20', season: 'موسم 1448هـ' },
   })
   ok(order.orderNumber.startsWith('PKG-'), 'رقم أمر الفرز PKG-')
+  eq(order.lotNumber, 'موسم-1448-ق1', 'رقم التشغيلة المخصص محفوظ')
+  // سد فجوة التتبع: كل ناتج يتتبع الصلاحية فتح دفعة بتاريخ انتهائه الخاص ولوط الأمر
+  for (const [item, exp] of [[premium, '2027-06-01'], [mid, '2027-05-01'], [factory, '2027-03-01']]) {
+    const b = st().batches.find((x) => x.itemId === item.id && x.expiryDate === exp)
+    ok(b, `دفعة ${item.nameAr} بتاريخ ${exp} أُنشئت`)
+    eq(b.lotNumber, 'موسم-1448-ق1', `دفعة ${item.nameAr} تحمل لوط الأمر`)
+  }
+  // ناتج بلا تاريخ انتهاء صحيح يُرفض صراحة لا يمر بصمت
+  throws(() => st().postProcessing({
+    kind: 'dates', sourceItemId: raw.id, sourceQty: 1,
+    outputs: [{ itemId: premium.id, qty: 0.5 }], overheadMinor: 0,
+  }), 'رفض ناتج يتتبع الصلاحية بلا تاريخ انتهاء')
+  throws(() => st().postProcessing({
+    kind: 'dates', sourceItemId: raw.id, sourceQty: 1,
+    outputs: [{ itemId: premium.id, qty: 0.5, expiryDate: '2020-01-01' }], overheadMinor: 0,
+  }), 'رفض تاريخ انتهاء يسبق تاريخ أمر التجهيز')
   eq(order.outputs.reduce((a, o) => a + o.allocatedCostMinor, 0), 128000, 'التوزيع = 120000 خام + 8000 تعبئة')
   eq(processingYieldPercent(order), 90, 'تصافي الفرز 90٪')
   eq(order.compliance.season, 'موسم 1448هـ', 'الموسم محفوظ')

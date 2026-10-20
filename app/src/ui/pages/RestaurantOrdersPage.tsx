@@ -6,28 +6,32 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * (postSale يتولى الوصفات والمخزون والقيد) — قبل القفل لا شيء يلمس الدفاتر.
  */
 import { useMemo, useState } from 'react'
-import { UtensilsCrossed, Printer, XCircle, ReceiptText, Plus, Scissors } from 'lucide-react'
+import { UtensilsCrossed, Printer, XCircle, ReceiptText, Plus, Scissors, Combine } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { ORDER_TYPE_LABELS, orderSubtotalMinor, type RestaurantOrderType } from '../../core/restaurant.ts'
+import { ORDER_TYPE_LABELS, orderSubtotalMinor, linesReduceExistingQty, type RestaurantOrderType } from '../../core/restaurant.ts'
 import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml, printToRoute } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RestaurantOrdersPage() {
-  const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
+  const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, markKitchenFired, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, mergeRestaurantOrders, getEffectivePrice } = useDataStore()
   const { setup, receipt, printerProfiles } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
+  // سد فجوة النشاط #14 (Gap 1): حذف/تقليل صنف بعد إرساله للمطبخ يتطلب اعتماد مشرف
+  const voidApproval = useSupervisorApproval('sales.void.override')
 
   const open = restaurantOrders.filter((o) => o.status === 'open')
   const [newOpen, setNewOpen] = useState(false)
+
   const [nType, setNType] = useState<RestaurantOrderType>('dine_in')
   const [nTable, setNTable] = useState('')
   const [nDelivery, setNDelivery] = useState('')
@@ -55,6 +59,20 @@ export function RestaurantOrdersPage() {
       const child = splitRestaurantOrder(active.id, splitSel)
       setSplitOpen(false); setSplitSel([])
       toast.show(`✂️ فُصلت ${child.lines.length} أصناف إلى ${child.orderNumber} — يُفوتر مستقلاً`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* دمج أمرين مفتوحين في فاتورة واحدة (عكس التقسيم) — سد فجوة النشاط #14 (Gap 2):
+     مثال: عملاء على طاولتين قرروا الدفع معاً، أو طلب دليفري ضُمّ لطاولة بالخطأ */
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeSourceId, setMergeSourceId] = useState<number | null>(null)
+  const mergeCandidates = active ? open.filter((o) => o.id !== active.id) : []
+  const doMerge = () => {
+    if (!active || mergeSourceId == null) return
+    try {
+      const merged = mergeRestaurantOrders(active.id, mergeSourceId)
+      setMergeOpen(false); setMergeSourceId(null)
+      toast.show(`🔗 دُمج الأمران في ${merged.orderNumber} — ${merged.lines.length} صنف`)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -90,6 +108,15 @@ export function RestaurantOrdersPage() {
   const setQty = (idx: number, qty: number) => {
     if (!active) return
     const lines = qty <= 0 ? active.lines.filter((_, i) => i !== idx) : active.lines.map((l, i) => (i === idx ? { ...l, qty } : l))
+    // سد فجوة النشاط #14 (Gap 1): حذف/تقليل صنف بعد إرساله للمطبخ يتطلب سبباً واعتماد مشرف
+    if (active.kitchenFiredAt != null && linesReduceExistingQty(active.lines, lines)) {
+      const reason = window.prompt('حُذف/قُلِّل صنف بعد إرساله للمطبخ — ما السبب؟ (يُسجَّل بملاحظات الأمر)')
+      if (!reason?.trim()) return
+      voidApproval.request((approvedBy) => {
+        try { setRestaurantOrderLines(active.id, lines, reason, approvedBy) } catch (e) { toast.show((e as Error).message, 'error') }
+      })
+      return
+    }
     setRestaurantOrderLines(active.id, lines)
   }
 
@@ -103,6 +130,8 @@ export function RestaurantOrdersPage() {
       lines: o.lines,
       dateIso: new Date().toISOString(),
     }))
+    // سد فجوة النشاط #14 (Gap 1): من هذه اللحظة يصبح حذف/تقليل صنف "بعد الإرسال"
+    markKitchenFired(o.id)
   }
 
   const settle = () => {
@@ -199,6 +228,7 @@ export function RestaurantOrdersPage() {
             <div className="flex gap-2">
               <Btn variant="soft" onClick={() => printKitchen(active)} disabled={active.lines.length === 0}><Printer size={14} /> بون المطبخ</Btn>
               <Btn variant="soft" onClick={() => { setSplitSel([]); setSplitOpen(true) }} disabled={active.lines.length < 2}><Scissors size={14} /> تقسيم</Btn>
+              <Btn variant="soft" onClick={() => { setMergeSourceId(null); setMergeOpen(true) }} disabled={mergeCandidates.length === 0}><Combine size={14} /> دمج</Btn>
               <Btn variant="soft" onClick={() => {
                 const reason = window.prompt('سبب الإلغاء؟')
                 if (reason?.trim()) { try { cancelRestaurantOrder(active.id, reason); setActiveId(null); toast.show('أُلغي الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }
@@ -328,6 +358,36 @@ export function RestaurantOrdersPage() {
           </div>
         )}
       </Modal>
+
+      {/* دمج أمرين مفتوحين — عكس التقسيم (سد فجوة النشاط #14 — Gap 2) */}
+      <Modal open={mergeOpen && !!active} onClose={() => setMergeOpen(false)} title="دمج أمرين" subtitle="مستند دمج: ضم أصناف أمر آخر مفتوح إلى هذا الأمر ليُقفلا بفاتورة واحدة">
+        {active && (
+          <div className="space-y-3">
+            <DocSectionHead step="١" title="اختر الأمر المصدر" hint="أصنافه تُضاف إلى هذا الأمر، ويُقفل هو بلا فاتورة" />
+            {mergeCandidates.length === 0 ? (
+              <p className="text-[12px] text-slate-400">لا يوجد أمر مفتوح آخر لدمجه.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-[16rem] overflow-y-auto">
+                {mergeCandidates.map((o) => (
+                  <label key={o.id} className="flex items-center gap-2 text-[12.5px] bg-slate-50 dark:bg-slate-800/50 rounded-xl px-3 py-2 cursor-pointer">
+                    <input type="radio" name="mergeSource" checked={mergeSourceId === o.id} onChange={() => setMergeSourceId(o.id)} className="accent-orange-600" />
+                    <span className="text-xl">{ORDER_TYPE_LABELS[o.type].icon}</span>
+                    <span className="font-bold flex-1">{o.orderNumber}{o.type === 'dine_in' ? ` — طاولة ${o.tableName}` : ` — ${ORDER_TYPE_LABELS[o.type].nameAr}`}</span>
+                    <span className="text-slate-400">{o.lines.length} صنف</span>
+                    <span className="text-slate-500 font-bold w-20 text-left" dir="ltr">{fmt(orderSubtotalMinor(o.lines))}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <DocOutcome>الأثر: <b>لا قيد</b> عند الدمج — أصناف المصدر تُضاف لهذا الأمر ويُقفل المصدر بلا فاتورة، والقيد الوحيد عند قفل الأمر المدموج فيه (<b>4101</b> إيراداً و<b>5101</b> تكلفةً).</DocOutcome>
+            <Btn onClick={doMerge} className="w-full" disabled={mergeSourceId == null}>
+              <Combine size={14} /> دمج في {active.orderNumber}
+            </Btn>
+          </div>
+        )}
+      </Modal>
+
+      {voidApproval.dialog}
     </div>
   )
 }

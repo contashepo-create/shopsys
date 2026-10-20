@@ -25,12 +25,20 @@ const invoiceRoute = readFileSync(new URL('../src/ui/pages/InvoiceDocumentRoute.
   assert.ok(/warehouseId: newLineWarehouses\[i\] \?\? newHeaderWarehouseId/.test(repo), 'تعديل الفاتورة لا يحفظ مخازن السطور')
   assert.ok(repo.includes('purchaseOrders: updatedPurchaseOrders'), 'تعديل فاتورة الأمر لا يحدّث كميات المستلم في المخزن')
   assert.ok(/args\.inputVatMinor \?\? inv\.inputVatMinor/.test(repo), 'ضريبة مدخلات التعديل لا تتبع كميات المحرر الجديدة')
-  /* الصفحة: رقاقة الخضوع تكتب vatPercent لا الحقل الوهمي */
-  assert.ok(/setLines\(previous=>previous\.map\(line=>\(\{\.\.\.line,vatPercent:enabled\?taxPolicy\.effectivePercent:0\}\)\)\)/.test(purchaseInvoicePage), 'رقابة الخضوع للضريبة في الشراء لا تعدّل ضريبة السطور الموجودة')
+  /* ⑬→بلاغ لاحق (استقلال خانة الضريبة لكل بند): رقاقة «الخضوع» الموحّدة على
+     مستوى المستند حُذفت كلياً — صار لكل سطر خانة ضريبة مستقلة بذاتها
+     (InvoiceLinesTable.lineTaxOn/setLineTax)، لا يوجد applyTax ولا enabled
+     موحّد يكتب فوق كل السطور دفعة واحدة بعد الآن. */
+  assert.ok(!/setApplyTax/.test(purchaseInvoicePage), 'حقل التفعيل الموحّد applyTax الوهمي ما زال في فاتورة الشراء — صار لكل بند خانة مستقلة')
   assert.ok(!/vatPercentOverride:enabled/.test(purchaseInvoicePage), 'حقل vatPercentOverride الوهمي ما زال في فاتورة الشراء')
   assert.ok(purchaseInvoicePage.includes('applyPurchaseOrder'), 'دالة التعبئة من أمر الشراء مفقودة')
   assert.ok(purchaseInvoicePage.includes('setPurchaseOrderNumber(order.orderNumber)'), 'التعبئة لا تسجل رقم الأمر مرجعاً في الفاتورة')
-  assert.ok(purchaseInvoicePage.includes('setApplyTax(true)'), 'التعبئة لا تفعّل رقاقة الخضوع لأمر فيه ضريبة')
+  /* التعبئة من الأمر تحافظ على ضريبة كل سطر من سطور الأمر بذاته (lineVat) —
+     لا تفرض قيمة واحدة موحّدة على كل السطور. */
+  assert.ok(/const lineVat=\(line:PurchaseOrderLine\)=>poHasVat\?\(line\.vatPercent\|\|0\):taxPolicy\.effectivePercent/.test(purchaseInvoicePage),
+    'التعبئة من أمر الشراء لا تحافظ على ضريبة كل سطر من سطور الأمر على حدة')
+  assert.ok(/vatPercent:lineVat\(line\)/.test(purchaseInvoicePage), 'سطور الفاتورة المعبأة من الأمر لا تأخذ ضريبتها من lineVat لكل سطر')
+
   assert.ok(purchaseInvoicePage.includes('purchaseOrderId'), 'التعبئة المسبقة من زر «فاتورة استلام» غير موصولة بالصفحة')
   assert.ok(purchaseOrdersPage.includes('`/purchases/invoices/new?po=${order.id}`'), 'زر «فاتورة استلام» لا يمرر الأمر للفاتورة')
   assert.ok(windowStore.includes('PurchaseInvoicePrefill'), 'نافذة فاتورة الشراء لا تدعم التعبئة المسبقة')

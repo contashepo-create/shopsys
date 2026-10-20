@@ -1,9 +1,10 @@
-import { useState, type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { useState, type ReactNode, useEffect, useMemo, useRef, Fragment } from 'react'
 import { gridArrowNavigation } from './gridArrowNavigation.ts'
 import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { purchaseWeightDiscrepancy, moistureRiskLevel } from '../../core/purchases.ts'
 import { inputCls } from './ui.tsx'
 import { ItemQuickPicker, QuickSelect } from './KeyboardPickers.tsx'
 import { useWindowHost } from '../windows/windowHostContext.ts'
@@ -35,11 +36,22 @@ export type InvoiceTableLine = {
   unitCostMinor?: number
   discountPercent?: number
   vatPercent?: number
+  /** نسبة ضريبة فاتورة البيع لهذا السطر وحده — undefined يعني «يتبع نسبة المستند»
+   *  (القيمة التاريخية الافتراضية)؛ 0 إعفاء صريح لهذا البند فقط. يُقرأ من
+   *  core/pos.ts وcore/receipt.ts بنفس المعنى — لا تغيير في منطق الحساب هنا،
+   *  فقط checkbox مستقل لكل بند بدل تشيك بوكس واحد يفرض نفس القيمة على الكل. */
+  vatPercentOverride?: number
   warehouseId: number | null
   warehouseSource?: 'default' | 'manual'
   orderedQty?: number
   rejectedQty?: number
   expiryDate?: string
+  /** رقم التشغيلة/الدفعة التجاري (اختياري) — لتتبع السحب عند استدعاء منتج */
+  lotNumber?: string
+  /** الكمية/الوزن المذكور بفاتورة المورد وقت الشحن (سد فجوة النشاط #2: فرق وزن الاستلام) */
+  shippedQty?: number
+  /** نسبة الرطوبة عند الاستلام — إدخال يدوي اختياري (حبوب/أعلاف) */
+  moisturePercent?: number
 }
 
 type Warehouse = { id: number; nameAr: string }
@@ -115,6 +127,12 @@ type Props = {
   entry?: ReactNode
   /** تصفية التصنيف المصاحبة للبحث — تظهر فوق الجدول بجوار العدادات */
   entryFilter?: ReactNode
+  /**
+   * يُظهر خانتي «الوزن المرسَل» و«نسبة الرطوبة» عند الاستلام (سد فجوة النشاط #2:
+   * تجارة الأعلاف والحبوب) — فقط في شاشة فاتورة الشراء الفعلية، وليس أمر الشراء
+   * (الاستلام لم يحدث بعد في أمر الشراء فلا معنى لفرق وزن استلام).
+   */
+  showReceivingTracking?: boolean
 }
 
 /**
@@ -174,7 +192,7 @@ export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, showNotes = false, warnings, costShares, belowCostKeys,
   onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
-  entry, entryFilter,
+  entry, entryFilter, showReceivingTracking = false,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
   /* أعمدة العرض الاختيارية — من زر «تخصيص الحقول»؛ إخفاؤها لا يغيّر أي حساب */
@@ -183,6 +201,22 @@ export function InvoiceLinesTable({
      (قرار المالك): البيع المباشر والمبسط بلا عمود ضريبة أصلاً. */
   const showTaxColumn = columns.tax && taxEnabled && (mode === 'profit' || mode === 'advanced')
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
+  /**
+   * إصلاح بلاغ المالك: «تشيك بوكس واحد يطبّق الضريبة على كل البنود دفعة واحدة».
+   * الآن لكل سطر خانة ضريبة مستقلة تماماً عن باقي السطور. مصدر النسبة نفسها
+   * واحد فقط دائماً: نسبة الضريبة في الإعدادات (documentTaxPercent) — لا اختيار
+   * نسبة حرة هنا، فقط «خاضع لهذه النسبة أم معفى» لكل بند.
+   * القراءة تحترم المعنى التاريخي لكل حقل حتى لا يتغير أي حساب قديم:
+   *  - الشراء (vatPercent): undefined/0 = معفى، أي رقم أكبر من صفر = خاضع.
+   *  - البيع (vatPercentOverride): undefined = يتبع نسبة المستند (خاضع افتراضياً
+   *    كما كان الحساب دائماً)، 0 = إعفاء صريح لهذا البند، رقم آخر = خاضع.
+   */
+  const lineTaxOn = (line: InvoiceTableLine) => kind === 'purchase'
+    ? (line.vatPercent ?? 0) > 0
+    : (line.vatPercentOverride ?? documentTaxPercent) > 0
+  const setLineTax = (line: InvoiceTableLine, on: boolean) => {
+    onPatch(line.key, kind === 'purchase' ? { vatPercent: on ? documentTaxPercent : 0 } : { vatPercentOverride: on ? documentTaxPercent : 0 })
+  }
   const windowHost = useWindowHost()
   /**
    * نقرتان على اسم الصنف تفتحان نافذة اختيار الصنف لاستبداله (بلاغ المالك).
@@ -305,7 +339,6 @@ export function InvoiceLinesTable({
     if (columns.unit) plan.push({ key: 'unit', base: COLW.unit })
     plan.push({ key: 'price', base: COLW.price })
     if (kind === 'sale') plan.push({ key: 'discount', base: COLW.percent })
-    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'vat', base: COLW.percent })
     if (kind === 'sale' && mode === 'profit' && canViewCost) plan.push({ key: 'cost', base: COLW.money }, { key: 'margin', base: COLW.money })
     if (kind === 'purchase' && mode === 'profit' && canViewCost) plan.push({ key: 'expenseShare', base: COLW.money })
     if (showTaxColumn) plan.push({ key: 'tax', base: COLW.tax })
@@ -372,7 +405,6 @@ export function InvoiceLinesTable({
     + (columns.unit ? 1 : 0)
     + 1
     + (kind === 'sale' ? 1 : 0)
-    + (kind === 'purchase' && mode !== 'simple' ? 1 : 0)
     + (kind === 'sale' && mode === 'profit' && canViewCost ? 2 : 0)
     + (kind === 'purchase' && mode === 'profit' && canViewCost ? 1 : 0)
     + (showTaxColumn ? 1 : 0)
@@ -435,10 +467,10 @@ export function InvoiceLinesTable({
               {columns.unit && <th className={`p-2 ${COL.unit}`} scope="col">الوحدة</th>}
               <th className={`p-2 ${COL.price}`} scope="col">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
               {kind === 'sale' && <th className={`p-2 ${COL.percent}`} scope="col">خصم %</th>}
-              {kind === 'purchase' && mode !== 'simple' && <th className={`p-2 ${COL.percent}`} scope="col">ضريبة %</th>}
+
               {kind === 'sale' && mode === 'profit' && canViewCost && <><th className={`p-2 ${COL.money}`} scope="col">التكلفة</th><th className={`p-2 ${COL.money}`} scope="col">الهامش</th></>}
               {kind === 'purchase' && mode === 'profit' && canViewCost && <th className={`p-2 ${COL.money}`} scope="col">نصيبه من المصروفات</th>}
-              {showTaxColumn && <th className={`p-2 ${COL.tax}`} scope="col">الضريبة</th>}
+              {showTaxColumn && <th className={`p-2 ${COL.tax}`} scope="col" title="لكل بند خانة ضريبة مستقلة — تفعيلها أو إلغاؤها هنا لا يؤثر على باقي البنود">خاضع للضريبة</th>}
               <th className={`p-2 ${COL.total}`} scope="col">الإجمالي</th>
               <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
@@ -474,7 +506,8 @@ export function InvoiceLinesTable({
                 : ''
               const qtyTone = stockShort ? ' is-shortstock' : ''
               return (
-                <tr key={line.key} data-line-key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
+                <Fragment key={line.key}>
+                <tr data-line-key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
                   className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : ''}`}>
                   <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
                   {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
@@ -484,7 +517,10 @@ export function InvoiceLinesTable({
                     onDoubleClick={() => openReplacePicker(line.key, line.nameAr || item?.nameAr || '')}>
                     <b>{line.nameAr || item?.nameAr}</b>
                     {kind === 'purchase' && item?.trackExpiry && (
-                      <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
+                      <div className="flex flex-col gap-1">
+                        <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
+                        <input type="text" placeholder="رقم التشغيلة (اختياري)" title="رقم التشغيلة/الدفعة التجاري — لتتبع السحب عند استدعاء منتج" className={`${inputCls} text-[11px] py-1`} dir="ltr" value={line.lotNumber ?? ''} onChange={(event) => onPatch(line.key, { lotNumber: event.target.value })} />
+                      </div>
                     )}
                   </td>
                   {showNotes && (
@@ -508,10 +544,28 @@ export function InvoiceLinesTable({
                   {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
                   <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value), true)} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
-                  {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
+
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}>{(line.vatPercent ?? documentTaxPercent) > 0 ? <span className="invoice-doc-taxchip">{`${line.vatPercent ?? documentTaxPercent}% ض.ق.م`}</span> : null}</td>}
+                  {showTaxColumn && (() => {
+                    const on = lineTaxOn(line)
+                    return (
+                      <td className={`p-1 text-center ${COL.tax}`}>
+                        <label
+                          className="invoice-line-taxcheck"
+                          title={`خانة ضريبة مستقلة لهذا البند فقط — ${on ? `تُطبَّق حالياً نسبة ${documentTaxPercent}% من إعدادات الشركة على هذا البند وحده` : 'هذا البند غير خاضع للضريبة حالياً'}. تغييرها لا يؤثر على أي بند آخر.`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            aria-label={`خضوع بند ${line.nameAr || ''} للضريبة`}
+                            onChange={(event) => setLineTax(line, event.target.checked)}
+                          />
+                          {on && <span className="invoice-doc-taxchip">{`${documentTaxPercent}% ض.ق.م`}</span>}
+                        </label>
+                      </td>
+                    )
+                  })()}
                   <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                   <td className={`p-1 ${COL.tools}`}>
                     <div className="invoice-doc-rowtools">
@@ -522,6 +576,26 @@ export function InvoiceLinesTable({
                     </div>
                   </td>
                 </tr>
+                {/* فرق وزن الاستلام ونسبة الرطوبة (سد فجوة النشاط #2: تجارة الأعلاف والحبوب) —
+                    سطر فرعي مستقل بعرض الجدول كامل حتى لا يغيّر ترتيب حقول السطر الرئيسي. */}
+                {kind === 'purchase' && showReceivingTracking && (() => {
+                  const [disc] = line.shippedQty ? purchaseWeightDiscrepancy([{ itemId: line.itemId, nameAr: '', shippedQty: line.shippedQty, receivedQty: line.qty }]) : []
+                  const risk = moistureRiskLevel(line.moisturePercent ?? null)
+                  return (
+                    <tr className="border-t-0">
+                      <td />
+                      <td colSpan={columnPlan.length - 1} className="pb-2 px-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input type="number" min={0} step="any" placeholder="الوزن المرسَل بالفاتورة (اختياري)" title="الوزن/الكمية المفوتَر من المورد — يُقارَن بالمستلم" className={`${inputCls} text-[11px] py-1 max-w-[200px]`} dir="ltr" value={line.shippedQty ?? ''} onChange={(event) => onPatch(line.key, { shippedQty: event.target.value ? Number(event.target.value) : undefined })} />
+                          <input type="number" min={0} max={100} step="any" placeholder="نسبة الرطوبة ٪ (اختياري)" title="نسبة الرطوبة عند الاستلام — إدخال يدوي" className={`${inputCls} text-[11px] py-1 max-w-[160px]`} dir="ltr" value={line.moisturePercent ?? ''} onChange={(event) => onPatch(line.key, { moisturePercent: event.target.value ? Number(event.target.value) : undefined })} />
+                          {disc && <span className={`text-[10px] font-bold ${disc.exceedsThreshold ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{disc.exceedsThreshold ? '⚠️' : '✓'} فرق {disc.diffPercent}٪</span>}
+                          {risk === 'high' && <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">⚠️ رطوبة مرتفعة</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })()}
+                </Fragment>
               )
             })}
             {/* السطور الفارغة في النموذج المعتمد ليست فراغاً: لكل سطر نفس خلايا السطر

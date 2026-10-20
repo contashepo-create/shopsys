@@ -74,8 +74,15 @@ export const NAV_SECTIONS: NavSection[] = [
       // أنشطة «الفاتورة أولاً» (تجارة جملة/مصنع/خدمات): نفس الشاشة تظهر لهم باسم
       // «إنشاء فاتورة بيع» عبر ACTIVITY_LABELS (sales.pos) — ولا ورديات ولا استبدال
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
-      { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
-      { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'recipes', activities: ['restaurant'] },
+      { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'restaurant', activities: ['restaurant'] },
+      { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'restaurant', activities: ['restaurant'] },
+      // سد فجوة (تدقيق الأنشطة 29 — النشاط #27): وصف «مواد بناء وحدايد
+      // وبويات» يَعِد صراحة بـ«تسليم ونقل» — والمحرك (scheduleDelivery/
+      // DeliveryJob) عام بالفعل بلا أي قيد نشاط، وشاشة جدولة التوصيل في
+      // التقارير ظاهرة لكل الأنشطة أصلاً؛ الناقص كان فقط شاشة طاقم
+      // التوصيل نفسها (مهامه اليوم + تأكيد بتوقيع) محصورة بالأجهزة
+      // الكهربائية، رغم أن توصيل مواد البناء الثقيلة يحتاجها أكثر لا أقل.
+      { id: 'delivery-tasks', nameAr: 'مهام التوصيل (مندوب)', icon: Truck, path: '/sales/delivery-tasks', activities: ['electronics', 'building_materials'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },
       { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange', hideForActivities: INVOICE_FIRST_ACTIVITIES },
@@ -259,6 +266,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
+      { id: 'company', nameAr: 'بيانات المنشأة', icon: Building2, path: '/settings/company' },
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
       { id: 'lan', nameAr: 'شبكة المحل (عدة أجهزة)', icon: Network, path: '/settings/lan' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },

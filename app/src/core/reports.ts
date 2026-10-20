@@ -7,6 +7,7 @@
  */
 import type { Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
+import type { Item } from './items.ts'
 
 /* ─── أنواع مدخلات عامة (بنى فرعية من مستندات repo — لا استيراد دائري) ─── */
 
@@ -122,7 +123,11 @@ export interface TopItemRow {
  * يوزَّع صافي كل مستند على سطوره نسبياً، فتتسق أرباح الأصناف مع ملخص المبيعات
  * وقائمة الدخل بالقرش (إصلاح المراجعة: كان يضخَّم بالضريبة ويتجاهل خصم الفاتورة).
  */
-export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, limit = 10): TopItemRow[] {
+/**
+ * التجميع المشترك: إيراد/تكلفة/ربح كل الأصناف (بلا حد أقصى) — يُبنى عليه
+ * كل من topItems (أعلى N) وabcAnalysis (يحتاج كل الأصناف لحساب النسبة التراكمية).
+ */
+export function allItemRevenueRows(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period): TopItemRow[] {
   const map = new Map<number, TopItemRow>()
   const acc = (doc: { lines: CartLine[]; totals: CartTotals }, sign: 1 | -1) => {
     const lineNets = doc.lines.map((l) => Math.round(Math.round(l.unitPriceMinor * l.qty) * (1 - l.discountPercent / 100)))
@@ -144,7 +149,82 @@ export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, 
   }
   for (const s of sales) if (inPeriod(s.date, p)) acc(s, 1)
   for (const r of returns) if (inPeriod(r.date, p)) acc(r, -1)
-  return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor).slice(0, limit)
+  return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor)
+}
+
+export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, limit = 10): TopItemRow[] {
+  return allItemRevenueRows(sales, returns, p).slice(0, limit)
+}
+
+/* ─── تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد) ───
+   تصنيف Pareto كلاسيكي: A = أول أصناف تشكّل حتى 80٪ من الإيراد التراكمي،
+   B = حتى 95٪، C = الباقي — يوجّه المالك لأي الأصناف تستحق عناية أعلى
+   (تتبع مخزون أدق، تفاوض أفضل مع المورد) وأيها أقل أهمية. */
+
+export type AbcClass = 'A' | 'B' | 'C'
+
+export interface AbcRow extends TopItemRow {
+  class: AbcClass
+  /** نسبة إيراد هذا الصنف وحده من إجمالي الإيراد */
+  sharePercent: number
+  /** النسبة التراكمية حتى هذا الصنف (مرتب تنازلياً بالإيراد) */
+  cumulativeSharePercent: number
+}
+
+export function abcAnalysis(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period): AbcRow[] {
+  const rows = allItemRevenueRows(sales, returns, p).filter((r) => r.revenueMinor > 0)
+  const total = rows.reduce((a, r) => a + r.revenueMinor, 0)
+  if (total <= 0) return []
+  let cum = 0
+  return rows.map((r) => {
+    const cumBeforePercent = (cum / total) * 100
+    cum += r.revenueMinor
+    const cls: AbcClass = cumBeforePercent < 80 ? 'A' : cumBeforePercent < 95 ? 'B' : 'C'
+    return {
+      ...r,
+      class: cls,
+      sharePercent: Math.round((r.revenueMinor / total) * 10000) / 100,
+      cumulativeSharePercent: Math.round((cum / total) * 10000) / 100,
+    }
+  })
+}
+
+/* ─── تقرير الربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار) ───
+   حقل `Item.grade` (أصلي/بديل تجاري/مستعمل) مُدخَل ومعروض فعلاً لكن لم يكن
+   مُستثمَراً في أي تقرير يفصل الهامش بينها — الهدف المعلَن صراحة في دليل
+   التشغيل الداخلي من إضافة الحقل أصلاً: "حتى لا تختلط الأسعار والهوامش". */
+
+export interface GradeProfitRow {
+  grade: NonNullable<Item['grade']> | 'unspecified'
+  qty: number
+  revenueMinor: Minor
+  cogsMinor: Minor
+  profitMinor: Minor
+  /** هامش الربح = الربح / الإيراد × 100 — صفر إن لم يوجد إيراد لهذه الدرجة */
+  marginPercent: number
+}
+
+/** يجمّع ربح/إيراد المبيعات (بعد خصم المرتجعات) لكل درجة قطعة خلال فترة */
+export function gradeProfitReport(
+  sales: SaleDoc[],
+  returns: SaleReturnDoc[],
+  items: readonly Pick<Item, 'id' | 'grade'>[],
+  p: Period,
+): GradeProfitRow[] {
+  const gradeByItem = new Map(items.map((it) => [it.id, it.grade ?? 'unspecified']))
+  const byGrade = new Map<string, GradeProfitRow>()
+  for (const r of allItemRevenueRows(sales, returns, p)) {
+    const grade = gradeByItem.get(r.itemId) ?? 'unspecified'
+    const bucket = byGrade.get(grade) ?? { grade: grade as GradeProfitRow['grade'], qty: 0, revenueMinor: 0, cogsMinor: 0, profitMinor: 0, marginPercent: 0 }
+    bucket.qty = Math.round((bucket.qty + r.qty) * 1000) / 1000
+    bucket.revenueMinor += r.revenueMinor
+    bucket.cogsMinor += r.cogsMinor
+    bucket.profitMinor += r.profitMinor
+    byGrade.set(grade, bucket)
+  }
+  return [...byGrade.values()]
+    .map((b) => ({ ...b, marginPercent: b.revenueMinor > 0 ? Math.round((b.profitMinor / b.revenueMinor) * 1000) / 10 : 0 }))
+    .sort((a, b) => b.revenueMinor - a.revenueMinor)
 }
 
 /* ─── 2.5) الأصناف الراكدة (سد فجوة DEXEF/برامج السوق السعودي: «تقرير الراكد») ─── */
@@ -194,6 +274,218 @@ export function stagnantItems(
     })
   }
   return rows.sort((a, b) => b.stockValueMinor - a.stockValueMinor)
+}
+
+/* ─── 2.5-ب) ركود الأصناف على مستوى التركيبة لون×مقاس (فجوة فورية ③ —
+   نشاط الملابس): صنف "متحرك" ككل قد يُخفي تركيبة (لون/مقاس) راكدة تماماً
+   لأشهر بينما تركيبات أخرى من نفس الصنف تُباع بانتظام — `stagnantItems`
+   أعلاه لا ينزل لهذا المستوى، فهذا التقرير مكمِّل له لا بديل عنه. ─── */
+
+export interface StagnantVariantRow {
+  itemId: number
+  nameAr: string
+  color: string
+  size: string
+  qty: number
+  stockValueMinor: Minor
+  lastSoldDate: string | null
+  idleDays: number
+}
+
+/**
+ * تركيبات لون/مقاس راكدة: لها رصيد في المصفوفة الفرعية (`variantStocks`) ولم
+ * تُبع خلال آخر idleDaysThreshold يوماً — بصرف النظر عن حالة الصنف ككل.
+ */
+export function stagnantVariants(
+  items: readonly { id: number; nameAr: string; costMinor: Minor; isActive: boolean; isService?: boolean }[],
+  variantStocks: readonly { itemId: number; color: string; size: string; qty: number }[],
+  sales: readonly SaleDoc[],
+  todayIso: string,
+  idleDaysThreshold = 30,
+): StagnantVariantRow[] {
+  const lastSoldByVariant = new Map<string, string>()
+  for (const s of sales) {
+    for (const l of s.lines) {
+      if (!l.variantColor && !l.variantSize) continue
+      const key = `${l.itemId}⁞${(l.variantColor ?? '').trim()}⁞${(l.variantSize ?? '').trim()}`
+      const prev = lastSoldByVariant.get(key)
+      if (!prev || s.date > prev) lastSoldByVariant.set(key, s.date)
+    }
+  }
+  const today = new Date(todayIso.slice(0, 10) + 'T00:00:00Z').getTime()
+  const itemById = new Map(items.map((it) => [it.id, it]))
+  const rows: StagnantVariantRow[] = []
+  for (const v of variantStocks) {
+    if (v.qty <= 0) continue
+    const item = itemById.get(v.itemId)
+    if (!item || !item.isActive || item.isService) continue
+    const key = `${v.itemId}⁞${v.color.trim()}⁞${v.size.trim()}`
+    const last = lastSoldByVariant.get(key) ?? null
+    const refTime = last ? new Date(last.slice(0, 10) + 'T00:00:00Z').getTime() : 0
+    const idleDays = last ? Math.floor((today - refTime) / 86_400_000) : Number.MAX_SAFE_INTEGER
+    if (idleDays < idleDaysThreshold) continue
+    rows.push({
+      itemId: v.itemId, nameAr: item.nameAr, color: v.color, size: v.size, qty: v.qty,
+      stockValueMinor: Math.round(item.costMinor * v.qty),
+      lastSoldDate: last ? last.slice(0, 10) : null,
+      idleDays: last ? idleDays : -1,
+    })
+  }
+  return rows.sort((a, b) => b.stockValueMinor - a.stockValueMinor)
+}
+
+/* ─── 2.5-ج) تحليل منحنى المقاسات Size Curve Analysis (تطوير مستقبلي ② —
+   نشاط الملابس): نسبة مبيعات كل مقاس من إجمالي مبيعات الصنف خلال الفترة،
+   تُرشد قرار الشراء القادم (اطلب تشكيلة مقاسات تعكس ما يُباع فعلياً لا توزيعاً
+   عشوائياً متساوياً). مبني فوق سطور البيع التي تحمل `variantSize` فعلاً. ─── */
+
+export interface SizeCurveRow {
+  itemId: number
+  nameAr: string
+  size: string
+  soldQty: number
+  /** نسبة هذا المقاس من إجمالي ما بيع من الصنف (كل المقاسات) خلال الفترة */
+  sharePercent: number
+}
+
+export function sizeCurveAnalysis(
+  items: readonly { id: number; nameAr: string; isActive: boolean }[],
+  sales: readonly SaleDoc[],
+  fromDate?: string,
+  toDate?: string,
+): SizeCurveRow[] {
+  const soldBySize = new Map<string, number>() // itemId⁞size → كمية
+  const totalByItem = new Map<number, number>()
+  for (const s of sales) {
+    if (fromDate && s.date < fromDate) continue
+    if (toDate && s.date > toDate) continue
+    for (const l of s.lines) {
+      const size = (l.variantSize ?? '').trim()
+      if (!size) continue
+      const key = `${l.itemId}⁞${size}`
+      soldBySize.set(key, (soldBySize.get(key) ?? 0) + l.qty)
+      totalByItem.set(l.itemId, (totalByItem.get(l.itemId) ?? 0) + l.qty)
+    }
+  }
+  const itemById = new Map(items.map((it) => [it.id, it]))
+  const rows: SizeCurveRow[] = []
+  for (const [key, qty] of soldBySize) {
+    const sep = key.lastIndexOf('⁞')
+    const itemId = Number(key.slice(0, sep))
+    const size = key.slice(sep + 1)
+    const item = itemById.get(itemId)
+    if (!item || !item.isActive) continue
+    const total = totalByItem.get(itemId) ?? 0
+    rows.push({
+      itemId, nameAr: item.nameAr, size,
+      soldQty: Math.round(qty * 1000) / 1000,
+      sharePercent: total > 0 ? Math.round((qty / total) * 10000) / 100 : 0,
+    })
+  }
+  return rows.sort((a, b) => a.itemId - b.itemId || b.sharePercent - a.sharePercent)
+}
+
+/* ─── 2.6) تحليل أسباب الإرجاع (سد فجوة توثيق — دليل الأغذية الداخلي كان
+   يَعِد المستخدم بهذا التقرير دون أن يكون موجوداً فعلياً في الواجهة) ───
+   يجمع مرتجعات المبيعات حسب سبب الإرجاع الموحَّد (RETURN_REASONS)، فيُظهر
+   أكثر الأسباب تكراراً وقيمتها — مثال الاستخدام المذكور في الدليل:
+   «تكرار منتهي الصلاحية يعني خللاً في تدوير الأرفف». */
+
+export interface ReturnReasonDoc {
+  id: number
+  date: string
+  reasonCode?: string
+  totals: { totalMinor: Minor }
+  lines: readonly { condition?: 'resellable' | 'damaged' }[]
+}
+
+export interface ReturnReasonRow {
+  reasonCode: string
+  nameAr: string
+  count: number // عدد مستندات المرتجع بهذا السبب
+  totalValueMinor: Minor
+  damagedLines: number
+  resellableLines: number
+}
+
+/**
+ * ملخص أسباب الإرجاع ضمن فترة — مرتب بالأكثر تكراراً أولاً.
+ * reasonName: دالة اسم السبب بالعربية (RETURN_REASONS.returnReasonName) —
+ * تُمرَّر كوسيط لا تُستورد مباشرة فتبقى هذه الوحدة خالصة بلا اعتماد إضافي.
+ */
+export function returnReasonsSummary(
+  returns: readonly ReturnReasonDoc[],
+  p: Period,
+  reasonName: (code: string) => string,
+): ReturnReasonRow[] {
+  const map = new Map<string, ReturnReasonRow>()
+  for (const r of returns) {
+    if (!inPeriod(r.date, p)) continue
+    const code = r.reasonCode ?? 'unspecified'
+    const row = map.get(code) ?? {
+      reasonCode: code,
+      nameAr: r.reasonCode ? reasonName(code) : 'غير محدد (سجل قديم)',
+      count: 0, totalValueMinor: 0, damagedLines: 0, resellableLines: 0,
+    }
+    row.count += 1
+    row.totalValueMinor += r.totals.totalMinor
+    for (const l of r.lines) {
+      if (l.condition === 'damaged') row.damagedLines += 1
+      else if (l.condition === 'resellable') row.resellableLines += 1
+    }
+    map.set(code, row)
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count)
+}
+
+/* ─── توقع طلب إحصائي (سد فجوة «مستقبلية»: تنبؤ ذكاء اصطناعي) ───
+   هذا ليس نموذج تعلّم آلة حقيقياً — متوسط متحرك باتجاه خطي بسيط يعمل
+   محلياً بالكامل بلا أي اتصال سحابي. أداة استرشادية تكمّل أمر الشراء
+   اليدوي ولا تحل محل قرار المالك. */
+
+export interface DemandForecastRow {
+  itemId: number
+  nameAr: string
+  /** متوسط الكمية المباعة أسبوعياً خلال فترة الرصد */
+  avgWeeklyQty: number
+  /** نسبة تغيّر النصف الأحدث من الفترة عن النصف الأقدم — موجب = طلب صاعد */
+  trendPercent: number
+  /** توقع الأسبوع القادم (امتداد خطي للاتجاه، لا يقل عن صفر) */
+  forecastNextWeekQty: number
+}
+
+export function demandForecast(
+  sales: readonly SaleDoc[],
+  todayIso: string,
+  lookbackWeeks = 8,
+): DemandForecastRow[] {
+  const today = new Date(todayIso.slice(0, 10) + 'T00:00:00Z').getTime()
+  const weekMs = 7 * 86_400_000
+  const startTime = today - lookbackWeeks * weekMs
+  const perItem = new Map<number, { nameAr: string; buckets: number[] }>()
+  for (const s of sales) {
+    const t = new Date(s.date.slice(0, 10) + 'T00:00:00Z').getTime()
+    if (t < startTime || t > today) continue
+    const weekIdx = Math.min(lookbackWeeks - 1, Math.max(0, Math.floor((t - startTime) / weekMs)))
+    for (const l of s.lines) {
+      const row = perItem.get(l.itemId) ?? { nameAr: l.nameAr, buckets: new Array(lookbackWeeks).fill(0) }
+      row.buckets[weekIdx] += l.qty
+      perItem.set(l.itemId, row)
+    }
+  }
+  const rows: DemandForecastRow[] = []
+  const half = Math.floor(lookbackWeeks / 2)
+  for (const [itemId, { nameAr, buckets }] of perItem) {
+    const total = buckets.reduce((a, b) => a + b, 0)
+    if (total <= 0) continue
+    const avgWeeklyQty = Math.round((total / lookbackWeeks) * 100) / 100
+    const olderAvg = buckets.slice(0, half).reduce((a, b) => a + b, 0) / Math.max(1, half)
+    const recentAvg = buckets.slice(half).reduce((a, b) => a + b, 0) / Math.max(1, lookbackWeeks - half)
+    const trendPercent = olderAvg > 0 ? Math.round(((recentAvg - olderAvg) / olderAvg) * 1000) / 10 : (recentAvg > 0 ? 100 : 0)
+    const forecastNextWeekQty = Math.max(0, Math.round((recentAvg + (recentAvg - olderAvg)) * 100) / 100)
+    rows.push({ itemId, nameAr, avgWeeklyQty, trendPercent, forecastNextWeekQty })
+  }
+  return rows.sort((a, b) => b.forecastNextWeekQty - a.forecastNextWeekQty)
 }
 
 /* ─── 3) المبيعات اليومية (لرسم بياني بسيط) ─── */

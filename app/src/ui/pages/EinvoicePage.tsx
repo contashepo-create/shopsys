@@ -2,9 +2,11 @@
  * الفاتورة الإلكترونية (القرار 30) — ميزة بمفتاح ترخيص فقط:
  * - السعودية (einvoice_sa): رمز QR زاتكا TLV يُطبع تلقائياً على كل فاتورة.
  * - مصر (einvoice_eg): تصدير مستند JSON بصيغة بوابة الضرائب المصرية للرفع.
- * إعدادات الممول هنا (الرقم الضريبي + العنوان) — والحقول تبقى اختيارية حتى التفعيل.
+ * إعدادات الممول هنا: العنوان (محلي لمستند مصر) — أما الرقم الضريبي فيُحرَّر
+ * من صفحة «بيانات المنشأة» الموحّدة (مصدر واحد) ويُعرض هنا للقراءة فقط.
  */
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { FileCheck2, Lock, QrCode, FileJson, Download, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
@@ -12,7 +14,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import {
-  isValidSaVatNumber, isValidEgTaxNumber, buildEgInvoiceDocument, buildZatcaQr,
+  isValidSaVatNumber, isValidEgTaxNumber, buildEgInvoiceDocument, buildZatcaQr, buildEgReceiptBarcodeText,
 } from '../../core/einvoice.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
@@ -30,15 +32,14 @@ export function EinvoicePage() {
   const saActive = hasFeature(lic, 'einvoice_sa')
   const egActive = hasFeature(lic, 'einvoice_eg')
 
-  const [taxNumber, setTaxNumber] = useState(einvoice.taxNumber)
   const [address, setAddress] = useState(einvoice.address)
 
-  /* بند 4 (طلب المالك): مزامنة الحقول مع المخزن — بلاها بقيت الحقول القديمة
-     معروضة إذا تغيّرت الإعدادات من موضع آخر أو أُعيد فتح الصفحة.
+  /* بند 4 (طلب المالك): مزامنة حقل العنوان مع المخزن — بلاها بقي الحقل القديم
+     معروضاً إذا تغيّرت الإعدادات من موضع آخر أو أُعيد فتح الصفحة. الرقم الضريبي
+     لا حقل محلياً له هنا أصلاً (يُقرأ مباشرة من einvoice.taxNumber للعرض فقط —
+     تعديله الآن من صفحة «بيانات المنشأة» الموحّدة فلا حاجة لمزامنته هنا).
      النمط: تعديل الحالة أثناء العرض (كما في VouchersPage) — بلا useEffect. */
-  const [syncedTax, setSyncedTax] = useState(einvoice.taxNumber)
   const [syncedAddress, setSyncedAddress] = useState(einvoice.address)
-  if (syncedTax !== einvoice.taxNumber) { setSyncedTax(einvoice.taxNumber); setTaxNumber(einvoice.taxNumber) }
   if (syncedAddress !== einvoice.address) { setSyncedAddress(einvoice.address); setAddress(einvoice.address) }
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
@@ -64,11 +65,8 @@ export function EinvoicePage() {
   }
 
   const saveSettings = () => {
-    const t = taxNumber.trim()
-    if (saActive && t && !isValidSaVatNumber(t)) return toast.show('الرقم الضريبي السعودي: 15 رقماً يبدأ وينتهي بـ3', 'error')
-    if (egActive && !saActive && t && !isValidEgTaxNumber(t)) return toast.show('رقم التسجيل المصري: 9 أرقام', 'error')
-    updateEinvoice({ taxNumber: t, address: address.trim() })
-    toast.show('حُفظت إعدادات الممول ✅')
+    updateEinvoice({ address: address.trim() })
+    toast.show('حُفظ عنوان المنشأة ✅')
   }
 
   const exportEgJson = (s: SaleInvoice) => {
@@ -130,6 +128,21 @@ export function EinvoicePage() {
     } catch { return null }
   })()
 
+  /* معاينة رمز التحقق المحلي المصري — يُطبع على كل إيصال مصري عند تفعيل المفتاح */
+  const egBarcodePreview = (() => {
+    if (!egActive || saActive || !einvoice.taxNumber || !isValidEgTaxNumber(einvoice.taxNumber)) return null
+    try {
+      return buildEgReceiptBarcodeText({
+        sellerName: setup.shopName || 'تَحَكَّم',
+        taxNumber: einvoice.taxNumber,
+        invoiceNumber: 'INV-0001',
+        dateIso: new Date().toISOString(),
+        totalMinor: 115000,
+        decimals: cur.decimals,
+      })
+    } catch { return null }
+  })()
+
   const recentSales = [...sales].reverse().slice(0, 20)
 
   return (
@@ -160,52 +173,53 @@ export function EinvoicePage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* إعدادات الممول — الترتيب: الحقول ← الحفظ ← الخيارات (بند 4) */}
-        <div className={`anim-up ${card} space-y-4`}>
+        {/* إعدادات الممول — ثلاث مجموعات مرئية واضحة بدل حقول متناثرة بلا تجميع:
+            ① تفعيل المنظومة ② بيانات الممول (جنباً لجنب) ③ تفضيلات الطباعة */}
+        <div className={`anim-up ${card} space-y-3`}>
+
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <FileCheck2 size={17} className="text-slate-500" /> بيانات الممول
           </div>
 
-          {/* ① الحقول أولاً */}
-          <Field label={saActive ? 'الرقم الضريبي (زاتكا: 15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (مصر: 9 أرقام)'}>
-            <input value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} placeholder={saActive ? '310122393500003' : '123456789'} className={inputCls} dir="ltr" />
-          </Field>
-          <Field label="عنوان المنشأة" hint="يظهر في مستند البوابة المصرية">
-            <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="شارع، مدينة" className={inputCls} />
-          </Field>
+          <label className="flex items-center gap-2 text-[13px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer rounded-xl bg-slate-50 dark:bg-slate-800/40 p-2.5">
+            <input type="checkbox" checked={einvoice.enabled === true} onChange={(e) => updateEinvoice({ enabled: e.target.checked })} className="w-4 h-4 accent-emerald-600 shrink-0" />
+            تشغيل الإصدار الإلكتروني الرسمي وربط دورة المستندات
+          </label>
 
-          {/* ② الحفظ بعد الحقول مباشرة — لا يختفي تحت الخيارات */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <Btn onClick={saveSettings}>💾 حفظ البيانات</Btn>
-            <span className="text-[11px] text-slate-400">الرقم والعنوان يحتاجان حفظاً — أمّا الخيارات أدناه فتُطبَّق فوراً</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+            <Field
+              label={saActive ? 'الرقم الضريبي (زاتكا: 15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (مصر: 9 أرقام)'}
+              hint="يُحرَّر من صفحة «بيانات المنشأة» — مصدر واحد لا يتكرر"
+            >
+              <div className="flex items-center gap-2">
+                <input value={einvoice.taxNumber} readOnly placeholder={saActive ? '310122393500003' : '123456789'} className={`${inputCls} opacity-70 cursor-not-allowed`} dir="ltr" />
+                <Link to="/settings/company" className="shrink-0 text-[11px] font-bold text-brand-600 hover:underline whitespace-nowrap">تعديل ←</Link>
+              </div>
+            </Field>
+            <Field label="عنوان المنشأة" hint="يظهر في مستند البوابة المصرية">
+              <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="شارع، مدينة" className={inputCls} />
+            </Field>
           </div>
           {saActive && einvoice.taxNumber && !isValidSaVatNumber(einvoice.taxNumber) && (
-            <div className="text-[12px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={13} /> الرقم المحفوظ غير مطابق لصيغة زاتكا — لن يُطبع الرمز حتى تصحيحه</div>
+            <div className="text-[12px] text-amber-600 flex items-center gap-1.5 -mt-1"><AlertTriangle size={13} className="shrink-0" /> الرقم المحفوظ غير مطابق لصيغة زاتكا — لن يُطبع الرمز حتى تصحيحه</div>
+          )}
+          {egActive && !saActive && einvoice.taxNumber && !isValidEgTaxNumber(einvoice.taxNumber) && (
+            <div className="text-[12px] text-amber-600 flex items-center gap-1.5 -mt-1"><AlertTriangle size={13} className="shrink-0" /> الرقم المحفوظ غير مطابق لصيغة التسجيل المصري (9 أرقام) — لن يُطبع الرمز حتى تصحيحه</div>
           )}
 
-          {/* ③ الخيارات بعد الحفظ */}
-          <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2.5">
-            <div className="text-[11px] font-extrabold text-slate-400">خيارات الإصدار</div>
-            <label className="flex items-start gap-2 text-[13px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
-              <input type="checkbox" checked={einvoice.enabled === true} onChange={(e) => updateEinvoice({ enabled: e.target.checked })} className="w-4 h-4 mt-0.5 accent-emerald-600" />
-              <span>
-                تشغيل الإصدار الإلكتروني الرسمي وربط دورة المستندات
-                <span className="block text-[11px] font-normal text-slate-400">يُفعَّل فوراً بلا حفظ</span>
-              </span>
+          {/* مفتاح طباعة الرمز الضريبي — يعيش هنا فقط داخل الفاتورة الإلكترونية،
+              لا علاقة له بإعدادات الضريبة العامة. يعمل لأي من البلدين المفعّلين. */}
+          {(saActive || egActive) && (
+            <label className="flex items-center gap-2 text-[13px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-2.5">
+              <input type="checkbox" checked={einvoice.printZatcaQr} onChange={(e) => updateEinvoice({ printZatcaQr: e.target.checked })} className="w-4 h-4 accent-emerald-600 shrink-0" />
+              طباعة الرمز الضريبي ({saActive ? 'QR زاتكا' : 'رمز تحقق محلي'}) على كل فاتورة تلقائياً
             </label>
-            {saActive && (
-              <label className="flex items-start gap-2 text-[13px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={einvoice.printZatcaQr} onChange={(e) => updateEinvoice({ printZatcaQr: e.target.checked })} className="w-4 h-4 mt-0.5 accent-emerald-600" />
-                <span>
-                  طباعة رمز QR زاتكا على كل فاتورة تلقائياً
-                  <span className="block text-[11px] font-normal text-slate-400">يتطلب اتصالاً بالإنترنت وقت الطباعة — يُطبَّق فوراً</span>
-                </span>
-              </label>
-            )}
-          </div>
+          )}
+
+          <Btn onClick={saveSettings}>💾 حفظ العنوان</Btn>
         </div>
 
-        {/* معاينة QR */}
+        {/* معاينة الرمز الضريبي */}
         {saActive && (
           <div className={`anim-up ${card} space-y-3`}>
             <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
@@ -219,6 +233,23 @@ export function EinvoicePage() {
               </>
             ) : (
               <div className="text-[12.5px] text-slate-400">أدخل رقماً ضريبياً سعودياً صالحاً واحفظه لترى المعاينة</div>
+            )}
+          </div>
+        )}
+        {egActive && !saActive && (
+          <div className={`anim-up ${card} space-y-3`}>
+            <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+              <QrCode size={17} className="text-slate-500" /> معاينة رمز التحقق المحلي
+            </div>
+            {egBarcodePreview ? (
+              <>
+                <div className="text-[12px] text-slate-500">نص الرمز لفاتورة تجريبية (1150.00 جنيه):</div>
+                <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 font-mono text-[10px] break-all" dir="ltr">{egBarcodePreview}</div>
+                <div className="text-[12px] text-emerald-600 font-bold">✓ الصيغة سليمة — سيُطبع الرمز على الفواتير القادمة</div>
+                <div className="text-[11px] text-slate-400 leading-relaxed">رمز تحقق محلي يطبع على الإيصال — منفصل عن رفع مستند JSON لبوابة الضرائب المصرية أدناه.</div>
+              </>
+            ) : (
+              <div className="text-[12.5px] text-slate-400">أدخل رقم تسجيل ضريبي مصري صالحاً (9 أرقام) واحفظه لترى المعاينة</div>
             )}
           </div>
         )}

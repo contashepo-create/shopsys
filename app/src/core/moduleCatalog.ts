@@ -41,9 +41,11 @@ export const MODULE_REPORT_LINKS: Record<BusinessModule, ModuleReportCenter> = {
   ] },
   installments: { labelAr: 'الأقساط', links: [{ path: '/parties/installments', labelAr: 'جدول الأقساط والمتأخرات' }] },
   recipes: { labelAr: 'الوصفات والإنتاج', links: [
-    { path: '/restaurant/reports', labelAr: 'مركز تقارير المطعم' },
     { path: '/inventory/recipes', labelAr: 'الوصفات والتكلفة' },
-    { path: '/sales/restaurant-orders', labelAr: 'أوردرات المطبخ' },
+  ] },
+  restaurant: { labelAr: 'صالة المطعم', links: [
+    { path: '/restaurant/reports', labelAr: 'مركز تقارير المطعم' },
+    { path: '/sales/restaurant-orders', labelAr: 'أوردرات المطبخ والطاولات' },
   ] },
   processing: { labelAr: 'التجهيز والتفكيك', links: [
     { path: '/inventory/processing', labelAr: 'أوامر التجهيز والتصافي' },
@@ -94,7 +96,8 @@ export const MODULE_WIDGETS: Record<BusinessModule, ActivityWidget[]> = {
   inventory: ['low_stock', 'expiry_soon'],
   purchases: ['po_waiting'],
   installments: ['upcoming_installments'],
-  recipes: ['kitchen_orders'],
+  recipes: [], // استثناء موثّق في MODULE_WIDGET_EXCEPTIONS أدناه
+  restaurant: ['kitchen_orders'],
   processing: ['yield_today'],
   jewelry: ['gold_position'],
   maintenance: ['open_tickets'],
@@ -111,7 +114,11 @@ export const MODULE_WIDGETS: Record<BusinessModule, ActivityWidget[]> = {
 }
 
 /** وحدات بلا ويدجت — استثناء مصرَّح به بسببه؛ البوابة ترفض أي استثناء بلا نص */
-export const MODULE_WIDGET_EXCEPTIONS: Partial<Record<BusinessModule, string>> = {}
+export const MODULE_WIDGET_EXCEPTIONS: Partial<Record<BusinessModule, string>> = {
+  // الوصفات حساب تكلفة خلفي (خصم خامات الطبق عند البيع) بلا شاشة عمليات خاصة
+  // بها — ودجت «أوردرات مفتوحة» صار في وحدة «restaurant» المخصصة لشاشات الصالة
+  recipes: 'وصفات تكلفة خلفية بلا شاشة عمليات خاصة — ودجت الأوردرات انتقل لوحدة المطعم',
+}
 
 /* ═══ ③ قوالب مصروف الوحدة (حسابها من الشجرة القياسية) ═══ */
 export const MODULE_EXPENSE_TEMPLATES: Record<BusinessModule, ModuleExpenseTemplate[]> = {
@@ -126,6 +133,7 @@ export const MODULE_EXPENSE_TEMPLATES: Record<BusinessModule, ModuleExpenseTempl
   purchases: [{ nameAr: 'شحن ونقل مشتريات', accountCode: '5108' }],
   installments: [{ nameAr: 'عمولات بيع بالتقسيط للغير', accountCode: '5113' }],
   recipes: [{ nameAr: 'مستهلكات تشغيل المطبخ', accountCode: '5114' }],
+  restaurant: [{ nameAr: 'خدمة وضيافة الصالة (مفارش وأدوات مائدة)', accountCode: '5114' }],
   processing: [{ nameAr: 'فاقد التقطيع والفرز', accountCode: '5111' }],
   jewelry: [{ nameAr: 'مصنعية وسبك لدى الغير', accountCode: '5108' }],
   maintenance: [

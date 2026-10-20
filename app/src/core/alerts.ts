@@ -10,7 +10,7 @@
 export type AlertSeverity = 'danger' | 'warn'
 
 export interface BusinessAlert {
-  kind: 'low_stock' | 'expired' | 'expiring' | 'installment_overdue' | 'installment_soon' | 'cheque_due' | 'credit_limit' | 'leave_pending' | 'absence_today'
+  kind: 'low_stock' | 'expired' | 'expiring' | 'installment_overdue' | 'installment_soon' | 'cheque_due' | 'credit_limit' | 'leave_pending' | 'absence_today' | 'variant_undistributed' | 'part_order_arrived'
   severity: AlertSeverity
   titleAr: string
   detailAr: string
@@ -36,6 +36,10 @@ export function collectBusinessAlerts(args: {
   /** جسور الحضور: طلبات إجازة بانتظار الاعتماد + أسماء الغائبين اليوم بلا إجازة */
   pendingLeaveRequests?: number
   absentToday?: readonly string[]
+  /** تركيبات لون/مقاس غير موزَّعة منذ فترة طويلة (نشاط الملابس — تطوير مستقبلي ④) */
+  longUndistributedVariants?: readonly { itemName: string; undistributedQty: number; daysSincePurchase: number }[]
+  /** طلبات عملاء معلّقة وصلت قطعها ولم تُسلَّم بعد (النشاط #7: قطع غيار — سد فجوة فورية #2) */
+  arrivedPartOrders?: readonly { customerName: string; itemNameAr: string; orderNumber: string }[]
 }): BusinessAlert[] {
   const out: BusinessAlert[] = []
   const { todayIso, fmt } = args
@@ -137,6 +141,28 @@ export function collectBusinessAlerts(args: {
       titleAr: `${absentToday.length} غياب اليوم بلا إجازة`,
       detailAr: absentToday.slice(0, 3).join('، ') + (absentToday.length > 3 ? '…' : '') + ' — يخصم من مسير الرواتب',
       route: '/hr',
+    })
+  }
+
+  // 7) تركيبات لون/مقاس غير موزَّعة منذ فترة طويلة (نشاط الملابس)
+  const longUndist = args.longUndistributedVariants ?? []
+  if (longUndist.length) {
+    out.push({
+      kind: 'variant_undistributed', severity: 'warn',
+      titleAr: `${longUndist.length} صنفاً له تركيبات غير موزَّعة منذ فترة`,
+      detailAr: longUndist.slice(0, 3).map((r) => `${r.itemName} (${r.undistributedQty} منذ ${r.daysSincePurchase} يوم)`).join('، '),
+      route: '/inventory/items',
+    })
+  }
+
+  // 8) طلبات عملاء معلّقة وصلت قطعها — جاهزة للتسليم (النشاط #7: قطع غيار)
+  const arrived = args.arrivedPartOrders ?? []
+  if (arrived.length) {
+    out.push({
+      kind: 'part_order_arrived', severity: 'warn',
+      titleAr: `${arrived.length} طلب عميل وصلت قطعته — بانتظار التسليم`,
+      detailAr: arrived.slice(0, 3).map((o) => `${o.itemNameAr} — ${o.customerName} (${o.orderNumber})`).join('، ') + (arrived.length > 3 ? '…' : ''),
+      route: '/reports',
     })
   }
 

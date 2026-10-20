@@ -12,6 +12,7 @@ import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
 import { bookingsForDate, BOOKING_STATUS_LABELS } from '../../core/booking.ts'
 import { Link } from 'react-router-dom'
 import { collectBusinessAlerts } from '../../core/alerts.ts'
+import { longUndistributedVariants } from '../../core/variants.ts'
 import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
 import { dayMetrics, leaveDates } from '../../core/attendance.ts'
 import { themeForActivity, PERSONA_STYLES } from '../../core/activityTheme.ts'
@@ -21,7 +22,7 @@ import { UsersRound } from 'lucide-react'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, bookings } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, bookings, variantStocks, pendingPartOrders } = useDataStore()
   /* جسور الحضور (جولة «اكمل ونفذ»): حضور اليوم وأسماء الغائبين بلا إجازة */
   const { employees, attendanceRecords, leaveRequests, employeeShifts, hrRules } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -115,6 +116,21 @@ export function Dashboard() {
 
   /* مركز التنبيهات الموحد (جولة المراجعة الختامية): صلاحية/أقساط/شيكات/حد ائتمان + نواقص
      + جسور الحضور ③: طلبات إجازة معلقة وغياب اليوم بلا إجازة */
+  // آخر تاريخ فاتورة شراء لكل صنف (أساس تقريبي لعمر الكمية غير الموزَّعة على التركيبات)
+  const lastPurchaseDateByItem = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const p of purchases) {
+      for (const l of p.lines) {
+        const prev = m.get(l.itemId)
+        if (!prev || p.date > prev) m.set(l.itemId, p.date)
+      }
+    }
+    return m
+  }, [purchases])
+  const undistributedVariantRows = useMemo(
+    () => (variantStocks.length ? longUndistributedVariants(items, variantStocks, lastPurchaseDateByItem, new Date().toISOString(), 3) : []),
+    [items, variantStocks, lastPurchaseDateByItem],
+  )
   const businessAlerts = useMemo(() => {
     return collectBusinessAlerts({
       todayIso: new Date().toISOString(),
@@ -127,10 +143,12 @@ export function Dashboard() {
       fmt,
       pendingLeaveRequests: pendingLeaveCount,
       absentToday: attendanceToday.absentNames,
+      longUndistributedVariants: undistributedVariantRows.map((r) => ({ itemName: r.itemName, undistributedQty: r.undistributedQty, daysSincePurchase: r.daysSincePurchase })),
+      arrivedPartOrders: pendingPartOrders.filter((o) => o.status === 'arrived').map((o) => ({ customerName: o.customerName, itemNameAr: o.itemNameAr, orderNumber: o.orderNumber })),
     })
     // fmt يتغير فقط بتغير عملة الدولة — نمثلها بـ setup.countryCode بدل الدالة المتجددة كل رندر
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode, pendingLeaveCount, attendanceToday])
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode, pendingLeaveCount, attendanceToday, undistributedVariantRows, pendingPartOrders])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,
