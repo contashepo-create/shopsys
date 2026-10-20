@@ -84,7 +84,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
     : ''
 
   const qr = model.qrDataUrl
-    ? `<div class="center" style="margin-top:2mm"><img src="${esc(model.qrDataUrl)}" alt="ZATCA QR" style="width:${wide ? '26mm' : '20mm'};height:auto"/></div>`
+    ? `<div class="center" style="margin-top:2mm"><img src="${esc(model.qrDataUrl)}" alt="الرمز الضريبي" style="width:${wide ? '26mm' : '20mm'};height:auto"/></div>`
     : ''
 
   // باركود رقم الفاتورة — يسهّل استرجاعها بالماسح عند المرتجع أو الاستفسار

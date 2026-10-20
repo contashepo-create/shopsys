@@ -29,6 +29,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { jobTitlesFor, jobTitleLabel } from '../../core/jobTitles.ts'
+import { dailyRateMinor } from '../../core/attendance.ts'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
 function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: PartyExtended) => void }) {
@@ -115,6 +116,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
+  const getLeaveBalances = useDataStore((state) => state.getLeaveBalances)
+  const hrRules = useDataStore((state) => state.hrRules)
   const attendanceRecords = useDataStore((state) => state.attendanceRecords)
   /* جسر الحضور ⑤: أسماء المحددين بلا أي سجل حضور في شهر المسير — تحذير صريح قبل الترحيل */
   const [slipNoAttendance, setSlipNoAttendance] = useState<string[] | null>(null)
@@ -439,6 +442,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [runOpen, setRunOpen] = useState(false)
   /** نطاق المسير (طلب المالك): «all» كل الموظفين كما كان، و«single» موظف واحد بالبحث */
   const [runScope, setRunScope] = useState<'all' | 'single'>('all')
+  /** تسوية رصيد الإجازة في بطاقة الموظف الواحد (طلب المالك): أيام تُصرف نقداً لكل نوع إجازة،
+      تُجمَع مع خصم أيام الإجازة المستخدمة فوق الرصيد — مزيج صرف نقدي وخصم حسب كل حالة */
+  const [leaveCashDays, setLeaveCashDays] = useState<Record<string, string>>({})
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7))
   const [payMode, setPayMode] = useState<PayrollPayMode>('cash')
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
@@ -487,6 +493,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       return
     }
     setDraft([draftLineFor(employee)])
+    setLeaveCashDays({})
   }
   /** إعادة تعبئة مسير «كل الموظفين» عند تغيير الشهر — يستبعد من صُرف له بالفعل */
   const refillAll = (forMonth: string) => {
@@ -1649,12 +1656,233 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   />
                 </Field>
                 {draft.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-[12px] text-slate-400 dark:border-slate-700">اكتب أول حرف من اسم الموظف لاختياره — ثم تظهر بطاقة راتبه كاملة.</div>}
+
+                {/* بطاقة الموظف الواحد التفصيلية (طلب المالك ④): أرصدة، خصومات، مستحقات،
+                    الراتب السابق مقابل الحالي، مسدَّد/غير مسدَّد، حضور وغياب، وسجل الإجازات
+                    ورصيدها القابل للتسوية (صرف نقدي + خصم تجاوز معاً حسب كل حالة) */}
+                {draft.length > 0 && (() => {
+                  const line = draft[0]
+                  const employee = employees.find((e) => e.id === line.employeeId)
+                  if (!employee) return null
+                  const row = payrollRowData(line)
+                  const monthlyAtt = getMonthlyAttendance(employee.id, month)
+                  const impact = getAttendancePayrollImpact(month, [employee.id])[0]
+                  const year = Number(month.slice(0, 4)) || new Date().getFullYear()
+                  const leaves = getLeaveBalances(employee.id, year)
+                  const dailyRate = dailyRateMinor(toM(line.base) + toM(line.allowances), hrRules)
+                  const priorRun = [...payrollRuns]
+                    .filter((r) => r.month < month && r.lines.some((pl) => pl.employeeId === employee.id))
+                    .sort((a, b) => a.month.localeCompare(b.month))
+                    .at(-1)
+                  const priorLine = priorRun?.lines.find((pl) => pl.employeeId === employee.id)
+                  const attDeductionMinor = impact ? impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor : 0
+                  const attOvertimeMinor = impact?.overtimeAllowanceMinor ?? 0
+                  const cashOutMinor = leaves.reduce((sum, lv) => {
+                    if (!lv.paid) return sum
+                    const days = Math.max(0, Math.min(lv.remainingDays, Number(leaveCashDays[lv.typeId] || 0) || 0))
+                    return sum + days * dailyRate
+                  }, 0)
+                  const overUseMinor = leaves.reduce((sum, lv) => (lv.paid ? sum + Math.max(0, lv.usedDays - lv.quotaDays) * dailyRate : sum), 0)
+                  const stat = (label: string, value: string, tone: string) => (
+                    <div className="rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900/40">
+                      <div className="text-[10px] font-bold text-slate-400">{label}</div>
+                      <div className={`mt-0.5 text-[13px] font-black tabular-nums ${tone}`}>{value}</div>
+                    </div>
+                  )
+                  return (
+                    <div className="space-y-3" data-single-employee-card>
+                      {/* الهوية وزر كشف الحساب الكامل */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-500/5 p-3">
+                        <div className="flex items-center gap-2.5">
+                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-500/15 text-[13px] font-black text-brand-700 dark:text-brand-300">{employee.nameAr.slice(0, 1)}</span>
+                          <span>
+                            <b className="block text-[13px] text-slate-800 dark:text-white">{employee.nameAr}</b>
+                            <span className="block text-[10.5px] text-slate-400">{partyCode('EMP', employee.id)}{employee.jobTitle ? ` · ${employee.jobTitle}` : ''}</span>
+                          </span>
+                        </div>
+                        <button type="button" onClick={() => setStatementFor(employee.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-500 hover:border-brand-400 dark:border-slate-700">📒 كشف الحساب الكامل</button>
+                      </div>
+
+                      {/* ① أرصدة ومستحقات سريعة */}
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                        {stat('الراتب الأساسي الحالي', fmt(employee.baseSalaryMinor), 'text-slate-700 dark:text-slate-200')}
+                        {stat(priorRun ? `آخر صرف (${monthLabelAr(priorRun.month)})` : 'آخر صرف', priorLine ? fmt(priorLine.netMinor) : '— لا سابق', priorLine ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400')}
+                        {stat('سلف غير مسدَّدة', row.advanceBalance.remainingMinor > 0 ? fmt(row.advanceBalance.remainingMinor) : 'لا يوجد', row.advanceBalance.remainingMinor > 0 ? 'text-amber-600' : 'text-slate-400')}
+                        {stat('خصومات غير مطبَّقة', row.deductionBalance.remainingMinor > 0 ? fmt(row.deductionBalance.remainingMinor) : 'لا يوجد', row.deductionBalance.remainingMinor > 0 ? 'text-rose-600' : 'text-slate-400')}
+                        {stat('عمولات مستحقة', row.commissionsDue > 0 ? fmt(row.commissionsDue) : 'لا يوجد', row.commissionsDue > 0 ? 'text-violet-600' : 'text-slate-400')}
+                        {stat('مستحق عهدة', row.excessDue > 0 ? fmt(row.excessDue) : 'لا يوجد', row.excessDue > 0 ? 'text-sky-600' : 'text-slate-400')}
+                      </div>
+
+                      {/* ② بنود الراتب القابلة للتحرير */}
+                      <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                        <b className="mb-2 block text-[12px] text-slate-600 dark:text-slate-300">بنود راتب الشهر</b>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <Field label="الأساسي"><input value={line.base} onChange={(e) => patchDraft(employee.id, { base: e.target.value })} className={inputCls} dir="ltr" /></Field>
+                          <Field label="بدلات"><input value={line.allowances} onChange={(e) => patchDraft(employee.id, { allowances: e.target.value })} className={inputCls} dir="ltr" /></Field>
+                          <Field label="إضافي"><input value={line.overtime} onChange={(e) => patchDraft(employee.id, { overtime: e.target.value })} className={inputCls} dir="ltr" placeholder="0" /></Field>
+                        </div>
+                      </div>
+
+                      {/* ③ الخصومات والسلف والمستحقات — مع حالة مسدَّد/غير مسدَّد لكل سجل */}
+                      <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 space-y-3">
+                        <b className="block text-[12px] text-slate-600 dark:text-slate-300">خصومات وسلف ومستحقات</b>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <Field label="خصم هذا الشهر" hint={row.deductionBalance.remainingMinor > 0 ? `جزاءات غير مخصومة: ${fmt(row.deductionBalance.remainingMinor)}` : 'لا جزاءات مسجلة'}>
+                            <input value={line.deductions} onChange={(e) => patchDraft(employee.id, { deductions: e.target.value })} className={inputCls} dir="ltr" placeholder="0" />
+                          </Field>
+                          <Field label="سلف مستقطعة" hint={row.advanceBalance.remainingMinor > 0 ? `متبقٍ من السلف: ${fmt(row.advanceBalance.remainingMinor)}` : 'لا سلف على الموظف'}>
+                            <input value={line.advances} onChange={(e) => patchDraft(employee.id, { advances: e.target.value })} className={inputCls} dir="ltr" placeholder="0" disabled={row.advanceBalance.remainingMinor === 0} />
+                          </Field>
+                          <Field label="مستحق عهدة يُصرف" hint={row.excessDue > 0 ? `مستحق: ${fmt(row.excessDue)}` : 'لا مستحقات عهد'}>
+                            <input value={line.excessPaid} onChange={(e) => patchDraft(employee.id, { excessPaid: e.target.value })} className={inputCls} dir="ltr" placeholder="0" disabled={row.excessDue === 0} />
+                          </Field>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {row.deductionBalance.remainingMinor > 0 && (
+                            <button type="button" onClick={() => patchDraft(employee.id, { deductions: String(row.deductionBalance.remainingMinor / 10 ** cur.decimals) })} className="rounded-lg bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-500/20">استخدام الجزاءات المتبقية {fmt(row.deductionBalance.remainingMinor)}</button>
+                          )}
+                          {row.advanceBalance.remainingMinor > 0 && (
+                            <button type="button" onClick={() => patchDraft(employee.id, { advances: String(row.advanceBalance.remainingMinor / 10 ** cur.decimals) })} className="rounded-lg bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-600 hover:bg-amber-500/20">استقطاع كل السلف {fmt(row.advanceBalance.remainingMinor)}</button>
+                          )}
+                          {row.excessDue > 0 && (
+                            <button type="button" onClick={() => patchDraft(employee.id, { excessPaid: String(row.excessDue / 10 ** cur.decimals) })} className="rounded-lg bg-sky-500/10 px-2.5 py-1 text-[11px] font-bold text-sky-600 hover:bg-sky-500/20">صرف مستحق العهدة {fmt(row.excessDue)}</button>
+                          )}
+                          {row.commissionsDue > 0 && (
+                            <label className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-violet-500/10 px-2.5 py-1 text-[11px] font-bold text-violet-600">
+                              <input type="checkbox" checked={line.payCommissions} onChange={(e) => patchDraft(employee.id, { payCommissions: e.target.checked })} className="accent-violet-600" />
+                              صرف العمولات المستحقة {fmt(row.commissionsDue)}{row.driverDuesDue > 0 ? ` (منها نقلات ${fmt(row.driverDuesDue)})` : ''}
+                            </label>
+                          )}
+                        </div>
+                        {(row.advanceBalance.advances.length > 0 || row.deductionBalance.deductions.length > 0) && (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            {row.advanceBalance.advances.length > 0 && (
+                              <div className="rounded-lg border border-slate-100 p-2 dark:border-slate-800">
+                                <div className="mb-1 text-[10.5px] font-black text-slate-400">سجل السلف</div>
+                                <div className="space-y-1">
+                                  {row.advanceBalance.advances.map((a) => (
+                                    <div key={a.id} className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-500">{a.advanceNumber}{a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}</span>
+                                      {a.amountMinor - a.recoveredMinor <= 0
+                                        ? <span className="font-bold text-emerald-600">مسدَّدة ✓</span>
+                                        : <span className="font-bold text-amber-600">متبقٍ {fmt(a.amountMinor - a.recoveredMinor)}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {row.deductionBalance.deductions.length > 0 && (
+                              <div className="rounded-lg border border-slate-100 p-2 dark:border-slate-800">
+                                <div className="mb-1 text-[10.5px] font-black text-slate-400">سجل الخصومات والجزاءات</div>
+                                <div className="space-y-1">
+                                  {row.deductionBalance.deductions.map((d) => (
+                                    <div key={d.id} className="flex items-center justify-between text-[11px]">
+                                      <span className="text-slate-500" title={d.reason}>{d.dedNumber}</span>
+                                      {d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0) <= 0
+                                        ? <span className="font-bold text-emerald-600">{(d.waivedMinor ?? 0) > 0 ? 'معفوّ عنها ✓' : 'مطبَّقة بالكامل ✓'}</span>
+                                        : <span className="font-bold text-rose-600">متبقٍ {fmt(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0))}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ④ الحضور والغياب لشهر المسير */}
+                      <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <b className="text-[12px] text-slate-600 dark:text-slate-300">الحضور والغياب — {monthLabelAr(month)}</b>
+                          {(attDeductionMinor > 0 || attOvertimeMinor > 0) && (
+                            <button type="button" onClick={() => patchDraft(employee.id, {
+                              deductions: String(attDeductionMinor / 10 ** cur.decimals),
+                              overtime: String(attOvertimeMinor / 10 ** cur.decimals),
+                            })} className="rounded-lg bg-teal-500/10 px-2.5 py-1 text-[11px] font-bold text-teal-600 hover:bg-teal-500/20">📋 استخدام أثر الحضور (خصم {fmt(attDeductionMinor)} + إضافي {fmt(attOvertimeMinor)})</button>
+                          )}
+                        </div>
+                        {monthlyAtt.recordedDays > 0 || monthlyAtt.paidLeaveDays > 0 || monthlyAtt.unpaidLeaveDays > 0 ? (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-slate-500">
+                            <span>حاضر <b className="text-emerald-600">{monthlyAtt.presentDays}</b></span>
+                            <span>غياب <b className="text-rose-600">{monthlyAtt.absentDays}</b></span>
+                            <span>إجازة مدفوعة <b>{monthlyAtt.paidLeaveDays}</b></span>
+                            <span>بلا أجر <b className="text-amber-600">{monthlyAtt.unpaidLeaveDays}</b></span>
+                            <span>مأمورية <b>{monthlyAtt.missionDays}</b></span>
+                            <span>تأخير <b>{monthlyAtt.totalLateMinutes}</b> د</span>
+                            <span>إضافي <b>{monthlyAtt.totalOvertimeMinutes}</b> د</span>
+                          </div>
+                        ) : (
+                          <div className="text-[11.5px] text-slate-400">لا سجلات حضور هذا الشهر — يُرحَّل الراتب كاملاً ما لم تُسجَّل الغيابات من «الحضور والإجازات»</div>
+                        )}
+                        {impact && impact.notes.length > 0 && <p className="text-[10.5px] text-slate-400">{impact.notes.join(' · ')}</p>}
+                      </div>
+
+                      {/* ⑤ سجل الإجازات ورصيدها — تسوية بصرف نقدي و/أو خصم تجاوز معاً */}
+                      <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 space-y-2">
+                        <b className="block text-[12px] text-slate-600 dark:text-slate-300">رصيد الإجازات وتسويته</b>
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[32rem] text-[11px]">
+                            <thead>
+                              <tr className="text-[10px] text-slate-400">
+                                <th className="py-1 text-right font-black">النوع</th>
+                                <th className="py-1 font-black">المستحق سنوياً</th>
+                                <th className="py-1 font-black">المستخدم</th>
+                                <th className="py-1 font-black">المتبقي</th>
+                                <th className="py-1 font-black">تجاوز غير محسوب</th>
+                                <th className="py-1 font-black">أيام تُصرف نقداً</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {leaves.map((lv) => {
+                                const excessDays = lv.paid ? Math.max(0, lv.usedDays - lv.quotaDays) : 0
+                                return (
+                                  <tr key={lv.typeId} className="border-t border-slate-100 dark:border-slate-800">
+                                    <td className="py-1.5 font-bold text-slate-600 dark:text-slate-300">{lv.nameAr}{!lv.paid && <span className="text-[9.5px] text-slate-400"> (بلا أجر)</span>}</td>
+                                    <td className="py-1.5 text-center tabular-nums">{lv.quotaDays}</td>
+                                    <td className="py-1.5 text-center tabular-nums">{lv.usedDays}</td>
+                                    <td className="py-1.5 text-center tabular-nums font-bold text-emerald-600">{lv.remainingDays}</td>
+                                    <td className="py-1.5 text-center tabular-nums font-bold text-rose-600">{excessDays > 0 ? `${excessDays} يوم` : '—'}</td>
+                                    <td className="py-1.5 text-center">
+                                      {lv.paid && lv.remainingDays > 0 ? (
+                                        <input type="number" min={0} max={lv.remainingDays} value={leaveCashDays[lv.typeId] ?? ''} placeholder="0"
+                                          onChange={(e) => setLeaveCashDays((d) => ({ ...d, [lv.typeId]: e.target.value }))}
+                                          className="mx-auto h-7 w-16 rounded-lg border border-slate-200 bg-transparent text-center text-[11px] font-bold tabular-nums outline-none focus:border-brand-500 dark:border-slate-700" />
+                                      ) : <span className="text-slate-300">—</span>}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {(cashOutMinor > 0 || overUseMinor > 0) && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-500/5 p-2">
+                            <span className="text-[11px] text-slate-500">
+                              {cashOutMinor > 0 && <>صرف نقدي للرصيد: <b className="text-emerald-600">{fmt(cashOutMinor)}</b>{overUseMinor > 0 ? ' · ' : ''}</>}
+                              {overUseMinor > 0 && <>خصم تجاوز الرصيد: <b className="text-rose-600">{fmt(overUseMinor)}</b></>}
+                            </span>
+                            <button type="button" onClick={() => patchDraft(employee.id, {
+                              excessPaid: String((toM(line.excessPaid) + cashOutMinor) / 10 ** cur.decimals),
+                              deductions: String((toM(line.deductions) + overUseMinor) / 10 ** cur.decimals),
+                            })} className="rounded-lg bg-brand-600 px-3 py-1 text-[11px] font-bold text-white hover:bg-brand-700">✅ تطبيق التسوية على هذا المسير</button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ⑥ ملخص الصافي والمصروف النهائي */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-brand-500/10 p-3">
+                        <span className="text-[12px] text-slate-600 dark:text-slate-300">الراتب الصافي <b className="tabular-nums">{fmt(row.net)}</b> — المصروف الكلي للموظف</span>
+                        <span className={`text-[16px] font-black tabular-nums ${row.net < 0 ? 'text-rose-500' : 'text-brand-600'}`}>{fmt(row.payout)} {cur.symbol}</span>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
             ) : draft.length === 0 ? (
               <div className="p-6 text-center text-[12px] text-slate-400">لا موظف مدرج — كل من على رأس العمل صُرف راتب هذا الشهر، أو استبعدتهم يدوياً.</div>
             ) : null}
 
-            {draft.length > 0 && (
+            {runScope === 'all' && draft.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[46rem] text-[12px]">
                   <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/80">

@@ -84,6 +84,25 @@ export function zatcaQrPolicy(i: QrPolicyInput): QrPolicy {
   return { printQr: true, reasonAr: null }
 }
 
+/* ─── سياسة باركود مصر: رمز تحقق محلي لا يتطلب اتصالاً فورياً كزاتكا
+ *    (الرفع الفعلي لبوابة ETA منفصل عبر تصدير JSON وليس هذا الرمز) ─── */
+export interface EgBarcodePolicyInput {
+  /** ميزة einvoice_eg مفعلة بمفتاح الترخيص من بوت المطور */
+  featureActive: boolean
+  /** خيار «طباعة الرمز الضريبي» في إعدادات الممول */
+  printEnabled: boolean
+}
+
+export function egTaxBarcodePolicy(i: EgBarcodePolicyInput): QrPolicy {
+  if (!i.featureActive) {
+    return { printQr: false, reasonAr: 'الإصدار الإلكتروني غير مفعّل على هذه المنشأة حالياً. الضريبة تُحسب وتُطبع طبيعياً بلا باركود.' }
+  }
+  if (!i.printEnabled) {
+    return { printQr: false, reasonAr: 'خيار طباعة الرمز الضريبي موقوف من إعدادات الممول.' }
+  }
+  return { printQr: true, reasonAr: null }
+}
+
 /* ─── موانع تعديل فاتورة بعينها (سلامة محاسبية) ─── */
 
 export interface SaleEditBlocksInput {

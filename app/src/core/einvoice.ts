@@ -24,7 +24,9 @@ export interface EinvoiceSettings {
   taxNumber: string
   /** عنوان المنشأة (مطلوب لمستند مصر) */
   address: string
-  /** طباعة رمز QR زاتكا على الإيصالات تلقائياً (يتطلب ميزة einvoice_sa) */
+  /** طباعة الرمز الضريبي (QR) تلقائياً على كل فاتورة/إيصال — زاتكا TLV في السعودية
+   *  أو رمز التحقق المحلي في مصر، كلٌّ حسب الميزة المفعّلة بمفتاح الترخيص. مفتاح
+   *  واحد هنا داخل قسم الفاتورة الإلكترونية فقط — لا علاقة له بإعدادات الضريبة العامة. */
   printZatcaQr: boolean
 }
 
@@ -182,6 +184,44 @@ export function validateEgInvoice(inv: EgInvoiceInput): string[] {
     if (l.qty <= 0) errors.push(`كمية غير صالحة في «${l.nameAr}»`)
   }
   return errors
+}
+
+/* ─── مصر: رمز تحقق محلي على الإيصال المطبوع (مستقل عن رفع JSON لبوابة ETA) ───
+ * بلاغ المالك: الباركود الضريبي لا يظهر أبداً في مصر لأن القرار 30 كان مُنفَّذاً
+ * لزاتكا السعودية فقط. مصر ليس لها رمز QR رسمي موحّد يمكن توليده محلياً بلا رفع
+ * فوري عبر الإنترنت لبوابة الضرائب (ذلك الرفع منفصل ويبقى عبر تصدير JSON أعلاه) —
+ * لذلك هذا رمز تحقق محلي بسيط يُطبع على كل إيصال: الرقم الضريبي ورقم الفاتورة
+ * والتاريخ والإجمالي، ليتحقق منه العميل أو المراجع يدوياً دون اتصال بالإنترنت. */
+export interface EgReceiptBarcodeFields {
+  sellerName: string
+  taxNumber: string // 9 أرقام
+  invoiceNumber: string
+  dateIso: string
+  totalMinor: Minor
+  decimals: number
+}
+
+export function validateEgReceiptBarcodeFields(f: EgReceiptBarcodeFields): string[] {
+  const errors: string[] = []
+  if (!f.sellerName.trim()) errors.push('اسم البائع مطلوب لرمز الإيصال')
+  if (!isValidEgTaxNumber(f.taxNumber)) errors.push('رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام')
+  if (!f.invoiceNumber.trim()) errors.push('رقم الفاتورة مطلوب لرمز الإيصال')
+  if (Number.isNaN(Date.parse(f.dateIso))) errors.push('طابع زمني غير صالح')
+  if (!Number.isInteger(f.totalMinor) || f.totalMinor < 0) errors.push('الإجمالي غير صالح')
+  return errors
+}
+
+/** نص رمز التحقق المحلي المصري: EGTAX1|الرقم الضريبي|رقم الفاتورة|التاريخ|الإجمالي */
+export function buildEgReceiptBarcodeText(f: EgReceiptBarcodeFields): string {
+  const errors = validateEgReceiptBarcodeFields(f)
+  if (errors.length) throw new Error(errors.join(' — '))
+  return [
+    'EGTAX1',
+    f.taxNumber.trim().replace(/-/g, ''),
+    f.invoiceNumber.trim(),
+    f.dateIso.slice(0, 19),
+    minorToDecimalString(f.totalMinor, f.decimals),
+  ].join('|')
 }
 
 /**

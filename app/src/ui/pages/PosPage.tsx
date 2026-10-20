@@ -32,7 +32,7 @@ import { calculateInvoiceCommissionMinor } from '../../core/invoiceCommissions.t
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
-import { maybeZatcaQr } from '../print/zatcaQr.ts'
+import { maybeTaxBarcode } from '../print/taxBarcode.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNavigation, OverlayPortal } from '../components/ui.tsx'
 import { useAnchoredMenu } from '../components/anchoredMenu.ts'
@@ -498,14 +498,17 @@ export function PosPage() {
   }, [paidCash, totals, cur.decimals])
   const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
 
-  /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
+  /** طباعة إيصال فاتورة (المرحلة 5) — مع الرمز الضريبي عند تفعيل إحدى ميزتي
+      الفاتورة الإلكترونية (زاتكا السعودية أو التحقق المحلي المصري) */
   const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
-    const qrDataUrl = await maybeZatcaQr({
-      featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
+    const qrDataUrl = await maybeTaxBarcode({
+      saFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
+      egFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_eg'),
       printEnabled: einvoice.printZatcaQr,
       sellerName: setup.shopName,
-      vatNumber: einvoice.taxNumber,
+      taxNumber: einvoice.taxNumber,
+      invoiceNumber: sale.invoiceNumber,
       dateIso: sale.date,
       totalMinor: sale.totals.totalMinor,
       taxMinor: sale.totals.taxMinor,
