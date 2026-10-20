@@ -332,9 +332,16 @@ const ACTIVITY_TEMPLATE_SEED: ActivityTemplate[] = [
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
+    // سد فجوة (تدقيق الأنشطة 29 — النشاط #29): خصائص الصنف (صلاحية/سيريال/
+    // وزن/خدمة/متغيرات) متاحة فعلياً لأي نشاط عبر «خيارات أكثر» في شاشة
+    // الأصناف (القرار 5) مهما كانت قائمة features — لكن «قوائم الأسعار»
+    // ميزة استثناء: بوابتها في كتالوج التنقل تتحقق من setup.features مباشرة
+    // بلا أي مسار بديل لتفعيلها لاحقاً. نشاط «عام/آخر» وحده يَعِد صراحة
+    // بـ«فعّل ما تحتاجه لاحقاً» بلا نموذج عمل محدد يبرر استبعادها (خلافاً
+    // لأنشطة مثل الصيدلية/العيادة التي لا تحتاجها فعلاً) — فأُضيفت هنا.
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
-    features: ['multi_unit'],
+    features: ['multi_unit', 'price_lists'],
     modules: ['pos', 'inventory', 'purchases', 'installments'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
