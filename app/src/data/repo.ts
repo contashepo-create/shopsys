@@ -4175,6 +4175,156 @@ export const useRawDataStore = create<DataState>()(
           const branchEmployeeIds = new Set(((scopedState.employees ?? []) as { id: number }[]).map((row) => row.id))
           const branchPriceListIds = new Set(((scopedState.priceLists ?? []) as { id: number }[]).map((row) => row.id))
           const branchWarehouseIds = new Set(((scopedState.warehouses ?? []) as { id: number }[]).map((row) => row.id))
+          const scopedIdsCache = new Map<string, Set<unknown>>()
+          const scopedIdsFor = (collection: string): Set<unknown> => {
+            const cached = scopedIdsCache.get(collection)
+            if (cached) return cached
+            const ids = new Set<unknown>()
+            const visibleRows = scopedState[collection]
+            if (Array.isArray(visibleRows)) {
+              for (const row of visibleRows as { id?: unknown }[]) {
+                if (row?.id != null) ids.add(row.id)
+              }
+            }
+            // يسمح بعلاقة ذرية بوالد جديد في التحديث نفسه؛ ستُختم ملكيته بالفرع النشط أدناه.
+            const nextRows = patchRec[collection]
+            const previousRows = stateRec[collection]
+            if (Array.isArray(nextRows) && Array.isArray(previousRows)) {
+              const previousIds = new Set(previousRows.map((row: { id?: unknown }) => row?.id))
+              for (const row of nextRows as { id?: unknown }[]) {
+                if (row?.id != null && !previousIds.has(row.id)) ids.add(row.id)
+              }
+            }
+            scopedIdsCache.set(collection, ids)
+            return ids
+          }
+          const assertScopedParentReference = (
+            collection: string,
+            field: string,
+            parentCollection: string,
+            optional = false,
+            zeroMeansNone = false,
+          ) => {
+            const nextRows = patchRec[collection]
+            const previousRows = stateRec[collection]
+            if (!Array.isArray(nextRows) || !Array.isArray(previousRows)) return
+            const visibleRows = scopedState[collection]
+            const visibleIds = new Set(Array.isArray(visibleRows)
+              ? (visibleRows as { id?: unknown }[]).map((row) => row?.id)
+              : [])
+            const previousById = new Map(previousRows.map((row: { id?: unknown }) => [row?.id, row]))
+            const parentIds = scopedIdsFor(parentCollection)
+            for (const row of nextRows as Record<string, unknown>[]) {
+              if (!row || row.id == null) continue
+              const previous = previousById.get(row.id) as Record<string, unknown> | undefined
+              const parentId = row[field]
+              if (previous && Object.is(previous[field], parentId)) continue
+              // تعديلات السجلات الأجنبية مرفوضة بالحارس العام أدناه؛ لا نخلطها برسالة ربط الأب.
+              if (previous && !visibleIds.has(row.id)) continue
+              if (parentId == null || (zeroMeansNone && parentId === 0)) {
+                if (optional || (zeroMeansNone && parentId === 0)) continue
+                throw new Error(`لا يمكن حفظ «${collection}»: يلزم ربط ${field} بسجل من هذا الفرع`)
+              }
+              if (!parentIds.has(parentId)) {
+                throw new Error(`لا يمكن ربط «${collection}» بـ${field} تابع لفرع آخر أو غير موجود`)
+              }
+            }
+          }
+          const branchParentReferences = [
+            ['projects', 'clientId', 'customers', true],
+            ['projects', 'managerEmployeeId', 'employees', true],
+            ['custodyFiles', 'employeeId', 'employees', false],
+            ['custodyFiles', 'projectId', 'projects', true],
+            ['custodyTxs', 'fileId', 'custodyFiles', false],
+            ['custodyTxs', 'projectId', 'projects', true],
+            ['custodyTxs', 'purchaseId', 'purchases', true],
+            ['projectExtracts', 'projectId', 'projects', false],
+            ['projectCosts', 'projectId', 'projects', false],
+            ['projectCosts', 'costCenterId', 'costCenters', true],
+            ['projectCosts', 'custodyFileId', 'custodyFiles', true],
+            ['projectCosts', 'supplierId', 'suppliers', true],
+            ['retentionReleases', 'projectId', 'projects', false],
+            ['projectBudgets', 'projectId', 'projects', false],
+            ['projectTasks', 'projectId', 'projects', false],
+            ['changeOrders', 'projectId', 'projects', false],
+            ['clientAdvances', 'projectId', 'projects', false],
+            ['boqItems', 'projectId', 'projects', false],
+            ['subContracts', 'projectId', 'projects', false],
+            ['subContracts', 'supplierId', 'suppliers', true],
+            ['subCertificates', 'contractId', 'subContracts', false],
+            ['subPayments', 'contractId', 'subContracts', false],
+            ['subAdvances', 'contractId', 'subContracts', false],
+            ['bonds', 'projectId', 'projects', true],
+            ['dailyWorkRecords', 'workerId', 'dailyWorkers', false],
+            ['dailyWorkRecords', 'projectId', 'projects', true],
+            ['materialRequisitions', 'projectId', 'projects', false],
+            ['materialRequisitions', 'issuedByEmployeeId', 'employees', false],
+            ['materialRequisitions', 'receivedByEmployeeId', 'employees', false],
+            ['clientSettlements', 'customerId', 'customers', false],
+            ['payrollSlips', 'employeeId', 'employees', false],
+            ['employeeAdvances', 'employeeId', 'employees', false],
+            ['employeeAdvances', 'custodyFileId', 'custodyFiles', true],
+            ['employeeDeductions', 'employeeId', 'employees', false],
+            ['advanceRepayments', 'employeeId', 'employees', false],
+            ['attendanceRecords', 'employeeId', 'employees', false],
+            ['leaveRequests', 'employeeId', 'employees', false],
+            ['staffCommissions', 'employeeId', 'employees', false],
+            ['driverDues', 'driverId', 'employees', false],
+            ['driverDues', 'tripId', 'trips', false],
+            ['vehicles', 'defaultDriverId', 'employees', true],
+            ['vehicleCostEntries', 'vehicleId', 'vehicles', false],
+            ['vehicleCostEntries', 'purchaseId', 'purchases', true],
+            ['trips', 'customerId', 'customers', true],
+            ['trips', 'vehicleId', 'vehicles', true],
+            ['trips', 'driverId', 'employees', true],
+            ['trips', 'custodyFileId', 'custodyFiles', true],
+            ['tripExpenses', 'tripId', 'trips', false],
+            ['tripExpenses', 'vehicleId', 'vehicles', true],
+            ['tripExpenses', 'driverId', 'employees', true],
+            ['tripExpenses', 'customerId', 'customers', true],
+            ['tripExpenses', 'custodyFileId', 'custodyFiles', true],
+            ['equipment', 'driverEmployeeId', 'employees', true],
+            ['equipmentCosts', 'equipmentId', 'equipment', false],
+            ['equipmentCosts', 'contractId', 'rentalContracts', true],
+            ['equipmentCosts', 'customerId', 'customers', true],
+            ['equipmentCosts', 'driverEmployeeId', 'employees', true],
+            ['rentalContracts', 'customerId', 'customers', true],
+            ['rentalContracts', 'equipmentId', 'equipment', true],
+            ['rentalInvoices', 'contractId', 'rentalContracts', false],
+            ['rentalInvoices', 'equipmentId', 'equipment', true],
+            ['rentalInvoices', 'customerId', 'customers', true],
+            ['operatorShifts', 'equipmentId', 'equipment', false],
+            ['installmentPlans', 'customerId', 'customers', false],
+            ['installmentPlans', 'saleId', 'sales', true],
+            ['costCenterBudgets', 'costCenterId', 'costCenters', false],
+            ['purchaseOrders', 'supplierId', 'suppliers', true],
+            ['purchaseOrders', 'warehouseId', 'warehouses', true],
+            ['purchases', 'supplierId', 'suppliers', false, true],
+            ['purchases', 'warehouseId', 'warehouses', true],
+            ['carPrepCosts', 'carId', 'cars', false],
+            ['carPrepCosts', 'supplierId', 'suppliers', true],
+            ['carPurchaseInvoices', 'supplierId', 'suppliers', true],
+          ] as const
+          for (const [collection, field, parentCollection, optional, zeroMeansNone] of branchParentReferences) {
+            assertScopedParentReference(collection, field, parentCollection, optional, zeroMeansNone)
+          }
+          if (Array.isArray(patchRec.payrollRuns) && Array.isArray(stateRec.payrollRuns)) {
+            const previousRuns = stateRec.payrollRuns as { id: number; lines?: { employeeId: number }[] }[]
+            const nextRuns = patchRec.payrollRuns as { id: number; lines?: { employeeId: number }[] }[]
+            const visibleRunIds = new Set(((scopedState.payrollRuns ?? []) as { id: number }[]).map((run) => run.id))
+            const previousById = new Map(previousRuns.map((run) => [run.id, run] as const))
+            const employeeIds = scopedIdsFor('employees')
+            for (const run of nextRuns) {
+              const previous = previousById.get(run.id)
+              if (previous && !visibleRunIds.has(run.id)) continue // الحارس العام يمنع تعديل سجل مسير أجنبي
+              const oldEmployeeIds = previous?.lines?.map((line) => line.employeeId) ?? []
+              const nextEmployeeIds = run.lines?.map((line) => line.employeeId) ?? []
+              if (previous && JSON.stringify(oldEmployeeIds) === JSON.stringify(nextEmployeeIds)) continue
+              if (nextEmployeeIds.some((employeeId) => !employeeIds.has(employeeId))) {
+                throw new Error('لا يمكن ربط مسير الرواتب بموظف تابع لفرع آخر أو غير موجود')
+              }
+            }
+          }
           const assertParentScopedArray = (
             key: string,
             identity: (row: Record<string, unknown>) => string,

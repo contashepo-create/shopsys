@@ -52,6 +52,10 @@ console.log('🧮 ملخص الملف: تعزيزات مقابل منصرفات'
   ok('الممول = مجموع التعزيزات', s.fundedMinor === 150000)
   ok('المنصرف = مصاريف + فواتير', s.spentMinor === 75000)
   ok('المتبقي = الممول − المنصرف', s.remainingMinor === 75000)
+  const settled = summarizeCustody([
+    tx(1, 'fund', 100000), tx(1, 'expense', 30000), tx(1, 'return', 40000), tx(1, 'shortage', 30000),
+  ])
+  ok('بعد الإغلاق: المصروف الفعلي منفصل عن المرتجع والعجز والمتبقي صفر', settled.spentMinor === 30000 && settled.returnedMinor === 40000 && settled.shortageMinor === 30000 && settled.remainingMinor === 0)
   // مصروف بزيادة: الزيادة لا تنقص العهدة (تُحمَّل على 2107)
   const s2 = summarizeCustody([tx(1, 'fund', 100000), tx(1, 'expense', 120000, 20000)])
   ok('الزيادة لا تُخصم من العهدة', s2.remainingMinor === 0 && s2.excessMinor === 20000 && s2.expenseTotalMinor === 120000)

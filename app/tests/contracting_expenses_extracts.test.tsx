@@ -118,8 +118,8 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
     expect(document.querySelector('[data-expense-payment-total]')?.textContent).toContain('11,400')
     expect(document.querySelector('[data-expense-settlement-preview]')?.textContent).toContain('7,400')
 
-    fireEvent.change(document.querySelector('[data-pay-source-dependent] select[aria-label="نوع مصدر الدفع"]')!, { target: { value: 'custody' } })
-    const custodySelect = document.querySelector('[aria-label="ملف العهدة للدفع"]') as HTMLSelectElement
+    fireEvent.change(document.querySelector('[data-pay-source-linked] select[aria-label="نوع مصدر السداد"]')!, { target: { value: 'custody' } })
+    const custodySelect = document.querySelector('[data-pay-source-linked] select[aria-label="ملف العهدة"]') as HTMLSelectElement
     expect(custodySelect.value).toBe(String(file.id))
 
     const supplierId = S().suppliers[0].id
@@ -157,6 +157,7 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
   it('يسجل فاتورة مصروفات مشروع ببنود حرة (شامل الضريبة وغير شامل) ويخصم الصافي من ربح المشروع', () => {
     ui(<ProjectExpensesPage />)
     fireEvent.click(document.querySelector('[data-open-project-expense-modal]')!)
+    expect(document.querySelector('[data-no-payment-source]')).toBeTruthy() // لا يُطلب مصدر إذا كان المدفوع صفراً
     expect(document.querySelector('[data-expense-simple-entry]')).not.toBeNull()
     fireEvent.click(document.querySelector('[data-toggle-expense-detail]')!)
     expect(document.querySelector('[data-expense-lines-table]')).not.toBeNull()

@@ -907,6 +907,9 @@ export const useAppStore = create<AppState>()(
          يدوياً من الإعدادات إن لزم). */
       applyActivityChangeKey: async (key, pubB64u) => {
         const state = get()
+        if (state.activeBranchContext && !state.activeBranchContext.isMain) {
+          throw new Error('تغيير نشاط المنشأة العامة متاح من المنشأة الأساسية فقط')
+        }
         const companySetup = state.companySetup ?? state.setup
         if (!companySetup.completed) throw new Error('أكمل الإعداد الأول أولاً')
         if (!companySetup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
@@ -932,6 +935,9 @@ export const useAppStore = create<AppState>()(
         }
         const now = new Date().toISOString()
         set((s) => {
+          if (s.activeBranchContext && !s.activeBranchContext.isMain) {
+            throw new Error('تغيير نشاط المنشأة العامة متاح من المنشأة الأساسية فقط')
+          }
           const companySetup = s.companySetup ?? s.setup
           const nextCompanySetup: SetupState = {
             ...companySetup,
@@ -1208,10 +1214,11 @@ useAppStore.setState = ((partial, replace) => {
   const value = typeof partial === 'function' ? partial(current) : partial
   if (!value || typeof value !== 'object') return rawAppSetState(value as never, replace as never)
   const patch = { ...value } as Partial<AppState>
-  if (
-    ('activeBranchContext' in patch && patch.activeBranchContext !== current.activeBranchContext)
-    || ('branchBusinessProfiles' in patch && patch.branchBusinessProfiles !== current.branchBusinessProfiles)
-  ) {
+  const branchContextChanged = 'activeBranchContext' in patch
+    && JSON.stringify(patch.activeBranchContext) !== JSON.stringify(current.activeBranchContext)
+  const branchProfilesChanged = 'branchBusinessProfiles' in patch
+    && JSON.stringify(patch.branchBusinessProfiles) !== JSON.stringify(current.branchBusinessProfiles)
+  if (branchContextChanged || branchProfilesChanged) {
     throw new Error('سياق الفروع وملفاتها تُحدَّث عبر إجراءاتها المخصصة فقط')
   }
   if (current.activeBranchContext && !current.activeBranchContext.isMain

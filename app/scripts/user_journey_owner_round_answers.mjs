@@ -140,10 +140,10 @@ console.log('\n═══ ④ المشروع: صرف مخزني للموقع + ت
   assert.equal(lineOf(lIssue, '5110').debit, 50 * 60000, 'تكلفة المواد المصروفة 30,000 مدينة على 5110')
   assert.equal(lineOf(lIssue, '1103').credit, 50 * 60000, 'المخزون 1103 دائن بالإخراج بالمتوسط المرجح')
   ok(`(أ) الصرف المخزني ${req.reqNumber}: 50 علبة × تكلفة 600 = 30,000 → 5110 / 1103 والمخزن خُصم فوراً`)
-  // (ب) تكلفة مقاولة باطن آجلة 1,500 — المتبقي مربوط بمورد ليظهر في كشفه
-  st().addSupplier({ nameAr: 'مقاول كهرباء' })
-  const subcontractor = st().suppliers.at(-1)
-  st().addProjectCost({ projectId: project.id, kind: 'subcontract', amountMinor: 150000, payment: 'credit', supplierId: subcontractor.id, description: 'مقاول كهرباء' })
+  // (ب) تكلفة مقاولة باطن آجلة 1,500 — يجب إسناد الآجل لمورد/مقاول مسجل
+  st().addSupplier({ nameAr: 'مقاول كهرباء', phone: '', notes: '' })
+  const electricitySupplier = st().suppliers.at(-1)
+  st().addProjectCost({ projectId: project.id, kind: 'subcontract', amountMinor: 150000, payment: 'credit', supplierId: electricitySupplier.id, description: 'مقاول كهرباء' })
   assert.equal(st().projectCosts.filter((c) => c.projectId === project.id).reduce((s, c) => s + c.amountMinor, 0), 3150000)
   ok('(ب) تكلفة مقاولة باطن آجلة 1,500 → مجموع تكاليف المشروع 31,500 (مواد 30,000 + باطن 1,500)')
   // (ج) مستخلص 40,000 بضريبة 14% ومحتجز 10%: صافي = 40,000+5,600−4,000 = 41,600 نقداً

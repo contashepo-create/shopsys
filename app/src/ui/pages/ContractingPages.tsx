@@ -1476,6 +1476,8 @@ export function ProjectExpensesPage() {
     projects,
     projectCosts,
     suppliers,
+    custodyFiles,
+    treasuries,
     boqItems,
     costCenters,
     journal,
@@ -1620,7 +1622,10 @@ export function ProjectExpensesPage() {
       }
       const dueMinor = grossMinor - paidMinor
       if (dueMinor > 0 && !supplierId) {
-        throw new Error('المتبقي الآجل يتطلب اختيار المورد أو الجهة التي تتحمله ليظهر في كشف حسابها')
+        throw new Error('المتبقي الآجل يتطلب اختيار المورد أو مقاول الباطن ليظهر في كشف حسابه')
+      }
+      if (paidMinor > 0 && paySource.kind === 'custody' && !paySource.custodyFileId) {
+        throw new Error('اختر ملف العهدة الذي دُفع منه المبلغ')
       }
       const created = addProjectCost({
         projectId: selectedProject.id,
@@ -1765,6 +1770,14 @@ export function ProjectExpensesPage() {
                 const prj = projects.find((p) => p.id === c.projectId)
                 const sup = c.supplierId ? suppliers.find((s) => s.id === c.supplierId) : null
                 const gross = c.grossMinor ?? c.amountMinor + (c.vatMinor ?? 0)
+                const paid = c.paidMinor ?? (c.payment === 'cash' ? gross : 0)
+                const due = c.dueMinor ?? Math.max(0, gross - paid)
+                const custodyFile = c.custodyFileId != null ? custodyFiles.find((file) => file.id === c.custodyFileId) : null
+                const sourceLabel = custodyFile
+                  ? `عهدة ${custodyFile.fileNumber}`
+                  : c.treasury
+                  ? treasuries.find((treasury) => treasury.code === c.treasury)?.nameAr ?? c.treasury
+                  : paid > 0 ? 'مصدر نقدي' : 'لم يُدفع بعد'
                 return (
                   <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-rose-500/5 transition-colors">
                     <td className="px-3 py-2.5 font-mono font-black">
@@ -1784,8 +1797,10 @@ export function ProjectExpensesPage() {
                     </td>
                     <td className="px-3 py-2.5 text-[12px]">
                       {sup ? <div className="font-bold">{sup.nameAr}</div> : null}
+                      <div className="mb-1 text-[10.5px] text-slate-400" data-project-expense-payment-source>مصدر المدفوع: {sourceLabel}</div>
+                      <div className="mb-1 text-[10.5px] text-slate-500">مدفوع {fmt(paid)} · آجل {fmt(due)}</div>
                       <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.payment === 'cash' ? 'bg-emerald-500/10 text-emerald-600' : c.payment === 'credit' ? 'bg-amber-500/10 text-amber-600' : 'bg-sky-500/10 text-sky-600'}`}>
-                        {c.payment === 'cash' ? 'مدفوع بالكامل' : c.payment === 'credit' ? 'آجل على المورد' : `مختلط (متبقٍ ${fmt(c.dueMinor ?? 0)})`}
+                        {c.payment === 'cash' ? 'مدفوع بالكامل' : c.payment === 'credit' ? 'آجل على المورد' : 'سداد جزئي'}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 font-black text-rose-600">{fmt(c.amountMinor)} {cur.symbol}</td>
@@ -1874,16 +1889,20 @@ export function ProjectExpensesPage() {
                 dir="ltr"
                 placeholder="0 = آجل بالكامل"
                 data-expense-paid-now
+                data-project-expense-paid
               />
             </Field>
-            <Field label="مصدر المبلغ المدفوع">
-              <PaySourcePicker value={paySource} onChange={setPaySource} layout="dependent" />
-            </Field>
+            <div className="space-y-1.5" data-project-expense-source>
+              {paidNowValid && paidNowMinor > 0
+                ? <PaySourcePicker linked value={paySource} onChange={setPaySource} />
+                : <div className="flex min-h-10 items-center rounded-xl border border-dashed border-slate-300 px-3 text-[11px] text-slate-400 dark:border-slate-700" data-no-payment-source>لا يُختار مصدر سداد ما دام المدفوع صفراً.</div>}
+              <p className="text-[10px] text-slate-400">يُخصم المدفوع فقط من المصدر المحدد؛ إذا كان صفراً فلا تُسجَّل حركة على الخزينة أو العهدة.</p>
+            </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field
-              label={dueNowMinor > 0 ? 'المورد / الجهة التي تتحمل المتبقي *' : 'المورد / مقاول الباطن (اختياري)'}
-              hint={dueNowMinor > 0 ? `المتبقي الآجل ${fmt(dueNowMinor)} ${cur.symbol} سيظهر في كشف حساب الجهة المختارة` : 'يُربط المصروف بسجل المورد إن وُجد'}
+              label={dueNowMinor > 0 ? 'المورد / مقاول الباطن — الجهة الآجلة *' : 'المورد / مقاول الباطن (اختياري)'}
+              hint={dueNowMinor > 0 ? `المتبقي الآجل ${fmt(dueNowMinor)} ${cur.symbol} يجب ربطه بجهة مسجلة.` : 'لا يلزم اختيار جهة إذا كان المبلغ مدفوعاً بالكامل.'}
             >
               <PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashLabel="بدون جهة دائنة" label="بحث المورد / الجهة" cashValue={0} showCash={dueNowMinor === 0} />
             </Field>
@@ -2085,7 +2104,10 @@ export function ProjectExpensesPage() {
               <div className="rounded-xl bg-rose-600 text-white p-3">
                 <div className="text-[11px] opacity-90">إجمالي الفاتورة / المصروف الشامل</div>
                 <div className="text-xl font-black" data-expense-total-gross>{fmt(computedPreview.grossMinor)} {cur.symbol}</div>
-                <div className="text-[10px] opacity-85">مدفوع {fmt(paidNowValid ? paidNowMinor : 0)} · آجل {fmt(dueNowMinor)}</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 border-t border-white/20 pt-2 text-[10px] opacity-95" data-expense-payment-breakdown>
+                  <div>مدفوع الآن: <b data-expense-paid-preview>{fmt(paidNowValid ? paidNowMinor : 0)} {cur.symbol}</b></div>
+                  <div>آجل تلقائياً: <b data-expense-due-preview>{fmt(dueNowMinor)} {cur.symbol}</b></div>
+                </div>
               </div>
             </div>
 
@@ -2128,6 +2150,14 @@ export function ProjectExpensesPage() {
           const sup = viewingCost.supplierId ? suppliers.find((s) => s.id === viewingCost.supplierId) : null
           const entry = journal.find((e) => e.id === viewingCost.journalEntryId)
           const gross = viewingCost.grossMinor ?? viewingCost.amountMinor + (viewingCost.vatMinor ?? 0)
+          const paid = viewingCost.paidMinor ?? (viewingCost.payment === 'cash' ? gross : 0)
+          const due = viewingCost.dueMinor ?? Math.max(0, gross - paid)
+          const custodyFile = viewingCost.custodyFileId != null ? custodyFiles.find((file) => file.id === viewingCost.custodyFileId) : null
+          const paymentSource = custodyFile
+            ? `عهدة ${custodyFile.fileNumber}`
+            : viewingCost.treasury
+            ? treasuries.find((treasury) => treasury.code === viewingCost.treasury)?.nameAr ?? viewingCost.treasury
+            : paid > 0 ? 'مصدر نقدي' : 'لا يوجد — كامل المبلغ آجل'
           return (
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -2137,7 +2167,10 @@ export function ProjectExpensesPage() {
               </div>
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800 text-[12.5px]">
                 <div className="flex justify-between px-3 py-2"><span className="text-slate-500">المشروع</span><b>{prj ? `${prj.code} — ${prj.nameAr}` : `#${viewingCost.projectId}`}</b></div>
-                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">التاريخ · المورد</span><b>{viewingCost.date.slice(0, 10)} · {sup?.nameAr ?? 'نقدي مباشر'}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">التاريخ</span><b>{viewingCost.date.slice(0, 10)}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">الجهة الآجلة</span><b>{sup?.nameAr ?? (due > 0 ? 'غير محددة — سجل قديم' : 'لا يوجد')}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">مصدر السداد</span><b>{paymentSource}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">مدفوع الآن · آجل</span><b>{fmt(paid)} · {fmt(due)} {cur.symbol}</b></div>
                 {viewingCost.invoiceRef && <div className="flex justify-between px-3 py-2"><span className="text-slate-500">رقم فاتورة المورد</span><b>{viewingCost.invoiceRef}</b></div>}
                 <div className="flex justify-between px-3 py-2"><span className="text-slate-500">البيان</span><b>{viewingCost.description}</b></div>
               </div>

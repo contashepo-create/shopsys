@@ -297,8 +297,19 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.equal(scoped.projectExtracts.length, 1)
   assert.equal(scoped.projectExtracts[0].id, ext2.id)
 
-  // مستند حقيقي في الرئيسي لكشف أي getter يتجاوز مصفوفات الحالة المعزولة.
+  // سجلات رئيسية تُستخدم للتأكد أن الإدخالات الجديدة لا تربط أبناء الفرع بسجلات أب من الشركة الأخرى.
   st().setActiveBranchId(hqBranch.id)
+  const mainProject = st().addProject({
+    nameAr: 'مشروع الفرع الرئيسي', clientName: 'عميل الفرع الرئيسي', clientId: mainCustomerId,
+    contractValueMinor: 80000, retentionPercent: 0, startDate: '2026-10-01', notes: '',
+  })
+  const mainCustodyFile = st().openCustodyFile({
+    employeeId: mainEmployeeId, projectId: mainProject.id, reason: 'عهدة اختبار الفرع الرئيسي', notes: '',
+  })
+  st().fundCustodyFile({
+    fileId: mainCustodyFile.id, amountMinor: 5000, treasury: hqBranch.treasuryCode, description: 'رصيد اختبار عزل الفروع',
+  })
+  // مستند حقيقي في الرئيسي لكشف أي getter يتجاوز مصفوفات الحالة المعزولة.
   const mainSale = st().postSale({
     lines: [{ itemId, nameAr: 'مياه معدنية', qty: 1, unitPriceMinor: 1000, discountPercent: 0, costMinor: 600 }],
     customerId: mainCustomerId, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0,
@@ -385,7 +396,32 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.throws(() => st().postTransfer({ fromWarehouseId: logisticsBranch.warehouseId, toWarehouseId: hqBranch.warehouseId, lines: [], notes: '' }), /المخزن المستقبل غير موجود في هذا الفرع/)
   assert.throws(() => st().setOwnerPin('new-owner-pin'), /متاح للمالك فقط/)
   assert.throws(() => useAppStore.getState().updateSetup({ shopName: 'تغيير عام من فرع' }), /لا تُعدّل من داخل فرع مستقل/)
-  ok('حساب الفرع لا يقرأ أو يعدل عملاء/مستخدمين/خزائن/مخازن الفرع الآخر ولا إعدادات الشركة العامة')
+
+  // حراس علاقة الأب: لا يكفي ختم السجل الجديد بفرعه إذا كان يشير إلى موظف/مشروع/عهدة من شركة أخرى.
+  const custodyTxCountBefore = st().custodyTxs.length
+  const projectExtractCountBefore = st().projectExtracts.length
+  const payrollRunCountBefore = st().payrollRuns.length
+  assert.throws(() => st().openCustodyFile({
+    employeeId: mainEmployeeId, projectId: null, reason: 'ربط موظف من فرع آخر', notes: '',
+  }), /فرع آخر/)
+  assert.throws(() => st().postPayroll({
+    month: '2026-11', payMode: 'cash', treasury: logisticsBranch.treasuryCode, notes: 'اختبار عزل الموظف',
+    lines: [{ employeeId: mainEmployeeId, baseMinor: 500000, allowancesMinor: 0, overtimeMinor: 0, deductionsMinor: 0, advancesMinor: 0 }],
+  }), /فرع آخر/)
+  assert.throws(() => st().addProjectExtract({
+    projectId: mainProject.id, grossMinor: 1000, vatPercent: 0, payment: 'cash', description: 'ربط مشروع من فرع آخر',
+  }), /فرع آخر/)
+  assert.throws(() => st().fundCustodyFile({
+    fileId: mainCustodyFile.id, amountMinor: 1000, treasury: hqBranch.treasuryCode, description: 'محاولة تعزيز عابرة للفروع',
+  }), /فرع آخر/)
+  assert.throws(() => st().addProjectCost({
+    projectId: proj2.id, kind: 'other', amountMinor: 1000, payment: 'cash', paidMinor: 1000,
+    custodyFileId: mainCustodyFile.id, description: 'ربط عهدة من فرع آخر',
+  }), /فرع آخر|غير موجود في هذا الفرع/)
+  assert.equal(st().custodyTxs.length, custodyTxCountBefore, 'رفض علاقة الأب لا يترك حركة عهدة جزئية')
+  assert.equal(st().projectExtracts.length, projectExtractCountBefore, 'رفض المشروع الأجنبي لا ينشئ مستخلصاً')
+  assert.equal(st().payrollRuns.length, payrollRunCountBefore, 'رفض الموظف الأجنبي لا ينشئ مسيراً')
+  ok('حساب الفرع لا يقرأ أو يعدل بيانات فرع آخر، وحراس العلاقات تمنع ربط موظف/مشروع/عهدة أجنبية ذرياً')
 
   // شراء وبيع داخل الفرع الثاني يتوجهان تلقائياً لمخزن وخزينة الفرع الثاني
   const b2SupplierId = scoped.suppliers[0].id
