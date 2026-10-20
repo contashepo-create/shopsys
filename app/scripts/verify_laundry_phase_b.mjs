@@ -75,6 +75,16 @@ const msgDelivered = buildLaundryStatusMessage({ orderNumber: 'LN-0099', custome
 ok(msgDelivered.includes('تم تسليم') && msgDelivered.includes('مغسلة النظافة'), 'رسالة التسليم تشكر باسم المحل')
 ok(laundryWhatsappLink('01012345678', 'نص').startsWith('https://wa.me/201012345678?'), 'تحويل الرقم المصري المحلي لصيغة واتساب الدولية صحيح')
 
+// مراجعة الفرع: رسالة الرف/المتبقي كانت تثبّت «ج.م» دوماً — مغسلة في بلد خليجي
+// (ريال سعودي مثلاً) كانت ترسل لعميلها مبلغاً بعملة مصر خطأً. التصحيح: رمز
+// العملة وخاناتها العشرية يُمرَّران من الشاشة (setup.countryCode)، لا يُثبَّتان.
+const msgSar = buildLaundryStatusMessage(
+  { orderNumber: 'LN-0100', customerName: 'سعيد', status: 'ready', totalMinor: 10000, prepaidMinor: 3000, rackNumber: 'A-1' },
+  'مغسلة الرياض',
+  { symbol: 'ر.س', decimals: 2 },
+)
+ok(msgSar.includes('ر.س') && !msgSar.includes('ج.م'), 'رمز العملة الفعلي للمنشأة يظهر في رسالة واتساب — لا ثبات على الجنيه المصري')
+
 console.log('— ⑥ سجل الإشعارات المُرسَلة يُحفظ على الأمر بلا أي قيد محاسبي —')
 const journalBefore = S().journal.length
 const afterNotify = S().logLaundryNotificationSent(opened.id, 'delivered')

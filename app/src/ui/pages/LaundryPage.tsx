@@ -332,7 +332,7 @@ export function LaundryPage() {
                 {viewing.phone.trim() && (
                   <button
                     onClick={() => {
-                      window.open(laundryWhatsappLink(viewing.phone, buildLaundryStatusMessage(viewing, setup.shopName || 'المغسلة')), '_blank', 'noopener')
+                      window.open(laundryWhatsappLink(viewing.phone, buildLaundryStatusMessage(viewing, setup.shopName || 'المغسلة', { symbol: cur.symbol, decimals: cur.decimals })), '_blank', 'noopener')
                       try { logLaundryNotificationSent(viewing.id, viewing.status) } catch { /* لا يمنع الإرسال */ }
                     }}
                     title="إبلاغ العميل بحالة أمر الغسيل عبر واتساب — يُسجَّل في سجل الأمر أنه أُرسل"

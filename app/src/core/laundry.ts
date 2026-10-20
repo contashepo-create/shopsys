@@ -165,10 +165,13 @@ export function buildLaundryCancelEntry(prepaidMinor: Minor, note: string, treas
 export function buildLaundryStatusMessage(
   order: { orderNumber: string; customerName: string; status: LaundryStatus; totalMinor: Minor; prepaidMinor: Minor; promisedAt?: string; rackNumber?: string },
   shopName: string,
+  /** رمز العملة وعدد خاناتها العشرية — المنشأة قد تكون في أي دولة عربية مدعومة،
+   * فلا يصح تثبيت الجنيه المصري هنا (كان الخطأ السابق قبل هذا الإصلاح). */
+  currency: { symbol: string; decimals: number } = { symbol: 'ج.م', decimals: 2 },
 ): string {
   const remaining = order.totalMinor - order.prepaidMinor
   const remainingTxt = remaining > 0
-    ? ` المتبقي التقريبي ${(remaining / 100).toLocaleString('en-US')} ج.م.`
+    ? ` المتبقي التقريبي ${(remaining / 10 ** currency.decimals).toLocaleString('en-US')} ${currency.symbol}.`
     : order.prepaidMinor > 0 ? ' تم سداد كامل القيمة مقدماً.' : ''
   const rackTxt = order.rackNumber ? ` (رف ${order.rackNumber})` : ''
   const promisedTxt = order.promisedAt ? ` موعد التسليم المتوقع: ${order.promisedAt}.` : ''
