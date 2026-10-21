@@ -132,6 +132,26 @@ console.log('\n═══ ٣.٥) ثبات المرجع — مقارنة الرق�
   const scopedB = getBranchScopedDataState(rawAfter)
   eq(scopedA, scopedB, 'مع وجود علامة قراءة: نفس النسخة المخزَّنة لنفس اللقطة (لا مصفوفة جديدة كل قراءة)')
   eq(scopedA.readNotificationIds, scopedB.readNotificationIds, 'مصفوفة المعرّفات المجرَّدة بنفس المرجع — لا رقعة وهمية للمفتاح')
+
+  /*
+   * إثبات مباشر بنفس دالة الرقع التي يستخدمها مضيف الشبكة المحلية:
+   * لو أُعيد إنشاء مصفوفة جديدة عند كل قراءة لظهرت رقعة «readNotificationIds»
+   * بعد أي تغيير في الحالة ولو لم تتغير علامات القراءة إطلاقاً.
+   */
+  const { lanPatchBetween } = await import(pathToFileURL(join(root, 'src/data/lan/protocol.ts')).href)
+  const baseRaw = useRawDataStore.getState()
+  const prevSnapshot = getBranchScopedDataState(baseRaw)
+  // تغيير في مفتاح آخر (كما تفعل أي كتابة) مع بقاء مصفوفة العلامات نفسها بالمرجع
+  const nextSnapshot = getBranchScopedDataState({ ...baseRaw, sales: [...baseRaw.sales] })
+  eq(nextSnapshot.readNotificationIds, prevSnapshot.readNotificationIds, 'نفس المرجع عبر اللقطات المتتالية (شرط ثبات LAN)')
+  const phantom = Object.keys(lanPatchBetween(
+    { readNotificationIds: prevSnapshot.readNotificationIds },
+    { readNotificationIds: nextSnapshot.readNotificationIds },
+    ['readNotificationIds'],
+  ))
+  eq(phantom.length, 0, 'لا رقعة وهمية لمفتاح readNotificationIds بعد تغيير مفتاح آخر')
+  const real = Object.keys(lanPatchBetween({ sales: prevSnapshot.sales }, { sales: nextSnapshot.sales }, ['sales']))
+  eq(real.join(','), 'sales', 'التغيير الحقيقي (sales) يُبث وحده — التعرية لا تحجب الرقع الفعلية')
   S().restoreNotifications()
 }
 

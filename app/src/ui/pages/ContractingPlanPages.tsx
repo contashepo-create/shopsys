@@ -112,8 +112,9 @@ export function ProjectBudgetPage() {
                     <td className="p-3 font-bold text-slate-700 dark:text-slate-200">{COST_KIND_LABELS[r.kind].icon} {COST_KIND_LABELS[r.kind].nameAr}</td>
                     <td className="p-3 text-left tabular-nums">{fmt(r.budgetMinor)}</td>
                     <td className="p-3 text-left tabular-nums font-bold">{fmt(r.actualMinor)}</td>
-                    <td className={`p-3 text-left tabular-nums font-bold ${r.varianceMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      {r.varianceMinor >= 0 ? `وفر ${fmt(r.varianceMinor)}` : `عجز ${fmt(-r.varianceMinor)}`}
+                    {/* بلا موازنة (صفر) ⇒ لا انحراف: «—» رمادية بدل «عجز» حمراء تُشعر المستخدم بتجاوز لم يطلبه */}
+                    <td className={`p-3 text-left tabular-nums font-bold ${r.status === 'no-budget' ? 'text-slate-400' : r.varianceMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {r.status === 'no-budget' ? '—' : r.varianceMinor >= 0 ? `وفر ${fmt(r.varianceMinor)}` : `عجز ${fmt(-r.varianceMinor)}`}
                     </td>
                     <td className="p-3">
                       <div className="w-28 mx-auto">
