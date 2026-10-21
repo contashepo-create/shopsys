@@ -15,11 +15,11 @@ import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteK
 import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
-import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
+import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
-import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, isModernPinHash, hashPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { userPrefsKey, type UserPreferences } from '../core/userPreferences.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
 import { isEligibleApprover, describeShiftContext } from '../core/refundApproval.ts'
@@ -1941,7 +1941,7 @@ interface DataState {
    * تغيير الرقم السري بحرية بعد التحقق من الرقم الحالي + تحديث بيانات التواصل والصورة.
    * الحقول الحساسة (الدور/الصلاحيات/التفعيل) ليست هنا — للمالك فقط في شاشة الصلاحيات.
    */
-  changeMyPin: (currentPin: string, newPinHash: string) => Promise<void>
+  changeMyPin: (currentPin: string, newPinHash: string, newPin: string) => Promise<void>
   updateMyProfile: (patch: { phone?: string; email?: string; avatarDataUrl?: string }) => void
   /** تحديث تفضيلاتي (المستخدم الحالي فقط) — نمط الفواتير وقالب الطباعة المفضل */
   updateMyPreferences: (patch: Partial<UserPreferences>) => void
@@ -1997,7 +1997,7 @@ interface DataState {
   addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; branchId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
   updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'requireOpenShiftForSales' | 'employeeId' | 'branchId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin' | 'treasuryAccess' | 'paymentTerminalAccess'>>) => void
   /** الموظف يغيّر رقمه بنفسه (أول دخول الإجباري): يمسح initialPin فلا يعود أحد يعرفه */
-  changeOwnPin: (userId: number, newPinHash: string) => void
+  changeOwnPin: (userId: number, newPinHash: string, newPin: string) => Promise<void>
   removeAppUser: (id: number) => void
   setCurrentUser: (id: number | null) => void
   /** بلاغ داخلي عن مشكلة في عملية — يظهر للمدير/المحاسب مع إشعار بالجرس */
@@ -3868,12 +3868,16 @@ export function getBranchScopedDataState(state: DataState): DataState {
       )
     : null
   // صنفاً محوّلاً يمكن عرضه كمرجع في الفرع المستقبل، لكن كمية المخزون الظاهرة له هي كمية مخازن هذا الفرع فقط.
-  const scopedItems = scopedItemRows.map((item) => localWarehouseStock
-    ? {
-        ...item,
-        stockQty: [...scopedWhIds].reduce((sum, warehouseId) => sum + (localWarehouseStock.get(warehouseId)?.get(item.id) ?? 0), 0),
-      }
-    : item)
+  const scopedItems = scopedItemRows.map((item) => {
+    if (!localWarehouseStock) return item
+    const stockQty = [...scopedWhIds].reduce((sum, warehouseId) => sum + (localWarehouseStock.get(warehouseId)?.get(item.id) ?? 0), 0)
+    const companyQty = item.stockQty ?? 0
+    const companyValue = item.stockValueMinor ?? Math.round(companyQty * item.costMinor)
+    // Exact value belongs to the company-wide item; allocate only the branch's
+    // proportional share so branch reports cannot expose another warehouse's value.
+    const stockValueMinor = companyQty > 0 ? Math.round(companyValue * stockQty / companyQty) : 0
+    return { ...item, stockQty, stockValueMinor }
+  })
   const scopedItemIds = new Set(scopedItems.map((it) => it.id))
   const scopedOwnedItemIds = new Set(scopedItemRows
     .filter((item) => belongsToBranch(item, activeBranch, state.branches))
@@ -4851,9 +4855,30 @@ export const useRawDataStore = create<DataState>()(
           })
           assertTreasuryNotNegative(state.journal, nextJournal, nextTreasuries, state)
         }
-        // سجل النشاطات (طلب المالك): كل كتابة تولد أحداث تدقيق تلقائياً —
-        // «من فعل ماذا ومتى» بلا اعتماد على تسجيل يدوي في كل إجراء
+        // قيمة المخزون الدقيقة مركزياً: كل مسار يغيّر الكمية يحدّث القيمة المحمولة
+        // ما لم يرسل المسار قيمة دقيقة محسوبة صراحةً (مثل ترحيل الشراء).
         let finalPatch = patch as Partial<DataState>
+        if (patch && Array.isArray(finalPatch.items)) {
+          const previousById = new Map(state.items.map((item) => [item.id, item]))
+          finalPatch = {
+            ...finalPatch,
+            items: finalPatch.items.map((item) => {
+              const previous = previousById.get(item.id)
+              if (!previous || (item.stockQty === previous.stockQty && item.costMinor === previous.costMinor)) return item
+              // المسارات المحاسبية الدقيقة تحدّث الحقل صراحةً؛ لا تستبدل قيمتها.
+              if (item.stockValueMinor !== previous.stockValueMinor) return item
+              const previousQty = previous.stockQty ?? 0
+              const nextQty = item.stockQty ?? 0
+              const previousCost = Number.isSafeInteger(previous.costMinor) && previous.costMinor >= 0 ? previous.costMinor : 0
+              const nextCost = Number.isSafeInteger(item.costMinor) && item.costMinor >= 0 ? item.costMinor : previousCost
+              const previousValue = Number.isSafeInteger(previous.stockValueMinor) && previous.stockValueMinor! >= 0
+                ? previous.stockValueMinor!
+                : Math.round(previousQty * previousCost)
+              const reconciled = reconcileStockValue(previousQty, previousCost, previousValue, nextQty, nextCost)
+              return { ...item, ...reconciled }
+            }),
+          }
+        }
         if (patch && Array.isArray((patch as Partial<DataState>).auditLog) && activeBranch) {
           const existingAuditEvents = new Set(state.auditLog)
           const auditLog = ((patch as Partial<DataState>).auditLog ?? []).map((event) =>
@@ -6201,8 +6226,18 @@ export const useRawDataStore = create<DataState>()(
           if (itemLines.length === 0) return it
           const totalQty = itemLines.reduce((s, l) => s + l.qty, 0)
           const totalLanded = itemLines.reduce((s, l) => s + l.landedTotalMinor, 0)
-          const newCost = weightedAverage(it.stockQty ?? 0, it.costMinor, totalQty, totalLanded)
-          return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + totalQty }
+          const currentQty = Number.isFinite(it.stockQty) ? it.stockQty : 0
+          const currentCostMinor = Number.isSafeInteger(it.costMinor) && it.costMinor! >= 0 ? it.costMinor! : 0
+          // الرصيد السالب يُحمل كقيمة مقابلة بتكلفة المتوسط، حتى تُطفأ كميته عند الاستلام.
+          const currentValue = currentQty < 0
+            ? Math.round(currentQty * currentCostMinor)
+            : Number.isSafeInteger(it.stockValueMinor) && it.stockValueMinor! >= 0
+              ? it.stockValueMinor!
+              : Math.round(currentQty * currentCostMinor)
+          const nextQty = currentQty + totalQty
+          const newValue = nextQty > 0 ? Math.max(0, currentValue + totalLanded) : 0
+          const newCost = weightedAverage(currentQty, currentCostMinor, totalQty, totalLanded, currentValue)
+          return { ...it, costMinor: newCost, stockQty: nextQty, stockValueMinor: newValue }
         })
 
         // تطبيق توزيع التركيبات المُدخَل في سطور الشراء (لو وُجد) فوق المصفوفة الحالية —
@@ -6954,7 +6989,7 @@ export const useRawDataStore = create<DataState>()(
         // والاستنتاج من الإجماليات للفواتير القديمة فقط
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
           ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
-          : deriveTaxConfig(sale.totals)
+          : deriveTaxConfig(sale.totals, sale.lines)
         const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
         // 3) الرد الهجين للدفع المجزأ (إصلاح R1): لا نرد نقداً أكثر مما حُصِّل فعلاً،
         //    ولا نخفض ذمم العميل أكثر من المتبقي المفتوح على الفاتورة
@@ -7099,8 +7134,9 @@ export const useRawDataStore = create<DataState>()(
         const updatedItems = state.items.map((it) => {
           if (!qtyBack.has(it.id)) return it
           const newQty = Math.round(((it.stockQty ?? 0) + qtyBack.get(it.id)!) * 1000) / 1000
-          const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) + valueBack.get(it.id)!
-          return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+          const currentValue = it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)
+          const newValue = currentValue + valueBack.get(it.id)!
+          return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue }
         })
         // سيريالات هذه الفاتورة تعود متاحة بعدد الكمية المرتجعة (الأقدم بيعاً أولاً)
         const serialsToReturn: string[] = []
@@ -7314,8 +7350,9 @@ export const useRawDataStore = create<DataState>()(
         const updatedItems = state.items.map((it) => {
           if (!qtyOut.has(it.id)) return it
           const newQty = Math.round(((it.stockQty ?? 0) - qtyOut.get(it.id)!) * 1000) / 1000
-          const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) - valueOut.get(it.id)!
-          return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(Math.max(0, newValue) / newQty) : it.costMinor }
+          const currentValue = it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)
+          const newValue = Math.max(0, currentValue - valueOut.get(it.id)!)
+          return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue }
         })
         // G5: تخفيض دفعات الصلاحية — البضاعة العائدة للمورد تخرج من دفعات فاتورتها
         // أولاً (هي المعيبة عادة) ثم الأقرب انتهاءً؛ نظام استشاري: لو السجل أقل لا نحبس
@@ -7909,7 +7946,7 @@ export const useRawDataStore = create<DataState>()(
           // G1: النسبة المخزنة أولاً — الاستنتاج للفواتير القديمة فقط
           const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
             ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
-            : deriveTaxConfig(sale.totals)
+            : deriveTaxConfig(sale.totals, sale.lines)
           // البيع الجديد يتبع الفاتورة الأصلية أيضاً: آجلة ⇒ على حساب العميل
           // (المرتجع خفض دينه والجديد يضيف له — الحركة الصافية على الذمم = الفرق)
           const newSale = get().postSale({
@@ -8526,8 +8563,9 @@ export const useRawDataStore = create<DataState>()(
               updatedItems = updatedItems.map((it) => {
                 if (it.id !== sl.itemId) return it
                 const newQty = Math.round(((it.stockQty ?? 0) + sl.qty) * 1000) / 1000
-                const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) + sl.valueMinor
-                return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+                const currentValue = it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)
+                const newValue = currentValue + sl.valueMinor
+                return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue }
               })
             }
             // إقفال المطالبة: نصيب الجهة كله معكوس — لا يظهر في التحصيل بعد الآن
@@ -8692,15 +8730,18 @@ export const useRawDataStore = create<DataState>()(
         if (usesVariants) throw new Error('فاتورة بتركيبات لون/مقاس — صحّح بمرتجع وفاتورة جديدة للحفاظ على أرصدة التركيبات')
 
         // ① إعادة مخزون السطور القديمة (بتكلفتها التاريخية — نفس منطق المرتجع)
-        const stockAfterRestore = new Map<number, { qty: number; costMinor: number }>()
-        for (const it of state.items) stockAfterRestore.set(it.id, { qty: it.stockQty ?? 0, costMinor: it.costMinor })
+        const stockAfterRestore = new Map<number, { qty: number; costMinor: number; valueMinor: number }>()
+        for (const it of state.items) {
+          const qty = it.stockQty ?? 0
+          stockAfterRestore.set(it.id, { qty, costMinor: it.costMinor, valueMinor: it.stockValueMinor ?? Math.round(qty * it.costMinor) })
+        }
         // G7: الكمية بالوحدة الأساسية qty×unitFactor (صيدلية: علبة/شريط) — والقيمة بقيمة السطر كاملة
         for (const l of sale.lines) {
           const cur = stockAfterRestore.get(l.itemId)
           if (!cur) continue
           const newQty = Math.round((cur.qty + baseQty(l)) * 1000) / 1000
-          const newValue = Math.round(cur.qty * cur.costMinor) + Math.round(l.qty * l.unitCostMinor)
-          stockAfterRestore.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : cur.costMinor })
+          const newValue = cur.valueMinor + Math.round(l.qty * l.unitCostMinor)
+          stockAfterRestore.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : cur.costMinor, valueMinor: newValue })
         }
         // ② فحص كفاية المخزون للسطور الجديدة (بعد الإعادة)
         if (!args.allowNegativeStock) {
@@ -8731,7 +8772,7 @@ export const useRawDataStore = create<DataState>()(
         // G1: المعاملة الضريبية المخزنة على الفاتورة أولاً (دقيقة مع الأصناف المعفاة المختلطة)
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
           ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
-          : deriveTaxConfig(sale.totals)
+          : deriveTaxConfig(sale.totals, sale.lines)
         const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
         const customerCharges = args.customerCharges ?? sale.customerCharges ?? []
         const chargeErrors = validateDocumentCharges(customerCharges)
@@ -8840,13 +8881,15 @@ export const useRawDataStore = create<DataState>()(
         for (const l of costedLines) {
           const cur = finalStock.get(l.itemId)
           if (!cur) continue
-          finalStock.set(l.itemId, { ...cur, qty: Math.round((cur.qty - baseQty(l)) * 1000) / 1000 })
+          const nextQty = Math.round((cur.qty - baseQty(l)) * 1000) / 1000
+          const reconciled = reconcileStockValue(cur.qty, cur.costMinor, cur.valueMinor, nextQty, cur.costMinor)
+          finalStock.set(l.itemId, { qty: nextQty, costMinor: reconciled.costMinor, valueMinor: reconciled.stockValueMinor })
         }
         const updatedItems = state.items.map((it) => {
           const f = finalStock.get(it.id)
           if (!f) return it
-          if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor) return it
-          return { ...it, stockQty: f.qty, costMinor: f.costMinor }
+          if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor && f.valueMinor === it.stockValueMinor) return it
+          return { ...it, stockQty: f.qty, costMinor: f.costMinor, stockValueMinor: f.valueMinor }
         })
 
         const updatedSale: SaleInvoice = {
@@ -8936,8 +8979,11 @@ export const useRawDataStore = create<DataState>()(
         }
 
         // ① التراجع عن أثر المخزون القديم (كمية وقيمة بالتكلفة المحملة القديمة)
-        const stockAfterUndo = new Map<number, { qty: number; costMinor: number }>()
-        for (const it of state.items) stockAfterUndo.set(it.id, { qty: it.stockQty ?? 0, costMinor: it.costMinor })
+        const stockAfterUndo = new Map<number, { qty: number; costMinor: number; valueMinor: number }>()
+        for (const it of state.items) {
+          const qty = it.stockQty ?? 0
+          stockAfterUndo.set(it.id, { qty, costMinor: it.costMinor, valueMinor: it.stockValueMinor ?? Math.round(qty * it.costMinor) })
+        }
         const soldFrom: string[] = []
         for (const l of inv.lines) {
           const cur = stockAfterUndo.get(l.itemId)
@@ -8945,8 +8991,8 @@ export const useRawDataStore = create<DataState>()(
           if (!cur || !item) continue
           if (cur.qty < l.qty) { soldFrom.push(item.nameAr); continue }
           const newQty = Math.round((cur.qty - l.qty) * 1000) / 1000
-          const newValue = Math.round(cur.qty * cur.costMinor) - (Math.round(l.qty * l.unitPriceMinor) + (l.expenseShareMinor ?? 0))
-          stockAfterUndo.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.max(0, Math.round(newValue / newQty)) : cur.costMinor })
+          const newValue = Math.max(0, cur.valueMinor - (Math.round(l.qty * l.unitPriceMinor) + (l.expenseShareMinor ?? 0)))
+          stockAfterUndo.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.max(0, Math.round(newValue / newQty)) : cur.costMinor, valueMinor: newValue })
         }
         if (soldFrom.length) {
           throw new Error(`بيع من بضاعة هذه الفاتورة (${soldFrom.join('، ')}) — التعديل يفسد التكلفة؛ استخدم مرتجع شراء جزئياً`)
@@ -9032,14 +9078,17 @@ export const useRawDataStore = create<DataState>()(
         for (const l of landed) {
           const cur = finalStock.get(l.itemId)
           if (!cur) continue
-          const newCost = weightedAverage(cur.qty, cur.costMinor, l.qty, l.landedTotalMinor)
-          finalStock.set(l.itemId, { qty: Math.round((cur.qty + l.qty) * 1000) / 1000, costMinor: newCost })
+          const currentValue = cur.qty < 0 ? Math.round(cur.qty * cur.costMinor) : cur.valueMinor
+          const nextQty = Math.round((cur.qty + l.qty) * 1000) / 1000
+          const nextValue = nextQty > 0 ? Math.max(0, currentValue + l.landedTotalMinor) : 0
+          const newCost = weightedAverage(cur.qty, cur.costMinor, l.qty, l.landedTotalMinor, currentValue)
+          finalStock.set(l.itemId, { qty: nextQty, costMinor: newCost, valueMinor: nextValue })
         }
         const updatedItems = state.items.map((it) => {
           const f = finalStock.get(it.id)
           if (!f) return it
-          if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor) return it
-          return { ...it, stockQty: f.qty, costMinor: f.costMinor }
+          if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor && f.valueMinor === it.stockValueMinor) return it
+          return { ...it, stockQty: f.qty, costMinor: f.costMinor, stockValueMinor: f.valueMinor }
         })
         // دفعات الصلاحية المفتوحة بهذه الفاتورة تُستبدل بكميات السطور الجديدة
         let nextBatchId = nextId(state.batches)
@@ -9153,13 +9202,13 @@ export const useRawDataStore = create<DataState>()(
         set({ appUsers: [...state.appUsers, user] })
         return user
       },
-      changeOwnPin: (userId, newPinHash) => {
+      changeOwnPin: async (userId, newPinHash, newPin) => {
         const state = get()
         const user = state.appUsers.find((u) => u.id === userId)
         if (!user) throw new Error('المستخدم غير موجود')
         if (state.currentUserId !== userId) throw new Error('يمكن للمستخدم تغيير رقمه السري لحسابه الحالي فقط')
-        if (!newPinHash) throw new Error('الرقم الجديد مطلوب')
-        if (newPinHash === user.pinHash) throw new Error('الرقم الجديد يطابق القديم — اختر رقماً مختلفاً')
+        if (!newPinHash || !newPin) throw new Error('الرقم الجديد مطلوب للتحقق والتخزين')
+        if (await verifyPin(newPin, user.pinHash)) throw new Error('الرقم الجديد يطابق القديم — اختر رقماً مختلفاً')
         set({
           appUsers: state.appUsers.map((u) => (u.id === userId ? { ...u, pinHash: newPinHash, mustChangePin: false, initialPin: null } : u)),
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» غيّر رقمه السري (أول دخول)` }]),
@@ -9373,13 +9422,13 @@ export const useRawDataStore = create<DataState>()(
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: next.nameAr, kind: 'auth', title: 'المالك حدّث هوية الدخول الخاصة به' }]),
         })
       },
-      changeMyPin: async (currentPin, newPinHash) => {
+      changeMyPin: async (currentPin, newPinHash, newPin) => {
         const state = get()
-        if (!newPinHash) throw new Error('الرقم الجديد مطلوب')
+        if (!newPinHash || !newPin) throw new Error('الرقم الجديد مطلوب للتحقق والتخزين')
         if (state.currentUserId == null) {
           // المالك: تحقق من رقمه الحالي ثم بدّل
           if (!state.ownerPinHash || !(await verifyPin(currentPin, state.ownerPinHash))) throw new Error('الرقم الحالي غير صحيح')
-          if (newPinHash === state.ownerPinHash) throw new Error('الرقم الجديد يطابق الحالي — اختر رقماً مختلفاً')
+          if (await verifyPin(newPin, state.ownerPinHash)) throw new Error('الرقم الجديد يطابق الحالي — اختر رقماً مختلفاً')
           set({
             ownerPinHash: newPinHash,
             ownerTempPin: null,
@@ -9390,7 +9439,7 @@ export const useRawDataStore = create<DataState>()(
         const user = state.appUsers.find((u) => u.id === state.currentUserId && u.active)
         if (!user) throw new Error('المستخدم غير موجود')
         if (!(await verifyPin(currentPin, user.pinHash))) throw new Error('الرقم الحالي غير صحيح')
-        if (newPinHash === user.pinHash) throw new Error('الرقم الجديد يطابق الحالي — اختر رقماً مختلفاً')
+        if (await verifyPin(newPin, user.pinHash)) throw new Error('الرقم الجديد يطابق الحالي — اختر رقماً مختلفاً')
         set({
           appUsers: state.appUsers.map((u) => (u.id === user.id ? { ...u, pinHash: newPinHash, mustChangePin: false, initialPin: null } : u)),
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» غيّر رقمه السري من بروفايله` }]),
@@ -9464,12 +9513,20 @@ export const useRawDataStore = create<DataState>()(
             : 'رقم سري خاطئ')
         }
         const userName = id == null ? 'المالك' : (state.appUsers.find((u) => u.id === id)?.nameAr ?? '؟')
+        const legacyPinHash = id == null
+          ? (!usedTempPin && state.ownerPinHash && !isModernPinHash(state.ownerPinHash) ? await hashPin(pin) : null)
+          : (() => { const user = state.appUsers.find((u) => u.id === id); return user && !isModernPinHash(user.pinHash) ? user : null })()
+        const upgradedUserHash = legacyPinHash && typeof legacyPinHash === 'object' ? await hashPin(pin) : null
         set({
           currentUserId: id,
           loggedOut: false,
           loginGuard: EMPTY_GUARD,
           // الرقم المؤقت يُحرق فور استخدامه (استخدام واحد)
           ...(usedTempPin ? { ownerTempPin: null } : {}),
+          ...(typeof legacyPinHash === 'string' ? { ownerPinHash: legacyPinHash } : {}),
+          ...(legacyPinHash && typeof legacyPinHash === 'object' && upgradedUserHash
+            ? { appUsers: state.appUsers.map((u) => u.id === legacyPinHash.id ? { ...u, pinHash: upgradedUserHash } : u) }
+            : {}),
           auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: userName, kind: 'auth', title: usedTempPin ? 'دخول المالك برقم مؤقت (استعادة تليجرام)' : `تسجيل دخول «${userName}»` }]),
         })
         syncAppBranchContext(get())
@@ -14577,8 +14634,9 @@ export const useRawDataStore = create<DataState>()(
           if (it.id === productItemId) {
             const oldQty = it.stockQty ?? 0
             const newQty = oldQty + producedQty
-            const newValue = Math.round(oldQty * it.costMinor) + ingredientsCost + overhead + detailedOverhead
-            return { ...it, stockQty: newQty, costMinor: Math.round(newValue / newQty) }
+            const currentValue = it.stockValueMinor ?? Math.round(oldQty * it.costMinor)
+            const newValue = currentValue + ingredientsCost + overhead + detailedOverhead
+            return { ...it, stockQty: newQty, costMinor: Math.round(newValue / newQty), stockValueMinor: newValue }
           }
           return it
         })
@@ -14692,8 +14750,9 @@ export const useRawDataStore = create<DataState>()(
           if (out) {
             const oldQty = it.stockQty ?? 0
             const newQty = Math.round((oldQty + out.qty) * 1000) / 1000
-            const newValue = Math.round(oldQty * it.costMinor) + out.allocatedCostMinor
-            return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+            const currentValue = it.stockValueMinor ?? Math.round(oldQty * it.costMinor)
+            const newValue = currentValue + out.allocatedCostMinor
+            return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue }
           }
           return it
         })
@@ -16765,8 +16824,9 @@ export const useRawDataStore = create<DataState>()(
               if (!q) return it
               const part = ticket.parts.find((p) => p.itemId === it.id)!
               const newQty = Math.round(((it.stockQty ?? 0) + q) * 1000) / 1000
-              const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) + Math.round(q * part.unitCostMinor)
-              return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+              const currentValue = it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)
+              const newValue = currentValue + Math.round(q * part.unitCostMinor)
+              return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue }
             })
           : state.items
         let terminalRefund: PaymentTerminalTransaction | null = null

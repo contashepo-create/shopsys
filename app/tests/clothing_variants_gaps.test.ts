@@ -117,7 +117,7 @@ describe('تذكير التركيبات غير الموزَّعة منذ فتر�
 })
 
 describe('ركود التركيبات لون×مقاس (فجوة فورية ③ — نشاط الملابس)', () => {
-  const items = [{ id: 1, nameAr: 'قميص', costMinor: 10000, isActive: true }]
+  const items = [{ id: 1, nameAr: 'قميص', stockQty: 10, costMinor: 10000, stockValueMinor: 100_001, isActive: true }]
   const stocks: VariantStock[] = [{ itemId: 1, color: 'أحمر', size: 'XS', qty: 5 }, { itemId: 1, color: 'أزرق', size: 'L', qty: 5 }]
   const makeSale = (date: string, color: string, size: string): SaleDoc => ({
     id: 1, invoiceNumber: 'S1', date, customerId: null, payment: 'cash',
@@ -130,6 +130,7 @@ describe('ركود التركيبات لون×مقاس (فجوة فورية ③ 
     const rows = stagnantVariants(items, stocks, sales, '2026-02-20T00:00:00.000Z', 30)
     expect(rows).toHaveLength(1)
     expect(rows[0].color).toBe('أحمر')
+    expect(rows[0].stockValueMinor).toBe(50_001) // حصة تقريبية تضمن توزيع القيمة الدقيقة بلا فقد
     expect(rows[0].idleDays).toBe(-1) // لم يُبع قط
   })
 

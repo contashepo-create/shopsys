@@ -836,9 +836,19 @@ function removeTempFile(file: string): void {
   try { unlinkSync(file) } catch { /* غير موجود أو مقفل — لا أثر وظيفي */ }
 }
 
-async function printHtml(html: string, silent: boolean, printerName?: string): Promise<void> {
-  const tmp = join(app.getPath('userData'), 'print-tmp.html')
-  writeFileSync(tmp, html, 'utf8')
+let printQueue: Promise<unknown> = Promise.resolve()
+function enqueuePrint<T>(task: () => Promise<T>): Promise<T> {
+  const result = printQueue.then(task, task)
+  printQueue = result.then(() => undefined, () => undefined)
+  return result
+}
+function hardenedPrintHtml(html: string): string {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline' data:; font-src data: https:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">`
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (head) => `${head}${csp}`) : `${csp}${html}`
+}
+async function printHtmlNow(html: string, silent: boolean, printerName?: string): Promise<void> {
+  const tmp = join(app.getPath('userData'), `print-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.html`)
+  writeFileSync(tmp, hardenedPrintHtml(html), 'utf8')
   try {
     const win = printWindow && !printWindow.isDestroyed()
       ? printWindow
@@ -848,6 +858,10 @@ async function printHtml(html: string, silent: boolean, printerName?: string): P
   } finally {
     removeTempFile(tmp)
   }
+}
+
+function printHtml(html: string, silent: boolean, printerName?: string): Promise<void> {
+  return enqueuePrint(() => printHtmlNow(html, silent, printerName))
 }
 
 async function listPrinters(): Promise<string[]> {
@@ -864,15 +878,15 @@ async function listPrinters(): Promise<string[]> {
    3) فتح المجلد بالمستكشف والملف محدد — ليسحبه المستخدم للمحادثة
       (Electron 44 لا يوفر حافظة ملفات — لا ادعاء قدرة غير موجودة).
    4) فتح محادثة wa.me (برقم الطرف أو قائمة اختيار جهة عند غياب الرقم). */
-async function exportPdfShare(html: string, fileName: string, waLink?: string): Promise<{ ok: boolean; path?: string; copied: boolean; error?: string }> {
+async function exportPdfShareNow(html: string, fileName: string, waLink?: string): Promise<{ ok: boolean; path?: string; copied: boolean; error?: string }> {
   try {
     const dir = join(app.getPath('downloads'), 'Tahakom-PDF')
     mkdirSync(dir, { recursive: true })
     /* أسماء لاتينية آمنة عبر أنظمة الملفات والمشاركة */
     const safeName = (fileName || '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `doc-${Date.now()}`
     const outPath = join(dir, `${safeName}.pdf`)
-    const tmp = join(app.getPath('userData'), 'pdf-tmp.html')
-    writeFileSync(tmp, html, 'utf8')
+    const tmp = join(app.getPath('userData'), `pdf-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.html`)
+    writeFileSync(tmp, hardenedPrintHtml(html), 'utf8')
     const win = printWindow && !printWindow.isDestroyed()
       ? printWindow
       : (printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } }))
@@ -897,6 +911,10 @@ async function exportPdfShare(html: string, fileName: string, waLink?: string): 
   } catch (error) {
     return { ok: false, copied: false, error: (error as Error).message }
   }
+}
+
+function exportPdfShare(html: string, fileName: string, waLink?: string): Promise<{ ok: boolean; path?: string; copied: boolean; error?: string }> {
+  return enqueuePrint(() => exportPdfShareNow(html, fileName, waLink))
 }
 
 /* ── التحديث التلقائي بصمت: فحص/تنزيل في الخلفية + تثبيت وإعادة تشغيل عند الإغلاق ── */

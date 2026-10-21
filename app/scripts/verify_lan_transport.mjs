@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { reporter, freshCase, assertInvariants, balanceOf } from './auditKit.mjs'
 import { LanHostCore } from '../src/data/lan/hostCore.ts'
 import { LanClientCore } from '../src/data/lan/clientCore.ts'
-import { LAN_SESSION_KEYS } from '../src/data/lan/protocol.ts'
+import { LAN_SESSION_KEYS, lanSnapshotOf } from '../src/data/lan/protocol.ts'
 import { hashPin } from '../src/core/audit.ts'
 
 const R = reporter('نقل الشبكة المحلية — مضيف المحل (§102)')
@@ -88,13 +88,15 @@ R.section('🔌 الاقتران وتسليم الجلسة')
 c2.core.pair('1122', 'جهاز المحاسب')
 
 /* ── 4) اللقطة الأولى ── */
-const dataKeys = (state) => Object.entries(state).filter(([k, v]) => typeof v !== 'function' && !LAN_SESSION_KEYS.includes(k)).map(([k]) => k)
+const dataKeys = (state) => Object.keys(lanSnapshotOf(state))
 {
   const hs = hostStore.getState()
   const c1s = clientStore1.getState()
+  const safeHost = lanSnapshotOf(hs)
   for (const key of dataKeys(hs)) {
-    assert.deepEqual(c1s[key], hs[key], `مفتاح اللقطة «${key}» غير متطابق بعد التسليم`)
+    assert.deepEqual(c1s[key], safeHost[key], `مفتاح اللقطة «${key}» غير متطابق بعد التسليم`)
   }
+  assert.ok(!JSON.stringify(safeHost).includes(pinHash), 'تجزئات PIN لا تعبر الشبكة')
   /* القاعدة القديمة الدخيلة مُسحت */
   assert.ok(!clientStore1.getState().customers.some((cu) => cu.nameAr === 'زبون قاعدة قديمة'), 'بيانات القاعدة القديمة مسحت باللقطة')
   R.ok(`اللقطة الأولى مطابقة مفتاحاً بمفتاح (${dataKeys(hs).length} مفتاحاً) — والقاعدة القديمة للجهاز مُسحت`)
@@ -191,9 +193,10 @@ const saleArgs = (qty) => [{
 /* ── 11) التطابق النهائي الشامل ── */
 {
   const hs = hostStore.getState()
+  const safeHost = lanSnapshotOf(hs)
   for (const key of dataKeys(hs)) {
-    assert.deepEqual(clientStore1.getState()[key], hs[key], `التطابق النهائي «${key}» مع جهاز الكاشير`)
-    assert.deepEqual(clientStore2.getState()[key], hs[key], `التطابق النهائي «${key}» مع جهاز المحاسب`)
+    assert.deepEqual(clientStore1.getState()[key], safeHost[key], `التطابق النهائي «${key}» مع جهاز الكاشير`)
+    assert.deepEqual(clientStore2.getState()[key], safeHost[key], `التطابق النهائي «${key}» مع جهاز المحاسب`)
   }
   assert.equal(clientStore1.getState().currentUserId, cashier.id, 'جلسة الكاشير الجهازية محفوظة له وحده')
   assert.equal(hostStore.getState().currentUserId, null, 'المضيف بقي على هويته (المالك) بعد عمليات العملاء')

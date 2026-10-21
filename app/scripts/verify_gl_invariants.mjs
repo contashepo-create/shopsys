@@ -100,9 +100,10 @@ ok('البنك الثاني انخفض', bal(bank2.code) === -105000)
 
 /* ═══════════ البيع: نقدي، آجل، مجزأ، بضريبة شاملة ═══════════ */
 console.log('💵 المبيعات')
+const riceCostAtSale = S().items.find((i) => i.id === rice.id).costMinor
 const cash1 = S().postSale({ lines: [{ itemId: rice.id, nameAr: 'أرز', qty: 20, unitPriceMinor: 3000, unitCostMinor: 0, discountPercent: 5, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: false, treasury: '1101' })
 invariants('بيع نقدي بخصم سطر وضريبة مضافة')
-ok('اللقطة صححت تكلفة السطر للمتوسط الحالي', cash1.lines[0].unitCostMinor === S().items.find((i) => i.id === rice.id).costMinor)
+ok('اللقطة صححت تكلفة السطر للمتوسط الحالي وقت الترحيل', cash1.lines[0].unitCostMinor === riceCostAtSale)
 
 S().postSale({ lines: [{ itemId: oil.id, nameAr: 'زيت', qty: 10, unitPriceMinor: 8000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 2, taxPercent: 14, taxInclusive: true, treasury: '1101' })
 invariants('بيع آجل بخصم فاتورة وضريبة مشمولة')

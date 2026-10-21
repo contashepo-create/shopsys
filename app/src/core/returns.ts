@@ -34,20 +34,22 @@ export function buildReturnLines(
   priorReturnLines: CartLine[],
   qtyByItem: Map<number, number>,
 ): CartLine[] {
-  const remaining = remainingReturnable(saleLines, priorReturnLines)
-  const out: CartLine[] = []
+  const remaining = remainingByLine(saleLines, priorReturnLines)
+  const out: ReturnLine[] = []
   for (const [itemId, wanted] of qtyByItem) {
     if (wanted <= 0) continue
-    const canReturn = remaining.get(itemId) ?? 0
+    const canReturn = saleLines.reduce((sum, line, i) => sum + (line.itemId === itemId ? Math.max(0, remaining[i]) : 0), 0)
     if (wanted > canReturn + 1e-9) {
       const name = saleLines.find((l) => l.itemId === itemId)?.nameAr ?? `#${itemId}`
       throw new RangeError(`«${name}»: المطلوب إرجاع ${wanted} والمتبقي القابل للإرجاع ${canReturn}`)
     }
     let left = wanted
-    for (const l of saleLines) {
-      if (l.itemId !== itemId || left <= 0) continue
-      const take = Math.min(left, l.qty)
-      out.push({ ...l, qty: Math.round(take * 1000) / 1000 })
+    for (let i = 0; i < saleLines.length && left > 1e-9; i++) {
+      const l = saleLines[i]
+      if (l.itemId !== itemId || remaining[i] <= 0) continue
+      const take = Math.min(left, remaining[i])
+      out.push({ ...l, qty: Math.round(take * 1000) / 1000, saleLineIndex: i })
+      remaining[i] = Math.round((remaining[i] - take) * 1000) / 1000
       left = Math.round((left - take) * 1000) / 1000
     }
   }
@@ -59,9 +61,15 @@ export function buildReturnLines(
  * استنتاج إعدادات الضريبة من إجماليات الفاتورة الأصلية —
  * فيُحسب المرتجع بنفس المعاملة الضريبية وقت البيع حتى لو تغيرت الإعدادات لاحقاً.
  */
-export function deriveTaxConfig(totals: CartTotals): { taxPercent: number; taxInclusive: boolean } {
-  if (totals.taxMinor <= 0 || totals.taxBaseMinor <= 0) return { taxPercent: 0, taxInclusive: true }
-  const taxPercent = Math.round((totals.taxMinor / totals.taxBaseMinor) * 10000) / 100
+export function deriveTaxConfig(totals: CartTotals, lines: readonly CartLine[] = []): { taxPercent: number; taxInclusive: boolean } {
+  // For legacy mixed-rate invoices, use the preserved standard line rate as
+  // the fallback rate; explicit per-line overrides/exemptions remain on lines.
+  const explicitRates = lines.flatMap((line) => line.vatPercentOverride != null && line.vatPercentOverride > 0 ? [line.vatPercentOverride] : [])
+  const taxPercent = explicitRates.length
+    ? Math.max(...explicitRates)
+    : totals.taxMinor > 0 && totals.taxBaseMinor > 0
+      ? Math.round((totals.taxMinor / totals.taxBaseMinor) * 10000) / 100
+      : 0
   return { taxPercent, taxInclusive: totals.totalMinor === totals.netMinor }
 }
 

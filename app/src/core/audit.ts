@@ -323,16 +323,41 @@ export function findUserByIdentifier(users: readonly AppUser[], identifier: stri
  * تجزئة كلمة السر — WebCrypto متاح في المتصفح وNode 18+.
  * سياسة الطول (6-32 خانة، أرقام وحروف ورموز) تُفرض قبل التجزئة والتحقق.
  */
+const PIN_PBKDF2_ITERATIONS = 310_000
+const hexOf = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+const bytesOfHex = (hex: string) => Uint8Array.from(hex.match(/.{2}/g) ?? [], (b) => Number.parseInt(b, 16))
+
+async function derivePinHash(pin: string, salt: Uint8Array, iterations: number): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(`tahakam:${pin}`), 'PBKDF2', false, ['deriveBits'])
+  const saltBuffer = salt.buffer.slice(salt.byteOffset, salt.byteOffset + salt.byteLength) as ArrayBuffer
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: saltBuffer, iterations }, key, 256)
+  return hexOf(new Uint8Array(bits))
+}
+
+/** New PIN hashes are salted and deliberately slow; legacy SHA-256 remains verifiable for migration. */
 export async function hashPin(pin: string): Promise<string> {
   const clean = pin.trim()
   if (!clean || clean.length < PIN_MIN_LENGTH || clean.length > PIN_MAX_LENGTH) throw new Error(`كلمة السر يجب أن تكون من ${PIN_MIN_LENGTH} إلى ${PIN_MAX_LENGTH} خانة`)
-  const data = new TextEncoder().encode(`tahakam:${clean}`)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  return `pbkdf2-sha256$${PIN_PBKDF2_ITERATIONS}$${hexOf(salt)}$${await derivePinHash(clean, salt, PIN_PBKDF2_ITERATIONS)}`
+}
+
+export function isModernPinHash(pinHash: string): boolean {
+  return /^pbkdf2-sha256\$\d{5,8}\$[0-9a-f]{32}\$[0-9a-f]{64}$/i.test(pinHash)
 }
 
 export async function verifyPin(pin: string, pinHash: string): Promise<boolean> {
   const clean = pin.trim()
   if (!clean || clean.length < PIN_MIN_LENGTH || clean.length > PIN_MAX_LENGTH) return false
-  return (await hashPin(clean)) === pinHash
+  const match = /^pbkdf2-sha256\$(\d{5,8})\$([0-9a-f]{32})\$([0-9a-f]{64})$/i.exec(pinHash)
+  if (!match) {
+    // Constant-time legacy comparison; successful login flows should rehash
+    // before persisting a replacement PIN to migrate SHA-256 records.
+    const digest = hexOf(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`tahakam:${clean}`))))
+    if (!/^[0-9a-f]{64}$/i.test(pinHash)) return false
+    let diff = 0
+    for (let i = 0; i < digest.length; i++) diff |= digest.charCodeAt(i) ^ pinHash.toLowerCase().charCodeAt(i)
+    return diff === 0
+  }
+  return await derivePinHash(clean, bytesOfHex(match[2]), Number(match[1])) === match[3].toLowerCase()
 }

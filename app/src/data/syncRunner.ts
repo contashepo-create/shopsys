@@ -12,6 +12,7 @@ import { syncOnce, validateSyncConfig, type SyncConfig } from './syncClient.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { STANDARD_COA, type JournalEntry } from '../core/ledger.ts'
 import { fullCoa } from '../core/treasury.ts'
+import { encryptForDevice, decryptForDevice } from './secureStorage.ts'
 
 let applyingPull = false // يمنع اعتبار «تطبيق المسحوب» تغييراً محلياً جديداً
 let cycleRunning = false // قفل: دورة واحدة في اللحظة
@@ -40,7 +41,7 @@ function serializeStore(): string {
  * هنا نمرّ الدفتر الوارد على نفس الحارس قبل تطبيقه: إن سقط، تُرفض الدفعة كاملة
  * ويبقى الدفتر المحلي كما هو (لا تطبيق جزئي أبداً).
  */
-function assertIncomingLedgerSafe(parsed: Record<string, unknown>): void {
+function assertIncomingLedgerSafe(parsed: Record<string, unknown>, previousJournal?: readonly JournalEntry[]): void {
   const incoming = parsed.journal
   if (!Array.isArray(incoming)) return // دفعة بلا دفتر — لا شيء يُحرس
   const normalized = normalizeJournalDates(incoming as JournalEntry[]) as JournalEntry[]
@@ -51,8 +52,10 @@ function assertIncomingLedgerSafe(parsed: Record<string, unknown>): void {
     ...fullCoa(STANDARD_COA, treasuries),
     ...customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr, rootType: a.rootType, parentCode: a.parentCode, isPostable: true } as never)),
   ]
-  // الدفتر الوارد يُقاس من الصفر: كل قيد فيه «جديد» بالنسبة للحارس فيُفحص كاملاً
-  assertJournalIntegrity([], normalized, { coa, fiscalYears: useAppStore.getState().fiscalYears })
+  // Compare against the local ledger so existing posted entries cannot vanish
+  // or change during a pull. New cloud entries are still fully validated.
+  const prev = previousJournal ?? (useRawDataStore.getState().journal as JournalEntry[])
+  assertJournalIntegrity(prev, normalized, { coa, fiscalYears: useAppStore.getState().fiscalYears })
 }
 
 /** بدء مراقبة التغييرات المحلية — يُستدعى مرة عند الإقلاع */
@@ -80,14 +83,14 @@ const CONFLICT_KEEP = 5
  * لقطة أمان قبل تطبيق حالة سحابية فوق تغييرات محلية غير مدفوعة:
  * تُحفظ محلياً (آخر 5) ويمكن استرجاعها يدوياً — «لا ضياع بيانات أبداً».
  */
-function saveConflictSnapshot(data: string): void {
+async function saveConflictSnapshot(data: string): Promise<void> {
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
-    arr.push({ at: new Date().toISOString(), data })
+    arr.push({ at: new Date().toISOString(), data: await encryptForDevice(data) })
     while (arr.length > CONFLICT_KEEP) arr.shift()
     localStorage.setItem(CONFLICT_SNAPSHOTS_KEY, JSON.stringify(arr))
-  } catch { /* تخزين ممتلئ — المزامنة نفسها لا تتعطل */ }
+  } catch { /* storage full or unavailable — sync itself remains operational */ }
 }
 
 /** لقطات التعارض تحتوي نسخة كاملة من المتجر؛ لا يطّلع عليها أو يسترجعها إلا المالك. */
@@ -99,22 +102,23 @@ export function canManageConflictSnapshots(): boolean {
 }
 
 /** قائمة لقطات التعارض المحفوظة (للعرض في شاشة المزامنة) */
-export function listConflictSnapshots(): { at: string; size: number }[] {
+export async function listConflictSnapshots(): Promise<{ at: string; size: number }[]> {
   if (!canManageConflictSnapshots()) return []
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
-    return arr.map((s) => ({ at: s.at, size: s.data.length }))
+    return await Promise.all(arr.map(async (s) => ({ at: s.at, size: (await decryptForDevice(s.data))?.length ?? 0 })))
   } catch { return [] }
 }
 
 /** نص لقطة تعارض بعينها (للتنزيل كملف JSON) — null إن لم توجد */
-export function getConflictSnapshotData(at: string): string | null {
+export async function getConflictSnapshotData(at: string): Promise<string | null> {
   if (!canManageConflictSnapshots()) return null
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
-    return arr.find((s) => s.at === at)?.data ?? null
+    const item = arr.find((s) => s.at === at)
+    return item ? await decryptForDevice(item.data) : null
   } catch { return null }
 }
 
@@ -123,9 +127,9 @@ export function getConflictSnapshotData(at: string): string | null {
  * قبل الاسترجاع تُحفظ الحالة الحالية كلقطة جديدة (فلا يضيع شيء في الاتجاهين)،
  * وبعده يُرفع علم dirty كي تُدفع الحالة المسترجعة للسحابة في الدورة التالية.
  */
-export function restoreConflictSnapshot(at: string): { ok: boolean; message: string } {
+export async function restoreConflictSnapshot(at: string): Promise<{ ok: boolean; message: string }> {
   if (!canManageConflictSnapshots()) return { ok: false, message: 'تنزيل لقطات التعارض واستعادتها متاح للمالك فقط' }
-  const data = getConflictSnapshotData(at)
+  const data = await getConflictSnapshotData(at)
   if (!data) return { ok: false, message: 'اللقطة غير موجودة' }
   let parsed: Record<string, unknown>
   try {
@@ -133,11 +137,11 @@ export function restoreConflictSnapshot(at: string): { ok: boolean; message: str
   } catch {
     return { ok: false, message: 'اللقطة تالفة — لا يمكن قراءتها' }
   }
-  saveConflictSnapshot(serializeStore()) // شبكة أمان مزدوجة: الحالة الحالية تُحفظ قبل الدهس
+  await saveConflictSnapshot(serializeStore()) // preserve current state before replacement
   for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
   // AUDIT-016: اللقطة أيضاً تمر بالحارس — ملف محفوظ قد يكون تالفاً أو من نسخة قديمة مختلة
   try {
-    assertIncomingLedgerSafe(parsed)
+    assertIncomingLedgerSafe(parsed, [])
   } catch (e) {
     return { ok: false, message: `اللقطة مرفوضة — دفترها غير سليم: ${e instanceof Error ? e.message : ''}` }
   }
@@ -174,7 +178,7 @@ export async function runSyncCycle(): Promise<CycleResult> {
       // نحفظ لقطة كاملة من حالتنا المحلية أولاً — فلا يضيع إدخال أي جهاز أبداً،
       // ويستطيع المالك استرجاع اللقطة من النسخ الاحتياطية لو لزم.
       if (useAppStore.getState().sync.dirty) {
-        saveConflictSnapshot(serializeStore())
+        await saveConflictSnapshot(serializeStore())
       }
       // التطبيق دفعة واحدة — البيانات اجتازت (بصمة + AES-GCM + JSON) في العميل
       const parsed = JSON.parse(outcome.pulledData) as Record<string, unknown>
@@ -185,7 +189,7 @@ export async function runSyncCycle(): Promise<CycleResult> {
         assertIncomingLedgerSafe(parsed)
       } catch (e) {
         const why = e instanceof Error ? e.message : 'دفتر وارد غير سليم'
-        saveConflictSnapshot(serializeStore())
+        await saveConflictSnapshot(serializeStore())
         useAppStore.getState().updateSync({ lastResult: `⛔ رُفضت حالة السحابة — ${why}` })
         return { ok: false, message: `رُفضت حالة السحابة حفاظاً على سلامة الدفتر — ${why}` }
       }

@@ -128,7 +128,7 @@ export function SalesInvoicesPage() {
     if (!editing || !editLines.length) return null
     const { taxPercent, taxInclusive } = editing.taxPercent !== undefined
       ? { taxPercent: editing.taxPercent, taxInclusive: editing.taxInclusive ?? true }
-      : deriveTaxConfig(editing.totals)
+      : deriveTaxConfig(editing.totals, editing.lines)
     const base = computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
     const charges = editCustomerCharges
     const chargeNet = charges.reduce((sum, charge) => sum + charge.amountMinor, 0)

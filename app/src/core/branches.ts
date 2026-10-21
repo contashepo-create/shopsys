@@ -218,13 +218,40 @@ export function compareBranches(args: {
   warehouseStock: ReadonlyMap<number, ReadonlyMap<number, number>>
   /** متوسط تكلفة كل صنف الآن */
   itemCostById: ReadonlyMap<number, number>
+  /** القيمة والكمية الدقيقة للصنف، لاستخدامهما في توزيع قيمة المخزون على المخازن */
+  itemValueById?: ReadonlyMap<number, number>
+  itemQtyById?: ReadonlyMap<number, number>
 }): BranchComparisonRow[] {
+  const branchStockValueShares = new Map<string, number>()
+  if (args.itemValueById && args.itemQtyById) {
+    for (const [itemId, exactValue] of args.itemValueById) {
+      const companyQty = args.itemQtyById.get(itemId) ?? 0
+      if (companyQty <= 0) continue
+      const weights = args.branches.filter((branch) => branch.active).map((branch) => ({
+        branchId: branch.id,
+        qty: args.warehouseStock.get(branch.warehouseId)?.get(itemId) ?? 0,
+      })).filter((row) => row.qty > 0)
+      const totalBranchQty = weights.reduce((sum, row) => sum + row.qty, 0)
+      if (totalBranchQty <= 0) continue
+      const distributableValue = Math.round(exactValue * totalBranchQty / companyQty)
+      const rawShares = weights.map((row) => distributableValue * row.qty / totalBranchQty)
+      const shares = rawShares.map(Math.floor)
+      let remainder = distributableValue - shares.reduce((sum, share) => sum + share, 0)
+      const order = rawShares.map((raw, index) => ({ index, fraction: raw - Math.floor(raw) }))
+        .sort((a, b) => b.fraction - a.fraction)
+      for (let index = 0; index < order.length && remainder > 0; index++, remainder--) shares[order[index].index]++
+      weights.forEach((row, index) => branchStockValueShares.set(`${row.branchId}:${itemId}`, shares[index]))
+    }
+  }
   const rows = new Map<number, BranchComparisonRow>()
   for (const b of args.branches) {
     if (!b.active) continue
     const whStock = args.warehouseStock.get(b.warehouseId)
     let stockValue = 0
-    if (whStock) for (const [itemId, qty] of whStock) stockValue += Math.round(qty * (args.itemCostById.get(itemId) ?? 0))
+    if (whStock) for (const [itemId, qty] of whStock) {
+      const exactShare = branchStockValueShares.get(`${b.id}:${itemId}`)
+      stockValue += exactShare ?? Math.round(qty * (args.itemCostById.get(itemId) ?? 0))
+    }
     rows.set(b.id, {
       branchId: b.id, nameAr: b.nameAr, isMain: b.isMain,
       salesCount: 0, revenueMinor: 0, returnsMinor: 0, netRevenueMinor: 0,
