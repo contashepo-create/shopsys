@@ -108,7 +108,9 @@ describe('سد فجوات فورية #2/#4 ومستقبلية #1/#2 — النش
     expect(() => s.setRentalSignature(contract.id, 'delivery', '')).toThrow()
     expect(() => s.setRentalSignature(999999, 'delivery', 'x')).toThrow()
 
-    const closed = s.closeRental(contract.id, 0, { endDate: '2026-10-20' }, '1101', 'أُعيدت بحالة جيدة')
+    // endDate ديناميكي: اليوم التالي لتاريخ العقد (openRental يسجّل تاريخ اليوم) حتى يبقى الاختبار أخضر بأي تاريخ
+    const endDate = new Date(new Date(contract.date).getTime() + 86_400_000).toISOString().slice(0, 10)
+    const closed = s.closeRental(contract.id, 0, { endDate }, '1101', 'أُعيدت بحالة جيدة')
     expect(closed.returnConditionNote).toBe('أُعيدت بحالة جيدة')
     s = useDataStore.getState()
     const resigned = s.setRentalSignature(contract.id, 'return', 'data:image/png;base64,BBB')

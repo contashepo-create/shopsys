@@ -7542,3 +7542,21 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - **الحل**: `src/data/sessionAuth.ts` (تغيّرت): العلم في الذاكرة (متجر zustand صغير `useSessionAuthStore`) هو المعتمد للجلسة الحالية — `markSessionAuthenticated()` تعيّنه فور نجاح التحقق من الرقم السري بلا اعتماد على `sessionStorage` (الكتابة فيه best-effort لنقل العلم عبر F5 داخل الجلسة). `App.tsx` تقرأ العلم من المتجر (اشتراك React) فتفتح البوابة فوراً. عند «إغلاق التطبيق وإعادة فتحه» (نافذة جديدة = وحدة برمجية جديدة) يبدأ العلم من `sessionStorage` فارغة ⇒ يُفرض الدخول من جديد — طلب المالك intact.
 - **اختبارات**: `tests/login_blocked_session_storage.test.tsx` (3 اختبارات — حظر `sessionStorage`: الدخول الناجح يفتح التطبيق، «إغلاق وإعادة فتح» تُفرض شاشة الدخول، الرقم الخاطئ لا يفتح شيئاً) — تفشل 2/3 على الكود القديم وتنجح 3/3 بعد الإصلاح. وباقي الاختبارات: `tests/login_repro.test.tsx` (4)، `tests/login_bug_repro.test.tsx` (1)، `tests/e2e_login_session.test.tsx` (5)، `tests/session_auth_and_recent_logins.test.ts` (13) — كلها خضراء.
 - **التحقق**: `npm run typecheck` ✓ · `npx vitest run` — 203/204 ملفات (الوحيد الفاشل `equipment_rental_phase_b_activity8` يفشل identically على الكود الأصلي — علة متعلقة بالتواريخ، لا علاقة لها بالدخول).
+
+
+## جولة 2026-10-21 (ب) — إصلاح فشل بوابة الجودة على GitHub: اختبارatasheet обходной (v1.0.35)
+
+**الخطأ على GitHub**:/check-runsRs CI لمhemer الفرع «Build, lint and user journeys» (workflow quality.yml) فشل في الخطوة «Browser-like integration tests» («npm run test:e2e» = «vitest run» الكامل) علا التزامن.
+
+- **السبب**: اختبار «tests/equipment_rental_phase_b_activity8.test.ts» («توقيع رقمي للعميل عند التسليم ثم عند الإرجاع بعد الإقفال») يغلق العقد بتاريخ اليوم (openRental يسجّل «new Date().toISOString()») وبعدهي يغلقه بتاريخ محدد «2026-10-20» — فلما كان اليوم 2026-10-21 صار النهاية قبل البداية ← رمي daysBetweenDates يرمي «تاريخ النهاية قبل البداية». خبت الفشل بالكود الأصلي (baاريخي) وبالتزامن — لا علاقة بتعديلاتي بالدخول.
+- **الحل**: تم جعل endDate ديناميكياً: اليوم التالي لتاريخ العقد نفسه (contract.date + و٦ـ٠٠٠٠٠٠٠٠٠٠٠٠٠٠٠٠٠٠) حتى يبقى الاختبار أخضر بأي تاريخ.
+- **التحقق**: الملف بعد الإصلاح: 12/12 ✓ · السويت الكامل بـTZ=UTC (محاكاة بيئة CI): **204/204 ملفا / 1410/1410 اختبارا أخضر** · typecheck ✓ · lint:src 0/0.
+
+
+## جولة 2026-10-21 (ب) — إصلاح فشل بوابة الجودة على GitHub (v1.0.35)
+
+**الخطأ على GitHub**: فشل فحص CI للفرع «Build, lint and user journeys» (workflow: quality.yml) في الخطوة «Browser-like integration tests» («npm run test:e2e» = «vitest run» الكامل) على GitHub Actions.
+
+- **السبب**: اختبار «tests/equipment_rental_phase_b_activity8.test.ts» («توقيع رقمي للعميل عند التسليم ثم عند الإرجاع بعد الإقفال») يغلق العقد بتاريخ اليوم (openRental يسجّل «new Date().toISOString()») ثم يغلقه بتاريخ ثابت «2026-10-20» — فلما كان اليوم 2026-10-21 صار النهاية قبل البداية ← دالة daysBetweenDates ترمي «تاريخ النهاية قبل البداية». تأكدت: الاختبار نفسه يفشل على الكود الأصلي (قبل تعديلاتي) — لا علاقة له بالدخول.
+- **الحل**: جعل endDate ديناميكياً: اليوم التالي لتاريخ العقد نفسه (contract.date + 86_400_000) حتى يبقى الاختبار أخضر بأي تاريخ.
+- **التحقق**: الملف بعد الإصلاح: 12/12 ✓ · السويت الكامل بـTZ=UTC (محاكاة بيئة CI): **204/204 ملفا / 1410/1410 اختبارا أخضر** · typecheck ✓ · lint:src 0/0.
