@@ -1960,6 +1960,13 @@ interface DataState {
   markNotificationRead: (id: string) => void
   markAllNotificationsRead: (ids: string[]) => void
   restoreNotifications: () => void
+  /**
+   * معرّفات التنبيهات المقروءة في نطاق المستخدم/الفرع الحالي **بلا بادئة التخزين**
+   * (`notification-read:v1:<مستخدم>:branch-<فرع>:`) — هي الصيغة التي يقارنها الجرس
+   * بمعرّف التنبيه. `readNotificationIds` تبقى خامّة كما هي (عزل النطاقات وبث الشبكة
+   * المحلية يعتمدان عليها)، ولا يُبنى منها عرض بديل كي تبقى هوية الحالة ثابتة.
+   */
+  scopedReadNotificationIds: () => string[]
   /** طلبات استعادة كلمة سر الموظفين — تظهر إشعاراً للمالك */
   pinResetRequests: PinResetRequest[]
   /** تعيين/تغيير الرقم السري للمالك (يفعّل شاشة الدخول من أول تعيين) */
@@ -9510,6 +9517,7 @@ export const useRawDataStore = create<DataState>()(
           ? `رقم مشرف خاطئ — قُفل الاعتماد ${lockoutMinutesLeft(guard, nowIso)} دقائق`
           : 'الرقم السري غير صحيح أو صاحبه لا يملك صلاحية الاعتماد المطلوبة')
       },
+      scopedReadNotificationIds: () => scopedNotificationReadIds(get()),
       markNotificationRead: (id) => {
         const state = get()
         if (scopedNotificationReadIds(state).includes(id)) return

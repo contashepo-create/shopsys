@@ -46,7 +46,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, scopedReadNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, equipment, tickets, laundryOrders, leases, shifts, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices } = useDataStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -137,10 +137,12 @@ export function Header({ title }: { title: string }) {
       // خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء (سد فجوة تقرير النشاط #11 — Immediate #3)
       complianceDueBonds: bondComplianceWarnings(bonds, new Date().toISOString(), 30),
       // بنود موازنة مشروعات نشطة تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)
+      // قرار المالك 2026-10-21: «إذا كتبت أي رقم ابدأ المقارنة، أما إذا كان صفراً فلا أريد
+      // أي إشعارات للموازنة» — لذا يُشترط وجود موازنة موجبة فعلاً، لا مجرد حالة 'over'.
       projectBudgetOverruns: projects
         .filter((p) => p.status === 'active')
         .flatMap((p) => getProjectBudgetVariance(p.id).rows
-          .filter((r) => r.status === 'over')
+          .filter((r) => r.status === 'over' && r.budgetMinor > 0)
           .map((r) => ({ projectId: p.id, projectNameAr: p.nameAr, kindAr: COST_KIND_LABELS[r.kind].nameAr, overrunMinor: r.actualMinor - r.budgetMinor }))),
       // طلبات اعتماد مقاولات معلّقة تجاوزت 3 أيام بلا قرار (سد فجوة تقرير النشاط #11 — Immediate #3)
       pendingApprovalsAging: pendingApprovalAging(approvalRequests, new Date().toISOString(), 3).map((a) => ({
@@ -217,8 +219,10 @@ export function Header({ title }: { title: string }) {
     () => visibleNotifications(notifications, myPerms),
     [notifications, myPerms],
   )
-  // طلب المالك: التحكم في الإشعارات وتعليمها كمقروء — الشارة تعدّ غير المقروء فقط
-  const readSet = new Set(readNotificationIds)
+  // طلب المالك: التحكم في الإشعارات وتعليمها كمقروء — الشارة تعدّ غير المقروء فقط.
+  // المقارنة بمعرّفات النطاق بلا بادئة التخزين (بلاغ 2026-10-21: كانت المقارنة
+  // بالخام المبدوء بـ`notification-read:v1:…` فلا يختفي أي تنبيه عند تعليمه).
+  const readSet = new Set(scopedReadNotificationIds())
   const unread = notificationsForMe.filter((n) => !readSet.has(n.id))
   const readOnes = notificationsForMe.filter((n) => readSet.has(n.id))
 

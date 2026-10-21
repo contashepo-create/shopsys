@@ -2,7 +2,8 @@
  * فحص المستخلص البندي + موازنة الفئات (نقلة المقاولات — نمط AccFlex/pro-acc):
  * 1) مستخلص بندي من BOQ بنسب تراكمية — القيمة تُحسب آلياً وتُحدَّث نسب الإنجاز.
  * 2) رفض التراجع عن نسبة سابقة، ورفض نسبة > 100، ورفض بند من مشروع آخر.
- * 3) موازنة فئات التكاليف وتقرير الانحراف (ok/warning/over).
+ * 3) موازنة فئات التكاليف وتقرير الانحراف (ok/warning/over/no-budget):
+ *    الفئة التي تُترك صفراً «بلا موازنة» — لا تجاوز ولا تنبيه في الجرس (قرار المالك 2026-10-21).
  * تشغيل: node --experimental-strip-types scripts/verify_contracting_itemized.mjs
  */
 const mem = new Map()
@@ -76,14 +77,14 @@ S().setProjectBudget(proj.id, [
 S().addProjectCost({ projectId: proj.id, kind: 'materials', amountMinor: 90_000, payment: 'cash', description: 'خامات', treasury: '1101' }) // 90٪ → warning
 S().addProjectCost({ projectId: proj.id, kind: 'labor', amountMinor: 60_000, payment: 'cash', description: 'عمالة', treasury: '1101' }) // 120٪ → over
 S().addProjectCost({ projectId: proj.id, kind: 'equipment', amountMinor: 5_000, payment: 'cash', description: 'معدات', treasury: '1101' }) // 25٪ → ok
-S().addProjectCost({ projectId: proj.id, kind: 'other', amountMinor: 7_000, payment: 'cash', description: 'نثريات بلا موازنة', treasury: '1101' }) // بلا موازنة → over
+S().addProjectCost({ projectId: proj.id, kind: 'other', amountMinor: 7_000, payment: 'cash', description: 'نثريات بلا موازنة', treasury: '1101' }) // صفر موازنة → no-budget
 
 const rep = S().getProjectBudgetVariance(proj.id)
 const row = (k) => rep.rows.find((r) => r.kind === k)
 ok('materials عند 90٪ → تحذير', row('materials')?.status === 'warning', JSON.stringify(row('materials')))
 ok('labor تجاوز → over وانحراف −10,000', row('labor')?.status === 'over' && row('labor')?.varianceMinor === -10_000)
 ok('equipment عند 25٪ → ok ووفر 15,000', row('equipment')?.status === 'ok' && row('equipment')?.varianceMinor === 15_000)
-ok('تكلفة بلا موازنة تظهر over', row('other')?.status === 'over' && row('other')?.budgetMinor === 0)
+ok('تكلفة بلا موازنة تظهر no-budget لا تجاوزاً (صفر = لا مقارنة ولا تنبيه)', row('other')?.status === 'no-budget' && row('other')?.budgetMinor === 0 && row('other')?.usagePercent === 0)
 ok('الإجماليات صحيحة (موازنة 170,000 / فعلي 162,000)', rep.totalBudgetMinor === 170_000 && rep.totalActualMinor === 162_000, `${rep.totalBudgetMinor}/${rep.totalActualMinor}`)
 throws('رفض موازنة بمبلغ سالب', () => S().setProjectBudget(proj.id, [{ kind: 'materials', amountMinor: -5 }]))
 throws('رفض موازنة لمشروع غير موجود', () => S().setProjectBudget(999_999, [{ kind: 'materials', amountMinor: 100 }]), 'غير موجود')
