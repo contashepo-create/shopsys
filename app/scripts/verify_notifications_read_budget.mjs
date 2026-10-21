@@ -99,60 +99,71 @@ console.log('\n═══ ٢) جرس التنبيهات: تصفية التجاو�
 }
 
 /* ═══════════════════ ٣) تعليم الإشعار كمقروء يزيله فعلاً ═══════════════════ */
-console.log('\n═══ ٣) علامات القراءة: البادئة تُعرَّى في العرض فتُطابِق معرّفات الجرس ═══')
+console.log('\n═══ ٣) علامات القراءة: الجرس يقارن بمعرّفات النطاق بلا بادئة، والخام يبقى خامّاً ═══')
 {
   const id = 'prjbudget:1:مواد'
   S().markNotificationRead(id)
-  const readIds = S().readNotificationIds
-  assert.ok(readIds.includes(id), `تعليم كمقروء يجب أن يُظهر المعرّف المجرّد في العرض — الفعلي ${JSON.stringify(readIds)}`)
-  ok('العرض يُرجع المعرّف المجرَّد `prjbudget:1:مواد` بعد التعليم')
-  eq(readIds.filter((x) => x.startsWith(NOTIFICATION_READ_KEY_PREFIX)).length, 0, 'لا بادئة نطاق في العرض الشامل (كانت سبب عدم اختفاء الإشعار)')
-  eq(new Set(readIds).has(id), true, 'منطق الجرس نفسه (readSet.has) يعدّ الإشعار مقروءاً ⇒ يختفي من غير المقروء')
+  const inScope = S().scopedReadNotificationIds()
+  assert.ok(inScope.includes(id), `الجرس يجب أن يرى المعرّف المجرّد بعد التعليم — الفعلي ${JSON.stringify(inScope)}`)
+  ok('`scopedReadNotificationIds()` تُرجع المعرّف المجرَّد `prjbudget:1:مواد` بعد التعليم')
+  eq(inScope.filter((x) => x.startsWith(NOTIFICATION_READ_KEY_PREFIX)).length, 0, 'لا بادئة نطاق في معرّفات الجرس (كانت سبب عدم اختفاء الإشعار)')
+  eq(new Set(inScope).has(id), true, 'منطق الجرس نفسه (readSet.has) يعدّ الإشعار مقروءاً ⇒ يختفي من غير المقروء')
 
   const rawIds = useRawDataStore.getState().readNotificationIds
   assert.ok(rawIds.includes(`${NOTIFICATION_READ_KEY_PREFIX}owner:branch-all:${id}`),
     `التخزين الخام يجب أن يحتفظ ببادئة النطاق لعزل المستخدم/الفرع — الفعلي ${JSON.stringify(rawIds)}`)
   ok('التخزين الخام يحتفظ ببادئة `notification-read:v1:owner:branch-all:` (العزل لم يُكسر)')
 
+  /* الحالة نفسها لا تتغير شكلها: العرض الشامل للمالك يعيد اللقطة نفسها بالمرجع */
+  const rawState = useRawDataStore.getState()
+  eq(getBranchScopedDataState(rawState), rawState, 'الحالة المعروضة للمالك هي نفس اللقطة (لا نسخة ولا مصفوفة معاد بناؤها)')
+  eq(getBranchScopedDataState(rawState).readNotificationIds, rawState.readNotificationIds,
+    'مصفوفة العلامات بنفس المرجع — بث الشبكة المحلية لا يرى «رقعة وهمية»')
+
   S().markAllNotificationsRead(['a', 'b', 'c'])
-  eq(S().readNotificationIds.length, 4, 'تعليم الكل يضيف الجديد فقط بلا تكرار')
+  eq(S().scopedReadNotificationIds().length, 4, 'تعليم الكل يضيف الجديد فقط بلا تكرار')
   S().restoreNotifications()
-  eq(S().readNotificationIds.length, 0, 'الاسترجاع يعيد الكل إلى غير المقروء')
+  eq(S().scopedReadNotificationIds().length, 0, 'الاسترجاع يعيد الكل إلى غير المقروء')
   eq(useRawDataStore.getState().readNotificationIds.length, 0, 'الاسترجاع نظّف الخام أيضاً')
 }
 
-/* ═══════════════════ ٣.٥) ثبات المرجع: لا «رقعة وهمية» في مضيف الشبكة المحلية ═══════════════════ */
-console.log('\n═══ ٣.٥) ثبات المرجع — مقارنة الرقع في LAN لا ترى تغييراً وهمياً ═══')
+/* ═══════════════════ ٣.٥) بث الشبكة المحلية: علامة الجهاز تصل لصاحبها وتبقى معزولة ═══════════════════ */
+console.log('\n═══ ٣.٥) الشبكة المحلية — علامة القراءة تصل لجهاز صاحبها ولا تتسرب لغيره ═══')
 {
-  const raw = useRawDataStore.getState()
-  eq(getBranchScopedDataState(raw), raw, 'بلا علامات قراءة: تُعاد اللقطة نفسها بلا نسخ (هوية المرجع محفوظة)')
-  S().markNotificationRead('prjbudget:1:مواد')
-  const rawAfter = useRawDataStore.getState()
-  const scopedA = getBranchScopedDataState(rawAfter)
-  const scopedB = getBranchScopedDataState(rawAfter)
-  eq(scopedA, scopedB, 'مع وجود علامة قراءة: نفس النسخة المخزَّنة لنفس اللقطة (لا مصفوفة جديدة كل قراءة)')
-  eq(scopedA.readNotificationIds, scopedB.readNotificationIds, 'مصفوفة المعرّفات المجرَّدة بنفس المرجع — لا رقعة وهمية للمفتاح')
+  const { freshCase } = await import(pathToFileURL(join(root, 'scripts/auditKit.mjs')).href)
+  const { LanHostCore } = await import(pathToFileURL(join(root, 'src/data/lan/hostCore.ts')).href)
+  const { LanClientCore } = await import(pathToFileURL(join(root, 'src/data/lan/clientCore.ts')).href)
+  const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
 
-  /*
-   * إثبات مباشر بنفس دالة الرقع التي يستخدمها مضيف الشبكة المحلية:
-   * لو أُعيد إنشاء مصفوفة جديدة عند كل قراءة لظهرت رقعة «readNotificationIds»
-   * بعد أي تغيير في الحالة ولو لم تتغير علامات القراءة إطلاقاً.
-   */
-  const { lanPatchBetween } = await import(pathToFileURL(join(root, 'src/data/lan/protocol.ts')).href)
-  const baseRaw = useRawDataStore.getState()
-  const prevSnapshot = getBranchScopedDataState(baseRaw)
-  // تغيير في مفتاح آخر (كما تفعل أي كتابة) مع بقاء مصفوفة العلامات نفسها بالمرجع
-  const nextSnapshot = getBranchScopedDataState({ ...baseRaw, sales: [...baseRaw.sales] })
-  eq(nextSnapshot.readNotificationIds, prevSnapshot.readNotificationIds, 'نفس المرجع عبر اللقطات المتتالية (شرط ثبات LAN)')
-  const phantom = Object.keys(lanPatchBetween(
-    { readNotificationIds: prevSnapshot.readNotificationIds },
-    { readNotificationIds: nextSnapshot.readNotificationIds },
-    ['readNotificationIds'],
-  ))
-  eq(phantom.length, 0, 'لا رقعة وهمية لمفتاح readNotificationIds بعد تغيير مفتاح آخر')
-  const real = Object.keys(lanPatchBetween({ sales: prevSnapshot.sales }, { sales: nextSnapshot.sales }, ['sales']))
-  eq(real.join(','), 'sales', 'التغيير الحقيقي (sales) يُبث وحده — التعرية لا تحجب الرقع الفعلية')
-  S().restoreNotifications()
+  const host = await freshCase({ activityId: 'grocery', allowNegativeTreasury: true })
+  const hostStore = host.store
+  const pinHash = await hashPin('123456')
+  hostStore.getState().setOwnerPin(pinHash)
+  hostStore.getState().addAppUser({ nameAr: 'كاشير الشبكة', roleId: 'cashier', pinHash })
+  const cashier = hostStore.getState().appUsers.find((u) => u.nameAr === 'كاشير الشبكة')
+  const hostCore = new LanHostCore(hostStore, '1122', 'مضيف', {})
+  globalThis.localStorage.removeItem('shopsys-data')
+  const clientStore = (await import(pathToFileURL(join(root, 'src/data/repo.ts')).href + '?lanNotif=1')).useDataStore
+  let core = null
+  const sid = hostCore.attach({ deviceName: 'جهاز الكاشير', send: (msg) => core?.onMessage(msg) })
+  core = new LanClientCore({ store: clientStore, send: (msg) => hostCore.handle(sid, msg) })
+  hostCore.handle(sid, { op: 'pair', code: '1122', deviceName: 'جهاز الكاشير' })
+  await core.call('login', [cashier.id, '123456'])
+
+  const NOTIF = 'prjbudget:7:مواد'
+  await core.call('markNotificationRead', [NOTIF])
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  const clientRaw = clientStore.getState().readNotificationIds
+  assert.ok(clientRaw.includes(`${NOTIFICATION_READ_KEY_PREFIX}user-${cashier.id}:branch-all:${NOTIF}`),
+    `العلامة يجب أن تصل لجهاز الكاشير عبر الرقعة — الفعلي ${JSON.stringify(clientRaw)}`)
+  ok('علامة قراءة الجهاز تُبث في الرقعة وتصل لجهازه (بث readNotificationIds كما هو)')
+  assert.ok(clientStore.getState().scopedReadNotificationIds().includes(NOTIF), 'جرس جهاز الكاشير يعدّ التنبيه مقروءاً')
+  ok('`scopedReadNotificationIds()` على جهاز الكاشير تُرجع المعرّف المجرّد ⇒ الشارة تختفي عنده')
+  eq(hostStore.getState().scopedReadNotificationIds().includes(NOTIF), false, 'علامة الكاشير لا تظهر في نطاق المالك (عزل النطاقات سليم)')
+  const hostRaw = hostStore.getState().readNotificationIds
+  assert.ok(hostRaw.some((x) => x.includes(NOTIF)), 'العلامة محفوظة عند المضيف داخل نطاق صاحبها')
+  ok('المضيف يحفظ علامة كل مستخدم داخل نطاقه ولا يخلطها بنطاق المالك')
 }
 
 /* ═══════════════════ ٤) تكامل حقيقي: مشروع + تكلفة + موازنة صفرية ثم موجبة ═══════════════════ */
@@ -196,11 +207,11 @@ console.log('\n═══ ٤) تكامل المتجر: موازنة صفر ⇒ ل
   eq(alerts.length, 1, 'كتابة رقم للمواد (3,000) أقل من الفعلي (5,000) ⇒ يبدأ التنبيه واحد')
   eq(alerts[0].id, `prjbudget:${project.id}:${core.COST_KIND_LABELS.materials.nameAr}`, 'معرّف التنبيه ثابت مربوط بالمشروع والفئة')
 
-  const unreadBefore = alerts.filter((a) => !new Set(S().readNotificationIds).has(a.id))
+  const unreadBefore = alerts.filter((a) => !new Set(S().scopedReadNotificationIds()).has(a.id))
   eq(unreadBefore.length, 1, 'الإشعار ظاهر كغير مقروء قبل التعليم')
 
   S().markNotificationRead(alerts[0].id)
-  const readSet = new Set(S().readNotificationIds)
+  const readSet = new Set(S().scopedReadNotificationIds())
   eq(alerts.filter((a) => !readSet.has(a.id)).length, 0, 'بعد التعليم كمقروء يختفي إشعار الموازنة من قائمة غير المقروء')
 
   const again = budgetAlerts()
@@ -211,7 +222,7 @@ console.log('\n═══ ٤) تكامل المتجر: موازنة صفر ⇒ ل
 
   S().restoreNotifications()
   S().setProjectBudget(project.id, [{ kind: 'materials', amountMinor: 300_000 }])
-  const unreadAfterRestore = budgetAlerts().filter((a) => !new Set(S().readNotificationIds).has(a.id))
+  const unreadAfterRestore = budgetAlerts().filter((a) => !new Set(S().scopedReadNotificationIds()).has(a.id))
   eq(unreadAfterRestore.length, 1, 'الاسترجاع يعيد إشعار الموازنة إلى غير المقروء')
 }
 

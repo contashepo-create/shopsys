@@ -49,30 +49,38 @@ describe('موازنة المشروع — صفر لا يقارن ولا يُنب
   })
 })
 
-describe('تعليم الإشعار كمقروء — معرّف العرض مطابق لمعرّف الجرس', () => {
+describe('تعليم الإشعار كمقروء — معرّف الجرس مطابق بعد تعرية بادئة النطاق', () => {
   let useDataStore: typeof import('../src/data/repo.ts').useDataStore
   let useRawDataStore: typeof import('../src/data/repo.ts').useRawDataStore
+  let getBranchScopedDataState: typeof import('../src/data/repo.ts').getBranchScopedDataState
 
   beforeAll(async () => {
     localStorage.clear()
-    ;({ useDataStore, useRawDataStore } = await import('../src/data/repo.ts'))
+    ;({ useDataStore, useRawDataStore, getBranchScopedDataState } = await import('../src/data/repo.ts'))
   })
 
-  it('بعد التعليم يظهر المعرّف مجرَّداً بلا بادئة نطاق فيختفي من غير المقروء', () => {
+  it('الجرس يرى المعرّف مجرَّداً بعد التعليم بينما التخزين يحتفظ ببادئة النطاق', () => {
     const id = 'prjbudget:1:مواد'
     useDataStore.getState().markNotificationRead(id)
-    const readIds = useDataStore.getState().readNotificationIds
-    expect(readIds).toContain(id)
-    expect(readIds.some((x) => x.startsWith('notification-read:v1:'))).toBe(false)
+    const inScope = useDataStore.getState().scopedReadNotificationIds()
+    expect(inScope).toContain(id)
+    expect(inScope.some((x) => x.startsWith('notification-read:v1:'))).toBe(false)
     // نفس منطق الجرس في Header.tsx
-    expect(new Set(readIds).has(id)).toBe(true)
-    // التخزين الخام محتفظ بالبادئة لعزل المستخدم/الفرع
+    expect(new Set(inScope).has(id)).toBe(true)
+    // التخزين الخام محتفظ بالبادئة لعزل المستخدم/الفرع وبث الشبكة المحلية
     expect(useRawDataStore.getState().readNotificationIds).toContain(`notification-read:v1:owner:branch-all:${id}`)
+  })
+
+  it('الحالة المعروضة لا يُعاد بناؤها: نفس اللقطة ونفس مرجع المصفوفة (بث LAN بلا رقع وهمية)', () => {
+    const raw = useRawDataStore.getState()
+    const scoped = getBranchScopedDataState(raw)
+    expect(scoped).toBe(raw)
+    expect(scoped.readNotificationIds).toBe(raw.readNotificationIds)
   })
 
   it('الاسترجاع يعيد الإشعار إلى غير المقروء', () => {
     useDataStore.getState().restoreNotifications()
-    expect(useDataStore.getState().readNotificationIds).toHaveLength(0)
+    expect(useDataStore.getState().scopedReadNotificationIds()).toHaveLength(0)
     expect(useRawDataStore.getState().readNotificationIds).toHaveLength(0)
   })
 })
