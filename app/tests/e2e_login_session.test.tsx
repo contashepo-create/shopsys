@@ -28,7 +28,7 @@ const { useDataStore } = await import('../src/data/repo.ts')
 const { getCountry } = await import('../src/core/countries.ts')
 const { ACTIVITY_TEMPLATES } = await import('../src/core/activities.ts')
 const { hashPin } = await import('../src/core/audit.ts')
-const { isSessionAuthenticated } = await import('../src/data/sessionAuth.ts')
+const { isSessionAuthenticated, clearSessionAuthenticated } = await import('../src/data/sessionAuth.ts')
 const { rememberRecentLogin } = await import('../src/data/recentLogins.ts')
 
 const OWNER_NAME = 'م. محمد عبدة'
@@ -53,7 +53,7 @@ async function seedRegisteredShop() {
 function resetAll() {
   cleanup()
   localStorage.clear()
-  sessionStorage.clear()
+  clearSessionAuthenticated() // محاكاة «إغلاق التطبيق»: تصفير العلم في الذاكرة و sessionStorage معاً
   const app = useAppStore.getState()
   useAppStore.setState({
     ...app,

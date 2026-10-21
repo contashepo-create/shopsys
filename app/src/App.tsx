@@ -21,7 +21,7 @@ import { LockScreen } from './ui/LockScreen.tsx'
 import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
-import { isSessionAuthenticated } from './data/sessionAuth.ts'
+import { useSessionAuthStore } from './data/sessionAuth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
@@ -183,13 +183,17 @@ function Shell() {
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
   const { appUsers, currentUserId, roleOverrides, customRoles, ownerPinHash, loggedOut } = useDataStore()
+  // علم «الجلسة مصادَق عليها» — متجر React: تتغيّر البوابة فور تغيّره
+  const sessionAuthenticated = useSessionAuthStore((s) => s.authenticated)
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   // بوابة الدخول + إصلاح باج «إجبار تغيير الرقم أول دخول»: login() كان يرفع loggedOut
   // فتختفي شاشة الدخول قبل ظهور مودال التغيير الإجباري — الآن من عليه mustChangePin
   // يبقى محتجزاً في LoginScreen (بمودالها الإجباري) حتى يعيّن رقمه الخاص
   // + جلسة جديدة (إغلاق التطبيق فعلياً وإعادة فتحه) تُفرض من جديد دوماً حتى لو لم
-  // يُسجَّل خروج صريح — عبر isSessionAuthenticated المحصور بعمر النافذة (طلب المالك)
-  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || !isSessionAuthenticated() || activeUser?.mustChangePin)) {
+  // يُسجَّل خروج صريح — عبر useSessionAuthStore المحصور بعمر النافذة (طلب المالك)
+  // إصلاح بلاغ 2026-10-21: العلم في الذاكرة هو المعتمد بعد نجاح الدخول —
+  // لا يعتمد على sessionStorage (محظور في تطبيق سطح المكتب على file://)
+  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || !sessionAuthenticated || activeUser?.mustChangePin)) {
     return <LoginScreen />
   }
   // ─── حراسة الوحدات (سد ثغرة الرابط المباشر): شاشة وحدة غير مفعلة للنشاط ───
