@@ -8,6 +8,7 @@ import { authRequired } from '../src/core/auth.ts'
 describe('sessionAuth — إجبار الدخول في كل فتح جديد للتطبيق', () => {
   beforeEach(() => {
     sessionStorage.clear()
+    clearSessionAuthenticated() // تصفير العلم في الذاكرة — محاكاة جلسة جديدة
   })
 
   it('جلسة جديدة لم تُصادَق عليها بعد (محاكاة فتح تبويب/تطبيق جديد)', () => {
