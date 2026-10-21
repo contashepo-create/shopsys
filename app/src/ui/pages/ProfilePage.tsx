@@ -77,7 +77,7 @@ export function ProfilePage() {
       if (newPin !== newPin2) throw new Error('كلمتا السر الجديدتان غير متطابقتين')
       const fmtErr = validatePinFormat(newPin)
       if (fmtErr.length) throw new Error(fmtErr.join(' — '))
-      await changeMyPin(curPin, await hashPin(newPin))
+      await changeMyPin(curPin, await hashPin(newPin), newPin)
       setCurPin(''); setNewPin(''); setNewPin2('')
       toast.show('تغيّر رقمك السري — لا يعرفه أحد غيرك الآن ✅')
     } catch (e) { toast.show((e as Error).message, 'error') }

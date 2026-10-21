@@ -125,15 +125,21 @@ export function computeTotals(
 ): CartTotals {
   let gross = 0
   let lineDiscounts = 0
-  let cogs = 0
+  const cogsByCostBasis = new Map<string, { unitCostMinor: Minor; qty: number }>()
   for (const l of lines) {
     if (l.qty <= 0) throw new RangeError(`كمية غير صالحة للصنف ${l.nameAr}`)
     if (l.discountPercent < 0 || l.discountPercent > 100) throw new RangeError('خصم سطر خارج النطاق')
     const g = mulQty(l.unitPriceMinor, l.qty)
     gross += g
     lineDiscounts += percentOf(g, l.discountPercent)
-    cogs += mulQty(l.unitCostMinor, l.qty)
+    // Consolidate same-item/same-unit cost before rounding so duplicate fractional
+    // lines cannot each round a half-minor upward and overstate COGS.
+    const costBasisKey = `${l.itemId}:${l.unitFactor ?? 1}:${l.unitCostMinor}`
+    const costBasis = cogsByCostBasis.get(costBasisKey)
+    if (costBasis) costBasis.qty += l.qty
+    else cogsByCostBasis.set(costBasisKey, { unitCostMinor: l.unitCostMinor, qty: l.qty })
   }
+  const cogs = [...cogsByCostBasis.values()].reduce((sum, basis) => sum + mulQty(basis.unitCostMinor, basis.qty), 0)
   if (invoiceDiscountPercent < 0 || invoiceDiscountPercent > 100) throw new RangeError('خصم فاتورة خارج النطاق')
   const afterLineDiscounts = gross - lineDiscounts
   const invoiceDiscount = percentOf(afterLineDiscounts, invoiceDiscountPercent)

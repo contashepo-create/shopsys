@@ -115,7 +115,7 @@ export function LoginScreen() {
       const fmtErrors = validatePinFormat(newPin)
       if (fmtErrors.length) throw new Error(fmtErrors.join(' — '))
       const hash = await hashPin(newPin)
-      if (effectiveMustSet?.kind === 'employee') changeOwnPin(effectiveMustSet.userId, hash)
+      if (effectiveMustSet?.kind === 'employee') await changeOwnPin(effectiveMustSet.userId, hash, newPin)
       else setOwnerPin(hash)
       setMustSetNewPin(null)
       setNewPin(''); setNewPin2('')

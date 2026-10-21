@@ -75,6 +75,8 @@ export interface Item {
    * القيمة المدخلة عند إنشاء الصنف = تكلفة افتتاحية فقط.
    */
   costMinor: Minor
+  /** القيمة الدفترية الدقيقة للمخزون (Minor)، لتجنب ضياع كسور المتوسط المرجح. */
+  stockValueMinor?: Minor
   /** كمية المخزون الحالية (تتحرك بالشراء والبيع) */
   stockQty: number
   priceMinor: Minor

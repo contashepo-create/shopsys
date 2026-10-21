@@ -139,7 +139,7 @@ export function SaleReturnsPage() {
       const lines = specs.map((s) => ({ ...sale.lines[s.lineIndex], qty: s.qty }))
       const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
         ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
-        : deriveTaxConfig(sale.totals)
+        : deriveTaxConfig(sale.totals, sale.lines)
       const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
       const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
       const priorReturns = saleReturns.filter((r) => r.saleId === sale.id)

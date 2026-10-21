@@ -107,8 +107,12 @@ export async function fetchFxRates(args: {
   const url = args.provider === 'custom'
     ? args.customUrl.replace('{BASE}', book)
     : `https://open.er-api.com/v6/latest/${book}`
-  if (!/^https?:\/\//.test(url)) throw new Error('رابط المزود غير سليم (يجب أن يبدأ بـ http/https)')
-  const response = await fetch(url, { signal: args.signal })
+  let parsedUrl: URL
+  try { parsedUrl = new URL(url) } catch { throw new Error('رابط المزود غير سليم') }
+  if (parsedUrl.protocol !== 'https:') throw new Error('رابط مزود أسعار الصرف يجب أن يستخدم HTTPS')
+  const timeout = AbortSignal.timeout(10_000)
+  const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout
+  const response = await fetch(parsedUrl, { signal })
   if (!response.ok) throw new Error(`المزود ردّ بالحالة ${response.status}`)
   const payload = (await response.json()) as { result?: string; rates?: Record<string, number>; error_type?: string }
   if (payload.error_type) throw new Error(`خطأ المزود: ${payload.error_type}`)

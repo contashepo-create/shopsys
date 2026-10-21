@@ -109,15 +109,17 @@ async function authorizeSupport(request, env, deviceId, body = '') {
   if (!/^[A-Za-z0-9_-]{24}$/.test(requestNonce) || !/^[0-9a-f]{64}$/i.test(signature)) return false
   if (!await supportRequestSignature(token, request.method, new URL(request.url).pathname, timestamp, requestNonce, signature, body)) return false
 
-  const nonceKey = `support-nonce:${deviceId}:${requestNonce}`
-  if (await env.SHOPSYS_KV.get(nonceKey)) return false
-  await env.SHOPSYS_KV.put(nonceKey, '1', { expirationTtl: 600 })
-
   const presentedHash = await supportTokenHash(token)
   const key = `support-auth:${deviceId}`
   const storedHash = await env.SHOPSYS_KV.get(key)
-  if (storedHash) return constantTimeEqual(storedHash, presentedHash)
-  await env.SHOPSYS_KV.put(key, presentedHash)
+  if (storedHash && !constantTimeEqual(storedHash, presentedHash)) return false
+
+  const nonceKey = `support-nonce:${deviceId}:${requestNonce}`
+  if (await env.SHOPSYS_KV.get(nonceKey)) return false
+  // Only authenticated requests consume nonce storage. First-use registration
+  // remains TOFU: device identity must be paired out-of-band by the client.
+  if (!storedHash) await env.SHOPSYS_KV.put(key, presentedHash)
+  await env.SHOPSYS_KV.put(nonceKey, '1', { expirationTtl: 600 })
   return true
 }
 

@@ -61,12 +61,28 @@ export interface LanStoreLike {
 }
 
 /** لقطة الحالة البيانية: كل شيء عدا الدوال ومفاتيح جلسة الجهاز. */
+const LAN_SECRET_KEY = /(?:pin(?:hash)?|password|secret|token|credential|recovery|initialpin|ownerpin)/i
+
+/** Remove credential-like fields recursively before state can cross the LAN. */
+function lanPublicValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(lanPublicValue)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (LAN_SECRET_KEY.test(key) || typeof child === 'function') continue
+      out[key] = lanPublicValue(child)
+    }
+    return out
+  }
+  return value
+}
+
 export function lanSnapshotOf(state: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(state)) {
-    if (typeof value === 'function') continue
+    if (typeof value === 'function' || LAN_SECRET_KEY.test(key)) continue
     if ((LAN_SESSION_KEYS as readonly string[]).includes(key)) continue
-    out[key] = value
+    out[key] = lanPublicValue(value)
   }
   return out
 }
@@ -79,8 +95,8 @@ export function lanPatchBetween(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {}
   for (const key of changedKeys) {
-    if ((LAN_SESSION_KEYS as readonly string[]).includes(key)) continue
-    if (next[key] !== prev[key] || !(key in next)) patch[key] = next[key]
+    if ((LAN_SESSION_KEYS as readonly string[]).includes(key) || LAN_SECRET_KEY.test(key)) continue
+    if (next[key] !== prev[key] || !(key in next)) patch[key] = lanPublicValue(next[key])
   }
   return patch
 }

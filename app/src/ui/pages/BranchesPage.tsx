@@ -60,6 +60,8 @@ export function BranchesPage() {
       accountBalances,
       warehouseStock,
       itemCostById: new Map(items.map((it) => [it.id, it.costMinor])),
+      itemValueById: new Map(items.map((it) => [it.id, it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)])),
+      itemQtyById: new Map(items.map((it) => [it.id, it.stockQty ?? 0])),
     })
   }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal, productionOrders, processingOrders])
 

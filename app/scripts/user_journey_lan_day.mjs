@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { reporter, freshCase, assertInvariants, balanceOf } from './auditKit.mjs'
 import { LanHostCore } from '../src/data/lan/hostCore.ts'
 import { LanClientCore } from '../src/data/lan/clientCore.ts'
-import { LAN_SESSION_KEYS } from '../src/data/lan/protocol.ts'
+import { LAN_SESSION_KEYS, lanSnapshotOf } from '../src/data/lan/protocol.ts'
 import { hashPin } from '../src/core/audit.ts'
 
 const R = reporter('رحلة يوم محل عبر شبكة محلية (§102)')
@@ -64,7 +64,7 @@ const stopLocalBroadcast = hostCore.startLocalBroadcast()
 
 /* ═══ 2) الأجهزة الأربعة تتصل وتتسلم اللقطات ═══ */
 R.section('🔌 اقتران الأجهزة الأربع وتسليم اللقطات')
-const dataKeys = (state) => Object.entries(state).filter(([k, v]) => typeof v !== 'function' && !LAN_SESSION_KEYS.includes(k)).map(([k]) => k)
+const dataKeys = (state) => Object.keys(lanSnapshotOf(state))
 
 const clientLinks = []
 for (const [tag, q] of [['كاشير أول', 'day1'], ['كاشير ثان', 'day2'], ['كاشير ثالث', 'day3'], ['المحاسب', 'day4']]) {
@@ -90,11 +90,13 @@ await sleep(200)
 for (const link of clientLinks) assert.equal(link.core.status, 'connected', `جهاز «${link.tag}» متصل`)
 {
   const hs = hostStore.getState()
+  const safeHost = lanSnapshotOf(hs)
   for (const link of clientLinks) {
     for (const key of dataKeys(hs)) {
-      assert.deepEqual(link.store.getState()[key], hs[key], `لقطة «${link.tag}» — مفتاح «${key}»`)
+      assert.deepEqual(link.store.getState()[key], safeHost[key], `لقطة «${link.tag}» — مفتاح «${key}»`)
     }
   }
+  assert.ok(!JSON.stringify(safeHost).includes(pinHash), 'لا تُبث تجزئات PIN إلى أجهزة LAN')
   R.ok(`الأجهزة الأربعة اقترنت وتسلّمت اللقطة كاملة (${dataKeys(hs).length} مفتاحاً لكل جهاز)`)
 }
 
@@ -143,7 +145,8 @@ async function untilSynced(timeoutMs = 3000) {
   const t0 = Date.now()
   for (;;) {
     const hs = hostStore.getState()
-    const synced = clientLinks.every((link) => dataKeys(hs).every((k) => JSON.stringify(link.store.getState()[k]) === JSON.stringify(hs[k])))
+    const safeHost = lanSnapshotOf(hs)
+    const synced = clientLinks.every((link) => dataKeys(hs).every((k) => JSON.stringify(link.store.getState()[k]) === JSON.stringify(safeHost[k])))
     if (synced) return Date.now() - t0
     if (Date.now() - t0 > timeoutMs) throw new Error(`لم تتزامن الأجهزة خلال ${timeoutMs}ms`)
     await sleep(5)
@@ -265,11 +268,13 @@ await sleep(150)
 R.section('✨ الخلاصة — تطابق الأجهزة والثوابت')
 {
   const hs = hostStore.getState()
+  const safeHost = lanSnapshotOf(hs)
   for (const link of clientLinks) {
     for (const key of dataKeys(hs)) {
-      assert.deepEqual(link.store.getState()[key], hs[key], `التطابق النهائي «${link.tag}» — «${key}»`)
+      assert.deepEqual(link.store.getState()[key], safeHost[key], `التطابق النهائي «${link.tag}» — «${key}»`)
     }
   }
+  assert.ok(!JSON.stringify(safeHost).includes(pinHash), 'لا تتسرب تجزئات PIN في الحالة النهائية')
   R.ok(`الأجهزة الأربعة × ${dataKeys(hs).length} مفتاحاً — تطابق تام مع قاعدة المضيف`)
   assertInvariants('نهاية يوم محل موزع', host)
   R.ok('ثوابت المحاسبة العشرة خضراء عند المضيف بعد يوم كامل موزع')

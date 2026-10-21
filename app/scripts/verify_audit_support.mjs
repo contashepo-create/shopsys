@@ -15,7 +15,7 @@ globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } } }))
 
 const { useDataStore } = await import('../src/data/repo.ts')
-const { sanitizeText, auditFromPatch, appendAudit, AUDIT_MAX, hashPin, verifyPin, validateIssue, isValidDeviceId } = await import('../src/core/audit.ts')
+const { sanitizeText, auditFromPatch, appendAudit, AUDIT_MAX, hashPin, verifyPin, isModernPinHash, validateIssue, isValidDeviceId } = await import('../src/core/audit.ts')
 const { validatePinFormat } = await import('../src/core/auth.ts')
 const { pushLog, logToText, logEvent, getLogLines, LOG_MAX } = await import('../src/core/applog.ts')
 const { buildSupportPayload, parseConversation, supportUrl } = await import('../src/core/support.ts')
@@ -70,7 +70,7 @@ ok('حدث القيد الجديد فقط ومعقم', evs.length === 1 && evs[0
 
 console.log('\n4️⃣ المستخدمون: PIN مجزأ + مالك محمي + تعطيل لا حذف')
 const pinHash = await hashPin('123456')
-ok('PIN يُخزن hex-64 لا نصاً', /^[0-9a-f]{64}$/.test(pinHash))
+ok('PIN يُخزن بصيغة PBKDF2 مملحة لا نصاً', isModernPinHash(pinHash))
 ok('التحقق الصحيح يمر', await verifyPin('123456', pinHash))
 ok('التحقق الخاطئ يفشل', !(await verifyPin('999999', pinHash)))
 // سياسة 6-32 الجديدة: الطول يُفرض عند التعيين عبر validatePinFormat (auth.ts) —
@@ -78,7 +78,7 @@ ok('التحقق الخاطئ يفشل', !(await verifyPin('999999', pinHash)))
 ok('validatePinFormat يرفض القصير', validatePinFormat('Ab1!').length > 0)
 ok('validatePinFormat يقبل 6-32 بحروف ورموز', validatePinFormat('Ahmed@2026').length === 0)
 ok('validatePinFormat يرفض المسافات', validatePinFormat('abcd efgh').length > 0)
-ok('hashPin يقبل كلمة سر حروفاً ورموزاً', /^[0-9a-f]{64}$/.test(await hashPin('Ahmed@2026')))
+ok('hashPin يقبل كلمة سر حروفاً ورموزاً', isModernPinHash(await hashPin('Ahmed@2026')))
 // أمان الدفعة الجديدة: لا مستخدمين قبل تحصين المالك برقم سري
 throws('إضافة مستخدم قبل PIN المالك تُرفض', () => S().addAppUser({ nameAr: 'مبكر', roleId: 'cashier', pinHash }), 'المالك أولاً')
 S().setOwnerPin(pinHash)

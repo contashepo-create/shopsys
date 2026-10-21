@@ -284,10 +284,21 @@ export function cashFlowReport(
     if (cashDelta === 0) continue
     if (beforeP(e.date, p)) { opening += cashDelta; continue }
     if (!inP(e.date, p)) continue
-    // الحساب المقابل الأبرز: أكبر سطر غير نقدي بالقيد
+    // Choose a counter-entry on the opposite side of the cash movement first.
+    // Prefer economic accounts over tax/clearing lines; never let a large COGS
+    // debit label an incoming sale receipt.
+    const expectedSide = cashDelta > 0 ? 'credit' : 'debit'
+    const preferredRoots = cashDelta > 0 ? ['revenue', 'liabilities', 'equity'] : ['expenses', 'assets', 'liabilities', 'equity']
     const counter = [...e.lines]
-      .filter((l) => !cashSet.has(l.accountCode))
-      .sort((a, b) => (b.debit + b.credit) - (a.debit + a.credit))[0]
+      .filter((l) => !cashSet.has(l.accountCode) && l[expectedSide] > 0)
+      .sort((a, b) => {
+        const rank = (code: string) => {
+          const root = rootOf(code)
+          const i = preferredRoots.indexOf(root)
+          return i < 0 ? preferredRoots.length : i
+        }
+        return rank(a.accountCode) - rank(b.accountCode) || (b[expectedSide] - a[expectedSide])
+      })[0] ?? [...e.lines].filter((l) => !cashSet.has(l.accountCode)).sort((a, b) => (b.debit + b.credit) - (a.debit + a.credit))[0]
     const label = counter ? nameOf(counter.accountCode, extraNames) : 'تحويلات نقدية'
     const activity = counter ? activityOf(counter.accountCode) : 'operating'
     if (activity === 'operating') operatingNetMinor += cashDelta
@@ -335,6 +346,18 @@ const VAT_SETTLEMENT_SOURCES = new Set(['payment_voucher', 'receipt_voucher', 'y
  */
 export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCode = '2102'): VatReport {
   let output = 0, input = 0, settled = 0
+  const entriesById = new Map(journal.map((entry) => [entry.id, entry]))
+  const economicSource = (entry: JournalEntry): JournalEntry['sourceType'] => {
+    let current = entry
+    const visited = new Set<number>()
+    while (current.sourceType === 'reversal' && current.reversesEntryId != null && !visited.has(current.id)) {
+      visited.add(current.id)
+      const original = entriesById.get(current.reversesEntryId)
+      if (!original) break
+      current = original
+    }
+    return current.sourceType
+  }
   for (const e of journal) {
     if (!inP(e.date, p)) continue
     let credit = 0, debit = 0
@@ -343,7 +366,7 @@ export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCod
       credit += l.credit; debit += l.debit
     }
     if (credit === 0 && debit === 0) continue
-    const st = (e as { sourceType?: string }).sourceType
+    const st = e.sourceType === 'reversal' ? economicSource(e) : e.sourceType
     // قيود بلا مصدر (بيانات خارجية) والقيود اليدوية: تصنيف اتجاهي —
     // كانت اليدوية تقع في «مخرجات صافية» فيظهر قيد يدوي مدين على 2102
     // مخرجاتٍ سالبة تشوه بندي الإقرار (اكتشاف رحلة التقارير)
@@ -361,8 +384,14 @@ export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCod
 /** CSV بترميز UTF-8 BOM ليفتح في Excel بالعربية سليماً */
 export function toCsv(headers: readonly string[], rows: readonly (readonly (string | number)[])[]): string {
   const escape = (v: string | number) => {
-    const s = String(v)
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    let s = String(v)
+    // Protect user-controlled text from spreadsheet formula execution while
+    // preserving negative numeric accounting values as numbers.
+    // Spreadsheet apps may ignore leading control/space characters before formulas.
+    // Prefix text cells whose first non-space/control character is formula-like;
+    // numeric negatives are still emitted as numbers.
+    if (typeof v === 'string' && /^[\s\uFEFF]*[=+\-@]/.test(s)) s = `'${s}`
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
   return '\uFEFF' + [headers.map(escape).join(','), ...rows.map((r) => r.map(escape).join(','))].join('\n')
 }

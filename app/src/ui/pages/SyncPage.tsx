@@ -4,7 +4,7 @@
  * كاشير الفرع والمحاسب والمالك على نفس القاعدة: قفل تفاؤلي بلا ضياع بيانات،
  * والبيانات تُشفَّر AES-256-GCM على الجهاز قبل الرفع — السحابة لا ترى إلا شفرة.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useRawDataStore } from '../../data/repo.ts'
@@ -50,7 +50,12 @@ export function SyncPage() {
   const [busy, setBusy] = useState<string | null>(null)
   // لقطات التعارض (شبكة الأمان): تُحدَّث بعد كل مزامنة/استرجاع عبر هذا العداد
   const [snapVer, setSnapVer] = useState(0)
-  const snapshots = useMemo(() => { void snapVer; return listConflictSnapshots().slice().reverse() }, [snapVer])
+  const [snapshots, setSnapshots] = useState<{ at: string; size: number }[]>([])
+  useEffect(() => {
+    let alive = true
+    void listConflictSnapshots().then((rows) => { if (alive) setSnapshots(rows.slice().reverse()) })
+    return () => { alive = false }
+  }, [snapVer])
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
 
@@ -125,9 +130,9 @@ export function SyncPage() {
     }
   }
 
-  const downloadSnapshot = (at: string) => {
-    const data = getConflictSnapshotData(at)
-    if (!data) return toast.show('اللقطة غير موجودة', 'error')
+  const downloadSnapshot = async (at: string) => {
+    const data = await getConflictSnapshotData(at)
+    if (!data) return toast.show('اللقطة غير موجودة أو تعذر فك تشفيرها', 'error')
     const blob = new Blob([data], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -136,9 +141,9 @@ export function SyncPage() {
     URL.revokeObjectURL(a.href)
   }
 
-  const restoreSnapshot = (at: string) => {
+  const restoreSnapshot = async (at: string) => {
     if (!window.confirm('سيُستبدل ما على هذا الجهاز الآن بحالة اللقطة (وتُحفظ الحالة الحالية كلقطة جديدة أولاً — لا يضيع شيء). متابعة؟')) return
-    const r = restoreConflictSnapshot(at)
+    const r = await restoreConflictSnapshot(at)
     toast.show(r.message, r.ok ? undefined : 'error')
     setSnapVer((v) => v + 1)
   }

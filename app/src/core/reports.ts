@@ -246,7 +246,7 @@ export interface StagnantItemRow {
  * أصناف الخدمة والمعطلة مستثناة (لا مخزون لها أصلاً).
  */
 export function stagnantItems(
-  items: readonly { id: number; nameAr: string; stockQty: number; costMinor: Minor; isActive: boolean; isService?: boolean }[],
+  items: readonly { id: number; nameAr: string; stockQty: number; costMinor: Minor; stockValueMinor?: Minor; isActive: boolean; isService?: boolean }[],
   sales: readonly SaleDoc[],
   todayIso: string,
   idleDaysThreshold = 30,
@@ -268,7 +268,7 @@ export function stagnantItems(
     if (idleDays < idleDaysThreshold) continue
     rows.push({
       itemId: it.id, nameAr: it.nameAr, stockQty: it.stockQty,
-      stockValueMinor: Math.round(it.costMinor * it.stockQty),
+      stockValueMinor: it.stockValueMinor ?? Math.round(it.costMinor * it.stockQty),
       lastSoldDate: last ? last.slice(0, 10) : null,
       idleDays: last ? idleDays : -1, // -1 = لم يُبع قط (تعرضها الواجهة «لم يُبع»)
     })
@@ -297,7 +297,7 @@ export interface StagnantVariantRow {
  * تُبع خلال آخر idleDaysThreshold يوماً — بصرف النظر عن حالة الصنف ككل.
  */
 export function stagnantVariants(
-  items: readonly { id: number; nameAr: string; costMinor: Minor; isActive: boolean; isService?: boolean }[],
+  items: readonly { id: number; nameAr: string; stockQty?: number; costMinor: Minor; stockValueMinor?: Minor; isActive: boolean; isService?: boolean }[],
   variantStocks: readonly { itemId: number; color: string; size: string; qty: number }[],
   sales: readonly SaleDoc[],
   todayIso: string,
@@ -314,8 +314,35 @@ export function stagnantVariants(
   }
   const today = new Date(todayIso.slice(0, 10) + 'T00:00:00Z').getTime()
   const itemById = new Map(items.map((it) => [it.id, it]))
+  const valueByVariantIndex = new Map<number, number>()
+  const variantIndexesByItem = new Map<number, number[]>()
+  variantStocks.forEach((variant, index) => {
+    const indexes = variantIndexesByItem.get(variant.itemId) ?? []
+    indexes.push(index)
+    variantIndexesByItem.set(variant.itemId, indexes)
+  })
+  for (const [itemId, indexes] of variantIndexesByItem) {
+    const item = itemById.get(itemId)
+    const variants = indexes.map((index) => variantStocks[index]).filter((variant) => variant.qty > 0)
+    const totalVariantQty = variants.reduce((sum, variant) => sum + variant.qty, 0)
+    if (!item || totalVariantQty <= 0) continue
+    const companyQty = item.stockQty ?? 0
+    const value = item.stockValueMinor != null && companyQty > 0
+      ? Math.round(item.stockValueMinor * totalVariantQty / companyQty)
+      : Math.round(item.costMinor * totalVariantQty)
+    const exactShares = variants.map((variant, position) => ({
+      index: indexes.filter((candidateIndex) => variantStocks[candidateIndex].qty > 0)[position],
+      raw: value * variant.qty / totalVariantQty,
+    }))
+    const shares = exactShares.map((share) => Math.floor(share.raw))
+    let remainder = value - shares.reduce((sum, share) => sum + share, 0)
+    const order = exactShares.map((share, position) => ({ position, fraction: share.raw - Math.floor(share.raw) }))
+      .sort((a, b) => b.fraction - a.fraction)
+    for (let position = 0; position < order.length && remainder > 0; position++, remainder--) shares[order[position].position]++
+    exactShares.forEach((share, position) => valueByVariantIndex.set(share.index, shares[position]))
+  }
   const rows: StagnantVariantRow[] = []
-  for (const v of variantStocks) {
+  for (const [variantIndex, v] of variantStocks.entries()) {
     if (v.qty <= 0) continue
     const item = itemById.get(v.itemId)
     if (!item || !item.isActive || item.isService) continue
@@ -326,7 +353,7 @@ export function stagnantVariants(
     if (idleDays < idleDaysThreshold) continue
     rows.push({
       itemId: v.itemId, nameAr: item.nameAr, color: v.color, size: v.size, qty: v.qty,
-      stockValueMinor: Math.round(item.costMinor * v.qty),
+      stockValueMinor: valueByVariantIndex.get(variantIndex) ?? Math.round(item.costMinor * v.qty),
       lastSoldDate: last ? last.slice(0, 10) : null,
       idleDays: last ? idleDays : -1,
     })
@@ -623,7 +650,7 @@ export interface InventoryValueRow {
   valueMinor: Minor
 }
 
-export function inventoryValue(items: { id: number; nameAr: string; stockQty: number; costMinor: Minor }[]): {
+export function inventoryValue(items: { id: number; nameAr: string; stockQty: number; costMinor: Minor; stockValueMinor?: Minor }[]): {
   rows: InventoryValueRow[]
   totalMinor: Minor
 } {
@@ -631,7 +658,7 @@ export function inventoryValue(items: { id: number; nameAr: string; stockQty: nu
     .filter((it) => it.stockQty > 0)
     .map((it) => ({
       itemId: it.id, nameAr: it.nameAr, stockQty: it.stockQty, costMinor: it.costMinor,
-      valueMinor: Math.round(it.costMinor * it.stockQty),
+      valueMinor: it.stockValueMinor ?? Math.round(it.costMinor * it.stockQty),
     }))
     .sort((a, b) => b.valueMinor - a.valueMinor)
   return { rows, totalMinor: rows.reduce((a, r) => a + r.valueMinor, 0) }
