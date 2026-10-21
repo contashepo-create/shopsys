@@ -3717,6 +3717,8 @@ const BRANCH_STAMP_ID_KEYS = [
 
 const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
 const deniedBranchScopeCache = new WeakMap<DataState, DataState>()
+/** عرض «كل الفروع» للمالك: نسخة واحدة مخزَّنة لكل لقطة كي يثبت المرجع في React 19. */
+const allScopesStateCache = new WeakMap<DataState, DataState>()
 const NOTIFICATION_READ_KEY_PREFIX = 'notification-read:v1:'
 
 function notificationReadScopePrefix(state: DataState): string {
@@ -3725,17 +3727,51 @@ function notificationReadScopePrefix(state: DataState): string {
   return `${NOTIFICATION_READ_KEY_PREFIX}${user}:branch-${branch?.id ?? 'all'}:`
 }
 
-function scopedNotificationReadIds(state: DataState): string[] {
+/**
+ * إسقاط علامات القراءة إلى معرّفات مجرّدة كما يراها الجرس.
+ * التخزين يحمل بادئة النطاق (`notification-read:v1:<مستخدم>:branch-<فرع>:`)، والجرس
+ * يقارن بمعرّف التنبيه المجرّد؛ فإرجاع الخام في عرض «كل الفروع» كان يمنع اختفاء أي
+ * تنبيه عند تعليمه كمقروء (بلاغ المالك 2026-10-21).
+ * النتيجة مخزَّنة لكل مصفوفة مصدر كي يثبت المرجع: مقارنة الرقع في مضيف الشبكة
+ * المحلية (`lan/hostCore.ts`) تعتمد هوية القيم، وإعادة إنشاء مصفوفة جديدة كل حرف
+ * كانت ستُنتج «رقعة» وهمية بمفتاح readNotificationIds بعد كل تغيير حالة.
+ */
+interface NotificationReadProjection { ids: string[]; changed: boolean }
+const notificationReadProjectionCache = new WeakMap<readonly string[], Map<string, NotificationReadProjection>>()
+
+function notificationReadProjection(state: DataState): NotificationReadProjection {
   const prefix = notificationReadScopePrefix(state)
-  const scoped = state.readNotificationIds
-    .filter((id) => id.startsWith(prefix))
-    .map((id) => id.slice(prefix.length))
   const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
-  // حافظ على العلامات القديمة للمالك فقط؛ لا ترثها حسابات الفروع ولا تتداخل فروعها.
-  if (state.currentUserId == null || activeUser?.roleId === 'owner') {
-    scoped.push(...state.readNotificationIds.filter((id) => !id.startsWith(NOTIFICATION_READ_KEY_PREFIX)))
+  // العلامات القديمة (بلا بادئة) تُحفظ للمالك فقط؛ لا ترثها حسابات الفروع ولا تتداخل فروعها.
+  const keepLegacy = state.currentUserId == null || activeUser?.roleId === 'owner'
+  const source = state.readNotificationIds
+  const cacheKey = `${prefix}|${keepLegacy ? 'legacy' : 'strict'}`
+  let byKey = notificationReadProjectionCache.get(source)
+  if (!byKey) {
+    byKey = new Map()
+    notificationReadProjectionCache.set(source, byKey)
   }
-  return [...new Set(scoped)]
+  const cached = byKey.get(cacheKey)
+  if (cached) return cached
+
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const id of source) {
+    const value = id.startsWith(prefix)
+      ? id.slice(prefix.length)
+      : !id.startsWith(NOTIFICATION_READ_KEY_PREFIX) && keepLegacy ? id : null
+    if (value == null || seen.has(value)) continue
+    seen.add(value)
+    ids.push(value)
+  }
+  const changed = ids.length !== source.length || ids.some((id, index) => id !== source[index])
+  const result: NotificationReadProjection = { ids: changed ? ids : source, changed }
+  byKey.set(cacheKey, result)
+  return result
+}
+
+function scopedNotificationReadIds(state: DataState): string[] {
+  return notificationReadProjection(state).ids
 }
 
 function notificationReadIdsForStorage(state: DataState, ids: readonly string[]): string[] {
@@ -3802,7 +3838,22 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const activeBranch = getEffectiveActiveBranch(state)
   if (!activeBranch) {
     const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
-    return activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0 ? deniedBranchScope(state) : state
+    if (activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0) return deniedBranchScope(state)
+    /*
+     * إصلاح بلاغ المالك (2026-10-21): «إشعار ضبط الموازنة لا يختفي عند تعليمه كمقروء».
+     * علامات القراءة تُخزَّن مبدوءة بنطاق المستخدم/الفرع (`notification-read:v1:...`)،
+     * والجرس يقارنها بمعرّفات التنبيهات المجرّدة؛ فإرجاع الحالة الخام هنا كان يجعل
+     * المقارنة تفشل دائماً ولا يُزال أي تنبيه من قائمة غير المقروء. نُعري البادئة في
+     * العرض الشامل أيضاً (كما في عرض الفرع)، مع تخزين النسخة لثبات المرجع.
+     */
+    const projection = notificationReadProjection(state)
+    // لا شيء يحتاج تعرية ⇒ نفس اللقطة بلا نسخ (ثبات المرجع شرط مقارنة الرقع في LAN).
+    if (!projection.changed) return state
+    const cachedAll = allScopesStateCache.get(state)
+    if (cachedAll) return cachedAll
+    const allScoped: DataState = { ...state, readNotificationIds: projection.ids }
+    allScopesStateCache.set(state, allScoped)
+    return allScoped
   }
 
   let byBranch = scopedStateCache.get(state)

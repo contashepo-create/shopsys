@@ -516,7 +516,13 @@ export interface BudgetVarianceRow {
   actualMinor: Minor
   varianceMinor: Minor // موجب = وفر، سالب = تجاوز
   usagePercent: number // الفعلي ÷ الموازنة ×100 (0 عند غياب موازنة)
-  status: 'ok' | 'warning' | 'over' // >85٪ تحذير، >100٪ تجاوز
+  /**
+   * >85٪ تحذير، >100٪ تجاوز.
+   * `no-budget`: الفئة بلا موازنة مُدخلة (صفر) — قرار المالك 2026-10-21:
+   * «إذا كتبت أي رقم ابدأ المقارنة، أما إذا كان صفراً فلا أريد أي إشعارات للموازنة».
+   * تبقى التكلفة ظاهرة في التقرير بلا حكم تجاوز، ولا تُرفع إلى جرس التنبيهات إطلاقاً.
+   */
+  status: 'ok' | 'warning' | 'over' | 'no-budget'
 }
 
 export function budgetVarianceReport(
@@ -529,13 +535,16 @@ export function budgetVarianceReport(
     const budget = budgets.filter((b) => b.kind === kind).reduce((a, b) => a + b.amountMinor, 0)
     const actual = costs.filter((c) => c.kind === kind).reduce((a, c) => a + c.amountMinor, 0)
     if (budget === 0 && actual === 0) continue
-    const usage = budget > 0 ? Math.round((actual / budget) * 100) : actual > 0 ? 100 : 0
+    const usage = budget > 0 ? Math.round((actual / budget) * 100) : 0
     rows.push({
       kind, budgetMinor: budget, actualMinor: actual,
       varianceMinor: budget - actual,
       usagePercent: usage,
-      // فعلي بلا موازنة = تجاوز صريح (إنفاق خارج الخطة)
-      status: actual > budget ? 'over' : budget > 0 && usage >= 85 ? 'warning' : 'ok',
+      /*
+       * بلا موازنة مُدخلة (صفر) ⇒ لا مقارنة ولا تجاوز: المالك يريد ألا يظهر أي
+       * إشعار موازنة قبل أن يكتب رقماً. المقارنة تبدأ فقط عند كتابة رقم أكبر من صفر.
+       */
+      status: budget <= 0 ? 'no-budget' : actual > budget ? 'over' : usage >= 85 ? 'warning' : 'ok',
     })
   }
   return {

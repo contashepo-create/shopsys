@@ -68,6 +68,8 @@ export function ProjectBudgetPage() {
     ok: { label: 'ضمن الموازنة', cls: 'text-emerald-600 bg-emerald-500/10 border-emerald-500/30' },
     warning: { label: 'اقترب من السقف', cls: 'text-amber-600 bg-amber-500/10 border-amber-500/30' },
     over: { label: 'تجاوز!', cls: 'text-rose-600 bg-rose-500/10 border-rose-500/30' },
+    // صفر = لا موازنة لهذه الفئة: لا مقارنة ولا تنبيه (قرار المالك 2026-10-21)
+    'no-budget': { label: 'بلا موازنة', cls: 'text-slate-500 bg-slate-500/10 border-slate-400/30' },
   } as const
 
   return (
@@ -75,7 +77,7 @@ export function ProjectBudgetPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-black text-slate-800 dark:text-white flex items-center gap-2"><Scale className="w-5 h-5 text-orange-500" /> موازنة المشروع والانحرافات</h1>
-          <p className="text-[12px] text-slate-500 mt-1">موازنة تقديرية لكل فئة تكلفة تُقارن بالفعلي أولاً بأول — تحذير عند 85٪ وتجاوز فوق 100٪</p>
+          <p className="text-[12px] text-slate-500 mt-1">موازنة تقديرية لكل فئة تكلفة تُقارن بالفعلي أولاً بأول — تحذير عند 85٪ وتجاوز فوق 100٪. الفئة التي تتركها صفراً لا تُقارن ولا تُصدر أي تنبيه في الجرس.</p>
         </div>
         <div className="flex items-center gap-2">
           <QuickSelect value={pid ?? ''} onChange={(e) => setProjectId(Number(e.target.value))} className={inputCls + ' !w-56'}>
@@ -116,9 +118,9 @@ export function ProjectBudgetPage() {
                     <td className="p-3">
                       <div className="w-28 mx-auto">
                         <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                          <div className={`h-full rounded-full ${r.status === 'over' ? 'bg-rose-500' : r.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, r.usagePercent)}%` }} />
+                          <div className={`h-full rounded-full ${r.status === 'over' ? 'bg-rose-500' : r.status === 'warning' ? 'bg-amber-500' : r.status === 'no-budget' ? 'bg-slate-400' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, r.usagePercent)}%` }} />
                         </div>
-                        <div className="text-[10px] text-center font-bold text-slate-500 mt-0.5">{r.usagePercent}٪</div>
+                        <div className="text-[10px] text-center font-bold text-slate-500 mt-0.5">{r.status === 'no-budget' ? '—' : `${r.usagePercent}٪`}</div>
                       </div>
                     </td>
                     <td className="p-3 text-center"><span className={`text-[11px] font-bold px-2 py-1 rounded-lg border ${ui.cls}`}>{ui.label}</span></td>
@@ -147,7 +149,7 @@ export function ProjectBudgetPage() {
             </Field>
           ))}
           <div className="rounded-xl bg-sky-500/10 border border-sky-500/30 p-3 text-[12px] font-bold text-sky-700 dark:text-sky-300">
-            الحفظ يستبدل الموازنة السابقة للمشروع بالكامل — أي تكلفة تُسجل في فئة بلا موازنة ستظهر «تجاوزاً» فوراً
+            الحفظ يستبدل الموازنة السابقة للمشروع بالكامل — اكتب رقماً في الفئة التي تريد رقابتها فتبدأ المقارنة فوراً، واتركها صفراً (أو فارغة) فلا تُقارن ولا تُصدر أي تنبيه
           </div>
           <DocOutcome>الأثر: لا قيد — الموازنة سقف رقابي يُقارن بالتكاليف الفعلية المرحَّلة على المشروع.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setEditOpen(false)}>إلغاء</Btn>
