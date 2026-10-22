@@ -16,6 +16,7 @@ import { formatMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { Btn, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 
 type HubConfig = {
@@ -61,6 +62,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   const { sales, customers, rentalInvoices, rentalContracts, trips, tripExpenses, vehicles, employees } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
+  const stampTax = useTaxBarcodeStamp()
   const Icon = cfg.icon
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -105,6 +107,8 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       taxInclusive: s.taxInclusive ?? setup.taxInclusive,
       settings: receipt,
     })
+    /* فاتورة بيع خدمية — تُطبع برمز زاتكا عند تفعيله (نفس فاتورة المبيعات العامة) */
+    stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
@@ -287,6 +291,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                       taxInclusive: false,
                       settings: receipt,
                     })
+                    stampTax(model, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor: totalForCustomer, taxMinor: t.totals.vatMinor })
                     printModelWithTemplate(model, cur, receipt, tpl)
                   }
                   return (

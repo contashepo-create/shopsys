@@ -15,6 +15,7 @@ import { buildReceiptModel, A4_STYLES, type PaperWidth, type InvoiceTemplate, ty
 import { renderReceiptHtml, printHtml, listSystemPrinters } from '../print/printReceipt.ts'
 import { PRINT_ROUTES } from '../../core/printers.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
@@ -73,9 +74,12 @@ export function PrintSettingsPage() {
     [setup.countryCode],
   )
 
+  /* المعاينة تعرض الرمز الضريبي أيضاً إن كان مفعلاً — وإلا ظنّ المالك أن
+     الإعدادات تلغيه لأن المعاينة (وهي مرآة الطباعة) تخرج بلا رمز. */
+  const stampTax = useTaxBarcodeStamp()
   const sampleModel = useMemo(() => {
     const totals = computeTotals(SAMPLE_LINES, 0, setup.vatPercent, setup.taxInclusive)
-    return buildReceiptModel({
+    const model = buildReceiptModel({
       invoiceNumber: 'S-0001',
       dateIso: new Date().toISOString(),
       lines: SAMPLE_LINES,
@@ -86,7 +90,9 @@ export function PrintSettingsPage() {
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
-  }, [receipt, setup.vatPercent, setup.taxInclusive])
+    stampTax(model, { dateIso: new Date().toISOString() })
+    return model
+  }, [receipt, setup.vatPercent, setup.taxInclusive, stampTax])
 
   // نفس HTML الذي سيخرج للطابعة — المعاينة صادقة 100٪
   const thermalHtml = useMemo(() => renderReceiptHtml(sampleModel, cur, receipt), [sampleModel, cur, receipt])

@@ -26,6 +26,7 @@ import { periodPresets, type Period } from '../../core/reports.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -68,6 +69,8 @@ export function TripsPage() {
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
+  /* فاتورة النقل للعميل مستند بيع ضريبي — رمز زاتكا عند تفعيله */
+  const stampTax = useTaxBarcodeStamp()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -175,7 +178,7 @@ export function TripsPage() {
 
     const buildNow = () => {
       const st = useAppStore.getState()
-      return buildReceiptModel({
+      const model = buildReceiptModel({
         invoiceNumber: t.tripNumber,
         refCode: t.tripNumber,
         dateIso: t.date,
@@ -197,6 +200,8 @@ export function TripsPage() {
         taxInclusive: false,
         settings: st.receipt,
       })
+      stampTax(model, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor, taxMinor })
+      return model
     }
     const tpl = receipt.defaultTemplate || 'a4'
     const model = buildNow()

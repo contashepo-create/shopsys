@@ -24,6 +24,7 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { RATE_TYPE_LABELS, EQUIPMENT_COST_LABELS, type RateType, type EquipmentCostKind } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -94,6 +95,8 @@ export function RentalContractsPage() {
 
   /* ─── فاتورة إيجار للعميل (طلب المالك): وثيقة استحقاق بشكل فاتورة البيع يسدّد منها المستأجر ─── */
   const printSwitches = usePrintSwitches()
+  /* فاتورة الإيجار الدورية مستند بيع ضريبي — رمز زاتكا عند تفعيله */
+  const stampTax = useTaxBarcodeStamp()
   const printPeriodicInvoice = (inv: RentalInvoice, c: RentalContract, templateHint?: InvoiceTemplate) => {
     const template: InvoiceTemplate = templateHint ?? (printSwitches.cashierPrint ? 'thermal' : 'a4')
     const rt = c.rateType ?? 'daily'
@@ -124,6 +127,7 @@ export function RentalContractsPage() {
         inv.notes || '',
       ].filter(Boolean).join(' · ') || undefined,
     })
+    stampTax(model, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
     const live = useAppStore.getState().receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({
@@ -168,6 +172,7 @@ export function RentalContractsPage() {
         ...(c.notes ? [c.notes] : []),
       ].join(' · ') || undefined,
     })
+    stampTax(model, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
     const live = useAppStore.getState().receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({

@@ -155,22 +155,20 @@ export function EinvoicePage() {
   })()
 
   /* تشخيص «لماذا لا يظهر الباركود؟» — كل شرط على حدة بدل تخمين المستخدم.
-     نفس شروط maybeTaxBarcode تماماً (الترخيص + تشغيل الإصدار + الرقم + الاسم + المفتاح + الاتصال). */
+     نفس شروط maybeTaxBarcode تماماً (الترخيص + تشغيل الإصدار + الرقم + الاسم + المفتاح + الاتصال).
+     نعرض كل الموانع مجتمعةً لا أولها فقط: تعديل شرط قد يكشف آخر كان مخفياً. */
   const sellerNameReady = setup.shopName.trim().length > 0
   const taxNumberValid = saActive ? isValidSaVatNumber(einvoice.taxNumber) : isValidEgTaxNumber(einvoice.taxNumber)
   const barcodePolicy = saActive
     ? zatcaQrPolicy({ featureActive: einvoice.enabled === true, online: browserOnline, printEnabled: einvoice.printZatcaQr })
     : egTaxBarcodePolicy({ featureActive: einvoice.enabled === true, printEnabled: einvoice.printZatcaQr })
-  const barcodeWillPrint = barcodePolicy.printQr && taxNumberValid && sellerNameReady
-  const barcodeBlocker = !einvoice.enabled
-    ? 'الإصدار الإلكتروني الرسمي غير مشغَّل — فعّل «تشغيل الإصدار الإلكتروني الرسمي» في بطاقة بيانات الممول أدناه، ثم أعد الطباعة.'
-    : !barcodePolicy.printQr
-      ? barcodePolicy.reasonAr
-      : !taxNumberValid
-        ? (saActive ? 'الرقم الضريبي غير مطابق لصيغة زاتكا (15 رقماً يبدأ وينتهي بـ3).' : 'رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام.')
-        : !sellerNameReady
-          ? 'اسم المنشأة فارغ — عرّفه من «بيانات المنشأة» ليظهر في رمز زاتكا.'
-          : null
+  const barcodeBlockers: string[] = []
+  if (!einvoice.enabled) barcodeBlockers.push('الإصدار الإلكتروني الرسمي غير مشغَّل — فعّله من بطاقة بيانات الممول أدناه (أو بالزر بجانب التشخيص) ثم أعد طباعة الفاتورة.')
+  if (saActive && !browserOnline) barcodeBlockers.push('لا اتصال بالإنترنت — سياسة زاتكا الحالية تشترط اتصالاً وقت الطباعة.')
+  if (!einvoice.printZatcaQr) barcodeBlockers.push('خيار «طباعة الرمز الضريبي» موقوف — فعّله من بطاقة بيانات الممول.')
+  if (!taxNumberValid) barcodeBlockers.push(saActive ? 'الرقم الضريبي غير مطابق لصيغة زاتكا (15 رقماً يبدأ وينتهي بـ3) — صحّحه من «بيانات المنشأة».' : 'رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام — صحّحه من «بيانات المنشأة».')
+  if (!sellerNameReady) barcodeBlockers.push('اسم المنشأة فارغ — عرّفه من «بيانات المنشأة» ليظهر في رمز البائع.')
+  const barcodeWillPrint = barcodePolicy.printQr && barcodeBlockers.length === 0
 
   const recentSales = [...sales].reverse().slice(0, 20)
 
@@ -179,17 +177,34 @@ export function EinvoicePage() {
       <div className="anim-up flex items-center gap-2 flex-wrap">
         {saActive && (
           <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-emerald-500/10 text-emerald-600 flex items-center gap-1">
-            <CheckCircle2 size={12} /> زاتكا السعودية مفعلة
+            <CheckCircle2 size={12} /> زاتكا السعودية مرخّصة
           </span>
         )}
         {egActive && (
           <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-emerald-500/10 text-emerald-600 flex items-center gap-1">
-            <CheckCircle2 size={12} /> البوابة المصرية مفعلة
+            <CheckCircle2 size={12} /> البوابة المصرية مرخّصة
           </span>
         )}
-        <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-rose-500/10 text-rose-500">
-          🔒 تعديل الفواتير موقوف — التصحيح بإشعار دائن/مدين فقط
-        </span>
+        {/* التمييز الحاسم: «مرخّصة» ≠ «مشغَّلة» — الترخيص يفتح الشاشة، لكن الطباعة
+            تتطلب مفتاح «تشغيل الإصدار الإلكتروني الرسمي» أيضاً. هذا الالتباس تحديداً
+            كان يدفع المستخدم للاعتقاد بأن كل شيء مفعّل ثم لا يجد باركوداً. */}
+        {(saActive || egActive) && !einvoice.enabled && (
+          <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-amber-500/10 text-amber-600 flex items-center gap-1">
+            ⏸ تشغيل الإصدار الرسمي موقوف — الرمز لن يُطبع
+          </span>
+        )}
+        {/* القفل مرتبط بـ«تشغيل الإصدار الرسمي + وجود رقم ضريبي» لا بالترخيص وحده —
+            نفس شرط electronicInvoiceLockActive. عرض القفل قبل التشغيل كان يوهم
+            المالك بأن الفواتير مقفلة وهو لم يفعّل شيئاً بعد. */}
+        {einvoice.enabled === true && einvoice.taxNumber.trim() ? (
+          <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-rose-500/10 text-rose-500">
+            🔒 تعديل الفواتير موقوف — التصحيح بإشعار دائن/مدين فقط
+          </span>
+        ) : (
+          <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-slate-500/10 text-slate-500">
+            ✎ تعديل الفواتير متاح — القفل يبدأ بتشغيل الإصدار الرسمي
+          </span>
+        )}
       </div>
 
       {/* سياسة المرحلة الثانية (زاتكا): الربط يتطلب إنترنت — بلا اتصال لا يُطبع الرمز الضريبي */}
@@ -207,8 +222,13 @@ export function EinvoicePage() {
         <div className="flex flex-wrap items-center gap-2">
           <QrCode size={16} className={barcodeWillPrint ? 'text-emerald-600' : 'text-amber-600'} />
           <b className={barcodeWillPrint ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
-            {barcodeWillPrint ? 'الرمز الضريبي سيُطبع على الفاتورة القادمة ✓' : 'الرمز الضريبي لن يُطبع الآن'}
+            {barcodeWillPrint ? 'الرمز الضريبي سيُطبع على فواتير المبيعات القادمة ✓' : 'الرمز الضريبي لن يُطبع الآن'}
           </b>
+          {!einvoice.enabled && (
+            <Btn onClick={() => { updateEinvoice({ enabled: true }); toast.show('شُغِّل الإصدار الإلكتروني الرسمي — أعد طباعة الفاتورة ليظهر الرمز ✓') }}>
+              تشغيل الإصدار الإلكتروني الآن
+            </Btn>
+          )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-slate-600 dark:text-slate-300">
           <span>{einvoice.enabled === true ? '✓' : '✗'} تشغيل الإصدار الإلكتروني الرسمي</span>
@@ -217,8 +237,12 @@ export function EinvoicePage() {
           <span>{einvoice.printZatcaQr ? '✓' : '✗'} خيار طباعة الرمز الضريبي</span>
           {saActive && <span className={browserOnline ? '' : 'text-amber-600 font-bold'}>{browserOnline ? '✓' : '✗'} اتصال الإنترنت (تشترطه سياسة زاتكا الحالية)</span>}
         </div>
-        {barcodeBlocker && <div className="text-amber-700 dark:text-amber-400 font-bold">السبب: {barcodeBlocker}</div>}
-        {barcodeWillPrint && <div className="text-slate-500 dark:text-slate-400">ينطبق على الطباعة من الكاشير ومحرر فاتورة المبيعات وأي إعادة طباعة من قائمة الفواتير.</div>}
+        {barcodeBlockers.length > 0 && (
+          <div className="text-amber-700 dark:text-amber-400 font-bold space-y-1">
+            {barcodeBlockers.map((reason) => <div key={reason}>• {reason}</div>)}
+          </div>
+        )}
+        {barcodeWillPrint && <div className="text-slate-500 dark:text-slate-400">ينطبق على الكاشير ومحرر فاتورة المبيعات والمرتجعات ومراكز فواتير الأنشطة وأي إعادة طباعة من قائمة الفواتير.</div>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

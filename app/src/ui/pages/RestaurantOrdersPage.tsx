@@ -16,6 +16,7 @@ import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml, printToRoute } from '../print/printReceipt.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
@@ -24,6 +25,8 @@ export function RestaurantOrdersPage() {
   const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, markKitchenFired, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, mergeRestaurantOrders, getEffectivePrice } = useDataStore()
   const { setup, receipt, printerProfiles } = useAppStore()
   const toast = useToast()
+  /* إيصال العميل للمطعم فاتورة بيع — يجب أن يحمل رمز زاتكا عند تفعيله */
+  const stampTax = useTaxBarcodeStamp()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   // سد فجوة النشاط #14 (Gap 1): حذف/تقليل صنف بعد إرساله للمطبخ يتطلب اعتماد مشرف
@@ -175,6 +178,7 @@ export function RestaurantOrdersPage() {
           taxInclusive: setup.taxInclusive,
           settings: receipt,
         })
+        stampTax(model, { dateIso: sale.date, invoiceNumber: sale.invoiceNumber, totalMinor: sale.totals.totalMinor, taxMinor: sale.totals.taxMinor })
         printToRoute(renderReceiptHtml(model, cur, receipt), printerProfiles.clientReceipt, { silent: receipt.silentPrint })
       }
       if (printerProfiles.kitchenTicket.autoPrint)

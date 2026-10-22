@@ -145,15 +145,26 @@ ok(zatcaQrPolicy({ featureActive: true, online: true, printEnabled: true }).prin
    السبب: محرر «فاتورة مبيعات جديدة» كان يبني نموذج الطباعة بلا رمز إطلاقاً —
    الكاشير وقائمة الفواتير فقط هما من يطلبان الرمز. هذه البوابة تمنع رجوع العيب. */
 const readSource = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
-for (const [label, path] of [
-  ['الكاشير', '../src/ui/pages/PosPage.tsx'],
-  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx'],
+for (const [label, path, token] of [
+  ['الكاشير', '../src/ui/pages/PosPage.tsx', 'maybeTaxBarcode'],
+  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx', 'maybeTaxBarcode'],
+  ['محرر فاتورة المبيعات', '../src/ui/pages/AdvancedSalesInvoicePage.tsx', 'stampTax('],
+  /* مستندات المبيعات الأخرى — كلها كانت تطبع بلا رمز قبل 2026-10-22 */
+  ['مرتجع مبيعات (إشعار دائن)', '../src/ui/pages/SaleReturnsPage.tsx', 'stampTax('],
+  ['مراكز فواتير الأنشطة الخدمية', '../src/ui/pages/ActivityInvoicesHubs.tsx', 'stampTax('],
+  ['فواتير المقاولات', '../src/ui/pages/ContractingInvoicesPage.tsx', 'stampTax('],
+  ['فواتير الإيجار الدورية', '../src/ui/pages/RentalContractsPage.tsx', 'stampTax('],
+  ['فواتير النقل', '../src/ui/pages/TripsPage.tsx', 'stampTax('],
+  ['إيصال عميل المطعم', '../src/ui/pages/RestaurantOrdersPage.tsx', 'stampTax('],
+  ['معاينة إعدادات الطباعة', '../src/ui/pages/PrintSettingsPage.tsx', 'stampTax('],
 ]) {
-  ok(readSource(path).includes('maybeTaxBarcode'), `${label}: مسار الطباعة يطلب الرمز الضريبي`)
+  const source = readSource(path)
+  ok(source.includes(token), `${label}: مسار الطباعة يطلب الرمز الضريبي (${token})`)
 }
 const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
-ok(advSalesSrc.includes('withTaxBarcode') && advSalesSrc.includes('taxBarcodeArgs'), 'محرر فاتورة المبيعات: يلحق الرمز الضريبي بنموذج الطباعة')
+ok(advSalesSrc.includes('useTaxBarcodeStamp'), 'محرر فاتورة المبيعات: يستخدم خطاف الختم الموحد')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
+ok(readSource('../src/ui/hooks/useTaxBarcodeStamp.ts').includes('einvoice.enabled === true'), 'خطاف الختم يربط الرمز بتشغيل الإصدار الإلكتروني — لا يُطبع بلا تشغيل')
 
 /* ─── الإعدادات الافتراضية ─── */
 ok(DEFAULT_EINVOICE_SETTINGS.taxNumber === '' && DEFAULT_EINVOICE_SETTINGS.printZatcaQr === true, 'الافتراضيات سليمة')

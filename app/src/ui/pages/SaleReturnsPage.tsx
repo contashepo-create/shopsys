@@ -22,6 +22,7 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -47,6 +48,8 @@ export function SaleReturnsPage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
+  /* إشعار المرتجع مستند ضريبي (إشعار دائن) — يُطبع برمز زاتكا مثل الفاتورة الأصلية */
+  const stampTax = useTaxBarcodeStamp()
 
   /* ─── حالة المعالج ─── */
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -222,6 +225,8 @@ export function SaleReturnsPage() {
       settings: receipt,
     })
     model.docTitle = 'مرتجع مبيعات'
+    /* الرمز الضريبي لإشعار الدائن: إجمالي المرتجع وضريبته بتاريخه هو */
+    stampTax(model, { dateIso: r.date, invoiceNumber: r.returnNumber, totalMinor: r.totals.totalMinor, taxMinor: r.totals.taxMinor })
     model.paidMinor = r.totals.totalMinor
     model.remainingMinor = 0
     const cashPart = returnCashRefundMinor(r)
