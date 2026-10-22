@@ -331,6 +331,8 @@ export function ContractingInvoicesPage() {
                           <button onClick={() => {
                             const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
                             const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? setup.vatPercent, taxInclusive: s.taxInclusive ?? setup.taxInclusive, settings: receipt })
+                            /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
+                            stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
                             shareDocPdfViaWhatsapp({ model, cur, settings: receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: setup.shopName, toast })
                           }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Send size={13} /></button>
                           <button onClick={() => openSalesInvoiceWindow(s.id)} data-contracting-invoice-review title="مراجعة وتعديل الفاتورة في نافذتها الكاملة" className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Pencil size={13} /></button>
