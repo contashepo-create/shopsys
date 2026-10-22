@@ -15,6 +15,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { buildVehicleReport, vehicleReportCategories, type VehicleReportKind } from '../../core/vehicleReports.ts'
 import { vehicleComplianceWarnings, vehicleFuelStats, fuelDeviationWarnings, VEHICLE_COST_LABELS, type VehicleCostKind } from '../../core/logistics.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const VEHICLE_TYPES = ['تريلا', 'قلاب', 'دينا', 'سطحة', 'براد', 'صهريج', 'أخرى']
 const VEHICLE_COST_KINDS: VehicleCostKind[] = ['fuel', 'maintenance', 'parts', 'tolls', 'other']
@@ -46,7 +47,7 @@ export function FleetPage() {
       nameAr: quickDrvName.trim(),
       phone: quickDrvPhone.trim(),
       jobTitle: 'سائق نقل ثقيل',
-      hireDate: new Date().toISOString().slice(0, 10),
+      hireDate: todayLocalIso(),
       baseSalaryMinor: quickDrvSalary.trim() ? toMinor(quickDrvSalary, cur.decimals) : 0,
       allowancesMinor: 0,
       active: true,

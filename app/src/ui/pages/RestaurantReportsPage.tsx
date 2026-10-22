@@ -16,6 +16,7 @@ import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrin
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
 
@@ -67,7 +68,7 @@ export function RestaurantReportsPage() {
 
   /* فترة التقرير: الأوامر والفواتير والإنتاج تُفلتر بالتاريخ */
   const inPeriod = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayLocalIso()
     const month = today.slice(0, 7)
     return (dateIso: string) => {
       if (period === 'all') return true
@@ -232,7 +233,7 @@ export function RestaurantReportsPage() {
                 'الصنف': nameOf(d.itemId), 'وصفة مطبخ': d.hasRecipe ? 'نعم' : 'جاهز', 'الكمية': d.soldQty,
                 'الإيراد': fmt(d.revenueMinor), 'التكلفة': fmt(d.costMinor), 'الربح': fmt(d.profitMinor),
                 'الهامش٪': d.marginPercent == null ? '' : d.marginPercent,
-              })), `أطباق-المطعم-${new Date().toISOString().slice(0, 10)}.csv`)}
+              })), `أطباق-المطعم-${todayLocalIso()}.csv`)}
               className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
             >
               ⬇ CSV
@@ -306,7 +307,7 @@ export function RestaurantReportsPage() {
                   'الحالة': STATUS_LABELS[o.status], 'الفَتح': o.openedAt.slice(0, 16).replace('T', ' '),
                   'القفل': o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '',
                   'القيمة': fmt(o.lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor * (100 - l.discountPercent) / 100), 0)),
-                })), `أوامر-المطعم-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `أوامر-المطعم-${todayLocalIso()}.csv`)}
                 className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
               >
                 ⬇ CSV
@@ -362,7 +363,7 @@ export function RestaurantReportsPage() {
                   'تشغيلات': p.batches, 'الكمية المنتجة': p.producedQty,
                   'خامات': fmt(p.ingredientsCostMinor), 'مصاريف': fmt(p.overheadMinor),
                   'الإجمالي': fmt(p.totalCostMinor), 'تكلفة الوحدة': p.producedQty > 0 ? fmt(Math.round(p.totalCostMinor / p.producedQty)) : '',
-                })), `إنتاج-المطعم-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `إنتاج-المطعم-${todayLocalIso()}.csv`)}
                 className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
               >
                 ⬇ CSV

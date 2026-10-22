@@ -147,6 +147,7 @@ import {
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
 import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
+import { localIsoTimestamp, todayLocalIso } from '../core/time.ts'
 
 export interface Warehouse {
   id: number
@@ -1482,6 +1483,12 @@ export interface SaleInvoice {
   dueDate?: string
   notes?: string
   /**
+   * حمولة الرمز الضريبي (TLV/EGTAX1) كما وُلدت عند أول طباعة للفاتورة.
+   * إعادة الطباعة تقرأ هذه الحمولة لا تعيد التوليد — فتظل أرقام الرمز واسم
+   * المنشأة والرقم الضريبي كما كانت لحظة الإصدار لو تغيّرت الإعدادات لاحقاً.
+   */
+  taxQrPayload?: string
+  /**
    * تحصيل الفاتورة بعملة أجنبية: المبلغ الأجنبي وسعر صرفه لحظة التحصيل.
    * الدفتر يبقى أحادي العملة — القيد كله بعملة الدفتر وهذه الساق توثيق على المستند.
    */
@@ -1540,6 +1547,8 @@ export interface SaleReturn {
   crossShiftNote?: string
   /** المراكز العامة الموجودة في مصروفات الفاتورة الأصلية */
   costCenterIds?: number[]
+  /** حمولة الرمز الضريبي كما وُلدت عند أول طباعة لإشعار الدائن — إعادة الطباعة تقرأها */
+  taxQrPayload?: string
 }
 
 /** مستند مقايضة ذهب (الصاغة): بيع مشغول جديد + شراء كسر العميل بعملية واحدة — الفرق النقدي فقط بالخزينة */
@@ -2362,6 +2371,10 @@ interface DataState {
    * ④ يتولد قيد جديد متوازن — رقم الفاتورة والمرجع يبقيان كما هما.
    * ملاحظة: الحارس saleEditBlocks يمنع تعديل فواتير عليها مستندات لاحقة.
    */
+  /** تجميد حمولة الرمز الضريبي على فاتورة (مرة واحدة) — لا يغيّر أرقام المستند */
+  attachSaleTaxQr: (saleId: number, payload: string) => void
+  /** تجميد حمولة الرمز على إشعار مرتجع */
+  attachSaleReturnTaxQr: (returnId: number, payload: string) => void
   editSale: (args: {
     saleId: number
     lines: CartLine[]
@@ -5196,7 +5209,7 @@ export const useRawDataStore = create<DataState>()(
         const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
         if (!request) throw new Error('طلب الإجازة غير موجود')
         if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const decided: LeaveRequest = { ...request, status: approve ? 'approved' : 'rejected', decidedBy: by || 'المالك', decidedAt: now }
         /* عند الاعتماد: تُعلَّم أيام الإجازة في شبكة الحضور تلقائياً (فوق أي «حاضر» سابق) */
         if (approve) {
@@ -5482,7 +5495,7 @@ export const useRawDataStore = create<DataState>()(
       setPendingPartOrderStatus: (id, status) => set((state) => {
         const order = state.pendingPartOrders.find((o) => o.id === id)
         if (!order) throw new Error('الطلب غير موجود')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         return {
           pendingPartOrders: state.pendingPartOrders.map((o) => (o.id === id
             ? { ...o, status, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
@@ -5580,7 +5593,7 @@ export const useRawDataStore = create<DataState>()(
         if (accessErrors.length) throw new Error(accessErrors.join(' — '))
         const entryId = nextId(state.journal)
         const voucherId = nextId(state.vouchers)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const voucherNumber = `PV-${String(voucherId).padStart(4, '0')}`
         const description = `سداد مصروف مستحق — ${payable.beneficiaryName}: ${payable.description}`
         const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `${description} (${voucherNumber})`, sourceType: 'payment_voucher', sourceId: voucherId, lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
@@ -5615,7 +5628,7 @@ export const useRawDataStore = create<DataState>()(
       advancedInvoiceDrafts: [],
       upsertAdvancedInvoiceDraft: (input) => {
         const state = get()
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const existing = state.advancedInvoiceDrafts.find((draft) => draft.id === input.id)
         const draft: AdvancedInvoiceDraft = { ...input, createdAt: existing?.createdAt ?? input.createdAt ?? now, updatedAt: now }
         set({ advancedInvoiceDrafts: [...state.advancedInvoiceDrafts.filter((row) => row.id !== draft.id), draft] })
@@ -5712,7 +5725,7 @@ export const useRawDataStore = create<DataState>()(
         const createdWithDetail = { ...created }
         const lines = buildOpeningDeltaEntry('item_stock', openingValueMinor, `${OPENING_KIND_LABELS.item_stock} — ${item.nameAr}`)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -5764,7 +5777,7 @@ export const useRawDataStore = create<DataState>()(
             const delta = newVal - oldVal
             const entryLines = buildOpeningDeltaEntry('item_stock', delta, `${OPENING_KIND_LABELS.item_stock} — ${current.nameAr} (تعديل بطاقة)`)
             const entryId = nextId(state.journal)
-            const now = new Date().toISOString()
+            const now = localIsoTimestamp()
             const entry: JournalEntry = {
               id: entryId,
               entryNumber: entryId,
@@ -6749,12 +6762,12 @@ export const useRawDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
-        const systemDate = new Date().toISOString().slice(0, 10)
+        const systemDate = todayLocalIso()
         const chosenDate = (args.documentDate ?? '').slice(0, 10)
         if (chosenDate && !/^\d{4}-\d{2}-\d{2}$/.test(chosenDate)) throw new Error('تاريخ الفاتورة غير صالح')
         // يُسمح بتأريخ الفاتورة بيوم سابق (فواتير متأخرة الإدخال) ولا يُسمح بالمستقبل.
         // المقارنة بيوم إضافي لأن ساعة الجهاز محلية وتاريخ النظام بتوقيت UTC.
-        const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+        const tomorrow = todayLocalIso(new Date(Date.now() + 86_400_000))
         if (chosenDate && chosenDate > tomorrow) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
         const postingDate = chosenDate || systemDate
         if (args.dueDate && args.dueDate < postingDate) throw new Error('تاريخ استحقاق البيع لا يسبق تاريخ الترحيل')
@@ -6805,7 +6818,9 @@ export const useRawDataStore = create<DataState>()(
         assertBalanced(entryLines)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
-        const stamp = new Date().toISOString()
+        /* الختم بالتوقيت المحلي: تاريخ القيد/الفاتورة = يوم المستخدم، والوقت
+           المعروض هو وقته لا وقت UTC (كان 01:00 يُقيَّد 23:00 من اليوم السابق). */
+        const stamp = localIsoTimestamp()
         const now = postingDate === stamp.slice(0, 10) ? stamp : `${postingDate}T${stamp.slice(11)}`
         const invoiceNumber = `S-${String(saleId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('SAL', now, usedRefCodes(state))
@@ -7042,7 +7057,7 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const returnNumber = `R-${String(returnId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('SRT', now, usedRefCodes(state))
 
@@ -7305,7 +7320,7 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101', inputVatShare, supplierValue)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const returnNumber = `PR-${String(returnId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('PRT', now, usedRefCodes(state))
         const entry: JournalEntry = {
@@ -7401,7 +7416,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const result = computeStocktake(counts)
         const stocktakeId = nextId(state.stocktakes)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const stocktakeNumber = `ST-${String(stocktakeId).padStart(4, '0')}`
 
         let entryId: number | null = null
@@ -7480,7 +7495,7 @@ export const useRawDataStore = create<DataState>()(
 
         const wastageId = nextId(state.wastages)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const wastageNumber = `WST-${String(wastageId).padStart(4, '0')}`
         const entryLines = buildWastageEntry(lines, wastageNumber)
         const entry: JournalEntry = {
@@ -7554,7 +7569,7 @@ export const useRawDataStore = create<DataState>()(
 
         const consumptionId = nextId(state.consumptions)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const consumptionNumber = `CNS-${String(consumptionId).padStart(4, '0')}`
         const entryLines = buildConsumptionEntry(lines, expenseAccount, consumptionNumber)
         const entry: JournalEntry = {
@@ -7641,7 +7656,7 @@ export const useRawDataStore = create<DataState>()(
             : undefined,
         )
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -7752,7 +7767,7 @@ export const useRawDataStore = create<DataState>()(
           return
         }
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -7790,7 +7805,7 @@ export const useRawDataStore = create<DataState>()(
         if (amountMinor > ceiling) {
           throw new Error(`أقصى مقاصة ممكنة ${(ceiling / 100).toFixed(2)} — دين العميل ${(customerBalance / 100).toFixed(2)} ومستحق المورد ${(supplierBalance / 100).toFixed(2)}`)
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const date = (args.date ?? now).slice(0, 10)
         const id = nextId(state.partyOffsets)
         const entryId = nextId(state.journal)
@@ -7870,7 +7885,7 @@ export const useRawDataStore = create<DataState>()(
         // 3) قيد الفرق (يضرب 5112 إجبارياً — درس عجز الـ5,000 المتبخر في mobileshop)
         const variance = settlementVariance(input)
         const entryLines = buildSettlementEntry(input)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.settlements)
         const doc: SettlementDoc = {
           id,
@@ -7971,7 +7986,7 @@ export const useRawDataStore = create<DataState>()(
           const doc: ExchangeDoc = {
             id,
             exchangeNumber: `EXC-${String(id).padStart(4, '0')}`,
-            date: new Date().toISOString(),
+            date: localIsoTimestamp(),
             originalSaleId: sale.id,
             returnId: ret.id,
             newSaleId: newSale.id,
@@ -8287,7 +8302,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع المرتبط بالسند غير موجود')
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const transactionAt = args.date ? `${args.date}T${now.slice(11)}` : now
         const prefix = args.kind === 'receipt' ? 'RV' : args.kind === 'payment' ? 'PV' : 'TV'
         const voucherNumber = `${prefix}-${String(voucherId).padStart(4, '0')}`
@@ -8411,7 +8426,7 @@ export const useRawDataStore = create<DataState>()(
         ]
         const advId = nextId(state.employeeAdvances)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
         const entry: JournalEntry = {
           id: entryId,
@@ -8461,7 +8476,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const meaningful = args.lines.filter((l) => l.debit !== 0 || l.credit !== 0)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -8573,7 +8588,7 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         const newId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const reversal: JournalEntry = {
           id: newId,
           entryNumber: newId,
@@ -8655,7 +8670,7 @@ export const useRawDataStore = create<DataState>()(
         const returnDocs = state.saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? state.sales.find((s) => s.id === r.saleId)?.treasury) }))
         const variance = summarizeShift(shift, saleDocs, returnDocs).varianceMinor
         if (variance === null || variance === 0) throw new Error('لا فرق في هذه الوردية للتسوية')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const label = `وردية #${shift.id}`
 
         if (args.mode === 'advance') {
@@ -8702,6 +8717,12 @@ export const useRawDataStore = create<DataState>()(
         return updated
       },
 
+      attachSaleTaxQr: (saleId, payload) => set((state) => ({
+        sales: state.sales.map((sale) => (sale.id === saleId && !sale.taxQrPayload ? { ...sale, taxQrPayload: payload } : sale)),
+      })),
+      attachSaleReturnTaxQr: (returnId, payload) => set((state) => ({
+        saleReturns: state.saleReturns.map((ret) => (ret.id === returnId && !ret.taxQrPayload ? { ...ret, taxQrPayload: payload } : ret)),
+      })),
       editSale: (args) => {
         const state = get()
         // ⛔ سياسة المالك: الفاتورة الضريبية الإلكترونية مفعلة ⇒ لا تعديل — إشعار دائن/مدين فقط
@@ -8788,7 +8809,7 @@ export const useRawDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
-        if (args.dueDate && args.dueDate < new Date().toISOString().slice(0, 10)) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ التعديل')
+        if (args.dueDate && args.dueDate < todayLocalIso()) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ التعديل')
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('الفاتورة محصلة بالكامل ولا تحتاج تاريخ استحقاق')
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
@@ -8853,7 +8874,7 @@ export const useRawDataStore = create<DataState>()(
         }
         newEntryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury))
         assertBalanced(newEntryLines)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
 
         // ⑤ قيد عكس القيد القديم + القيد الجديد (سجل تدقيق كامل — لا حذف أبداً)
         const oldEntry = state.journal.find((e) => e.id === sale.journalEntryId)
@@ -9043,7 +9064,7 @@ export const useRawDataStore = create<DataState>()(
         })
         newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: expense.payableAccountCode ?? '2117', costCenterId: expense.costCenterId ?? null, taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
         assertBalanced(newEntryLines)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
 
         // إصلاح (مراجعة المالك 2026-10-01): سطور الفاتورة المعدلة كانت تُبنى من الصفر
         // فتضيع مخازن السطور وضريبتها وكميات الطلب/المرفوض — تُحفظ الآن من المحرر
@@ -10030,7 +10051,7 @@ export const useRawDataStore = create<DataState>()(
             get().addEmployee({
               ...EMPTY_EXTENDED,
               nameAr: row.nameAr, phone: row.phone, jobTitle: row.jobTitle, roleId: null,
-              hireDate: row.hireDate || new Date().toISOString().slice(0, 10),
+              hireDate: row.hireDate || todayLocalIso(),
               baseSalaryMinor: row.baseSalaryMinor, allowancesMinor: row.allowancesMinor,
               active: true, notes: row.notes,
             })
@@ -10189,7 +10210,7 @@ export const useRawDataStore = create<DataState>()(
 
         const runId = nextId(state.payrollRuns)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const runNumber = `SAL-${String(runId).padStart(4, '0')}`
 
         const entry: JournalEntry = {
@@ -10326,7 +10347,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId(state.employeeDeductions)
         const ded: EmployeeDeduction = {
           id, dedNumber: `DED-${String(id).padStart(4, '0')}`, employeeId: args.employeeId,
-          date: new Date().toISOString(), amountMinor: args.amountMinor, recoveredMinor: 0,
+          date: localIsoTimestamp(), amountMinor: args.amountMinor, recoveredMinor: 0,
           reason: args.reason.trim(), notes: args.notes?.trim() ?? '',
         }
         // لا قيد الآن — الخصم يتحقق محاسبياً عند المسير (يخفض 5102 بطريقة صافي التكلفة)
@@ -10376,7 +10397,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId(state.advanceRepayments)
         const repayNumber = `ADR-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `سداد نقدي لسلفة — ${emp.nameAr} (${repayNumber})`,
@@ -10405,7 +10426,7 @@ export const useRawDataStore = create<DataState>()(
       closeFiscalYear: (fy, allYears) => {
         const state = get()
         // ① تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
-        const errors = validateYearClose(fy, allYears, new Date().toISOString().slice(0, 10))
+        const errors = validateYearClose(fy, allYears, todayLocalIso())
         if (errors.length) throw new Error(errors.join(' — '))
         // ② لا يُقفل مرتين: قيد إقفال سابق **غير معكوس** لنفس السنة؟
         // (إعادة الفتح تعكس قيد الإقفال — بعدها يجوز إقفال جديد بالأرقام المصححة)
@@ -10419,7 +10440,7 @@ export const useRawDataStore = create<DataState>()(
         const result = buildYearClosingLines(state.journal.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId,
           date: fy.endDate, // قيد الإقفال بتاريخ آخر يوم في السنة (المنهجية العالمية)
@@ -10577,7 +10598,7 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         const valueMinor = redeemValue(points, loyalty)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `استبدال ${points} نقطة ولاء — ${cust.nameAr}`,
@@ -10747,7 +10768,7 @@ export const useRawDataStore = create<DataState>()(
           firstDueDate: args.firstDueDate,
         })
         const planId = nextId(state.installmentPlans)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const planNumber = `INS-${String(planId).padStart(4, '0')}`
         const customerName = state.customers.find((c) => c.id === args.customerId)?.nameAr ?? ''
 
@@ -10830,12 +10851,12 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const plan = state.installmentPlans.find((p) => p.id === planId)
         if (!plan) throw new Error('خطة الأقساط غير موجودة')
-        const progress = planProgress(plan.items, new Date().toISOString().slice(0, 10))
+        const progress = planProgress(plan.items, todayLocalIso())
         if (progress.finished) throw new Error('الخطة مسددة بالكامل')
         if (amountMinor > progress.remainingMinor) {
           throw new Error(`المبلغ أكبر من المتبقي على الخطة (${progress.remainingMinor})`)
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         // 1) توزيع الدفعة على الأقساط الأقدم أولاً (نواة خالصة)
         const { items } = applyPayment(plan.items, amountMinor, now)
         // 2) قيد التحصيل المتوازن: خزينة ← عملاء
@@ -10920,7 +10941,7 @@ export const useRawDataStore = create<DataState>()(
         const totals = totalsProbe
         const tripId = nextId(state.trips)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const tripNumber = `TR-${String(tripId).padStart(4, '0')}`
         const entryLines = buildTripEntry(totals, args.input.payment, tripNumber, args.treasury ?? '1101', args.paidMinor)
 
@@ -11051,7 +11072,7 @@ export const useRawDataStore = create<DataState>()(
             guardCreditLimit(get(), args.customerId, newDue - oldDue, args.creditLimitOverrideBy)
           }
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         let nextJournal = [...state.journal]
         // 1) عكس القيد القديم للنقلة
         const oldEntry = nextJournal.find((e) => e.id === existing.journalEntryId)
@@ -11235,7 +11256,7 @@ export const useRawDataStore = create<DataState>()(
         const treasury = args.treasury ?? '1101'
         const expId = nextId(state.tripExpenses)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const expenseNumber = `TRE-${String(expId).padStart(4, '0')}`
         const lines = buildStandaloneTripExpenseEntry({
           amountMinor,
@@ -11354,7 +11375,7 @@ export const useRawDataStore = create<DataState>()(
         const oldEntry = state.journal.find((e) => e.id === exp.journalEntryId)
         if (!oldEntry) throw new Error('قيد المصروف غير موجود')
         const revId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const revEntry: JournalEntry = {
           id: revId,
           entryNumber: revId,
@@ -11425,7 +11446,7 @@ export const useRawDataStore = create<DataState>()(
         const unsettled = state.driverDues.filter((d) => d.driverId === driverId && !d.settled)
         const total = unsettled.reduce((s2, d) => s2 + d.amountMinor, 0)
         const lines = buildDriverSettlementEntry(total, driver.nameAr, treasury) // يرمي لو صفر
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -11460,7 +11481,7 @@ export const useRawDataStore = create<DataState>()(
         if (!(amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
         const treasury = args.treasury ?? '1101'
         if (!state.treasuries.some((t) => t.code === treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const date = args.date ?? now.slice(0, 10)
         const entryId = nextId(state.journal)
         const costId = nextId(state.vehicleCostEntries)
@@ -11589,7 +11610,7 @@ export const useRawDataStore = create<DataState>()(
           revenueAccount: '4101', vatMinor: totals.taxMinor, cogsMinor: totals.cogsMinor,
           treasury: args.treasury ?? '1101', providerName: provider.nameAr,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const claimId = nextId(state.insuranceClaims)
         const entry: JournalEntry = {
@@ -11627,7 +11648,7 @@ export const useRawDataStore = create<DataState>()(
         })
         const totals = computeLabTotals(chosen.map((t) => t.priceMinor), 0, args.vatPercent)
         const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const orderId = nextId(state.labOrders)
         const orderNumber = `LAB-${String(orderId).padStart(4, '0')}`
         const entryLines = buildInsuredEntry({
@@ -11703,7 +11724,7 @@ export const useRawDataStore = create<DataState>()(
         const unsettled = state.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled)
         const total = unsettled.reduce((s2, c) => s2 + c.claimMinor, 0)
         const lines = buildClaimSettlementEntry(total, provider.nameAr, treasury) // يرمي لو صفر
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -11798,7 +11819,7 @@ export const useRawDataStore = create<DataState>()(
           guardCreditLimit(get(), args.customerId, totals.collectCreditMinor, args.creditLimitOverrideBy)
         }
         const contractId = nextId(state.rentalContracts)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const contractNumber = `RC-${String(contractId).padStart(4, '0')}`
         const entryLines = billingMode === 'reference'
           ? buildReferenceDepositEntry(totals.depositMinor, contractNumber, args.treasury ?? '1101')
@@ -11897,7 +11918,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const invId = nextId(state.rentalInvoices)
         const invoiceNumber = `RINV-${String(invId).padStart(4, '0')}`
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const customerName = (contract.customerId != null ? state.customers.find((c) => c.id === contract.customerId)?.nameAr : null) ?? 'عميل'
         const periodLabel = args.periodLabel.trim() || `دفعة دورية #${state.rentalInvoices.filter((x) => x.contractId === contract.id).length + 1}`
         const treasury = args.treasury ?? '1101'
@@ -11961,7 +11982,7 @@ export const useRawDataStore = create<DataState>()(
         if (!contract) throw new Error('العقد غير موجود')
         if (contract.status === 'closed') throw new Error('العقد مُقفل بالفعل')
 
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         let journal = state.journal
 
         // ترقية القرار 25: تسوية الاستخدام الفعلي (عدّاد للساعي، تاريخ إرجاع لليومي/الشهري)
@@ -12115,7 +12136,7 @@ export const useRawDataStore = create<DataState>()(
         if (borneBy === 'customer' && customerId == null) {
           throw new Error('تحميل المصروف على المستأجر يتطلب ربط المصروف بعقد لعميل مسجل')
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const costId = nextId(state.equipmentCosts)
         const label = EQUIPMENT_COST_LABELS[args.kind]
@@ -12291,7 +12312,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.payment !== 'cash' && labDueMinor > 0) {
           guardCreditLimit(get(), labDebtor?.customerId ?? patient.linkedCustomerId ?? null, labDueMinor, args.creditLimitOverrideBy)
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const orderId = nextId(state.labOrders)
         const orderNumber = `LAB-${String(orderId).padStart(4, '0')}`
         const labPaidMinor = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
@@ -12368,7 +12389,7 @@ export const useRawDataStore = create<DataState>()(
         }
         if (to === 'resulted' && !resultValue?.trim()) throw new Error('أدخل قيمة النتيجة أولاً')
         if (to === 'rejected' && !rejectionReason?.trim()) throw new Error('سبب رفض العينة مطلوب (انحلال دموي/متجلطة/كمية غير كافية…)')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const updatedTest: LabOrderTest = {
           ...test,
           status: to,
@@ -12399,7 +12420,7 @@ export const useRawDataStore = create<DataState>()(
         if (!test) throw new Error('الفحص ليس في هذا الطلب')
         if (!isCriticalFlag(test.resultFlag)) throw new Error('النتيجة ليست حرجة — لا حاجة لتوثيق إبلاغ')
         if (!by?.trim()) throw new Error('اسم مُستلم الإبلاغ مطلوب (الطبيب المعالج أو من ناب عنه)')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const updatedTest: LabOrderTest = { ...test, criticalAckAt: now, criticalAckBy: by.trim(), criticalAckNote: (note ?? '').trim() }
         const updated: LabOrder = { ...order, tests: order.tests.map((t) => (t.testId === testId ? updatedTest : t)) }
         set({ labOrders: state.labOrders.map((o) => (o.id === orderId ? updated : o)) })
@@ -12412,7 +12433,7 @@ export const useRawDataStore = create<DataState>()(
         const unpaid = state.labOrders.filter((o) => o.referrerId === referrerId && !o.commissionPaid && o.commissionMinor > 0)
         const total = unpaid.reduce((a, o) => a + o.commissionMinor, 0)
         const lines = buildCommissionPayoutEntry(total, referrer.nameAr, treasury) // يرمي لو صفر
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -12488,7 +12509,7 @@ export const useRawDataStore = create<DataState>()(
           clientName: q.clientName.trim(),
           clientId: q.clientId ?? null,
           titleAr: q.titleAr.trim(),
-          date: new Date().toISOString().slice(0, 10),
+          date: todayLocalIso(),
           validUntil: q.validUntil,
           lines: fullLines.filter((l) => l.descriptionAr.trim() && l.qty > 0),
           status: 'draft',
@@ -12561,7 +12582,7 @@ export const useRawDataStore = create<DataState>()(
           clientId: q.clientId ?? null, // الربط الإداري ينتقل مع التحويل — بلا أي أثر مالي
           contractValueMinor: netContractMinor,
           retentionPercent,
-          startDate: new Date().toISOString().slice(0, 10),
+          startDate: todayLocalIso(),
           notes: `متولد من ${q.quoteNumber}${quotationTotals(q.lines).taxMinor > 0 ? ' — قيمة العقد صافية بلا الضريبة' : ''}`,
         })
         // تحويل بضغطة: كل بنود العرض تنتقل جدولَ كميات للمشروع بأكوادها وتكاليفها التقديرية — بأسعار صافية
@@ -12591,7 +12612,7 @@ export const useRawDataStore = create<DataState>()(
         if (!state.employees.find((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
         if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
         const id = nextId(state.custodyFiles)
-        const openedAt = new Date().toISOString().slice(0, 10)
+        const openedAt = todayLocalIso()
         const file: CustodyFile = {
           id, fileNumber: custodyFileNumber(id, openedAt),
           employeeId: args.employeeId, projectId: args.projectId,
@@ -12612,7 +12633,7 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = buildCustodyFundEntry(args.amountMinor, args.treasury, `${file.fileNumber} — ${emp?.nameAr ?? ''}`)
         const txId = nextId(state.custodyTxs)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تعزيز عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}${args.description ? ` — ${args.description}` : ''}`,
@@ -12643,7 +12664,7 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = buildCustodyExpenseEntry(expenseAccount, fromCustodyMinor, excessMinor, `${args.description.trim()} (${file.fileNumber})`)
         const txId = nextId(state.custodyTxs)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const emp = state.employees.find((e) => e.id === file.employeeId)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -12679,7 +12700,7 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = buildCustodyFileSettleEntry(summary.remainingMinor, args.returnedMinor, args.treasury, file.fileNumber)
         const shortage = summary.remainingMinor - args.returnedMinor
         const emp = state.employees.find((e) => e.id === file.employeeId)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
 
         let journal = state.journal
         let custodyTxs = state.custodyTxs
@@ -12801,7 +12822,7 @@ export const useRawDataStore = create<DataState>()(
         const computed = computeFxConversion(input)
         const docId = nextId(state.fxConversions)
         const docNumber = `FXC-${String(docId).padStart(4, '0')}`
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const date = args.date || now.slice(0, 10)
         const fromTxt = (args.fromAmountMinor / 10 ** args.fromDecimals).toFixed(args.fromDecimals)
         const toTxt = (computed.toAmountMinor / 10 ** args.toDecimals).toFixed(args.toDecimals)
@@ -12887,7 +12908,7 @@ export const useRawDataStore = create<DataState>()(
         const lines = recovery > 0
           ? buildExtractEntryWithAdvance(totals, args.payment, extractNumber, args.treasury ?? '1101', recovery)
           : buildExtractEntry(totals, args.payment, extractNumber, args.treasury ?? '1101')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -12957,7 +12978,7 @@ export const useRawDataStore = create<DataState>()(
         const original = state.journal.find((e) => e.id === extract.journalEntryId)
         if (!original) throw new Error('قيد المستخلص الأصلي غير موجود')
         if (original.reversedByEntryId) throw new Error('قيد المستخلص معكوس مسبقاً — لا يُعدَّل مرتين')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const reversalId = nextId(state.journal)
         const reversal: JournalEntry = {
           id: reversalId, entryNumber: reversalId, date: now.slice(0, 10),
@@ -13165,7 +13186,7 @@ export const useRawDataStore = create<DataState>()(
             const payment = unit.acquisitionPayment ?? args.acquisitionPayment ?? 'cash'
             const treasury = args.treasury ?? '1101'
             const entryId = nextId(journal)
-            const now = new Date().toISOString()
+            const now = localIsoTimestamp()
             journal = [...journal, {
               id: entryId, entryNumber: entryId, date: now.slice(0, 10),
               description: `اقتناء وحدة ${unit.code} من عقار ${property.code} — ${property.nameAr}`,
@@ -13178,7 +13199,7 @@ export const useRawDataStore = create<DataState>()(
           const payment = args.acquisitionPayment ?? 'cash'
           const treasury = args.treasury ?? '1101'
           const entryId = nextId(journal)
-          const now = new Date().toISOString()
+          const now = localIsoTimestamp()
           journal = [...journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `اقتناء عقار ${property.code} — ${property.nameAr}`,
@@ -13213,7 +13234,7 @@ export const useRawDataStore = create<DataState>()(
         let journal = state.journal
         if (property.ownership === 'owned' && costMinor > 0) {
           const entryId = nextId(journal)
-          const now = new Date().toISOString()
+          const now = localIsoTimestamp()
           journal = [...journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `اقتناء وحدة ${unit.code} من عقار ${property.code} — ${property.nameAr}`,
@@ -13259,7 +13280,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.buyerCustomerId != null && !state.customers.some((c) => c.id === args.buyerCustomerId)) throw new Error('المشتري غير موجود في سجل العملاء')
         if (dueMinor > 0) guardCreditLimit(get(), args.buyerCustomerId, dueMinor, null)
         const treasury = args.treasury ?? '1101'
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const saleId = nextId(state.propertySales)
         const buyer = args.buyerCustomerId != null ? state.customers.find((c) => c.id === args.buyerCustomerId) : null
@@ -13331,7 +13352,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.tenantId != null && !state.customers.some((c) => c.id === args.tenantId)) throw new Error('العميل المربوط غير موجود')
         const installments = generateLeaseSchedule(args.startDate, args.months, args.frequency, totalRentMinor)
         const id = nextId(state.leases)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         // قبض التأمين المسترد (إن وجد): نقدية ← 2103
         let journal = state.journal
         if (args.depositMinor > 0) {
@@ -13384,7 +13405,7 @@ export const useRawDataStore = create<DataState>()(
           amountMinor: amount, ownership: property.ownership, commissionPercent: property.commissionPercent,
           vatOnCommissionMinor: vatOnCommission, vatOnRentMinor: vatOnRent, treasury, label,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -13424,7 +13445,7 @@ export const useRawDataStore = create<DataState>()(
         const balance = get().getOwnerBalance(args.propertyId)
         if (args.amountMinor > balance) throw new Error(`المبلغ أكبر من مستحق المالك (${balance})`)
         const treasury = args.treasury ?? '1101'
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -13449,7 +13470,7 @@ export const useRawDataStore = create<DataState>()(
         if (lease.depositMinor > 0) {
           const treasury = args.treasury ?? '1101'
           refunded = lease.depositMinor - deduction
-          const now = new Date().toISOString()
+          const now = localIsoTimestamp()
           const entryId = nextId(state.journal)
           journal = [...state.journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -13489,7 +13510,7 @@ export const useRawDataStore = create<DataState>()(
         const totalCostMinor = args.amountMinor + materialsCostMinor
         if (args.bearer === 'owner' && totalCostMinor > get().getOwnerBalance(property.id)) throw new Error('الصيانة أكبر من مستحق المالك — حصّل أولاً أو حمّلها على المكتب')
         const treasury = args.treasury ?? '1101'
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -13557,7 +13578,7 @@ export const useRawDataStore = create<DataState>()(
         if (dueMinor > 0 && args.buyerCustomerId == null) throw new Error('بيع العقار الآجل يتطلب اختيار المشتري من سجل العملاء')
         if (args.buyerCustomerId != null && !state.customers.some((c) => c.id === args.buyerCustomerId)) throw new Error('المشتري غير موجود في سجل العملاء')
         if (dueMinor > 0) guardCreditLimit(get(), args.buyerCustomerId, dueMinor, null)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -13630,7 +13651,7 @@ export const useRawDataStore = create<DataState>()(
         // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102.
         const lines = buildProjectCostEntry(netCostMinor, resolvedPayment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor)
           .map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.projectCosts)
         const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
@@ -13681,7 +13702,7 @@ export const useRawDataStore = create<DataState>()(
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
         const remaining = held - released
         const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury) // يرمي لو صفر
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.retentionReleases)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -13811,7 +13832,7 @@ export const useRawDataStore = create<DataState>()(
         const order: ChangeOrder = {
           id, projectId: args.projectId, number: `CO-${String(id).padStart(4, '0')}`,
           titleAr: args.titleAr.trim(), amountMinor: args.amountMinor,
-          status: 'draft', date: new Date().toISOString().slice(0, 10), approvedAt: null,
+          status: 'draft', date: todayLocalIso(), approvedAt: null,
         }
         set({ changeOrders: [...state.changeOrders, order] })
         return order
@@ -13842,7 +13863,7 @@ export const useRawDataStore = create<DataState>()(
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل')
         const lines = buildClientAdvanceEntry(args.amountMinor, args.treasury, project.nameAr)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -13957,7 +13978,7 @@ export const useRawDataStore = create<DataState>()(
         if (recovery > 0 && recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
         const label = `${contract.contractNumber} — ${contract.contractorName}`
         const lines = buildSubCertificateEntry(amountMinor, retention, withhold, recovery, label)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.subCertificates)
         const entryId = nextId(state.journal)
         const number = state.subCertificates.filter((c) => c.contractId === contract.id).length + 1
@@ -14004,7 +14025,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.amountMinor > netCertified - paid) throw new Error(`الدفعة أكبر من مستحقه (المتبقي ${netCertified - paid})`)
         const label = `${contract.contractNumber} — ${contract.contractorName}`
         const lines = buildSubPaymentEntry(args.amountMinor, args.treasury, label)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.subPayments)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -14024,7 +14045,7 @@ export const useRawDataStore = create<DataState>()(
         const remaining = held - released
         const label = `${contract.contractNumber} — ${contract.contractorName}`
         const lines = buildSubRetentionReleaseEntry(remaining, treasury, label)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.subPayments)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -14048,7 +14069,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
         const label = `${args.bondNumber} — ${args.beneficiary}`
         const lines = buildBondIssueEntry(args.marginMinor, args.feesMinor, args.bank, label)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.bonds)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -14085,7 +14106,7 @@ export const useRawDataStore = create<DataState>()(
         const lines = outcome === 'released'
           ? buildBondReleaseEntry(bond.marginMinor, bond.bank, label)
           : buildBondForfeitEntry(bond.marginMinor, label)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -14145,7 +14166,7 @@ export const useRawDataStore = create<DataState>()(
         const projectTotal = unsettled.filter((r) => r.projectId != null).reduce((s, r) => s + r.wageMinor, 0)
         const overheadTotal = total - projectTotal
         const lines = buildDailyWorkSettlementEntry(projectTotal, overheadTotal, treasury, worker.nameAr) // يرمي لو صفر
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -14197,7 +14218,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId(state.materialRequisitions)
         const reqNumber = `MRQ-${String(id).padStart(4, '0')}`
         const entryLines = buildMaterialIssueEntry(totalCost, `${reqNumber} — ${project.nameAr}`)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -14368,7 +14389,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId(state.clientSettlements)
         const settlementNumber = `CLR-${String(id).padStart(4, '0')}`
         const entryLines = buildClientReceiptEntry(args.amountMinor, args.treasury, `${settlementNumber} — ${customer.nameAr}`)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -14402,7 +14423,7 @@ export const useRawDataStore = create<DataState>()(
         if (!contract) throw new Error('عقد الباطن غير موجود')
         if (contract.status !== 'active') throw new Error('العقد غير نشط')
         const lines = buildSubAdvanceEntry(args.amountMinor, args.treasury, `${contract.contractNumber} — ${contract.contractorName}`)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.subAdvances)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -14430,7 +14451,7 @@ export const useRawDataStore = create<DataState>()(
           { accountCode: '2112', debit: balance, credit: 0, note: 'توريد ضريبة الاستقطاع' },
           { accountCode: treasury, debit: 0, credit: balance, note: 'المسدد للمصلحة' },
         ]
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -14597,7 +14618,7 @@ export const useRawDataStore = create<DataState>()(
           if (expense.payableAccountCode && !['2117', '2104'].includes(expense.payableAccountCode)) throw new Error('حساب استحقاق مصروف التصنيع غير صالح')
         }
         const lines = buildProductionEntry(ingredientsCost, overhead, treasury, productionExpenses)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const productionDate = args.date || now.slice(0, 10)
         if (!/^\d{4}-\d{2}-\d{2}$/.test(productionDate)) throw new Error('تاريخ التصنيع غير صالح')
         const entryId = nextId(state.journal)
@@ -14684,7 +14705,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.overheadMinor > 0 && !state.treasuries.some((t) => t.code === treasury)) {
           throw new Error('خزينة مصاريف التجهيز غير موجودة')
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const orderDate = now.slice(0, 10)
         // سد فجوة تتبع الصلاحية العالمية (Batch & Lot Traceability — أهم ميزة
         // مُجمَع عليها في كل برامج الجزارة/التعبئة المتخصصة): أي ناتج يتتبع
@@ -14823,7 +14844,7 @@ export const useRawDataStore = create<DataState>()(
         const totalMinor = Math.round(args.weightGrams * args.pricePerGramMinor)
         const treasury = args.treasury ?? '1101'
         const lines = buildScrapPurchaseEntry(totalMinor, treasury, KARAT_LABELS[args.karat])
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const lotId = nextId(state.scrapLots)
         const entry: JournalEntry = {
@@ -14848,7 +14869,7 @@ export const useRawDataStore = create<DataState>()(
         const saleMinor = Math.round(args.weightGrams * args.pricePerGramMinor)
         const treasury = args.treasury ?? '1101'
         const lines = buildScrapSaleEntry(saleMinor, costMinor, treasury, KARAT_LABELS[args.karat])
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const saleId = nextId(state.scrapSales)
         const entry: JournalEntry = {
@@ -14906,7 +14927,7 @@ export const useRawDataStore = create<DataState>()(
           const doc: GoldTradeInDoc = {
             id,
             tradeNumber: `GTI-${String(id).padStart(4, '0')}`,
-            date: new Date().toISOString(),
+            date: localIsoTimestamp(),
             saleId: sale.id,
             scrapLotId: lot.id,
             saleMinor: preview.saleMinor,
@@ -15114,7 +15135,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId(state.clinicVisits)
         const visitNumber = `VIS-${String(id).padStart(4, '0')}`
         const lines = buildVisitEntry(totals, `${visitNumber} — ${patient.nameAr}`, args.treasury ?? '1101')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -15164,7 +15185,7 @@ export const useRawDataStore = create<DataState>()(
           revenueAccount: '4108', vatMinor: insured.vatMinor, cogsMinor: 0,
           treasury: args.treasury ?? '1101', providerName: provider.nameAr,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -15228,7 +15249,7 @@ export const useRawDataStore = create<DataState>()(
         const balance = get().getPatientBalance(patientId)
         if (amountMinor > balance) throw new Error(`المبلغ أكبر من رصيد المريض المستحق`)
         const lines = buildPatientCollectionEntry(amountMinor, patient.nameAr, treasury)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.clinicCollections)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -15317,7 +15338,7 @@ export const useRawDataStore = create<DataState>()(
         const label = `${args.make} ${args.model} ${args.year} (${args.plateOrVin})`
         const supplier = args.supplierId != null ? state.suppliers.find((row) => row.id === args.supplierId) : null
         const lines = buildCarPurchaseEntry(args.purchaseCostMinor, args.payment, label, args.treasury ?? '1101', paidMinor)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const id = nextId(state.cars)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -15354,7 +15375,7 @@ export const useRawDataStore = create<DataState>()(
         const label = `${car.make} ${car.model} (${car.plateOrVin})`
         const beneficiary = (supplier?.nameAr ?? payableBeneficiary).trim()
         const lines = buildCarPrepEntry(amountMinor, payment, `${label}: ${description || 'تجهيز'}${beneficiary ? ` — جهة الاستحقاق: ${beneficiary}` : ''}`, treasury, paid)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -15400,7 +15421,7 @@ export const useRawDataStore = create<DataState>()(
         if (dueMinor > 0 && args.supplierId == null) throw new Error('الجزء الآجل يتطلب اختيار المورد — لا دين بلا طرف مسجل')
         const supplier = args.supplierId != null ? state.suppliers.find((row) => row.id === args.supplierId) : null
         if (args.supplierId != null && !supplier) throw new Error('المورد غير موجود في سجل الموردين')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const date = args.date ?? now.slice(0, 10)
         const treasury = args.treasury ?? '1101'
         const labels = lines.map((line) => `${line.make} ${line.model} ${line.year} (${line.plateOrVin})`)
@@ -15484,7 +15505,7 @@ export const useRawDataStore = create<DataState>()(
         if (dueMinor > 0) guardCreditLimit(get(), args.buyerCustomerId, dueMinor, args.creditLimitOverrideBy)
         const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
         const lines = buildCarSaleEntry(totals, args.payment, label, args.treasury ?? '1101', paidMinor, tradeInMinor)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -15604,7 +15625,7 @@ export const useRawDataStore = create<DataState>()(
         const vatPct = args.vatPercentOnCommission ?? 0
         const vatOnCommission = vatPct > 0 ? Math.round(grossCommission - grossCommission / (1 + vatPct / 100)) : 0
         const lines = buildConsignmentSaleEntry(args.salePriceMinor, car.ownerNetMinor, vatOnCommission, args.payment, label, args.treasury ?? '1101')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -15640,7 +15661,7 @@ export const useRawDataStore = create<DataState>()(
         if (car.status !== 'sold') throw new Error('لا مستحق للمالك — السيارة لم تُبع بعد أو سُدد بالفعل')
         const label = `${car.make} ${car.model} (${car.plateOrVin})`
         const lines = buildConsignmentPayoutEntry(car.ownerNetMinor, label, treasury)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -15670,7 +15691,7 @@ export const useRawDataStore = create<DataState>()(
         const prepaid = args.prepaidMinor ?? 0
         if (!Number.isInteger(prepaid) || prepaid < 0) throw new Error('العربون لا يكون سالباً')
         const id = nextId(state.tickets)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         // عربون الاستلام (نمط RepairShopr): خزينة ← 2109 دفعات مقدمة — التزام لا إيراد
         let prepaidEntryId: number | null = null
         let journal = state.journal
@@ -15725,7 +15746,7 @@ export const useRawDataStore = create<DataState>()(
         if (!TICKET_TRANSITIONS[ticket.status].includes(status)) {
           throw new Error(`لا يمكن الانتقال من «${ticket.status}» إلى «${status}»`)
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         let journal = state.journal
         // إلغاء تذكرة عليها عربون: رده تلقائياً من الخزينة (2109 مدين / 1101 دائن)
         if (status === 'cancelled' && (ticket.prepaidMinor ?? 0) > 0) {
@@ -15773,7 +15794,7 @@ export const useRawDataStore = create<DataState>()(
         if (state.serials.some((u) => u.serial === serial)) throw new Error('هذا السيريال مسجل من قبل')
         if (!Number.isInteger(args.valuationMinor) || args.valuationMinor <= 0) throw new Error('سعر التقييم يجب أن يكون موجباً')
         if (!args.customerName.trim() && args.customerId == null) throw new Error('حدد العميل أو اكتب اسمه')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const serialId = nextId(state.serials)
         const unit: SerialUnit = {
           id: serialId, itemId: args.itemId, serial, status: 'in_stock',
@@ -15830,7 +15851,7 @@ export const useRawDataStore = create<DataState>()(
         const sessions = ticket.workSessions ?? []
         const openIdx = sessions.findIndex((s) => s.endedAt == null)
         if (openIdx === -1) throw new Error('لا توجد جلسة عمل مفتوحة لإنهائها')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const updatedSessions = sessions.map((s, i) => (i === openIdx ? { ...s, endedAt: now } : s))
         const updated: MaintenanceTicket = { ...ticket, workSessions: updatedSessions }
         set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
@@ -15873,7 +15894,7 @@ export const useRawDataStore = create<DataState>()(
         // حد الائتمان يسري على الخدمات أيضاً — الآجل هنا دين 1104 كالبيع تماماً
         guardCreditLimit(get(), ticket.customerId, realCredit, input.creditLimitOverrideBy)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         // تصفية عربون الاستلام إن وُجد (2109 مدين) — التحصيل النقدي الآن = المدفوع − العربون
         const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber, input.treasury ?? '1101', ticket.prepaidMinor ?? 0)
 
@@ -15957,7 +15978,7 @@ export const useRawDataStore = create<DataState>()(
         const opId = nextId(state.walletOps)
         const opNumber = `WS-${String(opId).padStart(4, '0')}`
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const date = input.date ?? now.slice(0, 10)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date,
@@ -16002,7 +16023,7 @@ export const useRawDataStore = create<DataState>()(
         const orig = state.journal.find((e) => e.id === op.journalEntryId)
         if (!orig) throw new Error('قيد العملية الأصلي غير موجود')
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع خدمة محافظ ${op.opNumber}${reason ? ` — ${sanitizeText(reason, 120)}` : ''}`,
@@ -16052,7 +16073,7 @@ export const useRawDataStore = create<DataState>()(
         const transfer: StockTransfer = {
           id,
           transferNumber: `TRF-${String(id).padStart(4, '0')}`,
-          date: new Date().toISOString(),
+          date: localIsoTimestamp(),
           fromWarehouseId: args.fromWarehouseId,
           toWarehouseId: args.toWarehouseId,
           lines: args.lines.map((l) => ({
@@ -16091,13 +16112,13 @@ export const useRawDataStore = create<DataState>()(
         if (remaining > 0 && (args.installmentCount ?? 0) > 1) {
           installments = buildAssetInstallments(
             remaining, args.installmentCount!, args.installmentIntervalMonths ?? 1,
-            args.firstInstallmentDate ?? new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+            args.firstInstallmentDate ?? todayLocalIso(new Date(Date.now() + 30 * 86400000)),
           )
         }
 
         const id = nextId(state.assets)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const assetNumber = `FA-${String(id).padStart(4, '0')}`
         const entryLines = buildAssetPurchaseEntry(args.costMinor, paid, assetNumber, args.treasury ?? '1101', funding)
 
@@ -16146,7 +16167,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السداد يجب أن يكون موجباً')
         if (args.amountMinor > due.remainingMinor) throw new Error(`المبلغ أكبر من متبقي دين الأصل (${due.remainingMinor})`)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const supName = state.suppliers.find((x) => x.id === asset.supplierId)?.nameAr ?? ''
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16205,7 +16226,7 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         const preview = assetDisposalPreview(asset, proceeds)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const date = args.date ?? now.slice(0, 10)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -16283,7 +16304,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId(state.externalCommissions)
         const commissionNumber = `${args.direction === 'earned' ? 'EXC' : 'CMO'}-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: args.direction === 'earned'
@@ -16312,7 +16333,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
         if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من المتبقي (${remaining})`)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const earned = (com.direction ?? 'earned') === 'earned'
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16362,7 +16383,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const id = nextId(state.staffCommissions)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const code = `SCM-${String(id).padStart(4, '0')}`
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16391,7 +16412,7 @@ export const useRawDataStore = create<DataState>()(
         if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
         const emp = state.employees.find((e) => e.id === com.employeeId)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `صرف عمولة ${com.code} — ${emp?.nameAr ?? ''} (منفردة)`,
@@ -16413,7 +16434,7 @@ export const useRawDataStore = create<DataState>()(
         if (!args.reason.trim()) throw new Error('سبب الإلغاء مطلوب — يبقى في سجل التدقيق')
         const emp = state.employees.find((e) => e.id === com.employeeId)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إلغاء عمولة ${com.code} — ${emp?.nameAr ?? ''}: ${args.reason.trim()}`,
@@ -16487,7 +16508,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isFinite(args.qty) || args.qty <= 0) throw new Error('الكمية غير صالحة')
         const entry: ControlledDispense = {
           id: nextId(state.controlledDispenses),
-          date: new Date().toISOString(),
+          date: localIsoTimestamp(),
           itemId: args.itemId,
           qty: args.qty,
           patientName: args.patientName.trim(),
@@ -16510,7 +16531,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isFinite(args.tempC)) throw new Error('درجة الحرارة غير صالحة')
         const entry: ColdChainReading = {
           id: nextId(state.coldChainReadings),
-          date: new Date().toISOString(),
+          date: localIsoTimestamp(),
           storageUnitName: args.storageUnitName.trim(),
           tempC: args.tempC,
           minC: args.minC ?? null,
@@ -16592,7 +16613,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) throw new Error('العميل غير موجود')
         const id = nextId(state.laundryOrders)
         const orderNumber = `LN-${String(id).padStart(4, '0')}`
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         let prepaidEntryId: number | null = null
         let journal = state.journal
         if (args.prepaidMinor > 0) {
@@ -16657,7 +16678,7 @@ export const useRawDataStore = create<DataState>()(
         const deliverySetup = appSetupForState(state)
         const vatPercent = deliverySetup.vatPercent ?? 0
         const taxInclusive = deliverySetup.taxInclusive ?? true
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const built = buildLaundryDeliverEntry({
           totalMinor: order.totalMinor, prepaidMinor: order.prepaidMinor,
           taxPercent: vatPercent, taxInclusive,
@@ -16697,7 +16718,7 @@ export const useRawDataStore = create<DataState>()(
         const order = state.laundryOrders.find((o) => o.id === orderId)
         if (!order) throw new Error('الأمر غير موجود')
         assertLaundryTransition(order.status, 'cancelled')
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         let journal = state.journal
         let cancelEntryId: number | null = null
         if (order.prepaidMinor > 0) {
@@ -16733,7 +16754,7 @@ export const useRawDataStore = create<DataState>()(
           mode: args.mode, treasury: args.treasury,
           note: `مرتجع خدمة ${order.orderNumber}`,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16800,7 +16821,7 @@ export const useRawDataStore = create<DataState>()(
           restockCostMinor: restockCost,
           note: `مرتجع خدمة صيانة ${ticket.ticketNumber}`,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16863,7 +16884,7 @@ export const useRawDataStore = create<DataState>()(
           mode: args.mode, treasury: args.treasury,
           note: `مرتجع نقلة ${trip.tripNumber}`,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16930,7 +16951,7 @@ export const useRawDataStore = create<DataState>()(
             lines.push({ accountCode: '5109', debit: 0, credit: commissionShare, note: 'تخفيض مصروف عمولات' })
           }
         }
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -16980,7 +17001,7 @@ export const useRawDataStore = create<DataState>()(
           note: `مرتجع زيارة ${visit.visitNumber}`,
         })
         const patient = state.clinicPatients.find((pt) => pt.id === visit.patientId)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -17028,7 +17049,7 @@ export const useRawDataStore = create<DataState>()(
           mode: args.mode, treasury: args.treasury,
           note: `مرتجع إيجار ${contract.contractNumber}`,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -17074,7 +17095,7 @@ export const useRawDataStore = create<DataState>()(
           mode: args.mode, treasury: args.treasury,
           note: `إشعار دائن على مستخلص ${extract.extractNumber}`,
         })
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -17115,7 +17136,7 @@ export const useRawDataStore = create<DataState>()(
         let totalMinor = 0
         for (const a of due) totalMinor += monthlyDepreciation(a.costMinor, a.salvageMinor, a.lifeMonths, a.monthsDepreciated)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         // تسمية الشهر المرحّل: شهر أقدم استحقاق (كلها تتقدم شهراً واحداً)
         const monthLabel = due.map((a) => nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated)).sort()[0]
         const entry: JournalEntry = {
@@ -17170,7 +17191,7 @@ export const useRawDataStore = create<DataState>()(
           throw new Error('شيك بنفس الرقم والبنك مسجل من قبل')
         }
         const id = nextId(state.cheques)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const note = `شيك وارد ${args.chequeNumber} — ${partyName}`
         const lines = buildChequeReceiveEntry(args.amountMinor, note, counterAccount)
         const entryId = nextId(state.journal)
@@ -17203,7 +17224,7 @@ export const useRawDataStore = create<DataState>()(
           throw new Error('رقم شيك صادر مكرر — كل ورقة من دفترك برقم فريد')
         }
         const id = nextId(state.cheques)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const note = `شيك صادر ${args.chequeNumber} — ${partyName}`
         const lines = buildChequeIssueEntry(args.amountMinor, note, counterAccount)
         const entryId = nextId(state.journal)
@@ -17229,7 +17250,7 @@ export const useRawDataStore = create<DataState>()(
         const cheque = state.cheques.find((c) => c.id === chequeId)
         if (!cheque) throw new Error('الشيك غير موجود')
         assertTransition(cheque.status, status)
-        const now = new Date().toISOString()
+        const now = localIsoTimestamp()
         const note = `شيك ${cheque.chequeNumber} — ${cheque.partyName}`
         // الإيداع تحول حالة فقط — لا قيد (الورقة ما زالت أصلاً بنفس القيمة)
         if (status === 'deposited') {

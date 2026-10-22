@@ -32,6 +32,7 @@ import type { ItemLabelData } from '../../core/labels.ts'
 import { variantBarcode, variantLabel as variantComboLabel } from '../../core/variants.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
@@ -292,7 +293,7 @@ export function ItemsPage() {
     )
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    a.download = `shopsys-items-${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `shopsys-items-${todayLocalIso()}.csv`
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 3000)
     toast.show(`صُدّر ${items.length} صنفاً — يفتح في Excel مباشرة 📄`)

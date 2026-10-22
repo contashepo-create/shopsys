@@ -115,7 +115,7 @@ export async function maybeTaxBarcode(args: TaxBarcodeArgs): Promise<string | un
  * بسطر واحد قبل الطباعة. النسختان تتشاركان resolveTaxBarcodeKind نفسها. */
 
 /** مصفوفة QR إلى Data URL بصيغة SVG (متزامن — بلا canvas ولا شبكة) */
-function qrSvgDataUrl(payload: string): string {
+export function qrDataUrlFromPayload(payload: string): string {
   const qr = QRCode.create(payload, { errorCorrectionLevel: 'M' })
   const size = qr.modules.size
   let path = ''
@@ -136,7 +136,7 @@ function qrSvgDataUrl(payload: string): string {
 export function zatcaQrSvgDataUrl(fields: ZatcaFields): string | null {
   try {
     if (!fields.sellerName.trim() || !isValidSaVatNumber(fields.vatNumber)) return null
-    return qrSvgDataUrl(buildZatcaQr(fields))
+    return qrDataUrlFromPayload(buildZatcaQr(fields))
   } catch {
     return null
   }
@@ -146,7 +146,7 @@ export function zatcaQrSvgDataUrl(fields: ZatcaFields): string | null {
 export function egBarcodeSvgDataUrl(fields: EgReceiptBarcodeFields): string | null {
   try {
     if (!fields.sellerName.trim() || !isValidEgTaxNumber(fields.taxNumber)) return null
-    return qrSvgDataUrl(buildEgReceiptBarcodeText(fields))
+    return qrDataUrlFromPayload(buildEgReceiptBarcodeText(fields))
   } catch {
     return null
   }
@@ -176,6 +176,42 @@ export function maybeTaxBarcodeSync(args: TaxBarcodeArgs): string | undefined {
     }) ?? undefined
   }
   return undefined
+}
+
+/**
+ * حمولة الرمز النصية (TLV زاتكا أو EGTAX1) حسب السياسة — تُحفظ على المستند
+ * عند أول طباعة، فتُعاد الطباعة لاحقاً من نفس الحمولة بلا إعادة توليد.
+ * undefined = لا رمز (سياسة/بيانات ناقصة) — لا نرمي.
+ */
+export function taxBarcodePayload(args: TaxBarcodeArgs): string | undefined {
+  const kind = resolveTaxBarcodeKind(args)
+  try {
+    if (kind === 'sa') {
+      if (!args.sellerName.trim() || !isValidSaVatNumber(args.taxNumber)) return undefined
+      return buildZatcaQr({
+        sellerName: args.sellerName,
+        vatNumber: args.taxNumber,
+        timestampIso: normalizeZatcaTimestamp(args.dateIso),
+        totalWithVatMinor: args.totalMinor,
+        vatMinor: args.taxMinor,
+        decimals: args.decimals,
+      })
+    }
+    if (kind === 'eg') {
+      if (!args.sellerName.trim() || !isValidEgTaxNumber(args.taxNumber)) return undefined
+      return buildEgReceiptBarcodeText({
+        sellerName: args.sellerName,
+        taxNumber: args.taxNumber,
+        invoiceNumber: args.invoiceNumber,
+        dateIso: normalizeZatcaTimestamp(args.dateIso),
+        totalMinor: args.totalMinor,
+        decimals: args.decimals,
+      })
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** يُلحق الرمز بنموذج مستند الطباعة متزامناً — تُرجع true لو أُلحق الرمز فعلاً */

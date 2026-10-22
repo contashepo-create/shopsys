@@ -19,7 +19,7 @@ export interface PaymentScheduleLine {
 function addUtcDays(date: string, days: number): string {
   const value = new Date(`${date.slice(0, 10)}T00:00:00.000Z`)
   value.setUTCDate(value.getUTCDate() + days)
-  return value.toISOString().slice(0, 10)
+  return todayLocalIso(value)
 }
 
 export function validatePaymentTerm(term: PaymentTerm): string[] {
@@ -40,6 +40,7 @@ export function validatePaymentTerm(term: PaymentTerm): string[] {
 }
 
 /** يوزع الباقي الناتج عن التقريب على آخر قسط كي يطابق الإجمالي بالضبط. */
+import { todayLocalIso } from './time.ts'
 export function buildPaymentSchedule(documentDate: string, totalMinor: number, term: PaymentTerm): PaymentScheduleLine[] {
   const errors = validatePaymentTerm(term)
   if (errors.length) throw new RangeError(errors.join(' — '))

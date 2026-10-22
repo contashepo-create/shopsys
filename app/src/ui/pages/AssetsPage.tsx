@@ -15,6 +15,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function AssetsPage() {
   const { assets, journal, suppliers, treasuries, addAsset, postMonthlyDepreciation, payAssetInstallment, getAssetDue } = useDataStore()
@@ -84,7 +85,7 @@ export function AssetsPage() {
   const [instFirstDate, setInstFirstDate] = useState('')
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
 
-  const openNew = () => { setNameAr(''); setCost(''); setSalvage(''); setLifeYears('5'); setPaid(''); setNotes(''); setFunding('cash'); setSupplierId(''); setInstCount(''); setInstInterval('1'); setInstFirstDate(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)); setOpen(true) }
+  const openNew = () => { setNameAr(''); setCost(''); setSalvage(''); setLifeYears('5'); setPaid(''); setNotes(''); setFunding('cash'); setSupplierId(''); setInstCount(''); setInstInterval('1'); setInstFirstDate(todayLocalIso(new Date(Date.now() + 30 * 86400000))); setOpen(true) }
 
   const preview = useMemo(() => {
     try {
@@ -348,7 +349,7 @@ export function AssetsPage() {
                   <tbody>
                     {(fileAsset.installments ?? []).map((it) => {
                       const done = it.paidMinor >= it.amountMinor
-                      const overdue = !done && it.dueDate < new Date().toISOString().slice(0, 10)
+                      const overdue = !done && it.dueDate < todayLocalIso()
                       return (
                         <tr key={it.seq} className="border-b border-slate-50 dark:border-slate-800/50">
                           <td className="px-3 py-1.5 font-bold">{it.seq}</td>

@@ -22,7 +22,8 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
+import { useTaxBarcodePayload } from '../hooks/useTaxBarcodeStamp.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -41,15 +42,16 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId } = useDataStore()
+  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
-  /* إشعار المرتجع مستند ضريبي (إشعار دائن) — يُطبع برمز زاتكا مثل الفاتورة الأصلية */
-  const stampTax = useTaxBarcodeStamp()
+  /* إشعار المرتجع مستند ضريبي (إشعار دائن) — يُطبع برمز زاتكا مثل الفاتورة الأصلية.
+     الحمولة تُجمَّد على الإشعار عند أول طباعة، فإعادة الطباعة لا تعيد توليدها. */
+  const taxPayload = useTaxBarcodePayload()
 
   /* ─── حالة المعالج ─── */
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -230,8 +232,20 @@ export function SaleReturnsPage() {
       settings: receipt,
     })
     model.docTitle = 'مرتجع مبيعات'
-    /* الرمز الضريبي لإشعار الدائن: إجمالي المرتجع وضريبته بتاريخه هو */
-    stampTax(model, { dateIso: r.date, invoiceNumber: r.returnNumber, totalMinor: r.totals.totalMinor, taxMinor: r.totals.taxMinor })
+    /* الرمز الضريبي لإشعار الدائن: إجمالي المرتجع وضريبته بتاريخه هو.
+       إعادة الطباعة تقرأ الحمولة المجمّدة وقت أول طباعة (إن وُجدت) فلا يتغير
+       الرمز لو تغيّر اسم المنشأة أو رقمها الضريبي لاحقاً. */
+    if (r.taxQrPayload) {
+      model.qrDataUrl = qrDataUrlFromPayload(r.taxQrPayload)
+    } else {
+      const payload = taxPayload(model, { dateIso: r.date, invoiceNumber: r.returnNumber, totalMinor: r.totals.totalMinor, taxMinor: r.totals.taxMinor })
+      if (payload) {
+        model.qrDataUrl = qrDataUrlFromPayload(payload)
+        attachSaleReturnTaxQr(r.id, payload)
+      } else {
+        delete model.qrDataUrl
+      }
+    }
     model.paidMinor = r.totals.totalMinor
     model.remainingMinor = 0
     const cashPart = returnCashRefundMinor(r)

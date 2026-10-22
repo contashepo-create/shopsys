@@ -15,6 +15,7 @@
  * كل المبالغ أعداد صحيحة بالوحدة الصغرى (Minor).
  */
 import type { Minor } from './money.ts'
+import { todayLocalIso } from './time.ts'
 
 /* ───────────────────────── 1) الحضور اليومي ───────────────────────── */
 
@@ -249,7 +250,7 @@ export function leaveDates(leave: Pick<LeaveRequest, 'from' | 'to'>): string[] {
   const cursor = new Date(`${leave.from}T00:00:00`)
   const end = new Date(`${leave.to}T00:00:00`)
   if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime()) || end < cursor) return out
-  for (let d = cursor; d <= end; d = new Date(d.getTime() + 86_400_000)) out.push(d.toISOString().slice(0, 10))
+  for (let d = cursor; d <= end; d = new Date(d.getTime() + 86_400_000)) out.push(todayLocalIso(d))
   return out
 }
 

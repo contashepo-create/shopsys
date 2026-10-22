@@ -8,6 +8,7 @@
  * - بيع عقار مملوك: إيراد 4115 وتكلفة 5116 وإخراج من أصل العقارات 1113.
  * كل الدوال نقية، والمبالغ integer minors، وكل قيد يمر على assertBalanced.
  */
+import { todayLocalIso } from './time.ts'
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
@@ -152,7 +153,7 @@ export function generateLeaseSchedule(startDate: string, months: number, frequen
     due.setUTCMonth(due.getUTCMonth() + i * step)
     const amount = i === count - 1 ? totalRentMinor - allocated : base
     allocated += amount
-    schedule.push({ seq: i + 1, dueDate: due.toISOString().slice(0, 10), amountMinor: amount, paidMinor: 0, paidAt: null })
+    schedule.push({ seq: i + 1, dueDate: todayLocalIso(due), amountMinor: amount, paidMinor: 0, paidAt: null })
   }
   return schedule
 }
@@ -364,7 +365,7 @@ export interface LeaseAlert {
 export function leaseEndDate(startDate: string, months: number): string {
   const d = new Date(startDate + 'T00:00:00Z')
   d.setUTCMonth(d.getUTCMonth() + months)
-  return d.toISOString().slice(0, 10)
+  return todayLocalIso(d)
 }
 
 export function collectLeaseAlerts(leases: readonly Lease[], todayIso: string, expiryWindowDays = 60): LeaseAlert[] {

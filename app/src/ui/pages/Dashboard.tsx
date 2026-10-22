@@ -19,6 +19,7 @@ import { themeForActivity, PERSONA_STYLES } from '../../core/activityTheme.ts'
 import { ActivityWidgets } from '../components/ActivityWidgets.tsx'
 import { getActivity } from '../../core/activities.ts'
 import { UsersRound } from 'lucide-react'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
@@ -58,7 +59,7 @@ export function Dashboard() {
     }
   }, [journal, treasuries])
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
   const todaySales = useMemo(() => sales.filter((s) => s.date.startsWith(today)), [sales, today])
   // أرقام اليوم من دفتر الأستاذ نفسه — تشمل كل العمليات (بيع، صيانة، تحاليل، عيادة، إيجار، نقلات، مقاولات…)
   // وليس فواتير الكاشير فقط — هذا ما يمنع «الأصفار» رغم وجود عمليات من وحدات أخرى
@@ -136,7 +137,7 @@ export function Dashboard() {
       todayIso: new Date().toISOString(),
       items: items.map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty, isActive: it.isActive })),
       batches,
-      installmentAlerts: collectInstallmentAlerts(installmentPlans, new Date().toISOString().slice(0, 10)),
+      installmentAlerts: collectInstallmentAlerts(installmentPlans, todayLocalIso()),
       cheques,
       customers,
       customerBalances: (id) => useDataStore.getState().getCustomerBalance(id), // الرصيد الموحّد من كل الأنشطة
@@ -175,7 +176,7 @@ export function Dashboard() {
 
   /* v1.0.12 (اقتراح منفذ): بطاقة مواعيد اليوم — لوحدة المواعيد المفعّلة فقط */
   const bookingEnabled = setup.modules.includes('booking')
-  const todayBookings = useMemo(() => (bookingEnabled ? bookingsForDate(bookings, new Date().toISOString().slice(0, 10)) : []), [bookingEnabled, bookings])
+  const todayBookings = useMemo(() => (bookingEnabled ? bookingsForDate(bookings, todayLocalIso()) : []), [bookingEnabled, bookings])
   const upcomingToday = todayBookings.filter((b) => b.status === 'scheduled').slice(0, 4)
 
   return (

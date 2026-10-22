@@ -13,6 +13,7 @@ import { resolvePrice, priceSource } from '../../core/priceLists.ts'
 import { useWindowHost } from './windowHostContext.ts'
 import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyLedgerWindow } from './windowStore.ts'
 import type { SmartEntry } from '../components/smartEntry.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -95,7 +96,7 @@ export function ItemLedgerWindowView() {
   const { items, warehouses } = useDataStore()
   const { fiscalYears } = useAppStore()
   const item = items.find((row) => row.id === itemId) ?? null
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
   /* الافتراضي المطلوب من المالك: من بداية السنة المالية حتى اليوم */
   const yearStart = useMemo(() => {
     const open = fiscalYears.find((fy) => fy.status === 'open') ?? fiscalYears.at(-1)

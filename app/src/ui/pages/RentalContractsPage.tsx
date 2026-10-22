@@ -11,6 +11,7 @@ import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { SignaturePad } from '../components/SignaturePad.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, rentalInvoiceDoc,
@@ -418,7 +419,7 @@ export function RentalContractsPage() {
   const openInstallmentFor = (c: RentalContract) => {
     setInstallmentFor(c); setInsCount('3'); setInsIntervalMonths('1')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
-    setInsFirstDue(d.toISOString().slice(0, 10)); setInsTreasury('1101'); setSigning(null)
+    setInsFirstDue(todayLocalIso(d)); setInsTreasury('1101'); setSigning(null)
   }
   const saveInstallment = () => {
     if (!installmentFor || installmentFor.customerId == null) return

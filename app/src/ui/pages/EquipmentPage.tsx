@@ -15,6 +15,7 @@ import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const EQUIPMENT_KINDS = ['حفار', 'لودر', 'بلدوزر', 'ونش', 'رافعة شوكية', 'مولد', 'ضاغط هواء', 'أخرى']
 
@@ -115,7 +116,7 @@ export function EquipmentPage() {
     const activeContract = rentalContracts.find((c) => c.equipmentId === e.id && c.status === 'active')
     const defId = activeContract?.driverEmployeeId ?? e.driverEmployeeId ?? 0
     const defEmp = employees.find((emp) => emp.id === defId)
-    setShiftFor(e); setShiftDriverId(defId); setOpName(defEmp?.nameAr ?? ''); setShiftDate(new Date().toISOString().slice(0, 10))
+    setShiftFor(e); setShiftDriverId(defId); setOpName(defEmp?.nameAr ?? ''); setShiftDate(todayLocalIso())
     setShiftStart(String(e.meterReading || '')); setShiftEnd(''); setShiftNotes('')
   }
   const saveShift = () => {

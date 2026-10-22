@@ -13,6 +13,7 @@ import { useAppStore } from '../stores/app.store.ts'
 import { ACTIVITY_TEMPLATES } from '../core/activities.ts'
 import { getCountry } from '../core/countries.ts'
 import { DEMO_WIPE_KEY } from './demoBoot.ts'
+import { todayLocalIso } from '../core/time.ts'
 
 export interface DemoActivitySummary {
   id: string
@@ -511,7 +512,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
         projectId, contractorName: str(row.contractor_name), supplierId: supplierId.get(str(row.supplier_ref)) ?? null,
         scopeAr: str(row.scope_ar), contractValueMinor: num(row.contract_value_minor),
         retentionPercent: num(row.retention_percent, 5), taxWithholdPercent: num(row.tax_withhold_percent),
-        advanceRecoveryPercent: num(row.advance_percent), startDate: str(row.start_date, new Date().toISOString().slice(0, 10)),
+        advanceRecoveryPercent: num(row.advance_percent), startDate: str(row.start_date, todayLocalIso()),
       } as never)
       if (num(row.advance_minor) > 0)
         data().addSubAdvance({ contractId: contract.id, amountMinor: num(row.advance_minor), treasury: (treasuryCode.get(str(row.advance_treasury_ref)) ?? '1101') as never } as never)
@@ -763,7 +764,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       /* عقد مقفل: خصم تالفيات ورد التأمين — بقيد إقفال مستقل؛ تسوية التجاوز
          تُحسب فقط إن كان تاريخ الإرجاع اليوم أو بعده (تاريخ فتح العقد = لحظة التحميل) */
       const endDate = str(row.close_end_date)
-      const todayIso = new Date().toISOString().slice(0, 10)
+      const todayIso = todayLocalIso()
       if (num(row.close_deduct_minor) > 0 || endDate)
         data().closeRental(contract.id, num(row.close_deduct_minor), endDate && endDate >= todayIso ? { endDate } : undefined, (treasuryCode.get(str(row.treasury_ref)) ?? '1101') as never)
       rentalsOpened += 1

@@ -35,6 +35,7 @@ import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { InsuranceProvidersSection } from '../components/InsuranceProvidersSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -877,7 +878,7 @@ export function ClinicPatientsPage() {
 export function ClinicAppointmentsPage() {
   const { clinicAppointments, clinicPatients, addAppointment, setAppointmentStatus } = useDataStore()
   const toast = useToast()
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   const [open, setOpen] = useState(false)
   const [patientId, setPatientId] = useState('')

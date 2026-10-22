@@ -30,6 +30,7 @@ import { DEFAULT_FX_RATES_SETTINGS, normalizeFxRatesSettings, type FxRatesMap, t
 import { DEFAULT_SCALE_RULES, validateScaleRule, type ScaleRule } from '../core/barcode.ts'
 import type { AboutContent, CloudNotice } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
+import { todayLocalIso } from '../core/time.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -904,7 +905,7 @@ export const useAppStore = create<AppState>()(
         })
       },
       renewalDismissedDay: null,
-      dismissRenewalNotice: (day) => set({ renewalDismissedDay: day ?? new Date().toISOString().slice(0, 10) }),
+      dismissRenewalNotice: (day) => set({ renewalDismissedDay: day ?? todayLocalIso() }),
       registrationReportedAt: null,
       /* حارس الفرق (درس ث1): لا set بلا تغيّر فعلي — لا تحديثات متكررة للمتجر */
       markRegistrationReported: (at) =>
@@ -960,7 +961,7 @@ export const useAppStore = create<AppState>()(
         const template = ACTIVITY_TEMPLATES.find((t) => t.id === payload.toActivityId)
         if (!template) throw new Error(`نشاط غير معروف في هذه النسخة («${payload.toActivityId}») — حدّث التطبيق أولاً`)
         if (companySetup.lastActivityChangeAt) {
-          const since = daysBetween(companySetup.lastActivityChangeAt.slice(0, 10), new Date().toISOString().slice(0, 10))
+          const since = daysBetween(companySetup.lastActivityChangeAt.slice(0, 10), todayLocalIso())
           if (since < ACTIVITY_CHANGE_COOLDOWN_DAYS) {
             throw new Error(`مضى ${since} يوماً فقط على آخر تغيير نشاط — التغيير مسموح كل ${ACTIVITY_CHANGE_COOLDOWN_DAYS} يوماً (باقٍ ${ACTIVITY_CHANGE_COOLDOWN_DAYS - since} يوماً)`)
           }

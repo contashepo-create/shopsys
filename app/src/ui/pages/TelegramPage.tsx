@@ -21,6 +21,7 @@ import { salesSummary, stockAlerts, type Period } from '../../core/reports.ts'
 import { buildBackup, backupFileName } from '../../core/backup.ts'
 import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 
 export function TelegramPage() {
@@ -85,7 +86,7 @@ export function TelegramPage() {
   })
 
   const sendDaily = () => run('أُرسل تقرير اليوم', async () => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayLocalIso()
     const period: Period = { from: today, to: today }
     const s = salesSummary(sales, saleReturns, period)
     const alerts = stockAlerts(items)

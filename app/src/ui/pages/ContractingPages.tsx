@@ -32,6 +32,7 @@ import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 import { renderExtractHtml, renderExtractClientInvoiceHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function ProjectsPage() {
   const navigate = useNavigate()
@@ -58,7 +59,7 @@ export function ProjectsPage() {
   const [clientId, setClientId] = useState('') // ربط إداري — لا يمس رصيد العميل
   const [contractValue, setContractValue] = useState('')
   const [retention, setRetention] = useState('5')
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
+  const [startDate, setStartDate] = useState(todayLocalIso())
   const [notes, setNotes] = useState('')
   /* بيانات تشغيلية موسعة (أمر التعديل: نماذج احترافية) — اختيارية */
   const [contractNumber, setContractNumber] = useState('')
@@ -118,7 +119,7 @@ export function ProjectsPage() {
     try {
       const d = JSON.parse(draft.payload)
       setNameAr(d.nameAr ?? ''); setClientName(d.clientName ?? ''); setClientId(d.clientId ?? ''); setContractValue(d.contractValue ?? '')
-      setRetention(d.retention ?? '5'); setStartDate(d.startDate ?? new Date().toISOString().slice(0, 10)); setNotes(d.notes ?? '')
+      setRetention(d.retention ?? '5'); setStartDate(d.startDate ?? todayLocalIso()); setNotes(d.notes ?? '')
       setContractNumber(d.contractNumber ?? ''); setLocation(d.location ?? ''); setExpectedEnd(d.expectedEnd ?? ''); setManagerId(d.managerId ?? ''); setTags(d.tags ?? '')
       setValueMode(d.valueMode ?? 'boq'); setBoqDraft(d.boqDraft?.length ? d.boqDraft : [emptyBoqLine()])
       setOpen(true)
@@ -301,7 +302,7 @@ export function ProjectsPage() {
       docTitle: exFinal ? 'مستخلص ختامي — أعمال منفذة' : 'مستخلص أعمال منفذة',
       invoiceNumber: 'مسودة',
       refCode: `PRX-${extractFor.code}`,
-      dateIso: new Date().toISOString().slice(0, 10),
+      dateIso: todayLocalIso(),
       partyLabel: extractFor.clientName || 'الجهة المالكة',
       paymentLabel: `${exPayment === 'cash' ? 'تحصيل فوري' : 'آجل (مستحق على العميل)'} · المستحق ${formatMinor(dueMinor, cur, false)} ${cur.symbol}`,
       rows: exMode === 'lines' && extractBoq.length > 0
@@ -724,7 +725,7 @@ export function ProjectsPage() {
           kind="sale"
           modeLabel={editingExtract ? 'تعديل مستخلص صادر — قيد عاكس وإعادة بناء' : 'مستخلص أعمال'}
           currencyLabel={`${cur.code} · ${cur.symbol}`}
-          dateLabel={editingExtract ? editingExtract.date.slice(0, 10) : new Date().toISOString().slice(0, 10)}
+          dateLabel={editingExtract ? editingExtract.date.slice(0, 10) : todayLocalIso()}
           branchLabel={setup.shopName ?? ''}
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}

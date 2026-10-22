@@ -17,6 +17,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface DraftLine { itemId: string; qty: string }
 
@@ -28,7 +29,7 @@ export function WastagePage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const active = useMemo(() => items.filter((it) => it.isActive), [items])
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   // أصناف منتهية الصلاحية حالياً — مرشحة فورية للإعدام
   const expiredNow = useMemo(

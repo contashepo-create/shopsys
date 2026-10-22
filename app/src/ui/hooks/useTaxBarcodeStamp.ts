@@ -16,7 +16,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { getCountry } from '../../core/countries.ts'
 import type { ReceiptModel } from '../../core/receipt.ts'
-import { withTaxBarcodeSync, type TaxBarcodeArgs } from '../print/taxBarcode.ts'
+import { taxBarcodePayload, withTaxBarcodeSync, type TaxBarcodeArgs } from '../print/taxBarcode.ts'
 
 /** بيانات المستند التي لا يحملها نموذج الطباعة بالضرورة */
 export interface TaxBarcodeDoc {
@@ -32,7 +32,11 @@ export type TaxBarcodeStamp = (
   doc: TaxBarcodeDoc,
 ) => boolean
 
-export function useTaxBarcodeStamp(): TaxBarcodeStamp {
+/**
+ * بناء وسائط الرمز من حالة التطبيق — مصدر واحد تستخدمه نسخة الختم ونسخة
+ * الحمولة (التجميد) فتستحيل مفارقة شروطهما.
+ */
+function useTaxBarcodeArgs(): (model: Pick<ReceiptModel, 'invoiceNumber' | 'totalMinor' | 'taxMinor'> | null, doc: TaxBarcodeDoc) => TaxBarcodeArgs {
   const { setup, einvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const lic = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
@@ -40,19 +44,36 @@ export function useTaxBarcodeStamp(): TaxBarcodeStamp {
   )
   const decimals = (setup.countryCode ? getCountry(setup.countryCode)?.currency.decimals : undefined) ?? 2
 
-  return useCallback<TaxBarcodeStamp>((model, doc) => {
-    const args: TaxBarcodeArgs = {
-      saFeatureActive: einvoice.enabled === true && hasFeature(lic, 'einvoice_sa'),
-      egFeatureActive: einvoice.enabled === true && hasFeature(lic, 'einvoice_eg'),
-      printEnabled: einvoice.printZatcaQr,
-      sellerName: setup.shopName,
-      taxNumber: einvoice.taxNumber,
-      invoiceNumber: doc.invoiceNumber ?? model.invoiceNumber,
-      dateIso: doc.dateIso,
-      totalMinor: doc.totalMinor ?? model.totalMinor,
-      taxMinor: doc.taxMinor ?? model.taxMinor,
-      decimals,
-    }
-    return withTaxBarcodeSync(model, args)
-  }, [setup.shopName, einvoice, lic, decimals])
+  return useCallback((model, doc) => ({
+    saFeatureActive: einvoice.enabled === true && hasFeature(lic, 'einvoice_sa'),
+    egFeatureActive: einvoice.enabled === true && hasFeature(lic, 'einvoice_eg'),
+    printEnabled: einvoice.printZatcaQr,
+    sellerName: setup.shopName,
+    taxNumber: einvoice.taxNumber,
+    invoiceNumber: doc.invoiceNumber ?? model?.invoiceNumber ?? '',
+    dateIso: doc.dateIso,
+    totalMinor: doc.totalMinor ?? model?.totalMinor ?? 0,
+    taxMinor: doc.taxMinor ?? model?.taxMinor ?? 0,
+    decimals,
+  }), [setup.shopName, einvoice, lic, decimals])
+}
+
+export function useTaxBarcodeStamp(): TaxBarcodeStamp {
+  const argsFor = useTaxBarcodeArgs()
+  return useCallback<TaxBarcodeStamp>(
+    (model, doc) => withTaxBarcodeSync(model, argsFor(model, doc)),
+    [argsFor],
+  )
+}
+
+/**
+ * حمولة الرمز النصية (للتجميد على المستند عند أول طباعة). `undefined` تعني
+ * «لا رمز الآن» — لا يُحفظ شيء ولا يُطبع رمز.
+ */
+export function useTaxBarcodePayload(): (
+  model: Pick<ReceiptModel, 'invoiceNumber' | 'totalMinor' | 'taxMinor'> | null,
+  doc: TaxBarcodeDoc,
+) => string | undefined {
+  const argsFor = useTaxBarcodeArgs()
+  return useCallback((model, doc) => taxBarcodePayload(argsFor(model, doc)), [argsFor])
 }

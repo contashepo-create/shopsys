@@ -20,7 +20,10 @@ const PRINT_CALLS = new Set([
 ])
 /* مستندات غير ضريبية تُطبع من صفحات المبيعات (بوليصة نقل، تذكرة مطبخ، عقد، إذن استلام) */
 const NON_TAX_MARKERS = ['renderWaybillHtml', 'renderKitchenTicketHtml', 'renderRentalContractHtml', 'buildWarehouseReceiptHtml', 'renderReportShell']
-const STAMP = /(stampTax|maybeTaxBarcode|maybeTaxBarcodeSync|withTaxBarcodeSync)\s*\(/
+/* معاينة مسودة غير مرحّلة: لا تحمل رمزاً ضريبياً عمداً (الرمز للمستند الصادر).
+   أي مسار غير مسودة في نفس الصفحة يبقى خاضعاً للفحص. */
+const DRAFT_MARKERS = ['edPrintModel']
+const STAMP = /(stampTax|maybeTaxBarcode|maybeTaxBarcodeSync|withTaxBarcodeSync|taxBarcodePayload|taxQrPayload)\s*\(|taxQrPayload/
 const FILES = [
   'src/ui/pages/PosPage.tsx', 'src/ui/pages/SalesInvoicesPage.tsx', 'src/ui/pages/AdvancedSalesInvoicePage.tsx',
   'src/ui/pages/SaleReturnsPage.tsx', 'src/ui/pages/ActivityInvoicesHubs.tsx', 'src/ui/pages/ContractingInvoicesPage.tsx',
@@ -79,7 +82,7 @@ for (const file of FILES) {
       const simple = callee.split('.').pop()
       if (PRINT_CALLS.has(simple)) {
         const text = node.getText(sf)
-        if (!NON_TAX_MARKERS.some((m) => text.includes(m))) {
+        if (!NON_TAX_MARKERS.some((m) => text.includes(m)) && !DRAFT_MARKERS.some((m) => text.includes(m))) {
           const fnAncestors = [...ancestors].reverse().filter((n) => ts.isFunctionLike(n))
           const nearestText = fnAncestors.length ? fnAncestors[0].getText(sf) : ''
           const scopes = fnAncestors.map((n) => n.getStart(sf))

@@ -21,6 +21,7 @@ import { renderReportShell } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 type BookCur = { code: string; symbol: string; decimals: 0 | 2 | 3; name: string }
 
@@ -63,7 +64,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
   const [fromRate, setFromRate] = useState('')
   const [toRate, setToRate] = useState('')
   const [fee, setFee] = useState('')
-  const [convDate, setConvDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [convDate, setConvDate] = useState(() => todayLocalIso())
   const [convNotes, setConvNotes] = useState('')
 
   const fromDecimals: 0 | 2 | 3 = fromCurrency === cur.code.toUpperCase() ? cur.decimals : (fxMetaOf(fromCurrency)?.decimals ?? 2)

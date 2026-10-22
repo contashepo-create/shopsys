@@ -182,10 +182,10 @@ ok(zatcaLinkPolicy({ featureActive: true, online: true }).canLink === true, 'ا�
 const readSource = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 for (const [label, path, token] of [
   ['الكاشير', '../src/ui/pages/PosPage.tsx', 'maybeTaxBarcode'],
-  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx', 'maybeTaxBarcode'],
+  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx', 'taxBarcodePayload'],
   ['محرر فاتورة المبيعات', '../src/ui/pages/AdvancedSalesInvoicePage.tsx', 'stampTax('],
   /* مستندات المبيعات الأخرى — كلها كانت تطبع بلا رمز قبل 2026-10-22 */
-  ['مرتجع مبيعات (إشعار دائن)', '../src/ui/pages/SaleReturnsPage.tsx', 'stampTax('],
+  ['مرتجع مبيعات (إشعار دائن)', '../src/ui/pages/SaleReturnsPage.tsx', 'taxPayload('],
   ['مراكز فواتير الأنشطة الخدمية', '../src/ui/pages/ActivityInvoicesHubs.tsx', 'stampTax('],
   ['فواتير المقاولات', '../src/ui/pages/ContractingInvoicesPage.tsx', 'stampTax('],
   ['فواتير الإيجار الدورية', '../src/ui/pages/RentalContractsPage.tsx', 'stampTax('],

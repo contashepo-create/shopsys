@@ -17,6 +17,7 @@ import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrin
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
 
@@ -344,7 +345,7 @@ export function ContractingReportsPage() {
                   'التكاليف': fmt(r.card.costsMinor), 'الربح': fmt(r.card.profitMinor), 'الهامش ٪': r.card.marginPercent,
                   'محتجز قائم': fmt(r.card.retentionHeldMinor), 'دفعات مقدمة متبقية': fmt(r.card.advancesRemainingMinor),
                   'ذمم مفتوحة': fmt(openByProject.get(r.project.id) ?? 0), 'الحالة': r.project.status === 'active' ? 'جارٍ' : 'مُسلَّم',
-                })), `تقرير-مشاريع-المقاولات-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `تقرير-مشاريع-المقاولات-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير اللوحة CSV</button>
               </div>
               <div className={`${card} overflow-x-auto`}>
@@ -567,7 +568,7 @@ export function ContractingReportsPage() {
                     <button onClick={() => downloadCsv([
                       ...clientRows.map((r) => ({ 'نوع الصف': 'مشروع', 'المشروع': `${r.projectCode} — ${r.projectName}`, 'العقد الفعلي': fmt(r.contractEffectiveMinor), 'المستخلصات': fmt(r.extractedMinor), 'محتجز قائم': fmt(r.retentionHeldMinor), 'مقدمة متبقية': fmt(r.advancesRemainingMinor), 'مفتوح': fmt(r.openExtractsMinor), 'محصّل': fmt(r.settledOnExtractsMinor), 'الحالة': r.status === 'active' ? 'جارٍ' : r.status === 'completed' ? 'مكتمل' : 'مُسلَّم' })),
                       ...clientExtractRows.map(({ extract: e, projectName, settledMinor, remainingMinor }) => ({ 'نوع الصف': 'مستخلص', 'المشروع': projectName, 'العقد الفعلي': '', 'المستخلصات': fmt(e.totals.grossMinor), 'محتجز قائم': fmt(e.totals.retentionMinor), 'مقدمة متبقية': '', 'مفتوح': fmt(remainingMinor), 'محصّل': fmt(settledMinor), 'الحالة': e.payment === 'cash' ? 'نقدي' : remainingMinor > 0 ? 'آجل مفتوح' : 'آجل مسدد' })),
-                    ], `بطاقة-عميل-${clientName || clientId}-${new Date().toISOString().slice(0, 10)}.csv`)}
+                    ], `بطاقة-عميل-${clientName || clientId}-${todayLocalIso()}.csv`)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير البطاقة CSV</button>
                     <button onClick={() => { window.location.hash = `#/reports/statements?kind=customer&id=${clientId}` }}
                       className="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-[12px] font-bold hover:bg-sky-700 transition-all">كشف الحساب الكامل ←</button>
@@ -651,7 +652,7 @@ export function ContractingReportsPage() {
                 <button onClick={() => downloadCsv(clientDues.map((row) => ({
                   'العميل': row.nameAr, 'الأعمال المستخلصة': fmt(row.extractedMinor), 'المحتجز لدى العميل': fmt(row.retentionMinor),
                   'ذمم مفتوحة': fmt(row.openMinor), 'مستخلصات آجلة': row.openDocs,
-                })), `ذمم-عملاء-المقاولات-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `ذمم-عملاء-المقاولات-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير الذمم CSV</button>
               </div>
               <div className={`${card} overflow-x-auto`}>

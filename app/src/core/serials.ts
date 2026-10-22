@@ -10,6 +10,7 @@
  *   (كي لا يتعطل محل أدخل مخزونه الافتتاحي بلا سيريالات)
  * - المرتجع يعيد السيريال متاحاً، والضمان يُستعلم عنه بأي سيريال
  */
+import { todayLocalIso } from './time.ts'
 
 export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier'
 
@@ -182,7 +183,7 @@ export function warrantyEndDate(soldAtIso: string, months: number): string {
   d.setUTCMonth(d.getUTCMonth() + months)
   const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
   d.setUTCDate(Math.min(day, lastDay))
-  return d.toISOString().slice(0, 10)
+  return todayLocalIso(d)
 }
 
 /** استعلام ضمان بسيريال — undefined لو غير مسجل أو لم يُبع بعد */

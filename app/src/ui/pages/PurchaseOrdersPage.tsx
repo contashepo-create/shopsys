@@ -54,6 +54,7 @@ import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { PrintSettingsPopup } from '../components/PrintSettingsPopup.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 type DraftLine = PurchaseOrderLine & { key: string; warehouseId: number | null }
 
@@ -81,8 +82,8 @@ export function PurchaseOrdersPage() {
   const [open, setOpen] = useState(false)
   const [supplierId, setSupplierId] = useState<number | null>(null)
   const [supplierName, setSupplierName] = useState('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [expectedDate, setExpectedDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [expectedDate, setExpectedDate] = useState(() => todayLocalIso())
   const [warehouseId, setWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [notes, setNotes] = useState('')
   /* عمود ملاحظات البنود (طلب المالك) — نفس تسهيل فاتورة الشراء (بوابة التكافؤ)، ويُفعَّل تلقائياً من تفضيل المستخدم أو عند وجود ملاحظات بالبنود */
@@ -161,12 +162,12 @@ export function PurchaseOrdersPage() {
     setActiveItemId(null); setPartyNote(''); setCategoryFilter(0); setLinkedTicketId('')
   }
   const openNew = () => {
-    reset(); setDate(new Date().toISOString().slice(0, 10)); setExpectedDate(new Date().toISOString().slice(0, 10)); setOpen(true)
+    reset(); setDate(todayLocalIso()); setExpectedDate(todayLocalIso()); setOpen(true)
   }
   /** يفتح أمراً جديداً مُعبَّأً تلقائياً بكل الأصناف تحت حد الطلب — يبقى المورد والكميات والأسعار قابلة للمراجعة قبل الاعتماد */
   const openAutoReorder = () => {
     reset()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayLocalIso()
     setDate(today); setExpectedDate(today)
     setLines(reorderSuggestions.map((row) => ({
       key: crypto.randomUUID(), itemId: row.itemId, nameAr: row.nameAr, qty: row.suggestedQty, receivedQty: 0,
@@ -192,7 +193,7 @@ export function PurchaseOrdersPage() {
     try {
       const data = JSON.parse(draft.payload)
       setSupplierId(data.supplierId ?? null); setSupplierName(data.supplierName ?? '')
-      setDate(data.date ?? new Date().toISOString().slice(0, 10)); setExpectedDate(data.expectedDate ?? '')
+      setDate(data.date ?? todayLocalIso()); setExpectedDate(data.expectedDate ?? '')
       setWarehouseId(data.warehouseId ?? null); setNotes(data.notes ?? ''); setReference(data.reference ?? '')
       setLines(data.lines ?? [])
       toast.show(`استُعيدت «${draft.name}» ✓`)

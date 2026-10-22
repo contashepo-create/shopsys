@@ -20,7 +20,8 @@
     "desktop:compile": "node desktop/build.mjs",
     "desktop:dev": "node desktop/build.mjs && node desktop/dev.mjs",
     "desktop:dist": "node node_modules/electron/install.js && vite build && node desktop/build.mjs && electron-builder --win nsis --publish never",
-    "desktop:publish": "node node_modules/electron/install.js && vite build && node desktop/build.mjs && electron-builder --win nsis --publish always"
+    "desktop:publish": "node node_modules/electron/install.js && vite build && node desktop/build.mjs && electron-builder --win nsis --publish always",
+    "audit:all": "node --experimental-strip-types scripts/audit_comprehensive.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

@@ -11,6 +11,7 @@
  * - تكلفة: 5110 ← 1101 (نقدي) | 2101 (آجل على مورد/مقاول باطن)
  * - إفراج محتجز: 1101 ← 1105
  */
+import { todayLocalIso } from './time.ts'
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
@@ -65,7 +66,7 @@ export function retentionReleaseDueDate(p: Pick<Project, 'actualHandoverDate' | 
   const due = new Date(`${p.actualHandoverDate.slice(0, 10)}T00:00:00Z`)
   if (Number.isNaN(due.getTime())) return null
   due.setUTCMonth(due.getUTCMonth() + p.defectsLiabilityMonths)
-  return due.toISOString().slice(0, 10)
+  return todayLocalIso(due)
 }
 
 export interface RetentionDueWarning {

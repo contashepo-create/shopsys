@@ -1,4 +1,5 @@
-/**
+
+import { todayLocalIso } from './time.ts'/**
  * استيراد الموظفين من Excel/CSV (البند ③ من أمر «اكمل ونفذ» 2026-10-01):
  * تحليل مرن بلا مكتبات — رؤوس أعمدة عربية/إنجليزية بمرادفات، أرقام عربية
  * وهندية، وتواريخ مصرية (يوم/شهر/سنة). «قالب الأعمدة» يُنزَّل كملف CSV
@@ -126,7 +127,7 @@ export function parseEmployeesCsv(text: string): EmployeeImportResult {
       nameAr,
       jobTitle: cell(parts, 'jobTitle'),
       phone: normalizeDigits(cell(parts, 'phone')).replace(/[^\d+]/g, ''),
-      hireDate: hireDate || new Date().toISOString().slice(0, 10),
+      hireDate: hireDate || todayLocalIso(),
       baseSalaryMinor,
       allowancesMinor,
       notes: cell(parts, 'notes'),

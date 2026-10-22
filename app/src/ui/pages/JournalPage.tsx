@@ -18,6 +18,7 @@ import { validateManualEntry, PARTY_CONTROL_ACCOUNTS } from '../../core/accounti
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface DraftLine { accountCode: string; debit: string; credit: string; costCenterId?: string; partyId?: string }
 
@@ -157,7 +158,7 @@ export function JournalPage() {
 
   const openManual = () => {
     setMDesc('')
-    setMDate(new Date().toISOString().slice(0, 10))
+    setMDate(todayLocalIso())
     setMLines([{ accountCode: '', debit: '', credit: '' }, { accountCode: '', debit: '', credit: '' }])
     setManualOpen(true)
   }

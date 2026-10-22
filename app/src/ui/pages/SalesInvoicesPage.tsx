@@ -19,10 +19,10 @@ import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.t
 import { effectiveVatPercent, PriceFloorError } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { qrDataUrlFromPayload, taxBarcodePayload } from '../print/taxBarcode.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { saleWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
-import { maybeTaxBarcode } from '../print/taxBarcode.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive, saleEditBlocks } from '../../core/invoiceEdit.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -35,9 +35,10 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
 import { openItemPricesWindow } from '../windows/windowStore.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, suppliers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
+  const { sales, customers, suppliers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId, attachSaleTaxQr } = useDataStore()
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -53,7 +54,7 @@ export function SalesInvoicesPage() {
   }
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
   const [printTarget, setPrintTarget] = useState<SaleInvoice | null>(null)
-  const [today] = useState(() => new Date().toISOString().slice(0, 10))
+  const [today] = useState(() => todayLocalIso())
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة بمفتاح المطور ⇒ لا تعديل — إشعارات فقط
   const lic = useMemo(
@@ -191,19 +192,30 @@ export function SalesInvoicesPage() {
 
   /** نموذج الطباعة لفاتورة مبيعات — يُستعمل للطباعة وللإرسال عبر واتساب */
   const buildSaleModel = async (s: SaleInvoice) => {
-    const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
-    const qrDataUrl = await maybeTaxBarcode({
-      saFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
-      egFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_eg'),
-      printEnabled: einvoice.printZatcaQr,
-      sellerName: setup.shopName,
-      taxNumber: einvoice.taxNumber,
-      invoiceNumber: s.invoiceNumber,
-      dateIso: s.date,
-      totalMinor: s.totals.totalMinor,
-      taxMinor: s.totals.taxMinor,
-      decimals: cur.decimals,
-    })
+    /* إعادة طباعة فاتورة قديمة: الرمز يُعاد من الحمولة المجمّدة وقت أول طباعة
+       (اسم المنشأة/الرقم الضريبي/الأرقام كما كانت) — لا يُعاد توليده ببيانات اليوم.
+       وإن لم تكن مجمّدة بعد (فاتورة سابقة للتحديث) نولّدها مرة واحدة ونحفظها. */
+    let qrDataUrl: string | undefined
+    if (s.taxQrPayload) {
+      qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    } else {
+      const payload = taxBarcodePayload({
+        saFeatureActive: einvoice.enabled === true && hasFeature(licStateForQr(), 'einvoice_sa'),
+        egFeatureActive: einvoice.enabled === true && hasFeature(licStateForQr(), 'einvoice_eg'),
+        printEnabled: einvoice.printZatcaQr,
+        sellerName: setup.shopName,
+        taxNumber: einvoice.taxNumber,
+        invoiceNumber: s.invoiceNumber,
+        dateIso: s.date,
+        totalMinor: s.totals.totalMinor,
+        taxMinor: s.totals.taxMinor,
+        decimals: cur.decimals,
+      })
+      if (payload) {
+        qrDataUrl = qrDataUrlFromPayload(payload)
+        attachSaleTaxQr(s.id, payload)
+      }
+    }
     /* بيانات الضريبة المعروضة: من الفاتورة إن كانت مخزنة، وإلا تُستنتج من
        إجمالياتها (فواتير قديمة/مستوردة) — نفس قاعدة editSale والمرتجع. */
     const tx = s.taxPercent !== undefined
@@ -227,6 +239,8 @@ export function SalesInvoicesPage() {
     if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${receipt.footerText ? ' — ' + receipt.footerText : ''}`
     return model
   }
+  const licStateForQr = () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+
   const printInvoice = async (s: SaleInvoice, template: InvoiceTemplate) => {
     const model = await buildSaleModel(s)
     printModelWithTemplate(model, cur, receipt, template)

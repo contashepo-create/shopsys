@@ -30,6 +30,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { jobTitlesFor, jobTitleLabel } from '../../core/jobTitles.ts'
 import { dailyRateMinor } from '../../core/attendance.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
 function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: PartyExtended) => void }) {
@@ -273,7 +274,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      من الخزينة الرئيسية فقط، ويعرض كشف الحساب القيمة مرة واحدة صحيحة. */
   const [paySlipFor, setPaySlipFor] = useState<PayrollSlip | null>(null)
   const [paySlipTreasury, setPaySlipTreasury] = useState('1101')
-  const [paySlipDate, setPaySlipDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [paySlipDate, setPaySlipDate] = useState(() => todayLocalIso())
   /* مبلغ سند الصرف: افتراضياً المتبقي من القسيمة فقط (بلاغ المالك) — وقابل للتعديل للصرف الجزئي */
   const [paySlipAmount, setPaySlipAmount] = useState(0)
   const postSlipVoucher = () => {
@@ -407,7 +408,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   )
 
   const openNew = () => {
-    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(new Date().toISOString().slice(0, 10))
+    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(todayLocalIso())
     setBaseSalary(''); setAllowances(''); setCommissionPercent(''); setActive(true); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true)
   }
   const openEdit = (e: Employee) => {
@@ -1314,7 +1315,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(new Date().toISOString().slice(0, 10)); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>

@@ -18,6 +18,7 @@ import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 /** فاتورة تجريبية للمعاينة والطباعة الاختبارية */
 const SAMPLE_LINES = [
@@ -183,7 +184,7 @@ export function PrintSettingsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Btn variant="ghost" onClick={() => printHtml(buildWarehouseReceiptHtml({
-              title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: new Date().toISOString().slice(0, 10),
+              title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: todayLocalIso(),
               partyLabel: 'جهة تجريبية', branchLabel: 'الفرع الرئيسي', companyName: setup.shopName || 'المنشأة',
               userLabel: setup.ownerName || 'المالك', settings: warehouseReceipt,
               lines: [

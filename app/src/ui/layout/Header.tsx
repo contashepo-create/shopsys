@@ -30,6 +30,7 @@ import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
 import { guardNavigation, useToast } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload } = useAppStore()
@@ -129,11 +130,11 @@ export function Header({ title }: { title: string }) {
           .filter((t) => (t.status === 'received' || t.status === 'in_progress' || t.status === 'ready') && t.promisedAt && t.promisedAt < new Date().toISOString())
           .map((t) => ({ id: t.id, docNumber: t.ticketNumber, what: t.deviceName, kind: 'maintenance' as const, promisedAt: t.promisedAt ?? '' })),
         ...laundryOrders
-          .filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt && o.promisedAt < new Date().toISOString().slice(0, 10))
+          .filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt && o.promisedAt < todayLocalIso())
           .map((o) => ({ id: o.id, docNumber: o.orderNumber, what: o.customerName, kind: 'laundry' as const, promisedAt: o.promisedAt })),
       ],
       // عقود إيجار العقارات: انتهاء قريب (60 يوماً) أو أقساط متأخرة (نمط سمات)
-      leaseAlerts: collectLeaseAlerts(leases, new Date().toISOString().slice(0, 10), 60),
+      leaseAlerts: collectLeaseAlerts(leases, todayLocalIso(), 60),
       // خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء (سد فجوة تقرير النشاط #11 — Immediate #3)
       complianceDueBonds: bondComplianceWarnings(bonds, new Date().toISOString(), 30),
       // بنود موازنة مشروعات نشطة تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)

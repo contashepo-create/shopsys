@@ -17,6 +17,7 @@ import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 import { accountName } from './accountNames.ts'
 
 import { FxRatesManager } from '../components/FxRatesManager.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function GeneralSettingsPage() {
   const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload, updateSetup, updateCompanyName, updateTaxSettings, activeBranchContext } = useAppStore()
@@ -516,7 +517,7 @@ export function GeneralSettingsPage() {
         <div className="space-y-2">
           {fiscalYears.length === 0 && <div className="text-[12px] text-slate-400">لا سنوات مسجلة</div>}
           {fiscalYears.map((y) => {
-            const closable = validateYearClose(y, fiscalYears, new Date().toISOString().slice(0, 10)).length === 0
+            const closable = validateYearClose(y, fiscalYears, todayLocalIso()).length === 0
             // إعادة الفتح بالترتيب العكسي: أحدث سنة مقفلة فقط (لا سنة مقفلة أحدث منها)
             const newestClosed = y.status === 'closed' && !fiscalYears.some((o) => o.id !== y.id && o.status === 'closed' && o.startDate > y.endDate)
             return (

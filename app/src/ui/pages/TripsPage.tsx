@@ -37,6 +37,7 @@ import { renderWaybillHtml } from '../print/printWaybill.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface DraftTripLine {
   key: string
@@ -399,7 +400,7 @@ export function TripsPage() {
       nameAr: quickDrvName.trim(),
       phone: quickDrvPhone.trim(),
       jobTitle: 'سائق نقل ثقيل',
-      hireDate: new Date().toISOString().slice(0, 10),
+      hireDate: todayLocalIso(),
       baseSalaryMinor: 0,
       allowancesMinor: 0,
       active: true,

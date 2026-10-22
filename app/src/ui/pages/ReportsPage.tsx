@@ -40,6 +40,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Landmark } from 'lucide-react'
+import { todayLocalIso } from '../../core/time.ts'
 
 /* التبويبات من السجل الواحد `core/reportTabs.ts` — لا نسخة محلية تتقادم (سدّ ف1) */
 type TabId = ReportTabId
@@ -1069,7 +1070,7 @@ export function ReportsPage() {
               const { reportPrint, receipt } = useAppStore.getState()
               printHtml(renderReportShell({
                 title: 'تقرير أرصدة العملاء والموردين',
-                subtitle: `${setup.shopName || ''} — الأرصدة الحية الموحّدة مع كشوف الحساب · ${new Date().toISOString().slice(0, 10)}`,
+                subtitle: `${setup.shopName || ''} — الأرصدة الحية الموحّدة مع كشوف الحساب · ${todayLocalIso()}`,
                 companyName: setup.shopName || '',
                 logoDataUrl: receipt.logoDataUrl,
                 settings: reportPrint,
@@ -1677,7 +1678,7 @@ function MarketPriceReferenceCard({ card }: { card: string }) {
   const [commodityName, setCommodityName] = useState('')
   const [unit, setUnit] = useState('طن')
   const [price, setPrice] = useState('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => todayLocalIso())
   const [error, setError] = useState('')
   const sorted = useMemo(() => [...marketPrices].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)), [marketPrices])
   const submit = () => {

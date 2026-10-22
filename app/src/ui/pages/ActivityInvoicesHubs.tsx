@@ -16,6 +16,7 @@ import { formatMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { Btn, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
@@ -112,7 +113,9 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       settings: receipt,
     })
     /* فاتورة بيع خدمية — تُطبع برمز زاتكا عند تفعيله (نفس فاتورة المبيعات العامة) */
-    stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+    /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
+    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }

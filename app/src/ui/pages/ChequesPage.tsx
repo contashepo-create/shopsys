@@ -20,6 +20,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { useActivityBaseCoa } from '../activityCoa.ts'
 import { accountName } from './accountNames.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 const STATUS_STYLE: Record<ChequeStatus, string> = {
   held: 'bg-amber-500/10 text-amber-600',
@@ -97,7 +98,7 @@ export function ChequesPage() {
     setDirection(d)
     setChequeNumber(''); setPartyId(''); setPartyName(''); setBankName(''); setAmount(''); setNotes('')
     setCounterAccount(d === 'incoming' ? '4110' : '5108')
-    setDueDate(new Date().toISOString().slice(0, 10))
+    setDueDate(todayLocalIso())
     setOpen(true)
   }
 

@@ -21,6 +21,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
@@ -31,6 +32,7 @@ import { effectiveContractValue } from '../../core/contracting.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function ContractingInvoicesPage() {
   const {
@@ -144,7 +146,7 @@ export function ContractingInvoicesPage() {
     toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع (${pct}٪) ✓`)
   }
   const edPrintModel = () => {
-    const dateIso = new Date().toISOString().slice(0, 10)
+    const dateIso = todayLocalIso()
     const model = buildSimpleDocModel({
       docTitle: 'فاتورة مقاولات',
       invoiceNumber: 'مسودة',
@@ -160,8 +162,8 @@ export function ContractingInvoicesPage() {
       extraFooter: edNotes.trim() || undefined,
       tax: edTax > 0 ? { label: 'الضريبة', minor: edTax, baseMinor: edNet } : undefined,
     })
-    /* فاتورة المقاولات مستند بيع ضريبي — رمز زاتكا كما في فاتورة المبيعات */
-    stampTax(model, { dateIso, totalMinor: edGross, taxMinor: edTax })
+    /* المسودة لا تحمل رمزاً ضریبياً: رمز زاتكا يخص المستند الصادر بعد الترحيل
+       (الترحيل يولّد رقم فاتورة حقيقياً، والطباعة بعده تختم). */
     return model
   }
   const postFreeInvoice = () => {
@@ -216,7 +218,9 @@ export function ContractingInvoicesPage() {
     })
     const prj = projects.find((p) => p.id === s.projectId)
     model.footerText = `${prj ? `مشروع: ${prj.code} — ${prj.nameAr}` : ''}${prj && receipt.footerText ? ' — ' : ''}${receipt.footerText ?? ''}`
-    stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+    /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
+    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
@@ -358,7 +362,7 @@ export function ContractingInvoicesPage() {
               kind="sale"
               modeLabel="فاتورة مقاولات — بنود حرة"
               currencyLabel={`${cur.code} · ${cur.symbol}`}
-              dateLabel={new Date().toISOString().slice(0, 10)}
+              dateLabel={todayLocalIso()}
               branchLabel={setup.shopName ?? ''}
               userLabel={setup.ownerName ?? 'المالك'}
               activityLabel="مقاولات"

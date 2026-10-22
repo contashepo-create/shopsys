@@ -19,6 +19,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   paid: { label: 'مدفوع', cls: 'text-emerald-600 bg-emerald-500/10' },
@@ -37,7 +38,7 @@ export function InstallmentsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   const custName = (id: number) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`
 
@@ -62,7 +63,7 @@ export function InstallmentsPage() {
     if (customers.length === 0) return toast.show('أضف عميلاً أولاً من شاشة العملاء', 'error')
     setCustomerId(''); setTotal(''); setDown(''); setInterest(''); setCount('6'); setInterval_('1')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
-    setFirstDue(d.toISOString().slice(0, 10))
+    setFirstDue(todayLocalIso(d))
     setTreasury('1101'); setNotes(''); setOpen(true)
   }
 

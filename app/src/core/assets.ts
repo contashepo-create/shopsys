@@ -8,6 +8,7 @@
  */
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { todayLocalIso } from './time.ts'
 
 /**
  * مصدر تمويل الأصل (طلب المالك — سد فجوة المعالجة المحاسبية):
@@ -107,7 +108,7 @@ export function buildAssetInstallments(
   return Array.from({ length: count }, (_, i) => {
     const d = new Date(base)
     d.setUTCMonth(d.getUTCMonth() + i * intervalMonths)
-    return { seq: i + 1, dueDate: d.toISOString().slice(0, 10), amountMinor: i === 0 ? first : per, paidMinor: 0, paidAt: null }
+    return { seq: i + 1, dueDate: todayLocalIso(d), amountMinor: i === 0 ? first : per, paidMinor: 0, paidAt: null }
   })
 }
 

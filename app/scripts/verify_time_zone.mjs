@@ -1,0 +1,70 @@
+/**
+ * بوابة الوقت والتاريخ — تمنع عودة عيب UTC في المستندات المحاسبية.
+ *
+ * الخلل الذي تمنعه: `new Date().toISOString().slice(0,10)` يعطي يوم UTC، ففاتورة
+ * الساعة 01:00 في القاهرة (UTC+2/+3) تُرحَّل بتاريخ أمس، وساعة الطباعة تنقص 2–3 ساعات.
+ * الفحص لا «يقرأ الكود بعينه»: يشغّل الدوال فعلياً في منطقتين زمنيتين مختلفتين
+ * (شرق وجنوب خط جرينتش) ويثبت النتيجة، ثم يمنع التعبير الخام في الشيفرة.
+ */
+import { spawnSync } from 'node:child_process'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+
+let pass = 0, fail = 0
+const ok = (cond, name) => { if (cond) pass++; else { fail++; console.error(`❌ ${name}`) } }
+
+/* ① سلوك فعلي تحت منطقتين زمنيتين */
+const probe = (tz) => {
+  const code = `
+    import { todayLocalIso, localDateIso, localDateTimeLabel } from '${fileURLToPath(new URL('../src/core/time.ts', import.meta.url))}'
+    const instant = new Date('2026-10-22T01:00:00+03:00')   // 22:00 UTC يوم 21
+    console.log(JSON.stringify({
+      today: todayLocalIso(instant),
+      date: localDateIso('2026-10-21T22:00:00Z'),
+      label: localDateTimeLabel('2026-10-21T22:00:00Z'),
+      plain: localDateTimeLabel('2026-10-22'),
+      invalid: localDateTimeLabel('not-a-date'),
+    }))
+  `
+  const r = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], {
+    encoding: 'utf8', env: { ...process.env, TZ: tz },
+  })
+  if (r.status !== 0) { console.error(r.stderr); return null }
+  return JSON.parse(r.stdout.trim())
+}
+const cairo = probe('Africa/Cairo')
+const newYork = probe('America/New_York')
+ok(cairo && cairo.today === '2026-10-22', 'القاهرة: لحظة 01:00 محلياً ⇒ تاريخ اليوم 22 لا 21')
+ok(cairo && cairo.date === '2026-10-22' && cairo.label === '2026-10-22 01:00', 'القاهرة: العرض 01:00 كما حدث فعلاً')
+ok(newYork && newYork.today === '2026-10-21', 'نيويورك: نفس اللحظة ليست 22 هناك (الإصلاح ليس تغييراً أعمى)')
+ok(newYork && newYork.label === '2026-10-21 18:00', 'نيويورك: العرض بالتوقيت المحلي 18:00')
+ok(cairo && cairo.plain === '2026-10-22' && cairo.invalid === 'not-a-date'.slice(0, 16), 'التاريخ المجرد يبقى كما هو والقيمة الفاسدة لا تُرمى')
+
+/* ② منع التعبير الخام في الشيفرة (خارج time.ts) */
+const root = fileURLToPath(new URL('../src', import.meta.url))
+const walk = (dir) => readdirSync(dir).flatMap((name) => {
+  const full = join(dir, name)
+  return statSync(full).isDirectory() ? walk(full) : [full]
+})
+const offenders = []
+for (const file of walk(root)) {
+  if (!/\.(ts|tsx)$/.test(file) || file.endsWith('/core/time.ts')) continue
+  const src = readFileSync(file, 'utf8')
+  if (/toISOString\(\)\.slice\(0,\s*10\)/.test(src)) offenders.push(file.replace(root + '/', 'src/'))
+}
+ok(offenders.length === 0, `لا تاريخ UTC خام في الشيفرة — وجدت: ${offenders.slice(0, 6).join('، ') || '—'}`)
+
+/* ③ ترحيل المستندات يستخدم الختم المحلي لا UTC */
+const repo = readFileSync(new URL('../src/data/repo.ts', import.meta.url), 'utf8')
+ok(repo.includes('const now = localIsoTimestamp()'), 'repo: تواريخ المستندات تُبنى بختم محلي')
+ok(repo.includes('const stamp = localIsoTimestamp()'), 'repo: ختم لحظة البيع محلي لا UTC')
+ok(!/date: new Date\(\)\.toISOString\(\)/.test(repo), 'repo: لا تاريخ مستند من UTC الخام')
+
+/* ④ المستندات المخزّنة تعرض بتوقيت المستخدم (نموذج الطباعة) */
+const receipt = readFileSync(new URL('../src/core/receipt.ts', import.meta.url), 'utf8')
+ok(receipt.includes('localDateTimeLabel(args.dateIso)'), 'نموذج الطباعة يعرض توقيت المستخدم لا UTC')
+
+console.log(`PASS=${pass} FAIL=${fail}`)
+if (fail > 0) process.exit(1)
+console.log(`🎉 فحص الوقت والتواريخ — ${pass} اختباراً`)

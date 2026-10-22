@@ -1,4 +1,5 @@
-/**
+
+import { todayLocalIso } from './time.ts'/**
  * واتساب — مساعدات موحدة (v1.0.13)
  * يسّير نفس منطق تذكيرات المواعيد (booking.ts) مع إضافة حالات إرسال المستندات:
  * بلا رقم يفتح قائمة اختيار جهة في واتساب بدل الفشل الصامت.
@@ -27,7 +28,7 @@ export function waChatLink(phone: string, message: string): string {
 /** اسم ملف لاتيني آمن للـ PDF عبر أنظمة الملفات والمشاركة: INV-0001 → Tahakom-INV-0001 */
 export function safePdfFileName(prefix: string, docNumber: string): string {
   const doc = (docNumber || 'draft').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
-  const stamp = new Date().toISOString().slice(0, 10)
+  const stamp = todayLocalIso()
   return `Tahakom-${prefix}-${doc}-${stamp}`
 }
 
