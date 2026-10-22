@@ -173,6 +173,7 @@ for (const [label, path, token] of [
 const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
 ok(advSalesSrc.includes('useTaxBarcodeStamp'), 'محرر فاتورة المبيعات: يستخدم خطاف الختم الموحد')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
+ok(advSalesSrc.includes('editingInvoice?{invoiceNumber:editingInvoice.invoiceNumber'), 'محرر الفاتورة: معاينة فاتورة قائمة تستخدم رقمها وتاريخها لا «مسودة» (طابع زاتكا صحيح)')
 ok(readSource('../src/ui/hooks/useTaxBarcodeStamp.ts').includes('einvoice.enabled === true'), 'خطاف الختم يربط الرمز بتشغيل الإصدار الإلكتروني — لا يُطبع بلا تشغيل')
 /* منع عودة شرط الاتصال إلى مسار الطباعة: المولّد لا يقرأ الشبكة، والشاشة تفصل الربط عنه */
 ok(!readSource('../src/ui/print/taxBarcode.ts').includes('navigator.onLine'), 'مولّد الرمز لا يقرأ حالة الشبكة — الطباعة محلية')

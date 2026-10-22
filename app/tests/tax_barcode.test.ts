@@ -56,10 +56,16 @@ describe('الرمز الضريبي الموحَّد — مصر والسعودي
     expect(url!.startsWith('data:image/')).toBe(true)
   })
 
-  it('السعودية: الرمز يُولَّد بلا إنترنت (مرحلة أولى محلية) — لا شرط اتصال', async () => {
-    const url = await maybeTaxBarcode({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003' })
-    expect(url, 'رمز المرحلة الأولى يجب أن يُطبع أوفلاين — اشتراط الاتصال يخص الربط فقط').toBeTruthy()
-    expect(url!.startsWith('data:image/')).toBe(true)
+  it('السعودية: الرمز يُولَّد والمتصفح معلن قطع الاتصال — لا قراءة للشبكة إطلاقاً', () => {
+    const original = navigator.onLine
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
+    try {
+      const url = maybeTaxBarcodeSync({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003' })
+      expect(url, 'رمز المرحلة الأولى يجب أن يُطبع أوفلاين — اشتراط الاتصال يخص الربط فقط').toBeTruthy()
+      expect(url!.startsWith('data:image/svg+xml')).toBe(true)
+    } finally {
+      Object.defineProperty(navigator, 'onLine', { configurable: true, value: original })
+    }
   })
 
   it('لا ميزة مفعّلة على الإطلاق ⇒ لا رمز أبداً', async () => {

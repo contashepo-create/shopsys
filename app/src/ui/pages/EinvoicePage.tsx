@@ -156,7 +156,8 @@ export function EinvoicePage() {
   })()
 
   /* تشخيص «لماذا لا يظهر الباركود؟» — كل شرط على حدة بدل تخمين المستخدم.
-     نفس شروط maybeTaxBarcode تماماً (الترخيص + تشغيل الإصدار + الرقم + الاسم + المفتاح + الاتصال).
+     نفس شروط maybeTaxBarcode تماماً (الترخيص + تشغيل الإصدار + الرقم + الاسم + المفتاح) —
+     بلا اتصال: ذاك شرط الربط/الإرسال وحده في linkPolicy أدناه.
      نعرض كل الموانع مجتمعةً لا أولها فقط: تعديل شرط قد يكشف آخر كان مخفياً. */
   const sellerNameReady = setup.shopName.trim().length > 0
   const taxNumberValid = saActive ? isValidSaVatNumber(einvoice.taxNumber) : isValidEgTaxNumber(einvoice.taxNumber)
@@ -218,7 +219,7 @@ export function EinvoicePage() {
         <div className="anim-up rounded-2xl border border-sky-500/20 bg-sky-500/[0.04] p-4 text-[12.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1">
           <div className="font-bold text-sky-700 dark:text-sky-400">📡 المرحلة الأولى (الرمز) والمرحلة الثانية (الربط):</div>
           <div>• <b>رمز QR الضريبي — المرحلة الأولى:</b> يُولَّد محلياً من بيانات الفاتورة ويُطبع <b>حتى بلا إنترنت</b>؛ الاتصال ليس شرطاً لطباعته.</div>
-          <div>• <b>الربط والإرسال إلى منصة فاتورة — المرحلة الثانية:</b> {linkPolicy?.canLink ? '✓ متاح الآن (الاتصال بالإنترنت قائم).' : linkPolicy?.reasonAr}</div>
+          <div>• <b>الربط والإرسال إلى منصة فاتورة — المرحلة الثانية:</b> {linkPolicy?.canLink ? '✓ الاتصال بالإنترنت قائم — وهو الشرط الوحيد المطلوب عند تشغيل الربط؛ لا علاقة له بطباعة الرمز.' : linkPolicy?.reasonAr}</div>
           <div>• ولأن الفواتير مرتبطة بالمنظومة عند التشغيل، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
         </div>
       )}
