@@ -204,6 +204,11 @@ export function SalesInvoicesPage() {
       taxMinor: s.totals.taxMinor,
       decimals: cur.decimals,
     })
+    /* بيانات الضريبة المعروضة: من الفاتورة إن كانت مخزنة، وإلا تُستنتج من
+       إجمالياتها (فواتير قديمة/مستوردة) — نفس قاعدة editSale والمرتجع. */
+    const tx = s.taxPercent !== undefined
+      ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
+      : deriveTaxConfig(s.totals, s.lines)
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
@@ -214,8 +219,8 @@ export function SalesInvoicesPage() {
       paidMinor: s.paidMinor, // الدفع المجزأ: المدفوع/المتبقي على المطبوعة (بلاغ المالك)
       operatorName: printOperatorName,
       customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null,
-      taxPercent: s.taxPercent ?? countryVatPercent,
-      taxInclusive: s.taxInclusive ?? setup.taxInclusive,
+      taxPercent: tx.taxPercent,
+      taxInclusive: tx.taxInclusive,
       settings: receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl

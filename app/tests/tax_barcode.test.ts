@@ -69,6 +69,17 @@ describe('الرمز الضريبي الموحَّد — مصر والسعودي
     }
   })
 
+  it('السعودية: رقم ضريبي بالأرقام العربية يُطبَّع ويُولّد رمزاً (لا يُسقط بصمت)', async () => {
+    const url = await maybeTaxBarcode({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '٣١٠١٢٢٣٩٣٥٠٠٠٠٣' })
+    expect(url).toBeTruthy()
+    expect(url!.startsWith('data:image/')).toBe(true)
+  })
+
+  it('مصر: رقم فاتورة يحوي الفاصل | يمنع الرمز بدل بناء بنية مكسورة', async () => {
+    const url = await maybeTaxBarcode({ ...base, printEnabled: true, saFeatureActive: false, egFeatureActive: true, taxNumber: '123456789', invoiceNumber: 'INV|42' })
+    expect(url).toBeUndefined()
+  })
+
   it('لا ميزة مفعّلة على الإطلاق ⇒ لا رمز أبداً', async () => {
     const url = await maybeTaxBarcode({ ...base, saFeatureActive: false, egFeatureActive: false, taxNumber: '123456789' })
     expect(url).toBeUndefined()

@@ -223,8 +223,10 @@ export function SaleReturnsPage() {
       /* معدل الضريبة ونمطها من الفاتورة الأصلية — لا من إعدادات اليوم.
          إشعار الدائن يجب أن يعرض نفس نسبة الفاتورة التي يعدّلها، ولو تغيّر
          المعدل العام بعد إصدارها؛ الإجماليات تأتي من المرتجع نفسه أصلاً. */
-      taxPercent: orig?.taxPercent ?? setup.vatPercent,
-      taxInclusive: orig?.taxInclusive ?? setup.taxInclusive,
+      /* من الفاتورة الأصلية إن كانت النسبة مخزنة؛ وإلا تُستنتج من إجماليات
+         المرتجع نفسه — لا من إعدادات اليوم التي قد تخالف المستند القديم. */
+      taxPercent: orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent,
+      taxInclusive: orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive,
       settings: receipt,
     })
     model.docTitle = 'مرتجع مبيعات'

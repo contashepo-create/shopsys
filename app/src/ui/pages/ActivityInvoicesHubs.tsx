@@ -14,6 +14,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
+import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { Btn, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
@@ -93,6 +94,9 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط مركز المقاولات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
+    const tx = s.taxPercent !== undefined
+      ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
+      : deriveTaxConfig(s.totals, s.lines)
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
@@ -103,8 +107,8 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       paidMinor: s.paidMinor,
       operatorName: setup.ownerName ?? 'المالك',
       customerName,
-      taxPercent: s.taxPercent ?? setup.vatPercent,
-      taxInclusive: s.taxInclusive ?? setup.taxInclusive,
+      taxPercent: tx.taxPercent,
+      taxInclusive: tx.taxInclusive,
       settings: receipt,
     })
     /* فاتورة بيع خدمية — تُطبع برمز زاتكا عند تفعيله (نفس فاتورة المبيعات العامة) */

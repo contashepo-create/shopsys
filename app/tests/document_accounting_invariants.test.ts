@@ -9,6 +9,7 @@ import { computeTotals, type CartLine } from '../src/core/pos.ts'
 import { buildReceiptModel, buildSimpleDocModel, DEFAULT_RECEIPT_SETTINGS } from '../src/core/receipt.ts'
 import { decodeZatcaQr, buildZatcaQr, minorToDecimalString } from '../src/core/einvoice.ts'
 import { withTaxBarcodeSync } from '../src/ui/print/taxBarcode.ts'
+import { deriveTaxConfig } from '../src/core/returns.ts'
 
 const line = (p: Partial<CartLine> & { unitPriceMinor: number }): CartLine => ({
   itemId: 1, nameAr: 'صنف', qty: 1, unitPriceMinor: 0, unitCostMinor: 0,
@@ -80,6 +81,22 @@ describe('نموذج الطباعة يرث الإجماليات كما هي', ()
       tax: { label: 'ض.ق.م 14٪', minor: 1400, baseMinor: 10000 },
     })
     expect(m.taxBaseMinor + m.taxMinor).toBe(m.totalMinor)
+  })
+})
+
+describe('استنتاج ضريبة المستندات القديمة (بلا taxPercent مخزّن)', () => {
+  it('فاتورة مضافة 14٪: الاستنتاج يعطي 14 ومضافة', () => {
+    const t = computeTotals([line({ unitPriceMinor: 10000 })], 0, 14, false)
+    expect(deriveTaxConfig(t, [line({ unitPriceMinor: 10000 })])).toEqual({ taxPercent: 14, taxInclusive: false })
+  })
+  it('فاتورة مشمولة 14٪: الاستنتاج يعطي 14% وشاملة', () => {
+    const t = computeTotals([line({ unitPriceMinor: 11400 })], 0, 14, true)
+    expect(deriveTaxConfig(t)).toEqual({ taxPercent: 14, taxInclusive: true })
+  })
+  it('فاتورة بنسب مختلطة: النسبة القياسية = أعلى تجاوز سطر (بلا كسر الإجماليات)', () => {
+    const ls = [line({ itemId: 1, unitPriceMinor: 10000, vatPercentOverride: 14 }), line({ itemId: 2, unitPriceMinor: 10000, vatPercentOverride: 5 })]
+    const t = computeTotals(ls, 0, 14, false)
+    expect(deriveTaxConfig(t, ls).taxPercent).toBe(14)
   })
 })
 

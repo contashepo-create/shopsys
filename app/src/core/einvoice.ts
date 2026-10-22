@@ -56,8 +56,17 @@ export function minorToDecimalString(minor: Minor, decimals: number): string {
   return `${s.slice(0, -decimals)}.${s.slice(-decimals)}`
 }
 
-/** أرقام فقط — يتحمل لصق الأرقام بمسافات أو شرطات من لوحة المفاتيح/الفاتورة الورقية */
-const digitsOnly = (value: string) => value.replace(/[\s-]/g, '')
+/**
+ * أرقام لاتينية فقط — يتحمل لصق الرقم بمسافات/شرطات (لوحة المفاتيح أو فاتورة
+ * ورقية)، وكذلك الأرقام العربية/الفارسية (٠١٢…/۰۱۲…) التي يكتبها بعض المستخدمين
+ * بلغة الواجهة؛ بدون التطبيع كان الرقم «يبدو صحيحاً» في الشاشة ثم يُسقط الرمز
+ * بصمت لأن التحقق لا يقبل إلا 0-9.
+ */
+const normalizeDigits = (value: string) =>
+  value
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+const digitsOnly = (value: string) => normalizeDigits(value).replace(/[\s\-\u2010-\u2015]/g, '')
 
 /** التحقق من الرقم الضريبي السعودي: 15 رقماً، يبدأ وينتهي بـ3 */
 export function isValidSaVatNumber(vat: string): boolean {
@@ -75,12 +84,31 @@ export function isValidEgTaxNumber(tax: string): boolean {
  * غير موجود في رمز ضريبي. هنا نتحقق من اليوم التقويمي نفسه بعد التحويل.
  * الميلي ثانية اختيارية (1–3 أرقام).
  */
-const ZATCA_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/
-export function isValidZatcaTimestamp(value: string): boolean {
-  if (!ZATCA_TIMESTAMP_RE.test(value) || Number.isNaN(Date.parse(value))) return false
-  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
+const ZATCA_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/
+/** يوم تقويمي حقيقي — لا «30 فبراير» ولا «31 أبريل» */
+function isRealCalendarDay(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false
   const probe = new Date(Date.UTC(year, month - 1, day))
   return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day
+}
+/** ساعة صحيحة 00–23: `Date.parse` تقبل 24:00 وتحوّلها لليوم التالي، و60 ثانية ككبسة */
+const isValidClock = (hour: number, minute: number, second: number) =>
+  hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59
+
+export function isValidZatcaTimestamp(value: string): boolean {
+  const m = ZATCA_TIMESTAMP_RE.exec(value)
+  if (!m) return false
+  const [, y, mo, d, h, mi, sec] = m.map(Number)
+  if (!isRealCalendarDay(y, mo, d) || !isValidClock(h, mi, sec)) return false
+  return !Number.isNaN(Date.parse(value))
+}
+
+/** طابع محلي بلا منطقة زمنية لباركود مصر (YYYY-MM-DDTHH:MM:SS) — نفس صرامة اليوم/الساعة */
+export function isValidLocalIsoDateTime(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?$/.exec(value)
+  if (!m) return false
+  const [, y, mo, d, h, mi, sec] = m.map(Number)
+  return isRealCalendarDay(y, mo, d) && isValidClock(h, mi, sec)
 }
 
 export function validateZatcaFields(f: ZatcaFields): string[] {
@@ -226,7 +254,9 @@ export function validateEgReceiptBarcodeFields(f: EgReceiptBarcodeFields): strin
   if (!f.sellerName.trim()) errors.push('اسم البائع مطلوب لرمز الإيصال')
   if (!isValidEgTaxNumber(f.taxNumber)) errors.push('رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام')
   if (!f.invoiceNumber.trim()) errors.push('رقم الفاتورة مطلوب لرمز الإيصال')
-  if (Number.isNaN(Date.parse(f.dateIso))) errors.push('طابع زمني غير صالح')
+  /* الفاصل «|» يبني بنية EGTAX1 — وجوده داخل رقم الفاتورة يفكك الحقول عند القراءة */
+  else if (f.invoiceNumber.includes('|')) errors.push('رقم الفاتورة لا يحتوي على الفاصل «|» (يفكك رمز الإيصال)')
+  if (!isValidLocalIsoDateTime(f.dateIso.slice(0, 19))) errors.push('طابع زمني غير صالح')
   if (!Number.isInteger(f.totalMinor) || f.totalMinor < 0) errors.push('الإجمالي غير صالح')
   return errors
 }

@@ -4,7 +4,7 @@
  */
 import {
   minorToDecimalString, isValidSaVatNumber, isValidEgTaxNumber, isValidZatcaTimestamp,
-  validateZatcaFields, tlvBytes, buildZatcaQr, decodeZatcaQr,
+  validateZatcaFields, tlvBytes, buildZatcaQr, decodeZatcaQr, isValidLocalIsoDateTime,
   bytesToBase64, base64ToBytes,
   validateEgInvoice, buildEgInvoiceDocument,
   validateEgReceiptBarcodeFields, buildEgReceiptBarcodeText,
@@ -83,6 +83,14 @@ ok(validateZatcaFields({ ...fields, timestampIso: '2026-02-30T00:00:00Z' }).leng
 ok(validateZatcaFields({ ...fields, timestampIso: '2026-09-14T20:30:00' }).length === 1, 'طابع بلا منطقة زمنية يُكشف')
 ok(validateZatcaFields({ ...fields, timestampIso: '2026-09-14T20:30:00+03:00' }).length === 0, 'منطقة زمنية صريحة مقبولة')
 ok(isValidZatcaTimestamp('2026-09-14T20:30:00.123Z') && !isValidZatcaTimestamp('2026-09-14'), 'فاحص الطابع الزمني مباشرة')
+/* أرقام عربية/فارسية: تُطبَّع قبل التحقق والترميز بدل إسقاط الرمز بصمت */
+ok(isValidSaVatNumber('٣١٠١٢٢٣٩٣٥٠٠٠٠٣'), 'الرقم السعودي بالأرقام العربية يُقبل')
+ok(isValidEgTaxNumber('١٢٣٤٥٦٧٨٩'), 'الرقم المصري بالأرقام العربية يُقبل')
+ok(decodeZatcaQr(buildZatcaQr({ ...fields, vatNumber: '٣١٠-١٢٢-٣٩٣-٥٠٠-٠٠٣' })).get(2) === '310122393500003', 'الرقم العربي المنسّق يُرمَّز لاتينياً')
+/* ساعة/دقيقة/ثانية صحيحة — Date.parse وحدها تقبل 24:00 وتحوّلها لليوم التالي */
+ok(!isValidZatcaTimestamp('2026-09-14T24:00:00Z'), 'الساعة 24 مرفوضة في طابع زاتكا')
+ok(!isValidZatcaTimestamp('2026-09-14T20:30:60Z'), 'الثانية 60 مرفوضة')
+ok(isValidZatcaTimestamp('2026-09-14T23:59:59Z'), 'آخر لحظة في اليوم مقبولة')
 const longName = 'م'.repeat(300)
 ok(validateZatcaFields({ ...fields, sellerName: longName }).some((e) => e.includes('255')), 'اسم أطول من 255 بايت ⇒ رسالة عربية قبل RangeError')
 throws(() => buildZatcaQr({ ...fields, sellerName: longName }), 'بناء الرمز يرفض الاسم الطويل برسالة مفهومة')
@@ -146,6 +154,10 @@ const egText = buildEgReceiptBarcodeText(egBarcodeFields)
 ok(egText === 'EGTAX1|123456789|INV-0042|2026-10-20T12:00:00|1150.00', 'نص رمز التحقق المصري بالصيغة الصحيحة')
 throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, taxNumber: '123' }), 'رقم ضريبي مصري قصير يرمي')
 throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, invoiceNumber: '' }), 'رقم فاتورة فارغ يرمي')
+/* باركود مصر: الفاصل «|» يفكك البنية، والتاريخ المستحيل يُرفض */
+throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, invoiceNumber: 'INV|42' }), 'فاصل | في رقم فاتورة مصر يرمي')
+ok(validateEgReceiptBarcodeFields({ ...egBarcodeFields, invoiceNumber: 'INV|42' }).length === 1, 'فاصل | يُكشف برسالة')
+ok(validateEgReceiptBarcodeFields({ ...egBarcodeFields, dateIso: '2026-02-30T10:00:00' }).length === 1, 'تاريخ مصري مستحيل يُكشف')
 ok(validateEgReceiptBarcodeFields({ ...egBarcodeFields, sellerName: ' ' }).length === 1, 'اسم بائع فارغ يُكشف')
 
 /* سياسة باركود مصر: ميزة + مفتاح طباعة فقط — بلا اشتراط اتصال */
@@ -188,9 +200,16 @@ const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
 ok(advSalesSrc.includes('useTaxBarcodeStamp'), 'محرر فاتورة المبيعات: يستخدم خطاف الختم الموحد')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
 ok(advSalesSrc.includes('editingInvoice?{invoiceNumber:editingInvoice.invoiceNumber'), 'محرر الفاتورة: معاينة فاتورة قائمة تستخدم رقمها وتاريخها لا «مسودة» (طابع زاتكا صحيح)')
+/* إعادة طباعة فاتورة شاملة الضريبة كانت تعرض «(مضافة)» رغم أن الإجماليات مشمولة */
+ok(/taxInclusive:editingInvoice\?\.taxInclusive\?\?false/.test(advSalesSrc), 'محرر الفاتورة: نمط الضريبة (مضافة/مشمولة) يتبع الفاتورة المعدّلة')
 /* إشعار الدائن: نسبة الضريبة من الفاتورة الأصلية لا من إعدادات اليوم — وإلا
    طُبع سطر ضريبة بنسبة مخالفة للإشعار ولو كانت الإجماليات صحيحة */
-ok(readSource('../src/ui/pages/SaleReturnsPage.tsx').includes('orig?.taxPercent ?? setup.vatPercent'), 'إشعار الدائن يعرض نسبة ضريبة الفاتورة الأصلية')
+ok(readSource('../src/ui/pages/SaleReturnsPage.tsx').includes('deriveTaxConfig(r.totals, r.lines).taxPercent'), 'إشعار الدائن: فاتورة قديمة بلا نسبة ⇒ استنتاج من إجماليات المرتجع')
+/* إعادة طباعة فاتورة قديمة/مستوردة بلا taxPercent مخزّن: النسبة تُستنتج من
+   إجمالياتها لا من إعدادات اليوم (وإلا طُبع سطر ضريبة بنسبة تخالف المستند) */
+ok(readSource('../src/ui/pages/SalesInvoicesPage.tsx').includes('deriveTaxConfig(s.totals, s.lines)'), 'قائمة المبيعات: نسبة الفاتورة القديمة تُستنتج من إجمالياتها')
+ok(readSource('../src/ui/pages/ActivityInvoicesHubs.tsx').includes('deriveTaxConfig(s.totals, s.lines)'), 'مراكز الأنشطة: نفس الاستنتاج')
+ok(readSource('../src/ui/pages/ContractingInvoicesPage.tsx').includes('deriveTaxConfig(s.totals, s.lines)'), 'فواتير المقاولات: نفس الاستنتاج')
 ok(readSource('../src/ui/hooks/useTaxBarcodeStamp.ts').includes('einvoice.enabled === true'), 'خطاف الختم يربط الرمز بتشغيل الإصدار الإلكتروني — لا يُطبع بلا تشغيل')
 /* منع عودة شرط الاتصال إلى مسار الطباعة: المولّد لا يقرأ الشبكة، والشاشة تفصل الربط عنه */
 ok(!readSource('../src/ui/print/taxBarcode.ts').includes('navigator.onLine'), 'مولّد الرمز لا يقرأ حالة الشبكة — الطباعة محلية')

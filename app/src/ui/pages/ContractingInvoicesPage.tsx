@@ -19,6 +19,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
+import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
@@ -196,6 +197,9 @@ export function ContractingInvoicesPage() {
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط شاشة فواتير المبيعات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
+    const tx = s.taxPercent !== undefined
+      ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
+      : deriveTaxConfig(s.totals, s.lines)
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
@@ -206,8 +210,8 @@ export function ContractingInvoicesPage() {
       paidMinor: s.paidMinor,
       operatorName: setup.ownerName ?? 'المالك',
       customerName,
-      taxPercent: s.taxPercent ?? setup.vatPercent,
-      taxInclusive: s.taxInclusive ?? setup.taxInclusive,
+      taxPercent: tx.taxPercent,
+      taxInclusive: tx.taxInclusive,
       settings: receipt,
     })
     const prj = projects.find((p) => p.id === s.projectId)
