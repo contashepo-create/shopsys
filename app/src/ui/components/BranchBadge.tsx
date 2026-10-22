@@ -69,7 +69,7 @@ export function BranchBadge({
         {icon}
         {dot}
         <span className="branch-badge-name">{current?.nameAr ?? (locked ? 'غير محدد' : 'كل الفروع')}</span>
-        {showCaption && <small className="branch-badge-caption">الفرع الحالي</small>}
+        {showCaption && !allBranches && <small className="branch-badge-caption">الفرع الحالي</small>}
         {lock}
       </span>
     )
