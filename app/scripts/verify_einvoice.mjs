@@ -10,7 +10,7 @@ import {
   validateEgReceiptBarcodeFields, buildEgReceiptBarcodeText,
   DEFAULT_EINVOICE_SETTINGS,
 } from '../src/core/einvoice.ts'
-import { zatcaQrPolicy, egTaxBarcodePolicy } from '../src/core/invoiceEdit.ts'
+import { zatcaQrPolicy, egTaxBarcodePolicy, zatcaLinkPolicy } from '../src/core/invoiceEdit.ts'
 import { readFileSync } from 'node:fs'
 
 let pass = 0, fail = 0
@@ -134,11 +134,20 @@ throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, taxNumber: '123' })
 throws(() => buildEgReceiptBarcodeText({ ...egBarcodeFields, invoiceNumber: '' }), 'رقم فاتورة فارغ يرمي')
 ok(validateEgReceiptBarcodeFields({ ...egBarcodeFields, sellerName: ' ' }).length === 1, 'اسم بائع فارغ يُكشف')
 
-/* سياسة باركود مصر: ميزة + مفتاح طباعة فقط — بلا اشتراط اتصال (خلافاً لزاتكا) */
+/* سياسة باركود مصر: ميزة + مفتاح طباعة فقط — بلا اشتراط اتصال */
 ok(egTaxBarcodePolicy({ featureActive: true, printEnabled: true }).printQr === true, 'مصر: كل الشروط ⇒ يُطبع')
 ok(egTaxBarcodePolicy({ featureActive: false, printEnabled: true }).printQr === false, 'مصر: ميزة موقوفة ⇒ لا رمز')
 ok(egTaxBarcodePolicy({ featureActive: true, printEnabled: false }).printQr === false, 'مصر: خيار الطباعة موقوف ⇒ لا رمز')
-ok(zatcaQrPolicy({ featureActive: true, online: true, printEnabled: true }).printQr === true, 'السعودية: لم تتأثر سياستها بإضافة مصر')
+
+/* سياسة زاتكا (قرار المالك 2026-10-22): رمز المرحلة الأولى (Generation)
+   يُولَّد محلياً ولا يشترط اتصالاً. الاتصال شرط للربط/الإرسال (المرحلة
+   الثانية) وحدهما — فصلُهما هنا يمنع عودة منع الرمز عند انقطاع الشبكة. */
+ok(zatcaQrPolicy({ featureActive: true, printEnabled: true }).printQr === true, 'السعودية: الرمز يُطبع بلا شرط اتصال')
+ok(zatcaQrPolicy({ featureActive: false, printEnabled: true }).printQr === false, 'السعودية: ميزة موقوفة ⇒ لا رمز')
+ok(zatcaQrPolicy({ featureActive: true, printEnabled: false }).printQr === false, 'السعودية: مفتاح الطباعة موقوف ⇒ لا رمز')
+ok(zatcaLinkPolicy({ featureActive: true, online: false }).canLink === false, 'الربط/الإرسال بلا إنترنت ⇒ ممنوع (مرحلة ثانية)')
+ok(String(zatcaLinkPolicy({ featureActive: true, online: false }).reasonAr).includes('بلا اتصال'), 'سبب منع الربط يوضح أن الطباعة المحلية لا تتأثر')
+ok(zatcaLinkPolicy({ featureActive: true, online: true }).canLink === true, 'الربط/الإرسال مع إنترنت ⇒ متاح')
 
 /* ─── ربط الرمز بكل مسارات طباعة فاتورة المبيعات ───
    بلاغ المالك 2026-10-22: فاتورة لعميل نقدي بلا باركود رغم تفعيل زاتكا.
@@ -165,6 +174,10 @@ const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
 ok(advSalesSrc.includes('useTaxBarcodeStamp'), 'محرر فاتورة المبيعات: يستخدم خطاف الختم الموحد')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
 ok(readSource('../src/ui/hooks/useTaxBarcodeStamp.ts').includes('einvoice.enabled === true'), 'خطاف الختم يربط الرمز بتشغيل الإصدار الإلكتروني — لا يُطبع بلا تشغيل')
+/* منع عودة شرط الاتصال إلى مسار الطباعة: المولّد لا يقرأ الشبكة، والشاشة تفصل الربط عنه */
+ok(!readSource('../src/ui/print/taxBarcode.ts').includes('navigator.onLine'), 'مولّد الرمز لا يقرأ حالة الشبكة — الطباعة محلية')
+ok(!readSource('../src/ui/print/taxBarcode.ts').includes('online'), 'بيانات توليد الرمز خالية من أي شرط اتصال')
+ok(readSource('../src/ui/pages/EinvoicePage.tsx').includes('zatcaLinkPolicy'), 'شاشة الفاتورة الإلكترونية تفصل سياسة الربط عن طباعة الرمز')
 
 /* ─── الإعدادات الافتراضية ─── */
 ok(DEFAULT_EINVOICE_SETTINGS.taxNumber === '' && DEFAULT_EINVOICE_SETTINGS.printZatcaQr === true, 'الافتراضيات سليمة')

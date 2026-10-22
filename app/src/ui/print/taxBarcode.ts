@@ -1,8 +1,9 @@
 /**
  * توليد صورة الرمز الضريبي (Data URL) لطباعته على الفواتير/الإيصالات.
  * الطباعة تشترط مجتمعاً: ميزة الترخيص (einvoice_sa/einvoice_eg) + تشغيل
- * الإصدار الرسمي + رقم ضريبي واسم منشأة صالحين + مفتاح einvoice.printZatcaQr
- * (ولزاتكا السعودية: اتصال بالإنترنت حسب السياسة الحالية). البلد المفعّل يحدد:
+ * الإصدار الرسمي + رقم ضريبي واسم منشأة صالحين + مفتاح einvoice.printZatcaQr.
+ * لا تشترط اتصالاً بالإنترنت: رمز المرحلة الأولى (Generation) يُولَّد محلياً،
+ * واشتراط الاتصال يخص الربط/الإرسال (المرحلة الثانية) وحدهما. البلد المفعّل يحدد:
  *   - السعودية (einvoice_sa): رمز زاتكا TLV الرسمي.
  *   - مصر (einvoice_eg): رمز تحقق محلي (EGTAX1) — الرفع الفعلي لبوابة ETA
  *     منفصل تماماً عبر تصدير JSON في شاشة الفاتورة الإلكترونية.
@@ -17,7 +18,9 @@ export async function zatcaQrDataUrl(fields: ZatcaFields): Promise<string | null
   try {
     if (!fields.sellerName.trim() || !isValidSaVatNumber(fields.vatNumber)) return null
     const payload = buildZatcaQr(fields)
-    return await QRCode.toDataURL(payload, { margin: 2, width: 220, errorCorrectionLevel: 'M' })
+    /* margin = 4 وحدات: منطقة الهدوء التي يفرضها معيار QR (ISO/IEC 18004) —
+       بأقل من ذلك ترفض كاميرات كثيرة المسح وخصوصاً على ورق حراري لامع */
+    return await QRCode.toDataURL(payload, { margin: 4, width: 220, errorCorrectionLevel: 'M' })
   } catch {
     return null
   }
@@ -28,7 +31,7 @@ export async function egBarcodeDataUrl(fields: EgReceiptBarcodeFields): Promise<
   try {
     if (!fields.sellerName.trim() || !isValidEgTaxNumber(fields.taxNumber)) return null
     const payload = buildEgReceiptBarcodeText(fields)
-    return await QRCode.toDataURL(payload, { margin: 2, width: 220, errorCorrectionLevel: 'M' })
+    return await QRCode.toDataURL(payload, { margin: 4, width: 220, errorCorrectionLevel: 'M' })
   } catch {
     return null
   }
@@ -45,8 +48,6 @@ export interface TaxBarcodeArgs {
   totalMinor: number
   taxMinor: number
   decimals: number
-  /** حالة الاتصال — الافتراضي قراءة المتصفح؛ قابلة للتمرير للفحص (زاتكا السعودية فقط) */
-  online?: boolean
 }
 
 /**
@@ -65,8 +66,7 @@ function normalizeZatcaTimestamp(iso: string): string {
  */
 function resolveTaxBarcodeKind(args: TaxBarcodeArgs): 'sa' | 'eg' | null {
   if (args.saFeatureActive) {
-    const online = args.online ?? (typeof navigator !== 'undefined' ? navigator.onLine : true)
-    return zatcaQrPolicy({ featureActive: true, online, printEnabled: args.printEnabled }).printQr ? 'sa' : null
+    return zatcaQrPolicy({ featureActive: true, printEnabled: args.printEnabled }).printQr ? 'sa' : null
   }
   if (args.egFeatureActive) {
     return egTaxBarcodePolicy({ featureActive: true, printEnabled: args.printEnabled }).printQr ? 'eg' : null
@@ -77,7 +77,7 @@ function resolveTaxBarcodeKind(args: TaxBarcodeArgs): 'sa' | 'eg' | null {
 /**
  * الرمز الضريبي للفاتورة إن كانت إحدى الميزتين مستحقة — مفتاح طباعة واحد
  * (einvoice.printZatcaQr) يُحترم لكلا البلدين، وكل بلد بسياسته الخاصة:
- * ① السعودية: ميزة einvoice_sa + تشغيل الإصدار الإلكتروني + اتصال إنترنت (مرحلة ثانية زاتكا) + رقم ضريبي سعودي صالح.
+ * ① السعودية: ميزة einvoice_sa + تشغيل الإصدار الإلكتروني + رقم ضريبي سعودي صالح — بلا اشتراط اتصال (رمز Generation محلي).
  * ② مصر: ميزة einvoice_eg + رقم تسجيل ضريبي مصري صالح — بلا اشتراط اتصال (رمز محلي).
  * السعودية لها أولوية إن كانت الميزتان مفعلتين معاً (حالة نظرية لا تقع عملياً).
  */

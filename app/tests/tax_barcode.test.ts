@@ -7,6 +7,9 @@
  * ② مصر الآن تنتج رمز تحقق محلي فعلي (Data URL) عند تفعيل الميزة والمفتاح.
  * ③ السعودية غير متأثرة — نفس سلوك زاتكا TLV القديم تماماً.
  * ④ تعطيل الميزة أو المفتاح أو نقص بيانات الممول ⇒ لا رمز إطلاقاً (بلا طباعة فاسدة).
+ * ⑤ لا يشترط اتصالاً بالإنترنت: رمز المرحلة الأولى (Generation) يُولَّد محلياً،
+ *   واشتراط الاتصال يخص الربط/الإرسال (المرحلة الثانية) وحدهما — انظر
+ *   zatcaLinkPolicy في tests/invoice_edit_policy.test.ts.
  */
 import { describe, it, expect } from 'vitest'
 import { maybeTaxBarcode, zatcaQrDataUrl, egBarcodeDataUrl, maybeTaxBarcodeSync, zatcaQrSvgDataUrl, egBarcodeSvgDataUrl, withTaxBarcodeSync } from '../src/ui/print/taxBarcode.ts'
@@ -47,15 +50,16 @@ describe('الرمز الضريبي الموحَّد — مصر والسعودي
     expect(url).toBeUndefined()
   })
 
-  it('السعودية: لم يتأثر سلوكها القديم — رقم صالح + اتصال ⇒ رمز زاتكا فعلي', async () => {
-    const url = await maybeTaxBarcode({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003', online: true })
+  it('السعودية: رقم صالح ومفتاح طباعة ⇒ رمز زاتكا فعلي', async () => {
+    const url = await maybeTaxBarcode({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003' })
     expect(url, 'زاتكا توقفت عن إنتاج رمز بعد توحيد الدالة').toBeTruthy()
     expect(url!.startsWith('data:image/')).toBe(true)
   })
 
-  it('السعودية: بلا اتصال (مرحلة ثانية) ⇒ لا رمز رغم بيانات صالحة', async () => {
-    const url = await maybeTaxBarcode({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003', online: false })
-    expect(url).toBeUndefined()
+  it('السعودية: الرمز يُولَّد بلا إنترنت (مرحلة أولى محلية) — لا شرط اتصال', async () => {
+    const url = await maybeTaxBarcode({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003' })
+    expect(url, 'رمز المرحلة الأولى يجب أن يُطبع أوفلاين — اشتراط الاتصال يخص الربط فقط').toBeTruthy()
+    expect(url!.startsWith('data:image/')).toBe(true)
   })
 
   it('لا ميزة مفعّلة على الإطلاق ⇒ لا رمز أبداً', async () => {
@@ -77,7 +81,7 @@ describe('الرمز الضريبي الموحَّد — مصر والسعودي
  * نفس شروط النسخة غير المتزامنة (نفس resolveTaxBarcodeKind) فلا تتباعد السياسة.
  */
 describe('النسخة المتزامنة SVG — كل مستندات المبيعات', () => {
-  const args = { ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003', online: true }
+  const args = { ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003' }
 
   it('السعودية: يُنتج SVG صالحاً فوراً (بلا await) ويُفك ترميزه إلى <svg> حقيقي', () => {
     const url = maybeTaxBarcodeSync(args)
@@ -88,8 +92,7 @@ describe('النسخة المتزامنة SVG — كل مستندات المبي
     expect(svg).toMatch(/<path d="M\d+ \d+h1v1h-1z/)
   })
 
-  it('نفس الشروط السلبية: بلا اتصال / بلا رقم صالح / المفتاح موقوف / الاسم فارغ ⇒ لا رمز', () => {
-    expect(maybeTaxBarcodeSync({ ...args, online: false })).toBeUndefined()
+  it('نفس الشروط السلبية: بلا رقم صالح / المفتاح موقوف / الاسم فارغ ⇒ لا رمز', () => {
     expect(maybeTaxBarcodeSync({ ...args, taxNumber: '123' })).toBeUndefined()
     expect(maybeTaxBarcodeSync({ ...args, printEnabled: false })).toBeUndefined()
     expect(maybeTaxBarcodeSync({ ...args, sellerName: '  ' })).toBeUndefined()
@@ -106,7 +109,7 @@ describe('النسخة المتزامنة SVG — كل مستندات المبي
     expect(withTaxBarcodeSync(printed, args)).toBe(true)
     expect(printed.qrDataUrl).toMatch(/^data:image\/svg\+xml/)
     const plain: { qrDataUrl?: string } = {}
-    expect(withTaxBarcodeSync(plain, { ...args, online: false })).toBe(false)
+    expect(withTaxBarcodeSync(plain, { ...args, printEnabled: false })).toBe(false)
     expect(plain.qrDataUrl).toBeUndefined()
   })
 
@@ -140,7 +143,7 @@ describe('الرمز يصل إلى الورق — HTML الحراري وA4', () 
     saFeatureActive: true, egFeatureActive: false, printEnabled: true,
     sellerName: 'مؤسسة تَحَكَّم التجارية', taxNumber: '310122393500003',
     invoiceNumber: 'SAL-261022-0001', dateIso: '2026-10-22T09:30:00Z',
-    totalMinor: 11500, taxMinor: 1500, decimals: 2, online: true,
+    totalMinor: 11500, taxMinor: 1500, decimals: 2,
   }
 
   it('الإيصال الحراري يحتوي صورة الرمز الضريبي', () => {

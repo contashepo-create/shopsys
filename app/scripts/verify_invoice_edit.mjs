@@ -1,7 +1,8 @@
 /**
  * فحص تعديل الفواتير + سياسة الفاتورة الإلكترونية (طلب المالك):
  * ① السياسة: منظومة إلكترونية غير مفعلة ⇒ تعديل متاح؛ مفعلة ⇒ إشعارات فقط
- * ② باركود زاتكا: يُطبع فقط مع (ميزة مفعلة + إنترنت + خيار طباعة) — الضريبة تُحسب دائماً
+ * ② باركود زاتكا: يُطبع مع (ميزة مفعلة + خيار طباعة) — رمز المرحلة الأولى محلي
+ *    لا يشترط إنترنت؛ الاتصال شرط الربط/الإرسال (zatcaLinkPolicy) وحدهما
  * ③ editSale: عكس القيد + قيد جديد متوازن + مخزون صحيح + سجل تدقيق + الرقم المرجعي ثابت
  * ④ موانع تعديل البيع: مرتجع/أقساط/وردية مقفلة/سيريالات/تحصيلات مخصصة
  * ⑤ editPurchase: عكس + إعادة ترحيل بالتكلفة المحملة + متوسط مرجح صحيح + دفعات صلاحية
@@ -17,7 +18,7 @@ globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } } }))
 
 const { useDataStore } = await import('../src/data/repo.ts')
-const { invoiceEditPolicy, zatcaQrPolicy, saleEditBlocks } = await import('../src/core/invoiceEdit.ts')
+const { invoiceEditPolicy, zatcaQrPolicy, zatcaLinkPolicy, saleEditBlocks } = await import('../src/core/invoiceEdit.ts')
 const S = () => useDataStore.getState()
 
 let pass = 0, fail = 0
@@ -41,12 +42,15 @@ ok('غير مفعلة ⇒ التعديل متاح', invoiceEditPolicy({ einvoice
 ok('مفعلة ⇒ التعديل محظور', invoiceEditPolicy({ einvoiceActive: true }).canEdit === false)
 ok('سبب الحظر يذكر الإشعارات', invoiceEditPolicy({ einvoiceActive: true }).reasonAr.includes('إشعار'))
 
-console.log('\n2️⃣ باركود زاتكا: ميزة + إنترنت + خيار — الضريبة دائماً')
-ok('كل الشروط ⇒ يُطبع', zatcaQrPolicy({ featureActive: true, online: true, printEnabled: true }).printQr === true)
-ok('بلا إنترنت ⇒ لا باركود (مرحلة ثانية)', zatcaQrPolicy({ featureActive: true, online: false, printEnabled: true }).printQr === false)
-ok('سبب الأوفلاين يوضح أن الضريبة تظهر طبيعياً', String(zatcaQrPolicy({ featureActive: true, online: false, printEnabled: true }).reasonAr).includes('الضريبي'))
-ok('ميزة موقوفة ⇒ لا باركود والضريبة طبيعية', (() => { const p = zatcaQrPolicy({ featureActive: false, online: true, printEnabled: true }); return !p.printQr && p.reasonAr.includes('الضريبة تُحسب') })())
-ok('خيار الطباعة موقوف ⇒ لا باركود', zatcaQrPolicy({ featureActive: true, online: true, printEnabled: false }).printQr === false)
+console.log('\n2️⃣ باركود زاتكا: ميزة + خيار طباعة — الرمز محلي، والاتصال للربط فقط')
+ok('كل الشروط ⇒ يُطبع', zatcaQrPolicy({ featureActive: true, printEnabled: true }).printQr === true)
+ok('لا شرط اتصال: رمز المرحلة الأولى (Generation) يُولَّد محلياً', zatcaQrPolicy({ featureActive: true, printEnabled: true }).printQr === true)
+ok('لا سبب منع عند غياب الاتصال', zatcaQrPolicy({ featureActive: true, printEnabled: true }).reasonAr === null)
+ok('ميزة موقوفة ⇒ لا باركود والضريبة طبيعية', (() => { const p = zatcaQrPolicy({ featureActive: false, printEnabled: true }); return !p.printQr && p.reasonAr.includes('الضريبة تُحسب') })())
+ok('خيار الطباعة موقوف ⇒ لا باركود', zatcaQrPolicy({ featureActive: true, printEnabled: false }).printQr === false)
+ok('الربط/الإرسال بلا إنترنت ⇒ ممنوع (مرحلة ثانية)', zatcaLinkPolicy({ featureActive: true, online: false }).canLink === false)
+ok('سبب منع الربط يوضح أن طباعة الرمز تعمل بلا اتصال', String(zatcaLinkPolicy({ featureActive: true, online: false }).reasonAr).includes('بلا اتصال'))
+ok('الربط/الإرسال مع إنترنت ⇒ متاح', zatcaLinkPolicy({ featureActive: true, online: true }).canLink === true)
 
 console.log('\n🏗️ التأسيس: صنفان + عميل + مورد')
 S().addCustomer({ ...party('عميل التعديل'), creditLimitMinor: 0 })

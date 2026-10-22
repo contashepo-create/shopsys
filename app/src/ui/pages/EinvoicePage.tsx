@@ -13,7 +13,7 @@ import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { zatcaQrPolicy, egTaxBarcodePolicy } from '../../core/invoiceEdit.ts'
+import { zatcaQrPolicy, egTaxBarcodePolicy, zatcaLinkPolicy } from '../../core/invoiceEdit.ts'
 import {
   isValidSaVatNumber, isValidEgTaxNumber, buildEgInvoiceDocument, buildZatcaQr, buildEgReceiptBarcodeText,
 } from '../../core/einvoice.ts'
@@ -33,8 +33,9 @@ export function EinvoicePage() {
   const saActive = hasFeature(lic, 'einvoice_sa')
   const egActive = hasFeature(lic, 'einvoice_eg')
 
-  /* حالة الاتصال الحية — سياسة زاتكا الحالية تشترط اتصالاً وقت الطباعة،
-     فبدون إظهارها هنا يبحث المستخدم عن سبب غياب الرمز في المكان الخطأ. */
+  /* حالة الاتصال الحية — لم تعد شرطاً لطباعة الرمز (المرحلة الأولى محلية)،
+     لكنها تخص الربط/الإرسال إلى المنظومة؛ نعرضها هنا صراحةً بدل ترك المستخدم
+     يخمّن. */
   const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
   useEffect(() => {
     const refresh = () => setBrowserOnline(typeof navigator === 'undefined' ? true : navigator.onLine)
@@ -160,11 +161,14 @@ export function EinvoicePage() {
   const sellerNameReady = setup.shopName.trim().length > 0
   const taxNumberValid = saActive ? isValidSaVatNumber(einvoice.taxNumber) : isValidEgTaxNumber(einvoice.taxNumber)
   const barcodePolicy = saActive
-    ? zatcaQrPolicy({ featureActive: einvoice.enabled === true, online: browserOnline, printEnabled: einvoice.printZatcaQr })
+    ? zatcaQrPolicy({ featureActive: einvoice.enabled === true, printEnabled: einvoice.printZatcaQr })
     : egTaxBarcodePolicy({ featureActive: einvoice.enabled === true, printEnabled: einvoice.printZatcaQr })
+  /* سياسة الربط/الإرسال منفصلة: الاتصال يلزم لها وحدها لا لطباعة الرمز */
+  const linkPolicy = saActive
+    ? zatcaLinkPolicy({ featureActive: einvoice.enabled === true, online: browserOnline })
+    : null
   const barcodeBlockers: string[] = []
   if (!einvoice.enabled) barcodeBlockers.push('الإصدار الإلكتروني الرسمي غير مشغَّل — فعّله من بطاقة بيانات الممول أدناه (أو بالزر بجانب التشخيص) ثم أعد طباعة الفاتورة.')
-  if (saActive && !browserOnline) barcodeBlockers.push('لا اتصال بالإنترنت — سياسة زاتكا الحالية تشترط اتصالاً وقت الطباعة.')
   if (!einvoice.printZatcaQr) barcodeBlockers.push('خيار «طباعة الرمز الضريبي» موقوف — فعّله من بطاقة بيانات الممول.')
   if (!taxNumberValid) barcodeBlockers.push(saActive ? 'الرقم الضريبي غير مطابق لصيغة زاتكا (15 رقماً يبدأ وينتهي بـ3) — صحّحه من «بيانات المنشأة».' : 'رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام — صحّحه من «بيانات المنشأة».')
   if (!sellerNameReady) barcodeBlockers.push('اسم المنشأة فارغ — عرّفه من «بيانات المنشأة» ليظهر في رمز البائع.')
@@ -207,12 +211,15 @@ export function EinvoicePage() {
         )}
       </div>
 
-      {/* سياسة المرحلة الثانية (زاتكا): الربط يتطلب إنترنت — بلا اتصال لا يُطبع الرمز الضريبي */}
+      {/* المرحلة الثانية (زاتكا): الربط/الإرسال يتطلب إنترنت — أما رمز المرحلة
+          الأولى (Generation) فيُولَّد ويُطبع محلياً بلا اتصال. كان الخلط بين
+          الشرطين يمنع طباعة رمز إلزامي عند انقطاع الشبكة. */}
       {saActive && (
         <div className="anim-up rounded-2xl border border-sky-500/20 bg-sky-500/[0.04] p-4 text-[12.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1">
-          <div className="font-bold text-sky-700 dark:text-sky-400">📡 المرحلة الثانية — الربط والتكامل:</div>
-          <div>• الفاتورة الضريبية تتطلب اتصالاً بالإنترنت وقت الطباعة. بلا اتصال: تُطبع فاتورة عادية <b>بدون رمز QR الضريبي</b> — ومبلغ الضريبة يُحسب ويُرحّل في القيود طبيعياً.</div>
-          <div>• لأن الفواتير مرتبطة بالمنظومة، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
+          <div className="font-bold text-sky-700 dark:text-sky-400">📡 المرحلة الأولى (الرمز) والمرحلة الثانية (الربط):</div>
+          <div>• <b>رمز QR الضريبي — المرحلة الأولى:</b> يُولَّد محلياً من بيانات الفاتورة ويُطبع <b>حتى بلا إنترنت</b>؛ الاتصال ليس شرطاً لطباعته.</div>
+          <div>• <b>الربط والإرسال إلى منصة فاتورة — المرحلة الثانية:</b> {linkPolicy?.canLink ? '✓ متاح الآن (الاتصال بالإنترنت قائم).' : linkPolicy?.reasonAr}</div>
+          <div>• ولأن الفواتير مرتبطة بالمنظومة عند التشغيل، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
         </div>
       )}
 
@@ -235,7 +242,7 @@ export function EinvoicePage() {
           <span>{taxNumberValid ? '✓' : '✗'} {saActive ? 'الرقم الضريبي (15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (9 أرقام)'}</span>
           <span>{sellerNameReady ? '✓' : '✗'} اسم المنشأة في رمز البائع</span>
           <span>{einvoice.printZatcaQr ? '✓' : '✗'} خيار طباعة الرمز الضريبي</span>
-          {saActive && <span className={browserOnline ? '' : 'text-amber-600 font-bold'}>{browserOnline ? '✓' : '✗'} اتصال الإنترنت (تشترطه سياسة زاتكا الحالية)</span>}
+          {saActive && <span className="text-slate-500 dark:text-slate-400">{browserOnline ? '✓' : '•'} اتصال الإنترنت (يلزم للربط والإرسال فقط — لا يمنع طباعة الرمز)</span>}
         </div>
         {barcodeBlockers.length > 0 && (
           <div className="text-amber-700 dark:text-amber-400 font-bold space-y-1">
