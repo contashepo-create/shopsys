@@ -11,6 +11,7 @@ import {
   DEFAULT_EINVOICE_SETTINGS,
 } from '../src/core/einvoice.ts'
 import { zatcaQrPolicy, egTaxBarcodePolicy } from '../src/core/invoiceEdit.ts'
+import { readFileSync } from 'node:fs'
 
 let pass = 0, fail = 0
 const ok = (cond, name) => { if (cond) { pass++ } else { fail++; console.error(`❌ ${name}`) } }
@@ -138,6 +139,21 @@ ok(egTaxBarcodePolicy({ featureActive: true, printEnabled: true }).printQr === t
 ok(egTaxBarcodePolicy({ featureActive: false, printEnabled: true }).printQr === false, 'مصر: ميزة موقوفة ⇒ لا رمز')
 ok(egTaxBarcodePolicy({ featureActive: true, printEnabled: false }).printQr === false, 'مصر: خيار الطباعة موقوف ⇒ لا رمز')
 ok(zatcaQrPolicy({ featureActive: true, online: true, printEnabled: true }).printQr === true, 'السعودية: لم تتأثر سياستها بإضافة مصر')
+
+/* ─── ربط الرمز بكل مسارات طباعة فاتورة المبيعات ───
+   بلاغ المالك 2026-10-22: فاتورة لعميل نقدي بلا باركود رغم تفعيل زاتكا.
+   السبب: محرر «فاتورة مبيعات جديدة» كان يبني نموذج الطباعة بلا رمز إطلاقاً —
+   الكاشير وقائمة الفواتير فقط هما من يطلبان الرمز. هذه البوابة تمنع رجوع العيب. */
+const readSource = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
+for (const [label, path] of [
+  ['الكاشير', '../src/ui/pages/PosPage.tsx'],
+  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx'],
+]) {
+  ok(readSource(path).includes('maybeTaxBarcode'), `${label}: مسار الطباعة يطلب الرمز الضريبي`)
+}
+const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
+ok(advSalesSrc.includes('withTaxBarcode') && advSalesSrc.includes('taxBarcodeArgs'), 'محرر فاتورة المبيعات: يلحق الرمز الضريبي بنموذج الطباعة')
+ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
 
 /* ─── الإعدادات الافتراضية ─── */
 ok(DEFAULT_EINVOICE_SETTINGS.taxNumber === '' && DEFAULT_EINVOICE_SETTINGS.printZatcaQr === true, 'الافتراضيات سليمة')

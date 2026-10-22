@@ -9,7 +9,7 @@
  * ④ تعطيل الميزة أو المفتاح أو نقص بيانات الممول ⇒ لا رمز إطلاقاً (بلا طباعة فاسدة).
  */
 import { describe, it, expect } from 'vitest'
-import { maybeTaxBarcode, zatcaQrDataUrl, egBarcodeDataUrl } from '../src/ui/print/taxBarcode.ts'
+import { maybeTaxBarcode, zatcaQrDataUrl, egBarcodeDataUrl, withTaxBarcode } from '../src/ui/print/taxBarcode.ts'
 
 const base = {
   printEnabled: true,
@@ -57,6 +57,17 @@ describe('الرمز الضريبي الموحَّد — مصر والسعودي
   it('لا ميزة مفعّلة على الإطلاق ⇒ لا رمز أبداً', async () => {
     const url = await maybeTaxBarcode({ ...base, saFeatureActive: false, egFeatureActive: false, taxNumber: '123456789' })
     expect(url).toBeUndefined()
+  })
+
+  it('withTaxBarcode يُلحق الرمز بنموذج المستند (طريق الطباعة من المحرر) ولا يغيّر النموذج عند غياب الشروط', async () => {
+    const printed: { qrDataUrl?: string } = {}
+    const same = await withTaxBarcode(printed, { ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310122393500003', online: true })
+    expect(same).toBe(printed)
+    expect(printed.qrDataUrl).toMatch(/^data:image\/png;base64,/)
+
+    const plain: { qrDataUrl?: string } = {}
+    await withTaxBarcode(plain, { ...base, saFeatureActive: false, egFeatureActive: false, taxNumber: '310122393500003' })
+    expect(plain.qrDataUrl).toBeUndefined()
   })
 
   it('zatcaQrDataUrl وegBarcodeDataUrl ينتجان Data URL حقيقياً بصيغة PNG', async () => {

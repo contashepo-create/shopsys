@@ -5,7 +5,7 @@
  * إعدادات الممول هنا: العنوان (محلي لمستند مصر) — أما الرقم الضريبي فيُحرَّر
  * من صفحة «بيانات المنشأة» الموحّدة (مصدر واحد) ويُعرض هنا للقراءة فقط.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FileCheck2, Lock, QrCode, FileJson, Download, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -13,6 +13,7 @@ import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
+import { zatcaQrPolicy, egTaxBarcodePolicy } from '../../core/invoiceEdit.ts'
 import {
   isValidSaVatNumber, isValidEgTaxNumber, buildEgInvoiceDocument, buildZatcaQr, buildEgReceiptBarcodeText,
 } from '../../core/einvoice.ts'
@@ -31,6 +32,16 @@ export function EinvoicePage() {
   )
   const saActive = hasFeature(lic, 'einvoice_sa')
   const egActive = hasFeature(lic, 'einvoice_eg')
+
+  /* حالة الاتصال الحية — سياسة زاتكا الحالية تشترط اتصالاً وقت الطباعة،
+     فبدون إظهارها هنا يبحث المستخدم عن سبب غياب الرمز في المكان الخطأ. */
+  const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
+  useEffect(() => {
+    const refresh = () => setBrowserOnline(typeof navigator === 'undefined' ? true : navigator.onLine)
+    window.addEventListener('online', refresh)
+    window.addEventListener('offline', refresh)
+    return () => { window.removeEventListener('online', refresh); window.removeEventListener('offline', refresh) }
+  }, [])
 
   const [address, setAddress] = useState(einvoice.address)
 
@@ -143,6 +154,24 @@ export function EinvoicePage() {
     } catch { return null }
   })()
 
+  /* تشخيص «لماذا لا يظهر الباركود؟» — كل شرط على حدة بدل تخمين المستخدم.
+     نفس شروط maybeTaxBarcode تماماً (الترخيص + تشغيل الإصدار + الرقم + الاسم + المفتاح + الاتصال). */
+  const sellerNameReady = setup.shopName.trim().length > 0
+  const taxNumberValid = saActive ? isValidSaVatNumber(einvoice.taxNumber) : isValidEgTaxNumber(einvoice.taxNumber)
+  const barcodePolicy = saActive
+    ? zatcaQrPolicy({ featureActive: einvoice.enabled === true, online: browserOnline, printEnabled: einvoice.printZatcaQr })
+    : egTaxBarcodePolicy({ featureActive: einvoice.enabled === true, printEnabled: einvoice.printZatcaQr })
+  const barcodeWillPrint = barcodePolicy.printQr && taxNumberValid && sellerNameReady
+  const barcodeBlocker = !einvoice.enabled
+    ? 'الإصدار الإلكتروني الرسمي غير مشغَّل — فعّل «تشغيل الإصدار الإلكتروني الرسمي» في بطاقة بيانات الممول أدناه، ثم أعد الطباعة.'
+    : !barcodePolicy.printQr
+      ? barcodePolicy.reasonAr
+      : !taxNumberValid
+        ? (saActive ? 'الرقم الضريبي غير مطابق لصيغة زاتكا (15 رقماً يبدأ وينتهي بـ3).' : 'رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام.')
+        : !sellerNameReady
+          ? 'اسم المنشأة فارغ — عرّفه من «بيانات المنشأة» ليظهر في رمز زاتكا.'
+          : null
+
   const recentSales = [...sales].reverse().slice(0, 20)
 
   return (
@@ -171,6 +200,26 @@ export function EinvoicePage() {
           <div>• لأن الفواتير مرتبطة بالمنظومة، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
         </div>
       )}
+
+      {/* تشخيص مباشر: هل سيُطبع الرمز على الفاتورة القادمة؟ وأي شرط يمنعه؟
+          أُضيف بعد بلاغ المالك (2026-10-22): فاتورة نقدية بلا باركود رغم تفعيل زاتكا. */}
+      <div className={`anim-up rounded-2xl border p-4 text-[12.5px] leading-relaxed space-y-2 ${barcodeWillPrint ? 'border-emerald-500/25 bg-emerald-500/[0.05]' : 'border-amber-500/30 bg-amber-500/[0.06]'}`} data-tax-barcode-diagnosis>
+        <div className="flex flex-wrap items-center gap-2">
+          <QrCode size={16} className={barcodeWillPrint ? 'text-emerald-600' : 'text-amber-600'} />
+          <b className={barcodeWillPrint ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
+            {barcodeWillPrint ? 'الرمز الضريبي سيُطبع على الفاتورة القادمة ✓' : 'الرمز الضريبي لن يُطبع الآن'}
+          </b>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-slate-600 dark:text-slate-300">
+          <span>{einvoice.enabled === true ? '✓' : '✗'} تشغيل الإصدار الإلكتروني الرسمي</span>
+          <span>{taxNumberValid ? '✓' : '✗'} {saActive ? 'الرقم الضريبي (15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (9 أرقام)'}</span>
+          <span>{sellerNameReady ? '✓' : '✗'} اسم المنشأة في رمز البائع</span>
+          <span>{einvoice.printZatcaQr ? '✓' : '✗'} خيار طباعة الرمز الضريبي</span>
+          {saActive && <span className={browserOnline ? '' : 'text-amber-600 font-bold'}>{browserOnline ? '✓' : '✗'} اتصال الإنترنت (تشترطه سياسة زاتكا الحالية)</span>}
+        </div>
+        {barcodeBlocker && <div className="text-amber-700 dark:text-amber-400 font-bold">السبب: {barcodeBlocker}</div>}
+        {barcodeWillPrint && <div className="text-slate-500 dark:text-slate-400">ينطبق على الطباعة من الكاشير ومحرر فاتورة المبيعات وأي إعادة طباعة من قائمة الفواتير.</div>}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* إعدادات الممول — ثلاث مجموعات مرئية واضحة بدل حقول متناثرة بلا تجميع:

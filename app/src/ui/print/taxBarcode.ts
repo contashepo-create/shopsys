@@ -33,14 +33,7 @@ export async function egBarcodeDataUrl(fields: EgReceiptBarcodeFields): Promise<
   }
 }
 
-/**
- * الرمز الضريبي للفاتورة إن كانت إحدى الميزتين مستحقة — مفتاح طباعة واحد
- * (einvoice.printZatcaQr) يُحترم لكلا البلدين، وكل بلد بسياسته الخاصة:
- * ① السعودية: ميزة einvoice_sa + اتصال إنترنت (مرحلة ثانية زاتكا) + رقم ضريبي سعودي صالح.
- * ② مصر: ميزة einvoice_eg + رقم تسجيل ضريبي مصري صالح — بلا اشتراط اتصال (رمز محلي).
- * السعودية لها أولوية إن كانت الميزتان مفعلتين معاً (حالة نظرية لا تقع عملياً).
- */
-export async function maybeTaxBarcode(args: {
+export interface TaxBarcodeArgs {
   saFeatureActive: boolean
   egFeatureActive: boolean
   printEnabled: boolean
@@ -53,7 +46,16 @@ export async function maybeTaxBarcode(args: {
   decimals: number
   /** حالة الاتصال — الافتراضي قراءة المتصفح؛ قابلة للتمرير للفحص (زاتكا السعودية فقط) */
   online?: boolean
-}): Promise<string | undefined> {
+}
+
+/**
+ * الرمز الضريبي للفاتورة إن كانت إحدى الميزتين مستحقة — مفتاح طباعة واحد
+ * (einvoice.printZatcaQr) يُحترم لكلا البلدين، وكل بلد بسياسته الخاصة:
+ * ① السعودية: ميزة einvoice_sa + اتصال إنترنت (مرحلة ثانية زاتكا) + رقم ضريبي سعودي صالح.
+ * ② مصر: ميزة einvoice_eg + رقم تسجيل ضريبي مصري صالح — بلا اشتراط اتصال (رمز محلي).
+ * السعودية لها أولوية إن كانت الميزتان مفعلتين معاً (حالة نظرية لا تقع عملياً).
+ */
+export async function maybeTaxBarcode(args: TaxBarcodeArgs): Promise<string | undefined> {
   if (args.saFeatureActive) {
     const online = args.online ?? (typeof navigator !== 'undefined' ? navigator.onLine : true)
     const policy = zatcaQrPolicy({ featureActive: args.saFeatureActive, online, printEnabled: args.printEnabled })
@@ -82,4 +84,16 @@ export async function maybeTaxBarcode(args: {
     return url ?? undefined
   }
   return undefined
+}
+
+/**
+ * يُلحق الرمز الضريبي بنموذج مستند الطباعة (نموذج الإيصال/الفاتورة) قبل توليد HTML.
+ * مصدر واحد لكل شاشات الطباعة — من ينسى استدعاءه يطبع بلا رمز رغم تفعيل الميزة
+ * (كان هذا سبب بلاغ المالك: محرر «فاتورة مبيعات جديدة» يطبع بلا باركود).
+ * لا يرمي أبداً: أي نقص في البيانات أو فشل توليد الصورة يعني طباعة بلا رمز فقط.
+ */
+export async function withTaxBarcode<T extends { qrDataUrl?: string }>(model: T, args: TaxBarcodeArgs): Promise<T> {
+  const url = await maybeTaxBarcode(args)
+  if (url) model.qrDataUrl = url
+  return model
 }
