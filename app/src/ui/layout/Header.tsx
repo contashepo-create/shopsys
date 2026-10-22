@@ -34,14 +34,15 @@ import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
 import { BranchBadge } from '../components/BranchBadge.tsx'
 
-export function Header({ title }: { title: string }) {
+export function Header({ title, sidebarCollapsed = false }: { title: string; sidebarCollapsed?: boolean }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload } = useAppStore()
   const navigationMode = useAppStore((s) => s.appearance.navigationMode)
-  /* شارة الفرع فوق اسم المستخدم: تظهر في وضع الشريط الجانبي فقط — في وضع
-     القوائم العلوي توجد الشارة نفسها في الشريط أعلى اسم المستخدم تماماً،
-     فلا نكرّرها مرتين على بعد بكسلات (قرار المالك: مكان واضح لا مزدوج). */
-  const { branches: activeBranches, effectiveBranchId, isLockedToUserBranch, setActiveBranchId } = useEffectiveBranchScope()
-  const showHeaderBranchBadge = navigationMode !== 'topbar' && activeBranches.length > 0
+  /* شارة الفرع تظهر مرة واحدة دائماً:
+     - وضع القوائم العلوي: في MenuBar فوق اسم المستخدم مباشرة.
+     - وضع الشريط الجانبي موسّعاً: في الشريط نفسه.
+     - وضع الشريط الجانبي مطوياً: هنا فوق اسم المستخدم (وإلا اختفت الشارة كلياً). */
+  const { branches: activeBranches, effectiveBranch, effectiveBranchId, isLockedToUserBranch, setActiveBranchId } = useEffectiveBranchScope()
+  const showHeaderBranchBadge = navigationMode !== 'topbar' && sidebarCollapsed && activeBranches.length > 0
   const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
@@ -366,32 +367,37 @@ export function Header({ title }: { title: string }) {
         {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
       </button>
 
-      <div className="flex flex-col items-end gap-1 pr-2 border-r border-slate-200 dark:border-slate-700">
-        {showHeaderBranchBadge && (
-          <BranchBadge
-            branches={activeBranches}
-            value={effectiveBranchId}
-            locked={isLockedToUserBranch}
-            onChange={setActiveBranchId}
-            placement="header"
-            showCaption
-          />
-        )}
-        <div className="flex items-center gap-2">
-          <div className="text-left hidden sm:block">
-            <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
-            <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
-              {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
+      <div className="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-700">
+        {/* شارة الفرع فوق اسم المستخدم — في وضع الشريط الجانبي فقط (في وضع
+            القوائم العلوي تعرضها MenuBar مباشرة فوق هذا الموضع فلا تتكرر) */}
+        <div className="flex flex-col items-end gap-1">
+          {showHeaderBranchBadge && (
+            <BranchBadge
+              branches={activeBranches}
+              value={effectiveBranchId}
+              fallbackName={effectiveBranch?.nameAr}
+              locked={isLockedToUserBranch}
+              onChange={setActiveBranchId}
+              placement="header"
+              showCaption
+            />
+          )}
+          <div className="flex items-center gap-2">
+            <div className="text-left hidden sm:block">
+              <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
+              <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
+                {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
+              </div>
             </div>
-          </div>
-          <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
-            {(() => {
-              const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
-              return av
-                ? <img src={av} alt="" className="w-8 h-8 rounded-xl object-cover border border-brand-500/40" />
-                : <UserCircle2 size={30} className="text-brand-500" />
-            })()}
+            <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
+              {(() => {
+                const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
+                return av
+                  ? <img src={av} alt="" className="w-8 h-8 rounded-xl object-cover border border-brand-500/40" />
+                  : <UserCircle2 size={30} className="text-brand-500" />
+              })()}
             </button>
+          </div>
         </div>
         {authOn && (
           <button

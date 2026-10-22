@@ -7,6 +7,8 @@
  * (نمط mobileshop: نسخة يومية تلقائية للبوت).
  */
 
+import { localStampCompact } from './time.ts'
+
 export const BACKUP_FORMAT = 'shopsys-backup'
 export const BACKUP_VERSION = 1
 
@@ -55,7 +57,8 @@ export function buildBackup(args: {
 /** اسم ملف واضح: shopsys-backup-بقالة-النور-2026-09-14-2210.json */
 export function backupFileName(shopName: string, nowIso: string): string {
   const safe = shopName.trim().replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 30) || 'shopsys'
-  const d = nowIso.slice(0, 16).replace('T', '-').replace(':', '')
+  /* الختم المحلي: اسم الملف يطابق ساعة المستخدم لا UTC */
+  const d = localStampCompact(nowIso) || nowIso.slice(0, 10)
   return `shopsys-backup-${safe}-${d}.json`
 }
 

@@ -25,6 +25,7 @@ export function BranchBadge({
   onChange,
   placement,
   showCaption = false,
+  fallbackName,
   className = '',
 }: {
   branches: readonly BranchOption[]
@@ -36,11 +37,19 @@ export function BranchBadge({
   placement: 'menubar' | 'sidebar' | 'header'
   /** شرح مختصر «الفرع الحالي» — يُستخدم فوق اسم المستخدم فقط */
   showCaption?: boolean
+  /**
+   * اسم الفرع الفعّال حين لا يكون ضمن `branches` (فرع مُعطَّل مثلاً).
+   * بلا هذا الاسم يظهر المبدّل «كل الفروع» بينما النظام مقيَّد بفرع آخر.
+   */
+  fallbackName?: string
   className?: string
 }) {
   if (branches.length === 0) return null
   const current = value == null ? null : branches.find((b) => b.id === value) ?? null
-  const allBranches = current == null
+  /* «شامل» تعني فعلاً بلا فرع (value == null) — لا تعني «لم أجد الفرع في القائمة» */
+  const allBranches = value == null
+  const displayName = current?.nameAr
+    ?? (allBranches ? 'كل الفروع' : (fallbackName ?? (locked ? 'فرعك غير متاح' : `فرع #${value}`)))
   const switchable = !locked && !!onChange
   const tone = allBranches ? 'is-all' : 'is-current'
   const switchAttrs = placement === 'menubar'
@@ -49,10 +58,10 @@ export function BranchBadge({
       ? { 'data-sidebar-branch-locked': locked && current ? current.id : undefined }
       : {}
   const title = locked
-    ? `فرع العمل الحالي: ${current?.nameAr ?? 'غير محدد'} — مخصص لحسابك ولا يمكن تبديله`
+    ? `فرع العمل الحالي: ${displayName} — مخصص لحسابك ولا يمكن تبديله`
     : allBranches
       ? 'عرض شامل لكل الفروع — اختر فرعاً للعمل داخله'
-      : `فرع العمل الحالي: ${current?.nameAr}`
+      : `فرع العمل الحالي: ${displayName}`
 
   const icon = <GitBranch size={placement === 'header' ? 12 : 11} className="branch-badge-ico" aria-hidden />
   const dot = <span className={`branch-badge-dot ${tone}`} aria-hidden />
@@ -68,7 +77,7 @@ export function BranchBadge({
       >
         {icon}
         {dot}
-        <span className="branch-badge-name">{current?.nameAr ?? (locked ? 'غير محدد' : 'كل الفروع')}</span>
+        <span className="branch-badge-name">{displayName}</span>
         {showCaption && !allBranches && <small className="branch-badge-caption">الفرع الحالي</small>}
         {lock}
       </span>
@@ -86,11 +95,15 @@ export function BranchBadge({
       <select
         aria-label="الفرع النشط — تبديل الفرع"
         data-branch-switcher={placement}
-        value={current?.id ?? ''}
+        value={current?.id ?? value ?? ''}
         onChange={(e) => onChange?.(e.target.value ? Number(e.target.value) : null)}
         className="branch-badge-select"
       >
         <option value="">كل الفروع (شامل)</option>
+        {/* الفرع الفعّال المُعطَّل: خيار صريح كي لا يعرض المبدّل خياراً مخالفاً للحالة */}
+        {!current && value != null && (
+          <option value={value}>{fallbackName ?? `فرع #${value}`}</option>
+        )}
         {branches.map((b) => (
           <option key={b.id} value={b.id}>
             {b.nameAr}

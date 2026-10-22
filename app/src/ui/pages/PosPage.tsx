@@ -10,6 +10,7 @@ import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
@@ -227,7 +228,7 @@ export function PosPage() {
   const searchOpen = query.trim().length > 0
   const searchMenuStyle = useAnchoredMenu(searchBoxRef, searchOpen, 420)
   /** سد فجوة فورية — النشاط #5 (صيدلية): شارة استباقية لأقرب تاريخ انتهاء قبل الإضافة للسلة */
-  const nearestExpiry = useMemo(() => nearestExpiryByItem(batches, new Date().toISOString()), [batches])
+  const nearestExpiry = useMemo(() => nearestExpiryByItem(batches, todayLocalIso()), [batches])
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
@@ -381,7 +382,7 @@ export function PosPage() {
         setQuery('')
         return
       }
-      const w = warrantyLookup(serials, q, new Date().toISOString())
+      const w = warrantyLookup(serials, q, todayLocalIso())
       const itName = items.find((it) => it.id === su.itemId)?.nameAr ?? 'صنف'
       toast.show(
         w?.active

@@ -11,7 +11,7 @@ import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { SignaturePad } from '../components/SignaturePad.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { todayLocalIso } from '../../core/time.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, rentalInvoiceDoc,
@@ -441,7 +441,7 @@ export function RentalContractsPage() {
   }
 
   /* ─── تقرير ─── */
-  const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
+  const presets = useMemo(() => periodPresets(todayLocalIso()), [])
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const report = useMemo(() => rentalReport(rentalContracts, period), [rentalContracts, period])
@@ -528,7 +528,7 @@ export function RentalContractsPage() {
                       <td className="px-4 py-3 text-slate-500">{c.totals.depositMinor > 0 ? fmt(c.totals.depositMinor) : '—'}</td>
                       <td className="px-4 py-3">
                         {c.status === 'active'
-                          ? isRentalOverdue(c, todayLocalIso())
+                          ? isRentalOverdue(c, localIsoTimestamp())
                             ? <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[11px] font-bold animate-pulse">⏰ متأخر عن الإرجاع</span>
                             : <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[11px] font-bold">نشط</span>
                           : <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-500 text-[11px] font-bold">مُقفل</span>}

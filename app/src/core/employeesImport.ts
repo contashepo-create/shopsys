@@ -1,5 +1,4 @@
-
-import { todayLocalIso } from './time.ts'/**
+/**
  * استيراد الموظفين من Excel/CSV (البند ③ من أمر «اكمل ونفذ» 2026-10-01):
  * تحليل مرن بلا مكتبات — رؤوس أعمدة عربية/إنجليزية بمرادفات، أرقام عربية
  * وهندية، وتواريخ مصرية (يوم/شهر/سنة). «قالب الأعمدة» يُنزَّل كملف CSV
@@ -7,6 +6,9 @@ import { todayLocalIso } from './time.ts'/**
  *
  * نواة خالصة بلا React ولا قيود — كل مبلغ يُحوَّل للوحدة الصغرى (Minor).
  */
+
+import { todayLocalIso } from './time.ts'
+
 export interface EmployeeImportRow {
   nameAr: string
   jobTitle: string

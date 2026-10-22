@@ -16,6 +16,7 @@ import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 import { barcodeSvg } from '../../core/code128.ts'
 import { amountInWords } from './printInvoiceA4.ts'
+import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -99,7 +100,8 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
     } catch { return '' }
   })()
 
-  const printedAt = new Date().toISOString().slice(0, 16).replace('T', ' ')
+  /* ختم الطباعة بساعة الجهاز (الإيصال ورقة محلية، لا مستند ZATCA) */
+  const printedAt = localDateTimeLabel(localIsoTimestamp())
 
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">

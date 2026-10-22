@@ -25,6 +25,8 @@ const probe = (tz) => {
       label: localDateTimeLabel('2026-10-21T22:00:00Z'),
       plain: localDateTimeLabel('2026-10-22'),
       invalid: localDateTimeLabel('not-a-date'),
+      docStamp: localDateTimeLabel('2026-07-15T12:00:00.000+03:00'),
+      docDay: localDateIso('2026-07-15T00:30:00.000+03:00'),
     }))
   `
   const r = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], {
@@ -40,6 +42,10 @@ ok(cairo && cairo.date === '2026-10-22' && cairo.label === '2026-10-22 01:00', '
 ok(newYork && newYork.today === '2026-10-21', 'نيويورك: نفس اللحظة ليست 22 هناك (الإصلاح ليس تغييراً أعمى)')
 ok(newYork && newYork.label === '2026-10-21 18:00', 'نيويورك: العرض بالتوقيت المحلي 18:00')
 ok(cairo && cairo.plain === '2026-10-22' && cairo.invalid === 'not-a-date'.slice(0, 16), 'التاريخ المجرد يبقى كما هو والقيمة الفاسدة لا تُرمى')
+/* ختم محلي بإزاحته: ساعته ساعة المستند — لا تتغير بمنطقة العارض ولا بفصل السنة */
+ok(cairo && cairo.docStamp === '2026-07-15 12:00', 'القاهرة: ختم يوليو +03 يُعرض 12:00 كما كُتب', cairo?.docStamp)
+ok(newYork && newYork.docStamp === '2026-07-15 12:00', 'نيويورك: نفس المستند يعرض 12:00 (ساعة المستند لا ساعة العارض)', newYork?.docStamp)
+ok(cairo && cairo.docDay === '2026-07-15' && newYork && newYork.docDay === '2026-07-15', 'يوم المستند من ختمه المحلي لا من إزاحة العارض')
 
 /* ② منع التعبير الخام في الشيفرة (خارج time.ts) */
 const root = fileURLToPath(new URL('../src', import.meta.url))
@@ -58,7 +64,8 @@ ok(offenders.length === 0, `لا تاريخ UTC خام في الشيفرة — �
 /* ③ ترحيل المستندات يستخدم الختم المحلي لا UTC */
 const repo = readFileSync(new URL('../src/data/repo.ts', import.meta.url), 'utf8')
 ok(repo.includes('const now = localIsoTimestamp()'), 'repo: تواريخ المستندات تُبنى بختم محلي')
-ok(repo.includes('const stamp = localIsoTimestamp()'), 'repo: ختم لحظة البيع محلي لا UTC')
+ok(/const stamp = localIsoTimestamp\(\w*\)/.test(repo), 'repo: ختم لحظة البيع محلي لا UTC')
+ok(repo.includes('localTimestampOnDay(postingDate, at)'), 'repo: الفاتورة المؤرَّخة تأخذ إزاحة يومها لا إزاحة اليوم')
 ok(!/date: new Date\(\)\.toISOString\(\)/.test(repo), 'repo: لا تاريخ مستند من UTC الخام')
 
 /* ④ ذوات «اليوم/الشهر» للجديد: لا تُشتق من UTC في أي واجهة أو نواة */

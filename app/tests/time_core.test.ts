@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   addCalendarMonths, calendarDateIso, localDateIso, localDateTimeLabel,
-  localIsoTimestamp, localTimestampOn, todayLocalIso,
+  localIsoTimestamp, localTimestampOn, localTimestampOnDay, todayLocalIso,
 } from '../src/core/time.ts'
 
 describe('calendarDateIso — تقويم مجرّد', () => {
@@ -50,6 +50,26 @@ describe('الأختام', () => {
     expect(back.getHours()).toBe(9)
     expect(back.getDate()).toBe(15)
     expect(back.getMonth()).toBe(0)
+  })
+  it('ختم يوم ماضٍ: ساعة اللحظة نفسها بتاريخ ذلك اليوم وبإزاحته', () => {
+    const at = new Date(2026, 6, 15, 14, 33, 9, 12)
+    const stamp = localTimestampOnDay('2026-01-15', at)
+    expect(stamp.startsWith('2026-01-15T14:33:09.012')).toBe(true)
+    const back = new Date(stamp)
+    expect(back.getHours()).toBe(14)
+    expect(back.getMinutes()).toBe(33)
+    expect(back.getDate()).toBe(15)
+    expect(back.getMonth()).toBe(0)
+  })
+  it('مدخل تاريخ فاسد يعود إلى ختم اللحظة الحالية لا إلى «T09:00» مبتور', () => {
+    const stamp = localTimestampOn('غير تاريخ', 9)
+    expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/)
+    expect(localTimestampOnDay('2026-99-99', new Date()).slice(0, 4)).toMatch(/^\d{4}$/)
+  })
+  it('ختم محلي بإزاحته: الساعة واليوم كما كُتبا لا بإزاحة اليوم', () => {
+    expect(localDateTimeLabel('2026-07-15T12:00:00.000+03:00')).toBe('2026-07-15 12:00')
+    expect(localDateIso('2026-07-15T00:30:00.000+03:00')).toBe('2026-07-15')
+    expect(localDateTimeLabel('2026-01-31T09:00+02:00')).toBe('2026-01-31 09:00')
   })
   it('عرض تاريخ مخزّن: المجرّد كما هو، واللحظة تُحوَّل للمنطقة المحلية', () => {
     expect(localDateTimeLabel('2026-10-22')).toBe('2026-10-22')

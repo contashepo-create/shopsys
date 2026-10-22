@@ -8,6 +8,7 @@ import { Plus, Gift, Power, Trash2, CalendarRange } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { promotionRetailMinor, promotionSavingsMinor, promotionActiveOn, type PromotionComponent } from '../../core/promotions.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
@@ -21,7 +22,7 @@ export function PromotionsPage() {
   )
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const todayIso = new Date().toISOString()
+  const todayIso = todayLocalIso()
 
   /* محرر عرض */
   const [editorOpen, setEditorOpen] = useState(false)

@@ -57,6 +57,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
 
   const {
     branches: activeBranches,
+    effectiveBranch,
     effectiveBranchId,
     isLockedToUserBranch,
     effectiveModules,
@@ -271,6 +272,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
           <BranchBadge
             branches={activeBranches}
             value={effectiveBranchId}
+            fallbackName={effectiveBranch?.nameAr}
             locked={isLockedToUserBranch}
             onChange={setActiveBranchId}
             placement="menubar"

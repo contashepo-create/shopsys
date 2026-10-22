@@ -29,7 +29,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
-import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
+import { localDateTimeLabel, localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
   received: 'bg-sky-500/10 text-sky-600',
@@ -304,12 +304,12 @@ export function MaintenancePage() {
                   <div className={`px-4 py-3 text-lg font-black ${STATUS_COLORS[col]}`}>{TICKET_STATUS_LABELS[col]} ({colTickets.length})</div>
                   <div className="p-3 space-y-3 max-h-[75vh] overflow-y-auto">
                     {colTickets.map((t) => (
-                      <div key={t.id} className={`rounded-xl p-3 ${isTicketOverdue(t, todayLocalIso()) ? 'bg-rose-500/20 border border-rose-500/40' : 'bg-white/10'}`}>
+                      <div key={t.id} className={`rounded-xl p-3 ${isTicketOverdue(t, localIsoTimestamp()) ? 'bg-rose-500/20 border border-rose-500/40' : 'bg-white/10'}`}>
                         <div className="text-xl font-black text-amber-400">{t.ticketNumber}</div>
                         <div className="text-lg font-bold">{t.deviceName}</div>
                         <div className="text-sm text-slate-300 truncate">{t.issue}</div>
                         {t.technicianId != null && <div className="text-sm text-indigo-300 mt-1">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? ''}</div>}
-                        {isTicketOverdue(t, todayLocalIso()) && <div className="text-sm font-black text-rose-300 mt-1">⏰ متأخرة</div>}
+                        {isTicketOverdue(t, localIsoTimestamp()) && <div className="text-sm font-black text-rose-300 mt-1">⏰ متأخرة</div>}
                       </div>
                     ))}
                     {colTickets.length === 0 && <div className="text-center text-slate-500 py-6">لا تذاكر</div>}
@@ -341,7 +341,7 @@ export function MaintenancePage() {
                         <div className="text-[12px] font-bold text-slate-700 dark:text-slate-200 truncate">{t.deviceName}</div>
                         <div className="text-[10.5px] text-slate-400 truncate">{t.issue}</div>
                         {t.technicianId != null && <div className="text-[10px] text-indigo-500 mt-0.5">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? ''}</div>}
-                        {isTicketOverdue(t, todayLocalIso()) && <div className="text-[9.5px] text-rose-600 font-bold mt-0.5">⏰ متأخرة</div>}
+                        {isTicketOverdue(t, localIsoTimestamp()) && <div className="text-[9.5px] text-rose-600 font-bold mt-0.5">⏰ متأخرة</div>}
                       </button>
                     ))}
                     {colTickets.length === 0 && <div className="text-center text-[11px] text-slate-300 py-4">—</div>}
@@ -386,8 +386,8 @@ export function MaintenancePage() {
                     <td className="px-4 py-3 text-slate-500">{custLabel(t)}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${STATUS_COLORS[t.status]}`}>{TICKET_STATUS_LABELS[t.status]}</span>
-                      {isTicketOverdue(t, todayLocalIso()) && <span className="ms-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[10px] font-bold animate-pulse">⏰ متأخرة</span>}
-                      {t.promisedAt && !isTicketOverdue(t, todayLocalIso()) && t.status !== 'delivered' && t.status !== 'cancelled' && (
+                      {isTicketOverdue(t, localIsoTimestamp()) && <span className="ms-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[10px] font-bold animate-pulse">⏰ متأخرة</span>}
+                      {t.promisedAt && !isTicketOverdue(t, localIsoTimestamp()) && t.status !== 'delivered' && t.status !== 'cancelled' && (
                         <div className="text-[9.5px] text-slate-400 mt-0.5" dir="ltr">موعدها {localDateTimeLabel(t.promisedAt)}</div>
                       )}
                     </td>

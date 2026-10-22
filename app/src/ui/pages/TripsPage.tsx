@@ -527,7 +527,7 @@ export function TripsPage() {
   }
 
   /* ─── تقرير الربحية ─── */
-  const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
+  const presets = useMemo(() => periodPresets(todayLocalIso()), [])
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const profit = useMemo(() => tripProfitReport(trips, period), [trips, period])

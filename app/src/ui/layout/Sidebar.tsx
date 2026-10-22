@@ -35,6 +35,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const { appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const {
     branches: activeBranches,
+    effectiveBranch,
     effectiveBranchId,
     isLockedToUserBranch,
     effectiveModules,
@@ -109,6 +110,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           <BranchBadge
             branches={activeBranches}
             value={effectiveBranchId}
+            fallbackName={effectiveBranch?.nameAr}
             locked={isLockedToUserBranch}
             onChange={setActiveBranchId}
             placement="sidebar"

@@ -1,9 +1,10 @@
-
-import { todayLocalIso } from './time.ts'/**
+/**
  * واتساب — مساعدات موحدة (v1.0.13)
  * يسّير نفس منطق تذكيرات المواعيد (booking.ts) مع إضافة حالات إرسال المستندات:
  * بلا رقم يفتح قائمة اختيار جهة في واتساب بدل الفشل الصامت.
  */
+
+import { todayLocalIso } from './time.ts'
 
 /** يطبّع الرقم لمسار wa.me: يقبل 01x المصري ويرفقه 2، ويمرر الدولي كما هو */
 export function normalizeWaPhone(phone: string): string {

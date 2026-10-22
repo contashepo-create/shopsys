@@ -315,7 +315,13 @@ export function isRentalOverdue(
   nowIso: string,
 ): boolean {
   if (contract.status !== 'active') return false
-  return nowIso > rentalExpectedEnd(contract.date, contract.days, contract.rateType ?? 'daily')
+  const end = rentalExpectedEnd(contract.date, contract.days, contract.rateType ?? 'daily')
+  // مقارنة لحظات لا نصوص: الطرفان قد يحملان إزاحتين مختلفتين (+03:00 مقابل Z)،
+  // والمقارنة النصية كانت تُخطئ بفارق ساعات عند حدود اليوم.
+  const endMs = Date.parse(end)
+  const nowMs = Date.parse(nowIso)
+  if (Number.isNaN(endMs) || Number.isNaN(nowMs)) return nowIso > end
+  return nowMs > endMs
 }
 
 /* ─── فاتورة إيجار للعميل (طلب المالك — «كيف أصدر فاتورة لمستأجر المعدات كي يسدد إيجاره؟») ─── */

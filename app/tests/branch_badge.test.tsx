@@ -47,6 +47,24 @@ describe('BranchBadge', () => {
     expect(one.querySelector('.branch-badge.is-current')).toBeTruthy()
   })
 
+  it('فرع فعّال غير موجود في قائمة النشِط: يُعرض باسمه لا «كل الفروع»', () => {
+    const onChange = vi.fn()
+    const { container } = render(
+      <BranchBadge branches={[branches[0]]} value={9} fallbackName="فرع قديم" onChange={onChange} placement="menubar" />,
+    )
+    expect(screen.getByText('فرع قديم')).toBeTruthy()
+    expect(container.querySelector('.branch-badge.is-current')).toBeTruthy()
+    expect(container.querySelector('.branch-badge.is-all')).toBeNull()
+    const select = container.querySelector('select') as HTMLSelectElement
+    expect(select.value).toBe('9')
+    expect(Array.from(select.options).some((o) => o.value === '9' && o.textContent === 'فرع قديم')).toBe(true)
+  })
+
+  it('موظف مقيَّد بفرع غير متاح: رسالة صريحة بدل «غير محدد»', () => {
+    render(<BranchBadge branches={[branches[0]]} value={9} locked placement="sidebar" />)
+    expect(screen.getByText('فرعك غير متاح')).toBeTruthy()
+  })
+
   it('بلا فروع لا تُرسم شارة', () => {
     const { container } = render(<BranchBadge branches={[]} value={null} placement="sidebar" />)
     expect(container.innerHTML).toBe('')

@@ -147,7 +147,7 @@ import {
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
 import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
-import { localIsoTimestamp, localTimestampOn, todayLocalIso } from '../core/time.ts'
+import { localIsoTimestamp, localTimestampOn, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
 
 export interface Warehouse {
   id: number
@@ -3335,6 +3335,23 @@ function deserializeApprovalPayload<T>(payload: string): T {
 }
 
 /**
+ * تثبيت تاريخ المستند لحظة **التقديم** لا لحظة الاعتماد.
+ * الحادثة: كاشير يقدّم فاتورة مساءً، يعتمدها المدير صباح اليوم التالي ⇒ القيد
+ * يُرحَّل بتاريخ الاعتماد فتذهب الإيراد إلى فترة محاسبية أخرى (وتتغيّر
+ * تقارير اليوم). الحقول: البيع `documentDate`، والباقي `date` — لا نكتب فوق
+ * تاريخ اختاره المستخدم، ونترك الحمولة كما هي إن لم تكن JSON صالحاً.
+ */
+function stampApprovalDocDate(payload: string, kind: ApprovalDocKind): string {
+  let obj: Record<string, unknown>
+  try { obj = deserializeApprovalPayload<Record<string, unknown>>(payload) } catch { return payload }
+  if (!obj || typeof obj !== 'object') return payload
+  const field = kind === 'sale' ? 'documentDate' : 'date'
+  if (typeof obj[field] === 'string' && obj[field]) return payload
+  obj[field] = todayLocalIso()
+  return serializeApprovalPayload(obj)
+}
+
+/**
  * بوابة الاعتماد: إن كان نوع المستند خاضعاً للنظام والمُدخِل لا يملك تجاوزاً،
  * يُسجَّل الطلب بلا أي كتابة في الدفتر أو المخزون ثم يُرمى خطأ إخباري.
  * لا تُستدعى إلا من رؤوس إجراءات الترحيل المباشرة (بيع/شراء/سندات/مرتجعات).
@@ -3358,7 +3375,7 @@ function enforceApprovalGate(
     title: meta.title,
     partyName: meta.partyName,
     amountMinor: Math.round(amountMinor),
-    payload: meta.payload,
+    payload: stampApprovalDocDate(meta.payload, kind),
     requestedBy: state.currentUserId,
     requestedByName: activeUserName(state),
   })
@@ -6821,8 +6838,9 @@ export const useRawDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         /* الختم بالتوقيت المحلي: تاريخ القيد/الفاتورة = يوم المستخدم، والوقت
            المعروض هو وقته لا وقت UTC (كان 01:00 يُقيَّد 23:00 من اليوم السابق). */
-        const stamp = localIsoTimestamp()
-        const now = postingDate === stamp.slice(0, 10) ? stamp : `${postingDate}T${stamp.slice(11)}`
+        const at = new Date()
+        const stamp = localIsoTimestamp(at)
+        const now = postingDate === todayLocalIso(at) ? stamp : localTimestampOnDay(postingDate, at)
         const invoiceNumber = `S-${String(saleId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('SAL', now, usedRefCodes(state))
 

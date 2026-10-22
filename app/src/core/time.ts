@@ -21,6 +21,10 @@ export function todayLocalIso(now: Date = new Date()): string {
 }
 
 const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/
+/* ختم محلي كَتَبْناه بإزاحته (+03:00). ساعته «ساعة المستند» لا لحظة كونية:
+   تحويلها بإزاحة اليوم (صيف/شتاء) كان يعرض فاتورة يوليو 12:00 الساعة 11:00
+   في يناير. الأختام القديمة بـZ تبقى لحظات كونية تُحوَّل لبتوقيت العارض. */
+const LOCAL_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?[+-]\d{2}:\d{2}$/
 
 /**
  * تاريخ `YYYY-MM-DD` من كائن Date بُني **بـUTC عمداً** (تقويم مجرّد لا لحظة).
@@ -50,6 +54,8 @@ export function localDateIso(stored: string): string {
   const value = (stored ?? '').trim()
   if (!value) return ''
   if (PLAIN_DATE.test(value)) return value
+  /* ختم محلي بإزاحته: يومه مكتوب فيه — لا يُعاد حسابه بإزاحة اليوم */
+  if (LOCAL_STAMP.test(value)) return value.slice(0, 10)
   const t = Date.parse(value)
   return Number.isNaN(t) ? value.slice(0, 10) : todayLocalIso(new Date(t))
 }
@@ -62,12 +68,25 @@ export function localDateTimeLabel(stored: string): string {
   const value = (stored ?? '').trim()
   if (!value) return ''
   if (PLAIN_DATE.test(value)) return value
+  /* ساعة المستند كما كُتبت — ثابتة في كل المناطق وفصول السنة */
+  if (LOCAL_STAMP.test(value)) return `${value.slice(0, 10)} ${value.slice(11, 16)}`
   const t = Date.parse(value)
   if (Number.isNaN(t)) return value.slice(0, 16).replace('T', ' ')
   const d = new Date(t)
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
   return `${todayLocalIso(d)} ${hh}:${mm}`
+}
+
+/**
+ * وسم مضغوط لأسماء الملفات: `YYYY-MM-DD-HHmm` بالتوقيت المحلي للعارض.
+ * يخدم الأختام القديمة المحفوظة بـ`Z` (اسم نسخة احتياطية يحمل ساعة UTC كان
+ * يبدو «من المستقبل/الماضي» بفارق ساعتين لقارئ القاهرة).
+ */
+export function localStampCompact(stored: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2})(?: (\d{2}):(\d{2}))?$/.exec(localDateTimeLabel(stored))
+  if (!m) return ''
+  return m[2] ? `${m[1]}-${m[2]}${m[3]}` : m[1]
 }
 
 /**
@@ -93,8 +112,23 @@ export function localIsoTimestamp(now: Date = new Date()): string {
  */
 export function localTimestampOn(dateIso: string, hour = 9): string {
   const day = (dateIso ?? '').slice(0, 10)
+  if (!PLAIN_DATE.test(day)) return localIsoTimestamp()
   // إزاحة اليوم المطلوب نفسه لا إزاحة اليوم الحالي: قيد يناير على جهاز صيفي
   // يجب أن يحمل +02:00 لا +03:00 وإلا عُرضت ساعته منزاحة عند الطباعة.
-  const onDay = new Date(`${day}T${pad2(hour)}:00:00`)
-  return `${day}T${pad2(hour)}:00:00.000${Number.isNaN(onDay.getTime()) ? offsetSuffix() : offsetSuffix(onDay)}`
+  const clock = `${pad2(hour)}:00:00.000`
+  return `${day}T${clock}${offsetSuffix(new Date(`${day}T${clock}`))}`
+}
+
+/**
+ * ختم ليوم محدَّد مع **ساعة اللحظة الحالية** وإزاحة ذلك اليوم.
+ * يُستخدم للمستند المؤرَّخ في الماضي (فاتورة متأخرة الإدخال): تاريخ القيد هو
+ * اليوم المختار، والساعة المعروضة هي ساعة الإدخال نفسها في ذلك اليوم — لا
+ * ساعةً مزاحة بفارق التوقيت الصيفي بين اليومين.
+ */
+export function localTimestampOnDay(dateIso: string, at: Date = new Date()): string {
+  const day = (dateIso ?? '').slice(0, 10)
+  if (!PLAIN_DATE.test(day)) return localIsoTimestamp(at)
+  const clock = `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}.${pad2(at.getMilliseconds(), 3)}`
+  const onDay = new Date(`${day}T${clock}`)
+  return `${day}T${clock}${Number.isNaN(onDay.getTime()) ? offsetSuffix(at) : offsetSuffix(onDay)}`
 }

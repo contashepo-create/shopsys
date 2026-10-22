@@ -8,6 +8,7 @@
  * وصياغة نصوص الرسائل — بلا fetch هنا (الاتصال مسؤولية الواجهة).
  */
 import type { Minor } from './money.ts'
+import { localDateTimeLabel } from './time.ts'
 
 export interface TelegramSettings {
   botToken: string // من BotFather
@@ -110,5 +111,5 @@ export function buildLowStockText(shopName: string, rows: LowStockRow[]): string
 
 /** تعليق ملف النسخة الاحتياطية عند إرسالها sendDocument */
 export function buildBackupCaption(shopName: string, nowIso: string): string {
-  return `🗄 نسخة احتياطية — ${shopName}\n${nowIso.slice(0, 16).replace('T', ' ')}`
+  return `🗄 نسخة احتياطية — ${shopName}\n${localDateTimeLabel(nowIso)}`
 }

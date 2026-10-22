@@ -10,7 +10,7 @@
  *   (كي لا يتعطل محل أدخل مخزونه الافتتاحي بلا سيريالات)
  * - المرتجع يعيد السيريال متاحاً، والضمان يُستعلم عنه بأي سيريال
  */
-import { addCalendarMonths } from './time.ts'
+import { addCalendarMonths, localDateIso } from './time.ts'
 
 export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier'
 
@@ -177,7 +177,7 @@ export interface WarrantyInfo {
 
 /** تاريخ نهاية الضمان: نفس اليوم بعد N شهراً (تشبع نهاية الشهر: 31/1 + شهر = 28/2) */
 export function warrantyEndDate(soldAtIso: string, months: number): string {
-  return addCalendarMonths(soldAtIso.slice(0, 10), months)
+  return addCalendarMonths(localDateIso(soldAtIso), months)
 }
 
 /** استعلام ضمان بسيريال — undefined لو غير مسجل أو لم يُبع بعد */
