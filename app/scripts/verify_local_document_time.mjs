@@ -8,7 +8,6 @@
  * وختم الرواتب على يوم محدَّد.
  */
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 
 let pass = 0, fail = 0
 const ok = (cond, name, detail = '') => {
@@ -79,42 +78,58 @@ const probeSource = (absUrl, timeUrl, srcUrl) => `
   }))
 `
 
-const auditKitUrl = fileURLToPath(new URL('./auditKit.mjs', import.meta.url))
-const timeUrl = fileURLToPath(new URL('../src/core/time.ts', import.meta.url))
-const srcUrl = fileURLToPath(new URL('../src', import.meta.url))
+/* روابط file:// لا مسارات خام: ويندوز يرفض `import('D:\\...')` بـERR_UNSUPPORTED_ESM_URL_SCHEME */
+const auditKitUrl = new URL('./auditKit.mjs', import.meta.url).href
+const timeUrl = new URL('../src/core/time.ts', import.meta.url).href
+const srcUrl = new URL('../src', import.meta.url).href
 const probe = (tz) => {
   const r = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', probeSource(auditKitUrl, timeUrl, srcUrl)], {
-    encoding: 'utf8', env: { ...process.env, TZ: tz }, maxBuffer: 20 * 1024 * 1024,
+    encoding: 'utf8', env: tz ? { ...process.env, TZ: tz } : process.env, maxBuffer: 20 * 1024 * 1024,
   })
   if (r.status !== 0) { console.error(r.stderr?.slice(-1500)); return null }
   return JSON.parse(r.stdout.trim().split('\n').at(-1))
 }
 
-for (const tz of ['Africa/Cairo', 'America/New_York']) {
+/* هل يطبّق هذا النظام متغيّر TZ؟ كل فحوص هذا الملف مستقلة عن المنطقة أصلاً،
+   فيكفي تشغيل واحد في منطقة النظام حين يتجاهل ويندوز TZ — بدل فشل كاذب. */
+const offsetAt = (tz) => {
+  const r = spawnSync(process.execPath, ['-e', "console.log(new Date('2026-07-15T12:00:00Z').getTimezoneOffset())"], {
+    encoding: 'utf8', env: tz ? { ...process.env, TZ: tz } : process.env,
+  })
+  return r.status === 0 ? Number(r.stdout.trim()) : NaN
+}
+const baseOffset = offsetAt(null)
+const tzSupported = ['Africa/Cairo', 'America/New_York'].every((tz) => offsetAt(tz) !== baseOffset)
+if (!tzSupported) console.log('ℹ️ هذا النظام لا يطبّق متغيّر TZ — تشغيل واحد في منطقة النظام (الفحوص مستقلة عن المنطقة).')
+
+for (const tz of tzSupported ? ['Africa/Cairo', 'America/New_York'] : [null]) {
   const p = probe(tz)
-  if (!p) { ok(false, `${tz}: تشغيل مسار الترحيل`); continue }
-  ok(p.datedDate.startsWith('2026-03-01T'), `${tz}: تاريخ المستند المحرَّر في الرأس هو تاريخ الفاتورة`, p.datedDate)
-  ok(p.datedRef.split('-')[1] === '260301', `${tz}: كود المرجع SAL-YYMMDD من يوم المستند لا من UTC`, p.datedRef)
-  ok(p.entryDate === '2026-03-01', `${tz}: تاريخ القيد = تاريخ المستند`, p.entryDate)
-  ok(p.entryCreatedAt.startsWith('2026-03-01T'), `${tz}: ختم إنشاء القيد لم ينزلق ليوم آخر`, p.entryCreatedAt)
-  ok(!p.datedDate.endsWith('Z') && /[+-]\d{2}:\d{2}$/.test(p.datedDate), `${tz}: الختم يحمل إزاحة صريحة لا Z`, p.datedDate)
-  ok(p.todayDate.slice(0, 10) === p.todayLocal, `${tz}: بيع بلا تاريخ محرَّر يأخذ «اليوم المحلي» للجهاز`, `${p.todayDate} ≠ ${p.todayLocal}`)
-  ok(p.todayRef.split('-')[1] === p.todayLocal.slice(2).replaceAll('-', ''), `${tz}: كود المرجع اليومي مطابق لليوم المحلي`, p.todayRef)
-  ok(p.payrollStamp.startsWith('2026-01-15T09:00:00.000'), `${tz}: ختم الرواتب على اليوم المطلوب بالساعة 09:00`, p.payrollStamp)
-  ok(p.payrollHourLocal === 9 && p.payrollDayLocal === 15, `${tz}: إعادة قراءة ختم الرواتب تعطي 15 يناير 09:00 محلياً`, String(p.payrollHourLocal))
-  ok(p.stampNow.slice(0, 10) === p.todayLocal, `${tz}: الختم الحالي يبدأ بتاريخ اليوم المحلي`, p.stampNow)
+  if (!p) { ok(false, `${tz ?? 'المنطقة الحالية'}: تشغيل مسار الترحيل`); continue }
+  const T = tz ?? 'المنطقة الحالية'
+  ok(p.datedDate.startsWith('2026-03-01T'), `${T}: تاريخ المستند المحرَّر في الرأس هو تاريخ الفاتورة`, p.datedDate)
+  ok(p.datedRef.split('-')[1] === '260301', `${T}: كود المرجع SAL-YYMMDD من يوم المستند لا من UTC`, p.datedRef)
+  ok(p.entryDate === '2026-03-01', `${T}: تاريخ القيد = تاريخ المستند`, p.entryDate)
+  ok(p.entryCreatedAt.startsWith('2026-03-01T'), `${T}: ختم إنشاء القيد لم ينزلق ليوم آخر`, p.entryCreatedAt)
+  ok(!p.datedDate.endsWith('Z') && /[+-]\d{2}:\d{2}$/.test(p.datedDate), `${T}: الختم يحمل إزاحة صريحة لا Z`, p.datedDate)
+  ok(p.todayDate.slice(0, 10) === p.todayLocal, `${T}: بيع بلا تاريخ محرَّر يأخذ «اليوم المحلي» للجهاز`, `${p.todayDate} ≠ ${p.todayLocal}`)
+  ok(p.todayRef.split('-')[1] === p.todayLocal.slice(2).replaceAll('-', ''), `${T}: كود المرجع اليومي مطابق لليوم المحلي`, p.todayRef)
+  ok(p.payrollStamp.startsWith('2026-01-15T09:00:00.000'), `${T}: ختم الرواتب على اليوم المطلوب بالساعة 09:00`, p.payrollStamp)
+  ok(p.payrollHourLocal === 9 && p.payrollDayLocal === 15, `${T}: إعادة قراءة ختم الرواتب تعطي 15 يناير 09:00 محلياً`, String(p.payrollHourLocal))
+  ok(p.stampNow.slice(0, 10) === p.todayLocal, `${T}: الختم الحالي يبدأ بتاريخ اليوم المحلي`, p.stampNow)
   /* دوال النواة التي كانت تُقرأ بـgetDate/getMonth على كائن UTC فتزحف يوماً غرباً */
-  ok(p.assetDue.join(',') === '2026-01-15,2026-02-15,2026-03-15', `${tz}: أقساط الأصول تبدأ من تاريخها المطلوب`, p.assetDue.join(','))
-  ok(p.expiryValid === true && p.expiryInvalid === false, `${tz}: فحص صلاحية تاريخ الانتهاء لا يرفض تاريخاً صحيحاً ولا يقبل 30 فبراير`)
-  ok(p.calendarFeb29 === '2028-02-29', `${tz}: calendarDateIso يحفظ اليوم التقويمي من كائن UTC`, p.calendarFeb29)
-  ok(p.retention === '2027-01-10', `${tz}: تاريخ استحقاق محتجز الضمان سنة كاملة`, p.retention)
-  ok(p.terms.join(',') === '2026-01-31,2026-03-02', `${tz}: استحقاقات شروط الدفع من تاريخ المستند`, p.terms.join(','))
-  ok(p.leaseEnd === '2026-02-28', `${tz}: نهاية الإيجار تحترم آخر يوم في الشهر`, p.leaseEnd)
-  ok(p.leaseFirst.join(',') === '2026-03-01,2026-04-01', `${tz}: جدول الإيجار يبدأ من يوم التعاقد`, p.leaseFirst.join(','))
-  ok(p.warranty === '2026-03-31', `${tz}: نهاية الضمان لا تنزلق يوماً للخلف`, p.warranty)
-  ok(p.week === '2026-03-02', `${tz}: «آخر 7 أيام» يبدأ من اليوم المحلي −6`, p.week)
-  ok(p.leave.join(',') === '2026-10-27,2026-10-28,2026-10-29,2026-10-30,2026-10-31,2026-11-01,2026-11-02', `${tz}: أيام الإجازة كاملة عبر تغيير التوقيت الصيفي`, p.leave.join(','))
+  ok(p.assetDue.join(',') === '2026-01-15,2026-02-15,2026-03-15', `${T}: أقساط الأصول تبدأ من تاريخها المطلوب`, p.assetDue.join(','))
+  ok(p.expiryValid === true && p.expiryInvalid === false, `${T}: فحص صلاحية تاريخ الانتهاء لا يرفض تاريخاً صحيحاً ولا يقبل 30 فبراير`)
+  ok(p.calendarFeb29 === '2028-02-29', `${T}: calendarDateIso يحفظ اليوم التقويمي من كائن UTC`, p.calendarFeb29)
+  ok(p.retention === '2027-01-10', `${T}: تاريخ استحقاق محتجز الضمان سنة كاملة`, p.retention)
+  ok(p.terms.join(',') === '2026-01-31,2026-03-02', `${T}: استحقاقات شروط الدفع من تاريخ المستند`, p.terms.join(','))
+  ok(p.leaseEnd === '2026-02-28', `${T}: نهاية الإيجار تحترم آخر يوم في الشهر`, p.leaseEnd)
+  ok(p.leaseFirst.join(',') === '2026-03-01,2026-04-01', `${T}: جدول الإيجار يبدأ من يوم التعاقد`, p.leaseFirst.join(','))
+  ok(p.warranty === '2026-03-31', `${T}: نهاية الضمان لا تنزلق يوماً للخلف`, p.warranty)
+  ok(p.week === '2026-03-02', `${T}: «آخر 7 أيام» يبدأ من اليوم المحلي −6`, p.week)
+  ok(p.leave.join(',') === '2026-10-27,2026-10-28,2026-10-29,2026-10-30,2026-10-31,2026-11-01,2026-11-02', `${T}: أيام الإجازة كاملة عبر تغيير التوقيت الصيفي`, p.leave.join(','))
 }
 
 if (fail) { console.error(`\nPASS=${pass} FAIL=${fail}`); process.exit(1) }
-console.log(`✅ بوابة المستند الجديد — ${pass} فحصاً في منطقتين زمنيتين`)
+console.log(tzSupported
+  ? `✅ بوابة المستند الجديد — ${pass} فحصاً في منطقتين زمنيتين`
+  : `✅ بوابة المستند الجديد — ${pass} فحصاً في منطقة النظام (هذا النظام يتجاهل TZ؛ المنطقتان تُفحصان على CI لينكس)`)
