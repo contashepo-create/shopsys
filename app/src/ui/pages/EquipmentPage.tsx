@@ -15,6 +15,7 @@ import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const EQUIPMENT_KINDS = ['حفار', 'لودر', 'بلدوزر', 'ونش', 'رافعة شوكية', 'مولد', 'ضاغط هواء', 'أخرى']
 
@@ -115,7 +116,7 @@ export function EquipmentPage() {
     const activeContract = rentalContracts.find((c) => c.equipmentId === e.id && c.status === 'active')
     const defId = activeContract?.driverEmployeeId ?? e.driverEmployeeId ?? 0
     const defEmp = employees.find((emp) => emp.id === defId)
-    setShiftFor(e); setShiftDriverId(defId); setOpName(defEmp?.nameAr ?? ''); setShiftDate(new Date().toISOString().slice(0, 10))
+    setShiftFor(e); setShiftDriverId(defId); setOpName(defEmp?.nameAr ?? ''); setShiftDate(todayLocalIso())
     setShiftStart(String(e.meterReading || '')); setShiftEnd(''); setShiftNotes('')
   }
   const saveShift = () => {
@@ -249,7 +250,7 @@ export function EquipmentPage() {
             const hasActiveContract = rentalContracts.some((c) => c.equipmentId === e.id && c.status === 'active')
             const status = equipmentStatus({ hasActiveContract, service: svc })
             const activeContract = hasActiveContract ? rentalContracts.find((c) => c.equipmentId === e.id && c.status === 'active') : undefined
-            const compliance = equipmentComplianceWarnings([e], new Date().toISOString(), 30)
+            const compliance = equipmentComplianceWarnings([e], todayLocalIso(), 30)
             return (
               <div key={e.id} className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 hover:shadow-md transition-all duration-200 group">
                 <div className="flex items-start justify-between">

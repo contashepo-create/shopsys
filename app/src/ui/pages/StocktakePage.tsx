@@ -14,6 +14,7 @@ import type { CountInput } from '../../core/stocktake.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function StocktakePage() {
   const { items, stocktakes, journal, postStocktake } = useDataStore()
@@ -198,7 +199,7 @@ export function StocktakePage() {
                 <tr key={st.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-amber-500/[0.03] transition-colors">
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{st.stocktakeNumber}</div>
-                    <div className="text-[11px] text-slate-400">{st.date.slice(0, 16).replace('T', ' ')}</div>
+                    <div className="text-[11px] text-slate-400">{localDateTimeLabel(st.date)}</div>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{st.countedItems} ({st.result.matchedCount} مطابق)</td>
                   <td className="px-4 py-3">

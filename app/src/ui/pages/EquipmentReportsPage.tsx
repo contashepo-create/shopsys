@@ -17,6 +17,7 @@ import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrin
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
 
@@ -360,7 +361,7 @@ export function EquipmentReportsPage() {
                   'عقود': r.report.contractsCount, 'نشطة': r.report.activeContracts,
                   'وحدات محجوزة': r.report.rentedUnits, 'تأمينات محتجزة': fmt(r.report.depositsHeldMinor),
                   'ذمم مفتوحة': fmt(openByEquipment.get(r.equipment.id) ?? 0),
-                })), `تقرير-أسطول-المعدات-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `تقرير-أسطول-المعدات-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير الأسطول CSV</button>
               </div>
               <div className={`${card} overflow-x-auto`}>
@@ -622,7 +623,7 @@ export function EquipmentReportsPage() {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                 <button onClick={() => downloadCsv(renterDues.map((row) => ({
                   'العميل': row.nameAr, 'العقود': row.contractsCount, 'الإيراد': fmt(row.revenueMinor), 'ذمم مفتوحة': fmt(row.openMinor),
-                })), `ذمم-عملاء-التأجير-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `ذمم-عملاء-التأجير-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير الذمم CSV</button>
               </div>
               <div className={`${card} overflow-x-auto`}>

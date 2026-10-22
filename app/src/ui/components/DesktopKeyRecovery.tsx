@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { KeyRound, Download, Upload, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { Btn, Modal, inputCls, useToast } from './ui.tsx'
 import { desktopKeyRecoveryBridge } from '../../data/desktopBridge.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 const KEY_RECOVERY_UI_MIN_PASSPHRASE = 10
 
@@ -72,7 +73,7 @@ export function DesktopKeyRecoveryCard({ deviceId }: { deviceId: string }) {
       {exportedAt && (
         <div className="rounded-xl bg-emerald-500/10 p-3 text-[12px] text-emerald-700 dark:text-emerald-300 flex gap-2">
           <CheckCircle2 size={15} className="shrink-0 mt-0.5" />
-          آخر تصدير: {exportedAt.slice(0, 16).replace('T', ' ')} — احتفظ به إذا كنت تحتاج ترحيل لقطات قديمة مشفّرة.
+          آخر تصدير: {localDateTimeLabel(exportedAt)} — احتفظ به إذا كنت تحتاج ترحيل لقطات قديمة مشفّرة.
         </div>
       )}
       <Btn onClick={() => setOpen(true)} className="w-full"><KeyRound size={15} /> تصدير مفتاح الاسترداد بكلمة مرور</Btn>

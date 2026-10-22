@@ -30,6 +30,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { jobTitlesFor, jobTitleLabel } from '../../core/jobTitles.ts'
 import { dailyRateMinor } from '../../core/attendance.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
 function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: PartyExtended) => void }) {
@@ -152,7 +153,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       ? `أُضيف ${outcome.added} موظفاً${outcome.skipped.length ? ` — و${outcome.skipped.length} صفوف مرفوضة بأسبابها` : ''}`
       : 'لم يُضف أي موظف — راجع الصفوف المرفوضة', outcome.added ? undefined : 'error')
   }
-  const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [slipMonth, setSlipMonth] = useState(() => todayLocalIso().slice(0, 7))
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
   const getEmployeeStatementRows = useDataStore((state) => state.getEmployeeStatementRows)
@@ -273,7 +274,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      من الخزينة الرئيسية فقط، ويعرض كشف الحساب القيمة مرة واحدة صحيحة. */
   const [paySlipFor, setPaySlipFor] = useState<PayrollSlip | null>(null)
   const [paySlipTreasury, setPaySlipTreasury] = useState('1101')
-  const [paySlipDate, setPaySlipDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [paySlipDate, setPaySlipDate] = useState(() => todayLocalIso())
   /* مبلغ سند الصرف: افتراضياً المتبقي من القسيمة فقط (بلاغ المالك) — وقابل للتعديل للصرف الجزئي */
   const [paySlipAmount, setPaySlipAmount] = useState(0)
   const postSlipVoucher = () => {
@@ -407,7 +408,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   )
 
   const openNew = () => {
-    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(new Date().toISOString().slice(0, 10))
+    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(todayLocalIso())
     setBaseSalary(''); setAllowances(''); setCommissionPercent(''); setActive(true); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true)
   }
   const openEdit = (e: Employee) => {
@@ -446,7 +447,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   /** تسوية رصيد الإجازة في بطاقة الموظف الواحد (طلب المالك): أيام تُصرف نقداً لكل نوع إجازة،
       تُجمَع مع خصم أيام الإجازة المستخدمة فوق الرصيد — مزيج صرف نقدي وخصم حسب كل حالة */
   const [leaveCashDays, setLeaveCashDays] = useState<Record<string, string>>({})
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(todayLocalIso().slice(0, 7))
   const [payMode, setPayMode] = useState<PayrollPayMode>('cash')
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [runNotes, setRunNotes] = useState('')
@@ -466,13 +467,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     payrollRuns.some((run) => run.month === forMonth && run.lines.some((line) => line.employeeId === employeeId))
 
   const resetRunHeader = () => {
-    setMonth(new Date().toISOString().slice(0, 7))
+    setMonth(todayLocalIso().slice(0, 7))
     setPayMode('cash'); setPaySource(DEFAULT_PAY_SOURCE); setRunNotes(''); setRunFilter('')
   }
   const openRun = () => {
     const activeStaff = employees.filter((e) => e.active)
     if (activeStaff.length === 0) return toast.show('لا يوجد موظفون على رأس العمل — أضفهم أولاً', 'error')
-    const thisMonth = new Date().toISOString().slice(0, 7)
+    const thisMonth = todayLocalIso().slice(0, 7)
     setRunScope('all')
     setDraft(activeStaff.filter((employee) => !paidThisMonth(employee.id, thisMonth)).map(draftLineFor))
     resetRunHeader()
@@ -1314,7 +1315,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(new Date().toISOString().slice(0, 10)); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>
@@ -1479,7 +1480,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               {/* جسر الحضور ④ (جولة «اكمل ونفذ»): ملخص حضور الشهر الجاري وأثره المالي داخل الكشف الموحد */}
               {(() => {
-                const monthNow = new Date().toISOString().slice(0, 7)
+                const monthNow = todayLocalIso().slice(0, 7)
                 const employee = employees.find((e) => e.id === statementFor)
                 if (!employee || employee.active === false) return null
                 const summary = getMonthlyAttendance(statementFor, monthNow)

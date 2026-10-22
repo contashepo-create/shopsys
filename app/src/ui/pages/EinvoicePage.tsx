@@ -5,7 +5,7 @@
  * إعدادات الممول هنا: العنوان (محلي لمستند مصر) — أما الرقم الضريبي فيُحرَّر
  * من صفحة «بيانات المنشأة» الموحّدة (مصدر واحد) ويُعرض هنا للقراءة فقط.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FileCheck2, Lock, QrCode, FileJson, Download, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -13,10 +13,12 @@ import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
+import { zatcaQrPolicy, egTaxBarcodePolicy, zatcaLinkPolicy } from '../../core/invoiceEdit.ts'
 import {
   isValidSaVatNumber, isValidEgTaxNumber, buildEgInvoiceDocument, buildZatcaQr, buildEgReceiptBarcodeText,
 } from '../../core/einvoice.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
 
 export function EinvoicePage() {
   const { setup, einvoice, updateEinvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
@@ -26,11 +28,22 @@ export function EinvoicePage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const lic = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: localIsoTimestamp(), deviceFlags }),
     [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const saActive = hasFeature(lic, 'einvoice_sa')
   const egActive = hasFeature(lic, 'einvoice_eg')
+
+  /* حالة الاتصال الحية — لم تعد شرطاً لطباعة الرمز (المرحلة الأولى محلية)،
+     لكنها تخص الربط/الإرسال إلى المنظومة؛ نعرضها هنا صراحةً بدل ترك المستخدم
+     يخمّن. */
+  const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
+  useEffect(() => {
+    const refresh = () => setBrowserOnline(typeof navigator === 'undefined' ? true : navigator.onLine)
+    window.addEventListener('online', refresh)
+    window.addEventListener('offline', refresh)
+    return () => { window.removeEventListener('online', refresh); window.removeEventListener('offline', refresh) }
+  }, [])
 
   const [address, setAddress] = useState(einvoice.address)
 
@@ -120,7 +133,7 @@ export function EinvoicePage() {
       return buildZatcaQr({
         sellerName: setup.shopName || 'تَحَكَّم',
         vatNumber: einvoice.taxNumber,
-        timestampIso: new Date().toISOString(),
+        timestampIso: localIsoTimestamp(),
         totalWithVatMinor: 115000,
         vatMinor: 15000,
         decimals: cur.decimals,
@@ -136,12 +149,32 @@ export function EinvoicePage() {
         sellerName: setup.shopName || 'تَحَكَّم',
         taxNumber: einvoice.taxNumber,
         invoiceNumber: 'INV-0001',
-        dateIso: new Date().toISOString(),
+        dateIso: localIsoTimestamp(),
         totalMinor: 115000,
         decimals: cur.decimals,
       })
     } catch { return null }
   })()
+
+  /* تشخيص «لماذا لا يظهر الباركود؟» — كل شرط على حدة بدل تخمين المستخدم.
+     نفس شروط maybeTaxBarcode تماماً (الترخيص + تشغيل الإصدار + الرقم + الاسم + المفتاح) —
+     بلا اتصال: ذاك شرط الربط/الإرسال وحده في linkPolicy أدناه.
+     نعرض كل الموانع مجتمعةً لا أولها فقط: تعديل شرط قد يكشف آخر كان مخفياً. */
+  const sellerNameReady = setup.shopName.trim().length > 0
+  const taxNumberValid = saActive ? isValidSaVatNumber(einvoice.taxNumber) : isValidEgTaxNumber(einvoice.taxNumber)
+  const barcodePolicy = saActive
+    ? zatcaQrPolicy({ featureActive: einvoice.enabled === true, printEnabled: einvoice.printZatcaQr })
+    : egTaxBarcodePolicy({ featureActive: einvoice.enabled === true, printEnabled: einvoice.printZatcaQr })
+  /* سياسة الربط/الإرسال منفصلة: الاتصال يلزم لها وحدها لا لطباعة الرمز */
+  const linkPolicy = saActive
+    ? zatcaLinkPolicy({ featureActive: einvoice.enabled === true, online: browserOnline })
+    : null
+  const barcodeBlockers: string[] = []
+  if (!einvoice.enabled) barcodeBlockers.push('الإصدار الإلكتروني الرسمي غير مشغَّل — فعّله من بطاقة بيانات الممول أدناه (أو بالزر بجانب التشخيص) ثم أعد طباعة الفاتورة.')
+  if (!einvoice.printZatcaQr) barcodeBlockers.push('خيار «طباعة الرمز الضريبي» موقوف — فعّله من بطاقة بيانات الممول.')
+  if (!taxNumberValid) barcodeBlockers.push(saActive ? 'الرقم الضريبي غير مطابق لصيغة زاتكا (15 رقماً يبدأ وينتهي بـ3) — صحّحه من «بيانات المنشأة».' : 'رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام — صحّحه من «بيانات المنشأة».')
+  if (!sellerNameReady) barcodeBlockers.push('اسم المنشأة في «بيانات المنشأة» فارغ — رمز زاتكا يقرأ الاسم الرسمي لا اسم ترويسة الطباعة. عرّفه ليظهر رمز البائع.')
+  const barcodeWillPrint = barcodePolicy.printQr && barcodeBlockers.length === 0
 
   const recentSales = [...sales].reverse().slice(0, 20)
 
@@ -150,27 +183,76 @@ export function EinvoicePage() {
       <div className="anim-up flex items-center gap-2 flex-wrap">
         {saActive && (
           <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-emerald-500/10 text-emerald-600 flex items-center gap-1">
-            <CheckCircle2 size={12} /> زاتكا السعودية مفعلة
+            <CheckCircle2 size={12} /> زاتكا السعودية مرخّصة
           </span>
         )}
         {egActive && (
           <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-emerald-500/10 text-emerald-600 flex items-center gap-1">
-            <CheckCircle2 size={12} /> البوابة المصرية مفعلة
+            <CheckCircle2 size={12} /> البوابة المصرية مرخّصة
           </span>
         )}
-        <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-rose-500/10 text-rose-500">
-          🔒 تعديل الفواتير موقوف — التصحيح بإشعار دائن/مدين فقط
-        </span>
+        {/* التمييز الحاسم: «مرخّصة» ≠ «مشغَّلة» — الترخيص يفتح الشاشة، لكن الطباعة
+            تتطلب مفتاح «تشغيل الإصدار الإلكتروني الرسمي» أيضاً. هذا الالتباس تحديداً
+            كان يدفع المستخدم للاعتقاد بأن كل شيء مفعّل ثم لا يجد باركوداً. */}
+        {(saActive || egActive) && !einvoice.enabled && (
+          <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-amber-500/10 text-amber-600 flex items-center gap-1">
+            ⏸ تشغيل الإصدار الرسمي موقوف — الرمز لن يُطبع
+          </span>
+        )}
+        {/* القفل مرتبط بـ«تشغيل الإصدار الرسمي + وجود رقم ضريبي» لا بالترخيص وحده —
+            نفس شرط electronicInvoiceLockActive. عرض القفل قبل التشغيل كان يوهم
+            المالك بأن الفواتير مقفلة وهو لم يفعّل شيئاً بعد. */}
+        {einvoice.enabled === true && einvoice.taxNumber.trim() ? (
+          <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-rose-500/10 text-rose-500">
+            🔒 تعديل الفواتير موقوف — التصحيح بإشعار دائن/مدين فقط
+          </span>
+        ) : (
+          <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-slate-500/10 text-slate-500">
+            ✎ تعديل الفواتير متاح — القفل يبدأ بتشغيل الإصدار الرسمي
+          </span>
+        )}
       </div>
 
-      {/* سياسة المرحلة الثانية (زاتكا): الربط يتطلب إنترنت — بلا اتصال لا يُطبع الرمز الضريبي */}
+      {/* المرحلة الثانية (زاتكا): الربط/الإرسال يتطلب إنترنت — أما رمز المرحلة
+          الأولى (Generation) فيُولَّد ويُطبع محلياً بلا اتصال. كان الخلط بين
+          الشرطين يمنع طباعة رمز إلزامي عند انقطاع الشبكة. */}
       {saActive && (
         <div className="anim-up rounded-2xl border border-sky-500/20 bg-sky-500/[0.04] p-4 text-[12.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1">
-          <div className="font-bold text-sky-700 dark:text-sky-400">📡 المرحلة الثانية — الربط والتكامل:</div>
-          <div>• الفاتورة الضريبية تتطلب اتصالاً بالإنترنت وقت الطباعة. بلا اتصال: تُطبع فاتورة عادية <b>بدون رمز QR الضريبي</b> — ومبلغ الضريبة يُحسب ويُرحّل في القيود طبيعياً.</div>
-          <div>• لأن الفواتير مرتبطة بالمنظومة، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
+          <div className="font-bold text-sky-700 dark:text-sky-400">📡 المرحلة الأولى (الرمز) والمرحلة الثانية (الربط):</div>
+          <div>• <b>رمز QR الضريبي — المرحلة الأولى:</b> يُولَّد محلياً من بيانات الفاتورة ويُطبع <b>حتى بلا إنترنت</b>؛ الاتصال ليس شرطاً لطباعته.</div>
+          <div>• <b>الربط والإرسال إلى منصة فاتورة — المرحلة الثانية:</b> {linkPolicy?.canLink ? '✓ الاتصال بالإنترنت قائم — وهو الشرط الوحيد المطلوب عند تشغيل الربط؛ لا علاقة له بطباعة الرمز.' : linkPolicy?.reasonAr}</div>
+          <div>• ولأن الفواتير مرتبطة بالمنظومة عند التشغيل، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
         </div>
       )}
+
+      {/* تشخيص مباشر: هل سيُطبع الرمز على الفاتورة القادمة؟ وأي شرط يمنعه؟
+          أُضيف بعد بلاغ المالك (2026-10-22): فاتورة نقدية بلا باركود رغم تفعيل زاتكا. */}
+      <div className={`anim-up rounded-2xl border p-4 text-[12.5px] leading-relaxed space-y-2 ${barcodeWillPrint ? 'border-emerald-500/25 bg-emerald-500/[0.05]' : 'border-amber-500/30 bg-amber-500/[0.06]'}`} data-tax-barcode-diagnosis>
+        <div className="flex flex-wrap items-center gap-2">
+          <QrCode size={16} className={barcodeWillPrint ? 'text-emerald-600' : 'text-amber-600'} />
+          <b className={barcodeWillPrint ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
+            {barcodeWillPrint ? 'الرمز الضريبي سيُطبع على فواتير المبيعات القادمة ✓' : 'الرمز الضريبي لن يُطبع الآن'}
+          </b>
+          {!einvoice.enabled && (
+            <Btn onClick={() => { updateEinvoice({ enabled: true }); toast.show('شُغِّل الإصدار الإلكتروني الرسمي — أعد طباعة الفاتورة ليظهر الرمز ✓') }}>
+              تشغيل الإصدار الإلكتروني الآن
+            </Btn>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-slate-600 dark:text-slate-300">
+          <span>{einvoice.enabled === true ? '✓' : '✗'} تشغيل الإصدار الإلكتروني الرسمي</span>
+          <span>{taxNumberValid ? '✓' : '✗'} {saActive ? 'الرقم الضريبي (15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (9 أرقام)'}</span>
+          <span>{sellerNameReady ? '✓' : '✗'} اسم المنشأة في رمز البائع</span>
+          <span>{einvoice.printZatcaQr ? '✓' : '✗'} خيار طباعة الرمز الضريبي</span>
+          {saActive && <span className="text-slate-500 dark:text-slate-400">{browserOnline ? '✓' : '•'} اتصال الإنترنت (يلزم للربط والإرسال فقط — لا يمنع طباعة الرمز)</span>}
+        </div>
+        {barcodeBlockers.length > 0 && (
+          <div className="text-amber-700 dark:text-amber-400 font-bold space-y-1">
+            {barcodeBlockers.map((reason) => <div key={reason}>• {reason}</div>)}
+          </div>
+        )}
+        {barcodeWillPrint && <div className="text-slate-500 dark:text-slate-400">ينطبق على الكاشير ومحرر فاتورة المبيعات والمرتجعات ومراكز فواتير الأنشطة وأي إعادة طباعة من قائمة الفواتير.</div>}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* إعدادات الممول — ثلاث مجموعات مرئية واضحة بدل حقول متناثرة بلا تجميع:
@@ -269,7 +351,7 @@ export function EinvoicePage() {
                 <div key={s.id} className="flex items-center justify-between py-2.5">
                   <div>
                     <span className="font-bold text-slate-800 dark:text-white">{s.invoiceNumber}</span>
-                    <span className="text-[11px] text-slate-400 mr-2">{s.date.slice(0, 16).replace('T', ' ')}</span>
+                    <span className="text-[11px] text-slate-400 mr-2">{localDateTimeLabel(s.date)}</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-black text-[13px]">{fmt(s.totals.totalMinor)} {cur.symbol}</span>

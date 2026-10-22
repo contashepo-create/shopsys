@@ -23,6 +23,7 @@ import {
   NOTICE_LEVEL_ICONS, NOTICE_LEVEL_LABELS_AR, osNotificationFor,
 } from '../../core/devNotice.ts'
 import { showDesktopNotification } from '../../data/desktopBridge.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 const LEVEL_STYLE = {
   critical: { ring: 'border-rose-400/70', head: 'text-rose-600 dark:text-rose-400', Icon: ShieldAlert },
@@ -88,7 +89,7 @@ export function DevNoticeHost() {
         <div className="px-5 py-4 space-y-3">
           <p className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{notice.body}</p>
           {notice.createdAt && (
-            <div className="text-[10.5px] font-bold text-slate-400">🕒 {notice.createdAt.slice(0, 16).replace('T', ' ')}</div>
+            <div className="text-[10.5px] font-bold text-slate-400">🕒 {localDateTimeLabel(notice.createdAt)}</div>
           )}
           {mandatory && (
             <p className="text-[11px] font-bold text-rose-500/90">

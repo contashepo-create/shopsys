@@ -13,12 +13,13 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { BOOKING_STATUS_LABELS, BOOKING_STATUS_STYLE, bookingsForDate, bookingDayStats, bookingConflicts, validateBooking, buildBookingReminderMessage, bookingWhatsappLink, type Booking } from '../../core/booking.ts'
 import { Btn, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
-const todayIso = () => new Date().toISOString().slice(0, 10)
+const todayIso = () => todayLocalIso()
 const shiftDate = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00`)
   d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
+  return todayLocalIso(d)
 }
 const arabicDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long' })
 
@@ -33,7 +34,7 @@ export function BookingsPage() {
   const [draft, setDraft] = useState<(Draft & { id?: number; allowConflict?: boolean }) | null>(null)
   const [remindersOpen, setRemindersOpen] = useState(false)
   const [reminderDay, setReminderDay] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10)
+    const d = new Date(); d.setDate(d.getDate() + 1); return todayLocalIso(d)
   })
 
   const dayList = useMemo(() => {
@@ -147,8 +148,8 @@ export function BookingsPage() {
           <div className="flex items-center gap-2">
             <input type="date" value={reminderDay} onChange={(e) => setReminderDay(e.target.value || reminderDay)} className={`${inputCls} !w-40`} dir="ltr" />
             <div className="flex gap-1.5">
-              <Btn variant="ghost" onClick={() => setReminderDay(new Date().toISOString().slice(0, 10))}>اليوم</Btn>
-              <Btn variant="ghost" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); setReminderDay(d.toISOString().slice(0, 10)) }}>غداً</Btn>
+              <Btn variant="ghost" onClick={() => setReminderDay(todayLocalIso())}>اليوم</Btn>
+              <Btn variant="ghost" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); setReminderDay(todayLocalIso(d)) }}>غداً</Btn>
             </div>
             <span className="text-[12px] font-bold text-slate-500">{bookingsForDate(bookings, reminderDay).filter((b) => b.status === 'scheduled').length} محجوزاً</span>
           </div>

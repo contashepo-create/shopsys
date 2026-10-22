@@ -21,6 +21,13 @@ ok('داخل المدة = ليس متأخراً', !isRentalOverdue(c, '2026-01-1
 ok('بعد المدة = متأخر', isRentalOverdue(c, '2026-01-14T00:00:00.000Z'))
 ok('العقد المقفل لا يتأخر أبداً', !isRentalOverdue({ ...c, status: 'closed' }, '2026-06-01T00:00:00.000Z'))
 ok('عقد قديم بلا rateType يعامل يومياً', isRentalOverdue({ status: 'active', date: '2026-01-10T08:00:00.000Z', days: 1 }, '2026-01-12T00:00:00.000Z'))
+/* مقارنة لحظات لا نصوص: 15:00+03:00 = 12:00Z قبل نهاية عقد الساعة 13:00Z */
+ok('إزاحة مختلفة: 15:00+03:00 قبل 13:00Z ⇒ ليس متأخراً',
+  !isRentalOverdue({ status: 'active', date: '2026-01-10T08:00:00.000Z', days: 5, rateType: 'hourly' }, '2026-01-10T15:00:00+03:00'))
+ok('نفس اللحظة بالإزاحة الأخرى: 17:00+03:00 = 14:00Z ⇒ متأخر',
+  isRentalOverdue({ status: 'active', date: '2026-01-10T08:00:00.000Z', days: 5, rateType: 'hourly' }, '2026-01-10T17:00:00+03:00'))
+ok('تاريخ مجرّد لا يلغي دقة الساعة: نفس اليوم قبل الانتهاء ⇒ ليس متأخراً',
+  !isRentalOverdue({ status: 'active', date: '2026-01-10T08:00:00.000Z', days: 5, rateType: 'hourly' }, '2026-01-10'))
 
 console.log('\n3️⃣ عقد الإيجار المطبوع')
 const html = renderRentalContractHtml({

@@ -8,6 +8,7 @@
  */
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { addCalendarMonths } from './time.ts'
 
 /**
  * مصدر تمويل الأصل (طلب المالك — سد فجوة المعالجة المحاسبية):
@@ -103,12 +104,13 @@ export function buildAssetInstallments(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(firstDueDate)) throw new Error('تاريخ أول قسط بصيغة YYYY-MM-DD')
   const per = Math.floor(remainingMinor / count)
   const first = remainingMinor - per * (count - 1)
-  const base = new Date(firstDueDate + 'T00:00:00Z')
-  return Array.from({ length: count }, (_, i) => {
-    const d = new Date(base)
-    d.setUTCMonth(d.getUTCMonth() + i * intervalMonths)
-    return { seq: i + 1, dueDate: d.toISOString().slice(0, 10), amountMinor: i === 0 ? first : per, paidMinor: 0, paidAt: null }
-  })
+  return Array.from({ length: count }, (_, i) => ({
+    seq: i + 1,
+    dueDate: addCalendarMonths(firstDueDate, i * intervalMonths),
+    amountMinor: i === 0 ? first : per,
+    paidMinor: 0,
+    paidAt: null,
+  }))
 }
 
 /** قيد سداد قسط/دفعة أصل: 2101 مدين / خزينة دائن */

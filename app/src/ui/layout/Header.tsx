@@ -30,9 +30,19 @@ import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
 import { guardNavigation, useToast } from '../components/ui.tsx'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
+import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
+import { BranchBadge } from '../components/BranchBadge.tsx'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload } = useAppStore()
+  const navigationMode = useAppStore((s) => s.appearance.navigationMode)
+  /* شارة الفرع فوق اسم المستخدم: تظهر في وضع الشريط الجانبي (موسّعاً أو
+     مطوياً) — وفي وضع القوائم العلوي تعرضها MenuBar أعلى هذا الموضع فلا
+     تتكرر في الرأس. (الشريط الجانبي الموسّع يعرض نسخة ثانية أعلى قائمته:
+     قرار المالك المعتمد — تُبقى كما هي حتى يقرر توحيدها.) */
+  const { branches: activeBranches, effectiveBranch, effectiveBranchId, isLockedToUserBranch, setActiveBranchId } = useEffectiveBranchScope()
+  const showHeaderBranchBadge = navigationMode !== 'topbar' && activeBranches.length > 0
   const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
@@ -101,7 +111,7 @@ export function Header({ title }: { title: string }) {
       cheques,
       // إيجارات متجاوزة موعد الإرجاع (نمط Point of Rental) + مواعيد تسليم موعودة متجاوزة (صيانة/مغسلة)
       overdueRentals: rentalContracts
-        .filter((c) => isRentalOverdue(c, new Date().toISOString()))
+        .filter((c) => isRentalOverdue(c, localIsoTimestamp()))
         .map((c) => ({ id: c.id, contractNumber: c.contractNumber, equipmentName: c.equipmentName, expectedEnd: rentalExpectedEnd(c.date, c.days, c.rateType ?? 'daily') })),
       // معدات تجاوزت صيانتها الوقائية (سد فجوة تقرير النشاط #8 — Immediate #1): نفس تصميم overdueRentals، الحساب جاهز بالفعل في serviceStatus
       overdueMaintenanceEquipment: equipment
@@ -109,9 +119,9 @@ export function Header({ title }: { title: string }) {
         .filter((x) => x.svc?.overdue)
         .map((x) => ({ id: x.e.id, nameAr: x.e.nameAr, overdueHours: Math.abs(x.svc!.remainingHours) })),
       // امتثال معدات: تأمين/فحص دوري يقترب أو انتهى (سد فجوة تقرير النشاط #8 — Future #3)
-      complianceDueEquipment: equipmentComplianceWarnings(equipment, new Date().toISOString(), 30),
+      complianceDueEquipment: equipmentComplianceWarnings(equipment, localIsoTimestamp(), 30),
       // امتثال مركبات: رخصة/تأمين يقترب أو انتهى (سد فجوة تقرير النشاط #9 — Immediate #1)
-      complianceDueVehicles: vehicleComplianceWarnings(vehicles, new Date().toISOString(), 30),
+      complianceDueVehicles: vehicleComplianceWarnings(vehicles, localIsoTimestamp(), 30),
       // مستحقات سائقين غير مسواة مجمعة — مرفوعة لمركز التنبيهات (سد فجوة تقرير النشاط #9 — Immediate #2)
       unsettledDriverDues: unsettledDriverDues(driverDues).map((d) => ({
         driverId: d.driverId,
@@ -126,16 +136,16 @@ export function Header({ title }: { title: string }) {
       })),
       overduePromises: [
         ...tickets
-          .filter((t) => (t.status === 'received' || t.status === 'in_progress' || t.status === 'ready') && t.promisedAt && t.promisedAt < new Date().toISOString())
+          .filter((t) => (t.status === 'received' || t.status === 'in_progress' || t.status === 'ready') && t.promisedAt && t.promisedAt < localIsoTimestamp())
           .map((t) => ({ id: t.id, docNumber: t.ticketNumber, what: t.deviceName, kind: 'maintenance' as const, promisedAt: t.promisedAt ?? '' })),
         ...laundryOrders
-          .filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt && o.promisedAt < new Date().toISOString().slice(0, 10))
+          .filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt && o.promisedAt < todayLocalIso())
           .map((o) => ({ id: o.id, docNumber: o.orderNumber, what: o.customerName, kind: 'laundry' as const, promisedAt: o.promisedAt })),
       ],
       // عقود إيجار العقارات: انتهاء قريب (60 يوماً) أو أقساط متأخرة (نمط سمات)
-      leaseAlerts: collectLeaseAlerts(leases, new Date().toISOString().slice(0, 10), 60),
+      leaseAlerts: collectLeaseAlerts(leases, todayLocalIso(), 60),
       // خطابات ضمان مقاولات تقترب/تجاوزت الانتهاء (سد فجوة تقرير النشاط #11 — Immediate #3)
-      complianceDueBonds: bondComplianceWarnings(bonds, new Date().toISOString(), 30),
+      complianceDueBonds: bondComplianceWarnings(bonds, localIsoTimestamp(), 30),
       // بنود موازنة مشروعات نشطة تجاوزت الفعلي موازنتها (سد فجوة تقرير النشاط #11 — Immediate #3)
       // قرار المالك 2026-10-21: «إذا كتبت أي رقم ابدأ المقارنة، أما إذا كان صفراً فلا أريد
       // أي إشعارات للموازنة» — لذا يُشترط وجود موازنة موجبة فعلاً، لا مجرد حالة 'over'.
@@ -145,36 +155,36 @@ export function Header({ title }: { title: string }) {
           .filter((r) => r.status === 'over' && r.budgetMinor > 0)
           .map((r) => ({ projectId: p.id, projectNameAr: p.nameAr, kindAr: COST_KIND_LABELS[r.kind].nameAr, overrunMinor: r.actualMinor - r.budgetMinor }))),
       // طلبات اعتماد مقاولات معلّقة تجاوزت 3 أيام بلا قرار (سد فجوة تقرير النشاط #11 — Immediate #3)
-      pendingApprovalsAging: pendingApprovalAging(approvalRequests, new Date().toISOString(), 3).map((a) => ({
+      pendingApprovalsAging: pendingApprovalAging(approvalRequests, localIsoTimestamp(), 3).map((a) => ({
         requestId: a.requestId, subject: a.subject, actionLabel: APPROVAL_ACTION_LABELS[a.action], daysPending: a.daysPending,
       })),
       // مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
-      retentionDueProjects: retentionDueWarnings(projects, (projectId) => getRemainingRetention(projectId), new Date().toISOString(), 30).map((r) => ({
+      retentionDueProjects: retentionDueWarnings(projects, (projectId) => getRemainingRetention(projectId), localIsoTimestamp(), 30).map((r) => ({
         projectId: r.projectId, projectNameAr: r.projectNameAr, dueDate: r.dueDate, daysLeft: r.daysLeft, remainingMinor: r.remainingRetentionMinor,
       })),
       // مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)
       clinicAppointmentsToday: todaysUnfinishedAppointments(
         clinicAppointments,
         (id) => clinicPatients.find((p) => p.id === id)?.nameAr ?? `مريض #${id}`,
-        new Date().toISOString(),
+        localIsoTimestamp(),
       ),
       // مرضى عيادة برصيد مستحق تجاوز مدة معقولة (سد فجوة تقرير النشاط #12 — Immediate #3)
       overduePatientBalances: overduePatientBalances(
         clinicPatients,
         clinicVisits.map((v) => ({ patientId: v.patientId, date: v.date, dueMinor: v.totals.dueMinor })),
         getPatientBalance,
-        new Date().toISOString(),
+        localIsoTimestamp(),
         7,
       ),
       // سيارات معرض متقادمة بالمخزون 60 يوماً فأكثر بلا بيع (سد فجوة تقرير النشاط #13 — Gap 3)
       agingCars: agingInventoryCars(
         cars,
         (entryId) => journal.find((e) => e.id === entryId)?.date ?? null,
-        new Date().toISOString(),
+        localIsoTimestamp(),
         60,
       ),
       // أوامر مطعم مفتوحة تجاوزت 45 دقيقة بلا إغلاق (سد فجوة تقرير النشاط #14 — Gap 3)
-      staleRestaurantOrders: staleOpenOrders(restaurantOrders, new Date().toISOString(), 45),
+      staleRestaurantOrders: staleOpenOrders(restaurantOrders, localIsoTimestamp(), 45),
       // سعر جرام الذهب لم يُحدَّث اليوم — فقط لو الصاغة مفعّلة فعلاً بوصف ذهبي واحد على الأقل
       // (سد فجوة تقرير النشاط #15 — Gap 2)
       staleGoldPrices: jewelryProfiles.length > 0 ? { updatedAt: gramPrices.updatedAt } : null,
@@ -187,10 +197,10 @@ export function Header({ title }: { title: string }) {
          الموقّعة فيعمل أوفلاين. الإسكات يخصّ الشريط الظاهر، لا إدراج الجرس. */
       licenseReminder: reminderAsNotification(renewalReminder({
         expiresAt: activatedPayload?.expiresAt ?? null,
-        todayIso: new Date().toISOString(),
+        todayIso: localIsoTimestamp(),
       })),
       fmt: (m) => formatMinor(m, cur, false),
-      todayIso: new Date().toISOString(),
+      todayIso: localIsoTimestamp(),
     }),
     ],
     [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices],
@@ -358,20 +368,37 @@ export function Header({ title }: { title: string }) {
       </button>
 
       <div className="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-700">
-        <div className="text-left hidden sm:block">
-          <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
-          <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
-            {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
+        {/* شارة الفرع فوق اسم المستخدم — في وضع الشريط الجانبي فقط (في وضع
+            القوائم العلوي تعرضها MenuBar مباشرة فوق هذا الموضع فلا تتكرر) */}
+        <div className="flex flex-col items-end gap-1">
+          {showHeaderBranchBadge && (
+            <BranchBadge
+              branches={activeBranches}
+              value={effectiveBranchId}
+              fallbackName={effectiveBranch?.nameAr}
+              locked={isLockedToUserBranch}
+              onChange={setActiveBranchId}
+              placement="header"
+              showCaption
+            />
+          )}
+          <div className="flex items-center gap-2">
+            <div className="text-left hidden sm:block">
+              <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
+              <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
+                {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
+              </div>
+            </div>
+            <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
+              {(() => {
+                const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
+                return av
+                  ? <img src={av} alt="" className="w-8 h-8 rounded-xl object-cover border border-brand-500/40" />
+                  : <UserCircle2 size={30} className="text-brand-500" />
+              })()}
+            </button>
           </div>
         </div>
-        <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
-          {(() => {
-            const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
-            return av
-              ? <img src={av} alt="" className="w-8 h-8 rounded-xl object-cover border border-brand-500/40" />
-              : <UserCircle2 size={30} className="text-brand-500" />
-          })()}
-        </button>
         {authOn && (
           <button
             onClick={() => { logout(); clearSessionAuthenticated() }}

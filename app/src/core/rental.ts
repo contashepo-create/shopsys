@@ -8,6 +8,7 @@
  */
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { addCalendarMonths, localDateIso, offsetSuffix } from './time.ts'
 
 export type RentalPaymentMode = 'cash' | 'credit' | 'mixed'
 export type RentalBillingMode = 'reference' | 'upfront'
@@ -296,9 +297,15 @@ function daysBetweenIso(a: string, b: string): number {
 /** نهاية العقد المتوقعة حسب نوع التسعير: ساعات تُحوَّل زمنياً، أيام وأشهر تقويمياً */
 export function rentalExpectedEnd(dateIso: string, units: number, rateType: 'hourly' | 'daily' | 'monthly'): string {
   const d = new Date(dateIso)
+  if (Number.isNaN(d.getTime())) return dateIso
   if (rateType === 'hourly') d.setTime(d.getTime() + units * 3_600_000)
   else if (rateType === 'daily') d.setDate(d.getDate() + units)
-  else d.setMonth(d.getMonth() + units)
+  else {
+    // شهري تقويمي: 31 يناير + شهر = 28/29 فبراير لا 3 مارس
+    const clock = /T\d{2}:\d{2}/.test(dateIso) ? dateIso.slice(10, 19) : 'T00:00:00'
+    const endDay = addCalendarMonths(localDateIso(dateIso), units)
+    return `${endDay}${clock}.000${offsetSuffix(new Date(`${endDay}${clock}`))}`
+  }
   return d.toISOString()
 }
 
@@ -308,7 +315,13 @@ export function isRentalOverdue(
   nowIso: string,
 ): boolean {
   if (contract.status !== 'active') return false
-  return nowIso > rentalExpectedEnd(contract.date, contract.days, contract.rateType ?? 'daily')
+  const end = rentalExpectedEnd(contract.date, contract.days, contract.rateType ?? 'daily')
+  // مقارنة لحظات لا نصوص: الطرفان قد يحملان إزاحتين مختلفتين (+03:00 مقابل Z)،
+  // والمقارنة النصية كانت تُخطئ بفارق ساعات عند حدود اليوم.
+  const endMs = Date.parse(end)
+  const nowMs = Date.parse(nowIso)
+  if (Number.isNaN(endMs) || Number.isNaN(nowMs)) return nowIso > end
+  return nowMs > endMs
 }
 
 /* ─── فاتورة إيجار للعميل (طلب المالك — «كيف أصدر فاتورة لمستأجر المعدات كي يسدد إيجاره؟») ─── */

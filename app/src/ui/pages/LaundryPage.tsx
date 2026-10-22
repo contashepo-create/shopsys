@@ -24,6 +24,7 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 const STATUS_STYLE: Record<LaundryStatus, string> = {
   received: 'bg-sky-500/10 text-sky-600',
@@ -63,7 +64,7 @@ export function LaundryPage() {
 
   const openNew = () => {
     setCustomerId(''); setCustName(''); setPhone(''); setPrepaid(''); setRack(''); setNotes('')
-    setPromisedAt(new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10))
+    setPromisedAt(todayLocalIso(new Date(Date.now() + 2 * 86400000)))
     setDLines([{ desc: '', service: 'wash_iron', qty: '1', price: '' }])
     setOpen(true)
   }
@@ -179,7 +180,7 @@ export function LaundryPage() {
               </thead>
               <tbody>
                 {[...laundryOrders].reverse().map((o) => {
-                  const overdue = o.promisedAt && o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt < new Date().toISOString().slice(0, 10)
+                  const overdue = o.promisedAt && o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt < todayLocalIso()
                   return (
                     <tr key={o.id} onClick={() => { setViewingId(o.id); setDeliverTreasury('1101') }} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-sky-500/[0.03] transition-colors cursor-pointer">
                       <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{o.orderNumber}</td>
@@ -349,7 +350,7 @@ export function LaundryPage() {
             {(viewing.notifications ?? []).length > 0 && (
               <div className="text-[11px] text-slate-400">
                 📨 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
-                  <span key={i}>{i > 0 ? ' · ' : ''}{LAUNDRY_STATUS_LABELS[n.status]} ({n.at.slice(0, 16).replace('T', ' ')})</span>
+                  <span key={i}>{i > 0 ? ' · ' : ''}{LAUNDRY_STATUS_LABELS[n.status]} ({localDateTimeLabel(n.at)})</span>
                 ))}
               </div>
             )}

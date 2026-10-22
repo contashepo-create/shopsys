@@ -8,6 +8,7 @@ import { Gem, RefreshCcw, Scale, ArrowDownToLine, ArrowUpFromLine } from 'lucide
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { localIsoTimestamp } from '../../core/time.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { KARAT_LABELS, ALL_KARATS, jewelryBreakdown, pricesAreStale, computeTradeInNet, type Karat } from '../../core/jewelry.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
@@ -26,7 +27,7 @@ export function JewelryPage() {
   )
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const stale = pricesAreStale(gramPrices, new Date().toISOString())
+  const stale = pricesAreStale(gramPrices, localIsoTimestamp())
 
   /* أسعار اليوم */
   const [priceOpen, setPriceOpen] = useState(false)

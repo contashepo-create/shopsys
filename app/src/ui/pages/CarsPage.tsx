@@ -23,6 +23,7 @@ import { CarPurchaseInvoiceModal, SupplierInlineCreate } from '../components/Car
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { localIsoTimestamp } from '../../core/time.ts'
 
 const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
   in_stock: { nameAr: 'بالمعرض', cls: 'bg-sky-500/10 text-sky-600' },
@@ -54,7 +55,7 @@ export function CarsPage() {
     const vat = vatOf(c.saleEntryId)
     printHtml(renderCarSaleContractHtml({
       shopName: setup.shopName || 'معرض سيارات',
-      dateIso: c.soldAt ?? new Date().toISOString(),
+      dateIso: c.soldAt ?? localIsoTimestamp(),
       buyerName: c.buyerName,
       make: c.make, model: c.model, year: c.year, plateOrVin: c.plateOrVin, odometerKm: c.odometerKm,
       price: `${fmt(c.salePriceMinor)} ${cur.symbol}`,
@@ -68,7 +69,7 @@ export function CarsPage() {
     if (c.salePriceMinor == null) return
     printHtml(renderCarSaleContractHtml({
       shopName: setup.shopName || 'معرض سيارات',
-      dateIso: c.soldAt ?? new Date().toISOString(),
+      dateIso: c.soldAt ?? localIsoTimestamp(),
       buyerName: c.buyerName,
       make: c.make, model: c.model, year: c.year, plateOrVin: c.plateOrVin, odometerKm: 0,
       price: `${fmt(c.salePriceMinor)} ${cur.symbol}`,

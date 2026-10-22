@@ -47,6 +47,17 @@ describe('قوالب طباعة الفواتير المتقدمة', () => {
     expect(html).toContain('تمت الطباعة')
     expect(html).toContain('<svg') // باركود رقم الفاتورة
   })
+  it('مبالغ على حساب العميل بلا ضريبة تُعرض صراحةً فيُجمع المستند (A4 وحراري)', () => {
+    /* حالة فاتورة النقل: أجرة 100 + ضريبة 14 + مصاريف مستقلة 36 على حساب
+       العميل ⇒ الأساس + الضريبة = 114، والإجمالي 150 — الفارق يُسمّى. */
+    const trip = { ...model, taxBaseMinor: 10000, taxMinor: 1400, totalMinor: 15000, paidMinor: 0, remainingMinor: 15000 }
+    for (const html of [renderInvoiceA4Html(trip, cur, DEFAULT_RECEIPT_SETTINGS), renderReceiptHtml(trip, cur, DEFAULT_RECEIPT_SETTINGS)]) {
+      expect(html).toContain('مبالغ غير خاضعة للضريبة')
+      expect(html).toContain('36.00')
+    }
+    // مستند متسق لا يُضاف له سطر وهمي
+    expect(renderInvoiceA4Html(model, cur, DEFAULT_RECEIPT_SETTINGS)).not.toContain('مبالغ غير خاضعة للضريبة')
+  })
   it('الدفع المجزأ يطبع المدفوع والمتبقي، والسداد الكامل لا يطبعهما', () => {
     const partial = renderReceiptHtml({ ...model, paidMinor: 1000, remainingMinor: 1280 }, cur, DEFAULT_RECEIPT_SETTINGS)
     expect(partial).toContain('المتبقي (آجل)')

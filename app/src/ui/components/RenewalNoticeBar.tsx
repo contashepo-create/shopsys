@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import { CalendarClock, X, Headset } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { renewalReminder, shouldShowReminderBar } from '../../core/subscriptionReminder.ts'
+import { localIsoTimestamp } from '../../core/time.ts'
 
 export function RenewalNoticeBar() {
   const navigate = useNavigate()
@@ -22,7 +23,7 @@ export function RenewalNoticeBar() {
   const dismissedDay = useAppStore((s) => s.renewalDismissedDay)
   const dismiss = useAppStore((s) => s.dismissRenewalNotice)
 
-  const todayIso = new Date().toISOString()
+  const todayIso = localIsoTimestamp()
   const reminder = useMemo(
     () => renewalReminder({ expiresAt: activatedPayload?.expiresAt ?? null, todayIso }),
     // اليوم وحده يكفي لإعادة الحساب — لا حاجة لإعادة التقييم كل ثانية

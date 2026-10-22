@@ -9,6 +9,7 @@
  */
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { localDateTimeLabel, localIsoTimestamp } from './time.ts'
 
 export type TicketStatus = 'received' | 'in_progress' | 'ready' | 'delivered' | 'cancelled'
 
@@ -275,7 +276,11 @@ export function isTicketOverdue(
 ): boolean {
   if (!ticket.promisedAt) return false
   if (ticket.status === 'delivered' || ticket.status === 'cancelled') return false
-  return nowIso > ticket.promisedAt
+  // لحظات لا نصوص: الموعد قد يُحفظ بختم محلي (+03:00) والآن بختم آخر
+  const dueMs = Date.parse(ticket.promisedAt)
+  const nowMs = Date.parse(nowIso)
+  if (Number.isNaN(dueMs) || Number.isNaN(nowMs)) return nowIso > ticket.promisedAt
+  return nowMs > dueMs
 }
 
 /* ─── سد الفجوة العالمية 3: إشعار العميل بحالة التذكرة (نمط RepairShopr SMS) ───
@@ -286,7 +291,7 @@ export function buildTicketStatusMessage(
   shopName: string,
 ): string {
   const estimate = ticket.estimateMinor > 0 ? ` والتكلفة المقدرة ${(ticket.estimateMinor / 100).toLocaleString('en-US')} ج.م` : ''
-  const promised = ticket.promisedAt ? ` موعد التسليم المتوقع: ${ticket.promisedAt.slice(0, 16).replace('T', ' ')}.` : ''
+  const promised = ticket.promisedAt ? ` موعد التسليم المتوقع: ${localDateTimeLabel(ticket.promisedAt)}.` : ''
   const statusLine: Record<TicketStatus, string> = {
     received: `استلمنا جهازك (${ticket.deviceName}) برقم أمر ${ticket.ticketNumber}${estimate}. سنبلغك بأي مستجد.`,
     in_progress: `جهازك (${ticket.deviceName}) — أمر ${ticket.ticketNumber} — تحت الصيانة الآن${estimate}.`,
@@ -360,7 +365,7 @@ export function maintenanceRepairTimeReport(
    جلسات بدء/إنهاء بسيطة؛ الجلسة المفتوحة (بلا endedAt) تُحسب حتى `nowIso`. */
 export function ticketWorkMinutes(
   sessions: { startedAt: string; endedAt: string | null }[],
-  nowIso: string = new Date().toISOString(),
+  nowIso: string = localIsoTimestamp(),
 ): number {
   let totalMs = 0
   for (const s of sessions) {

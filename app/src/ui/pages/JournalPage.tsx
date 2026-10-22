@@ -18,6 +18,7 @@ import { validateManualEntry, PARTY_CONTROL_ACCOUNTS } from '../../core/accounti
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 interface DraftLine { accountCode: string; debit: string; credit: string; costCenterId?: string; partyId?: string }
 
@@ -157,7 +158,7 @@ export function JournalPage() {
 
   const openManual = () => {
     setMDesc('')
-    setMDate(new Date().toISOString().slice(0, 10))
+    setMDate(todayLocalIso())
     setMLines([{ accountCode: '', debit: '', credit: '' }, { accountCode: '', debit: '', credit: '' }])
     setManualOpen(true)
   }
@@ -313,7 +314,7 @@ export function JournalPage() {
               </tbody>
             </table>
             <div className="px-4 py-1.5 text-[10px] text-slate-300 dark:text-slate-600 border-t border-slate-50 dark:border-slate-800/60 flex items-center gap-1">
-              <BookOpenText size={10} /> {e.createdBy} · {e.createdAt.slice(0, 16).replace('T', ' ')} · دفتر Append-Only — التصحيح بقيد عكسي فقط
+              <BookOpenText size={10} /> {e.createdBy} · {localDateTimeLabel(e.createdAt)} · دفتر Append-Only — التصحيح بقيد عكسي فقط
             </div>
           </div>
         ))}

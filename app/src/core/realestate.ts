@@ -8,6 +8,7 @@
  * - بيع عقار مملوك: إيراد 4115 وتكلفة 5116 وإخراج من أصل العقارات 1113.
  * كل الدوال نقية، والمبالغ integer minors، وكل قيد يمر على assertBalanced.
  */
+import { addCalendarMonths } from './time.ts'
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
@@ -144,15 +145,12 @@ export function generateLeaseSchedule(startDate: string, months: number, frequen
   const count = months / step
   const base = Math.floor(totalRentMinor / count)
   const schedule: LeaseInstallment[] = []
-  const d0 = new Date(startDate + 'T00:00:00Z')
-  if (Number.isNaN(d0.getTime())) throw new Error('تاريخ بداية العقد غير صالح')
+  if (Number.isNaN(new Date(startDate + 'T00:00:00Z').getTime())) throw new Error('تاريخ بداية العقد غير صالح')
   let allocated = 0
   for (let i = 0; i < count; i++) {
-    const due = new Date(d0)
-    due.setUTCMonth(due.getUTCMonth() + i * step)
     const amount = i === count - 1 ? totalRentMinor - allocated : base
     allocated += amount
-    schedule.push({ seq: i + 1, dueDate: due.toISOString().slice(0, 10), amountMinor: amount, paidMinor: 0, paidAt: null })
+    schedule.push({ seq: i + 1, dueDate: addCalendarMonths(startDate, i * step), amountMinor: amount, paidMinor: 0, paidAt: null })
   }
   return schedule
 }
@@ -362,9 +360,7 @@ export interface LeaseAlert {
 
 /** نهاية العقد = بداية + مدة بالأشهر */
 export function leaseEndDate(startDate: string, months: number): string {
-  const d = new Date(startDate + 'T00:00:00Z')
-  d.setUTCMonth(d.getUTCMonth() + months)
-  return d.toISOString().slice(0, 10)
+  return addCalendarMonths(startDate, months)
 }
 
 export function collectLeaseAlerts(leases: readonly Lease[], todayIso: string, expiryWindowDays = 60): LeaseAlert[] {

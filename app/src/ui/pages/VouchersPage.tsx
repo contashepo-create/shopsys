@@ -26,6 +26,8 @@ import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
+import { todayLocalIso } from '../../core/time.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 /** الحسابات المقابلة المتاحة لكل نوع سند — بلغة التاجر */
 const VEHICLE_COST_CATEGORIES = [
@@ -57,7 +59,7 @@ export function VouchersPage() {
   const [fxCode, setFxCode] = useState('USD')
   const [fxAmount, setFxAmount] = useState('')
   const [fxRate, setFxRate] = useState('')
-  const [voucherDate, setVoucherDate] = useState(new Date().toISOString().slice(0, 10))
+  const [voucherDate, setVoucherDate] = useState(todayLocalIso())
   const [desc, setDesc] = useState('')
   const [quickAccountOpen, setQuickAccountOpen] = useState(false)
   const [quickAccountCode, setQuickAccountCode] = useState('')
@@ -142,7 +144,7 @@ export function VouchersPage() {
     setTerminalPayment({ terminalId: '', providerReference: '', cardLast4: '' })
     setCounter('')
     setAmount('')
-    setVoucherDate(new Date().toISOString().slice(0, 10))
+    setVoucherDate(todayLocalIso())
     setDesc('')
     setPartyId(0)
     setPurchaseId(0)
@@ -181,7 +183,7 @@ export function VouchersPage() {
         setTerminalPayment(draft.terminalPayment ?? { terminalId: '', providerReference: '', cardLast4: '' })
         setCounter(draft.counter ?? '')
         setAmount(draft.amount ?? '')
-        setVoucherDate(draft.voucherDate ?? new Date().toISOString().slice(0, 10))
+        setVoucherDate(draft.voucherDate ?? todayLocalIso())
         setDesc(draft.desc ?? '')
         setPartyId(draft.partyId ?? 0)
         setPurchaseId(draft.purchaseId ?? 0)
@@ -406,7 +408,7 @@ export function VouchersPage() {
                 >
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{v.voucherNumber}</div>
-                    <div className="text-[11px] text-slate-400">{v.date.slice(0, 16).replace('T', ' ')}{v.description && ` · ${v.description}`}</div>
+                    <div className="text-[11px] text-slate-400">{localDateTimeLabel(v.date)}{v.description && ` · ${v.description}`}</div>
                     {v.purchaseExpensePayableId && <div className="text-[10px] font-bold text-violet-600">سداد استحقاق مصروف على فاتورة شراء</div>}
                     {v.projectId != null && (() => {
                       const prj = projects.find((p) => p.id === v.projectId)

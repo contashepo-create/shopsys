@@ -14,8 +14,11 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
+import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { Btn, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 
 type HubConfig = {
@@ -61,6 +64,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   const { sales, customers, rentalInvoices, rentalContracts, trips, tripExpenses, vehicles, employees } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
+  const stampTax = useTaxBarcodeStamp()
   const Icon = cfg.icon
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -91,6 +95,9 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط مركز المقاولات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
+    const tx = s.taxPercent !== undefined
+      ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
+      : deriveTaxConfig(s.totals, s.lines)
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
@@ -101,10 +108,14 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       paidMinor: s.paidMinor,
       operatorName: setup.ownerName ?? 'المالك',
       customerName,
-      taxPercent: s.taxPercent ?? setup.vatPercent,
-      taxInclusive: s.taxInclusive ?? setup.taxInclusive,
+      taxPercent: tx.taxPercent,
+      taxInclusive: tx.taxInclusive,
       settings: receipt,
     })
+    /* فاتورة بيع خدمية — تُطبع برمز زاتكا عند تفعيله (نفس فاتورة المبيعات العامة) */
+    /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
+    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
@@ -215,9 +226,9 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
               <tbody>
                 {[...trips].reverse().map((t) => {
                   const cust = t.customerId ? customers.find((c) => c.id === t.customerId) : undefined
-                  const customerStandaloneMinor = tripExpenses
+                  const standaloneExpenseRecords = tripExpenses
                     .filter((x) => x.tripId === t.id && !x.reversedByEntryId && x.bearer === 'customer')
-                    .reduce((s, x) => s + x.amountMinor, 0)
+                  const customerStandaloneMinor = standaloneExpenseRecords.reduce((s, x) => s + x.amountMinor, 0)
                   const totalForCustomer = t.totals.grandMinor + customerStandaloneMinor
                   const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)
                   const remain = Math.max(0, totalForCustomer - paid)
@@ -259,6 +270,16 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                         discountPercent: 0,
                         soldByWeight: false,
                       })),
+                      ...standaloneExpenseRecords.map((exp, idx) => ({
+                        itemId: -(2000 + idx),
+                        nameAr: `${exp.nameAr} (على حساب العميل — ${exp.expenseNumber})`,
+                        qty: 1,
+                        unitPriceMinor: exp.amountMinor,
+                        unitCostMinor: 0,
+                        discountPercent: 0,
+                        soldByWeight: false,
+                        vatPercentOverride: 0,
+                      })),
                     ]
                     const subtotalMinor = t.totals.baseMinor + customerBorneExpenses.reduce((s, e) => s + e.amountMinor, 0)
                     const extraContext = [
@@ -287,6 +308,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                       taxInclusive: false,
                       settings: receipt,
                     })
+                    stampTax(model, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor: totalForCustomer, taxMinor: t.totals.vatMinor })
                     printModelWithTemplate(model, cur, receipt, tpl)
                   }
                   return (

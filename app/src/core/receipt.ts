@@ -6,6 +6,7 @@
  */
 import type { Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
+import { localDateTimeLabel } from './time.ts'
 
 export type PaperWidth = '80' | '58'
 
@@ -221,7 +222,7 @@ export function buildReceiptModel(args: {
     operatorName: args.operatorName?.trim() || 'المالك',
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode ?? '',
-    dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
+    dateLabel: localDateTimeLabel(args.dateIso),
     customerName: args.customerName ?? 'عميل نقدي',
     paymentLabel: remaining <= 0 ? 'نقدي' : paid > 0 ? 'مجزأ — جزء محصل والباقي آجل' : 'آجل',
     rows,
@@ -284,7 +285,7 @@ export function buildSimpleDocModel(args: {
     docTitle: args.docTitle,
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode,
-    dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
+    dateLabel: localDateTimeLabel(args.dateIso),
     customerName: args.partyLabel,
     paymentLabel: args.paymentLabel,
     rows,

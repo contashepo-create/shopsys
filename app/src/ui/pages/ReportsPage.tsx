@@ -40,6 +40,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Landmark } from 'lucide-react'
+import { todayLocalIso, localIsoTimestamp } from '../../core/time.ts'
 
 /* التبويبات من السجل الواحد `core/reportTabs.ts` — لا نسخة محلية تتقادم (سدّ ف1) */
 type TabId = ReportTabId
@@ -64,7 +65,7 @@ export function ReportsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const today = new Date().toISOString()
+  const today = localIsoTimestamp()
   const toast = useToast()
 
   const presets = useMemo(() => periodPresets(today), [today])
@@ -92,7 +93,7 @@ export function ReportsPage() {
   // الداخلي لها تحديداً 6 أشهر لا شهر واحد).
   const defaultStagnantDays = setup.activityId === 'spare_parts' ? 180 : 30
   const [stagnantThresholdDays, setStagnantThresholdDays] = useState(defaultStagnantDays)
-  const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), stagnantThresholdDays), [items, sales, stagnantThresholdDays])
+  const stagnant = useMemo(() => stagnantItems(items, sales, todayLocalIso(), stagnantThresholdDays), [items, sales, stagnantThresholdDays])
 
   /**
    * تقرير الربح حسب درجة القطعة (سد فجوة فورية #3 — النشاط #7: قطع غيار):
@@ -103,7 +104,7 @@ export function ReportsPage() {
   const hasGradedItems = useMemo(() => items.some((it) => it.grade), [items])
   // ركود التركيبات لون×مقاس (فجوة فورية ③ — نشاط الملابس): مكمِّل لتقرير ركود الصنف أعلاه
   const stagnantVariantRows = useMemo(
-    () => (variantStocks.length ? stagnantVariants(items, variantStocks, sales, new Date().toISOString(), 30) : []),
+    () => (variantStocks.length ? stagnantVariants(items, variantStocks, sales, todayLocalIso(), 30) : []),
     [items, variantStocks, sales],
   )
   // منحنى المقاسات (تطوير مستقبلي ② — نشاط الملابس): نسبة كل مقاس من مبيعات الصنف بالفترة المحددة
@@ -121,9 +122,9 @@ export function ReportsPage() {
   // تحليل ABC (سد فجوة: لا تصنيف أصناف حسب مساهمتها بالإيراد — باريتو 80/95)
   const abcRows = useMemo(() => abcAnalysis(sales, saleReturns, period), [sales, saleReturns, period])
   // توقع طلب إحصائي (سد فجوة مستقبلية: تنبؤ ذكاء اصطناعي — نسخة إحصائية محلية بلا سحابة)
-  const forecastRows = useMemo(() => demandForecast(sales, new Date().toISOString(), 8), [sales])
+  const forecastRows = useMemo(() => demandForecast(sales, todayLocalIso(), 8), [sales])
   // اقتراح تسعير تصاعدي قرب الانتهاء (سد فجوة مستقبلية: تسعير ديناميكي)
-  const markdowns = useMemo(() => markdownSuggestions(batches, items, new Date().toISOString(), 7), [batches, items])
+  const markdowns = useMemo(() => markdownSuggestions(batches, items, todayLocalIso(), 7), [batches, items])
   /** سد فجوة النشاط #2 (تجارة الأعلاف والحبوب): تقرير مجمَّع لفرق الوزن — استلام من موردين + تصنيع داخلي */
   const receivingVariance = useMemo(() => purchaseReceivingVarianceReport(purchases, suppliers), [purchases, suppliers])
   const productionVariance = useMemo(() => productionVarianceReport(productionOrders, items), [productionOrders, items])
@@ -201,14 +202,14 @@ export function ReportsPage() {
   })()
 
   const expAlerts = useMemo(
-    () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
+    () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, todayLocalIso()),
     [batches, items],
   )
   // قيمة المخزون المعرَّض لخطر الانتهاء بالعملة لكل أفق (سد فجوة فورية — النشاط #5: صيدلية)
-  const expiryValueRows = useMemo(() => expiryValueAtRisk(batches, items, new Date().toISOString(), [30, 60, 90]), [batches, items])
+  const expiryValueRows = useMemo(() => expiryValueAtRisk(batches, items, todayLocalIso(), [30, 60, 90]), [batches, items])
   // مرشحات إرجاع المورد: دفعات لا تزال داخل نافذة إرجاع موردها المسجَّلة (سد فجوة فورية — النشاط #5: صيدلية)
   const returnCandidates = useMemo(
-    () => supplierReturnCandidates(batches, items, purchases, suppliers, new Date().toISOString()),
+    () => supplierReturnCandidates(batches, items, purchases, suppliers, todayLocalIso()),
     [batches, items, purchases, suppliers],
   )
   const returnCandidatesBySupplier = useMemo(() => {
@@ -1069,7 +1070,7 @@ export function ReportsPage() {
               const { reportPrint, receipt } = useAppStore.getState()
               printHtml(renderReportShell({
                 title: 'تقرير أرصدة العملاء والموردين',
-                subtitle: `${setup.shopName || ''} — الأرصدة الحية الموحّدة مع كشوف الحساب · ${new Date().toISOString().slice(0, 10)}`,
+                subtitle: `${setup.shopName || ''} — الأرصدة الحية الموحّدة مع كشوف الحساب · ${todayLocalIso()}`,
                 companyName: setup.shopName || '',
                 logoDataUrl: receipt.logoDataUrl,
                 settings: reportPrint,
@@ -1677,7 +1678,7 @@ function MarketPriceReferenceCard({ card }: { card: string }) {
   const [commodityName, setCommodityName] = useState('')
   const [unit, setUnit] = useState('طن')
   const [price, setPrice] = useState('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => todayLocalIso())
   const [error, setError] = useState('')
   const sorted = useMemo(() => [...marketPrices].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)), [marketPrices])
   const submit = () => {

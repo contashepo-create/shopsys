@@ -17,6 +17,7 @@ import type { TreasuryOperation } from '../../core/treasuryAccess.ts'
 import { getCountry } from '../../core/countries.ts'
 import { toMinor } from '../../core/money.ts'
 import { Btn, DecimalInput, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
@@ -386,7 +387,7 @@ export function PermissionsPage() {
               {openResets.map((r) => (
                 <div key={r.id} className="flex items-center gap-2 text-[12px]">
                   <span className="flex-1 font-bold">{r.nameAr}</span>
-                  <span className="text-[10px] text-slate-400">{r.requestedAt.slice(0, 16).replace('T', ' ')}</span>
+                  <span className="text-[10px] text-slate-400">{localDateTimeLabel(r.requestedAt)}</span>
                   <Btn className="!text-[11px] !py-1" onClick={() => setPinFor(r.userId)}>تعيين رقم جديد</Btn>
                   <Btn variant="ghost" className="!text-[11px] !py-1 border border-slate-200 dark:border-slate-700" onClick={() => { try { resolvePinReset(r.id, 'cancelled'); toast.show('أُلغي الطلب') } catch (err) { toast.show((err as Error).message, 'error') } }}>رفض</Btn>
                 </div>

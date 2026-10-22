@@ -7,6 +7,7 @@
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 import type { StatementRow } from '../../core/statements.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -30,7 +31,7 @@ export function renderStatementHtml(a: StatementPrintArgs): string {
   const totalCredit = a.rows.reduce((s, r) => s + r.creditMinor, 0)
   const balance = a.rows.length ? a.rows[a.rows.length - 1].balanceMinor : 0
   const meaning = balance >= 0 ? a.balanceMeaning[0] : a.balanceMeaning[1]
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   const rowsHtml = a.rows
     .map(

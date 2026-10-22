@@ -15,6 +15,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { formatMinor } from '../../core/money.ts'
 import { getCountry } from '../../core/countries.ts'
 import { Printer } from 'lucide-react'
+import { todayLocalIso } from '../../core/time.ts'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   in_stock: { label: 'بالمخزون', cls: 'bg-emerald-500/10 text-emerald-600' },
@@ -29,7 +30,7 @@ export function SerialsPage() {
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier'>('all')
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   /* ─── استبدال/مقايضة جهاز قديم (Trade-In) — سد فجوة مستقبلية من تقرير النشاط #3 ───
      يسجل الجهاز القديم كسيريال داخل بسعر تقييم متفق عليه، ويولّد رصيداً دائناً

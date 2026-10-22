@@ -21,6 +21,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 const emptyTerminalPayment = (): TerminalPaymentDraft => ({ terminalId: '', providerReference: '', cardLast4: '' })
@@ -539,7 +540,7 @@ export function LeasesPage() {
   const { properties, propertyUnits, leases, customers, employees, paymentTerminals, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
-  const todayIso = new Date().toISOString().slice(0, 10)
+  const todayIso = todayLocalIso()
   const alerts = useMemo(() => collectLeaseAlerts(leases, todayIso, 60), [leases, todayIso])
 
   /* عقد جديد */

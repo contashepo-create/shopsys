@@ -33,6 +33,7 @@ import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
 import { openItemPricesWindow } from '../windows/windowStore.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -74,7 +75,7 @@ export function PurchasesPage() {
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice, deviceFlags } = useAppStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
-  const [today] = useState(() => new Date().toISOString().slice(0, 10))
+  const [today] = useState(() => todayLocalIso())
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة ⇒ لا تعديل — إشعار مدين على المورد
@@ -297,7 +298,7 @@ export function PurchasesPage() {
         payableAccountCode: latePaidBy === 'payable' ? latePayableAccount : null,
         costCenterId: lateCostCenterId,
         vehicleId: lateVehicleId,
-        date: new Date().toISOString().slice(0, 10),
+        date: todayLocalIso(),
       })
       setViewing(updated)
       setLateName(''); setLateAmount(''); setLatePayableName(''); setLateVehicleId(null); setLateCostCenterId(null)
@@ -407,7 +408,7 @@ export function PurchasesPage() {
     }
     const inv = postPurchase({
       supplierId,
-      date: new Date().toISOString().slice(0, 10),
+      date: todayLocalIso(),
       lines: preview.landed.map((l, i) => {
         const d = enteredLines[i]
         return {
@@ -1132,7 +1133,7 @@ export function PurchasesPage() {
                 </div>
                 {viewing.editHistory.map((h, i) => (
                   <div key={i} className="text-[11px] text-slate-500">
-                    {h.at.slice(0, 16).replace('T', ' ')} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
+                    {localDateTimeLabel(h.at)} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
                   </div>
                 ))}
               </div>

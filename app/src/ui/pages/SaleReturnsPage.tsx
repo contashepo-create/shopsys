@@ -22,12 +22,15 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
+import { useTaxBarcodePayload } from '../hooks/useTaxBarcodeStamp.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { localDateIso, localDateTimeLabel } from '../../core/time.ts'
 
 /** حالة سطر واحد في المعالج */
 interface WizardLine {
@@ -40,13 +43,16 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId } = useDataStore()
+  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
+  /* إشعار المرتجع مستند ضريبي (إشعار دائن) — يُطبع برمز زاتكا مثل الفاتورة الأصلية.
+     الحمولة تُجمَّد على الإشعار عند أول طباعة، فإعادة الطباعة لا تعيد توليدها. */
+  const taxPayload = useTaxBarcodePayload()
 
   /* ─── حالة المعالج ─── */
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -217,11 +223,30 @@ export function SaleReturnsPage() {
       paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
       operatorName: printOperatorName,
       customerName: orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.nameAr ?? null : null,
-      taxPercent: setup.vatPercent,
-      taxInclusive: setup.taxInclusive,
+      /* معدل الضريبة ونمطها من الفاتورة الأصلية — لا من إعدادات اليوم.
+         إشعار الدائن يجب أن يعرض نفس نسبة الفاتورة التي يعدّلها، ولو تغيّر
+         المعدل العام بعد إصدارها؛ الإجماليات تأتي من المرتجع نفسه أصلاً. */
+      /* من الفاتورة الأصلية إن كانت النسبة مخزنة؛ وإلا تُستنتج من إجماليات
+         المرتجع نفسه — لا من إعدادات اليوم التي قد تخالف المستند القديم. */
+      taxPercent: orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent,
+      taxInclusive: orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive,
       settings: receipt,
     })
     model.docTitle = 'مرتجع مبيعات'
+    /* الرمز الضريبي لإشعار الدائن: إجمالي المرتجع وضريبته بتاريخه هو.
+       إعادة الطباعة تقرأ الحمولة المجمّدة وقت أول طباعة (إن وُجدت) فلا يتغير
+       الرمز لو تغيّر اسم المنشأة أو رقمها الضريبي لاحقاً. */
+    if (r.taxQrPayload) {
+      model.qrDataUrl = qrDataUrlFromPayload(r.taxQrPayload)
+    } else {
+      const payload = taxPayload(model, { dateIso: r.date, invoiceNumber: r.returnNumber, totalMinor: r.totals.totalMinor, taxMinor: r.totals.taxMinor })
+      if (payload) {
+        model.qrDataUrl = qrDataUrlFromPayload(payload)
+        attachSaleReturnTaxQr(r.id, payload)
+      } else {
+        delete model.qrDataUrl
+      }
+    }
     model.paidMinor = r.totals.totalMinor
     model.remainingMinor = 0
     const cashPart = returnCashRefundMinor(r)
@@ -295,7 +320,7 @@ export function SaleReturnsPage() {
                   <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح المرتجع ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
-                      <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>
+                      <div className="text-[11px] text-slate-400">{localDateTimeLabel(r.date)}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{orig?.invoiceNumber ?? '—'}</td>
                     <td className="px-4 py-3">
@@ -389,7 +414,7 @@ export function SaleReturnsPage() {
                     <span>
                       <b className="text-slate-800 dark:text-white">{s.invoiceNumber}</b>
                       {s.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{s.refCode}</span>}
-                      <span className="text-[11px] text-slate-400 mr-2">{s.date.slice(0, 10)} · {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr : 'عميل نقدي'}</span>
+                      <span className="text-[11px] text-slate-400 mr-2">{localDateIso(s.date)} · {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr : 'عميل نقدي'}</span>
                     </span>
                     <b className="text-emerald-600">{fmt(s.totals.totalMinor)}</b>
                   </button>

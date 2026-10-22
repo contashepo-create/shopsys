@@ -29,6 +29,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { localDateTimeLabel, localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
   received: 'bg-sky-500/10 text-sky-600',
@@ -105,7 +106,7 @@ export function MaintenancePage() {
    */
   const deviceWarranty = useMemo(() => {
     if (!deviceSerial.trim()) return null
-    const info = warrantyLookup(serials, deviceSerial, new Date().toISOString())
+    const info = warrantyLookup(serials, deviceSerial, todayLocalIso())
     if (!info) return null
     const originalCustomerName = info.saleId != null
       ? (() => {
@@ -257,7 +258,7 @@ export function MaintenancePage() {
   const viewEntry = viewing?.journalEntryId != null ? journal.find((e) => e.id === viewing.journalEntryId) : null
 
   /* ─── تقرير ─── */
-  const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
+  const presets = useMemo(() => periodPresets(todayLocalIso()), [])
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const report = useMemo(() => maintenanceReport(tickets, period), [tickets, period])
@@ -303,12 +304,12 @@ export function MaintenancePage() {
                   <div className={`px-4 py-3 text-lg font-black ${STATUS_COLORS[col]}`}>{TICKET_STATUS_LABELS[col]} ({colTickets.length})</div>
                   <div className="p-3 space-y-3 max-h-[75vh] overflow-y-auto">
                     {colTickets.map((t) => (
-                      <div key={t.id} className={`rounded-xl p-3 ${isTicketOverdue(t, new Date().toISOString()) ? 'bg-rose-500/20 border border-rose-500/40' : 'bg-white/10'}`}>
+                      <div key={t.id} className={`rounded-xl p-3 ${isTicketOverdue(t, localIsoTimestamp()) ? 'bg-rose-500/20 border border-rose-500/40' : 'bg-white/10'}`}>
                         <div className="text-xl font-black text-amber-400">{t.ticketNumber}</div>
                         <div className="text-lg font-bold">{t.deviceName}</div>
                         <div className="text-sm text-slate-300 truncate">{t.issue}</div>
                         {t.technicianId != null && <div className="text-sm text-indigo-300 mt-1">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? ''}</div>}
-                        {isTicketOverdue(t, new Date().toISOString()) && <div className="text-sm font-black text-rose-300 mt-1">⏰ متأخرة</div>}
+                        {isTicketOverdue(t, localIsoTimestamp()) && <div className="text-sm font-black text-rose-300 mt-1">⏰ متأخرة</div>}
                       </div>
                     ))}
                     {colTickets.length === 0 && <div className="text-center text-slate-500 py-6">لا تذاكر</div>}
@@ -340,7 +341,7 @@ export function MaintenancePage() {
                         <div className="text-[12px] font-bold text-slate-700 dark:text-slate-200 truncate">{t.deviceName}</div>
                         <div className="text-[10.5px] text-slate-400 truncate">{t.issue}</div>
                         {t.technicianId != null && <div className="text-[10px] text-indigo-500 mt-0.5">🔧 {employees.find((e) => e.id === t.technicianId)?.nameAr ?? ''}</div>}
-                        {isTicketOverdue(t, new Date().toISOString()) && <div className="text-[9.5px] text-rose-600 font-bold mt-0.5">⏰ متأخرة</div>}
+                        {isTicketOverdue(t, localIsoTimestamp()) && <div className="text-[9.5px] text-rose-600 font-bold mt-0.5">⏰ متأخرة</div>}
                       </button>
                     ))}
                     {colTickets.length === 0 && <div className="text-center text-[11px] text-slate-300 py-4">—</div>}
@@ -385,9 +386,9 @@ export function MaintenancePage() {
                     <td className="px-4 py-3 text-slate-500">{custLabel(t)}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${STATUS_COLORS[t.status]}`}>{TICKET_STATUS_LABELS[t.status]}</span>
-                      {isTicketOverdue(t, new Date().toISOString()) && <span className="ms-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[10px] font-bold animate-pulse">⏰ متأخرة</span>}
-                      {t.promisedAt && !isTicketOverdue(t, new Date().toISOString()) && t.status !== 'delivered' && t.status !== 'cancelled' && (
-                        <div className="text-[9.5px] text-slate-400 mt-0.5" dir="ltr">موعدها {t.promisedAt.slice(0, 16).replace('T', ' ')}</div>
+                      {isTicketOverdue(t, localIsoTimestamp()) && <span className="ms-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[10px] font-bold animate-pulse">⏰ متأخرة</span>}
+                      {t.promisedAt && !isTicketOverdue(t, localIsoTimestamp()) && t.status !== 'delivered' && t.status !== 'cancelled' && (
+                        <div className="text-[9.5px] text-slate-400 mt-0.5" dir="ltr">موعدها {localDateTimeLabel(t.promisedAt)}</div>
                       )}
                     </td>
                     <td className="px-4 py-3 font-bold">{t.totals ? fmt(t.totals.grandMinor) : t.estimateMinor > 0 ? <span className="text-slate-400 font-normal">تقدير {fmt(t.estimateMinor)}</span> : '—'}</td>
@@ -745,7 +746,7 @@ export function MaintenancePage() {
             <div className="flex flex-wrap gap-1.5">
               {viewing.statusHistory.map((h, i) => (
                 <span key={i} className={`px-2 py-1 rounded-lg text-[10.5px] font-bold ${STATUS_COLORS[h.status]}`}>
-                  {TICKET_STATUS_LABELS[h.status]} <span className="opacity-60" dir="ltr">{h.at.slice(0, 16).replace('T', ' ')}</span>
+                  {TICKET_STATUS_LABELS[h.status]} <span className="opacity-60" dir="ltr">{localDateTimeLabel(h.at)}</span>
                 </span>
               ))}
             </div>
@@ -753,7 +754,7 @@ export function MaintenancePage() {
             {(viewing.notifications ?? []).length > 0 && (
               <div className="text-[10.5px] text-slate-400">
                 📹 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
-                  <span key={i} className="me-2">«{TICKET_STATUS_LABELS[n.status]}» <span dir="ltr" className="opacity-70">{n.at.slice(0, 16).replace('T', ' ')}</span></span>
+                  <span key={i} className="me-2">«{TICKET_STATUS_LABELS[n.status]}» <span dir="ltr" className="opacity-70">{localDateTimeLabel(n.at)}</span></span>
                 ))}
               </div>
             )}

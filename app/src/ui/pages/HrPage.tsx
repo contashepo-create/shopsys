@@ -32,6 +32,7 @@ import { monthLabelAr } from '../../core/payroll.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { printHtml } from '../print/printReceipt.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 /* ثابت داخلي (سياسة Fast Refresh: الملف يصدّر مكونات فقط) */
 const HR_TABS = [
@@ -108,7 +109,7 @@ export function HrPage() {
 function AttendanceTab() {
   const { employees, attendanceRecords, leaveRequests, hrRules, employeeShifts, setAttendanceDay, clearAttendanceDay } = useDataStore()
   const toast = useToast()
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
   const [selected, setSelected] = useState<{ employeeId: number; date: string } | null>(null)
   const [dayStatus, setDayStatus] = useState<AttendanceStatus>('present')
   const [dayIn, setDayIn] = useState('')
@@ -122,7 +123,7 @@ function AttendanceTab() {
     for (const r of attendanceRecords) map.set(`${r.employeeId}|${r.date}`, r)
     return map
   }, [attendanceRecords])
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   const openDay = (employeeId: number, date: string) => {
     const existing = byKey.get(`${employeeId}|${date}`)
@@ -489,7 +490,7 @@ function FingerprintTab() {
                 {[...attendanceImports].reverse().map((imp) => (
                   <tr key={imp.id} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="p-1.5 font-bold">{imp.fileName}</td>
-                    <td className="p-1.5 text-center font-mono">{imp.at.slice(0, 16).replace('T', ' ')}</td>
+                    <td className="p-1.5 text-center font-mono">{localDateTimeLabel(imp.at)}</td>
                     <td className="p-1.5 text-center font-mono">{imp.rows}</td>
                     <td className="p-1.5 text-center font-mono text-emerald-600">{imp.inserted}</td>
                     <td className="p-1.5 text-center font-mono text-sky-600">{imp.updated}</td>
@@ -513,10 +514,10 @@ function LeavesTab() {
   const [open, setOpen] = useState(false)
   const [employeeId, setEmployeeId] = useState(0)
   const [typeId, setTypeId] = useState('annual')
-  const [from, setFrom] = useState(new Date().toISOString().slice(0, 10))
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10))
+  const [from, setFrom] = useState(todayLocalIso())
+  const [to, setTo] = useState(todayLocalIso())
   const [reason, setReason] = useState('')
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
   const active = useMemo(() => employees.filter((e) => e.active), [employees])
 
   const submit = () => {
@@ -826,7 +827,7 @@ function HrReportsTab() {
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
 
   const rows = useMemo(() => {
     const impacts = new Map(getAttendancePayrollImpact(month).map((row) => [row.employeeId, row]))
@@ -891,7 +892,7 @@ function HrReportsTab() {
       <style>body{font-family:system-ui,'Segoe UI',Tahoma;padding:24px;color:#0f172a}h1{font-size:18px;margin:0 0 4px}p{color:#64748b;font-size:12px;margin:0 0 14px}
       table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:center}th{background:#f1f5f9}
       td:first-child{text-align:right;font-weight:700}.n{font-variant-numeric:tabular-nums}tfoot td{font-weight:800;background:#f8fafc}</style></head><body>
-      <h1>كشف الحضور والانصراف — ${monthLabelAr(month)}</h1><p>${setup.shopName ?? ''} · تاريخ الطباعة ${new Date().toISOString().slice(0, 10)}</p>
+      <h1>كشف الحضور والانصراف — ${monthLabelAr(month)}</h1><p>${setup.shopName ?? ''} · تاريخ الطباعة ${todayLocalIso()}</p>
       <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>يوم إضافي</th><th>بدل إضافي</th><th>مكافأة يوم إضافي</th><th>إجمالي الخصومات</th><th>صافي الأثر</th></tr></thead>
       <tbody>${body}</tbody>
       <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${totals.holidayWorked}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.holidayBonus)}</td><td class="n">${fmt(totals.deductions)}</td><td class="n">${fmt(totals.net)}</td></tr></tfoot></table>

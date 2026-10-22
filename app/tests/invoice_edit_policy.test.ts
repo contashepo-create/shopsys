@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { electronicInvoiceLockActive, invoiceEditPolicy } from '../src/core/invoiceEdit.ts'
+import { electronicInvoiceLockActive, invoiceEditPolicy, zatcaLinkPolicy, zatcaQrPolicy } from '../src/core/invoiceEdit.ts'
 
 describe('سياسة تعديل الفاتورة', () => {
   it('يسمح بالتعديل للمنشأة غير المسجلة ضريبياً ولو كانت الإمكانية متاحة', () => {
@@ -18,5 +18,25 @@ describe('سياسة تعديل الفاتورة', () => {
   it('لا يكشف للمستخدم أي وصف تجاري للميزة', () => {
     expect(invoiceEditPolicy({ einvoiceActive: false }).reasonAr).not.toMatch(/مدفوع|ترخيص|اشتراك/)
     expect(invoiceEditPolicy({ einvoiceActive: true }).reasonAr).not.toMatch(/مدفوع|ترخيص|اشتراك/)
+  })
+})
+
+describe('سياسة رمز زاتكا: الرمز محلي والاتصال للربط فقط', () => {
+  it('يُطبع الرمز بلا إنترنت: رمز المرحلة الأولى (Generation) لا يشترط اتصالاً', () => {
+    expect(zatcaQrPolicy({ featureActive: true, printEnabled: true }).printQr).toBe(true)
+    expect(zatcaQrPolicy({ featureActive: true, printEnabled: true }).reasonAr).toBeNull()
+  })
+  it('يبقى محكوماً بالميزة ومفتاح الطباعة وحدهما', () => {
+    expect(zatcaQrPolicy({ featureActive: false, printEnabled: true }).printQr).toBe(false)
+    expect(zatcaQrPolicy({ featureActive: true, printEnabled: false }).printQr).toBe(false)
+  })
+  it('الربط/الإرسال (المرحلة الثانية) هو ما يتطلب الإنترنت', () => {
+    expect(zatcaLinkPolicy({ featureActive: true, online: false }).canLink).toBe(false)
+    expect(zatcaLinkPolicy({ featureActive: true, online: false }).reasonAr).toMatch(/اتصال/)
+    expect(zatcaLinkPolicy({ featureActive: true, online: true }).canLink).toBe(true)
+    expect(zatcaLinkPolicy({ featureActive: false, online: true }).canLink).toBe(false)
+  })
+  it('سبب منع الربط يوضح أن الطباعة المحلية لا تتأثر', () => {
+    expect(zatcaLinkPolicy({ featureActive: true, online: false }).reasonAr).toMatch(/بلا اتصال/)
   })
 })

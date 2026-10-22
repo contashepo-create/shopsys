@@ -20,6 +20,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { useActivityBaseCoa } from '../activityCoa.ts'
 import { accountName } from './accountNames.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 const STATUS_STYLE: Record<ChequeStatus, string> = {
   held: 'bg-amber-500/10 text-amber-600',
@@ -84,7 +85,7 @@ export function ChequesPage() {
     ]
   }, [activityBase, direction, customAccounts])
 
-  const today = new Date().toISOString()
+  const today = localIsoTimestamp()
   const alerts = useMemo(() => dueCheques(cheques, today), [cheques, today])
   const portfolio = useMemo(() => chequePortfolio(cheques), [cheques])
   const listed = useMemo(() => [...cheques].reverse(), [cheques])
@@ -97,7 +98,7 @@ export function ChequesPage() {
     setDirection(d)
     setChequeNumber(''); setPartyId(''); setPartyName(''); setBankName(''); setAmount(''); setNotes('')
     setCounterAccount(d === 'incoming' ? '4110' : '5108')
-    setDueDate(new Date().toISOString().slice(0, 10))
+    setDueDate(todayLocalIso())
     setOpen(true)
   }
 

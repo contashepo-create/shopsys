@@ -13,6 +13,7 @@ import { isElectronRuntime } from '../../data/desktopBridge.ts'
 import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
 import { PLAN_LABELS } from '../../core/license.ts'
 import { Btn, useToast } from '../components/ui.tsx'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function AboutPage() {
   const { cloudAbout, cloudAccountMessage, cloudSyncedAt, setCloudData, deviceId, activatedPayload, setup } = useAppStore()
@@ -136,7 +137,7 @@ export function AboutPage() {
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">معرف الجهاز</div><div className="font-mono font-bold" dir="ltr">{deviceId}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">الباقة</div><div className="font-black">{activatedPayload ? PLAN_LABELS[activatedPayload.plan] : 'تجريبي'}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">النشاط</div><div className="font-black">{setup.activityId ?? '—'}</div></div>
-          <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">آخر مزامنة سحابية</div><div className="font-bold">{cloudSyncedAt ? cloudSyncedAt.slice(0, 16).replace('T', ' ') : 'لم تتم بعد'}</div></div>
+          <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">آخر مزامنة سحابية</div><div className="font-bold">{cloudSyncedAt ? localDateTimeLabel(cloudSyncedAt) : 'لم تتم بعد'}</div></div>
         </div>
       </div>
 

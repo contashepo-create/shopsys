@@ -15,8 +15,10 @@ import { buildReceiptModel, A4_STYLES, type PaperWidth, type InvoiceTemplate, ty
 import { renderReceiptHtml, printHtml, listSystemPrinters } from '../print/printReceipt.ts'
 import { PRINT_ROUTES } from '../../core/printers.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 /** فاتورة تجريبية للمعاينة والطباعة الاختبارية */
 const SAMPLE_LINES = [
@@ -73,11 +75,14 @@ export function PrintSettingsPage() {
     [setup.countryCode],
   )
 
+  /* المعاينة تعرض الرمز الضريبي أيضاً إن كان مفعلاً — وإلا ظنّ المالك أن
+     الإعدادات تلغيه لأن المعاينة (وهي مرآة الطباعة) تخرج بلا رمز. */
+  const stampTax = useTaxBarcodeStamp()
   const sampleModel = useMemo(() => {
     const totals = computeTotals(SAMPLE_LINES, 0, setup.vatPercent, setup.taxInclusive)
-    return buildReceiptModel({
+    const model = buildReceiptModel({
       invoiceNumber: 'S-0001',
-      dateIso: new Date().toISOString(),
+      dateIso: localIsoTimestamp(),
       lines: SAMPLE_LINES,
       totals,
       payment: 'cash',
@@ -86,7 +91,9 @@ export function PrintSettingsPage() {
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
-  }, [receipt, setup.vatPercent, setup.taxInclusive])
+    stampTax(model, { dateIso: localIsoTimestamp() })
+    return model
+  }, [receipt, setup.vatPercent, setup.taxInclusive, stampTax])
 
   // نفس HTML الذي سيخرج للطابعة — المعاينة صادقة 100٪
   const thermalHtml = useMemo(() => renderReceiptHtml(sampleModel, cur, receipt), [sampleModel, cur, receipt])
@@ -177,7 +184,7 @@ export function PrintSettingsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Btn variant="ghost" onClick={() => printHtml(buildWarehouseReceiptHtml({
-              title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: new Date().toISOString().slice(0, 10),
+              title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: todayLocalIso(),
               partyLabel: 'جهة تجريبية', branchLabel: 'الفرع الرئيسي', companyName: setup.shopName || 'المنشأة',
               userLabel: setup.ownerName || 'المالك', settings: warehouseReceipt,
               lines: [

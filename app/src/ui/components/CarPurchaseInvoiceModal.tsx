@@ -15,6 +15,7 @@ import { TreasuryPicker } from './TreasuryPicker.tsx'
 import { useDataStore, EMPTY_EXTENDED, type Supplier } from '../../data/repo.ts'
 import { formatMinor, toMinor, type CurrencyConfig } from '../../core/money.ts'
 import { computeCarPurchaseInvoice, type CarInvoiceLine, type CarPurpose } from '../../core/cars.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface VehicleRow {
   make: string
@@ -75,7 +76,7 @@ export function CarPurchaseInvoiceModal({ open, onClose, cur }: { open: boolean;
 
   const [supplierId, setSupplierId] = useState(0)
   const [supplierInvoiceNo, setSupplierInvoiceNo] = useState('')
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(() => todayLocalIso())
   const [notes, setNotes] = useState('')
   const [rows, setRows] = useState<VehicleRow[]>([emptyVehicle()])
   const [expenses, setExpenses] = useState<{ label: string; amount: string }[]>([])

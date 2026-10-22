@@ -27,6 +27,7 @@ import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { InsuranceProvidersSection } from '../components/InsuranceProvidersSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -763,7 +764,7 @@ export function LabReferrersPage() {
   }
 
   /* كشف شهري */
-  const thisMonth = new Date().toISOString().slice(0, 7)
+  const thisMonth = todayLocalIso().slice(0, 7)
   const [stmtRef, setStmtRef] = useState<number | null>(null)
   const [month, setMonth] = useState(thisMonth)
   const stmt = useMemo(() => {

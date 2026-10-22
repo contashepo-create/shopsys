@@ -14,6 +14,7 @@
  *
  * نواة خالصة بلا React وبلا استيراد من طبقة البيانات — قابلة للاختبار وحدها.
  */
+import { calendarDateIso } from './time.ts'
 import type { Account, JournalEntry, SourceType } from './ledger.ts'
 
 export interface FiscalYearLike {
@@ -38,7 +39,7 @@ const isMoney = (n: unknown): n is number => typeof n === 'number' && Number.isI
 /** تاريخ YYYY-MM-DD موجود فعلاً في التقويم (ذهاباً وإياباً عبر محرك التواريخ) */
 function isValidCalendarDate(iso: string): boolean {
   const d = new Date(`${iso}T00:00:00Z`)
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso
+  return !Number.isNaN(d.getTime()) && calendarDateIso(d) === iso
 }
 
 /**

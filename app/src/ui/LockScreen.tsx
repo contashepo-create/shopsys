@@ -22,6 +22,7 @@ import { buildFullExportSheets, sheetsToExcelXml, downloadTextFile, exportFileNa
 import { desktopDatabaseStorage, isElectronRuntime } from '../data/desktopBridge.ts'
 import { Btn, inputCls, useToast } from './components/ui.tsx'
 import { DeveloperMessage } from './components/DeveloperMessage.tsx'
+import { localIsoTimestamp, todayLocalIso } from '../core/time.ts'
 
 const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
 const money = (minor: number) => (minor / 100).toFixed(2)
@@ -88,7 +89,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
   const exportExcel = () => {
     try {
       const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
-      downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', new Date().toISOString()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
+      downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', localIsoTimestamp()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
       toast.show(`نُزّل ملف Excel شامل (${sheets.length} أوراق) 📊`)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -114,7 +115,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
       let n = 0
       for (const [name, rows] of files) {
         if (!rows.length) continue
-        downloadBlob(toCsv(rows), `shopsys-${name}-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8')
+        downloadBlob(toCsv(rows), `shopsys-${name}-${todayLocalIso()}.csv`, 'text/csv;charset=utf-8')
         n++
       }
       toast.show(n ? `نُزّل ${n} ملف CSV (يفتح في Excel مباشرة) 📊` : 'لا بيانات للتصدير')

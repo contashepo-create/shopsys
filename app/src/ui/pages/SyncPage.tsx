@@ -15,6 +15,7 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 import { isCloudDisabled } from '../../core/featureFlags.ts'
 import { exportSyncPairing, importSyncPairing, PAIRING_PASSWORD_MIN } from '../../core/syncPairing.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 const MIGRATION_PATH = 'supabase/migrations/202609220001_secure_store_rls.sql'
 
@@ -183,7 +184,7 @@ export function SyncPage() {
       const expiresAt = await rotateStoreAccessToken(current, next)
       setAccessToken(next)
       updateSync({ accessToken: next })
-      toast.show(`تم التدوير ✅ — الاعتماد القديم ينتهي ${expiresAt.slice(0, 16).replace('T', ' ')}. صدّر ملف ربط جديداً الآن.`)
+      toast.show(`تم التدوير ✅ — الاعتماد القديم ينتهي ${localDateTimeLabel(expiresAt)}. صدّر ملف ربط جديداً الآن.`)
     } catch (e) { toast.show((e as Error).message, 'error') }
     finally { setBusy(null) }
   }
@@ -246,7 +247,7 @@ export function SyncPage() {
       {sync.enabled && (
         <div className={`anim-up ${card} flex items-center justify-between flex-wrap gap-3`}>
           <div className="text-[12.5px] space-y-1">
-            <div className="text-slate-500">آخر مزامنة: <b className="text-slate-700 dark:text-slate-200">{sync.lastSyncedAt ? sync.lastSyncedAt.slice(0, 16).replace('T', ' ') : 'لم تتم بعد'}</b> — المراجعة <b>{sync.lastKnownRev}</b></div>
+            <div className="text-slate-500">آخر مزامنة: <b className="text-slate-700 dark:text-slate-200">{sync.lastSyncedAt ? localDateTimeLabel(sync.lastSyncedAt) : 'لم تتم بعد'}</b> — المراجعة <b>{sync.lastKnownRev}</b></div>
             {sync.lastResult && <div className="text-slate-400">{sync.lastResult}</div>}
             {sync.dirty && <div className="text-amber-600 font-bold">توجد تغييرات محلية بانتظار الدفع…</div>}
           </div>
@@ -331,7 +332,7 @@ export function SyncPage() {
             {snapshots.map((s) => (
               <div key={s.at} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-amber-500/5 border border-amber-400/20">
                 <div className="text-[12px]">
-                  <div className="font-bold text-slate-700 dark:text-slate-200">{s.at.slice(0, 16).replace('T', ' ')}</div>
+                  <div className="font-bold text-slate-700 dark:text-slate-200">{localDateTimeLabel(s.at)}</div>
                   <div className="text-slate-400 text-[10.5px]">{(s.size / 1024).toFixed(1)} ك.ب</div>
                 </div>
                 <div className="flex items-center gap-1.5">

@@ -10,6 +10,7 @@ import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
@@ -32,7 +33,7 @@ import { calculateInvoiceCommissionMinor } from '../../core/invoiceCommissions.t
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
-import { maybeTaxBarcode } from '../print/taxBarcode.ts'
+import { maybeTaxBarcode, qrDataUrlFromPayload, taxBarcodePayload } from '../print/taxBarcode.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNavigation, OverlayPortal } from '../components/ui.tsx'
 import { useAnchoredMenu } from '../components/anchoredMenu.ts'
@@ -68,7 +69,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices, employees } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices, employees, attachSaleTaxQr } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
@@ -227,7 +228,7 @@ export function PosPage() {
   const searchOpen = query.trim().length > 0
   const searchMenuStyle = useAnchoredMenu(searchBoxRef, searchOpen, 420)
   /** سد فجوة فورية — النشاط #5 (صيدلية): شارة استباقية لأقرب تاريخ انتهاء قبل الإضافة للسلة */
-  const nearestExpiry = useMemo(() => nearestExpiryByItem(batches, new Date().toISOString()), [batches])
+  const nearestExpiry = useMemo(() => nearestExpiryByItem(batches, todayLocalIso()), [batches])
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
@@ -381,7 +382,7 @@ export function PosPage() {
         setQuery('')
         return
       }
-      const w = warrantyLookup(serials, q, new Date().toISOString())
+      const w = warrantyLookup(serials, q, todayLocalIso())
       const itName = items.find((it) => it.id === su.itemId)?.nameAr ?? 'صنف'
       toast.show(
         w?.active
@@ -500,9 +501,10 @@ export function PosPage() {
 
   /** طباعة إيصال فاتورة (المرحلة 5) — مع الرمز الضريبي عند تفعيل إحدى ميزتي
       الفاتورة الإلكترونية (زاتكا السعودية أو التحقق المحلي المصري) */
-  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
+  /** وسائط رمز الفاتورة — مصدر واحد للتوليد والتجميد */
+  const taxArgsFor = (sale: { invoiceNumber: string; date: string; totals: ReturnType<typeof computeTotals> }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
-    const qrDataUrl = await maybeTaxBarcode({
+    return {
       saFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
       egFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_eg'),
       printEnabled: einvoice.printZatcaQr,
@@ -513,7 +515,15 @@ export function PosPage() {
       totalMinor: sale.totals.totalMinor,
       taxMinor: sale.totals.taxMinor,
       decimals: cur.decimals,
-    })
+    }
+  }
+
+  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number; taxQrPayload?: string }) => {
+    /* الرمز المجمّد على الفاتورة أولاً — إيصال فاتورة قديمة يجب أن يطابق
+       الرمز الذي طُبع يوم البيع، لا رمزاً ببيانات إعدادات اليوم. */
+    const qrDataUrl = sale.taxQrPayload
+      ? qrDataUrlFromPayload(sale.taxQrPayload)
+      : await maybeTaxBarcode(taxArgsFor(sale))
     const model = buildReceiptModel({
       invoiceNumber: sale.invoiceNumber,
       refCode: sale.refCode,
@@ -634,7 +644,10 @@ export function PosPage() {
         ...(commissionEmployeeId && commissionMinor > 0 ? { staffCommission: { employeeId: commissionEmployeeId, amountMinor: commissionMinor } } : {}),
       })
       setLastInvoice(sale.invoiceNumber)
-      setLastSale(sale)
+      /* تجميد الرمز عند البيع: كل إعادة طباعة لاحقة تقرأ نفس الحمولة */
+      const frozenPayload = taxBarcodePayload(taxArgsFor(sale))
+      if (frozenPayload) attachSaleTaxQr(sale.id, frozenPayload)
+      setLastSale({ ...sale, taxQrPayload: frozenPayload })
       // سد فجوة مستقبلية — النشاط #5 (صيدلية): تسجيل صرف كل صنف خاضع للرقابة في سجل مستقل
       for (const line of cartControlledLines) {
         addControlledDispense({ itemId: line.itemId, qty: line.qty, patientName: pharmacyPatientName, prescriberName: pharmacyPrescriberName, idNumber: pharmacyIdNumber, saleId: sale.id })

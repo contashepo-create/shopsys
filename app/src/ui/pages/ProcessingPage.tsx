@@ -20,6 +20,7 @@ import {
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function ProcessingPage() {
   const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, postProcessing } = useDataStore()
@@ -93,7 +94,7 @@ export function ProcessingPage() {
   // المستخدم برسالة خطأ بعد الضغط لم تظهر كتحذير مسبق في الواجهة.
   const expiryErrors = validateProcessingOutputExpiry(
     parsedOuts, (id) => !!items.find((it) => it.id === id)?.trackExpiry,
-    new Date().toISOString().slice(0, 10), (id) => items.find((it) => it.id === id)?.nameAr ?? '؟',
+    todayLocalIso(), (id) => items.find((it) => it.id === id)?.nameAr ?? '؟',
   )
   const canPost = !!sourceId && !!sourceWarehouseId && !!outputWarehouseId && srcQtyNum > 0 && parsedOuts.length > 0 && expiryErrors.length === 0
 

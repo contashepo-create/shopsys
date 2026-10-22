@@ -11,6 +11,7 @@ import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { SignaturePad } from '../components/SignaturePad.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, rentalInvoiceDoc,
@@ -24,6 +25,7 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { RATE_TYPE_LABELS, EQUIPMENT_COST_LABELS, type RateType, type EquipmentCostKind } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -94,6 +96,8 @@ export function RentalContractsPage() {
 
   /* ─── فاتورة إيجار للعميل (طلب المالك): وثيقة استحقاق بشكل فاتورة البيع يسدّد منها المستأجر ─── */
   const printSwitches = usePrintSwitches()
+  /* فاتورة الإيجار الدورية مستند بيع ضريبي — رمز زاتكا عند تفعيله */
+  const stampTax = useTaxBarcodeStamp()
   const printPeriodicInvoice = (inv: RentalInvoice, c: RentalContract, templateHint?: InvoiceTemplate) => {
     const template: InvoiceTemplate = templateHint ?? (printSwitches.cashierPrint ? 'thermal' : 'a4')
     const rt = c.rateType ?? 'daily'
@@ -124,13 +128,20 @@ export function RentalContractsPage() {
         inv.notes || '',
       ].filter(Boolean).join(' · ') || undefined,
     })
+    stampTax(model, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
     const live = useAppStore.getState().receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({
         html: buildModelHtml(model, cur, live, template),
         wide: template !== 'thermal',
         title: `فاتورة إيجار دورية ${inv.invoiceNumber} — ${c.contractNumber}`,
-        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(model, cur, r, template) },
+        rebuild: () => {
+          const r = useAppStore.getState().receipt
+          /* إعادة الختم عند كل إعادة بناء: لو تغيّرت بيانات الإصدار أو اسم
+             المنشأة أثناء فتح المعاينة يُعاد توليد الرمز بدل التقاط نسخة قديمة. */
+          stampTax(model, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
+          return buildModelHtml(model, cur, r, template)
+        },
       })
       return
     }
@@ -168,13 +179,18 @@ export function RentalContractsPage() {
         ...(c.notes ? [c.notes] : []),
       ].join(' · ') || undefined,
     })
+    stampTax(model, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
     const live = useAppStore.getState().receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({
         html: buildModelHtml(model, cur, live, template),
         wide: template !== 'thermal',
         title: template !== 'thermal' ? `فاتورة إيجار ${c.contractNumber} — ${c.equipmentName}` : 'إيصال إيجار',
-        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(model, cur, r, template) },
+        rebuild: () => {
+          const r = useAppStore.getState().receipt
+          stampTax(model, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
+          return buildModelHtml(model, cur, r, template)
+        },
       })
       return
     }
@@ -403,7 +419,7 @@ export function RentalContractsPage() {
   const openInstallmentFor = (c: RentalContract) => {
     setInstallmentFor(c); setInsCount('3'); setInsIntervalMonths('1')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
-    setInsFirstDue(d.toISOString().slice(0, 10)); setInsTreasury('1101'); setSigning(null)
+    setInsFirstDue(todayLocalIso(d)); setInsTreasury('1101'); setSigning(null)
   }
   const saveInstallment = () => {
     if (!installmentFor || installmentFor.customerId == null) return
@@ -425,7 +441,7 @@ export function RentalContractsPage() {
   }
 
   /* ─── تقرير ─── */
-  const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
+  const presets = useMemo(() => periodPresets(todayLocalIso()), [])
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const report = useMemo(() => rentalReport(rentalContracts, period), [rentalContracts, period])
@@ -512,7 +528,7 @@ export function RentalContractsPage() {
                       <td className="px-4 py-3 text-slate-500">{c.totals.depositMinor > 0 ? fmt(c.totals.depositMinor) : '—'}</td>
                       <td className="px-4 py-3">
                         {c.status === 'active'
-                          ? isRentalOverdue(c, new Date().toISOString())
+                          ? isRentalOverdue(c, localIsoTimestamp())
                             ? <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[11px] font-bold animate-pulse">⏰ متأخر عن الإرجاع</span>
                             : <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[11px] font-bold">نشط</span>
                           : <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-500 text-[11px] font-bold">مُقفل</span>}

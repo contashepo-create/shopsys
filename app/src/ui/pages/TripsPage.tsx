@@ -26,6 +26,7 @@ import { periodPresets, type Period } from '../../core/reports.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -36,6 +37,7 @@ import { renderWaybillHtml } from '../print/printWaybill.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface DraftTripLine {
   key: string
@@ -68,6 +70,8 @@ export function TripsPage() {
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
+  /* فاتورة النقل للعميل مستند بيع ضريبي — رمز زاتكا عند تفعيله */
+  const stampTax = useTaxBarcodeStamp()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -134,9 +138,12 @@ export function TripsPage() {
           containerNumbers: t.containerNumbers,
         }]
     const customerBorneExpenses = t.expenses.filter((e) => e.source === 'customer')
-    const customerStandaloneMinor = tripExpenses
+    /* مصاريف عُوملت على العميل بقيد مستقل (TRE-XXXX): تدخل إجمالي الفاتورة
+       لأنها دين على العميل في 1104 — فتُعرض سطوراً بنسبة ضريبة صفر حتى لا
+       يخرج الإجمالي أكبر من مجموع السطور + الضريبة. */
+    const standaloneExpenseRecords = tripExpenses
       .filter((x) => x.tripId === t.id && !x.reversedByEntryId && x.bearer === 'customer')
-      .reduce((s, x) => s + x.amountMinor, 0)
+    const customerStandaloneMinor = standaloneExpenseRecords.reduce((s, x) => s + x.amountMinor, 0)
     const invoiceLines = [
       ...tripLines.map((line, idx) => {
         const routeNote = line.fromLoc && line.toLoc ? `المسار: ${line.fromLoc} ← ${line.toLoc}` : ''
@@ -162,6 +169,16 @@ export function TripsPage() {
         discountPercent: 0,
         soldByWeight: false,
       })),
+      ...standaloneExpenseRecords.map((exp, idx) => ({
+        itemId: -(2000 + idx),
+        nameAr: `${exp.nameAr} (على حساب العميل — ${exp.expenseNumber})`,
+        qty: 1,
+        unitPriceMinor: exp.amountMinor,
+        unitCostMinor: 0,
+        discountPercent: 0,
+        soldByWeight: false,
+        vatPercentOverride: 0,
+      })),
     ]
     const subtotalMinor = t.totals.baseMinor + customerBorneExpenses.reduce((s, e) => s + e.amountMinor, 0)
     const taxMinor = t.totals.vatMinor
@@ -175,7 +192,7 @@ export function TripsPage() {
 
     const buildNow = () => {
       const st = useAppStore.getState()
-      return buildReceiptModel({
+      const model = buildReceiptModel({
         invoiceNumber: t.tripNumber,
         refCode: t.tripNumber,
         dateIso: t.date,
@@ -197,6 +214,8 @@ export function TripsPage() {
         taxInclusive: false,
         settings: st.receipt,
       })
+      stampTax(model, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor, taxMinor })
+      return model
     }
     const tpl = receipt.defaultTemplate || 'a4'
     const model = buildNow()
@@ -381,7 +400,7 @@ export function TripsPage() {
       nameAr: quickDrvName.trim(),
       phone: quickDrvPhone.trim(),
       jobTitle: 'سائق نقل ثقيل',
-      hireDate: new Date().toISOString().slice(0, 10),
+      hireDate: todayLocalIso(),
       baseSalaryMinor: 0,
       allowancesMinor: 0,
       active: true,
@@ -508,7 +527,7 @@ export function TripsPage() {
   }
 
   /* ─── تقرير الربحية ─── */
-  const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
+  const presets = useMemo(() => periodPresets(todayLocalIso()), [])
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const profit = useMemo(() => tripProfitReport(trips, period), [trips, period])

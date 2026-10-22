@@ -15,6 +15,7 @@ import { getLogText, getLogLines, logEvent } from '../../core/applog.ts'
 import { getOrCreateSupportToken } from '../../data/supportAuth.ts'
 import { APP_VERSION } from '../../core/updates.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function SupportPage() {
   const { setup, deviceId } = useAppStore()
@@ -106,7 +107,7 @@ export function SupportPage() {
                 }`}>
                   <div className="text-[10px] font-bold mb-0.5 opacity-60">{m.from === 'client' ? '🧑 أنت' : '👨‍💻 المطوّر'}</div>
                   {m.text}
-                  {m.at && <div className="text-[9.5px] opacity-50 mt-1" dir="ltr">{m.at.slice(0, 16).replace('T', ' ')}</div>}
+                  {m.at && <div className="text-[9.5px] opacity-50 mt-1" dir="ltr">{localDateTimeLabel(m.at)}</div>}
                 </div>
               </div>
             ))

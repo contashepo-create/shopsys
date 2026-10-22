@@ -27,6 +27,7 @@ import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { validateQuotation } from '../../core/contracting.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface DraftLine { key: string; nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
 
@@ -70,7 +71,7 @@ export function QuotationsPage() {
   const openNew = () => {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
-    setValidUntil(d.toISOString().slice(0, 10))
+    setValidUntil(todayLocalIso(d))
     setQLines([{ key: crypto.randomUUID(), nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])
     setNotes(''); setWinProb('50'); setBidBond(''); setEditingQuote(null); setOpen(true)
   }
@@ -104,7 +105,7 @@ export function QuotationsPage() {
   /* §92: أخطاء النواة نفسها (validateQuotation — لا ازدواج منطق) + فحوص الواجهة */
   const quoteIssues: PrePostIssue[] = [
     ...validateQuotation({ titleAr, clientName, clientId: clientId ? Number(clientId) : null, lines: parsedLines }).map((text) => ({ id: `core:${text}`, level: 'blocking' as const, text })),
-    ...(validUntil && validUntil < new Date().toISOString().slice(0, 10)
+    ...(validUntil && validUntil < todayLocalIso()
       ? [{ id: 'expired', level: 'blocking' as const, text: 'صلاحية العرض انتهت — حدّث «ساري حتى» قبل الاعتماد', focus: 'input[type="date"]' }]
       : []),
     ...qLines.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && safeMinor(l.unitPrice) === 0).map((l) => ({
@@ -158,7 +159,7 @@ export function QuotationsPage() {
       docTitle: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
       invoiceNumber: editingQuote?.quoteNumber ?? 'مسودة',
       refCode: editingQuote ? 'QT' : 'DRAFT',
-      dateIso: new Date().toISOString().slice(0, 10),
+      dateIso: todayLocalIso(),
       partyLabel: clientName.trim() || 'عميل غير محدد',
       paymentLabel: `ساري حتى ${validUntil || '—'}`,
       rows: parsedLines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
@@ -235,7 +236,7 @@ export function QuotationsPage() {
           kind="sale"
           modeLabel={kind === 'tender' ? 'مناقصة' : 'عرض سعر'}
           currencyLabel={`${cur.code} · ${cur.symbol}`}
-          dateLabel={new Date().toISOString().slice(0, 10)}
+          dateLabel={todayLocalIso()}
           branchLabel={setup.shopName ?? ''}
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}

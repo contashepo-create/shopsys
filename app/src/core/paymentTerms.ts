@@ -1,3 +1,5 @@
+import { calendarDateIso } from './time.ts'
+
 export interface PaymentInstallmentTerm {
   dueDays: number
   percent: number
@@ -19,7 +21,7 @@ export interface PaymentScheduleLine {
 function addUtcDays(date: string, days: number): string {
   const value = new Date(`${date.slice(0, 10)}T00:00:00.000Z`)
   value.setUTCDate(value.getUTCDate() + days)
-  return value.toISOString().slice(0, 10)
+  return calendarDateIso(value)
 }
 
 export function validatePaymentTerm(term: PaymentTerm): string[] {

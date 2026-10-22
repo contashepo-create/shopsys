@@ -19,9 +19,12 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
+import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
@@ -29,6 +32,7 @@ import { effectiveContractValue } from '../../core/contracting.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 export function ContractingInvoicesPage() {
   const {
@@ -37,6 +41,7 @@ export function ContractingInvoicesPage() {
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
+  const stampTax = useTaxBarcodeStamp()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -140,21 +145,27 @@ export function ContractingInvoicesPage() {
     })))
     toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع (${pct}٪) ✓`)
   }
-  const edPrintModel = () => buildSimpleDocModel({
-    docTitle: 'فاتورة مقاولات',
-    invoiceNumber: 'مسودة',
-    refCode: 'CI',
-    dateIso: new Date().toISOString().slice(0, 10),
-    partyLabel: customers.find((c) => c.id === edCustomerId)?.nameAr ?? projects.find((x) => x.id === edProjectId)?.clientName ?? 'عميل',
-    paymentLabel: edPayment === 'cash' ? 'نقدي' : 'آجل',
-    rows: edParsed.map((l) => ({ nameAr: l.nameAr, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
-    totalMinor: edGross,
-    paidMinor: edPayment === 'cash' ? edGross : 0,
-    operatorName: setup.ownerName ?? 'المالك',
-    settings: receipt,
-    extraFooter: edNotes.trim() || undefined,
-    tax: edTax > 0 ? { label: 'الضريبة', minor: edTax, baseMinor: edNet } : undefined,
-  })
+  const edPrintModel = () => {
+    const dateIso = todayLocalIso()
+    const model = buildSimpleDocModel({
+      docTitle: 'فاتورة مقاولات',
+      invoiceNumber: 'مسودة',
+      refCode: 'CI',
+      dateIso,
+      partyLabel: customers.find((c) => c.id === edCustomerId)?.nameAr ?? projects.find((x) => x.id === edProjectId)?.clientName ?? 'عميل',
+      paymentLabel: edPayment === 'cash' ? 'نقدي' : 'آجل',
+      rows: edParsed.map((l) => ({ nameAr: l.nameAr, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
+      totalMinor: edGross,
+      paidMinor: edPayment === 'cash' ? edGross : 0,
+      operatorName: setup.ownerName ?? 'المالك',
+      settings: receipt,
+      extraFooter: edNotes.trim() || undefined,
+      tax: edTax > 0 ? { label: 'الضريبة', minor: edTax, baseMinor: edNet } : undefined,
+    })
+    /* المسودة لا تحمل رمزاً ضریبياً: رمز زاتكا يخص المستند الصادر بعد الترحيل
+       (الترحيل يولّد رقم فاتورة حقيقياً، والطباعة بعده تختم). */
+    return model
+  }
   const postFreeInvoice = () => {
     if (!edParsed.length) { toast.show('أضف بنداً واحداً على الأقل بكمية موجبة', 'error'); return }
     if (edProjectId && !edCustomerId) { toast.show('حدّد عميل الفاتورة (عميل المشروع أو غيره)', 'error'); return }
@@ -188,6 +199,9 @@ export function ContractingInvoicesPage() {
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط شاشة فواتير المبيعات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
+    const tx = s.taxPercent !== undefined
+      ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
+      : deriveTaxConfig(s.totals, s.lines)
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
@@ -198,12 +212,15 @@ export function ContractingInvoicesPage() {
       paidMinor: s.paidMinor,
       operatorName: setup.ownerName ?? 'المالك',
       customerName,
-      taxPercent: s.taxPercent ?? setup.vatPercent,
-      taxInclusive: s.taxInclusive ?? setup.taxInclusive,
+      taxPercent: tx.taxPercent,
+      taxInclusive: tx.taxInclusive,
       settings: receipt,
     })
     const prj = projects.find((p) => p.id === s.projectId)
     model.footerText = `${prj ? `مشروع: ${prj.code} — ${prj.nameAr}` : ''}${prj && receipt.footerText ? ' — ' : ''}${receipt.footerText ?? ''}`
+    /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
+    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
@@ -322,6 +339,8 @@ export function ContractingInvoicesPage() {
                           <button onClick={() => {
                             const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
                             const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? setup.vatPercent, taxInclusive: s.taxInclusive ?? setup.taxInclusive, settings: receipt })
+                            /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
+                            stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
                             shareDocPdfViaWhatsapp({ model, cur, settings: receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: setup.shopName, toast })
                           }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Send size={13} /></button>
                           <button onClick={() => openSalesInvoiceWindow(s.id)} data-contracting-invoice-review title="مراجعة وتعديل الفاتورة في نافذتها الكاملة" className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Pencil size={13} /></button>
@@ -343,7 +362,7 @@ export function ContractingInvoicesPage() {
               kind="sale"
               modeLabel="فاتورة مقاولات — بنود حرة"
               currencyLabel={`${cur.code} · ${cur.symbol}`}
-              dateLabel={new Date().toISOString().slice(0, 10)}
+              dateLabel={todayLocalIso()}
               branchLabel={setup.shopName ?? ''}
               userLabel={setup.ownerName ?? 'المالك'}
               activityLabel="مقاولات"

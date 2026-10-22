@@ -15,6 +15,7 @@
  * كل المبالغ أعداد صحيحة بالوحدة الصغرى (Minor).
  */
 import type { Minor } from './money.ts'
+import { calendarDateIso } from './time.ts'
 
 /* ───────────────────────── 1) الحضور اليومي ───────────────────────── */
 
@@ -246,10 +247,16 @@ export function leaveDaysBetween(from: string, to: string): number {
 /** كل التواريخ التي تغطيها إجازة */
 export function leaveDates(leave: Pick<LeaveRequest, 'from' | 'to'>): string[] {
   const out: string[] = []
-  const cursor = new Date(`${leave.from}T00:00:00`)
-  const end = new Date(`${leave.to}T00:00:00`)
+  // تقويم مجرّد: أيام الإجازة لا تتغير بتوقيت الجهاز، والخطو بـ24 ساعة كان
+  // يكرر يوماً أو يقفزه عند تقديم/تأخير الساعة الصيفية.
+  const cursor = new Date(`${leave.from}T00:00:00Z`)
+  const end = new Date(`${leave.to}T00:00:00Z`)
   if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime()) || end < cursor) return out
-  for (let d = cursor; d <= end; d = new Date(d.getTime() + 86_400_000)) out.push(d.toISOString().slice(0, 10))
+  for (let i = 0; ; i++) {
+    const d = new Date(cursor.getTime() + i * 86_400_000)
+    if (d.getTime() > end.getTime()) break
+    out.push(calendarDateIso(d))
+  }
   return out
 }
 

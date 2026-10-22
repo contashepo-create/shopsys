@@ -10,7 +10,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRight, Check, MoreHorizontal, GitBranch } from 'lucide-react'
+import { ChevronDown, PanelRight, Check, MoreHorizontal } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -19,6 +19,7 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation, OverlayPortal, useToast } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
+import { BranchBadge } from '../components/BranchBadge.tsx'
 
 /** موضع القائمة تحت عنوانها مباشرة — محاذاة يمينية (RTL) مع انقلاب عند ضيق الشاشة */
 function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
@@ -267,33 +268,16 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
 
       <span className="mx-1 hidden h-4 w-px shrink-0 bg-slate-200 sm:block dark:bg-slate-700" />
       {activeBranches.length > 0 && (
-        isLockedToUserBranch && effectiveBranch ? (
-          <span
-            data-menubar-branch-locked={effectiveBranch.id}
-            className="hidden shrink-0 items-center gap-1 rounded border border-brand-200 bg-brand-50/70 px-1.5 py-0.5 text-[10.5px] font-bold text-brand-700 sm:inline-flex dark:border-brand-800 dark:bg-brand-950/40 dark:text-brand-300"
-          >
-            <GitBranch size={11} />
-            {effectiveBranch.nameAr}
-          </span>
-        ) : (
-          <label className="hidden shrink-0 items-center gap-1 text-[10.5px] font-bold text-slate-500 sm:inline-flex dark:text-slate-300">
-            <GitBranch size={11} className="text-brand-600" />
-            <select
-              aria-label="تبديل الفرع النشط"
-              data-branch-switcher="menubar"
-              value={effectiveBranchId ?? ''}
-              onChange={(e) => setActiveBranchId(e.target.value ? Number(e.target.value) : null)}
-              className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10.5px] font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            >
-              <option value="">كل الفروع (شامل)</option>
-              {activeBranches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.nameAr}{b.customModulesMode === 'custom' ? ' (مخصص)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        )
+        <span className="hidden min-w-0 sm:inline-flex">
+          <BranchBadge
+            branches={activeBranches}
+            value={effectiveBranchId}
+            fallbackName={effectiveBranch?.nameAr}
+            locked={isLockedToUserBranch}
+            onChange={setActiveBranchId}
+            placement="menubar"
+          />
+        </span>
       )}
       <span className="hidden max-w-[12rem] shrink-0 truncate text-[11px] text-slate-400 lg:block">{setup.shopName || 'تَحَكَّم في إدارة أعمالك'}</span>
       {/* زر التحويل إلى الشريط الجانبي — في نهاية الشريط (يساره في RTL) */}

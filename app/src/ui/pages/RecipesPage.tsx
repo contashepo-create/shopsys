@@ -8,6 +8,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { PRODUCTION_VARIANCE_REASONS, computeRecipeNutrition, type ProductionExpense } from '../../core/recipes.ts'
 import { Btn, DecimalInput, Field, inputCls, useToast, OverlayPortal } from '../components/ui.tsx'
 import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 type MaterialRow = { id: string; itemId: number; code: string; query: string; qty: string; unitFactor: number; unitName: string; warehouseId?: number | null }
 type Tab = 'materials' | 'expenses'
@@ -33,7 +34,7 @@ export function RecipesPage() {
   const [notes, setNotes] = useState('')
   const [outputExpiryDate, setOutputExpiryDate] = useState('')
   const [outputLotNumber, setOutputLotNumber] = useState('')
-  const [productionDate, setProductionDate] = useState(new Date().toISOString().slice(0, 10))
+  const [productionDate, setProductionDate] = useState(todayLocalIso())
   const [strictBalance, setStrictBalance] = useState(true)
   const [allowNegativeIngredients, setAllowNegativeIngredients] = useState(() => localStorage.getItem('shopsys:manufacturing:allow-negative-stock') === 'true')
   /**
@@ -135,7 +136,7 @@ export function RecipesPage() {
     const headers=['الأمر','التاريخ','المنتج','مخزن صرف الخامات','مخزن استلام الناتج','رقم التشغيلة','تاريخ الصلاحية','الكمية','تكلفة الخامات','المصروفات','الإجمالي'];const values=productionOrders.map(order=>[order.orderNumber,order.date.slice(0,10),items.find(item=>item.id===order.productItemId)?.nameAr??'',warehouses.find(warehouse=>warehouse.id===(order.ingredientWarehouseId??order.warehouseId))?.nameAr??'',warehouses.find(warehouse=>warehouse.id===(order.outputWarehouseId??order.warehouseId))?.nameAr??'',order.outputLotNumber??order.orderNumber,order.outputExpiryDate??'',order.producedQty,fmt(order.ingredientsCostMinor),fmt(order.overheadMinor),fmt(order.totalCostMinor)]);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(row=>row.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=url;anchor.download='production-orders.csv';anchor.click();URL.revokeObjectURL(url)
   }
   const reset = () => {
-    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setOutputExpiryDate(''); setOutputLotNumber(''); setMaterials([{ id: crypto.randomUUID(), itemId: 0, code: '', query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setVarianceReasonCode(''); setProductionDate(new Date().toISOString().slice(0, 10)); setTab('materials')
+    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setOutputExpiryDate(''); setOutputLotNumber(''); setMaterials([{ id: crypto.randomUUID(), itemId: 0, code: '', query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setVarianceReasonCode(''); setProductionDate(todayLocalIso()); setTab('materials')
   }
   const submit = () => {
     try {

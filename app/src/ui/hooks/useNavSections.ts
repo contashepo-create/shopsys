@@ -41,7 +41,9 @@ export function useEffectiveBranchScope(): EffectiveBranchScope {
     const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
     const linkedEmployee = activeUser?.employeeId != null ? employees.find((employee) => employee.id === activeUser.employeeId) : null
     const assignedBranchId = activeUser?.branchId ?? linkedEmployee?.branchId ?? null
-    const isOwner = activeUser?.roleId === 'owner'
+    /* null = المالك الافتراضي في كل الشيفرة (BranchesPage/Header) — كان
+       يُعامل هنا كموظف مقيَّد بالفرع الرئيسي فلا يمكنه تبديل الفرع. */
+    const isOwner = activeUser == null || activeUser.roleId === 'owner'
     const userBranch = !isOwner
       ? (assignedBranchId != null ? branches.find((branch) => branch.id === assignedBranchId) ?? null : activeBranches.find((branch) => branch.isMain) ?? null)
       : null

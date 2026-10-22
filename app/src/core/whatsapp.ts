@@ -4,6 +4,8 @@
  * بلا رقم يفتح قائمة اختيار جهة في واتساب بدل الفشل الصامت.
  */
 
+import { todayLocalIso } from './time.ts'
+
 /** يطبّع الرقم لمسار wa.me: يقبل 01x المصري ويرفقه 2، ويمرر الدولي كما هو */
 export function normalizeWaPhone(phone: string): string {
   const digits = (phone || '').replace(/\D/g, '')
@@ -27,7 +29,7 @@ export function waChatLink(phone: string, message: string): string {
 /** اسم ملف لاتيني آمن للـ PDF عبر أنظمة الملفات والمشاركة: INV-0001 → Tahakom-INV-0001 */
 export function safePdfFileName(prefix: string, docNumber: string): string {
   const doc = (docNumber || 'draft').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
-  const stamp = new Date().toISOString().slice(0, 10)
+  const stamp = todayLocalIso()
   return `Tahakom-${prefix}-${doc}-${stamp}`
 }
 

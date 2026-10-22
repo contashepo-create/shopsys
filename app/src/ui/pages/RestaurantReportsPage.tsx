@@ -16,6 +16,7 @@ import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrin
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
 
@@ -67,7 +68,7 @@ export function RestaurantReportsPage() {
 
   /* فترة التقرير: الأوامر والفواتير والإنتاج تُفلتر بالتاريخ */
   const inPeriod = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayLocalIso()
     const month = today.slice(0, 7)
     return (dateIso: string) => {
       if (period === 'all') return true
@@ -140,7 +141,7 @@ export function RestaurantReportsPage() {
       headers: ['الأمر', 'النوع', 'الطاولة / التوصيل', 'الحالة', 'الفَتح', 'القفل', 'القيمة'], numCols: [6],
       rows: periodOrders.map((o) => [
         o.orderNumber, ORDER_TYPE_LABELS[o.type].nameAr, o.tableName || o.deliveryInfo || '—', STATUS_LABELS[o.status],
-        o.openedAt.slice(0, 16).replace('T', ' '), o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '—', fmt(orderValueMinor(o)),
+        localDateTimeLabel(o.openedAt), o.settledAt ? localDateTimeLabel(o.settledAt) : '—', fmt(orderValueMinor(o)),
       ]),
     }),
   ].join(''))
@@ -232,7 +233,7 @@ export function RestaurantReportsPage() {
                 'الصنف': nameOf(d.itemId), 'وصفة مطبخ': d.hasRecipe ? 'نعم' : 'جاهز', 'الكمية': d.soldQty,
                 'الإيراد': fmt(d.revenueMinor), 'التكلفة': fmt(d.costMinor), 'الربح': fmt(d.profitMinor),
                 'الهامش٪': d.marginPercent == null ? '' : d.marginPercent,
-              })), `أطباق-المطعم-${new Date().toISOString().slice(0, 10)}.csv`)}
+              })), `أطباق-المطعم-${todayLocalIso()}.csv`)}
               className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
             >
               ⬇ CSV
@@ -303,10 +304,10 @@ export function RestaurantReportsPage() {
                 onClick={() => downloadCsv(periodOrders.map((o) => ({
                   'الأمر': o.orderNumber, 'النوع': ORDER_TYPE_LABELS[o.type].nameAr,
                   'الطاولة/التوصيل': o.tableName || o.deliveryInfo || '—',
-                  'الحالة': STATUS_LABELS[o.status], 'الفَتح': o.openedAt.slice(0, 16).replace('T', ' '),
-                  'القفل': o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '',
+                  'الحالة': STATUS_LABELS[o.status], 'الفَتح': localDateTimeLabel(o.openedAt),
+                  'القفل': o.settledAt ? localDateTimeLabel(o.settledAt) : '',
                   'القيمة': fmt(o.lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor * (100 - l.discountPercent) / 100), 0)),
-                })), `أوامر-المطعم-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `أوامر-المطعم-${todayLocalIso()}.csv`)}
                 className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
               >
                 ⬇ CSV
@@ -328,8 +329,8 @@ export function RestaurantReportsPage() {
                         <td className="px-3 py-2.5">{ORDER_TYPE_LABELS[o.type].icon} {ORDER_TYPE_LABELS[o.type].nameAr}</td>
                         <td className="px-3 py-2.5 max-w-52 truncate" title={o.tableName || o.deliveryInfo}>{o.tableName || o.deliveryInfo || '—'}</td>
                         <td className="px-3 py-2.5"><span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${STATUS_BADGE[o.status]}`}>{STATUS_LABELS[o.status]}</span></td>
-                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{o.openedAt.slice(0, 16).replace('T', ' ')}</td>
-                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '—'}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{localDateTimeLabel(o.openedAt)}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{o.settledAt ? localDateTimeLabel(o.settledAt) : '—'}</td>
                         <td className="px-3 py-2.5 tabular-nums font-bold">{fmt(o.lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor * (100 - l.discountPercent) / 100), 0))}</td>
                       </tr>
                     ))}
@@ -362,7 +363,7 @@ export function RestaurantReportsPage() {
                   'تشغيلات': p.batches, 'الكمية المنتجة': p.producedQty,
                   'خامات': fmt(p.ingredientsCostMinor), 'مصاريف': fmt(p.overheadMinor),
                   'الإجمالي': fmt(p.totalCostMinor), 'تكلفة الوحدة': p.producedQty > 0 ? fmt(Math.round(p.totalCostMinor / p.producedQty)) : '',
-                })), `إنتاج-المطعم-${new Date().toISOString().slice(0, 10)}.csv`)}
+                })), `إنتاج-المطعم-${todayLocalIso()}.csv`)}
                 className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
               >
                 ⬇ CSV

@@ -13,6 +13,7 @@ import {
 import { salesSummary, stockAlerts, type Period } from '../core/reports.ts'
 import { buildBackup, backupFileName } from '../core/backup.ts'
 import { appStorage, settingsAppStorage } from '../data/persistentStorage.ts'
+import { todayLocalIso } from '../core/time.ts'
 
 /** استدعاء Bot API برسائل خطأ عربية */
 export async function callBot(token: string, method: string, body: FormData | Record<string, unknown>): Promise<void> {
@@ -44,7 +45,7 @@ export async function sendDailyReportNow(): Promise<void> {
   const app = useAppStore.getState()
   const data = useDataStore.getState()
   const cur = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
   const period: Period = { from: today, to: today }
   const s = salesSummary(data.sales, data.saleReturns, period)
   const alerts = stockAlerts(data.items)

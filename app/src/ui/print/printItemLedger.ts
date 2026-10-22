@@ -6,6 +6,7 @@
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 import type { ItemLedgerResult } from '../../core/itemLedger.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -23,7 +24,7 @@ const qty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).repla
 
 export function renderItemLedgerHtml(a: ItemLedgerPrintArgs): string {
   const fmt = (m: number) => formatMinor(m, a.cur, false)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   const rowsHtml = a.ledger.rows
     .map(

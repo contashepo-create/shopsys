@@ -17,6 +17,7 @@ import { collectAlerts as collectInstallmentAlerts } from '../../core/installmen
 import { bookingsForDate, BOOKING_STATUS_LABELS } from '../../core/booking.ts'
 import { LAUNDRY_STATUS_LABELS } from '../../core/laundry.ts'
 import type { BusinessModule } from '../../core/activities.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 interface Row { key: string; main: string; sub: string; badge?: string; tone?: 'ok' | 'warn' | 'danger' }
 
@@ -26,7 +27,7 @@ export function ActivityWidgets() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur)
   const theme = themeForActivity(setup.activityId)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIso()
 
   /** بيانات كل ويدجت — تُحسب فقط للويدجات المعروضة */
   const widgets = useMemo(() => {
@@ -94,7 +95,7 @@ export function ActivityWidgets() {
           }
         }
         case 'expiry_soon': {
-          const horizon = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+          const horizon = todayLocalIso(new Date(Date.now() + 30 * 86400000))
           const soon = store.batches.filter((b) => b.qty > 0 && b.expiryDate && b.expiryDate <= horizon)
           return {
             count: soon.length,

@@ -21,6 +21,7 @@ import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
+import { todayLocalIso } from '../../core/time.ts'
 
 const useCur = () => {
   const { setup } = useAppStore()
@@ -280,7 +281,7 @@ export function SubcontractorsPage() {
         supplierId: supplierId ? Number(supplierId) : null,
         contractValueMinor: toMinor(value, cur.decimals), retentionPercent: Number(retention) || 0,
         taxWithholdPercent: Number(withhold) || 0, boqItemIds: assignedBoq, advanceRecoveryPercent: Number(advPct) || 0,
-        startDate: new Date().toISOString().slice(0, 10),
+        startDate: todayLocalIso(),
       })
       toast.show(`أُنشئ عقد الباطن ${c.contractNumber} ✅`)
       setOpen(false); setName(''); setScope(''); setValue(''); setSupplierId(''); setWithhold('0'); setAdvPct('0'); setAssignedBoq([])
@@ -588,7 +589,7 @@ export function BondsPage() {
         bondNumber: bondNumber.trim(), type, beneficiary: beneficiary.trim(),
         amountMinor: toMinor(amount, cur.decimals), marginMinor: toMinor(margin, cur.decimals),
         feesMinor: toMinor(fees || '0', cur.decimals), bank,
-        issueDate: new Date().toISOString().slice(0, 10), expiryDate: expiry,
+        issueDate: todayLocalIso(), expiryDate: expiry,
       })
       toast.show(`صدر الخطاب ${b.bondNumber} — الهامش مجمد في 1109 ✅`)
       setOpen(false); setBondNumber(''); setBeneficiary(''); setAmount(''); setMargin(''); setFees(''); setExpiry('')
@@ -602,8 +603,8 @@ export function BondsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const today = new Date().toISOString().slice(0, 10)
-  const soon = new Date(nowMs + 30 * 86400000).toISOString().slice(0, 10)
+  const today = todayLocalIso()
+  const soon = todayLocalIso(new Date(nowMs + 30 * 86400000))
 
   return (
     <div className="space-y-4">
@@ -754,7 +755,7 @@ export function DailyWorkersPage() {
 
   const [recFor, setRecFor] = useState<number | null>(null)
   const [recProject, setRecProject] = useState<number | ''>('')
-  const [recDate, setRecDate] = useState(new Date().toISOString().slice(0, 10))
+  const [recDate, setRecDate] = useState(todayLocalIso())
   const [recDays, setRecDays] = useState('1')
 
   const [settleTreasury, setSettleTreasury] = useState('1101')

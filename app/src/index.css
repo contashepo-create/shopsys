@@ -2863,3 +2863,65 @@ input, textarea, select, option,
 @media (max-width: 520px) {
   [data-project-doc-editor] .invoice-doc .invoice-doc-fields { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   شارة الفرع النشط (قرار المالك — 2026-10-22)
+   اسم الفرع كان نصاً داكناً على رمادي فلا يُقرأ؛ هنا شارة واحدة
+   الشكل في الشريط العلوي والجانبي وفوق اسم المستخدم: تباين عالٍ،
+   نقطة حالة، وتوهّج نابض هادئ يتوقف مع «تقليل الحركة».
+   ───────────────────────────────────────────────────────────── */
+.branch-badge{
+  --bb-ink:#3730a3; --bb-bg1:#f6f8ff; --bb-bg2:#e9edff; --bb-line:#c7d2fe;
+  --bb-dot:#10b981; --bb-dot-ring:rgba(16,185,129,.16);
+  --bb-glow-0:rgba(99,102,241,.30); --bb-glow-ring:rgba(99,102,241,.09);
+  --bb-glow:rgba(99,102,241,.26); --bb-inset:rgba(255,255,255,.95);
+  position:relative; display:inline-flex; align-items:center; gap:.36rem;
+  min-width:0; max-width:100%; padding:.24rem .6rem;
+  border:1px solid var(--bb-line); border-radius:999px;
+  background:linear-gradient(180deg,var(--bb-bg1),var(--bb-bg2));
+  color:var(--bb-ink); font-size:11px; font-weight:800; line-height:1.75;
+  white-space:nowrap; vertical-align:middle;
+  box-shadow:0 0 0 0 var(--bb-glow-0), inset 0 1px 0 var(--bb-inset);
+  animation:branch-breathe 3.8s ease-in-out infinite;
+}
+.dark .branch-badge{
+  --bb-ink:#dbe3ff; --bb-bg1:rgba(99,102,241,.20); --bb-bg2:rgba(79,70,229,.12);
+  --bb-line:rgba(129,140,248,.42);
+  --bb-glow-0:rgba(129,140,248,.26); --bb-glow-ring:rgba(129,140,248,.08);
+  --bb-glow:rgba(129,140,248,.22); --bb-inset:rgba(255,255,255,.06);
+  background:linear-gradient(180deg,var(--bb-bg1),var(--bb-bg2));
+  color:var(--bb-ink); border-color:var(--bb-line);
+}
+.branch-badge--header{ font-size:11.5px; padding:.26rem .66rem; gap:.4rem; max-width:15rem; }
+.branch-badge--menubar{ max-width:14rem; }
+.branch-badge--sidebar{ width:100%; justify-content:flex-start; }
+.branch-badge.is-all{ --bb-dot:#f59e0b; --bb-dot-ring:rgba(245,158,11,.18); }
+.branch-badge-ico{ flex:0 0 auto; opacity:.9; }
+.branch-badge-dot{
+  flex:0 0 auto; width:6px; height:6px; border-radius:999px;
+  background:var(--bb-dot); box-shadow:0 0 0 3px var(--bb-dot-ring);
+}
+.branch-badge-name{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.branch-badge-caption{ font-size:9.5px; font-weight:700; color:#4f46e5; opacity:.85; }
+.dark .branch-badge-caption{ color:#a5b4fc; }
+.branch-badge-lock{ flex:0 0 auto; opacity:.6; }
+.branch-badge-select{
+  appearance:none; -webkit-appearance:none; min-width:0; max-width:12.5rem;
+  margin:0; padding:0; border:0; background:transparent;
+  color:inherit; font:inherit; line-height:inherit; cursor:pointer; outline:none;
+}
+.branch-badge--sidebar .branch-badge-select{ flex:1 1 auto; max-width:none; }
+.branch-badge-select:focus-visible{ text-decoration:underline; text-underline-offset:3px; }
+.branch-badge-select option{ color:#0f172a; background:#fff; font-weight:700; }
+.dark .branch-badge-select option{ color:#e2e8f0; background:#111c2e; }
+.branch-badge-chev{ flex:0 0 auto; opacity:.55; }
+.branch-badge.is-switchable:hover{ --bb-line:#a5b4fc; }
+.dark .branch-badge.is-switchable:hover{ --bb-line:rgba(165,180,252,.65); }
+
+@keyframes branch-breathe{
+  0%,100%{ box-shadow:0 0 0 0 var(--bb-glow-0), 0 0 0 0 rgba(0,0,0,0), inset 0 1px 0 var(--bb-inset); }
+  50%{ box-shadow:0 0 0 3px var(--bb-glow-ring), 0 0 15px 2px var(--bb-glow), inset 0 1px 0 var(--bb-inset); }
+}
+@media (prefers-reduced-motion: reduce){
+  .branch-badge{ animation:none; }
+}

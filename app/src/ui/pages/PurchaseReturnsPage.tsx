@@ -24,6 +24,7 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function PurchaseReturnsPage() {
   const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
@@ -214,7 +215,7 @@ export function PurchaseReturnsPage() {
                   <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح مرتجع المشتريات ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
-                      <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>
+                      <div className="text-[11px] text-slate-400">{localDateTimeLabel(r.date)}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{orig?.invoiceNumber ?? '—'}</td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{orig ? supplierName(orig.supplierId) : '—'}</td>

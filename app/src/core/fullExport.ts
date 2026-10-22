@@ -12,6 +12,8 @@
  * للمحاسبة والمخزون، لا نسخة استعادة (تلك وظيفة النسخة الاحتياطية الكاملة).
  */
 
+import { localStampCompact } from './time.ts'
+
 export interface ExportSheet {
   nameAr: string
   headers: string[]
@@ -189,6 +191,7 @@ export function downloadTextFile(fileName: string, mime: string, content: string
 /** اسم ملف تصدير موحد: tahakom-export-اسم-المحل-2026-10-05-1030 */
 export function exportFileName(shopName: string, kind: string, ext: string, nowIso: string): string {
   const safe = shopName.trim().replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 30) || 'tahakom'
-  const d = nowIso.slice(0, 16).replace('T', '-').replace(':', '')
+  /* الختم المحلي: اسم الملف يطابق ساعة المستخدم لا UTC */
+  const d = localStampCompact(nowIso) || nowIso.slice(0, 10)
   return `tahakom-${kind}-${safe}-${d}.${ext}`
 }

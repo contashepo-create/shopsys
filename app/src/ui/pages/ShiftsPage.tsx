@@ -16,6 +16,7 @@ import { summarizeShift, currentOpenShift, type Shift } from '../../core/shifts.
 import { returnCashRefundMinor } from '../../core/returns.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 function StatCard({ label, value, icon: Icon, tone }: { label: string; value: string; icon: typeof Banknote; tone: string }) {
   return (
@@ -112,7 +113,7 @@ export function ShiftsPage() {
               </span>
               <div>
                 <div className="font-extrabold text-slate-800 dark:text-white">وردية مفتوحة #{open.id}</div>
-                <div className="text-[11px] text-slate-400">فتحها {open.openedBy} · {open.openedAt.slice(0, 16).replace('T', ' ')}</div>
+                <div className="text-[11px] text-slate-400">فتحها {open.openedBy} · {localDateTimeLabel(open.openedAt)}</div>
               </div>
             </div>
             <Btn onClick={() => { setCountedCash(''); setCloseModal(true) }}>

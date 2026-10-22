@@ -6,6 +6,9 @@
  *
  * نواة خالصة بلا React ولا قيود — كل مبلغ يُحوَّل للوحدة الصغرى (Minor).
  */
+
+import { todayLocalIso } from './time.ts'
+
 export interface EmployeeImportRow {
   nameAr: string
   jobTitle: string
@@ -126,7 +129,7 @@ export function parseEmployeesCsv(text: string): EmployeeImportResult {
       nameAr,
       jobTitle: cell(parts, 'jobTitle'),
       phone: normalizeDigits(cell(parts, 'phone')).replace(/[^\d+]/g, ''),
-      hireDate: hireDate || new Date().toISOString().slice(0, 10),
+      hireDate: hireDate || todayLocalIso(),
       baseSalaryMinor,
       allowancesMinor,
       notes: cell(parts, 'notes'),

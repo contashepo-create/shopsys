@@ -8,6 +8,7 @@
  * (جرد/مرتجعات قديمة) يُصرف الفائض غير المتتبَّع بلا اعتراض — لا نحبس البيع.
  * نواة خالصة بلا واجهات.
  */
+import { calendarDateIso } from './time.ts'
 
 export interface StockBatch {
   id: number
@@ -36,7 +37,7 @@ export class ExpiredStockError extends Error {
 export function isValidExpiryDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
   const d = new Date(`${s}T00:00:00Z`)
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+  return !Number.isNaN(d.getTime()) && calendarDateIso(d) === s
 }
 
 /** ترتيب FEFO: الأقرب انتهاءً أولاً، وبلا تاريخ في الآخر، ثم الأقدم استلاماً */
