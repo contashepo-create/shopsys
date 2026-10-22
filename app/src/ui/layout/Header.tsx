@@ -34,15 +34,15 @@ import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
 import { BranchBadge } from '../components/BranchBadge.tsx'
 
-export function Header({ title, sidebarCollapsed = false }: { title: string; sidebarCollapsed?: boolean }) {
+export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload } = useAppStore()
   const navigationMode = useAppStore((s) => s.appearance.navigationMode)
-  /* شارة الفرع تظهر مرة واحدة دائماً:
-     - وضع القوائم العلوي: في MenuBar فوق اسم المستخدم مباشرة.
-     - وضع الشريط الجانبي موسّعاً: في الشريط نفسه.
-     - وضع الشريط الجانبي مطوياً: هنا فوق اسم المستخدم (وإلا اختفت الشارة كلياً). */
+  /* شارة الفرع فوق اسم المستخدم: تظهر في وضع الشريط الجانبي (موسّعاً أو
+     مطوياً) — وفي وضع القوائم العلوي تعرضها MenuBar أعلى هذا الموضع فلا
+     تتكرر في الرأس. (الشريط الجانبي الموسّع يعرض نسخة ثانية أعلى قائمته:
+     قرار المالك المعتمد — تُبقى كما هي حتى يقرر توحيدها.) */
   const { branches: activeBranches, effectiveBranch, effectiveBranchId, isLockedToUserBranch, setActiveBranchId } = useEffectiveBranchScope()
-  const showHeaderBranchBadge = navigationMode !== 'topbar' && sidebarCollapsed && activeBranches.length > 0
+  const showHeaderBranchBadge = navigationMode !== 'topbar' && activeBranches.length > 0
   const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح

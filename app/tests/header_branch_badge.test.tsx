@@ -1,8 +1,8 @@
 /**
- * موضع شارة الفرع في الرأس — قاعدة «شارة واحدة ظاهرة دائماً»:
- *  - وضع القوائم العلوي: الرأس لا يعرضها (تعرضها MenuBar فوق اسم المستخدم).
- *  - شريط جانبي موسّع: الرأس لا يعرضها (تعرضها Sidebar).
- *  - شريط جانبي مطوي: الرأس يعرضها وإلا اختفت الشارة من الشاشة.
+ * موضع شارة الفرع في الرأس — القرار المعتمد من المالك (2026-10-22):
+ *  - وضع الشريط الجانبي (موسّعاً أو مطوياً): تظهر **فوق اسم المستخدم** في الرأس.
+ *  - وضع القوائم العلوي: تعرضها MenuBar أعلى هذا الموضع، فلا تتكرر في الرأس.
+ * (الشريط الجانبي الموسّع يعرض نسخة ثانية أعلى قائمته — سلوك معتمد.)
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -26,28 +26,35 @@ const setup = (navigationMode: 'topbar' | 'sidebar') => {
   })
 }
 
-const renderHeader = (collapsed: boolean) =>
-  render(<MemoryRouter><Header title="الرئيسية" sidebarCollapsed={collapsed} /></MemoryRouter>)
+const renderHeader = () =>
+  render(<MemoryRouter><Header title="الرئيسية" /></MemoryRouter>)
 
 beforeEach(() => setup('sidebar'))
 
 describe('موضع شارة الفرع في الرأس', () => {
-  it('شريط جانبي مطوي: الشارة ظاهرة فوق اسم المستخدم مع اسم الفرع', () => {
-    const { container } = renderHeader(true)
+  it('وضع الشريط الجانبي: الشارة فوق اسم المستخدم مع اسم الفرع', () => {
+    const { container } = renderHeader()
     const badge = container.querySelector('[data-branch-badge="header"]')
     expect(badge).toBeTruthy()
     expect(badge?.textContent).toContain('فرع المنصورة')
     expect(screen.getByText('محمود علي')).toBeTruthy()
   })
 
-  it('شريط جانبي موسّع: لا تكرار في الرأس (الشارة في الشريط الجانبي)', () => {
-    const { container } = renderHeader(false)
+  it('وضع القوائم العلوي: لا شارة في الرأس (MenuBar يعرضها)', () => {
+    setup('topbar')
+    const { container } = renderHeader()
     expect(container.querySelector('[data-branch-badge="header"]')).toBeNull()
   })
 
-  it('وضع القوائم العلوي: الرأس لا يعرضها (MenuBar يعرضها)', () => {
-    setup('topbar')
-    const { container } = renderHeader(true)
-    expect(container.querySelector('[data-branch-badge="header"]')).toBeNull()
+  it('موظف مقيَّد بفرع: الشارة مقفولة بلا مبدّل', () => {
+    useRawDataStore.setState({
+      appUsers: [{ id: 3, nameAr: 'محمود علي', roleId: 'cashier', pinHash: '0'.repeat(64), active: true, branchId: 2 }],
+      currentUserId: 3,
+      activeBranchId: 2,
+    })
+    const { container } = renderHeader()
+    const badge = container.querySelector('[data-branch-badge="header"]')
+    expect(badge).toBeTruthy()
+    expect(container.querySelector('[data-branch-badge="header"] select')).toBeNull()
   })
 })
