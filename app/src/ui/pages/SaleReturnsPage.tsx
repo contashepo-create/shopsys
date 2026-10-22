@@ -220,8 +220,11 @@ export function SaleReturnsPage() {
       paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
       operatorName: printOperatorName,
       customerName: orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.nameAr ?? null : null,
-      taxPercent: setup.vatPercent,
-      taxInclusive: setup.taxInclusive,
+      /* معدل الضريبة ونمطها من الفاتورة الأصلية — لا من إعدادات اليوم.
+         إشعار الدائن يجب أن يعرض نفس نسبة الفاتورة التي يعدّلها، ولو تغيّر
+         المعدل العام بعد إصدارها؛ الإجماليات تأتي من المرتجع نفسه أصلاً. */
+      taxPercent: orig?.taxPercent ?? setup.vatPercent,
+      taxInclusive: orig?.taxInclusive ?? setup.taxInclusive,
       settings: receipt,
     })
     model.docTitle = 'مرتجع مبيعات'

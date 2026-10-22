@@ -99,7 +99,7 @@ export async function maybeTaxBarcode(args: TaxBarcodeArgs): Promise<string | un
       sellerName: args.sellerName,
       taxNumber: args.taxNumber,
       invoiceNumber: args.invoiceNumber,
-      dateIso: args.dateIso,
+      dateIso: normalizeZatcaTimestamp(args.dateIso),
       totalMinor: args.totalMinor,
       decimals: args.decimals,
     })
@@ -170,7 +170,7 @@ export function maybeTaxBarcodeSync(args: TaxBarcodeArgs): string | undefined {
       sellerName: args.sellerName,
       taxNumber: args.taxNumber,
       invoiceNumber: args.invoiceNumber,
-      dateIso: args.dateIso,
+      dateIso: normalizeZatcaTimestamp(args.dateIso),
       totalMinor: args.totalMinor,
       decimals: args.decimals,
     }) ?? undefined
@@ -181,7 +181,12 @@ export function maybeTaxBarcodeSync(args: TaxBarcodeArgs): string | undefined {
 /** يُلحق الرمز بنموذج مستند الطباعة متزامناً — تُرجع true لو أُلحق الرمز فعلاً */
 export function withTaxBarcodeSync<T extends { qrDataUrl?: string }>(model: T, args: TaxBarcodeArgs): boolean {
   const url = maybeTaxBarcodeSync(args)
-  if (!url) return false
+  if (!url) {
+    /* لا نترك رمزاً قديماً على نموذج أُعيد استخدامه — الطباعة بلا رمز أصدق
+       من طباعة رمز لا تجيزه السياسة الحالية */
+    delete model.qrDataUrl
+    return false
+  }
   model.qrDataUrl = url
   return true
 }

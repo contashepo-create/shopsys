@@ -160,6 +160,10 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
   if (m.taxLabel) {
     rows.push(`<div class="tr"><span>الوعاء الضريبي</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
     rows.push(`<div class="tr"><span>${esc(m.taxLabel)}</span><b>${fmt(m.taxMinor)}</b></div>`)
+    /* مستندات فيها مبالغ على حساب العميل بلا ضريبة (مصاريف نقلات مستقلة):
+       الأساس + الضريبة لا يساوي الإجمالي، فيُظهر الفارق صراحةً بدل رقم لا يُجمع. */
+    const nonTaxableMinor = m.totalMinor - m.taxBaseMinor - m.taxMinor
+    if (nonTaxableMinor > 0) rows.push(`<div class="tr"><span>مبالغ غير خاضعة للضريبة (على حساب العميل)</span><b>${fmt(nonTaxableMinor)}</b></div>`)
   }
   // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يظهران على المطبوعة
   const paidRows = m.remainingMinor > 0

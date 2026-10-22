@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest'
 import { maybeTaxBarcode, zatcaQrDataUrl, egBarcodeDataUrl, maybeTaxBarcodeSync, zatcaQrSvgDataUrl, egBarcodeSvgDataUrl, withTaxBarcodeSync } from '../src/ui/print/taxBarcode.ts'
 import { buildReceiptModel, DEFAULT_RECEIPT_SETTINGS } from '../src/core/receipt.ts'
+import { buildZatcaQr, isValidZatcaTimestamp, validateZatcaFields } from '../src/core/einvoice.ts'
 import { renderReceiptHtml } from '../src/ui/print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../src/ui/print/printInvoiceA4.ts'
 import type { CurrencyConfig } from '../src/core/money.ts'
@@ -172,5 +173,59 @@ describe('الرمز يصل إلى الورق — HTML الحراري وA4', () 
     const model = buildModel()
     expect(withTaxBarcodeSync(model, { ...args, saFeatureActive: false, egFeatureActive: false })).toBe(false)
     expect(renderReceiptHtml(model, cur, DEFAULT_RECEIPT_SETTINGS)).not.toContain('data:image/svg+xml')
+  })
+})
+
+/**
+ * تحصين المدخلات (مراجعة برمجية/أمنية/محاسبية 2026-10-22):
+ * ① الأرقام الضريبية تُلصق غالباً بمسافات/شرطات — تُنظَّف قبل التحقق والترميز
+ *   بدل إسقاط الرمز بصمت.
+ * ② الرمز مصفوفة نقاط فقط: اسم بائع يحوي وسوماً لا يدخل SVG بأي شكل.
+ * ③ النموذج المُعاد استخدامه لا يحتفظ برمز قديم بعد توقف السياسة.
+ * ④ طابع زاتكا الزمني صارم: تاريخ تقويمي حقيقي + وقت + منطقة زمنية.
+ */
+describe('تحصين المدخلات والطابع الزمني', () => {
+  it('الرقم السعودي بمسافات/شرطات يُقبل ويُرمَّز 15 رقماً فقط', () => {
+    const url = maybeTaxBarcodeSync({ ...base, saFeatureActive: true, egFeatureActive: false, taxNumber: '310-122-393-500-003' })
+    expect(url, 'الرقم المنسّق يجب ألا يُسقط الرمز').toMatch(/^data:image\/svg\+xml/)
+  })
+
+  it('الرقم المصري بمسافات/شرطات يُقبل', () => {
+    const url = maybeTaxBarcodeSync({ ...base, saFeatureActive: false, egFeatureActive: true, taxNumber: '123 456-789' })
+    expect(url).toMatch(/^data:image\/svg\+xml/)
+  })
+
+  it('اسم بائع يحوي وسوم HTML لا يدخل في SVG (الرمز نقاط فقط)', () => {
+    const url = zatcaQrSvgDataUrl({
+      sellerName: '<script>alert(1)</script>', vatNumber: '310122393500003',
+      timestampIso: '2026-10-20T12:00:00Z', totalWithVatMinor: 1150, vatMinor: 150, decimals: 2,
+    })
+    expect(url).toBeTruthy()
+    const svg = decodeURIComponent(url!.split(',').slice(1).join(','))
+    expect(svg).not.toContain('<script')
+    expect(svg).toContain('shape-rendering="crispEdges"')
+  })
+
+  it('withTaxBarcodeSync يمسح رمزاً قديماً حين تمنع السياسة الطباعة', () => {
+    const model: { qrDataUrl?: string } = { qrDataUrl: 'data:image/png;base64,OLD' }
+    const stamped = withTaxBarcodeSync(model, { ...base, saFeatureActive: true, egFeatureActive: false, printEnabled: false, taxNumber: '310122393500003' })
+    expect(stamped).toBe(false)
+    expect(model.qrDataUrl, 'رمز قديم بلا سياسة = طباعة مضللة').toBeUndefined()
+  })
+
+  it('اسم بائع أطول من 255 بايت ⇒ رسالة عربية واضحة لا RangeError صامت', () => {
+    const longName = 'م'.repeat(300)
+    const errors = validateZatcaFields({ sellerName: longName, vatNumber: '300000000000003', timestampIso: '2026-09-14T20:30:00Z', totalWithVatMinor: 11500, vatMinor: 1500, decimals: 2 })
+    expect(errors.some((e) => e.includes('255'))).toBe(true)
+    expect(() => buildZatcaQr({ sellerName: longName, vatNumber: '300000000000003', timestampIso: '2026-09-14T20:30:00Z', totalWithVatMinor: 11500, vatMinor: 1500, decimals: 2 })).toThrow(/255/)
+  })
+  it('طابع زاتكا: تاريخ مستحيل يُرفض، والمنطقة الزمنية والوقت مطلوبان', () => {
+    expect(isValidZatcaTimestamp('2026-09-14T20:30:00Z')).toBe(true)
+    expect(isValidZatcaTimestamp('2026-09-14T20:30:00.000Z')).toBe(true)
+    expect(isValidZatcaTimestamp('2026-09-14T20:30:00+03:00')).toBe(true)
+    expect(isValidZatcaTimestamp('2026-02-30T00:00:00Z')).toBe(false)
+    expect(isValidZatcaTimestamp('2026-09-14T20:30:00')).toBe(false)
+    expect(isValidZatcaTimestamp('2026-09-14')).toBe(false)
+    expect(isValidZatcaTimestamp('ليس تاريخاً')).toBe(false)
   })
 })

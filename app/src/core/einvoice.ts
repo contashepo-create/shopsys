@@ -56,21 +56,41 @@ export function minorToDecimalString(minor: Minor, decimals: number): string {
   return `${s.slice(0, -decimals)}.${s.slice(-decimals)}`
 }
 
+/** أرقام فقط — يتحمل لصق الأرقام بمسافات أو شرطات من لوحة المفاتيح/الفاتورة الورقية */
+const digitsOnly = (value: string) => value.replace(/[\s-]/g, '')
+
 /** التحقق من الرقم الضريبي السعودي: 15 رقماً، يبدأ وينتهي بـ3 */
 export function isValidSaVatNumber(vat: string): boolean {
-  return /^3\d{13}3$/.test(vat.trim())
+  return /^3\d{13}3$/.test(digitsOnly(vat))
 }
 
 /** التحقق من رقم التسجيل الضريبي المصري: 9 أرقام */
 export function isValidEgTaxNumber(tax: string): boolean {
-  return /^\d{9}$/.test(tax.trim().replace(/-/g, ''))
+  return /^\d{9}$/.test(digitsOnly(tax))
+}
+
+/**
+ * طابع زاتكا: ISO 8601 كامل بتاريخ ووقت ومنطقة زمنية (Z أو ±HH:MM).
+ * `Date.parse` وحده يقبل «2026-02-30» ويحوّلها إلى 2 مارس — فيُرمَّز تاريخ
+ * غير موجود في رمز ضريبي. هنا نتحقق من اليوم التقويمي نفسه بعد التحويل.
+ * الميلي ثانية اختيارية (1–3 أرقام).
+ */
+const ZATCA_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/
+export function isValidZatcaTimestamp(value: string): boolean {
+  if (!ZATCA_TIMESTAMP_RE.test(value) || Number.isNaN(Date.parse(value))) return false
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
+  const probe = new Date(Date.UTC(year, month - 1, day))
+  return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day
 }
 
 export function validateZatcaFields(f: ZatcaFields): string[] {
   const errors: string[] = []
   if (!f.sellerName.trim()) errors.push('اسم البائع مطلوب لرمز QR')
+  /* TLV يحمل الطول في بايت واحد (≤255)؛ الفحص هنا يعطي رسالة عربية واضحة
+     بدل RangeError تُلتقط صامتاً في مسار الطباعة فيختفي الرمز بلا سبب. */
+  else if (new TextEncoder().encode(f.sellerName.trim()).length > 255) errors.push('اسم البائع أطول من 255 بايت — لا يتسع له رمز QR')
   if (!isValidSaVatNumber(f.vatNumber)) errors.push('الرقم الضريبي السعودي يجب أن يكون 15 رقماً يبدأ وينتهي بـ3')
-  if (Number.isNaN(Date.parse(f.timestampIso))) errors.push('طابع زمني غير صالح')
+  if (!isValidZatcaTimestamp(f.timestampIso)) errors.push('طابع زمني غير صالح (يلزم ISO 8601 كامل بتاريخ ووقت ومنطقة زمنية)')
   if (!Number.isInteger(f.totalWithVatMinor) || f.totalWithVatMinor < 0) errors.push('الإجمالي غير صالح')
   if (!Number.isInteger(f.vatMinor) || f.vatMinor < 0) errors.push('قيمة الضريبة غير صالحة')
   if (f.vatMinor > f.totalWithVatMinor) errors.push('الضريبة لا تتجاوز الإجمالي')
@@ -90,7 +110,7 @@ export function buildZatcaQr(f: ZatcaFields): string {
   if (errors.length) throw new Error(errors.join(' — '))
   const bytes = [
     ...tlvBytes(1, f.sellerName.trim()),
-    ...tlvBytes(2, f.vatNumber.trim()),
+    ...tlvBytes(2, digitsOnly(f.vatNumber)),
     ...tlvBytes(3, f.timestampIso),
     ...tlvBytes(4, minorToDecimalString(f.totalWithVatMinor, f.decimals)),
     ...tlvBytes(5, minorToDecimalString(f.vatMinor, f.decimals)),
@@ -217,7 +237,7 @@ export function buildEgReceiptBarcodeText(f: EgReceiptBarcodeFields): string {
   if (errors.length) throw new Error(errors.join(' — '))
   return [
     'EGTAX1',
-    f.taxNumber.trim().replace(/-/g, ''),
+    digitsOnly(f.taxNumber),
     f.invoiceNumber.trim(),
     f.dateIso.slice(0, 19),
     minorToDecimalString(f.totalMinor, f.decimals),
@@ -235,12 +255,14 @@ export function buildEgInvoiceDocument(inv: EgInvoiceInput): Record<string, unkn
   return {
     issuer: {
       type: 'B',
-      id: inv.issuerTaxNumber.trim(),
+      /* أرقام فقط: التحقق يتسامح مع الشرطات/المسافات، لكن بوابة ETA ترفضهما
+         داخل الحقل نفسه — فكان التصدير يخرج برقم منسّق غير مقبول. */
+      id: digitsOnly(inv.issuerTaxNumber),
       name: inv.issuerName.trim(),
       address: { country: 'EG', regionCity: '', street: inv.issuerAddress || '—', buildingNumber: '—' },
     },
     receiver: inv.receiverTaxNumber
-      ? { type: 'B', id: inv.receiverTaxNumber.trim(), name: inv.receiverName || '—' }
+      ? { type: 'B', id: digitsOnly(inv.receiverTaxNumber), name: inv.receiverName || '—' }
       : { type: 'P', id: '', name: inv.receiverName || 'مستهلك نهائي' },
     documentType: 'I',
     documentTypeVersion: '1.0',

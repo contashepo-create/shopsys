@@ -3,7 +3,7 @@
  * node --experimental-strip-types scripts/verify_einvoice.mjs
  */
 import {
-  minorToDecimalString, isValidSaVatNumber, isValidEgTaxNumber,
+  minorToDecimalString, isValidSaVatNumber, isValidEgTaxNumber, isValidZatcaTimestamp,
   validateZatcaFields, tlvBytes, buildZatcaQr, decodeZatcaQr,
   bytesToBase64, base64ToBytes,
   validateEgInvoice, buildEgInvoiceDocument,
@@ -34,6 +34,9 @@ ok(!isValidSaVatNumber('31012239350003'), '14 رقماً مرفوض')
 ok(!isValidSaVatNumber(''), 'فارغ مرفوض')
 ok(isValidEgTaxNumber('123456789'), 'رقم مصري 9 أرقام')
 ok(isValidEgTaxNumber('123-456-789'), 'الشرطات تُنظف')
+ok(isValidEgTaxNumber('123 456 789'), 'المسافات تُنظف (لصق من فاتورة ورقية)')
+ok(isValidSaVatNumber('310 122 393 500 003'), 'رقم سعودي بمسافات يُقبل')
+ok(isValidSaVatNumber('310-122-393-500-003'), 'رقم سعودي بشرطات يُقبل')
 ok(!isValidEgTaxNumber('12345678'), '8 أرقام مرفوض')
 ok(!isValidEgTaxNumber('abc456789'), 'حروف مرفوضة')
 
@@ -76,6 +79,15 @@ throws(() => buildZatcaQr({ ...fields, vatNumber: '123' }), 'رقم ضريبي �
 throws(() => buildZatcaQr({ ...fields, sellerName: ' ' }), 'اسم فارغ يرمي')
 throws(() => buildZatcaQr({ ...fields, vatMinor: 200000 }), 'ضريبة أكبر من الإجمالي ترمي')
 ok(validateZatcaFields({ ...fields, timestampIso: 'ليس تاريخاً' }).length === 1, 'طابع زمني فاسد يُكشف')
+ok(validateZatcaFields({ ...fields, timestampIso: '2026-02-30T00:00:00Z' }).length === 1, 'تاريخ تقويمي مستحيل يُكشف (لا يُطبَّع إلى مارس)')
+ok(validateZatcaFields({ ...fields, timestampIso: '2026-09-14T20:30:00' }).length === 1, 'طابع بلا منطقة زمنية يُكشف')
+ok(validateZatcaFields({ ...fields, timestampIso: '2026-09-14T20:30:00+03:00' }).length === 0, 'منطقة زمنية صريحة مقبولة')
+ok(isValidZatcaTimestamp('2026-09-14T20:30:00.123Z') && !isValidZatcaTimestamp('2026-09-14'), 'فاحص الطابع الزمني مباشرة')
+const longName = 'م'.repeat(300)
+ok(validateZatcaFields({ ...fields, sellerName: longName }).some((e) => e.includes('255')), 'اسم أطول من 255 بايت ⇒ رسالة عربية قبل RangeError')
+throws(() => buildZatcaQr({ ...fields, sellerName: longName }), 'بناء الرمز يرفض الاسم الطويل برسالة مفهومة')
+const formattedVat = buildZatcaQr({ ...fields, vatNumber: '310-122-393-500-003' })
+ok(decodeZatcaQr(formattedVat).get(2) === '310122393500003', 'الرقم المنسّق يُرمَّز أرقاماً فقط')
 
 /* ─── مستند البوابة المصرية ─── */
 const egInput = {
@@ -110,6 +122,8 @@ ok(doc.invoiceLines[1].netTotal === 45 && doc.invoiceLines[1].total === 51.3, '�
 ok(doc.totalAmount === 279.3, 'الإجمالي النهائي')
 ok(doc.netAmount === 245, 'الصافي قبل الضريبة')
 ok(doc.taxTotals[0].amount === 34.3, 'إجمالي الضرائب')
+const docFormatted = buildEgInvoiceDocument({ ...egInput, issuerTaxNumber: '123-456-789', receiverTaxNumber: '987 654 321' })
+ok(docFormatted.issuer.id === '123456789' && docFormatted.receiver.id === '987654321', 'مستند ETA يطبّع أرقام الضرائب (بلا شرطات/مسافات)')
 
 /* مستهلك نهائي B2C */
 const b2c = buildEgInvoiceDocument({ ...egInput, receiverTaxNumber: '', receiverName: '' })
@@ -174,6 +188,9 @@ const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
 ok(advSalesSrc.includes('useTaxBarcodeStamp'), 'محرر فاتورة المبيعات: يستخدم خطاف الختم الموحد')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
 ok(advSalesSrc.includes('editingInvoice?{invoiceNumber:editingInvoice.invoiceNumber'), 'محرر الفاتورة: معاينة فاتورة قائمة تستخدم رقمها وتاريخها لا «مسودة» (طابع زاتكا صحيح)')
+/* إشعار الدائن: نسبة الضريبة من الفاتورة الأصلية لا من إعدادات اليوم — وإلا
+   طُبع سطر ضريبة بنسبة مخالفة للإشعار ولو كانت الإجماليات صحيحة */
+ok(readSource('../src/ui/pages/SaleReturnsPage.tsx').includes('orig?.taxPercent ?? setup.vatPercent'), 'إشعار الدائن يعرض نسبة ضريبة الفاتورة الأصلية')
 ok(readSource('../src/ui/hooks/useTaxBarcodeStamp.ts').includes('einvoice.enabled === true'), 'خطاف الختم يربط الرمز بتشغيل الإصدار الإلكتروني — لا يُطبع بلا تشغيل')
 /* منع عودة شرط الاتصال إلى مسار الطباعة: المولّد لا يقرأ الشبكة، والشاشة تفصل الربط عنه */
 ok(!readSource('../src/ui/print/taxBarcode.ts').includes('navigator.onLine'), 'مولّد الرمز لا يقرأ حالة الشبكة — الطباعة محلية')

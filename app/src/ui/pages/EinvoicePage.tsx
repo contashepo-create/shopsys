@@ -172,7 +172,7 @@ export function EinvoicePage() {
   if (!einvoice.enabled) barcodeBlockers.push('الإصدار الإلكتروني الرسمي غير مشغَّل — فعّله من بطاقة بيانات الممول أدناه (أو بالزر بجانب التشخيص) ثم أعد طباعة الفاتورة.')
   if (!einvoice.printZatcaQr) barcodeBlockers.push('خيار «طباعة الرمز الضريبي» موقوف — فعّله من بطاقة بيانات الممول.')
   if (!taxNumberValid) barcodeBlockers.push(saActive ? 'الرقم الضريبي غير مطابق لصيغة زاتكا (15 رقماً يبدأ وينتهي بـ3) — صحّحه من «بيانات المنشأة».' : 'رقم التسجيل الضريبي المصري يجب أن يكون 9 أرقام — صحّحه من «بيانات المنشأة».')
-  if (!sellerNameReady) barcodeBlockers.push('اسم المنشأة فارغ — عرّفه من «بيانات المنشأة» ليظهر في رمز البائع.')
+  if (!sellerNameReady) barcodeBlockers.push('اسم المنشأة في «بيانات المنشأة» فارغ — رمز زاتكا يقرأ الاسم الرسمي لا اسم ترويسة الطباعة. عرّفه ليظهر رمز البائع.')
   const barcodeWillPrint = barcodePolicy.printQr && barcodeBlockers.length === 0
 
   const recentSales = [...sales].reverse().slice(0, 20)

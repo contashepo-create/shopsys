@@ -219,9 +219,9 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
               <tbody>
                 {[...trips].reverse().map((t) => {
                   const cust = t.customerId ? customers.find((c) => c.id === t.customerId) : undefined
-                  const customerStandaloneMinor = tripExpenses
+                  const standaloneExpenseRecords = tripExpenses
                     .filter((x) => x.tripId === t.id && !x.reversedByEntryId && x.bearer === 'customer')
-                    .reduce((s, x) => s + x.amountMinor, 0)
+                  const customerStandaloneMinor = standaloneExpenseRecords.reduce((s, x) => s + x.amountMinor, 0)
                   const totalForCustomer = t.totals.grandMinor + customerStandaloneMinor
                   const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)
                   const remain = Math.max(0, totalForCustomer - paid)
@@ -262,6 +262,16 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                         unitCostMinor: 0,
                         discountPercent: 0,
                         soldByWeight: false,
+                      })),
+                      ...standaloneExpenseRecords.map((exp, idx) => ({
+                        itemId: -(2000 + idx),
+                        nameAr: `${exp.nameAr} (على حساب العميل — ${exp.expenseNumber})`,
+                        qty: 1,
+                        unitPriceMinor: exp.amountMinor,
+                        unitCostMinor: 0,
+                        discountPercent: 0,
+                        soldByWeight: false,
+                        vatPercentOverride: 0,
                       })),
                     ]
                     const subtotalMinor = t.totals.baseMinor + customerBorneExpenses.reduce((s, e) => s + e.amountMinor, 0)

@@ -137,9 +137,12 @@ export function TripsPage() {
           containerNumbers: t.containerNumbers,
         }]
     const customerBorneExpenses = t.expenses.filter((e) => e.source === 'customer')
-    const customerStandaloneMinor = tripExpenses
+    /* مصاريف عُوملت على العميل بقيد مستقل (TRE-XXXX): تدخل إجمالي الفاتورة
+       لأنها دين على العميل في 1104 — فتُعرض سطوراً بنسبة ضريبة صفر حتى لا
+       يخرج الإجمالي أكبر من مجموع السطور + الضريبة. */
+    const standaloneExpenseRecords = tripExpenses
       .filter((x) => x.tripId === t.id && !x.reversedByEntryId && x.bearer === 'customer')
-      .reduce((s, x) => s + x.amountMinor, 0)
+    const customerStandaloneMinor = standaloneExpenseRecords.reduce((s, x) => s + x.amountMinor, 0)
     const invoiceLines = [
       ...tripLines.map((line, idx) => {
         const routeNote = line.fromLoc && line.toLoc ? `المسار: ${line.fromLoc} ← ${line.toLoc}` : ''
@@ -164,6 +167,16 @@ export function TripsPage() {
         unitCostMinor: 0,
         discountPercent: 0,
         soldByWeight: false,
+      })),
+      ...standaloneExpenseRecords.map((exp, idx) => ({
+        itemId: -(2000 + idx),
+        nameAr: `${exp.nameAr} (على حساب العميل — ${exp.expenseNumber})`,
+        qty: 1,
+        unitPriceMinor: exp.amountMinor,
+        unitCostMinor: 0,
+        discountPercent: 0,
+        soldByWeight: false,
+        vatPercentOverride: 0,
       })),
     ]
     const subtotalMinor = t.totals.baseMinor + customerBorneExpenses.reduce((s, e) => s + e.amountMinor, 0)

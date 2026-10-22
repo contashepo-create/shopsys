@@ -134,7 +134,13 @@ export function RentalContractsPage() {
         html: buildModelHtml(model, cur, live, template),
         wide: template !== 'thermal',
         title: `فاتورة إيجار دورية ${inv.invoiceNumber} — ${c.contractNumber}`,
-        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(model, cur, r, template) },
+        rebuild: () => {
+          const r = useAppStore.getState().receipt
+          /* إعادة الختم عند كل إعادة بناء: لو تغيّرت بيانات الإصدار أو اسم
+             المنشأة أثناء فتح المعاينة يُعاد توليد الرمز بدل التقاط نسخة قديمة. */
+          stampTax(model, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
+          return buildModelHtml(model, cur, r, template)
+        },
       })
       return
     }
@@ -179,7 +185,11 @@ export function RentalContractsPage() {
         html: buildModelHtml(model, cur, live, template),
         wide: template !== 'thermal',
         title: template !== 'thermal' ? `فاتورة إيجار ${c.contractNumber} — ${c.equipmentName}` : 'إيصال إيجار',
-        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(model, cur, r, template) },
+        rebuild: () => {
+          const r = useAppStore.getState().receipt
+          stampTax(model, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
+          return buildModelHtml(model, cur, r, template)
+        },
       })
       return
     }
