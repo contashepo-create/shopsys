@@ -7658,9 +7658,10 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - **`scripts/verify_local_document_time.mjs`**: تشغّل **مسار الترحيل الحقيقي** (`postSale` + `postPurchase`) تحت `Africa/Cairo` و`America/New_York` وتثبت 40 فحصاً: تاريخ المستند المحرَّر، كود المرجع `SAL-YYMMDD` من يوم المستند، تاريخ القيد وختمه، بيع بلا تاريخ = اليوم المحلي، ختم الرواتب 09:00، و7 دوال نواة + أيام الإجازة عبر تغيير التوقيت.
 - **`verify_time_zone.mjs`** (13 فحصاً): أُضيف منع قراءة تاريخ مجرّد بـ`todayLocalIso` داخل `src/core` (يجب `calendarDateIso`) ومنع `toISOString().slice(0,10)`.
 - **`npm run audit:all`**: صار 19 فحصاً ويضم البوابة الجديدة في `docs/مراجعة-شاملة-آلية.md`.
+- **`app/tests/time_core.test.ts`**: 7 اختبارات وحدة لنواة الوقت (تقويم مجرّد، انسكاب الشهر، الإزاحة، عرض المخزّن).
 
 ### التحقق
-`npx tsc -b --force` ✓ · `npm run verify:all` **335/335** (315 بوابة + 20 رحلة) ✓ · `npx vitest run` **211 ملفاً / 1484 اختباراً** ✓ · `npm run build` ✓ · `oxlint` 0/0 ✓ · `npm run audit:all` **19/19** ✓ · `npm audit --omit=dev` 0 ✓ · `verify_time_zone` 13/13 · `verify_local_document_time` 40/40 · `verify_einvoice` 112/112 · `verify_print_escaping` 19/19 · `verify_sales_print_coverage` 21/21.
+`npx tsc -b --force` ✓ · `npm run verify:all` **335/335** (315 بوابة + 20 رحلة) ✓ · `npx vitest run` **212 ملفاً / 1491 اختباراً** ✓ · `npm run build` ✓ · `oxlint` 0/0 ✓ · `npm run audit:all` **19/19** ✓ · `npm audit --omit=dev` 0 ✓ · `verify_time_zone` 13/13 · `verify_local_document_time` 40/40 · `verify_einvoice` 112/112 · `verify_print_escaping` 19/19 · `verify_sales_print_coverage` 21/21.
 
 ## جولة 2026-10-22 (رابعة) — إغلاق الملفات المفتوحة وتأسيس مراجعة آلية شاملة
 
