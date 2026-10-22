@@ -35,7 +35,7 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
 import { openItemPricesWindow } from '../windows/windowStore.ts'
-import { todayLocalIso } from '../../core/time.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, suppliers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId, attachSaleTaxQr } = useDataStore()
@@ -329,7 +329,7 @@ export function SalesInvoicesPage() {
                 <td className="px-4 py-3">
                   <div className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5">{s.invoiceNumber}{returnStateOf(s)!=='none'&&<span className={`text-[9px] px-1.5 py-0.5 rounded-full ${returnStateOf(s)==='full'?'bg-rose-600 text-white':'bg-amber-500 text-white'}`}>{returnStateOf(s)==='full'?'مرتجع كلي':'مرتجع جزئي'}</span>}</div>
                   {s.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{s.refCode}</div>}
-                  <div className="text-[11px] text-slate-400">{s.date.slice(0, 16).replace('T', ' ')}</div>
+                  <div className="text-[11px] text-slate-400">{localDateTimeLabel(s.date)}</div>
                 </td>
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                   {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? '—' : s.partyName ? <span>{s.partyName} <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${s.partyKind === 'supplier' ? 'bg-cyan-500/10 text-cyan-600' : 'bg-violet-500/10 text-violet-600'}`}>{s.partyKind === 'supplier' ? 'مورد' : 'موظف'}</span></span> : 'عميل نقدي'}
@@ -478,7 +478,7 @@ export function SalesInvoicesPage() {
                 </div>
                 {viewing.editHistory.map((h, i) => (
                   <div key={i} className="text-[11px] text-slate-500">
-                    {h.at.slice(0, 16).replace('T', ' ')} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
+                    {localDateTimeLabel(h.at)} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
                   </div>
                 ))}
               </div>

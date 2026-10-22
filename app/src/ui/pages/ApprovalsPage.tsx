@@ -16,6 +16,7 @@ import { formatMinor } from '../../core/money.ts'
 import { getCountry } from '../../core/countries.ts'
 import { APPROVAL_DOC_LABELS, canApprove, pendingForUser, type DocApprovalStatus } from '../../core/approvals.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function ApprovalsPage() {
   const toast = useToast()
@@ -103,7 +104,7 @@ export function ApprovalsPage() {
                 <td className="p-2 text-center">{row.partyName}</td>
                 <td className="p-2 text-center font-mono font-bold">{formatMinor(row.amountMinor, cur, false)}</td>
                 <td className="p-2 text-center">{row.requestedByName}</td>
-                <td className="p-2 text-center font-mono text-[11px]">{row.requestedAt.slice(0, 16).replace('T', ' ')}</td>
+                <td className="p-2 text-center font-mono text-[11px]">{localDateTimeLabel(row.requestedAt)}</td>
                 <td className="p-2 text-center">
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${row.status === 'approved' ? 'bg-emerald-500/10 text-emerald-600' : row.status === 'rejected' ? 'bg-rose-500/10 text-rose-600' : 'bg-amber-500/10 text-amber-600'}`}>
                     {row.status === 'approved' ? 'معتمد ورُحِّل' : row.status === 'rejected' ? 'مرفوض' : 'بانتظار الاعتماد'}
@@ -125,7 +126,7 @@ export function ApprovalsPage() {
                       </div>
                     )
                   )}
-                  {row.status !== 'pending' && <span className="text-[11px] text-slate-400">{row.decidedByName} · {(row.decidedAt ?? '').slice(0, 16).replace('T', ' ')}</span>}
+                  {row.status !== 'pending' && <span className="text-[11px] text-slate-400">{row.decidedByName} · {localDateTimeLabel(row.decidedAt ?? '')}</span>}
                 </td>
               </tr>
             ))}

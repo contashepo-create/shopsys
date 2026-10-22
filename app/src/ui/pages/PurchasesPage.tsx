@@ -33,7 +33,7 @@ import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
 import { openItemPricesWindow } from '../windows/windowStore.ts'
-import { todayLocalIso } from '../../core/time.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -1133,7 +1133,7 @@ export function PurchasesPage() {
                 </div>
                 {viewing.editHistory.map((h, i) => (
                   <div key={i} className="text-[11px] text-slate-500">
-                    {h.at.slice(0, 16).replace('T', ' ')} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
+                    {localDateTimeLabel(h.at)} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
                   </div>
                 ))}
               </div>

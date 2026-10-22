@@ -27,6 +27,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
 import { todayLocalIso } from '../../core/time.ts'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 /** الحسابات المقابلة المتاحة لكل نوع سند — بلغة التاجر */
 const VEHICLE_COST_CATEGORIES = [
@@ -407,7 +408,7 @@ export function VouchersPage() {
                 >
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{v.voucherNumber}</div>
-                    <div className="text-[11px] text-slate-400">{v.date.slice(0, 16).replace('T', ' ')}{v.description && ` · ${v.description}`}</div>
+                    <div className="text-[11px] text-slate-400">{localDateTimeLabel(v.date)}{v.description && ` · ${v.description}`}</div>
                     {v.purchaseExpensePayableId && <div className="text-[10px] font-bold text-violet-600">سداد استحقاق مصروف على فاتورة شراء</div>}
                     {v.projectId != null && (() => {
                       const prj = projects.find((p) => p.id === v.projectId)

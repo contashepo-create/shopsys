@@ -32,7 +32,7 @@ import { monthLabelAr } from '../../core/payroll.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { printHtml } from '../print/printReceipt.ts'
-import { todayLocalIso } from '../../core/time.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 /* ثابت داخلي (سياسة Fast Refresh: الملف يصدّر مكونات فقط) */
 const HR_TABS = [
@@ -109,7 +109,7 @@ export function HrPage() {
 function AttendanceTab() {
   const { employees, attendanceRecords, leaveRequests, hrRules, employeeShifts, setAttendanceDay, clearAttendanceDay } = useDataStore()
   const toast = useToast()
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
   const [selected, setSelected] = useState<{ employeeId: number; date: string } | null>(null)
   const [dayStatus, setDayStatus] = useState<AttendanceStatus>('present')
   const [dayIn, setDayIn] = useState('')
@@ -490,7 +490,7 @@ function FingerprintTab() {
                 {[...attendanceImports].reverse().map((imp) => (
                   <tr key={imp.id} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="p-1.5 font-bold">{imp.fileName}</td>
-                    <td className="p-1.5 text-center font-mono">{imp.at.slice(0, 16).replace('T', ' ')}</td>
+                    <td className="p-1.5 text-center font-mono">{localDateTimeLabel(imp.at)}</td>
                     <td className="p-1.5 text-center font-mono">{imp.rows}</td>
                     <td className="p-1.5 text-center font-mono text-emerald-600">{imp.inserted}</td>
                     <td className="p-1.5 text-center font-mono text-sky-600">{imp.updated}</td>
@@ -517,7 +517,7 @@ function LeavesTab() {
   const [from, setFrom] = useState(todayLocalIso())
   const [to, setTo] = useState(todayLocalIso())
   const [reason, setReason] = useState('')
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
   const active = useMemo(() => employees.filter((e) => e.active), [employees])
 
   const submit = () => {
@@ -827,7 +827,7 @@ function HrReportsTab() {
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
 
   const rows = useMemo(() => {
     const impacts = new Map(getAttendancePayrollImpact(month).map((row) => [row.employeeId, row]))

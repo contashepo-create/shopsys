@@ -22,7 +22,7 @@ import { buildFullExportSheets, sheetsToExcelXml, downloadTextFile, exportFileNa
 import { desktopDatabaseStorage, isElectronRuntime } from '../data/desktopBridge.ts'
 import { Btn, inputCls, useToast } from './components/ui.tsx'
 import { DeveloperMessage } from './components/DeveloperMessage.tsx'
-import { todayLocalIso } from '../core/time.ts'
+import { localIsoTimestamp, todayLocalIso } from '../core/time.ts'
 
 const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
 const money = (minor: number) => (minor / 100).toFixed(2)
@@ -89,7 +89,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
   const exportExcel = () => {
     try {
       const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
-      downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', new Date().toISOString()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
+      downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', localIsoTimestamp()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
       toast.show(`نُزّل ملف Excel شامل (${sheets.length} أوراق) 📊`)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }

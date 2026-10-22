@@ -16,6 +16,7 @@ import { DesktopKeyRecoveryCard } from '../components/DesktopKeyRecovery.tsx'
 import { getDeviceSecret, setDeviceSecret } from '../../data/secureStorage.ts'
 import { wrapSecretWithPassword, unwrapSecretWithPassword, parseKeyFile, keyFileName, type SecretKeyFile } from '../../core/secretTransfer.ts'
 import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
+import { localIsoTimestamp, localDateTimeLabel } from '../../core/time.ts'
 
 
 export function BackupPage() {
@@ -72,7 +73,7 @@ export function BackupPage() {
       const serialized = JSON.stringify(backup)
       const restored = parseBackup(serialized)
       if (JSON.stringify(restored.data.store) !== JSON.stringify(backup.data.store)) throw new Error('فشل تطابق البيانات بعد الاستعادة التجريبية')
-      setLastVerification({ at: new Date().toISOString(), bytes: new Blob([serialized]).size })
+      setLastVerification({ at: localIsoTimestamp(), bytes: new Blob([serialized]).size })
       toast.show('نجح فحص النسخ والاستعادة التجريبي دون تغيير بياناتك ✓')
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
@@ -179,11 +180,11 @@ export function BackupPage() {
   const exportAll = () => {
     const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
     setExportSheets(sheets)
-    downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', new Date().toISOString()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
+    downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', localIsoTimestamp()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
     toast.show(`نُزّل ملف Excel شامل (${sheets.length} أوراق: أصناف/فواتير/قيود/أطراف…) ✓`)
   }
   const exportCsv = (sheet: ExportSheet) => {
-    downloadTextFile(exportFileName(setup.shopName, sheet.nameAr.replace(/\s+/g, '-'), 'csv', new Date().toISOString()), 'text/csv;charset=utf-8', sheetToCsv(sheet))
+    downloadTextFile(exportFileName(setup.shopName, sheet.nameAr.replace(/\s+/g, '-'), 'csv', localIsoTimestamp()), 'text/csv;charset=utf-8', sheetToCsv(sheet))
     toast.show(`نُزّل CSV «${sheet.nameAr}» (${sheet.rows.length} صفاً) ✓`)
   }
 
@@ -262,7 +263,7 @@ export function BackupPage() {
         </div>
         <div className="text-[11px] text-slate-400">
           {lastHourlyBackupAt
-            ? <>آخر لقطة تلقائية: <b dir="ltr">{lastHourlyBackupAt.slice(0, 16).replace('T', ' ')}</b></>
+            ? <>آخر لقطة تلقائية: <b dir="ltr">{localDateTimeLabel(lastHourlyBackupAt)}</b></>
             : 'لم تُؤخذ لقطة تلقائية بعد — تُؤخذ الأولى خلال دقائق من فتح التطبيق'}
         </div>
       </div>
@@ -333,7 +334,7 @@ export function BackupPage() {
           {storageInfo && (
             <div className="text-[11px] text-slate-400">
               {storageInfo.lastFileBackupAt
-                ? <>آخر نسخة ملفية تلقائية: <b dir="ltr">{storageInfo.lastFileBackupAt.slice(0, 16).replace('T', ' ')}</b> — تُؤخذ تلقائياً مرة يومياً عند فتح التطبيق.</>
+                ? <>آخر نسخة ملفية تلقائية: <b dir="ltr">{localDateTimeLabel(storageInfo.lastFileBackupAt)}</b> — تُؤخذ تلقائياً مرة يومياً عند فتح التطبيق.</>
                 : 'تُؤخذ نسخة ملفية تلقائية مرة يومياً عند فتح التطبيق (في المكانين معاً).'}
             </div>
           )}
@@ -400,7 +401,7 @@ export function BackupPage() {
               {fileBackups.slice(0, 12).map((b) => (
                 <div key={b.path} className={`flex flex-wrap items-center gap-2 justify-between rounded-xl border p-2.5 ${confirmingPath === b.path ? 'border-amber-400 bg-amber-500/[0.07]' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'}`}>
                   <div className="text-[12px] leading-relaxed">
-                    <b dir="ltr">{b.at.slice(0, 16).replace('T', ' ')}</b>
+                    <b dir="ltr">{localDateTimeLabel(b.at)}</b>
                     <span className="text-slate-400"> · {b.kind} · {b.where} · {(b.size / 1024).toFixed(0)} ك.ب</span>
                   </div>
                   {confirmingPath === b.path ? (
@@ -448,7 +449,7 @@ export function BackupPage() {
               <div className="flex items-center gap-1.5 text-[12px] font-bold text-emerald-600 mb-2"><CheckCircle2 size={14} /> نسخة سليمة — البصمة مطابقة</div>
               <div className="grid grid-cols-2 gap-y-1 text-[12.5px]">
                 <span className="text-slate-400">المحل</span><b>{pending.summary.shopName || '—'}</b>
-                <span className="text-slate-400">التاريخ</span><b dir="ltr">{pending.summary.createdAt.slice(0, 16).replace('T', ' ')}</b>
+                <span className="text-slate-400">التاريخ</span><b dir="ltr">{localDateTimeLabel(pending.summary.createdAt)}</b>
                 <span className="text-slate-400">الأصناف</span><b>{pending.summary.items}</b>
                 <span className="text-slate-400">فواتير البيع</span><b>{pending.summary.sales}</b>
                 <span className="text-slate-400">فواتير الشراء</span><b>{pending.summary.purchases}</b>

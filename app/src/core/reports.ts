@@ -5,7 +5,7 @@
  * لا إعادة حساب للضرائب أو التكاليف — كل الأرقام من المستندات المرحّلة
  * وقيودها (مصدر الحقيقة الواحد — القرار 9).
  */
-import { todayLocalIso } from './time.ts'
+import { calendarDateIso } from './time.ts'
 import type { Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
 import type { Item } from './items.ts'
@@ -770,7 +770,7 @@ export function periodPresets(todayIso: string): { id: string; label: string; pe
   const startOfYear = `${y}-01-01`
   const d = new Date(Date.parse(`${today}T00:00:00Z`))
   d.setUTCDate(d.getUTCDate() - 6)
-  const weekAgo = todayLocalIso(d)
+  const weekAgo = calendarDateIso(d)
   const prevM = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 }
   const prevStart = `${prevM.y}-${String(prevM.m).padStart(2, '0')}-01`
   const prevEnd = `${prevM.y}-${String(prevM.m).padStart(2, '0')}-${String(new Date(Date.UTC(prevM.y, prevM.m, 0)).getUTCDate()).padStart(2, '0')}`

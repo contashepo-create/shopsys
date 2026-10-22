@@ -24,7 +24,7 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
-import { todayLocalIso } from '../../core/time.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 const STATUS_STYLE: Record<LaundryStatus, string> = {
   received: 'bg-sky-500/10 text-sky-600',
@@ -350,7 +350,7 @@ export function LaundryPage() {
             {(viewing.notifications ?? []).length > 0 && (
               <div className="text-[11px] text-slate-400">
                 📨 إشعارات واتساب مُرسَلة: {(viewing.notifications ?? []).map((n, i) => (
-                  <span key={i}>{i > 0 ? ' · ' : ''}{LAUNDRY_STATUS_LABELS[n.status]} ({n.at.slice(0, 16).replace('T', ' ')})</span>
+                  <span key={i}>{i > 0 ? ' · ' : ''}{LAUNDRY_STATUS_LABELS[n.status]} ({localDateTimeLabel(n.at)})</span>
                 ))}
               </div>
             )}

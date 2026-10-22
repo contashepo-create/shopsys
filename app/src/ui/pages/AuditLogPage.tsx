@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react'
 import { ScrollText, Lock, Search } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { inputCls, EmptyState } from '../components/ui.tsx'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 const KIND_META: Record<string, { icon: string; label: string; cls: string }> = {
   journal: { icon: '📒', label: 'قيد', cls: 'bg-sky-500/10 text-sky-600' },
@@ -93,7 +94,7 @@ export function AuditLogPage() {
                 const meta = KIND_META[e.kind] ?? KIND_META.system
                 return (
                   <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-2 text-slate-400 font-mono text-[11px]" dir="ltr">{e.at.slice(0, 16).replace('T', ' ')}</td>
+                    <td className="px-4 py-2 text-slate-400 font-mono text-[11px]" dir="ltr">{localDateTimeLabel(e.at)}</td>
                     <td className="px-4 py-2 font-bold text-slate-600 dark:text-slate-300">{e.user}</td>
                     <td className="px-4 py-2">
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${meta.cls}`}>{meta.icon} {meta.label}</span>

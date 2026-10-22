@@ -78,7 +78,7 @@ export function FleetPage() {
   }), [vehicleCostEntries, reportFrom, reportTo, reportVehicleId, reportKind, reportCategory])
 
   // تنبيهات امتثال المركبات: رخصة/تأمين تقترب أو انتهت (سد فجوة تقرير النشاط #9 — Immediate #1)
-  const complianceWarnings = useMemo(() => vehicleComplianceWarnings(vehicles, new Date().toISOString(), 30), [vehicles])
+  const complianceWarnings = useMemo(() => vehicleComplianceWarnings(vehicles, todayLocalIso(), 30), [vehicles])
   // تحليل استهلاك الوقود لكل مركبة وانحرافاته عن متوسط الأسطول (سد فجوة تقرير النشاط #9 — Future #2)
   const fuelStats = useMemo(() => vehicleFuelStats(trips), [trips])
   const fuelWarnings = useMemo(() => fuelDeviationWarnings(fuelStats), [fuelStats])

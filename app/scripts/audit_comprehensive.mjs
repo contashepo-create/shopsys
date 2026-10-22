@@ -32,6 +32,7 @@ const read = (f) => readFileSync(f, 'utf8')
 const gates = [
   ['تغطية الرمز الضريبي في كل مسار طباعة (AST)', 'verify_sales_print_coverage.mjs'],
   ['الوقت والتواريخ المحلية', 'verify_time_zone.mjs'],
+  ['المستند الجديد بتاريخ المستخدم (قاهرة/نيويورك)', 'verify_local_document_time.mjs'],
   ['تهريب النصوص في قوالب الطباعة', 'verify_print_escaping.mjs'],
   ['الفاتورة الإلكترونية (TLV/ETA/السياسة)', 'verify_einvoice.mjs'],
 ]

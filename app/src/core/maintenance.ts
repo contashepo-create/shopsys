@@ -9,6 +9,7 @@
  */
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { localIsoTimestamp } from './time.ts'
 
 export type TicketStatus = 'received' | 'in_progress' | 'ready' | 'delivered' | 'cancelled'
 
@@ -360,7 +361,7 @@ export function maintenanceRepairTimeReport(
    جلسات بدء/إنهاء بسيطة؛ الجلسة المفتوحة (بلا endedAt) تُحسب حتى `nowIso`. */
 export function ticketWorkMinutes(
   sessions: { startedAt: string; endedAt: string | null }[],
-  nowIso: string = new Date().toISOString(),
+  nowIso: string = localIsoTimestamp(),
 ): number {
   let totalMs = 0
   for (const s of sessions) {

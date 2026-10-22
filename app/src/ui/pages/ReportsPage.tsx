@@ -40,7 +40,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Landmark } from 'lucide-react'
-import { todayLocalIso } from '../../core/time.ts'
+import { todayLocalIso, localIsoTimestamp } from '../../core/time.ts'
 
 /* التبويبات من السجل الواحد `core/reportTabs.ts` — لا نسخة محلية تتقادم (سدّ ف1) */
 type TabId = ReportTabId
@@ -65,7 +65,7 @@ export function ReportsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const today = new Date().toISOString()
+  const today = localIsoTimestamp()
   const toast = useToast()
 
   const presets = useMemo(() => periodPresets(today), [today])

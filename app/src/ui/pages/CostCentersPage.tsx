@@ -4,7 +4,7 @@ import { Pencil, Trash2, Check, X } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { effectiveModules } from '../../core/activities.ts'
-import { todayLocalIso } from '../../core/time.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 import { expenseTemplatesForModules } from '../../core/moduleCatalog.ts'
 import { nextCostCenterCode, type CostCenter, type CostCenterBudget } from '../../core/costCenters.ts'
 import type { ExpenseTemplate } from '../../core/expenseCatalog.ts'
@@ -12,7 +12,7 @@ import { Btn, DecimalInput, Field, inputCls, useToast } from '../components/ui.t
 
 const card = 'rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-card-dark'
 const emptyTemplate: Omit<ExpenseTemplate, 'id' | 'isActive'> = { code: '', nameAr: '', accountCode: '5108', taxTreatment: 'exempt', taxPercent: 0, settlement: 'payable_later', affectsProfit: true, landedCostAllocation: 'none', notes: '' }
-const monthStart = new Date().toISOString().slice(0, 7) + '-01'
+const monthStart = localIsoTimestamp().slice(0, 7) + '-01'
 const monthEnd = todayLocalIso(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0))
 const emptyBudget: Omit<CostCenterBudget, 'id'> = { costCenterId: 0, from: monthStart, to: monthEnd, amountMinor: 0, notes: '' }
 

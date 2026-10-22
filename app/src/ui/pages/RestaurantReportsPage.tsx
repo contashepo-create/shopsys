@@ -16,7 +16,7 @@ import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrin
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
-import { todayLocalIso } from '../../core/time.ts'
+import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
 
@@ -141,7 +141,7 @@ export function RestaurantReportsPage() {
       headers: ['الأمر', 'النوع', 'الطاولة / التوصيل', 'الحالة', 'الفَتح', 'القفل', 'القيمة'], numCols: [6],
       rows: periodOrders.map((o) => [
         o.orderNumber, ORDER_TYPE_LABELS[o.type].nameAr, o.tableName || o.deliveryInfo || '—', STATUS_LABELS[o.status],
-        o.openedAt.slice(0, 16).replace('T', ' '), o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '—', fmt(orderValueMinor(o)),
+        localDateTimeLabel(o.openedAt), o.settledAt ? localDateTimeLabel(o.settledAt) : '—', fmt(orderValueMinor(o)),
       ]),
     }),
   ].join(''))
@@ -304,8 +304,8 @@ export function RestaurantReportsPage() {
                 onClick={() => downloadCsv(periodOrders.map((o) => ({
                   'الأمر': o.orderNumber, 'النوع': ORDER_TYPE_LABELS[o.type].nameAr,
                   'الطاولة/التوصيل': o.tableName || o.deliveryInfo || '—',
-                  'الحالة': STATUS_LABELS[o.status], 'الفَتح': o.openedAt.slice(0, 16).replace('T', ' '),
-                  'القفل': o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '',
+                  'الحالة': STATUS_LABELS[o.status], 'الفَتح': localDateTimeLabel(o.openedAt),
+                  'القفل': o.settledAt ? localDateTimeLabel(o.settledAt) : '',
                   'القيمة': fmt(o.lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor * (100 - l.discountPercent) / 100), 0)),
                 })), `أوامر-المطعم-${todayLocalIso()}.csv`)}
                 className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700"
@@ -329,8 +329,8 @@ export function RestaurantReportsPage() {
                         <td className="px-3 py-2.5">{ORDER_TYPE_LABELS[o.type].icon} {ORDER_TYPE_LABELS[o.type].nameAr}</td>
                         <td className="px-3 py-2.5 max-w-52 truncate" title={o.tableName || o.deliveryInfo}>{o.tableName || o.deliveryInfo || '—'}</td>
                         <td className="px-3 py-2.5"><span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${STATUS_BADGE[o.status]}`}>{STATUS_LABELS[o.status]}</span></td>
-                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{o.openedAt.slice(0, 16).replace('T', ' ')}</td>
-                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '—'}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{localDateTimeLabel(o.openedAt)}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-slate-500">{o.settledAt ? localDateTimeLabel(o.settledAt) : '—'}</td>
                         <td className="px-3 py-2.5 tabular-nums font-bold">{fmt(o.lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor * (100 - l.discountPercent) / 100), 0))}</td>
                       </tr>
                     ))}

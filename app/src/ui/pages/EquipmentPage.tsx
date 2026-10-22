@@ -250,7 +250,7 @@ export function EquipmentPage() {
             const hasActiveContract = rentalContracts.some((c) => c.equipmentId === e.id && c.status === 'active')
             const status = equipmentStatus({ hasActiveContract, service: svc })
             const activeContract = hasActiveContract ? rentalContracts.find((c) => c.equipmentId === e.id && c.status === 'active') : undefined
-            const compliance = equipmentComplianceWarnings([e], new Date().toISOString(), 30)
+            const compliance = equipmentComplianceWarnings([e], todayLocalIso(), 30)
             return (
               <div key={e.id} className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 hover:shadow-md transition-all duration-200 group">
                 <div className="flex items-start justify-between">

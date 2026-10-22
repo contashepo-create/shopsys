@@ -18,7 +18,7 @@ import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
-import { todayLocalIso } from '../../core/time.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 /** فاتورة تجريبية للمعاينة والطباعة الاختبارية */
 const SAMPLE_LINES = [
@@ -82,7 +82,7 @@ export function PrintSettingsPage() {
     const totals = computeTotals(SAMPLE_LINES, 0, setup.vatPercent, setup.taxInclusive)
     const model = buildReceiptModel({
       invoiceNumber: 'S-0001',
-      dateIso: new Date().toISOString(),
+      dateIso: localIsoTimestamp(),
       lines: SAMPLE_LINES,
       totals,
       payment: 'cash',
@@ -91,7 +91,7 @@ export function PrintSettingsPage() {
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
-    stampTax(model, { dateIso: new Date().toISOString() })
+    stampTax(model, { dateIso: localIsoTimestamp() })
     return model
   }, [receipt, setup.vatPercent, setup.taxInclusive, stampTax])
 

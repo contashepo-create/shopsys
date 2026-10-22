@@ -9,6 +9,7 @@ import { MessageSquareWarning, Plus, CheckCircle2, CircleDot, Timer } from 'luci
 import { useDataStore } from '../../data/repo.ts'
 import { ISSUE_STATUS_LABELS, type IssueStatus } from '../../core/audit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { localDateTimeLabel } from '../../core/time.ts'
 
 export function IssuesPage() {
   const { issues, appUsers, currentUserId, reportIssue, setIssueStatus, sales, purchases, vouchers } = useDataStore()
@@ -81,8 +82,8 @@ export function IssuesPage() {
                   </div>
                   <div className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed whitespace-pre-wrap">{i.details}</div>
                   <div className="text-[10.5px] text-slate-400 mt-1.5">
-                    أبلغ: <b>{i.reportedBy}</b> · {i.reportedAt.slice(0, 16).replace('T', ' ')}
-                    {i.status === 'resolved' && <> — حلّه: <b>{i.resolvedBy}</b> {i.resolvedAt?.slice(0, 16).replace('T', ' ')}{i.resolution && <> · «{i.resolution}»</>}</>}
+                    أبلغ: <b>{i.reportedBy}</b> · {localDateTimeLabel(i.reportedAt)}
+                    {i.status === 'resolved' && <> — حلّه: <b>{i.resolvedBy}</b> {localDateTimeLabel(i.resolvedAt ?? '')}{i.resolution && <> · «{i.resolution}»</>}</>}
                   </div>
                 </div>
                 {isManager && i.status !== 'resolved' && (

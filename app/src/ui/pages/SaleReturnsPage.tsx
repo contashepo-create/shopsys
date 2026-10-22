@@ -30,6 +30,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { localDateIso, localDateTimeLabel } from '../../core/time.ts'
 
 /** حالة سطر واحد في المعالج */
 interface WizardLine {
@@ -319,7 +320,7 @@ export function SaleReturnsPage() {
                   <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح المرتجع ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
-                      <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>
+                      <div className="text-[11px] text-slate-400">{localDateTimeLabel(r.date)}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{orig?.invoiceNumber ?? '—'}</td>
                     <td className="px-4 py-3">
@@ -413,7 +414,7 @@ export function SaleReturnsPage() {
                     <span>
                       <b className="text-slate-800 dark:text-white">{s.invoiceNumber}</b>
                       {s.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{s.refCode}</span>}
-                      <span className="text-[11px] text-slate-400 mr-2">{s.date.slice(0, 10)} · {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr : 'عميل نقدي'}</span>
+                      <span className="text-[11px] text-slate-400 mr-2">{localDateIso(s.date)} · {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr : 'عميل نقدي'}</span>
                     </span>
                     <b className="text-emerald-600">{fmt(s.totals.totalMinor)}</b>
                   </button>

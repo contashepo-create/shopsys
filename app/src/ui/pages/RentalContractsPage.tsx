@@ -528,7 +528,7 @@ export function RentalContractsPage() {
                       <td className="px-4 py-3 text-slate-500">{c.totals.depositMinor > 0 ? fmt(c.totals.depositMinor) : '—'}</td>
                       <td className="px-4 py-3">
                         {c.status === 'active'
-                          ? isRentalOverdue(c, new Date().toISOString())
+                          ? isRentalOverdue(c, todayLocalIso())
                             ? <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[11px] font-bold animate-pulse">⏰ متأخر عن الإرجاع</span>
                             : <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[11px] font-bold">نشط</span>
                           : <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-500 text-[11px] font-bold">مُقفل</span>}

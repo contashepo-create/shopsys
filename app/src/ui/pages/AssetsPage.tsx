@@ -15,7 +15,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
-import { todayLocalIso } from '../../core/time.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 export function AssetsPage() {
   const { assets, journal, suppliers, treasuries, addAsset, postMonthlyDepreciation, payAssetInstallment, getAssetDue } = useDataStore()
@@ -28,7 +28,7 @@ export function AssetsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const report = useMemo(() => assetsReport(assets), [assets])
-  const nowMonth = new Date().toISOString().slice(0, 7)
+  const nowMonth = localIsoTimestamp().slice(0, 7)
   const dueCount = assets.filter(
     (a) => a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
   ).length

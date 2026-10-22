@@ -61,7 +61,43 @@ ok(repo.includes('const now = localIsoTimestamp()'), 'repo: تواريخ الم�
 ok(repo.includes('const stamp = localIsoTimestamp()'), 'repo: ختم لحظة البيع محلي لا UTC')
 ok(!/date: new Date\(\)\.toISOString\(\)/.test(repo), 'repo: لا تاريخ مستند من UTC الخام')
 
-/* ④ المستندات المخزّنة تعرض بتوقيت المستخدم (نموذج الطباعة) */
+/* ④ ذوات «اليوم/الشهر» للجديد: لا تُشتق من UTC في أي واجهة أو نواة */
+const walk2 = (dir) => readdirSync(dir).flatMap((name) => {
+  const full = join(dir, name)
+  return statSync(full).isDirectory() ? walk2(full) : [full]
+})
+const utcMonth = []
+const utcTodayArgs = []
+for (const file of walk2(root)) {
+  if (!/\.(ts|tsx)$/.test(file) || file.endsWith('/core/time.ts')) continue
+  const src = readFileSync(file, 'utf8')
+  if (/new Date\(\)\.toISOString\(\)\.slice\(0,\s*7\)/.test(src)) utcMonth.push(file.replace(root + '/', 'src/'))
+  for (const m of src.matchAll(/([A-Za-z_$][\w$]*(?:Warnings|Overdue|Aging|Due)\()\s*[^\n]*?new Date\(\)\.toISOString\(\)/g)) {
+    utcTodayArgs.push(`${file.replace(root + '/', 'src/')}: ${m[1]}`)
+  }
+  if (/promotionActiveOn\([^)]*new Date\(\)\.toISOString\(\)/.test(src)) utcTodayArgs.push(`${file.replace(root + '/', 'src/')}: promotionActiveOn`)
+}
+ok(utcMonth.length === 0, 'لا شهر مشتق من UTC (رواتب/تقارير)', utcMonth.slice(0, 5).join('، '))
+ok(utcTodayArgs.length === 0, 'لا «اليوم» مشتق من UTC في تنبيهات/سريان', utcTodayArgs.slice(0, 5).join('، '))
+
+/* ⑤ لا رياضيات تواريخ على كائنات UTC ثم تُقرأ بمنطقة محلية (عيب انزياح اليوم غرباً) */
+const utcMath = []
+for (const file of walk(root)) {
+  if (!/\.(ts|tsx)$/.test(file) || file.endsWith('/core/time.ts')) continue
+  const src = readFileSync(file, 'utf8')
+  const name = file.replace(root + '/', 'src/')
+  src.split('\n').forEach((line, i) => {
+    if (/toISOString\(\)\.slice\(0,\s*10\)/.test(line)) utcMath.push(`${name}:${i + 1} قص UTC`)
+    // داخل النواة: التاريخ المجرّد يُبنى بـUTC ويُقرأ بـcalendarDateIso فقط.
+    // قراءته بـtodayLocalIso (getFullYear/getMonth) تُزيح اليوم غرب جرينتش.
+    if (name.includes('/core/') && !name.endsWith('/core/time.ts') && /todayLocalIso\(\s*[^)\s]/.test(line)) {
+      utcMath.push(`${name}:${i + 1} تاريخ مجرّد يُقرأ محلياً`)
+    }
+  })
+}
+ok(utcMath.length === 0, 'لا كائن UTC يُقرأ كتاريخ محلي — استخدم calendarDateIso/addCalendarMonths', utcMath.slice(0, 5).join('، '))
+
+/* ⑥ المستندات المخزّنة تعرض بتوقيت المستخدم (نموذج الطباعة) */
 const receipt = readFileSync(new URL('../src/core/receipt.ts', import.meta.url), 'utf8')
 ok(receipt.includes('localDateTimeLabel(args.dateIso)'), 'نموذج الطباعة يعرض توقيت المستخدم لا UTC')
 

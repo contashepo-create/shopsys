@@ -19,7 +19,7 @@ import { themeForActivity, PERSONA_STYLES } from '../../core/activityTheme.ts'
 import { ActivityWidgets } from '../components/ActivityWidgets.tsx'
 import { getActivity } from '../../core/activities.ts'
 import { UsersRound } from 'lucide-react'
-import { todayLocalIso } from '../../core/time.ts'
+import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
@@ -129,12 +129,12 @@ export function Dashboard() {
     return m
   }, [purchases])
   const undistributedVariantRows = useMemo(
-    () => (variantStocks.length ? longUndistributedVariants(items, variantStocks, lastPurchaseDateByItem, new Date().toISOString(), 3) : []),
+    () => (variantStocks.length ? longUndistributedVariants(items, variantStocks, lastPurchaseDateByItem, localIsoTimestamp(), 3) : []),
     [items, variantStocks, lastPurchaseDateByItem],
   )
   const businessAlerts = useMemo(() => {
     return collectBusinessAlerts({
-      todayIso: new Date().toISOString(),
+      todayIso: localIsoTimestamp(),
       items: items.map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty, isActive: it.isActive })),
       batches,
       installmentAlerts: collectInstallmentAlerts(installmentPlans, todayLocalIso()),

@@ -18,6 +18,7 @@ import {
   isValidSaVatNumber, isValidEgTaxNumber, buildEgInvoiceDocument, buildZatcaQr, buildEgReceiptBarcodeText,
 } from '../../core/einvoice.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
 
 export function EinvoicePage() {
   const { setup, einvoice, updateEinvoice, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
@@ -27,7 +28,7 @@ export function EinvoicePage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const lic = useMemo(
-    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: localIsoTimestamp(), deviceFlags }),
     [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
   )
   const saActive = hasFeature(lic, 'einvoice_sa')
@@ -132,7 +133,7 @@ export function EinvoicePage() {
       return buildZatcaQr({
         sellerName: setup.shopName || 'تَحَكَّم',
         vatNumber: einvoice.taxNumber,
-        timestampIso: new Date().toISOString(),
+        timestampIso: localIsoTimestamp(),
         totalWithVatMinor: 115000,
         vatMinor: 15000,
         decimals: cur.decimals,
@@ -148,7 +149,7 @@ export function EinvoicePage() {
         sellerName: setup.shopName || 'تَحَكَّم',
         taxNumber: einvoice.taxNumber,
         invoiceNumber: 'INV-0001',
-        dateIso: new Date().toISOString(),
+        dateIso: localIsoTimestamp(),
         totalMinor: 115000,
         decimals: cur.decimals,
       })
@@ -350,7 +351,7 @@ export function EinvoicePage() {
                 <div key={s.id} className="flex items-center justify-between py-2.5">
                   <div>
                     <span className="font-bold text-slate-800 dark:text-white">{s.invoiceNumber}</span>
-                    <span className="text-[11px] text-slate-400 mr-2">{s.date.slice(0, 16).replace('T', ' ')}</span>
+                    <span className="text-[11px] text-slate-400 mr-2">{localDateTimeLabel(s.date)}</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-black text-[13px]">{fmt(s.totals.totalMinor)} {cur.symbol}</span>

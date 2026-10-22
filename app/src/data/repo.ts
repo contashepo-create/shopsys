@@ -147,7 +147,7 @@ import {
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
 import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
-import { localIsoTimestamp, todayLocalIso } from '../core/time.ts'
+import { localIsoTimestamp, localTimestampOn, todayLocalIso } from '../core/time.ts'
 
 export interface Warehouse {
   id: number
@@ -4905,7 +4905,7 @@ export const useRawDataStore = create<DataState>()(
             state as unknown as Record<string, unknown>,
             patch as Record<string, unknown>,
             activeUser?.nameAr ?? 'المالك',
-            new Date().toISOString(),
+            localIsoTimestamp(),
           ).map((event) => activeBranch ? { ...event, branchId: activeBranch.id } : event)
           if (events.length) finalPatch = { ...finalPatch, auditLog: appendAudit(state.auditLog ?? [], events) }
         }
@@ -5000,7 +5000,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const runId = nextId(state.payrollRuns)
         const baseId = nextId(state.payrollSlips)
-        const now = args.date ? `${args.date}T09:00:00.000Z` : new Date().toISOString()
+        const now = args.date ? localTimestampOn(args.date, 9) : localIsoTimestamp()
         const numbered = drafts.map((draft, index) => ({ ...draft, slipNumber: `PS-${String(baseId + index).padStart(4, '0')}` }))
         const monthLabel = monthLabelAr(args.month)
         const lines = buildSlipAccrualLines(numbered, monthLabel)
@@ -5049,7 +5049,7 @@ export const useRawDataStore = create<DataState>()(
         const amount = args.amountMinor ?? remaining
         if (!Number.isInteger(amount) || amount <= 0) throw new Error('مبلغ الصرف يجب أن يكون موجباً')
         if (amount > remaining) throw new Error(`مبلغ الصرف (${amount}) أكبر من المتبقي من القسيمة (${remaining})`)
-        const now = args.date ? `${args.date}T12:00:00.000Z` : new Date().toISOString()
+        const now = args.date ? localTimestampOn(args.date, 12) : localIsoTimestamp()
         const lines = buildSlipPaymentLines({ slipNumber: slip.slipNumber, employeeName: slip.employeeName, netMinor: amount }, args.treasury)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -5112,7 +5112,7 @@ export const useRawDataStore = create<DataState>()(
             return { ...a, recoveredMinor: a.recoveredMinor - give }
           })
         }
-        const nowIso = new Date().toISOString()
+        const nowIso = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: nowIso.slice(0, 10),
@@ -6163,7 +6163,7 @@ export const useRawDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('PUR', inv.date, usedRefCodes(state))
-        const nowIso = new Date().toISOString()
+        const nowIso = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -6449,7 +6449,7 @@ export const useRawDataStore = create<DataState>()(
 
         const entryLines = buildLateExpenseEntry({ debits, creditAccount, creditNote })
         const entryId = nextId(state.journal)
-        const nowIso = new Date().toISOString()
+        const nowIso = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -6647,7 +6647,8 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         // 2) دفعات الصلاحية FEFO (القراران 5 و8): تخطيط الصرف وحظر المنتهي بلا تجاوز مدير
-        const now0 = new Date().toISOString()
+        /* تاريخ محلي لصلاحية الدفعات FEFO: مقارنة UTC كانت تعتبر دفعة تنتهي اليوم غير منتهية */
+        const now0 = localIsoTimestamp()
         const qtyPlanned = stockNeeds
         let workingBatches = state.batches
         const expiredNames: string[] = []
@@ -8395,7 +8396,7 @@ export const useRawDataStore = create<DataState>()(
            القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
         if (settleAllocations.length) {
           const applied = new Map(settleAllocations.map((row) => [row.slipId, row.amountMinor]))
-          const settledNow = new Date().toISOString()
+          const settledNow = localIsoTimestamp()
           const from = `سند صرف ${voucherNumber}`
           set({
             payrollSlips: get().payrollSlips.map((slip) => {
@@ -9502,7 +9503,7 @@ export const useRawDataStore = create<DataState>()(
       },
       login: async (id, pin) => {
         const state = get()
-        const nowIso = new Date().toISOString()
+        const nowIso = localIsoTimestamp()
         const lockLeft = lockoutMinutesLeft(state.loginGuard, nowIso)
         if (lockLeft > 0) throw new Error(`محاولات كثيرة خاطئة — الدخول مقفول ${lockLeft} دقيقة`)
         let ok = false
@@ -9563,7 +9564,7 @@ export const useRawDataStore = create<DataState>()(
       },
       approveByPin: async (pin, permId) => {
         const state = get()
-        const nowIso = new Date().toISOString()
+        const nowIso = localIsoTimestamp()
         // نفس حارس شاشة الدخول — لا تخمين رقم المشرف بلا حساب
         const lockLeft = lockoutMinutesLeft(state.loginGuard, nowIso)
         if (lockLeft > 0) throw new Error(`محاولات كثيرة خاطئة — الاعتماد مقفول ${lockLeft} دقيقة`)
@@ -11590,7 +11591,7 @@ export const useRawDataStore = create<DataState>()(
         // دفعات الصلاحية FEFO — الصيدلية نشاط expiry_batches أصلاً: بيع مؤمَّن لا يستهلك
         // الدفعات يترك أرصدة وهمية فيها (تنبيهات صلاحية كاذبة) — نفس سياسة postSale:
         // المنتهي محظور بيعه للمريض (لا تجاوز هنا — البيع المؤمَّن ليس له مسار override)
-        const nowIso = new Date().toISOString()
+        const nowIso = localIsoTimestamp()
         let workingBatches = state.batches
         {
           const expiredNames: string[] = []
@@ -15047,7 +15048,7 @@ export const useRawDataStore = create<DataState>()(
         const state = getBranchScopedDataState(get())
         const promo = state.promotions.find((p) => p.id === promotionId)
         if (!promo) throw new Error('العرض غير موجود')
-        if (!promotionActiveOn(promo, new Date().toISOString())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
+        if (!promotionActiveOn(promo, todayLocalIso())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
         return promotionCartLines(promo, count, state.items)
       },
 
@@ -17126,7 +17127,7 @@ export const useRawDataStore = create<DataState>()(
 
       postMonthlyDepreciation: () => {
         const state = get()
-        const nowMonth = new Date().toISOString().slice(0, 7)
+        const nowMonth = todayLocalIso().slice(0, 7)
         // الأصول المستحقة: لم يكتمل عمرها، وشهرها التالي ≤ الشهر الحالي (لا إهلاك مستقبلي)
         const due = state.assets.filter(
           (a) => !a.disposal && a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
@@ -17165,7 +17166,7 @@ export const useRawDataStore = create<DataState>()(
         let posted = 0
         for (let guard = 0; guard < 240; guard++) {
           const state = get()
-          const nowMonth = new Date().toISOString().slice(0, 7)
+          const nowMonth = todayLocalIso().slice(0, 7)
           const due = state.assets.some(
             (a) => !a.disposal && a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
           )
