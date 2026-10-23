@@ -97,12 +97,59 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
 
   afterEach(cleanup)
 
-  it('يفتح محرر مصروف المشروع متعدد البنود من صفحة المصروفات', () => {
+  it('يسجل مصروفاً مختلط السداد من العهدة والآجل للمورد في المحرر الحر', async () => {
+    const project = S().projects[0]
+    S().addEmployee({
+      nameAr: 'موظف مصروفات المشروع', phone: '', jobTitle: 'محاسب موقع', roleId: null,
+      hireDate: '2026-10-01', baseSalaryMinor: 0, allowancesMinor: 0, active: true, notes: '',
+      taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '',
+    })
+    const employee = S().employees.at(-1)!
+    const file = S().openCustodyFile({ employeeId: employee.id, projectId: project.id, reason: 'مصروف مشروع', notes: '' })
+    S().fundCustodyFile({ fileId: file.id, amountMinor: 500000, treasury: '1101', description: 'تعزيز الاختبار' })
+
     ui(<><ProjectExpensesPage /><WindowHost /></>)
     fireEvent.click(document.querySelector('[data-open-project-expense-modal]')!)
     expect(document.querySelector('[data-expense-lines-table]')).not.toBeNull()
-    expect(document.querySelector('[data-expense-paid-now]')).toBeTruthy()
-    expect(document.querySelector('[data-expense-project-select]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-expense-tax-mode] button:first-child')!) // بلا ضريبة لهذه الحالة
+    fireEvent.change(document.querySelector('[data-expense-line-desc]')!, { target: { value: 'مواد بناء للموقع' } })
+    fireEvent.change(document.querySelector('[data-expense-line-price]')!, { target: { value: '11400' } })
+    fireEvent.change(document.querySelector('[data-expense-paid-now]')!, { target: { value: '4000' } })
+
+    fireEvent.change(document.querySelector('[data-pay-source-linked] select[aria-label="نوع مصدر السداد"]')!, { target: { value: 'custody' } })
+    const custodySelect = document.querySelector('[data-pay-source-linked] select[aria-label="ملف العهدة"]') as HTMLSelectElement
+    expect(custodySelect.value).toBe(String(file.id))
+
+    const supplierId = S().suppliers[0].id
+    const supplierPicker = document.querySelector('[data-party-picker]')!
+    fireEvent.change(supplierPicker.querySelector('input')!, { target: { value: 'شركة حديد عز' } })
+    let supplierOption: Element | null = null
+    await waitFor(() => {
+      supplierOption = document.querySelector(`.invoice-party-overlay [data-quick-option][data-value="${supplierId}"]`)
+      expect(supplierOption).not.toBeNull()
+    })
+    fireEvent.doubleClick(supplierOption!)
+    await waitFor(() => expect((supplierPicker.querySelector('input') as HTMLInputElement).value).toBe('شركة حديد عز'))
+
+    const save = document.querySelector('[data-save-project-expense]') as HTMLButtonElement
+    expect(save.disabled).toBe(false)
+    fireEvent.click(save)
+
+    const cost = S().projectCosts[0]
+    expect(cost.amountMinor).toBe(1140000)
+    expect(cost.grossMinor).toBe(1140000)
+    expect(cost.paidMinor).toBe(400000)
+    expect(cost.dueMinor).toBe(740000)
+    expect(cost.payment).toBe('mixed')
+    expect(cost.custodyFileId).toBe(file.id)
+    expect(cost.supplierId).toBe(supplierId)
+    expect(S().getCustodySummary(file.id).spentMinor).toBe(400000)
+    expect(S().getCustodySummary(file.id).remainingMinor).toBe(100000)
+
+    const entry = S().journal.find((row) => row.sourceType === 'project_cost' && row.sourceId === cost.id)!
+    expect(entry.lines.find((line) => line.accountCode === '1108')?.credit).toBe(400000)
+    expect(entry.lines.find((line) => line.accountCode === '2101')?.credit).toBe(740000)
+    expect(entry.lines.some((line) => line.accountCode === '1101' && line.credit > 0)).toBe(false)
   })
 
   it('يسجل فاتورة مصروفات مشروع ببنود حرة (شامل الضريبة وغير شامل) ويخصم الصافي من ربح المشروع', () => {

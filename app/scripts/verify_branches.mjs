@@ -128,6 +128,37 @@ console.log('\n═══ 3) بيع من كل فرع → المقارنة تعك�
   // مخزون: الرئيسي 50 × 6.00 = 300.00؛ المعادي 35 × 6.00 = 210.00
   assert.equal(rMain.stockValueMinor, 30000)
   assert.equal(rNew.stockValueMinor, 21000)
+
+  // تدقيق دفتر/ميزان كل فرع: جمع ميزاني الفروع يجب أن يعيد ميزان الشركة
+  // حساباً بحساب، بلا قيد مكرر أو مفقود (خصوصاً الحساب المشترك 4101).
+  // بعض القيود تُنسب بعلاقة مستندها/خزينتها بدلاً من ختم branchId عند العرض الشامل.
+  const companyJournal = st().journal
+  const companyTotals = new Map()
+  for (const entry of companyJournal) for (const line of entry.lines) {
+    const total = companyTotals.get(line.accountCode) ?? { debit: 0, credit: 0 }
+    total.debit += line.debit; total.credit += line.credit
+    companyTotals.set(line.accountCode, total)
+  }
+  const branchTotals = new Map()
+  const scopedEntryIds = []
+  for (const branch of st().branches.filter((row) => row.active)) {
+    st().setActiveBranchId(branch.id)
+    const scoped = getBranchScopedDataState(st())
+    for (const entry of scoped.journal) {
+      scopedEntryIds.push(entry.id)
+      for (const line of entry.lines) {
+        const total = branchTotals.get(line.accountCode) ?? { debit: 0, credit: 0 }
+        total.debit += line.debit; total.credit += line.credit
+        branchTotals.set(line.accountCode, total)
+      }
+    }
+  }
+  assert.equal(scopedEntryIds.length, companyJournal.length, 'كل قيد ظاهر في فرع واحد بالضبط')
+  assert.equal(new Set(scopedEntryIds).size, companyJournal.length, 'لا قيد متكرر بين ميزاني الفروع')
+  assert.deepEqual([...branchTotals.entries()].sort(), [...companyTotals.entries()].sort(), 'مجاميع كل حساب عبر الفروع تطابق ميزان الشركة')
+  assert.equal(branchTotals.get('4101')?.credit, companyTotals.get('4101')?.credit, 'الحساب المشترك 4101 لا يتضخم عند جمع الفروع')
+  st().setActiveBranchId(null)
+  ok('مطابقة دفترية حساباً بحساب: لا قيد مفقود/مكرر، ومجموع أرصدة الفروع يساوي الشركة')
   ok('المقارنة مطابقة للدفاتر: إيراد/تكلفة/ربح/خزينة/مخزون لكل فرع')
 }
 
