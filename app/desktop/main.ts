@@ -1677,10 +1677,13 @@ function wireIpc(): void {
   })
 }
 
-const flushRequests = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
-ipcMain.handle('persistence:flushed', (_event, token: unknown, error: unknown) => {
+/* إقرار الحفظ مربوط بالتوكن وبالمُرسل نفسه: لكل نافذة توكن عشوائي خاص بها،
+   ولا يُقبل إقراره إلا من WebContents التي استلمته — نافذة أخرى (أو توكن
+   مُخمَّن/مسرَّب) لا تستطيع إنهاء حفظ غيرها قبل أوانه */
+const flushRequests = new Map<string, { wcId: number; resolve: () => void; reject: (error: Error) => void }>()
+ipcMain.handle('persistence:flushed', (event, token: unknown, error: unknown) => {
   const req = typeof token === 'string' ? flushRequests.get(token) : undefined
-  if (!req) return
+  if (!req || event.sender.id !== req.wcId) return
   flushRequests.delete(token as string)
   if (typeof error === 'string' && error) req.reject(new Error(error))
   else req.resolve()
@@ -1694,7 +1697,7 @@ async function flushRenderer(): Promise<void> {
   if (targets.length === 0) throw new Error('تعذّر التأكد من حفظ بيانات الواجهة — لم يبدأ التحديث')
   await withDeadline(Promise.all(targets.map((wc) => new Promise<void>((resolve, reject) => {
     const token = randomBytes(16).toString('hex')
-    flushRequests.set(token, { resolve, reject })
+    flushRequests.set(token, { wcId: wc.id, resolve, reject })
     wc.send('persistence:flush', token)
   }))), 15_000, 'تعذّر إتمام حفظ البيانات قبل الإغلاق — أعد المحاولة')
 }

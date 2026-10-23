@@ -58,7 +58,7 @@ check('الاستيراد لا يكتب مفتاحاً صريحاً على ال�
 check('IPC مفتاح الاسترداد: status/export/import مسجلة في main', /keyRecovery:status/.test(main) && /keyRecovery:export/.test(main) && /keyRecovery:import/.test(main))
 check('التصدير لا يكشف المفتاح الخام (يُغلَّف فقط)', /wrapDeviceKey\(deviceEncryptionKey, passphrase/.test(main) && !/device:getEncryptionKey[\s\S]{0,10}raw/.test(main))
 check('الاستيراد يعيد التشغيل بعد النجاح', /app\.relaunch\(\); app\.exit\(0\)/.test(main))
-check('preload يعرض keyRecovery فقط عبر contextBridge', /keyRecovery,\s*\}\)|notifications, keyRecovery, persistence \}/.test(preload))
+check('preload يعرض keyRecovery فقط عبر contextBridge', /contextBridge\.exposeInMainWorld\('shopsysDesktop'[\s\S]*?keyRecovery,/.test(preload) && !/window\\.keyRecovery|globalThis\\.keyRecovery/.test(preload))
 check('الواجهة لا تستورد node:crypto ولا keyRecovery.ts (تبقى في العملية الرئيسية)', !/from ['"]node:crypto['"]|from ['"][^'"\n]*desktop\/keyRecovery/.test(desktopKeyUi + backupPage + appTsx))
 check('شاشة الاسترداد تعرض استيراد مفتاح الاسترداد', /<DesktopKeyRecoveryImport \/>/.test(appTsx))
 check('صفحة النسخ على سطح المكتب تستعمل مفتاح الاسترداد بدل سر المتصفح', /desktopKeyRecoveryBridge\(\) \? <DesktopKeyRecoveryCard/.test(backupPage))
