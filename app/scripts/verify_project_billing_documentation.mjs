@@ -148,4 +148,16 @@ const extra = S().postSale(extraArgs)
 ok(extra.id > 0, 'إضافية بتمام المتاح الأصلي (400,000) تمرّ بعد توثيق شامل')
 eq(S().getProjectBillingGuard(prj.id).extraRoomNetMinor, 0, 'والآن فقط أُقفل سقف العقد')
 
+console.log('\n═══ ز) أسلاك الواجهة (أ-٢ب): الطبيعة إلزامية من فاتورة البيع ═══')
+{
+  const { readFileSync } = await import('node:fs')
+  const page = readFileSync(join(root, 'src/ui/pages/AdvancedSalesInvoicePage.tsx'), 'utf8')
+  ok(page.includes("data-billing-nature=\"documentation\"") && page.includes("data-billing-nature=\"extra\""), 'محدد الطبيعة بفرعيه في فاتورة البيع')
+  ok(page.includes('projectBilling:projectId>0?projectBilling:undefined'), 'الطبيعة تُرسل دائماً إذا اختير مشروع (انتهى المسار التاريخي الصامت من الواجهة)')
+  ok(page.includes("projectBilling==='documentation'?docExtractIds:undefined"), 'المستخلصات المحددة ترافق التوثيق فقط')
+  ok(page.includes('data-billing-guard') && page.includes('availableToDocumentGrossMinor') && page.includes('extraRoomNetMinor'), 'لوحة الحارس تعرض المتاحين (توثيق/إضافية)')
+  ok(page.includes("id:'billing-doc-over'") && page.includes("id:'billing-extra-over'"), 'مراجعة قبل الترحيل تحذر من تجاوز السقفين')
+  ok(page.includes('data-billing-autofill'), 'زر ملء سطور التوثيق من المستخلصات موجود')
+}
+
 console.log(`\n✅ verify_project_billing_documentation PASS=${pass}`)
