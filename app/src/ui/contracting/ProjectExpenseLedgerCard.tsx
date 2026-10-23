@@ -20,6 +20,7 @@ import {
 import { sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 import { renderReportShell, htmlTableHtml } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { localIsoTimestamp } from '../../core/time.ts'
 
 const PRINT_HEADERS = ['التاريخ', 'المستند', 'مرجع المورد', 'المورد', 'بيان البند', 'التصنيف', 'كمية × سعر', 'الصافي', 'الضريبة', 'الإجمالي'] as const
 
@@ -54,12 +55,16 @@ export function ProjectExpenseLedgerCard(props: {
   const exportExcel = () => {
     const sheets = [...(props.preSheets ?? []), exportSheet()]
     downloadTextFile(
-      exportFileName(`كشف-مصروفات-${props.projectCode}`, 'xls'),
-      sheetsToExcelXml(sheets, `كشف مشروع ${props.projectCode} — ${setup.shopName || 'المنشأة'}`),
+      exportFileName(setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'xls', localIsoTimestamp()),
       'application/vnd.ms-excel',
+      sheetsToExcelXml(sheets),
     )
   }
-  const exportCsv = () => downloadTextFile(exportFileName(`كشف-مصروفات-${props.projectCode}`, 'csv'), sheetToCsv(exportSheet()), 'text/csv;charset=utf-8')
+  const exportCsv = () => downloadTextFile(
+    exportFileName(setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'csv', localIsoTimestamp()),
+    'text/csv;charset=utf-8',
+    sheetToCsv(exportSheet()),
+  )
 
   const printLedger = () => {
     const { reportPrint, receipt } = useAppStore.getState()
