@@ -39,8 +39,10 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
   const dirtyRef = useRef(false)
   const promptRef = useRef<WindowClosePrompt | null>(null)
   const [prompt, setPrompt] = useState<WindowClosePrompt | null>(null)
-  /** طلب إغلاق معلّق: token من العملية الرئيسية، أو null لطلب محلي (Escape) */
-  const [ask, setAsk] = useState<{ token: string | null } | null>(null)
+  /* طلبات إغلاق معلّقة: كل مصافحة من العملية الرئيسية لها توكنها — قد يصل
+     طلب ثانٍ (إغلاق شامل) بينما حوار الأول مفتوح، فتُجمع التوكنات وتُجاب
+     كلها معاً وإلا انتهت مهلة أحدهما وأُغلقت النافذة قسراً أثناء قراره */
+  const [ask, setAsk] = useState<{ tokens: (string | null)[] } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
   const props = useMemo<Record<string, unknown>>(() => {
@@ -63,7 +65,7 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
 
   useEffect(() => bridge?.onRequestClose(({ token }) => {
     if (!dirtyRef.current && !promptRef.current) { bridge?.respondClose(token, true); return }
-    setAsk({ token })
+    setAsk((prev) => ({ tokens: [...(prev?.tokens ?? []), token] }))
   }), [bridge])
 
   /* تركيز أول حقل — نفس سلوك النافذة العائمة عند فتحها */
@@ -80,8 +82,11 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
     setAsk(null)
     if (allow) before?.()
     if (!current) return
-    if (current.token) bridge?.respondClose(current.token, allow)
-    else if (allow) bridge?.closeSelf()
+    let localOnly = true
+    for (const token of current.tokens) {
+      if (token) { localOnly = false; bridge?.respondClose(token, allow) }
+    }
+    if (localOnly && allow) bridge?.closeSelf()
   }
 
   const kind = descriptor.kind as AppWindowKind | undefined
@@ -97,7 +102,7 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
           if (event.key !== 'Escape' || event.defaultPrevented) return
           event.stopPropagation()
           if (!dirtyRef.current && !promptRef.current) bridge?.closeSelf()
-          else setAsk({ token: null })
+          else setAsk((prev) => ({ tokens: [...(prev?.tokens ?? []), null] }))
         }}
       >
         <div className="app-window-body">

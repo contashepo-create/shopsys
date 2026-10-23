@@ -6635,6 +6635,7 @@ export const useRawDataStore = create<DataState>()(
         const isDocumentation = args.projectBilling === 'documentation'
         if (isDocumentation) {
           if (args.customerId == null) throw new Error('فاتورة التوثيق مستند ضريبي — تتطلب عميلاً مسجلاً (عميل المشروع)')
+          if ((args.partyKind ?? 'customer') !== 'customer') throw new Error('فاتورة التوثيق تصدر لعميل المشروع فقط — لا بيع توثيقي على حساب مورد أو موظف')
           if (saleLines.some((l) => !isServiceItem(l.itemId))) throw new Error('فاتورة التوثيق لأعمال المستخلصات فقط — سطورها بنود خدمية، ولا تُباع بها أصناف مخزنية')
           if (args.fx || args.terminalPayment) throw new Error('فاتورة التوثيق لا تحصيل عليها — لا عملة أجنبية ولا ماكينة دفع')
           if (args.paymentAllocations?.length || (args.paidMinor ?? 0) > 0) throw new Error('فاتورة التوثيق لا تحصيل عليها — التحصيل والذمة على المستخلصات نفسها')
@@ -14426,6 +14427,9 @@ export const useRawDataStore = create<DataState>()(
         // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
         for (const sale of state.sales) {
           if (sale.customerId !== customerId) continue
+          /* فاتورة توثيق مستخلصات (النموذج أ): لا ذمة بها — الذمة على
+             المستخلص نفسه؛ عرضها هنا يجعل معالج التحصيل يسدد الدين مرتين */
+          if (sale.projectBilling === 'documentation') continue
           const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
           const creditPart = sale.totals.totalMinor - paid
           if (creditPart <= 0) continue

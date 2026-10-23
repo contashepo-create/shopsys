@@ -41,6 +41,7 @@ console.log('\n═══ أ+ب) الأسلاك ووحدة المحرك ═══
   ok(view.includes('addProjectExtract({'), 'الترحيل بنفس محرك الصفحة addProjectExtract — لا مسار موازٍ')
   ok(view.includes('computeExtractTotals(') && view.includes('computeExtractLines('), 'معاينة الأرقام بدوال النواة نفسها')
   ok(src('src/ui/pages/ContractingPages.tsx').includes('data-open-extract-wizard'), 'زر المعالج السريع في صفحة المشروعات')
+  ok(view.includes('data-wizard-new-project') && view.includes('openProjectEditorWindow(0,'), 'المعالج ينشئ مشروعاً جديداً في نافذة ابنة ويختاره (+ جديد كاملة)')
 }
 
 console.log('\n═══ ج) سلوك بوسائط المعالج نفسها ═══')

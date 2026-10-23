@@ -16,6 +16,7 @@ import { boqItemTotal, computeExtractLines, computeExtractTotals } from '../../c
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useWindowHost } from './windowHostContext.ts'
+import { openProjectEditorWindow } from './windowStore.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -167,10 +168,18 @@ export function ExtractWizardWindowView() {
         {step === 1 && (
           <div className="space-y-3">
             <Field label="المشروع *">
-              <QuickSelect className={inputCls} value={projectId} onChange={(e) => { setProjectId(Number(e.target.value)); setLinePct({}) }} data-window-autofocus aria-label="مشروع المستخلص">
-                <option value={0}>اختر المشروع…</option>
-                {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-              </QuickSelect>
+              <div className="flex gap-2">
+                <QuickSelect className={inputCls} value={projectId} onChange={(e) => { setProjectId(Number(e.target.value)); setLinePct({}) }} data-window-autofocus aria-label="مشروع المستخلص">
+                  <option value={0}>اختر المشروع…</option>
+                  {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                </QuickSelect>
+                <button
+                  type="button" data-wizard-new-project
+                  className="shrink-0 rounded-lg border border-emerald-300 px-2 py-0.5 font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300"
+                  title="مشروع غير موجود بعد؟ أنشئه في نافذة ابنة ويُختار هنا تلقائياً"
+                  onClick={() => openProjectEditorWindow(0, host?.windowId ?? null, (id) => { setProjectId(id); setLinePct({}) })}
+                >+ مشروع جديد</button>
+              </div>
             </Field>
             {project && guard && (
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 grid grid-cols-2 gap-2 text-[12px]" data-wizard-project-summary>

@@ -107,6 +107,14 @@ eq(summaryAfter.taxMinor, summaryBefore.taxMinor, 'ضريبة المبيعات �
 eq(JSON.stringify(dailySales(S().sales, PERIOD)), dailyBefore, 'يومية المبيعات لا تراها')
 eq(JSON.stringify(topItems(S().sales, S().saleReturns, PERIOD, 50)), itemsBefore, 'أرباح الأصناف لا تراها')
 eq(S().getCustomerStatementRows(client.id).length, stmtBefore.length, 'كشف العميل بلا صف توثيق مضلّل')
+{
+  const { summarizeShift } = await import(pathToFileURL(join(root, 'src/core/shifts.ts')).href)
+  const shift = { id: 77, openingCashMinor: 0, countedCashMinor: null }
+  const docs = S().sales.map((s2) => ({ shiftId: 77, payment: s2.payment, totalMinor: s2.totals.totalMinor, paidMinor: s2.paidMinor, projectBilling: s2.projectBilling }))
+  const sum = summarizeShift(shift, docs, [])
+  eq(sum.invoiceCount, 0, 'تلخيص الوردية لا يعدّ فاتورة التوثيق من مبيعاته')
+  eq(sum.creditSalesMinor, 0, 'ولا يحسب إجماليها بيعاً آجلاً في تقرير الوردية')
+}
 
 console.log('\n═══ د) الرفضات: كل محاولة لفكّ صمت التوثيق تُصدّ ═══')
 throws(() => S().postSale(docArgs(34_200_100)), /سقف توثيق المشروع/, 'توثيق فوق المستخلَص غير الموثَّق يُرفض')
@@ -117,6 +125,8 @@ throws(() => S().postSale(docArgs(100, { lines: [{ itemId: cement.id, nameAr: ce
 throws(() => S().postSale(docArgs(100, { paidMinor: 100 })), /لا تحصيل عليها/, 'تحصيل على توثيق يُرفض')
 throws(() => S().postSale(docArgs(100, { internalExpenses: [{ label: 'نقل', amountMinor: 100, taxPercent: 0, taxTreatment: 'inclusive', settlement: 'paid_now' }] })), /بلا مصروفات داخلية/, 'مصروف داخلي على توثيق يُرفض')
 throws(() => S().postSale(docArgs(100, { staffCommission: { employeeId: 1, amountMinor: 100 } })), /بلا عمولات/, 'عمولة على توثيق تُرفض')
+throws(() => S().postSale(docArgs(100, { partyKind: 'supplier', partyId: 1 })), /عميل المشروع فقط/, 'توثيق على حساب مورد يُرفض — لا ورقة ضريبية بملف خصم مالي آخر')
+ok(!S().getOpenClientInvoices(client.id).some((o) => o.docKey === `sale:${doc.id}`), 'معالج التحصيل لا يعرض فاتورة التوثيق مديونية (وإلا سُددت فوق ذمة مستخلصها)')
 throws(() => S().editSale({ saleId: doc.id, lines: doc.lines, reason: 'تصحيح', einvoiceActive: false }), /لا تُعدَّل/, 'تعديل فاتورة التوثيق ممنوع')
 throws(() => S().postExchange({ originalSaleId: doc.id, returnQtyByItem: new Map([[svc.id, 1]]), newLines: doc.lines }), /لا تُستبدل/, 'استبدال فاتورة التوثيق ممنوع')
 
