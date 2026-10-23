@@ -34,6 +34,7 @@ const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).
 useAppStore.getState().updateSetup({ allowNegativeTreasury: true, shopName: 'المنشأة الأساسية', vatPercent: 14, taxInclusive: true, taxRegistrationStatus: 'registered' })
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
+const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const st = () => useDataStore.getState()
 const raw = () => useRawDataStore.getState()
 let pass = 0
@@ -170,7 +171,17 @@ console.log('\n═══ 4) تحويل نقدية بين خزينتي الفرع
   for (const e of st().journal) for (const l of e.lines) balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
   assert.equal(balances.get(branchNew.treasuryCode), 2000, 'خزينة المعادي 50.00−30.00=20.00')
   assert.equal(balances.get('1101'), -47000, 'خزينة المركز −500.00+30.00=−470.00')
-  ok('تحويل النقدية بين الفروع مستند سند موثق في اليومية')
+  const voucher = st().vouchers.at(-1)
+  const pair = st().journal.filter((entry) => entry.interBranchTransferId === voucher.id)
+  assert.equal(pair.length, 2, 'التحويل يُنشئ قيداً في دفتر كل فرع')
+  assert.deepEqual(new Set(pair.map((entry) => entry.branchId)), new Set([mainBranch.id, branchNew.id]))
+  assert.ok(pair.every((entry) => entry.lines.reduce((sum, line) => sum + line.debit, 0) === entry.lines.reduce((sum, line) => sum + line.credit, 0)), 'القيدان متوازنان منفردين')
+  const consolidated = trialBalance(st().journal, { from: '2026-01-01', to: '2026-12-31' })
+  assert.equal(consolidated.rows.some((row) => row.code === '1114' || row.code === '2118'), false, 'الرصيد البيني يُستبعد من التقرير المجمع بعد التحقق من اقتران القيدين')
+  const reversed = st().reverseVoucher(voucher.id, 'اختبار عكس مزدوج')
+  assert.ok(reversed.branchTransfer.destinationReversalEntryId, 'عكس السند يُنشئ قيد عكس ثانياً للفرع المقابل')
+  assert.equal(st().journal.filter((entry) => entry.interBranchTransferId === voucher.id).length, 4, 'العكس يضيف قيدين ولا يمحو الأصل')
+  ok('قيدان متوازنان مستقلان للتحويل، تسوية داخلية مستبعدة من التجميع، وعكس ذري مزدوج')
 }
 
 console.log('\n═══ 5) الأرصدة الافتتاحية: ملف ودفتر مستقلان لكل فرع ═══')

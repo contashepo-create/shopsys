@@ -39,6 +39,7 @@ import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotio
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, validatePurchaseVariantBreakdown, applyPurchaseVariantBreakdown, type VariantStock, type VariantBreakdownLine } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
+import { buildInterBranchTransferLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE } from '../core/branchAccounting.ts'
 import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { getCountry } from '../core/countries.ts'
@@ -1329,6 +1330,8 @@ export interface Voucher {
   amountMinor: number
   description: string
   journalEntryId: number
+  /** تحويل بين فرعين: القيدان يظلان في دفتريهما، والسند متاح للطرفين. */
+  branchTransfer?: { sourceBranchId: number; destinationBranchId: number; destinationJournalEntryId: number; reversalEntryId?: number | null; destinationReversalEntryId?: number | null }
   // ربط السند بطرفه — يغذي كشوف حساب العميل/المورد (طلب المالك)
   /** الطرف على السند: عميل أو مورد أو موظف (سلفة/استرداد) — طلب المالك */
   partyKind?: 'customer' | 'supplier' | 'employee' | null
@@ -4849,16 +4852,24 @@ export const useRawDataStore = create<DataState>()(
               patchRec[key] = nextArr.map((r: Record<string, unknown>) => {
                 if (r && !prevIds.has(r.id)) {
                   const isTransferVoucher = key === 'vouchers' && r.kind === 'transfer'
+                  const approvedInterBranchEntry = key === 'journal' && typeof r.interBranchTransferId === 'number'
+                    && Array.isArray(patchRec.vouchers) && (patchRec.vouchers as Voucher[]).some((voucher) =>
+                      voucher.id === r.interBranchTransferId && voucher.branchTransfer != null
+                      && [voucher.branchTransfer.sourceBranchId, voucher.branchTransfer.destinationBranchId].includes(r.branchId as number),
+                    )
+                  const transfer = r.branchTransfer as Voucher['branchTransfer'] | undefined
+                  const approvedInterBranchVoucher = key === 'vouchers' && transfer != null
+                    && [transfer.sourceBranchId, transfer.destinationBranchId].includes(activeBranch.id)
                   return {
                     ...r,
-                    ...(r.branchId !== activeBranch.id ? { branchId: activeBranch.id } : {}),
+                    ...(r.branchId !== activeBranch.id && !approvedInterBranchEntry && !approvedInterBranchVoucher ? { branchId: activeBranch.id } : {}),
                     ...(key === 'items' && !activeBranch.isMain && r.warehouseId === undefined
                       ? { warehouseId: activeBranch.warehouseId }
                       : {}),
                     ...(remapDefaultTreasury && !isTransferVoucher && r.treasury === '1101'
                       ? { treasury: activeBranch.treasuryCode }
                       : {}),
-                    ...(remapDefaultTreasury && key === 'journal' && Array.isArray(r.lines) && !(r.lines as { accountCode?: string }[]).some((l) => l.accountCode === activeBranch.treasuryCode)
+                    ...(remapDefaultTreasury && key === 'journal' && !approvedInterBranchEntry && Array.isArray(r.lines) && !(r.lines as { accountCode?: string }[]).some((l) => l.accountCode === activeBranch.treasuryCode)
                       ? {
                           lines: (r.lines as { accountCode?: string }[]).map((l) =>
                             l.accountCode === '1101' ? { ...l, accountCode: activeBranch.treasuryCode } : l,
@@ -4896,7 +4907,11 @@ export const useRawDataStore = create<DataState>()(
             }).map((treasury) => treasury.code))
             for (const entry of nextJournal) {
               if (previousEntryIds.has(entry.id)) continue
-              if (entry.lines.some((line) => foreignTreasuryCodes.has(line.accountCode))) {
+              const pairedTransfer = entry.interBranchTransferId != null
+                && (patch as Partial<DataState>).vouchers?.some((voucher) => voucher.id === entry.interBranchTransferId
+                  && voucher.branchTransfer != null
+                  && [voucher.branchTransfer.sourceBranchId, voucher.branchTransfer.destinationBranchId].includes(entry.branchId ?? -1))
+              if (!pairedTransfer && entry.lines.some((line) => foreignTreasuryCodes.has(line.accountCode))) {
                 throw new Error('لا يمكن ترحيل قيد على خزينة أو بنك تابع لفرع آخر')
               }
             }
@@ -8402,18 +8417,47 @@ export const useRawDataStore = create<DataState>()(
         }
 
         // القيد حسب نوع السند — كله عبر دوال النواة المتوازنة بنيوياً
+        const treasuryBranch = (code: string) => {
+          const treasury = state.treasuries.find((row) => row.code === code)
+          return state.branches.find((branch) => branch.treasuryCode === code)
+            ?? (treasury?.branchId != null ? state.branches.find((branch) => branch.id === treasury.branchId) : undefined)
+        }
+        const sourceBranch = args.kind === 'transfer' ? treasuryBranch(args.treasury) : undefined
+        const destinationBranch = args.kind === 'transfer' ? treasuryBranch(args.counterAccountCode) : undefined
+        const interBranch = !!sourceBranch && !!destinationBranch && sourceBranch.id !== destinationBranch.id
+        if (interBranch && activeBranch && ![sourceBranch!.id, destinationBranch!.id].includes(activeBranch.id)) {
+          throw new Error('اختر فرع المصدر أو الوجهة قبل تسجيل التحويل بين الفروع')
+        }
+        if (interBranch && activeUser && activeUser.roleId !== 'owner') {
+          throw new Error('التحويل بين الفروع يتطلب صلاحية المالك؛ يُرحَّل القيدان المتناظران معاً')
+        }
+        let interBranchLines: ReturnType<typeof buildInterBranchTransferLines> | null = null
+        if (interBranch) {
+          const sourcePositionMinor = state.journal
+            .filter((entry) => entry.branchId === sourceBranch!.id)
+            .flatMap((entry) => entry.lines)
+            .filter((line) => line.relatedBranchId === destinationBranch!.id && (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE))
+            .reduce((sum, line) => sum + line.debit - line.credit, 0)
+          interBranchLines = buildInterBranchTransferLines({
+            sourceBranchId: sourceBranch!.id, destinationBranchId: destinationBranch!.id,
+            sourceTreasury: args.treasury, destinationTreasury: args.counterAccountCode,
+            amountMinor: args.amountMinor, feeMinor: args.feeMinor ?? 0, sourcePositionMinor,
+            description: args.description,
+          })
+        }
         const baseEntryLines =
           args.kind === 'receipt'
             ? buildReceiptVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
             : args.kind === 'payment'
               ? buildPaymentVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
-              : buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description, args.feeMinor ?? 0)
+              : interBranchLines?.sourceLines ?? buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description, args.feeMinor ?? 0)
         const entryLines = args.costCenterId == null ? baseEntryLines : baseEntryLines.map((line) => line.debit > 0 && line.accountCode === args.counterAccountCode ? { ...line, costCenterId: args.costCenterId } : line)
 
         if (args.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ السند غير صالح')
         if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع المرتبط بالسند غير موجود')
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
+        const destinationEntryId = interBranch ? entryId + 1 : null
         const now = localIsoTimestamp()
         const transactionAt = args.date ? `${args.date}T${now.slice(11)}` : now
         const prefix = args.kind === 'receipt' ? 'RV' : args.kind === 'payment' ? 'PV' : 'TV'
@@ -8425,6 +8469,7 @@ export const useRawDataStore = create<DataState>()(
 
         const entry: JournalEntry = {
           id: entryId,
+          ...(interBranch ? { branchId: sourceBranch!.id, interBranchTransferId: voucherId } : {}),
           entryNumber: entryId,
           date: transactionAt.slice(0, 10),
           description: `${kindAr} ${voucherNumber}${args.description ? ` — ${args.description}` : ''}${fxLeg ? ` — ${describeFxLeg(fxLeg, args.amountMinor, args.bookDecimals ?? 2)}` : ''}`,
@@ -8455,6 +8500,7 @@ export const useRawDataStore = create<DataState>()(
           fx: fxLeg,
           ...(partyAllocations ? { allocations: partyAllocations, unallocatedMinor: partyUnallocatedMinor ?? 0 } : {}),
           reversalEntryId: null,
+          ...(interBranch ? { branchTransfer: { sourceBranchId: sourceBranch!.id, destinationBranchId: destinationBranch!.id, destinationJournalEntryId: destinationEntryId! } } : {}),
         }
 
         // ═══ إصلاح المالك: «المبالغ في الملف غير مطابقة لكشف الحساب» ═══
@@ -8502,7 +8548,14 @@ export const useRawDataStore = create<DataState>()(
               purchaseId: null, payableId: null, journalEntryId: entryId, settlementEntryIds: [],
             }]
           : state.vehicleCostEntries
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        const destinationEntry: JournalEntry | null = interBranch && interBranchLines ? {
+          id: destinationEntryId!, branchId: destinationBranch!.id, interBranchTransferId: voucherId,
+          entryNumber: destinationEntryId!, date: transactionAt.slice(0, 10),
+          description: `تحويل وارد ${voucherNumber}${args.description ? ` — ${args.description}` : ''}`,
+          sourceType: 'payment_voucher', sourceId: voucherId, lines: interBranchLines.destinationLines,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        } : null
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry, ...(destinationEntry ? [destinationEntry] : [])], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
            القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
         if (settleAllocations.length) {
@@ -8672,6 +8725,7 @@ export const useRawDataStore = create<DataState>()(
             throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بسلفة موظف — سوِّها من صفحة الموظفين')
           }
           const voucher = state.vouchers.find((v) => v.journalEntryId === original.id)
+          if (voucher?.branchTransfer) throw new Error('هذا تحويل بين فرعين؛ اعكس السند من صفحة السندات ليُعكس القيدان معاً')
           if (voucher?.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
           if (voucher && state.paymentTerminalTransactions.some((tx) => tx.documentType === 'receipt_voucher' && tx.documentId === voucher.voucherNumber && tx.kind === 'charge')) {
             throw new Error('السند مرتبط بماكينة دفع — استخدم استرداد العملية من مستندها الأصلي، لا تعكس السند مباشرة')
@@ -8733,6 +8787,40 @@ export const useRawDataStore = create<DataState>()(
         const voucher = get().vouchers.find((item) => item.id === voucherId)
         if (!voucher) throw new Error('السند غير موجود')
         if (voucher.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
+        if (voucher.branchTransfer) {
+          const state = get()
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner') throw new Error('عكس تحويل بين الفروع يتطلب صلاحية المالك')
+          if (getEffectiveActiveBranch(state)) throw new Error('لضمان عكس القيدين معاً، اختر «كل الفروع» قبل عكس التحويل البيني')
+          const source = state.journal.find((entry) => entry.id === voucher.journalEntryId)
+          const destination = state.journal.find((entry) => entry.id === voucher.branchTransfer!.destinationJournalEntryId)
+          if (!source || !destination) throw new Error('قيدا التحويل البيني غير مكتملين؛ لا يمكن عكس طرف واحد')
+          if (source.reversedByEntryId || destination.reversedByEntryId) throw new Error('أحد قيدي التحويل معكوس بالفعل؛ راجع دفتر اليومية قبل المتابعة')
+          const firstId = nextId(state.journal)
+          const secondId = firstId + 1
+          const now = localIsoTimestamp()
+          const makeReversal = (original: JournalEntry, id: number): JournalEntry => ({
+            id, branchId: original.branchId, interBranchTransferId: voucherId,
+            entryNumber: id, date: now.slice(0, 10), description: `عكس القيد #${original.entryNumber}${reason ? ` — ${reason}` : ''}`,
+            sourceType: 'reversal', sourceId: original.id, lines: buildReversalLines(original.lines),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: original.id,
+          })
+          const sourceReversal = makeReversal(source, firstId)
+          const destinationReversal = makeReversal(destination, secondId)
+          const updatedVoucher = {
+            ...voucher, reversalEntryId: firstId,
+            branchTransfer: { ...voucher.branchTransfer, reversalEntryId: firstId, destinationReversalEntryId: secondId },
+          }
+          set({
+            journal: [
+              ...state.journal.map((entry) => entry.id === source.id ? { ...entry, reversedByEntryId: firstId }
+                : entry.id === destination.id ? { ...entry, reversedByEntryId: secondId } : entry),
+              sourceReversal, destinationReversal,
+            ],
+            vouchers: state.vouchers.map((item) => item.id === voucherId ? updatedVoucher : item),
+          })
+          return updatedVoucher
+        }
         const reversal = get().reverseEntry(voucher.journalEntryId, reason)
         const current = get()
         const updatedVoucher = { ...voucher, reversalEntryId: reversal.id }

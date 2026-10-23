@@ -9,6 +9,7 @@
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
 import { closingMechanismIds } from './fiscal.ts'
+import { eliminatePairedInterBranchLines } from './branchAccounting.ts'
 
 export interface FinPeriod {
   from: string // YYYY-MM-DD شامل
@@ -49,7 +50,7 @@ export interface TrialBalance {
 
 export function trialBalance(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): TrialBalance {
   const t = new Map<string, { d: Minor; c: Minor }>()
-  for (const e of journal) {
+  for (const e of eliminatePairedInterBranchLines(journal)) {
     if (!inP(e.date, p)) continue
     for (const l of e.lines) {
       const cur = t.get(l.accountCode) ?? { d: 0, c: 0 }
