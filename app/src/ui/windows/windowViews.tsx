@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ArrowDownLeft, ArrowUpRight, Boxes, PackageSearch, Save, UserRound } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { fiscalYearsForBranch } from '../../core/fiscal.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { partyCode } from '../../core/partyCodes.ts'
@@ -94,7 +95,8 @@ export function ItemLedgerWindowView() {
   const itemId = Number(host?.props.itemId ?? 0)
   const cur = useCur()
   const { items, warehouses } = useDataStore()
-  const { fiscalYears } = useAppStore()
+  const { fiscalYears: allFiscalYears, activeBranchContext } = useAppStore()
+  const fiscalYears = fiscalYearsForBranch(allFiscalYears, activeBranchContext?.id ?? null, Boolean(activeBranchContext?.isMain))
   const item = items.find((row) => row.id === itemId) ?? null
   const today = todayLocalIso()
   /* الافتراضي المطلوب من المالك: من بداية السنة المالية حتى اليوم */

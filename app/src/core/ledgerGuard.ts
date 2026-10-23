@@ -18,6 +18,7 @@ import { calendarDateIso } from './time.ts'
 import type { Account, JournalEntry, SourceType } from './ledger.ts'
 
 export interface FiscalYearLike {
+  branchId?: number
   nameAr: string
   startDate: string
   endDate: string
@@ -115,8 +116,9 @@ export function validateEntry(entry: JournalEntry, ctx: LedgerGuardContext): str
     // تاريخ غير موجود تقويمياً يُرفض الآن قبل أن يفسد ترتيب الفترات (مراجعة §75)
     errors.push(`${tag}: تاريخ غير موجود في التقويم (${entry.date})`)
   } else if (!CLOSED_YEAR_EXEMPT.includes(entry.sourceType)) {
-    const closed = (ctx.fiscalYears ?? []).find((y) => y.status === 'closed' && entry.date >= y.startDate && entry.date <= y.endDate)
-    if (closed) errors.push(`التاريخ ${entry.date} داخل السنة المالية المقفلة «${closed.nameAr}» — لا قيود في فترة مقفلة`)
+    const scopedYears = (ctx.fiscalYears ?? []).filter((year) => entry.branchId == null ? year.branchId == null : year.branchId === entry.branchId)
+    const closed = scopedYears.find((y) => y.status === 'closed' && entry.date >= y.startDate && entry.date <= y.endDate)
+    if (closed) errors.push(`التاريخ ${entry.date} داخل السنة المالية المقفلة «${closed.nameAr}»${entry.branchId != null ? ` للفرع #${entry.branchId}` : ''} — لا قيود في فترة مقفلة`)
   }
 
   return errors

@@ -81,6 +81,8 @@ export type SourceType =
 
 export interface JournalEntry {
   id: number
+  /** فرع القيد المحاسبي؛ يدعم الأستاذ والأقفال والتقارير المستقلة لكل فرع. */
+  branchId?: number
   entryNumber: number
   date: string // ISO
   description: string

@@ -16,6 +16,7 @@ import { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS, type BusinessModule } f
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { evaluateLicense, effectiveLimits } from '../../core/license.ts'
 import { formatMinor } from '../../core/money.ts'
+import { validateFiscalYear } from '../../core/fiscal.ts'
 import { getCountry } from '../../core/countries.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
@@ -91,6 +92,10 @@ export function BranchesPage() {
   const [customModulesMode, setCustomModulesMode] = useState<'all' | 'custom'>('all')
   const [enabledModules, setEnabledModules] = useState<BusinessModule[]>([])
   const [branchActivityId, setBranchActivityId] = useState<string>('')
+  const currentYear = new Date().getFullYear()
+  const [fiscalYearName, setFiscalYearName] = useState(String(currentYear))
+  const [fiscalYearStart, setFiscalYearStart] = useState(`${currentYear}-01-01`)
+  const [fiscalYearEnd, setFiscalYearEnd] = useState(`${currentYear}-12-31`)
 
   const usedWh = new Set(branches.map((b) => b.warehouseId))
   const usedTr = new Set(branches.map((b) => b.treasuryCode))
@@ -101,6 +106,8 @@ export function BranchesPage() {
     setEditing(null); setName(''); setAddress(''); setPhone(''); setManager('')
     setWhMode('new'); setTrMode('new-cash')
     setCustomModulesMode('all'); setEnabledModules([...setup.modules]); setBranchActivityId('')
+    const year = new Date().getFullYear()
+    setFiscalYearName(String(year)); setFiscalYearStart(`${year}-01-01`); setFiscalYearEnd(`${year}-12-31`)
     setOpen(true)
   }
   const openEdit = (b: Branch) => {
@@ -127,6 +134,11 @@ export function BranchesPage() {
 
   const save = () => {
     try {
+      const openingFiscalYear = { nameAr: fiscalYearName.trim(), startDate: fiscalYearStart, endDate: fiscalYearEnd }
+      if (!editing) {
+        const fiscalErrors = validateFiscalYear(openingFiscalYear, [])
+        if (fiscalErrors.length) throw new Error(fiscalErrors.join(' — '))
+      }
       if (editing) {
         updateBranch(editing.id, {
           nameAr: name,
@@ -141,7 +153,7 @@ export function BranchesPage() {
         })
         toast.show(`حُدّث فرع «${name.trim()}» ✅`)
       } else {
-        addBranch({
+        const createdBranch = addBranch({
           nameAr: name,
           warehouseId: typeof whMode === 'number' ? whMode : 0,
           treasuryCode: typeof trMode === 'string' && !trMode.startsWith('new-') ? trMode : '',
@@ -154,7 +166,9 @@ export function BranchesPage() {
           enabledModules: customModulesMode === 'custom' ? enabledModules : undefined,
           activityId: branchActivityId || null,
         }, maxBranches)
-        toast.show(`أُنشئ فرع «${name.trim()}» بمخزنه وخزينته ✅`)
+        if (!branches.length) useAppStore.getState().bindLegacyFiscalYearsToMain(1)
+        useAppStore.getState().addBranchFiscalYear(createdBranch.id, openingFiscalYear)
+        toast.show(`أُنشئ فرع «${name.trim()}» بمخزنه وخزينته وسنته المالية ✅`)
       }
       setOpen(false)
     } catch (e) {
@@ -387,6 +401,25 @@ export function BranchesPage() {
           <Field label="اسم الفرع *">
             <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="فرع المعادي…" />
           </Field>
+          {!editing && (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-3">
+              <div>
+                <div className="text-[12px] font-extrabold text-emerald-800 dark:text-emerald-200">السنة المالية الافتتاحية للفرع *</div>
+                <div className="text-[10.5px] text-slate-500 mt-0.5">حدّد الفترة التي سيعمل عليها هذا الفرع؛ تُحفظ مستقلة عن فترات الفروع الأخرى.</div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Field label="اسم السنة">
+                  <input value={fiscalYearName} onChange={(e) => setFiscalYearName(e.target.value)} className={inputCls} required />
+                </Field>
+                <Field label="تاريخ البداية *">
+                  <input type="date" value={fiscalYearStart} onChange={(e) => setFiscalYearStart(e.target.value)} className={inputCls} required />
+                </Field>
+                <Field label="تاريخ النهاية *">
+                  <input type="date" value={fiscalYearEnd} onChange={(e) => setFiscalYearEnd(e.target.value)} className={inputCls} required />
+                </Field>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="مخزن الفرع *" hint="لكل فرع مخزنه الخاص — أرصدته منفصلة">
               <QuickSelect value={whMode === 'new' ? 'new' : String(whMode)} onChange={(e) => setWhMode(e.target.value === 'new' ? 'new' : Number(e.target.value))} className={inputCls} disabled={!!editing && editing.isMain}>

@@ -211,6 +211,10 @@ interface AppState {
   updateCompanyName: (name: string) => void
   updateTaxSettings: (patch: Pick<SetupState, 'vatPercent' | 'taxInclusive' | 'taxRegistrationStatus'>) => void
   fiscalYears: FiscalYear[]
+  /** يربط السنوات القديمة غير المنسوبة بالفرع الرئيسي عند تفعيل نموذج الفروع. */
+  bindLegacyFiscalYearsToMain: (branchId: number) => void
+  /** ينشئ السنة الافتتاحية لفرع جديد بعد التحقق. */
+  addBranchFiscalYear: (branchId: number, fy: Omit<FiscalYear, 'id' | 'status' | 'branchId'>) => void
   completeSetup: (data: {
     country: Country
     activity: ActivityTemplate
@@ -907,14 +911,25 @@ export const useAppStore = create<AppState>()(
             ...effectiveBranchAppSettings(companySetup, null, {}, baseReceipt, baseEinvoice, baseApprovals, baseReportPrint),
           }
         }),
-      /* سنة مالية واحدة مفتوحة فقط (طلب المالك) — الحارس هنا في المتجر لا في
-         الشاشة وحدها: أي مسار آخر (استيراد حالة، ترحيل قديم) لا يفتح سنتين. */
+      bindLegacyFiscalYearsToMain: (branchId) => set((s) => ({
+        fiscalYears: s.fiscalYears.map((year) => year.branchId == null ? { ...year, branchId } : year),
+      })),
+      addBranchFiscalYear: (branchId, fy) => set((s) => {
+        const scopedYears = s.fiscalYears.filter((year) => year.branchId === branchId)
+        const errors = validateFiscalYear(fy, scopedYears)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const id = s.fiscalYears.reduce((max, year) => Math.max(max, year.id), 0) + 1
+        return { fiscalYears: [...s.fiscalYears, { ...fy, id, branchId, status: 'open' }] }
+      }),
+      /* سنة مالية واحدة مفتوحة فقط لكل فرع — الحارس مركزي داخل المتجر. */
       addFiscalYear: (fy) =>
         set((s) => {
-          const errors = validateFiscalYear(fy, s.fiscalYears)
+          const branchId = s.activeBranchContext?.id
+          const scopedYears = s.fiscalYears.filter((year) => branchId == null ? year.branchId == null : year.branchId === branchId)
+          const errors = validateFiscalYear(fy, scopedYears)
           if (errors.length) throw new Error(errors.join(' — '))
           return {
-            fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
+            fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, ...(branchId != null ? { branchId } : {}), status: 'open' }],
           }
         }),
       markFiscalYearClosed: (id) =>

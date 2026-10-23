@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { suggestFiscalYear, validateFiscalYear, type FiscalYear } from '../src/core/fiscal.ts'
+import { fiscalYearsForBranch, suggestFiscalYear, validateFiscalYear, type FiscalYear } from '../src/core/fiscal.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 
 const closed2025: FiscalYear = { id: 1, ...suggestFiscalYear(2025), status: 'closed' }
@@ -44,5 +44,22 @@ describe('التحقق من تعريف السنة المالية', () => {
     })).toThrow(/تاريخ بداية السنة غير صالح/)
     expect(useAppStore.getState().setup.completed).toBe(false)
     expect(useAppStore.getState().fiscalYears).toEqual([])
+  })
+
+  it('يفصل السنوات بين الفروع ويسمح بتداخل الفترات بين فرعين مختلفين فقط', () => {
+    useAppStore.getState().addBranchFiscalYear(10, suggestFiscalYear(2025))
+    useAppStore.getState().addBranchFiscalYear(20, suggestFiscalYear(2025))
+    expect(useAppStore.getState().fiscalYears.map((year) => year.branchId)).toEqual([10, 20])
+    expect(fiscalYearsForBranch(useAppStore.getState().fiscalYears, 10)).toHaveLength(1)
+    expect(fiscalYearsForBranch(useAppStore.getState().fiscalYears, 20)).toHaveLength(1)
+    expect(() => useAppStore.getState().addBranchFiscalYear(10, suggestFiscalYear(2025))).toThrow(/تتداخل/)
+  })
+
+  it('يربط الفترات القديمة غير المنسوبة بالرئيسي فقط دون نقلها إلى الفروع الجديدة', () => {
+    useAppStore.setState({ fiscalYears: [closed2025] })
+    useAppStore.getState().bindLegacyFiscalYearsToMain(1)
+    const years = useAppStore.getState().fiscalYears
+    expect(fiscalYearsForBranch(years, 1, true)).toEqual([{ ...closed2025, branchId: 1 }])
+    expect(fiscalYearsForBranch(years, 2)).toEqual([])
   })
 })

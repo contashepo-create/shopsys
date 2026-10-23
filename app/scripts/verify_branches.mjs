@@ -195,7 +195,40 @@ console.log('\n═══ 5) الأرصدة الافتتاحية: ملف ودفت
   ok('خزائن الفروع: رصيد الافتتاحي يُحفظ ويُرحّل بدفتر الفرع، لا يختلط بين الرئيسي والفرع')
 }
 
-console.log('\n═══ 6) قواعد الصحة ═══')
+console.log('\n═══ 6) سنوات مالية وإقفال مستقل لكل فرع ═══')
+{
+  const mainYear = { id: 901, branchId: mainBranch.id, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }
+  const branchYear = { id: 902, branchId: branchNew.id, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }
+  useAppStore.setState({ fiscalYears: [mainYear, branchYear] })
+  const postRevenue = (branch, amount) => {
+    st().setActiveBranchId(branch.id)
+    st().postManualEntry({
+      date: '2025-06-30', description: `إيراد اختبار ${branch.nameAr}`,
+      lines: [
+        { accountCode: branch.treasuryCode, debit: amount, credit: 0, note: 'تحصيل' },
+        { accountCode: '4101', debit: 0, credit: amount, note: 'إيراد' },
+      ],
+    })
+  }
+  postRevenue(mainBranch, 100000)
+  postRevenue(branchNew, 250000)
+  st().setActiveBranchId(mainBranch.id)
+  const mainClose = st().closeFiscalYear(mainYear, [mainYear])
+  st().setActiveBranchId(branchNew.id)
+  const branchClose = st().closeFiscalYear(branchYear, [branchYear])
+  const mainClosing = raw().journal.find((entry) => entry.id === mainClose.entryId)
+  const branchClosing = raw().journal.find((entry) => entry.id === branchClose.entryId)
+  assert.equal(mainClose.netProfitMinor, 100000)
+  assert.equal(branchClose.netProfitMinor, 250000)
+  assert.equal(mainClosing.branchId, mainBranch.id)
+  assert.equal(branchClosing.branchId, branchNew.id)
+  assert.equal(mainClosing.lines.find((line) => line.accountCode === '4101')?.debit, 100000)
+  assert.equal(branchClosing.lines.find((line) => line.accountCode === '4101')?.debit, 250000)
+  ok('فرعان لهما الفترة نفسها: قيد الإقفال مختوم بالفرع ويصفّر صافي دفتره فقط بلا خلط')
+  st().setActiveBranchId(null)
+}
+
+console.log('\n═══ 7) قواعد الصحة ═══')
 {
   // مخزن مربوط بفرع آخر يُرفض
   const errs = validateBranch({ nameAr: 'فرع مكرر', warehouseId: whNew, treasuryCode: '1102' }, st().branches, st().warehouses, st().treasuries)
@@ -213,7 +246,7 @@ console.log('\n═══ 6) قواعد الصحة ═══')
   ok('قواعد الصحة: منع التكرار + حماية الرئيسي + منع حذف الفرع ذي التاريخ التشغيلي')
 }
 
-console.log('\n═══ 7) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
+console.log('\n═══ 8) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
 {
   const companyModules = ['pos', 'inventory', 'purchases', 'contracting', 'logistics', 'equipment_rental']
   // إنشاء فرع مخصص للشحن واللوجستيات فقط
@@ -334,7 +367,7 @@ console.log('\n═══ 7) تخصيص الأقسام والأنشطة لكل ف
   assert.ok(emptyCustomErrs.some((e) => e.includes('اختر قسماً واحداً على الأقل')))
   ok('تخصيص الأقسام والأنشطة لكل فرع: شامل أو مخصص (مقاولات/لوجستيات) + تبديل الفرع النشط')
 
-  console.log('\n═══ 8) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
+  console.log('\n═══ 9) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
   // تفعيل فرع اللوجستيات كشركة مستقلة
   st().setActiveBranchId(logisticsBranch.id)
   let scoped = getBranchScopedDataState(st())

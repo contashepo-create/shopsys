@@ -6,10 +6,18 @@
 
 export interface FiscalYear {
   id: number
+  /** معرف الفرع المالك للفترة. undefined = سنة تاريخية قديمة لم تُربط بعد بفرع. */
+  branchId?: number
   nameAr: string // «2026» أو «2025-2026»
   startDate: string // ISO yyyy-mm-dd
   endDate: string
   status: 'open' | 'closed'
+}
+
+/** الفترات التي تخص فرعاً بعينه. لا نُظهر السنوات القديمة غير المنسوبة إلا قبل إنشاء الفروع أو للفرع الرئيسي. */
+export function fiscalYearsForBranch(years: readonly FiscalYear[], branchId: number | null, isMain = false): FiscalYear[] {
+  if (branchId == null) return years.filter((year) => year.branchId == null)
+  return years.filter((year) => year.branchId === branchId || (isMain && year.branchId == null))
 }
 
 /** اقتراح سنة ميلادية كاملة */

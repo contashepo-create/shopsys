@@ -33,7 +33,7 @@ ok('effectiveModules تحسب الممنوح من النشاط + المفتاح 
 // ── ③ سنة مالية واحدة مفتوحة فقط ─────────────────────────────────────────
 const storeSrc = read('src/stores/app.store.ts')
 const addFiscalYearBlock = storeSrc.slice(storeSrc.lastIndexOf('      addFiscalYear: (fy)'), storeSrc.lastIndexOf('      markFiscalYearClosed:'))
-ok('addFiscalYear يرفض فتح سنة والمفتوحة موجودة عبر التحقق المشترك', /validateFiscalYear\(fy, s\.fiscalYears\)/.test(addFiscalYearBlock))
+ok('addFiscalYear يرفض فتح سنة والمفتوحة موجودة عبر التحقق المشترك', /validateFiscalYear\(fy, scopedYears\)/.test(addFiscalYearBlock))
 ok('الحارس داخل set يمنع الفتح غير الصالح أو المتداخل مباشرةً', /if \(errors\.length\) throw new Error\(errors\.join/.test(addFiscalYearBlock))
 const { useAppStore } = await import(pathToFileURL(join(appRoot, 'src/stores/app.store.ts')).href)
 /* وضع سنة مفتوحة (كما بعد إكمال الإعداد) ثم محاولة فتح أخرى */
