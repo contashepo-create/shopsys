@@ -69,8 +69,9 @@ export function ContractingInvoicesPage() {
 
   const totals = useMemo(() => ({
     invoices: invoices.length,
-    invoiced: invoices.reduce((a, s) => a + s.totals.totalMinor, 0),
-    collected: invoices.reduce((a, s) => a + (s.paidMinor ?? 0), 0),
+    /* فواتير التوثيق ورقة ضريبية فوق مستخلصات معترف بها — جمعها هنا يضخّم «المفوتَر» */
+    invoiced: invoices.reduce((a, s) => a + (s.projectBilling === 'documentation' ? 0 : s.totals.totalMinor), 0),
+    collected: invoices.reduce((a, s) => a + (s.projectBilling === 'documentation' ? 0 : s.paidMinor ?? 0), 0),
     linked: invoices.filter((s) => s.projectId != null).length,
     extracts: projectExtracts.length,
     extracted: projectExtracts.reduce((a, e) => a + e.totals.grossMinor, 0),
@@ -152,6 +153,9 @@ export function ContractingInvoicesPage() {
       const paidMinor = edPayment === 'cash' ? (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return edGross } })() : edGross) : (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return 0 } })() : 0)
       const sale = postSale({
         projectId: edProjectId || null,
+        /* النموذج أ: محرر هذه الصفحة لا يوثّق مستخلصات — أي فاتورة مشروع منه
+           «إضافية» بسقف العقد الموحد، حتى لا تعود فوترة مزدوجة من هذا الباب */
+        ...(edProjectId ? { projectBilling: 'extra' as const } : {}),
         customerId: edCustomerId || null,
         payment: edPayment,
         paidMinor,
@@ -268,7 +272,7 @@ export function ContractingInvoicesPage() {
                   const customerName = customers.find((c) => c.id === s.customerId)?.nameAr ?? s.partyName ?? 'نقدي'
                   return (
                     <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-emerald-500/5">
-                      <td className="px-3 py-2 font-bold">{s.invoiceNumber}</td>
+                      <td className="px-3 py-2 font-bold">{s.invoiceNumber}{s.projectBilling === 'documentation' && <span className="mr-1 rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600" title="فاتورة توثيق مقابل مستخلصات — ورقة ضريبية بلا فوترة جديدة">توثيق</span>}</td>
                       <td className="px-3 py-2">{s.date.slice(0, 10)}</td>
                       <td className="px-3 py-2">{prj ? <span title={prj.nameAr} className="font-bold text-orange-600">{prj.code}</span> : <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-bold">حرة</span>}</td>
                       <td className="px-3 py-2">{customerName}</td>

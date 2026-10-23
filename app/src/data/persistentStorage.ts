@@ -286,10 +286,14 @@ export class DesktopStateStorage implements StateStorage {
   handleExternalChange(name: string): void {
     if (this.paused || !this.snapshots.has(name) || failedStores.has(name)) return
     void this.enqueue(name, async () => {
+      const prev = this.snapshots.get(name)
       this.snapshots.delete(name)
-      await this.load(name)
+      const loaded = await this.load(name)
+      /* لا إخطار للمطبِّقات إلا بتغيّر فعلي: بثّ يصل النافذة الكاتبة نفسها
+         (صدى) أو تكرار إخطار لا يُعيد ترطيب المخازن بلا داعٍ */
+      return loaded.revision !== prev?.revision || loaded.payloadJson !== prev?.payloadJson
     }).then(
-      () => notifyExternalSnapshotAppliers(name),
+      (changed) => { if (changed) notifyExternalSnapshotAppliers(name) },
       () => undefined, /* فشل القراءة سيظهر عند أول getItem قادم بالمسار المعتاد */
     )
   }

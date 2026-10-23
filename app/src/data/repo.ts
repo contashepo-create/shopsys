@@ -8921,6 +8921,28 @@ export const useRawDataStore = create<DataState>()(
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('الفاتورة محصلة بالكامل ولا تحتاج تاريخ استحقاق')
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
+        /* النموذج أ عند التعديل: الفاتورة الإضافية (أو التاريخية المرتبطة بمشروع)
+           تُعاد محاكمتها لسقف العقد الموحد بعد استبعاد نسختها القديمة من الحساب —
+           وإلا صار «التعديل» باباً خلفياً لتجاوز العقد فوق المستخلصات */
+        if (sale.projectId != null) {
+          const branchState = getBranchScopedDataState(state)
+          const editProject = branchState.projects.find((p) => p.id === sale.projectId)
+          if (editProject) {
+            const otherInvoices = branchState.sales.filter((inv) => inv.projectId === editProject.id && inv.id !== sale.id)
+            const otherIds = new Set(otherInvoices.map((inv) => inv.id))
+            const editGuard = computeProjectBillingGuard({
+              contractValueMinor: editProject.contractValueMinor,
+              changeOrders: branchState.changeOrders.filter((o) => o.projectId === editProject.id),
+              extracts: branchState.projectExtracts.filter((e) => e.projectId === editProject.id),
+              saleInvoices: otherInvoices,
+              saleReturns: branchState.saleReturns.filter((r) => otherIds.has(r.saleId)),
+            })
+            const editedWorksNet = totals.totalMinor - totals.taxMinor
+            if (editedWorksNet > editGuard.extraRoomNetMinor) {
+              throw new Error(`سقف فوترة المشروع «${editProject.nameAr}»: صافي الفاتورة بعد التعديل (${editedWorksNet}) يتجاوز المتاح من العقد الفعلي (${editGuard.extraRoomNetMinor}) بعد استبعاد نسختها القديمة — مستخلصات ${editGuard.extractedNetMinor} + إضافيات أخرى ${editGuard.extraInvoicedNetMinor} من عقد فعلي ${editGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى).`)
+            }
+          }
+        }
         const newCreditPart = totals.totalMinor - paidM
         if (newCreditPart > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)

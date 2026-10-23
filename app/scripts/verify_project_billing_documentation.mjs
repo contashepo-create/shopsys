@@ -32,7 +32,7 @@ const eq = (a, b, name) => { assert.equal(a, b, `${name} — الفعلي ${a}،
 const throws = (fn, re, name) => { assert.throws(fn, re, name); pass++; console.log('  ✓', name) }
 
 const { useDataStore } = await import(`${pathToFileURL(join(root, 'src/data/repo.ts')).href}?docbilling=1`)
-const { salesSummary, dailySales, topItems } = await import(pathToFileURL(join(root, 'src/core/reports.ts')).href)
+const { salesSummary, dailySales, topItems, customerBalances, demandForecast } = await import(pathToFileURL(join(root, 'src/core/reports.ts')).href)
 const S = () => useDataStore.getState()
 const PERIOD = { from: '2000-01-01', to: '2100-01-01' }
 
@@ -100,6 +100,13 @@ eq(g1.documentedGrossMinor, 34_200_000, 'الموثَّق = إجمالي فات�
 eq(g1.availableToDocumentGrossMinor, 68_400_000 - 34_200_000, 'المتبقي للتوثيق نقص بمقدارها')
 eq(g1.extraRoomNetMinor, 40_000_000, 'المتاح لإضافية لم يتأكل بالتوثيق (لا ازدواج)')
 
+const balancesAfter = customerBalances(S().sales, S().saleReturns, [])
+eq(JSON.stringify(balancesAfter), JSON.stringify(customerBalances(S().sales.filter((x) => x.id !== doc.id), S().saleReturns, [])), 'تقرير أرصدة العملاء لا يضخّم المديونية بفاتورة التوثيق')
+const today = new Date().toISOString().slice(0, 10)
+const fcWith = demandForecast(S().sales, today)
+const fcWithout = demandForecast(S().sales.filter((x) => x.id !== doc.id), today)
+eq(JSON.stringify(fcWith), JSON.stringify(fcWithout), 'توقع الطلب لا يبني على ورقة ضريبية')
+ok(fcWith.length === 0, 'والعينة حيّة فعلاً: لا صف توقع لبند التوثيق الخدمي')
 const summaryAfter = salesSummary(S().sales, S().saleReturns, PERIOD)
 eq(summaryAfter.invoiceCount, summaryBefore.invoiceCount, 'ملخص المبيعات لا يعدّها فاتورة بيع')
 eq(summaryAfter.totalMinor, summaryBefore.totalMinor, 'إجمالي المبيعات لم يتضخم بها')
@@ -169,5 +176,72 @@ console.log('\n═══ ز) أسلاك الواجهة (أ-٢ب): الطبيعة
   ok(page.includes("id:'billing-doc-over'") && page.includes("id:'billing-extra-over'"), 'مراجعة قبل الترحيل تحذر من تجاوز السقفين')
   ok(page.includes('data-billing-autofill'), 'زر ملء سطور التوثيق من المستخلصات موجود')
 }
+
+
+/* ─────────── سيناريو عدواني ٢: حدود القرش، مرتجعات جزئية، مشروع مقفل، اعتماد ─────────── */
+console.log('سيناريو ٢ — الحدود القصوى والمسارات الشائكة:')
+const prjB = S().addProject({ nameAr: 'عمارة الشروق', clientName: client.nameAr, clientId: client.id, contractValueMinor: 30_000_000, retentionPercent: 10, startDate: '2026-10-01', notes: '' })
+S().addProjectExtract({ projectId: prjB.id, grossMinor: 10_000_000, vatPercent: 14, payment: 'credit', description: 'م1' })
+S().addProjectExtract({ projectId: prjB.id, grossMinor: 20_000_000, vatPercent: 14, payment: 'credit', description: 'م2' })
+const [exB1, exB2] = S().projectExtracts.filter((e) => e.projectId === prjB.id)
+eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 34_200_000, 'مستخلصان: المتاح للتوثيق مجموع شامل الضريبة')
+const docInvB = (netMinor, extractIds) => S().postSale({
+  lines: [{ itemId: svc.id, nameAr: svc.nameAr, qty: 1, unitPriceMinor: netMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }],
+  customerId: client.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: false, treasury: '1101',
+  projectId: prjB.id, projectBilling: 'documentation', extractIds,
+})
+const docB1 = docInvB(10_000_000, [exB1.id]) // 11_400_000
+const docB2 = docInvB(10_000_000, [exB2.id]) // نصف الثاني
+eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 11_400_000, 'توثيقات متعددة تخصم تباعاً')
+throws(() => docInvB(10_000_001, [exB2.id]), /سقف توثيق/, 'قرش واحد فوق المتاح يُرفض (10_000_001 صافي)')
+const docB3 = docInvB(10_000_000, [exB2.id]) // الباقي بالتمام
+eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 0, 'التوثيق بالتمام يصفّر المتاح')
+throws(() => docInvB(88, [exB1.id]), /سقف توثيق/, 'أي مبلغ بعد التصفير يُرفض')
+
+// مرتجع جزئي (نصف سطر) يعيد نصف المتاح، ومرتجع يتجاوز باقي السطر يُرفض
+S().postSaleReturn({ saleId: docB2.id, qtyByItem: new Map([[svc.id, 0.5]]), refund: 'credit', reason: 'تصحيح جزئي' })
+eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 5_700_000, 'مرتجع توثيق جزئي يعيد نصف الموثَّق للمتاح')
+throws(() => S().postSaleReturn({ saleId: docB2.id, qtyByItem: new Map([[svc.id, 0.6]]), refund: 'credit', reason: 'تجاوز الباقي' }), /.+/, 'مرتجع يتجاوز باقي سطر الفاتورة يُرفض')
+eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 5_700_000, 'والرفض لم يحرك المتاح')
+
+// مشروع مقفل: «إضافية» ممنوعة والتوثيق يمر (ورقة ضريبية لأعمال منجزة)
+const prjC = S().addProject({ nameAr: 'فيلا مقفلة', clientName: client.nameAr, clientId: client.id, contractValueMinor: 5_000_000, retentionPercent: 10, startDate: '2026-10-01', notes: '' })
+S().addProjectExtract({ projectId: prjC.id, grossMinor: 5_000_000, vatPercent: 14, payment: 'credit', description: 'ختامي', isFinal: true })
+const exC = S().projectExtracts.find((e) => e.projectId === prjC.id)
+useDataStore.setState((st) => ({ projects: st.projects.map((p) => (p.id === prjC.id ? { ...p, status: 'completed' } : p)) }))
+throws(() => S().postSale({
+  lines: [{ itemId: svc.id, nameAr: svc.nameAr, qty: 1, unitPriceMinor: 100_000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }],
+  customerId: client.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: false, treasury: '1101',
+  projectId: prjC.id, projectBilling: 'extra',
+}), /مقفل/, 'فاتورة إضافية على مشروع مقفل تُرفض')
+const docC = S().postSale({
+  lines: [{ itemId: svc.id, nameAr: svc.nameAr, qty: 1, unitPriceMinor: 5_000_000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }],
+  customerId: client.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: false, treasury: '1101',
+  projectId: prjC.id, projectBilling: 'documentation', extractIds: [exC.id],
+})
+ok(docC.projectBilling === 'documentation', 'توثيق مشروع مقفل يمر (ورقة ضريبية لا فوترة جديدة)')
+
+// مسار الاعتماد: التوثيق ينتظر الاعتماد ثم يُرحَّل صامتاً كما هو
+const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+useDataStore.setState({
+  appUsers: [{ id: 77, nameAr: 'كاشير توثيق', roleId: 'cashier', pinHash: '0'.repeat(64), active: true }],
+  currentUserId: 77,
+})
+useAppStore.getState().updateApprovals({ enabled: true, scope: ['sale'], thresholdMinor: 0 })
+const journalBeforeAppr = S().journal.length
+const approvalsBefore = S().docApprovals.length
+throws(() => docInvB(2_500_000, [exB2.id]), /للاعتماد/, 'مع نظام الاعتماد: فاتورة التوثيق تُقدَّم ولا تُرحَّل')
+eq(S().journal.length, journalBeforeAppr, 'لا قيد قبل الاعتماد')
+eq(S().docApprovals.length, approvalsBefore + 1, 'طلب اعتماد واحد معلّق')
+const reqDoc = S().docApprovals.at(-1)
+useDataStore.setState({ currentUserId: null }) // المالك يعتمد بنفسه
+S().decideDocApproval(reqDoc.id, { status: 'approved', by: null, byName: 'المالك' })
+const postedDoc = S().sales.at(-1)
+ok(postedDoc.projectBilling === 'documentation' && postedDoc.extractIds?.length === 1, 'بعد الاعتماد: الطبيعة والمستخلصات محفوظة')
+const memoEntryAppr = S().journal.find((e) => e.id === postedDoc.journalEntryId)
+ok(memoEntryAppr?.memoOnly === true && memoEntryAppr.lines.length === 0, 'وقيدها تذكاري صامت بعد الاعتماد أيضاً')
+eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 5_700_000 - 2_850_000, 'والمعتمَدة خصمت من المتاح')
+useAppStore.getState().updateApprovals({ enabled: false })
+useDataStore.setState({ appUsers: [], currentUserId: null })
 
 console.log(`\n✅ verify_project_billing_documentation PASS=${pass}`)

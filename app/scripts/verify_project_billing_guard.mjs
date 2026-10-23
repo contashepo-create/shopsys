@@ -131,4 +131,20 @@ throws(
   'لا فواتير إضافية على مشروع مقفل',
 )
 
+
+/* التعديل لا يتسلل فوق السقف: إضافية 30M قائمة وإضافيات أخرى 15M فوق
+   مستخلصات 60M من عقد 100M — المتاح بعد استبعاد القديمة = 25M؛ تعديل
+   إلى 45M يُرفض، وإلى 24M يمر */
+const editArgs = (unitPriceMinor) => ({
+  saleId: extra1.id,
+  lines: [{ itemId: svc.id, nameAr: svc.nameAr, qty: 1, unitPriceMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }],
+  customerId: client.id, payment: 'credit', paidMinor: 0, treasury: '1101',
+  invoiceDiscountPercent: 0, reason: 'تصحيح قيمة الأعمال الإضافية', einvoiceActive: false,
+})
+throws(() => S().editSale(editArgs(45_000_000)), /سقف فوترة المشروع/, 'تعديل يرفع إضافية فوق سقف العقد يُرفض')
+eq(S().getProjectBillingGuard(prj.id).extraInvoicedNetMinor, 45_000_000, 'الرفض لم يغيّر المفوتَر (30M إضافية + 15M لاحقة/تاريخية بالبوابة)')
+const edited = S().editSale(editArgs(24_000_000))
+eq(edited.totals.totalMinor, 24_000_000, 'تعديل داخل السقف يمر (24M)')
+eq(S().getProjectBillingGuard(prj.id).extraInvoicedNetMinor, 39_000_000, 'والحارس يرى القيمة المعدّلة لا القديمة (15M أخرى + 24M)')
+
 console.log(`\nPASS=${pass} — سقف أ-١ صلب حيث يُطلب، وصامت حيث لم تصل الواجهة بعد`)

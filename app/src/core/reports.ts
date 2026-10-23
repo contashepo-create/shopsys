@@ -509,6 +509,7 @@ export function demandForecast(
   const startTime = today - lookbackWeeks * weekMs
   const perItem = new Map<number, { nameAr: string; buckets: number[] }>()
   for (const s of sales) {
+    if (s.projectBilling === 'documentation') continue // ورقة ضريبية — ليست طلباً حقيقياً يُبنى عليه توقّع
     const t = new Date(s.date.slice(0, 10) + 'T00:00:00Z').getTime()
     if (t < startTime || t > today) continue
     const weekIdx = Math.min(lookbackWeeks - 1, Math.max(0, Math.floor((t - startTime) / weekMs)))
@@ -592,12 +593,16 @@ export function customerBalances(
   }
   const saleCustomer = new Map<number, number | null>()
   for (const s of sales) {
+    /* توثيق مستخلصات: لا ذمة بها أبداً — إدخالها هنا يضخّم مديونية العميل
+       في تقارير الأرصدة فوق ذمة مستخلصاته الحقيقية */
+    if (s.projectBilling === 'documentation') continue
     saleCustomer.set(s.id, s.customerId)
     // الدفع المجزأ: الجزء الآجل فقط يدخل ذمة العميل — المحصل وقت البيع ليس ديناً
     const creditPart = s.totals.totalMinor - salePaidMinor(s)
     if (creditPart > 0 && s.customerId != null) row(s.customerId).invoicedMinor += creditPart
   }
   for (const r of returns) {
+    if (r.projectBilling === 'documentation') continue
     // الجزء المخفِّض للذمة فقط (الرد الهجين R1 وإيداع الرصيد G2) — سجلات قديمة: كامل مرتجع «على الحساب»
     const cid = saleCustomer.get(r.saleId)
     if (cid == null) continue
