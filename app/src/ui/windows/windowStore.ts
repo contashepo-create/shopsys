@@ -23,6 +23,7 @@ export type AppWindowKind =
   | 'party-editor'
   | 'party-ledger'
   | 'project-expense'
+  | 'extract-wizard'
   | 'entity-picker'
   | 'project-editor'
   | 'employee-editor'
@@ -590,6 +591,22 @@ export function openProjectExpenseWindow(preselectProjectId?: number, parentId?:
     parentId: parentId ?? null,
     dedupeKey: null,
     width: 1060, height: 700,
+  })
+}
+
+/**
+ * معالج إصدار مستخلص (٣ خطوات — تبسيط إنشاء المستخلص): كل فتح = مستخلص
+ * جديد مستقل (مستندات متعددة كالفواتير)، والترحيل بنفس محرك الصفحة.
+ */
+export function openExtractWizardWindow(opts?: { projectId?: number; parentId?: string | null; onPosted?: (extractId: number) => void }) {
+  return useWindowStore.getState().openWindow({
+    kind: 'extract-wizard',
+    title: 'مستخلص أعمال — معالج سريع',
+    subtitle: 'ثلاث خطوات: المشروع ← الأعمال ← التسوية',
+    props: { ...(opts?.projectId ? { preselectProjectId: opts.projectId } : {}), ...(opts?.onPosted ? { onPosted: opts.onPosted } : {}) },
+    parentId: opts?.parentId ?? null,
+    dedupeKey: null,
+    width: 860, height: 640,
   })
 }
 

@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { AppWindow as WindowIcon, Building2, FileText, Hammer, IdCard, PackageSearch, ReceiptText, UserRound, Users, X } from 'lucide-react'
+import { AppWindow as WindowIcon, Building2, FileCheck2, FileText, Hammer, IdCard, PackageSearch, ReceiptText, UserRound, Users, X } from 'lucide-react'
 import { OverlayPortal, useToast } from '../components/ui.tsx'
 import { useWindowStore, restoreWindowSession, watchWindowSession, type AppWindow, type AppWindowKind } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
 import { ProjectExpenseWindowView } from './ProjectExpenseWindowView.tsx'
+import { ExtractWizardWindowView } from './ExtractWizardWindowView.tsx'
 import { EntityPickerWindowView, ProjectEditorWindowView, EmployeeEditorWindowView } from './EntityPickerWindows.tsx'
 import { isDesktopFreeWindows } from '../../data/desktopBridge.ts'
 
@@ -44,6 +45,7 @@ const ICONS: Record<AppWindowKind, typeof FileText> = {
   'party-editor': UserRound,
   'party-ledger': UserRound,
   'project-expense': Hammer,
+  'extract-wizard': FileCheck2,
   'entity-picker': Users,
   'project-editor': Building2,
   'employee-editor': IdCard,
@@ -61,6 +63,7 @@ export function WindowViewContent({ kind }: { kind: AppWindowKind }) {
     case 'party-editor': return <PartyEditorWindowView />
     case 'party-ledger': return <PartyLedgerWindowView />
     case 'project-expense': return <ProjectExpenseWindowView />
+    case 'extract-wizard': return <ExtractWizardWindowView />
     case 'entity-picker': return <EntityPickerWindowView />
     case 'project-editor': return <ProjectEditorWindowView />
     case 'employee-editor': return <EmployeeEditorWindowView />

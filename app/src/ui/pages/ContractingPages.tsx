@@ -27,7 +27,7 @@ import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
-import { openSalesInvoiceWindow, openProjectExpenseWindow } from '../windows/windowStore.ts'
+import { openSalesInvoiceWindow, openProjectExpenseWindow, openExtractWizardWindow } from '../windows/windowStore.ts'
 import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
 import { renderExtractHtml, renderExtractClientInvoiceHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -2128,6 +2128,9 @@ export function ProjectExtractsPage() {
             قسم مستقل لإصدار المستخلصات كفواتير أعمال على العميل من بنود جدول الكميات (BOQ) مع طباعة فاتورة مستخلص احترافية للعميل
           </p>
         </div>
+        <Btn variant="primary" onClick={() => openExtractWizardWindow()} data-open-extract-wizard title="طريق مختصر من ثلاث خطوات في نافذة حرة — نفس محرك الترحيل">
+          <Plus className="w-4 h-4" /> مستخلص جديد — معالج سريع
+        </Btn>
         <Btn onClick={() => openNewExtractModal()} data-open-extract-modal>
           <Plus className="w-4 h-4" /> إصدار مستخلص جديد (فاتورة للعميل)
         </Btn>
