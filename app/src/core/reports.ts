@@ -22,6 +22,12 @@ export interface SaleDoc {
   paidMinor?: Minor
   lines: CartLine[]
   totals: CartTotals
+  /**
+   * طبيعة فوترة المشروع (النموذج أ): «documentation» مستند ضريبي مقابل
+   * مستخلصات سبق الاعتراف بإيرادها — يُستثنى من كل تجميعات المبيعات/الأرباح
+   * حتى لا يُحسب الإيراد مرتين. undefined = فاتورة عادية/تاريخية.
+   */
+  projectBilling?: 'documentation' | 'extra'
 }
 
 /** المحصل وقت البيع (الدفع المجزأ) — التوافق الخلفي: cash=كامل، credit=صفر */
@@ -35,6 +41,12 @@ export interface SaleReturnDoc {
   saleId: number
   lines: CartLine[]
   totals: CartTotals
+  /**
+   * طبيعة فوترة المشروع (النموذج أ): «documentation» مستند ضريبي مقابل
+   * مستخلصات سبق الاعتراف بإيرادها — يُستثنى من كل تجميعات المبيعات/الأرباح
+   * حتى لا يُحسب الإيراد مرتين. undefined = فاتورة عادية/تاريخية.
+   */
+  projectBilling?: 'documentation' | 'extra'
 }
 
 export interface PurchaseDoc {
@@ -79,6 +91,7 @@ export function salesSummary(sales: SaleDoc[], returns: SaleReturnDoc[], p: Peri
   let invoiceCount = 0, gross = 0, discount = 0, tax = 0, total = 0, cogs = 0, cash = 0, credit = 0
   for (const s of sales) {
     if (!inPeriod(s.date, p)) continue
+    if (s.projectBilling === 'documentation') continue // توثيق مستخلصات — إيراده معترف به بالمستخلص
     invoiceCount++
     gross += s.totals.grossMinor
     discount += s.totals.discountMinor
@@ -93,6 +106,7 @@ export function salesSummary(sales: SaleDoc[], returns: SaleReturnDoc[], p: Peri
   let returnsMinor = 0, returnsCogs = 0, returnsTax = 0
   for (const r of returns) {
     if (!inPeriod(r.date, p)) continue
+    if (r.projectBilling === 'documentation') continue
     returnsMinor += r.totals.totalMinor
     returnsCogs += r.totals.cogsMinor
     returnsTax += r.totals.taxMinor
@@ -148,8 +162,8 @@ export function allItemRevenueRows(sales: SaleDoc[], returns: SaleReturnDoc[], p
       map.set(l.itemId, row)
     }
   }
-  for (const s of sales) if (inPeriod(s.date, p)) acc(s, 1)
-  for (const r of returns) if (inPeriod(r.date, p)) acc(r, -1)
+  for (const s of sales) if (inPeriod(s.date, p) && s.projectBilling !== 'documentation') acc(s, 1)
+  for (const r of returns) if (inPeriod(r.date, p) && r.projectBilling !== 'documentation') acc(r, -1)
   return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor)
 }
 
@@ -423,6 +437,8 @@ export interface ReturnReasonDoc {
   id: number
   date: string
   reasonCode?: string
+  /** مرتجع توثيق مشروعات: يُستثنى من قيم المرتجعات (لا مال تحرّك) */
+  projectBilling?: 'documentation' | 'extra'
   totals: { totalMinor: Minor }
   lines: readonly { condition?: 'resellable' | 'damaged' }[]
 }
@@ -449,6 +465,7 @@ export function returnReasonsSummary(
   const map = new Map<string, ReturnReasonRow>()
   for (const r of returns) {
     if (!inPeriod(r.date, p)) continue
+    if (r.projectBilling === 'documentation') continue
     const code = r.reasonCode ?? 'unspecified'
     const row = map.get(code) ?? {
       reasonCode: code,
@@ -529,6 +546,7 @@ export function dailySales(sales: SaleDoc[], p: Period): DailyRow[] {
   const map = new Map<string, DailyRow>()
   for (const s of sales) {
     if (!inPeriod(s.date, p)) continue
+    if (s.projectBilling === 'documentation') continue
     const d = s.date.slice(0, 10)
     const row = map.get(d) ?? { date: d, totalMinor: 0, profitMinor: 0, invoiceCount: 0 }
     row.totalMinor += s.totals.totalMinor

@@ -100,11 +100,12 @@ throws(
 S().postSale(saleArgs(10_000_000, { projectBilling: 'extra' }))
 eq(S().getProjectBillingGuard(prj.id).extraRoomNetMinor, 0, 'إضافية بتمام المتاح تمر ويُقفل السقف')
 
-console.log('\n═══ د+هـ) توثيق محجوب في أ-١ + طبيعة بلا مشروع تُرفض ═══')
+console.log('\n═══ د+هـ) التوثيق بلا مستخلصات محددة يُرفض + طبيعة بلا مشروع تُرفض ═══')
+// كان التوثيق محجوباً كلياً في أ-١؛ فُعّل في أ-٢ (بوابته: verify_project_billing_documentation)
 throws(
-  () => S().postSale(saleArgs(100, { projectBilling: 'documentation', extractIds: [1] })),
-  /الشريحة التالية/,
-  'التوثيق محجوب صراحة حتى تُبنى معالجته الصامتة (لا نصف نموذج)',
+  () => S().postSale(saleArgs(100, { projectBilling: 'documentation' })),
+  /المستخلصات الموثَّقة/,
+  'التوثيق بلا مستخلصات محددة بأعينها يُرفض',
 )
 throws(
   () => S().postSale(saleArgs(100, { projectBilling: 'extra', projectId: null })),
