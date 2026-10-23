@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
-import { useDataStore } from './data/repo.ts'
+import { useDataStore, useRawDataStore } from './data/repo.ts'
 import { evaluateLicense, oldestValidDay, newestValidDay } from './core/license.ts'
 import { currentLockReason, isBackupDue } from './core/security.ts'
 import { isDailySendDue, localNowIso } from './core/schedule.ts'
@@ -182,7 +182,11 @@ function Shell() {
   const effectiveFeatures = ACTIVITY_TEMPLATES.find((activity) => activity.id === effectiveActivityId)?.features ?? setupState.features
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
-  const { appUsers, currentUserId, roleOverrides, customRoles, ownerPinHash, loggedOut } = useDataStore()
+  /* الهوية والمصادقة من المتجر الخام (غير مصفّاة بالفرع): بوابة الدخول
+     وحساب «هل الدخول مطلوب؟» يجب أن يريا مستخدمي كل الفروع وبصمة المالك
+     الحقيقية — الأدوار وحدها تبقى مصفّاة لأن تجاوزات الفرع تُدمج فيها. */
+  const { appUsers, currentUserId, ownerPinHash, loggedOut } = useRawDataStore()
+  const { roleOverrides, customRoles } = useDataStore()
   // علم «الجلسة مصادَق عليها» — متجر React: تتغيّر البوابة فور تغيّره
   const sessionAuthenticated = useSessionAuthStore((s) => s.authenticated)
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null

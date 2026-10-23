@@ -110,7 +110,7 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask,
-  computeProjectExpenseInvoice, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed } from '../core/contracting.ts'
+  computeProjectExpenseInvoice, DEFAULT_PROJECT_EXPENSE_CATEGORIES, normalizeExpenseCategoryName, computeProjectBillingGuard, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed, type ProjectExpenseCategory, type ProjectBillingGuard, type ProjectBillingNature } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
   buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry, validateUnitMaintenanceMaterials,
@@ -545,7 +545,7 @@ export interface ProjectExtract {
   editReversalEntryId?: number
 }
 
-export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed }
+export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed, ProjectExpenseCategory, ProjectBillingGuard, ProjectBillingNature }
 
 /** تكلفة مسجلة على مشروع ببند أو كفاتورة مصروفات متعددة البنود */
 export interface ProjectCost {
@@ -1496,6 +1496,14 @@ export interface SaleInvoice {
   /** مشروع المقاولات المرتبط — يُنسب إليه إيراد الفاتورة وربحيتها (طلب المالك) */
   projectId?: number | null
   /**
+   * طبيعة فوترة المشروع — النموذج (أ): «documentation» توثيق مقابل مستخلصات
+   * (لا ذمة/إيراد/ضريبة جديدة) أو «extra» فاتورة إضافية كاملة تحت السقف الموحد.
+   * undefined = فاتورة تاريخية رُحّلت كاملة (تُحسب إضافية في الحارس).
+   */
+  projectBilling?: ProjectBillingNature
+  /** المستخلصات الموثَّقة بهذه الفاتورة (لطبيعة التوثيق) */
+  extractIds?: number[]
+  /**
    * روشتة مرفقة بالفاتورة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة
    * المنظَّمة الجاهز فعلاً في وحدة العيادة (`core/prescription.ts`) مُعاد
    * استخدامه هنا مباشرة على مستوى الفاتورة — بلا حاجة لملف مريض/زيارة
@@ -1711,6 +1719,8 @@ interface DataState {
   deletePendingPartOrder: (id: number) => void
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
+  /** تصنيفات مصروفات المشروعات الحرة (تنمو من «أخرى…» في نافذة المصروف وتُحفظ دائماً) */
+  projectExpenseCategories: ProjectExpenseCategory[]
   retentionReleases: RetentionRelease[]
   quotations: Quotation[] // عروض أسعار ومناقصات (طلب المالك)
   /* عمق المقاولات (مقارنة pro-acc — طلب المالك) */
@@ -2134,6 +2144,10 @@ interface DataState {
     bookCurrencyCode?: string
     /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
     projectId?: number | null
+    /** طبيعة فوترة المشروع (النموذج أ) — عند إرسالها يُفرض سقف العقد الموحد على «extra» */
+    projectBilling?: ProjectBillingNature
+    /** المستخلصات الموثَّقة (لطبيعة «documentation») */
+    extractIds?: number[]
     /**
      * روشتة مرفقة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة المنظَّمة
      * الجاهز في core/prescription.ts، معاد استخدامه مباشرة على الفاتورة.
@@ -2783,7 +2797,9 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
+  /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
+  addProjectExpenseCategory: (nameAr: string, kind?: CostKind) => ProjectExpenseCategory
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -2848,6 +2864,8 @@ interface DataState {
   getRemainingRetention: (projectId: number) => number
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
+  /** حارس فوترة المشروع (النموذج أ): عقد فعلي/مستخلَص/موثَّق/متاح الآن — لوحة نافذة الفاتورة */
+  getProjectBillingGuard: (projectId: number) => ProjectBillingGuard
   /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
   getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
@@ -5522,6 +5540,7 @@ export const useRawDataStore = create<DataState>()(
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
       projectExtracts: [],
       projectCosts: [],
+      projectExpenseCategories: [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
       retentionReleases: [],
       quotations: [],
       boqItems: [],
@@ -6740,6 +6759,34 @@ export const useRawDataStore = create<DataState>()(
         const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
         const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * args.taxPercent / 100), 0)
         const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
+        /* ── حارس فوترة المشاريع — النموذج (أ)، شريحة أ-١ ──
+           يُفرض فقط حين تُرسل الواجهة طبيعة الفوترة صراحة؛ المسار التاريخي
+           (بلا طبيعة) لا يتغيّر حتى تصل واجهة الطبيعة في الشريحة التالية.
+           «extra» تحت السقف الموحد، و«documentation» محجوبة حتى تُبنى
+           معالجتها الدفترية الصامتة (لا نرحّل نصف نموذج). */
+        if (args.projectBilling) {
+          if (args.projectId == null) throw new Error('طبيعة فوترة المشروع تتطلب اختيار المشروع المرتبط بالفاتورة')
+          const branchState = getBranchScopedDataState(state)
+          const billingProject = branchState.projects.find((p) => p.id === args.projectId)
+          if (!billingProject) throw new Error('المشروع المرتبط بالفاتورة غير موجود في هذا الفرع')
+          if (args.projectBilling === 'documentation') {
+            throw new Error('فاتورة التوثيق مقابل المستخلصات تُفعَّل في الشريحة التالية من حارس الفوترة — معالجتها الدفترية لم تُبنَ بعد')
+          }
+          if (billingProject.status === 'completed') throw new Error('المشروع مقفل — لا فواتير إضافية جديدة عليه')
+          const projectInvoices = branchState.sales.filter((inv) => inv.projectId === billingProject.id)
+          const projectInvoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+          const billingGuard = computeProjectBillingGuard({
+            contractValueMinor: billingProject.contractValueMinor,
+            changeOrders: branchState.changeOrders.filter((o) => o.projectId === billingProject.id),
+            extracts: branchState.projectExtracts.filter((e) => e.projectId === billingProject.id),
+            saleInvoices: projectInvoices,
+            saleReturns: branchState.saleReturns.filter((r) => projectInvoiceIds.has(r.saleId)),
+          })
+          const invoiceWorksNet = totals.totalMinor - totals.taxMinor
+          if (invoiceWorksNet > billingGuard.extraRoomNetMinor) {
+            throw new Error(`سقف فوترة المشروع «${billingProject.nameAr}»: صافي هذه الفاتورة الإضافية (${invoiceWorksNet}) يتجاوز المتاح من العقد الفعلي (${billingGuard.extraRoomNetMinor}) — مستخلصات ${billingGuard.extractedNetMinor} + إضافيات سابقة ${billingGuard.extraInvoicedNetMinor} من عقد فعلي ${billingGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى). وثّق مقابل المستخلصات أو اعتمد أمر تغيير أولاً.`)
+          }
+        }
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const allocationPaid = args.paymentAllocations?.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
         const paidM = allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
@@ -6891,6 +6938,8 @@ export const useRawDataStore = create<DataState>()(
           notes: args.notes?.trim() || undefined,
           fx: saleFxLeg,
           projectId: args.projectId ?? null,
+          ...(args.projectId != null && args.projectBilling ? { projectBilling: args.projectBilling } : {}),
+          ...(args.projectId != null && args.extractIds && args.extractIds.length ? { extractIds: [...args.extractIds] } : {}),
           prescription: args.prescription
             ? (() => {
                 if (!args.prescription!.patientName.trim()) throw new Error('اسم المريض مطلوب في الروشتة المرفقة')
@@ -13614,6 +13663,17 @@ export const useRawDataStore = create<DataState>()(
           journal: [...state.journal, entry],
         })
       },
+      addProjectExpenseCategory: (nameAr, kind) => {
+        const clean = nameAr.trim().replace(/\s+/g, ' ')
+        if (!clean) throw new Error('اسم التصنيف مطلوب')
+        const state = get()
+        const list = state.projectExpenseCategories ?? []
+        const existing = list.find((c) => normalizeExpenseCategoryName(c.nameAr) === normalizeExpenseCategoryName(clean))
+        if (existing) return existing
+        const cat: ProjectExpenseCategory = { id: nextId(list), nameAr: clean, kind: kind ?? 'other' }
+        set({ projectExpenseCategories: [...list, cat] })
+        return cat
+      },
       addProjectCost: (args) => {
         const state = get()
         const branchState = getBranchScopedDataState(state)
@@ -13628,7 +13688,14 @@ export const useRawDataStore = create<DataState>()(
         let resolvedDescription = args.description?.trim() ?? ''
         let computedLines: ProjectExpenseLineComputed[] | undefined
         if (args.lines && args.lines.length > 0) {
-          const inv = computeProjectExpenseInvoice(args.lines, args.defaultVatPercent ?? 14)
+          // التصنيف الحر عند حضوره هو مرجع kind والاسم — لا نثق بما أرسلته الواجهة
+          const resolvedLines = args.lines.map((line) => {
+            if (line.categoryId == null) return line
+            const cat = (state.projectExpenseCategories ?? []).find((c) => c.id === line.categoryId)
+            if (!cat) throw new Error(`تصنيف المصروف غير موجود في قائمة المنشأة (${line.categoryNameAr?.trim() || line.categoryId})`)
+            return { ...line, kind: cat.kind, categoryNameAr: cat.nameAr }
+          })
+          const inv = computeProjectExpenseInvoice(resolvedLines, args.defaultVatPercent ?? 14)
           netCostMinor = inv.netMinor
           vatCostMinor = inv.vatMinor
           resolvedKind = args.kind ?? inv.primaryKind
@@ -13671,11 +13738,14 @@ export const useRawDataStore = create<DataState>()(
         const lines = buildProjectCostEntry(netCostMinor, resolvedPayment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor)
           .map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = localIsoTimestamp()
+        // تاريخ المستند اختياري (مصروف بأثر رجعي) — بصيغة YYYY-MM-DD وإلا اليوم
+        const expenseDate = args.date && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : null
+        const costDate = expenseDate ? `${expenseDate}${now.slice(10)}` : now
         const id = nextId(state.projectCosts)
         const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: expenseDate ?? now.slice(0, 10),
           description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — دفع من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -13684,7 +13754,7 @@ export const useRawDataStore = create<DataState>()(
           id,
           expenseNumber,
           ...(args.invoiceRef?.trim() ? { invoiceRef: args.invoiceRef.trim() } : {}),
-          projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: resolvedKind,
+          projectId: project.id, costCenterId: args.costCenterId ?? null, date: costDate, kind: resolvedKind,
           description: resolvedDescription, amountMinor: netCostMinor,
           ...(vatCostMinor > 0 ? { vatMinor: vatCostMinor } : {}),
           grossMinor: grossCostMinor,
@@ -13699,7 +13769,7 @@ export const useRawDataStore = create<DataState>()(
         if (custodyFile && paidCostMinor > 0) {
           custodyTxs = [...state.custodyTxs, {
             id: nextId(state.custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
-            date: now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
+            date: expenseDate ?? now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
             description: `المدفوع من تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]
@@ -13771,6 +13841,20 @@ export const useRawDataStore = create<DataState>()(
         return { manual, subCertificates, dailyWork, purchases, materialIssues, purchaseReturns, totals: { ...totals, allMinor: totals.manualMinor + totals.subMinor + totals.dailyMinor + totals.purchasesMinor + totals.materialIssuesMinor - totals.returnsMinor } }
       },
 
+      getProjectBillingGuard: (projectId) => {
+        const state = getBranchScopedDataState(get())
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const projectInvoices = state.sales.filter((inv) => inv.projectId === projectId)
+        const invoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+        return computeProjectBillingGuard({
+          contractValueMinor: project.contractValueMinor,
+          changeOrders: state.changeOrders.filter((o) => o.projectId === projectId),
+          extracts: state.projectExtracts.filter((e) => e.projectId === projectId),
+          saleInvoices: projectInvoices,
+          saleReturns: state.saleReturns.filter((r) => invoiceIds.has(r.saleId)),
+        })
+      },
       getProjectProfit: (projectId) => {
         const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
@@ -17539,6 +17623,7 @@ export const useRawDataStore = create<DataState>()(
           })),
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
+          projectExpenseCategories: s.projectExpenseCategories && s.projectExpenseCategories.length ? s.projectExpenseCategories : [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
           retentionReleases: s.retentionReleases ?? [],
           clinicVisits: s.clinicVisits ?? [],
           treatmentPlans: s.treatmentPlans ?? [],

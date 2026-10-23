@@ -20,6 +20,10 @@ export type AppWindowKind =
   | 'item-ledger'
   | 'party-editor'
   | 'party-ledger'
+  | 'project-expense'
+  | 'entity-picker'
+  | 'project-editor'
+  | 'employee-editor'
 
 export type AppWindowMode = 'normal' | 'maximized' | 'minimized'
 
@@ -376,10 +380,87 @@ export function openItemPricesWindow(itemId: number, parentId?: string | null) {
   })
 }
 
-export function openPartyEditorWindow(kind: 'customer' | 'supplier', partyId: number, parentId?: string | null) {
+export function openPartyEditorWindow(kind: 'customer' | 'supplier', partyId: number, parentId?: string | null, onSaved?: (partyId: number) => void) {
+  const isNew = partyId === 0
   return useWindowStore.getState().openWindow({
-    kind: 'party-editor', title: kind === 'customer' ? 'تعديل عميل' : 'تعديل مورد', subtitle: 'تعديل سريع بلا مغادرة الفاتورة',
-    props: { partyKind: kind, partyId }, parentId: parentId ?? null, dedupeKey: `party-editor:${kind}:${partyId}`, width: 820, height: 640,
+    kind: 'party-editor',
+    title: isNew ? (kind === 'customer' ? 'عميل جديد' : 'مورد جديد') : (kind === 'customer' ? 'تعديل عميل' : 'تعديل مورد'),
+    subtitle: isNew ? 'إضافة سريعة — تعود بك إلى نافذتك وتُختار تلقائياً' : 'تعديل سريع بلا مغادرة الفاتورة',
+    props: { partyKind: kind, partyId, ...(onSaved ? { onSaved } : {}) }, parentId: parentId ?? null,
+    dedupeKey: isNew ? null : `party-editor:${kind}:${partyId}`, width: 820, height: 640,
+  })
+}
+
+export type EntityPickerKind = 'customer' | 'supplier' | 'employee' | 'project'
+
+const ENTITY_PICKER_TITLES: Record<EntityPickerKind, string> = {
+  customer: 'اختيار عميل',
+  supplier: 'اختيار مورد / جهة',
+  employee: 'اختيار موظف',
+  project: 'اختيار مشروع',
+}
+
+/**
+ * المنتقي الحي (طلب المالك — بند ٩): نافذة بحث حية بنفس تصميم منتقي الأصناف
+ * للعملاء والموردين والموظفين والمشاريع — الإنشاء السريع والتعديل وكشف الحساب
+ * تفتح بنوافذ ابنة فوقها وتعود إليها، والحفظ في الابنة يختار ويرجع بالأم.
+ */
+export function openEntityPickerWindow(input: {
+  entity: EntityPickerKind
+  parentId?: string | null
+  initialQuery?: string
+  onPick: (id: number) => void
+}) {
+  return useWindowStore.getState().openWindow({
+    kind: 'entity-picker',
+    title: ENTITY_PICKER_TITLES[input.entity],
+    subtitle: 'بحث حي — إنشاء وتعديل في نوافذ ابنة بلا مغادرة مكانك',
+    props: { entity: input.entity, initialQuery: input.initialQuery ?? '', onPick: input.onPick },
+    parentId: input.parentId ?? null,
+    dedupeKey: input.parentId ? `entity-picker:${input.parentId}:${input.entity}` : `entity-picker:${input.entity}`,
+    width: 860,
+    height: 560,
+  })
+}
+
+/** مشروع جديد/تعديل سريع — نافذة ابنة للمنتقي أو لأي نافذة أم */
+export function openProjectEditorWindow(projectId: number, parentId?: string | null, onSaved?: (projectId: number) => void) {
+  const isNew = projectId === 0
+  return useWindowStore.getState().openWindow({
+    kind: 'project-editor',
+    title: isNew ? 'مشروع جديد' : 'تعديل مشروع',
+    subtitle: isNew ? 'إنشاء سريع — يعود بك إلى نافذتك ويُختار تلقائياً' : 'تعديل سريع بلا مغادرة فاتورتك',
+    props: { projectId, ...(onSaved ? { onSaved } : {}) }, parentId: parentId ?? null,
+    dedupeKey: isNew ? null : `project-editor:${projectId}`, width: 680, height: 600,
+  })
+}
+
+/** موظف جديد/تعديل سريع — نافذة ابنة للمنتقي أو لأي نافذة أم */
+export function openEmployeeEditorWindow(employeeId: number, parentId?: string | null, onSaved?: (employeeId: number) => void) {
+  const isNew = employeeId === 0
+  return useWindowStore.getState().openWindow({
+    kind: 'employee-editor',
+    title: isNew ? 'موظف جديد' : 'تعديل موظف',
+    subtitle: isNew ? 'إنشاء سريع — تُستكمل بقية البيانات لاحقاً من صفحة الموظفين' : 'تعديل سريع بلا مغادرة فاتورتك',
+    props: { employeeId, ...(onSaved ? { onSaved } : {}) }, parentId: parentId ?? null,
+    dedupeKey: isNew ? null : `employee-editor:${employeeId}`, width: 680, height: 600,
+  })
+}
+
+/**
+ * نافذة مصروف المشروع الحرة (اعتماد المالك لنموذج N-04 الحي 2026-10-22):
+ * كل «تسجيل مصروف جديد» = نافذة مستقلة بمسودتها الخاصة (dedupeKey فارغ)،
+ * فتتعدد مصروفات قيد الإدخال بلا تصادم — الترقيم PEX يُحسم عند الحفظ في المضيف.
+ */
+export function openProjectExpenseWindow(preselectProjectId?: number, parentId?: string | null) {
+  return useWindowStore.getState().openWindow({
+    kind: 'project-expense',
+    title: 'تسجيل مصروف مشروع — جديد',
+    subtitle: 'نافذة حرة · تصنيفات تنمو معك',
+    props: preselectProjectId ? { preselectProjectId } : {},
+    parentId: parentId ?? null,
+    dedupeKey: null,
+    width: 1060, height: 700,
   })
 }
 

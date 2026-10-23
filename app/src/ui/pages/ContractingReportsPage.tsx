@@ -13,6 +13,9 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind, projectReportCard, clientContractingCard, type ClientProjectRow } from '../../core/contracting.ts'
 import { toCsv } from '../../core/security.ts'
+import { buildProjectExpenseLedger } from '../../core/projectExpenseLedger.ts'
+import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
+import type { ExportSheet } from '../../core/fullExport.ts'
 import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
@@ -34,6 +37,7 @@ function downloadCsv(rows: readonly Record<string, unknown>[], filename: string)
 export function ContractingReportsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
+    suppliers, treasuries, custodyFiles, boqItems, journal,
     getOpenClientInvoices, getProjectCostBreakdown,
   } = useDataStore()
   const { setup } = useAppStore()
@@ -99,6 +103,14 @@ export function ContractingReportsPage() {
   const selected = cards.find((r) => r.project.id === Number(projectId)) ?? null
   const selectedExtracts = selected ? projectExtracts.filter((e) => e.projectId === selected.project.id) : []
   const selectedCosts = selected ? projectCosts.filter((c) => c.projectId === selected.project.id) : []
+  /* كشف المصروفات التفصيلي (طلب المالك — سطر لكل بند) من النواة الخالصة */
+  const selectedLedger = useMemo(() => buildProjectExpenseLedger(selected ? projectCosts.filter((c) => c.projectId === selected.project.id) : [], {
+    supplierName: (id) => (id == null ? '—' : suppliers.find((x) => x.id === id)?.nameAr ?? `#${id}`),
+    treasuryName: (code) => (code ? treasuries.find((x) => x.code === code)?.nameAr ?? code : ''),
+    custodyLabel: (fileId) => { const f = custodyFiles.find((x) => x.id === fileId); return f ? `عهدة ${f.fileNumber}` : 'عهدة موظف' },
+    boqLabel: (id) => { const b = boqItems.find((x) => x.id === id); return b ? `${b.code} — ${b.descriptionAr}` : '' },
+    journalEntryNumber: (entryId) => journal.find((e) => e.id === entryId)?.entryNumber ?? entryId,
+  }), [projectCosts, selected, suppliers, treasuries, custodyFiles, boqItems, journal])
   const selectedOrders = selected ? changeOrders.filter((o) => o.projectId === selected.project.id) : []
   const selectedOpenDocs = selected?.project.clientId != null
     ? getOpenClientInvoices(selected.project.clientId).filter((inv) => selectedExtracts.some((e) => `extract:${e.id}` === inv.docKey))
@@ -249,11 +261,16 @@ export function ContractingReportsPage() {
           rows: selectedOrders.map((o) => [o.number, o.titleAr, `${o.amountMinor >= 0 ? '+' : '−'}${fmt(Math.abs(o.amountMinor))}`, o.status === 'approved' ? 'معتمد' : o.status === 'invoiced' ? 'مُستخلَص' : o.status === 'draft' ? 'مسودة' : 'مرفوض']),
         }),
       ] : []),
-      ...(selectedCosts.length ? [
-        sectionHtml(`تكاليف المشروع (${selectedCosts.length})`),
+      ...(selectedLedger.rows.length ? [
+        sectionHtml(`كشف مصروفات المشروع التفصيلي (${selectedLedger.totals.docsCount} مستند · ${selectedLedger.totals.linesCount} بند)`),
         htmlTableHtml({
-          headers: ['البيان', 'النوع', 'المبلغ'], numCols: [2],
-          rows: selectedCosts.map((x) => [x.description, COST_KIND_LABELS[x.kind].nameAr, fmt(x.amountMinor)]),
+          headers: ['التاريخ', 'المستند', 'مرجع المورد', 'المورد', 'بيان البند', 'التصنيف', 'كمية × سعر', 'الصافي', 'الضريبة', 'الإجمالي'],
+          numCols: [6, 7, 8, 9],
+          rows: selectedLedger.rows.map((r) => [
+            r.date, r.expenseNumber, r.invoiceRef || '—', r.supplierName, r.lineDescription, r.categoryName,
+            `${r.qty} × ${fmt(r.unitPriceMinor)}`, fmt(r.netMinor), fmt(r.vatMinor), fmt(r.grossMinor),
+          ]),
+          totalRow: ['', '', '', '', `الإجمالي (المدفوع ${fmt(selectedLedger.totals.paidMinor)} · الآجل ${fmt(selectedLedger.totals.dueMinor)})`, '', '', fmt(selectedLedger.totals.netMinor), fmt(selectedLedger.totals.vatMinor), fmt(selectedLedger.totals.grossMinor)],
         }),
       ] : []),
     ].join('')
@@ -468,6 +485,45 @@ export function ContractingReportsPage() {
                           </tbody>
                         </table>
                       </div>
+                    )
+                  })()}
+
+                  {/* كشف المصروفات التفصيلي + الكشف الشامل للمشروع (Excel ثلاث أوراق) */}
+                  {(() => {
+                    const mny = (m: number) => m / 10 ** cur.decimals
+                    const openRemaining = selectedOpenDocs.reduce((a, inv) => a + Math.max(0, inv.dueMinor - inv.settledMinor), 0)
+                    const cardSheet: ExportSheet = {
+                      nameAr: 'بطاقة المشروع',
+                      headers: ['البند', 'القيمة'],
+                      rows: [
+                        ['رمز المشروع', selected.project.code],
+                        ['اسم المشروع', selected.project.nameAr],
+                        ['العميل', selected.project.clientName ?? ''],
+                        ['قيمة العقد الأصلية', mny(selected.card.contractOriginalMinor)],
+                        ['قيمة العقد الفعلية (بأوامر التغيير)', mny(selected.card.contractEffectiveMinor)],
+                        ['الأعمال المستخلصة', mny(selected.card.extractedMinor)],
+                        ['ضريبة القيمة المضافة المحمّلة على العميل', mny(selected.card.vatChargedMinor)],
+                        ['نسبة الإنجاز ٪', selected.card.progressPercent],
+                        ['الاحتفاظ المحتجَز لدى العميل', mny(selected.card.retentionHeldMinor)],
+                        ['الدفعات المقدمة المتبقية', mny(selected.card.advancesRemainingMinor)],
+                        ['ذمم مستخلصات مفتوحة', mny(openRemaining)],
+                        ['إجمالي التكاليف', mny(selected.card.costsMinor)],
+                        ['صافي ربح المشروع', mny(selected.card.profitMinor)],
+                      ],
+                    }
+                    const extractsSheet: ExportSheet = {
+                      nameAr: 'المستخلصات',
+                      headers: ['رقم المستخلص', 'التاريخ', 'الأعمال (شامل الضريبة)', 'الضريبة', 'الاحتفاظ', 'صافي المستحق', 'الحالة'],
+                      rows: selectedExtracts.map((e) => [e.extractNumber, e.date.slice(0, 10), mny(e.totals.grossMinor), mny(e.totals.vatMinor), mny(e.totals.retentionMinor), mny(e.totals.dueMinor), e.isFinal ? 'ختامي' : 'جاري']),
+                    }
+                    return (
+                      <ProjectExpenseLedgerCard
+                        costs={selectedCosts}
+                        projectCode={selected.project.code}
+                        projectNameAr={selected.project.nameAr}
+                        preSheets={[cardSheet, extractsSheet]}
+                        title="كشف المصروفات التفصيلي — وزر Excel يُصدّر كشف المشروع الشامل (٣ أوراق)"
+                      />
                     )
                   })()}
 

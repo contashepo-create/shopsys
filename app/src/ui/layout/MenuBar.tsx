@@ -19,7 +19,6 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation, OverlayPortal, useToast } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
-import { BranchBadge } from '../components/BranchBadge.tsx'
 
 /** موضع القائمة تحت عنوانها مباشرة — محاذاة يمينية (RTL) مع انقلاب عند ضيق الشاشة */
 function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
@@ -55,15 +54,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   const widthsRef = useRef(new Map<string, number>())
   const [visibleCount, setVisibleCount] = useState(Number.POSITIVE_INFINITY)
 
-  const {
-    branches: activeBranches,
-    effectiveBranch,
-    effectiveBranchId,
-    isLockedToUserBranch,
-    effectiveModules,
-    effectiveActivityId,
-    setActiveBranchId,
-  } = useEffectiveBranchScope()
+  const { effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
   const sections = NAV_SECTIONS
@@ -267,18 +258,6 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
       </div>
 
       <span className="mx-1 hidden h-4 w-px shrink-0 bg-slate-200 sm:block dark:bg-slate-700" />
-      {activeBranches.length > 0 && (
-        <span className="hidden min-w-0 sm:inline-flex">
-          <BranchBadge
-            branches={activeBranches}
-            value={effectiveBranchId}
-            fallbackName={effectiveBranch?.nameAr}
-            locked={isLockedToUserBranch}
-            onChange={setActiveBranchId}
-            placement="menubar"
-          />
-        </span>
-      )}
       <span className="hidden max-w-[12rem] shrink-0 truncate text-[11px] text-slate-400 lg:block">{setup.shopName || 'تَحَكَّم في إدارة أعمالك'}</span>
       {/* زر التحويل إلى الشريط الجانبي — في نهاية الشريط (يساره في RTL) */}
       <button

@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { AppWindow as WindowIcon, FileText, PackageSearch, ReceiptText, UserRound, X } from 'lucide-react'
+import { AppWindow as WindowIcon, Building2, FileText, Hammer, IdCard, PackageSearch, ReceiptText, UserRound, Users, X } from 'lucide-react'
 import { OverlayPortal, useToast } from '../components/ui.tsx'
 import { useWindowStore, restoreWindowSession, watchWindowSession, type AppWindow, type AppWindowKind } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
+import { ProjectExpenseWindowView } from './ProjectExpenseWindowView.tsx'
+import { EntityPickerWindowView, ProjectEditorWindowView, EmployeeEditorWindowView } from './EntityPickerWindows.tsx'
 
 /* الفواتير ثقيلة — تُحمَّل عند أول فتح نافذة فقط */
 const SalesInvoiceWindowView = lazy(() => import('../pages/AdvancedSalesInvoicePage.tsx').then((mod) => ({ default: mod.AdvancedSalesInvoicePage })))
@@ -40,6 +42,10 @@ const ICONS: Record<AppWindowKind, typeof FileText> = {
   'item-ledger': PackageSearch,
   'party-editor': UserRound,
   'party-ledger': UserRound,
+  'project-expense': Hammer,
+  'entity-picker': Users,
+  'project-editor': Building2,
+  'employee-editor': IdCard,
 }
 
 function WindowContent({ win }: { win: AppWindow }) {
@@ -52,6 +58,10 @@ function WindowContent({ win }: { win: AppWindow }) {
     case 'item-ledger': return <ItemLedgerWindowView />
     case 'party-editor': return <PartyEditorWindowView />
     case 'party-ledger': return <PartyLedgerWindowView />
+    case 'project-expense': return <ProjectExpenseWindowView />
+    case 'entity-picker': return <EntityPickerWindowView />
+    case 'project-editor': return <ProjectEditorWindowView />
+    case 'employee-editor': return <EmployeeEditorWindowView />
     default: return null
   }
 }

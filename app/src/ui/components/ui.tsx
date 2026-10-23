@@ -91,22 +91,22 @@ export function Btn({
 export function Field({
   label, children, hint, icon, badge, badgeTone, extra,
 }: { label: string; children: ReactNode; hint?: string; icon?: ReactNode; badge?: ReactNode; badgeTone?: 'accent' | 'ok' | 'warn'; extra?: ReactNode }) {
+  /* طلب المالك: لا ملاحظات دائمة أسفل الحقول — التلميح يظهر كرسالة عند تمرير
+     المؤشر فوق الحقل فقط (title على الحاوية فيشمل التسمية والحقل معاً). */
   if (icon || badge || extra) return (
-    <div className="form-field">
+    <div className="form-field" title={hint || undefined}>
       <div className="field-head">
         <label>{icon}{label}</label>
         {extra}
         {badge && <span className={`field-badge${badgeTone ? ` is-${badgeTone}` : ''}`}>{badge}</span>}
       </div>
       {children}
-      {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
     </div>
   )
   return (
-    <div className="form-field">
+    <div className="form-field" title={hint || undefined}>
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
       {children}
-      {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
     </div>
   )
 }

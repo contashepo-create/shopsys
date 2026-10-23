@@ -5,15 +5,15 @@
  * في المقاولات لأني قد أصدر فاتورة ليست مرتبطة بمشروع»).
  *
  * صفحة واحدة تجمع دورة الفوترة كاملة:
- *   ① ملخص فوترة كل مشروع: قيمة العقد ← المستخلصات ← الفواتير ← المتبقي،
- *      وزر «فاتورة بيع» يفتح نافذة الفاتورة المتقدمة (نفس محرك الأعلاف تماماً)
- *      معبأة بالمشروع وعميله.
+ *   ① فاتورة بيع كاملة تفتح حرة، والربط بالمشروع من حقل «المشروع» داخلها
+ *      (بطاقات ملخص المشاريع حُذفت من هنا بقرار المالك 2026-10-22 — مكانها
+ *      شاشة المشروعات؛ هذا القسم للفواتير فقط مهما بلغ عدد المشاريع).
  *   ② فاتورة حرة بدون مشروع — من نفس النافذة الكاملة.
  *   ③ جدول كل الفواتير المرتبطة بمشاريع المقاولات: مراجعة (نافذة التعديل)
  *      وطباعة بنفس قوالب الفواتير.
  */
 import { useMemo, useState } from 'react'
-import { FilePlus2, Printer, Pencil, HardHat, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
+import { FilePlus2, Printer, Pencil, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -28,7 +28,6 @@ import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
-import { effectiveContractValue } from '../../core/contracting.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
@@ -36,8 +35,7 @@ import { todayLocalIso } from '../../core/time.ts'
 
 export function ContractingInvoicesPage() {
   const {
-    projects, projectExtracts, projectCosts, changeOrders, sales, customers, boqItems,
-    staffCommissions, purchases, postSale, ensureServiceItemForFreeLine,
+    projects, projectExtracts, sales, customers, boqItems, postSale, ensureServiceItemForFreeLine,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -65,28 +63,9 @@ export function ContractingInvoicesPage() {
       .sort((a, b) => b.id - a.id)
   }, [sales, projects, customers, prjFilter, search])
 
-  /* ملخص الفوترة لكل مشروع نشط: العقد الفعلي (بأوامر التغيير) مقابل المستخلصات والفواتير */
-  const projectCards = useMemo(() => projects
-    .filter((p) => (prjFilter ? p.id === prjFilter : true))
-    .map((p) => {
-      const ex = projectExtracts.filter((e) => e.projectId === p.id)
-      const extracted = ex.reduce((a, e) => a + e.totals.grossMinor, 0)
-      const orders = changeOrders.filter((o) => o.projectId === p.id)
-      const effective = effectiveContractValue(p.contractValueMinor, orders)
-      const inv = sales.filter((s) => s.projectId === p.id)
-      const invoiced = inv.reduce((a, s) => a + s.totals.totalMinor, 0)
-      const collected = inv.reduce((a, s) => a + (s.paidMinor ?? 0), 0)
-      const costs = projectCosts.filter((c) => c.projectId === p.id).reduce((a, c) => a + c.amountMinor, 0)
-      const comms = staffCommissions.filter((c) => c.source === 'project' && c.sourceId === p.id).reduce((a, c) => a + c.amountMinor, 0)
-      const purch = purchases.filter((x) => x.projectId === p.id)
-      const purchTotal = purch.reduce((a, x) => a + x.grandTotalMinor, 0)
-      return {
-        project: p, extractsCount: ex.length, extracted, effective, invoiced, collected, costs, comms, purchasesCount: purch.length, purchTotal,
-        remaining: Math.max(0, effective - extracted),
-        boqCount: boqItems.filter((b) => b.projectId === p.id).length,
-      }
-    })
-    .sort((a, b) => b.project.id - a.project.id), [projects, projectExtracts, changeOrders, sales, projectCosts, staffCommissions, purchases, boqItems, prjFilter])
+  /* قرار المالك (2026-10-22): أُزيلت بطاقات «ملخص فوترة كل مشروع» من هذا القسم
+     نهائياً — مع عشرات المشاريع كانت تدفن جدول الفواتير. ملخص المشروع مكانه شاشة
+     «المشروعات والمستخلصات» وبطاقة المشروع؛ هذا القسم يعرض الفواتير فقط. */
 
   const totals = useMemo(() => ({
     invoices: invoices.length,
@@ -266,41 +245,6 @@ export function ContractingInvoicesPage() {
           <Btn variant="soft" data-contracting-free-invoice onClick={() => openFreeEditor(prjFilter)} title="فاتورة مقاولات ببنود تُكتب يدوياً بحرية (مثل عرض السعر) وتُرحَّل بمحرك فاتورة البيع"><Plus size={16} /> فاتورة مقاولات ببنود حرة</Btn>
         </div>
       </div>
-
-      {/* ملخص فوترة المشروعات: العقد ← المستخلصات ← الفواتير ← الأطراف */}
-      {projectCards.length === 0 ? (
-        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-          <EmptyState icon="🏗️" title="لا مشروعات مقاولات بعد" sub="أنشئ مشروعاً من «المشروعات والمستخلصات» ثم أصدر له فواتير ومستخلصات من هنا" />
-        </div>
-      ) : (
-        <div className="grid md:grid-cols-2 gap-3" data-contracting-project-cards>
-          {projectCards.map(({ project: p, extractsCount, extracted, effective, invoiced, collected, costs, comms, purchasesCount, purchTotal, remaining, boqCount }) => (
-            <div key={p.id} className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="grid place-items-center w-9 h-9 rounded-xl bg-orange-500/10 text-orange-600 shrink-0"><HardHat size={17} /></span>
-                  <div className="min-w-0">
-                    <div className="font-black text-[13px] truncate" title={p.nameAr}>{p.code} — {p.nameAr}</div>
-                    <div className="text-[11px] text-slate-500 truncate">{p.clientName || 'بلا جهة مالكة'} · {p.status === 'active' ? 'نشط' : 'مكتمل'} · {boqCount} بند BOQ</div>
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
-                <div className="rounded-xl bg-slate-500/5 p-2"><div className="text-slate-500">العقد الفعلي</div><b className="block text-[12px]">{fmt(effective)}</b></div>
-                <div className="rounded-xl bg-orange-500/10 p-2"><div className="text-slate-500">مستخلصات ({extractsCount})</div><b className="block text-[12px] text-orange-600">{fmt(extracted)}</b></div>
-                <div className="rounded-xl bg-emerald-500/10 p-2"><div className="text-slate-500">فواتير بيع</div><b className="block text-[12px] text-emerald-600">{fmt(invoiced)}</b></div>
-                <div className="rounded-xl bg-sky-500/10 p-2"><div className="text-slate-500">المتبقي من العقد</div><b className="block text-[12px] text-sky-600">{fmt(remaining)}</b></div>
-              </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 border-t border-slate-100 dark:border-slate-800 pt-2">
-                <span>محصل من الفواتير: <b className="text-emerald-600">{fmt(collected)}</b></span>
-                <span>تكاليف: <b className="text-rose-600">{fmt(costs)}</b></span>
-                <span>مشتريات موردين ({purchasesCount}): <b className="text-rose-600">{fmt(purchTotal)}</b></span>
-                <span>عمولات موظفين: <b className="text-violet-600">{fmt(comms)}</b></span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* جدول فواتير المشاريع: مراجعة وطباعة */}
       <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -499,7 +443,7 @@ export function ContractingInvoicesPage() {
 
       {/* إرشاد: أين المستخلصات؟ مراجعتها وتعديلها وطباعتها */}
       <div className="rounded-2xl bg-orange-500/5 border border-orange-500/20 p-3 text-[12px] text-orange-700 dark:text-orange-300 leading-relaxed">
-        <b>دليل الصفحة:</b> «فاتورة بيع جديدة» تفتح الفاتورة الكاملة <b>حرة</b> (أصناف · عمولات موظفين · تحصيل متعدد · طباعة A4/A5/حراري) — ثم اربط المشروع من حقل <b>«المشروع»</b> في شريط الفاتورة نفسها: يُعبأ عميل المشروع تلقائياً (إن لم تختر عميلاً) وتظهر قيمة عقده، وتُحتسب الفاتورة في ملخص المشروع هنا وفي تفاصيله بشاشة المشروعات. بلا ربط؟ تبقى فاتورة حرة. <b>المستخلصات (PRX)</b> تُدار من شاشة «المشروعات والمستخلصات»: إصدار ومراجعة كاملة وتعديل بقيد عاكس وطباعة وثيقة رسمية للجهة المالكة.
+        <b>دليل الصفحة:</b> «فاتورة بيع جديدة» تفتح الفاتورة الكاملة <b>حرة</b> (أصناف · عمولات موظفين · تحصيل متعدد · طباعة A4/A5/حراري) — ثم اربط المشروع من حقل <b>«المشروع»</b> في شريط الفاتورة نفسها: يُعبأ عميل المشروع تلقائياً (إن لم تختر عميلاً) وتظهر قيمة عقده، وتُحتسب الفاتورة في ملخص المشروع وتفاصيله بشاشة المشروعات. بلا ربط؟ تبقى فاتورة حرة. <b>المستخلصات (PRX)</b> تُدار من شاشة «المشروعات والمستخلصات»: إصدار ومراجعة كاملة وتعديل بقيد عاكس وطباعة وثيقة رسمية للجهة المالكة.
       </div>
     </div>
   )
