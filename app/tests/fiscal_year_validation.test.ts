@@ -1,0 +1,48 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import { suggestFiscalYear, validateFiscalYear, type FiscalYear } from '../src/core/fiscal.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+
+const closed2025: FiscalYear = { id: 1, ...suggestFiscalYear(2025), status: 'closed' }
+
+beforeEach(() => useAppStore.setState({ fiscalYears: [] }))
+
+describe('التحقق من تعريف السنة المالية', () => {
+  it.each(['2025-02-30', '2025-13-01', 'not-a-date', '2025-1-01'])('يرفض تاريخاً تقويمياً غير صالح: %s', (date) => {
+    expect(validateFiscalYear({ nameAr: 'سنة غير صالحة', startDate: date, endDate: '2025-12-31' }, []))
+      .toContain('تاريخ بداية السنة غير صالح — استخدم تاريخاً صحيحاً بصيغة YYYY-MM-DD')
+  })
+
+  it('يقبل اليوم الكبيس الحقيقي ويرفض اليوم نفسه في سنة غير كبيسة', () => {
+    expect(validateFiscalYear({ nameAr: '2024', startDate: '2024-02-29', endDate: '2024-12-31' }, [])).toEqual([])
+    expect(validateFiscalYear({ nameAr: '2025', startDate: '2025-02-29', endDate: '2025-12-31' }, []))
+      .toContain('تاريخ بداية السنة غير صالح — استخدم تاريخاً صحيحاً بصيغة YYYY-MM-DD')
+  })
+
+  it('يحافظ على منع التداخل ووجود سنة واحدة مفتوحة فقط', () => {
+    expect(validateFiscalYear(suggestFiscalYear(2025), [closed2025]).join(' ')).toContain('تتداخل')
+    expect(validateFiscalYear(suggestFiscalYear(2026), [{ ...closed2025, status: 'open' }]).join(' ')).toContain('ما زالت مفتوحة')
+  })
+
+  it('يحرس إجراء المتجر نفسه من تاريخ غير صالح أو تداخل حتى عند تجاوز الواجهة', () => {
+    expect(() => useAppStore.getState().addFiscalYear({ nameAr: 'تاريخ تالف', startDate: '2025-02-30', endDate: '2025-12-31' }))
+      .toThrow(/تاريخ بداية السنة غير صالح/)
+    expect(useAppStore.getState().fiscalYears).toEqual([])
+
+    useAppStore.setState({ fiscalYears: [closed2025] })
+    expect(() => useAppStore.getState().addFiscalYear(suggestFiscalYear(2025)))
+      .toThrow(/تتداخل/)
+    expect(useAppStore.getState().fiscalYears).toEqual([closed2025])
+  })
+
+  it('يرفض إكمال الإعداد إذا استُدعِي المتجر مباشرةً بتاريخ افتتاح غير صالح', () => {
+    expect(() => useAppStore.getState().completeSetup({
+      country: {} as never,
+      activity: {} as never,
+      shopName: 'اختبار',
+      ownerName: 'المالك',
+      fiscalYear: { nameAr: '2025', startDate: '2025-02-30', endDate: '2025-12-31' },
+    })).toThrow(/تاريخ بداية السنة غير صالح/)
+    expect(useAppStore.getState().setup.completed).toBe(false)
+    expect(useAppStore.getState().fiscalYears).toEqual([])
+  })
+})

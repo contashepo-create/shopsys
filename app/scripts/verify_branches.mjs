@@ -28,13 +28,14 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useDataStore, useRawDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const { useAppStore, branchIdentityMissingFields, resolveBranchAppSettings, resolveDocumentBranchAppSettings } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
 const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
 useAppStore.getState().updateSetup({ allowNegativeTreasury: true, shopName: 'المنشأة الأساسية', vatPercent: 14, taxInclusive: true, taxRegistrationStatus: 'registered' })
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
 const st = () => useDataStore.getState()
+const raw = () => useRawDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }
 const EXT = { taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' }
@@ -172,7 +173,29 @@ console.log('\n═══ 4) تحويل نقدية بين خزينتي الفرع
   ok('تحويل النقدية بين الفروع مستند سند موثق في اليومية')
 }
 
-console.log('\n═══ 5) قواعد الصحة ═══')
+console.log('\n═══ 5) الأرصدة الافتتاحية: ملف ودفتر مستقلان لكل فرع ═══')
+{
+  const mainOpening = 125000
+  const branchOpening = 287000
+  st().setActiveBranchId(mainBranch.id)
+  st().setOpeningBalance({ kind: 'treasury', refId: mainBranch.treasuryCode, amountMinor: mainOpening, label: 'افتتاحي خزينة الرئيسي' })
+  const mainScope = getBranchScopedDataState(st())
+  assert.equal(mainScope.openingBalances[`treasury:${mainBranch.treasuryCode}`], mainOpening)
+  assert.ok(mainScope.journal.some((entry) => entry.sourceType === 'opening' && entry.branchId === mainBranch.id), 'قيد افتتاحي الرئيسي مختوم بالرئيسي')
+
+  st().setActiveBranchId(branchNew.id)
+  st().setOpeningBalance({ kind: 'treasury', refId: branchNew.treasuryCode, amountMinor: branchOpening, label: 'افتتاحي خزينة الفرع' })
+  const branchScope = getBranchScopedDataState(st())
+  assert.equal(branchScope.openingBalances[`treasury:${branchNew.treasuryCode}`], branchOpening)
+  assert.equal(branchScope.openingBalances[`treasury:${mainBranch.treasuryCode}`], undefined, 'لا يقرأ افتتاحي خزينة الرئيسي')
+  assert.ok(branchScope.journal.some((entry) => entry.sourceType === 'opening' && entry.branchId === branchNew.id), 'قيد افتتاحي الفرع مختوم بفرعه')
+  assert.equal(raw().branchOpeningBalances[branchNew.id].openingBalances[`treasury:${branchNew.treasuryCode}`], branchOpening)
+  assert.equal(raw().openingBalances[`treasury:${mainBranch.treasuryCode}`], mainOpening, 'افتتاحي الرئيسي محفوظ في ملفه')
+  st().setActiveBranchId(null)
+  ok('خزائن الفروع: رصيد الافتتاحي يُحفظ ويُرحّل بدفتر الفرع، لا يختلط بين الرئيسي والفرع')
+}
+
+console.log('\n═══ 6) قواعد الصحة ═══')
 {
   // مخزن مربوط بفرع آخر يُرفض
   const errs = validateBranch({ nameAr: 'فرع مكرر', warehouseId: whNew, treasuryCode: '1102' }, st().branches, st().warehouses, st().treasuries)
@@ -190,7 +213,7 @@ console.log('\n═══ 5) قواعد الصحة ═══')
   ok('قواعد الصحة: منع التكرار + حماية الرئيسي + منع حذف الفرع ذي التاريخ التشغيلي')
 }
 
-console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
+console.log('\n═══ 7) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
 {
   const companyModules = ['pos', 'inventory', 'purchases', 'contracting', 'logistics', 'equipment_rental']
   // إنشاء فرع مخصص للشحن واللوجستيات فقط
@@ -311,7 +334,7 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.ok(emptyCustomErrs.some((e) => e.includes('اختر قسماً واحداً على الأقل')))
   ok('تخصيص الأقسام والأنشطة لكل فرع: شامل أو مخصص (مقاولات/لوجستيات) + تبديل الفرع النشط')
 
-  console.log('\n═══ 7) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
+  console.log('\n═══ 8) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
   // تفعيل فرع اللوجستيات كشركة مستقلة
   st().setActiveBranchId(logisticsBranch.id)
   let scoped = getBranchScopedDataState(st())

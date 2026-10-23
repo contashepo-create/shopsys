@@ -17,25 +17,52 @@ export function suggestFiscalYear(year: number): Omit<FiscalYear, 'id' | 'status
   return { nameAr: String(year), startDate: `${year}-01-01`, endDate: `${year}-12-31` }
 }
 
+function isValidFiscalDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(5, 7))
+  const day = Number(value.slice(8, 10))
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const monthDays = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= monthDays[month - 1]
+}
+
+function fiscalDayOrdinal(value: string): number {
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(5, 7))
+  const day = Number(value.slice(8, 10))
+  const priorYear = year - 1
+  const leapDaysBefore = Math.floor(priorYear / 4) - Math.floor(priorYear / 100) + Math.floor(priorYear / 400)
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const monthDays = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return priorYear * 365 + leapDaysBefore + monthDays.slice(0, month - 1).reduce((sum, days) => sum + days, 0) + day
+}
+
 export function validateFiscalYear(fy: { nameAr: string; startDate: string; endDate: string }, existing: FiscalYear[]): string[] {
   const errors: string[] = []
   if (!fy.nameAr.trim()) errors.push('اسم السنة المالية مطلوب')
-  if (!fy.startDate || !fy.endDate) errors.push('تاريخا البداية والنهاية مطلوبان')
-  else {
-    if (fy.endDate <= fy.startDate) errors.push('نهاية السنة يجب أن تكون بعد بدايتها')
-    const days = (new Date(fy.endDate).getTime() - new Date(fy.startDate).getTime()) / 86400000
-    if (days > 400) errors.push('السنة المالية لا تتجاوز ~13 شهراً')
-    if (days < 27) errors.push('السنة المالية قصيرة جداً (أقل من شهر)')
-    // تداخل مع سنوات موجودة
-    for (const ex of existing) {
-      if (fy.startDate <= ex.endDate && fy.endDate >= ex.startDate) {
-        errors.push(`تتداخل مع السنة «${ex.nameAr}» (${ex.startDate} → ${ex.endDate})`)
-      }
-    }
-    // (طلب المالك): سنة مالية واحدة مفتوحة فقط — لا تُفتح جديدة قبل إقفال المفتوحة
-    const open = existing.find((y) => y.status === 'open')
-    if (open) errors.push(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
+  if (!fy.startDate || !fy.endDate) {
+    errors.push('تاريخا البداية والنهاية مطلوبان')
+    return errors
   }
+  if (!isValidFiscalDate(fy.startDate)) errors.push('تاريخ بداية السنة غير صالح — استخدم تاريخاً صحيحاً بصيغة YYYY-MM-DD')
+  if (!isValidFiscalDate(fy.endDate)) errors.push('تاريخ نهاية السنة غير صالح — استخدم تاريخاً صحيحاً بصيغة YYYY-MM-DD')
+  // لا تُجرَ حسابات المدة أو التداخل على مدخلات غير تقويمية.
+  if (errors.some((error) => error.includes('تاريخ ') && error.includes('غير صالح'))) return errors
+
+  if (fy.endDate <= fy.startDate) errors.push('نهاية السنة يجب أن تكون بعد بدايتها')
+  const days = fiscalDayOrdinal(fy.endDate) - fiscalDayOrdinal(fy.startDate)
+  if (days > 400) errors.push('السنة المالية لا تتجاوز ~13 شهراً')
+  if (days < 27) errors.push('السنة المالية قصيرة جداً (أقل من شهر)')
+  // تداخل مع سنوات موجودة
+  for (const ex of existing) {
+    if (fy.startDate <= ex.endDate && fy.endDate >= ex.startDate) {
+      errors.push(`تتداخل مع السنة «${ex.nameAr}» (${ex.startDate} → ${ex.endDate})`)
+    }
+  }
+  // (طلب المالك): سنة مالية واحدة مفتوحة فقط — لا تُفتح جديدة قبل إقفال المفتوحة
+  const open = existing.find((y) => y.status === 'open')
+  if (open) errors.push(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
   return errors
 }
 

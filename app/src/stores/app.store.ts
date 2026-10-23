@@ -8,7 +8,7 @@ import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../cor
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
 import { toggleModuleList, effectiveModules, clampModulesToLicense, withDependencies, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
-import type { FiscalYear } from '../core/fiscal.ts'
+import { validateFiscalYear, type FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
 import { settingsAppStorage, registerExternalSnapshotApplier } from '../data/persistentStorage.ts'
@@ -864,6 +864,8 @@ export const useAppStore = create<AppState>()(
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
         set((s) => {
+          const fiscalErrors = validateFiscalYear(fiscalYear, [])
+          if (fiscalErrors.length) throw new Error(fiscalErrors.join(' — '))
           const companySetup: SetupState = {
             completed: true,
             countryCode: country.code,
@@ -909,8 +911,8 @@ export const useAppStore = create<AppState>()(
          الشاشة وحدها: أي مسار آخر (استيراد حالة، ترحيل قديم) لا يفتح سنتين. */
       addFiscalYear: (fy) =>
         set((s) => {
-          const open = s.fiscalYears.find((y) => y.status === 'open')
-          if (open) throw new Error(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
+          const errors = validateFiscalYear(fy, s.fiscalYears)
+          if (errors.length) throw new Error(errors.join(' — '))
           return {
             fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
           }
