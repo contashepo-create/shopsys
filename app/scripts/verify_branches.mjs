@@ -29,7 +29,7 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
 const { useDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
-const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+const { useAppStore, branchIdentityMissingFields, resolveBranchAppSettings, resolveDocumentBranchAppSettings } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
 const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
 useAppStore.getState().updateSetup({ allowNegativeTreasury: true, shopName: 'المنشأة الأساسية', vatPercent: 14, taxInclusive: true, taxRegistrationStatus: 'registered' })
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
@@ -182,28 +182,69 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   })
   const updatedHq = st().branches.find((x) => x.id === hqBranch.id)
 
-  // الاسم والضريبة ورقم التسجيل الإلكتروني إعدادات منفصلة لكل فرع؛ الملف القديم يُنسخ عند أول تفعيل فقط.
-  const baseEinvoice = { ...useAppStore.getState().einvoice }
+  // الهوية القانونية وتصميم الطباعة مستقلان: الفرع الجديد يبدأ باسمه وببيانات قانونية فارغة.
+  const mainIdentityBeforeBranchEdit = { ...useAppStore.getState().companySetup }
+  const mainReceiptBeforeBranchEdit = { ...useAppStore.getState().baseReceipt }
+  const mainReportPrintBeforeBranchEdit = { ...useAppStore.getState().baseReportPrint }
+  const baseEinvoice = { ...useAppStore.getState().baseEinvoice }
   st().setActiveBranchId(logisticsBranch.id)
-  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'الملف الأول يرث الاسم الحالي حفاظاً على التوافق')
-  useAppStore.getState().updateCompanyName('اسم فرع اللوجستيات')
+  const newBranchProfile = useAppStore.getState().branchBusinessProfiles[logisticsBranch.id]
+  assert.equal(useAppStore.getState().setup.shopName, logisticsBranch.nameAr, 'الفرع الجديد يبدأ باسمه لا باسم المنشأة الرئيسية')
+  assert.equal(useAppStore.getState().setup.phone, '', 'هاتف الفرع الجديد فارغ ولا يرث هاتف الرئيسي')
+  assert.equal(useAppStore.getState().setup.commercialRegister, '', 'سجل الفرع الجديد فارغ ولا يرث سجل الرئيسي')
+  assert.equal(useAppStore.getState().einvoice.taxNumber, '', 'رقم ضريبة الفرع الجديد فارغ ولا يرث الرئيسي')
+  assert.equal(useAppStore.getState().einvoice.address, '', 'عنوان الممول للفرع الجديد فارغ')
+  assert.equal(newBranchProfile.receipt.logoDataUrl, '', 'شعار الفرع الجديد لا ينسخ شعار الرئيسي')
+  assert.deepEqual(newBranchProfile.receipt.headerLines, [], 'ترويسة الفرع الجديد لا تنسخ بيانات الرئيسي')
+
+  useAppStore.getState().updateCompanyProfile({
+    shopName: 'اسم فرع اللوجستيات', phone: '01090000000', email: 'branch@example.com',
+    website: 'branch.example.com', city: 'المنصورة', street: 'شارع الجيش', buildingNo: '12',
+    postalCode: '35511', poBox: '44', commercialRegister: 'CR-BR-22',
+  })
   useAppStore.getState().updateTaxSettings({ vatPercent: 5, taxInclusive: false, taxRegistrationStatus: 'registered' })
   useAppStore.getState().updateSetup({ allowNegativeTreasury: false })
-  useAppStore.getState().updateEinvoice({ taxNumber: '123456789', address: 'عنوان فرع اللوجستيات' })
+  useAppStore.getState().updateEinvoice({ taxNumber: '123456789', address: 'عنوان ضريبي فرعي' })
+  useAppStore.getState().updateReceipt({
+    shopName: 'اسم إيصال اللوجستيات', logoDataUrl: 'data:image/png;base64,branch-logo',
+    headerLines: ['سطر فرع مستقل'], footerText: 'تذييل فرع مستقل',
+  })
+  useAppStore.getState().updateReportPrint({ headerLine: 'ترويسة تقرير فرعية', footerText: 'تذييل تقرير فرعي' })
   assert.equal(useAppStore.getState().setup.shopName, 'اسم فرع اللوجستيات')
   assert.equal(useAppStore.getState().setup.vatPercent, 5)
   assert.equal(useAppStore.getState().setup.allowNegativeTreasury, false)
   assert.equal(useAppStore.getState().einvoice.taxNumber, '123456789')
+  assert.equal(useAppStore.getState().receipt.logoDataUrl, 'data:image/png;base64,branch-logo')
+  assert.equal(useAppStore.getState().receipt.footerText, 'تذييل فرع مستقل')
+  assert.ok(useAppStore.getState().reportPrint.headerLine.includes('ترويسة تقرير فرعية'))
+  assert.ok(useAppStore.getState().reportPrint.headerLine.includes('CR-BR-22'))
+  assert.ok(useAppStore.getState().reportPrint.headerLine.includes('123456789'))
+  assert.deepEqual(useAppStore.getState().companySetup, mainIdentityBeforeBranchEdit, 'تعديل هوية الفرع لا يغير ملف الشركة الرئيسي')
+  assert.deepEqual(useAppStore.getState().baseReceipt, mainReceiptBeforeBranchEdit, 'تعديل تصميم إيصال الفرع لا يغير إيصال الرئيسي')
+  assert.deepEqual(useAppStore.getState().baseEinvoice, baseEinvoice, 'إعداد الضريبة الإلكترونية للفرع لا يغير الرئيسي')
+  assert.deepEqual(useAppStore.getState().baseReportPrint, mainReportPrintBeforeBranchEdit, 'تصميم تقارير الفرع لا يغير إعدادات الرئيسي')
+
   st().setActiveBranchId(hqBranch.id)
-  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'اسم الفرع لا يغير المنشأة الأساسية')
+  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'اسم المنشأة الرئيسية الأصلي محفوظ')
   assert.equal(useAppStore.getState().setup.vatPercent, 14, 'ضريبة الفرع لا تغير ضريبة المنشأة الأساسية')
-  assert.equal(useAppStore.getState().setup.allowNegativeTreasury, true, 'سياسة الخزينة الخاصة بالفرع لا تغير سياسة المنشأة')
+  assert.equal(useAppStore.getState().setup.phone, '', 'هوية الرئيسي لا تتغير بسبب تعديل الفرع')
   assert.deepEqual(useAppStore.getState().einvoice, baseEinvoice, 'رقم الضريبة الإلكترونية لا ينتقل بين الفروع')
+  const resolvedBranchBWhileMainActive = resolveBranchAppSettings(useAppStore.getState(), logisticsBranch)
+  assert.equal(resolvedBranchBWhileMainActive.setup.shopName, 'اسم فرع اللوجستيات', 'محلل فرع ب يعيد هويته بينما الرئيسي نشط')
+  assert.equal(resolvedBranchBWhileMainActive.einvoice.taxNumber, '123456789')
+  assert.equal(resolvedBranchBWhileMainActive.receipt.logoDataUrl, 'data:image/png;base64,branch-logo')
+  const resolvedDocumentBWhileMainActive = resolveDocumentBranchAppSettings(
+    useAppStore.getState(), { warehouseId: logisticsBranch.warehouseId }, st().branches, st().warehouses, st().treasuries,
+  )
+  assert.equal(resolvedDocumentBWhileMainActive.branch.id, logisticsBranch.id, 'مخزن المستند يحدد فرعه مستقلاً عن الفرع النشط')
+  assert.equal(resolvedDocumentBWhileMainActive.setup.shopName, 'اسم فرع اللوجستيات')
+  assert.deepEqual(branchIdentityMissingFields({ shopName: logisticsBranch.nameAr, city: '', street: '', phone: '', commercialRegister: '' }, { taxNumber: '' }), ['الرقم الضريبي', 'السجل التجاري', 'العنوان', 'الهاتف'])
+
   st().setActiveBranchId(logisticsBranch.id)
   assert.equal(useAppStore.getState().setup.shopName, 'اسم فرع اللوجستيات', 'إعدادات فرع اللوجستيات محفوظة عند العودة إليه')
   useAppStore.getState().updateSetup({ allowNegativeTreasury: true })
   st().setActiveBranchId(null)
-  ok('عزل إعدادات الاسم والضريبة ورقم التسجيل الإلكتروني لكل فرع مع بقاء قيم المنشأة الأساسية')
+  ok('هوية وإيصال وتقارير وضريبة مستقلة؛ بذرة بلا نسخ للرئيسي؛ محلل مستند B يعمل والرئيسي نشط')
 
   // العرض الشامل (null) يعيد كل أقسام الشركة
   assert.deepEqual(resolveBranchModules(null, companyModules), companyModules)
@@ -395,7 +436,10 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.throws(() => st().renameTreasury(hqBranch.treasuryCode, 'خزينة مخترقة'), /غير موجودة في هذا الفرع/)
   assert.throws(() => st().postTransfer({ fromWarehouseId: logisticsBranch.warehouseId, toWarehouseId: hqBranch.warehouseId, lines: [], notes: '' }), /المخزن المستقبل غير موجود في هذا الفرع/)
   assert.throws(() => st().setOwnerPin('new-owner-pin'), /متاح للمالك فقط/)
-  assert.throws(() => useAppStore.getState().updateSetup({ shopName: 'تغيير عام من فرع' }), /لا تُعدّل من داخل فرع مستقل/)
+  const companyIdentityBeforeBranchEdit = { ...useAppStore.getState().companySetup }
+  useAppStore.getState().updateCompanyProfile({ shopName: 'هوية فرع اللوجستيات' })
+  assert.equal(useAppStore.getState().setup.shopName, 'هوية فرع اللوجستيات')
+  assert.deepEqual(useAppStore.getState().companySetup, companyIdentityBeforeBranchEdit, 'تعديل هوية الفرع لا يغير ملف المنشأة الرئيسية')
 
   // حراس علاقة الأب: لا يكفي ختم السجل الجديد بفرعه إذا كان يشير إلى موظف/مشروع/عهدة من شركة أخرى.
   const custodyTxCountBefore = st().custodyTxs.length

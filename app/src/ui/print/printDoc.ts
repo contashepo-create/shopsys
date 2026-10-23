@@ -34,6 +34,14 @@ export function printModelWithTemplate(
   cur: CurrencyConfig,
   settings: ReceiptSettings,
   template: InvoiceTemplate,
+  options?: {
+    /**
+     * مصدر إعدادات إعادة بناء المعاينة. لمستند يخص فرعاً غير النشط يجب
+     * تمرير محلل فرع المستند؛ القراءة الافتراضية من الفرع النشط كانت
+     * تستبدل هوية/تصميم المستند عند أول تحديث للمعاينة الحية.
+     */
+    resolveSettings?: () => ReceiptSettings
+  },
 ): void {
   /* قاعدة المالك الموحدة في كل الأنشطة: أي طباعة مستند تفتح معاينة قبل
      الطباعة أولاً — إلا إذا اختار «طباعة مباشرة» (صامتة) فيخرج المستند
@@ -47,6 +55,11 @@ export function printModelWithTemplate(
     html,
     wide: template !== 'thermal',
     title: template !== 'thermal' ? 'معاينة المستند قبل الطباعة' : 'معاينة الإيصال الحراري',
-    rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, template),
+    rebuild: () => buildModelHtml(
+      model,
+      cur,
+      options?.resolveSettings ? options.resolveSettings() : useAppStore.getState().receipt,
+      template,
+    ),
   })
 }

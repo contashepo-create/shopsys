@@ -19,6 +19,7 @@ import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
@@ -441,12 +442,13 @@ export function ProjectsPage() {
   const printExtract = (ex: (typeof projectExtracts)[number]) => {
     const prj = projects.find((p) => p.id === ex.projectId)
     if (!prj) return
+    const documentSettings = resolveDocumentPrintSettings(prj)
     const previous = projectExtracts
       .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
       .reduce((a, e) => a + e.totals.grossMinor, 0)
     const cumulative = previous + ex.totals.grossMinor
     printHtml(renderExtractHtml({
-      shopName: setup.shopName || 'مقاولات',
+      shopName: documentSettings.setup.shopName || 'مقاولات',
       extractNumber: ex.extractNumber,
       dateIso: ex.date,
       projectName: prj.nameAr,
@@ -473,16 +475,17 @@ export function ProjectsPage() {
   const printExtractClientInvoice = (ex: (typeof projectExtracts)[number]) => {
     const prj = projects.find((p) => p.id === ex.projectId)
     if (!prj) return
+    const documentSettings = resolveDocumentPrintSettings(prj)
     const client = prj.clientId != null ? customers.find((c) => c.id === prj.clientId) : undefined
     const previous = projectExtracts
       .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
       .reduce((a, e) => a + e.totals.grossMinor, 0)
     const cumulative = previous + ex.totals.grossMinor
-    const einv = useAppStore.getState().einvoice
+    const einv = documentSettings.einvoice
     printHtml(renderExtractClientInvoiceHtml({
-      shopName: setup.shopName || 'مقاولات',
-      shopPhone: setup.phone,
-      shopAddress: [setup.city, setup.street].filter(Boolean).join(' — '),
+      shopName: documentSettings.setup.shopName || 'مقاولات',
+      shopPhone: documentSettings.setup.phone,
+      shopAddress: [documentSettings.setup.city, documentSettings.setup.street].filter(Boolean).join(' — '),
       shopTaxId: einv.taxNumber,
       extractNumber: ex.extractNumber,
       dateIso: ex.date,
@@ -1936,13 +1939,14 @@ export function ProjectExtractsPage() {
   const printExtractDoc = (ex: (typeof projectExtracts)[number]) => {
     const prj = projects.find((p) => p.id === ex.projectId)
     if (!prj) return
+    const documentSettings = resolveDocumentPrintSettings(prj)
     const previous = projectExtracts
       .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
       .reduce((a, e) => a + e.totals.grossMinor, 0)
     const cumulative = previous + ex.totals.grossMinor
     printHtml(
       renderExtractHtml({
-        shopName: setup.shopName || 'مقاولات',
+        shopName: documentSettings.setup.shopName || 'مقاولات',
         extractNumber: ex.extractNumber,
         dateIso: ex.date,
         projectName: prj.nameAr,
@@ -1975,17 +1979,18 @@ export function ProjectExtractsPage() {
   const printClientInvoice = (ex: (typeof projectExtracts)[number]) => {
     const prj = projects.find((p) => p.id === ex.projectId)
     if (!prj) return
+    const documentSettings = resolveDocumentPrintSettings(prj)
     const client = prj.clientId != null ? customers.find((c) => c.id === prj.clientId) : undefined
     const previous = projectExtracts
       .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
       .reduce((a, e) => a + e.totals.grossMinor, 0)
     const cumulative = previous + ex.totals.grossMinor
-    const einv = useAppStore.getState().einvoice
+    const einv = documentSettings.einvoice
     printHtml(
       renderExtractClientInvoiceHtml({
-        shopName: setup.shopName || 'مقاولات',
-        shopPhone: setup.phone,
-        shopAddress: [setup.city, setup.street].filter(Boolean).join(' — '),
+        shopName: documentSettings.setup.shopName || 'مقاولات',
+        shopPhone: documentSettings.setup.phone,
+        shopAddress: [documentSettings.setup.city, documentSettings.setup.street].filter(Boolean).join(' — '),
         shopTaxId: einv.taxNumber,
         extractNumber: ex.extractNumber,
         dateIso: ex.date,

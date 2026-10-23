@@ -19,10 +19,10 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { documentTaxBarcodePayload, resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
-import { useTaxBarcodePayload } from '../hooks/useTaxBarcodeStamp.ts'
 import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
@@ -50,9 +50,8 @@ export function SaleReturnsPage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
-  /* إشعار المرتجع مستند ضريبي (إشعار دائن) — يُطبع برمز زاتكا مثل الفاتورة الأصلية.
-     الحمولة تُجمَّد على الإشعار عند أول طباعة، فإعادة الطباعة لا تعيد توليدها. */
-  const taxPayload = useTaxBarcodePayload()
+  /* إشعار المرتجع مستند ضريبي (إشعار دائن) — يُطبع برمز زاتكا مثل الفاتورة الأصلية،
+     وبهوية فرع الفاتورة الأصلية نفسها. الحمولة تُجمَّد عند أول طباعة. */
 
   /* ─── حالة المعالج ─── */
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -213,6 +212,8 @@ export function SaleReturnsPage() {
   /** بناء موديل طباعة إشعار المرتجع — مشترك بين الطباعة وإرسال واتساب PDF (v1.0.13) */
   const buildReturnModel = (r: SaleReturn) => {
     const orig = sales.find((s) => s.id === r.saleId)
+    const documentRecord = orig ?? r
+    const documentSettings = resolveDocumentPrintSettings(documentRecord)
     const model = buildReceiptModel({
       invoiceNumber: r.returnNumber,
       refCode: r.refCode,
@@ -230,16 +231,16 @@ export function SaleReturnsPage() {
          المرتجع نفسه — لا من إعدادات اليوم التي قد تخالف المستند القديم. */
       taxPercent: orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent,
       taxInclusive: orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive,
-      settings: receipt,
+      settings: documentSettings.receipt,
     })
     model.docTitle = 'مرتجع مبيعات'
     /* الرمز الضريبي لإشعار الدائن: إجمالي المرتجع وضريبته بتاريخه هو.
        إعادة الطباعة تقرأ الحمولة المجمّدة وقت أول طباعة (إن وُجدت) فلا يتغير
        الرمز لو تغيّر اسم المنشأة أو رقمها الضريبي لاحقاً. */
-    if (r.taxQrPayload) {
+    if (r.taxQrPayload && documentSettings.identityComplete) {
       model.qrDataUrl = qrDataUrlFromPayload(r.taxQrPayload)
-    } else {
-      const payload = taxPayload(model, { dateIso: r.date, invoiceNumber: r.returnNumber, totalMinor: r.totals.totalMinor, taxMinor: r.totals.taxMinor })
+    } else if (documentSettings.identityComplete) {
+      const payload = documentTaxBarcodePayload(model, documentRecord, { dateIso: r.date, invoiceNumber: r.returnNumber, totalMinor: r.totals.totalMinor, taxMinor: r.totals.taxMinor })
       if (payload) {
         model.qrDataUrl = qrDataUrlFromPayload(payload)
         attachSaleReturnTaxQr(r.id, payload)
@@ -267,7 +268,12 @@ export function SaleReturnsPage() {
   /** طباعة إشعار المرتجع للعميل — بالقالب المختار (حراري/A4/A5) */
   const printReturn = (r: SaleReturn, template?: InvoiceTemplate) => {
     const model = buildReturnModel(r)
-    printModelWithTemplate(model, cur, receipt, template ?? receipt.defaultTemplate)
+    const orig = sales.find((s) => s.id === r.saleId)
+    const documentRecord = orig ?? r
+    const documentSettings = resolveDocumentPrintSettings(documentRecord)
+    printModelWithTemplate(model, cur, documentSettings.receipt, template ?? documentSettings.receipt.defaultTemplate, {
+      resolveSettings: () => resolveDocumentPrintSettings(documentRecord).receipt,
+    })
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
 
@@ -275,7 +281,8 @@ export function SaleReturnsPage() {
   const whatsappReturn = (r: SaleReturn, template: InvoiceTemplate) => {
     const orig = sales.find((s) => s.id === r.saleId)
     const phone = orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.phone ?? '' : ''
-    shareDocPdfViaWhatsapp({ model: buildReturnModel(r), cur, settings: receipt, template, docLabel: 'مرتجع مبيعات', docNumber: r.returnNumber, partyPhone: phone, shopName: setup.shopName, toast })
+    const documentSettings = resolveDocumentPrintSettings(orig ?? r)
+    shareDocPdfViaWhatsapp({ model: buildReturnModel(r), cur, settings: documentSettings.receipt, template, docLabel: 'مرتجع مبيعات', docNumber: r.returnNumber, partyPhone: phone, shopName: documentSettings.setup.shopName, toast })
   }
 
   const canNext =
@@ -808,7 +815,7 @@ export function SaleReturnsPage() {
       <PrintTemplateModal
         open={printTarget != null}
         onClose={() => setPrintTarget(null)}
-        defaultTemplate={receipt.defaultTemplate}
+        defaultTemplate={printTarget ? resolveDocumentPrintSettings(sales.find((s) => s.id === printTarget.saleId) ?? printTarget).receipt.defaultTemplate : receipt.defaultTemplate}
         title="🖨️ طباعة إشعار المرتجع"
         onPrint={(t) => { if (printTarget) printReturn(printTarget, t) }}
         onWhatsappPdf={(t) => { if (printTarget) whatsappReturn(printTarget, t) }}

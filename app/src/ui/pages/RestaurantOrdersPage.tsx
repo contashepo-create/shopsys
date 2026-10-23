@@ -16,17 +16,15 @@ import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml, printToRoute } from '../print/printReceipt.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RestaurantOrdersPage() {
   const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, markKitchenFired, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, mergeRestaurantOrders, getEffectivePrice } = useDataStore()
-  const { setup, receipt, printerProfiles } = useAppStore()
+  const { setup, printerProfiles } = useAppStore()
   const toast = useToast()
-  /* إيصال العميل للمطعم فاتورة بيع — يجب أن يحمل رمز زاتكا عند تفعيله */
-  const stampTax = useTaxBarcodeStamp()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   // سد فجوة النشاط #14 (Gap 1): حذف/تقليل صنف بعد إرساله للمطبخ يتطلب اعتماد مشرف
@@ -125,7 +123,7 @@ export function RestaurantOrdersPage() {
 
   const printKitchen = (o: typeof open[number]) => {
     printHtml(renderKitchenTicketHtml({
-      shopName: setup.shopName || 'تَحَكَّم',
+      shopName: resolveDocumentPrintSettings(o).setup.shopName || 'تَحَكَّم',
       orderNumber: o.orderNumber,
       typeLabel: ORDER_TYPE_LABELS[o.type].nameAr,
       tableName: o.tableName,
@@ -152,10 +150,11 @@ export function RestaurantOrdersPage() {
         taxInclusive: setup.taxInclusive,
       })
       toast.show(`قُفل ${settleOrder.orderNumber} بالفاتورة ${sale.invoiceNumber} — ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✓`)
+      const documentSettings = resolveDocumentPrintSettings(sale)
       /* §102 (تعدد الطابعات): النسخ الآلية عند الإقفال — لكل مسار مفعّل تُرسل
          نسخته إلى طابعته المسماة (صامتة في EXE عبر الجسر، وحوار في المتصفح). */
       const ticketArgs = {
-        shopName: setup.shopName || 'تَحَكَّم',
+        shopName: documentSettings.setup.shopName || 'تَحَكَّم',
         orderNumber: settleOrder.orderNumber,
         typeLabel: ORDER_TYPE_LABELS[settleOrder.type].nameAr,
         tableName: settleOrder.tableName,
@@ -174,17 +173,17 @@ export function RestaurantOrdersPage() {
           paidMinor: sale.paidMinor,
           operatorName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك',
           customerName: null,
-          taxPercent: setup.vatPercent,
-          taxInclusive: setup.taxInclusive,
-          settings: receipt,
+          taxPercent: sale.taxPercent ?? documentSettings.setup.vatPercent,
+          taxInclusive: sale.taxInclusive ?? documentSettings.setup.taxInclusive,
+          settings: documentSettings.receipt,
         })
-        stampTax(model, { dateIso: sale.date, invoiceNumber: sale.invoiceNumber, totalMinor: sale.totals.totalMinor, taxMinor: sale.totals.taxMinor })
-        printToRoute(renderReceiptHtml(model, cur, receipt), printerProfiles.clientReceipt, { silent: receipt.silentPrint })
+        stampDocumentTaxBarcode(model, sale, { dateIso: sale.date, invoiceNumber: sale.invoiceNumber, totalMinor: sale.totals.totalMinor, taxMinor: sale.totals.taxMinor })
+        printToRoute(renderReceiptHtml(model, cur, documentSettings.receipt), printerProfiles.clientReceipt, { silent: documentSettings.receipt.silentPrint })
       }
       if (printerProfiles.kitchenTicket.autoPrint)
-        printToRoute(renderKitchenTicketHtml(ticketArgs), printerProfiles.kitchenTicket, { silent: receipt.silentPrint })
+        printToRoute(renderKitchenTicketHtml(ticketArgs), printerProfiles.kitchenTicket, { silent: documentSettings.receipt.silentPrint })
       if (printerProfiles.stationTicket.autoPrint)
-        printToRoute(renderKitchenTicketHtml({ ...ticketArgs, stationLabel: 'المحطة' }), printerProfiles.stationTicket, { silent: receipt.silentPrint })
+        printToRoute(renderKitchenTicketHtml({ ...ticketArgs, stationLabel: 'المحطة' }), printerProfiles.stationTicket, { silent: documentSettings.receipt.silentPrint })
       setSettleFor(null)
       if (activeId === settleOrder.id) setActiveId(null)
       setSvcPct(''); setDelFee(''); setTerminalId(''); setTerminalReference(''); setCardLast4('')

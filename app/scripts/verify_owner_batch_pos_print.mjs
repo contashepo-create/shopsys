@@ -149,9 +149,9 @@ console.log('\n6️⃣ المراجعة الثانية (طلب المالك): ط
   // A5 متاح من كل منافذ الطباعة لا الكاشير فقط
   const salesPage = readFileSync(new URL('../src/ui/pages/SalesInvoicesPage.tsx', import.meta.url), 'utf-8')
   ok('فواتير المبيعات: زر A5 لكل فاتورة', salesPage.includes("printInvoice(s, 'a5')"))
-  ok('فواتير المبيعات: زر الطباعة يمرر القالب الموحد', salesPage.includes('printModelWithTemplate(model, cur, receipt, template)'))
+  ok('فواتير المبيعات: زر الطباعة يمرر قالب وهوية فرع المستند', salesPage.includes('printModelWithTemplate(model, cur, documentSettings.receipt, template'))
   const returnsPage = readFileSync(new URL('../src/ui/pages/SaleReturnsPage.tsx', import.meta.url), 'utf-8')
-  ok('إشعار المرتجع يحترم افتراضي A5 (عبر printModelWithTemplate)', returnsPage.includes('printModelWithTemplate(model, cur, receipt, template ?? receipt.defaultTemplate)'))
+  ok('إشعار المرتجع يحترم قالب فرع الفاتورة الأصلية', returnsPage.includes('template ?? documentSettings.receipt.defaultTemplate'))
   ok('إشعار المرتجع: اختيار قالب لحظة الطباعة', returnsPage.includes('PrintTemplateModal'))
   const printSettings = readFileSync(new URL('../src/ui/pages/PrintSettingsPage.tsx', import.meta.url), 'utf-8')
   ok('إعدادات الطباعة: A5 خيار افتراضي ثالث', printSettings.includes('فاتورة A5'))

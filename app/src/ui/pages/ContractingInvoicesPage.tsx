@@ -22,9 +22,9 @@ import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '..
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
@@ -37,14 +37,22 @@ export function ContractingInvoicesPage() {
   const {
     projects, projectExtracts, sales, customers, boqItems, postSale, ensureServiceItemForFreeLine,
   } = useDataStore()
-  const { setup, receipt } = useAppStore()
+  const { setup } = useAppStore()
   const toast = useToast()
-  const stampTax = useTaxBarcodeStamp()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const runtimeBranchId = (record: unknown): number | null => {
+    const value = (record as { branchId?: unknown } | null | undefined)?.branchId
+    return typeof value === 'number' ? value : null
+  }
+  const salePrintRecord = (s: (typeof sales)[number]) => {
+    const project = projects.find((p) => p.id === s.projectId)
+    const projectBranchId = runtimeBranchId(project)
+    return runtimeBranchId(s) == null && projectBranchId != null ? { ...s, branchId: projectBranchId } : s
+  }
   const [prjFilter, setPrjFilter] = useState(0) // 0 = كل المشاريع
   const [search, setSearch] = useState('')
 
@@ -125,8 +133,15 @@ export function ContractingInvoicesPage() {
     })))
     toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع (${pct}٪) ✓`)
   }
+  const draftPrintSettings = () => {
+    const draftProject = projects.find((x) => x.id === edProjectId)
+    const draftCustomer = customers.find((c) => c.id === edCustomerId)
+    const draftBranchId = runtimeBranchId(draftProject) ?? runtimeBranchId(draftCustomer)
+    return resolveDocumentPrintSettings(draftBranchId != null ? { branchId: draftBranchId } : draftProject ?? draftCustomer ?? null)
+  }
   const edPrintModel = () => {
     const dateIso = todayLocalIso()
+    const documentSettings = draftPrintSettings()
     const model = buildSimpleDocModel({
       docTitle: 'فاتورة مقاولات',
       invoiceNumber: 'مسودة',
@@ -138,7 +153,7 @@ export function ContractingInvoicesPage() {
       totalMinor: edGross,
       paidMinor: edPayment === 'cash' ? edGross : 0,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: receipt,
+      settings: documentSettings.receipt,
       extraFooter: edNotes.trim() || undefined,
       tax: edTax > 0 ? { label: 'الضريبة', minor: edTax, baseMinor: edNet } : undefined,
     })
@@ -181,6 +196,8 @@ export function ContractingInvoicesPage() {
 
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط شاشة فواتير المبيعات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
+    const documentRecord = salePrintRecord(s)
+    const documentSettings = resolveDocumentPrintSettings(documentRecord)
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
     const tx = s.taxPercent !== undefined
       ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
@@ -189,7 +206,7 @@ export function ContractingInvoicesPage() {
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
       dateIso: s.date,
-      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? setup.vatPercent) : 0 }))],
+      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? documentSettings.setup.vatPercent) : 0 }))],
       totals: s.totals,
       payment: s.payment,
       paidMinor: s.paidMinor,
@@ -197,14 +214,16 @@ export function ContractingInvoicesPage() {
       customerName,
       taxPercent: tx.taxPercent,
       taxInclusive: tx.taxInclusive,
-      settings: receipt,
+      settings: documentSettings.receipt,
     })
     const prj = projects.find((p) => p.id === s.projectId)
-    model.footerText = `${prj ? `مشروع: ${prj.code} — ${prj.nameAr}` : ''}${prj && receipt.footerText ? ' — ' : ''}${receipt.footerText ?? ''}`
+    model.footerText = `${prj ? `مشروع: ${prj.code} — ${prj.nameAr}` : ''}${prj && documentSettings.receipt.footerText ? ' — ' : ''}${documentSettings.receipt.footerText ?? ''}`
     /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
-    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
-    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-    printModelWithTemplate(model, cur, receipt, template)
+    if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+    printModelWithTemplate(model, cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(documentRecord).receipt,
+    })
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
 
@@ -286,10 +305,13 @@ export function ContractingInvoicesPage() {
                           <button onClick={() => printInvoice(s, 'thermal')} title="إيصال حراري" className="p-1.5 rounded-md text-slate-400 hover:text-sky-600 hover:bg-sky-500/10"><Printer size={13} /></button>
                           <button onClick={() => {
                             const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
-                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? setup.vatPercent, taxInclusive: s.taxInclusive ?? setup.taxInclusive, settings: receipt })
+                            const documentRecord = salePrintRecord(s)
+                            const documentSettings = resolveDocumentPrintSettings(documentRecord)
+                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? documentSettings.setup.vatPercent, taxInclusive: s.taxInclusive ?? documentSettings.setup.taxInclusive, settings: documentSettings.receipt })
                             /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
-                            stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-                            shareDocPdfViaWhatsapp({ model, cur, settings: receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: setup.shopName, toast })
+                            if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+                            else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+                            shareDocPdfViaWhatsapp({ model, cur, settings: documentSettings.receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: documentSettings.setup.shopName, toast })
                           }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Send size={13} /></button>
                           <button onClick={() => openSalesInvoiceWindow(s.id)} data-contracting-invoice-review title="مراجعة وتعديل الفاتورة في نافذتها الكاملة" className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Pencil size={13} /></button>
                         </div>
@@ -311,7 +333,7 @@ export function ContractingInvoicesPage() {
               modeLabel="فاتورة مقاولات — بنود حرة"
               currencyLabel={`${cur.code} · ${cur.symbol}`}
               dateLabel={todayLocalIso()}
-              branchLabel={setup.shopName ?? ''}
+              branchLabel={draftPrintSettings().setup.shopName ?? ''}
               userLabel={setup.ownerName ?? 'المالك'}
               activityLabel="مقاولات"
               documentNumber="CI-DRAFT"
@@ -321,9 +343,9 @@ export function ContractingInvoicesPage() {
               onItemSearch={() => undefined}
               onSaveDraft={() => toast.show('هذه الفاتورة تُرحَّل مباشرة — بلا مسودات (بنودها حرة تُكتب مرة واحدة)')}
               onRestoreDraft={() => toast.show('لا مسودات لفاتورة البنود الحرة — اكتب البنود أو عبئها من بنود المشروع')}
-              onPrint={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل المعاينة', 'error'); openPrintPreview({ html: buildModelHtml(edPrintModel(), cur, receipt, 'a4'), wide: true, title: 'معاينة فاتورة المقاولات قبل الترحيل', rebuild: () => buildModelHtml(edPrintModel(), cur, receipt, 'a4' as InvoiceTemplate) }) }}
+              onPrint={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل المعاينة', 'error'); const draftSettings = draftPrintSettings(); openPrintPreview({ html: buildModelHtml(edPrintModel(), cur, draftSettings.receipt, 'a4'), wide: true, title: 'معاينة فاتورة المقاولات قبل الترحيل', rebuild: () => buildModelHtml(edPrintModel(), cur, draftPrintSettings().receipt, 'a4' as InvoiceTemplate) }) }}
               onExportPdf={() => toast.show('بعد الترحيل: طباعة ← حفظ كـ PDF 🖨️')}
-              onWhatsappPdf={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: receipt, docLabel: 'فاتورة', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: setup.shopName, toast }) }}
+              onWhatsappPdf={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const draftSettings = draftPrintSettings(); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: draftSettings.receipt, docLabel: 'فاتورة', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: draftSettings.setup.shopName, toast }) }}
               onPost={postFreeInvoice}
               headerFields={
                 <>

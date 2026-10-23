@@ -19,7 +19,8 @@ import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.t
 import { effectiveVatPercent, PriceFloorError } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
-import { qrDataUrlFromPayload, taxBarcodePayload } from '../print/taxBarcode.ts'
+import { documentTaxBarcodePayload, resolveDocumentPrintSettings } from '../print/branchPrint.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { saleWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
@@ -192,24 +193,20 @@ export function SalesInvoicesPage() {
 
   /** نموذج الطباعة لفاتورة مبيعات — يُستعمل للطباعة وللإرسال عبر واتساب */
   const buildSaleModel = async (s: SaleInvoice) => {
+    const documentSettings = resolveDocumentPrintSettings(s)
     /* إعادة طباعة فاتورة قديمة: الرمز يُعاد من الحمولة المجمّدة وقت أول طباعة
        (اسم المنشأة/الرقم الضريبي/الأرقام كما كانت) — لا يُعاد توليده ببيانات اليوم.
-       وإن لم تكن مجمّدة بعد (فاتورة سابقة للتحديث) نولّدها مرة واحدة ونحفظها. */
+       وإن لم تكن مجمّدة بعد (فاتورة سابقة للتحديث) نولّدها مرة واحدة من
+       هوية فرع الفاتورة نفسه — ولو كان الفرع النشط مختلفاً — ثم نحفظها. */
     let qrDataUrl: string | undefined
-    if (s.taxQrPayload) {
+    if (s.taxQrPayload && documentSettings.identityComplete) {
       qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
-    } else {
-      const payload = taxBarcodePayload({
-        saFeatureActive: einvoice.enabled === true && hasFeature(licStateForQr(), 'einvoice_sa'),
-        egFeatureActive: einvoice.enabled === true && hasFeature(licStateForQr(), 'einvoice_eg'),
-        printEnabled: einvoice.printZatcaQr,
-        sellerName: setup.shopName,
-        taxNumber: einvoice.taxNumber,
+    } else if (documentSettings.identityComplete) {
+      const payload = documentTaxBarcodePayload(null, s, {
         invoiceNumber: s.invoiceNumber,
         dateIso: s.date,
         totalMinor: s.totals.totalMinor,
         taxMinor: s.totals.taxMinor,
-        decimals: cur.decimals,
       })
       if (payload) {
         qrDataUrl = qrDataUrlFromPayload(payload)
@@ -233,17 +230,19 @@ export function SalesInvoicesPage() {
       customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null,
       taxPercent: tx.taxPercent,
       taxInclusive: tx.taxInclusive,
-      settings: receipt,
+      settings: documentSettings.receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
-    if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${receipt.footerText ? ' — ' + receipt.footerText : ''}`
+    if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${documentSettings.receipt.footerText ? ' — ' + documentSettings.receipt.footerText : ''}`
     return model
   }
-  const licStateForQr = () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
 
   const printInvoice = async (s: SaleInvoice, template: InvoiceTemplate) => {
     const model = await buildSaleModel(s)
-    printModelWithTemplate(model, cur, receipt, template)
+    const documentSettings = resolveDocumentPrintSettings(s)
+    printModelWithTemplate(model, cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(s).receipt,
+    })
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
   }
 
@@ -252,7 +251,8 @@ export function SalesInvoicesPage() {
     const party = saleWaParty(s, { customers, suppliers, employees })
     if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا الطرف في بطاقته', 'error')
     const model = await buildSaleModel(s)
-    shareDocPdfViaWhatsapp({ model, cur, settings: receipt, template: 'a4', docLabel: 'فاتورة مبيعات', docNumber: s.invoiceNumber, partyPhone: party.phone, shopName: setup.shopName, toast })
+    const documentSettings = resolveDocumentPrintSettings(s)
+    shareDocPdfViaWhatsapp({ model, cur, settings: documentSettings.receipt, template: 'a4', docLabel: 'فاتورة مبيعات', docNumber: s.invoiceNumber, partyPhone: party.phone, shopName: documentSettings.setup.shopName, toast })
   }
 
   const exportSales = () => {
@@ -648,7 +648,7 @@ export function SalesInvoicesPage() {
       </Modal>
       {unsavedEdit.prompt}
       <PartyQuickEditModal open={partyEditorOpen} target={editCustomerId && customers.find((customer) => customer.id === editCustomerId) ? { kind: 'customer', party: customers.find((customer) => customer.id === editCustomerId)! } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
-      <PrintTemplateModal open={!!printTarget} onClose={()=>setPrintTarget(null)} defaultTemplate={receipt.defaultTemplate} title="طباعة الفاتورة" onPrint={(template)=>{if(printTarget)void printInvoice(printTarget,template)}}/>
+      <PrintTemplateModal open={!!printTarget} onClose={()=>setPrintTarget(null)} defaultTemplate={printTarget ? resolveDocumentPrintSettings(printTarget).receipt.defaultTemplate : receipt.defaultTemplate} title="طباعة الفاتورة" onPrint={(template)=>{if(printTarget)void printInvoice(printTarget,template)}}/>
       {editApproval.dialog}
       {creditApproval.dialog}
     </div>

@@ -21,7 +21,7 @@ import { LEGAL_VERSION } from '../core/legal.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
-import { resolveBranchActivityId, resolveBranchModules, type Branch } from '../core/branches.ts'
+import { branchOfRecord, resolveBranchActivityId, resolveBranchModules, type Branch, type BranchScopedRecord } from '../core/branches.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../core/taxRegistration.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
@@ -34,7 +34,7 @@ import { todayLocalIso } from '../core/time.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
-interface SetupState {
+export interface SetupState {
   completed: boolean
   countryCode: string | null
   activityId: string | null
@@ -100,9 +100,38 @@ interface SetupState {
 /** سياق الفرع النشط الذي يمرره مخزن البيانات إلى إعدادات التطبيق العامة. */
 export type AppBranchContext = Pick<Branch, 'id' | 'nameAr' | 'isMain' | 'warehouseId' | 'customModulesMode' | 'enabledModules' | 'activityId'>
 
-/** بيانات هوية وضريبة مستقلة لكل فرع غير رئيسي؛ القيم الأولى تُنسخ من المنشأة الحالية. */
-interface BranchBusinessProfile {
+/**
+ * الهوية القانونية والتجارية التي تملكها كل منشأة/فرع بصورة مستقلة.
+ * الرقم الضريبي يبقى في einvoice.taxNumber حتى لا يتكرر مصدر الحقيقة.
+ */
+export interface BranchLegalIdentity {
+  shopName?: string
+  phone?: string
+  email?: string
+  website?: string
+  city?: string
+  street?: string
+  buildingNo?: string
+  postalCode?: string
+  poBox?: string
+  commercialRegister?: string
+}
+
+/**
+ * ملف أعمال مستقل لكل فرع غير رئيسي. الهوية القانونية وإعدادات الطباعة
+ * تُحفظ هنا كاملة ولا تُستعار من الملف الأساسي للفرع الرئيسي.
+ */
+export interface BranchBusinessProfile {
   shopName: string
+  phone: string
+  email: string
+  website?: string
+  city: string
+  street: string
+  buildingNo?: string
+  postalCode?: string
+  poBox?: string
+  commercialRegister?: string
   vatPercent: number
   taxInclusive: boolean
   taxRegistrationStatus?: BusinessTaxStatus
@@ -111,8 +140,34 @@ interface BranchBusinessProfile {
   allowNegativeStock: boolean
   requireOpenShiftForSales: boolean
   receiptShopName: string
+  /** تصميم الإيصال والفاتورة لهذا الفرع وحده (اختياري للتوافق مع ملفات قديمة) */
+  receipt?: ReceiptSettings
+  /** تصميم طباعة التقارير لهذا الفرع وحده (اختياري للتوافق مع ملفات قديمة) */
+  reportPrint?: ReportPrintSettings
   einvoice: EinvoiceSettings
   approvals: ApprovalSettings
+}
+
+export interface BranchEffectiveAppSettings {
+  setup: SetupState
+  receipt: ReceiptSettings
+  einvoice: EinvoiceSettings
+  approvals: ApprovalSettings
+  reportPrint: ReportPrintSettings
+}
+
+export interface BranchAppSettingsState {
+  setup: SetupState
+  companySetup?: SetupState
+  branchBusinessProfiles?: Record<number, BranchBusinessProfile>
+  receipt: ReceiptSettings
+  baseReceipt?: ReceiptSettings
+  einvoice: EinvoiceSettings
+  baseEinvoice?: EinvoiceSettings
+  approvals: ApprovalSettings
+  baseApprovals?: ApprovalSettings
+  reportPrint: ReportPrintSettings
+  baseReportPrint?: ReportPrintSettings
 }
 
 /**
@@ -193,8 +248,9 @@ interface AppState {
   baseApprovals: ApprovalSettings
   updateApprovals: (patch: Partial<ApprovalSettings>) => void
   updateLoyalty: (patch: Partial<LoyaltySettings>) => void
-  /** إعدادات طباعة التقارير المعممة (طلب المالك): كل تقارير النظام لا الفواتير فقط */
+  /** إعدادات طباعة التقارير الفعالة للفرع الحالي؛ baseReportPrint هو ملف الرئيسي. */
   reportPrint: ReportPrintSettings
+  baseReportPrint: ReportPrintSettings
   updateReportPrint: (patch: Partial<ReportPrintSettings>) => void
   /** قالب ملصقات الباركود/السيريال — يُضبط مرة ويسري على كل الطباعات (طلب المالك) */
   labelSettings: LabelSettings
@@ -453,15 +509,129 @@ const DEFAULT_SETUP_STATE: SetupState = {
   coreModulesMigratedAt: null,
 }
 
+const cleanIdentityValue = (value: string | null | undefined) => (value ?? '').trim()
+
+/** الحقول الأساسية التي إن نقص أيٌّ منها تُطبع هوية الفرع باسمها فقط مع تنبيه. */
+export function branchIdentityMissingFields(
+  identity: BranchLegalIdentity | null | undefined,
+  einvoice?: Pick<EinvoiceSettings, 'taxNumber'> | null,
+): string[] {
+  const missing: string[] = []
+  if (!cleanIdentityValue(identity?.shopName)) missing.push('اسم المنشأة')
+  if (!cleanIdentityValue(einvoice?.taxNumber)) missing.push('الرقم الضريبي')
+  if (!cleanIdentityValue(identity?.commercialRegister)) missing.push('السجل التجاري')
+  if (!cleanIdentityValue(identity?.city) || !cleanIdentityValue(identity?.street)) missing.push('العنوان')
+  if (!cleanIdentityValue(identity?.phone)) missing.push('الهاتف')
+  return missing
+}
+
+function branchIdentityHeaderLines(identity: SetupState, einvoice: EinvoiceSettings): string[] {
+  const lines: string[] = []
+  const address = [
+    cleanIdentityValue(identity.city),
+    cleanIdentityValue(identity.street),
+    cleanIdentityValue(identity.buildingNo) ? `مبنى ${cleanIdentityValue(identity.buildingNo)}` : '',
+    cleanIdentityValue(identity.postalCode) ? `الرمز البريدي ${cleanIdentityValue(identity.postalCode)}` : '',
+    cleanIdentityValue(identity.poBox) ? `صندوق بريد ${cleanIdentityValue(identity.poBox)}` : '',
+  ].filter(Boolean).join('، ')
+  if (address) lines.push(`العنوان: ${address}`)
+  if (cleanIdentityValue(identity.phone)) lines.push(`الهاتف: ${cleanIdentityValue(identity.phone)}`)
+  const electronicContact = [cleanIdentityValue(identity.email), cleanIdentityValue(identity.website)].filter(Boolean).join(' · ')
+  if (electronicContact) lines.push(electronicContact)
+  if (cleanIdentityValue(einvoice.taxNumber)) lines.push(`الرقم الضريبي: ${cleanIdentityValue(einvoice.taxNumber)}`)
+  if (cleanIdentityValue(identity.commercialRegister)) lines.push(`السجل التجاري: ${cleanIdentityValue(identity.commercialRegister)}`)
+  return lines
+}
+
+function withBranchIdentityHeaderLines(
+  receipt: ReceiptSettings,
+  identitySetup: SetupState,
+  einvoice: EinvoiceSettings,
+  nameOnlyWhenIncomplete: boolean,
+): ReceiptSettings {
+  // «اسم فقط» عند نقص الهوية يتقدم حتى على ترويسة مخصصة/قديمة؛ بذلك لا
+  // يتسرب رقم أو عنوان قديم من بيانات رئيسية منسوخة إلى مستند الفرع.
+  if (nameOnlyWhenIncomplete && branchIdentityMissingFields(identitySetup, einvoice).length > 0) {
+    // الفرع غير المكتمل يطبع اسمه وحده: لا ترويسة تعريفية ولا شعار ناقص.
+    return { ...receipt, headerLines: [], logoDataUrl: '' }
+  }
+  const identityLines = branchIdentityHeaderLines(identitySetup, einvoice)
+  const headerLines = [...new Set([
+    ...identityLines,
+    ...receipt.headerLines.filter((line) => line.trim()),
+  ])]
+  return headerLines.length ? { ...receipt, headerLines } : receipt
+}
+
+function sanitizedBranchReceipt(baseReceipt: ReceiptSettings, shopName: string): ReceiptSettings {
+  return {
+    ...baseReceipt,
+    shopName,
+    // عناصر التصميم تُنسخ كنقطة بداية، أما أي نص/شعار قد يحمل هوية الرئيسي فلا ينتقل.
+    headerLines: [],
+    footerText: DEFAULT_RECEIPT_SETTINGS.footerText,
+    logoDataUrl: '',
+    watermarkEnabled: false,
+    watermarkText: '',
+  }
+}
+
+function sanitizedBranchReportPrint(baseReportPrint: ReportPrintSettings): ReportPrintSettings {
+  return {
+    ...baseReportPrint,
+    headerLine: '',
+    footerText: '',
+    watermarkEnabled: false,
+    watermarkText: '',
+  }
+}
+
+function branchReceiptFromProfile(profile: BranchBusinessProfile, baseReceipt: ReceiptSettings): ReceiptSettings {
+  const shopName = profile.receipt?.shopName || profile.receiptShopName || profile.shopName
+  if (profile.receipt) return { ...DEFAULT_RECEIPT_SETTINGS, ...profile.receipt, shopName }
+  return sanitizedBranchReceipt(baseReceipt, shopName)
+}
+
+function branchReportPrintFromProfile(profile: BranchBusinessProfile, baseReportPrint: ReportPrintSettings): ReportPrintSettings {
+  if (profile.reportPrint) return { ...DEFAULT_REPORT_PRINT, ...profile.reportPrint }
+  return sanitizedBranchReportPrint(baseReportPrint)
+}
+
+function withBranchReportIdentity(
+  settings: ReportPrintSettings,
+  identitySetup: SetupState,
+  einvoice: EinvoiceSettings,
+  nameOnlyWhenIncomplete: boolean,
+): ReportPrintSettings {
+  if (nameOnlyWhenIncomplete && branchIdentityMissingFields(identitySetup, einvoice).length > 0) {
+    return { ...settings, headerLine: '' }
+  }
+  const identityLine = branchIdentityHeaderLines(identitySetup, einvoice).join(' · ')
+  const headerLine = [...new Set([identityLine, cleanIdentityValue(settings.headerLine)].filter(Boolean))].join(' · ')
+  return headerLine ? { ...settings, headerLine } : settings
+}
+
 function branchProfileFromBase(
   setup: SetupState,
   receipt: ReceiptSettings,
   einvoice: EinvoiceSettings,
   approvals: ApprovalSettings,
   branchName = '',
+  reportPrint: ReportPrintSettings = DEFAULT_REPORT_PRINT,
 ): BranchBusinessProfile {
+  const shopName = branchName
   return {
-    shopName: setup.shopName || branchName,
+    shopName,
+    // هوية قانونية جديدة تبدأ فارغة عمداً: لا نسخ من بيانات الفرع الرئيسي.
+    phone: '',
+    email: '',
+    website: '',
+    city: '',
+    street: '',
+    buildingNo: '',
+    postalCode: '',
+    poBox: '',
+    commercialRegister: '',
     vatPercent: setup.vatPercent,
     taxInclusive: setup.taxInclusive,
     taxRegistrationStatus: setup.taxRegistrationStatus,
@@ -469,8 +639,11 @@ function branchProfileFromBase(
     allowNegativeTreasury: setup.allowNegativeTreasury,
     allowNegativeStock: setup.allowNegativeStock,
     requireOpenShiftForSales: setup.requireOpenShiftForSales,
-    receiptShopName: receipt.shopName || setup.shopName || branchName,
-    einvoice: { ...einvoice },
+    receiptShopName: shopName,
+    receipt: sanitizedBranchReceipt(receipt, shopName),
+    reportPrint: sanitizedBranchReportPrint(reportPrint),
+    // تفضيلات الإصدار قد تُنسخ، أما الرقم الضريبي وعنوان الممول فهوية مستقلة.
+    einvoice: { ...einvoice, taxNumber: '', address: '' },
     approvals: { ...approvals, scope: [...approvals.scope], approverUserIds: [...approvals.approverUserIds], autoApprovedUserIds: [...approvals.autoApprovedUserIds] },
   }
 }
@@ -482,56 +655,121 @@ function effectiveBranchAppSettings(
   baseReceipt: ReceiptSettings,
   baseEinvoice: EinvoiceSettings,
   baseApprovals: ApprovalSettings,
-): Pick<AppState, 'setup' | 'receipt' | 'einvoice' | 'approvals'> {
+  baseReportPrint: ReportPrintSettings = DEFAULT_REPORT_PRINT,
+): BranchEffectiveAppSettings {
   if (!branch || branch.isMain) {
-    return { setup: companySetup, receipt: baseReceipt, einvoice: baseEinvoice, approvals: baseApprovals }
+    return {
+      setup: companySetup,
+      receipt: withBranchIdentityHeaderLines(baseReceipt, companySetup, baseEinvoice, false),
+      einvoice: baseEinvoice,
+      approvals: baseApprovals,
+      reportPrint: withBranchReportIdentity(baseReportPrint, companySetup, baseEinvoice, false),
+    }
   }
-  const profile = profiles[branch.id] ?? branchProfileFromBase(companySetup, baseReceipt, baseEinvoice, baseApprovals, branch.nameAr)
+  const profile = profiles[branch.id]
+    ?? branchProfileFromBase(companySetup, baseReceipt, baseEinvoice, baseApprovals, branch.nameAr, baseReportPrint)
   const activityId = resolveBranchActivityId(branch, companySetup.activityId)
   const activity = ACTIVITY_TEMPLATES.find((candidate) => candidate.id === activityId)
+  const setup: SetupState = {
+    ...companySetup,
+    // الهوية القانونية للفرع مستقلة؛ الحقول الغائبة في ملفات قديمة تبقى فارغة ولا ترث الرئيسي.
+    shopName: profile.shopName || branch.nameAr,
+    phone: profile.phone ?? '',
+    email: profile.email ?? '',
+    website: profile.website ?? '',
+    city: profile.city ?? '',
+    street: profile.street ?? '',
+    buildingNo: profile.buildingNo ?? '',
+    postalCode: profile.postalCode ?? '',
+    poBox: profile.poBox ?? '',
+    commercialRegister: profile.commercialRegister ?? '',
+    vatPercent: profile.vatPercent,
+    taxInclusive: profile.taxInclusive,
+    taxRegistrationStatus: profile.taxRegistrationStatus,
+    doctorSpecialty: profile.doctorSpecialty,
+    allowNegativeTreasury: profile.allowNegativeTreasury,
+    allowNegativeStock: profile.allowNegativeStock,
+    requireOpenShiftForSales: profile.requireOpenShiftForSales,
+    activityId,
+    defaultWarehouseId: branch.warehouseId,
+    modules: resolveBranchModules(branch, companySetup.modules),
+    features: activity?.features ?? companySetup.features,
+  }
+  const rawReceipt = branchReceiptFromProfile({ ...profile, shopName: setup.shopName }, baseReceipt)
   return {
-    setup: {
-      ...companySetup,
-      shopName: profile.shopName,
-      vatPercent: profile.vatPercent,
-      taxInclusive: profile.taxInclusive,
-      taxRegistrationStatus: profile.taxRegistrationStatus,
-      doctorSpecialty: profile.doctorSpecialty,
-      allowNegativeTreasury: profile.allowNegativeTreasury,
-      allowNegativeStock: profile.allowNegativeStock,
-      requireOpenShiftForSales: profile.requireOpenShiftForSales,
-      activityId,
-      defaultWarehouseId: branch.warehouseId,
-      modules: resolveBranchModules(branch, companySetup.modules),
-      features: activity?.features ?? companySetup.features,
-    },
-    receipt: { ...baseReceipt, shopName: profile.receiptShopName },
+    setup,
+    receipt: withBranchIdentityHeaderLines(rawReceipt, setup, profile.einvoice, true),
     einvoice: profile.einvoice,
     approvals: profile.approvals,
+    reportPrint: withBranchReportIdentity(branchReportPrintFromProfile(profile, baseReportPrint), setup, profile.einvoice, true),
   }
+}
+
+/** إعدادات أي فرع بعينه دون تغيير الفرع النشط — أساس طباعة مستندات الفروع الأخرى. */
+export function resolveBranchAppSettings(
+  state: BranchAppSettingsState,
+  branch: AppBranchContext | Branch | null | undefined,
+): BranchEffectiveAppSettings {
+  return effectiveBranchAppSettings(
+    state.companySetup ?? state.setup,
+    branch ?? null,
+    state.branchBusinessProfiles ?? {},
+    state.baseReceipt ?? state.receipt,
+    state.baseEinvoice ?? state.einvoice,
+    state.baseApprovals ?? state.approvals,
+    state.baseReportPrint ?? state.reportPrint,
+  )
+}
+
+/**
+ * هوية المستند نفسه: branchId الصريح أولاً، ثم مخزن/خزينة المستند، ثم الرئيسي
+ * للسجلات القديمة وحدها. لا علاقة للنتيجة بالفرع المعروض حالياً في الواجهة.
+ */
+export function resolveDocumentBranchAppSettings(
+  state: BranchAppSettingsState,
+  record: BranchScopedRecord | object | null | undefined,
+  branches: readonly Branch[],
+  warehouses: readonly { id: number; branchId?: number | null }[] = [],
+  treasuries: readonly { code: string; branchId?: number | null }[] = [],
+): { branch: Branch | null } & BranchEffectiveAppSettings {
+  const branch = branchOfRecord(record, branches, warehouses, treasuries)
+  return { branch, ...resolveBranchAppSettings(state, branch) }
 }
 
 function companySetupPatch(state: AppState, patch: Partial<SetupState>): Partial<AppState> {
   const branch = state.activeBranchContext
+  const baseReportPrint = state.baseReportPrint ?? state.reportPrint
   if (branch && !branch.isMain) {
+    // الهوية القانونية للفرع تُعدَّل من داخله وتُحفظ في ملفه فقط. ownerName
+    // والدولة والعملة والترخيص ما تزال على مستوى قاعدة البيانات/المنشأة الأم.
     const branchSettingKeys = new Set<keyof SetupState>([
+      'shopName', 'phone', 'email', 'website', 'city', 'street', 'buildingNo', 'postalCode', 'poBox', 'commercialRegister',
       'doctorSpecialty', 'allowNegativeTreasury', 'allowNegativeStock', 'requireOpenShiftForSales',
     ])
     const unsupported = Object.keys(patch).filter((key) => !branchSettingKeys.has(key as keyof SetupState))
     if (unsupported.length) throw new Error('الإعدادات العامة للشركة لا تُعدّل من داخل فرع مستقل — غيّر الفرع إلى الرئيسي أولاً')
     const current = state.branchBusinessProfiles[branch.id]
-      ?? branchProfileFromBase(state.companySetup ?? state.setup, state.baseReceipt, state.baseEinvoice, state.baseApprovals, branch.nameAr)
-    const branchBusinessProfiles = { ...state.branchBusinessProfiles, [branch.id]: { ...current, ...patch } }
+      ?? branchProfileFromBase(state.companySetup ?? state.setup, state.baseReceipt, state.baseEinvoice, state.baseApprovals, branch.nameAr, baseReportPrint)
+    const nextProfile = { ...current, ...patch }
+    if (patch.shopName && patch.shopName !== current.shopName) {
+      nextProfile.receiptShopName = patch.shopName
+      if (nextProfile.receipt) nextProfile.receipt = { ...nextProfile.receipt, shopName: patch.shopName }
+    }
+    const branchBusinessProfiles = { ...state.branchBusinessProfiles, [branch.id]: nextProfile }
     const companySetup = state.companySetup ?? state.setup
     return {
       branchBusinessProfiles,
-      ...effectiveBranchAppSettings(companySetup, branch, branchBusinessProfiles, state.baseReceipt, state.baseEinvoice, state.baseApprovals),
+      ...effectiveBranchAppSettings(companySetup, branch, branchBusinessProfiles, state.baseReceipt, state.baseEinvoice, state.baseApprovals, baseReportPrint),
     }
   }
   const companySetup = { ...(state.companySetup ?? state.setup), ...patch }
+  const baseReceipt = patch.shopName != null
+    ? { ...state.baseReceipt, shopName: patch.shopName }
+    : state.baseReceipt
   return {
     companySetup,
-    ...effectiveBranchAppSettings(companySetup, branch, state.branchBusinessProfiles, state.baseReceipt, state.baseEinvoice, state.baseApprovals),
+    baseReceipt,
+    ...effectiveBranchAppSettings(companySetup, branch, state.branchBusinessProfiles, baseReceipt, state.baseEinvoice, state.baseApprovals, baseReportPrint),
   }
 }
 
@@ -557,17 +795,19 @@ export const useAppStore = create<AppState>()(
           && s.activeBranchContext?.activityId === nextBranch?.activityId
           && JSON.stringify(s.activeBranchContext?.enabledModules ?? []) === JSON.stringify(nextBranch?.enabledModules ?? [])) return {}
         let branchBusinessProfiles = s.branchBusinessProfiles ?? {}
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
         if (nextBranch && !nextBranch.isMain && !branchBusinessProfiles[nextBranch.id]) {
           branchBusinessProfiles = {
             ...branchBusinessProfiles,
-            [nextBranch.id]: branchProfileFromBase(s.companySetup ?? s.setup, s.baseReceipt ?? s.receipt, s.baseEinvoice ?? s.einvoice, s.baseApprovals ?? s.approvals, nextBranch.nameAr),
+            [nextBranch.id]: branchProfileFromBase(s.companySetup ?? s.setup, s.baseReceipt ?? s.receipt, s.baseEinvoice ?? s.einvoice, s.baseApprovals ?? s.approvals, nextBranch.nameAr, baseReportPrint),
           }
         }
         const companySetup = s.companySetup ?? s.setup
         return {
           activeBranchContext: nextBranch,
           branchBusinessProfiles,
-          ...effectiveBranchAppSettings(companySetup, nextBranch, branchBusinessProfiles, s.baseReceipt ?? s.receipt, s.baseEinvoice ?? s.einvoice, s.baseApprovals ?? s.approvals),
+          baseReportPrint,
+          ...effectiveBranchAppSettings(companySetup, nextBranch, branchBusinessProfiles, s.baseReceipt ?? s.receipt, s.baseEinvoice ?? s.einvoice, s.baseApprovals ?? s.approvals, baseReportPrint),
         }
       }),
       removeBranchBusinessProfile: (branchId) => set((s) => {
@@ -580,12 +820,20 @@ export const useAppStore = create<AppState>()(
         const shopName = name.trim()
         if (!shopName) throw new Error('اسم المنشأة مطلوب')
         const branch = s.activeBranchContext
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
         if (branch && !branch.isMain) {
-          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
-          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, shopName, receiptShopName: shopName } }
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr, baseReportPrint)
+          const nextProfile = {
+            ...current,
+            shopName,
+            receiptShopName: shopName,
+            ...(current.receipt ? { receipt: { ...current.receipt, shopName } } : {}),
+          }
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: nextProfile }
           return {
             branchBusinessProfiles,
-            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals),
+            baseReportPrint,
+            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint),
           }
         }
         const companySetup = { ...s.companySetup, shopName }
@@ -593,22 +841,25 @@ export const useAppStore = create<AppState>()(
         return {
           companySetup,
           baseReceipt,
-          ...effectiveBranchAppSettings(companySetup, branch, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals),
+          baseReportPrint,
+          ...effectiveBranchAppSettings(companySetup, branch, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint),
         }
       }),
       updateTaxSettings: (patch) => set((s) => {
         resolveBusinessTax(patch.taxRegistrationStatus, patch.vatPercent)
         const branch = s.activeBranchContext
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
         if (branch && !branch.isMain) {
-          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr, baseReportPrint)
           const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, ...patch } }
           return {
             branchBusinessProfiles,
-            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals),
+            baseReportPrint,
+            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint),
           }
         }
         const companySetup = { ...s.companySetup, ...patch }
-        return { companySetup, ...effectiveBranchAppSettings(companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals) }
+        return { companySetup, baseReportPrint, ...effectiveBranchAppSettings(companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint) }
       }),
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
@@ -639,6 +890,7 @@ export const useAppStore = create<AppState>()(
           const baseReceipt = { ...s.baseReceipt, shopName, defaultTemplate: activity.defaultInvoiceTemplate }
           const baseEinvoice = { ...s.baseEinvoice }
           const baseApprovals = { ...s.baseApprovals }
+          const baseReportPrint = { ...(s.baseReportPrint ?? s.reportPrint) }
           return {
             fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
             // الهوية اللونية حسب النشاط (بعد نقاش المالك) — قابلة للتغيير لاحقاً من المظهر
@@ -649,7 +901,8 @@ export const useAppStore = create<AppState>()(
             baseReceipt,
             baseEinvoice,
             baseApprovals,
-            ...effectiveBranchAppSettings(companySetup, null, {}, baseReceipt, baseEinvoice, baseApprovals),
+            baseReportPrint,
+            ...effectiveBranchAppSettings(companySetup, null, {}, baseReceipt, baseEinvoice, baseApprovals, baseReportPrint),
           }
         }),
       /* سنة مالية واحدة مفتوحة فقط (طلب المالك) — الحارس هنا في المتجر لا في
@@ -692,18 +945,40 @@ export const useAppStore = create<AppState>()(
       baseApprovals: DEFAULT_APPROVALS,
       updateApprovals: (patch) => set((s) => {
         const branch = s.activeBranchContext
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
         if (branch && !branch.isMain) {
-          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr, baseReportPrint)
           const approvals = { ...current.approvals, ...patch }
           const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, approvals } }
-          return { branchBusinessProfiles, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals) }
+          return { branchBusinessProfiles, baseReportPrint, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint) }
         }
         const baseApprovals = { ...s.baseApprovals, ...patch }
-        return { baseApprovals, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, baseApprovals) }
+        return { baseApprovals, baseReportPrint, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, baseApprovals, baseReportPrint) }
       }),
       updateLoyalty: (patch) => set((s) => ({ loyalty: { ...s.loyalty, ...patch } })),
       reportPrint: DEFAULT_REPORT_PRINT,
-      updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
+      baseReportPrint: DEFAULT_REPORT_PRINT,
+      updateReportPrint: (patch) => set((s) => {
+        const branch = s.activeBranchContext
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
+        if (branch && !branch.isMain) {
+          const current = s.branchBusinessProfiles[branch.id]
+            ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr, baseReportPrint)
+          const currentReportPrint = branchReportPrintFromProfile(current, baseReportPrint)
+          const nextProfile = { ...current, reportPrint: { ...currentReportPrint, ...patch } }
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: nextProfile }
+          return {
+            branchBusinessProfiles,
+            baseReportPrint,
+            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint),
+          }
+        }
+        const nextBaseReportPrint = { ...baseReportPrint, ...patch }
+        return {
+          baseReportPrint: nextBaseReportPrint,
+          ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, nextBaseReportPrint),
+        }
+      }),
       labelSettings: DEFAULT_LABEL_SETTINGS,
       updateLabelSettings: (patch) => set((s) => ({ labelSettings: { ...s.labelSettings, ...patch } })),
       fxRates: {},
@@ -756,19 +1031,22 @@ export const useAppStore = create<AppState>()(
       resetWarehouseReceipt: () => set({ warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT }),
       updateReceipt: (patch) => set((s) => {
         const branch = s.activeBranchContext
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
         if (branch && !branch.isMain) {
-          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
-          const branchBusinessProfiles = {
-            ...s.branchBusinessProfiles,
-            [branch.id]: { ...current, receiptShopName: patch.shopName ?? current.receiptShopName },
+          const current = s.branchBusinessProfiles[branch.id]
+            ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr, baseReportPrint)
+          const currentReceipt = branchReceiptFromProfile(current, s.baseReceipt)
+          const receipt = { ...currentReceipt, ...patch }
+          const nextProfile = { ...current, receipt, receiptShopName: receipt.shopName }
+          const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: nextProfile }
+          return {
+            branchBusinessProfiles,
+            baseReportPrint,
+            ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint),
           }
-          const sharedPatch = { ...patch }
-          delete sharedPatch.shopName
-          const baseReceipt = { ...s.baseReceipt, ...sharedPatch }
-          return { baseReceipt, branchBusinessProfiles, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals) }
         }
         const baseReceipt = { ...s.baseReceipt, ...patch }
-        return { baseReceipt, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals) }
+        return { baseReceipt, baseReportPrint, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint) }
       }),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
       appearance: DEFAULT_APPEARANCE,
@@ -779,13 +1057,14 @@ export const useAppStore = create<AppState>()(
       baseEinvoice: DEFAULT_EINVOICE_SETTINGS,
       updateEinvoice: (patch) => set((s) => {
         const branch = s.activeBranchContext
+        const baseReportPrint = s.baseReportPrint ?? s.reportPrint
         if (branch && !branch.isMain) {
-          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr)
+          const current = s.branchBusinessProfiles[branch.id] ?? branchProfileFromBase(s.companySetup, s.baseReceipt, s.baseEinvoice, s.baseApprovals, branch.nameAr, baseReportPrint)
           const branchBusinessProfiles = { ...s.branchBusinessProfiles, [branch.id]: { ...current, einvoice: { ...current.einvoice, ...patch } } }
-          return { branchBusinessProfiles, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals) }
+          return { branchBusinessProfiles, baseReportPrint, ...effectiveBranchAppSettings(s.companySetup, branch, branchBusinessProfiles, s.baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint) }
         }
         const baseEinvoice = { ...s.baseEinvoice, ...patch }
-        return { baseEinvoice, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, baseEinvoice, s.baseApprovals) }
+        return { baseEinvoice, baseReportPrint, ...effectiveBranchAppSettings(s.companySetup, branch, s.branchBusinessProfiles, s.baseReceipt, baseEinvoice, s.baseApprovals, baseReportPrint) }
       }),
       schedule: DEFAULT_SCHEDULE_SETTINGS,
       updateSchedule: (patch) => set((s) => ({ schedule: { ...s.schedule, ...patch } })),
@@ -982,11 +1261,13 @@ export const useAppStore = create<AppState>()(
             activityKeyFingerprints: [...(companySetup.activityKeyFingerprints ?? []), fingerprint],
           }
           const baseReceipt = { ...s.baseReceipt, defaultTemplate: template.defaultInvoiceTemplate }
+          const baseReportPrint = s.baseReportPrint ?? s.reportPrint
           return {
             appearance: { ...s.appearance, accentId: activityAccentId(template.id) },
             companySetup: nextCompanySetup,
             baseReceipt,
-            ...effectiveBranchAppSettings(nextCompanySetup, s.activeBranchContext, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals),
+            baseReportPrint,
+            ...effectiveBranchAppSettings(nextCompanySetup, s.activeBranchContext, s.branchBusinessProfiles, baseReceipt, s.baseEinvoice, s.baseApprovals, baseReportPrint),
           }
         })
         return template.nameAr
@@ -1057,6 +1338,8 @@ export const useAppStore = create<AppState>()(
         if (!saved.einvoice && saved.baseEinvoice) merged.einvoice = saved.baseEinvoice
         if (!saved.baseApprovals && saved.approvals) merged.baseApprovals = saved.approvals
         if (!saved.approvals && saved.baseApprovals) merged.approvals = saved.baseApprovals
+        if (!saved.baseReportPrint && saved.reportPrint) merged.baseReportPrint = saved.reportPrint
+        if (!saved.reportPrint && saved.baseReportPrint) merged.reportPrint = saved.baseReportPrint
         return merged
       },
       /**
@@ -1077,6 +1360,8 @@ export const useAppStore = create<AppState>()(
           baseEinvoice: state.baseEinvoice,
           approvals: state.baseApprovals,
           baseApprovals: state.baseApprovals,
+          reportPrint: state.baseReportPrint ?? state.reportPrint,
+          baseReportPrint: state.baseReportPrint ?? state.reportPrint,
         }
       },
       onRehydrateStorage: () => (state) => {
@@ -1090,12 +1375,23 @@ export const useAppStore = create<AppState>()(
           state.baseReceipt = { ...DEFAULT_RECEIPT_SETTINGS, ...(state.baseReceipt ?? state.receipt ?? {}) }
           state.baseEinvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...(state.baseEinvoice ?? state.einvoice ?? {}) }
           state.baseApprovals = { ...DEFAULT_APPROVALS, ...(state.baseApprovals ?? state.approvals ?? {}) }
+          state.baseReportPrint = { ...DEFAULT_REPORT_PRINT, ...(state.baseReportPrint ?? state.reportPrint ?? {}) }
           const savedBranchProfiles = state.branchBusinessProfiles ?? {}
           state.branchBusinessProfiles = Object.fromEntries(Object.entries(savedBranchProfiles).map(([branchId, saved]) => {
-            const defaults = branchProfileFromBase(state.companySetup, state.baseReceipt, state.baseEinvoice, state.baseApprovals)
+            const defaults = branchProfileFromBase(state.companySetup, state.baseReceipt, state.baseEinvoice, state.baseApprovals, '', state.baseReportPrint)
             return [Number(branchId), {
               ...defaults,
               ...saved,
+              // هوية قديمة بلا هذه المفاتيح تبقى فارغة؛ القيم المحفوظة صراحةً لا تُلمس.
+              phone: saved.phone ?? '',
+              email: saved.email ?? '',
+              website: saved.website ?? '',
+              city: saved.city ?? '',
+              street: saved.street ?? '',
+              buildingNo: saved.buildingNo ?? '',
+              postalCode: saved.postalCode ?? '',
+              poBox: saved.poBox ?? '',
+              commercialRegister: saved.commercialRegister ?? '',
               shopName: saved.shopName ?? defaults.shopName,
               vatPercent: saved.vatPercent ?? defaults.vatPercent,
               taxInclusive: saved.taxInclusive ?? defaults.taxInclusive,
@@ -1105,6 +1401,12 @@ export const useAppStore = create<AppState>()(
               allowNegativeStock: saved.allowNegativeStock ?? defaults.allowNegativeStock,
               requireOpenShiftForSales: saved.requireOpenShiftForSales ?? defaults.requireOpenShiftForSales,
               receiptShopName: saved.receiptShopName ?? defaults.receiptShopName,
+              receipt: saved.receipt
+                ? { ...DEFAULT_RECEIPT_SETTINGS, ...saved.receipt }
+                : defaults.receipt,
+              reportPrint: saved.reportPrint
+                ? { ...DEFAULT_REPORT_PRINT, ...saved.reportPrint }
+                : defaults.reportPrint,
               einvoice: { ...defaults.einvoice, ...(saved.einvoice ?? {}) },
               approvals: saved.approvals ?? defaults.approvals,
             }]
@@ -1113,6 +1415,7 @@ export const useAppStore = create<AppState>()(
           state.receipt = state.baseReceipt
           state.einvoice = state.baseEinvoice
           state.approvals = state.baseApprovals
+          state.reportPrint = state.baseReportPrint
           // آخر أعلام محفوظة (وضع الأوفلاين) تسري من أول لحظة قبل أي جلب جديد
           setActiveDeviceFlags(state.deviceFlags ?? null)
           state.activatedPayload = null
@@ -1230,10 +1533,12 @@ export const useAppStore = create<AppState>()(
           state.baseReceipt = state.receipt
           state.baseEinvoice = state.einvoice
           state.baseApprovals = { ...DEFAULT_APPROVALS, ...state.approvals }
+          state.baseReportPrint = { ...DEFAULT_REPORT_PRINT, ...(state.baseReportPrint ?? state.reportPrint ?? {}) }
           state.setup = state.companySetup
           state.receipt = state.baseReceipt
           state.einvoice = state.baseEinvoice
           state.approvals = state.baseApprovals
+          state.reportPrint = state.baseReportPrint
         }
       },
     },
@@ -1255,7 +1560,7 @@ useAppStore.setState = ((partial, replace) => {
     throw new Error('سياق الفروع وملفاتها تُحدَّث عبر إجراءاتها المخصصة فقط')
   }
   if (current.activeBranchContext && !current.activeBranchContext.isMain
-    && ['setup', 'companySetup', 'receipt', 'baseReceipt', 'einvoice', 'baseEinvoice', 'approvals', 'baseApprovals'].some((key) => key in patch)) {
+    && ['setup', 'companySetup', 'receipt', 'baseReceipt', 'einvoice', 'baseEinvoice', 'approvals', 'baseApprovals', 'reportPrint', 'baseReportPrint'].some((key) => key in patch)) {
     throw new Error('لا يمكن تعديل إعدادات المنشأة العامة من داخل فرع مستقل')
   }
   if (patch.setup && (!patch.companySetup || patch.companySetup === current.companySetup || JSON.stringify(patch.companySetup) === JSON.stringify(current.companySetup))) {
@@ -1264,6 +1569,7 @@ useAppStore.setState = ((partial, replace) => {
   if (patch.receipt && (!patch.baseReceipt || patch.baseReceipt === current.baseReceipt)) patch.baseReceipt = patch.receipt
   if (patch.einvoice && (!patch.baseEinvoice || patch.baseEinvoice === current.baseEinvoice)) patch.baseEinvoice = patch.einvoice
   if (patch.approvals && (!patch.baseApprovals || patch.baseApprovals === current.baseApprovals)) patch.baseApprovals = patch.approvals
+  if (patch.reportPrint && (!patch.baseReportPrint || patch.baseReportPrint === current.baseReportPrint)) patch.baseReportPrint = patch.reportPrint
   return rawAppSetState(patch as never, replace as never)
 }) as typeof useAppStore.setState
 

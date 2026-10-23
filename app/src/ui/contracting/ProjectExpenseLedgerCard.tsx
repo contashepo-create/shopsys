@@ -20,6 +20,7 @@ import {
 import { sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 import { renderReportShell, htmlTableHtml } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { localIsoTimestamp } from '../../core/time.ts'
 
 const PRINT_HEADERS = ['التاريخ', 'المستند', 'مرجع المورد', 'المورد', 'بيان البند', 'التصنيف', 'كمية × سعر', 'الصافي', 'الضريبة', 'الإجمالي'] as const
@@ -52,22 +53,37 @@ export function ProjectExpenseLedgerCard(props: {
   })
   const hasLedger = ledger.rows.length > 0
 
+  /* كشف المشروع الواحد يحمل هوية فرع مستندات التكلفة إذا اتفقت كلها على
+     فرع واحد؛ عند اختلافها (بيانات قديمة/مجمعة) يبقى سياق العرض الحالي. */
+  const resolveLedgerPrintSettings = () => {
+    const byBranch = new Map<number, ReturnType<typeof resolveDocumentPrintSettings>>()
+    for (const cost of props.costs) {
+      const resolved = resolveDocumentPrintSettings(cost)
+      byBranch.set(resolved.branchId ?? 0, resolved)
+    }
+    return byBranch.size === 1 ? [...byBranch.values()][0] : null
+  }
+
   const exportExcel = () => {
     const sheets = [...(props.preSheets ?? []), exportSheet()]
     downloadTextFile(
-      exportFileName(setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'xls', localIsoTimestamp()),
+      exportFileName(resolveLedgerPrintSettings()?.setup.shopName || setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'xls', localIsoTimestamp()),
       'application/vnd.ms-excel',
       sheetsToExcelXml(sheets),
     )
   }
   const exportCsv = () => downloadTextFile(
-    exportFileName(setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'csv', localIsoTimestamp()),
+    exportFileName(resolveLedgerPrintSettings()?.setup.shopName || setup.shopName || 'المنشأة', `كشف-مصروفات-${props.projectCode}`, 'csv', localIsoTimestamp()),
     'text/csv;charset=utf-8',
     sheetToCsv(exportSheet()),
   )
 
   const printLedger = () => {
-    const { reportPrint, receipt } = useAppStore.getState()
+    const active = useAppStore.getState()
+    const documentSettings = resolveLedgerPrintSettings()
+    const reportPrint = documentSettings?.reportPrint ?? active.reportPrint
+    const receipt = documentSettings?.receipt ?? active.receipt
+    const companyName = documentSettings?.setup.shopName ?? active.setup.shopName
     const bodyHtml = htmlTableHtml({
       headers: [...PRINT_HEADERS],
       numCols: [6, 7, 8, 9],
@@ -80,7 +96,7 @@ export function ProjectExpenseLedgerCard(props: {
     printHtml(renderReportShell({
       title: `كشف مصروفات المشروع التفصيلي — ${props.projectCode}`,
       subtitle: `${props.projectNameAr} · المدفوع ${fmt(ledger.totals.paidMinor)} · الآجل ${fmt(ledger.totals.dueMinor)}`,
-      companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint,
+      companyName: companyName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint,
     }))
   }
 
