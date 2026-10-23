@@ -16,7 +16,7 @@
  */
 import { useState } from 'react'
 import { LogIn, KeyRound, LifeBuoy, UserPlus, X, ChevronRight } from 'lucide-react'
-import { useDataStore } from '../data/repo.ts'
+import { useRawDataStore } from '../data/repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { hashPin, findUserByIdentifier, matchesOwnerIdentity } from '../core/audit.ts'
 import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft, validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../core/auth.ts'
@@ -27,7 +27,11 @@ import { Btn, Modal, inputCls, PinInput, useToast } from './components/ui.tsx'
 
 
 export function LoginScreen() {
-  const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useDataStore()
+  /* الهوية لا تُصفّى بالفرع أبداً: شاشة الدخول تقرأ المتجر الخام حتى ترى
+     مستخدمي كل الفروع — المتجر المصفّى (useDataStore) يحصر appUsers في
+     الفرع النشط، فكان مستخدم فرع آخر يختفي من البحث ويُرفض دخوله الصحيح
+     (بلاغ المالك 2026-10-22) — وloginGuard/ownerProfile خامان أصحّ أيضاً. */
+  const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useRawDataStore()
   const { setup, telegram } = useAppStore()
   const toast = useToast()
 

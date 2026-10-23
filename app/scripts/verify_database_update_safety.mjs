@@ -39,7 +39,7 @@ check('غياب app-update.yml يستخدم تغذية GitHub العامة ال�
 check('لقطات SQLite الجديدة نصية، واللقطات المشفرة القديمة تُفك وتُرحّل صامتاً', storage.includes('payloadJson: value') && storage.includes('isEncryptedSnapshot(snapshot.payloadJson)') && storage.includes('decryptSnapshotForDevice'))
 const steps = ['await deps.flush()', 'await deps.protect()', 'await deps.backup()', 'deps.close()', 'await deps.install()', 'deps.exit()'].map(step => lifecycle.indexOf(step))
 check('الترتيب: flush ثم protect ثم backup ثم close ثم install ثم exit', steps.every((position, index) => position >= 0 && (index === 0 || position > steps[index - 1])))
-check('ACK الحفظ مربوط بالمصيّر والتوكن المتوقع فقط', main.includes('event.sender !== mainWindow?.webContents') && main.includes('token !== flushRequest.token'))
+check('ACK الحفظ مربوط بالمصيّر والتوكن المتوقع فقط', main.includes('event.sender.id !== req.wcId') && main.includes('flushRequests.get(token)'))
 check('جسر الاستئناف لا يمرر IpcRendererEvent إلى الواجهة', preload.includes("ipcRenderer.on('persistence:resume', () => listener())"))
 check('جسر preload يربط flush والنتيجة والاستئناف', ['persistence:flush', 'persistence:flushed', 'persistence:resume'].every(channel => preload.includes(channel)))
 check('flush يسجل مخزني الإعدادات والأعمال الثابتين مرة واحدة لكل جسر قاعدة', storage.includes('cachedDesktopStorage(appStorageCache, bridge.database, null)') && storage.includes('cachedDesktopStorage(settingsStorageCache, bridge.database, rawLocalStorage)') && storage.includes('activeDesktopStores'))

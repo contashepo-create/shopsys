@@ -68,6 +68,8 @@ export interface DesktopDatabaseBridge {
   completeOutbox(input: { id: string; status: 'sent' | 'failed'; nextAttemptAt?: string | null }): Promise<{ updated: boolean }>
   integrityCheck(): Promise<{ ok: boolean; message: string }>
   schemaVersion(): Promise<number>
+  /** نوافذ الأقمار الحرة: تُبثّ حين تحفظ نافذة أخرى لقطة — لتطبيق أحدث حالة */
+  onSnapshotChanged?(listener: (e: { storeName: string; revision: number }) => void): () => void
 }
 
 /** v1.0.8: معلومات وإدارة مكان القاعدة والنسخ المزدوجة — سطح المكتب فقط */
@@ -154,6 +156,61 @@ export interface DesktopKeyRecoveryBridge {
   startFresh(): Promise<{ ok: boolean; canceled?: boolean; reason?: string; archivePath?: string; relaunching?: boolean }>
 }
 
+/* ─── نوافذ الأقمار الحرة (قرار المالك 2026-10-22) ───
+   كل قسم/مستند/منتقٍ نافذة نظام مستقلة. العقد هنا هو صورة المُصيّر من
+   desktop/satelliteWindows.ts (العملية الرئيسية) — أي تعديل يكون في الاثنين. */
+
+/** ما يستلمه القمر الوليد عند المطالبة (claim) ليبني واجهته */
+export interface SatelliteDescriptor {
+  windowId: string
+  type: 'section' | 'view'
+  /** صنف العرض (sales-invoice…) لنوع view */
+  kind?: string | null
+  /** مسار القسم لنوع section */
+  path?: string
+  title: string
+  subtitle?: string
+  /** خصائص قابلة للتسلسل فقط — الدوال تُستبدل بأقزام IPC بأسمائها في callbackNames */
+  props?: Record<string, unknown>
+  callbackNames?: string[]
+  requestId?: string | null
+}
+
+export interface SatelliteRegistryEntry {
+  windowId: string
+  type: 'section' | 'view'
+  kind: string | null
+  sectionPath: string | null
+  title: string
+  dedupeKey: string | null
+  parentId: string | null
+  dirty: boolean
+}
+
+export interface DesktopWindowsBridge {
+  /** فتح نافذة عرض (مستند/منتقٍ/محرر) — الواصف كاملاً من windowStore */
+  open(input: Record<string, unknown>): Promise<{ ok: boolean; deduped?: boolean; existingId?: string }>
+  /** فتح/تركيز نافذة قسم — نسخة واحدة لكل مسار */
+  openSection(input: { path: string; title: string }): Promise<{ ok: boolean; windowId?: string; deduped?: boolean; main?: boolean }>
+  /** القمر الوليد يستلم واصفه برمزه لمرة واحدة */
+  claim(token: string): Promise<SatelliteDescriptor | null>
+  list(): Promise<SatelliteRegistryEntry[]>
+  /** استدعاء رد نداء عند النافذة الأم مالكة الطلب (onPick/onSaved…) */
+  invokeProp(input: { requestId: string; prop: string; args: unknown[] }): void
+  closeSelf(): void
+  requestClose(windowId: string): void
+  focus(windowId: string): void
+  minimize(windowId?: string): void
+  toggleMaximize(windowId?: string): void
+  setTitle(title: string): void
+  setDirty(dirty: boolean): void
+  respondClose(token: string, allow: boolean): void
+  onPropInvoke(listener: (e: { requestId: string; prop: string; args: unknown[] }) => void): () => void
+  onRequestClose(listener: (e: { token: string }) => void): () => void
+  onNavigate(listener: (e: { path: string }) => void): () => void
+  onRegistry(listener: (entries: SatelliteRegistryEntry[]) => void): () => void
+}
+
 export interface ShopsysDesktopBridge {
   runtime: 'electron'
   persistence?: {
@@ -161,6 +218,7 @@ export interface ShopsysDesktopBridge {
     onResume(listener: () => void): void
   }
   database: DesktopDatabaseBridge
+  windows?: DesktopWindowsBridge
   databaseStorage?: DesktopDatabaseStorageBridge
   notifications?: DesktopNotificationsBridge
   keyRecovery?: DesktopKeyRecoveryBridge
@@ -246,4 +304,14 @@ export function desktopDeviceIdentity(): ((candidate?: { deviceId?: string; firs
 /** بند 5: جسر قناة الدعم — null خارج سطح المكتب */
 export function desktopSupportBridge(): DesktopSupportBridge | null {
   return typeof window !== 'undefined' ? window.shopsysSupport ?? null : null
+}
+
+/** جسر النوافذ الحرة — null خارج سطح المكتب (المتصفح يحتفظ بالنوافذ الداخلية) */
+export function desktopWindowsBridge(): DesktopWindowsBridge | null {
+  return typeof window !== 'undefined' ? window.shopsysDesktop?.windows ?? null : null
+}
+
+/** هل تعمل النوافذ الحرة الحقيقية هنا؟ (نسخة سطح المكتب فقط — قرار المالك) */
+export function isDesktopFreeWindows(): boolean {
+  return desktopWindowsBridge() !== null
 }

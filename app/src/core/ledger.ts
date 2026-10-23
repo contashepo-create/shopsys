@@ -91,6 +91,12 @@ export interface JournalEntry {
   createdAt: string
   reversedByEntryId: number | null // إن عُكس هذا القيد
   reversesEntryId: number | null // إن كان هذا قيداً عاكساً
+  /**
+   * قيد تذكاري بلا سطور مالية (فاتورة توثيق مستخلصات — النموذج أ):
+   * يربط المستند الضريبي بدفتره (قرار 9) بصفر أثر على الأرصدة.
+   * الحارس يفرض: memoOnly ⇒ صفر سطور حتماً. undefined = قيد مالي عادي.
+   */
+  memoOnly?: boolean
 }
 
 export class UnbalancedEntryError extends Error {

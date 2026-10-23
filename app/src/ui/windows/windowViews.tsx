@@ -210,7 +210,9 @@ export function PartyEditorWindowView() {
   const partyId = Number(host?.props.partyId ?? 0)
   const cur = useCur()
   const toast = useToast()
-  const { customers, suppliers, updateCustomer, updateSupplier, getCustomerBalance, getSupplierBalance } = useDataStore()
+  const { customers, suppliers, updateCustomer, updateSupplier, addCustomer, addSupplier, getCustomerBalance, getSupplierBalance } = useDataStore()
+  const isNew = partyId === 0
+  const onSaved = host?.props.onSaved as ((partyId: number) => void) | undefined
   const party = partyKind === 'customer' ? customers.find((row) => row.id === partyId) : suppliers.find((row) => row.id === partyId)
   const [form, setForm] = useState(() => ({
     nameAr: party?.nameAr ?? '',
@@ -223,17 +225,32 @@ export function PartyEditorWindowView() {
     creditLimit: partyKind === 'customer' && party && 'creditLimitMinor' in party ? String((party.creditLimitMinor ?? 0) / 10 ** cur.decimals) : '0',
   }))
   const patch = (next: Partial<typeof form>) => { setForm((prev) => ({ ...prev, ...next })); host?.setDirty(true) }
-  if (!party) return <div className="p-6 text-sm text-slate-500">الحساب غير موجود.</div>
-  const balance = partyKind === 'customer' ? getCustomerBalance(party.id) : getSupplierBalance(party.id)
+  if (!party && !isNew) return <div className="p-6 text-sm text-slate-500">الحساب غير موجود.</div>
+  const balance = party ? (partyKind === 'customer' ? getCustomerBalance(party.id) : getSupplierBalance(party.id)) : 0
 
   const save = () => {
     try {
       if (!form.nameAr.trim()) throw new Error('الاسم مطلوب')
       const base = { nameAr: form.nameAr.trim(), phone: form.phone.trim(), email: form.email.trim(), taxNumber: form.taxNumber.trim(), address: form.address.trim(), city: form.city.trim(), notes: form.notes }
-      if (partyKind === 'customer') updateCustomer(party.id, { ...base, creditLimitMinor: toMinor(form.creditLimit || '0', cur.decimals) })
-      else updateSupplier(party.id, base)
+      if (isNew) {
+        // وضع الإنشاء (زر «+» في النوافذ): حقول موسّعة فارغة تُستكمل لاحقاً من مركز الحسابات
+        const fresh = { ...base, commercialReg: '', postalCode: '', buildingNo: '', nationalId: '' }
+        const beforeIds = new Set((partyKind === 'customer' ? customers : suppliers).map((row) => row.id))
+        if (partyKind === 'customer') addCustomer({ ...fresh, creditLimitMinor: toMinor(form.creditLimit || '0', cur.decimals) })
+        else addSupplier(fresh)
+        const afterRows = partyKind === 'customer' ? useDataStore.getState().customers : useDataStore.getState().suppliers
+        const created = afterRows.find((row) => !beforeIds.has(row.id))
+        host?.setDirty(false)
+        toast.show(`أُنشئ ${partyKind === 'customer' ? 'العميل' : 'المورد'} «${base.nameAr}» ✅`)
+        if (created) onSaved?.(created.id)
+        host?.close()
+        return
+      }
+      if (partyKind === 'customer') updateCustomer(party!.id, { ...base, creditLimitMinor: toMinor(form.creditLimit || '0', cur.decimals) })
+      else updateSupplier(party!.id, base)
       host?.setDirty(false)
       toast.show('حُفظت بيانات الحساب ✅ — الفاتورة المفتوحة لم تتأثر')
+      onSaved?.(party!.id)
       host?.close()
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -243,8 +260,8 @@ export function PartyEditorWindowView() {
       <div className="flex items-center gap-3 rounded-2xl bg-brand-500/8 p-3">
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-500/15 text-brand-700 dark:text-brand-300"><UserRound size={18} /></span>
         <div className="min-w-0">
-          <b className="block truncate">{party.nameAr}</b>
-          <small className="text-slate-500">{partyCode(partyKind === 'customer' ? 'CUS' : 'SUP', party.id)} · الرصيد {formatMinor(Math.abs(balance), cur, false)} {cur.symbol} {balance > 0 ? 'عليه' : balance < 0 ? 'له' : 'متزن'}</small>
+          <b className="block truncate">{party?.nameAr ?? (form.nameAr || (partyKind === 'customer' ? 'عميل جديد' : 'مورد جديد'))}</b>
+          <small className="text-slate-500">{party ? `${partyCode(partyKind === 'customer' ? 'CUS' : 'SUP', party.id)} · الرصيد ${formatMinor(Math.abs(balance), cur, false)} ${cur.symbol} ${balance > 0 ? 'عليه' : balance < 0 ? 'له' : 'متزن'}` : 'حساب جديد — يُحفظ ويُختار تلقائياً في نافذتك'}</small>
         </div>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
@@ -258,10 +275,10 @@ export function PartyEditorWindowView() {
       </div>
       <Field label="ملاحظات"><textarea className={inputCls} rows={2} value={form.notes} onChange={(e) => patch({ notes: e.target.value })} /></Field>
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
-        <Btn variant="ghost" onClick={() => openPartyLedgerWindow(partyKind, party.id, host?.windowId ?? null)}>كشف الحساب</Btn>
+        {party ? <Btn variant="ghost" onClick={() => openPartyLedgerWindow(partyKind, party.id, host?.windowId ?? null)}>كشف الحساب</Btn> : <span />}
         <div className="flex gap-2">
           <Btn variant="ghost" onClick={() => host?.close()}>إلغاء</Btn>
-          <Btn onClick={save} shortcut="F9"><Save size={14} /> حفظ التعديل</Btn>
+          <Btn onClick={save} shortcut="F9"><Save size={14} /> {isNew ? 'إنشاء الحساب' : 'حفظ التعديل'}</Btn>
         </div>
       </div>
     </div>
@@ -331,16 +348,38 @@ export function ItemPickerWindowView() {
   const initialQuery = String(props.initialQuery ?? '')
   /* القائمة تُحدَّث حيّاً بعد التعديل في النافذة الابنة */
   const liveItems = useDataStore((state) => state.items)
-  const merged = items.map((row) => {
-    const live = liveItems.find((entry) => entry.id === row.id)
-    return live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit } : row
-  })
+  const storeCategories = useDataStore((state) => state.categories)
+  const cur = useCur()
+  /* نافذة قمر حرة (سطح المكتب): القائمة ودوال العرض لا تعبر IPC — تُبنى هنا
+     من متجر هذا القمر الحي نفسه (متزامن مع بقية النوافذ عبر لقطات SQLite) */
+  const fromStore = props.itemsFromStore === true
+  const merged: QuickItem[] = fromStore
+    ? liveItems.map((it) => ({
+      id: it.id, nameAr: it.nameAr, sku: it.sku, barcodes: it.barcodes,
+      stockQty: it.stockQty, priceMinor: it.priceMinor, costMinor: it.costMinor,
+      baseUnit: it.baseUnit, categoryId: it.categoryId, isService: it.isService,
+    }))
+    : items.map((row) => {
+      const live = liveItems.find((entry) => entry.id === row.id)
+      return live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit } : row
+    })
+  const effectiveCategories = categories ?? (fromStore ? storeCategories.map((c) => ({ id: c.id, nameAr: c.nameAr })) : undefined)
+  const effectiveMeta = itemMeta ?? (fromStore
+    ? (item: QuickItem): QuickItemMeta => ({
+      category: storeCategories.find((c) => c.id === item.categoryId)?.nameAr ?? '',
+      unit: item.baseUnit ?? '',
+      stock: item.isService ? 'خدمة' : String(item.stockQty ?? 0),
+      price: formatMinor(item.priceMinor ?? 0, cur, false),
+      cost: formatMinor(item.costMinor ?? 0, cur, false),
+      low: !item.isService && (item.stockQty ?? 0) <= 0,
+    })
+    : undefined)
   return (
     <div className="flex h-full min-h-0 flex-col" data-window-view="item-picker">
       <ItemSearchPanel
         items={merged}
-        itemMeta={itemMeta}
-        categories={categories}
+        itemMeta={effectiveMeta}
+        categories={effectiveCategories}
         amountLabel={amountLabel}
         onCreate={onCreate}
         initialQuery={initialQuery}

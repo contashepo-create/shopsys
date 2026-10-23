@@ -1,0 +1,21 @@
+/** Regression checks for issues found in the 2026-10 session audit. */
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8')
+const trips = read('../src/ui/pages/TripsPage.tsx')
+const tripPrint = trips.slice(trips.indexOf('const buildNow ='), trips.indexOf('const [tab, setTab]'))
+assert.equal((tripPrint.match(/printModelWithTemplate\(/g) ?? []).length, 1, 'trip printing has one unified preview/print entry point')
+assert.equal((tripPrint.match(/openPrintPreview\(/g) ?? []).length, 0, 'trip printing does not open a duplicate preview')
+const pos = read('../src/ui/pages/PosPage.tsx')
+assert.match(pos, /printModelWithTemplate\(model, cur, documentSettings\.receipt, posTemplate/)
+assert.doesNotMatch(pos, /printHtml\(/, 'POS must not bypass preview / silent-print policy')
+const close = read('../desktop/satelliteWindows.ts')
+assert.match(close, /resolve\(false\)/, 'close handshake timeout must cancel')
+assert.doesNotMatch(close, /انتهت مهلة مصافحة إغلاق[^\n]*إغلاق قسري/)
+const satellite = read('../src/ui/windows/satellite.tsx')
+assert.match(satellite, /hasUnsavedChangesInCurrentWindow/)
+assert.match(satellite, /catch \(error\)/, 'failed save cannot approve close')
+const ui = read('../src/ui/components/unsavedChangeRegistry.ts')
+assert.match(ui, /export function hasUnsavedChangesInCurrentWindow/)
+assert.match(ui, /dirtyChangeGuards\.add/)
+console.log('verify_session_review_fixes PASS=10')

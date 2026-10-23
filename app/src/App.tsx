@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
-import { useDataStore } from './data/repo.ts'
+import { useDataStore, useRawDataStore } from './data/repo.ts'
 import { evaluateLicense, oldestValidDay, newestValidDay } from './core/license.ts'
 import { currentLockReason, isBackupDue } from './core/security.ts'
 import { isDailySendDue, localNowIso } from './core/schedule.ts'
@@ -15,13 +15,16 @@ import { buildRegistrationReport, shouldReportRegistration, sendRegistrationRepo
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
-import { isElectronRuntime, desktopDatabaseStorage, desktopKeyRecoveryBridge } from './data/desktopBridge.ts'
+import { isElectronRuntime, isDesktopFreeWindows, desktopDatabaseStorage, desktopKeyRecoveryBridge, type SatelliteDescriptor } from './data/desktopBridge.ts'
+import { isSatelliteBoot, claimSatellite } from './ui/windows/satelliteState.ts'
+import { SatelliteLayout, SatelliteViewRoot } from './ui/windows/satellite.tsx'
+import { openSectionWindow } from './ui/windows/windowStore.ts'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
-import { useSessionAuthStore } from './data/sessionAuth.ts'
+import { useSessionAuthStore, markSessionAuthenticated } from './data/sessionAuth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
@@ -162,9 +165,10 @@ function usePageTitle(): string {
   return 'TAHAKAM ERP'
 }
 
-function Shell() {
+function Shell({ satellite = false }: { satellite?: boolean }) {
   const title = usePageTitle()
   const location = useLocation()
+  const navigate = useNavigate()
   const { effectiveBranch, effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
   const setActiveBranchContext = useAppStore((s) => s.setActiveBranchContext)
   const setupState = useAppStore((s) => s.setup)
@@ -181,8 +185,29 @@ function Shell() {
   }, [effectiveBranch, setActiveBranchContext])
   const effectiveFeatures = ACTIVITY_TEMPLATES.find((activity) => activity.id === effectiveActivityId)?.features ?? setupState.features
 
+  /* تخطيط حسب نوع النافذة (قرار المالك 2026-10-22): الرئيسية والويب بالشكل
+     الكامل، ونوافذ القمر الحرة بغلاف خفيف (شريط تحكم النظام هو عنوانها).
+     ملاحظة: بوابة الوحدات لا تُعفى القمر منها — قسم مفعّل ملغى للنشاط لا
+     يُفتح عبر رابط مباشر حتى من نافذة حرة. */
+  const Layout = (satellite ? SatelliteLayout : MainLayout) as React.ComponentType<{ title?: string; children: React.ReactNode }>
+
+  /* الرئيسية مشغّل (قرار المالك — سطح المكتب): أي تنقّل لغير لوحة التحكم
+     (روابط داخلية، تنقلات كود،…) يفتح القسم في نافذة نظام حرة وتعود
+     الرئيسية للوحة التحكم. في الويب لا يعمل — التنقل الداخلي كما هو. */
+  useEffect(() => {
+    if (satellite || !isDesktopFreeWindows()) return
+    if (!setupState.completed || location.pathname === '/') return
+    const raw = useRawDataStore.getState()
+    if (raw.loggedOut || !useSessionAuthStore.getState().authenticated) return
+    if (openSectionWindow(`${location.pathname}${location.search}`, title)) navigate('/', { replace: true })
+  }, [satellite, location.pathname, location.search, title, setupState.completed, navigate])
+
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
-  const { appUsers, currentUserId, roleOverrides, customRoles, ownerPinHash, loggedOut } = useDataStore()
+  /* الهوية والمصادقة من المتجر الخام (غير مصفّاة بالفرع): بوابة الدخول
+     وحساب «هل الدخول مطلوب؟» يجب أن يريا مستخدمي كل الفروع وبصمة المالك
+     الحقيقية — الأدوار وحدها تبقى مصفّاة لأن تجاوزات الفرع تُدمج فيها. */
+  const { appUsers, currentUserId, ownerPinHash, loggedOut } = useRawDataStore()
+  const { roleOverrides, customRoles } = useDataStore()
   // علم «الجلسة مصادَق عليها» — متجر React: تتغيّر البوابة فور تغيّره
   const sessionAuthenticated = useSessionAuthStore((s) => s.authenticated)
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
@@ -200,7 +225,7 @@ function Shell() {
   // يُستخدم نفس النشاط والوحدات الفعالة للقائمة، بما فيها تخصيص الفرع، منعاً لاختلاف الرابط المباشر.
   if (!pathAllowedForSetup(location.pathname, effectiveModules, effectiveFeatures, effectiveActivityId)) {
     return (
-      <MainLayout title="غير متاح لنشاطك">
+      <Layout title="غير متاح لنشاطك">
         <div className="max-w-lg mx-auto mt-16 text-center space-y-4 p-10 rounded-3xl bg-white dark:bg-card-dark border border-amber-500/25 anim-pop">
           <div className="text-5xl">🔒</div>
           <h1 className="text-xl font-black text-slate-800 dark:text-white">هذه الشاشة غير مفعلة لنشاطك</h1>
@@ -209,7 +234,7 @@ function Shell() {
             تفعيل الأقسام الإضافية يتم عبر المطوّر بمفتاح موقّع.
           </p>
         </div>
-      </MainLayout>
+      </Layout>
     )
   }
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
@@ -217,7 +242,7 @@ function Shell() {
     const needed = permissionForPath(location.pathname)
     const permName = PERMISSIONS.find((p) => p.id === needed)?.nameAr ?? needed
     return (
-      <MainLayout title="غير مصرح">
+      <Layout title="غير مصرح">
         <div className="max-w-lg mx-auto mt-16 text-center space-y-4 p-10 rounded-3xl bg-white dark:bg-card-dark border border-rose-500/25 anim-pop">
           <div className="text-5xl">🚫</div>
           <h1 className="text-xl font-black text-slate-800 dark:text-white">هذه الشاشة تحتاج صلاحية</h1>
@@ -226,12 +251,12 @@ function Shell() {
             اطلب من المالك منحها لدورك أو لحسابك من شاشة الصلاحيات.
           </p>
         </div>
-      </MainLayout>
+      </Layout>
     )
   }
 
   return (
-    <MainLayout title={title}>
+    <Layout title={title}>
       <KeyboardNavigation />
       <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>}>
       <Routes>
@@ -355,7 +380,7 @@ function Shell() {
         <Route path="*" element={<Dashboard />} />
       </Routes>
       </Suspense>
-    </MainLayout>
+    </Layout>
   )
 }
 
@@ -488,6 +513,26 @@ export default function App() {
   const legalAccepted = legal !== null
   const seed = useDataStore((s) => s.seed)
 
+  /* نافذة قمر حرة (سطح المكتب — قرار المالك 2026-10-22): العملية الرئيسية
+     فتحت هذه النافذة برمز إقلاع في الرابط (?sat=). المطالبة تُثبت هويتنا
+     والوصف يحدد ما نعرضه (قسم كامل أو عرض نافذة). الجلسة مصادَقة فوراً
+     لأن القمر لا يُنشأ إلا من داخل نافذة دخلت أصلاً — ولا نطلب PIN مع
+     كل نافذة. قبل المطالبة ينتظر العرض شاشة التحميل نفسها. */
+  const satelliteBoot = isSatelliteBoot()
+  const [satDescriptor, setSatDescriptor] = useState<SatelliteDescriptor | null>(null)
+  const [satClaimed, setSatClaimed] = useState(!satelliteBoot)
+  useEffect(() => {
+    if (!satelliteBoot) return
+    let cancelled = false
+    void claimSatellite().then((descriptor) => {
+      if (cancelled) return
+      if (descriptor && !useRawDataStore.getState().loggedOut) markSessionAuthenticated()
+      setSatDescriptor(descriptor)
+      setSatClaimed(true)
+    })
+    return () => { cancelled = true }
+  }, [satelliteBoot])
+
   /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
      التجربة: عند الإقلاع نطابق بداية التجربة مع أقدم تاريخ معروف للجهاز */
   /* ح1/ح5 (مراجعة ③): مطابقة مرساة سطح المكتب — الأقدم لبداية التجربة، والأحدث لآخر
@@ -506,6 +551,7 @@ export default function App() {
   /* v1.0.9 (درع البيانات): إشعار استرداد القاعدة — إن اكتُشف تلف عند الإقلاع
      استُردت أحدث نسخة سليمة تلقائياً (أو بدئت قاعدة جديدة لعدم وجود نسخة) */
   useEffect(() => {
+    if (satelliteBoot) return
     const bridge = desktopDatabaseStorage()
     if (!bridge?.recoveryNotice) return
     void bridge.recoveryNotice().then((notice) => {
@@ -514,16 +560,16 @@ export default function App() {
       if (notice.from) toast.show('اكتُشف تلف في قاعدة البيانات واستُردت تلقائياً من أحدث نسخة سليمة ✓')
       else toast.show('تعذّر إيجاد نسخة سليمة — بدئت قاعدة جديدة. استعد بياناتك من «النسخ الاحتياطي ← استعادة نسخة قاعدة كاملة»', 'error')
     }).catch(() => { /* إشعار مساعد — لا يعطل الإقلاع */ })
-  }, [])
+  }, [satelliteBoot])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
   /* ث1 (تدقيق 2026-10-08): إعادة التحقق من توقيع المفتاح المحفوظ في كل إقلاع.
      الحمولة تُشتق من المفتاح الموقّع لا من التخزين — تعديل `activatedPayload`
      في localStorage (نسخة الويب نص صريح) لم يعد يفتح `lifetime` بكل الميزات. */
   useEffect(() => {
-    if (!storesHydrated) return
+    if (!storesHydrated || satelliteBoot) return
     void useAppStore.getState().reverifyActivation()
-  }, [storesHydrated])
+  }, [storesHydrated, satelliteBoot])
 
   const licenseState = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
@@ -556,6 +602,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (satelliteBoot) return
     const beat = () => {
       /* v1.0.19: في سطح المكتب الكاتب الوحيد محمي أصلاً بقفل العملية الواحدة
          (requestSingleInstanceLock). نبضة تركها تطبيق سابق قُتل أثناء التحديث أو
@@ -575,7 +622,7 @@ export default function App() {
     }
     window.addEventListener('beforeunload', release)
     return () => { clearInterval(t); release(); window.removeEventListener('beforeunload', release) }
-  }, [])
+  }, [satelliteBoot])
 
   // ─── شبكة المحل (§102): إقلاع دور الجهاز — مضيف مفعّل يفتح خادمه، وعميل
   // مفعل يعيد الاتصال بالمضيف تلقائياً بالتوكن المحفوظ (بلا رمز اقتران) ───
@@ -583,7 +630,7 @@ export default function App() {
      ميزة multi_user_lan بالمفتاح، والعميل يتطلب فتح القفل. كانت تُفتح عند كل إقلاع بلا
      أي بوابة ترخيص. تُعاد المراجعة عند كل تغيّر في الترخيص أو القفل. */
   useEffect(() => {
-    if (!storesHydrated || licenseAudit.status === 'checking') return
+    if (!storesHydrated || satelliteBoot || licenseAudit.status === 'checking') return
     const { lanHost, lanClient } = useAppStore.getState()
     const lan = useLanStatusStore.getState()
     const unlocked = lockReason === null
@@ -598,11 +645,11 @@ export default function App() {
     } else if (!hostConfigured && lanClient.enabled && lanClient.hostUrl && lan.role !== 'client') {
       bootRemoteSession()
     }
-  }, [storesHydrated, licenseAudit.status, licenseState, lockReason])
+  }, [storesHydrated, licenseAudit.status, licenseState, lockReason, satelliteBoot])
 
   // ─── مزامنة الترخيص و«حول» من عامل التحكم — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
-    if (!legalAccepted) return
+    if (!legalAccepted || satelliteBoot) return
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
@@ -630,10 +677,11 @@ export default function App() {
     sync()
     const t = setInterval(sync, 6 * 60 * 60 * 1000)
     return () => { cancelled = true; clearInterval(t) }
-  }, [setCloudData, legalAccepted])
+  }, [setCloudData, legalAccepted, satelliteBoot])
 
   // ─── تنبيهات المطوّر من البوت — تحديث دوري كل دقيقة وعند العودة للتطبيق ───
   useEffect(() => {
+    if (satelliteBoot) return
     let cancelled = false
     const syncNotices = async () => {
       if (!legalAccepted || !useAppStore.getState().setup.completed) return
@@ -649,7 +697,7 @@ export default function App() {
       clearInterval(timer)
       window.removeEventListener('focus', syncNotices)
     }
-  }, [setCloudData, legalAccepted])
+  }, [setCloudData, legalAccepted, satelliteBoot])
 
   /* ─── بند 2 (تدقيق 2026-10-08): إبلاغ المطوّر بكل عميل جديد ───────────────
      ما كان: المعالج يجمع الاسم والهاتف والبريد والمنشأة والنشاط ثم لا يُرسل
@@ -659,7 +707,7 @@ export default function App() {
      يُرسل الحقول المعلنة فقط (المنشأة والمالك والتواصل والعنوان والنشاط + معرّف الجهاز)
      — انظر core/registration.ts. */
   useEffect(() => {
-    if (!setup.completed || !legalAccepted) return
+    if (!setup.completed || !legalAccepted || satelliteBoot) return
     let cancelled = false
     const report = async () => {
       const app = useAppStore.getState()
@@ -687,11 +735,11 @@ export default function App() {
     }
     void report()
     return () => { cancelled = true }
-  }, [setup.completed, legalAccepted])
+  }, [setup.completed, legalAccepted, satelliteBoot])
 
   // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───
   useEffect(() => {
-    if (!setup.completed) return
+    if (!setup.completed || satelliteBoot) return
     const tick = async () => {
       const app = useAppStore.getState()
       // شروط الإرسال: الجدولة مفعلة + ميزة telegram_bot بالمفتاح + اتصال بوت سليم
@@ -713,11 +761,11 @@ export default function App() {
     tick()
     const t = setInterval(tick, 5 * 60 * 1000) // فحص كل 5 دقائق
     return () => clearInterval(t)
-  }, [setup.completed])
+  }, [setup.completed, satelliteBoot])
 
   // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28): لقطة مشفرة على جهاز العميل ───
   useEffect(() => {
-    if (!setup.completed) return
+    if (!setup.completed || satelliteBoot) return
     const takeSnapshot = async () => {
       const now = new Date().toISOString()
       const appNow = useAppStore.getState()
@@ -734,11 +782,11 @@ export default function App() {
     takeSnapshot()
     const t = setInterval(takeSnapshot, 5 * 60 * 1000) // فحص كل 5 دقائق، لقطة كل ساعة
     return () => clearInterval(t)
-  }, [setup.completed, lastHourlyBackupAt, setLastHourlyBackupAt])
+  }, [setup.completed, lastHourlyBackupAt, setLastHourlyBackupAt, satelliteBoot])
 
   // ─── المزامنة السحابية متعددة الأجهزة (Supabase — ميزة cloud_sync): دورة كل دقيقة ───
   useEffect(() => {
-    if (!setup.completed) return
+    if (!setup.completed || satelliteBoot) return
     watchLocalChanges() // يرفع علم dirty عند أي تغيير محلي
     const tick = async () => {
       const app = useAppStore.getState()
@@ -755,7 +803,7 @@ export default function App() {
     tick()
     const t = setInterval(tick, 60 * 1000)
     return () => clearInterval(t)
-  }, [setup.completed])
+  }, [setup.completed, satelliteBoot])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -771,11 +819,12 @@ export default function App() {
 
   // مرساة «آخر ظهور» ضد إرجاع ساعة الجهاز (نظام الترخيص) — عند الإقلاع وكل ساعة
   useEffect(() => {
+    if (satelliteBoot) return
     const beat = () => { touchLastSeen(); syncDesktopAnchor() }
     beat()
     const t = setInterval(beat, 60 * 60 * 1000)
     return () => clearInterval(t)
-  }, [touchLastSeen])
+  }, [touchLastSeen, satelliteBoot])
 
   // سجل التطبيق التقني (طلب المالك): مصائد الأخطاء العامة + حدث الإقلاع —
   // حلقة محلية على الجهاز، تُرسل للمطوّر فقط بموافقة صريحة من شاشة الدعم
@@ -786,13 +835,13 @@ export default function App() {
 
   // بذر البيانات الأولية (قسم عام + مخزن رئيسي) فور اكتمال المعالج
   useEffect(() => {
-    if (setup.completed) seed(setup.features)
-  }, [setup.completed, setup.features, seed])
+    if (setup.completed && !satelliteBoot) seed(setup.features)
+  }, [setup.completed, setup.features, seed, satelliteBoot])
 
   // الإهلاك التلقائي (طلب المالك): لو نُسي الترحيل، تُرحَّل كل الأشهر المتأخرة عند فتح البرنامج
   // ثم فحص يومي — لا يعتمد على تدخل المالك إطلاقاً
   useEffect(() => {
-    if (!setup.completed) return
+    if (!setup.completed || satelliteBoot) return
     const run = () => {
       try {
         const n = useDataStore.getState().runAutoDepreciation()
@@ -802,7 +851,7 @@ export default function App() {
     run()
     const t = setInterval(run, 24 * 60 * 60 * 1000)
     return () => clearInterval(t)
-  }, [setup.completed])
+  }, [setup.completed, satelliteBoot])
 
   /* ث1: لا حكم على الترخيص (ولا شاشة قفل) قبل انتهاء إعادة التحقق من التوقيع —
      وإلا ومضت شاشة «انتهى اشتراكك» لعميل مفعّل في نافذة الفحص. */
@@ -860,7 +909,7 @@ export default function App() {
     <HashRouter>
       {!storesHydrated && hydrationFailure ? (
         <DataRecoveryScreen reason={hydrationFailure} />
-      ) : !storesHydrated ? (
+      ) : !storesHydrated || !satClaimed ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
           <div className="text-center space-y-3">
             <div className="text-4xl animate-pulse">🏛️</div>
@@ -869,7 +918,11 @@ export default function App() {
         </div>
       ) : !legal ? (
         <><LegalGate /></>
-      ) : setup.completed ? <Shell /> : <FirstRunWizard />}
+      ) : setup.completed ? (
+        satDescriptor?.type === 'view'
+          ? <SatelliteViewRoot descriptor={satDescriptor} />
+          : <Shell satellite={satelliteBoot} />
+      ) : <FirstRunWizard />}
       <ToastHost />
       {/* بند 10 (تدقيق 2026-10-08): نافذة تنبيه المطوّر المنبثقة. تظهر فقط لدرجتَي
           important/critical؛ أما info فبقي جرساً وتوستاً بلا مقاطعة.

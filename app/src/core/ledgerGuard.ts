@@ -97,8 +97,14 @@ export function validateEntry(entry: JournalEntry, ctx: LedgerGuardContext): str
   }
 
   // ث1 — التوازن
-  if (totalDebit !== totalCredit) errors.push(`${tag}: غير متزن — مدين ${totalDebit} ودائن ${totalCredit}`)
-  if (meaningful < 2) errors.push(`${tag}: يحتاج طرفين على الأقل`)
+  if (entry.memoOnly) {
+    // قيد تذكاري (توثيق مستخلصات): أي سطر مالي عليه = تسرّب أثر دفتري
+    // لمستند يجب أن يكون صامتاً — يُرفض فوراً
+    if (lines.length > 0) errors.push(`${tag}: قيد تذكاري يحمل سطوراً مالية — التوثيق بلا أثر دفتري`)
+  } else {
+    if (totalDebit !== totalCredit) errors.push(`${tag}: غير متزن — مدين ${totalDebit} ودائن ${totalCredit}`)
+    if (meaningful < 2) errors.push(`${tag}: يحتاج طرفين على الأقل`)
+  }
 
   // ث3 — مصدر وتاريخ وسنة مفتوحة
   if (!entry.sourceType) errors.push(`${tag}: بلا نوع مصدر — كل قيد يتبع مستنداً`)

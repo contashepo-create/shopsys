@@ -63,7 +63,7 @@ export function BranchBadge({
       ? 'عرض شامل لكل الفروع — اختر فرعاً للعمل داخله'
       : `فرع العمل الحالي: ${displayName}`
 
-  const icon = <GitBranch size={placement === 'header' ? 12 : 11} className="branch-badge-ico" aria-hidden />
+  const icon = <GitBranch size={10} className="branch-badge-ico" aria-hidden />
   const dot = <span className={`branch-badge-dot ${tone}`} aria-hidden />
   const lock = locked ? <Lock size={9} className="branch-badge-lock" aria-hidden /> : null
 

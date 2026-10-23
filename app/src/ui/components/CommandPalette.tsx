@@ -12,7 +12,7 @@ import { useNavSections } from '../hooks/useNavSections.ts'
 import { SHORTCUT_MAP } from '../shortcutMap.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { openPurchaseInvoiceWindow, openSalesInvoiceWindow, useWindowStore } from '../windows/windowStore.ts'
+import { openPurchaseInvoiceWindow, openSalesInvoiceWindow, openSectionWindow, useWindowStore } from '../windows/windowStore.ts'
 
 type Command = {
   id: string
@@ -82,19 +82,19 @@ export function CommandPalette() {
     )
     for (const sec of sections) for (const child of sec.children) {
       list.push({ id: `nav:${sec.id}.${child.id}`, group: sec.nameAr, label: child.nameAr, hint: sec.nameAr, keys: 'انتقال',
-        run: () => { if (!guardNavigation(() => navigate(child.path))) navigate(child.path) } })
+        run: () => { if (openSectionWindow(child.path, child.nameAr)) return; if (!guardNavigation(() => navigate(child.path))) navigate(child.path) } })
     }
     for (const customer of customers.slice(0, 200)) {
       list.push({ id: `customer:${customer.id}`, group: 'العملاء', label: customer.nameAr, hint: customer.phone ?? '', keys: 'فتح العميل',
-        run: () => navigate(`/parties/customers?focus=${customer.id}`) })
+        run: () => { if (!openSectionWindow(`/parties/customers?focus=${customer.id}`, 'العملاء')) navigate(`/parties/customers?focus=${customer.id}`) } })
     }
     for (const supplier of suppliers.slice(0, 200)) {
       list.push({ id: `supplier:${supplier.id}`, group: 'الموردون', label: supplier.nameAr, hint: supplier.phone ?? '', keys: 'فتح المورد',
-        run: () => navigate(`/parties/suppliers?focus=${supplier.id}`) })
+        run: () => { if (!openSectionWindow(`/parties/suppliers?focus=${supplier.id}`, 'الموردون')) navigate(`/parties/suppliers?focus=${supplier.id}`) } })
     }
     for (const item of items.slice(0, 200)) {
       list.push({ id: `item:${item.id}`, group: 'الأصناف', label: item.nameAr, hint: item.sku ?? '', keys: 'فتح الصنف',
-        run: () => navigate(`/items?focus=${item.id}`) })
+        run: () => { if (!openSectionWindow(`/items?focus=${item.id}`, 'الأصناف')) navigate(`/items?focus=${item.id}`) } })
     }
     return list
   }, [customers, items, navigate, sections, suppliers, theme, toggleTheme])

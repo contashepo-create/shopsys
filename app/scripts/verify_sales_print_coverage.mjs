@@ -23,7 +23,7 @@ const NON_TAX_MARKERS = ['renderWaybillHtml', 'renderKitchenTicketHtml', 'render
 /* معاينة مسودة غير مرحّلة: لا تحمل رمزاً ضريبياً عمداً (الرمز للمستند الصادر).
    أي مسار غير مسودة في نفس الصفحة يبقى خاضعاً للفحص. */
 const DRAFT_MARKERS = ['edPrintModel']
-const STAMP = /(stampTax|maybeTaxBarcode|maybeTaxBarcodeSync|withTaxBarcodeSync|taxBarcodePayload|taxQrPayload)\s*\(|taxQrPayload/
+const STAMP = /(stampTax|stampDocumentTaxBarcode|maybeTaxBarcode|maybeTaxBarcodeSync|withTaxBarcodeSync|taxBarcodePayload|documentTaxBarcodePayload|taxQrPayload)\s*\(|taxQrPayload/
 const FILES = [
   'src/ui/pages/PosPage.tsx', 'src/ui/pages/SalesInvoicesPage.tsx', 'src/ui/pages/AdvancedSalesInvoicePage.tsx',
   'src/ui/pages/SaleReturnsPage.tsx', 'src/ui/pages/ActivityInvoicesHubs.tsx', 'src/ui/pages/ContractingInvoicesPage.tsx',

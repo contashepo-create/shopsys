@@ -24,6 +24,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { purchaseWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
@@ -122,6 +123,7 @@ export function PurchasesPage() {
   /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
   /** نموذج الطباعة لفاتورة شراء — يُستعمل للطباعة وللإرسال عبر واتساب */
   const buildPurchaseModel = (inv: PurchaseInvoice) => {
+    const documentSettings = resolveDocumentPrintSettings(inv)
     return buildSimpleDocModel({
       docTitle: 'فاتورة شراء',
       invoiceNumber: inv.invoiceNumber,
@@ -138,19 +140,23 @@ export function PurchasesPage() {
       totalMinor: inv.grandTotalMinor,
       paidMinor: inv.paidMinor,
       operatorName: printOperatorName,
-      settings: receipt,
+      settings: documentSettings.receipt,
       extraFooter: [`${inv.supplierInvoiceNumber ? `فاتورة المورد ${inv.supplierInvoiceNumber}` : ''}${inv.purchaseOrderNumber ? ` · أمر شراء ${inv.purchaseOrderNumber}` : ''}${inv.dueDate ? ` · استحقاق ${inv.dueDate}` : ''}`, inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : ''].filter(Boolean).join(' — ') || undefined,
     })
   }
   const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
-    printModelWithTemplate(buildPurchaseModel(inv), cur, receipt, template)
+    const documentSettings = resolveDocumentPrintSettings(inv)
+    printModelWithTemplate(buildPurchaseModel(inv), cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(inv).receipt,
+    })
     toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
   }
   /** إرسال فاتورة الشراء PDF عبر واتساب إلى رقم المورد المسجّل في بطاقته */
   const sendPurchaseWhatsapp = (inv: PurchaseInvoice) => {
     const party = purchaseWaParty(inv.supplierId, suppliers)
     if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا المورد في بطاقته', 'error')
-    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, shopName: setup.shopName, toast })
+    const documentSettings = resolveDocumentPrintSettings(inv)
+    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: documentSettings.receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, shopName: documentSettings.setup.shopName, toast })
   }
   const [supplierId, setSupplierId] = useState(0)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
@@ -1250,7 +1256,7 @@ onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
       <PrintTemplateModal
         open={printTarget != null}
         onClose={() => setPrintTarget(null)}
-        defaultTemplate={receipt.defaultTemplate}
+        defaultTemplate={printTarget ? resolveDocumentPrintSettings(printTarget).receipt.defaultTemplate : receipt.defaultTemplate}
         title="🖨️ طباعة فاتورة الشراء"
         onPrint={(t) => { if (printTarget) printPurchase(printTarget, t) }}
       />

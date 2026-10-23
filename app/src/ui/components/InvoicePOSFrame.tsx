@@ -110,6 +110,7 @@ export function InvoicePOSFrame({
   const sale = kind === 'sale'
   /* نقاط سطح المكتب الثلاث: تعمل فعلاً على النافذة الحاوية (إغلاق · تصغير · تكبير) */
   const host = useWindowHost()
+  const hostId = host?.windowId
   const minimizeWindow = useWindowStore((state) => state.minimizeWindow)
   const toggleMaximize = useWindowStore((state) => state.toggleMaximizeWindow)
   const { sync, receipt, autoPrintAfterSale, einvoice, invoiceColumns, toggleInvoiceColumn, resetInvoiceColumns } = useAppStore()
@@ -149,13 +150,20 @@ export function InvoicePOSFrame({
     <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${docKind ?? kind}`} dir="rtl">
       {/* ① الشريط العلوي: أدوات · رقم المستند وحالته · أزرار الاعتماد */}
       <header className="invoice-doc-topbar">
-        {/* أزرار النافذة: **وظيفة كل زر مرسومة داخله** لا دوائر ملونة (طلب المالك) */}
-        <div className="invoice-doc-winbtns">
-          <button type="button" className="is-min" onClick={() => { if (host) minimizeWindow(host.windowId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة"><Minus size={13} /></button>
-          <button type="button" className="is-max" onClick={() => { if (host) toggleMaximize(host.windowId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة"><Square size={11} /></button>
-          <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند"><X size={13} /></button>
-        </div>
-        <span className="invoice-doc-divider" />
+        {/* أزرار نافذة الإطار تظهر فقط خارج النوافذ الحرة (صفحة كاملة: مستخلص/أمر شراء/عرض سعر).
+            داخل نافذة حرة يكون شريط عنوان النافذة وحده شريط التحكم — **لا شريط مكرر**
+            (قرار المالك 2026-10-22؛ يخلف قرار ⑩ح داخل النوافذ الحرة فقط، والصفحات
+            الكاملة بلا مضيف تبقى بأزرارها الوظيفية كما كانت). */}
+        {!host && (
+          <>
+            <div className="invoice-doc-winbtns">
+              <button type="button" className="is-min" onClick={() => { if (hostId) minimizeWindow(hostId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة"><Minus size={13} /></button>
+              <button type="button" className="is-max" onClick={() => { if (hostId) toggleMaximize(hostId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة"><Square size={11} /></button>
+              <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند"><X size={13} /></button>
+            </div>
+            <span className="invoice-doc-divider" />
+          </>
+        )}
         <div className="invoice-doc-utility-tools">
           <button type="button" aria-label="محادثة الدعم" title="الدعم الفني" onClick={() => onNavigate('/support')}><MessageSquare size={14} /></button>
         </div>

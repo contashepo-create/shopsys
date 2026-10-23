@@ -8,7 +8,7 @@
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { appStorage } from './persistentStorage.ts'
+import { appStorage, registerExternalSnapshotApplier } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import { draftFromCategory, nextSku } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
@@ -110,7 +110,7 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask,
-  computeProjectExpenseInvoice, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed } from '../core/contracting.ts'
+  computeProjectExpenseInvoice, DEFAULT_PROJECT_EXPENSE_CATEGORIES, normalizeExpenseCategoryName, computeProjectBillingGuard, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed, type ProjectExpenseCategory, type ProjectBillingGuard, type ProjectBillingNature } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
   buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry, validateUnitMaintenanceMaterials,
@@ -545,7 +545,7 @@ export interface ProjectExtract {
   editReversalEntryId?: number
 }
 
-export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed }
+export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed, ProjectExpenseCategory, ProjectBillingGuard, ProjectBillingNature }
 
 /** تكلفة مسجلة على مشروع ببند أو كفاتورة مصروفات متعددة البنود */
 export interface ProjectCost {
@@ -1496,6 +1496,14 @@ export interface SaleInvoice {
   /** مشروع المقاولات المرتبط — يُنسب إليه إيراد الفاتورة وربحيتها (طلب المالك) */
   projectId?: number | null
   /**
+   * طبيعة فوترة المشروع — النموذج (أ): «documentation» توثيق مقابل مستخلصات
+   * (لا ذمة/إيراد/ضريبة جديدة) أو «extra» فاتورة إضافية كاملة تحت السقف الموحد.
+   * undefined = فاتورة تاريخية رُحّلت كاملة (تُحسب إضافية في الحارس).
+   */
+  projectBilling?: ProjectBillingNature
+  /** المستخلصات الموثَّقة بهذه الفاتورة (لطبيعة التوثيق) */
+  extractIds?: number[]
+  /**
    * روشتة مرفقة بالفاتورة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة
    * المنظَّمة الجاهز فعلاً في وحدة العيادة (`core/prescription.ts`) مُعاد
    * استخدامه هنا مباشرة على مستوى الفاتورة — بلا حاجة لملف مريض/زيارة
@@ -1517,6 +1525,8 @@ export interface SaleReturn {
   lines: ReturnLine[]
   totals: CartTotals
   journalEntryId: number
+  /** مرتجع فاتورة توثيق مشروعات (النموذج أ): يخفض «الموثَّق» فقط، ويُستثنى من تجميعات المرتجعات المالية */
+  projectBilling?: ProjectBillingNature
   reason: string
   /** كود سبب موحد (RETURN_REASONS) — undefined = سجل قديم/سبب حر */
   reasonCode?: string
@@ -1711,6 +1721,8 @@ interface DataState {
   deletePendingPartOrder: (id: number) => void
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
+  /** تصنيفات مصروفات المشروعات الحرة (تنمو من «أخرى…» في نافذة المصروف وتُحفظ دائماً) */
+  projectExpenseCategories: ProjectExpenseCategory[]
   retentionReleases: RetentionRelease[]
   quotations: Quotation[] // عروض أسعار ومناقصات (طلب المالك)
   /* عمق المقاولات (مقارنة pro-acc — طلب المالك) */
@@ -2134,6 +2146,10 @@ interface DataState {
     bookCurrencyCode?: string
     /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
     projectId?: number | null
+    /** طبيعة فوترة المشروع (النموذج أ) — عند إرسالها يُفرض سقف العقد الموحد على «extra» */
+    projectBilling?: ProjectBillingNature
+    /** المستخلصات الموثَّقة (لطبيعة «documentation») */
+    extractIds?: number[]
     /**
      * روشتة مرفقة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة المنظَّمة
      * الجاهز في core/prescription.ts، معاد استخدامه مباشرة على الفاتورة.
@@ -2783,7 +2799,9 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
+  /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
+  addProjectExpenseCategory: (nameAr: string, kind?: CostKind) => ProjectExpenseCategory
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -2848,6 +2866,8 @@ interface DataState {
   getRemainingRetention: (projectId: number) => number
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
+  /** حارس فوترة المشروع (النموذج أ): عقد فعلي/مستخلَص/موثَّق/متاح الآن — لوحة نافذة الفاتورة */
+  getProjectBillingGuard: (projectId: number) => ProjectBillingGuard
   /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
   getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
@@ -5522,6 +5542,7 @@ export const useRawDataStore = create<DataState>()(
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
       projectExtracts: [],
       projectCosts: [],
+      projectExpenseCategories: [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
       retentionReleases: [],
       quotations: [],
       boqItems: [],
@@ -6607,6 +6628,22 @@ export const useRawDataStore = create<DataState>()(
         // البيع بوحدة أكبر (صيدلية: شريط/علبة) — المخزون يُخصم بالوحدة الأساسية qty×factor
         // أصناف الخدمة (isService — نمط Square): لا فحص مخزون ولا خصم ولا تكلفة
         const isServiceItem = (itemId: number) => state.items.find((it) => it.id === itemId)?.isService === true
+        /* فاتورة توثيق مستخلصات (النموذج أ — أ-٢): مستند ضريبي صامت دفترياً.
+           التحققات المبكرة هنا قبل أي تخطيط مخزون: سطورها بنود خدمية فقط
+           (أعمال المستخلص)، ولا تحصيل/عمولات/مصروفات عليها — المال والذمة
+           والضريبة سبق أن نشأت بالمستخلصات نفسها. السقف يُفحص لاحقاً بحارسه. */
+        const isDocumentation = args.projectBilling === 'documentation'
+        if (isDocumentation) {
+          if (args.customerId == null) throw new Error('فاتورة التوثيق مستند ضريبي — تتطلب عميلاً مسجلاً (عميل المشروع)')
+          if ((args.partyKind ?? 'customer') !== 'customer') throw new Error('فاتورة التوثيق تصدر لعميل المشروع فقط — لا بيع توثيقي على حساب مورد أو موظف')
+          if (saleLines.some((l) => !isServiceItem(l.itemId))) throw new Error('فاتورة التوثيق لأعمال المستخلصات فقط — سطورها بنود خدمية، ولا تُباع بها أصناف مخزنية')
+          if (args.fx || args.terminalPayment) throw new Error('فاتورة التوثيق لا تحصيل عليها — لا عملة أجنبية ولا ماكينة دفع')
+          if (args.paymentAllocations?.length || (args.paidMinor ?? 0) > 0) throw new Error('فاتورة التوثيق لا تحصيل عليها — التحصيل والذمة على المستخلصات نفسها')
+          if ((args.internalExpenses ?? []).length) throw new Error('فاتورة التوثيق بلا مصروفات داخلية — حمّل المصروف على المشروع مباشرة')
+          if ((args.customerCharges ?? []).length) throw new Error('فاتورة التوثيق بلا إضافات على العميل — إجماليها يوازي المستخلصات الموثَّقة')
+          if ((args.staffCommissions ?? []).length || args.staffCommission) throw new Error('فاتورة التوثيق بلا عمولات — العمولة تُستحق على الأعمال نفسها')
+          if (args.dueDate) throw new Error('فاتورة التوثيق بلا تاريخ استحقاق — لا دين جديداً ينشأ بها')
+        }
         for (const l of saleLines) {
           if (isServiceItem(l.itemId)) continue
           saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
@@ -6740,9 +6777,47 @@ export const useRawDataStore = create<DataState>()(
         const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
         const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * args.taxPercent / 100), 0)
         const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
+        /* ── حارس فوترة المشاريع — النموذج (أ) (أ-١ سقف «extra»، أ-٢ توثيق) ──
+           يُفرض فقط حين تُرسل الواجهة طبيعة الفوترة صراحة؛ المسار التاريخي
+           (بلا طبيعة) لا يتغيّر حتى تُلزم الواجهة الطبيعة لفواتير المشروعات.
+           «extra»: سقف موحد بصافي الأعمال. «documentation»: سقفها المستخلَص
+           غير الموثَّق شامل الضريبة، وترحيلها صامت دفترياً (قيد تذكاري فقط). */
+        if (args.projectBilling) {
+          if (args.projectId == null) throw new Error('طبيعة فوترة المشروع تتطلب اختيار المشروع المرتبط بالفاتورة')
+          const branchState = getBranchScopedDataState(state)
+          const billingProject = branchState.projects.find((p) => p.id === args.projectId)
+          if (!billingProject) throw new Error('المشروع المرتبط بالفاتورة غير موجود في هذا الفرع')
+          const projectInvoices = branchState.sales.filter((inv) => inv.projectId === billingProject.id)
+          const projectInvoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+          const billingGuard = computeProjectBillingGuard({
+            contractValueMinor: billingProject.contractValueMinor,
+            changeOrders: branchState.changeOrders.filter((o) => o.projectId === billingProject.id),
+            extracts: branchState.projectExtracts.filter((e) => e.projectId === billingProject.id),
+            saleInvoices: projectInvoices,
+            saleReturns: branchState.saleReturns.filter((r) => projectInvoiceIds.has(r.saleId)),
+          })
+          if (args.projectBilling === 'documentation') {
+            /* تُسمح حتى للمشروع المقفل: ورقة ضريبية لأعمال منجزة ومُستخلَصة،
+               لا فوترة جديدة — ورفضها بعد الإقفال يحبس التوثيق الضريبي. */
+            if (!args.extractIds?.length) throw new Error('حدد المستخلصات الموثَّقة بهذه الفاتورة — التوثيق دائماً مقابل مستخلصات بأعينها')
+            const projectExtracts = branchState.projectExtracts.filter((e) => e.projectId === billingProject.id)
+            const unknownExtract = args.extractIds.find((id) => !projectExtracts.some((e) => e.id === id))
+            if (unknownExtract != null) throw new Error(`المستخلص #${unknownExtract} لا يخص مشروع «${billingProject.nameAr}»`)
+            if (billingProject.clientId != null && args.customerId !== billingProject.clientId) throw new Error('فاتورة التوثيق تصدر لعميل المشروع نفسه — المستخلصات على ذمته')
+            if (totals.totalMinor > billingGuard.availableToDocumentGrossMinor) {
+              throw new Error(`سقف توثيق المشروع «${billingProject.nameAr}»: إجمالي الفاتورة (${totals.totalMinor}) يتجاوز المستخلَص غير الموثَّق (${billingGuard.availableToDocumentGrossMinor}) — شامل الضريبة بالوحدة الصغرى (موثَّق سابقاً ${billingGuard.documentedGrossMinor}). التوثيق لا يفوتر عملاً جديداً؛ للأعمال خارج المستخلصات استخدم طبيعة «إضافية».`)
+            }
+          } else {
+            if (billingProject.status === 'completed') throw new Error('المشروع مقفل — لا فواتير إضافية جديدة عليه')
+            const invoiceWorksNet = totals.totalMinor - totals.taxMinor
+            if (invoiceWorksNet > billingGuard.extraRoomNetMinor) {
+              throw new Error(`سقف فوترة المشروع «${billingProject.nameAr}»: صافي هذه الفاتورة الإضافية (${invoiceWorksNet}) يتجاوز المتاح من العقد الفعلي (${billingGuard.extraRoomNetMinor}) — مستخلصات ${billingGuard.extractedNetMinor} + إضافيات سابقة ${billingGuard.extraInvoicedNetMinor} من عقد فعلي ${billingGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى). وثّق مقابل المستخلصات أو اعتمد أمر تغيير أولاً.`)
+            }
+          }
+        }
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const allocationPaid = args.paymentAllocations?.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
-        const paidM = allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+        const paidM = isDocumentation ? 0 : allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
         // العملة الثانية: الدفتر أحادي العملة، فالمرحَّل هو حاصل التحويل — ويجب أن يطابق ما أرسلته الشاشة
         let saleFxLeg: FxLeg | null = null
         if (args.fx) {
@@ -6793,7 +6868,7 @@ export const useRawDataStore = create<DataState>()(
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
         // يُفحص لحظة الترحيل — رصيده + الآجل الجديد ≤ حده، والتجاوز بموافقة مدير مسجلة
         const newCredit = totals.totalMinor - paidM
-        if (newCredit > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
+        if (!isDocumentation && newCredit > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
           if (cust && cust.creditLimitMinor > 0) {
             const balance = get().getCustomerBalance(cust.id)
@@ -6806,7 +6881,9 @@ export const useRawDataStore = create<DataState>()(
           receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
           receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
         }
-        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
+        /* توثيق ⇒ بلا سطور قيد: يولد قيد «تذكاري» فارغ يربط المستند بدفتره
+           (قرار 9: كل مستند مربوط بقيده) بلا أي أثر على الأرصدة */
+        const entryLines = isDocumentation ? [] : args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
         const internalExpenses = args.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -6833,7 +6910,7 @@ export const useRawDataStore = create<DataState>()(
           if (errors.length) throw new Error(errors.join(' — '))
         }
         entryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury ?? '1101'))
-        assertBalanced(entryLines)
+        if (!isDocumentation) assertBalanced(entryLines)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
         /* الختم بالتوقيت المحلي: تاريخ القيد/الفاتورة = يوم المستخدم، والوقت
@@ -6848,10 +6925,11 @@ export const useRawDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
+          description: isDocumentation ? `فاتورة توثيق ${invoiceNumber} — مستند ضريبي مقابل مستخلصات مشروع (بلا أثر دفتري)` : `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: 'sale',
           sourceId: saleId,
           lines: entryLines,
+          ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
@@ -6869,7 +6947,7 @@ export const useRawDataStore = create<DataState>()(
           partyName: salePartyKind === 'customer' ? null : args.partyName
             ?? (salePartyKind === 'supplier' ? state.suppliers.find((p) => p.id === salePartyId)?.nameAr : state.employees.find((p) => p.id === salePartyId)?.nameAr)
             ?? null,
-          payment: args.payment,
+          payment: isDocumentation ? 'credit' : args.payment,
           paidMinor: paidM,
           treasury: args.treasury ?? '1101',
           paymentAllocations: args.paymentAllocations,
@@ -6891,6 +6969,8 @@ export const useRawDataStore = create<DataState>()(
           notes: args.notes?.trim() || undefined,
           fx: saleFxLeg,
           projectId: args.projectId ?? null,
+          ...(args.projectId != null && args.projectBilling ? { projectBilling: args.projectBilling } : {}),
+          ...(args.projectId != null && args.extractIds && args.extractIds.length ? { extractIds: [...args.extractIds] } : {}),
           prescription: args.prescription
             ? (() => {
                 if (!args.prescription!.patientName.trim()) throw new Error('اسم المريض مطلوب في الروشتة المرفقة')
@@ -6927,7 +7007,7 @@ export const useRawDataStore = create<DataState>()(
         // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
         const loyaltySettings = readLoyaltySettings()
         const decimals = readCurrencyDecimals()
-        const earned = args.customerId != null ? earnedPoints(totals.totalMinor, decimals, loyaltySettings) : 0
+        const earned = !isDocumentation && args.customerId != null ? earnedPoints(totals.totalMinor, decimals, loyaltySettings) : 0
 
         // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
         const updatedItems = state.items.map((it) =>
@@ -6981,6 +7061,10 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        /* مرتجع توثيق (النموذج أ — أ-٢): يخفض «الموثَّق» في حارس المشروع فقط —
+           لا نقد يعود ولا ذمة تتغير، لأن مال الفاتورة لم يتحرك بدفترها أصلاً */
+        const isDocReturn = sale.projectBilling === 'documentation'
+        if (isDocReturn && args.refund !== 'credit') throw new Error('مرتجع فاتورة التوثيق يكون «تخفيضاً» فقط — لا رد نقدي ولا رصيد عميل، لأنه يصحّح ورقة ضريبية لا عملية مالية')
         // بوابة اعتماد المستندات (خطة ③): مرتجع خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!args.__approvalBypass) {
           const returnedMinor = args.lineSpecs?.length
@@ -7073,7 +7157,7 @@ export const useRawDataStore = create<DataState>()(
           const errors = validateTreasuryAccess(user?.treasuryAccess, refundTreasury, 'refund', alloc.cashMinor)
           if (errors.length) throw new Error(errors.join(' — '))
         }
-        const entryLines = buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
+        const entryLines = isDocReturn ? [] : buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
@@ -7084,10 +7168,11 @@ export const useRawDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `مرتجع مبيعات ${returnNumber} عن الفاتورة ${sale.invoiceNumber}`,
+          description: isDocReturn ? `مرتجع توثيق ${returnNumber} عن فاتورة التوثيق ${sale.invoiceNumber} — تصحيح ورقة ضريبية (بلا أثر دفتري)` : `مرتجع مبيعات ${returnNumber} عن الفاتورة ${sale.invoiceNumber}`,
           sourceType: 'sale_return',
           sourceId: returnId,
           lines: entryLines,
+          ...(isDocReturn ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
@@ -7116,6 +7201,7 @@ export const useRawDataStore = create<DataState>()(
           lines,
           totals,
           journalEntryId: entryId,
+          ...(isDocReturn ? { projectBilling: 'documentation' as const } : {}),
           reason: args.reason,
           ...(args.reasonCode ? { reasonCode: args.reasonCode } : {}),
           treasury: refundTreasury,
@@ -7159,6 +7245,7 @@ export const useRawDataStore = create<DataState>()(
         const qtyBack = new Map<number, number>()
         const valueBack = new Map<number, number>()
         for (const l of lines) {
+          if (isDocReturn) break // أعمال موثَّقة خدمية — لم يُخصم مخزون أصلاً كي يرجع
           if (isDish(l.itemId)) continue // الطبق بلا مخزون — لا عودة
           if (l.condition === 'damaged') continue // تالف: لا يدخل المخزون — تكلفته في 5111 بالقيد
           // سطر بوحدة أكبر: يعود للمخزون بالوحدة الأساسية qty×factor وبقيمته الكاملة
@@ -7946,6 +8033,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((x) => x.id === args.originalSaleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        if (sale.projectBilling === 'documentation') throw new Error('فاتورة التوثيق لا تُستبدل — مستند ضريبي بلا سلعة ولا تحصيل؛ صحّحها بمرتجع توثيق')
         const retLinesForValidation = args.returnLineSpecs?.length
           ? args.returnLineSpecs.map((s) => ({ itemId: sale.lines[s.lineIndex]?.itemId ?? -1, qty: s.qty }))
           : [...(args.returnQtyByItem ?? new Map())].map(([itemId, qty]) => ({ itemId, qty }))
@@ -8750,6 +8838,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (sale.projectBilling === 'documentation') throw new Error('فاتورة التوثيق لا تُعدَّل — صحّحها بمرتجع توثيق ثم فاتورة توثيق جديدة (تعديلها يرحّلها فوترة كاملة مكررة فوق المستخلصات)')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'sale' && row.documentId === String(sale.id))) throw new Error('لا يمكن تعديل فاتورة محصلة بالماكينة؛ استخدم مرتجعاً مرتبطاً بالأصل ثم أصدر فاتورة جديدة')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
@@ -8832,6 +8921,28 @@ export const useRawDataStore = create<DataState>()(
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('الفاتورة محصلة بالكامل ولا تحتاج تاريخ استحقاق')
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
+        /* النموذج أ عند التعديل: الفاتورة الإضافية (أو التاريخية المرتبطة بمشروع)
+           تُعاد محاكمتها لسقف العقد الموحد بعد استبعاد نسختها القديمة من الحساب —
+           وإلا صار «التعديل» باباً خلفياً لتجاوز العقد فوق المستخلصات */
+        if (sale.projectId != null) {
+          const branchState = getBranchScopedDataState(state)
+          const editProject = branchState.projects.find((p) => p.id === sale.projectId)
+          if (editProject) {
+            const otherInvoices = branchState.sales.filter((inv) => inv.projectId === editProject.id && inv.id !== sale.id)
+            const otherIds = new Set(otherInvoices.map((inv) => inv.id))
+            const editGuard = computeProjectBillingGuard({
+              contractValueMinor: editProject.contractValueMinor,
+              changeOrders: branchState.changeOrders.filter((o) => o.projectId === editProject.id),
+              extracts: branchState.projectExtracts.filter((e) => e.projectId === editProject.id),
+              saleInvoices: otherInvoices,
+              saleReturns: branchState.saleReturns.filter((r) => otherIds.has(r.saleId)),
+            })
+            const editedWorksNet = totals.totalMinor - totals.taxMinor
+            if (editedWorksNet > editGuard.extraRoomNetMinor) {
+              throw new Error(`سقف فوترة المشروع «${editProject.nameAr}»: صافي الفاتورة بعد التعديل (${editedWorksNet}) يتجاوز المتاح من العقد الفعلي (${editGuard.extraRoomNetMinor}) بعد استبعاد نسختها القديمة — مستخلصات ${editGuard.extractedNetMinor} + إضافيات أخرى ${editGuard.extraInvoicedNetMinor} من عقد فعلي ${editGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى).`)
+            }
+          }
+        }
         const newCreditPart = totals.totalMinor - paidM
         if (newCreditPart > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
@@ -13614,6 +13725,17 @@ export const useRawDataStore = create<DataState>()(
           journal: [...state.journal, entry],
         })
       },
+      addProjectExpenseCategory: (nameAr, kind) => {
+        const clean = nameAr.trim().replace(/\s+/g, ' ')
+        if (!clean) throw new Error('اسم التصنيف مطلوب')
+        const state = get()
+        const list = state.projectExpenseCategories ?? []
+        const existing = list.find((c) => normalizeExpenseCategoryName(c.nameAr) === normalizeExpenseCategoryName(clean))
+        if (existing) return existing
+        const cat: ProjectExpenseCategory = { id: nextId(list), nameAr: clean, kind: kind ?? 'other' }
+        set({ projectExpenseCategories: [...list, cat] })
+        return cat
+      },
       addProjectCost: (args) => {
         const state = get()
         const branchState = getBranchScopedDataState(state)
@@ -13628,7 +13750,14 @@ export const useRawDataStore = create<DataState>()(
         let resolvedDescription = args.description?.trim() ?? ''
         let computedLines: ProjectExpenseLineComputed[] | undefined
         if (args.lines && args.lines.length > 0) {
-          const inv = computeProjectExpenseInvoice(args.lines, args.defaultVatPercent ?? 14)
+          // التصنيف الحر عند حضوره هو مرجع kind والاسم — لا نثق بما أرسلته الواجهة
+          const resolvedLines = args.lines.map((line) => {
+            if (line.categoryId == null) return line
+            const cat = (state.projectExpenseCategories ?? []).find((c) => c.id === line.categoryId)
+            if (!cat) throw new Error(`تصنيف المصروف غير موجود في قائمة المنشأة (${line.categoryNameAr?.trim() || line.categoryId})`)
+            return { ...line, kind: cat.kind, categoryNameAr: cat.nameAr }
+          })
+          const inv = computeProjectExpenseInvoice(resolvedLines, args.defaultVatPercent ?? 14)
           netCostMinor = inv.netMinor
           vatCostMinor = inv.vatMinor
           resolvedKind = args.kind ?? inv.primaryKind
@@ -13671,11 +13800,14 @@ export const useRawDataStore = create<DataState>()(
         const lines = buildProjectCostEntry(netCostMinor, resolvedPayment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor)
           .map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = localIsoTimestamp()
+        // تاريخ المستند اختياري (مصروف بأثر رجعي) — بصيغة YYYY-MM-DD وإلا اليوم
+        const expenseDate = args.date && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : null
+        const costDate = expenseDate ? `${expenseDate}${now.slice(10)}` : now
         const id = nextId(state.projectCosts)
         const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: expenseDate ?? now.slice(0, 10),
           description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — دفع من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -13684,7 +13816,7 @@ export const useRawDataStore = create<DataState>()(
           id,
           expenseNumber,
           ...(args.invoiceRef?.trim() ? { invoiceRef: args.invoiceRef.trim() } : {}),
-          projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: resolvedKind,
+          projectId: project.id, costCenterId: args.costCenterId ?? null, date: costDate, kind: resolvedKind,
           description: resolvedDescription, amountMinor: netCostMinor,
           ...(vatCostMinor > 0 ? { vatMinor: vatCostMinor } : {}),
           grossMinor: grossCostMinor,
@@ -13699,7 +13831,7 @@ export const useRawDataStore = create<DataState>()(
         if (custodyFile && paidCostMinor > 0) {
           custodyTxs = [...state.custodyTxs, {
             id: nextId(state.custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
-            date: now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
+            date: expenseDate ?? now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
             description: `المدفوع من تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]
@@ -13771,6 +13903,20 @@ export const useRawDataStore = create<DataState>()(
         return { manual, subCertificates, dailyWork, purchases, materialIssues, purchaseReturns, totals: { ...totals, allMinor: totals.manualMinor + totals.subMinor + totals.dailyMinor + totals.purchasesMinor + totals.materialIssuesMinor - totals.returnsMinor } }
       },
 
+      getProjectBillingGuard: (projectId) => {
+        const state = getBranchScopedDataState(get())
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const projectInvoices = state.sales.filter((inv) => inv.projectId === projectId)
+        const invoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+        return computeProjectBillingGuard({
+          contractValueMinor: project.contractValueMinor,
+          changeOrders: state.changeOrders.filter((o) => o.projectId === projectId),
+          extracts: state.projectExtracts.filter((e) => e.projectId === projectId),
+          saleInvoices: projectInvoices,
+          saleReturns: state.saleReturns.filter((r) => invoiceIds.has(r.saleId)),
+        })
+      },
       getProjectProfit: (projectId) => {
         const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
@@ -14303,6 +14449,9 @@ export const useRawDataStore = create<DataState>()(
         // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
         for (const sale of state.sales) {
           if (sale.customerId !== customerId) continue
+          /* فاتورة توثيق مستخلصات (النموذج أ): لا ذمة بها — الذمة على
+             المستخلص نفسه؛ عرضها هنا يجعل معالج التحصيل يسدد الدين مرتين */
+          if (sale.projectBilling === 'documentation') continue
           const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
           const creditPart = sale.totals.totalMinor - paid
           if (creditPart <= 0) continue
@@ -17539,6 +17688,7 @@ export const useRawDataStore = create<DataState>()(
           })),
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
+          projectExpenseCategories: s.projectExpenseCategories && s.projectExpenseCategories.length ? s.projectExpenseCategories : [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
           retentionReleases: s.retentionReleases ?? [],
           clinicVisits: s.clinicVisits ?? [],
           treatmentPlans: s.treatmentPlans ?? [],
@@ -17638,3 +17788,10 @@ const scopedStoreApi = {
 
 export const useDataStore = Object.assign(useScopedDataStore, scopedStoreApi) as typeof useRawDataStore
 
+/* نوافذ الأقمار الحرة (سطح المكتب): حين تحفظ نافذة أخرى لقطة «shopsys-data»
+   تُبطل persistentStorage ذاكرتها ثم ينادينا هنا — إعادة الترطيب تطبّق أحدث
+   حالة على المتجر الخام (والمصفّى بالفرع يشتق منه) بلا كتابة صدى راجعة.
+   في الويب والاختبارات لا يصل الحدث أصلاً فالتسجيل خامل. */
+registerExternalSnapshotApplier((storeName) => {
+  if (storeName === 'shopsys-data') void useRawDataStore.persist.rehydrate()
+})
