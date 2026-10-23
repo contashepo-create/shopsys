@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { SmartEntry } from '../components/smartEntry.ts'
+import { desktopWindowsBridge, type DesktopWindowsBridge, type SatelliteRegistryEntry } from '../../data/desktopBridge.ts'
+import { getSelfWindowId } from './satelliteState.ts'
 
 /**
  * نظام النوافذ المستقلة (طلب المالك):
@@ -156,16 +158,129 @@ export interface WindowStoreState {
   setWindowTitle: (id: string, title: string, subtitle?: string) => void
 }
 
+/* ─── نقل النوافذ الحرة لسطح المكتب (قرار المالك 2026-10-22) ───────────────
+   على سطح المكتب فقط: openWindow لا يرسم نافذة عائمة داخلية بل يطلب من
+   العملية الرئيسية نافذة نظام حرة (satelliteWindows.ts). الدوال في الخصائص
+   (onPick/onSaved…) لا تعبر IPC — تُسجَّل هنا برقم الطلب، والقمر يستدعيها
+   عبر قناة prop-invoke فتُنفَّذ عند أمّها كأنها محلية. في الويب لا جسر،
+   فيبقى كل هذا خاملاً والمسار الداخلي كما هو حرفياً. */
+type PropFn = (...args: unknown[]) => unknown
+const pendingCallbacks = new Map<string, Record<string, PropFn>>() // requestId → ردود النداء
+const satelliteByDedupe = new Map<string, string>() // dedupeKey → windowId
+const satelliteIds = new Map<string, string | null>() // windowId → requestId
+let transportInstalled = false
+
+function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
+  const alive = new Set<string>()
+  satelliteByDedupe.clear()
+  for (const entry of entries) {
+    alive.add(entry.windowId)
+    if (entry.dedupeKey) satelliteByDedupe.set(entry.dedupeKey, entry.windowId)
+    if (!satelliteIds.has(entry.windowId)) satelliteIds.set(entry.windowId, null)
+  }
+  for (const [id, requestId] of [...satelliteIds]) {
+    if (!alive.has(id)) {
+      satelliteIds.delete(id)
+      if (requestId) pendingCallbacks.delete(requestId)
+    }
+  }
+}
+
+function installDesktopTransport(bridge: DesktopWindowsBridge): void {
+  if (transportInstalled) return
+  transportInstalled = true
+  bridge.onPropInvoke(({ requestId, prop, args }) => {
+    const fn = pendingCallbacks.get(requestId)?.[prop]
+    if (!fn) return
+    try { fn(...(Array.isArray(args) ? args : [])) } catch { /* خطأ في رد النداء عند الصفحة لا يكسر القناة */ }
+  })
+  bridge.onRegistry(syncSatelliteMirror)
+  void bridge.list().then(syncSatelliteMirror).catch(() => undefined)
+}
+
+function desktopBridge(): DesktopWindowsBridge | null {
+  const bridge = desktopWindowsBridge()
+  if (bridge) installDesktopTransport(bridge)
+  return bridge
+}
+
+/** جسر صالح للتعامل مع هذا المعرّف كنافذة نظام (قمر معروف أو نافذتي نفسها) */
+function satelliteBridgeFor(id: string): DesktopWindowsBridge | null {
+  const bridge = desktopBridge()
+  if (!bridge) return null
+  return satelliteIds.has(id) || id === getSelfWindowId() ? bridge : null
+}
+
+function newWindowId(): string {
+  return `win-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInput): string {
+  if (input.dedupeKey) {
+    const existingId = satelliteByDedupe.get(input.dedupeKey)
+    if (existingId) { bridge.focus(existingId); return existingId }
+  }
+  const id = newWindowId()
+  const requestId = `req-${id}`
+  const fns: Record<string, PropFn> = {}
+  const props: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input.props ?? {})) {
+    if (typeof value === 'function') {
+      /* itemMeta/amountLabel دوال عرض متزامنة تُستدعى أثناء الرسم — لا يمكن
+         تمريرها عبر IPC؛ نافذة القمر تبني افتراضيات مكافئة من متجرها الحي */
+      if (input.kind === 'item-picker' && (key === 'itemMeta' || key === 'amountLabel')) continue
+      fns[key] = value as PropFn
+    } else if (input.kind === 'item-picker' && key === 'items') {
+      /* قائمة الأصناف ضخمة والقمر يملك المتجر كاملاً — علامة بدل النسخ */
+      props.itemsFromStore = true
+    } else {
+      props[key] = value
+    }
+  }
+  const hasCallbacks = Object.keys(fns).length > 0
+  if (hasCallbacks) pendingCallbacks.set(requestId, fns)
+  satelliteIds.set(id, hasCallbacks ? requestId : null)
+  if (input.dedupeKey) satelliteByDedupe.set(input.dedupeKey, id)
+  void bridge.open({
+    windowId: id,
+    kind: input.kind,
+    title: input.title,
+    subtitle: input.subtitle ?? '',
+    props,
+    callbackNames: Object.keys(fns),
+    requestId,
+    parentId: input.parentId ?? getSelfWindowId(),
+    dedupeKey: input.dedupeKey ?? null,
+    width: input.width ?? 1180,
+    height: input.height ?? 760,
+    mode: input.mode ?? 'normal',
+  }).catch(() => { /* العملية الرئيسية تسجّل الفشل — لا حالة محلية تُفقد */ })
+  return id
+}
+
+/**
+ * فتح قسم كنافذة نظام حرة (نسخة واحدة لكل مسار — قرار المالك).
+ * يعيد true إذا تولّى سطح المكتب الفتح؛ في الويب false فيتنقل المستدعي داخلياً.
+ */
+export function openSectionWindow(path: string, title: string): boolean {
+  const bridge = desktopBridge()
+  if (!bridge || !path || path === '/') return false
+  void bridge.openSection({ path, title }).catch(() => undefined)
+  return true
+}
+
 export const useWindowStore = create<WindowStoreState>((set, get) => ({
   windows: [],
   topZ: BASE_Z,
   openWindow: (input) => {
+    const bridge = desktopBridge()
+    if (bridge) return openSatelliteWindow(bridge, input)
     const state = get()
     if (input.dedupeKey) {
       const existing = state.windows.find((win) => win.dedupeKey === input.dedupeKey)
       if (existing) { get().focusWindow(existing.id); return existing.id }
     }
-    const id = `win-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const id = newWindowId()
     const rect = input.x != null && input.y != null
       ? clampRect({ x: input.x, y: input.y, w: input.width ?? 1180, h: input.height ?? 760 })
       : cascadeRect(state.windows.length, input.width ?? 1180, input.height ?? 760)
@@ -191,6 +306,8 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     return id
   },
   closeWindow: (id) => {
+    const sat = satelliteBridgeFor(id)
+    if (sat) { sat.requestClose(id); return }
     set((state) => {
       const doomed = new Set<string>([id])
       // إغلاق الأم يغلق بناتها فقط — لا شيء غيرها
@@ -205,6 +322,8 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     })
   },
   requestCloseWindow: (id) => {
+    const sat = satelliteBridgeFor(id)
+    if (sat) { sat.requestClose(id); return }
     const win = get().windows.find((row) => row.id === id)
     if (!win) return
     if (!win.dirty) { get().closeWindow(id); return }
@@ -230,6 +349,8 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
   },
   closeAll: () => set({ windows: [] }),
   focusWindow: (id) => {
+    const sat = satelliteBridgeFor(id)
+    if (sat) { sat.focus(id); return }
     const state = get()
     const win = state.windows.find((row) => row.id === id)
     if (!win) return
@@ -239,9 +360,13 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set(z > MAX_WINDOW_Z ? renumber(raised, id) : { topZ: z, windows: raised })
   },
   minimizeWindow: (id) => {
+    const sat = satelliteBridgeFor(id)
+    if (sat) { sat.minimize(id); return }
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, mode: 'minimized' } : row)) }))
   },
   toggleMaximizeWindow: (id) => {
+    const sat = satelliteBridgeFor(id)
+    if (sat) { sat.toggleMaximize(id); return }
     set((state) => ({
       windows: state.windows.map((row) => {
         if (row.id !== id) return row
@@ -251,6 +376,8 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     }))
   },
   restoreWindow: (id) => {
+    const sat = satelliteBridgeFor(id)
+    if (sat) { sat.focus(id); return }
     get().focusWindow(id)
     set((state) => ({ windows: state.windows.map((row) => (row.id === id && row.mode === 'minimized' ? { ...row, mode: 'normal' } : row)) }))
   },
@@ -261,11 +388,13 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, rect: clampRect(rect), lastRect: clampRect(rect) } : row)) }))
   },
   setWindowDirty: (id, dirty) => {
+    if (id === getSelfWindowId()) desktopBridge()?.setDirty(dirty)
     set((state) => (state.windows.some((row) => row.id === id && row.dirty !== dirty)
       ? { windows: state.windows.map((row) => (row.id === id ? { ...row, dirty } : row)) }
       : {}))
   },
   setWindowTitle: (id, title, subtitle) => {
+    if (id === getSelfWindowId()) desktopBridge()?.setTitle(title)
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, title, subtitle: subtitle ?? row.subtitle } : row)) }))
   },
 }))
@@ -481,6 +610,7 @@ type SessionWindow = { kind: AppWindowKind; title: string; subtitle: string; pro
 
 export function saveWindowSession(): void {
   if (typeof localStorage === 'undefined') return
+  if (desktopBridge()) { localStorage.removeItem(SESSION_KEY); return }
   const rows: SessionWindow[] = useWindowStore.getState().windows
     .filter((win) => RESTORABLE.includes(win.kind))
     .map((win) => ({ kind: win.kind, title: win.title, subtitle: win.subtitle, props: win.props, mode: win.mode, rect: win.rect }))
@@ -491,6 +621,7 @@ export function saveWindowSession(): void {
 /** يُستدعى مرة عند الإقلاع — يعيد فتح ما كان مفتوحاً ويرجع عددها */
 export function restoreWindowSession(): number {
   if (typeof localStorage === 'undefined') return 0
+  if (desktopBridge()) return 0 /* الأقمار الحرة لا تُستعاد كنوافذ داخلية */
   let rows: SessionWindow[] = []
   try { rows = JSON.parse(localStorage.getItem(SESSION_KEY) ?? '[]') as SessionWindow[] } catch { return 0 }
   if (!Array.isArray(rows) || !rows.length) return 0

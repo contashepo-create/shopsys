@@ -7,6 +7,7 @@ import { FloatingWindow } from './FloatingWindow.tsx'
 import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
 import { ProjectExpenseWindowView } from './ProjectExpenseWindowView.tsx'
 import { EntityPickerWindowView, ProjectEditorWindowView, EmployeeEditorWindowView } from './EntityPickerWindows.tsx'
+import { isDesktopFreeWindows } from '../../data/desktopBridge.ts'
 
 /* الفواتير ثقيلة — تُحمَّل عند أول فتح نافذة فقط */
 const SalesInvoiceWindowView = lazy(() => import('../pages/AdvancedSalesInvoicePage.tsx').then((mod) => ({ default: mod.AdvancedSalesInvoicePage })))
@@ -48,8 +49,9 @@ const ICONS: Record<AppWindowKind, typeof FileText> = {
   'employee-editor': IdCard,
 }
 
-function WindowContent({ win }: { win: AppWindow }) {
-  switch (win.kind) {
+/** محتوى العرض بصنفه — يستعمله المضيف الداخلي (ويب) وجذر نافذة القمر (سطح المكتب) */
+export function WindowViewContent({ kind }: { kind: AppWindowKind }) {
+  switch (kind) {
     case 'sales-invoice': return <SalesInvoiceWindowView />
     case 'purchase-invoice': return <PurchaseInvoiceWindowView />
     case 'item-picker': return <ItemPickerWindowView />
@@ -64,6 +66,10 @@ function WindowContent({ win }: { win: AppWindow }) {
     case 'employee-editor': return <EmployeeEditorWindowView />
     default: return null
   }
+}
+
+function WindowContent({ win }: { win: AppWindow }) {
+  return <WindowViewContent kind={win.kind} />
 }
 
 /**
@@ -85,6 +91,7 @@ export function WindowHost() {
   /* استعادة جلسة النوافذ بعد التحديث (طلب المالك): ما كان مفتوحاً يعود بمقاسه
      وموضعه، ثم يُحفظ أي تغيير تلقائياً. */
   useEffect(() => {
+    if (isDesktopFreeWindows()) return /* النوافذ نظامية — لا استعادة داخلية */
     const restored = restoreWindowSession()
     if (restored > 0) useToast.getState().show(`استُعيدت ${restored} نافذة من جلستك السابقة`)
     return watchWindowSession()

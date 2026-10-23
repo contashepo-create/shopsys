@@ -348,16 +348,38 @@ export function ItemPickerWindowView() {
   const initialQuery = String(props.initialQuery ?? '')
   /* القائمة تُحدَّث حيّاً بعد التعديل في النافذة الابنة */
   const liveItems = useDataStore((state) => state.items)
-  const merged = items.map((row) => {
-    const live = liveItems.find((entry) => entry.id === row.id)
-    return live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit } : row
-  })
+  const storeCategories = useDataStore((state) => state.categories)
+  const cur = useCur()
+  /* نافذة قمر حرة (سطح المكتب): القائمة ودوال العرض لا تعبر IPC — تُبنى هنا
+     من متجر هذا القمر الحي نفسه (متزامن مع بقية النوافذ عبر لقطات SQLite) */
+  const fromStore = props.itemsFromStore === true
+  const merged: QuickItem[] = fromStore
+    ? liveItems.map((it) => ({
+      id: it.id, nameAr: it.nameAr, sku: it.sku, barcodes: it.barcodes,
+      stockQty: it.stockQty, priceMinor: it.priceMinor, costMinor: it.costMinor,
+      baseUnit: it.baseUnit, categoryId: it.categoryId, isService: it.isService,
+    }))
+    : items.map((row) => {
+      const live = liveItems.find((entry) => entry.id === row.id)
+      return live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit } : row
+    })
+  const effectiveCategories = categories ?? (fromStore ? storeCategories.map((c) => ({ id: c.id, nameAr: c.nameAr })) : undefined)
+  const effectiveMeta = itemMeta ?? (fromStore
+    ? (item: QuickItem): QuickItemMeta => ({
+      category: storeCategories.find((c) => c.id === item.categoryId)?.nameAr ?? '',
+      unit: item.baseUnit ?? '',
+      stock: item.isService ? 'خدمة' : String(item.stockQty ?? 0),
+      price: formatMinor(item.priceMinor ?? 0, cur, false),
+      cost: formatMinor(item.costMinor ?? 0, cur, false),
+      low: !item.isService && (item.stockQty ?? 0) <= 0,
+    })
+    : undefined)
   return (
     <div className="flex h-full min-h-0 flex-col" data-window-view="item-picker">
       <ItemSearchPanel
         items={merged}
-        itemMeta={itemMeta}
-        categories={categories}
+        itemMeta={effectiveMeta}
+        categories={effectiveCategories}
         amountLabel={amountLabel}
         onCreate={onCreate}
         initialQuery={initialQuery}

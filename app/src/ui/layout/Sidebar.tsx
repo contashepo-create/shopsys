@@ -12,12 +12,24 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
+import { openSectionWindow } from '../windows/windowStore.ts'
+
+function titleForPath(path: string): string {
+  for (const sec of NAV_SECTIONS) {
+    const child = sec.children.find((c) => c.path === path)
+    if (child) return child.nameAr
+  }
+  return 'تَحَكَّم'
+}
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const guardLink = (event: ReactMouseEvent<HTMLAnchorElement>, path: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    /* سطح المكتب (قرار المالك): كل قسم يفتح في نافذة نظام حرة — الرئيسية مشغّل.
+       في الويب يعيد false فنكمل التنقل الداخلي كما هو. */
+    if (openSectionWindow(path, titleForPath(path))) { event.preventDefault(); return }
     if (guardNavigation(() => navigate(path))) event.preventDefault()
   }
   const { setup, updateAppearance } = useAppStore()

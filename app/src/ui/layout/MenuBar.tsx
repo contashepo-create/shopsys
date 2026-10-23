@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as Rea
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, PanelRight, Check, MoreHorizontal } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
+import { openSectionWindow } from '../windows/windowStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { pendingForUser, canApprove } from '../../core/approvals.ts'
@@ -32,6 +33,14 @@ function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
     right: Math.max(8, (window.innerWidth || 1024) - rect.right),
     maxHeight: Math.min(space, Math.round(viewportHeight * 0.75)),
   }
+}
+
+function titleForPath(path: string): string {
+  for (const sec of NAV_SECTIONS) {
+    const child = sec.children.find((c) => c.path === path)
+    if (child) return child.nameAr
+  }
+  return 'تَحَكَّم'
 }
 
 export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }) {
@@ -166,11 +175,14 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   }
   const go = (path: string) => {
     setOpenId(null)
+    /* سطح المكتب: القسم في نافذة نظام حرة (قرار المالك) — الويب تنقل داخلي */
+    if (openSectionWindow(path, titleForPath(path))) return
     if (!guardNavigation(() => navigate(path))) navigate(path)
   }
   const onItemClick = (event: ReactMouseEvent<HTMLAnchorElement>, path: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     setOpenId(null)
+    if (openSectionWindow(path, titleForPath(path))) { event.preventDefault(); return }
     if (guardNavigation(() => navigate(path))) event.preventDefault()
   }
 
