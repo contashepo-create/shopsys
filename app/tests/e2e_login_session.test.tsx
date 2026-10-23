@@ -154,7 +154,8 @@ describe('شاشة الدخول: جلسة جديدة + تذكّر المعرف �
     await waitFor(() => expect(document.querySelector('[role="menubar"]')).toBeTruthy())
 
     // خروج صريح: الزر في الهيدر
-    fireEvent.click(screen.getByTitle('تسجيل خروج — العودة لشاشة الدخول'))
+    fireEvent.click(screen.getByTitle('قائمة المستخدم'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /تسجيل خروج/ }))
     await waitFor(() => expect(useDataStore.getState().loggedOut).toBe(true))
     rerender(<App />)
     await waitFor(() => expect(document.querySelector('[role="menubar"]')).toBeFalsy())

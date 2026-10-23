@@ -202,7 +202,7 @@ it('flush يضم مخزن الإعدادات shopsys-app ومخزن الأعما
     await expect(settings.setItem('shopsys-app', '{}')).rejects.toThrow('إغلاق')
     await expect(data.setItem('shopsys-data', '{}')).rejects.toThrow('إغلاق')
     onResume()
-    await settings.setItem('shopsys-app', '{"state":{"setup":{"completed":true}}}')
+    await settings.setItem('shopsys-app', '{"state":{"setup":{"completed":false}}}')
     await data.setItem('shopsys-data', '{"state":{"balance":54322}}')
     expect(calls).toHaveLength(4)
   } finally { window.shopsysDesktop = previous }

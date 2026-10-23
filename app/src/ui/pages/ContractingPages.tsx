@@ -1534,7 +1534,7 @@ export function ProjectExpensesPage() {
             قسم مستقل لتسجيل فواتير ومصروفات المشروعات ببنود حرة (شامل أو غير شامل الضريبة) وتحميل الصافي على أرباح المشروع
           </p>
         </div>
-        <Btn onClick={() => openProjectExpenseWindow(filterProjectId ? Number(filterProjectId) : undefined)} data-open-project-expense>
+        <Btn onClick={() => openProjectExpenseWindow(filterProjectId ? Number(filterProjectId) : undefined)} data-open-project-expense data-open-project-expense-modal>
           <Plus className="w-4 h-4" /> تسجيل مصروف مشروع جديد
         </Btn>
       </div>

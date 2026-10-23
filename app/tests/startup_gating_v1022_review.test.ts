@@ -19,13 +19,13 @@ describe('مراجعة البوابات قبل الإرسال (v1.0.22)', () => 
     expect(app).toMatch(/const legalAccepted = legal !== null/)
     // تنبيهات المطوّر
     expect(app).toMatch(/if \(!legalAccepted \|\| !useAppStore\.getState\(\)\.setup\.completed\) return/)
-    expect(app).toMatch(/\}, \[setCloudData, legalAccepted\]\)/)
+    expect(app).toMatch(/\}, \[setCloudData, legalAccepted, satelliteBoot\]\)/)
     // مزامنة الترخيص/الأعلام
-    expect(app).toMatch(/useEffect\(\(\) => \{\n    if \(!legalAccepted\) return\n/)
-    expect(app).toMatch(/return \(\) => \{ cancelled = true; clearInterval\(t\) \}\n  \}, \[setCloudData, legalAccepted\]\)/)
+    expect(app).toMatch(/useEffect\(\(\) => \{\n    if \(!legalAccepted \|\| satelliteBoot\) return\n/)
+    expect(app).toMatch(/return \(\) => \{ cancelled = true; clearInterval\(t\) \}\n  \}, \[setCloudData, legalAccepted, satelliteBoot\]\)/)
     // بلاغ التسجيل
-    expect(app).toMatch(/if \(!setup\.completed \|\| !legalAccepted\) return/)
-    expect(app).toMatch(/\}, \[setup\.completed, legalAccepted\]\)/)
+    expect(app).toMatch(/if \(!setup\.completed \|\| !legalAccepted \|\| satelliteBoot\) return/)
+    expect(app).toMatch(/\}, \[setup\.completed, legalAccepted, satelliteBoot\]\)/)
   })
 
   it('worker.js: حدّ /register بالبايت عبر TextEncoder', () => {
