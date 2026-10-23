@@ -134,6 +134,23 @@ export function newJournalEntries(nextPayloadJson: string, previousPayloadJson: 
  * داخل Electron تنتقل اللقطة نفسها إلى SQLite كنص عبر IPC، مع رقم إصدار
  * متفائل يمنع كاتباً قديماً من الكتابة فوق لقطة أحدث؛ enc:v1 للتوافق الرجعي فقط.
  */
+/* ─── نوافذ الأقمار الحرة: تطبيق لقطات كتبتها نافذة أخرى ───────────────────
+   العملية الرئيسية تبثّ «database:snapshot-changed» بعد كل حفظ ناجح. هنا
+   نُبطل الذاكرة الوسيطة ونعيد القراءة في طابور المتجر نفسه، ثم نستدعي
+   المطبّقات المسجلة من المتاجر (persist.rehydrate) فتظهر أحدث حالة فوراً. */
+const externalSnapshotAppliers = new Set<(storeName: string) => void>()
+
+/** تسجيل مطبّق يستدعى بعد إبطال ذاكرة لقطة واردة وإعادة قراءتها */
+export function registerExternalSnapshotApplier(applier: (storeName: string) => void): void {
+  externalSnapshotAppliers.add(applier)
+}
+
+function notifyExternalSnapshotAppliers(storeName: string): void {
+  for (const applier of externalSnapshotAppliers) {
+    try { applier(storeName) } catch { /* مطبّق معطّل لا يكسر مزامنة النوافذ */ }
+  }
+}
+
 export class DesktopStateStorage implements StateStorage {
   private readonly snapshots = new Map<string, CachedSnapshot>()
   private readonly queues = new Map<string, Promise<unknown>>()
@@ -261,6 +278,22 @@ export class DesktopStateStorage implements StateStorage {
     })
   }
 
+  /**
+   * لقطة كتبتها نافذة حرة أخرى (بثّ العملية الرئيسية): تُسلسَل المعالجة في
+   * طابور المتجر نفسه — كتاباتنا المعلّقة تُنجز أولاً، ثم يُبطل المخزن الوسيط
+   * وتُعاد القراءة من SQLite، وأخيراً تُستدعى المطبّقات لتحديث حالة المتجر الحي.
+   */
+  handleExternalChange(name: string): void {
+    if (this.paused || !this.snapshots.has(name) || failedStores.has(name)) return
+    void this.enqueue(name, async () => {
+      this.snapshots.delete(name)
+      await this.load(name)
+    }).then(
+      () => notifyExternalSnapshotAppliers(name),
+      () => undefined, /* فشل القراءة سيظهر عند أول getItem قادم بالمسار المعتاد */
+    )
+  }
+
   setItem(name: string, value: string): Promise<void> {
     if (this.paused) return Promise.reject(new Error('جارٍ حفظ البيانات وإغلاق البرنامج'))
     return this.enqueue(name, async () => {
@@ -268,17 +301,33 @@ export class DesktopStateStorage implements StateStorage {
         throw new Error(`لم تُحمَّل بيانات «${name}» — منع الحفظ حتى لا تُكتب فوقها. ${failedStores.get(name)}`)
       }
       const current = await this.load(name)
-      const idempotencyKey = await snapshotIdempotencyKey(name, current.revision, value)
+      /* حارس الصدى (نوافذ الأقمار): قيمة مطابقة حرفياً لما في القاعدة تعني أن
+         «الحفظ» مجرد انعكاس لتطبيق لقطة واردة من نافذة أخرى — تمريرها كان
+         سيبثّ «تغيّرت اللقطة» من جديد في حلقة لا نهائية بين النوافذ. */
+      if (current.payloadJson === value) return
       // تخزين SQLite النصي مقصود: لا تعتمد البيانات الجديدة على مفتاح جهاز
       // أو safeStorage. اللقطات القديمة تُفك وتُرحّل تلقائياً عند أول قراءة.
-      const result = await this.database.saveSnapshot({
+      const saveFrom = async (base: CachedSnapshot) => this.database.saveSnapshot({
         storeName: name,
-        expectedRevision: current.revision,
+        expectedRevision: base.revision,
         payloadJson: value,
-        idempotencyKey,
-        auditEvents: newAuditEvents(value, current.payloadJson),
-        journalEntries: newJournalEntries(value, current.payloadJson),
+        idempotencyKey: await snapshotIdempotencyKey(name, base.revision, value),
+        auditEvents: newAuditEvents(value, base.payloadJson),
+        journalEntries: newJournalEntries(value, base.payloadJson),
       })
+      let result: Awaited<ReturnType<typeof saveFrom>>
+      try {
+        result = await saveFrom(current)
+      } catch (error) {
+        /* تعارض مراجعة: نافذة حرة أخرى حفظت قبلنا بجزء من الثانية (ذاكرتنا
+           الوسيطة سبقها البثّ). نحدّث المراجعة من القاعدة ونعيد حفظ حالتنا
+           الحالية مرة واحدة بدل إعلان فشل كتابة يُفقد المستخدم عمله للتو. */
+        if (!/تعارض كتابة/.test(error instanceof Error ? error.message : '')) throw error
+        this.snapshots.delete(name)
+        const fresh = await this.load(name)
+        if (fresh.payloadJson === value) return
+        result = await saveFrom(fresh)
+      }
       this.snapshots.set(name, { revision: result.revision, payloadJson: value })
     }, true)
   }
@@ -302,6 +351,7 @@ export class DesktopStateStorage implements StateStorage {
 
 const activeDesktopStores = new Set<DesktopStateStorage>()
 const registeredPersistenceBridges = new WeakSet<object>()
+const registeredSnapshotBridges = new WeakSet<object>()
 
 type DesktopStorageCache = { database: DesktopDatabaseBridge; storage: DesktopStateStorage }
 let appStorageCache: DesktopStorageCache | null = null
@@ -317,6 +367,15 @@ function registerDesktopStorage(storage: DesktopStateStorage): DesktopStateStora
       await Promise.all([...activeDesktopStores].map(store => store.flush()))
     })
     persistence.onResume(() => { for (const store of activeDesktopStores) store.resume() })
+  }
+  /* مزامنة النوافذ الحرة: بثّ «تغيّرت اللقطة» من العملية الرئيسية يُمرَّر
+     لكل مخازن سطح المكتب النشطة في هذه النافذة */
+  const database = bridge?.database
+  if (database?.onSnapshotChanged && !registeredSnapshotBridges.has(database)) {
+    registeredSnapshotBridges.add(database)
+    database.onSnapshotChanged(({ storeName }) => {
+      for (const store of activeDesktopStores) store.handleExternalChange(storeName)
+    })
   }
   return storage
 }

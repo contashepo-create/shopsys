@@ -11,7 +11,7 @@ import { toggleModuleList, effectiveModules, clampModulesToLicense, withDependen
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
-import { settingsAppStorage } from '../data/persistentStorage.ts'
+import { settingsAppStorage, registerExternalSnapshotApplier } from '../data/persistentStorage.ts'
 import { desktopDeviceIdentity } from '../data/desktopBridge.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
@@ -1266,3 +1266,9 @@ useAppStore.setState = ((partial, replace) => {
   if (patch.approvals && (!patch.baseApprovals || patch.baseApprovals === current.baseApprovals)) patch.baseApprovals = patch.approvals
   return rawAppSetState(patch as never, replace as never)
 }) as typeof useAppStore.setState
+
+/* نوافذ الأقمار الحرة (سطح المكتب): إعدادات/مظهر غُيّرت في نافذة أخرى تصل
+   هنا فوراً عبر إعادة ترطيب «shopsys-app» — بما فيها تسجيل الخروج. */
+registerExternalSnapshotApplier((storeName) => {
+  if (storeName === 'shopsys-app') void useAppStore.persist.rehydrate()
+})

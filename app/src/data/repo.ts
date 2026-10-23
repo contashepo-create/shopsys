@@ -8,7 +8,7 @@
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { appStorage } from './persistentStorage.ts'
+import { appStorage, registerExternalSnapshotApplier } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import { draftFromCategory, nextSku } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
@@ -17723,3 +17723,10 @@ const scopedStoreApi = {
 
 export const useDataStore = Object.assign(useScopedDataStore, scopedStoreApi) as typeof useRawDataStore
 
+/* نوافذ الأقمار الحرة (سطح المكتب): حين تحفظ نافذة أخرى لقطة «shopsys-data»
+   تُبطل persistentStorage ذاكرتها ثم ينادينا هنا — إعادة الترطيب تطبّق أحدث
+   حالة على المتجر الخام (والمصفّى بالفرع يشتق منه) بلا كتابة صدى راجعة.
+   في الويب والاختبارات لا يصل الحدث أصلاً فالتسجيل خامل. */
+registerExternalSnapshotApplier((storeName) => {
+  if (storeName === 'shopsys-data') void useRawDataStore.persist.rehydrate()
+})
