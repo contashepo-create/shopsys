@@ -55,7 +55,11 @@ export function BookingsPage() {
     if (errors.length) { toast.show(errors[0], 'error'); return }
     if (draft.id != null) {
       const res = updateBooking(draft.id, draft)
-      toast.show(res.conflicts.length && !draft.allowConflict ? `حُفظ التعديل — تنبيه: يتداخل مع ${res.conflicts.length} موعداً بنفس الوقت` : 'حُفظ تعديل الموعد ✓')
+      if (res.conflicts.length && !draft.allowConflict) {
+        setDraft({ ...draft, allowConflict: true })
+        return // لا يُحفظ تعديل التداخل إلا بعد موافقة صريحة بنقرة ثانية
+      }
+      toast.show(res.conflicts.length ? `حُفظ التعديل — تنبيه: يتداخل مع ${res.conflicts.length} موعداً بنفس الوقت` : 'حُفظ تعديل الموعد ✓')
       setDraft(null)
       return
     }

@@ -3052,7 +3052,7 @@ interface DataState {
   /* ─── المواعيد والحجوزات (وحدة booking) ─── */
   addBooking: (b: Omit<Booking, 'id' | 'status' | 'createdAt'> & { allowConflict?: boolean }) => { booking: Booking; conflicts: Booking[] }
   setBookingStatus: (id: number, status: BookingStatus) => void
-  updateBooking: (id: number, patch: Partial<Omit<Booking, 'id'>>) => { conflicts: Booking[] }
+  updateBooking: (id: number, patch: Partial<Omit<Booking, 'id'>> & { allowConflict?: boolean }) => { conflicts: Booking[] }
   deleteBooking: (id: number) => void
   addAppointment: (a: Omit<ClinicAppointment, 'id' | 'status'>) => ClinicAppointment
   /** يضبط حالة الموعد لأي من الأربع (محجوز/تم/أُلغي/لم يحضر) — سد فجوة النشاط #12 */
@@ -15669,10 +15669,14 @@ export const useRawDataStore = create<DataState>()(
       },
       updateBooking: (id, patch) => {
         const state = get()
-        const merged = { ...state.bookings.find((b) => b.id === id)!, ...patch }
+        const existing = state.bookings.find((b) => b.id === id)
+        if (!existing) throw new Error('الموعد غير موجود')
+        const { allowConflict = false, ...bookingPatch } = patch
+        const merged = { ...existing, ...bookingPatch }
         const errors = validateBooking(merged)
         if (errors.length) throw new Error(errors[0])
         const conflicts = bookingConflicts(state.bookings, merged, id)
+        if (conflicts.length && !allowConflict) return { conflicts }
         set({ bookings: state.bookings.map((b) => (b.id === id ? merged : b)) })
         return { conflicts }
       },
