@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { assertJournalSnapshotSafe } from '../src/core/ledgerSnapshotGuard.ts'
 import type { JournalEntry } from '../src/core/ledger.ts'
+import type { FiscalYear } from '../src/core/fiscal.ts'
 
 const entry = (sourceType: JournalEntry['sourceType'], sourceId: number | null, options: Partial<JournalEntry> = {}): JournalEntry => ({
   id: options.id ?? 1,
@@ -47,6 +48,17 @@ describe('حارس دفتر النسخ/المزامنة', () => {
       vouchers: [{ id: 8, branchId: 1 }],
       advanceRepayments: [{ id: 7, branchId: 1 }],
     }))).toThrow('غير موجود')
+  })
+
+  it('يتحقق من مرجع إقفال السنة مقابل السنوات المالية داخل اللقطة الواردة لا الحالة المحلية', () => {
+    const closing = entry('year_closing', 4, { sourceCollection: 'fiscalYears', branchId: 2 })
+    const incomingYears: FiscalYear[] = [{ id: 4, branchId: 2, status: 'closed', startDate: '2025-01-01', endDate: '2025-12-31', nameAr: '2025' }]
+    const incoming = snapshot([closing], { fiscalYears: incomingYears })
+    expect(() => assertJournalSnapshotSafe(incoming)).not.toThrow()
+    // Sync snapshots may not carry app settings; then use the separately supplied local fiscal years.
+    expect(() => assertJournalSnapshotSafe(snapshot([closing]), incomingYears)).not.toThrow()
+    expect(() => assertJournalSnapshotSafe(snapshot([closing], { fiscalYears: [{ ...incomingYears[0], id: 5 }] }))).toThrow('غير موجود')
+    expect(() => assertJournalSnapshotSafe(snapshot([closing], { fiscalYears: [{ ...incomingYears[0], branchId: 7 }] }))).toThrow('فرع آخر')
   })
 
   it('يرفض القيد الحديث المختلط بلا مجموعة، ويحافظ على اللقطات التاريخية بلا تخمين', () => {

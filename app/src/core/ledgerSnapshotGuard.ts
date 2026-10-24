@@ -59,12 +59,16 @@ export function assertJournalSnapshotSafe(
   }
   sourceDocumentIndexes.payroll = payrollIndex
 
+  const referenceFiscalYears = Array.isArray(snapshot.fiscalYears)
+    ? snapshot.fiscalYears.filter((year): year is Record<string, unknown> => Boolean(year) && typeof year === 'object')
+    : fiscalYears
+
   const sourceCollectionIndexes: Record<string, ReadonlyMap<number, number | null | undefined>> = {}
   for (const entry of journal) {
     const collection = entry.sourceCollection
     if (!collection || sourceCollectionIndexes[collection]) continue
     if (collection === 'fiscalYears') {
-      sourceCollectionIndexes[collection] = new Map(fiscalYears.map((year) => [year.id, year.branchId] as const))
+      sourceCollectionIndexes[collection] = indexOf(referenceFiscalYears)
     } else {
       sourceCollectionIndexes[collection] = indexOf(rowsOf(snapshot, collection))
     }
