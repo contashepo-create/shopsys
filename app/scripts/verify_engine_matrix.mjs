@@ -6,13 +6,14 @@
  *      (أي مسار ترحيل جديد بلا تحديث المصفوفة = فشل).
  *   2) **تغطية أنواع المصادر والحسابات**: كل قيمة في اتحاد `SourceType` لها مسار فعلي (عدا المستثنى الموثق)،
  *      وكل كود حساب مستعمل موجود في الشجرة وقابل للترحيل.
- *   3) **الثوابت العشرة** (AGENTS.md §3.5) على دورات حقيقية في أنشطة مختلفة، بعد كل خطوة.
+ *   3) **الثوابت العشرة** (AGENTS.md §3.5) على دورة النواة المشتركة في كل قوالب الأنشطة الـ29، بعد كل خطوة؛ وهذا لا يغني عن اختبارات الوحدة التخصصية لكل نشاط.
  *   4) **الثابت العاشر**: الرفض بنص عربي بلا أثر جزئي (سنة مقفلة، قيد غير متزن، بيع بلا رصيد، مبلغ سالب).
  */
 import { readFileSync } from 'node:fs'
 import { freshCase, assertInvariants, checkInvariants, expectReject, addSimpleItem, addParty, balanceOf, reporter, STANDARD_COA, useAppStore } from './auditKit.mjs'
 import { buildMatrix, MATRIX_PATH } from './gen_engine_matrix.mjs'
 import { SOURCE_TYPE_VALUES } from '../src/core/sourceTypes.ts'
+import { ACTIVITY_TEMPLATES } from '../src/core/activities.ts'
 
 const R = reporter('بوابة مصفوفة المحرك والثوابت العشرة')
 
@@ -130,10 +131,10 @@ async function tradingCycle(activityId, opts = {}) {
   return c
 }
 
-for (const activityId of ['grocery', 'pharmacy', 'clothing', 'general', 'trading']) {
-  const c = await tradingCycle(activityId)
+for (const activity of ACTIVITY_TEMPLATES) {
+  const c = await tradingCycle(activity.id)
   const { stats } = checkInvariants(c)
-  R.ok(`${c.label}: دورة كاملة — ${stats.entries} قيداً، ${stats.accounts.length} حساباً، الثوابت العشرة سليمة`)
+  R.ok(`${activity.nameAr}: دورة النواة المشتركة — ${stats.entries} قيود، ${stats.accounts.length} حساباً، الثوابت العشرة سليمة`)
 }
 
 // نشاط خدمي بلا مخزون + ضريبة سعودية غير شاملة

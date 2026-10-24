@@ -1,6 +1,6 @@
 /**
  * فحص تغطية الأنشطة والوحدات (مراجعة المالك الشاملة):
- * 1) كل نشاط من الـ18: وحداته معرفة، ولكل وحدة قسم تنقل بمسارات، ولكل مسار صفحة مسجلة في App.tsx
+ * 1) كل نشاط من الـ29: وحداته معرفة، ولكل وحدة قسم تنقل بمسارات، ولكل مسار صفحة مسجلة في App.tsx
  * 2) أي وحدة تُفعَّل لأي نشاط (من الإعدادات أو البوت) تجد شاشاتها — لا مسار يتيماً
  * 3) حسابات كل وحدة موجودة في شجرة الحسابات المعيارية (إيراد/تكلفة/ذمم)
  * 4) السلف والخصومات والمسيرات والعُهد متاحة لكل الأنشطة (قسم عام غير مشروط بوحدة)
@@ -29,6 +29,9 @@ if (NAV_SECTIONS.length < 10) { console.log('❌ فشل تحليل navCatalog �
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => { if (cond) { pass++; console.log(`  ✅ ${name}`) } else { fail++; console.log(`  ❌ ${name}${extra ? ' — ' + extra : ''}`) } }
+const activityIds = ACTIVITY_TEMPLATES.map((activity) => activity.id)
+ok('القائمة المرجعية تضم 29 نشاطاً بمعرّفات فريدة', ACTIVITY_TEMPLATES.length === 29 && new Set(activityIds).size === ACTIVITY_TEMPLATES.length,
+  `العدد=${ACTIVITY_TEMPLATES.length}، المعرّفات الفريدة=${new Set(activityIds).size}`)
 
 const appTsx = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const routedPaths = new Set([...appTsx.matchAll(/Route path="([^"]+)"/g)].map((m) => m[1]))
@@ -54,13 +57,15 @@ for (const m of ALL_MODULES) {
   ok(`وحدة «${MODULE_LABELS[m].nameAr}» (${m}) لها واجهة`, modulesInNav.has(m))
 }
 
-console.log('\n🏪 الأنشطة الـ18: وحدات معرفة + وحدة عمل واحدة على الأقل')
+console.log('\n🏪 الأنشطة الـ29: وحدات النواة (المخزون/المشتريات) ووحدة عمل واحدة على الأقل')
 const workModules = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'realestate']
 for (const a of ACTIVITY_TEMPLATES) {
   const allKnown = a.modules.every((m) => ALL_MODULES.includes(m))
   const hasWork = a.modules.some((m) => workModules.includes(m))
+  const hasCore = a.modules.includes('inventory') && a.modules.includes('purchases')
   ok(`${a.icon} ${a.nameAr}: وحدات سليمة وعمل موجود`, allKnown && hasWork,
     !allKnown ? 'وحدة غير معرفة' : 'بلا وحدة عمل')
+  ok(`${a.icon} ${a.nameAr}: المخزون والمشتريات من وحدات النواة`, hasCore)
 }
 
 console.log('\n🔀 محاكاة البوت/الإعدادات: تفعيل كل وحدة على كل نشاط ثم إطفاؤها')
