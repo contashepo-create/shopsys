@@ -17,6 +17,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { openingKey, summarizeOpeningBalances, OPENING_COVERED_SYSTEM_KEYS, type OpeningKind } from '../../core/openingBalances.ts'
 import { STANDARD_COA, accountNature } from '../../core/ledger.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
 
 const TABS: { id: OpeningKind; nameAr: string; icon: typeof Users; hint: string }[] = [
@@ -38,6 +39,7 @@ export function OpeningBalancesPage() {
   const [tab, setTab] = useState<OpeningKind>('customer')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [capitalDraft, setCapitalDraft] = useState('')
+  const [effectiveDate, setEffectiveDate] = useState(() => todayLocalIso())
   const meta = TABS.find((t) => t.id === tab)!
 
   /* ═══ لوحة التوازن (نمط Xero/Odoo) ═══ */
@@ -58,7 +60,7 @@ export function OpeningBalancesPage() {
     const raw = capitalDraft.trim()
     if (!raw) return
     try {
-      declareOpeningCapital(toMinor(raw, cur.decimals))
+      declareOpeningCapital(toMinor(raw, cur.decimals), effectiveDate)
       setCapitalDraft('')
       toast.show(`أُعلن رأس المال — رصيد 3101 صار مطابقاً، وأي فرق عن المحتسب رُحِّل لأرباح مرحّلة 3102 ✓`)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -103,7 +105,7 @@ export function OpeningBalancesPage() {
     const raw = drafts[key]
     if (raw == null || raw.trim() === '') return
     try {
-      setOpeningBalance({ kind: tab, refId, amountMinor: toMinor(raw, cur.decimals), label: nameAr })
+      setOpeningBalance({ kind: tab, refId, amountMinor: toMinor(raw, cur.decimals), label: nameAr, effectiveDate })
       setDrafts((d) => { const n = { ...d }; delete n[key]; return n })
       toast.show(`ثُبّت الرصيد الافتتاحي لـ«${nameAr}» بقيد متوازن مقابل رأس المال ✓`)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -119,7 +121,7 @@ export function OpeningBalancesPage() {
       const qty = qtyRaw != null && qtyRaw !== '' ? Number(qtyRaw) : (detail?.qty ?? 0)
       const unitCostMinor = costRaw != null && costRaw !== '' ? toMinor(costRaw, cur.decimals) : (detail?.unitCostMinor ?? 0)
       if (!Number.isFinite(qty)) throw new Error('الكمية غير صحيحة')
-      setOpeningItemStock({ itemId, qty, unitCostMinor })
+      setOpeningItemStock({ itemId, qty, unitCostMinor, effectiveDate })
       setDrafts((d) => { const n = { ...d }; delete n[`qty:${itemId}`]; delete n[`cost:${itemId}`]; return n })
       toast.show(`ثُبّت المخزون الافتتاحي لـ«${nameAr}»: ${qty} × ${fmt(unitCostMinor)} = ${fmt(Math.round(qty * unitCostMinor))} — الكمية والدفتر معاً ✓`)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -137,6 +139,21 @@ export function OpeningBalancesPage() {
           <div className="text-[10px] text-slate-400 font-bold">إجمالي المثبت — {meta.nameAr}</div>
           <div className="text-lg font-black text-brand-600">{fmt(totalPosted)} {cur.symbol}</div>
         </div>
+      </div>
+
+      <div className="anim-up flex items-center gap-3 flex-wrap rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 px-4 py-3">
+        <label htmlFor="opening-effective-date" className="text-[12px] font-bold">تاريخ سريان الأرصدة الافتتاحية</label>
+        <input
+          id="opening-effective-date"
+          type="date"
+          value={effectiveDate}
+          onChange={(event) => setEffectiveDate(event.target.value)}
+          className={`${inputCls} !py-1.5 !text-[12px] w-44`}
+          aria-describedby="opening-effective-date-help"
+        />
+        <span id="opening-effective-date-help" className="text-[10.5px] text-slate-400">
+          يطبّق على أول إثبات لكل رصيد وعلى أول إعلان رأس مال فقط؛ التعديلات اللاحقة تُرحّل بتاريخ اليوم ولا تعيد كتابة الماضي.
+        </span>
       </div>
 
       {/* ═══ لوحة التوازن وإعلان رأس المال (نمط العالمية) ═══ */}

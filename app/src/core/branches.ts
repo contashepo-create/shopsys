@@ -180,6 +180,71 @@ export function branchOfWarehouse(warehouseId: number | null | undefined, branch
   return branches.find((b) => b.warehouseId === warehouseId) ?? branches.find((b) => b.isMain) ?? null
 }
 
+/**
+ * الفرع المالك لسجل/مستند بعينه، مستقلاً عن الفرع المعروض حالياً:
+ * 1. branchId الصريح، 2. مخزن المستند (بما فيه مخزن إضافي branchId)،
+ * 3. خزينة المستند (بما فيها خزينة إضافية branchId)، 4. الرئيسي للسجلات القديمة.
+ */
+export function branchOfRecord(
+  record: BranchScopedRecord | object | null | undefined,
+  branches: readonly Branch[],
+  warehouses: readonly { id: number; branchId?: number | null }[] = [],
+  treasuries: readonly { code: string; branchId?: number | null }[] = [],
+): Branch | null {
+  if (!branches.length) return null
+  const main = branches.find((branch) => branch.isMain) ?? null
+  if (!record) return main
+  const rec = record as BranchScopedRecord & {
+    lines?: readonly { warehouseId?: number | null }[]
+    paymentAllocations?: readonly { accountCode?: string }[]
+  }
+  if (rec.branchId != null) {
+    const explicitId = Number(rec.branchId)
+    return branches.find((branch) => branch.id === explicitId) ?? main
+  }
+
+  const warehouseBranchFor = (warehouseId: number | null | undefined): Branch | null => {
+    if (warehouseId == null) return null
+    const warehouse = warehouses.find((candidate) => candidate.id === warehouseId)
+    if (warehouse?.branchId != null) {
+      const warehouseBranch = branches.find((branch) => branch.id === warehouse.branchId)
+      if (warehouseBranch) return warehouseBranch
+    }
+    return branches.find((branch) => branch.warehouseId === warehouseId) ?? null
+  }
+  const headerWarehouseBranch = warehouseBranchFor(rec.warehouseId)
+  if (headerWarehouseBranch) return headerWarehouseBranch
+
+  // الفواتير الموزعة على أكثر من مخزن قد يكون مخزن رأسها فارغاً؛ لا نختار
+  // فرعاً من السطور إلا إذا اتفقت كل المخازن المعروفة على فرع واحد.
+  const lineWarehouseBranches = new Map<number, Branch>()
+  for (const line of rec.lines ?? []) {
+    const branch = warehouseBranchFor(line.warehouseId)
+    if (branch) lineWarehouseBranches.set(branch.id, branch)
+  }
+  if (lineWarehouseBranches.size === 1) return [...lineWarehouseBranches.values()][0]
+
+  const treasuryBranchFor = (code: string | null | undefined): Branch | null => {
+    if (!code) return null
+    const treasury = treasuries.find((candidate) => candidate.code === code)
+    if (treasury?.branchId != null) {
+      const treasuryBranch = branches.find((branch) => branch.id === treasury.branchId)
+      if (treasuryBranch) return treasuryBranch
+    }
+    return branches.find((branch) => branch.treasuryCode === code) ?? null
+  }
+  const headerTreasuryBranch = treasuryBranchFor(rec.treasury ?? rec.treasuryCode ?? null)
+  if (headerTreasuryBranch) return headerTreasuryBranch
+
+  const allocationBranches = new Map<number, Branch>()
+  for (const allocation of rec.paymentAllocations ?? []) {
+    const branch = treasuryBranchFor(allocation.accountCode)
+    if (branch) allocationBranches.set(branch.id, branch)
+  }
+  if (allocationBranches.size === 1) return [...allocationBranches.values()][0]
+  return main
+}
+
 /** صف مقارنة فرع في لوحة المالك */
 export interface BranchComparisonRow {
   branchId: number

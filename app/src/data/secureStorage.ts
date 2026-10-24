@@ -21,6 +21,13 @@ function getOrCreateSecret(): string {
 }
 
 let keyPromise: Promise<CryptoKey> | null = null
+const pendingWrites = new Set<Promise<void>>()
+
+/** انتظر اكتمال تشفير/كتابة كل لقطات Zustand قبل تحرير قفل الترحيل عبر التبويبات. */
+export async function flushSecureStorageWrites(): Promise<void> {
+  while (pendingWrites.size) await Promise.all([...pendingWrites])
+}
+
 function key(): Promise<CryptoKey> {
   if (!keyPromise) keyPromise = deriveKey(getOrCreateSecret())
   return keyPromise
@@ -66,11 +73,14 @@ export const secureStorage: StateStorage = {
       return null
     }
   },
-  setItem: async (name, value) => {
+  setItem: (name, value) => {
     /* بعد استيراد سر جديد: القاعدة الحالية فُكّت بالسر القديم — أي كتابة
        الآن كانت ستحفظها بالسر الجديد وتُضلّل الجهاز؛ نتوقف حتى إعادة التشغيل */
-    if (sealedForTransfer) return
-    localStorage.setItem(name, await encryptText(value, await key()))
+    if (sealedForTransfer) return Promise.resolve()
+    const write = (async () => { localStorage.setItem(name, await encryptText(value, await key())) })()
+    pendingWrites.add(write)
+    void write.finally(() => pendingWrites.delete(write)).catch(() => undefined)
+    return write
   },
   removeItem: async (name) => {
     localStorage.removeItem(name)

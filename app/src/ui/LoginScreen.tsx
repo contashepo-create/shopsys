@@ -16,18 +16,22 @@
  */
 import { useState } from 'react'
 import { LogIn, KeyRound, LifeBuoy, UserPlus, X, ChevronRight } from 'lucide-react'
-import { useDataStore } from '../data/repo.ts'
+import { useRawDataStore } from '../data/repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { hashPin, findUserByIdentifier, matchesOwnerIdentity } from '../core/audit.ts'
 import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft, validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../core/auth.ts'
 import { apiUrl, isValidBotToken, isValidChatId } from '../core/telegram.ts'
 import { loadRecentLogins, rememberRecentLogin, forgetRecentLogin, purgeLegacySavedPin, type RecentLogin } from '../data/recentLogins.ts'
-import { markSessionAuthenticated } from '../data/sessionAuth.ts'
+import { authorizeSession } from '../data/sessionAuth.ts'
 import { Btn, Modal, inputCls, PinInput, useToast } from './components/ui.tsx'
 
 
 export function LoginScreen() {
-  const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useDataStore()
+  /* الهوية لا تُصفّى بالفرع أبداً: شاشة الدخول تقرأ المتجر الخام حتى ترى
+     مستخدمي كل الفروع — المتجر المصفّى (useDataStore) يحصر appUsers في
+     الفرع النشط، فكان مستخدم فرع آخر يختفي من البحث ويُرفض دخوله الصحيح
+     (بلاغ المالك 2026-10-22) — وloginGuard/ownerProfile خامان أصحّ أيضاً. */
+  const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useRawDataStore()
   const { setup, telegram } = useAppStore()
   const toast = useToast()
 
@@ -82,7 +86,7 @@ export function LoginScreen() {
       const ownerByWizardName = !!setup.ownerName?.trim() && identifier.trim() === setup.ownerName.trim()
       if (matchesOwnerIdentity(ownerProfile, identifier) || ownerByWizardName) {
         const { usedTempPin } = await login(null, pin)
-        markSessionAuthenticated()
+        await authorizeSession(null, pin)
         rememberRecentLogin(identifier, ownerProfile.nameAr?.trim() || 'المالك')
         setPin('')
         if (usedTempPin) setMustSetNewPin({ kind: 'owner' })
@@ -92,7 +96,7 @@ export function LoginScreen() {
         // رسالة واحدة عامة سواء أخطأ المعرف أو الرقم — لا نكشف أي الاثنين خاطئ
         if (!user) throw new Error('بيانات الدخول غير صحيحة — تحقق من المعرف والرقم السري')
         const { mustChangePin } = await login(user.id, pin)
-        markSessionAuthenticated()
+        await authorizeSession(user.id, pin)
         rememberRecentLogin(identifier, user.nameAr)
         setPin('')
         if (mustChangePin) {

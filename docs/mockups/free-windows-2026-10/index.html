@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>تَحَكَّم — تصوّر النوافذ الحرة وفوترة المشاريع (للاعتماد)</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+
+<!-- ══════════ صفحة الخلفية: قسم «فاتورة بيع — المقاولات» بعد إزالة بطاقات المشاريع ══════════ -->
+<div class="desktop" id="desktop">
+  <header class="app-topbar">
+    <div class="brand"><span class="brand-mark">تح</span> تَحَكَّم <small>نشاط: مقاولات وتشطيبات</small></div>
+    <nav class="top-menus">
+      <span>المبيعات</span><span>المشتريات</span><span class="is-on">المقاولات</span><span>المخزون</span><span>الحسابات</span><span>التقارير</span>
+    </nav>
+    <span class="proto-badge">🧪 تصوّر تفاعلي للاعتماد — بيانات تجريبية، التطبيق الحقيقي لم يُمسّ</span>
+  </header>
+
+  <main class="page">
+    <div class="page-head">
+      <div>
+        <h1>فواتير البيع — المقاولات</h1>
+        <p class="page-sub">هكذا سيبدو القسم بعد طلبك: <b>لا بطاقات مشاريع</b> — فلتر وجدول فواتير فقط، حتى لو كان لديك 50 مشروعاً. ملخص المشروع يبقى في شاشة «المشروعات».</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-primary" data-open="invoice-free">🧾 فاتورة بيع جديدة (F3)</button>
+        <button class="btn" data-open="invoice-project">🏗️ فاتورة لمشروع «برج النيل»</button>
+        <button class="btn" data-open="extract">📐 مستخلص جديد — بالطريقة المبسطة</button>
+        <button class="btn" data-open="expense">💸 تسجيل مصروف مشروع</button>
+      </div>
+    </div>
+
+    <div class="kpi-strip">
+      <div class="kpi"><small>فواتير البيع (كلها)</small><b>1,284,500</b><span>14 فاتورة · 9 مربوطة بمشروع</span></div>
+      <div class="kpi"><small>محصَّل من الفواتير</small><b class="ok">932,000</b><span>نقدي وماكينة وبنوك</span></div>
+      <div class="kpi"><small>مستخلصات صادرة (PRX)</small><b class="warn">720,000</b><span>6 مستخلصات — برج النيل</span></div>
+      <div class="kpi"><small>مستخلصات لم تُفوتر بعد</small><b class="violet">240,000</b><span>المتاح للفوترة الآن دون تضاعف</span></div>
+    </div>
+
+    <div class="filter-bar">
+      <label>المشروع
+        <select id="bgProjectFilter">
+          <option value="0">كل الفواتير (حرة ومربوطة)</option>
+          <option value="1">PRJ-0003 — برج النيل السكني — المرحلة الثانية</option>
+          <option value="2">PRJ-0007 — مخزن لوجستي — المنطقة الصناعية ببدر</option>
+        </select>
+      </label>
+      <label class="grow">بحث <input id="bgSearch" placeholder="برقم الفاتورة أو العميل أو المشروع…" /></label>
+      <span class="filter-note" id="bgFilterNote">معروض: كل الفواتير</span>
+    </div>
+
+    <section class="card">
+      <div class="card-head">🧾 فواتير البيع <small>النقر على ✎ يفتح الفاتورة في نافذتها الحرة دون مغادرة هذه الصفحة</small></div>
+      <div class="table-wrap">
+        <table class="grid-table" id="bgInvoicesTable">
+          <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>طبيعتها</th><th>المشروع</th><th>العميل</th><th class="num">الإجمالي</th><th class="num">المحصل</th><th class="num">الباقي</th><th></th></tr></thead>
+          <tbody id="bgInvoicesBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="hint-card">
+      <b>جرّب بنفسك (٣ دقائق):</b>
+      <ol>
+        <li>افتح «فاتورة لمشروع برج النيل» وحاول ترحيلها بـ<b>كامل العقد 1,200,000</b> — سيرفضها الحارس لأنه توجد مستخلصات 720,000 والمتاح للفوترة 240,000 فقط. هذه هي معالجة التضاعف التي طلبتها.</li>
+        <li>افتح فاتورة ثانية بجانب الأولى من لوحة «افتح نافذة» — حرّكهما، صغّر واحدة وكبّر الأخرى، ورحّل كل واحدة وحدها.</li>
+        <li>من داخل الفاتورة افتح «اختيار صنف» ثم «＋ صنف جديد» — نوافذ ابنة فوق الأم، وإغلاقها لا يمسّ الفاتورة.</li>
+        <li>افتح نوافذ الإعدادات الثلاث جنباً إلى جنب، وافتح حتى <b>10 نوافذ</b> لترى رسالة الحد الأقصى وشريط النوافذ بالأسفل.</li>
+        <li>في نافذة مصروف المشروع اختر تصنيف «أخرى…» واكتب تصنيفاً جديداً (مثلاً: «أتعاب مكتب هندسي») — سيُحفظ في القائمة دائماً.</li>
+      </ol>
+    </div>
+  </main>
+</div>
+
+<!-- ══════════ لوحة فتح النوافذ (سجل النوافذ المسماة) ══════════ -->
+<aside class="launcher" id="launcher">
+  <div class="launcher-head">🪟 سجل النوافذ <button class="icon-btn" id="launcherToggle" title="طي/فتح اللوحة">❯</button></div>
+  <div class="launcher-group">مستندات</div>
+  <button class="launch" data-open="invoice-free"><b>N-01 فاتورة بيع جديدة</b><small>نافذة حرة — حقول واسعة وشريط واحد</small></button>
+  <button class="launch" data-open="invoice-two"><b>فاتورتان معاً</b><small>إثبات تعدد الفواتير بلا تعارض</small></button>
+  <button class="launch" data-open="extract"><b>N-03 مستخلص أعمال — مبسّط</b><small>معالج ٣ خطوات بدل الشاشة المشتتة</small></button>
+  <button class="launch" data-open="expense"><b>N-04 مصروف مشروع</b><small>تصنيفات حرة + «أخرى…» تُحفظ</small></button>
+  <div class="launcher-group">صفحات كنوافذ مستقلة</div>
+  <button class="launch" data-open="settings-general"><b>الإعدادات العامة</b><small>صفحة كاملة داخل نافذة</small></button>
+  <button class="launch" data-open="settings-tax"><b>إعدادات الضريبة</b><small>تفتح بجانب العامة دون إغلاقها</small></button>
+  <button class="launch" data-open="settings-invoice"><b>إعدادات الفاتورة</b><small>ثالثة بجانبهما — جرّب بنفسك</small></button>
+  <button class="launch" data-open="settings-three"><b>⚡ افتح الثلاث متجاوبة</b><small>ترتيب تجانب تلقائي</small></button>
+  <div class="launcher-group">إدارة النوافذ</div>
+  <div class="launcher-row">
+    <button class="btn btn-small" data-arrange="tile">تجانب</button>
+    <button class="btn btn-small" data-arrange="cascade">تتالي</button>
+    <button class="btn btn-small" data-arrange="minall">تصغير الكل</button>
+    <button class="btn btn-small danger" data-arrange="closeall">إغلاق الكل</button>
+  </div>
+  <p class="launcher-note">اسحب أي نافذة من شريط عنوانها، وحجّمها من حوافها، واسحبها لأعلى الشاشة لتكبيرها أو لجانبها لنصف الشاشة. <b>Esc</b> يغلق النافذة النشطة وحدها. النقطة <span class="dirty-dot">●</span> تعني بيانات غير محفوظة — الإغلاق سيسألك أولاً.</p>
+</aside>
+<button class="launcher-fab" id="launcherFab" title="سجل النوافذ">🪟 النوافذ</button>
+
+<!-- ══════════ شريط النوافذ (على طراز Windows 11) ══════════ -->
+<footer class="taskbar">
+  <div class="taskbar-start">
+    <span class="win-logo" title="تَحَكَّم">تح</span>
+    <span class="win-count" id="winCount">النوافذ المفتوحة: 0 / 10</span>
+  </div>
+  <div class="taskbar-chips" id="taskbarChips"></div>
+  <div class="taskbar-end"><span id="clock"></span></div>
+</footer>
+
+<div class="snap-preview" id="snapPreview" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

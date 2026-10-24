@@ -21,6 +21,7 @@ import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
@@ -153,6 +154,18 @@ export function QuotationsPage() {
   }
 
   /* معاينة وطباعة العرض بنفس محرك قوالب الفواتير (طلب المالك: شكل مطابق للفاتورة) */
+  const runtimeBranchId = (record: unknown) => {
+    if (!record || typeof record !== 'object') return undefined
+    const value = (record as { branchId?: unknown }).branchId
+    return typeof value === 'number' || typeof value === 'string' ? value : undefined
+  }
+  const currentQuotePrintRecord = () => {
+    const linkedCustomer = clientId ? customers.find((c) => c.id === Number(clientId)) : undefined
+    return {
+      ...(editingQuote ?? {}),
+      branchId: runtimeBranchId(editingQuote) ?? runtimeBranchId(linkedCustomer),
+    }
+  }
   /* المعاينة الحية: الموديل يُبنى بإعدادات اللحظة وrebuild يعيد بناءه كاملاً —
        فيتحدث التذييل (ملاحظات + تذييل الإعدادات) وكل حقول الإعدادات فوراً */
     const buildPrintModel = () => buildSimpleDocModel({
@@ -167,16 +180,18 @@ export function QuotationsPage() {
       /* عرض السعر ليس مستند تحصيل: بلا «مدفوع/متبقي» إطلاقاً (بلاغ المالك) */
       paidMinor: draftTax.grossMinor,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: useAppStore.getState().receipt,
+      settings: resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt,
       extraFooter: notes.trim() || undefined,
       tax: { label: 'الضريبة', minor: draftTax.taxMinor, baseMinor: draftTax.netMinor },
     })
     const printDraft = (template: InvoiceTemplate) => {
       if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
       const model = buildPrintModel()
-      const live = useAppStore.getState().receipt
-      if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
-      printModelWithTemplate(model, cur, live, template)
+      const live = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt
+      if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
+      printModelWithTemplate(model, cur, live, template, {
+        resolveSettings: () => resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt,
+      })
   }
 
   /** طباعة عرض/مناقصة محفوظة من القائمة — قالب A4 كالفاتورة (بلاغ المالك: «لا يوجد زر طباعة») */
@@ -193,19 +208,21 @@ export function QuotationsPage() {
       totalMinor: t.grossMinor,
       paidMinor: t.grossMinor,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: useAppStore.getState().receipt,
+      settings: resolveDocumentPrintSettings(q).receipt,
       extraFooter: q.notes?.trim() || undefined,
       tax: { label: 'الضريبة', minor: t.taxMinor, baseMinor: t.netMinor },
     })
   }
   const printQuotation = (q: Quotation) => {
     const model = quotationModel(q)
-    const live = useAppStore.getState().receipt
+    const live = resolveDocumentPrintSettings(q).receipt
     if (!printSwitches.silentPrint) {
-      openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, 'a4') })
+      openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(quotationModel(q), cur, resolveDocumentPrintSettings(q).receipt, 'a4') })
       return
     }
-    printModelWithTemplate(model, cur, live, 'a4')
+    printModelWithTemplate(model, cur, live, 'a4', {
+      resolveSettings: () => resolveDocumentPrintSettings(q).receipt,
+    })
   }
 
   const transition = (q: Quotation, status: 'submitted' | 'won' | 'lost') => {
@@ -237,7 +254,7 @@ export function QuotationsPage() {
           modeLabel={kind === 'tender' ? 'مناقصة' : 'عرض سعر'}
           currencyLabel={`${cur.code} · ${cur.symbol}`}
           dateLabel={todayLocalIso()}
-          branchLabel={setup.shopName ?? ''}
+          branchLabel={resolveDocumentPrintSettings(currentQuotePrintRecord()).setup.shopName ?? ''}
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
           documentNumber={editingQuote ? editingQuote.quoteNumber : "QT-DRAFT"}
@@ -249,7 +266,7 @@ export function QuotationsPage() {
           onRestoreDraft={() => setDraftsOpen(true)}
           onPrint={() => printDraft('a4')}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
-          onWhatsappPdf={() => { if (!parsedLines.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); shareDocPdfViaWhatsapp({ model: buildPrintModel(), cur, settings: useAppStore.getState().receipt, docLabel: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: editingQuote?.quoteNumber ?? 'مسودة', partyPhone: '', shopName: setup.shopName, toast }) }}
+          onWhatsappPdf={() => { if (!parsedLines.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const ds = resolveDocumentPrintSettings(currentQuotePrintRecord()); shareDocPdfViaWhatsapp({ model: buildPrintModel(), cur, settings: ds.receipt, docLabel: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: editingQuote?.quoteNumber ?? 'مسودة', partyPhone: '', shopName: ds.setup.shopName, toast }) }}
           onPost={save}
           headerFields={
             <>
@@ -474,7 +491,7 @@ export function QuotationsPage() {
                             <span title="العرض تحوّل لمشروع — بنوده جدول كميات المشروع؛ التعديل من المشروع" className="text-[10px] text-slate-400 px-1">🔒 مشروع</span>
                           )}
                           <button onClick={() => printQuotation(q)} title="طباعة العرض (A4)" data-quotation-print className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Printer size={15} /></button>
-                          <button onClick={() => shareDocPdfViaWhatsapp({ model: quotationModel(q), cur, settings: useAppStore.getState().receipt, docLabel: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: q.quoteNumber, partyPhone: customers.find((c) => c.id === q.clientId)?.phone ?? '', shopName: setup.shopName, toast })} title="إرسال PDF واتساب" data-quotation-whatsapp className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Send size={15} /></button>
+                          <button onClick={() => { const ds = resolveDocumentPrintSettings(q); shareDocPdfViaWhatsapp({ model: quotationModel(q), cur, settings: ds.receipt, docLabel: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: q.quoteNumber, partyPhone: customers.find((c) => c.id === q.clientId)?.phone ?? '', shopName: ds.setup.shopName, toast }) }} title="إرسال PDF واتساب" data-quotation-whatsapp className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Send size={15} /></button>
                           {q.status === 'draft' && (
                             <button onClick={() => transition(q, 'submitted')} title="تقديم العرض" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Send size={15} /></button>
                           )}

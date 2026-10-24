@@ -5,16 +5,17 @@
  * في المقاولات لأني قد أصدر فاتورة ليست مرتبطة بمشروع»).
  *
  * صفحة واحدة تجمع دورة الفوترة كاملة:
- *   ① ملخص فوترة كل مشروع: قيمة العقد ← المستخلصات ← الفواتير ← المتبقي،
- *      وزر «فاتورة بيع» يفتح نافذة الفاتورة المتقدمة (نفس محرك الأعلاف تماماً)
- *      معبأة بالمشروع وعميله.
+ *   ① فاتورة بيع كاملة تفتح حرة، والربط بالمشروع من حقل «المشروع» داخلها
+ *      (بطاقات ملخص المشاريع حُذفت من هنا بقرار المالك 2026-10-22 — مكانها
+ *      شاشة المشروعات؛ هذا القسم للفواتير فقط مهما بلغ عدد المشاريع).
  *   ② فاتورة حرة بدون مشروع — من نفس النافذة الكاملة.
  *   ③ جدول كل الفواتير المرتبطة بمشاريع المقاولات: مراجعة (نافذة التعديل)
  *      وطباعة بنفس قوالب الفواتير.
  */
-import { useMemo, useState } from 'react'
-import { FilePlus2, Printer, Pencil, HardHat, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useMemo, useRef, useState } from 'react'
+import { FilePlus2, Printer, Pencil, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -22,13 +23,12 @@ import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '..
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
-import { effectiveContractValue } from '../../core/contracting.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { gridArrowNavigation } from '../components/gridArrowNavigation.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
@@ -36,17 +36,24 @@ import { todayLocalIso } from '../../core/time.ts'
 
 export function ContractingInvoicesPage() {
   const {
-    projects, projectExtracts, projectCosts, changeOrders, sales, customers, boqItems,
-    staffCommissions, purchases, postSale, ensureServiceItemForFreeLine,
+    projects, projectExtracts, sales, customers, boqItems, postSale, ensureServiceItemForFreeLine,
   } = useDataStore()
-  const { setup, receipt } = useAppStore()
+  const { setup } = useAppStore()
   const toast = useToast()
-  const stampTax = useTaxBarcodeStamp()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const runtimeBranchId = (record: unknown): number | null => {
+    const value = (record as { branchId?: unknown } | null | undefined)?.branchId
+    return typeof value === 'number' ? value : null
+  }
+  const salePrintRecord = (s: (typeof sales)[number]) => {
+    const project = projects.find((p) => p.id === s.projectId)
+    const projectBranchId = runtimeBranchId(project)
+    return runtimeBranchId(s) == null && projectBranchId != null ? { ...s, branchId: projectBranchId } : s
+  }
   const [prjFilter, setPrjFilter] = useState(0) // 0 = كل المشاريع
   const [search, setSearch] = useState('')
 
@@ -65,33 +72,15 @@ export function ContractingInvoicesPage() {
       .sort((a, b) => b.id - a.id)
   }, [sales, projects, customers, prjFilter, search])
 
-  /* ملخص الفوترة لكل مشروع نشط: العقد الفعلي (بأوامر التغيير) مقابل المستخلصات والفواتير */
-  const projectCards = useMemo(() => projects
-    .filter((p) => (prjFilter ? p.id === prjFilter : true))
-    .map((p) => {
-      const ex = projectExtracts.filter((e) => e.projectId === p.id)
-      const extracted = ex.reduce((a, e) => a + e.totals.grossMinor, 0)
-      const orders = changeOrders.filter((o) => o.projectId === p.id)
-      const effective = effectiveContractValue(p.contractValueMinor, orders)
-      const inv = sales.filter((s) => s.projectId === p.id)
-      const invoiced = inv.reduce((a, s) => a + s.totals.totalMinor, 0)
-      const collected = inv.reduce((a, s) => a + (s.paidMinor ?? 0), 0)
-      const costs = projectCosts.filter((c) => c.projectId === p.id).reduce((a, c) => a + c.amountMinor, 0)
-      const comms = staffCommissions.filter((c) => c.source === 'project' && c.sourceId === p.id).reduce((a, c) => a + c.amountMinor, 0)
-      const purch = purchases.filter((x) => x.projectId === p.id)
-      const purchTotal = purch.reduce((a, x) => a + x.grandTotalMinor, 0)
-      return {
-        project: p, extractsCount: ex.length, extracted, effective, invoiced, collected, costs, comms, purchasesCount: purch.length, purchTotal,
-        remaining: Math.max(0, effective - extracted),
-        boqCount: boqItems.filter((b) => b.projectId === p.id).length,
-      }
-    })
-    .sort((a, b) => b.project.id - a.project.id), [projects, projectExtracts, changeOrders, sales, projectCosts, staffCommissions, purchases, boqItems, prjFilter])
+  /* قرار المالك (2026-10-22): أُزيلت بطاقات «ملخص فوترة كل مشروع» من هذا القسم
+     نهائياً — مع عشرات المشاريع كانت تدفن جدول الفواتير. ملخص المشروع مكانه شاشة
+     «المشروعات والمستخلصات» وبطاقة المشروع؛ هذا القسم يعرض الفواتير فقط. */
 
   const totals = useMemo(() => ({
     invoices: invoices.length,
-    invoiced: invoices.reduce((a, s) => a + s.totals.totalMinor, 0),
-    collected: invoices.reduce((a, s) => a + (s.paidMinor ?? 0), 0),
+    /* فواتير التوثيق ورقة ضريبية فوق مستخلصات معترف بها — جمعها هنا يضخّم «المفوتَر» */
+    invoiced: invoices.reduce((a, s) => a + (s.projectBilling === 'documentation' ? 0 : s.totals.totalMinor), 0),
+    collected: invoices.reduce((a, s) => a + (s.projectBilling === 'documentation' ? 0 : s.paidMinor ?? 0), 0),
     linked: invoices.filter((s) => s.projectId != null).length,
     extracts: projectExtracts.length,
     extracted: projectExtracts.reduce((a, e) => a + e.totals.grossMinor, 0),
@@ -103,6 +92,8 @@ export function ContractingInvoicesPage() {
      والإيراد والقيد والتحصيل والطباعة والواتساب كلها مثل فاتورة البيع حرفياً. */
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
   const [edOpen, setEdOpen] = useState(false)
+  const [isPosting, setIsPosting] = useState(false)
+  const postingRef = useRef(false)
   const [edProjectId, setEdProjectId] = useState(0)
   const [edCustomerId, setEdCustomerId] = useState(0)
   const [edPayment, setEdPayment] = useState<'cash' | 'credit'>('credit')
@@ -145,8 +136,15 @@ export function ContractingInvoicesPage() {
     })))
     toast.show(`عُبِّئت ${boq.length} بنداً من جدول كميات المشروع (${pct}٪) ✓`)
   }
+  const draftPrintSettings = () => {
+    const draftProject = projects.find((x) => x.id === edProjectId)
+    const draftCustomer = customers.find((c) => c.id === edCustomerId)
+    const draftBranchId = runtimeBranchId(draftProject) ?? runtimeBranchId(draftCustomer)
+    return resolveDocumentPrintSettings(draftBranchId != null ? { branchId: draftBranchId } : draftProject ?? draftCustomer ?? null)
+  }
   const edPrintModel = () => {
     const dateIso = todayLocalIso()
+    const documentSettings = draftPrintSettings()
     const model = buildSimpleDocModel({
       docTitle: 'فاتورة مقاولات',
       invoiceNumber: 'مسودة',
@@ -158,7 +156,7 @@ export function ContractingInvoicesPage() {
       totalMinor: edGross,
       paidMinor: edPayment === 'cash' ? edGross : 0,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: receipt,
+      settings: documentSettings.receipt,
       extraFooter: edNotes.trim() || undefined,
       tax: edTax > 0 ? { label: 'الضريبة', minor: edTax, baseMinor: edNet } : undefined,
     })
@@ -169,10 +167,16 @@ export function ContractingInvoicesPage() {
   const postFreeInvoice = () => {
     if (!edParsed.length) { toast.show('أضف بنداً واحداً على الأقل بكمية موجبة', 'error'); return }
     if (edProjectId && !edCustomerId) { toast.show('حدّد عميل الفاتورة (عميل المشروع أو غيره)', 'error'); return }
-    try {
+    if (postingRef.current) return
+    postingRef.current = true
+    setIsPosting(true)
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
       const paidMinor = edPayment === 'cash' ? (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return edGross } })() : edGross) : (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return 0 } })() : 0)
-      const sale = postSale({
+      return postSale({
         projectId: edProjectId || null,
+        /* النموذج أ: محرر هذه الصفحة لا يوثّق مستخلصات — أي فاتورة مشروع منه
+           «إضافية» بسقف العقد الموحد، حتى لا تعود فوترة مزدوجة من هذا الباب */
+        ...(edProjectId ? { projectBilling: 'extra' as const } : {}),
         customerId: edCustomerId || null,
         payment: edPayment,
         paidMinor,
@@ -191,13 +195,17 @@ export function ContractingInvoicesPage() {
           warehouseId: null,
         })),
       })
+    }).then((sale) => {
       setEdOpen(false)
       toast.show(`رُحِّلت فاتورة المقاولات ${sale.invoiceNumber} — الإجمالي ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✅`)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    }).catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة', 'error'))
+      .finally(() => { postingRef.current = false; setIsPosting(false) })
   }
 
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط شاشة فواتير المبيعات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
+    const documentRecord = salePrintRecord(s)
+    const documentSettings = resolveDocumentPrintSettings(documentRecord)
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
     const tx = s.taxPercent !== undefined
       ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
@@ -206,7 +214,7 @@ export function ContractingInvoicesPage() {
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
       dateIso: s.date,
-      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? setup.vatPercent) : 0 }))],
+      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? documentSettings.setup.vatPercent) : 0 }))],
       totals: s.totals,
       payment: s.payment,
       paidMinor: s.paidMinor,
@@ -214,14 +222,16 @@ export function ContractingInvoicesPage() {
       customerName,
       taxPercent: tx.taxPercent,
       taxInclusive: tx.taxInclusive,
-      settings: receipt,
+      settings: documentSettings.receipt,
     })
     const prj = projects.find((p) => p.id === s.projectId)
-    model.footerText = `${prj ? `مشروع: ${prj.code} — ${prj.nameAr}` : ''}${prj && receipt.footerText ? ' — ' : ''}${receipt.footerText ?? ''}`
+    model.footerText = `${prj ? `مشروع: ${prj.code} — ${prj.nameAr}` : ''}${prj && documentSettings.receipt.footerText ? ' — ' : ''}${documentSettings.receipt.footerText ?? ''}`
     /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
-    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
-    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-    printModelWithTemplate(model, cur, receipt, template)
+    if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+    printModelWithTemplate(model, cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(documentRecord).receipt,
+    })
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
 
@@ -267,41 +277,6 @@ export function ContractingInvoicesPage() {
         </div>
       </div>
 
-      {/* ملخص فوترة المشروعات: العقد ← المستخلصات ← الفواتير ← الأطراف */}
-      {projectCards.length === 0 ? (
-        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-          <EmptyState icon="🏗️" title="لا مشروعات مقاولات بعد" sub="أنشئ مشروعاً من «المشروعات والمستخلصات» ثم أصدر له فواتير ومستخلصات من هنا" />
-        </div>
-      ) : (
-        <div className="grid md:grid-cols-2 gap-3" data-contracting-project-cards>
-          {projectCards.map(({ project: p, extractsCount, extracted, effective, invoiced, collected, costs, comms, purchasesCount, purchTotal, remaining, boqCount }) => (
-            <div key={p.id} className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="grid place-items-center w-9 h-9 rounded-xl bg-orange-500/10 text-orange-600 shrink-0"><HardHat size={17} /></span>
-                  <div className="min-w-0">
-                    <div className="font-black text-[13px] truncate" title={p.nameAr}>{p.code} — {p.nameAr}</div>
-                    <div className="text-[11px] text-slate-500 truncate">{p.clientName || 'بلا جهة مالكة'} · {p.status === 'active' ? 'نشط' : 'مكتمل'} · {boqCount} بند BOQ</div>
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
-                <div className="rounded-xl bg-slate-500/5 p-2"><div className="text-slate-500">العقد الفعلي</div><b className="block text-[12px]">{fmt(effective)}</b></div>
-                <div className="rounded-xl bg-orange-500/10 p-2"><div className="text-slate-500">مستخلصات ({extractsCount})</div><b className="block text-[12px] text-orange-600">{fmt(extracted)}</b></div>
-                <div className="rounded-xl bg-emerald-500/10 p-2"><div className="text-slate-500">فواتير بيع</div><b className="block text-[12px] text-emerald-600">{fmt(invoiced)}</b></div>
-                <div className="rounded-xl bg-sky-500/10 p-2"><div className="text-slate-500">المتبقي من العقد</div><b className="block text-[12px] text-sky-600">{fmt(remaining)}</b></div>
-              </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 border-t border-slate-100 dark:border-slate-800 pt-2">
-                <span>محصل من الفواتير: <b className="text-emerald-600">{fmt(collected)}</b></span>
-                <span>تكاليف: <b className="text-rose-600">{fmt(costs)}</b></span>
-                <span>مشتريات موردين ({purchasesCount}): <b className="text-rose-600">{fmt(purchTotal)}</b></span>
-                <span>عمولات موظفين: <b className="text-violet-600">{fmt(comms)}</b></span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* جدول فواتير المشاريع: مراجعة وطباعة */}
       <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
@@ -324,7 +299,7 @@ export function ContractingInvoicesPage() {
                   const customerName = customers.find((c) => c.id === s.customerId)?.nameAr ?? s.partyName ?? 'نقدي'
                   return (
                     <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-emerald-500/5">
-                      <td className="px-3 py-2 font-bold">{s.invoiceNumber}</td>
+                      <td className="px-3 py-2 font-bold">{s.invoiceNumber}{s.projectBilling === 'documentation' && <span className="mr-1 rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-600" title="فاتورة توثيق مقابل مستخلصات — ورقة ضريبية بلا فوترة جديدة">توثيق</span>}</td>
                       <td className="px-3 py-2">{s.date.slice(0, 10)}</td>
                       <td className="px-3 py-2">{prj ? <span title={prj.nameAr} className="font-bold text-orange-600">{prj.code}</span> : <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-bold">حرة</span>}</td>
                       <td className="px-3 py-2">{customerName}</td>
@@ -338,10 +313,13 @@ export function ContractingInvoicesPage() {
                           <button onClick={() => printInvoice(s, 'thermal')} title="إيصال حراري" className="p-1.5 rounded-md text-slate-400 hover:text-sky-600 hover:bg-sky-500/10"><Printer size={13} /></button>
                           <button onClick={() => {
                             const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
-                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? setup.vatPercent, taxInclusive: s.taxInclusive ?? setup.taxInclusive, settings: receipt })
+                            const documentRecord = salePrintRecord(s)
+                            const documentSettings = resolveDocumentPrintSettings(documentRecord)
+                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? documentSettings.setup.vatPercent, taxInclusive: s.taxInclusive ?? documentSettings.setup.taxInclusive, settings: documentSettings.receipt })
                             /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
-                            stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-                            shareDocPdfViaWhatsapp({ model, cur, settings: receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: setup.shopName, toast })
+                            if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+                            else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+                            shareDocPdfViaWhatsapp({ model, cur, settings: documentSettings.receipt, docLabel: 'فاتورة', docNumber: s.invoiceNumber, partyPhone: customers.find((c) => c.id === s.customerId)?.phone ?? '', shopName: documentSettings.setup.shopName, toast })
                           }} title="إرسال PDF واتساب" data-contracting-invoice-whatsapp className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Send size={13} /></button>
                           <button onClick={() => openSalesInvoiceWindow(s.id)} data-contracting-invoice-review title="مراجعة وتعديل الفاتورة في نافذتها الكاملة" className="p-1.5 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10"><Pencil size={13} /></button>
                         </div>
@@ -356,14 +334,14 @@ export function ContractingInvoicesPage() {
       </div>
 
       {edOpen && (
-        <div data-contracting-free-editor className="layer-modal fixed inset-0 overflow-auto bg-slate-900/40 p-4 backdrop-blur-sm">
-          <div className="mx-auto max-w-6xl">
+        <div data-contracting-free-editor aria-busy={isPosting} className="layer-modal fixed inset-0 overflow-auto bg-slate-900/40 p-4 backdrop-blur-sm">
+          <div className={`relative mx-auto max-w-6xl ${isPosting ? 'pointer-events-none select-none' : ''}`}>
             <InvoicePOSFrame
               kind="sale"
               modeLabel="فاتورة مقاولات — بنود حرة"
               currencyLabel={`${cur.code} · ${cur.symbol}`}
               dateLabel={todayLocalIso()}
-              branchLabel={setup.shopName ?? ''}
+              branchLabel={draftPrintSettings().setup.shopName ?? ''}
               userLabel={setup.ownerName ?? 'المالك'}
               activityLabel="مقاولات"
               documentNumber="CI-DRAFT"
@@ -373,9 +351,9 @@ export function ContractingInvoicesPage() {
               onItemSearch={() => undefined}
               onSaveDraft={() => toast.show('هذه الفاتورة تُرحَّل مباشرة — بلا مسودات (بنودها حرة تُكتب مرة واحدة)')}
               onRestoreDraft={() => toast.show('لا مسودات لفاتورة البنود الحرة — اكتب البنود أو عبئها من بنود المشروع')}
-              onPrint={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل المعاينة', 'error'); openPrintPreview({ html: buildModelHtml(edPrintModel(), cur, receipt, 'a4'), wide: true, title: 'معاينة فاتورة المقاولات قبل الترحيل', rebuild: () => buildModelHtml(edPrintModel(), cur, receipt, 'a4' as InvoiceTemplate) }) }}
+              onPrint={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل المعاينة', 'error'); const draftSettings = draftPrintSettings(); openPrintPreview({ html: buildModelHtml(edPrintModel(), cur, draftSettings.receipt, 'a4'), wide: true, title: 'معاينة فاتورة المقاولات قبل الترحيل', rebuild: () => buildModelHtml(edPrintModel(), cur, draftPrintSettings().receipt, 'a4' as InvoiceTemplate) }) }}
               onExportPdf={() => toast.show('بعد الترحيل: طباعة ← حفظ كـ PDF 🖨️')}
-              onWhatsappPdf={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: receipt, docLabel: 'فاتورة', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: setup.shopName, toast }) }}
+              onWhatsappPdf={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const draftSettings = draftPrintSettings(); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: draftSettings.receipt, docLabel: 'فاتورة', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: draftSettings.setup.shopName, toast }) }}
               onPost={postFreeInvoice}
               headerFields={
                 <>
@@ -493,13 +471,14 @@ export function ContractingInvoicesPage() {
                 </section>
               </section>
             </InvoicePOSFrame>
+            {isPosting && <div className="absolute inset-0 z-50 grid place-items-center rounded-2xl bg-white/75 p-4 text-center font-black text-slate-700 backdrop-blur-sm dark:bg-slate-950/75 dark:text-white" role="status" aria-live="polite">جارٍ تأمين ترحيل الفاتورة وحفظها…</div>}
           </div>
         </div>
       )}
 
       {/* إرشاد: أين المستخلصات؟ مراجعتها وتعديلها وطباعتها */}
       <div className="rounded-2xl bg-orange-500/5 border border-orange-500/20 p-3 text-[12px] text-orange-700 dark:text-orange-300 leading-relaxed">
-        <b>دليل الصفحة:</b> «فاتورة بيع جديدة» تفتح الفاتورة الكاملة <b>حرة</b> (أصناف · عمولات موظفين · تحصيل متعدد · طباعة A4/A5/حراري) — ثم اربط المشروع من حقل <b>«المشروع»</b> في شريط الفاتورة نفسها: يُعبأ عميل المشروع تلقائياً (إن لم تختر عميلاً) وتظهر قيمة عقده، وتُحتسب الفاتورة في ملخص المشروع هنا وفي تفاصيله بشاشة المشروعات. بلا ربط؟ تبقى فاتورة حرة. <b>المستخلصات (PRX)</b> تُدار من شاشة «المشروعات والمستخلصات»: إصدار ومراجعة كاملة وتعديل بقيد عاكس وطباعة وثيقة رسمية للجهة المالكة.
+        <b>دليل الصفحة:</b> «فاتورة بيع جديدة» تفتح الفاتورة الكاملة <b>حرة</b> (أصناف · عمولات موظفين · تحصيل متعدد · طباعة A4/A5/حراري) — ثم اربط المشروع من حقل <b>«المشروع»</b> في شريط الفاتورة نفسها: يُعبأ عميل المشروع تلقائياً (إن لم تختر عميلاً) وتظهر قيمة عقده، وتُحتسب الفاتورة في ملخص المشروع وتفاصيله بشاشة المشروعات. بلا ربط؟ تبقى فاتورة حرة. <b>المستخلصات (PRX)</b> تُدار من شاشة «المشروعات والمستخلصات»: إصدار ومراجعة كاملة وتعديل بقيد عاكس وطباعة وثيقة رسمية للجهة المالكة.
       </div>
     </div>
   )

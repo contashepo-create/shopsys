@@ -9,9 +9,9 @@
 import { useRawDataStore } from './repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { syncOnce, validateSyncConfig, type SyncConfig } from './syncClient.ts'
-import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
-import { STANDARD_COA, type JournalEntry } from '../core/ledger.ts'
-import { fullCoa } from '../core/treasury.ts'
+import type { JournalEntry } from '../core/ledger.ts'
+import { assertJournalSnapshotSafe } from '../core/ledgerSnapshotGuard.ts'
+import { todayLocalIso } from '../core/time.ts'
 import { encryptForDevice, decryptForDevice } from './secureStorage.ts'
 
 let applyingPull = false // يمنع اعتبار «تطبيق المسحوب» تغييراً محلياً جديداً
@@ -42,20 +42,15 @@ function serializeStore(): string {
  * ويبقى الدفتر المحلي كما هو (لا تطبيق جزئي أبداً).
  */
 function assertIncomingLedgerSafe(parsed: Record<string, unknown>, previousJournal?: readonly JournalEntry[]): void {
-  const incoming = parsed.journal
-  if (!Array.isArray(incoming)) return // دفعة بلا دفتر — لا شيء يُحرس
-  const normalized = normalizeJournalDates(incoming as JournalEntry[]) as JournalEntry[]
-  parsed.journal = normalized
-  const treasuries = (Array.isArray(parsed.treasuries) ? parsed.treasuries : useRawDataStore.getState().treasuries) as Parameters<typeof fullCoa>[1]
-  const customAccounts = (Array.isArray(parsed.customAccounts) ? parsed.customAccounts : useRawDataStore.getState().customAccounts) as { code: string; nameAr: string; rootType: string; parentCode: string }[]
-  const coa = [
-    ...fullCoa(STANDARD_COA, treasuries),
-    ...customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr, rootType: a.rootType, parentCode: a.parentCode, isPostable: true } as never)),
-  ]
-  // Compare against the local ledger so existing posted entries cannot vanish
-  // or change during a pull. New cloud entries are still fully validated.
-  const prev = previousJournal ?? (useRawDataStore.getState().journal as JournalEntry[])
-  assertJournalIntegrity(prev, normalized, { coa, fiscalYears: useAppStore.getState().fiscalYears })
+  if (!Array.isArray(parsed.journal)) return // دفعة بلا دفتر — لا شيء يُحرس
+  // يبقى الدفتر المحلي مرجعاً لمنع الاختفاء/التعديل، بينما تُفحص مراجع كل القيود
+  // الواردة أيضاً باستخدام مجموعات المستندات داخل اللقطة نفسها.
+  assertJournalSnapshotSafe(
+    parsed,
+    useAppStore.getState().fiscalYears,
+    todayLocalIso(),
+    previousJournal ?? (useRawDataStore.getState().journal as JournalEntry[]),
+  )
 }
 
 /** بدء مراقبة التغييرات المحلية — يُستدعى مرة عند الإقلاع */

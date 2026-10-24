@@ -7,6 +7,7 @@
 import type { Minor } from './money.ts'
 import type { JournalEntry } from './ledger.ts'
 import type { CostCenterBudget } from './costCenters.ts'
+import { economicSourceResolver } from './journalSource.ts'
 
 export interface ExpenseAccountRow {
   accountCode: string
@@ -39,6 +40,18 @@ function inPeriod(date: string, f: ExpenseReportFilter): boolean {
   return true
 }
 
+/** أرصدة المصروفات الافتتاحية ليست مصروف فترة؛ تُعرض فقط عند اختيار مصدرها صراحةً. */
+function includeExpenseEntry(
+  entry: JournalEntry,
+  filter: ExpenseReportFilter,
+  sourceOf: (entry: JournalEntry) => string | undefined,
+): boolean {
+  if (!inPeriod(entry.date, filter)) return false
+  if (filter.sourceType && sourceOf(entry) !== filter.sourceType) return false
+  if (sourceOf(entry) === 'opening' && filter.sourceType !== 'opening') return false
+  return true
+}
+
 /** هل الكود بند مصروف؟ الشجرة القياسية 5xxx أو حساب مخصص جذره مصروفات */
 export function isExpenseCode(code: string, customExpenseCodes: ReadonlySet<string>): boolean {
   return code.startsWith('5') || customExpenseCodes.has(code)
@@ -52,9 +65,9 @@ export function expensesSummary(
   customExpenseCodes: ReadonlySet<string>,
 ): { rows: ExpenseAccountRow[]; grandTotalMinor: Minor; txCount: number } {
   const map = new Map<string, { totalMinor: number; txCount: number }>()
+  const sourceOf = economicSourceResolver(journal)
   for (const e of journal) {
-    if (!inPeriod(e.date, filter)) continue
-    if (filter.sourceType && e.sourceType !== filter.sourceType) continue
+    if (!includeExpenseEntry(e, filter, sourceOf)) continue
     for (const l of e.lines) {
       if (!isExpenseCode(l.accountCode, customExpenseCodes)) continue
       const cur = map.get(l.accountCode) ?? { totalMinor: 0, txCount: 0 }
@@ -218,9 +231,9 @@ export function journalExpensesByCostCenter(
   customExpenseCodes: ReadonlySet<string>,
 ): { rows: JournalCostCenterExpenseRow[]; totalMinor: Minor } {
   const grouped = new Map<string, JournalCostCenterExpenseRow>()
+  const sourceOf = economicSourceResolver(journal)
   for (const entry of journal) {
-    if (!inPeriod(entry.date, filter)) continue
-    if (filter.sourceType && entry.sourceType !== filter.sourceType) continue
+    if (!includeExpenseEntry(entry, filter, sourceOf)) continue
     for (const line of entry.lines) {
       if (line.costCenterId == null || !isExpenseCode(line.accountCode, customExpenseCodes)) continue
       if (filter.costCenterId !== undefined && filter.costCenterId !== 'all' && line.costCenterId !== filter.costCenterId) continue
@@ -257,10 +270,11 @@ export function costCenterBudgetReport(
     while (queue.length) for (const childId of children.get(queue.shift()!) ?? []) { if (!ids.has(childId)) { ids.add(childId); queue.push(childId) } }
     return ids
   }
+  const sourceOf = economicSourceResolver(journal)
   return budgets.filter((budget) => (!filter.from || budget.to >= filter.from) && (!filter.to || budget.from <= filter.to)).map((budget) => {
     const budgetCenters = includedCenters(budget.costCenterId)
     const actualMinor = journal.reduce((sum, entry) => {
-      if (entry.date.slice(0, 10) < budget.from || entry.date.slice(0, 10) > budget.to || !inPeriod(entry.date, filter)) return sum
+      if (entry.date.slice(0, 10) < budget.from || entry.date.slice(0, 10) > budget.to || !includeExpenseEntry(entry, filter, sourceOf)) return sum
       return sum + entry.lines.filter((line) => line.costCenterId != null && budgetCenters.has(line.costCenterId) && isExpenseCode(line.accountCode, customExpenseCodes)).reduce((lineSum, line) => lineSum + line.debit - line.credit, 0)
     }, 0)
     return { ...budget, actualMinor, varianceMinor: budget.amountMinor - actualMinor, utilizationPercent: budget.amountMinor > 0 ? Math.round(actualMinor / budget.amountMinor * 1000) / 10 : 0 }
@@ -279,9 +293,9 @@ export function expenseDetails(
   customExpenseCodes: ReadonlySet<string>,
 ): { rows: (ExpenseTxRow & { accountCode: string })[]; totalMinor: Minor } {
   const rows: (ExpenseTxRow & { accountCode: string })[] = []
+  const sourceOf = economicSourceResolver(journal)
   for (const e of journal) {
-    if (!inPeriod(e.date, filter)) continue
-    if (filter.sourceType && e.sourceType !== filter.sourceType) continue
+    if (!includeExpenseEntry(e, filter, sourceOf)) continue
     for (const l of e.lines) {
       if (!isExpenseCode(l.accountCode, customExpenseCodes)) continue
       if (filter.accountCode && l.accountCode !== filter.accountCode) continue

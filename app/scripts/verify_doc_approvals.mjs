@@ -57,7 +57,7 @@ const css = read('index.css')
   assert.ok(/data-approvals-list/.test(page) && /data-approval-row/.test(page), 'شاشة الاعتماد بلا معرّفات')
   assert.ok(/data-approvals-badge/.test(page), 'لا عدّاد للمعلّق في الشاشة')
   assert.ok(/data-approvals-alert/.test(menu) && /pendingForUser/.test(menu), 'لا شارة تنبيه للمعتمِد في الشريط العلوي')
-  assert.ok(/const submitForApprovalIfNeeded=/.test(sales) && /if\(!approvedBy&&submitForApprovalIfNeeded\(saleArgs\)\)return;const sale=postSale\(saleArgs\);/.test(sales),
+  assert.ok(/const submitForApprovalIfNeeded=/.test(sales) && /if\(!approvedBy&&submitForApprovalIfNeeded\(saleArgs\)\)return(?: true)?;const sale=postSale\(saleArgs\);/.test(sales),
     'فاتورة البيع لا تمرّ ببوابة الاعتماد قبل الترحيل')
   assert.ok(/payload:JSON\.stringify\(saleArgs\)/.test(sales), 'حمولة اعتماد البيع ليست وسيط الترحيل الكامل')
   /* بطاقة الإعدادات مكون مشترك (طلب المالك: التحكم من قسم الصلاحيات أيضاً) */

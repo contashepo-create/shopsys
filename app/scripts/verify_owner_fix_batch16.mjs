@@ -61,7 +61,10 @@ const frame = read('ui/components/InvoicePOSFrame.tsx')
 }
 {
   assert.ok(/\.invoice-doc \.invoice-doc-fields > \.form-field:nth-child\(even\)/.test(css), 'لا تدريج بصري لصفوف الحقول')
-  assert.ok(/\.invoice-doc \.invoice-doc-fields > \.form-field:focus-within/.test(css), 'الحقل النشط غير مميّز')
+  /* قاعدة المالك الأحدث (حزمة ١١ بنداً — بند ٤): التركيز داخل الحقل نفسه
+     لا على حاويته — حلقة inset وصبغة خلفية على الإدخال، ولا :focus-within */
+  assert.ok(/\.form-field :is\(input/.test(css) && /box-shadow: inset/.test(css), 'الحقل النشط غير مميّز داخل الحقل')
+  assert.ok(!/\.form-field:focus-within/.test(css), 'عاد تمييز الحاوية عند التركيز — مخالف لقاعدة المالك')
   R.ok('تدريج بصري لحقول الترويسة يخفّف الازدحام')
 }
 /* ⑧ توسيط خانة الإجمالي + فحوص الائتمان + قوالب الفواتير (دفعة ⑰) */

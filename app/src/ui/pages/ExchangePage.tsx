@@ -5,9 +5,10 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * اختر الفاتورة ← حدد المرتجع ← اختر الجديد ← الصافي يُعرض (يدفع/نرد/متكافئ)
  * والنظام يولد مرتجعاً + بيعاً كاملين مربوطين بمستند EXC-#### واحد.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Repeat, Search, ArrowLeftRight, Trash2 } from 'lucide-react'
-import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type SaleInvoice } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
@@ -35,6 +36,8 @@ export function ExchangePage() {
   const [retQtys, setRetQtys] = useState<Record<number, string>>({})
   const [retConds, setRetConds] = useState<Record<number, ReturnCondition>>({})
   const [newLines, setNewLines] = useState<CartLine[]>([])
+  const postingRef = useRef(false)
+  const [isPosting, setIsPosting] = useState(false)
   /** نص الكمية لكل سطر جديد — يقبل الكسور العشرية (وزن ⚖️) أثناء الكتابة */
   const [newQtyTexts, setNewQtyTexts] = useState<Record<number, string>>({})
   const [itemQuery, setItemQuery] = useState('')
@@ -94,16 +97,18 @@ export function ExchangePage() {
   }
 
   const submit = (creditLimitOverrideBy?: string) => {
-    if (!sale) return
+    if (!sale || postingRef.current) return
     approval.request((approvedBy) => {
-    try {
+      if (postingRef.current) return
+      postingRef.current = true
+      setIsPosting(true)
       const specs: ReturnLineSpec[] = []
       for (const [idxStr, v] of Object.entries(retQtys)) {
         const q = Number(v)
         const idx = Number(idxStr)
         if (q > 0) specs.push({ lineIndex: idx, qty: q, condition: retConds[idx] ?? 'resellable' })
       }
-      const doc = postExchange({
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postExchange({
         originalSaleId: sale.id,
         returnLineSpecs: specs,
         newLines,
@@ -111,23 +116,23 @@ export function ExchangePage() {
         notes,
         approvedBy,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
-      })
-      toast.show(
-        doc.netMinor === 0
-          ? `استبدال متكافئ ✓ ${doc.exchangeNumber} — لا فرق نقدي`
-          : doc.netMinor > 0
-            ? `${doc.exchangeNumber}: العميل يدفع فرقاً ${fmt(doc.netMinor)} ${cur.symbol}`
-            : `${doc.exchangeNumber}: يُرد للعميل ${fmt(-doc.netMinor)} ${cur.symbol}`,
-      )
-      setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]); setNewQtyTexts({}); setNotes('')
-    } catch (e) {
-      // استبدال آجل بأغلى تخطى حد العميل: اللقطة استُرجعت في repo — اعرض اعتماد المدير
-      if (e instanceof CreditLimitError) {
-        creditApproval.request((creditBy) => submit(creditBy ?? 'المشرف'))
-        return
-      }
-      toast.show((e as Error).message, 'error')
-    }
+      })).then((doc) => {
+        toast.show(
+          doc.netMinor === 0
+            ? `استبدال متكافئ ✓ ${doc.exchangeNumber} — لا فرق نقدي`
+            : doc.netMinor > 0
+              ? `${doc.exchangeNumber}: العميل يدفع فرقاً ${fmt(doc.netMinor)} ${cur.symbol}`
+              : `${doc.exchangeNumber}: يُرد للعميل ${fmt(-doc.netMinor)} ${cur.symbol}`,
+        )
+        setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]); setNewQtyTexts({}); setNotes('')
+      }).catch((e: unknown) => {
+        // استبدال آجل بأغلى تخطى حد العميل: المعاملة الذرية تراجعت — اطلب اعتماد المدير ثم أعدها تحت القفل.
+        if (e instanceof CreditLimitError) {
+          creditApproval.request((creditBy) => submit(creditBy ?? 'المشرف'))
+          return
+        }
+        toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل الاستبدال', 'error')
+      }).finally(() => { postingRef.current = false; setIsPosting(false) })
     })
   }
 
@@ -243,7 +248,7 @@ export function ExchangePage() {
               {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
             </QuickSelect>
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={`${inputCls} flex-1 min-w-48`} placeholder="ملاحظات (اختياري)…" />
-            <Btn onClick={submit} shortcut="F9" disabled={returnValue <= 0 || newLines.length === 0}>ترحيل الاستبدال</Btn>
+            <Btn onClick={submit} shortcut="F9" disabled={isPosting || returnValue <= 0 || newLines.length === 0}>{isPosting ? 'جارٍ ترحيل الاستبدال…' : 'ترحيل الاستبدال'}</Btn>
           </div>
         </div>
       )}

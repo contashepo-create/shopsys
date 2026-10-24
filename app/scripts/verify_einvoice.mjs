@@ -182,22 +182,22 @@ ok(zatcaLinkPolicy({ featureActive: true, online: true }).canLink === true, 'ا�
 const readSource = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 for (const [label, path, token] of [
   ['الكاشير', '../src/ui/pages/PosPage.tsx', 'maybeTaxBarcode'],
-  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx', 'taxBarcodePayload'],
-  ['محرر فاتورة المبيعات', '../src/ui/pages/AdvancedSalesInvoicePage.tsx', 'stampTax('],
-  /* مستندات المبيعات الأخرى — كلها كانت تطبع بلا رمز قبل 2026-10-22 */
-  ['مرتجع مبيعات (إشعار دائن)', '../src/ui/pages/SaleReturnsPage.tsx', 'taxPayload('],
-  ['مراكز فواتير الأنشطة الخدمية', '../src/ui/pages/ActivityInvoicesHubs.tsx', 'stampTax('],
-  ['فواتير المقاولات', '../src/ui/pages/ContractingInvoicesPage.tsx', 'stampTax('],
-  ['فواتير الإيجار الدورية', '../src/ui/pages/RentalContractsPage.tsx', 'stampTax('],
-  ['فواتير النقل', '../src/ui/pages/TripsPage.tsx', 'stampTax('],
-  ['إيصال عميل المطعم', '../src/ui/pages/RestaurantOrdersPage.tsx', 'stampTax('],
+  ['قائمة فواتير المبيعات', '../src/ui/pages/SalesInvoicesPage.tsx', 'documentTaxBarcodePayload('],
+  ['محرر فاتورة المبيعات', '../src/ui/pages/AdvancedSalesInvoicePage.tsx', 'stampDocumentTaxBarcode('],
+  /* مستندات المبيعات الأخرى — الرمز يتبع هوية فرع المستند لا الفرع النشط */
+  ['مرتجع مبيعات (إشعار دائن)', '../src/ui/pages/SaleReturnsPage.tsx', 'documentTaxBarcodePayload('],
+  ['مراكز فواتير الأنشطة الخدمية', '../src/ui/pages/ActivityInvoicesHubs.tsx', 'stampDocumentTaxBarcode('],
+  ['فواتير المقاولات', '../src/ui/pages/ContractingInvoicesPage.tsx', 'stampDocumentTaxBarcode('],
+  ['فواتير الإيجار الدورية', '../src/ui/pages/RentalContractsPage.tsx', 'stampDocumentTaxBarcode('],
+  ['فواتير النقل', '../src/ui/pages/TripsPage.tsx', 'stampDocumentTaxBarcode('],
+  ['إيصال عميل المطعم', '../src/ui/pages/RestaurantOrdersPage.tsx', 'stampDocumentTaxBarcode('],
   ['معاينة إعدادات الطباعة', '../src/ui/pages/PrintSettingsPage.tsx', 'stampTax('],
 ]) {
   const source = readSource(path)
   ok(source.includes(token), `${label}: مسار الطباعة يطلب الرمز الضريبي (${token})`)
 }
 const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
-ok(advSalesSrc.includes('useTaxBarcodeStamp'), 'محرر فاتورة المبيعات: يستخدم خطاف الختم الموحد')
+ok(advSalesSrc.includes('stampDocumentTaxBarcode') && advSalesSrc.includes('resolveDocumentPrintSettings'), 'محرر فاتورة المبيعات: ختم الرمز وإعداداته من فرع المستند')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
 ok(advSalesSrc.includes('editingInvoice?{invoiceNumber:editingInvoice.invoiceNumber'), 'محرر الفاتورة: معاينة فاتورة قائمة تستخدم رقمها وتاريخها لا «مسودة» (طابع زاتكا صحيح)')
 /* إعادة طباعة فاتورة شاملة الضريبة كانت تعرض «(مضافة)» رغم أن الإجماليات مشمولة */

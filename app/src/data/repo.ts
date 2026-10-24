@@ -8,7 +8,7 @@
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { appStorage } from './persistentStorage.ts'
+import { appStorage, registerExternalSnapshotApplier } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import { draftFromCategory, nextSku } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
@@ -39,8 +39,11 @@ import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotio
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, validatePurchaseVariantBreakdown, applyPurchaseVariantBreakdown, type VariantStock, type VariantBreakdownLine } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
+import { buildInterBranchTransferLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE } from '../core/branchAccounting.ts'
 import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
+import { SOURCE_REFERENCE_COLLECTIONS } from '../core/sourceTypes.ts'
+import type { SourceType } from '../core/ledger.ts'
 import { getCountry } from '../core/countries.ts'
 import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyaltyRedeemEntry, type LoyaltySettings } from '../core/loyalty.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
@@ -91,7 +94,7 @@ import { customerStatement, supplierStatement, statementBalance, customerUnitDoc
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
 import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxHoldingsFromFlows, validateFxConversion, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
-import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, type FiscalYear } from '../core/fiscal.ts'
+import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, mergeOrderLines, linesReduceExistingQty, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
@@ -110,7 +113,7 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask,
-  computeProjectExpenseInvoice, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed } from '../core/contracting.ts'
+  computeProjectExpenseInvoice, DEFAULT_PROJECT_EXPENSE_CATEGORIES, normalizeExpenseCategoryName, computeProjectBillingGuard, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed, type ProjectExpenseCategory, type ProjectBillingGuard, type ProjectBillingNature } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
   buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry, validateUnitMaintenanceMaterials,
@@ -147,7 +150,16 @@ import {
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
 import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
-import { localIsoTimestamp, localTimestampOn, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
+import { calendarDateIso, localIsoTimestamp, localTimestampOn, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
+
+function checkedOpeningEffectiveDate(value: string | undefined, fallback: string): string {
+  const date = (value ?? fallback).trim()
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : new Date(Number.NaN)
+  if (!Number.isFinite(parsed.getTime()) || calendarDateIso(parsed) !== date) {
+    throw new Error('تاريخ سريان الرصيد الافتتاحي غير صالح — استخدم تاريخاً تقويمياً بصيغة YYYY-MM-DD')
+  }
+  return date
+}
 
 export interface Warehouse {
   id: number
@@ -545,7 +557,7 @@ export interface ProjectExtract {
   editReversalEntryId?: number
 }
 
-export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed }
+export type { ExpenseTaxMode, ProjectExpenseLineInput, ProjectExpenseLineComputed, ProjectExpenseCategory, ProjectBillingGuard, ProjectBillingNature }
 
 /** تكلفة مسجلة على مشروع ببند أو كفاتورة مصروفات متعددة البنود */
 export interface ProjectCost {
@@ -1329,6 +1341,8 @@ export interface Voucher {
   amountMinor: number
   description: string
   journalEntryId: number
+  /** تحويل بين فرعين: القيدان يظلان في دفتريهما، والسند متاح للطرفين. */
+  branchTransfer?: { sourceBranchId: number; destinationBranchId: number; destinationJournalEntryId: number; reversalEntryId?: number | null; destinationReversalEntryId?: number | null }
   // ربط السند بطرفه — يغذي كشوف حساب العميل/المورد (طلب المالك)
   /** الطرف على السند: عميل أو مورد أو موظف (سلفة/استرداد) — طلب المالك */
   partyKind?: 'customer' | 'supplier' | 'employee' | null
@@ -1496,6 +1510,14 @@ export interface SaleInvoice {
   /** مشروع المقاولات المرتبط — يُنسب إليه إيراد الفاتورة وربحيتها (طلب المالك) */
   projectId?: number | null
   /**
+   * طبيعة فوترة المشروع — النموذج (أ): «documentation» توثيق مقابل مستخلصات
+   * (لا ذمة/إيراد/ضريبة جديدة) أو «extra» فاتورة إضافية كاملة تحت السقف الموحد.
+   * undefined = فاتورة تاريخية رُحّلت كاملة (تُحسب إضافية في الحارس).
+   */
+  projectBilling?: ProjectBillingNature
+  /** المستخلصات الموثَّقة بهذه الفاتورة (لطبيعة التوثيق) */
+  extractIds?: number[]
+  /**
    * روشتة مرفقة بالفاتورة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة
    * المنظَّمة الجاهز فعلاً في وحدة العيادة (`core/prescription.ts`) مُعاد
    * استخدامه هنا مباشرة على مستوى الفاتورة — بلا حاجة لملف مريض/زيارة
@@ -1517,6 +1539,8 @@ export interface SaleReturn {
   lines: ReturnLine[]
   totals: CartTotals
   journalEntryId: number
+  /** مرتجع فاتورة توثيق مشروعات (النموذج أ): يخفض «الموثَّق» فقط، ويُستثنى من تجميعات المرتجعات المالية */
+  projectBilling?: ProjectBillingNature
   reason: string
   /** كود سبب موحد (RETURN_REASONS) — undefined = سجل قديم/سبب حر */
   reasonCode?: string
@@ -1711,6 +1735,8 @@ interface DataState {
   deletePendingPartOrder: (id: number) => void
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
+  /** تصنيفات مصروفات المشروعات الحرة (تنمو من «أخرى…» في نافذة المصروف وتُحفظ دائماً) */
+  projectExpenseCategories: ProjectExpenseCategory[]
   retentionReleases: RetentionRelease[]
   quotations: Quotation[] // عروض أسعار ومناقصات (طلب المالك)
   /* عمق المقاولات (مقارنة pro-acc — طلب المالك) */
@@ -2134,6 +2160,10 @@ interface DataState {
     bookCurrencyCode?: string
     /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
     projectId?: number | null
+    /** طبيعة فوترة المشروع (النموذج أ) — عند إرسالها يُفرض سقف العقد الموحد على «extra» */
+    projectBilling?: ProjectBillingNature
+    /** المستخلصات الموثَّقة (لطبيعة «documentation») */
+    extractIds?: number[]
     /**
      * روشتة مرفقة (سد فجوة النشاط #5 صيدلية): نفس نموذج الروشتة المنظَّمة
      * الجاهز في core/prescription.ts، معاد استخدامه مباشرة على الفاتورة.
@@ -2224,15 +2254,15 @@ interface DataState {
    * ضبط رصيد افتتاحي (نمط mobileshop): عميل/مورد/خزينة/سلفة موظف —
    * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
    */
-  setOpeningBalance: (args: { kind: OpeningKind; refId: string | number; amountMinor: number; label: string }) => void
+  setOpeningBalance: (args: { kind: OpeningKind; refId: string | number; amountMinor: number; label: string; effectiveDate?: string }) => void
   /**
    * المخزون الافتتاحي بالتقييم المادي (كمية × تكلفة وحدة — بلاغ المالك v1.0.4):
    * يثبّت القيمة الدفترية (1103/3101) والكمية الفعلية (stockQty) وتكلفة الصنف
    * المرجعية معاً، والتعديل اللاحق يرحّل فرق القيمة وفرق الكمية — لا تكرار.
    */
-  setOpeningItemStock: (args: { itemId: number; qty: number; unitCostMinor: number }) => void
+  setOpeningItemStock: (args: { itemId: number; qty: number; unitCostMinor: number; effectiveDate?: string }) => void
   /** إعلان رأس المال — الفرق عن المحتسب يرحَّل لأرباح مرحّلة 3102 بقيد متوازن */
-  declareOpeningCapital: (declaredMinor: number) => void
+  declareOpeningCapital: (declaredMinor: number, effectiveDate?: string) => void
   /**
    * تسوية شاملة (نمط mobileshop): مطابقة رصيد خزينة/عميل/مورد بالواقع —
    * الفرق يضرب 5112 إجبارياً (درس عجز الـ5,000 المتبخر) ويُوثق بمستند SET-####.
@@ -2783,7 +2813,9 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
+  /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
+  addProjectExpenseCategory: (nameAr: string, kind?: CostKind) => ProjectExpenseCategory
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -2848,6 +2880,8 @@ interface DataState {
   getRemainingRetention: (projectId: number) => number
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
+  /** حارس فوترة المشروع (النموذج أ): عقد فعلي/مستخلَص/موثَّق/متاح الآن — لوحة نافذة الفاتورة */
+  getProjectBillingGuard: (projectId: number) => ProjectBillingGuard
   /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
   getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
@@ -4829,16 +4863,24 @@ export const useRawDataStore = create<DataState>()(
               patchRec[key] = nextArr.map((r: Record<string, unknown>) => {
                 if (r && !prevIds.has(r.id)) {
                   const isTransferVoucher = key === 'vouchers' && r.kind === 'transfer'
+                  const approvedInterBranchEntry = key === 'journal' && typeof r.interBranchTransferId === 'number'
+                    && Array.isArray(patchRec.vouchers) && (patchRec.vouchers as Voucher[]).some((voucher) =>
+                      voucher.id === r.interBranchTransferId && voucher.branchTransfer != null
+                      && [voucher.branchTransfer.sourceBranchId, voucher.branchTransfer.destinationBranchId].includes(r.branchId as number),
+                    )
+                  const transfer = r.branchTransfer as Voucher['branchTransfer'] | undefined
+                  const approvedInterBranchVoucher = key === 'vouchers' && transfer != null
+                    && [transfer.sourceBranchId, transfer.destinationBranchId].includes(activeBranch.id)
                   return {
                     ...r,
-                    ...(r.branchId !== activeBranch.id ? { branchId: activeBranch.id } : {}),
+                    ...(r.branchId !== activeBranch.id && !approvedInterBranchEntry && !approvedInterBranchVoucher ? { branchId: activeBranch.id } : {}),
                     ...(key === 'items' && !activeBranch.isMain && r.warehouseId === undefined
                       ? { warehouseId: activeBranch.warehouseId }
                       : {}),
                     ...(remapDefaultTreasury && !isTransferVoucher && r.treasury === '1101'
                       ? { treasury: activeBranch.treasuryCode }
                       : {}),
-                    ...(remapDefaultTreasury && key === 'journal' && Array.isArray(r.lines) && !(r.lines as { accountCode?: string }[]).some((l) => l.accountCode === activeBranch.treasuryCode)
+                    ...(remapDefaultTreasury && key === 'journal' && !approvedInterBranchEntry && Array.isArray(r.lines) && !(r.lines as { accountCode?: string }[]).some((l) => l.accountCode === activeBranch.treasuryCode)
                       ? {
                           lines: (r.lines as { accountCode?: string }[]).map((l) =>
                             l.accountCode === '1101' ? { ...l, accountCode: activeBranch.treasuryCode } : l,
@@ -4861,17 +4903,26 @@ export const useRawDataStore = create<DataState>()(
         if (patch && (patch as Partial<DataState>).journal) {
           // توحيد التاريخ أولاً: كل قيد بصيغة YYYY-MM-DD مهما أرسل المسار
           const rawJournal = (patch as Partial<DataState>).journal!
-          const nextJournal = normalizeJournalDates(rawJournal) as JournalEntry[]
+          const previousEntryIds = new Set(state.journal.map((entry) => entry.id))
+          let nextJournal = normalizeJournalDates(rawJournal) as JournalEntry[]
+          if (activeBranch) {
+            nextJournal = nextJournal.map((entry) => !previousEntryIds.has(entry.id) && entry.branchId == null
+              ? { ...entry, branchId: activeBranch.id }
+              : entry)
+          }
           if (nextJournal !== rawJournal) (patch as Partial<DataState>).journal = nextJournal
           if (activeBranch) {
             const foreignTreasuryCodes = new Set(state.treasuries.filter((treasury) => {
               const owner = state.branches.find((branch) => branch.treasuryCode === treasury.code)
               return (owner && owner.id !== activeBranch.id) || (treasury.branchId != null && treasury.branchId !== activeBranch.id)
             }).map((treasury) => treasury.code))
-            const previousEntryIds = new Set(state.journal.map((entry) => entry.id))
             for (const entry of nextJournal) {
               if (previousEntryIds.has(entry.id)) continue
-              if (entry.lines.some((line) => foreignTreasuryCodes.has(line.accountCode))) {
+              const pairedTransfer = entry.interBranchTransferId != null
+                && (patch as Partial<DataState>).vouchers?.some((voucher) => voucher.id === entry.interBranchTransferId
+                  && voucher.branchTransfer != null
+                  && [voucher.branchTransfer.sourceBranchId, voucher.branchTransfer.destinationBranchId].includes(entry.branchId ?? -1))
+              if (!pairedTransfer && entry.lines.some((line) => foreignTreasuryCodes.has(line.accountCode))) {
                 throw new Error('لا يمكن ترحيل قيد على خزينة أو بنك تابع لفرع آخر')
               }
             }
@@ -4879,9 +4930,46 @@ export const useRawDataStore = create<DataState>()(
           const nextTreasuries = (patch as Partial<DataState>).treasuries ?? state.treasuries
           // الحارس المركزي للدفتر (AUDIT-002/003): توازن + نظافة سطر + مصدر + سنة مفتوحة
           // + لا تعديل صامت — يُرفض القيد المختل قبل أي كتابة فلا يبقى أثر جزئي أبداً.
+          const sourcePatch = patch as Partial<DataState>
+          const indexDocuments = (rows: readonly { id: number; branchId?: number | null }[]) =>
+            new Map(rows.map((row) => [row.id, row.branchId] as const))
+          const sourceDocumentIndexes: Partial<Record<SourceType, ReadonlyMap<number, number | null | undefined>>> = {}
+          const sourceCollectionIndexes: Record<string, ReadonlyMap<number, number | null | undefined>> = {}
+          const requiredSourceCollections = new Set(nextJournal
+            .filter((entry) => !previousEntryIds.has(entry.id) && entry.sourceCollection)
+            .map((entry) => entry.sourceCollection!))
+          const sourceRows = { ...state, ...sourcePatch } as Record<string, unknown>
+          for (const collection of requiredSourceCollections) {
+            if (collection === 'fiscalYears') {
+              sourceCollectionIndexes.fiscalYears = new Map(
+                useAppStore.getState().fiscalYears.map((year) => [year.id, year.branchId] as const),
+              )
+              continue
+            }
+            const rows = sourceRows[collection]
+            if (!Array.isArray(rows)) continue
+            const docs = rows.filter((row): row is { id: number; branchId?: number | null } =>
+              Boolean(row) && typeof row === 'object' && Number.isSafeInteger((row as { id?: unknown }).id),
+            )
+            sourceCollectionIndexes[collection] = indexDocuments(docs)
+          }
+          for (const [sourceType, collection] of Object.entries(SOURCE_REFERENCE_COLLECTIONS) as [SourceType, string][]) {
+            const rows = (sourcePatch as Record<string, unknown>)[collection] ?? (state as unknown as Record<string, unknown>)[collection]
+            if (!Array.isArray(rows)) throw new Error(`سياسة مصدر القيد ${sourceType} تشير إلى مجموعة غير معرّفة: ${collection}`)
+            sourceDocumentIndexes[sourceType] = indexDocuments(rows as { id: number; branchId?: number | null }[])
+          }
+          // تُرحّل القسائم الحالية على runId مشترك، لا على id صف payrollRuns؛
+          // احتفظ بمسار PayrollRun القديم وأضف معرّفات مجموعات القسائم الحديثة.
+          const payrollSlips = (sourcePatch.payrollSlips ?? state.payrollSlips) as { runId: number }[]
+          const payrollIndex = new Map(sourceDocumentIndexes.payroll)
+          for (const slip of payrollSlips) payrollIndex.set(slip.runId, undefined)
+          sourceDocumentIndexes.payroll = payrollIndex
           assertJournalIntegrity(state.journal, nextJournal, {
             coa: [...fullCoa(STANDARD_COA, nextTreasuries), ...customAsAccounts((patch as Partial<DataState>).customAccounts ?? state.customAccounts ?? [])],
             fiscalYears: useAppStore.getState().fiscalYears,
+            sourceDocumentIndexes,
+            sourceCollectionIndexes,
+            requireSourceCollection: true,
           })
           assertTreasuryNotNegative(state.journal, nextJournal, nextTreasuries, state)
         }
@@ -5522,6 +5610,7 @@ export const useRawDataStore = create<DataState>()(
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
       projectExtracts: [],
       projectCosts: [],
+      projectExpenseCategories: [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
       retentionReleases: [],
       quotations: [],
       boqItems: [],
@@ -5613,7 +5702,7 @@ export const useRawDataStore = create<DataState>()(
         const now = localIsoTimestamp()
         const voucherNumber = `PV-${String(voucherId).padStart(4, '0')}`
         const description = `سداد مصروف مستحق — ${payable.beneficiaryName}: ${payable.description}`
-        const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `${description} (${voucherNumber})`, sourceType: 'payment_voucher', sourceId: voucherId, lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
+        const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `${description} (${voucherNumber})`, sourceType: 'payment_voucher', sourceId: voucherId, sourceCollection: 'vouchers', lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
         assertBalanced(entry.lines)
         const voucher: Voucher = { id: voucherId, voucherNumber, kind: 'payment', date: args.date, treasury: args.treasury, counterAccountCode: payable.payableAccountCode, amountMinor: args.amountMinor, description, journalEntryId: entryId, partyKind: null, partyId: null, purchaseExpensePayableId: payable.id, reversalEntryId: null }
         const paidMinor = payable.paidMinor + args.amountMinor
@@ -6607,6 +6696,22 @@ export const useRawDataStore = create<DataState>()(
         // البيع بوحدة أكبر (صيدلية: شريط/علبة) — المخزون يُخصم بالوحدة الأساسية qty×factor
         // أصناف الخدمة (isService — نمط Square): لا فحص مخزون ولا خصم ولا تكلفة
         const isServiceItem = (itemId: number) => state.items.find((it) => it.id === itemId)?.isService === true
+        /* فاتورة توثيق مستخلصات (النموذج أ — أ-٢): مستند ضريبي صامت دفترياً.
+           التحققات المبكرة هنا قبل أي تخطيط مخزون: سطورها بنود خدمية فقط
+           (أعمال المستخلص)، ولا تحصيل/عمولات/مصروفات عليها — المال والذمة
+           والضريبة سبق أن نشأت بالمستخلصات نفسها. السقف يُفحص لاحقاً بحارسه. */
+        const isDocumentation = args.projectBilling === 'documentation'
+        if (isDocumentation) {
+          if (args.customerId == null) throw new Error('فاتورة التوثيق مستند ضريبي — تتطلب عميلاً مسجلاً (عميل المشروع)')
+          if ((args.partyKind ?? 'customer') !== 'customer') throw new Error('فاتورة التوثيق تصدر لعميل المشروع فقط — لا بيع توثيقي على حساب مورد أو موظف')
+          if (saleLines.some((l) => !isServiceItem(l.itemId))) throw new Error('فاتورة التوثيق لأعمال المستخلصات فقط — سطورها بنود خدمية، ولا تُباع بها أصناف مخزنية')
+          if (args.fx || args.terminalPayment) throw new Error('فاتورة التوثيق لا تحصيل عليها — لا عملة أجنبية ولا ماكينة دفع')
+          if (args.paymentAllocations?.length || (args.paidMinor ?? 0) > 0) throw new Error('فاتورة التوثيق لا تحصيل عليها — التحصيل والذمة على المستخلصات نفسها')
+          if ((args.internalExpenses ?? []).length) throw new Error('فاتورة التوثيق بلا مصروفات داخلية — حمّل المصروف على المشروع مباشرة')
+          if ((args.customerCharges ?? []).length) throw new Error('فاتورة التوثيق بلا إضافات على العميل — إجماليها يوازي المستخلصات الموثَّقة')
+          if ((args.staffCommissions ?? []).length || args.staffCommission) throw new Error('فاتورة التوثيق بلا عمولات — العمولة تُستحق على الأعمال نفسها')
+          if (args.dueDate) throw new Error('فاتورة التوثيق بلا تاريخ استحقاق — لا دين جديداً ينشأ بها')
+        }
         for (const l of saleLines) {
           if (isServiceItem(l.itemId)) continue
           saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
@@ -6740,9 +6845,47 @@ export const useRawDataStore = create<DataState>()(
         const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
         const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * args.taxPercent / 100), 0)
         const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
+        /* ── حارس فوترة المشاريع — النموذج (أ) (أ-١ سقف «extra»، أ-٢ توثيق) ──
+           يُفرض فقط حين تُرسل الواجهة طبيعة الفوترة صراحة؛ المسار التاريخي
+           (بلا طبيعة) لا يتغيّر حتى تُلزم الواجهة الطبيعة لفواتير المشروعات.
+           «extra»: سقف موحد بصافي الأعمال. «documentation»: سقفها المستخلَص
+           غير الموثَّق شامل الضريبة، وترحيلها صامت دفترياً (قيد تذكاري فقط). */
+        if (args.projectBilling) {
+          if (args.projectId == null) throw new Error('طبيعة فوترة المشروع تتطلب اختيار المشروع المرتبط بالفاتورة')
+          const branchState = getBranchScopedDataState(state)
+          const billingProject = branchState.projects.find((p) => p.id === args.projectId)
+          if (!billingProject) throw new Error('المشروع المرتبط بالفاتورة غير موجود في هذا الفرع')
+          const projectInvoices = branchState.sales.filter((inv) => inv.projectId === billingProject.id)
+          const projectInvoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+          const billingGuard = computeProjectBillingGuard({
+            contractValueMinor: billingProject.contractValueMinor,
+            changeOrders: branchState.changeOrders.filter((o) => o.projectId === billingProject.id),
+            extracts: branchState.projectExtracts.filter((e) => e.projectId === billingProject.id),
+            saleInvoices: projectInvoices,
+            saleReturns: branchState.saleReturns.filter((r) => projectInvoiceIds.has(r.saleId)),
+          })
+          if (args.projectBilling === 'documentation') {
+            /* تُسمح حتى للمشروع المقفل: ورقة ضريبية لأعمال منجزة ومُستخلَصة،
+               لا فوترة جديدة — ورفضها بعد الإقفال يحبس التوثيق الضريبي. */
+            if (!args.extractIds?.length) throw new Error('حدد المستخلصات الموثَّقة بهذه الفاتورة — التوثيق دائماً مقابل مستخلصات بأعينها')
+            const projectExtracts = branchState.projectExtracts.filter((e) => e.projectId === billingProject.id)
+            const unknownExtract = args.extractIds.find((id) => !projectExtracts.some((e) => e.id === id))
+            if (unknownExtract != null) throw new Error(`المستخلص #${unknownExtract} لا يخص مشروع «${billingProject.nameAr}»`)
+            if (billingProject.clientId != null && args.customerId !== billingProject.clientId) throw new Error('فاتورة التوثيق تصدر لعميل المشروع نفسه — المستخلصات على ذمته')
+            if (totals.totalMinor > billingGuard.availableToDocumentGrossMinor) {
+              throw new Error(`سقف توثيق المشروع «${billingProject.nameAr}»: إجمالي الفاتورة (${totals.totalMinor}) يتجاوز المستخلَص غير الموثَّق (${billingGuard.availableToDocumentGrossMinor}) — شامل الضريبة بالوحدة الصغرى (موثَّق سابقاً ${billingGuard.documentedGrossMinor}). التوثيق لا يفوتر عملاً جديداً؛ للأعمال خارج المستخلصات استخدم طبيعة «إضافية».`)
+            }
+          } else {
+            if (billingProject.status === 'completed') throw new Error('المشروع مقفل — لا فواتير إضافية جديدة عليه')
+            const invoiceWorksNet = totals.totalMinor - totals.taxMinor
+            if (invoiceWorksNet > billingGuard.extraRoomNetMinor) {
+              throw new Error(`سقف فوترة المشروع «${billingProject.nameAr}»: صافي هذه الفاتورة الإضافية (${invoiceWorksNet}) يتجاوز المتاح من العقد الفعلي (${billingGuard.extraRoomNetMinor}) — مستخلصات ${billingGuard.extractedNetMinor} + إضافيات سابقة ${billingGuard.extraInvoicedNetMinor} من عقد فعلي ${billingGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى). وثّق مقابل المستخلصات أو اعتمد أمر تغيير أولاً.`)
+            }
+          }
+        }
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const allocationPaid = args.paymentAllocations?.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
-        const paidM = allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+        const paidM = isDocumentation ? 0 : allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
         // العملة الثانية: الدفتر أحادي العملة، فالمرحَّل هو حاصل التحويل — ويجب أن يطابق ما أرسلته الشاشة
         let saleFxLeg: FxLeg | null = null
         if (args.fx) {
@@ -6793,7 +6936,7 @@ export const useRawDataStore = create<DataState>()(
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
         // يُفحص لحظة الترحيل — رصيده + الآجل الجديد ≤ حده، والتجاوز بموافقة مدير مسجلة
         const newCredit = totals.totalMinor - paidM
-        if (newCredit > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
+        if (!isDocumentation && newCredit > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
           if (cust && cust.creditLimitMinor > 0) {
             const balance = get().getCustomerBalance(cust.id)
@@ -6806,7 +6949,9 @@ export const useRawDataStore = create<DataState>()(
           receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
           receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
         }
-        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
+        /* توثيق ⇒ بلا سطور قيد: يولد قيد «تذكاري» فارغ يربط المستند بدفتره
+           (قرار 9: كل مستند مربوط بقيده) بلا أي أثر على الأرصدة */
+        const entryLines = isDocumentation ? [] : args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
         const internalExpenses = args.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -6833,7 +6978,7 @@ export const useRawDataStore = create<DataState>()(
           if (errors.length) throw new Error(errors.join(' — '))
         }
         entryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury ?? '1101'))
-        assertBalanced(entryLines)
+        if (!isDocumentation) assertBalanced(entryLines)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
         /* الختم بالتوقيت المحلي: تاريخ القيد/الفاتورة = يوم المستخدم، والوقت
@@ -6848,10 +6993,11 @@ export const useRawDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
+          description: isDocumentation ? `فاتورة توثيق ${invoiceNumber} — مستند ضريبي مقابل مستخلصات مشروع (بلا أثر دفتري)` : `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: 'sale',
           sourceId: saleId,
           lines: entryLines,
+          ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
@@ -6869,7 +7015,7 @@ export const useRawDataStore = create<DataState>()(
           partyName: salePartyKind === 'customer' ? null : args.partyName
             ?? (salePartyKind === 'supplier' ? state.suppliers.find((p) => p.id === salePartyId)?.nameAr : state.employees.find((p) => p.id === salePartyId)?.nameAr)
             ?? null,
-          payment: args.payment,
+          payment: isDocumentation ? 'credit' : args.payment,
           paidMinor: paidM,
           treasury: args.treasury ?? '1101',
           paymentAllocations: args.paymentAllocations,
@@ -6891,6 +7037,8 @@ export const useRawDataStore = create<DataState>()(
           notes: args.notes?.trim() || undefined,
           fx: saleFxLeg,
           projectId: args.projectId ?? null,
+          ...(args.projectId != null && args.projectBilling ? { projectBilling: args.projectBilling } : {}),
+          ...(args.projectId != null && args.extractIds && args.extractIds.length ? { extractIds: [...args.extractIds] } : {}),
           prescription: args.prescription
             ? (() => {
                 if (!args.prescription!.patientName.trim()) throw new Error('اسم المريض مطلوب في الروشتة المرفقة')
@@ -6927,7 +7075,7 @@ export const useRawDataStore = create<DataState>()(
         // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
         const loyaltySettings = readLoyaltySettings()
         const decimals = readCurrencyDecimals()
-        const earned = args.customerId != null ? earnedPoints(totals.totalMinor, decimals, loyaltySettings) : 0
+        const earned = !isDocumentation && args.customerId != null ? earnedPoints(totals.totalMinor, decimals, loyaltySettings) : 0
 
         // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
         const updatedItems = state.items.map((it) =>
@@ -6981,6 +7129,10 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        /* مرتجع توثيق (النموذج أ — أ-٢): يخفض «الموثَّق» في حارس المشروع فقط —
+           لا نقد يعود ولا ذمة تتغير، لأن مال الفاتورة لم يتحرك بدفترها أصلاً */
+        const isDocReturn = sale.projectBilling === 'documentation'
+        if (isDocReturn && args.refund !== 'credit') throw new Error('مرتجع فاتورة التوثيق يكون «تخفيضاً» فقط — لا رد نقدي ولا رصيد عميل، لأنه يصحّح ورقة ضريبية لا عملية مالية')
         // بوابة اعتماد المستندات (خطة ③): مرتجع خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!args.__approvalBypass) {
           const returnedMinor = args.lineSpecs?.length
@@ -7073,7 +7225,7 @@ export const useRawDataStore = create<DataState>()(
           const errors = validateTreasuryAccess(user?.treasuryAccess, refundTreasury, 'refund', alloc.cashMinor)
           if (errors.length) throw new Error(errors.join(' — '))
         }
-        const entryLines = buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
+        const entryLines = isDocReturn ? [] : buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
@@ -7084,10 +7236,11 @@ export const useRawDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `مرتجع مبيعات ${returnNumber} عن الفاتورة ${sale.invoiceNumber}`,
+          description: isDocReturn ? `مرتجع توثيق ${returnNumber} عن فاتورة التوثيق ${sale.invoiceNumber} — تصحيح ورقة ضريبية (بلا أثر دفتري)` : `مرتجع مبيعات ${returnNumber} عن الفاتورة ${sale.invoiceNumber}`,
           sourceType: 'sale_return',
           sourceId: returnId,
           lines: entryLines,
+          ...(isDocReturn ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
@@ -7116,6 +7269,7 @@ export const useRawDataStore = create<DataState>()(
           lines,
           totals,
           journalEntryId: entryId,
+          ...(isDocReturn ? { projectBilling: 'documentation' as const } : {}),
           reason: args.reason,
           ...(args.reasonCode ? { reasonCode: args.reasonCode } : {}),
           treasury: refundTreasury,
@@ -7159,6 +7313,7 @@ export const useRawDataStore = create<DataState>()(
         const qtyBack = new Map<number, number>()
         const valueBack = new Map<number, number>()
         for (const l of lines) {
+          if (isDocReturn) break // أعمال موثَّقة خدمية — لم يُخصم مخزون أصلاً كي يرجع
           if (isDish(l.itemId)) continue // الطبق بلا مخزون — لا عودة
           if (l.condition === 'damaged') continue // تالف: لا يدخل المخزون — تكلفته في 5111 بالقيد
           // سطر بوحدة أكبر: يعود للمخزون بالوحدة الأساسية qty×factor وبقيمته الكاملة
@@ -7450,7 +7605,7 @@ export const useRawDataStore = create<DataState>()(
             date: now.slice(0, 10),
             description: `تسوية جرد ${stocktakeNumber}`,
             sourceType: 'adjustment',
-            sourceId: stocktakeId,
+            sourceId: stocktakeId, sourceCollection: 'stocktakes',
             lines: entryLines,
             createdBy: activeUserName(get()),
             createdAt: now,
@@ -7676,11 +7831,15 @@ export const useRawDataStore = create<DataState>()(
         )
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
+        const requestedEffectiveDate = checkedOpeningEffectiveDate(args.effectiveDate, todayLocalIso())
+        const hasPriorOpeningRecord = Object.prototype.hasOwnProperty.call(openingState.openingBalances, key)
+        // تاريخ السريان يطبق على أول إثبات فقط. تعديلات لاحقة تُرحّل بتاريخ اليوم حتى لا يعاد تحرير الماضي.
+        const postingDate = hasPriorOpeningRecord ? todayLocalIso() : requestedEffectiveDate
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
-          date: now.slice(0, 10),
-          description: `رصيد افتتاحي: ${args.label} (${previous === 0 ? 'إثبات' : 'تعديل بفرق'})`,
+          date: postingDate,
+          description: `رصيد افتتاحي: ${args.label} (${hasPriorOpeningRecord ? 'تعديل بفرق' : 'إثبات'})`,
           sourceType: 'opening',
           sourceId: null,
           lines: entryLines,
@@ -7705,7 +7864,7 @@ export const useRawDataStore = create<DataState>()(
             const advId = nextId(employeeAdvances)
             employeeAdvances = [...employeeAdvances, {
               id: advId, advanceNumber: `ADV-${String(advId).padStart(4, '0')}`,
-              employeeId: empId, date: now,
+              employeeId: empId, date: postingDate,
               amountMinor: args.amountMinor, recoveredMinor: 0,
               source: 'opening' as const, custodyFileId: null, treasury: '1101',
               notes: `رصيد افتتاحي — ${args.label}`, journalEntryId: entryId,
@@ -7745,7 +7904,7 @@ export const useRawDataStore = create<DataState>()(
           throw new Error(`لا يمكن تخفيض الكمية الافتتاحية دون المستهلك فعلياً (الرصيد الحالي ${item.stockQty ?? 0}) — استخدم تسوية الجرد`)
         }
         // القيمة الدفترية بنفس مسار الافتتاحي المتوازن (1103/3101 بفرق القيمة)
-        get().setOpeningBalance({ kind: 'item_stock', refId: args.itemId, amountMinor, label: item.nameAr })
+        get().setOpeningBalance({ kind: 'item_stock', refId: args.itemId, amountMinor, label: item.nameAr, effectiveDate: args.effectiveDate })
         // التقييم المادي: تثبيت الكمية والتكلفة المرجعية للصنف + سجل الافتتاحي المادي
         set((s) => {
           const branch = getEffectiveActiveBranch(s)
@@ -7763,8 +7922,9 @@ export const useRawDataStore = create<DataState>()(
         })
       },
 
-      declareOpeningCapital: (declaredMinor) => {
+      declareOpeningCapital: (declaredMinor, requestedDate) => {
         if (!Number.isInteger(declaredMinor) || declaredMinor < 0) throw new Error('رأس المال المعلن لا يكون سالباً')
+        const requestedEffectiveDate = checkedOpeningEffectiveDate(requestedDate, todayLocalIso())
         const state = get()
         const activeBranch = getEffectiveActiveBranch(state)
         const scoped = getBranchScopedDataState(state)
@@ -7787,10 +7947,12 @@ export const useRawDataStore = create<DataState>()(
         }
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
+        const hasPriorDeclaration = scoped.journal.some((entry) => entry.sourceType === 'opening' && entry.description.startsWith('إعلان رأس المال:'))
+        const postingDate = hasPriorDeclaration ? todayLocalIso() : requestedEffectiveDate
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
-          date: now.slice(0, 10),
+          date: postingDate,
           description: `إعلان رأس المال: ${declaredMinor} — الفرق عن الدفتر يرحَّل لأرباح مرحّلة 3102`,
           sourceType: 'opening',
           sourceId: null,
@@ -7930,7 +8092,7 @@ export const useRawDataStore = create<DataState>()(
             date: now.slice(0, 10),
             description: `${SETTLEMENT_LABELS[args.section]} ${doc.settlementNumber}: ${refNameAr} — ${args.reason.trim()}`,
             sourceType: 'adjustment',
-            sourceId: id,
+            sourceId: id, sourceCollection: 'settlements',
             lines: entryLines,
             createdBy: activeUserName(get()),
             createdAt: now,
@@ -7946,6 +8108,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((x) => x.id === args.originalSaleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        if (sale.projectBilling === 'documentation') throw new Error('فاتورة التوثيق لا تُستبدل — مستند ضريبي بلا سلعة ولا تحصيل؛ صحّحها بمرتجع توثيق')
         const retLinesForValidation = args.returnLineSpecs?.length
           ? args.returnLineSpecs.map((s) => ({ itemId: sale.lines[s.lineIndex]?.itemId ?? -1, qty: s.qty }))
           : [...(args.returnQtyByItem ?? new Map())].map(([itemId, qty]) => ({ itemId, qty }))
@@ -8309,18 +8472,47 @@ export const useRawDataStore = create<DataState>()(
         }
 
         // القيد حسب نوع السند — كله عبر دوال النواة المتوازنة بنيوياً
+        const treasuryBranch = (code: string) => {
+          const treasury = state.treasuries.find((row) => row.code === code)
+          return state.branches.find((branch) => branch.treasuryCode === code)
+            ?? (treasury?.branchId != null ? state.branches.find((branch) => branch.id === treasury.branchId) : undefined)
+        }
+        const sourceBranch = args.kind === 'transfer' ? treasuryBranch(args.treasury) : undefined
+        const destinationBranch = args.kind === 'transfer' ? treasuryBranch(args.counterAccountCode) : undefined
+        const interBranch = !!sourceBranch && !!destinationBranch && sourceBranch.id !== destinationBranch.id
+        if (interBranch && activeBranch && ![sourceBranch!.id, destinationBranch!.id].includes(activeBranch.id)) {
+          throw new Error('اختر فرع المصدر أو الوجهة قبل تسجيل التحويل بين الفروع')
+        }
+        if (interBranch && activeUser && activeUser.roleId !== 'owner') {
+          throw new Error('التحويل بين الفروع يتطلب صلاحية المالك؛ يُرحَّل القيدان المتناظران معاً')
+        }
+        let interBranchLines: ReturnType<typeof buildInterBranchTransferLines> | null = null
+        if (interBranch) {
+          const sourcePositionMinor = state.journal
+            .filter((entry) => entry.branchId === sourceBranch!.id)
+            .flatMap((entry) => entry.lines)
+            .filter((line) => line.relatedBranchId === destinationBranch!.id && (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE))
+            .reduce((sum, line) => sum + line.debit - line.credit, 0)
+          interBranchLines = buildInterBranchTransferLines({
+            sourceBranchId: sourceBranch!.id, destinationBranchId: destinationBranch!.id,
+            sourceTreasury: args.treasury, destinationTreasury: args.counterAccountCode,
+            amountMinor: args.amountMinor, feeMinor: args.feeMinor ?? 0, sourcePositionMinor,
+            description: args.description,
+          })
+        }
         const baseEntryLines =
           args.kind === 'receipt'
             ? buildReceiptVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
             : args.kind === 'payment'
               ? buildPaymentVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
-              : buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description, args.feeMinor ?? 0)
+              : interBranchLines?.sourceLines ?? buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description, args.feeMinor ?? 0)
         const entryLines = args.costCenterId == null ? baseEntryLines : baseEntryLines.map((line) => line.debit > 0 && line.accountCode === args.counterAccountCode ? { ...line, costCenterId: args.costCenterId } : line)
 
         if (args.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ السند غير صالح')
         if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع المرتبط بالسند غير موجود')
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
+        const destinationEntryId = interBranch ? entryId + 1 : null
         const now = localIsoTimestamp()
         const transactionAt = args.date ? `${args.date}T${now.slice(11)}` : now
         const prefix = args.kind === 'receipt' ? 'RV' : args.kind === 'payment' ? 'PV' : 'TV'
@@ -8332,11 +8524,13 @@ export const useRawDataStore = create<DataState>()(
 
         const entry: JournalEntry = {
           id: entryId,
+          ...(interBranch ? { branchId: sourceBranch!.id, interBranchTransferId: voucherId } : {}),
           entryNumber: entryId,
           date: transactionAt.slice(0, 10),
           description: `${kindAr} ${voucherNumber}${args.description ? ` — ${args.description}` : ''}${fxLeg ? ` — ${describeFxLeg(fxLeg, args.amountMinor, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: args.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher',
           sourceId: voucherId,
+          sourceCollection: 'vouchers',
           lines: entryLines,
           createdBy: activeUserName(get()),
           createdAt: now,
@@ -8362,6 +8556,7 @@ export const useRawDataStore = create<DataState>()(
           fx: fxLeg,
           ...(partyAllocations ? { allocations: partyAllocations, unallocatedMinor: partyUnallocatedMinor ?? 0 } : {}),
           reversalEntryId: null,
+          ...(interBranch ? { branchTransfer: { sourceBranchId: sourceBranch!.id, destinationBranchId: destinationBranch!.id, destinationJournalEntryId: destinationEntryId! } } : {}),
         }
 
         // ═══ إصلاح المالك: «المبالغ في الملف غير مطابقة لكشف الحساب» ═══
@@ -8409,7 +8604,14 @@ export const useRawDataStore = create<DataState>()(
               purchaseId: null, payableId: null, journalEntryId: entryId, settlementEntryIds: [],
             }]
           : state.vehicleCostEntries
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        const destinationEntry: JournalEntry | null = interBranch && interBranchLines ? {
+          id: destinationEntryId!, branchId: destinationBranch!.id, interBranchTransferId: voucherId,
+          entryNumber: destinationEntryId!, date: transactionAt.slice(0, 10),
+          description: `تحويل وارد ${voucherNumber}${args.description ? ` — ${args.description}` : ''}`,
+          sourceType: 'payment_voucher', sourceId: voucherId, sourceCollection: 'vouchers', lines: interBranchLines.destinationLines,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        } : null
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry, ...(destinationEntry ? [destinationEntry] : [])], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
            القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
         if (settleAllocations.length) {
@@ -8453,7 +8655,7 @@ export const useRawDataStore = create<DataState>()(
           date: now.slice(0, 10),
           description: `سلفة موظف ${advanceNumber} — ${emp.nameAr}${args.notes ? ` — ${args.notes}` : ''}`,
           sourceType: 'payment_voucher',
-          sourceId: advId,
+          sourceId: advId, sourceCollection: 'employeeAdvances',
           lines: entryLines,
           createdBy: activeUserName(get()),
           createdAt: now,
@@ -8490,7 +8692,10 @@ export const useRawDataStore = create<DataState>()(
         if (args.lines.some((line) => line.costCenterId != null && !state.costCenters.some((center) => center.id === line.costCenterId && center.isActive))) throw new Error('كل مراكز التكلفة العامة في القيد اليدوي يجب أن تكون موجودة ونشطة')
         // حارس الفترة المقفلة (منهجية Closing Date العالمية): لا قيود بأثر رجعي في سنة مقفلة
         if (args.date) {
-          const closed = dateInClosedYear(args.date, useAppStore.getState().fiscalYears)
+          const appState = useAppStore.getState()
+          const branchContext = appState.activeBranchContext
+          const branchYears = fiscalYearsForBranch(appState.fiscalYears, branchContext?.id ?? null, Boolean(branchContext?.isMain))
+          const closed = dateInClosedYear(args.date, branchYears)
           if (closed) throw new Error(`التاريخ ${args.date} داخل السنة المالية المقفلة «${closed.nameAr}» — لا قيود في فترة مقفلة`)
         }
         const meaningful = args.lines.filter((l) => l.debit !== 0 || l.credit !== 0)
@@ -8576,6 +8781,7 @@ export const useRawDataStore = create<DataState>()(
             throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بسلفة موظف — سوِّها من صفحة الموظفين')
           }
           const voucher = state.vouchers.find((v) => v.journalEntryId === original.id)
+          if (voucher?.branchTransfer) throw new Error('هذا تحويل بين فرعين؛ اعكس السند من صفحة السندات ليُعكس القيدان معاً')
           if (voucher?.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
           if (voucher && state.paymentTerminalTransactions.some((tx) => tx.documentType === 'receipt_voucher' && tx.documentId === voucher.voucherNumber && tx.kind === 'charge')) {
             throw new Error('السند مرتبط بماكينة دفع — استخدم استرداد العملية من مستندها الأصلي، لا تعكس السند مباشرة')
@@ -8637,6 +8843,40 @@ export const useRawDataStore = create<DataState>()(
         const voucher = get().vouchers.find((item) => item.id === voucherId)
         if (!voucher) throw new Error('السند غير موجود')
         if (voucher.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
+        if (voucher.branchTransfer) {
+          const state = get()
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner') throw new Error('عكس تحويل بين الفروع يتطلب صلاحية المالك')
+          if (getEffectiveActiveBranch(state)) throw new Error('لضمان عكس القيدين معاً، اختر «كل الفروع» قبل عكس التحويل البيني')
+          const source = state.journal.find((entry) => entry.id === voucher.journalEntryId)
+          const destination = state.journal.find((entry) => entry.id === voucher.branchTransfer!.destinationJournalEntryId)
+          if (!source || !destination) throw new Error('قيدا التحويل البيني غير مكتملين؛ لا يمكن عكس طرف واحد')
+          if (source.reversedByEntryId || destination.reversedByEntryId) throw new Error('أحد قيدي التحويل معكوس بالفعل؛ راجع دفتر اليومية قبل المتابعة')
+          const firstId = nextId(state.journal)
+          const secondId = firstId + 1
+          const now = localIsoTimestamp()
+          const makeReversal = (original: JournalEntry, id: number): JournalEntry => ({
+            id, branchId: original.branchId, interBranchTransferId: voucherId,
+            entryNumber: id, date: now.slice(0, 10), description: `عكس القيد #${original.entryNumber}${reason ? ` — ${reason}` : ''}`,
+            sourceType: 'reversal', sourceId: original.id, lines: buildReversalLines(original.lines),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: original.id,
+          })
+          const sourceReversal = makeReversal(source, firstId)
+          const destinationReversal = makeReversal(destination, secondId)
+          const updatedVoucher = {
+            ...voucher, reversalEntryId: firstId,
+            branchTransfer: { ...voucher.branchTransfer, reversalEntryId: firstId, destinationReversalEntryId: secondId },
+          }
+          set({
+            journal: [
+              ...state.journal.map((entry) => entry.id === source.id ? { ...entry, reversedByEntryId: firstId }
+                : entry.id === destination.id ? { ...entry, reversedByEntryId: secondId } : entry),
+              sourceReversal, destinationReversal,
+            ],
+            vouchers: state.vouchers.map((item) => item.id === voucherId ? updatedVoucher : item),
+          })
+          return updatedVoucher
+        }
         const reversal = get().reverseEntry(voucher.journalEntryId, reason)
         const current = get()
         const updatedVoucher = { ...voucher, reversalEntryId: reversal.id }
@@ -8703,7 +8943,7 @@ export const useRawDataStore = create<DataState>()(
           const entry: JournalEntry = {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
-            sourceType: 'payment_voucher', sourceId: advId,
+            sourceType: 'payment_voucher', sourceId: advId, sourceCollection: 'employeeAdvances',
             lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
             createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }
@@ -8727,7 +8967,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
-          sourceType: 'adjustment', sourceId: shift.id,
+          sourceType: 'adjustment', sourceId: shift.id, sourceCollection: 'shifts',
           lines: buildVarianceExpenseEntry(variance, '1101', label),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -8750,6 +8990,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (sale.projectBilling === 'documentation') throw new Error('فاتورة التوثيق لا تُعدَّل — صحّحها بمرتجع توثيق ثم فاتورة توثيق جديدة (تعديلها يرحّلها فوترة كاملة مكررة فوق المستخلصات)')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'sale' && row.documentId === String(sale.id))) throw new Error('لا يمكن تعديل فاتورة محصلة بالماكينة؛ استخدم مرتجعاً مرتبطاً بالأصل ثم أصدر فاتورة جديدة')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
@@ -8832,6 +9073,28 @@ export const useRawDataStore = create<DataState>()(
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('الفاتورة محصلة بالكامل ولا تحتاج تاريخ استحقاق')
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
+        /* النموذج أ عند التعديل: الفاتورة الإضافية (أو التاريخية المرتبطة بمشروع)
+           تُعاد محاكمتها لسقف العقد الموحد بعد استبعاد نسختها القديمة من الحساب —
+           وإلا صار «التعديل» باباً خلفياً لتجاوز العقد فوق المستخلصات */
+        if (sale.projectId != null) {
+          const branchState = getBranchScopedDataState(state)
+          const editProject = branchState.projects.find((p) => p.id === sale.projectId)
+          if (editProject) {
+            const otherInvoices = branchState.sales.filter((inv) => inv.projectId === editProject.id && inv.id !== sale.id)
+            const otherIds = new Set(otherInvoices.map((inv) => inv.id))
+            const editGuard = computeProjectBillingGuard({
+              contractValueMinor: editProject.contractValueMinor,
+              changeOrders: branchState.changeOrders.filter((o) => o.projectId === editProject.id),
+              extracts: branchState.projectExtracts.filter((e) => e.projectId === editProject.id),
+              saleInvoices: otherInvoices,
+              saleReturns: branchState.saleReturns.filter((r) => otherIds.has(r.saleId)),
+            })
+            const editedWorksNet = totals.totalMinor - totals.taxMinor
+            if (editedWorksNet > editGuard.extraRoomNetMinor) {
+              throw new Error(`سقف فوترة المشروع «${editProject.nameAr}»: صافي الفاتورة بعد التعديل (${editedWorksNet}) يتجاوز المتاح من العقد الفعلي (${editGuard.extraRoomNetMinor}) بعد استبعاد نسختها القديمة — مستخلصات ${editGuard.extractedNetMinor} + إضافيات أخرى ${editGuard.extraInvoicedNetMinor} من عقد فعلي ${editGuard.effectiveContractNetMinor} (المبالغ بالوحدة الصغرى).`)
+            }
+          }
+        }
         const newCreditPart = totals.totalMinor - paidM
         if (newCreditPart > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
@@ -10420,7 +10683,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `سداد نقدي لسلفة — ${emp.nameAr} (${repayNumber})`,
-          sourceType: 'receipt_voucher', sourceId: id,
+          sourceType: 'receipt_voucher', sourceId: id, sourceCollection: 'advanceRepayments',
           lines: [
             { accountCode: args.treasury, debit: args.amountMinor, credit: 0, note: 'نقدية واردة' },
             { accountCode: '1107', debit: 0, credit: args.amountMinor, note: `سداد سلفة ${emp.nameAr}` },
@@ -10444,50 +10707,82 @@ export const useRawDataStore = create<DataState>()(
 
       closeFiscalYear: (fy, allYears) => {
         const state = get()
-        // ① تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
+        const effectiveBranch = getEffectiveActiveBranch(state)
+        const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
+        const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
+        if (state.branches.length > 0 && fiscalBranchId == null) throw new Error('لا يوجد فرع رئيسي صالح لإسناد السنة المالية القديمة')
+        if (fiscalBranchId != null && effectiveBranch && effectiveBranch.id !== fiscalBranchId) {
+          throw new Error('لا يمكن إقفال سنة مالية تخص فرعاً آخر من النطاق الحالي')
+        }
+        if (fy.branchId == null && fiscalBranchId != null) {
+          useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
+        }
+        // ① قيد إقفال محفوظ مع سنة ما زالت مفتوحة يعني أن التطبيق توقف بين
+        // تخزين الدفتر وحالة الفترة؛ أصلح الحالة تكرارياً بدلاً من تعطيل المستخدم.
+        const branchJournal = fiscalBranchId == null
+          ? state.journal
+          : getBranchScopedDataState({ ...state, activeBranchId: fiscalBranchId }).journal
+        const existingClosing = branchJournal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        if (existingClosing) {
+          // استعادة الحالة بعد انقطاع سابق، لكن لا تُعامل محاولة الإقفال المكررة كنجاح.
+          // علّم الفترة مغلقة ثم ارفض الطلب كي يظل عقد API مانعاً للتكرار.
+          useAppStore.getState().markFiscalYearClosed(fy.id)
+          throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل — تمت استعادة حالة الإقفال`)
+        }
+        // ② تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
         const errors = validateYearClose(fy, allYears, todayLocalIso())
         if (errors.length) throw new Error(errors.join(' — '))
-        // ② لا يُقفل مرتين: قيد إقفال سابق **غير معكوس** لنفس السنة؟
-        // (إعادة الفتح تعكس قيد الإقفال — بعدها يجوز إقفال جديد بالأرقام المصححة)
-        if (state.journal.some((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)) {
-          throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل`)
-        }
-        // ③ بناء قيد الإقفال من اليومية — تستثنى آلية الإقفال كاملة (قيود إقفال
-        // سابقة **وعواكسها من إعادة فتح**): العاكس يعكس تصفيراً لن يصل الحساب
-        // أصلاً فاحتسابه يضاعف الصافي بعد إعادة فتح ثم إقفال جديد
-        const mechanism = closingMechanismIds(state.journal)
-        const result = buildYearClosingLines(state.journal.filter((e) => !mechanism.has(e.id)), fy)
+        // ③ يبني الإقفال من دفتر الفرع صاحب الفترة وحده؛ العرض/الإقفال العام القديم
+        // يبقى على اليومية الكاملة للتوافق مع السجلات غير المنسوبة.
+        const mechanism = closingMechanismIds(branchJournal)
+        const result = buildYearClosingLines(branchJournal.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId,
+          ...(fiscalBranchId != null ? { branchId: fiscalBranchId } : {}),
           date: fy.endDate, // قيد الإقفال بتاريخ آخر يوم في السنة (المنهجية العالمية)
           description: `إقفال السنة المالية «${fy.nameAr}» — صافي ${result.netProfitMinor >= 0 ? 'ربح' : 'خسارة'} يُرحَّل للأرباح المرحلة`,
-          sourceType: 'year_closing', sourceId: fy.id,
+          sourceType: 'year_closing', sourceId: fy.id, sourceCollection: 'fiscalYears',
           lines: result.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit, note: l.note })),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({ journal: [...state.journal, entry] })
+        // حدّث حالة الفترة ضمن العملية نفسها بعد قبول قيد الدفتر؛ الإقفال الذري
+        // محلياً ويُستعاد عند إعادة المحاولة إن انقطع الحفظ بين المخزنين.
+        useAppStore.getState().markFiscalYearClosed(fy.id)
         return { entryId, netProfitMinor: result.netProfitMinor }
       },
 
       reopenFiscalYear: (fy, allYears) => {
         const state = get()
+        const effectiveBranch = getEffectiveActiveBranch(state)
+        const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
+        const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
+        if (state.branches.length > 0 && fiscalBranchId == null) throw new Error('لا يوجد فرع رئيسي صالح لإسناد السنة المالية القديمة')
+        if (fiscalBranchId != null && effectiveBranch && effectiveBranch.id !== fiscalBranchId) {
+          throw new Error('لا يمكن إعادة فتح سنة مالية تخص فرعاً آخر من النطاق الحالي')
+        }
+        if (fy.branchId == null && fiscalBranchId != null) {
+          useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
+        }
         if (fy.status !== 'closed') throw new Error('السنة مفتوحة أصلاً — لا شيء يُعاد فتحه')
         // الترتيب العكسي (نمط Odoo): لا إعادة فتح لسنة توجد بعدها سنة مقفلة —
         // قيد إقفال السنة الأحدث بُني على أرصدة أُغلق عليها الأقدم، ففكّ الأحدث أولاً
         const newerClosed = allYears.find((y) => y.id !== fy.id && y.status === 'closed' && y.startDate > fy.endDate)
         if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
         const closingEntry = state.journal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
-        // أولاً: فتح الفترة (متجر الإعداد) — حتى يقبل حارس الدفتر قيد العكس بتاريخ داخلها
-        useAppStore.getState().reopenFiscalYear(fy.id)
-        if (!closingEntry) return { reversedEntryId: null } // مقفلة بلا قيد إقفال (إقفال قديم بلا حركة) — يكفي فتح الحالة
+        if (!closingEntry) {
+          useAppStore.getState().reopenFiscalYear(fy.id)
+          return { reversedEntryId: null } // مقفلة بلا قيد إقفال أو عُكس سابقاً — يكفي فتح الحالة
+        }
         // قيد عاكس لقيد الإقفال: يعيد أرصدة الإيرادات والمصروفات وأثر الأرباح المرحلة،
         // بتاريخ آخر يوم بالسنة المعاد فتحها (يلغي أثر التصفير داخل فترته نفسها)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId,
+          ...(fiscalBranchId != null ? { branchId: fiscalBranchId } : {}),
           date: fy.endDate,
           description: `إعادة فتح السنة المالية «${fy.nameAr}» — عكس قيد الإقفال #${closingEntry.entryNumber}`,
           sourceType: 'reversal', sourceId: closingEntry.id,
@@ -10501,6 +10796,9 @@ export const useRawDataStore = create<DataState>()(
             entry,
           ],
         })
+        // عكس القيد يُحفظ أولاً؛ فإن انقطع التطبيق قبل فتح الفترة، يمكن إعادة
+        // فتحها لاحقاً بلا إنشاء عكس ثانٍ ولا تركها مفتوحة بلا قيد عاكس.
+        useAppStore.getState().reopenFiscalYear(fy.id)
         return { reversedEntryId: entryId }
       },
 
@@ -10817,7 +11115,7 @@ export const useRawDataStore = create<DataState>()(
             date: now.slice(0, 10),
             description: `إثبات هامش تقسيط ${planNumber} — ${customerName}`,
             sourceType: 'receipt_voucher',
-            sourceId: planId,
+            sourceId: planId, sourceCollection: 'installmentPlans',
             lines: [
               { accountCode: '1104', debit: interestMinor, credit: 0, note: `هامش تقسيط ${planNumber} على العميل` },
               { accountCode: '4111', debit: 0, credit: interestMinor, note: 'أرباح تقسيط (هامش تمويل)' },
@@ -10838,7 +11136,7 @@ export const useRawDataStore = create<DataState>()(
             date: now.slice(0, 10),
             description: `مقدم خطة أقساط ${planNumber} — ${customerName}`,
             sourceType: 'receipt_voucher',
-            sourceId: planId,
+            sourceId: planId, sourceCollection: 'installmentPlans',
             lines: entryLines,
             createdBy: activeUserName(get()),
             createdAt: now,
@@ -10888,7 +11186,7 @@ export const useRawDataStore = create<DataState>()(
           date: now.slice(0, 10),
           description: `تحصيل قسط ${plan.planNumber} — ${customerName}`,
           sourceType: 'receipt_voucher',
-          sourceId: plan.id,
+          sourceId: plan.id, sourceCollection: 'installmentPlans',
           lines: entryLines,
           createdBy: activeUserName(get()),
           createdAt: now,
@@ -11034,7 +11332,7 @@ export const useRawDataStore = create<DataState>()(
           const commEntry: JournalEntry = {
             id: commEntryId, entryNumber: commEntryId, date: now.slice(0, 10),
             description: `استحقاق عمولة سائق ${driver?.nameAr ?? ''} — ${trip.tripNumber}`,
-            sourceType: 'driver_settlement', sourceId: trip.id, lines: commLines,
+            sourceType: 'driver_settlement', sourceId: trip.id, sourceCollection: 'trips', lines: commLines,
             createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }
           newJournal = [...newJournal, commEntry]
@@ -11232,7 +11530,7 @@ export const useRawDataStore = create<DataState>()(
             nextJournal.push({
               id: commEntryId, entryNumber: commEntryId, date: now.slice(0, 10),
               description: `استحقاق عمولة سائق ${driver?.nameAr ?? ''} — ${existing.tripNumber}`,
-              sourceType: 'driver_settlement', sourceId: existing.id, lines: commLines,
+              sourceType: 'driver_settlement', sourceId: existing.id, sourceCollection: 'trips', lines: commLines,
               createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
             })
             nextDues.push({
@@ -11470,7 +11768,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تسوية مستحقات السائق ${driver.nameAr} (${unsettled.length} رحلة)`,
-          sourceType: 'driver_settlement', sourceId: driverId, lines,
+          sourceType: 'driver_settlement', sourceId: driverId, sourceCollection: 'employees', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
@@ -11635,7 +11933,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع بتغطية ${provider.nameAr} (${provider.coveragePercent}٪)`,
-          sourceType: 'insured_sale', sourceId: claimId, lines,
+          sourceType: 'insured_sale', sourceId: claimId, sourceCollection: 'insuranceClaims', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const claim: InsuranceClaim = {
@@ -11680,7 +11978,7 @@ export const useRawDataStore = create<DataState>()(
         journal = [...journal, {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `طلب تحاليل ${orderNumber} — ${patient.nameAr} بتغطية ${provider.nameAr}`,
-          sourceType: 'insured_sale', sourceId: orderId, lines: entryLines,
+          sourceType: 'insured_sale', sourceId: orderId, sourceCollection: 'labOrders', lines: entryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }]
         const commissionMinor = referrer ? commissionFor(totals.netMinor, referrer.commissionPercent) : 0
@@ -12656,7 +12954,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تعزيز عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}${args.description ? ` — ${args.description}` : ''}`,
-          sourceType: 'payment_voucher', sourceId: txId, lines: entryLines,
+          sourceType: 'payment_voucher', sourceId: txId, sourceCollection: 'custodyTxs', lines: entryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const tx: CustodyTx = {
@@ -12688,7 +12986,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مصروف من عهدة ${file.fileNumber} — ${args.description.trim()}${excessMinor > 0 ? ` (زيادة ${excessMinor} مستحقة لـ${emp?.nameAr ?? 'الموظف'})` : ''}`,
-          sourceType: 'payment_voucher', sourceId: txId, lines: entryLines,
+          sourceType: 'payment_voucher', sourceId: txId, sourceCollection: 'custodyTxs', lines: entryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const tx: CustodyTx = {
@@ -12731,7 +13029,7 @@ export const useRawDataStore = create<DataState>()(
           journal = [...journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `تسوية عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}: مرتجع ${args.returnedMinor}${shortage > 0 ? ` + عجز ${shortage} سلفة تُخصم من الراتب` : ''}`,
-            sourceType: 'payment_voucher', sourceId: file.id, lines: entryLines,
+            sourceType: 'payment_voucher', sourceId: file.id, sourceCollection: 'custodyTxs', lines: entryLines,
             createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
           if (args.returnedMinor > 0) {
@@ -13209,7 +13507,7 @@ export const useRawDataStore = create<DataState>()(
             journal = [...journal, {
               id: entryId, entryNumber: entryId, date: now.slice(0, 10),
               description: `اقتناء وحدة ${unit.code} من عقار ${property.code} — ${property.nameAr}`,
-              sourceType: 'property_acquisition' as const, sourceId: unit.id,
+              sourceType: 'property_acquisition' as const, sourceId: unit.id, sourceCollection: 'propertyUnits',
               lines: buildPropertyAcquisitionEntry(unit.costMinor, payment, treasury, `${property.nameAr} / ${unit.code}`),
               createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
             }]
@@ -13222,7 +13520,7 @@ export const useRawDataStore = create<DataState>()(
           journal = [...journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `اقتناء عقار ${property.code} — ${property.nameAr}`,
-            sourceType: 'property_acquisition' as const, sourceId: id,
+            sourceType: 'property_acquisition' as const, sourceId: id, sourceCollection: 'properties',
             lines: buildPropertyAcquisitionEntry(args.costMinor, payment, treasury, property.nameAr),
             createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
@@ -13257,7 +13555,7 @@ export const useRawDataStore = create<DataState>()(
           journal = [...journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `اقتناء وحدة ${unit.code} من عقار ${property.code} — ${property.nameAr}`,
-            sourceType: 'property_acquisition' as const, sourceId: unit.id,
+            sourceType: 'property_acquisition' as const, sourceId: unit.id, sourceCollection: 'propertyUnits',
             lines: buildPropertyAcquisitionEntry(costMinor, unit.acquisitionPayment ?? 'cash', args.treasury ?? '1101', `${property.nameAr} / ${unit.code}`),
             createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
@@ -13306,7 +13604,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع ${saleLines.length} وحدة من ${property.nameAr} (${property.code})${buyer ? ` — المشتري: ${buyer.nameAr}` : ''}`,
-          sourceType: 'property_sale', sourceId: saleLines[0].unitId,
+          sourceType: 'property_sale', sourceId: saleLines[0].unitId, sourceCollection: 'propertyUnits',
           lines: buildPropertyUnitsSaleEntry({ lines: saleLines, vatMinor, paidMinor, treasury, label: property.nameAr }),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -13602,7 +13900,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع عقار ${property.code} — ${property.nameAr}`,
-          sourceType: 'property_sale', sourceId: property.id,
+          sourceType: 'property_sale', sourceId: property.id, sourceCollection: 'properties',
           lines: buildPropertyUnitsSaleEntry({
             lines: [{ unitId: 0, label: property.nameAr, priceMinor: args.salePriceMinor, costMinor: property.costMinor }],
             vatMinor: vat, paidMinor, treasury: args.treasury ?? '1101', label: property.nameAr,
@@ -13613,6 +13911,17 @@ export const useRawDataStore = create<DataState>()(
           properties: state.properties.map((p) => (p.id === property.id ? { ...p, status: 'sold' as const } : p)),
           journal: [...state.journal, entry],
         })
+      },
+      addProjectExpenseCategory: (nameAr, kind) => {
+        const clean = nameAr.trim().replace(/\s+/g, ' ')
+        if (!clean) throw new Error('اسم التصنيف مطلوب')
+        const state = get()
+        const list = state.projectExpenseCategories ?? []
+        const existing = list.find((c) => normalizeExpenseCategoryName(c.nameAr) === normalizeExpenseCategoryName(clean))
+        if (existing) return existing
+        const cat: ProjectExpenseCategory = { id: nextId(list), nameAr: clean, kind: kind ?? 'other' }
+        set({ projectExpenseCategories: [...list, cat] })
+        return cat
       },
       addProjectCost: (args) => {
         const state = get()
@@ -13628,7 +13937,14 @@ export const useRawDataStore = create<DataState>()(
         let resolvedDescription = args.description?.trim() ?? ''
         let computedLines: ProjectExpenseLineComputed[] | undefined
         if (args.lines && args.lines.length > 0) {
-          const inv = computeProjectExpenseInvoice(args.lines, args.defaultVatPercent ?? 14)
+          // التصنيف الحر عند حضوره هو مرجع kind والاسم — لا نثق بما أرسلته الواجهة
+          const resolvedLines = args.lines.map((line) => {
+            if (line.categoryId == null) return line
+            const cat = (state.projectExpenseCategories ?? []).find((c) => c.id === line.categoryId)
+            if (!cat) throw new Error(`تصنيف المصروف غير موجود في قائمة المنشأة (${line.categoryNameAr?.trim() || line.categoryId})`)
+            return { ...line, kind: cat.kind, categoryNameAr: cat.nameAr }
+          })
+          const inv = computeProjectExpenseInvoice(resolvedLines, args.defaultVatPercent ?? 14)
           netCostMinor = inv.netMinor
           vatCostMinor = inv.vatMinor
           resolvedKind = args.kind ?? inv.primaryKind
@@ -13671,11 +13987,14 @@ export const useRawDataStore = create<DataState>()(
         const lines = buildProjectCostEntry(netCostMinor, resolvedPayment, resolvedDescription || project.nameAr, payAccount, vatCostMinor, paidCostMinor)
           .map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = localIsoTimestamp()
+        // تاريخ المستند اختياري (مصروف بأثر رجعي) — بصيغة YYYY-MM-DD وإلا اليوم
+        const expenseDate = args.date && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : null
+        const costDate = expenseDate ? `${expenseDate}${now.slice(10)}` : now
         const id = nextId(state.projectCosts)
         const expenseNumber = `PEX-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: expenseDate ?? now.slice(0, 10),
           description: `تكلفة على ${project.nameAr}: ${resolvedDescription || '—'}${custodyFile ? ` — دفع من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -13684,7 +14003,7 @@ export const useRawDataStore = create<DataState>()(
           id,
           expenseNumber,
           ...(args.invoiceRef?.trim() ? { invoiceRef: args.invoiceRef.trim() } : {}),
-          projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: resolvedKind,
+          projectId: project.id, costCenterId: args.costCenterId ?? null, date: costDate, kind: resolvedKind,
           description: resolvedDescription, amountMinor: netCostMinor,
           ...(vatCostMinor > 0 ? { vatMinor: vatCostMinor } : {}),
           grossMinor: grossCostMinor,
@@ -13699,7 +14018,7 @@ export const useRawDataStore = create<DataState>()(
         if (custodyFile && paidCostMinor > 0) {
           custodyTxs = [...state.custodyTxs, {
             id: nextId(state.custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
-            date: now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
+            date: expenseDate ?? now.slice(0, 10), amountMinor: paidCostMinor, excessMinor: 0,
             description: `المدفوع من تكلفة مشروع ${project.nameAr}: ${resolvedDescription || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]
@@ -13727,7 +14046,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إفراج عن محتجزات ${project.nameAr} وإقفال المشروع`,
-          sourceType: 'retention_release', sourceId: id, lines,
+          sourceType: 'retention_release', sourceId: id, sourceCollection: 'retentionReleases', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
@@ -13771,6 +14090,20 @@ export const useRawDataStore = create<DataState>()(
         return { manual, subCertificates, dailyWork, purchases, materialIssues, purchaseReturns, totals: { ...totals, allMinor: totals.manualMinor + totals.subMinor + totals.dailyMinor + totals.purchasesMinor + totals.materialIssuesMinor - totals.returnsMinor } }
       },
 
+      getProjectBillingGuard: (projectId) => {
+        const state = getBranchScopedDataState(get())
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const projectInvoices = state.sales.filter((inv) => inv.projectId === projectId)
+        const invoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+        return computeProjectBillingGuard({
+          contractValueMinor: project.contractValueMinor,
+          changeOrders: state.changeOrders.filter((o) => o.projectId === projectId),
+          extracts: state.projectExtracts.filter((e) => e.projectId === projectId),
+          saleInvoices: projectInvoices,
+          saleReturns: state.saleReturns.filter((r) => invoiceIds.has(r.saleId)),
+        })
+      },
       getProjectProfit: (projectId) => {
         const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
@@ -14070,7 +14403,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إفراج محتجزات باطن ${label} وإقفال عقده`,
-          sourceType: 'retention_release', sourceId: id, lines,
+          sourceType: 'retention_release', sourceId: id, sourceCollection: 'subPayments', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
@@ -14303,6 +14636,9 @@ export const useRawDataStore = create<DataState>()(
         // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
         for (const sale of state.sales) {
           if (sale.customerId !== customerId) continue
+          /* فاتورة توثيق مستخلصات (النموذج أ): لا ذمة بها — الذمة على
+             المستخلص نفسه؛ عرضها هنا يجعل معالج التحصيل يسدد الدين مرتين */
+          if (sale.projectBilling === 'documentation') continue
           const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
           const creditPart = sale.totals.totalMinor - paid
           if (creditPart <= 0) continue
@@ -14462,23 +14798,34 @@ export const useRawDataStore = create<DataState>()(
 
       remitWithholdingTax: (treasury) => {
         const state = get()
-        // رصيد 2112 الدائن من القيود = المستحق توريده
-        let balance = 0
-        for (const e of state.journal) for (const l of e.lines) if (l.accountCode === '2112') balance += l.credit - l.debit
+        if (!state.treasuries.some((row) => row.code === treasury)) throw new Error('الخزينة/البنك غير موجود')
+        // رصيد 2112 الدائن في دفتر النطاق الحالي فقط = المستحق توريده لهذا الفرع.
+        const scopedJournal = getBranchScopedDataState(state).journal
+        const balance = scopedJournal.reduce((total, entry) => total + entry.lines
+          .filter((line) => line.accountCode === '2112')
+          .reduce((sum, line) => sum + line.credit - line.debit, 0), 0)
         if (balance <= 0) throw new Error('لا ضريبة استقطاع مستحقة للتوريد')
         const lines: JournalLine[] = [
           { accountCode: '2112', debit: balance, credit: 0, note: 'توريد ضريبة الاستقطاع' },
           { accountCode: treasury, debit: 0, credit: balance, note: 'المسدد للمصلحة' },
         ]
         const now = localIsoTimestamp()
+        const voucherId = nextId(state.vouchers)
+        const voucherNumber = `PV-${String(voucherId).padStart(4, '0')}`
+        const description = 'توريد ضريبة استقطاع مقاولي الباطن'
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `توريد ضريبة استقطاع مقاولي الباطن`,
-          sourceType: 'payment_voucher', sourceId: entryId, lines,
+          description: `${description} (${voucherNumber})`,
+          sourceType: 'payment_voucher', sourceId: voucherId, sourceCollection: 'vouchers', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        set({ journal: [...state.journal, entry] })
+        const voucher: Voucher = {
+          id: voucherId, voucherNumber, kind: 'payment', date: now.slice(0, 10),
+          treasury: treasury as TreasuryAccount, counterAccountCode: '2112', amountMinor: balance,
+          description, journalEntryId: entryId, partyKind: null, partyId: null, purchaseExpensePayableId: null, reversalEntryId: null,
+        }
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry] })
         return { amount: balance }
       },
 
@@ -15159,7 +15506,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `زيارة ${visitNumber} — ${patient.nameAr}`,
-          sourceType: 'clinic_visit', sourceId: id, lines,
+          sourceType: 'clinic_visit', sourceId: id, sourceCollection: 'clinicVisits', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const visit: ClinicVisit = {
@@ -15209,7 +15556,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `زيارة ${visitNumber} — ${patient.nameAr} بتغطية ${provider.nameAr}`,
-          sourceType: 'clinic_visit', sourceId: id, lines,
+          sourceType: 'clinic_visit', sourceId: id, sourceCollection: 'clinicVisits', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const totals: VisitTotals = {
@@ -15274,7 +15621,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تحصيل متأخرات من ${patient.nameAr}`,
-          sourceType: 'clinic_visit', sourceId: id, lines,
+          sourceType: 'clinic_visit', sourceId: id, sourceCollection: 'clinicCollections', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const collection: ClinicCollection = { id, patientId, date: now, amountMinor, journalEntryId: entryId }
@@ -15363,7 +15710,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `شراء سيارة ${label}${supplier ? ` — المورد: ${supplier.nameAr}` : ''}`,
-          sourceType: 'car_purchase', sourceId: id, lines,
+          sourceType: 'car_purchase', sourceId: id, sourceCollection: 'cars', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const car: Car = {
@@ -15399,7 +15746,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تجهيز ${label}: ${description || '—'}${beneficiary ? ` — جهة الاستحقاق: ${beneficiary}` : ''}`,
-          sourceType: 'car_purchase', sourceId: carId, lines,
+          sourceType: 'car_purchase', sourceId: carId, sourceCollection: 'cars', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const prep: CarPrepCost = {
@@ -15451,7 +15798,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date,
           description: `فاتورة شراء سيارات ${invoiceNumber}${supplier ? ` — المورد: ${supplier.nameAr}` : ''} (${lines.length} سيارة)`,
-          sourceType: 'car_purchase', sourceId: invoiceId, lines: entryLines,
+          sourceType: 'car_purchase', sourceId: invoiceId, sourceCollection: 'carPurchaseInvoices', lines: entryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         // توزيع المدفوع والمتبقي على السيارات بالقيمة — حتى تُقرأ ذمة كل سيارة منفردة
@@ -17025,7 +17372,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع زيارة ${visit.visitNumber} — ${patient?.nameAr ?? ''}${args.reason ? ` (${args.reason})` : ''}`,
-          sourceType: 'clinic_visit', sourceId: visit.id, lines: built.lines,
+          sourceType: 'clinic_visit', sourceId: visit.id, sourceCollection: 'clinicVisits', lines: built.lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: ClinicVisit = {
@@ -17539,6 +17886,7 @@ export const useRawDataStore = create<DataState>()(
           })),
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
+          projectExpenseCategories: s.projectExpenseCategories && s.projectExpenseCategories.length ? s.projectExpenseCategories : [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
           retentionReleases: s.retentionReleases ?? [],
           clinicVisits: s.clinicVisits ?? [],
           treatmentPlans: s.treatmentPlans ?? [],
@@ -17638,3 +17986,10 @@ const scopedStoreApi = {
 
 export const useDataStore = Object.assign(useScopedDataStore, scopedStoreApi) as typeof useRawDataStore
 
+/* نوافذ الأقمار الحرة (سطح المكتب): حين تحفظ نافذة أخرى لقطة «shopsys-data»
+   تُبطل persistentStorage ذاكرتها ثم ينادينا هنا — إعادة الترطيب تطبّق أحدث
+   حالة على المتجر الخام (والمصفّى بالفرع يشتق منه) بلا كتابة صدى راجعة.
+   في الويب والاختبارات لا يصل الحدث أصلاً فالتسجيل خامل. */
+registerExternalSnapshotApplier((storeName) => {
+  if (storeName === 'shopsys-data') void useRawDataStore.persist.rehydrate()
+})

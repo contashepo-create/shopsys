@@ -76,7 +76,7 @@ assertInvariants('قبل المزامنة', c)
 /* ② حارس الدفتر على الوارد (AUDIT-016) */
 {
   assert.ok(RUNNER.includes('assertIncomingLedgerSafe'), 'لا حارس للوارد من السحابة')
-  assert.ok(RUNNER.includes('assertJournalIntegrity'), 'الحارس لا يستدعي فحص سلامة الدفتر')
+  assert.ok(RUNNER.includes('assertJournalSnapshotSafe'), 'الحارس لا يستدعي فحص سلامة لقطة الدفتر')
   assert.ok(/rejected|رُفضت حالة السحابة/.test(RUNNER), 'لا رسالة رفض عربية للحالة السحابية المختلة')
   const pullIdx = RUNNER.indexOf("outcome.action === 'pulled'")
   const guardIdx = RUNNER.indexOf('assertIncomingLedgerSafe(parsed)', pullIdx)

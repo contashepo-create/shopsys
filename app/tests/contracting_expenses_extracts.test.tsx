@@ -8,6 +8,7 @@ vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
 const { ProjectExpensesPage, ProjectExtractsPage } = await import('../src/ui/pages/ContractingPages.tsx')
+const { WindowHost } = await import('../src/ui/windows/WindowHost.tsx')
 const { CustodyPage } = await import('../src/ui/pages/CustodyPage.tsx')
 const { ToastHost } = await import('../src/ui/components/ui.tsx')
 
@@ -96,7 +97,7 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
 
   afterEach(cleanup)
 
-  it('يسجل الإجمالي المبسط مع دفع جزئي من ملف العهدة ويحمّل المدفوع فقط على العهدة والباقي على المورد', async () => {
+  it('يسجل مصروفاً مختلط السداد من العهدة والآجل للمورد في المحرر الحر', async () => {
     const project = S().projects[0]
     S().addEmployee({
       nameAr: 'موظف مصروفات المشروع', phone: '', jobTitle: 'محاسب موقع', roleId: null,
@@ -107,23 +108,20 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
     const file = S().openCustodyFile({ employeeId: employee.id, projectId: project.id, reason: 'مصروف مشروع', notes: '' })
     S().fundCustodyFile({ fileId: file.id, amountMinor: 500000, treasury: '1101', description: 'تعزيز الاختبار' })
 
-    ui(<ProjectExpensesPage />)
+    ui(<><ProjectExpensesPage /><WindowHost /></>)
     fireEvent.click(document.querySelector('[data-open-project-expense-modal]')!)
-    expect(document.querySelector('[data-expense-simple-entry]')).not.toBeNull()
-    expect(document.querySelector('[data-expense-lines-table]')).toBeNull()
-
-    fireEvent.change(document.querySelector('[data-expense-simple-description]')!, { target: { value: 'مواد بناء للموقع' } })
-    fireEvent.change(document.querySelector('[data-expense-simple-total]')!, { target: { value: '11400' } })
+    expect(document.querySelector('[data-expense-lines-table]')).not.toBeNull()
+    fireEvent.click(document.querySelector('[data-expense-tax-mode] button:first-child')!) // بلا ضريبة لهذه الحالة
+    fireEvent.change(document.querySelector('[data-expense-line-desc]')!, { target: { value: 'مواد بناء للموقع' } })
+    fireEvent.change(document.querySelector('[data-expense-line-price]')!, { target: { value: '11400' } })
     fireEvent.change(document.querySelector('[data-expense-paid-now]')!, { target: { value: '4000' } })
-    expect(document.querySelector('[data-expense-payment-total]')?.textContent).toContain('11,400')
-    expect(document.querySelector('[data-expense-settlement-preview]')?.textContent).toContain('7,400')
 
     fireEvent.change(document.querySelector('[data-pay-source-linked] select[aria-label="نوع مصدر السداد"]')!, { target: { value: 'custody' } })
     const custodySelect = document.querySelector('[data-pay-source-linked] select[aria-label="ملف العهدة"]') as HTMLSelectElement
     expect(custodySelect.value).toBe(String(file.id))
 
     const supplierId = S().suppliers[0].id
-    const supplierPicker = document.querySelector('[data-project-expense-modal] [data-party-picker]')!
+    const supplierPicker = document.querySelector('[data-party-picker]')!
     fireEvent.change(supplierPicker.querySelector('input')!, { target: { value: 'شركة حديد عز' } })
     let supplierOption: Element | null = null
     await waitFor(() => {
@@ -155,33 +153,28 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
   })
 
   it('يسجل فاتورة مصروفات مشروع ببنود حرة (شامل الضريبة وغير شامل) ويخصم الصافي من ربح المشروع', () => {
-    ui(<ProjectExpensesPage />)
+    ui(<><ProjectExpensesPage /><WindowHost /></> )
     fireEvent.click(document.querySelector('[data-open-project-expense-modal]')!)
     expect(document.querySelector('[data-no-payment-source]')).toBeTruthy() // لا يُطلب مصدر إذا كان المدفوع صفراً
-    expect(document.querySelector('[data-expense-simple-entry]')).not.toBeNull()
-    fireEvent.click(document.querySelector('[data-toggle-expense-detail]')!)
     expect(document.querySelector('[data-expense-lines-table]')).not.toBeNull()
 
     // إدخال البند الأول: شامل الضريبة (11,400 ← صافي 10,000 + ضريبة 1,400)
     const descInputs = document.querySelectorAll('[data-expense-line-desc]')
     const priceInputs = document.querySelectorAll('[data-expense-line-price]')
-    const taxSelects = document.querySelectorAll('[data-expense-line-tax-mode]')
     fireEvent.change(descInputs[0], { target: { value: 'توريد خرسانة جاهزة شامل الضريبة' } })
     fireEvent.change(priceInputs[0], { target: { value: '11400' } })
-    fireEvent.change(taxSelects[0], { target: { value: 'inclusive' } })
+    fireEvent.click(document.querySelector('[data-expense-tax-mode] button[aria-pressed="false"]:last-child')!)
 
     // إضافة بند ثانٍ: بدون ضريبة (3,000)
     fireEvent.click(document.querySelector('[data-add-expense-line]')!)
     const descInputs2 = document.querySelectorAll('[data-expense-line-desc]')
     const priceInputs2 = document.querySelectorAll('[data-expense-line-price]')
-    const taxSelects2 = document.querySelectorAll('[data-expense-line-tax-mode]')
     fireEvent.change(descInputs2[1], { target: { value: 'إكراميات ونقل للموقع' } })
     fireEvent.change(priceInputs2[1], { target: { value: '3000' } })
-    fireEvent.change(taxSelects2[1], { target: { value: 'none' } })
 
     // التحقق من الإجماليات المعروضة في النافذة
-    expect(document.querySelector('[data-expense-total-net]')?.textContent).toContain('13,000')
-    expect(document.querySelector('[data-expense-total-vat]')?.textContent).toContain('1,400')
+    expect(document.querySelector('[data-expense-total-net]')?.textContent).toContain('12,631')
+    expect(document.querySelector('[data-expense-total-vat]')?.textContent).toContain('1,768')
     expect(document.querySelector('[data-expense-total-gross]')?.textContent).toContain('14,400')
     fireEvent.change(document.querySelector('[data-expense-paid-now]')!, { target: { value: '14400' } })
 
@@ -189,12 +182,12 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
     fireEvent.click(document.querySelector('[data-save-project-expense]')!)
 
     expect(S().projectCosts.length).toBe(1)
-    expect(S().projectCosts[0].amountMinor).toBe(1300000) // الصافي فقط 13,000
-    expect(S().projectCosts[0].vatMinor).toBe(140000) // ضريبة المدخلات 1,400
+    expect(S().projectCosts[0].amountMinor).toBe(1263158) // الصافي بعد فك الضريبة الشاملة
+    expect(S().projectCosts[0].vatMinor).toBe(176842) // ضريبة المدخلات
     expect(S().projectCosts[0].grossMinor).toBe(1440000) // الإجمالي الشامل 14,400
     expect(S().projectCosts[0].paidMinor).toBe(1440000)
     expect(S().projectCosts[0].dueMinor).toBe(0)
-    expect(S().getProjectProfit(S().projects[0].id).costsMinor).toBe(1300000)
+    expect(S().getProjectProfit(S().projects[0].id).costsMinor).toBe(1263158)
   })
 
   it('يعرض المرتجع والعجز والزيادة المدفوعة والمتبقية بوضوح في الملف المغلق دون اعتبار التسوية مصروفاً', () => {

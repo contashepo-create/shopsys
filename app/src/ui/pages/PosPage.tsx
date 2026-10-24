@@ -7,7 +7,8 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { todayLocalIso } from '../../core/time.ts'
@@ -31,10 +32,9 @@ import { resolveShortcuts } from '../../core/keyboardShortcuts.ts'
 import { isInvoiceFirst, getActivity } from '../../core/activities.ts'
 import { calculateInvoiceCommissionMinor } from '../../core/invoiceCommissions.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
-import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
-import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
 import { maybeTaxBarcode, qrDataUrlFromPayload, taxBarcodePayload } from '../print/taxBarcode.ts'
-import { evaluateLicense, hasFeature } from '../../core/license.ts'
+import { documentTaxBarcodeArgs, resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNavigation, OverlayPortal } from '../components/ui.tsx'
 import { useAnchoredMenu } from '../components/anchoredMenu.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -71,7 +71,7 @@ function saveHeldCarts(held: HeldCart[]) {
 export function PosPage() {
   const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints, batches, addControlledDispense, jewelryProfiles, gramPrices, employees, attachSaleTaxQr } = useDataStore()
   const openShift = currentOpenShift(shifts)
-  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
@@ -129,6 +129,8 @@ export function PosPage() {
     })
   }
   const [payOpen, setPayOpen] = useState(false)
+  const [isPosting, setIsPosting] = useState(false)
+  const postingRef = useRef(false)
   // فتح وردية من الكاشير مباشرة (سياسة «لا بيع بلا وردية» — نمط Toast/Square)
   const [shiftOpenModal, setShiftOpenModal] = useState(false)
   const [shiftOpeningCash, setShiftOpeningCash] = useState('')
@@ -502,26 +504,26 @@ export function PosPage() {
   /** طباعة إيصال فاتورة (المرحلة 5) — مع الرمز الضريبي عند تفعيل إحدى ميزتي
       الفاتورة الإلكترونية (زاتكا السعودية أو التحقق المحلي المصري) */
   /** وسائط رمز الفاتورة — مصدر واحد للتوليد والتجميد */
-  const taxArgsFor = (sale: { invoiceNumber: string; date: string; totals: ReturnType<typeof computeTotals> }) => {
-    const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
-    return {
-      saFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
-      egFeatureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_eg'),
-      printEnabled: einvoice.printZatcaQr,
-      sellerName: setup.shopName,
-      taxNumber: einvoice.taxNumber,
-      invoiceNumber: sale.invoiceNumber,
-      dateIso: sale.date,
-      totalMinor: sale.totals.totalMinor,
-      taxMinor: sale.totals.taxMinor,
-      decimals: cur.decimals,
-    }
-  }
+  const taxArgsFor = (sale: {
+    invoiceNumber: string
+    date: string
+    totals: ReturnType<typeof computeTotals>
+    branchId?: number | null
+    warehouseId?: number | null
+    treasury?: string
+    lines?: CartLine[]
+  }) => documentTaxBarcodeArgs(null, sale, {
+    invoiceNumber: sale.invoiceNumber,
+    dateIso: sale.date,
+    totalMinor: sale.totals.totalMinor,
+    taxMinor: sale.totals.taxMinor,
+  })
 
-  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number; taxQrPayload?: string }) => {
+  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number; taxQrPayload?: string; branchId?: number | null; warehouseId?: number | null; treasury?: string; taxPercent?: number; taxInclusive?: boolean }) => {
+    const documentSettings = resolveDocumentPrintSettings(sale)
     /* الرمز المجمّد على الفاتورة أولاً — إيصال فاتورة قديمة يجب أن يطابق
        الرمز الذي طُبع يوم البيع، لا رمزاً ببيانات إعدادات اليوم. */
-    const qrDataUrl = sale.taxQrPayload
+    const qrDataUrl = sale.taxQrPayload && documentSettings.identityComplete
       ? qrDataUrlFromPayload(sale.taxQrPayload)
       : await maybeTaxBarcode(taxArgsFor(sale))
     const model = buildReceiptModel({
@@ -534,17 +536,16 @@ export function PosPage() {
       paidMinor: sale.paidMinor, // الدفع المجزأ: يطبع المدفوع/المتبقي (بلاغ المالك)
       operatorName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك',
       customerName: sale.customerId ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : null,
-      taxPercent: effectiveCountryVatPercent,
-      taxInclusive: setup.taxInclusive,
-      settings: receipt,
+      taxPercent: sale.taxPercent ?? documentSettings.setup.vatPercent,
+      taxInclusive: sale.taxInclusive ?? documentSettings.setup.taxInclusive,
+      settings: documentSettings.receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
-    // القالب من شريط الكاشير (تجاوز مؤقت) — حراري أو A4 أو A5؛ الإعدادات الدائمة لا تُمس
-    printHtml(
-      posTemplate === 'thermal'
-        ? renderReceiptHtml(model, cur, receipt)
-        : renderInvoiceA4Html(model, cur, receipt, posTemplate === 'a5' ? 'a5' : 'a4'),
-    )
+    // القالب من شريط الكاشير تجاوز مؤقت؛ printModelWithTemplate يفتح المعاينة
+    // افتراضياً ويحترم الطباعة الصامتة المضبوطة في هوية فرع المستند.
+    printModelWithTemplate(model, cur, documentSettings.receipt, posTemplate, {
+      resolveSettings: () => resolveDocumentPrintSettings(sale).receipt,
+    })
   }
 
   const [lastSale, setLastSale] = useState<Parameters<typeof printSale>[0] | null>(null)
@@ -619,6 +620,10 @@ export function PosPage() {
   const [pendingFinishArgs, setPendingFinishArgs] = useState<[string?, string?, string?] | null>(null)
 
   const executeSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
+    if (postingRef.current) return
+    postingRef.current = true
+    setIsPosting(true)
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
     try {
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
@@ -685,6 +690,8 @@ export function PosPage() {
       }
       toast.show((e as Error).message, 'error')
     }
+    }).catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة', 'error'))
+      .finally(() => { postingRef.current = false; setIsPosting(false) })
   }
 
   const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
@@ -753,7 +760,7 @@ export function PosPage() {
   }
 
   return (
-    <div data-pos-layout={posLayout} className={`pos-workspace pos-layout-${posLayout} ${isFastList ? 'pos-fast-list' : isVisualGrid ? 'pos-visual-grid' : isDetailCards ? 'pos-detail-cards' : ''} flex flex-col gap-2 h-[calc(100vh-6.5rem)]`}>
+    <div data-pos-layout={posLayout} aria-busy={isPosting} className={`relative pos-workspace pos-layout-${posLayout} ${isFastList ? 'pos-fast-list' : isVisualGrid ? 'pos-visual-grid' : isDetailCards ? 'pos-detail-cards' : ''} flex flex-col gap-2 h-[calc(100vh-6.5rem)]`}>
       {/* ═══ يمين: الأصناف والبحث ═══ */}
       <div className="relative flex flex-col gap-2 shrink-0">
         <div ref={searchBoxRef} className="anim-up relative">
@@ -1628,6 +1635,7 @@ export function PosPage() {
           })}
         </div>
       </Modal>
+      {isPosting && <div className="absolute inset-0 z-50 grid place-items-center bg-white/75 p-4 text-center font-black text-slate-700 backdrop-blur-sm dark:bg-slate-950/75 dark:text-white" role="status" aria-live="polite">جارٍ تأمين ترحيل الفاتورة وحفظها…</div>}
     </div>
   )
 }

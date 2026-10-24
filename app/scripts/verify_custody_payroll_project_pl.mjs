@@ -177,7 +177,8 @@ const contractingUi = readFileSync(new URL('../src/ui/pages/ContractingPages.tsx
 const expenseStart = contractingUi.indexOf('export function ProjectExpensesPage()')
 const extractsStart = contractingUi.indexOf('export function ProjectExtractsPage()')
 const projectsUi = contractingUi.slice(0, contractingUi.indexOf('/* ═══════════════════════════════════════════════════════════════════════════════\n   §96-أ'))
-const expensesUi = contractingUi.slice(expenseStart, extractsStart)
+// محرر المصروف انتقل إلى نافذة حرة (اعتماد المالك لنموذج N-04) — نفس الضمانات في ملفها الجديد
+const expensesUi = contractingUi.slice(expenseStart, extractsStart) + readFileSync(new URL('../src/ui/windows/ProjectExpenseWindowView.tsx', import.meta.url), 'utf8')
 const paySourceUi = readFileSync(new URL('../src/ui/components/PaySourcePicker.tsx', import.meta.url), 'utf8')
 const projectCss = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
 const custodyUi = readFileSync(new URL('../src/ui/pages/CustodyPage.tsx', import.meta.url), 'utf8')
