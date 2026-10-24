@@ -23,8 +23,21 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-describe('تأكيد التداخل عند تعديل الحجز من الواجهة', () => {
-  it('لا يحفظ موعداً متداخلاً قبل نقرة موافقة ثانية', () => {
+describe('تأكيد التداخل في الحجوزات من الواجهة', () => {
+  it('لا يحفظ موعداً جديداً متداخلاً قبل نقرة موافقة ثانية', () => {
+    render(<MemoryRouter><BookingsPage /><ToastHost /></MemoryRouter>)
+    const before = useDataStore.getState().bookings.length
+    fireEvent.click(screen.getByRole('button', { name: /حجز موعد/ }))
+    fireEvent.change(screen.getByPlaceholderText('مثال: أحمد محمود'), { target: { value: 'عميل جديد' } })
+    fireEvent.click(screen.getByRole('button', { name: /متابعة رغم التداخل/ }))
+
+    expect(useDataStore.getState().bookings).toHaveLength(before)
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /حجز/ }))
+    expect(useDataStore.getState().bookings).toHaveLength(before + 1)
+    expect(useDataStore.getState().bookings.at(-1)?.customerName).toBe('عميل جديد')
+  })
+
+  it('لا يحفظ تعديلاً متداخلاً قبل نقرة موافقة ثانية', () => {
     render(<MemoryRouter><BookingsPage /><ToastHost /></MemoryRouter>)
     const row = screen.getByText('عميل أول').closest('.flex.flex-wrap.items-center.gap-3')
     expect(row).not.toBeNull()
