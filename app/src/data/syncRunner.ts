@@ -78,14 +78,15 @@ const CONFLICT_KEEP = 5
  * لقطة أمان قبل تطبيق حالة سحابية فوق تغييرات محلية غير مدفوعة:
  * تُحفظ محلياً (آخر 5) ويمكن استرجاعها يدوياً — «لا ضياع بيانات أبداً».
  */
-async function saveConflictSnapshot(data: string): Promise<void> {
+async function saveConflictSnapshot(data: string): Promise<boolean> {
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
     arr.push({ at: new Date().toISOString(), data: await encryptForDevice(data) })
     while (arr.length > CONFLICT_KEEP) arr.shift()
     localStorage.setItem(CONFLICT_SNAPSHOTS_KEY, JSON.stringify(arr))
-  } catch { /* storage full or unavailable — sync itself remains operational */ }
+    return true
+  } catch { return false }
 }
 
 /** لقطات التعارض تحتوي نسخة كاملة من المتجر؛ لا يطّلع عليها أو يسترجعها إلا المالك. */
@@ -132,7 +133,9 @@ export async function restoreConflictSnapshot(at: string): Promise<{ ok: boolean
   } catch {
     return { ok: false, message: 'اللقطة تالفة — لا يمكن قراءتها' }
   }
-  await saveConflictSnapshot(serializeStore()) // preserve current state before replacement
+  if (!(await saveConflictSnapshot(serializeStore()))) {
+    return { ok: false, message: 'تعذر حفظ الحالة الحالية قبل الاسترجاع — لم تُستبدل بيانات المتجر' }
+  }
   for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
   // AUDIT-016: اللقطة أيضاً تمر بالحارس — ملف محفوظ قد يكون تالفاً أو من نسخة قديمة مختلة
   try {
@@ -172,8 +175,10 @@ export async function runSyncCycle(): Promise<CycleResult> {
       // لو عندنا تغييرات محلية لم تُدفع بعد (dirty) وسنطبق حالة أحدث من جهاز آخر،
       // نحفظ لقطة كاملة من حالتنا المحلية أولاً — فلا يضيع إدخال أي جهاز أبداً،
       // ويستطيع المالك استرجاع اللقطة من النسخ الاحتياطية لو لزم.
-      if (useAppStore.getState().sync.dirty) {
-        await saveConflictSnapshot(serializeStore())
+      if (useAppStore.getState().sync.dirty && !(await saveConflictSnapshot(serializeStore()))) {
+        const message = 'تعذر حفظ لقطة العمل المحلي — لم تُطبَّق حالة السحابة حتى لا تضيع بيانات هذا الجهاز'
+        useAppStore.getState().updateSync({ lastResult: `⛔ ${message}` })
+        return { ok: false, message }
       }
       // التطبيق دفعة واحدة — البيانات اجتازت (بصمة + AES-GCM + JSON) في العميل
       const parsed = JSON.parse(outcome.pulledData) as Record<string, unknown>

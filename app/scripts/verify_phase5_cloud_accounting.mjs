@@ -123,6 +123,8 @@ assertInvariants('قبل المزامنة', c)
 /* ④ لا عمل محلي يُدهس بلا لقطة */
 {
   assert.ok(RUNNER.includes('saveConflictSnapshot(serializeStore())'), 'لا لقطة أمان قبل تطبيق حالة أحدث')
+  assert.ok(RUNNER.includes('sync.dirty && !(await saveConflictSnapshot(serializeStore()))'), 'تغييرات محلية معلقة يجب أن توقف السحب إذا فشل حفظ اللقطة')
+  assert.ok(RUNNER.includes('if (!(await saveConflictSnapshot(serializeStore())))'), 'استعادة اللقطة يجب أن تحفظ الحالة الحالية قبل استبدالها')
   assert.ok(RUNNER.includes('restoreConflictSnapshot'), 'لا استرجاع للقطات')
   const pullBlock = RUNNER.slice(RUNNER.indexOf("outcome.action === 'pulled'"), RUNNER.indexOf('applyingPull = true'))
   assert.ok(pullBlock.includes('saveConflictSnapshot'), 'اللقطة يجب أن تُحفظ قبل السحب المطبَّق')
