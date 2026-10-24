@@ -24,9 +24,8 @@ import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { summarizeCustody } from '../../core/custody.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
-import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
-import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -68,10 +67,8 @@ export function TripsPage() {
     postTrip, updateTrip, refundTrip, driverDues, getDriverDueBalance, settleDriverDues,
     ensureServiceItemForFreeLine, addEmployee, addDocumentFile,
   } = useDataStore()
-  const { setup, receipt } = useAppStore()
+  const { setup } = useAppStore()
   const toast = useToast()
-  /* فاتورة النقل للعميل مستند بيع ضريبي — رمز زاتكا عند تفعيله */
-  const stampTax = useTaxBarcodeStamp()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -96,7 +93,7 @@ export function TripsPage() {
     const veh = vehicles.find((v) => v.id === t.vehicleId)
     const drv = employees.find((e) => e.id === t.driverId)
     printHtml(renderWaybillHtml({
-      shopName: setup.shopName || 'نقل ولوجستيات',
+      shopName: resolveDocumentPrintSettings(t).setup.shopName || 'نقل ولوجستيات',
       tripNumber: t.tripNumber,
       dateIso: t.date,
       customerName: custName(t.customerId),
@@ -192,6 +189,7 @@ export function TripsPage() {
 
     const buildNow = () => {
       const st = useAppStore.getState()
+      const documentSettings = resolveDocumentPrintSettings(t)
       const model = buildReceiptModel({
         invoiceNumber: t.tripNumber,
         refCode: t.tripNumber,
@@ -212,24 +210,17 @@ export function TripsPage() {
         customerName: cust ? `${cust.nameAr}${extraContext ? ` (${extraContext})` : ''}` : `عميل نقدي${extraContext ? ` (${extraContext})` : ''}`,
         taxPercent: t.vatPercent,
         taxInclusive: false,
-        settings: st.receipt,
+        settings: documentSettings.receipt,
       })
-      stampTax(model, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor, taxMinor })
+      stampDocumentTaxBarcode(model, t, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor, taxMinor })
       return model
     }
-    const tpl = receipt.defaultTemplate || 'a4'
+    const documentSettings = resolveDocumentPrintSettings(t)
+    const tpl = documentSettings.receipt.defaultTemplate || 'a4'
     const model = buildNow()
-    openPrintPreview({
-      title: `فاتورة نقل للعميل ${t.tripNumber}`,
-      html: buildModelHtml(model, cur, receipt, tpl),
-      wide: tpl !== 'thermal',
-      rebuild: () => {
-        const st = useAppStore.getState()
-        const curTpl = st.receipt.defaultTemplate || tpl
-        return buildModelHtml(buildNow(), cur, st.receipt, curTpl)
-      },
+    printModelWithTemplate(model, cur, documentSettings.receipt, tpl, {
+      resolveSettings: () => resolveDocumentPrintSettings(t).receipt,
     })
-    printModelWithTemplate(model, cur, receipt, tpl)
   }
 
   const [tab, setTab] = usePersistedSectionView('trips', 'list', ['list', 'profit'] as const)

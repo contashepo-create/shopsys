@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DesktopStateStorage, newAuditEvents, newJournalEntries, snapshotIdempotencyKey, appStorage, settingsAppStorage } from '../src/data/persistentStorage.ts'
+import { DesktopStateStorage, mergeConcurrentSnapshots, newAuditEvents, newJournalEntries, snapshotIdempotencyKey, appStorage, settingsAppStorage } from '../src/data/persistentStorage.ts'
 import { encryptLegacySnapshotForTest } from './legacy_snapshot_fixture.ts'
 import type { DesktopDatabaseBridge, DesktopSnapshot } from '../src/data/desktopBridge.ts'
 
@@ -136,6 +136,46 @@ describe('جسر تخزين Zustand إلى SQLite', () => {
     expect(calls).toEqual([{ expectedRevision: 0, payloadJson: '{"legacy":true}' }])
   })
 
+  it('يدمج تعديلات متزامنة على حقول مستقلة بدلاً من إسقاط إحداها', async () => {
+    const { database } = fakeDatabase()
+    const first = new DesktopStateStorage(database, null)
+    const second = new DesktopStateStorage(database, null)
+    const base = JSON.stringify({ state: { left: 1, right: 1 } })
+    await first.setItem('shopsys-data', base)
+    await second.getItem('shopsys-data')
+
+    await first.setItem('shopsys-data', JSON.stringify({ state: { left: 2, right: 1 } }))
+    await second.setItem('shopsys-data', JSON.stringify({ state: { left: 1, right: 2 } }))
+
+    const reader = new DesktopStateStorage(database, null)
+    expect(JSON.parse((await reader.getItem('shopsys-data'))!)).toEqual({ state: { left: 2, right: 2 } })
+  })
+
+  it('يدمج تعديلين مستقلين على حقلي السجل نفسه داخل قائمة ذات معرّفات مستقرة', () => {
+    const base = JSON.stringify({ state: { rows: [{ id: 7, title: 'قديم', note: 'قديم' }] } })
+    const local = JSON.stringify({ state: { rows: [{ id: 7, title: 'قديم', note: 'ملاحظة محلية' }] } })
+    const remote = JSON.stringify({ state: { rows: [{ id: 7, title: 'عنوان أحدث', note: 'قديم' }] } })
+    expect(JSON.parse(mergeConcurrentSnapshots(base, local, remote))).toEqual({
+      state: { rows: [{ id: 7, title: 'عنوان أحدث', note: 'ملاحظة محلية' }] },
+    })
+  })
+
+  it('يدمج إضافات متزامنة لقائمة سجلات ذات معرّفات مستقرة', () => {
+    const base = JSON.stringify({ state: { rows: [{ id: 1, value: 'old' }] } })
+    const local = JSON.stringify({ state: { rows: [{ id: 1, value: 'old' }, { id: 2, value: 'local' }] } })
+    const remote = JSON.stringify({ state: { rows: [{ id: 1, value: 'old' }, { id: 3, value: 'remote' }] } })
+    expect(JSON.parse(mergeConcurrentSnapshots(base, local, remote))).toEqual({
+      state: { rows: [{ id: 1, value: 'old' }, { id: 3, value: 'remote' }, { id: 2, value: 'local' }] },
+    })
+  })
+
+  it('يرفض التعديلين المتزامنين على الحقل نفسه بدلاً من الكتابة فوق تعديل أحدث', () => {
+    const base = JSON.stringify({ state: { owner: 'base' } })
+    const local = JSON.stringify({ state: { owner: 'local' } })
+    const remote = JSON.stringify({ state: { owner: 'remote' } })
+    expect(() => mergeConcurrentSnapshots(base, local, remote)).toThrow('تعارض تعديل متزامن')
+  })
+
   it('لا يكتب فوق لقطة أحدث من نافذة أخرى', async () => {
     const { database } = fakeDatabase()
     const first = new DesktopStateStorage(database, null)
@@ -202,7 +242,7 @@ it('flush يضم مخزن الإعدادات shopsys-app ومخزن الأعما
     await expect(settings.setItem('shopsys-app', '{}')).rejects.toThrow('إغلاق')
     await expect(data.setItem('shopsys-data', '{}')).rejects.toThrow('إغلاق')
     onResume()
-    await settings.setItem('shopsys-app', '{"state":{"setup":{"completed":true}}}')
+    await settings.setItem('shopsys-app', '{"state":{"setup":{"completed":false}}}')
     await data.setItem('shopsys-data', '{"state":{"balance":54322}}')
     expect(calls).toHaveLength(4)
   } finally { window.shopsysDesktop = previous }

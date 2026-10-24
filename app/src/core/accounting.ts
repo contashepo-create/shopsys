@@ -7,6 +7,7 @@
 import type { Minor } from './money.ts'
 import type { Account, JournalEntry, JournalLine } from './ledger.ts'
 import { assertBalanced, accountBalance } from './ledger.ts'
+import { eliminatePairedInterBranchLines } from './branchAccounting.ts'
 
 /* ─── ميزان المراجعة ─── */
 
@@ -31,7 +32,7 @@ export interface TrialBalance {
 /** ميزان مراجعة بالمجاميع والأرصدة — الحسابات المتحركة فقط */
 export function computeTrialBalance(journal: JournalEntry[], coa: Account[]): TrialBalance {
   const totals = new Map<string, { d: Minor; c: Minor }>()
-  for (const e of journal) {
+  for (const e of eliminatePairedInterBranchLines(journal)) {
     for (const l of e.lines) {
       const t = totals.get(l.accountCode) ?? { d: 0, c: 0 }
       t.d += l.debit
@@ -205,6 +206,8 @@ export const LOCKED_CONTROL_ACCOUNTS: Record<string, string> = {
   '1107': 'سلف الموظفين — استخدم صرف سلفة أو استقطاعها في المسير',
   '1108': 'عهد الموظفين — استخدم تمويل العهدة ومصروفاتها وتسويتها',
   '2116': 'عمولات الموظفين المستحقة — تنشأ من عمولة الفاتورة وتُقفل بصرفها',
+  '1114': 'مستحق من فروع أخرى — يتغذى حصراً من التحويلات البينية',
+  '2118': 'مستحق إلى فروع أخرى — يتغذى حصراً من التحويلات البينية',
 }
 
 export function validateManualEntry(

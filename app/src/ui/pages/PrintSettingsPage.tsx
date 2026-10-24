@@ -67,7 +67,7 @@ function readLogoFile(file: File, onDone: (dataUrl: string) => void, onError: ()
 }
 
 export function PrintSettingsPage() {
-  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, updateReportPrint, warehouseReceipt, updateWarehouseReceipt, resetWarehouseReceipt, printerProfiles, setPrinterProfile } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, baseReportPrint, updateReportPrint, warehouseReceipt, updateWarehouseReceipt, resetWarehouseReceipt, printerProfiles, setPrinterProfile, activeBranchContext, branchBusinessProfiles } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const cur = useMemo(
@@ -126,7 +126,20 @@ export function PrintSettingsPage() {
     )
   }
 
-  const headerText = receipt.headerLines.join('\n')
+  // عرض سطور الترويسة المحفوظة كما أدخلها المستخدم، حتى إن كان الفرع غير
+  // مكتمل الهوية وتُحجب هذه السطور مؤقتاً من مخرجات الطباعة وفق قرار الاسم فقط.
+  const savedBranchHeaderLines = activeBranchContext && !activeBranchContext.isMain
+    ? branchBusinessProfiles[activeBranchContext.id]?.receipt?.headerLines
+    : undefined
+  const headerText = (savedBranchHeaderLines ?? receipt.headerLines).join('\n')
+  const displayedLogoDataUrl = activeBranchContext && !activeBranchContext.isMain
+    ? branchBusinessProfiles[activeBranchContext.id]?.receipt?.logoDataUrl ?? ''
+    : receipt.logoDataUrl
+  // التقرير الفعلي يضيف بيانات المنشأة المهيكلة إلى headerLine للعرض؛ محرر
+  // الإعدادات يعرض القيمة المحفوظة وحدها كي لا يعيد حفظ السطر القانوني مولّداً.
+  const reportHeaderLineValue = activeBranchContext && !activeBranchContext.isMain
+    ? branchBusinessProfiles[activeBranchContext.id]?.reportPrint?.headerLine ?? ''
+    : baseReportPrint.headerLine
 
   /* §102 (تعدد الطابعات): قائمة طابعات النظام — متاحة في نسخة EXE فقط
      (جسر shopsysPrinters/Electron)؛ في المتصفح تبقى فارغة ونشرح السبب. */
@@ -144,6 +157,11 @@ export function PrintSettingsPage() {
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      {activeBranchContext && !activeBranchContext.isMain && (
+        <div className="xl:col-span-2 rounded-xl border border-brand-500/25 bg-brand-500/5 px-4 py-2.5 text-[12px] font-bold text-slate-700 dark:text-slate-200" data-branch-print-scope>
+          تُحرَّر الآن تصميمات الفواتير والتقارير الخاصة بـ«{setup.shopName || activeBranchContext.nameAr}» فقط — الشعار والترويسات والتذييلات والعلامات المائية لا تؤثر في أي منشأة أخرى.
+        </div>
+      )}
       {/* ─── عمود الإعدادات ─── */}
       <div className="anim-up space-y-4">
         {/* إذن استلام المستودع — مطبوعة كميات فقط، تُفتح أيضاً من داخل الفاتورة (طلب المالك) */}
@@ -185,7 +203,7 @@ export function PrintSettingsPage() {
           <div className="flex flex-wrap gap-2">
             <Btn variant="ghost" onClick={() => printHtml(buildWarehouseReceiptHtml({
               title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: todayLocalIso(),
-              partyLabel: 'جهة تجريبية', branchLabel: 'الفرع الرئيسي', companyName: setup.shopName || 'المنشأة',
+              partyLabel: 'جهة تجريبية', branchLabel: activeBranchContext?.nameAr || setup.shopName || 'المنشأة', companyName: setup.shopName || 'المنشأة',
               userLabel: setup.ownerName || 'المالك', settings: warehouseReceipt,
               lines: [
                 { nameAr: 'صنف تجريبي أول', qty: 10, unit: 'قطعة', code: 'A-001', barcode: '6221000000017', warehouseAr: 'المخزن الرئيسي', location: 'ممر 1 — رف 3' },
@@ -221,7 +239,7 @@ export function PrintSettingsPage() {
               <input type="color" value={reportPrint.accentColor} onChange={(e) => updateReportPrint({ accentColor: e.target.value })} className="w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer bg-transparent" />
             </Field>
             <Field label="سطر ترويسة إضافي">
-              <input value={reportPrint.headerLine} onChange={(e) => updateReportPrint({ headerLine: e.target.value })} className={inputCls} placeholder="عنوان — هاتف — سجل تجاري" />
+              <input value={reportHeaderLineValue} onChange={(e) => updateReportPrint({ headerLine: e.target.value })} className={inputCls} placeholder="عنوان — هاتف — سجل تجاري" />
             </Field>
             <Field label="نص التذييل">
               <input value={reportPrint.footerText} onChange={(e) => updateReportPrint({ footerText: e.target.value })} className={inputCls} placeholder="اختياري" />
@@ -384,8 +402,8 @@ export function PrintSettingsPage() {
 
           <Field label="شعار المحل / الشركة" hint="يظهر أعلى الفاتورة الحرارية وA4 — يُحفظ داخل النظام">
             <div className="flex items-center gap-3">
-              {receipt.logoDataUrl ? (
-                <img src={receipt.logoDataUrl} alt="الشعار" className="w-16 h-16 object-contain rounded-xl border border-slate-200 dark:border-slate-700 bg-white p-1" />
+              {displayedLogoDataUrl ? (
+                <img src={displayedLogoDataUrl} alt="الشعار" className="w-16 h-16 object-contain rounded-xl border border-slate-200 dark:border-slate-700 bg-white p-1" />
               ) : (
                 <div className="w-16 h-16 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-slate-300">
                   <ImagePlus size={22} />
@@ -393,9 +411,9 @@ export function PrintSettingsPage() {
               )}
               <div className="flex flex-col gap-1.5">
                 <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={() => fileRef.current?.click()}>
-                  <ImagePlus size={14} /> {receipt.logoDataUrl ? 'تغيير الشعار' : 'رفع شعار'}
+                  <ImagePlus size={14} /> {displayedLogoDataUrl ? 'تغيير الشعار' : 'رفع شعار'}
                 </Btn>
-                {receipt.logoDataUrl && (
+                {displayedLogoDataUrl && (
                   <button onClick={() => updateReceipt({ logoDataUrl: '' })} className="text-[11px] text-rose-500 hover:text-rose-600 font-bold flex items-center gap-1">
                     <Trash2 size={11} /> إزالة الشعار
                   </button>
@@ -406,7 +424,7 @@ export function PrintSettingsPage() {
           </Field>
 
           {/* تحكم كامل بالشعار على فاتورة A4 (طلب المالك): الموضع + الحجم + الشفافية */}
-          {receipt.logoDataUrl && (
+          {displayedLogoDataUrl && (
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-3">
               <div className="text-[11.5px] font-bold text-slate-500">تحكم الشعار على فاتورة A4</div>
               <Field label="موضع الشعار">

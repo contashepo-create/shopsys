@@ -36,6 +36,8 @@ export interface JournalLine {
    */
   partyKind?: 'customer' | 'supplier' | null
   partyId?: number | null
+  /** الفرع المقابل في حسابات التسوية بين الفروع فقط. */
+  relatedBranchId?: number | null
 }
 
 export interface CostCenterAllocationWeight {
@@ -81,16 +83,28 @@ export type SourceType =
 
 export interface JournalEntry {
   id: number
+  /** فرع القيد المحاسبي؛ يدعم الأستاذ والأقفال والتقارير المستقلة لكل فرع. */
+  branchId?: number
+  /** رابط القيدين المتناظرين لتحويل بين فرعين. */
+  interBranchTransferId?: number
   entryNumber: number
   date: string // ISO
   description: string
   sourceType: SourceType
   sourceId: number | null
+  /** اسم مجموعة المستند المالكة عندما يحتمل sourceType أكثر من نوع مستند. */
+  sourceCollection?: string
   lines: JournalLine[]
   createdBy: string
   createdAt: string
   reversedByEntryId: number | null // إن عُكس هذا القيد
   reversesEntryId: number | null // إن كان هذا قيداً عاكساً
+  /**
+   * قيد تذكاري بلا سطور مالية (فاتورة توثيق مستخلصات — النموذج أ):
+   * يربط المستند الضريبي بدفتره (قرار 9) بصفر أثر على الأرصدة.
+   * الحارس يفرض: memoOnly ⇒ صفر سطور حتماً. undefined = قيد مالي عادي.
+   */
+  memoOnly?: boolean
 }
 
 export class UnbalancedEntryError extends Error {
@@ -130,6 +144,7 @@ export function buildReversalLines(original: JournalLine[]): JournalLine[] {
     accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: l.note,
     ...(l.costCenterId != null ? { costCenterId: l.costCenterId } : {}),
     ...(l.partyKind ? { partyKind: l.partyKind, partyId: l.partyId ?? null } : {}),
+    ...(l.relatedBranchId != null ? { relatedBranchId: l.relatedBranchId } : {}),
   }))
 }
 
@@ -153,6 +168,7 @@ export const STANDARD_COA: Account[] = [
   { code: '1111', nameAr: 'دفعات مقدمة لمقاولي الباطن', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'sub_advances' },
   { code: '12', nameAr: 'الأصول الثابتة', rootType: 'assets', parentCode: '1', isPostable: false },
   { code: '1112', nameAr: 'عمولات مستحقة لدى الغير', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'external_commissions_receivable' },
+  { code: '1114', nameAr: 'مستحق من فروع أخرى', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'interbranch_receivable' },
   { code: '1113', nameAr: 'عقارات مملوكة (استثمار/بيع)', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'real_estate_assets' },
   { code: '1201', nameAr: 'أصول ومعدات', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'fixed_assets' },
   { code: '1202', nameAr: 'مجمع الإهلاك', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'acc_depreciation' },
@@ -174,6 +190,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2115', nameAr: 'مستحق لملاك العقارات المدارة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'property_owners_payable' },
   { code: '2116', nameAr: 'عمولات موظفين مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'staff_commissions_payable' },
   { code: '2117', nameAr: 'مصروفات داخلية مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'internal_expenses_payable' },
+  { code: '2118', nameAr: 'مستحق إلى فروع أخرى', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'interbranch_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },

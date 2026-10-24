@@ -5,7 +5,7 @@
  * الاستدعاءات وترتيبها ومحتواها (بون المطبخ بلا أسعار · نسخة المحطة بعنوانها).
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, render, screen, fireEvent } from '@testing-library/react'
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import React from 'react'
 
 vi.mock('../src/ui/print/printReceipt.ts', async (importOriginal) => {
@@ -59,6 +59,8 @@ const settleOpenOrder = async () => {
   fireEvent.click(screen.getByText('ORD-0009')) /* بطاقة الأمر */
   fireEvent.click(screen.getByText('الفاتورة والدفع')) /* زر الدفع */
   fireEvent.click(screen.getByText('قفل الأمر وإصدار الفاتورة')) /* الإقفال */
+  await waitFor(() => expect(useDataStore.getState().settleRestaurantOrder).toHaveBeenCalled())
+  await waitFor(() => expect(screen.queryByText('قفل الأمر وإصدار الفاتورة')).toBeNull())
 }
 
 describe('§102 الطباعة الآلية عند إقفال أمر المطعم', () => {

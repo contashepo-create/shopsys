@@ -59,7 +59,7 @@ ok('③ واتساب العرض يمرر هاتف العميل المسجَّل'
 /* ── ④ فاتورة المقاولات الحرة ─────────────────────────────────────────────── */
 const ciSrc = read('src/ui/pages/ContractingInvoicesPage.tsx')
 ok('④ محرر فاتورة مقاولات ببنود حرة موجود', ciSrc.includes('data-contracting-free-editor'))
-ok('④ تُرحَّل بمحرك فاتورة البيع (postSale)', ciSrc.includes('const sale = postSale({'))
+ok('④ تُرحَّل بمحرك فاتورة البيع (postSale) تحت قفل الترحيل', ciSrc.includes('return postSale({') && ciSrc.includes('withInvoiceCommitLock'))
 ok('④ بنودها أصناف خدمة مضمونة (بلا مخزون)', ciSrc.includes('ensureServiceItemForFreeLine({ nameAr: l.nameAr'))
 ok('④ إجمالياتها بنفس الترتيب المطلوب', ciSrc.includes('<span>الإجمالي</span>') && ciSrc.includes('<span>الضريبة') && ciSrc.includes('<span>الإجمالي بالضريبة</span>'))
 ok('④ تنقل خلاياها مثل الفاتورة', ciSrc.includes('<tbody onKeyDown={gridArrowNavigation}>'))

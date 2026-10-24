@@ -5,9 +5,10 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * ← أرسل بون المطبخ (بلا أسعار) ← عند المغادرة اقفل بفاتورة واحدة
  * (postSale يتولى الوصفات والمخزون والقيد) — قبل القفل لا شيء يلمس الدفاتر.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { UtensilsCrossed, Printer, XCircle, ReceiptText, Plus, Scissors, Combine } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -16,17 +17,15 @@ import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml, printToRoute } from '../print/printReceipt.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RestaurantOrdersPage() {
   const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, markKitchenFired, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, mergeRestaurantOrders, getEffectivePrice } = useDataStore()
-  const { setup, receipt, printerProfiles } = useAppStore()
+  const { setup, printerProfiles } = useAppStore()
   const toast = useToast()
-  /* إيصال العميل للمطعم فاتورة بيع — يجب أن يحمل رمز زاتكا عند تفعيله */
-  const stampTax = useTaxBarcodeStamp()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   // سد فجوة النشاط #14 (Gap 1): حذف/تقليل صنف بعد إرساله للمطبخ يتطلب اعتماد مشرف
@@ -34,6 +33,8 @@ export function RestaurantOrdersPage() {
 
   const open = restaurantOrders.filter((o) => o.status === 'open')
   const [newOpen, setNewOpen] = useState(false)
+  const [isPosting, setIsPosting] = useState(false)
+  const postingRef = useRef(false)
 
   const [nType, setNType] = useState<RestaurantOrderType>('dine_in')
   const [nTable, setNTable] = useState('')
@@ -125,7 +126,7 @@ export function RestaurantOrdersPage() {
 
   const printKitchen = (o: typeof open[number]) => {
     printHtml(renderKitchenTicketHtml({
-      shopName: setup.shopName || 'تَحَكَّم',
+      shopName: resolveDocumentPrintSettings(o).setup.shopName || 'تَحَكَّم',
       orderNumber: o.orderNumber,
       typeLabel: ORDER_TYPE_LABELS[o.type].nameAr,
       tableName: o.tableName,
@@ -137,11 +138,13 @@ export function RestaurantOrdersPage() {
     markKitchenFired(o.id)
   }
 
-  const settle = () => {
-    if (!settleOrder) return
+  const settle = async () => {
+    if (!settleOrder || postingRef.current) return
+    postingRef.current = true
+    setIsPosting(true)
     try {
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      const sale = settleRestaurantOrder({
+      const sale = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => settleRestaurantOrder({
         orderId: settleOrder.id,
         payment: 'cash',
         treasury: (terminal?.settlementAccountCode ?? payTreasury) as never,
@@ -150,12 +153,13 @@ export function RestaurantOrdersPage() {
         deliveryFeeMinor: delFee.trim() ? toMinor(delFee, cur.decimals) : 0,
         taxPercent: setup.vatPercent,
         taxInclusive: setup.taxInclusive,
-      })
+      }))
       toast.show(`قُفل ${settleOrder.orderNumber} بالفاتورة ${sale.invoiceNumber} — ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✓`)
+      const documentSettings = resolveDocumentPrintSettings(sale)
       /* §102 (تعدد الطابعات): النسخ الآلية عند الإقفال — لكل مسار مفعّل تُرسل
          نسخته إلى طابعته المسماة (صامتة في EXE عبر الجسر، وحوار في المتصفح). */
       const ticketArgs = {
-        shopName: setup.shopName || 'تَحَكَّم',
+        shopName: documentSettings.setup.shopName || 'تَحَكَّم',
         orderNumber: settleOrder.orderNumber,
         typeLabel: ORDER_TYPE_LABELS[settleOrder.type].nameAr,
         tableName: settleOrder.tableName,
@@ -174,21 +178,22 @@ export function RestaurantOrdersPage() {
           paidMinor: sale.paidMinor,
           operatorName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك',
           customerName: null,
-          taxPercent: setup.vatPercent,
-          taxInclusive: setup.taxInclusive,
-          settings: receipt,
+          taxPercent: sale.taxPercent ?? documentSettings.setup.vatPercent,
+          taxInclusive: sale.taxInclusive ?? documentSettings.setup.taxInclusive,
+          settings: documentSettings.receipt,
         })
-        stampTax(model, { dateIso: sale.date, invoiceNumber: sale.invoiceNumber, totalMinor: sale.totals.totalMinor, taxMinor: sale.totals.taxMinor })
-        printToRoute(renderReceiptHtml(model, cur, receipt), printerProfiles.clientReceipt, { silent: receipt.silentPrint })
+        stampDocumentTaxBarcode(model, sale, { dateIso: sale.date, invoiceNumber: sale.invoiceNumber, totalMinor: sale.totals.totalMinor, taxMinor: sale.totals.taxMinor })
+        printToRoute(renderReceiptHtml(model, cur, documentSettings.receipt), printerProfiles.clientReceipt, { silent: documentSettings.receipt.silentPrint })
       }
       if (printerProfiles.kitchenTicket.autoPrint)
-        printToRoute(renderKitchenTicketHtml(ticketArgs), printerProfiles.kitchenTicket, { silent: receipt.silentPrint })
+        printToRoute(renderKitchenTicketHtml(ticketArgs), printerProfiles.kitchenTicket, { silent: documentSettings.receipt.silentPrint })
       if (printerProfiles.stationTicket.autoPrint)
-        printToRoute(renderKitchenTicketHtml({ ...ticketArgs, stationLabel: 'المحطة' }), printerProfiles.stationTicket, { silent: receipt.silentPrint })
+        printToRoute(renderKitchenTicketHtml({ ...ticketArgs, stationLabel: 'المحطة' }), printerProfiles.stationTicket, { silent: documentSettings.receipt.silentPrint })
       setSettleFor(null)
       if (activeId === settleOrder.id) setActiveId(null)
       setSvcPct(''); setDelFee(''); setTerminalId(''); setTerminalReference(''); setCardLast4('')
     } catch (e) { toast.show((e as Error).message, 'error') }
+    finally { postingRef.current = false; setIsPosting(false) }
   }
 
   return (
@@ -323,7 +328,7 @@ export function RestaurantOrdersPage() {
             </div>
             <p className="text-[11px] text-slate-400">الضريبة والوصفات وخصم الخامات كلها عبر فاتورة الكاشير نفسها — قيد واحد متوازن.</p>
             <DocOutcome>الأثر: يُرحَّل الأمر كفاتورة بيع: <b>4101 المبيعات</b> دائناً بوعاء الأصناف والرسوم · <b>2102</b> دائناً بالضريبة · <b>الخزينة/ماكينة الدفع</b> مديناً بالمحصَّل و<b>1104 ذمم العملاء</b> بالباقي الآجل · والمواد المستهلكة تخرج من <b>1103 المخزون</b> إلى <b>5101 تكلفة المبيعات</b> حسب وصفة كل صنف.</DocOutcome>
-            <Btn onClick={settle} shortcut="F9" className="w-full">قفل الأمر وإصدار الفاتورة</Btn>
+            <Btn onClick={settle} shortcut="F9" className="w-full" disabled={isPosting}>{isPosting ? 'جارٍ ترحيل الفاتورة…' : 'قفل الأمر وإصدار الفاتورة'}</Btn>
           </div>
         )}
       </Modal>

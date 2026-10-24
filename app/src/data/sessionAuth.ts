@@ -24,6 +24,7 @@
  * فيُفرض الدخول من جديد — طلب المالك.
  */
 import { create } from 'zustand'
+import { desktopBridge } from './desktopBridge.ts'
 
 const SESSION_AUTH_KEY = 'tahakam-session-authenticated'
 
@@ -43,6 +44,16 @@ export function isSessionAuthenticated(): boolean {
   return useSessionAuthStore.getState().authenticated
 }
 
+/** تحقق إضافي في العملية الرئيسية قبل اعتماد جلسة Electron؛ الويب يبقى محلياً. */
+export async function authorizeSession(userId: number | null, pin: string): Promise<void> {
+  const bridge = desktopBridge()
+  if (bridge?.auth) {
+    const result = await bridge.auth.authorize({ userId, pin })
+    if (!result.ok) throw new Error(result.error || 'تعذّر اعتماد جلسة الدخول في العملية الرئيسية')
+  }
+  markSessionAuthenticated()
+}
+
 export function markSessionAuthenticated(): void {
   try {
     sessionStorage.setItem(SESSION_AUTH_KEY, '1')
@@ -55,11 +66,17 @@ export function markSessionAuthenticated(): void {
   useSessionAuthStore.setState({ authenticated: true })
 }
 
-export function clearSessionAuthenticated(): void {
-  try {
-    sessionStorage.removeItem(SESSION_AUTH_KEY)
-  } catch {
-    /* صامت */
-  }
+function clearSessionFlag(): void {
+  try { sessionStorage.removeItem(SESSION_AUTH_KEY) } catch { /* صامت */ }
   useSessionAuthStore.setState({ authenticated: false })
+}
+
+export function clearSessionAuthenticated(): void {
+  clearSessionFlag()
+  desktopBridge()?.auth?.revoke()
+}
+
+/** إبطال صادر من العملية الرئيسية — لا نرسل revoke مرتداً مرة أخرى. */
+export function clearSessionAuthenticatedFromMain(): void {
+  clearSessionFlag()
 }

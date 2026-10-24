@@ -53,7 +53,7 @@ const TAB_ICONS: Record<TabId, typeof BarChart3> = {
 const EXP_SOURCE_LABELS: Record<string, string> = {
   sale: 'فاتورة بيع', purchase: 'فاتورة شراء', payment_voucher: 'سند صرف', payroll: 'رواتب',
   manual: 'قيد يدوي', depreciation: 'إهلاك', wastage: 'هالك', logistics_trip: 'نقلة',
-  reversal: 'قيد عاكس', adjustment: 'تسوية', asset_payment: 'سداد أصل', asset_disposal: 'استبعاد أصل', external_commission: 'عمولات',
+  reversal: 'قيد عاكس', adjustment: 'تسوية', opening: 'رصيد افتتاحي', asset_payment: 'سداد أصل', asset_disposal: 'استبعاد أصل', external_commission: 'عمولات',
   contracting: 'مقاولات', lab: 'معمل', sale_return: 'مرتجع بيع', purchase_return: 'مرتجع شراء',
 }
 

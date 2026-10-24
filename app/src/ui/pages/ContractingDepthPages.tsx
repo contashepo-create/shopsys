@@ -19,6 +19,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { todayLocalIso } from '../../core/time.ts'
@@ -212,6 +213,8 @@ export function SubcontractorsPage() {
 
   /** طباعة شهادة أعمال باطن — نموذج A4 بالمستحق وكل الاستقطاعات (نفس محرك الفواتير) */
   const printSubCertificate = (c: SubContract, cert: SubCertificate) => {
+    const project = projects.find((p) => p.id === c.projectId)
+    const documentSettings = resolveDocumentPrintSettings(project ?? c)
     const rows = [{ nameAr: cert.descriptionAr || `قيمة الأعمال المعتمدة — شهادة #${cert.number}`, qty: 1, unitPriceMinor: cert.amountMinor, totalMinor: cert.amountMinor }]
     if (cert.retentionMinor > 0) rows.push({ nameAr: 'محتجز ضمان الأعمال', qty: 1, unitPriceMinor: -cert.retentionMinor, totalMinor: -cert.retentionMinor })
     if (cert.taxWithholdMinor > 0) rows.push({ nameAr: 'ضريبة استقطاع (تُورَّد للمصلحة)', qty: 1, unitPriceMinor: -cert.taxWithholdMinor, totalMinor: -cert.taxWithholdMinor })
@@ -227,12 +230,14 @@ export function SubcontractorsPage() {
       totalMinor: cert.netMinor,
       paidMinor: 0,
       operatorName: useAppStore.getState().setup.ownerName ?? 'المالك',
-      settings: useAppStore.getState().receipt,
+      settings: documentSettings.receipt,
       extraFooter: `قيمة الأعمال ${fmt(cert.amountMinor)} − المحتجز ${fmt(cert.retentionMinor)}${cert.taxWithholdMinor > 0 ? ` − استقطاع ${fmt(cert.taxWithholdMinor)}` : ''}${cert.advanceRecoveryMinor > 0 ? ` − استرداد دفعة ${fmt(cert.advanceRecoveryMinor)}` : ''} = الصافي ${fmt(cert.netMinor)}`,
     })
-    const live = useAppStore.getState().receipt
-    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة شهادة #${cert.number} قبل الطباعة`, rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, 'a4') }); return }
-    printModelWithTemplate(model, cur, live, 'a4')
+    const live = documentSettings.receipt
+    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة شهادة #${cert.number} قبل الطباعة`, rebuild: () => buildModelHtml(model, cur, resolveDocumentPrintSettings(project ?? c).receipt, 'a4') }); return }
+    printModelWithTemplate(model, cur, live, 'a4', {
+      resolveSettings: () => resolveDocumentPrintSettings(project ?? c).receipt,
+    })
   }
 
   const [open, setOpen] = useState(false)

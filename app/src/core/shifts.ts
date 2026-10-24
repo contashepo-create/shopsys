@@ -34,6 +34,8 @@ export interface ShiftDoc {
   paidMinor?: Minor
   /** وجهة التحصيل: درج نقدي أم بنك؟ (التحصيل البنكي لا يدخل عدّ الدرج) */
   treasuryKind?: 'cash' | 'bank'
+  /** فاتورة توثيق مستخلصات (النموذج أ): ليست بيع وردية — تُستثنى من التلخيص */
+  projectBilling?: 'documentation' | 'extra'
 }
 
 export interface ShiftSummary {
@@ -56,8 +58,9 @@ function paidOf(d: ShiftDoc): Minor {
 
 /** تلخيص وردية من مستنداتها — منطق خالص قابل للفحص */
 export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDoc[]): ShiftSummary {
-  const mySales = sales.filter((s) => s.shiftId === shift.id)
-  const myReturns = returns.filter((r) => r.shiftId === shift.id)
+  /* مستندات التوثيق الضريبية لا مبيعات وردية ولا تحصيل بها — خارج التلخيص */
+  const mySales = sales.filter((s) => s.shiftId === shift.id && s.projectBilling !== 'documentation')
+  const myReturns = returns.filter((r) => r.shiftId === shift.id && r.projectBilling !== 'documentation')
   let cashSales = 0, bankSales = 0, creditSales = 0
   for (const s of mySales) {
     const paid = paidOf(s)

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as Rea
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, PanelRight, Check, MoreHorizontal } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
+import { openSectionWindow } from '../windows/windowStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { pendingForUser, canApprove } from '../../core/approvals.ts'
@@ -19,7 +20,6 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation, OverlayPortal, useToast } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
-import { BranchBadge } from '../components/BranchBadge.tsx'
 
 /** موضع القائمة تحت عنوانها مباشرة — محاذاة يمينية (RTL) مع انقلاب عند ضيق الشاشة */
 function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
@@ -33,6 +33,14 @@ function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
     right: Math.max(8, (window.innerWidth || 1024) - rect.right),
     maxHeight: Math.min(space, Math.round(viewportHeight * 0.75)),
   }
+}
+
+function titleForPath(path: string): string {
+  for (const sec of NAV_SECTIONS) {
+    const child = sec.children.find((c) => c.path === path)
+    if (child) return child.nameAr
+  }
+  return 'تَحَكَّم'
 }
 
 export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }) {
@@ -55,15 +63,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   const widthsRef = useRef(new Map<string, number>())
   const [visibleCount, setVisibleCount] = useState(Number.POSITIVE_INFINITY)
 
-  const {
-    branches: activeBranches,
-    effectiveBranch,
-    effectiveBranchId,
-    isLockedToUserBranch,
-    effectiveModules,
-    effectiveActivityId,
-    setActiveBranchId,
-  } = useEffectiveBranchScope()
+  const { effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
   const sections = NAV_SECTIONS
@@ -175,11 +175,14 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   }
   const go = (path: string) => {
     setOpenId(null)
+    /* سطح المكتب: القسم في نافذة نظام حرة (قرار المالك) — الويب تنقل داخلي */
+    if (openSectionWindow(path, titleForPath(path))) return
     if (!guardNavigation(() => navigate(path))) navigate(path)
   }
   const onItemClick = (event: ReactMouseEvent<HTMLAnchorElement>, path: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     setOpenId(null)
+    if (openSectionWindow(path, titleForPath(path))) { event.preventDefault(); return }
     if (guardNavigation(() => navigate(path))) event.preventDefault()
   }
 
@@ -267,18 +270,6 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
       </div>
 
       <span className="mx-1 hidden h-4 w-px shrink-0 bg-slate-200 sm:block dark:bg-slate-700" />
-      {activeBranches.length > 0 && (
-        <span className="hidden min-w-0 sm:inline-flex">
-          <BranchBadge
-            branches={activeBranches}
-            value={effectiveBranchId}
-            fallbackName={effectiveBranch?.nameAr}
-            locked={isLockedToUserBranch}
-            onChange={setActiveBranchId}
-            placement="menubar"
-          />
-        </span>
-      )}
       <span className="hidden max-w-[12rem] shrink-0 truncate text-[11px] text-slate-400 lg:block">{setup.shopName || 'تَحَكَّم في إدارة أعمالك'}</span>
       {/* زر التحويل إلى الشريط الجانبي — في نهاية الشريط (يساره في RTL) */}
       <button

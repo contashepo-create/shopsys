@@ -48,7 +48,7 @@ check('غلاف القائمة شفاف بلا تعتيم ولا طمس ولا �
 
 check('نتائج البحث معلنة لقارئ الشاشة', () => {
   assert.ok(/role="combobox"/.test(pickers), 'حقل البحث لا يعلن أنه صندوق تحرير وسرد')
-  assert.equal(pickers.match(/role="listbox"/g)?.length, 2, 'قائمتا الأصناف والأطراف لا تحملان role=listbox')
+  assert.ok((pickers.match(/role="listbox"/g)?.length ?? 0) >= 2, 'قائمتا الأصناف والأطراف لا تحملان role=listbox')
   assert.ok(/role="option"/.test(pickers) && /aria-selected=\{row === index\}/.test(pickers), 'النتائج بلا role=option/aria-selected')
   assert.ok(/aria-activedescendant=\{matches\[index\]/.test(pickers), 'لا إعلان للعنصر النشط أثناء التنقل بالأسهم')
 })

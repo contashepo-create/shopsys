@@ -40,10 +40,12 @@ describe('موضع شارة الفرع في الرأس', () => {
     expect(screen.getByText('محمود علي')).toBeTruthy()
   })
 
-  it('وضع القوائم العلوي: لا شارة في الرأس (MenuBar يعرضها)', () => {
+  it('وضع القوائم العلوي: الشارة في الرأس وفق موضعها المعتمد', () => {
     setup('topbar')
     const { container } = renderHeader()
-    expect(container.querySelector('[data-branch-badge="header"]')).toBeNull()
+    const badge = container.querySelector('[data-branch-badge="header"]')
+    expect(badge).toBeTruthy()
+    expect(badge?.textContent).toContain('فرع المنصورة')
   })
 
   it('موظف مقيَّد بفرع: الشارة مقفولة بلا مبدّل', () => {

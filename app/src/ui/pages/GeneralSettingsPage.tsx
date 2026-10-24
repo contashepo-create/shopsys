@@ -10,7 +10,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, effectiveModules } from '../../core/activities.ts'
-import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
+import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, fiscalYearsForBranch, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
@@ -20,8 +20,11 @@ import { FxRatesManager } from '../components/FxRatesManager.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 
 export function GeneralSettingsPage() {
-  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload, updateSetup, updateCompanyName, updateTaxSettings, activeBranchContext } = useAppStore()
-  const { warehouses, closeFiscalYear, reopenFiscalYear, journal } = useDataStore()
+  const { setup, fiscalYears: allFiscalYears, addFiscalYear, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload, updateSetup, updateCompanyName, updateTaxSettings, activeBranchContext } = useAppStore()
+  const { warehouses, branches, closeFiscalYear, reopenFiscalYear, journal, currentUserId, appUsers } = useDataStore()
+  const fiscalYears = fiscalYearsForBranch(allFiscalYears, activeBranchContext?.id ?? null, Boolean(activeBranchContext?.isMain))
+  const ownerSession = currentUserId == null || appUsers.find((user) => user.id === currentUserId)?.roleId === 'owner'
+  const canManageFiscalYears = branches.length === 0 || Boolean(activeBranchContext && (ownerSession || activeBranchContext.isMain))
   const toast = useToast()
   /* v1.0.7: تغيير النشاط بمفتاح الدعم الفني فقط (موافقة المالك) */
   const [activityKeyOpen, setActivityKeyOpen] = useState(false)
@@ -59,7 +62,6 @@ export function GeneralSettingsPage() {
     if (!closeTarget) return
     try {
       const { netProfitMinor } = closeFiscalYear(closeTarget, fiscalYears)
-      markFiscalYearClosed(closeTarget.id)
       toast.show(`أُقفلت سنة «${closeTarget.nameAr}» — صافي ${netProfitMinor >= 0 ? 'الربح' : 'الخسارة'} ${fmt(Math.abs(netProfitMinor))} ${cur.symbol} رُحّل للأرباح المرحلة ✅`)
       setCloseTarget(null)
     } catch (err) { toast.show((err as Error).message, 'error') }
@@ -503,8 +505,13 @@ export function GeneralSettingsPage() {
         </p>
       </section>
 
-      {/* السنوات المالية والإقفال السنوي (طلب المالك — منهجية عالمية) */}
-      <section hidden={!canEditCompanyWideSettings} className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '200ms' }}>
+      {/* السنوات المالية والإقفال السنوي — تُدار الآن ضمن الفرع المختار */}
+      {branches.length > 0 && !activeBranchContext && (
+        <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 text-[12px] text-amber-800 dark:text-amber-200">
+          اختر فرعاً محدداً من محدد الفروع لإدارة سنته المالية وإقفاله؛ العرض الشامل لا يغيّر تقاويم الفروع.
+        </div>
+      )}
+      <section hidden={!canManageFiscalYears} className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '200ms' }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-extrabold text-slate-800 dark:text-white text-sm flex items-center gap-2"><CalendarCheck2 size={16} className="text-emerald-500" /> السنوات المالية</h3>
           <Btn variant="ghost" onClick={() => setNewYearOpen(true)}>+ فتح سنة جديدة</Btn>
@@ -514,6 +521,11 @@ export function GeneralSettingsPage() {
           الربح/الخسارة إلى «الأرباح المرحّلة» — وبعده تُقفل الفترة فلا قيود بأثر رجعي فيها.
           أرصدة العملاء والموردين والخزائن تنتقل تلقائياً (الميزانية تراكمية).
         </p>
+        {branches.length > 0 && activeBranchContext && fiscalYears.length === 0 && (
+          <div role="alert" className="mb-3 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[12px] text-amber-900 dark:text-amber-200">
+            لا توجد سنة مالية لهذا الفرع. بعد تفعيل التقويم المالي، لن تُرحّل قيود الفرع حتى تفتح سنة تغطي تاريخها.
+          </div>
+        )}
         <div className="space-y-2">
           {fiscalYears.length === 0 && <div className="text-[12px] text-slate-400">لا سنوات مسجلة</div>}
           {fiscalYears.map((y) => {

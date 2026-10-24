@@ -7,15 +7,16 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * - حد الفروع من الرخصة الموقعة (القرار 24) — الزيادة بمفتاح من المطوّر
  */
 import { useEffect, useMemo, useState } from 'react'
-import { GitBranch, Plus, Trash2, Star, PenLine, BarChart3, Wallet2, Package, ArrowLeftRight, Phone, MapPin, UserCircle2, Layers, CheckCircle2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { GitBranch, Plus, Trash2, Star, PenLine, BarChart3, Wallet2, Package, ArrowLeftRight, Phone, MapPin, UserCircle2, Layers, CheckCircle2, Building2, AlertTriangle, BadgeCheck } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useDataStore } from '../../data/repo.ts'
-import { useAppStore } from '../../stores/app.store.ts'
+import { branchIdentityMissingFields, resolveBranchAppSettings, useAppStore } from '../../stores/app.store.ts'
 import { compareBranches, type Branch } from '../../core/branches.ts'
 import { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS, type BusinessModule } from '../../core/activities.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { evaluateLicense, effectiveLimits } from '../../core/license.ts'
 import { formatMinor } from '../../core/money.ts'
+import { validateFiscalYear } from '../../core/fiscal.ts'
 import { getCountry } from '../../core/countries.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
@@ -30,8 +31,20 @@ export function BranchesPage() {
     // المقارنة تحتاج لقطة شاملة لا بيانات الفرع الذي كان المالك يستعرضه قبل فتح الصفحة.
     if (canManageAllBranches && activeBranchId != null) setActiveBranchId(null)
   }, [activeBranchId, canManageAllBranches, setActiveBranchId])
-  const { setup, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = useAppStore()
+  const appState = useAppStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt, deviceFlags } = appState
+  const navigate = useNavigate()
   const toast = useToast()
+
+  const identityMissingForBranch = (branch: Branch) => {
+    if (branch.isMain) return []
+    const resolved = resolveBranchAppSettings(appState, branch)
+    return branchIdentityMissingFields(resolved.setup, resolved.einvoice)
+  }
+  const openBranchIdentity = (branch: Branch) => {
+    setActiveBranchId(branch.id)
+    navigate('/settings/company')
+  }
 
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -79,6 +92,10 @@ export function BranchesPage() {
   const [customModulesMode, setCustomModulesMode] = useState<'all' | 'custom'>('all')
   const [enabledModules, setEnabledModules] = useState<BusinessModule[]>([])
   const [branchActivityId, setBranchActivityId] = useState<string>('')
+  const currentYear = new Date().getFullYear()
+  const [fiscalYearName, setFiscalYearName] = useState(String(currentYear))
+  const [fiscalYearStart, setFiscalYearStart] = useState(`${currentYear}-01-01`)
+  const [fiscalYearEnd, setFiscalYearEnd] = useState(`${currentYear}-12-31`)
 
   const usedWh = new Set(branches.map((b) => b.warehouseId))
   const usedTr = new Set(branches.map((b) => b.treasuryCode))
@@ -89,6 +106,8 @@ export function BranchesPage() {
     setEditing(null); setName(''); setAddress(''); setPhone(''); setManager('')
     setWhMode('new'); setTrMode('new-cash')
     setCustomModulesMode('all'); setEnabledModules([...setup.modules]); setBranchActivityId('')
+    const year = new Date().getFullYear()
+    setFiscalYearName(String(year)); setFiscalYearStart(`${year}-01-01`); setFiscalYearEnd(`${year}-12-31`)
     setOpen(true)
   }
   const openEdit = (b: Branch) => {
@@ -115,6 +134,11 @@ export function BranchesPage() {
 
   const save = () => {
     try {
+      const openingFiscalYear = { nameAr: fiscalYearName.trim(), startDate: fiscalYearStart, endDate: fiscalYearEnd }
+      if (!editing) {
+        const fiscalErrors = validateFiscalYear(openingFiscalYear, [])
+        if (fiscalErrors.length) throw new Error(fiscalErrors.join(' — '))
+      }
       if (editing) {
         updateBranch(editing.id, {
           nameAr: name,
@@ -129,7 +153,7 @@ export function BranchesPage() {
         })
         toast.show(`حُدّث فرع «${name.trim()}» ✅`)
       } else {
-        addBranch({
+        const createdBranch = addBranch({
           nameAr: name,
           warehouseId: typeof whMode === 'number' ? whMode : 0,
           treasuryCode: typeof trMode === 'string' && !trMode.startsWith('new-') ? trMode : '',
@@ -142,7 +166,9 @@ export function BranchesPage() {
           enabledModules: customModulesMode === 'custom' ? enabledModules : undefined,
           activityId: branchActivityId || null,
         }, maxBranches)
-        toast.show(`أُنشئ فرع «${name.trim()}» بمخزنه وخزينته ✅`)
+        if (!branches.length) useAppStore.getState().bindLegacyFiscalYearsToMain(1)
+        useAppStore.getState().addBranchFiscalYear(createdBranch.id, openingFiscalYear)
+        toast.show(`أُنشئ فرع «${name.trim()}» بمخزنه وخزينته وسنته المالية ✅`)
       }
       setOpen(false)
     } catch (e) {
@@ -307,6 +333,15 @@ export function BranchesPage() {
                       {getActivity(b.activityId)?.icon} {getActivity(b.activityId)?.nameAr}
                     </span>
                   )}
+                  {!b.isMain && (identityMissingForBranch(b).length > 0 ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300" data-branch-identity-status="incomplete">
+                      <AlertTriangle size={11} /> الهوية ناقصة
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" data-branch-identity-status="complete">
+                      <BadgeCheck size={11} /> الهوية مكتملة
+                    </span>
+                  ))}
                 </div>
                 {b.customModulesMode === 'custom' && (b.enabledModules ?? []).length > 0 && (
                   <div className="flex flex-wrap gap-1">
@@ -343,6 +378,17 @@ export function BranchesPage() {
                     تخصيص الأقسام
                   </button>
                 </div>
+                {canManageAllBranches && (
+                  <button
+                    type="button"
+                    data-branch-identity-action={b.id}
+                    onClick={() => openBranchIdentity(b)}
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-brand-500/10 hover:text-brand-600 transition-all"
+                  >
+                    <Building2 size={13} />
+                    {b.isMain ? 'بيانات هوية المنشأة' : 'بيانات هوية الفرع'}
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -355,6 +401,25 @@ export function BranchesPage() {
           <Field label="اسم الفرع *">
             <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="فرع المعادي…" />
           </Field>
+          {!editing && (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-3">
+              <div>
+                <div className="text-[12px] font-extrabold text-emerald-800 dark:text-emerald-200">السنة المالية الافتتاحية للفرع *</div>
+                <div className="text-[10.5px] text-slate-500 mt-0.5">حدّد الفترة التي سيعمل عليها هذا الفرع؛ تُحفظ مستقلة عن فترات الفروع الأخرى.</div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Field label="اسم السنة">
+                  <input value={fiscalYearName} onChange={(e) => setFiscalYearName(e.target.value)} className={inputCls} required />
+                </Field>
+                <Field label="تاريخ البداية *">
+                  <input type="date" value={fiscalYearStart} onChange={(e) => setFiscalYearStart(e.target.value)} className={inputCls} required />
+                </Field>
+                <Field label="تاريخ النهاية *">
+                  <input type="date" value={fiscalYearEnd} onChange={(e) => setFiscalYearEnd(e.target.value)} className={inputCls} required />
+                </Field>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="مخزن الفرع *" hint="لكل فرع مخزنه الخاص — أرصدته منفصلة">
               <QuickSelect value={whMode === 'new' ? 'new' : String(whMode)} onChange={(e) => setWhMode(e.target.value === 'new' ? 'new' : Number(e.target.value))} className={inputCls} disabled={!!editing && editing.isMain}>

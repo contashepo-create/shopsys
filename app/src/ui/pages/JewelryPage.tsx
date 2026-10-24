@@ -3,9 +3,10 @@ import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/Ke
  * الصاغة — سعر الجرام اليومي + المصنعية + الكسر
  * السعر = الوزن × جرام العيار + المصنعية، ويعاد تسعير المحل كله بضغطة.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Gem, RefreshCcw, Scale, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { localIsoTimestamp } from '../../core/time.ts'
@@ -80,6 +81,8 @@ export function JewelryPage() {
 
   /* مقايضة: بيع مشغول جديد + كسر العميل جزء من الثمن (جولة الصاغة) */
   const [tradeOpen, setTradeOpen] = useState(false)
+  const [isPostingTrade, setIsPostingTrade] = useState(false)
+  const tradePostingRef = useRef(false)
   const [trItem, setTrItem] = useState('')
   const [trCustomer, setTrCustomer] = useState('')
   const [trKarat, setTrKarat] = useState<Karat>('k21')
@@ -92,22 +95,22 @@ export function JewelryPage() {
     try { return computeTradeInNet(tradeItem.priceMinor, Number(trWeight), toMinor(trGramPrice, cur.decimals)) } catch { return null }
   })()
   const saveTrade = () => {
-    if (!tradeItem) return
-    try {
-      // سد فجوة فورية (النشاط #15): الضريبة على المشغول المباع تُحسب على
-      // المصنعية فقط لا على كامل السعر — بروتوكول مصلحة الضرائب مع شعبة الذهب
-      const tradeProfile = jewelryProfiles.find((p) => p.itemId === tradeItem.id)
-      const tradeExemptMinor = tradeProfile && gramPrices.updatedAt ? jewelryBreakdown(tradeProfile, gramPrices).goldMinor : 0
-      const doc = postGoldTradeIn({
-        lines: [{ itemId: tradeItem.id, nameAr: tradeItem.nameAr, qty: 1, unitPriceMinor: tradeItem.priceMinor, unitCostMinor: tradeItem.costMinor, discountPercent: 0, soldByWeight: false, vatExemptPerUnitMinor: tradeExemptMinor }],
-        customerId: trCustomer ? Number(trCustomer) : null,
-        scrapKarat: trKarat,
-        scrapWeightGrams: Number(trWeight),
-        scrapPricePerGramMinor: toMinor(trGramPrice, cur.decimals),
-        treasury: trTreasury as never,
-        taxPercent: setup.vatPercent,
-        taxInclusive: setup.taxInclusive,
-      })
+    if (!tradeItem || tradePostingRef.current) return
+    tradePostingRef.current = true
+    setIsPostingTrade(true)
+    // سد فجوة فورية (النشاط #15): ضريبة المشغول تُحسب على المصنعية فقط.
+    const tradeProfile = jewelryProfiles.find((p) => p.itemId === tradeItem.id)
+    const tradeExemptMinor = tradeProfile && gramPrices.updatedAt ? jewelryBreakdown(tradeProfile, gramPrices).goldMinor : 0
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postGoldTradeIn({
+      lines: [{ itemId: tradeItem.id, nameAr: tradeItem.nameAr, qty: 1, unitPriceMinor: tradeItem.priceMinor, unitCostMinor: tradeItem.costMinor, discountPercent: 0, soldByWeight: false, vatExemptPerUnitMinor: tradeExemptMinor }],
+      customerId: trCustomer ? Number(trCustomer) : null,
+      scrapKarat: trKarat,
+      scrapWeightGrams: Number(trWeight),
+      scrapPricePerGramMinor: toMinor(trGramPrice, cur.decimals),
+      treasury: trTreasury as never,
+      taxPercent: setup.vatPercent,
+      taxInclusive: setup.taxInclusive,
+    })).then((doc) => {
       toast.show(
         doc.netMinor === 0
           ? `مقايضة متكافئة ${doc.tradeNumber} — لا فرق نقدي ✅`
@@ -116,7 +119,8 @@ export function JewelryPage() {
             : `${doc.tradeNumber}: رُدّ للعميل ${fmt(-doc.netMinor)} ✅`,
       )
       setTradeOpen(false); setTrItem(''); setTrWeight(''); setTrGramPrice(''); setTrCustomer('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    }).catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل المقايضة', 'error'))
+      .finally(() => { tradePostingRef.current = false; setIsPostingTrade(false) })
   }
 
   const scrapByKarat = useMemo(() => {
@@ -372,7 +376,7 @@ export function JewelryPage() {
               {tradePreview.netMinor === 0 ? ' مقايضة متكافئة' : tradePreview.netMinor > 0 ? ` العميل يدفع ${fmt(tradePreview.netMinor)}` : ` نرد للعميل ${fmt(-tradePreview.netMinor)}`}
             </div>
           )}<DocOutcome>الأثر: <b>4101 إيراد البيع</b> دائناً بكامل قيمة المشغول · <b>1103 المخزون</b> مديناً بقيمة الكسر المستلم · والفرق وحده يدخل الخزينة مديناً.</DocOutcome>
-          <Btn onClick={saveTrade} shortcut="F9" className="w-full" disabled={!tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()}>ترحيل المقايضة</Btn>
+          <Btn onClick={saveTrade} shortcut="F9" className="w-full" disabled={isPostingTrade || !tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()}>{isPostingTrade ? 'جارٍ ترحيل المقايضة…' : 'ترحيل المقايضة'}</Btn>
         </div>
       </Modal>
 

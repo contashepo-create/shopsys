@@ -18,6 +18,12 @@ const database = {
   completeOutbox: (input: unknown) => ipcRenderer.invoke('database:completeOutbox', input),
   integrityCheck: () => ipcRenderer.invoke('database:integrityCheck'),
   schemaVersion: () => ipcRenderer.invoke('database:schemaVersion'),
+  /* نوافذ الأقمار الحرة: إشعار «نافذة أخرى حفظت لقطة» لتطبيق أحدث حالة فوراً */
+  onSnapshotChanged: (listener: (e: { storeName: string; revision: number }) => void) => {
+    const wrapped = (_event: unknown, e: { storeName: string; revision: number }) => listener(e)
+    ipcRenderer.on('database:snapshot-changed', wrapped)
+    return () => ipcRenderer.removeListener('database:snapshot-changed', wrapped)
+  },
 }
 
 /* v1.0.8: إدارة مكان قاعدة البيانات والنسخ الاحتياطية المزدوجة (طلب المالك) */
@@ -59,7 +65,61 @@ const persistence = {
   },
   onResume: (listener: () => void): void => { ipcRenderer.on('persistence:resume', () => listener()) },
 }
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence })
+/* نوافذ الأقمار الحرة (قرار المالك 2026-10-22): إنشاء نوافذ نظام مستقلة لكل
+   قسم/مستند/منتقٍ، وقناة ردود النداء بين القمر وأمه، ومصافحة الإغلاق الآمنة.
+   العقد الكامل في desktop/satelliteWindows.ts ونظيره في src/data/desktopBridge.ts */
+const auth = {
+  authorize: (input: { userId: number | null; pin: string }) => ipcRenderer.invoke('session:authorize', input),
+  revoke: () => ipcRenderer.send('session:revoke'),
+  onRevoked: (listener: () => void) => {
+    const wrapped = () => listener()
+    ipcRenderer.on('session:revoked', wrapped)
+    return () => ipcRenderer.removeListener('session:revoked', wrapped)
+  },
+}
+
+const invoiceCommit = {
+  acquire: () => ipcRenderer.invoke('invoice-commit:acquire'),
+  release: (token: string) => ipcRenderer.send('invoice-commit:release', token),
+}
+
+const windows = {
+  open: (input: unknown) => ipcRenderer.invoke('windows:open', input),
+  openSection: (input: { path: string; title: string }) => ipcRenderer.invoke('windows:open-section', input),
+  claim: (token: string) => ipcRenderer.invoke('windows:claim', token),
+  list: () => ipcRenderer.invoke('windows:list'),
+  invokeProp: (input: { requestId: string; prop: string; args: unknown[] }) => ipcRenderer.send('windows:prop-invoke', input),
+  closeSelf: () => ipcRenderer.send('windows:close-self'),
+  requestClose: (windowId: string) => ipcRenderer.send('windows:request-close', windowId),
+  focus: (windowId: string) => ipcRenderer.send('windows:focus', windowId),
+  minimize: (windowId?: string) => ipcRenderer.send('windows:minimize', windowId),
+  toggleMaximize: (windowId?: string) => ipcRenderer.send('windows:toggle-maximize', windowId),
+  setTitle: (title: string) => ipcRenderer.send('windows:set-title', { title }),
+  setDirty: (dirty: boolean) => ipcRenderer.send('windows:set-dirty', dirty),
+  respondClose: (token: string, allow: boolean) => ipcRenderer.send('windows:close-response', { token, allow }),
+  onPropInvoke: (listener: (e: { requestId: string; prop: string; args: unknown[] }) => void) => {
+    const wrapped = (_event: unknown, e: { requestId: string; prop: string; args: unknown[] }) => listener(e)
+    ipcRenderer.on('windows:prop-invoke', wrapped)
+    return () => ipcRenderer.removeListener('windows:prop-invoke', wrapped)
+  },
+  onRequestClose: (listener: (e: { token: string }) => void) => {
+    const wrapped = (_event: unknown, e: { token: string }) => listener(e)
+    ipcRenderer.on('windows:request-close', wrapped)
+    return () => ipcRenderer.removeListener('windows:request-close', wrapped)
+  },
+  onNavigate: (listener: (e: { path: string }) => void) => {
+    const wrapped = (_event: unknown, e: { path: string }) => listener(e)
+    ipcRenderer.on('windows:navigate', wrapped)
+    return () => ipcRenderer.removeListener('windows:navigate', wrapped)
+  },
+  onRegistry: (listener: (entries: unknown[]) => void) => {
+    const wrapped = (_event: unknown, entries: unknown[]) => listener(entries)
+    ipcRenderer.on('windows:registry', wrapped)
+    return () => ipcRenderer.removeListener('windows:registry', wrapped)
+  },
+}
+
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence, auth, invoiceCommit, windows })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))

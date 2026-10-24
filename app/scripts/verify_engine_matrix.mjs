@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { freshCase, assertInvariants, checkInvariants, expectReject, addSimpleItem, addParty, balanceOf, reporter, STANDARD_COA, useAppStore } from './auditKit.mjs'
 import { buildMatrix, MATRIX_PATH } from './gen_engine_matrix.mjs'
+import { SOURCE_TYPE_VALUES } from '../src/core/sourceTypes.ts'
 
 const R = reporter('بوابة مصفوفة المحرك والثوابت العشرة')
 
@@ -19,7 +20,7 @@ const R = reporter('بوابة مصفوفة المحرك والثوابت الع
 // 1) المصفوفة محدَّثة
 // ————————————————————————————————————————————————
 R.section('📐 مصفوفة المحرك المحاسبي')
-const { md, rows, sources } = buildMatrix()
+const { md, rows, sources, unused } = buildMatrix()
 const onDisk = readFileSync(MATRIX_PATH, 'utf8')
 if (onDisk !== md) {
   console.error('❌ مصفوفة المحرك غير محدَّثة — شغّل: node --experimental-strip-types scripts/gen_engine_matrix.mjs')
@@ -33,11 +34,14 @@ if (rows.length < 180) { console.error(`❌ عدد المسارات انهار �
 // ————————————————————————————————————————————————
 const ledgerSrc = readFileSync(new URL('../src/core/ledger.ts', import.meta.url), 'utf8')
 const union = [...ledgerSrc.slice(ledgerSrc.indexOf('export type SourceType')).split('\n\n')[0].matchAll(/'([a-z_]+)'/g)].map((m) => m[1])
-/** مستثنى موثق: قيمة محجوزة بلا مسار — الأرصدة الافتتاحية تُوسم adjustment اليوم (AUDIT-006) */
-const DOCUMENTED_UNUSED = ['opening']
-const missing = union.filter((u) => !sources.has(u) && !DOCUMENTED_UNUSED.includes(u))
+const runtimeTypes = new Set(SOURCE_TYPE_VALUES)
+if (runtimeTypes.size !== SOURCE_TYPE_VALUES.length || runtimeTypes.size !== union.length || union.some((type) => !runtimeTypes.has(type))) {
+  console.error('❌ قائمة أنواع المصدر وقت التشغيل لا تطابق اتحاد TypeScript')
+  process.exit(1)
+}
+const missing = union.filter((u) => !sources.has(u))
 if (missing.length) { console.error(`❌ أنواع مصدر بلا مسار ترحيل: ${missing.join(', ')}`); process.exit(1) }
-R.ok(`تغطية أنواع المصدر: ${sources.size}/${union.length} (المستثنى الموثق: ${DOCUMENTED_UNUSED.join('، ')})`)
+R.ok(`تغطية أنواع المصدر: ${sources.size}/${union.length} — لكل نوع مسار فعلي موثق`)
 
 const codes = new Set(STANDARD_COA.map((a) => a.code))
 const postable = new Set(STANDARD_COA.filter((a) => a.isPostable).map((a) => a.code))
@@ -47,6 +51,41 @@ for (const c of usedLiterals) {
   if (!postable.has(c)) { console.error(`❌ ترحيل على حساب تجميعي: ${c}`); process.exit(1) }
 }
 R.ok(`${usedLiterals.size} كود حساب مستعمل — كلها موجودة وقابلة للترحيل`)
+
+// الحسابات القابلة للترحيل التي لا تظهر كأرقام ثابتة في قيود المصفوفة قد تكون
+// ديناميكية (خزائن/دفاتر فرعية) أو مقابلات يختارها المستخدم؛ يجب تصنيفها جميعاً
+// وإرفاق ملف شاهد، لا اعتبارها «حسابات ميتة» تلقائياً (AUDIT-004).
+const UNUSED_ACCOUNT_DISPOSITIONS = {
+  '1101': ['ديناميكي: الخزينة الرئيسية', 'src/core/treasury.ts'],
+  '1102': ['ديناميكي: البنوك', 'src/core/treasury.ts'],
+  '1106': ['دفتر الشيكات الواردة', 'src/core/cheques.ts'],
+  '1112': ['دفتر العمولات المدينة', 'src/core/commissions.ts'],
+  '1114': ['حساب بين الفروع', 'src/core/branchAccounting.ts'],
+  '2106': ['دفتر الشيكات الصادرة', 'src/core/cheques.ts'],
+  '2114': ['دفتر العمولات الدائنة', 'src/core/commissions.ts'],
+  '2118': ['حساب بين الفروع', 'src/core/branchAccounting.ts'],
+  '4112': ['إيراد العمولات الخارجية', 'src/core/commissions.ts'],
+  '4116': ['ربح استبعاد أصل', 'src/core/assets.ts'],
+  '4117': ['ربح فرق العملة', 'src/core/fxTreasury.ts'],
+  '5103': ['مقابل مصروف يختاره المستخدم', 'src/core/voucherCounters.ts'],
+  '5104': ['مقابل مصروف يختاره المستخدم', 'src/core/voucherCounters.ts'],
+  '5105': ['مصاريف تشغيل المعدات', 'src/data/repo.ts'],
+  '5114': ['مصروف الاستهلاك الداخلي', 'src/core/consumption.ts'],
+  '5117': ['مصروف عمولات الموظفين', 'src/core/staffCommissions.ts'],
+  '5118': ['خسارة استبعاد أصل', 'src/core/assets.ts'],
+  '5119': ['خسارة فرق العملة', 'src/core/fxTreasury.ts'],
+}
+const classifiedCodes = Object.keys(UNUSED_ACCOUNT_DISPOSITIONS).sort()
+const discoveredUnused = [...unused].sort()
+if (JSON.stringify(classifiedCodes) !== JSON.stringify(discoveredUnused)) {
+  console.error(`❌ تصنيف AUDIT-004 لا يطابق الحسابات غير الثابتة في المصفوفة. تصنيف: ${classifiedCodes.join(', ')}؛ مكتشف: ${discoveredUnused.join(', ')}`)
+  process.exit(1)
+}
+for (const [code, [meaning, file]] of Object.entries(UNUSED_ACCOUNT_DISPOSITIONS)) {
+  const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+  if (!source.includes(code)) { console.error(`❌ الحساب ${code} مصنف «${meaning}» لكن لا يوجد شاهد في ${file}`); process.exit(1) }
+}
+R.ok(`AUDIT-004: صُنفت الحسابات الـ${unused.length} غير الظاهرة كأرقام ثابتة (خزائن/دفاتر فرعية/مقابلات مستخدم) ولكل منها شاهد كودي`)
 
 // ————————————————————————————————————————————————
 // 3) الثوابت العشرة على دورات حقيقية

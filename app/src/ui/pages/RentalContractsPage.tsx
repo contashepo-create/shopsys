@@ -23,9 +23,9 @@ import { renderRentalContractHtml } from '../print/printRentalContract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { RATE_TYPE_LABELS, EQUIPMENT_COST_LABELS, type RateType, type EquipmentCostKind } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -61,13 +61,14 @@ export function RentalContractsPage() {
 
   /** طباعة عقد الإيجار (جولة إيجار المعدات): ورقة A4 بطرفين وبنود وتوقيعين ومصفوفة تحمل المصاريف */
   const printContract = (c: RentalContract) => {
+    const documentSettings = resolveDocumentPrintSettings(c)
     const cust = customers.find((x) => x.id === c.customerId)
     const eq = equipment.find((x) => x.id === c.equipmentId)
     const drv = employees.find((x) => x.id === c.driverEmployeeId)
     const rt = c.rateType ?? 'daily'
     printHtml(renderRentalContractHtml({
-      shopName: setup.shopName || 'تأجير معدات',
-      shopPhone: '',
+      shopName: documentSettings.setup.shopName || 'تأجير معدات',
+      shopPhone: documentSettings.setup.phone ?? '',
       contractNumber: c.contractNumber,
       dateIso: c.date,
       customerName: cust?.nameAr ?? 'عميل نقدي',
@@ -96,9 +97,8 @@ export function RentalContractsPage() {
 
   /* ─── فاتورة إيجار للعميل (طلب المالك): وثيقة استحقاق بشكل فاتورة البيع يسدّد منها المستأجر ─── */
   const printSwitches = usePrintSwitches()
-  /* فاتورة الإيجار الدورية مستند بيع ضريبي — رمز زاتكا عند تفعيله */
-  const stampTax = useTaxBarcodeStamp()
   const printPeriodicInvoice = (inv: RentalInvoice, c: RentalContract, templateHint?: InvoiceTemplate) => {
+    const documentSettings = resolveDocumentPrintSettings(inv)
     const template: InvoiceTemplate = templateHint ?? (printSwitches.cashierPrint ? 'thermal' : 'a4')
     const rt = c.rateType ?? 'daily'
     const unitAr = RATE_TYPE_LABELS[rt].unitAr
@@ -120,7 +120,7 @@ export function RentalContractsPage() {
       totalMinor: inv.totalMinor,
       paidMinor: paid,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: useAppStore.getState().receipt,
+      settings: documentSettings.receipt,
       tax: inv.vatMinor > 0 ? { label: `ض.ق.م (${inv.vatPercent}٪)`, minor: inv.vatMinor, baseMinor: inv.netMinor } : undefined,
       extraFooter: [
         `عقد مرجعي: ${c.contractNumber}`,
@@ -128,30 +128,33 @@ export function RentalContractsPage() {
         inv.notes || '',
       ].filter(Boolean).join(' · ') || undefined,
     })
-    stampTax(model, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
-    const live = useAppStore.getState().receipt
+    stampDocumentTaxBarcode(model, inv, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
+    const live = documentSettings.receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({
         html: buildModelHtml(model, cur, live, template),
         wide: template !== 'thermal',
         title: `فاتورة إيجار دورية ${inv.invoiceNumber} — ${c.contractNumber}`,
         rebuild: () => {
-          const r = useAppStore.getState().receipt
-          /* إعادة الختم عند كل إعادة بناء: لو تغيّرت بيانات الإصدار أو اسم
-             المنشأة أثناء فتح المعاينة يُعاد توليد الرمز بدل التقاط نسخة قديمة. */
-          stampTax(model, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
+          const r = resolveDocumentPrintSettings(inv).receipt
+          /* إعادة الختم عند كل إعادة بناء: لو تغيّرت بيانات إصدار فرع
+             المستند أثناء فتح المعاينة يُعاد توليد الرمز من فرعه نفسه. */
+          stampDocumentTaxBarcode(model, inv, { dateIso: inv.date, invoiceNumber: inv.invoiceNumber, totalMinor: inv.totalMinor, taxMinor: inv.vatMinor })
           return buildModelHtml(model, cur, r, template)
         },
       })
       return
     }
-    printModelWithTemplate(model, cur, live, template)
+    printModelWithTemplate(model, cur, live, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(inv).receipt,
+    })
   }
   const printInvoice = (c: RentalContract, templateHint?: InvoiceTemplate, forceTaxMode?: 'with_tax' | 'without_tax') => {
+    const documentSettings = resolveDocumentPrintSettings(c)
     const doc = rentalInvoiceDoc(c)
     const template: InvoiceTemplate = templateHint ?? (printSwitches.cashierPrint ? 'thermal' : 'a4')
     const showTax = forceTaxMode === 'with_tax' ? true : forceTaxMode === 'without_tax' ? false : c.vatPercent > 0
-    const effVatPct = showTax ? (c.vatPercent || setup.vatPercent || 14) : 0
+    const effVatPct = showTax ? (c.vatPercent || documentSettings.setup.vatPercent || 14) : 0
     const baseNet = c.totals.rentMinor + c.extraMinor
     const effVatMinor = showTax ? Math.round((baseNet * effVatPct) / 100) : 0
     const effTotalMinor = baseNet + effVatMinor
@@ -171,7 +174,7 @@ export function RentalContractsPage() {
       totalMinor: effTotalMinor,
       paidMinor: effPaidMinor,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: useAppStore.getState().receipt,
+      settings: documentSettings.receipt,
       tax: effVatMinor > 0 ? { label: `ض.ق.م (${effVatPct}٪)`, minor: effVatMinor, baseMinor: baseNet } : undefined,
       extraFooter: [
         ...(c.totals.depositMinor > 0 ? [`تأمين محتجز (يُرَدّ عند الإقفال بعد خصم الأضرار): ${fmt(c.totals.depositMinor)} ${cur.symbol} — التزام مستقل لا يدخل استحقاق هذه الفاتورة`] : []),
@@ -179,22 +182,24 @@ export function RentalContractsPage() {
         ...(c.notes ? [c.notes] : []),
       ].join(' · ') || undefined,
     })
-    stampTax(model, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
-    const live = useAppStore.getState().receipt
+    stampDocumentTaxBarcode(model, c, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
+    const live = documentSettings.receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({
         html: buildModelHtml(model, cur, live, template),
         wide: template !== 'thermal',
         title: template !== 'thermal' ? `فاتورة إيجار ${c.contractNumber} — ${c.equipmentName}` : 'إيصال إيجار',
         rebuild: () => {
-          const r = useAppStore.getState().receipt
-          stampTax(model, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
+          const r = resolveDocumentPrintSettings(c).receipt
+          stampDocumentTaxBarcode(model, c, { dateIso: c.date.slice(0, 10), invoiceNumber: c.contractNumber, totalMinor: effTotalMinor, taxMinor: effVatMinor })
           return buildModelHtml(model, cur, r, template)
         },
       })
       return
     }
-    printModelWithTemplate(model, cur, live, template)
+    printModelWithTemplate(model, cur, live, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(c).receipt,
+    })
   }
 
   /* ─── فتح عقد ─── */

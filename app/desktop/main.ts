@@ -8,7 +8,7 @@
  *   • النسخ الدوّارة: ساعي 24 فقط = يوم واحد (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, type WebContents } from 'electron'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -17,8 +17,10 @@ import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type Snap
 import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
 import { KEY_RECOVERY_MAX_FILE_BYTES, keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
+import { persistedAuthState, authorizeDesktopIdentity, hasConfiguredDesktopAuth } from './sessionAuthorization.ts'
 import { generateDeviceIdFromBytes, mergeDeviceIdentity } from './deviceIdentity.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
+import { initSatelliteWindows, broadcastSnapshotChanged, satellitesOpenCount, satelliteWebContents, confirmAndCloseAllSatellites } from './satelliteWindows.ts'
 import Database from 'better-sqlite3'
 import {
   readDbLocationAt, writeDbLocationAt, restoreLocationPointerAt, customDbStatusAt, resolveDbPathAt,
@@ -70,6 +72,31 @@ let activeDatabasePath: string | null = null
 let updateLaunchInProgress = false
 let deviceEncryptionKey: Buffer = Buffer.alloc(0)
 let printWindow: BrowserWindow | null = null
+const authorizedWebContents = new Set<number>()
+const authAttempts = new Map<number, { count: number; windowStartedAt: number; lockedUntil: number }>()
+let invoiceCommitQueue: Promise<void> = Promise.resolve()
+const invoiceCommitLocks = new Map<string, { senderId: number; unlock: () => void; onDestroyed: () => void; sender: WebContents }>()
+
+function releaseInvoiceCommitLock(token: string): void {
+  const lock = invoiceCommitLocks.get(token)
+  if (!lock) return
+  invoiceCommitLocks.delete(token)
+  lock.sender.removeListener('destroyed', lock.onDestroyed)
+  lock.unlock()
+}
+
+function readDesktopAuthState() {
+  const payload = database?.getSnapshot('shopsys-data').payloadJson ?? null
+  return { payload, state: persistedAuthState(payload) }
+}
+
+function isAuthorizedWebContents(id: number): boolean {
+  const { payload, state } = readDesktopAuthState()
+  const configured = hasConfiguredDesktopAuth(state)
+  // لا توجد مصادقة معدّة = مسار الإعداد الأول؛ وجود لقطة غير قابلة للتحليل لا يُعامل كإعداد فارغ.
+  const requiresAuth = configured || (!!payload && !state)
+  return !requiresAuth || authorizedWebContents.has(id)
+}
 
 const isDev = !!process.env.ELECTRON_START_URL
 // قبل قفل العملية وأي قراءة: هوية ثابتة مستقلة عن اسم package وإصدار البرنامج.
@@ -321,6 +348,15 @@ function createMainWindow(): BrowserWindow {
     logLine('preload-error', `${preloadPath}: ${error}`)
   })
   win.on('close', (event) => {
+    /* قاعدة المالك: النافذة الرئيسية لا تُغلق بينما توجد نوافذ تابعة مفتوحة —
+       تُغلق الأقمار أولاً (بمصافحة حفظ كل واحدة) أو يبقى البرنامج مفتوحاً */
+    if (!shuttingDown && satellitesOpenCount() > 0) {
+      event.preventDefault()
+      void confirmAndCloseAllSatellites().then((allClosed) => {
+        if (allClosed && !win.isDestroyed()) win.close()
+      }).catch((error: unknown) => logLine('satellite-close', `حارس إغلاق الرئيسية: ${error instanceof Error ? error.message : String(error)}`))
+      return
+    }
     if (database && !shuttingDown) {
       // أبقِ المُصيّر حياً حتى تُحفظ طوابير الكتابة ويُؤخذ آخر backup.
       event.preventDefault()
@@ -1270,9 +1306,70 @@ function wireIpc(): void {
       return false
     }
   })
+  ipcMain.handle('invoice-commit:acquire', async (event): Promise<string | null> => {
+    if (!isAuthorizedWebContents(event.sender.id) || event.sender.isDestroyed()) return null
+    const previous = invoiceCommitQueue
+    let unlock!: () => void
+    invoiceCommitQueue = new Promise<void>((resolve) => { unlock = resolve })
+    await previous
+    if (event.sender.isDestroyed() || !isAuthorizedWebContents(event.sender.id)) { unlock(); return null }
+    const token = randomBytes(24).toString('hex')
+    const onDestroyed = () => releaseInvoiceCommitLock(token)
+    invoiceCommitLocks.set(token, { senderId: event.sender.id, unlock, onDestroyed, sender: event.sender })
+    event.sender.once('destroyed', onDestroyed)
+    return token
+  })
+  ipcMain.on('invoice-commit:release', (event, token: unknown) => {
+    if (typeof token !== 'string') return
+    if (invoiceCommitLocks.get(token)?.senderId === event.sender.id) releaseInvoiceCommitLock(token)
+  })
+
+  ipcMain.handle('session:authorize', (event, input: { userId?: unknown; pin?: unknown }) => {
+    const now = Date.now()
+    const attempt = authAttempts.get(event.sender.id)
+    if (attempt && attempt.lockedUntil > now) return { ok: false, error: 'محاولات كثيرة؛ انتظر قليلاً ثم أعد المحاولة.' }
+    const { payload, state } = readDesktopAuthState()
+    if (!payload || !hasConfiguredDesktopAuth(state)) {
+      // يمنع تجاوز حالة مخزن تالف/مشفّر مجهول: لا نمنح جلسة إلا عند لقطة فارغة فعلاً.
+      if (payload && !state) return { ok: false, error: 'تعذّرت قراءة إعداد المصادقة من قاعدة البيانات.' }
+      authorizedWebContents.add(event.sender.id)
+      authAttempts.delete(event.sender.id)
+      return { ok: true }
+    }
+    const allowed = authorizeDesktopIdentity(state, input?.userId, input?.pin)
+    if (allowed) {
+      authorizedWebContents.add(event.sender.id)
+      authAttempts.delete(event.sender.id)
+      return { ok: true }
+    }
+    const active = attempt && now - attempt.windowStartedAt < 10 * 60_000
+      ? attempt : { count: 0, windowStartedAt: now, lockedUntil: 0 }
+    active.count += 1
+    if (active.count >= 5) active.lockedUntil = now + 15 * 60_000
+    authAttempts.set(event.sender.id, active)
+    return { ok: false, error: active.lockedUntil > now ? 'محاولات كثيرة؛ تم إيقاف الدخول مؤقتاً.' : 'بيانات الدخول غير صحيحة.' }
+  })
+  ipcMain.on('session:revoke', (event) => {
+    if (!isAuthorizedWebContents(event.sender.id)) return
+    authorizedWebContents.clear()
+    authAttempts.clear()
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('session:revoked')
+    }
+  })
+
   ipcMain.handle('database:getSnapshot', (_event, storeName: string): SnapshotDto => db().getSnapshot(storeName))
-  ipcMain.handle('database:saveSnapshot', (_event, input: SaveSnapshotInput) => db().saveSnapshot(input))
-  ipcMain.handle('database:deleteSnapshot', (_event, input: DeleteSnapshotInput) => db().deleteSnapshot(input))
+  ipcMain.handle('database:saveSnapshot', (event, input: SaveSnapshotInput) => {
+    const result = db().saveSnapshot(input)
+    /* مزامنة النوافذ الحرة: بقية النوافذ تطبّق أحدث لقطة فور حفظها */
+    if (!result.replayed) broadcastSnapshotChanged(event.sender.id, input.storeName, result.revision)
+    return result
+  })
+  ipcMain.handle('database:deleteSnapshot', (event, input: DeleteSnapshotInput) => {
+    const result = db().deleteSnapshot(input)
+    broadcastSnapshotChanged(event.sender.id, input.storeName, result.revision)
+    return result
+  })
   ipcMain.handle('database:enqueueOutbox', (_event, input: EnqueueOutboxInput) => db().enqueueOutbox(input))
   ipcMain.handle('database:claimOutbox', (_event, input?: ClaimOutboxInput): OutboxEventDto[] => db().claimOutbox(input))
   ipcMain.handle('database:completeOutbox', (_event, input: CompleteOutboxInput) => db().completeOutbox(input))
@@ -1290,6 +1387,23 @@ function wireIpc(): void {
 
   /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
   initLanHostIpc(() => mainWindow)
+
+  /* نوافذ الأقمار الحرة (قرار المالك 2026-10-22): كل قسم ومستند ومنتقٍ نافذة
+     نظام مستقلة خارج إطار الرئيسية — المدير كاملاً في satelliteWindows.ts */
+  initSatelliteWindows({
+    getMainWindow: () => mainWindow,
+    isDev,
+    devStartUrl: isDev ? process.env.ELECTRON_START_URL! : null,
+    indexFilePath: join(__dirname, '../dist/index.html'),
+    appIndexFileUrl: APP_INDEX_FILE_URL,
+    devOrigin,
+    preloadPath: join(__dirname, 'preload.cjs'),
+    iconPath: join(__dirname, '../dist/app-icon.png'),
+    log: logLine,
+    isSenderAuthorized: isAuthorizedWebContents,
+    authorizeSatellite: (id) => { authorizedWebContents.add(id) },
+    forgetSatellite: (id) => { authorizedWebContents.delete(id); authAttempts.delete(id) },
+  })
 
   /* واجهة التحديث اليدوية (نسخة سطح المكتب): زر «فحص التحديثات» + شريط التنزيل.
      الفحص الدوري الخلفي والتثبيت الصامت عند الإغلاق يبقيان كما هما بلا تغيير. */
@@ -1644,23 +1758,29 @@ function wireIpc(): void {
   })
 }
 
-let flushRequest: { token: string; resolve: () => void; reject: (error: Error) => void } | null = null
+/* إقرار الحفظ مربوط بالتوكن وبالمُرسل نفسه: لكل نافذة توكن عشوائي خاص بها،
+   ولا يُقبل إقراره إلا من WebContents التي استلمته — نافذة أخرى (أو توكن
+   مُخمَّن/مسرَّب) لا تستطيع إنهاء حفظ غيرها قبل أوانه */
+const flushRequests = new Map<string, { wcId: number; resolve: () => void; reject: (error: Error) => void }>()
 ipcMain.handle('persistence:flushed', (event, token: unknown, error: unknown) => {
-  if (!flushRequest || event.sender !== mainWindow?.webContents || token !== flushRequest.token) return
-  if (typeof error === 'string' && error) flushRequest.reject(new Error(error))
-  else flushRequest.resolve()
-  flushRequest = null
+  const req = typeof token === 'string' ? flushRequests.get(token) : undefined
+  if (!req || event.sender.id !== req.wcId) return
+  flushRequests.delete(token as string)
+  if (typeof error === 'string' && error) req.reject(new Error(error))
+  else req.resolve()
 })
 
+/** تفريغ طوابير الحفظ في كل نوافذ التطبيق (الرئيسية + الأقمار الحرة) قبل الإغلاق/التحديث */
 async function flushRenderer(): Promise<void> {
-  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('تعذّر التأكد من حفظ بيانات الواجهة — لم يبدأ التحديث')
-  const token = randomBytes(16).toString('hex')
-  try {
-    await withDeadline(new Promise<void>((resolve, reject) => {
-      flushRequest = { token, resolve, reject }
-      mainWindow!.webContents.send('persistence:flush', token)
-    }), 15_000, 'تعذّر إتمام حفظ البيانات قبل الإغلاق — أعد المحاولة')
-  } finally { flushRequest = null }
+  const targets: WebContents[] = []
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow.webContents)
+  targets.push(...satelliteWebContents())
+  if (targets.length === 0) throw new Error('تعذّر التأكد من حفظ بيانات الواجهة — لم يبدأ التحديث')
+  await withDeadline(Promise.all(targets.map((wc) => new Promise<void>((resolve, reject) => {
+    const token = randomBytes(16).toString('hex')
+    flushRequests.set(token, { wcId: wc.id, resolve, reject })
+    wc.send('persistence:flush', token)
+  }))), 15_000, 'تعذّر إتمام حفظ البيانات قبل الإغلاق — أعد المحاولة')
 }
 
 let shutdownWork: Promise<void> | null = null
@@ -1723,6 +1843,7 @@ function shutdownApplication(update: boolean): Promise<void> {
     shutdownWork = null
     mainWindow?.setEnabled(true)
     mainWindow?.webContents.send('persistence:resume')
+    for (const wc of satelliteWebContents()) wc.send('persistence:resume')
     throw error
   })
   return shutdownWork

@@ -7,6 +7,7 @@ import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { userPrefsKey } from '../../core/userPreferences.ts'
 import { isFunctionKey, type ShortcutActionId } from '../../core/keyboardShortcuts.ts'
+import { setUnsavedChangeGuard } from './unsavedChangeRegistry.ts'
 
 let activeNavigationGuard: ((continueNavigation: () => void) => void) | null = null
 /** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودة غير محفوظة. */
@@ -91,22 +92,22 @@ export function Btn({
 export function Field({
   label, children, hint, icon, badge, badgeTone, extra,
 }: { label: string; children: ReactNode; hint?: string; icon?: ReactNode; badge?: ReactNode; badgeTone?: 'accent' | 'ok' | 'warn'; extra?: ReactNode }) {
+  /* طلب المالك: لا ملاحظات دائمة أسفل الحقول — التلميح يظهر كرسالة عند تمرير
+     المؤشر فوق الحقل فقط (title على الحاوية فيشمل التسمية والحقل معاً). */
   if (icon || badge || extra) return (
-    <div className="form-field">
+    <div className="form-field" title={hint || undefined}>
       <div className="field-head">
         <label>{icon}{label}</label>
         {extra}
         {badge && <span className={`field-badge${badgeTone ? ` is-${badgeTone}` : ''}`}>{badge}</span>}
       </div>
       {children}
-      {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
     </div>
   )
   return (
-    <div className="form-field">
+    <div className="form-field" title={hint || undefined}>
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
       {children}
-      {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
     </div>
   )
 }
@@ -335,6 +336,12 @@ export function useUnsavedChangesGuard(signature: string) {
   const pendingDiscard = useRef<(() => void) | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
   const isDirty = signature !== baseline
+  const guardToken = useRef<object>({})
+  useEffect(() => {
+    const token = guardToken.current
+    setUnsavedChangeGuard(token, isDirty)
+    return () => { setUnsavedChangeGuard(token, false) }
+  }, [isDirty])
   const markClean = useCallback(() => { setBaseline(signature) }, [signature])
   const requestClose = useCallback((discard: () => void) => {
     if (!isDirty) { discard(); return }

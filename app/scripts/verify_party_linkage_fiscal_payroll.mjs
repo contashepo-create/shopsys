@@ -135,8 +135,11 @@ ok(errsSkip.some((e) => e.includes('أقفل السنة الأقدم')), 'يُر
 // closeFiscalYear الحي في repo (سنة ماضية مفتوحة بقيود حقيقية)
 /* السنة 2025 مفتوحة حيّاً: setup مباشر (حارس «سنة واحدة مفتوحة» في addFiscalYear
    يُفحص في scripts/verify_owner_batch8_settings.mjs — وهذه البوابة تفحص الإقفال) */
-useAppStore.setState({ fiscalYears: [{ id: 90, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }] })
-const liveFy = useAppStore.getState().fiscalYears.at(-1)
+useAppStore.setState({ fiscalYears: [
+  { id: 90, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' },
+  { id: 91, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' },
+] })
+const liveFy = useAppStore.getState().fiscalYears.find((year) => year.nameAr === '2025')
 // لا قيود 2025 في المخزن الحي — يرفض «لا شيء يُقفل»
 let liveCloseError = ''
 try { S().closeFiscalYear(liveFy, useAppStore.getState().fiscalYears) } catch (e) { liveCloseError = e.message }

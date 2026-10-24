@@ -52,6 +52,8 @@ type InvoicePOSFrameProps = {
   /** v1.0.13 — إرسال المستند PDF عبر واتساب (سطح المكتب): يولّد الملف ويفتح المحادثة */
   onWhatsappPdf?: () => void
   onPost: () => void
+  /** أثناء انتظار دور الترحيل أو تأكيد الحفظ: يمنع تعديل النموذج دون إخفاء النافذة */
+  posting?: boolean
   /** نص زر الاعتماد الرئيسي — افتراضياً «حفظ وترحيل» (الفواتير)؛ أوامر الشراء «اعتماد أمر الشراء» لأنها التزام تجاري لا ترحيل محاسبي */
   postLabel?: string
   children: ReactNode
@@ -104,12 +106,14 @@ export function InvoicePOSFrame({
   onExportPdf,
   onWhatsappPdf,
   onPost,
+  posting = false,
   postLabel,
   children,
 }: InvoicePOSFrameProps) {
   const sale = kind === 'sale'
   /* نقاط سطح المكتب الثلاث: تعمل فعلاً على النافذة الحاوية (إغلاق · تصغير · تكبير) */
   const host = useWindowHost()
+  const hostId = host?.windowId
   const minimizeWindow = useWindowStore((state) => state.minimizeWindow)
   const toggleMaximize = useWindowStore((state) => state.toggleMaximizeWindow)
   const { sync, receipt, autoPrintAfterSale, einvoice, invoiceColumns, toggleInvoiceColumn, resetInvoiceColumns } = useAppStore()
@@ -146,16 +150,23 @@ export function InvoicePOSFrame({
   const serial = documentNumber ? documentNumber.split('-').pop() : 'مسودة'
 
   return (
-    <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${docKind ?? kind}`} dir="rtl">
+    <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${docKind ?? kind}${posting ? ' is-posting' : ''}`} dir="rtl" aria-busy={posting}>
       {/* ① الشريط العلوي: أدوات · رقم المستند وحالته · أزرار الاعتماد */}
       <header className="invoice-doc-topbar">
-        {/* أزرار النافذة: **وظيفة كل زر مرسومة داخله** لا دوائر ملونة (طلب المالك) */}
-        <div className="invoice-doc-winbtns">
-          <button type="button" className="is-min" onClick={() => { if (host) minimizeWindow(host.windowId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة"><Minus size={13} /></button>
-          <button type="button" className="is-max" onClick={() => { if (host) toggleMaximize(host.windowId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة"><Square size={11} /></button>
-          <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند"><X size={13} /></button>
-        </div>
-        <span className="invoice-doc-divider" />
+        {/* أزرار نافذة الإطار تظهر فقط خارج النوافذ الحرة (صفحة كاملة: مستخلص/أمر شراء/عرض سعر).
+            داخل نافذة حرة يكون شريط عنوان النافذة وحده شريط التحكم — **لا شريط مكرر**
+            (قرار المالك 2026-10-22؛ يخلف قرار ⑩ح داخل النوافذ الحرة فقط، والصفحات
+            الكاملة بلا مضيف تبقى بأزرارها الوظيفية كما كانت). */}
+        {!host && (
+          <>
+            <div className="invoice-doc-winbtns">
+              <button type="button" className="is-min" onClick={() => { if (hostId) minimizeWindow(hostId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة"><Minus size={13} /></button>
+              <button type="button" className="is-max" onClick={() => { if (hostId) toggleMaximize(hostId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة"><Square size={11} /></button>
+              <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند"><X size={13} /></button>
+            </div>
+            <span className="invoice-doc-divider" />
+          </>
+        )}
         <div className="invoice-doc-utility-tools">
           <button type="button" aria-label="محادثة الدعم" title="الدعم الفني" onClick={() => onNavigate('/support')}><MessageSquare size={14} /></button>
         </div>
@@ -258,6 +269,7 @@ export function InvoicePOSFrame({
           {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة"><MessageCircle size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
         </div>
       </footer>
+      {posting && <div className="invoice-posting-overlay" role="status" aria-live="polite">جارٍ تأمين الترحيل وحفظ الفاتورة — لا تغلق النافذة…</div>}
     </div>
   )
 }
