@@ -99,6 +99,9 @@ describe('دورة أمر الشراء ← فاتورة الاستلام ← ا�
     expect(postButton, 'زر الترحيل غير موجود في شريط الفاتورة').toBeTruthy()
     fireEvent.click(postButton!)
     await waitFor(() => expect(S().items.find((item) => item.id === itemId)!.stockQty).toBe(stockBefore + 3))
+    /* ترحيل الفاتورة ثم تحديث ارتباط الأمر عمليتان متتاليتان؛ انتظر اكتمال
+       الثانية بدلاً من قراءة الأمر في اللحظة بين حفظ المخزون وربط الفاتورة. */
+    await waitFor(() => expect(S().purchaseOrders.find((row) => row.id === order.id)?.status).toBe('closed'))
     cleanup(); view.unmount()
 
     /* ① المخزون زاد بكمية الأمر (والحركة مصدرها الفاتورة وحدها) */
