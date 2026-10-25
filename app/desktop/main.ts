@@ -1328,6 +1328,7 @@ function wireIpc(): void {
       return { status: 'unverifiable', payload: null, reason: databaseInitializationFailure ?? 'خدمة التحقق المركزية غير جاهزة', at: new Date().toISOString() }
     }
     const result = await licenseAuthority.audit()
+    if (result.changed) broadcastLicenseInvalidated()
     if (!licenseAuthorityInitialLogged) {
       licenseAuthorityInitialLogged = true
       logLine('license-authority', `حالة فحص الترخيص المركزي بعد تهيئة هوية الجهاز: ${result.status.status}`)
@@ -1413,10 +1414,11 @@ function wireIpc(): void {
     /* مزامنة النوافذ الحرة: بقية النوافذ تطبّق أحدث لقطة فور حفظها */
     if (!result.replayed) broadcastSnapshotChanged(event.sender.id, input.storeName, result.revision)
     if (input.storeName === 'shopsys-app' && licenseAuthority) {
-      /* كل لقطة إعدادات تُعيد ترطيب Zustand في النوافذ الأخرى؛ ذلك يعلّم audit
-         بـ checking حتى لو لم يتغير المفتاح. نرسل الإبطال دائماً، بينما يضمن مخبأ
-         Main أن التوقيع لا يُعاد إلا عند تغيّر المفتاح/الجهاز/قائمة الإبطال. */
-      void licenseAuthority.audit().then(() => broadcastLicenseInvalidated()).catch((error: unknown) => {
+      /* كل لقطة إعدادات تُفحص من Main، لكن لا نُعيد ترطيب النوافذ إلا إذا تغيّرت
+         مدخلات/نتيجة الترخيص فعلاً؛ يحمي ذلك المحررات من تحديثات إعدادات لا تخص الترخيص. */
+      void licenseAuthority.audit().then((result) => {
+        if (result.changed) broadcastLicenseInvalidated()
+      }).catch((error: unknown) => {
         logLine('license-authority', `فشل تحديث حالة الترخيص بعد حفظ الإعدادات: ${error instanceof Error ? error.message : String(error)}`)
         broadcastLicenseInvalidated()
       })

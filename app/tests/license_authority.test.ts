@@ -59,9 +59,34 @@ describe('Main-process license authority', () => {
     expect((await authority.audit()).status.status).toBe('unverifiable')
   })
 
-  it('returns no_key only for an actually empty activation key', async () => {
-    const authority = createLicenseAuthority({ readSnapshot: () => snapshot({ activatedKey: null }), readDeviceId: () => payload.deviceId })
+  it('returns no_key only for an actually empty activation key and fails closed on malformed license fields', async () => {
+    let current = snapshot({ activatedKey: null })
+    const authority = createLicenseAuthority({ readSnapshot: () => current, readDeviceId: () => payload.deviceId })
     expect((await authority.audit()).status.status).toBe('no_key')
+
+    current = snapshot({ activatedKey: 17 as unknown as string })
+    expect((await authority.audit()).status.status).toBe('unverifiable')
+    current = snapshot({ activatedKey: 'key-one', revokedKeys: 'not-an-array' as unknown as string[] })
+    expect((await authority.audit()).status.status).toBe('unverifiable')
+    current = { revision: 4, payloadJson: JSON.stringify({ state: null, version: 0 }) }
+    expect((await authority.audit()).status.status).toBe('unverifiable')
+  })
+
+  it('never returns an older verification result when the canonical key changes during crypto verification', async () => {
+    let current = snapshot({ activatedKey: 'old-key', revokedKeys: [] })
+    const resolvers = new Map<string, (value: LicensePayload) => void>()
+    const verify = vi.fn((key: string) => new Promise<LicensePayload>((resolve) => { resolvers.set(key, resolve) }))
+    const authority = createLicenseAuthority({ readSnapshot: () => current, readDeviceId: () => payload.deviceId, verify })
+
+    const oldRequest = authority.audit()
+    current = snapshot({ activatedKey: 'new-key', revokedKeys: [] }, 2)
+    const newRequest = authority.audit()
+    resolvers.get('old-key')!({ ...payload, customer: 'الحمولة القديمة' })
+    resolvers.get('new-key')!({ ...payload, customer: 'الحمولة الأحدث' })
+
+    const [oldResponse, newResponse] = await Promise.all([oldRequest, newRequest])
+    expect(oldResponse.status.payload?.customer).toBe('الحمولة الأحدث')
+    expect(newResponse.status.payload?.customer).toBe('الحمولة الأحدث')
   })
 
   it('treats a crypto-provider outage as unverifiable and retries instead of deleting or trusting the key', async () => {

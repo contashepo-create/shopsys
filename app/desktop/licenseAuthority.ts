@@ -16,10 +16,11 @@ function persistedState(payloadJson: string | null): Record<string, unknown> | n
     const parsed: unknown = JSON.parse(payloadJson)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
     const root = parsed as Record<string, unknown>
-    const state = root.state && typeof root.state === 'object' && !Array.isArray(root.state)
-      ? root.state as Record<string, unknown>
-      : root
-    return state
+    if (Object.hasOwn(root, 'state')) {
+      if (!root.state || typeof root.state !== 'object' || Array.isArray(root.state)) return null
+      return root.state as Record<string, unknown>
+    }
+    return root
   } catch {
     return null
   }
@@ -52,6 +53,20 @@ export function createLicenseAuthority(args: {
   let pending: Promise<{ status: MainLicenseStatus; changed: boolean }> | null = null
   let generation = 0
 
+  const unreadable = (reason: string): { status: MainLicenseStatus; changed: boolean } => {
+    /* Any verification already in flight was started from inputs we can no
+       longer establish; invalidate it and never let it publish a stale result. */
+    generation += 1
+    cacheKey = null
+    lastInputKey = null
+    pendingKey = null
+    pending = null
+    const status: MainLicenseStatus = { status: 'unverifiable', payload: null, reason, at: now() }
+    const changed = !equalStatus(cached, status)
+    cached = status // remember the diagnostic, but not as a reusable license result
+    return { status, changed }
+  }
+
   const audit = async (): Promise<{ status: MainLicenseStatus; changed: boolean }> => {
     let snapshot: PersistedSnapshot
     let deviceId: string
@@ -60,23 +75,24 @@ export function createLicenseAuthority(args: {
       deviceId = args.readDeviceId()
       if (!Number.isInteger(snapshot.revision) || snapshot.revision < 0 || !deviceId) throw new Error('تعذّر قراءة هوية الجهاز أو لقطة الإعدادات')
     } catch (error) {
-      const status: MainLicenseStatus = {
-        status: 'unverifiable', payload: null,
-        reason: error instanceof Error ? error.message : 'تعذّر قراءة بيانات الترخيص من العملية الرئيسية',
-        at: now(),
-      }
-      return { status, changed: !equalStatus(cached, status) }
+      return unreadable(error instanceof Error ? error.message : 'تعذّر قراءة بيانات الترخيص من العملية الرئيسية')
     }
 
     const state = persistedState(snapshot.payloadJson)
     if (!state && snapshot.payloadJson !== null) {
-      const status: MainLicenseStatus = { status: 'unverifiable', payload: null, reason: 'لقطة إعدادات الترخيص غير قابلة للقراءة', at: now() }
-      return { status, changed: !equalStatus(cached, status) }
+      return unreadable('لقطة إعدادات الترخيص غير قابلة للقراءة')
     }
-    const key = typeof state?.activatedKey === 'string' ? state.activatedKey.trim() : ''
-    const revoked = Array.isArray(state?.revokedKeys)
-      ? state.revokedKeys.filter((value): value is string => typeof value === 'string')
-      : []
+    const rawKey = state?.activatedKey
+    if (rawKey !== undefined && rawKey !== null && typeof rawKey !== 'string') {
+      return unreadable('حقل مفتاح التفعيل في لقطة الإعدادات تالف')
+    }
+    const rawRevoked = state?.revokedKeys
+    if (rawRevoked !== undefined && rawRevoked !== null
+      && (!Array.isArray(rawRevoked) || rawRevoked.some((value) => typeof value !== 'string'))) {
+      return unreadable('قائمة إبطال التراخيص في لقطة الإعدادات تالفة')
+    }
+    const key = typeof rawKey === 'string' ? rawKey.trim() : ''
+    const revoked = Array.isArray(rawRevoked) ? rawRevoked as string[] : []
     const fingerprint = `${deviceId}\u0000${key}\u0000${JSON.stringify([...revoked].sort())}`
     if (cacheKey === fingerprint && cached) return { status: cached, changed: false }
     if (pendingKey === fingerprint && pending) return pending
@@ -106,14 +122,13 @@ export function createLicenseAuthority(args: {
         }
       }
       const latest = generation === requestGeneration
-      const changed = latest && (lastInputKey !== fingerprint || !equalStatus(cached, status))
-      if (latest) {
-        lastInputKey = fingerprint
-        /* الحالات القابلة للتحقق تُخزّن بحسب المدخلات؛ أما تعذّر التحقق فلا يُخزّن
-           كمصدر نهائي، كي تُعاد المحاولة عند الطلب التالي من دون اعتماد قديم. */
-        cacheKey = status.status === 'unverifiable' ? null : fingerprint
-        cached = status
-      }
+      if (!latest) return audit() // inputs changed while awaiting crypto; never return the old decision
+      const changed = lastInputKey !== fingerprint || !equalStatus(cached, status)
+      lastInputKey = fingerprint
+      /* الحالات القابلة للتحقق تُخزَّن بحسب المدخلات؛ أما تعذّر التحقق فلا يُخزَّن
+         كمصدر نهائي، كي تُعاد المحاولة عند الطلب التالي من دون اعتماد قديم. */
+      cacheKey = status.status === 'unverifiable' ? null : fingerprint
+      cached = status
       return { status, changed }
     })()
     try {
