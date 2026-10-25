@@ -57,6 +57,8 @@ interface SatEntry {
   requestId: string | null
   dirty: boolean
   claimed: boolean
+  /** true only after the renderer has installed its own dirty-state close handler */
+  rendererReady: boolean
   forceClose: boolean
   closing: boolean
   descriptor: Record<string, unknown>
@@ -203,7 +205,7 @@ function createSatelliteWindow(init: {
   const entry: SatEntry = {
     windowId: init.windowId, win, webContentsId: win.webContents.id, type: init.type, kind: init.kind, sectionPath: init.sectionPath,
     title: init.title, dedupeKey: init.dedupeKey, parentId: init.parentId, ownerWcId: init.ownerWcId,
-    requestId: init.requestId, dirty: false, claimed: false, forceClose: false, closing: false,
+    requestId: init.requestId, dirty: false, claimed: false, rendererReady: false, forceClose: false, closing: false,
     descriptor: init.descriptor,
   }
   byId.set(entry.windowId, entry)
@@ -243,6 +245,12 @@ function createSatelliteWindow(init: {
 
 function handshakeClose(entry: SatEntry): Promise<boolean> {
   if (!entry.claimed || entry.win.isDestroyed() || entry.win.webContents.isDestroyed()) return Promise.resolve(true)
+  /* لا يوجد محرر/مستمع جاهز بعد: لم تُعرض واجهة عمل يمكن أن تحتوي مسودة.
+     إن كانت حالة dirty قد وصلت مبكراً، لا نتجاوز المصافحة حفاظاً على البيانات. */
+  if (!entry.rendererReady && !entry.dirty) {
+    deps?.log('satellite-close', `إغلاق مباشر لقمر ${entry.windowId} قبل جاهزية واجهة العمل`)
+    return Promise.resolve(true)
+  }
   return new Promise<boolean>((resolve) => {
     const token = randomBytes(10).toString('hex')
     const timer = setTimeout(() => {
@@ -456,6 +464,11 @@ export function initSatelliteWindows(d: SatelliteDeps): void {
     entry.title = cleanTitle(input.title, entry.title)
     if (!entry.win.isDestroyed()) entry.win.setTitle(entry.title)
     broadcastRegistry()
+  })
+
+  ipcMain.on('windows:renderer-ready', (event, ready: unknown) => {
+    const entry = senderEntry(event.sender)
+    if (entry) entry.rendererReady = ready === true
   })
 
   ipcMain.on('windows:set-dirty', (event, dirty: unknown) => {

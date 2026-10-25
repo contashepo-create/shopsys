@@ -21,6 +21,7 @@ import { persistedAuthState, authorizeDesktopIdentity, hasConfiguredDesktopAuth 
 import { generateDeviceIdFromBytes, mergeDeviceIdentity } from './deviceIdentity.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import { initSatelliteWindows, broadcastSnapshotChanged, satellitesOpenCount, satelliteWebContents, confirmAndCloseAllSatellites } from './satelliteWindows.ts'
+import { createLicenseAuthority } from './licenseAuthority.ts'
 import Database from 'better-sqlite3'
 import {
   readDbLocationAt, writeDbLocationAt, restoreLocationPointerAt, customDbStatusAt, resolveDbPathAt,
@@ -71,6 +72,9 @@ let database: ShopsysDatabase | null = null
 let activeDatabasePath: string | null = null
 let updateLaunchInProgress = false
 let deviceEncryptionKey: Buffer = Buffer.alloc(0)
+let desktopDeviceId: string | null = null
+let licenseAuthorityInitialLogged = false
+let licenseAuthority: ReturnType<typeof createLicenseAuthority> | null = null
 let printWindow: BrowserWindow | null = null
 const authorizedWebContents = new Set<number>()
 const authAttempts = new Map<number, { count: number; windowStartedAt: number; lockedUntil: number }>()
@@ -1282,7 +1286,30 @@ function resolveDeviceIdentity(candidate: unknown): { deviceId: string; firstTri
       logLine('identity', `تعذّر حفظ هوية الجهاز: ${(error as Error).message}`)
     }
   }
+  desktopDeviceId = deviceId
   return { deviceId, firstTrialAt: merged.identity.firstTrialAt }
+}
+
+function broadcastLicenseInvalidated(): void {
+  const targets = [mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null, ...satelliteWebContents()]
+  for (const wc of targets) if (wc && !wc.isDestroyed()) wc.send('license:invalidated')
+}
+
+function initializeLicenseAuthority(): void {
+  /* لا ننشئ هوية الجهاز هنا: قد تكون مرساة قديمة في localStorage لدى الـ Renderer
+     لم تُدمج بعد. الجهاز يُحسم أولاً عبر device:identity ثم يقرأه هذا المرجع. */
+  licenseAuthorityInitialLogged = false
+  licenseAuthority = createLicenseAuthority({
+    readSnapshot: () => {
+      if (!database) throw new Error(databaseInitializationFailure ?? 'قاعدة البيانات غير مهيأة بعد')
+      const snapshot = database.getSnapshot('shopsys-app')
+      return { revision: snapshot.revision, payloadJson: snapshot.payloadJson }
+    },
+    readDeviceId: () => {
+      if (!desktopDeviceId) throw new Error('هوية الجهاز لم تكتمل تهيئتها بعد')
+      return desktopDeviceId
+    },
+  })
 }
 
 function wireIpc(): void {
@@ -1291,6 +1318,22 @@ function wireIpc(): void {
     return database
   }
   ipcMain.handle('device:getEncryptionKey', (): Uint8Array | null => deviceEncryptionKey.length === 32 ? new Uint8Array(deviceEncryptionKey) : null)
+  ipcMain.handle('license:get-status', async (event) => {
+    const senderId = event.sender.id
+    const knownWindow = mainWindow?.webContents.id === senderId || satelliteWebContents().some((wc) => wc.id === senderId)
+    if (!knownWindow || !isInAppNavigation(event.sender.getURL(), APP_INDEX_FILE_URL, devOrigin)) {
+      return { status: 'unverifiable', payload: null, reason: 'مصدر طلب حالة الترخيص غير موثوق', at: new Date().toISOString() }
+    }
+    if (!licenseAuthority) {
+      return { status: 'unverifiable', payload: null, reason: databaseInitializationFailure ?? 'خدمة التحقق المركزية غير جاهزة', at: new Date().toISOString() }
+    }
+    const result = await licenseAuthority.audit()
+    if (!licenseAuthorityInitialLogged) {
+      licenseAuthorityInitialLogged = true
+      logLine('license-authority', `حالة فحص الترخيص المركزي بعد تهيئة هوية الجهاز: ${result.status.status}`)
+    }
+    return result.status
+  })
 
   /* بند 10 (تدقيق 2026-10-08): إشعار نظام التشغيل لتنبيهات المطوّر المهمة/العاجلة.
      يُعرض عبر Electron Notification (مركز الإشعارات في ويندوز/ماك) — ويعيد false
@@ -1369,6 +1412,15 @@ function wireIpc(): void {
     const result = db().saveSnapshot(input)
     /* مزامنة النوافذ الحرة: بقية النوافذ تطبّق أحدث لقطة فور حفظها */
     if (!result.replayed) broadcastSnapshotChanged(event.sender.id, input.storeName, result.revision)
+    if (input.storeName === 'shopsys-app' && licenseAuthority) {
+      /* كل لقطة إعدادات تُعيد ترطيب Zustand في النوافذ الأخرى؛ ذلك يعلّم audit
+         بـ checking حتى لو لم يتغير المفتاح. نرسل الإبطال دائماً، بينما يضمن مخبأ
+         Main أن التوقيع لا يُعاد إلا عند تغيّر المفتاح/الجهاز/قائمة الإبطال. */
+      void licenseAuthority.audit().then(() => broadcastLicenseInvalidated()).catch((error: unknown) => {
+        logLine('license-authority', `فشل تحديث حالة الترخيص بعد حفظ الإعدادات: ${error instanceof Error ? error.message : String(error)}`)
+        broadcastLicenseInvalidated()
+      })
+    }
     return result
   })
   ipcMain.handle('database:deleteSnapshot', (event, input: DeleteSnapshotInput) => {
@@ -1910,6 +1962,7 @@ if (!gotLock) {
         setSplashProgress(75, 'تعذّر التحقق من مفتاح البيانات — افتح شاشة الاسترداد')
       }
       setSplashProgress(75, 'تجهيز الواجهة…')
+      if (database) initializeLicenseAuthority()
       wireIpc()
       mainWindow = createMainWindow()
       mainWindow.once('ready-to-show', () => {

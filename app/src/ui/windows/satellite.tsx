@@ -28,14 +28,20 @@ export function SatelliteLayout({ children }: { title?: string; children: ReactN
   useEffect(() => desktopWindowsBridge()?.onNavigate(({ path }) => navigate(path)), [navigate])
   /* تسجيل حالة القسم عند العملية الرئيسية لتظهر في حوار إغلاق الكل */
   useEffect(() => { desktopWindowsBridge()?.setDirty(dirty) }, [dirty])
-  /* إغلاق نظام التشغيل يمر عبر تأكيد عند وجود تغييرات غير محفوظة */
-  useEffect(() => desktopWindowsBridge()?.onRequestClose(({ token }) => {
-    if (!hasUnsavedChangesInCurrentWindow()) {
-      desktopWindowsBridge()?.respondClose(token, true)
-      return
-    }
-    setCloseTokens((tokens) => tokens.includes(token) ? tokens : [...tokens, token])
-  }), [])
+  /* إغلاق نظام التشغيل يمر عبر تأكيد عند وجود تغييرات غير محفوظة. نعلن الجاهزية
+     بعد تركيب المستمع؛ قبلها تتعامل العملية الرئيسية مع النافذة كإقلاع بلا واجهة عمل. */
+  useEffect(() => {
+    const bridge = desktopWindowsBridge()
+    const off = bridge?.onRequestClose(({ token }) => {
+      if (!hasUnsavedChangesInCurrentWindow()) {
+        bridge?.respondClose(token, true)
+        return
+      }
+      setCloseTokens((tokens) => tokens.includes(token) ? tokens : [...tokens, token])
+    })
+    bridge?.setRendererReady(true)
+    return () => { bridge?.setRendererReady(false); off?.() }
+  }, [])
   const isInvoiceWorkspace = /^\/(sales|purchases)\/invoices\/new$/.test(location.pathname)
   const answerClose = (allow: boolean) => {
     const pending = closeTokens
@@ -95,10 +101,14 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
     setClosePrompt: (next: WindowClosePrompt | null) => { promptRef.current = next; setPrompt(next) },
   }), [descriptor, props, bridge])
 
-  useEffect(() => bridge?.onRequestClose(({ token }) => {
-    if (!dirtyRef.current && !promptRef.current) { bridge?.respondClose(token, true); return }
-    setAsk((prev) => ({ tokens: [...(prev?.tokens ?? []), token] }))
-  }), [bridge])
+  useEffect(() => {
+    const off = bridge?.onRequestClose(({ token }) => {
+      if (!dirtyRef.current && !promptRef.current) { bridge?.respondClose(token, true); return }
+      setAsk((prev) => ({ tokens: [...(prev?.tokens ?? []), token] }))
+    })
+    bridge?.setRendererReady(true)
+    return () => { bridge?.setRendererReady(false); off?.() }
+  }, [bridge])
 
   /* تركيز أول حقل — نفس سلوك النافذة العائمة عند فتحها */
   useEffect(() => {

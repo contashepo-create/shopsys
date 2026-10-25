@@ -68,6 +68,15 @@ const persistence = {
 /* نوافذ الأقمار الحرة (قرار المالك 2026-10-22): إنشاء نوافذ نظام مستقلة لكل
    قسم/مستند/منتقٍ، وقناة ردود النداء بين القمر وأمه، ومصافحة الإغلاق الآمنة.
    العقد الكامل في desktop/satelliteWindows.ts ونظيره في src/data/desktopBridge.ts */
+const license = {
+  getStatus: () => ipcRenderer.invoke('license:get-status'),
+  onInvalidated: (listener: () => void) => {
+    const wrapped = () => listener()
+    ipcRenderer.on('license:invalidated', wrapped)
+    return () => ipcRenderer.removeListener('license:invalidated', wrapped)
+  },
+}
+
 const auth = {
   authorize: (input: { userId: number | null; pin: string }) => ipcRenderer.invoke('session:authorize', input),
   revoke: () => ipcRenderer.send('session:revoke'),
@@ -96,6 +105,7 @@ const windows = {
   toggleMaximize: (windowId?: string) => ipcRenderer.send('windows:toggle-maximize', windowId),
   setTitle: (title: string) => ipcRenderer.send('windows:set-title', { title }),
   setDirty: (dirty: boolean) => ipcRenderer.send('windows:set-dirty', dirty),
+  setRendererReady: (ready: boolean) => ipcRenderer.send('windows:renderer-ready', ready),
   respondClose: (token: string, allow: boolean) => ipcRenderer.send('windows:close-response', { token, allow }),
   onPropInvoke: (listener: (e: { requestId: string; prop: string; args: unknown[] }) => void) => {
     const wrapped = (_event: unknown, e: { requestId: string; prop: string; args: unknown[] }) => listener(e)
@@ -119,7 +129,7 @@ const windows = {
   },
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence, auth, invoiceCommit, windows })
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage, notifications, keyRecovery, persistence, auth, invoiceCommit, windows, license })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))

@@ -16,7 +16,7 @@ import { buildRegistrationReport, shouldReportRegistration, sendRegistrationRepo
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
-import { isElectronRuntime, isDesktopFreeWindows, desktopDatabaseStorage, desktopKeyRecoveryBridge, desktopWindowsBridge, type SatelliteDescriptor } from './data/desktopBridge.ts'
+import { isElectronRuntime, isDesktopFreeWindows, desktopDatabaseStorage, desktopKeyRecoveryBridge, desktopBridge, type SatelliteDescriptor } from './data/desktopBridge.ts'
 import { isSatelliteBoot, claimSatellite } from './ui/windows/satelliteState.ts'
 import { SatelliteLayout, SatelliteViewRoot } from './ui/windows/satellite.tsx'
 import { openSectionWindow } from './ui/windows/windowStore.ts'
@@ -620,9 +620,8 @@ export default function App() {
   }, [satelliteBoot])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
-  /* ث1 (تدقيق 2026-10-08): إعادة التحقق من توقيع المفتاح المحفوظ في كل إقلاع.
-     الحمولة تُشتق من المفتاح الموقّع لا من التخزين — تعديل `activatedPayload`
-     في localStorage (نسخة الويب نص صريح) لم يعد يفتح `lifetime` بكل الميزات. */
+  /* في سطح المكتب، Main هو المرجع الوحيد لفحص التوقيع من لقطة SQLite وهوية الجهاز؛
+     الويب يحتفظ بالتحقق المحلي. لا تُشتق أي صلاحية من حمولة محفوظة غير موقّعة. */
   useEffect(() => {
     let cancelled = false
     const audit = () => {
@@ -630,7 +629,7 @@ export default function App() {
       const verify = useAppStore.getState().reverifyActivation()
       let timer: ReturnType<typeof setTimeout> | undefined
       const timeout = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('انتهت مهلة التحقق المحلي من توقيع الترخيص')), 8_000)
+        timer = setTimeout(() => reject(new Error('انتهت مهلة استجابة خدمة الترخيص المركزية')), 8_000)
       })
       void Promise.race([verify, timeout]).catch((error: unknown) => {
         if (timer) clearTimeout(timer)
@@ -661,6 +660,16 @@ export default function App() {
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => desktopBridge()?.license?.onInvalidated(() => {
+    /* أعد قراءة اللقطة المعتمدة أولاً ثم اسأل Main؛ يمنع فحصاً بمفتاح قديم إذا
+       وصل الإبطال قبل اكتمال إعادة ترطيب النافذة. */
+    void Promise.resolve(useAppStore.persist.rehydrate())
+      .catch((error: unknown) => {
+        console.error('[license-audit] تعذّرت إعادة قراءة لقطة الترخيص؛ سيعيد Main الفحص من مصدره:', error)
+      })
+      .then(() => useAppStore.getState().reverifyActivation())
+  }), [])
+
   const licenseState = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
     [activatedPayload, trialStartedAt, lastSeenAt, deviceFlags],
@@ -669,20 +678,6 @@ export default function App() {
     () => currentLockReason(licenseState, { activatedKey, activatedPayload, revokedKeys, licenseAudit, setup }),
     [licenseState, activatedKey, activatedPayload, revokedKeys, licenseAudit, setup],
   )
-
-  /* قد تطلب العملية الرئيسية إغلاق قمر أثناء شاشة الإقلاع/القفل؛ عندها لم يُركَّب
-     SatelliteViewRoot بعد كي يجيب المصافحة. لا توجد في هذه الحالات صفحة عمل أو
-     تعديلات غير محفوظة، لذا نقرّ الإغلاق فوراً. عند جاهزية التطبيق يتولى الجذر
-     نفسه المصافحة ويعرض تحذير المسودة كالمعتاد. */
-  const satelliteBootBlocked = satelliteBoot && (
-    !storesHydrated || !satClaimed || !legalAccepted
-    || licenseAudit.status === 'checking' || lockReason !== null
-  )
-  useEffect(() => {
-    if (!satelliteBootBlocked) return
-    const bridge = desktopWindowsBridge()
-    return bridge?.onRequestClose(({ token }) => bridge.respondClose(token, true))
-  }, [satelliteBootBlocked])
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
   const [readOnlyTab, setReadOnlyTab] = useState(false)

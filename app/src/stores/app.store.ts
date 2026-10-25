@@ -12,6 +12,7 @@ import { bindLegacyFiscalYearsToMain as bindFiscalYearsToMain, validateFiscalYea
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
 import { settingsAppStorage, registerExternalSnapshotApplier } from '../data/persistentStorage.ts'
+import { desktopBridge } from '../data/desktopBridge.ts'
 import { desktopDeviceIdentity } from '../data/desktopBridge.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
@@ -373,6 +374,22 @@ interface AppState {
   sync: SyncSettings
   updateSync: (patch: Partial<SyncSettings>) => void
 }
+
+function licenseAuditInputStamp(input: Pick<AppState, 'activatedKey' | 'deviceId' | 'revokedKeys'>): string {
+  const revokedKeys = Array.isArray(input.revokedKeys)
+    ? input.revokedKeys.filter((value): value is string => typeof value === 'string').sort()
+    : []
+  return JSON.stringify([input.activatedKey, input.deviceId, revokedKeys])
+}
+
+/* In-memory only: lets Zustand's hydration callback reuse a result already
+   audited by this renderer, without referring to the store during its own
+   initialization (which would deadlock the first hydration callback). */
+let lastAuditedLicenseResult: {
+  inputStamp: string
+  payload: LicensePayload | null
+  audit: AppState['licenseAudit']
+} | null = null
 
 /** إعدادات مضيف شبكة المحل (§102) — تُخزن لكل جهاز */
 export interface LanHostSettings {
@@ -1114,6 +1131,7 @@ export const useAppStore = create<AppState>()(
        */
       reverifyActivation: async () => {
         const before = get()
+        const beforeAuditInputStamp = licenseAuditInputStamp(before)
         /** الوحدات المسموح بظهورها لحمولة معيّنة (بلا إضافة — حذف فقط) */
         const companySetup = before.companySetup ?? before.setup
         const clamp = (payload: LicensePayload | null) => clampModulesToLicense({
@@ -1130,6 +1148,15 @@ export const useAppStore = create<AppState>()(
           const modulesChanged = companySetup.completed
             && (next.modules.length !== companySetup.modules.length
               || next.modules.some((m, i) => m !== companySetup.modules[i]))
+          const inputStamp = licenseAuditInputStamp({
+            ...before,
+            activatedKey: next.activatedKey,
+          })
+          lastAuditedLicenseResult = {
+            inputStamp,
+            payload: next.activatedPayload,
+            audit: next.licenseAudit,
+          }
           const unchanged = before.activatedKey === next.activatedKey
             && JSON.stringify(before.activatedPayload ?? null) === JSON.stringify(next.activatedPayload)
             && before.licenseAudit.status === next.licenseAudit.status
@@ -1141,6 +1168,68 @@ export const useAppStore = create<AppState>()(
             licenseAudit: next.licenseAudit,
             ...(s.companySetup.completed && modulesChanged ? companySetupPatch(s, { modules: next.modules }) : {}),
           }))
+        }
+
+        const mainLicense = desktopBridge()?.license
+        if (mainLicense) {
+          /* سطح المكتب: Main يقرأ المفتاح وهوية الجهاز من المصدرين المعتمدين
+             ويتحقق مرة واحدة لكل مفتاح/جهاز/قائمة إبطال، ثم يخدم كل النوافذ.
+             لا نرسل المفتاح أو deviceId من Renderer عبر IPC. */
+          if (!useAppStore.persist.hasHydrated()) return
+          let authority: Awaited<ReturnType<typeof mainLicense.getStatus>>
+          let authorityTimer: ReturnType<typeof setTimeout> | undefined
+          try {
+            const timeout = new Promise<never>((_resolve, reject) => {
+              authorityTimer = setTimeout(() => reject(new Error('انتهت مهلة استجابة خدمة الترخيص المركزية')), 8_000)
+            })
+            authority = await Promise.race([mainLicense.getStatus(), timeout])
+          } catch (error) {
+            if (licenseAuditInputStamp(get()) !== beforeAuditInputStamp) return
+            commit({
+              activatedKey: before.activatedKey,
+              activatedPayload: null,
+              licenseAudit: {
+                status: 'unverifiable',
+                reason: error instanceof Error ? error.message : 'تعذّر الاتصال بخدمة التحقق المركزية',
+                at: new Date().toISOString(),
+              },
+              modules: companySetup.modules,
+            })
+            return
+          } finally {
+            if (authorityTimer) clearTimeout(authorityTimer)
+          }
+          if (licenseAuditInputStamp(get()) !== beforeAuditInputStamp) return
+          if (authority.status === 'no_key') {
+            commit({ activatedKey: null, activatedPayload: null, licenseAudit: { status: 'no_key', at: authority.at }, modules: clamp(null) })
+            return
+          }
+          if (authority.status === 'verified' && authority.payload && typeof authority.payload === 'object') {
+            commit({
+              activatedKey: before.activatedKey,
+              activatedPayload: authority.payload as LicensePayload,
+              licenseAudit: { status: 'verified', at: authority.at },
+              modules: clamp(authority.payload as LicensePayload),
+            })
+            return
+          }
+          if (authority.status === 'unverifiable') {
+            commit({
+              activatedKey: before.activatedKey,
+              activatedPayload: null,
+              licenseAudit: { status: 'unverifiable', reason: authority.reason, at: authority.at },
+              modules: companySetup.modules,
+            })
+            return
+          }
+          // توقيع غير صالح أو محروق: يبقى الفشل مغلقاً ويُسقط المفتاح كما كان.
+          commit({
+            activatedKey: null,
+            activatedPayload: null,
+            licenseAudit: { status: 'tampered', reason: authority.reason, at: authority.at },
+            modules: clamp(null),
+          })
+          return
         }
 
         if (!before.activatedKey) {
@@ -1167,7 +1256,7 @@ export const useAppStore = create<AppState>()(
               reason: 'بيئة التشغيل لا تتيح التحقق من التوقيع (WebCrypto غير متاح)',
               at: new Date().toISOString(),
             },
-            modules: clamp(null),
+            modules: companySetup.modules,
           })
           return
         }
@@ -1435,10 +1524,21 @@ export const useAppStore = create<AppState>()(
           state.reportPrint = state.baseReportPrint
           // آخر أعلام محفوظة (وضع الأوفلاين) تسري من أول لحظة قبل أي جلب جديد
           setActiveDeviceFlags(state.deviceFlags ?? null)
-          state.activatedPayload = null
-          state.licenseAudit = state.activatedKey
-            ? { status: 'checking', at: new Date().toISOString() }
-            : { status: 'no_key' }
+          const cachedAudit = lastAuditedLicenseResult?.inputStamp === licenseAuditInputStamp(state)
+            ? lastAuditedLicenseResult
+            : null
+          /* إذا كانت المدخلات قد دُقّقت في هذه الجلسة، فإعادة ترطيب لقطة إعدادات
+             عادية ليست إقلاعاً جديداً؛ احتفظ بالنتيجة والحمولة الموثوقة حتى لا
+             يُفكّك محرر فاتورة بسبب تغير ثيم/إعداد. وإلا ابدأ تدقيقاً جديداً. */
+          if (cachedAudit) {
+            state.activatedPayload = cachedAudit.payload
+            state.licenseAudit = cachedAudit.audit
+          } else {
+            state.activatedPayload = null
+            state.licenseAudit = state.activatedKey
+              ? { status: 'checking', at: new Date().toISOString() }
+              : { status: 'no_key' }
+          }
         }
         // ترحيل: حسابات أُنشئت قبل خطوة السنة المالية تحصل على سنة ميلادية حالية تلقائياً
         if (state && state.setup.completed && state.fiscalYears.length === 0) {

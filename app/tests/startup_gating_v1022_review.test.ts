@@ -18,13 +18,17 @@ describe('مراجعة البوابات قبل الإرسال (v1.0.22)', () => 
     const app = read('src/App.tsx')
     expect(app).toMatch(/useAppStore\.persist\.hasHydrated\(\)\) audit\(\)[\s\S]*?useAppStore\.persist\.onFinishHydration\(audit\)/)
     expect(app).toMatch(/reverifyActivation\(\)/)
-    expect(app).toMatch(/انتهت مهلة التحقق المحلي من توقيع الترخيص/)
+    expect(app).toMatch(/انتهت مهلة استجابة خدمة الترخيص المركزية/)
     expect(app).not.toMatch(/reverifyActivation\(\)[\s\S]{0,120}\[storesHydrated\]/)
   })
 
-  it('App.tsx: القمر الذي لا يعرض واجهة عمل يجيب مصافحة الإغلاق أثناء بوابات الإقلاع', () => {
-    const app = read('src/App.tsx')
-    expect(app).toMatch(/satelliteBootBlocked[\s\S]*?desktopWindowsBridge\(\)[\s\S]*?onRequestClose\(\(\{ token \}\) => bridge\.respondClose\(token, true\)\)/)
+  it('القمر لا يدخل مصافحة الإغلاق قبل تثبيت مستمع المسودات، ولا يتجاوز المصافحة بعد الجاهزية', () => {
+    const satellite = read('src/ui/windows/satellite.tsx')
+    const windows = read('desktop/satelliteWindows.ts')
+    expect(satellite).toMatch(/onRequestClose\([\s\S]*?setRendererReady\(true\)/)
+    expect(satellite).toMatch(/setRendererReady\(false\)/)
+    expect(windows).toMatch(/if \(!entry\.rendererReady && !entry\.dirty\)/)
+    expect(windows).toMatch(/انتهت مهلة مصافحة إغلاق/)
   })
 
   it('App.tsx: كل إرسال يحمل معرّف الجهاز مشروط بقبول الاتفاقية الحالية', () => {

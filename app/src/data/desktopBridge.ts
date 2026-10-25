@@ -218,6 +218,8 @@ export interface DesktopWindowsBridge {
   toggleMaximize(windowId?: string): void
   setTitle(title: string): void
   setDirty(dirty: boolean): void
+  /** Announces that the satellite close/draft listener is installed and can safely answer. */
+  setRendererReady(ready: boolean): void
   respondClose(token: string, allow: boolean): void
   onPropInvoke(listener: (e: { requestId: string; prop: string; args: unknown[] }) => void): () => void
   onRequestClose(listener: (e: { token: string }) => void): () => void
@@ -238,6 +240,11 @@ export interface ShopsysDesktopBridge {
   databaseStorage?: DesktopDatabaseStorageBridge
   notifications?: DesktopNotificationsBridge
   keyRecovery?: DesktopKeyRecoveryBridge
+  license?: {
+    /** Main-process signature audit from the canonical shopsys-app SQLite snapshot. */
+    getStatus(): Promise<{ status: 'no_key' | 'verified' | 'tampered' | 'unverifiable'; payload: unknown | null; reason?: string; at: string }>
+    onInvalidated(listener: () => void): () => void
+  }
 }
 
 declare global {
