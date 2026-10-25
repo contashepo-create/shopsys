@@ -624,9 +624,13 @@ export default function App() {
      الحمولة تُشتق من المفتاح الموقّع لا من التخزين — تعديل `activatedPayload`
      في localStorage (نسخة الويب نص صريح) لم يعد يفتح `lifetime` بكل الميزات. */
   useEffect(() => {
-    if (!storesHydrated || satelliteBoot) return
+    if (!storesHydrated) return
+    /* كل نافذة Electron لها مُصيّر ومتجر ذاكرة جديد، وحالة licenseAudit لا تُحفظ
+       عمداً. لذلك تُعلَّم `checking` عند الترطيب في النافذة القمر أيضاً؛ تخطي
+       إعادة التحقق هنا يترك بوابة الإقلاع معلّقة إلى الأبد. التحقق محلي من المفتاح
+       الموقّع ولا يعتمد على الجلسة أو الشبكة. */
     void useAppStore.getState().reverifyActivation()
-  }, [storesHydrated, satelliteBoot])
+  }, [storesHydrated])
 
   const licenseState = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),

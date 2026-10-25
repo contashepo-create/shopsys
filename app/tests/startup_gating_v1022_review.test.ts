@@ -14,6 +14,11 @@ import { join } from 'node:path'
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8')
 
 describe('مراجعة البوابات قبل الإرسال (v1.0.22)', () => {
+  it('App.tsx: نافذة القمر تعيد التحقق من الترخيص بعد ترطيب متجرها ولا تبقى على شاشة الفحص', () => {
+    const app = read('src/App.tsx')
+    expect(app).toMatch(/if \(!storesHydrated\) return[\s\S]*?void useAppStore\.getState\(\)\.reverifyActivation\(\)[\s\S]*?\}, \[storesHydrated\]\)/)
+  })
+
   it('App.tsx: كل إرسال يحمل معرّف الجهاز مشروط بقبول الاتفاقية الحالية', () => {
     const app = read('src/App.tsx')
     expect(app).toMatch(/const legalAccepted = legal !== null/)
