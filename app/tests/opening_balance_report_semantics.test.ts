@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { balanceSheet, cashFlowReport, incomeStatement, trialBalance, vatReport } from '../src/core/financialReports.ts'
 import { activityRevenueRows } from '../src/core/reports.ts'
-import { expenseDetails, expensesSummary, journalExpensesByCostCenter } from '../src/core/expenseReports.ts'
+import { expenseDetails, expenseSourceTypes, expensesSummary, journalExpensesByCostCenter } from '../src/core/expenseReports.ts'
 import type { JournalEntry } from '../src/core/ledger.ts'
 import { economicSourceResolver } from '../src/core/journalSource.ts'
 
@@ -105,6 +105,7 @@ describe('opening balances are balances, not period activity', () => {
       ...openingEntry(9, [line('5102', 0, 500), line('1101', 500, 0)]),
       sourceType: 'reversal', reversesEntryId: original.id,
     }
+    expect(expenseSourceTypes([original, reversal], new Set())).toEqual(['voucher'])
     const rows = expenseDetails([original, reversal], { ...period, accountCode: '5102', sourceType: 'voucher' }, new Set())
     expect(rows.totalMinor).toBe(0)
     expect(rows.rows.map((row) => row.sourceType)).toEqual(['voucher', 'voucher'])

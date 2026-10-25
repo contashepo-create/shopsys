@@ -33,6 +33,18 @@ export interface ExpenseReportFilter {
   sourceType?: string // فلترة بمصدر العملية
 }
 
+/** مصادر فلتر المصروفات كما يفهمها التقرير: المصدر الاقتصادي حتى للقيود العاكسة. */
+export function expenseSourceTypes(journal: readonly JournalEntry[], customExpenseCodes: ReadonlySet<string>): string[] {
+  const sourceOf = economicSourceResolver(journal)
+  const sources = new Set<string>()
+  for (const entry of journal) {
+    if (!entry.lines.some((line) => isExpenseCode(line.accountCode, customExpenseCodes))) continue
+    const source = sourceOf(entry) ?? entry.sourceType
+    if (source) sources.add(source)
+  }
+  return [...sources]
+}
+
 function inPeriod(date: string, f: ExpenseReportFilter): boolean {
   const d = date.slice(0, 10)
   if (f.from && d < f.from) return false
