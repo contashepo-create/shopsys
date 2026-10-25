@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { parse, stringify } from 'yaml'
-import { versionOf, compareReleaseVersions, parseRemoteTags, completeRelease, planRelease, validateDesktopArtifacts, publishDesktopRelease } from '../scripts/releasePipeline.mjs'
+import { versionOf, compareReleaseVersions, parseRemoteTags, completeRelease, previousCompleteRelease, planRelease, validateDesktopArtifacts, publishDesktopRelease } from '../scripts/releasePipeline.mjs'
 
 const sha = 'a'.repeat(40), other = 'b'.repeat(40)
 const roots: string[] = []
@@ -43,6 +43,19 @@ describe('recovery of partially failed automatic releases', () => {
 it('public completeness requires correct tag, all uploaded nonempty assets and no draft/prerelease', () => {
   expect(completeRelease(release(), 'v1.0.24')).toBe(true)
   for (const patch of [{ draft: true }, { prerelease: true }, { tag_name: 'v1.0.23' }, { assets: assets().slice(1) }, { assets: assets().map(a => ({ ...a, size: 0 })) }, { assets: assets().map(a => ({ ...a, state: 'new' })) }]) expect(completeRelease({ ...release(), ...patch }, 'v1.0.24')).toBe(false)
+})
+it('selects the newest complete stable source installer before the candidate, skipping missing and incomplete releases', () => {
+  const complete = (tag: string) => ({ ...release(tag), assets: assets(tag) })
+  const selected = previousCompleteRelease([
+    complete('v1.0.38'),
+    complete('v1.0.40'),
+    complete('v1.0.42'),
+    { ...complete('v1.0.41'), draft: true },
+    { ...complete('v1.0.39'), assets: [] },
+    { tag_name: 'not-a-version', draft: false, prerelease: false, assets: [] },
+  ], 'v1.0.42')
+  expect(selected?.tag_name).toBe('v1.0.40')
+  expect(previousCompleteRelease([complete('v1.0.42')], 'v1.0.42')).toBeNull()
 })
 function artifact() {
   const dir = mkdtempSync(join(tmpdir(), 'shopsys-release-')); roots.push(dir)
@@ -138,7 +151,7 @@ it('workflows parse, atomic push and explicit dispatch have separate steps; bran
   expect(desktop.on.workflow_dispatch.inputs.dry_run.default).toBe(false)
 })
 it.skipIf(process.platform === 'win32')('all bash workflow blocks are syntax checked (not merely YAML checked)', () => {
-  for (const file of ['auto-release.yml', 'desktop-release.yml']) {
+  for (const file of ['auto-release.yml', 'desktop-release.yml', 'quality.yml']) {
     const workflow = parse(readFileSync(`../.github/workflows/${file}`, 'utf8'))
     for (const job of Object.values(workflow.jobs) as any[]) for (const step of job.steps) if (step.run && (!step.shell || step.shell === 'bash')) {
       const result = spawnSync('bash', ['-n'], { input: step.run.replace(/\$\{\{.*?\}\}/g, 'fixture'), encoding: 'utf8' })
@@ -148,13 +161,18 @@ it.skipIf(process.platform === 'win32')('all bash workflow blocks are syntax che
 })
 
 
-it('يمنع النشر العام قبل اختبار المثبت القديم وprofile ومفتاح وآخر عمل', () => {
+it('يمنع النشر العام حتى يختبر الترقية من أحدث مثبت سابق مكتمل على profile ومفتاح وآخر عمل', () => {
   const workflow = readFileSync(new URL('../../.github/workflows/desktop-release.yml', import.meta.url), 'utf8')
-  const native = workflow.indexOf('./scripts/windows_installer_smoke.ps1 -FromPublished23')
+  const baseline = workflow.indexOf('id: upgrade_baseline')
+  const download = workflow.indexOf('gh release download "$BASELINE_TAG"')
+  const native = workflow.indexOf('./scripts/windows_installer_smoke.ps1 -FromPublishedVersion')
   const publish = workflow.indexOf('run: node scripts/publish_desktop_release.mjs')
-  expect(native).toBeGreaterThan(0)
+  expect(baseline).toBeGreaterThan(0)
+  expect(download).toBeGreaterThan(baseline)
+  expect(native).toBeGreaterThan(download)
   expect(publish).toBeGreaterThan(native)
-  expect(workflow.indexOf('validateDesktopArtifacts(\'release-previous\',\'1.0.23\')')).toBeGreaterThan(0)
+  expect(workflow).toContain('scripts/select_upgrade_baseline.mjs')
+  expect(workflow).toContain('validateDesktopArtifacts(\'release-previous\', process.env.BASELINE_VERSION)')
 })
 it('يتحقق بعد النشر من تنزيل العميل السابق للإصدار العام الجديد بلا مصادقة أو تثبيت', () => {
   const workflow = parse(readFileSync('../.github/workflows/desktop-release.yml', 'utf8'))
@@ -173,11 +191,14 @@ it('يتحقق بعد النشر من تنزيل العميل السابق لل�
   expect(probe).toContain("process.env.PUBLIC_UPDATE_FROM_VERSION || '1.0.23'")
   expect(probe).toContain('installAttempted: false')
 })
-it('keeps the v23 upgrade fixture in the source repo, not the current public releases feed', () => {
+it('selects a real prior complete source release for installer upgrade gates, not a stale hardcoded version', () => {
   const desktop = readFileSync('../.github/workflows/desktop-release.yml', 'utf8')
   const quality = readFileSync('../.github/workflows/quality.yml', 'utf8')
   for (const workflow of [desktop, quality]) {
-    expect(workflow).toContain('gh release download v1.0.23 --repo contashepo-create/shopsys')
-    expect(workflow).not.toContain('gh release download v1.0.23 --repo contashepo-create/tahakam-releases')
+    expect(workflow).toContain('scripts/select_upgrade_baseline.mjs')
+    expect(workflow).toContain('gh release download "$BASELINE_TAG" --repo contashepo-create/shopsys')
+    expect(workflow).toContain('tahakom-setup-${BASELINE_VERSION}.exe')
+    expect(workflow).toContain('-FromPublishedVersion $env:BASELINE_VERSION')
+    expect(workflow).not.toContain('gh release download v1.0.23')
   }
 })

@@ -162,7 +162,7 @@ jobs:
             ${{ runner.temp }}/db-probe-*.json
 
   windows-previous-release-upgrade:
-    name: Published v23 to candidate — actual profile, key and first-upgrade backup
+    name: Published previous release to candidate — actual profile, key and first-upgrade backup
     runs-on: windows-latest
     timeout-minutes: 35
     defaults:
@@ -179,26 +179,40 @@ jobs:
       - name: Build candidate NSIS (no publication)
         shell: pwsh
         run: npm run desktop:dist
-      - name: Download original v23 installer from source repository (not mocked)
+      - name: Select latest complete prior source release for upgrade test
+        id: upgrade_baseline
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download v1.0.23 --repo contashepo-create/shopsys --pattern latest.yml --pattern tahakom-setup-1.0.23.exe --pattern tahakom-setup-1.0.23.exe.blockmap --dir release-previous
-          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous','1.0.23'));"
-      - name: Real old binary to candidate — same Chromium profile and encrypted data
-        shell: pwsh
+          set -euo pipefail
+          gh api repos/contashepo-create/shopsys/releases --paginate --jq '.[] | @json' > "$RUNNER_TEMP/source-releases.jsonl"
+          candidate="v$(node -p "require('./package.json').version")"
+          node scripts/select_upgrade_baseline.mjs "$RUNNER_TEMP/source-releases.jsonl" "$candidate"
+      - name: Download previous stable installer from source repository (not mocked)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASELINE_TAG: ${{ steps.upgrade_baseline.outputs.tag }}
+          BASELINE_VERSION: ${{ steps.upgrade_baseline.outputs.version }}
         run: |
-          try { ./scripts/windows_installer_smoke.ps1 -FromPublished23 } catch {
+          gh release download "$BASELINE_TAG" --repo contashepo-create/shopsys --pattern latest.yml --pattern "tahakom-setup-${BASELINE_VERSION}.exe" --pattern "tahakom-setup-${BASELINE_VERSION}.exe.blockmap" --dir release-previous
+          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous', process.env.BASELINE_VERSION));"
+      - name: Real previous binary to candidate — same Chromium profile and encrypted data
+        shell: pwsh
+        env:
+          BASELINE_VERSION: ${{ steps.upgrade_baseline.outputs.version }}
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 -FromPublishedVersion $env:BASELINE_VERSION } catch {
             $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Output "::error title=Published v23 upgrade::$detail"
+            Write-Output "::error title=Published previous release upgrade::$detail"
             throw
           }
       - name: Preserve first-upgrade evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: published-v23-to-candidate
+          name: published-previous-to-candidate
           retention-days: 7
           path: |
             ${{ runner.temp }}/previous-release-upgrade.json

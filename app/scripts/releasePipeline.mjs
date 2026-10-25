@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { parse } from 'yaml'
 
 import { versionOf, compareReleaseVersions, completeRelease } from './releaseVersion.mjs'
-export { versionOf, compareReleaseVersions, parseRemoteTags, completeRelease, planRelease } from './releaseVersion.mjs'
+export { versionOf, compareReleaseVersions, parseRemoteTags, completeRelease, previousCompleteRelease, planRelease } from './releaseVersion.mjs'
 
 export function validateDesktopArtifacts(directory, expectedVersion) {
   versionOf(expectedVersion)

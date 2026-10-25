@@ -198,18 +198,32 @@ jobs:
             app/release/*.blockmap
             app/release/latest.yml
 
-      - name: تنزيل EXE v23 المنشور لاختبار أول انتقال قبل النشر
+      - name: اختيار أحدث إصدار مصدر سابق مكتمل لاختبار الترقية
+        id: upgrade_baseline
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download v1.0.23 --repo contashepo-create/shopsys --pattern latest.yml --pattern tahakom-setup-1.0.23.exe --pattern tahakom-setup-1.0.23.exe.blockmap --dir release-previous
-          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous','1.0.23'));"
+          set -euo pipefail
+          gh api repos/contashepo-create/shopsys/releases --paginate --jq '.[] | @json' > "$RUNNER_TEMP/source-releases.jsonl"
+          node scripts/select_upgrade_baseline.mjs "$RUNNER_TEMP/source-releases.jsonl" "$GITHUB_REF_NAME"
 
-      - name: حاجز النشر — EXE القديم ثم المرشح ونفس profile/key وآخر عمل
-        shell: pwsh
+      - name: تنزيل مثبت الإصدار السابق لاختبار أول انتقال قبل النشر
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASELINE_TAG: ${{ steps.upgrade_baseline.outputs.tag }}
+          BASELINE_VERSION: ${{ steps.upgrade_baseline.outputs.version }}
         run: |
-          try { ./scripts/windows_installer_smoke.ps1 -FromPublished23 } catch {
+          gh release download "$BASELINE_TAG" --repo contashepo-create/shopsys --pattern latest.yml --pattern "tahakom-setup-${BASELINE_VERSION}.exe" --pattern "tahakom-setup-${BASELINE_VERSION}.exe.blockmap" --dir release-previous
+          node --input-type=module -e "import {validateDesktopArtifacts} from './scripts/releasePipeline.mjs'; console.log(validateDesktopArtifacts('release-previous', process.env.BASELINE_VERSION));"
+
+      - name: حاجز النشر — الإصدار السابق ثم المرشح ونفس profile/key وآخر عمل
+        shell: pwsh
+        env:
+          BASELINE_VERSION: ${{ steps.upgrade_baseline.outputs.version }}
+        run: |
+          try { ./scripts/windows_installer_smoke.ps1 -FromPublishedVersion $env:BASELINE_VERSION } catch {
             $detail = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::error title=Pre-publication old-binary upgrade::$detail"
             throw
