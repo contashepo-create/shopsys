@@ -1,11 +1,12 @@
 /**
- * جردٌ آليّ (لا بوابة CI) — مطابقة «ما يرحّله المحرك» مع «ما تُظهره الشجرة»:
+ * فحص آلي asserted لمطابقة «ما يرحّله المحرك» مع «ما تُظهره الشجرة»؛ مستورد ضمن verify_engine_tree_alignment.mjs.
  * يقرأ أكواد الحسابات الحرفية من ملفات النواة التي تبني القيود، ينسِبُها إلى
  * الوحدات حسب ملفها، ثم يقارنها بخريطة ACCOUNT_MODULE_MAP والشجرة المفلترة
  * لكل نشاط (وحداته الأصلية + الوحدات المطعَّمة).
  *
  * تشغيل: node --experimental-strip-types scripts/audit_engine_tree_alignment.mjs
  */
+import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { ACTIVITY_TEMPLATES, ALL_MODULES, effectiveModules } from '../src/core/activities.ts'
@@ -80,6 +81,7 @@ console.log('\n═══ ② ثقوب محتملة: وحدة مفعّلة يرح
     }
   }
   if (!holes) console.log('  ✓ لا ثقب: كل حساب يرحّله محرك وحدةٍ مفعّلة ظاهر في شجرة النشاط')
+  assert.equal(holes, 0, 'يوجد حساب يرحّله محرك وحدة مفعّلة لكنه مخفي عن شجرة النشاط')
 }
 
 console.log('\n═══ ③ الوحدات المطعَّمة (نشاط × وحدة إضافية): هل تكفي حساباتها وحدها؟ ═══')
@@ -98,6 +100,7 @@ console.log('\n═══ ③ الوحدات المطعَّمة (نشاط × وح
   }
   if (!rows.length) console.log('  ✓ كل الوحدات المطعَّمة تجد حساباتها ظاهرة في كل الأنشطة')
   for (const r of rows) console.log(`  ✗ ${r.activity} + ${r.extra} ⇒ ناقص: ${r.missing.join(' · ')}`)
+  assert.deepEqual(rows, [], 'توجد تركيبة وحدة مطعّمة تفتقد حساباً يرحّله محركها')
 }
 
 console.log('\n═══ ④ تسريب: حسابات نشاطٍ تظهر في نشاط لا يملك وحدته ═══')
@@ -116,6 +119,7 @@ console.log('\n═══ ④ تسريب: حسابات نشاطٍ تظهر في �
   }
   if (!leaks.size) console.log('  ✓ لا تسريب وفق الخريطة الحالية')
   for (const [c, list] of leaks) console.log(`  • ${c} «${coa.find((a) => a.code === c)?.nameAr}» يظهر في: ${list.slice(0, 4).join(', ')}${list.length > 4 ? ` … (+${list.length - 4})` : ''}`)
+  assert.equal(leaks.size, 0, 'يوجد حساب تخصصي ظاهر لنشاط لا يملك وحدته وفق خريطة الحسابات')
 }
 
 console.log('\n═══ ⑤ جدول: لكل نشاط — وحداته وحسابات محركه المخفية ═══')
