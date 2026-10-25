@@ -675,7 +675,7 @@ export default function App() {
      تعديلات غير محفوظة، لذا نقرّ الإغلاق فوراً. عند جاهزية التطبيق يتولى الجذر
      نفسه المصافحة ويعرض تحذير المسودة كالمعتاد. */
   const satelliteBootBlocked = satelliteBoot && (
-    !storesHydrated || !satClaimed || !setup.completed || !legalAccepted
+    !storesHydrated || !satClaimed || !legalAccepted
     || licenseAudit.status === 'checking' || lockReason !== null
   )
   useEffect(() => {
