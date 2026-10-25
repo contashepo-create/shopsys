@@ -14,9 +14,17 @@ import { join } from 'node:path'
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8')
 
 describe('مراجعة البوابات قبل الإرسال (v1.0.22)', () => {
-  it('App.tsx: نافذة القمر تعيد التحقق من الترخيص بعد ترطيب متجرها ولا تبقى على شاشة الفحص', () => {
+  it('App.tsx: تدقيق الترخيص يبدأ مع ترطيب متجر الإعدادات ولا ينتظر مخزن البيانات', () => {
     const app = read('src/App.tsx')
-    expect(app).toMatch(/if \(!storesHydrated\) return[\s\S]*?void useAppStore\.getState\(\)\.reverifyActivation\(\)[\s\S]*?\}, \[storesHydrated\]\)/)
+    expect(app).toMatch(/useAppStore\.persist\.hasHydrated\(\)\) audit\(\)[\s\S]*?useAppStore\.persist\.onFinishHydration\(audit\)/)
+    expect(app).toMatch(/reverifyActivation\(\)/)
+    expect(app).toMatch(/انتهت مهلة التحقق المحلي من توقيع الترخيص/)
+    expect(app).not.toMatch(/reverifyActivation\(\)[\s\S]{0,120}\[storesHydrated\]/)
+  })
+
+  it('App.tsx: القمر الذي لا يعرض واجهة عمل يجيب مصافحة الإغلاق أثناء بوابات الإقلاع', () => {
+    const app = read('src/App.tsx')
+    expect(app).toMatch(/satelliteBootBlocked[\s\S]*?desktopWindowsBridge\(\)[\s\S]*?onRequestClose\(\(\{ token \}\) => bridge\.respondClose\(token, true\)\)/)
   })
 
   it('App.tsx: كل إرسال يحمل معرّف الجهاز مشروط بقبول الاتفاقية الحالية', () => {

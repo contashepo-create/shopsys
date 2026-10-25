@@ -16,7 +16,7 @@ import { buildRegistrationReport, shouldReportRegistration, sendRegistrationRepo
 import { ACTIVITY_TEMPLATES } from './core/activities.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx'
-import { isElectronRuntime, isDesktopFreeWindows, desktopDatabaseStorage, desktopKeyRecoveryBridge, type SatelliteDescriptor } from './data/desktopBridge.ts'
+import { isElectronRuntime, isDesktopFreeWindows, desktopDatabaseStorage, desktopKeyRecoveryBridge, desktopWindowsBridge, type SatelliteDescriptor } from './data/desktopBridge.ts'
 import { isSatelliteBoot, claimSatellite } from './ui/windows/satelliteState.ts'
 import { SatelliteLayout, SatelliteViewRoot } from './ui/windows/satellite.tsx'
 import { openSectionWindow } from './ui/windows/windowStore.ts'
@@ -624,13 +624,42 @@ export default function App() {
      الحمولة تُشتق من المفتاح الموقّع لا من التخزين — تعديل `activatedPayload`
      في localStorage (نسخة الويب نص صريح) لم يعد يفتح `lifetime` بكل الميزات. */
   useEffect(() => {
-    if (!storesHydrated) return
-    /* كل نافذة Electron لها مُصيّر ومتجر ذاكرة جديد، وحالة licenseAudit لا تُحفظ
-       عمداً. لذلك تُعلَّم `checking` عند الترطيب في النافذة القمر أيضاً؛ تخطي
-       إعادة التحقق هنا يترك بوابة الإقلاع معلّقة إلى الأبد. التحقق محلي من المفتاح
-       الموقّع ولا يعتمد على الجلسة أو الشبكة. */
-    void useAppStore.getState().reverifyActivation()
-  }, [storesHydrated])
+    let cancelled = false
+    const audit = () => {
+      if (cancelled) return
+      const verify = useAppStore.getState().reverifyActivation()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('انتهت مهلة التحقق المحلي من توقيع الترخيص')), 8_000)
+      })
+      void Promise.race([verify, timeout]).catch((error: unknown) => {
+        if (timer) clearTimeout(timer)
+        const current = useAppStore.getState()
+        if (current.licenseAudit.status === 'checking') {
+          /* الفشل أو التعليق البيئي لا يُسقط المفتاح ولا يترك شاشة التحميل أبدية؛
+             يبقى التطبيق مقفلاً بوضوح حتى يمكن إعادة التحقق بأمان. */
+          useAppStore.setState({
+            activatedPayload: null,
+            licenseAudit: {
+              status: 'unverifiable',
+              reason: error instanceof Error ? error.message : 'تعذّر إكمال التحقق المحلي من الترخيص',
+              at: new Date().toISOString(),
+            },
+          })
+          console.error('[license-audit] تعذّر إكمال التحقق عند الإقلاع:', error)
+        }
+      }).finally(() => { if (timer) clearTimeout(timer) })
+    }
+    /* لا ننتظر ترطيب shopsys-data: التوقيع ومفتاح الترخيص من shopsys-app فقط.
+       انتظار المخزنين معاً كان يترك نافذة القمر على `checking` إن تأخر تحميل قاعدة
+       البيانات، كما أن بوابة الترخيص كانت تُرسم قبل بوابة ترطيب قاعدة البيانات. */
+    if (useAppStore.persist.hasHydrated()) audit()
+    else {
+      const off = useAppStore.persist.onFinishHydration(audit)
+      return () => { cancelled = true; off() }
+    }
+    return () => { cancelled = true }
+  }, [])
 
   const licenseState = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString(), deviceFlags }),
@@ -640,6 +669,20 @@ export default function App() {
     () => currentLockReason(licenseState, { activatedKey, activatedPayload, revokedKeys, licenseAudit, setup }),
     [licenseState, activatedKey, activatedPayload, revokedKeys, licenseAudit, setup],
   )
+
+  /* قد تطلب العملية الرئيسية إغلاق قمر أثناء شاشة الإقلاع/القفل؛ عندها لم يُركَّب
+     SatelliteViewRoot بعد كي يجيب المصافحة. لا توجد في هذه الحالات صفحة عمل أو
+     تعديلات غير محفوظة، لذا نقرّ الإغلاق فوراً. عند جاهزية التطبيق يتولى الجذر
+     نفسه المصافحة ويعرض تحذير المسودة كالمعتاد. */
+  const satelliteBootBlocked = satelliteBoot && (
+    !storesHydrated || !satClaimed || !setup.completed || !legalAccepted
+    || licenseAudit.status === 'checking' || lockReason !== null
+  )
+  useEffect(() => {
+    if (!satelliteBootBlocked) return
+    const bridge = desktopWindowsBridge()
+    return bridge?.onRequestClose(({ token }) => bridge.respondClose(token, true))
+  }, [satelliteBootBlocked])
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
   const [readOnlyTab, setReadOnlyTab] = useState(false)
