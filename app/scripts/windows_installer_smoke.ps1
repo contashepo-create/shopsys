@@ -95,14 +95,14 @@ try {
   if (-not $FromPublishedVersion -and (-not $safePath -or $safePath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase))) { throw 'Database was not protected outside installation' }
   Run-Probe 'verify' $safePath
   if ($FromPublishedVersion) {
-    if ($safePath -ne $unsafeDb) { throw 'previous published version did not use the requested owner installation database' }
     $backupDir = Join-Path $env:USERPROFILE 'Documents/Tahakom-Backups/manual'
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
     $backup = Join-Path $backupDir 'owner-first-upgrade.db'
-    # اترك القاعدة الافتراضية القديمة أقدم عمداً؛ الاسترداد يجب أن يحفظ آخر عمل.
-    Run-Probe 'advance' $unsafeDb
-    Run-Probe 'verify-latest' $unsafeDb
-    Run-Probe 'copy-latest' $unsafeDb $backup
+    # الإصدارات الأقدم قد تترك القاعدة داخل التثبيت، والأحدث قد تحميها عند الإقلاع؛
+    # في الحالتين نضيف آخر حركة إلى المسار الفعلي ونحفظ نسخة قبل ترقية المرشح.
+    Run-Probe 'advance' $safePath
+    Run-Probe 'verify-latest' $safePath
+    Run-Probe 'copy-latest' $safePath $backup
     Run-Probe 'verify-latest' $backup
     $installer = $candidateInstaller
   }
