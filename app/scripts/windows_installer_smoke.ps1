@@ -3,7 +3,8 @@ param([string]$FromPublishedVersion)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'CI Windows runner only — never run against the owner installation' }
 $install = Join-Path $env:RUNNER_TEMP 'Tahakom native smoke\previous install'
-$ud = Join-Path $env:APPDATA $(if ($FromPublishedVersion) { 'app' } else { 'Tahakom' })
+$legacyAppProfile = $FromPublishedVersion -and ([version]$FromPublishedVersion -lt [version]'1.0.24')
+$ud = Join-Path $env:APPDATA $(if ($legacyAppProfile) { 'app' } else { 'Tahakom' })
 if (Test-Path $ud) { throw "Expected an isolated fresh runner; will not touch existing userdata: $ud" }
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 if ($FromPublishedVersion -and $FromPublishedVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid previous published version' }
@@ -48,7 +49,7 @@ function Run-Installer([string[]]$arguments, [bool]$launchManually = $false) {
     if ($FromPublishedVersion) {
       # fixture فقط: لا تسمح لفحص التحديث الخلفي للنسخة القديمة أن يثبت إصداراً
       # مختلفاً وسط الاختبار. تنزيل القناة العامة مفحوص بشكل مستقل بHTTP حقيقي.
-      "provider: generic`nurl: http://127.0.0.1:9`nupdaterCacheDirName: ci-disabled-update" | Set-Content (Join-Path $install 'resources/app-update.yml') -Encoding utf8
+      "provider: generic`nurl: http://127.0.0.1:8123`nupdaterCacheDirName: ci-disabled-update" | Set-Content (Join-Path $install 'resources/app-update.yml') -Encoding utf8
     }
     $script:lastLaunch = Start-Process $exe -PassThru -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'native-app-stderr.log') -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'native-app-stdout.log')
   }
@@ -122,7 +123,8 @@ try {
   $afterPath = (Get-Content (Join-Path $ud 'db-location.json') -Raw | ConvertFrom-Json).customDbPath
   if ($FromPublishedVersion) {
     if (-not $afterPath -or $afterPath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase)) { throw 'First upgrade did not recover the owner backup outside installation' }
-    if (Test-Path (Join-Path $env:APPDATA 'Tahakom/device.key.enc')) { throw 'First upgrade created a new profile/key instead of using previous release profile' }
+    $otherProfileName = if ($legacyAppProfile) { 'Tahakom' } else { 'app' }
+    if (Test-Path (Join-Path (Join-Path $env:APPDATA $otherProfileName) 'device.key.enc')) { throw 'First upgrade created a duplicate profile/key instead of preserving the previous release profile' }
     if ((Get-Content $ready -Raw | ConvertFrom-Json).version -ne $version) { throw 'Candidate application did not start on the original profile' }
   } elseif ($afterPath -ne $safePath) { throw 'Existing safe database pointer changed during update' }
   if ((Get-FileHash $key -Algorithm SHA256).Hash -ne $keyHash) { throw 'Device encryption key changed during update' }

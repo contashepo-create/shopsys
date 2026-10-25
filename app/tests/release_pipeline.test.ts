@@ -201,4 +201,9 @@ it('selects a real prior complete source release for installer upgrade gates, no
     expect(workflow).toContain('-FromPublishedVersion $env:BASELINE_VERSION')
     expect(workflow).not.toContain('gh release download v1.0.23')
   }
+  const smoke = readFileSync('scripts/windows_installer_smoke.ps1', 'utf8')
+  expect(smoke).toContain("$legacyAppProfile = $FromPublishedVersion -and ([version]$FromPublishedVersion -lt [version]'1.0.24')")
+  expect(smoke).toContain('http://127.0.0.1:8123')
+  expect(smoke).not.toContain('http://127.0.0.1:9`n')
+  expect(smoke).toContain('duplicate profile/key')
 })
