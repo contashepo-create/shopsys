@@ -338,6 +338,12 @@ function createMainWindow(): BrowserWindow {
     handleMainFrameLoadFailure(win, loadState, code, desc, failedUrl)
   })
   win.webContents.on('render-process-gone', (_e, details) => {
+    if (shuttingDown) {
+      /* quitAndInstall ينهي المُصيّر عمداً بعد الحفظ والنسخة الاحتياطية؛ لا تحاول
+         تحميل صفحة خطأ أو إظهار نافذة أثناء بدء إغلاق Electron للتحديث. */
+      logLine('renderer-gone', `أُغلق المُصيّر مع إغلاق التطبيق: ${details.reason} / ${details.exitCode}`)
+      return
+    }
     logLine('renderer-gone', `reason=${details.reason} exitCode=${details.exitCode}`)
     showLoadError(win, `توقف محرك الواجهة (${details.reason} / ${details.exitCode})`)
   })

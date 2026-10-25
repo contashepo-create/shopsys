@@ -42,6 +42,8 @@ export interface SatelliteDeps {
 interface SatEntry {
   windowId: string
   win: BrowserWindow
+  /** تُلتقط قبل الإغلاق؛ webContents لا يمكن الوصول إليها من حدث closed. */
+  webContentsId: number
   type: 'section' | 'view'
   /** صنف العرض للنوع view (sales-invoice…) */
   kind: string | null
@@ -199,13 +201,13 @@ function createSatelliteWindow(init: {
     },
   })
   const entry: SatEntry = {
-    windowId: init.windowId, win, type: init.type, kind: init.kind, sectionPath: init.sectionPath,
+    windowId: init.windowId, win, webContentsId: win.webContents.id, type: init.type, kind: init.kind, sectionPath: init.sectionPath,
     title: init.title, dedupeKey: init.dedupeKey, parentId: init.parentId, ownerWcId: init.ownerWcId,
     requestId: init.requestId, dirty: false, claimed: false, forceClose: false, closing: false,
     descriptor: init.descriptor,
   }
   byId.set(entry.windowId, entry)
-  byWcId.set(win.webContents.id, entry.windowId)
+  byWcId.set(entry.webContentsId, entry.windowId)
   deps?.authorizeSatellite?.(win.webContents.id)
   if (init.requestId) requests.set(init.requestId, { ownerWcId: init.ownerWcId, windowId: entry.windowId })
   secureSatellite(win, entry)
@@ -221,8 +223,10 @@ function createSatelliteWindow(init: {
   })
   win.on('closed', () => {
     byId.delete(entry.windowId)
-    byWcId.delete(entry.win.webContents.id)
-    deps?.forgetSatellite?.(entry.win.webContents.id)
+    /* Electron أعدم BrowserWindow/WebContents قبل إطلاق `closed`؛ لا تستدعِ
+       entry.win.webContents هنا، وإلا يُرمى Object has been destroyed داخل main. */
+    byWcId.delete(entry.webContentsId)
+    deps?.forgetSatellite?.(entry.webContentsId)
     if (entry.requestId) requests.delete(entry.requestId)
     for (const [token, id] of tokens) if (id === entry.windowId) tokens.delete(token)
     /* يتيمات القمر المنهار: تُغلق قسراً — أمّها اختفت ولا معنى لبقائها */
