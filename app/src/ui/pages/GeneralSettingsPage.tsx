@@ -531,7 +531,7 @@ export function GeneralSettingsPage() {
           {fiscalYears.map((y) => {
             const closable = validateYearClose(y, fiscalYears, todayLocalIso()).length === 0
             // إعادة الفتح بالترتيب العكسي: أحدث سنة مقفلة فقط (لا سنة مقفلة أحدث منها)
-            const newestClosed = y.status === 'closed' && !fiscalYears.some((o) => o.id !== y.id && o.status === 'closed' && o.startDate > y.endDate)
+            const newestClosed = y.status === 'closed' && !fiscalYears.some((o) => o.id !== y.id && o.branchId === y.branchId && o.status === 'closed' && o.startDate > y.endDate)
             return (
               <div key={y.id} className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5">
                 <div>

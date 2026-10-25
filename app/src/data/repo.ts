@@ -10729,8 +10729,15 @@ export const useRawDataStore = create<DataState>()(
           useAppStore.getState().markFiscalYearClosed(fy.id)
           throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل — تمت استعادة حالة الإقفال`)
         }
-        // ② تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
-        const errors = validateYearClose(fy, allYears, todayLocalIso())
+        // ② تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني داخل الفرع نفسه).
+        // استخدم سجل السنوات المركزي لتفادي أن يمنع تقويم فرع آخر هذا الإقفال؛
+        // واربط الفترات التاريخية غير المنسوبة بالرئيسي قبل تطبيق ترتيب الفترات.
+        const storedYears = useAppStore.getState().fiscalYears
+        const orderedYears = state.branches.length > 0 && mainBranchId != null
+          ? storedYears.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
+          : allYears
+        const orderedYear = fiscalBranchId == null ? fy : { ...fy, branchId: fiscalBranchId }
+        const errors = validateYearClose(orderedYear, orderedYears, todayLocalIso())
         if (errors.length) throw new Error(errors.join(' — '))
         // ③ يبني الإقفال من دفتر الفرع صاحب الفترة وحده؛ العرض/الإقفال العام القديم
         // يبقى على اليومية الكاملة للتوافق مع السجلات غير المنسوبة.
@@ -10770,7 +10777,16 @@ export const useRawDataStore = create<DataState>()(
         if (fy.status !== 'closed') throw new Error('السنة مفتوحة أصلاً — لا شيء يُعاد فتحه')
         // الترتيب العكسي (نمط Odoo): لا إعادة فتح لسنة توجد بعدها سنة مقفلة —
         // قيد إقفال السنة الأحدث بُني على أرصدة أُغلق عليها الأقدم، ففكّ الأحدث أولاً
-        const newerClosed = allYears.find((y) => y.id !== fy.id && y.status === 'closed' && y.startDate > fy.endDate)
+        const storedYears = useAppStore.getState().fiscalYears
+        const orderedYears = state.branches.length > 0 && mainBranchId != null
+          ? storedYears.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
+          : allYears
+        const orderedBranchId = fiscalBranchId
+        const orderedFiscalYear = orderedBranchId == null ? fy : { ...fy, branchId: orderedBranchId }
+        const newerClosed = orderedYears.find((y) => y.id !== fy.id
+          && y.branchId === orderedFiscalYear.branchId
+          && y.status === 'closed'
+          && y.startDate > fy.endDate)
         if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
         const closingEntry = state.journal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
         if (!closingEntry) {

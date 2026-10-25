@@ -265,12 +265,18 @@ export function buildFiscalYearReport(
   return { rows, totalRevenueMinor: rev, totalExpenseMinor: exp, netProfitMinor: rev - exp }
 }
 
-/** تحقق قبل الإقفال: السنة منتهية فعلاً، ولا سنة أقدم منها ما زالت مفتوحة (الإقفال بالترتيب) */
+/**
+ * تحقق قبل الإقفال: السنة منتهية فعلاً، ولا سنة أقدم من الفرع نفسه ما زالت مفتوحة.
+ * تقاويم الفروع مستقلة؛ سنة مفتوحة في فرع آخر لا تعطل الإقفال هنا.
+ */
 export function validateYearClose(fy: FiscalYear, allYears: readonly FiscalYear[], todayIso: string): string[] {
   const errors: string[] = []
   if (fy.status === 'closed') errors.push('السنة مقفلة بالفعل')
   if (fy.endDate >= todayIso) errors.push(`لا تُقفل سنة قبل انتهائها — تنتهي في ${fy.endDate}`)
-  const olderOpen = allYears.find((y) => y.id !== fy.id && y.status === 'open' && y.endDate < fy.startDate)
+  const olderOpen = allYears.find((y) => y.id !== fy.id
+    && y.branchId === fy.branchId
+    && y.status === 'open'
+    && y.endDate < fy.startDate)
   if (olderOpen) errors.push(`أقفل السنة الأقدم «${olderOpen.nameAr}» أولاً — الإقفال يكون بالترتيب الزمني`)
   return errors
 }
