@@ -96,6 +96,21 @@ describe('opening balances are balances, not period activity', () => {
     })
   })
 
+  it('labels and filters expense reversals by their economic source, not the technical reversal marker', () => {
+    const original: JournalEntry = {
+      ...openingEntry(8, [line('5102', 500, 0), line('1101', 0, 500)]),
+      sourceType: 'voucher', sourceId: 44,
+    }
+    const reversal: JournalEntry = {
+      ...openingEntry(9, [line('5102', 0, 500), line('1101', 500, 0)]),
+      sourceType: 'reversal', reversesEntryId: original.id,
+    }
+    const rows = expenseDetails([original, reversal], { ...period, accountCode: '5102', sourceType: 'voucher' }, new Set())
+    expect(rows.totalMinor).toBe(0)
+    expect(rows.rows.map((row) => row.sourceType)).toEqual(['voucher', 'voucher'])
+    expect(expenseDetails([original, reversal], { ...period, accountCode: '5102', sourceType: 'reversal' }, new Set()).rows).toHaveLength(0)
+  })
+
   it('excludes opening revenues and expenses from operational reports, with explicit source drill-down available', () => {
     expect(activityRevenueRows(journal, period).totalMinor).toBe(0)
     const expenseCodes = new Set<string>()
@@ -113,7 +128,7 @@ describe('opening balances are balances, not period activity', () => {
     const withReversal = [...journal, openingExpenseReversal]
     expect(expenseDetails(withReversal, { ...period, accountCode: '5102', sourceType: 'opening' }, expenseCodes)).toMatchObject({
       totalMinor: 0,
-      rows: expect.arrayContaining([expect.objectContaining({ entryId: 7, sourceType: 'reversal', amountMinor: -200 })]),
+      rows: expect.arrayContaining([expect.objectContaining({ entryId: 7, sourceType: 'opening', amountMinor: -200 })]),
     })
     expect(journalExpensesByCostCenter(withReversal, { ...period, costCenterId: 7, sourceType: 'opening' }, expenseCodes).totalMinor).toBe(0)
   })

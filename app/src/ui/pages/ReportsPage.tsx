@@ -31,6 +31,7 @@ import { productionVarianceReport } from '../../core/recipes.ts'
 import { wastageRatioReport, wastageByItemReport } from '../../core/wastage.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
+import { economicSourceResolver } from '../../core/journalSource.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls, useToast } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
@@ -318,7 +319,10 @@ export function ReportsPage() {
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],
   )
-  const expSources = useMemo(() => [...new Set(journal.flatMap((e) => e.lines.some((l) => l.accountCode.startsWith('5') || customExpenseCodes.has(l.accountCode)) ? [e.sourceType] : []))], [journal, customExpenseCodes])
+  const expSources = useMemo(() => {
+    const sourceOf = economicSourceResolver(journal)
+    return [...new Set(journal.flatMap((entry) => entry.lines.some((line) => line.accountCode.startsWith('5') || customExpenseCodes.has(line.accountCode)) ? [sourceOf(entry) ?? entry.sourceType] : []))]
+  }, [journal, customExpenseCodes])
   const exportExpenses = () => {
     const csv = expAccount ? expenseDetailsCsv(expDetail.rows) : expenseSummaryCsv(expSummary.rows)
     const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }))

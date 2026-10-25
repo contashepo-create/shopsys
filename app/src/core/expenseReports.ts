@@ -301,7 +301,7 @@ export function expenseDetails(
       if (filter.accountCode && l.accountCode !== filter.accountCode) continue
       rows.push({
         entryId: e.id, entryNumber: e.entryNumber, date: e.date.slice(0, 10),
-        description: l.note || e.description, sourceType: e.sourceType,
+        description: l.note || e.description, sourceType: sourceOf(e) ?? e.sourceType,
         accountCode: l.accountCode,
         amountMinor: l.debit - l.credit,
       })
