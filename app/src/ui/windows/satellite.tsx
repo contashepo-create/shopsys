@@ -103,7 +103,7 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
 
   useEffect(() => {
     const off = bridge?.onRequestClose(({ token }) => {
-      if (!dirtyRef.current && !promptRef.current) { bridge?.respondClose(token, true); return }
+      if (!dirtyRef.current) { bridge?.respondClose(token, true); return }
       setAsk((prev) => ({ tokens: [...(prev?.tokens ?? []), token] }))
     })
     bridge?.setRendererReady(true)
@@ -150,7 +150,7 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
           /* Escape يغلق هذه النافذة وحدها (قاعدة المالك) ما لم يعالجه عنصر داخلها */
           if (event.key !== 'Escape' || event.defaultPrevented) return
           event.stopPropagation()
-          if (!dirtyRef.current && !promptRef.current) bridge?.closeSelf()
+          if (!dirtyRef.current) bridge?.closeSelf()
           else setAsk((prev) => ({ tokens: [...(prev?.tokens ?? []), null] }))
         }}
       >

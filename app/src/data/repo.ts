@@ -9820,17 +9820,25 @@ export const useRawDataStore = create<DataState>()(
           ? (!usedTempPin && state.ownerPinHash && !isModernPinHash(state.ownerPinHash) ? await hashPin(pin) : null)
           : (() => { const user = state.appUsers.find((u) => u.id === id); return user && !isModernPinHash(user.pinHash) ? user : null })()
         const upgradedUserHash = legacyPinHash && typeof legacyPinHash === 'object' ? await hashPin(pin) : null
+        /* غيّر هوية الجلسة أولاً قبل كتابة أي سرّ تابع للمستخدم الجديد.
+           حارس النطاق يقيّم كل كتابة في سياق المستخدم الحالي قبل العملية؛
+           جمع currentUserId مع ترقية PIN قديم في set واحدة كان يحاول تعديل
+           appUsers للفرع 2 بينما الحارس ما زال يرى جلسة الفرع 1، فيرفض الدخول
+           برسالة «سجل appUsers تابع لفرع آخر». بعد هذه الكتابة الصغيرة يصبح
+           نطاق الحراسة هو نطاق الحساب الذي أثبت PINه للتو. نبقي loggedOut=true
+           إلى أن تكتمل الكتابة الثانية كي لا تُفتح الواجهة في منتصف الدخول. */
+        set({ currentUserId: id, loggedOut: true })
+        const switched = get()
         set({
-          currentUserId: id,
           loggedOut: false,
           loginGuard: EMPTY_GUARD,
           // الرقم المؤقت يُحرق فور استخدامه (استخدام واحد)
           ...(usedTempPin ? { ownerTempPin: null } : {}),
           ...(typeof legacyPinHash === 'string' ? { ownerPinHash: legacyPinHash } : {}),
           ...(legacyPinHash && typeof legacyPinHash === 'object' && upgradedUserHash
-            ? { appUsers: state.appUsers.map((u) => u.id === legacyPinHash.id ? { ...u, pinHash: upgradedUserHash } : u) }
+            ? { appUsers: switched.appUsers.map((u) => u.id === legacyPinHash.id ? { ...u, pinHash: upgradedUserHash } : u) }
             : {}),
-          auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: userName, kind: 'auth', title: usedTempPin ? 'دخول المالك برقم مؤقت (استعادة تليجرام)' : `تسجيل دخول «${userName}»` }]),
+          auditLog: appendAudit(switched.auditLog, [{ at: nowIso, user: userName, kind: 'auth', title: usedTempPin ? 'دخول المالك برقم مؤقت (استعادة تليجرام)' : `تسجيل دخول «${userName}»` }]),
         })
         syncAppBranchContext(get())
         return { usedTempPin, mustChangePin }

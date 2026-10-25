@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
-const { useWindowStore, openSalesInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow, openItemLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
+const { useWindowStore, openSalesInvoiceWindow, openPurchaseInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow, openItemLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
 const { WindowHost } = await import('../src/ui/windows/WindowHost.tsx')
 const { Modal, Btn } = await import('../src/ui/components/ui.tsx')
 
@@ -193,6 +193,109 @@ describe('نظام النوافذ المستقلة', () => {
     await act(async () => { fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement) })
     await waitFor(() => expect(W().windows.find((row) => row.id === id)).toBeFalsy())
     expect(S().advancedInvoiceDrafts.length).toBe(before)
+  })
+
+  it('استعادة مسودة المبيعات تحفظ لاحقاً فوق نفس المسودة ولا تنشئ نسخة منفصلة', async () => {
+    const draftId = 'sales-draft-roundtrip'
+    const priorSalesDraftCount = S().advancedInvoiceDrafts.filter((draft) => draft.kind === 'sale' && !draft.isTemplate).length
+    S().upsertAdvancedInvoiceDraft({
+      id: draftId, kind: 'sale', name: 'مسودة اختبار العميل',
+      payload: JSON.stringify({ notes: 'ملاحظة محفوظة سابقاً', lines: [], customerId: 0 }),
+    })
+    const id = openSalesInvoiceWindow()
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    await waitFor(() => expect(document.querySelector('[data-window-kind="sales-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+
+    fireEvent.click([...document.querySelectorAll('button')].find((button) => button.textContent?.includes('المسودات')) as HTMLElement)
+    const row = await waitFor(() => {
+      const element = document.querySelector(`[data-draft-row="${draftId}"]`)
+      expect(element).toBeTruthy()
+      return element as HTMLElement
+    })
+    fireEvent.click(row.querySelector('button') as HTMLElement)
+    const notes = document.querySelector(`[data-app-window="${id}"] textarea`) as HTMLTextAreaElement
+    await waitFor(() => expect(notes.value).toBe('ملاحظة محفوظة سابقاً'))
+    fireEvent.change(notes, { target: { value: 'تعديل محفوظ على نفس المسودة' } })
+    fireEvent.click([...document.querySelectorAll('button')].find((button) => button.textContent?.includes('حفظ مسودة')) as HTMLElement)
+
+    await waitFor(() => {
+      const drafts = S().advancedInvoiceDrafts.filter((draft) => draft.kind === 'sale' && !draft.isTemplate)
+      const restoredDrafts = drafts.filter((draft) => draft.id === draftId)
+      expect(drafts).toHaveLength(priorSalesDraftCount + 1)
+      expect(restoredDrafts).toHaveLength(1)
+      expect(JSON.parse(restoredDrafts[0].payload).notes).toBe('تعديل محفوظ على نفس المسودة')
+    })
+  })
+
+  it('إلغاء مسودة مشتريات مستعادة يغلق النافذة ويحذف المسودة المحددة لا معرّفاً مؤقتاً', async () => {
+    const draftId = 'purchase-draft-discard'
+    S().upsertAdvancedInvoiceDraft({
+      id: draftId, kind: 'purchase', name: 'مسودة اختبار المورد',
+      payload: JSON.stringify({ notes: 'مسودة مشتريات محفوظة', lines: [], supplierId: 0 }),
+    })
+    const id = openPurchaseInvoiceWindow()
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    await waitFor(() => expect(document.querySelector('[data-window-kind="purchase-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+
+    fireEvent.click([...document.querySelectorAll('button')].find((button) => button.textContent?.includes('المسودات')) as HTMLElement)
+    const row = await waitFor(() => {
+      const element = document.querySelector(`[data-draft-row="${draftId}"]`)
+      expect(element).toBeTruthy()
+      return element as HTMLElement
+    })
+    fireEvent.click(row.querySelector('button') as HTMLElement)
+    const notes = document.querySelector(`[data-app-window="${id}"] textarea`) as HTMLTextAreaElement
+    await waitFor(() => expect(notes.value).toBe('مسودة مشتريات محفوظة'))
+    fireEvent.change(notes, { target: { value: 'تعديل مشتريات غير محفوظ' } })
+    await waitFor(() => expect(W().windows.find((window) => window.id === id)?.dirty).toBe(true))
+
+    fireEvent.click(document.querySelector(`[data-app-window="${id}"] [data-window-close]`) as HTMLElement)
+    await act(async () => { fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement) })
+    await waitFor(() => expect(W().windows.some((window) => window.id === id)).toBe(false))
+    expect(S().advancedInvoiceDrafts.some((draft) => draft.id === draftId)).toBe(false)
+  })
+
+  it('القمر المستقل يغلق فاتورة نظيفة فوراً ويطلب تأكيداً بعد تحريرها', async () => {
+    const previousDesktop = window.shopsysDesktop
+    let requestClose: ((event: { token: string }) => void) | undefined
+    const bridge = {
+      onRequestClose: (listener: (event: { token: string }) => void) => { requestClose = listener; return () => { requestClose = undefined } },
+      setRendererReady: vi.fn(),
+      setDirty: vi.fn(),
+      respondClose: vi.fn(),
+      closeSelf: vi.fn(),
+      setTitle: vi.fn(),
+      invokeProp: vi.fn(),
+    }
+    window.shopsysDesktop = { runtime: 'electron', windows: bridge } as unknown as NonNullable<typeof window.shopsysDesktop>
+    try {
+      const { SatelliteViewRoot } = await import('../src/ui/windows/satellite.tsx')
+      render(<MemoryRouter><SatelliteViewRoot descriptor={{ windowId: 'satellite-test', type: 'view', kind: 'sales-invoice', title: 'فاتورة اختبار' }} /></MemoryRouter>)
+      await waitFor(() => expect(document.querySelector('[data-satellite-view="sales-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+      await waitFor(() => expect(requestClose).toBeTypeOf('function'))
+      await act(async () => { requestClose?.({ token: 'clean-close' }) })
+      expect(bridge.respondClose).toHaveBeenCalledWith('clean-close', true)
+      expect(document.querySelector('[data-window-close-confirm]')).toBeNull()
+
+      const notes = document.querySelector('[data-satellite-view="sales-invoice"] textarea') as HTMLTextAreaElement
+      fireEvent.change(notes, { target: { value: 'تغيير غير محفوظ' } })
+      await waitFor(() => expect(bridge.setDirty).toHaveBeenCalledWith(true))
+      await act(async () => { requestClose?.({ token: 'dirty-close-cancel' }) })
+      expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+      expect(bridge.respondClose).not.toHaveBeenCalledWith('dirty-close-cancel', true)
+      fireEvent.click(document.querySelector('[data-window-close-cancel]') as HTMLElement)
+      expect(bridge.respondClose).toHaveBeenCalledWith('dirty-close-cancel', false)
+      expect(document.querySelector('[data-window-close-confirm]')).toBeNull()
+      expect(document.querySelector('[data-satellite-view="sales-invoice"] .invoice-pos-root')).toBeTruthy()
+
+      await act(async () => { requestClose?.({ token: 'dirty-close-confirm' }) })
+      expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+      fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement)
+      expect(bridge.respondClose).toHaveBeenCalledWith('dirty-close-confirm', true)
+    } finally {
+      if (previousDesktop) window.shopsysDesktop = previousDesktop
+      else delete window.shopsysDesktop
+    }
   })
 
   it('كشف حساب العميل يفتح كنافذة مستقلة بصفوف الحركة', () => {
