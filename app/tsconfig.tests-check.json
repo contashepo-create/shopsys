@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "module": "esnext",
+    "types": [
+      "vite/client",
+      "node"
+    ],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowArbitraryExtensions": true
+  },
+  "include": [
+    "tests/app_windows.test.tsx",
+    "tests/desktop_storage.test.ts",
+    "tests/invoice_commit_lock.test.ts",
+    "tests/invoice_window_close_repro.test.tsx",
+    "tests/keyboard_pickers.test.tsx",
+    "tests/satellite_window_destroyed.test.ts",
+    "tests/window_ask_layers.test.ts",
+    "tests/window_tabs.test.tsx",
+    "tests/window_tabs_app.test.tsx",
+    "tests/window_tabs_dedupe.test.tsx"
+  ]
+}

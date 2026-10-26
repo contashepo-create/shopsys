@@ -90,8 +90,8 @@ export interface OpenWindowInput {
 }
 
 /**
- * تبويب داخل النافذة الأم (طلب المالك2026-10-26): كل قسم/عرض كان يفتح نافذة
- * حرة مستقلة يُفتح الآن كتاباباً في الرئيسية — رأس علوي، تنقّل بالنقر، وزر
+ * تبويب داخل النافذة الأم (طلب المالك 2026-10-26): كل قسم/عرض كان يفتح نافذة
+ * حرة مستقلة يُفتح الآن تبويباً في الرئيسية — رأس علوي، تنقّل بالنقر، وزر
  * إغلاق بجانب الاسم — ماعدا الفواتير بجميع أنواعها (تبقى نوافذ حرة).
  * تبويب المسار يرسم شاشة من الراوتر · تبويب العرض يرسم WindowViewContent.
  */
@@ -197,7 +197,7 @@ export interface WindowStoreState {
   /** آخر مسار عرضه الراوتر — يُستخدم لتحديد التبويب النشط عند الإغلاق */
   currentPath: string
   openWindow: (input: OpenWindowInput) => string
-  /** فتح تبويب (مسار أو عرض) — يرجع null عند بلوغ الحد الأقصى10 */
+  /** فتح تبويب (مسار أو عرض) — يرجع null عند بلوغ الحد الأقصى 10 */
   openTab: (input: OpenTabInput) => string | null
   activateTab: (id: string) => void
   requestCloseTab: (id: string) => void
@@ -242,6 +242,8 @@ const satelliteParent = new Map<string, string | null>()
 let transportInstalled = false
 /** إجراء واحد معلّق لحوار تأكيد التبويب (إغلاق أو مغادرة) — يُنفّذ عند التأكيد فقط */
 let tabAskProceed: (() => void) | null = null
+/** أقمار عولج تعارضها مع تبويب قائمة (قاعدة «التبويب يسبق القمر») — مرة واحدة لكل قمر */
+const settledDedupeWindows = new Set<string>()
 
 function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
   const alive = new Set<string>()
@@ -251,6 +253,23 @@ function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
     if (entry.dedupeKey) satelliteByDedupe.set(entry.dedupeKey, entry.windowId)
     if (!satelliteIds.has(entry.windowId)) satelliteIds.set(entry.windowId, null)
     satelliteParent.set(entry.windowId, entry.parentId)
+    /* قاعدة «التبويب يسبق القمر»: قمر فُتح من نافذة أخرى (قمر مفتوح خلفيّاً)
+       بنفس مفتاح تبويب قائمة في هذه النافذة — يُغلق القمر (مع حوار إغلاقه إن
+       كان متسخاً) وتُصعَّد هذه النافذة على التبويب، فيبقى مثيل واحد لكل مفتاح
+       مهما من أي نافذة بدأ الفتح. الباب مغلق من الطرفين: openTab لا يدّعِ
+       فوق قمر قائم، وopenSatelliteWindow لا يفتح قمراً فوق تبويب قائم. */
+    if (entry.dedupeKey && !settledDedupeWindows.has(entry.windowId)) {
+      const store = useWindowStore.getState()
+      const dupTab = store.tabs.find((row) => row.dedupeKey === entry.dedupeKey)
+      if (dupTab) {
+        settledDedupeWindows.add(entry.windowId)
+        const bridge = desktopBridge()
+        bridge?.requestClose(entry.windowId)
+        /* صعود للأمام أولاً حتى يظهر حوار التبديل إن كان التبويب متسخاً */
+        void bridge?.openSection({ path: '/', title: 'الرئيسية' }).catch(() => undefined)
+        useWindowStore.getState().activateTab(dupTab.id)
+      }
+    }
   }
   for (const [id, requestId] of [...satelliteIds]) {
     if (!alive.has(id)) {
@@ -294,6 +313,15 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
   if (input.dedupeKey) {
     const existingId = satelliteByDedupe.get(input.dedupeKey)
     if (existingId) { bridge.focus(existingId); return existingId }
+    /* تبويب بنفس المفتاح مفتوح في هذه النافذة — لا يُفتح قمر ثانٍ لنفس
+       المحرر (تضارب نسختين على مستند واحد): التبويب يُفعَّل وتُصعَّد النافذة
+       لتراه. لا قناة تركيز مباشرة للأم — فُتح المسار الرئيسي يرفعها وحده. */
+    const existingTab = useWindowStore.getState().tabs.find((row) => row.dedupeKey === input.dedupeKey)
+    if (existingTab) {
+      void bridge.openSection({ path: '/', title: 'الرئيسية' }).catch(() => undefined)
+      useWindowStore.getState().activateTab(existingTab.id)
+      return existingTab.id
+    }
   }
   const id = newWindowId()
   const requestId = `req-${id}`
@@ -342,13 +370,26 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
 export function openSectionWindow(path: string, title: string): boolean {
   const bridge = desktopBridge()
   if (!bridge || !path || path === '/') return false
-  /* القرار (المالك2026-10-26): القسم يفتح كتاباباً داخل النافذة الأم لا نافذة
-     حرة — التبويب يفعّل الراوتر عبر pendingPath. عند بلوغ الحد الأقصى10
+  /* القرار (المالك 2026-10-26): القسم يفتح تبويباً داخل النافذة الأم لا نافذة
+     حرة — التبويب يفعّل الراوتر عبر pendingPath. عند بلوغ الحد الأقصى 10
      يعود لسلوكه القديم (نافذة قسم مستقلة) فلا يُحجب عن المستخدم. */
   const tabId = useWindowStore.getState().openTab({ path, title })
-  if (tabId) return true
+  if (tabId) {
+    /* نافذة قسم بنفس المسار قد بقيت مفتوحة من أيام امتلاء الحد الأقصى —
+       التبويب يحل محلها الآن فتُغلق؛ إن كانت متسخة يظهر حوار إغلاقها. */
+    const stale = satelliteByDedupe.get(sectionDedupeKey(path))
+    if (stale) bridge.requestClose(stale)
+    return true
+  }
   void bridge.openSection({ path, title }).catch(() => undefined)
   return true
+}
+
+/** مطابقة مفتاح تكرار نوافذ الأقسام على العملية الرئيسية (normalizeSectionPath هناك) */
+function sectionDedupeKey(path: string): string {
+  const noQuery = String(path ?? '').trim().split('?')[0].split('#')[0]
+  if (!noQuery || noQuery === '/') return 'section:/'
+  return `section:${noQuery.startsWith('/') ? noQuery : `/${noQuery}`}`
 }
 
 export const useWindowStore = create<WindowStoreState>((set, get) => ({
@@ -366,12 +407,16 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
          نوافذ حرة. والمنتقيات (entity/item-picker) تبقى نوافذ متكدسة حتى من
          الرئيسية: أدوات تراكب تحمل onPick فوق محتوى لا يجوز إزاحته — تبويبها
          من الرئيسية كان سيفكّ نداء الاختيار بعد تركيب الراوتر؛ وقبل كل ذلك
-         فالمنتقي يكدس فوق الصفحة لا يحل محلها (قرار المالك ㉧). */
+         فالمنتقي يكدس فوق الصفحة لا يحل محلها (قرار المالك). */
       const parent = resolveOpenParent(input)
       const fromMain = !parent || parent === 'main'
       const invoiceKind = input.kind === 'sales-invoice' || input.kind === 'purchase-invoice'
       const overlayKind = input.kind === 'entity-picker' || input.kind === 'item-picker'
-      if (fromMain && !invoiceKind && !overlayKind) {
+      /* قمر بنفس المفتاح مفتوح أصلاً (فُتح كابنة فوق نافذة أخرى) — لا يُدَّخَل
+         تبويب ثانٍ لنفس المحرر؛ الفتح يُركِّز القمر القائم كي لا تتضارب نسختا
+         تعديل على مستند واحد. */
+      const satelliteOpen = input.dedupeKey != null && satelliteByDedupe.has(input.dedupeKey)
+      if (fromMain && !invoiceKind && !overlayKind && !satelliteOpen) {
         const tabId = get().openTab({
           kind: input.kind,
           props: input.props,
@@ -380,7 +425,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
           dedupeKey: input.dedupeKey ?? null,
         })
         if (tabId) return tabId
-        /* الحد الأقصى10: يُفتح كنافذة حرة — السلوك القديم نفسه */
+        /* الحد الأقصى 10: يُفتح كنافذة حرة — السلوك القديم نفسه */
       }
       return openSatelliteWindow(bridge, input)
     }

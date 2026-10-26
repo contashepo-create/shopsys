@@ -193,8 +193,8 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
      يُفتح عبر رابط مباشر حتى من نافذة حرة. */
   const Layout = (satellite ? SatelliteLayout : MainLayout) as React.ComponentType<{ title?: string; children: React.ReactNode }>
 
-  /* ── تبويبات النافذة الأم (قرار المالك2026-10-26): الأقسام والعروض تُفتح
-     كتاباباً داخل الرئيسية — مزامنة الراوتر مع المتجر باتجاهين واحدة. ── */
+  /* ── تبويبات النافذة الأم (قرار المالك 2026-10-26): الأقسام والعروض تُفتح
+     تبويباً داخل الرئيسية — مزامنة الراوتر مع المتجر باتجاهين متبادلين. ── */
   const windowTabs = useWindowStore((s) => s.tabs)
   const viewActiveTabId = useWindowStore((s) => s.viewActiveTabId)
   const pendingPath = useWindowStore((s) => s.pendingPath)
@@ -215,10 +215,10 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
     if (pendingPath !== current) navigate(pendingPath, { replace: true })
   }, [pendingPath, satellite, location.pathname, location.search, navigate])
 
-  /* الرئيسية مشغّل — نسخة التبويبات (قرار المالك2026-10-26): أي تنقّل لغير
+  /* الرئيسية مشغّل — نسخة التبويبات (قرار المالك 2026-10-26): أي تنقّل لغير
      لوحة التحكم على سطح المكتب يفتح القسم تبويباً داخل هذه النافذة نفسها
      بدل نافذة حرة مستقلة، ولا تعود الرئيسية للوحة التحكم — التبويب هو العرض.
-     عند بلوغ10 تبويبات يعود openSectionWindow لسلوكه القديم (نافذة قسم)
+     عند بلوغ 10 تبويبات يعود openSectionWindow لسلوكه القديم (نافذة قسم)
      وهنا يرتد المحتوى للوحة التحكم حتى لا يُعرض القسم مرتين (نافذة + الرئيسية).
      في الويب لا جسر: التنقل الداخلي كما هو حرفياً. */
   useEffect(() => {
@@ -226,7 +226,7 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
     if (!setupState.completed || location.pathname === '/') return
     const raw = useRawDataStore.getState()
     if (raw.loggedOut || !useSessionAuthStore.getState().authenticated) return
-    /* الفواتير حرة (قرار المالك2026-10-26): مسار مستند الفاتورة يفتح نافذته
+    /* الفواتير حرة (قرار المالك 2026-10-26): مسار مستند الفاتورة يفتح نافذته
        ثم يعود للقائمة بفعل InvoiceDocumentRoute نفسه — لا يحجز تبويباً هنا. */
     if (location.pathname === '/sales/invoices/new' || location.pathname === '/purchases/invoices/new') return
     const current = `${location.pathname}${location.search}`

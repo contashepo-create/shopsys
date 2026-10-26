@@ -3,7 +3,7 @@
  * إعادة الفحص): يثبت قرارين لا يغطيهما اختبار المتجر وحده:
  *   • D5 «الفواتير حرة»: مسار مستند الفاتورة (/sales|purchases/invoices/new)
  *     لا يحجز تبويباً — يفتح نافذة الفاتورة الحرة ثم يعود للقائمة.
- *   • D1 ارتداد الحد الأقصى: عند10 تبويبات يفتح القسم نافذة حرة ويرتد
+ *   • D1 ارتداد الحد الأقصى: عند 10 تبويبات يفتح القسم نافذة حرة ويرتد
  *     محتوى الرئيسية للوحة التحكم حتى لا يُعرض القسم مرتين (نافذة + صفحة).
  * يركّب <App/> ببيانات النشاط التجريبي كما في all_pages_render + جسر وهمي كامل.
  */
@@ -76,8 +76,8 @@ async function prefillTabs() {
   const tabs = Array.from({ length: MAX_WINDOW_TABS }, (_, index) => ({
     id: `prefill-${index}`,
     path: `/prefill-${index}`,
-    kind: null,
-    props: null,
+    kind: undefined,
+    props: undefined,
     title: `قسم ${index}`,
     subtitle: '',
     dedupeKey: null,
@@ -116,7 +116,7 @@ describe('أثر <App/> للتبويبات على سطح المكتب', () => {
     expect(openSection.mock.calls.some((call) => call[0].path.includes('invoices/new'))).toBe(false)
   })
 
-  it('D1: عند10 تبويبات يفتح القسم نافذة حرة ويرتد محتوى الرئيسية للوحة (لا عرض مزدوج)', async () => {
+  it('D1: عند 10 تبويبات يفتح القسم نافذة حرة ويرتد محتوى الرئيسية للوحة (لا عرض مزدوج)', async () => {
     const { openSection } = installFakeDesktop()
     await prefillTabs()
     window.location.hash = '#/purchases/orders'
@@ -127,7 +127,7 @@ describe('أثر <App/> للتبويبات على سطح المكتب', () => {
     /* ارتداد: الرئيسية تعود للوحة التحكم بعد فتح النافذة الحرة */
     await waitFor(() => expect(window.location.hash).toBe('#/'), { timeout: 10_000 })
     const { useWindowStore, MAX_WINDOW_TABS } = await import('../src/ui/windows/windowStore.ts')
-    /* لم يُحجز حادي عشر تبويب — ال10 كما هي */
+    /* لم يُحجز حادي عشر تبويب — الـ10 كما هي */
     expect(useWindowStore.getState().tabs).toHaveLength(MAX_WINDOW_TABS)
     expect(useWindowStore.getState().tabs.some((tab) => tab.path === '/purchases/orders')).toBe(false)
   })

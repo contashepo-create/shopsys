@@ -22,7 +22,7 @@ describe('دورة حياة نوافذ Electron المستقلة', () => {
     expect(handler).toBeTruthy()
     expect(handler).toMatch(/if \(shuttingDown\)[\s\S]*?return/)
     expect(handler).toMatch(/showLoadError\(win/)
-    expect(handler?.indexOf('if (shuttingDown)')).toBeLessThan(handler?.indexOf('showLoadError(win'))
+    expect(handler!.indexOf('if (shuttingDown)')).toBeLessThan(handler!.indexOf('showLoadError(win'))
   })
 
   it('يركّز النافذة المستهدفة أمام المستخدم قبل إرسال سؤال تأكيد الإغلاق', () => {
