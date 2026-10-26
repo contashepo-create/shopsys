@@ -54,6 +54,52 @@ describe('نظام النوافذ المستقلة', () => {
     expect(W().windows.find((w) => w.id === first)!.z).toBeGreaterThan(W().windows.find((w) => w.id === second)!.z)
   })
 
+  it('ترحيل فاتورة البيع من نافذة مستقلة يثبت العميل ويغلق النافذة بعد النجاح', async () => {
+    const customerName = 'عميل إغلاق تلقائي'
+    S().addCustomer({ ...EMPTY, nameAr: customerName, phone: '', creditLimitMinor: 0, notes: '' } as never)
+    const customer = S().customers.at(-1)!
+    const itemName = 'صنف إغلاق تلقائي'
+    S().addItem({
+      nameAr: itemName, sku: 'AUTO-CLOSE-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
+      costMinor: 1000, stockQty: 10, priceMinor: 2500, minQty: 0, trackExpiry: false, trackSerial: false,
+      warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true,
+    })
+    const item = S().items.at(-1)!
+    const id = openSalesInvoiceWindow()
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+
+    const customerInput = await waitFor(() => {
+      const input = document.querySelector('[aria-label="بحث العميل — F4"]')
+      expect(input).toBeTruthy()
+      return input as HTMLInputElement
+    })
+    fireEvent.change(customerInput, { target: { value: customerName } })
+    const customerOption = await waitFor(() => {
+      const option = document.querySelector(`[data-quick-option][data-value="${customer.id}"]`)
+      expect(option).toBeTruthy()
+      return option as HTMLElement
+    })
+    fireEvent.click(customerOption)
+    expect(document.querySelector(`[data-app-window="${id}"] .invoice-doc-infield-chip`)?.textContent).not.toBe('CASH')
+
+    const itemInput = document.querySelector('[aria-label="اسم الصنف — اكتب أو اضغط مرتين للبحث"]') as HTMLInputElement
+    fireEvent.change(itemInput, { target: { value: itemName } })
+    const itemOption = await waitFor(() => {
+      const option = document.querySelector(`#invoice-item-option-${item.id}`)
+      expect(option).toBeTruthy()
+      return option as HTMLElement
+    })
+    fireEvent.doubleClick(itemOption)
+    const postButton = Array.from(document.querySelectorAll(`[data-app-window="${id}"] button`)).find((button) => button.textContent?.includes('حفظ وترحيل')) as HTMLButtonElement
+    expect(postButton).toBeTruthy()
+    fireEvent.click(postButton)
+
+    await waitFor(() => expect(W().windows.some((window) => window.id === id)).toBe(false))
+    const invoice = S().sales.at(-1)!
+    expect(invoice.customerId).toBe(customer.id)
+    expect(invoice.lines.some((line) => line.itemId === item.id)).toBe(true)
+  })
+
   it('تعديل الصنف يفتح نافذة ابنة: إغلاقها لا يغلق الفاتورة، وإغلاق الفاتورة يغلق بناتها', () => {
     const invoice = openSalesInvoiceWindow()
     const child = openItemEditorWindow(7, invoice)

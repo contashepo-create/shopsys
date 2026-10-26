@@ -17,7 +17,7 @@ import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type Snap
 import { describeDeviceKeyOutcome, resolveDeviceKey, storeRecoveredDeviceKey, type DeviceKeyIo } from './deviceKeyStore.ts'
 import { KEY_RECOVERY_MAX_FILE_BYTES, keyRecoveryFileName, unwrapDeviceKey, validateRecoveryPassphrase, wrapDeviceKey } from './keyRecovery.ts'
 import { mergeTrialAnchor } from './trialAnchor.ts'
-import { persistedAuthState, authorizeDesktopIdentity, hasConfiguredDesktopAuth } from './sessionAuthorization.ts'
+import { persistedAuthState, authorizeDesktopIdentity, hasConfiguredDesktopAuth, canReadDesktopSnapshot } from './sessionAuthorization.ts'
 import { generateDeviceIdFromBytes, mergeDeviceIdentity } from './deviceIdentity.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 import { initSatelliteWindows, broadcastSnapshotChanged, satellitesOpenCount, satelliteWebContents, confirmAndCloseAllSatellites } from './satelliteWindows.ts'
@@ -100,6 +100,10 @@ function isAuthorizedWebContents(id: number): boolean {
   // لا توجد مصادقة معدّة = مسار الإعداد الأول؛ وجود لقطة غير قابلة للتحليل لا يُعامل كإعداد فارغ.
   const requiresAuth = configured || (!!payload && !state)
   return !requiresAuth || authorizedWebContents.has(id)
+}
+
+function requireAuthorizedWebContents(id: number): void {
+  if (!isAuthorizedWebContents(id)) throw new Error('يلزم تسجيل الدخول قبل تنفيذ هذه العملية.')
 }
 
 const isDev = !!process.env.ELECTRON_START_URL
@@ -1408,8 +1412,24 @@ function wireIpc(): void {
     }
   })
 
-  ipcMain.handle('database:getSnapshot', (_event, storeName: string): SnapshotDto => db().getSnapshot(storeName))
+  ipcMain.handle('database:getSnapshot', (event, storeName: unknown): SnapshotDto => {
+    const knownWindowIds = new Set([
+      ...(mainWindow && !mainWindow.isDestroyed() ? [mainWindow.webContents.id] : []),
+      ...satelliteWebContents().map((webContents) => webContents.id),
+    ])
+    if (storeName !== 'shopsys-data' && storeName !== 'shopsys-app') throw new Error('اسم مخزن قاعدة البيانات غير مسموح')
+    if (!canReadDesktopSnapshot({
+      senderId: event.sender.id,
+      knownWindowIds,
+      senderUrl: event.sender.getURL(),
+      appIndexFileUrl: APP_INDEX_FILE_URL,
+      devOrigin,
+      storeName,
+    })) throw new Error('مصدر قراءة لقطة قاعدة البيانات غير موثوق')
+    return db().getSnapshot(storeName)
+  })
   ipcMain.handle('database:saveSnapshot', (event, input: SaveSnapshotInput) => {
+    requireAuthorizedWebContents(event.sender.id)
     const result = db().saveSnapshot(input)
     /* مزامنة النوافذ الحرة: بقية النوافذ تطبّق أحدث لقطة فور حفظها */
     if (!result.replayed) broadcastSnapshotChanged(event.sender.id, input.storeName, result.revision)
@@ -1426,15 +1446,16 @@ function wireIpc(): void {
     return result
   })
   ipcMain.handle('database:deleteSnapshot', (event, input: DeleteSnapshotInput) => {
+    requireAuthorizedWebContents(event.sender.id)
     const result = db().deleteSnapshot(input)
     broadcastSnapshotChanged(event.sender.id, input.storeName, result.revision)
     return result
   })
-  ipcMain.handle('database:enqueueOutbox', (_event, input: EnqueueOutboxInput) => db().enqueueOutbox(input))
-  ipcMain.handle('database:claimOutbox', (_event, input?: ClaimOutboxInput): OutboxEventDto[] => db().claimOutbox(input))
-  ipcMain.handle('database:completeOutbox', (_event, input: CompleteOutboxInput) => db().completeOutbox(input))
-  ipcMain.handle('database:integrityCheck', () => db().integrityCheck())
-  ipcMain.handle('database:schemaVersion', () => db().schemaVersion())
+  ipcMain.handle('database:enqueueOutbox', (event, input: EnqueueOutboxInput) => { requireAuthorizedWebContents(event.sender.id); return db().enqueueOutbox(input) })
+  ipcMain.handle('database:claimOutbox', (event, input?: ClaimOutboxInput): OutboxEventDto[] => { requireAuthorizedWebContents(event.sender.id); return db().claimOutbox(input) })
+  ipcMain.handle('database:completeOutbox', (event, input: CompleteOutboxInput) => { requireAuthorizedWebContents(event.sender.id); return db().completeOutbox(input) })
+  ipcMain.handle('database:integrityCheck', (event) => { requireAuthorizedWebContents(event.sender.id); return db().integrityCheck() })
+  ipcMain.handle('database:schemaVersion', (event) => { requireAuthorizedWebContents(event.sender.id); return db().schemaVersion() })
 
   ipcMain.handle('print:print', async (_event, html: string, silent: boolean, printerName?: string) => {
     await printHtml(html, silent, printerName)
@@ -1478,10 +1499,14 @@ function wireIpc(): void {
       return updaterState
     }
   })
-  ipcMain.handle('updater:install', async () => {
+  ipcMain.handle('updater:install', async (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     if (!app.isPackaged) return
     if (!downloadedUpdateVersion) throw new Error('لم يكتمل تنزيل التحديث بعد')
-    // نفس مسار الإغلاق الصامت بالضبط: حفظ الواجهة ثم حماية القاعدة ونسخها ثم التثبيت.
+    // المصافحة أولاً: كل مسودة في النوافذ الحرة تُحفظ أو يرفض المستخدم الإغلاق؛
+    // تفريغ Zustand وحده لا يحفظ حالة نموذج React غير المرحّلة.
+    if (!(await confirmAndCloseAllSatellites())) throw new Error('أُلغي التحديث أو تعذّر إغلاق نافذة بأمان؛ بقي البرنامج مفتوحاً حفاظاً على المسودات.')
+    // حفظ الواجهة ثم حماية القاعدة ونسخها ثم التثبيت.
     await shutdownApplication(true)
   })
 
@@ -1491,7 +1516,8 @@ function wireIpc(): void {
     electron: process.versions.electron,
     packaged: app.isPackaged,
   }))
-  ipcMain.handle('app:backupNow', async () => {
+  ipcMain.handle('app:backupNow', async (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     if (!database) throw new Error('قاعدة البيانات غير مهيأة')
     // v1.0.8: النسخة اليدوية في المكانين معاً (بجوار القاعدة + المكان الثاني)
     const written = await backupDatabaseFile('manual', database, resolveDbPath().dbPath)
@@ -1500,7 +1526,8 @@ function wireIpc(): void {
   })
 
   /* v1.0.22: تنزيل نسخة كاملة من القاعدة (SQLite .db) بحوار حفظ — بصيغة قابلة للفتح بأي أداة SQLite */
-  ipcMain.handle('database:exportCopy', async () => {
+  ipcMain.handle('database:exportCopy', async (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     if (!database) throw new Error('قاعدة البيانات غير مهيأة')
     const stamp = new Date().toISOString().slice(0, 10)
     const options = {
@@ -1663,7 +1690,8 @@ function wireIpc(): void {
   })
 
   /* بند 5: اعتماد قناة الدعم خارج القاعدة (يبقى ثابتاً بعد مسحها ⇒ لا رفض 401) */
-  ipcMain.handle('support:tokenGet', () => {
+  ipcMain.handle('support:tokenGet', (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     try {
       const parsed = JSON.parse(readFileSync(supportTokenPath(), 'utf8')) as { token?: unknown }
       const token = typeof parsed?.token === 'string' ? parsed.token : ''
@@ -1671,7 +1699,8 @@ function wireIpc(): void {
     } catch { return null }
   })
 
-  ipcMain.handle('support:tokenSet', (_event, token: unknown) => {
+  ipcMain.handle('support:tokenSet', (event, token: unknown) => {
+    requireAuthorizedWebContents(event.sender.id)
     const value = typeof token === 'string' ? token : ''
     if (!SUPPORT_TOKEN_RE.test(value)) return false
     try {
@@ -1684,7 +1713,8 @@ function wireIpc(): void {
   })
 
   /* ── v1.0.8: إدارة مكان القاعدة والنسخ (طلب المالك) ── */
-  ipcMain.handle('database:getStorageInfo', () => {
+  ipcMain.handle('database:getStorageInfo', (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     const { dbPath, isCustom } = resolveDbPath()
     const secondary = resolveSecondaryBackupDir()
     return {
@@ -1708,7 +1738,8 @@ function wireIpc(): void {
   })
 
   /* v1.0.9: استعادة نسخة قاعدة ملفية من داخل التطبيق (المكانان، يدوية وتلقائية) */
-  ipcMain.handle('database:listFileBackups', () => {
+  ipcMain.handle('database:listFileBackups', (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     const { dbPath } = resolveDbPath()
     const dirs = [
       { dir: join(dirname(dbPath), 'backups', 'manual'), where: 'بجوار القاعدة' },
@@ -1730,7 +1761,8 @@ function wireIpc(): void {
     return out.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 40)
   })
 
-  ipcMain.handle('database:restoreFileBackup', async (_event, args: { path?: string }) => {
+  ipcMain.handle('database:restoreFileBackup', async (event, args: { path?: string }) => {
+    requireAuthorizedWebContents(event.sender.id)
     if (!database) throw new Error('قاعدة البيانات غير مهيأة')
     const target = typeof args?.path === 'string' ? args.path : ''
     // أمن المسار: الاستعادة من ملفات النسخ المعروفة فقط — لا مسارات خارجية
@@ -1762,7 +1794,8 @@ function wireIpc(): void {
     }
   })
 
-  ipcMain.handle('database:chooseSecondaryBackupDir', async () => {
+  ipcMain.handle('database:chooseSecondaryBackupDir', async (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد النسخة الاحتياطية الثانية' })
     if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true as const }
     if (isUnsafeDatabaseLocation(result.filePaths[0], installationDir(), userDataDir())) throw new Error('اختر مكاناً للنسخة الاحتياطية خارج مجلد تثبيت البرنامج')
@@ -1775,7 +1808,8 @@ function wireIpc(): void {
 
   /** نقل القاعدة لمجلد يختاره المستخدم: إغلاق ← نسخ ← تحديث التوجيه ← إعادة تشغيل.
       الأصل يبقى في مكانه نسخةَ أمان حتى ينجح الإقلاع من المكان الجديد. */
-  ipcMain.handle('database:chooseDbLocation', async () => {
+  ipcMain.handle('database:chooseDbLocation', async (event) => {
+    requireAuthorizedWebContents(event.sender.id)
     const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد حفظ قاعدة البيانات (خارج قرص C إن أمكن)' })
     if (result.canceled || !result.filePaths[0]) return { ok: false as const, canceled: true as const }
     const dir = result.filePaths[0]

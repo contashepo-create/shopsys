@@ -9,11 +9,18 @@ import { userPrefsKey } from '../../core/userPreferences.ts'
 import { isFunctionKey, type ShortcutActionId } from '../../core/keyboardShortcuts.ts'
 import { setUnsavedChangeGuard } from './unsavedChangeRegistry.ts'
 
-let activeNavigationGuard: ((continueNavigation: () => void) => void) | null = null
-/** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودة غير محفوظة. */
+const activeNavigationGuards = new Set<(continueNavigation: () => void) => void>()
+/** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودات غير محفوظة. */
 export function guardNavigation(continueNavigation: () => void): boolean {
-  if (!activeNavigationGuard) return false
-  activeNavigationGuard(continueNavigation)
+  const guards = [...activeNavigationGuards]
+  if (!guards.length) return false
+  const confirmNext = (index: number): void => {
+    if (index >= guards.length) { continueNavigation(); return }
+    const guard = guards[index]
+    if (!activeNavigationGuards.has(guard)) { confirmNext(index + 1); return }
+    guard(() => confirmNext(index + 1))
+  }
+  confirmNext(0)
   return true
 }
 
@@ -331,8 +338,8 @@ export function Modal({
 }
 
 /** حارس موحد للعمليات التي تحتوي كتابة غير محفوظة: يحذر من إغلاق المتصفح أو إلغاء الفاتورة بالخطأ. */
-export function useUnsavedChangesGuard(signature: string) {
-  const [baseline, setBaseline] = useState(signature)
+export function useUnsavedChangesGuard(signature: string, initialBaseline = signature) {
+  const [baseline, setBaseline] = useState(initialBaseline)
   const pendingDiscard = useRef<(() => void) | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
   const isDirty = signature !== baseline
@@ -357,8 +364,8 @@ export function useUnsavedChangesGuard(signature: string) {
   useEffect(() => {
     if (!isDirty) return
     const guard = (continueNavigation: () => void) => requestClose(continueNavigation)
-    activeNavigationGuard = guard
-    return () => { if (activeNavigationGuard === guard) activeNavigationGuard = null }
+    activeNavigationGuards.add(guard)
+    return () => { activeNavigationGuards.delete(guard) }
   }, [isDirty, requestClose])
   const discard = useCallback(() => {
     const action = pendingDiscard.current

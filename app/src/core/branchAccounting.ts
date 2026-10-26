@@ -50,8 +50,8 @@ export function buildInterBranchTransferLines(args: {
   return { sourceLines, destinationLines }
 }
 
-/** Eliminate only verified, paired clearing lines in company-wide reports. */
-export function eliminatePairedInterBranchLines(journal: readonly JournalEntry[]): JournalEntry[] {
+/** Return entry IDs participating in a verified company-wide inter-branch pair. */
+export function pairedInterBranchTransferEntryIds(journal: readonly JournalEntry[]): Set<number> {
   const grouped = new Map<string, JournalEntry[]>()
   for (const entry of journal) {
     if (!entry.branchId || entry.sourceId == null) continue
@@ -75,6 +75,12 @@ export function eliminatePairedInterBranchLines(journal: readonly JournalEntry[]
       for (const entry of entries) pairedIds.add(entry.id)
     }
   }
+  return pairedIds
+}
+
+/** Eliminate only verified, paired clearing lines in company-wide reports. */
+export function eliminatePairedInterBranchLines(journal: readonly JournalEntry[]): JournalEntry[] {
+  const pairedIds = pairedInterBranchTransferEntryIds(journal)
   return journal.map((entry) => pairedIds.has(entry.id)
     ? { ...entry, lines: entry.lines.filter((line) =>
         !((line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null),

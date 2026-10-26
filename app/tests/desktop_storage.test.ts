@@ -205,6 +205,20 @@ describe('تفريغ كتابة الواجهة قبل التحديث', () => {
     expect(calls).toHaveLength(3)
   })
 
+  it('تعطّل لقطة الإعدادات لا يمنع ترحيل فاتورة وحفظ لقطة الأعمال', async () => {
+    const { database } = fakeDatabase()
+    const save = database.saveSnapshot.bind(database)
+    database.saveSnapshot = async (input) => {
+      if (input.storeName === 'shopsys-app') throw new Error('تعذّر حفظ إعداد مستقل')
+      return save(input)
+    }
+    const storage = new DesktopStateStorage(database, null)
+    await storage.setItem('shopsys-data', '{"state":{"sales":[1]}}')
+    await expect(storage.setItem('shopsys-app', '{"state":{"setup":{}}}')).rejects.toThrow('تعذّر حفظ إعداد مستقل')
+    await expect(storage.drain('shopsys-data')).resolves.toBeUndefined()
+    await expect(storage.drain()).rejects.toThrow('shopsys-app: تعذّر حفظ إعداد مستقل')
+  })
+
   it('فشل حفظ لقطة لا يُبتلع عند طلب إغلاق/تحديث؛ يمكن إعادة المحاولة', async () => {
     const { database } = fakeDatabase()
     const save = database.saveSnapshot

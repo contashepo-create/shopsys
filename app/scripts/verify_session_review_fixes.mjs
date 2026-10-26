@@ -18,4 +18,19 @@ assert.match(satellite, /catch \(error\)/, 'failed save cannot approve close')
 const ui = read('../src/ui/components/unsavedChangeRegistry.ts')
 assert.match(ui, /export function hasUnsavedChangesInCurrentWindow/)
 assert.match(ui, /dirtyChangeGuards\.add/)
-console.log('verify_session_review_fixes PASS=10')
+
+const main = read('../desktop/main.ts')
+const installHandler = main.slice(main.indexOf("ipcMain.handle('updater:install'"), main.indexOf("ipcMain.handle('app:info'"))
+assert.match(installHandler, /requireAuthorizedWebContents\(event\.sender\.id\)/, 'update IPC requires an authenticated renderer')
+assert.ok(installHandler.indexOf('confirmAndCloseAllSatellites') < installHandler.indexOf('shutdownApplication(true)'), 'manual update closes/prompts every satellite before shutdown')
+for (const channel of ['database:saveSnapshot', 'database:deleteSnapshot', 'database:enqueueOutbox', 'database:claimOutbox', 'database:completeOutbox', 'database:integrityCheck', 'database:schemaVersion', 'database:exportCopy', 'database:getStorageInfo', 'database:listFileBackups', 'database:restoreFileBackup', 'database:chooseDbLocation', 'database:chooseSecondaryBackupDir', 'app:backupNow', 'support:tokenGet', 'support:tokenSet']) {
+  const start = main.indexOf(`ipcMain.handle('${channel}'`)
+  assert.ok(start >= 0, `missing ${channel}`)
+  assert.match(main.slice(start, start + 300), /requireAuthorizedWebContents\(event\.sender\.id\)/, `${channel} requires an authenticated renderer`)
+}
+for (const page of ['SaleReturnsPage.tsx', 'PurchaseReturnsPage.tsx']) {
+  const source = read(`../src/ui/pages/${page}`)
+  assert.match(source, /withInvoiceCommitLock\(async \(\) => \{ await useRawDataStore\.persist\.rehydrate\(\) \}/, `${page} serializes and refreshes before posting`)
+  assert.match(source, /\.then\(\(ret\) => \{\s*toast\.show/, `${page} reports success only after durable commit`)
+}
+console.log('verify_session_review_fixes PASS=32')

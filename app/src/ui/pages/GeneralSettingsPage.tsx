@@ -3,7 +3,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * الإعدادات العامة — البلد والعملة والضريبة وطريقة الاحتساب
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins, Building2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -13,7 +13,7 @@ import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, effectiveModules } f
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, fiscalYearsForBranch, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
-import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
+import { Btn, Field, inputCls, Modal, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { accountName } from './accountNames.ts'
 
 import { FxRatesManager } from '../components/FxRatesManager.tsx'
@@ -37,6 +37,10 @@ export function GeneralSettingsPage() {
   const granted = effectiveModules(setup.activityId, activatedPayload?.extraModules)
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const canEditCompanyWideSettings = !activeBranchContext || activeBranchContext.isMain
+  // سياق الفرع الرئيسي يشارك المسودة نفسها مع العرض العام؛ لا تنشئ له مساحة فرعية مستقلة.
+  const businessSettingsDraftScope = activeBranchContext && !activeBranchContext.isMain
+    ? `branch-${activeBranchContext.id}`
+    : 'company'
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   /* ─── إقفال السنة المالية (منهجية QuickBooks/Xero — طلب المالك) ─── */
@@ -156,7 +160,8 @@ export function GeneralSettingsPage() {
       </section>
 
       <BranchBusinessSettingsDraft
-        key={[activeBranchContext?.id ?? 'company', setup.shopName, setup.vatPercent, setup.taxInclusive, setup.taxRegistrationStatus ?? ''].join(':')}
+        key={businessSettingsDraftScope}
+        draftScope={businessSettingsDraftScope}
         setup={setup}
         branchName={activeBranchContext && !activeBranchContext.isMain ? activeBranchContext.nameAr : null}
         taxName={country?.taxName ?? 'ضريبة القيمة المضافة'}
@@ -691,24 +696,58 @@ export function GeneralSettingsPage() {
 type GeneralSettingsAppState = ReturnType<typeof useAppStore.getState>
 
 type BranchBusinessSettingsDraftProps = {
+  draftScope: string
   setup: Pick<GeneralSettingsAppState['setup'], 'shopName' | 'vatPercent' | 'taxInclusive' | 'taxRegistrationStatus'>
   branchName: string | null
   taxName: string
   updateCompanyName: GeneralSettingsAppState['updateCompanyName']
   updateTaxSettings: GeneralSettingsAppState['updateTaxSettings']
 }
+type GeneralSettingsDraft = { companyName: string; vat: string; taxInclusive: boolean; taxStatus: BusinessTaxStatus }
+function readGeneralSettingsDraft(key: string): GeneralSettingsDraft | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as { version?: unknown; fields?: unknown } | null
+    if (parsed?.version !== 1 || !parsed.fields || typeof parsed.fields !== 'object') return null
+    const fields = parsed.fields as Record<string, unknown>
+    if (typeof fields.companyName !== 'string' || typeof fields.vat !== 'string' || typeof fields.taxInclusive !== 'boolean'
+        || !['registered', 'zero_rated', 'exempt'].includes(String(fields.taxStatus))) return null
+    return fields as GeneralSettingsDraft
+  } catch { return null }
+}
 
-/** تبقى مسودات الهوية والضريبة محلية، وتُعاد تهيئتها بتبديل الفرع/الإعداد عبر مفتاح React بدلاً من setState داخل effect. */
-function BranchBusinessSettingsDraft({ setup, branchName, taxName, updateCompanyName, updateTaxSettings }: BranchBusinessSettingsDraftProps) {
+/** تحفظ مسودات الهوية والضريبة محلياً وتعيدها بعد أي إعادة تحميل غير مقصودة. */
+function BranchBusinessSettingsDraft({ draftScope, setup, branchName, taxName, updateCompanyName, updateTaxSettings }: BranchBusinessSettingsDraftProps) {
   const toast = useToast()
-  const [companyName, setCompanyName] = useState(setup.shopName)
-  const [vat, setVat] = useState(String(setup.vatPercent))
-  const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
-  const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
+  const draftStorageKey = `shopsys-general-settings-draft-v1:${draftScope}`
+  const [restoredDraft, setRestoredDraft] = useState(() => readGeneralSettingsDraft(draftStorageKey))
+  const [companyName, setCompanyName] = useState(restoredDraft?.companyName ?? setup.shopName)
+  const [vat, setVat] = useState(restoredDraft?.vat ?? String(setup.vatPercent))
+  const [taxInclusive, setTaxInclusive] = useState(restoredDraft?.taxInclusive ?? setup.taxInclusive)
+  const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(restoredDraft?.taxStatus ?? setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
+  const [savedCompanyName, setSavedCompanyName] = useState(setup.shopName)
+  const [savedTaxDraft, setSavedTaxDraft] = useState<Pick<GeneralSettingsDraft, 'vat' | 'taxInclusive' | 'taxStatus'>>(() => ({ vat: String(setup.vatPercent), taxInclusive: setup.taxInclusive, taxStatus: setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated') }))
+  const taxDraft: GeneralSettingsDraft = { companyName, vat, taxInclusive, taxStatus }
+  const taxDraftStorageJson = JSON.stringify({ version: 1, fields: taxDraft })
+  const companyDirty = companyName !== savedCompanyName
+  const taxDirty = vat !== savedTaxDraft.vat || taxInclusive !== savedTaxDraft.taxInclusive || taxStatus !== savedTaxDraft.taxStatus
+  const unsaved = useUnsavedChangesGuard(JSON.stringify({ companyDirty, taxDirty }), JSON.stringify({ companyDirty: false, taxDirty: false }))
+  useEffect(() => {
+    try {
+      if (!companyDirty && !taxDirty) localStorage.removeItem(draftStorageKey)
+      else localStorage.setItem(draftStorageKey, taxDraftStorageJson)
+    } catch { /* يبقى حارس الإغلاق فعالاً حتى عند تعذر التخزين */ }
+  }, [draftStorageKey, taxDraftStorageJson, companyDirty, taxDirty])
+  const markUnsavedClean = unsaved.markClean
+  useEffect(() => {
+    if (companyDirty || taxDirty || !restoredDraft) return
+    markUnsavedClean()
+    setRestoredDraft(null)
+  }, [companyDirty, taxDirty, restoredDraft, markUnsavedClean])
 
   const saveCompanyName = () => {
     try {
       updateCompanyName(companyName)
+      setSavedCompanyName(companyName)
       toast.show('تم حفظ اسم المنشأة لهذا النطاق ✅')
     } catch (err) {
       toast.show((err as Error).message, 'error')
@@ -719,6 +758,7 @@ function BranchBusinessSettingsDraft({ setup, branchName, taxName, updateCompany
       const vatPercent = taxStatus === 'registered' ? Number(vat) : 0
       resolveBusinessTax(taxStatus, vatPercent)
       updateTaxSettings({ vatPercent, taxInclusive, taxRegistrationStatus: taxStatus })
+      setSavedTaxDraft(taxDraft)
       toast.show('تم حفظ إعدادات الضريبة لهذا النطاق ✅')
     } catch (err) {
       toast.show((err as Error).message, 'error')
@@ -727,6 +767,8 @@ function BranchBusinessSettingsDraft({ setup, branchName, taxName, updateCompany
 
   return (
     <>
+      {unsaved.prompt}
+      {(unsaved.isDirty || restoredDraft) && <div role="status" className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-800 dark:text-amber-300" data-settings-unsaved>{restoredDraft ? 'استُعيدت مسودة إعدادات غير محفوظة من هذا الجهاز؛ راجعها ثم احفظها.' : 'توجد تغييرات إعدادات لم تحفظها بعد؛ سيطلب التطبيق تأكيداً قبل مغادرة الصفحة أو إغلاق نافذتها.'}</div>}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '75ms' }}>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">🏢 اسم المنشأة والفاتورة</h3>
         <p className="text-[11.5px] text-slate-400 mb-3">

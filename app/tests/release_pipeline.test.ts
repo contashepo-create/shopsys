@@ -194,6 +194,8 @@ it('يتحقق بعد النشر من تنزيل العميل السابق لل�
 it('selects a real prior complete source release for installer upgrade gates, not a stale hardcoded version', () => {
   const desktop = readFileSync('../.github/workflows/desktop-release.yml', 'utf8')
   const quality = readFileSync('../.github/workflows/quality.yml', 'utf8')
+  expect(desktop).toContain(`CANDIDATE_TAG="v$(node -p "require('./package.json').version")"`)
+  expect(desktop).toContain('select_upgrade_baseline.mjs "$RUNNER_TEMP/source-releases.jsonl" "$CANDIDATE_TAG"')
   for (const workflow of [desktop, quality]) {
     expect(workflow).toContain('scripts/select_upgrade_baseline.mjs')
     expect(workflow).toContain('gh release download "$BASELINE_TAG" --repo contashepo-create/shopsys')

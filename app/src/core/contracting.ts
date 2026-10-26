@@ -644,6 +644,55 @@ export interface ProjectBillingGuard {
   availableToDocumentGrossMinor: Minor
 }
 
+export interface ProjectDocumentationInvoice {
+  id: number
+  projectBilling?: ProjectBillingNature
+  extractIds?: readonly number[]
+  totals: { totalMinor: Minor }
+}
+
+export interface ProjectDocumentationReturn {
+  saleId: number
+  totals: { totalMinor: Minor }
+}
+
+/** Remaining documentation capacity per extract, after prior document invoices and returns. */
+export function remainingDocumentableByExtract(
+  extracts: readonly { id: number; totals: { grossMinor: Minor; vatMinor: Minor }; refundedMinor?: Minor }[],
+  invoices: readonly ProjectDocumentationInvoice[],
+  returns: readonly ProjectDocumentationReturn[] = [],
+): Map<number, Minor> {
+  const ordered = [...extracts].sort((a, b) => a.id - b.id)
+  const remaining = new Map(ordered.map((extract) => [
+    extract.id,
+    Math.max(0, extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0)),
+  ]))
+  const returnedByInvoice = new Map<number, number>()
+  for (const ret of returns) returnedByInvoice.set(ret.saleId, (returnedByInvoice.get(ret.saleId) ?? 0) + ret.totals.totalMinor)
+
+  for (const invoice of invoices.filter((row) => row.projectBilling === 'documentation').slice().sort((a, b) => a.id - b.id)) {
+    let unallocated = Math.max(0, invoice.totals.totalMinor - (returnedByInvoice.get(invoice.id) ?? 0))
+    const selected = [...new Set(invoice.extractIds ?? [])]
+    for (const id of selected) {
+      if (unallocated <= 0) break
+      const room = remaining.get(id) ?? 0
+      const applied = Math.min(room, unallocated)
+      remaining.set(id, room - applied)
+      unallocated -= applied
+    }
+    // Legacy documents without links, or historically oversized links, are
+    // deterministically reconciled against oldest extracts as the UI displays.
+    for (const extract of ordered) {
+      if (unallocated <= 0) break
+      const room = remaining.get(extract.id) ?? 0
+      const applied = Math.min(room, unallocated)
+      remaining.set(extract.id, room - applied)
+      unallocated -= applied
+    }
+  }
+  return remaining
+}
+
 export function computeProjectBillingGuard(input: {
   contractValueMinor: Minor
   changeOrders: readonly ChangeOrder[]

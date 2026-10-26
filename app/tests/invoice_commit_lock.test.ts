@@ -6,8 +6,8 @@ const mocks = vi.hoisted(() => ({
   acquire: vi.fn<() => Promise<string | null>>(),
   release: vi.fn<(token: string) => void>(),
   refresh: vi.fn<(storeName: string) => Promise<void>>(),
-  flush: vi.fn<() => Promise<void>>(),
-  secureFlush: vi.fn<() => Promise<void>>(),
+  flush: vi.fn<(storeName?: string) => Promise<void>>(),
+  secureFlush: vi.fn<(storeName?: string) => Promise<void>>(),
 }))
 
 vi.mock('../src/data/desktopBridge.ts', () => ({
@@ -44,6 +44,7 @@ describe('قفل ترحيل الفواتير عبر النوافذ', () => {
     expect(result).toBe(42)
     expect(order).toEqual(['acquire', 'refresh-snapshot', 'rehydrate', 'commit', 'flush', 'release'])
     expect(mocks.refresh).toHaveBeenCalledWith('shopsys-data')
+    expect(mocks.flush).toHaveBeenCalledWith('shopsys-data')
     expect(mocks.release).toHaveBeenCalledWith('lock-1')
   })
 
@@ -72,6 +73,8 @@ describe('قفل ترحيل الفواتير عبر النوافذ', () => {
     expect(request).toHaveBeenCalledWith('shopsys:invoice-commit', { mode: 'exclusive' }, expect.any(Function))
     expect(mocks.acquire).not.toHaveBeenCalled()
     expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(mocks.secureFlush).toHaveBeenNthCalledWith(1, 'shopsys-data')
+    expect(mocks.secureFlush).toHaveBeenNthCalledWith(2, 'shopsys-data')
   })
 
   it('يمنع بدء ترحيل تبويب ثانٍ حتى يكتمل حفظ الأول', async () => {

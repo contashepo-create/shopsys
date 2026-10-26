@@ -22,6 +22,10 @@ globalThis.window = globalThis
 const { useDataStore } = await import('../src/data/repo.ts')
 const { validateProcessingOutputExpiry } = await import('../src/core/processing.ts')
 const { planFefo } = await import('../src/core/batches.ts')
+const { todayLocalIso } = await import('../src/core/time.ts')
+const today = todayLocalIso()
+const futureExpiry = todayLocalIso(new Date(Date.now() + 90 * 86_400_000))
+const laterExpiry = todayLocalIso(new Date(Date.now() + 120 * 86_400_000))
 
 let PASS = 0, FAIL = 0
 const ok = (cond, msg) => { if (cond) { PASS++; console.log(`  ✓ ${msg}`) } else { FAIL++; console.log(`  ✗ ${msg}`) } }
@@ -61,25 +65,25 @@ ok(S().batches.length === 0, 'لا دفعة تسرّبت رغم محاولات �
 console.log('— ③ postProcessing ينشئ دفعة صلاحية صحيحة + رقم تشغيلة —')
 const order = S().postProcessing({
   kind: 'butcher', sourceItemId: carcass.id, sourceQty: 10,
-  outputs: [{ itemId: leg.id, qty: 6, expiryDate: '2026-10-25' }, { itemId: bone.id, qty: 3 }],
+  outputs: [{ itemId: leg.id, qty: 6, expiryDate: futureExpiry }, { itemId: bone.id, qty: 3 }],
   overheadMinor: 0, wasteQty: 1, lotNumber: 'ذبيحة-2026-10-19-أ',
 })
 ok(order.lotNumber === 'ذبيحة-2026-10-19-أ', 'رقم التشغيلة المخصص محفوظ على الأمر')
 const legBatch = S().batches.find((b) => b.itemId === leg.id)
 ok(!!legBatch, 'دفعة صلاحية للفخذ أُنشئت فعلاً')
-ok(legBatch?.expiryDate === '2026-10-25', 'تاريخ انتهاء الدفعة مطابق لتاريخ الناتج المُدخَل')
+ok(legBatch?.expiryDate === futureExpiry, 'تاريخ انتهاء الدفعة مطابق لتاريخ الناتج المُدخَل')
 ok(legBatch?.lotNumber === 'ذبيحة-2026-10-19-أ', 'الدفعة تحمل رقم تشغيلة الأمر نفسه')
 ok(legBatch?.qty === 6, 'كمية الدفعة مطابقة لكمية الناتج')
 ok(legBatch?.warehouseId != null, 'الدفعة مربوطة بمخزن استلام النواتج')
 ok(!S().batches.some((b) => b.itemId === bone.id), 'العظم (لا يتتبع الصلاحية) لم يفتح دفعة — لا بيانات وهمية')
 
 console.log('— ④ رقم التشغيلة الافتراضي ولا يتكرر بلا سبب —')
-const order2 = S().postProcessing({ kind: 'butcher', sourceItemId: carcass.id, sourceQty: 5, outputs: [{ itemId: leg.id, qty: 3, expiryDate: '2026-11-01' }, { itemId: bone.id, qty: 1 }], overheadMinor: 0 })
+const order2 = S().postProcessing({ kind: 'butcher', sourceItemId: carcass.id, sourceQty: 5, outputs: [{ itemId: leg.id, qty: 3, expiryDate: laterExpiry }, { itemId: bone.id, qty: 1 }], overheadMinor: 0 })
 ok(order2.lotNumber === order2.orderNumber, 'لوط افتراضي = رقم الأمر لو تُرك فارغاً')
 ok(order2.lotNumber !== order.lotNumber, 'كل أمر تجهيز له لوط مستقل عن الآخر')
 
 console.log('— ⑤ FEFO يلتقط دفعات النواتج الجديدة عند بيعها لاحقاً —')
-const plan = planFefo(S().batches, leg.id, 4, '2026-10-19', order.outputWarehouseId)
+const plan = planFefo(S().batches, leg.id, 4, today, order.outputWarehouseId)
 const consumedQty = plan.allocations.reduce((a, p) => a + p.qty, 0)
 ok(Math.abs(consumedQty - 4) < 1e-9, 'خطة FEFO تسحب 4كجم من دفعات الفخذ المُنشأة حديثاً')
 ok(plan.allocations.some((p) => p.batchId === legBatch.id), 'الدفعة الأقرب انتهاءً (من order الأول) ضمن الخطة')

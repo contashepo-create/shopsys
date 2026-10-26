@@ -113,7 +113,7 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask,
-  computeProjectExpenseInvoice, DEFAULT_PROJECT_EXPENSE_CATEGORIES, normalizeExpenseCategoryName, computeProjectBillingGuard, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed, type ProjectExpenseCategory, type ProjectBillingGuard, type ProjectBillingNature } from '../core/contracting.ts'
+  computeProjectExpenseInvoice, DEFAULT_PROJECT_EXPENSE_CATEGORIES, normalizeExpenseCategoryName, computeProjectBillingGuard, remainingDocumentableByExtract, type ExpenseTaxMode, type ProjectExpenseLineInput, type ProjectExpenseLineComputed, type ProjectExpenseCategory, type ProjectBillingGuard, type ProjectBillingNature } from '../core/contracting.ts'
 import {
   validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
   buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry, validateUnitMaintenanceMaterials,
@@ -1451,6 +1451,8 @@ export interface AdvancedInvoiceDraft {
 export interface SaleInvoice {
   id: number
   invoiceNumber: string
+  /** مفتاح مسودة واجهة الفاتورة لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
+  sourceDraftId?: string
   /** الرقم المرجعي الفريد للتتبع — SAL-YYMMDD-XXXXXC (يُطبع على الإيصال ويُبحث به) */
   refCode: string
   date: string // ISO datetime
@@ -2113,6 +2115,8 @@ interface DataState {
    * يرمي خطأ لو نقص المخزون أو اختل القيد (بنيوياً لا يمكن حفظ فاتورة بلا قيد)
    */
   postSale: (args: {
+    /** UUID ثابت لمسودة المحرر؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر. */
+    sourceDraftId?: string
     lines: CartLine[]
     customerId: number | null
     /** §91 — نوع الطرف: عميل (افتراضي) أو مورد (2101) أو موظف (1107) */
@@ -6643,6 +6647,11 @@ export const useRawDataStore = create<DataState>()(
 
       postSale: (rawArgs) => {
         const state = get()
+        const sourceDraftId = rawArgs.sourceDraftId?.trim()
+        if (sourceDraftId) {
+          const alreadyPosted = state.sales.find((sale) => sale.sourceDraftId === sourceDraftId)
+          if (alreadyPosted) return alreadyPosted
+        }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const args = activeBranch && !activeBranch.isMain
@@ -6875,6 +6884,16 @@ export const useRawDataStore = create<DataState>()(
             if (totals.totalMinor > billingGuard.availableToDocumentGrossMinor) {
               throw new Error(`سقف توثيق المشروع «${billingProject.nameAr}»: إجمالي الفاتورة (${totals.totalMinor}) يتجاوز المستخلَص غير الموثَّق (${billingGuard.availableToDocumentGrossMinor}) — شامل الضريبة بالوحدة الصغرى (موثَّق سابقاً ${billingGuard.documentedGrossMinor}). التوثيق لا يفوتر عملاً جديداً؛ للأعمال خارج المستخلصات استخدم طبيعة «إضافية».`)
             }
+            const remainingByExtract = remainingDocumentableByExtract(
+              projectExtracts,
+              projectInvoices,
+              branchState.saleReturns.filter((r) => projectInvoiceIds.has(r.saleId)),
+            )
+            const selectedExtractIds = [...new Set(args.extractIds)]
+            const selectedCapacity = selectedExtractIds.reduce((sum, id) => sum + (remainingByExtract.get(id) ?? 0), 0)
+            if (totals.totalMinor > selectedCapacity) {
+              throw new Error(`فاتورة التوثيق (${totals.totalMinor}) تتجاوز الرصيد المتاح للمستخلصات المختارة (${selectedCapacity}) — اختر مستخلصات إضافية أو خفّض إجمالي الفاتورة.`)
+            }
           } else {
             if (billingProject.status === 'completed') throw new Error('المشروع مقفل — لا فواتير إضافية جديدة عليه')
             const invoiceWorksNet = totals.totalMinor - totals.taxMinor
@@ -7007,6 +7026,7 @@ export const useRawDataStore = create<DataState>()(
         const sale: SaleInvoice = {
           id: saleId,
           invoiceNumber,
+          ...(sourceDraftId ? { sourceDraftId } : {}),
           refCode,
           date: now,
           customerId: salePartyKind === 'customer' ? args.customerId : null,

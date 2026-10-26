@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildInterBranchTransferLines, eliminatePairedInterBranchLines } from '../src/core/branchAccounting.ts'
+import { cashFlowReport } from '../src/core/financialReports.ts'
 import { STANDARD_COA, type JournalEntry } from '../src/core/ledger.ts'
 import { validateManualEntry } from '../src/core/accounting.ts'
 
@@ -30,6 +31,24 @@ describe('inter-branch accounting', () => {
       { accountCode: '3101', debit: 0, credit: 100 },
     ], STANDARD_COA)
     expect(errors.some((message) => message.includes('حساب مراقبة'))).toBe(true)
+  })
+
+  it('excludes internal transfer principal from consolidated cash-flow gross lines but keeps fees', () => {
+    const pair = buildInterBranchTransferLines({
+      sourceBranchId: 2, destinationBranchId: 1, sourceTreasury: '2201', destinationTreasury: '1101', amountMinor: 5000, feeMinor: 100,
+    })
+    const rows = [
+      entry({ id: 10, branchId: 2, lines: pair.sourceLines }),
+      entry({ id: 11, branchId: 1, lines: pair.destinationLines }),
+    ]
+    const report = cashFlowReport(rows, ['1101', '2201'], { from: '2026-10-01', to: '2026-10-31' })
+    expect(report.totalInMinor).toBe(0)
+    expect(report.totalOutMinor).toBe(100)
+    expect(report.netChangeMinor).toBe(-100)
+    expect(report.outflows).toEqual([{ label: 'مصروفات عمومية', amountMinor: 100, activity: 'operating' }])
+
+    const branchReport = cashFlowReport(rows.slice(0, 1), ['1101', '2201'], { from: '2026-10-01', to: '2026-10-31' })
+    expect(branchReport.totalOutMinor).toBe(5100)
   })
 
   it('eliminates verified clearing lines only in the paired company-wide view', () => {

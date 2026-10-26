@@ -5,10 +5,11 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
-import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
@@ -35,6 +36,8 @@ export function PurchaseReturnsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
+  const [isPosting, setIsPosting] = useState(false)
+  const postingRef = useRef(false)
   const [pickOpen, setPickOpen] = useState(false)
   const [pickQuery, setPickQuery] = useState('')
   const [pickIndex, setPickIndex] = useState(0)
@@ -166,23 +169,27 @@ export function PurchaseReturnsPage() {
   // قاعدة المالك المعممة: كل المرتجعات باعتماد مشرف — مرتجع الشراء يخرج بضاعة ويرد مالاً
   const approval = useSupervisorApproval()
   const submit = () => {
-    if (!purchase) return
+    if (!purchase || postingRef.current) return
     approval.request((approvedBy) => {
-    try {
+      if (postingRef.current) return
+      postingRef.current = true
+      setIsPosting(true)
       const lineSpecs = Object.entries(qtys).flatMap(([indexText, value]) => {
         const lineIndex = Number(indexText)
         const qty = Number(value)
         if (!(qty > 0)) return []
         const source = purchase.lines[lineIndex]
-        const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
+        const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((w) => w.isMain)?.id ?? null
         return [{ lineIndex, qty, warehouseId }]
       })
-      const ret = postPurchaseReturn({ purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy })
-      toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
-      setPurchase(null)
-    } catch (e) {
-      toast.show((e as Error).message, 'error')
-    }
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postPurchaseReturn({
+        purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy,
+      })).then((ret) => {
+        toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
+        setPurchase(null)
+      }).catch((e: unknown) => {
+        toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل مرتجع الشراء', 'error')
+      }).finally(() => { postingRef.current = false; setIsPosting(false) })
     })
   }
 
@@ -358,7 +365,7 @@ export function PurchaseReturnsPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={closePurchase}>تراجع عن المرتجع</Btn>
-              <Btn onClick={submit} shortcut="F9" disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!anyQty || isPosting}>{isPosting ? 'جارٍ الترحيل…' : '📤 تنفيذ المرتجع'}</Btn>
             </div>
           </div>
         )}

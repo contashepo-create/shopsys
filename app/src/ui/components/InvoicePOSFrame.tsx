@@ -202,7 +202,7 @@ export function InvoicePOSFrame({
           {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}
           <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
           <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> {postLabel ?? 'حفظ وترحيل'}</Btn>
+          <Btn onClick={onPost} shortcut="F9" disabled={posting}><CheckCheck size={13} /> {posting ? 'جارٍ الترحيل…' : postLabel ?? 'حفظ وترحيل'}</Btn>
         </div>
       </header>
 

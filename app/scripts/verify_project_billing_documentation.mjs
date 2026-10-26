@@ -193,6 +193,7 @@ const docInvB = (netMinor, extractIds) => S().postSale({
 const docB1 = docInvB(10_000_000, [exB1.id]) // 11_400_000
 const docB2 = docInvB(10_000_000, [exB2.id]) // نصف الثاني
 eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 11_400_000, 'توثيقات متعددة تخصم تباعاً')
+throws(() => docInvB(1, [exB1.id]), /الرصيد المتاح للمستخلصات المختارة/, 'لا يسمح باستهلاك رصيد مستخلص غير محدد في الفاتورة')
 throws(() => docInvB(10_000_001, [exB2.id]), /سقف توثيق/, 'قرش واحد فوق المتاح يُرفض (10_000_001 صافي)')
 const docB3 = docInvB(10_000_000, [exB2.id]) // الباقي بالتمام
 eq(S().getProjectBillingGuard(prjB.id).availableToDocumentGrossMinor, 0, 'التوثيق بالتمام يصفّر المتاح')

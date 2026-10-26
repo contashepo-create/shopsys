@@ -1,5 +1,6 @@
 import { createHash, pbkdf2Sync, timingSafeEqual } from 'node:crypto'
 import { PIN_MAX_LENGTH, PIN_MIN_LENGTH } from '../src/core/auth.ts'
+import { isInAppNavigation } from './navigationPolicy.ts'
 
 export interface DesktopAuthState {
   ownerPinHash?: unknown
@@ -66,4 +67,23 @@ export function authorizeDesktopIdentity(state: DesktopAuthState | null, userId:
 
 export function isAuthorizedDesktopSender(authRequired: boolean, authorizedIds: ReadonlySet<number>, senderId: number): boolean {
   return !authRequired || authorizedIds.has(senderId)
+}
+
+/**
+ * Snapshot IPC is needed during login hydration, so it cannot be PIN-gated yet.
+ * Keep that bootstrap exception within known app windows, the app's own URL, and
+ * the two persistence stores; never let an arbitrary/preload-bearing renderer
+ * enumerate any snapshot row by choosing a store name.
+ */
+export function canReadDesktopSnapshot(input: {
+  senderId: number
+  knownWindowIds: ReadonlySet<number>
+  senderUrl: string
+  appIndexFileUrl: string
+  devOrigin: string | null
+  storeName: unknown
+}): boolean {
+  return input.knownWindowIds.has(input.senderId)
+    && isInAppNavigation(input.senderUrl, input.appIndexFileUrl, input.devOrigin)
+    && (input.storeName === 'shopsys-data' || input.storeName === 'shopsys-app')
 }

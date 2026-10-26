@@ -119,6 +119,17 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
+  it('اختيار الطرف بنقرة واحدة يثبّت العميل بدلاً من ترك الفاتورة نقدية', () => {
+    const onChange = vi.fn()
+    const onConfirm = vi.fn()
+    const view = render(<PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm} commitOnClick />)
+    fireEvent.change(view.getByLabelText('العميل'), { target: { value: 'أحمد' } })
+    fireEvent.click(document.querySelector('[data-quick-option][data-value="10"]')!)
+    expect(onChange).toHaveBeenCalledWith(10)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    expect(view.queryByRole('dialog')).toBeNull()
+  })
+
   it('يفتح منتقي الطرف الموجود في النافذة النشطة فقط عند تعدد المنتقيات', () => {
     const view = render(<MemoryRouter><KeyboardNavigation/><PartyQuickPicker parties={[{ id: 1, nameAr: 'عميل الصفحة' }]} value={0} onChange={() => undefined} cashLabel="عميل نقدي" label="طرف الصفحة"/><div role="dialog"><PartyQuickPicker parties={[{ id: 2, nameAr: 'عميل النافذة' }]} value={0} onChange={() => undefined} cashLabel="عميل نقدي" label="طرف النافذة"/></div></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F4' })

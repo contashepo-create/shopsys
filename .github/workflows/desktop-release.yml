@@ -206,7 +206,12 @@ jobs:
         run: |
           set -euo pipefail
           gh api repos/contashepo-create/shopsys/releases --paginate --jq '.[] | @json' > "$RUNNER_TEMP/source-releases.jsonl"
-          node scripts/select_upgrade_baseline.mjs "$RUNNER_TEMP/source-releases.jsonl" "$GITHUB_REF_NAME"
+          if [[ "${{ inputs.dry_run }}" = "true" ]]; then
+            CANDIDATE_TAG="v$(node -p "require('./package.json').version")"
+          else
+            CANDIDATE_TAG="$GITHUB_REF_NAME"
+          fi
+          node scripts/select_upgrade_baseline.mjs "$RUNNER_TEMP/source-releases.jsonl" "$CANDIDATE_TAG"
 
       - name: تنزيل مثبت الإصدار السابق لاختبار أول انتقال قبل النشر
         shell: bash

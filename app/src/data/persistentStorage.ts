@@ -242,10 +242,13 @@ export class DesktopStateStorage implements StateStorage {
   private readonly queueFailures = new Map<string, string>()
   private paused = false
 
-  async drain(): Promise<void> {
-    await Promise.all(this.queues.values())
-    if (failedStores.size) throw new Error(desktopStorageFailure() ?? 'تعذّر تحميل البيانات')
-    if (this.queueFailures.size) throw new Error([...this.queueFailures.values()].join(' | '))
+  async drain(storeName?: string): Promise<void> {
+    const names = storeName ? [storeName] : [...new Set([...this.queues.keys(), ...failedStores.keys(), ...this.queueFailures.keys()])]
+    await Promise.all(names.map((name) => this.queues.get(name)).filter((queue): queue is Promise<unknown> => !!queue))
+    const readFailures = [...failedStores].filter(([name]) => !storeName || name === storeName)
+    if (readFailures.length) throw new Error(readFailures.map(([name, message]) => `${name}: ${message}`).join(' | '))
+    const writeFailures = [...this.queueFailures].filter(([name]) => !storeName || name === storeName)
+    if (writeFailures.length) throw new Error(writeFailures.map(([name, message]) => `${name}: ${message}`).join(' | '))
   }
 
   async flush(): Promise<void> {
@@ -482,8 +485,8 @@ type DesktopStorageCache = { database: DesktopDatabaseBridge; storage: DesktopSt
 let appStorageCache: DesktopStorageCache | null = null
 let settingsStorageCache: DesktopStorageCache | null = null
 
-export async function flushPendingDesktopSnapshots(): Promise<void> {
-  await Promise.all([...activeDesktopStores].map((storage) => storage.drain()))
+export async function flushPendingDesktopSnapshots(storeName?: string): Promise<void> {
+  await Promise.all([...activeDesktopStores].map((storage) => storage.drain(storeName)))
 }
 
 export async function refreshDesktopSnapshot(storeName: string): Promise<void> {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createHash, pbkdf2Sync } from 'node:crypto'
 import {
   authorizeDesktopIdentity,
+  canReadDesktopSnapshot,
   hasConfiguredDesktopAuth,
   isAuthorizedDesktopSender,
   persistedAuthState,
@@ -51,5 +52,20 @@ describe('مصادقة الجلسات في عملية Electron الرئيسية'
     expect(isAuthorizedDesktopSender(true, allowlist, 11)).toBe(true)
     expect(isAuthorizedDesktopSender(true, allowlist, 12)).toBe(false)
     expect(isAuthorizedDesktopSender(false, allowlist, 12)).toBe(true)
+  })
+
+  it('يحصر قراءة لقطات الإقلاع في نوافذ التطبيق المعروفة ومصدره ومخازنه المسموحة', () => {
+    const base = {
+      senderId: 11,
+      knownWindowIds: new Set([11, 22]),
+      senderUrl: 'file:///app/dist/index.html',
+      appIndexFileUrl: 'file:///app/dist/index.html',
+      devOrigin: null,
+      storeName: 'shopsys-data',
+    }
+    expect(canReadDesktopSnapshot(base)).toBe(true)
+    expect(canReadDesktopSnapshot({ ...base, senderId: 99 })).toBe(false)
+    expect(canReadDesktopSnapshot({ ...base, senderUrl: 'https://evil.example/' })).toBe(false)
+    expect(canReadDesktopSnapshot({ ...base, storeName: 'arbitrary-table' })).toBe(false)
   })
 })

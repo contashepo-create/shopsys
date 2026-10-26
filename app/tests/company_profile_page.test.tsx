@@ -11,7 +11,7 @@
  * فقط مع رابط للتعديل من هنا.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, fireEvent, cleanup, screen } from '@testing-library/react'
+import { render, fireEvent, cleanup, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -19,11 +19,13 @@ vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
 const { useAppStore } = await import('../src/stores/app.store.ts')
 const { useToast } = await import('../src/ui/components/ui.tsx')
+const { hasUnsavedChangesInCurrentWindow } = await import('../src/ui/components/unsavedChangeRegistry.ts')
 const { CompanyProfilePage } = await import('../src/ui/pages/CompanyProfilePage.tsx')
 const { GeneralSettingsPage } = await import('../src/ui/pages/GeneralSettingsPage.tsx')
 const { EinvoicePage } = await import('../src/ui/pages/EinvoicePage.tsx')
 
 function resetStore() {
+  useAppStore.getState().setActiveBranchContext(null)
   localStorage.clear()
   const app = useAppStore.getState()
   useAppStore.setState({
@@ -54,6 +56,46 @@ describe('صفحة بيانات المنشأة', () => {
     fireEvent.click(screen.getByText('💾 حفظ بيانات المنشأة'))
 
     expect(useAppStore.getState().setup.shopName).toBe('سوبر ماركت النور')
+  })
+
+  it('يحفظ المسودة مشفّرة ويستعيدها بعد إعادة تركيب الصفحة ثم يحذفها بعد الحفظ', async () => {
+    const draftKey = 'shopsys-company-profile-draft-v1:main'
+    const first = render(<MemoryRouter><CompanyProfilePage /></MemoryRouter>)
+    await waitFor(() => expect(localStorage.getItem(draftKey)).not.toBeNull())
+    fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'draft@example.com' } })
+    expect(document.querySelector('[data-settings-unsaved]')).not.toBeNull()
+    await waitFor(() => {
+      const stored = localStorage.getItem(draftKey)
+      expect(stored).not.toContain('draft@example.com')
+      expect(stored).toMatch(/^SSENC1\./)
+    })
+    first.unmount()
+
+    render(<MemoryRouter><CompanyProfilePage /></MemoryRouter>)
+    await waitFor(() => expect((screen.getByPlaceholderText('name@example.com') as HTMLInputElement).value).toBe('draft@example.com'))
+    expect(document.querySelector('[data-settings-unsaved]')?.textContent).toContain('استُعيدت مسودة')
+    expect(hasUnsavedChangesInCurrentWindow()).toBe(true)
+    fireEvent.click(screen.getByText('💾 حفظ بيانات المنشأة'))
+    expect(hasUnsavedChangesInCurrentWindow()).toBe(false)
+    expect(useAppStore.getState().setup.email).toBe('draft@example.com')
+    await waitFor(() => expect(localStorage.getItem(draftKey)).toBeNull())
+  })
+
+  it('يرحّل المسودة القديمة الصريحة إلى تخزين مشفّر مع الحفاظ على الاستعادة', async () => {
+    const draftKey = 'shopsys-company-profile-draft-v1:main'
+    const draft = {
+      shopName: 'بقالة الأمل', ownerName: 'المالك', phone: '0100000000', email: 'legacy@example.com',
+      website: '', city: 'القاهرة', street: 'شارع النصر', buildingNo: '', postalCode: '', poBox: '',
+      commercialRegister: '', taxNumber: '',
+    }
+    localStorage.setItem(draftKey, JSON.stringify({ version: 1, fields: draft }))
+    render(<MemoryRouter><CompanyProfilePage /></MemoryRouter>)
+    await waitFor(() => expect((screen.getByPlaceholderText('name@example.com') as HTMLInputElement).value).toBe('legacy@example.com'))
+    await waitFor(() => {
+      const stored = localStorage.getItem(draftKey)
+      expect(stored).toMatch(/^SSENC1\./)
+      expect(stored).not.toContain('legacy@example.com')
+    })
   })
 
   it('لا يحفظ اسماً فارغاً (مسافات فقط) ويظهر تنبيهاً', () => {
@@ -124,6 +166,40 @@ describe('الإعدادات العامة بعد نقل بيانات المنش�
     expect(screen.queryByPlaceholderText('اسم منشأتك')).toBeNull()
     const link = screen.getByText(/بيانات المنشأة/).closest('a')
     expect(link?.getAttribute('href')).toBe('/settings/company')
+  })
+
+  it('تحذر من مغادرة الإعدادات العامة مع بيانات شركة/ضريبة غير محفوظة', () => {
+    render(<MemoryRouter><GeneralSettingsPage /></MemoryRouter>)
+    const companyName = screen.getByPlaceholderText('اسم المنشأة')
+    fireEvent.change(companyName, { target: { value: 'اسم جديد لم يُحفظ' } })
+    expect(document.querySelector('[data-settings-unsaved]')).not.toBeNull()
+    fireEvent.click(screen.getByText('حفظ الاسم'))
+    expect(document.querySelector('[data-settings-unsaved]')).toBeNull()
+  })
+
+  it('تستخدم المنشأة الرئيسية نفس مفتاح المسودة ولا تنشئ مساحة منفصلة', async () => {
+    useAppStore.getState().setActiveBranchContext({
+      id: 1, nameAr: 'الفرع الرئيسي', isMain: true, warehouseId: 1,
+      customModulesMode: 'all', enabledModules: [], activityId: 'grocery',
+    })
+    render(<MemoryRouter><GeneralSettingsPage /></MemoryRouter>)
+    fireEvent.change(screen.getByPlaceholderText('اسم المنشأة'), { target: { value: 'اسم رئيسي غير محفوظ' } })
+    await waitFor(() => expect(localStorage.getItem('shopsys-general-settings-draft-v1:company')).not.toBeNull())
+    expect(localStorage.getItem('shopsys-general-settings-draft-v1:branch-1')).toBeNull()
+  })
+
+  it('تستعيد مسودة الإعدادات العامة بعد إعادة تركيب الصفحة', () => {
+    const first = render(<MemoryRouter><GeneralSettingsPage /></MemoryRouter>)
+    fireEvent.change(screen.getByPlaceholderText('اسم المنشأة'), { target: { value: 'اسم إعداد مستعاد' } })
+    first.unmount()
+    render(<MemoryRouter><GeneralSettingsPage /></MemoryRouter>)
+    expect((screen.getByPlaceholderText('اسم المنشأة') as HTMLInputElement).value).toBe('اسم إعداد مستعاد')
+    expect(document.querySelector('[data-settings-unsaved]')?.textContent).toContain('استُعيدت مسودة')
+    expect(hasUnsavedChangesInCurrentWindow()).toBe(true)
+    fireEvent.click(screen.getByText('حفظ الاسم'))
+    expect(hasUnsavedChangesInCurrentWindow()).toBe(false)
+    expect(useAppStore.getState().setup.shopName).toBe('اسم إعداد مستعاد')
+    expect(localStorage.getItem('shopsys-general-settings-draft-v1:company')).toBeNull()
   })
 })
 

@@ -11,13 +11,25 @@
  * التخزين في مكانين، وتتيح تعبئته حتى لو ميزة الفاتورة الإلكترونية غير
  * مفعّلة بالترخيص (كانت شاشتها تُقفَل بالكامل فلا سبيل لإدخاله إطلاقاً).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, Building2, User, Phone, MapPin, Hash, Landmark, Image as ImageIcon } from 'lucide-react'
 import { branchIdentityMissingFields, useAppStore } from '../../stores/app.store.ts'
-import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { secureStorage } from '../../data/secureStorage.ts'
+import { Btn, Field, inputCls, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
 
 const isValidEmail = (v: string) => !v.trim() || /^\S+@\S+\.\S+$/.test(v.trim())
+type CompanyProfileDraft = Record<'shopName' | 'ownerName' | 'phone' | 'email' | 'website' | 'city' | 'street' | 'buildingNo' | 'postalCode' | 'poBox' | 'commercialRegister' | 'taxNumber', string>
+const COMPANY_DRAFT_FIELDS: readonly (keyof CompanyProfileDraft)[] = ['shopName', 'ownerName', 'phone', 'email', 'website', 'city', 'street', 'buildingNo', 'postalCode', 'poBox', 'commercialRegister', 'taxNumber']
+function readCompanyProfileDraft(serialized: string | null): CompanyProfileDraft | null {
+  try {
+    const parsed = JSON.parse(serialized ?? 'null') as { version?: unknown; fields?: unknown } | null
+    if (parsed?.version !== 1 || !parsed.fields || typeof parsed.fields !== 'object') return null
+    const fields = parsed.fields as Record<string, unknown>
+    if (!COMPANY_DRAFT_FIELDS.every((field) => typeof fields[field] === 'string')) return null
+    return fields as CompanyProfileDraft
+  } catch { return null }
+}
 
 function CompanyProfileForm() {
   const { setup, updateCompanyProfile, einvoice, updateEinvoice, receipt, activeBranchContext } = useAppStore()
@@ -26,6 +38,9 @@ function CompanyProfileForm() {
   // بصورة مستقلة. setup/einvoice هنا هما القيم الفعالة للسياق الحالي،
   // وتوجيه الحفظ إلى ملف الفرع أو ملف الرئيسي يتم داخل app.store.
   const isBranchScope = !!activeBranchContext && !activeBranchContext.isMain
+  const draftStorageKey = `shopsys-company-profile-draft-v1:${isBranchScope ? activeBranchContext?.id ?? 'branch' : 'main'}`
+  const [restoredDraft, setRestoredDraft] = useState<CompanyProfileDraft | null>(null)
+  const [draftReady, setDraftReady] = useState(false)
 
   const [shopName, setShopName] = useState(setup.shopName)
   const [ownerName, setOwnerName] = useState(isBranchScope ? '' : setup.ownerName)
@@ -39,6 +54,38 @@ function CompanyProfileForm() {
   const [poBox, setPoBox] = useState(setup.poBox ?? '')
   const [commercialRegister, setCommercialRegister] = useState(setup.commercialRegister ?? '')
   const [taxNumber, setTaxNumber] = useState(einvoice.taxNumber)
+  useEffect(() => {
+    let active = true
+    void Promise.resolve(secureStorage.getItem(draftStorageKey)).then((serialized) => {
+      const draft = readCompanyProfileDraft(serialized)
+      // الكتابة المشفّرة التي تلي التهيئة ترحّل تلقائياً أي مسودة قديمة كانت
+      // كنص صريح إلى التنسيق المحمي من دون ترك كتابة ترحيل متسابقة بالخلفية.
+      if (!active) return
+      if (draft) {
+        setShopName(draft.shopName); setOwnerName(draft.ownerName); setPhone(draft.phone); setEmail(draft.email)
+        setWebsite(draft.website); setCity(draft.city); setStreet(draft.street); setBuildingNo(draft.buildingNo)
+        setPostalCode(draft.postalCode); setPoBox(draft.poBox); setCommercialRegister(draft.commercialRegister); setTaxNumber(draft.taxNumber)
+      }
+      setRestoredDraft(draft)
+      setDraftReady(true)
+    }).catch(() => { if (active) setDraftReady(true) })
+    return () => { active = false }
+  }, [draftStorageKey])
+  const profileDraft: CompanyProfileDraft = { shopName, ownerName, phone, email, website, city, street, buildingNo, postalCode, poBox, commercialRegister, taxNumber }
+  const profileDraftJson = JSON.stringify(profileDraft)
+  const profileDraftStorageJson = JSON.stringify({ version: 1, fields: profileDraft })
+  const savedProfileDraft: CompanyProfileDraft = {
+    shopName: setup.shopName, ownerName: isBranchScope ? '' : setup.ownerName, phone: setup.phone, email: setup.email,
+    website: setup.website ?? '', city: setup.city, street: setup.street, buildingNo: setup.buildingNo ?? '',
+    postalCode: setup.postalCode ?? '', poBox: setup.poBox ?? '', commercialRegister: setup.commercialRegister ?? '', taxNumber: einvoice.taxNumber,
+  }
+  const unsaved = useUnsavedChangesGuard(profileDraftJson, JSON.stringify(savedProfileDraft))
+  useEffect(() => {
+    if (!draftReady) return
+    void Promise.resolve(secureStorage.setItem(draftStorageKey, profileDraftStorageJson)).catch(() => {
+      /* يبقى حارس الإغلاق فعالاً حتى عند تعذر التخزين */
+    })
+  }, [draftReady, draftStorageKey, profileDraftStorageJson])
 
 
   const identityMissing = isBranchScope
@@ -67,6 +114,9 @@ function CompanyProfileForm() {
         commercialRegister: commercialRegister.trim(),
       })
       updateEinvoice({ taxNumber: taxNumber.trim() })
+      unsaved.markClean()
+      setRestoredDraft(null)
+      void Promise.resolve(secureStorage.removeItem(draftStorageKey)).catch(() => { /* لا يؤثر في نجاح حفظ الإعدادات */ })
       toast.show(isBranchScope ? `حُفظت هوية «${shopName.trim()}» المستقلة ✓` : 'حُفظت بيانات المنشأة ✓')
     } catch (err) {
       toast.show((err as Error).message, 'error')
@@ -75,6 +125,8 @@ function CompanyProfileForm() {
 
   return (
     <div className="max-w-3xl space-y-4" data-company-profile-page>
+      {unsaved.prompt}
+      {(unsaved.isDirty || restoredDraft) && <div role="status" className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-800 dark:text-amber-300" data-settings-unsaved>{restoredDraft ? 'استُعيدت مسودة بيانات المنشأة غير المحفوظة من هذا الجهاز؛ راجعها ثم احفظها.' : 'لديك تغييرات لم تحفظها كإعداد بعد؛ سيطلب التطبيق تأكيداً قبل المغادرة.'}</div>}
       <div className="anim-up flex items-center gap-2">
         <Building2 size={22} className="text-brand-500" />
         <h1 className="text-lg font-black text-slate-800 dark:text-white">

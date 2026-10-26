@@ -43,7 +43,7 @@ check('ACK الحفظ مربوط بالمصيّر والتوكن المتوقع 
 check('جسر الاستئناف لا يمرر IpcRendererEvent إلى الواجهة', preload.includes("ipcRenderer.on('persistence:resume', () => listener())"))
 check('جسر preload يربط flush والنتيجة والاستئناف', ['persistence:flush', 'persistence:flushed', 'persistence:resume'].every(channel => preload.includes(channel)))
 check('flush يسجل مخزني الإعدادات والأعمال الثابتين مرة واحدة لكل جسر قاعدة', storage.includes('cachedDesktopStorage(appStorageCache, bridge.database, null)') && storage.includes('cachedDesktopStorage(settingsStorageCache, bridge.database, rawLocalStorage)') && storage.includes('activeDesktopStores'))
-check('flush ينتظر طوابير التخزين ولا يبتلع فشل الحفظ', storage.includes('await Promise.all(this.queues.values())') && storage.includes('if (this.queueFailures.size) throw new Error'))
+check('flush ينتظر طوابير المتجر المحدد أو كل المتاجر ولا يبتلع فشل القراءة/الحفظ', storage.includes('await Promise.all(names.map((name) => this.queues.get(name))') && storage.includes('if (readFailures.length) throw new Error') && storage.includes('if (writeFailures.length) throw new Error'))
 check('فشل التحضير يستأنف الواجهة دون تثبيت', main.includes("mainWindow?.webContents.send('persistence:resume')"))
 check('النسخ تشمل بجوار القاعدة وuserData والمستندات والمكان الثاني', safety.includes("join(dirname(expectedPath), 'backups')") && safety.includes("join(options.userData, 'backups')") && safety.includes('options.documentsBackupDir') && safety.includes('cfg.secondaryBackupDir'))
 check('لا استبدال للموجود؛ الاستعادة للمفقود فقط', safety.includes('if (existsSync(dbPath)) return null') && safety.includes('if (existsSync(destination)) throw new Error'))

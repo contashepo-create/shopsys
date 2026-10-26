@@ -9,7 +9,7 @@
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
 import { closingMechanismIds } from './fiscal.ts'
-import { eliminatePairedInterBranchLines } from './branchAccounting.ts'
+import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferEntryIds } from './branchAccounting.ts'
 import { economicSourceResolver } from './journalSource.ts'
 
 export interface FinPeriod {
@@ -298,8 +298,18 @@ export function cashFlowReport(
   const outMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
   let operatingNetMinor = 0, investingNetMinor = 0, financingNetMinor = 0
   const sourceOf = economicSourceResolver(journal)
+  const pairedTransfers = pairedInterBranchTransferEntryIds(journal)
   for (const e of journal) {
-    const cashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
+    const rawCashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
+    // In the company-wide view, matched due-to/due-from lines identify the
+    // internal principal. Remove that amount from gross cash movement while
+    // preserving real bank fees posted on the source entry. Branch-scoped
+    // reports contain only one side and intentionally retain the transfer.
+    const internalPrincipalDelta = pairedTransfers.has(e.id)
+      ? e.lines.filter((line) => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
+        .reduce((sum, line) => sum + line.debit - line.credit, 0)
+      : 0
+    const cashDelta = rawCashDelta + internalPrincipalDelta
     if (cashDelta === 0) continue
     // قيد التأسيس ليس تدفقاً تشغيلياً. إن سبق بداية الفترة يدخل رصيد أولها؛
     // وإن وقع داخلها يظهر كتسوية رصيد افتتاحي مستقلة حتى لا يُضخّم نقدية أول الفترة.

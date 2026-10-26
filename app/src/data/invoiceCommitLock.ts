@@ -21,7 +21,9 @@ export async function withInvoiceCommitLock<T>(
       await refreshDesktopSnapshot('shopsys-data')
       await refreshLiveData()
       const result = await commit()
-      await flushPendingDesktopSnapshots()
+      // لا تجعل خطأ لقطة الإعدادات shopsys-app يترك فاتورة مُرحّلة مفتوحة
+      // فيدفع المستخدم إلى إعادة الترحيل. نؤكد هنا لقطة دفتر المبيعات فقط.
+      await flushPendingDesktopSnapshots('shopsys-data')
       return result
     } finally {
       lock.release(token)
@@ -35,10 +37,10 @@ export async function withInvoiceCommitLock<T>(
     throw new Error('هذا المتصفح لا يدعم قفل الترحيل الآمن بين التبويبات. حدّث المتصفح ثم أعد المحاولة.')
   }
   return lockManager.request('shopsys:invoice-commit', { mode: 'exclusive' }, async () => {
-    await flushSecureStorageWrites()
+    await flushSecureStorageWrites('shopsys-data')
     await refreshLiveData()
     const result = await commit()
-    await flushSecureStorageWrites()
+    await flushSecureStorageWrites('shopsys-data')
     return result
   })
 }
