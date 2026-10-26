@@ -232,6 +232,8 @@ type PropFn = (...args: unknown[]) => unknown
 const pendingCallbacks = new Map<string, Record<string, PropFn>>() // requestId → ردود النداء
 const satelliteByDedupe = new Map<string, string>() // dedupeKey → windowId
 const satelliteIds = new Map<string, string | null>() // windowId → requestId
+/** windowId → أمه (تبويب/قمر/'main') — لإغلاق أبناء التبويب معه */
+const satelliteParent = new Map<string, string | null>()
 let transportInstalled = false
 /** إجراء واحد معلّق لحوار تأكيد التبويب (إغلاق أو مغادرة) — يُنفّذ عند التأكيد فقط */
 let tabAskProceed: (() => void) | null = null
@@ -243,10 +245,12 @@ function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
     alive.add(entry.windowId)
     if (entry.dedupeKey) satelliteByDedupe.set(entry.dedupeKey, entry.windowId)
     if (!satelliteIds.has(entry.windowId)) satelliteIds.set(entry.windowId, null)
+    satelliteParent.set(entry.windowId, entry.parentId)
   }
   for (const [id, requestId] of [...satelliteIds]) {
     if (!alive.has(id)) {
       satelliteIds.delete(id)
+      satelliteParent.delete(id)
       if (requestId) pendingCallbacks.delete(requestId)
     }
   }
@@ -306,6 +310,8 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
   const hasCallbacks = Object.keys(fns).length > 0
   if (hasCallbacks) pendingCallbacks.set(requestId, fns)
   satelliteIds.set(id, hasCallbacks ? requestId : null)
+  const parentId = input.parentId ?? getSelfWindowId()
+  satelliteParent.set(id, parentId)
   if (input.dedupeKey) satelliteByDedupe.set(input.dedupeKey, id)
   void bridge.open({
     windowId: id,
@@ -315,7 +321,7 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
     props,
     callbackNames: Object.keys(fns),
     requestId,
-    parentId: input.parentId ?? getSelfWindowId(),
+    parentId,
     dedupeKey: input.dedupeKey ?? null,
     width: input.width ?? 1180,
     height: input.height ?? 760,
@@ -469,6 +475,14 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       if (fallback?.path) { pendingPath = fallback.path; viewActiveTabId = null }
       else if (fallback) { viewActiveTabId = fallback.id; pendingPath = null }
       else { pendingPath = '/'; viewActiveTabId = null }
+    }
+    /* أبناء التبويب (نوافذ قمر فُتحت منه) تُغلق معه — نفس قاعدة «إغلاق الأم
+       يغلق بناتها»؛ كل ابنة تسأل عبر مصافحتها إن كانت متسخة. */
+    const bridge = desktopBridge()
+    if (bridge) {
+      for (const [childId, parentId] of satelliteParent) {
+        if (parentId === id && satelliteIds.has(childId)) bridge.requestClose(childId)
+      }
     }
     set({ tabs: rest, viewActiveTabId, pendingPath })
   },

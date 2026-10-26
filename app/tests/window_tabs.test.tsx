@@ -7,6 +7,7 @@ import { WindowTabBar } from '../src/ui/windows/WindowTabs.tsx'
 function installFakeDesktop() {
   const open = vi.fn(async () => ({ ok: true as const }))
   const openSection = vi.fn(async () => ({ ok: true as const }))
+  const requestClose = vi.fn()
   const windows = {
     open,
     openSection,
@@ -14,7 +15,7 @@ function installFakeDesktop() {
     list: vi.fn(async () => [] as never[]),
     invokeProp: vi.fn(),
     closeSelf: vi.fn(),
-    requestClose: vi.fn(),
+    requestClose,
     focus: vi.fn(),
     minimize: vi.fn(),
     toggleMaximize: vi.fn(),
@@ -28,7 +29,7 @@ function installFakeDesktop() {
     onNavigate: vi.fn(() => () => {}),
   }
   ;(window as unknown as { shopsysDesktop?: unknown }).shopsysDesktop = { runtime: 'electron', windows }
-  return { open, openSection }
+  return { open, openSection, requestClose }
 }
 
 function resetStore() {
@@ -163,6 +164,17 @@ describe('تبويبات النافذة الأم', () => {
     state = useWindowStore.getState()
     expect(state.viewActiveTabId).toBeNull()
     expect(state.pendingPath).toBe('/settings/general')
+  })
+
+  it('غلق تبويب يغلق نوافذ أبناء القمر المتفرعة منه', () => {
+    const { open, requestClose } = installFakeDesktop() as ReturnType<typeof installFakeDesktop> & { requestClose: ReturnType<typeof vi.fn> }
+    const viewId = useWindowStore.getState().openWindow({ kind: 'party-ledger', title: 'كشف حساب', dedupeKey: 'party-ledger:1' })
+    /* ابنة فُتحت من التبويب (مضيف النوافذ يمرّر parentId بمعرّف التبويب) */
+    const childId = useWindowStore.getState().openWindow({ kind: 'item-picker', title: 'منتقي', parentId: viewId })
+    expect(open).toHaveBeenCalledTimes(1)
+    useWindowStore.getState().closeTabNow(viewId)
+    expect(useWindowStore.getState().tabs).toHaveLength(0)
+    expect(requestClose).toHaveBeenCalledWith(childId)
   })
 
   it('في الويب بلا جسر: الأقسام تنقل عادي والتبويبات لا تُفتح', () => {
