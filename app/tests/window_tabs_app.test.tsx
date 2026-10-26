@@ -8,7 +8,7 @@
  * يركّب <App/> ببيانات النشاط التجريبي كما في all_pages_render + جسر وهمي كامل.
  */
 import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -185,5 +185,55 @@ describe('أثر <App/> للتبويبات على سطح المكتب', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }))
     /* قبل إصلاح D6 كان KeyboardNavigation يُفكّ مع فرع التبويب فتموت الاختصارات */
     await waitFor(() => expect(document.querySelector('[data-shortcut-help]')).toBeTruthy(), { timeout: 5000 })
+  })
+})
+
+describe('تكامل الراوتر مع تبويبات العرض داخل <App/>', () => {
+  it('التنقّل من داخل تبويب عرض يعيد المحتوى للراوتر — التبويب يبقى في الشريط ويُستعاد بالنقر', async () => {
+    installFakeDesktop()
+    window.location.hash = '#/'
+    render(<App />)
+    const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
+    const tabId = useWindowStore.getState().openWindow({ kind: 'item-editor', title: 'محرر محفوظ', dedupeKey: 'item-editor:nav-roundtrip' })
+    await waitFor(() => expect(document.querySelector(`[data-view-tab="${tabId}"]`)).toBeTruthy(), { timeout: 8000 })
+    /* تنقّل داخلي (روابط داخل الصفحة العلوية) — المسار يتغير والتبويب معروض */
+    window.location.hash = '#/parties/customers'
+    fireEvent(window, new Event('hashchange'))
+    await waitFor(() => expect(useWindowStore.getState().viewActiveTabId).toBeNull(), { timeout: 8000 })
+    expect(window.location.hash).toBe('#/parties/customers')
+    const state = useWindowStore.getState()
+    /* التبويب ظل في الشريط ولم يُمس */
+    expect(state.tabs.some((tab) => tab.id === tabId)).toBe(true)
+    /* والمسار الجديد احجز تبويبه (قرار: أي تنقّل يفتح القسم تبويباً) */
+    expect(state.tabs.some((tab) => tab.path === '/parties/customers')).toBe(true)
+    expect(document.querySelector(`[data-view-tab="${tabId}"]`)).toBeNull()
+    /* والنقر على التبويب يعيد العرض من المخزن */
+    fireEvent.click(screen.getByText('محرر محفوظ'))
+    await waitFor(() => expect(document.querySelector(`[data-view-tab="${tabId}"]`)).toBeTruthy(), { timeout: 8000 })
+    expect(useWindowStore.getState().viewActiveTabId).toBe(tabId)
+  })
+
+  it('تبديل بين تبويبَي عرض من نوعين مختلفين يبدّل المحتوى كلياً بلا تسرّب', async () => {
+    installFakeDesktop()
+    window.location.hash = '#/'
+    render(<App />)
+    const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
+    const { useDataStore } = await import('../src/data/repo.ts')
+    const firstItem = useDataStore.getState().items[0]
+    const customer = useDataStore.getState().customers[0]
+    expect(firstItem, 'صنف تجريبي مطلوب').toBeTruthy()
+    expect(customer, 'عميل تجريبي مطلوب').toBeTruthy()
+    const editorTab = useWindowStore.getState().openWindow({ kind: 'item-editor', title: 'محرر صنف', props: { itemId: firstItem.id }, dedupeKey: 'item-editor:cross-1' })
+    await waitFor(() => expect(document.querySelector(`[data-view-tab="${editorTab}"]`)).toBeTruthy(), { timeout: 8000 })
+    /* فتح النوع الثاني: يحل محل الأول تماماً (لا محتوى مشترك) */
+    const ledgerTab = useWindowStore.getState().openWindow({ kind: 'party-ledger', title: 'كشف عميل', props: { partyKind: 'customer', partyId: customer.id }, dedupeKey: 'party-ledger:customer:cross-1' })
+    await waitFor(() => expect(document.querySelector(`[data-view-tab="${ledgerTab}"]`)).toBeTruthy(), { timeout: 8000 })
+    expect(document.querySelector('[data-view-tab-kind="party-ledger"]')).toBeTruthy()
+    expect(document.querySelector(`[data-view-tab="${editorTab}"]`)).toBeNull()
+    /* والعودة للمحرر كذلك */
+    useWindowStore.getState().activateTab(editorTab)
+    await waitFor(() => expect(document.querySelector(`[data-view-tab="${editorTab}"]`)).toBeTruthy(), { timeout: 8000 })
+    expect(document.querySelector('[data-view-tab-kind="item-editor"]')).toBeTruthy()
+    expect(document.querySelector(`[data-view-tab="${ledgerTab}"]`)).toBeNull()
   })
 })

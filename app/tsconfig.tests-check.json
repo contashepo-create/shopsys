@@ -33,6 +33,8 @@
     "tests/window_ask_layers.test.ts",
     "tests/window_tabs.test.tsx",
     "tests/window_tabs_app.test.tsx",
-    "tests/window_tabs_dedupe.test.tsx"
+    "tests/window_tabs_dedupe.test.tsx",
+    "tests/window_actions_matrix.test.tsx",
+    "tests/window_kinds_smoke.test.tsx"
   ]
 }
