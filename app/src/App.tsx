@@ -19,7 +19,8 @@ import { DesktopKeyRecoveryImport } from './ui/components/DesktopKeyRecovery.tsx
 import { isElectronRuntime, isDesktopFreeWindows, desktopDatabaseStorage, desktopKeyRecoveryBridge, desktopBridge, type SatelliteDescriptor } from './data/desktopBridge.ts'
 import { isSatelliteBoot, claimSatellite } from './ui/windows/satelliteState.ts'
 import { SatelliteLayout, SatelliteViewRoot } from './ui/windows/satellite.tsx'
-import { openSectionWindow } from './ui/windows/windowStore.ts'
+import { openSectionWindow, useWindowStore } from './ui/windows/windowStore.ts'
+import { ActiveViewTab } from './ui/windows/WindowTabs.tsx'
 import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { DevNoticeHost } from './ui/components/DevNoticeModal.tsx'
@@ -192,16 +193,40 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
      يُفتح عبر رابط مباشر حتى من نافذة حرة. */
   const Layout = (satellite ? SatelliteLayout : MainLayout) as React.ComponentType<{ title?: string; children: React.ReactNode }>
 
-  /* الرئيسية مشغّل (قرار المالك — سطح المكتب): أي تنقّل لغير لوحة التحكم
-     (روابط داخلية، تنقلات كود،…) يفتح القسم في نافذة نظام حرة وتعود
-     الرئيسية للوحة التحكم. في الويب لا يعمل — التنقل الداخلي كما هو. */
+  /* ── تبويبات النافذة الأم (قرار المالك2026-10-26): الأقسام والعروض تُفتح
+     كتاباباً داخل الرئيسية — مزامنة الراوتر مع المتجر باتجاهين واحداً each. ── */
+  const windowTabs = useWindowStore((s) => s.tabs)
+  const viewActiveTabId = useWindowStore((s) => s.viewActiveTabId)
+  const pendingPath = useWindowStore((s) => s.pendingPath)
+  const viewActiveTab = viewActiveTabId ? windowTabs.find((tab) => tab.id === viewActiveTabId) ?? null : null
+  useEffect(() => {
+    if (satellite || !isDesktopFreeWindows()) return
+    const current = `${location.pathname}${location.search}`
+    const store = useWindowStore.getState()
+    store.syncCurrentPath(current)
+    /* تنقّل داخلي أثناء عرض تبويب (روابط داخل الصفحة العلوية مثلاً) يعيد
+       المحتوى للراوتر — التبويب يبقى في الشريط ويُستعاد بالنقر عليه. */
+    if (store.viewActiveTabId) useWindowStore.setState({ viewActiveTabId: null })
+  }, [satellite, location.pathname, location.search])
+  useEffect(() => {
+    if (pendingPath == null || satellite) return
+    useWindowStore.getState().setPendingPath(null)
+    const current = `${location.pathname}${location.search}`
+    if (pendingPath !== current) navigate(pendingPath, { replace: true })
+  }, [pendingPath, satellite, location.pathname, location.search, navigate])
+
+  /* الرئيسية مشغّل — نسخة التبويبات (قرار المالك2026-10-26): أي تنقّل لغير
+     لوحة التحكم على سطح المكتب يفتح القسم تبويباً داخل هذه النافذة نفسها
+     بدل نافذة حرة مستقلة، ولا تعود الرئيسية للوحة التحكم — التبويب هو العرض.
+     عند بلوغ10 تبويبات يعود openSectionWindow لسلوكه القديم (نافذة قسم).
+     في الويب لا جسر: التنقل الداخلي كما هو حرفياً. */
   useEffect(() => {
     if (satellite || !isDesktopFreeWindows()) return
     if (!setupState.completed || location.pathname === '/') return
     const raw = useRawDataStore.getState()
     if (raw.loggedOut || !useSessionAuthStore.getState().authenticated) return
-    if (openSectionWindow(`${location.pathname}${location.search}`, title)) navigate('/', { replace: true })
-  }, [satellite, location.pathname, location.search, title, setupState.completed, navigate])
+    openSectionWindow(`${location.pathname}${location.search}`, title)
+  }, [satellite, location.pathname, location.search, title, setupState.completed])
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
   /* الهوية والمصادقة من المتجر الخام (غير مصفّاة بالفرع): بوابة الدخول
@@ -257,7 +282,9 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
   }
 
   return (
-    <Layout title={title}>
+    <Layout title={viewActiveTab ? viewActiveTab.title : title}>
+      {viewActiveTab ? <ActiveViewTab tab={viewActiveTab} /> : (
+        <>
       <KeyboardNavigation />
       <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>}>
       <Routes>
@@ -381,6 +408,8 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
         <Route path="*" element={<Dashboard />} />
       </Routes>
       </Suspense>
+        </>
+      )}
     </Layout>
   )
 }

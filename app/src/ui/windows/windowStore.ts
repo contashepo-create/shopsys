@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { SmartEntry } from '../components/smartEntry.ts'
+import { guardNavigation } from '../components/navigationGuard.ts'
 import { desktopWindowsBridge, type DesktopWindowsBridge, type SatelliteRegistryEntry } from '../../data/desktopBridge.ts'
 import { getSelfWindowId } from './satelliteState.ts'
 
@@ -88,6 +89,47 @@ export interface OpenWindowInput {
   y?: number
 }
 
+/**
+ * تبويب داخل النافذة الأم (طلب المالك2026-10-26): كل قسم/عرض كان يفتح نافذة
+ * حرة مستقلة يُفتح الآن كتاباباً في الرئيسية — رأس علوي، تنقّل بالنقر، وزر
+ * إغلاق بجانب الاسم — ماعدا الفواتير بجميع أنواعها (تبقى نوافذ حرة).
+ * تبويب المسار يرسم شاشة من الراوتر · تبويب العرض يرسم WindowViewContent.
+ */
+export interface AppWindowTab {
+  id: string
+  /** تبويب شاشة (قسم) — المسار يُنقل إليه عند التفعيل */
+  path?: string
+  /** تبويب عرض (محرر/دفتر/منتقي بلا أب) — يُرسم بمضيف النوافذ */
+  kind?: AppWindowKind
+  props?: Record<string, unknown>
+  title: string
+  subtitle: string
+  dedupeKey: string | null
+  /** تعديلات غير محفوظة (تبويبات العرض عبر host.setDirty) — الإغلاق يسأل */
+  dirty: boolean
+  /** حوار تأكيد مفتوح على هذا التبويب: إغلاق أو مغادرة */
+  askMode: 'close' | 'switch' | null
+  closePrompt: WindowClosePrompt | null
+}
+
+export interface OpenTabInput {
+  path?: string
+  kind?: AppWindowKind
+  props?: Record<string, unknown>
+  title: string
+  subtitle?: string
+  dedupeKey?: string | null
+}
+
+/** حتى 10 تبويبات — بعدها يُفتح القسم كنافذة حرة (السلوك القديم) كما هو. */
+export const MAX_WINDOW_TABS = 10
+
+function tabKey(tab: Pick<AppWindowTab, 'path' | 'dedupeKey'>): string | null {
+  if (tab.path) return `path:${tab.path}`
+  if (tab.dedupeKey) return `kind:${tab.dedupeKey}`
+  return null
+}
+
 const MIN_W = 360
 const MIN_H = 240
 const BASE_Z = 700
@@ -141,7 +183,28 @@ function cascadeRect(count: number, width: number, height: number): WindowRect {
 export interface WindowStoreState {
   windows: AppWindow[]
   topZ: number
+  /* ── تبويبات النافذة الأم (سطح المكتب) ── */
+  tabs: AppWindowTab[]
+  /** تبويب العرض النشط — يرسم مكان محتوى الراوتر حتى يُغلق أو يُبدَّل */
+  viewActiveTabId: string | null
+  /** مسار تبويب مسار معلّق — مزامنته تنقل الراوتر (أثر واحد ثم يُصفَّر) */
+  pendingPath: string | null
+  /** آخر مسار عرضه الراوتر — يُستخدم لتحديد التبويب النشط عند الإغلاق */
+  currentPath: string
   openWindow: (input: OpenWindowInput) => string
+  /** فتح تبويب (مسار أو عرض) — يرجع null عند بلوغ الحد الأقصى10 */
+  openTab: (input: OpenTabInput) => string | null
+  activateTab: (id: string) => void
+  requestCloseTab: (id: string) => void
+  closeTabNow: (id: string) => void
+  beginTabAsk: (id: string, mode: 'close' | 'switch', proceed: () => void) => void
+  cancelTabAsk: () => void
+  confirmTabAsk: () => void
+  setTabDirty: (id: string, dirty: boolean) => void
+  setTabTitle: (id: string, title: string, subtitle?: string) => void
+  setTabClosePrompt: (id: string, prompt: WindowClosePrompt | null) => void
+  setPendingPath: (path: string | null) => void
+  syncCurrentPath: (path: string) => void
   closeWindow: (id: string) => void
   requestCloseWindow: (id: string) => void
   cancelCloseWindow: (id: string) => void
@@ -170,6 +233,8 @@ const pendingCallbacks = new Map<string, Record<string, PropFn>>() // requestId 
 const satelliteByDedupe = new Map<string, string>() // dedupeKey → windowId
 const satelliteIds = new Map<string, string | null>() // windowId → requestId
 let transportInstalled = false
+/** إجراء واحد معلّق لحوار تأكيد التبويب (إغلاق أو مغادرة) — يُنفّذ عند التأكيد فقط */
+let tabAskProceed: (() => void) | null = null
 
 function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
   const alive = new Set<string>()
@@ -266,6 +331,11 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
 export function openSectionWindow(path: string, title: string): boolean {
   const bridge = desktopBridge()
   if (!bridge || !path || path === '/') return false
+  /* القرار (المالك2026-10-26): القسم يفتح كتاباباً داخل النافذة الأم لا نافذة
+     حرة — التبويب يفعّل الراوتر عبر pendingPath. عند بلوغ الحد الأقصى10
+     يعود لسلوكه القديم (نافذة قسم مستقلة) فلا يُحجب عن المستخدم. */
+  const tabId = useWindowStore.getState().openTab({ path, title })
+  if (tabId) return true
   void bridge.openSection({ path, title }).catch(() => undefined)
   return true
 }
@@ -273,9 +343,31 @@ export function openSectionWindow(path: string, title: string): boolean {
 export const useWindowStore = create<WindowStoreState>((set, get) => ({
   windows: [],
   topZ: BASE_Z,
+  tabs: [],
+  viewActiveTabId: null,
+  pendingPath: null,
+  currentPath: '/',
   openWindow: (input) => {
     const bridge = desktopBridge()
-    if (bridge) return openSatelliteWindow(bridge, input)
+    if (bridge) {
+      /* من الرئيسية (لا أب/الأب 'main') وكل ما عدا الفواتير → تبويب داخلي.
+         الفواتير بجميع أنواعها وأبناء النوافذ (أبها قمر فعلي) تبقى نوافذ حرة. */
+      const parent = input.parentId ?? getSelfWindowId()
+      const fromMain = !parent || parent === 'main'
+      const invoiceKind = input.kind === 'sales-invoice' || input.kind === 'purchase-invoice'
+      if (fromMain && !invoiceKind) {
+        const tabId = get().openTab({
+          kind: input.kind,
+          props: input.props,
+          title: input.title,
+          subtitle: input.subtitle,
+          dedupeKey: input.dedupeKey ?? null,
+        })
+        if (tabId) return tabId
+        /* الحد الأقصى10: يُفتح كنافذة حرة — السلوك القديم نفسه */
+      }
+      return openSatelliteWindow(bridge, input)
+    }
     const state = get()
     if (input.dedupeKey) {
       const existing = state.windows.find((win) => win.dedupeKey === input.dedupeKey)
@@ -306,7 +398,113 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set(z > MAX_WINDOW_Z ? renumber(opened, id) : { windows: opened, topZ: z })
     return id
   },
+  /* ─── تبويبات النافذة الأم ─── */
+  openTab: (input) => {
+    const state = get()
+    const key = input.path ? `path:${input.path}` : input.dedupeKey ? `kind:${input.dedupeKey}` : null
+    const existing = key ? state.tabs.find((tab) => tabKey(tab) === key) : undefined
+    if (existing) {
+      if (state.viewActiveTabId === existing.id) return existing.id
+      const switchTo = () => set(existing.path
+        ? { pendingPath: existing.path, viewActiveTabId: null }
+        : { viewActiveTabId: existing.id })
+      /* مغادرة صفحة/عرض متسخ تحتاج تأكيداً أولاً */
+      if (guardNavigation(switchTo)) return existing.id
+      switchTo()
+      return existing.id
+    }
+    if (state.tabs.length >= MAX_WINDOW_TABS) return null
+    const id = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const tab: AppWindowTab = {
+      id,
+      path: input.path,
+      kind: input.kind,
+      props: input.props,
+      title: input.title,
+      subtitle: input.subtitle ?? '',
+      dedupeKey: input.dedupeKey ?? null,
+      dirty: false,
+      askMode: null,
+      closePrompt: null,
+    }
+    const createTab = () => set((current) => ({
+      tabs: [...current.tabs, tab],
+      ...(input.path ? { pendingPath: input.path, viewActiveTabId: null } : { viewActiveTabId: id }),
+    }))
+    if (guardNavigation(createTab)) return id
+    createTab()
+    return id
+  },
+  activateTab: (id) => {
+    const tab = get().tabs.find((row) => row.id === id)
+    if (!tab || get().viewActiveTabId === id) return
+    const activate = () => set(tab.path
+      ? { pendingPath: tab.path, viewActiveTabId: null }
+      : { viewActiveTabId: id })
+    if (guardNavigation(activate)) return
+    activate()
+  },
+  requestCloseTab: (id) => {
+    const tab = get().tabs.find((row) => row.id === id)
+    if (!tab) return
+    const proceed = () => get().closeTabNow(id)
+    if (!tab.path && tab.dirty) { get().beginTabAsk(id, 'close', proceed); return }
+    /* تبويب مسار: صفحة شاشتها نفسها تسأل عبر حارسها المسجّل */
+    if (guardNavigation(proceed)) return
+    proceed()
+  },
+  closeTabNow: (id) => {
+    const state = get()
+    const index = state.tabs.findIndex((row) => row.id === id)
+    if (index < 0) return
+    const tab = state.tabs[index]
+    const rest = state.tabs.filter((row) => row.id !== id)
+    const wasActiveView = state.viewActiveTabId === id
+    const wasActiveRoute = !!tab.path && state.currentPath === tab.path
+    const fallback = rest[Math.min(index, rest.length - 1)] ?? null
+    let viewActiveTabId = wasActiveView ? null : state.viewActiveTabId
+    let pendingPath: string | null = state.pendingPath
+    if (wasActiveRoute) {
+      /* إغلاق التبويب النشط: ينتقل الراوتر لجارٍه أو للوحة التحكم */
+      if (fallback?.path) { pendingPath = fallback.path; viewActiveTabId = null }
+      else if (fallback) { viewActiveTabId = fallback.id; pendingPath = null }
+      else { pendingPath = '/'; viewActiveTabId = null }
+    }
+    set({ tabs: rest, viewActiveTabId, pendingPath })
+  },
+  beginTabAsk: (id, mode, proceed) => {
+    tabAskProceed = proceed
+    set((state) => ({ tabs: state.tabs.map((row) => (row.id === id ? { ...row, askMode: mode } : row)) }))
+  },
+  cancelTabAsk: () => {
+    tabAskProceed = null
+    set((state) => ({ tabs: state.tabs.map((row) => (row.askMode ? { ...row, askMode: null } : row)) }))
+  },
+  confirmTabAsk: () => {
+    const proceed = tabAskProceed
+    tabAskProceed = null
+    set((state) => ({ tabs: state.tabs.map((row) => (row.askMode ? { ...row, askMode: null } : row)) }))
+    proceed?.()
+  },
+  setTabDirty: (id, dirty) => {
+    set((state) => (state.tabs.some((row) => row.id === id && row.dirty !== dirty)
+      ? { tabs: state.tabs.map((row) => (row.id === id ? { ...row, dirty } : row)) }
+      : {}))
+  },
+  setTabTitle: (id, title, subtitle) => {
+    set((state) => (state.tabs.some((row) => row.id === id)
+      ? { tabs: state.tabs.map((row) => (row.id === id ? { ...row, title, subtitle: subtitle ?? row.subtitle } : row)) }
+      : {}))
+  },
+  setTabClosePrompt: (id, prompt) => {
+    set((state) => (state.tabs.some((row) => row.id === id && row.closePrompt !== prompt)
+      ? { tabs: state.tabs.map((row) => (row.id === id ? { ...row, closePrompt: prompt } : row)) }
+      : {}))
+  },
+  setPendingPath: (path) => set({ pendingPath: path }),
+  syncCurrentPath: (path) => { if (get().currentPath !== path) set({ currentPath: path }) },
   closeWindow: (id) => {
+    if (get().tabs.some((row) => row.id === id)) { get().requestCloseTab(id); return }
     const sat = satelliteBridgeFor(id)
     if (sat) { sat.requestClose(id); return }
     set((state) => {
@@ -323,6 +521,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     })
   },
   requestCloseWindow: (id) => {
+    if (get().tabs.some((row) => row.id === id)) { get().requestCloseTab(id); return }
     const sat = satelliteBridgeFor(id)
     if (sat) { sat.requestClose(id); return }
     const win = get().windows.find((row) => row.id === id)
@@ -336,6 +535,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, mode: row.mode === 'minimized' ? 'normal' : row.mode, askingClose: true } : row)) }))
   },
   setWindowClosePrompt: (id, prompt) => {
+    if (get().tabs.some((row) => row.id === id)) { get().setTabClosePrompt(id, prompt); return }
     set((state) => (state.windows.some((row) => row.id === id && row.closePrompt !== prompt)
       ? { windows: state.windows.map((row) => (row.id === id ? { ...row, closePrompt: prompt } : row)) }
       : state))
@@ -351,6 +551,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
   },
   closeAll: () => set({ windows: [] }),
   focusWindow: (id) => {
+    if (get().tabs.some((row) => row.id === id)) { get().activateTab(id); return }
     const sat = satelliteBridgeFor(id)
     if (sat) { sat.focus(id); return }
     const state = get()
@@ -390,12 +591,14 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, rect: clampRect(rect), lastRect: clampRect(rect) } : row)) }))
   },
   setWindowDirty: (id, dirty) => {
+    if (get().tabs.some((row) => row.id === id)) { get().setTabDirty(id, dirty); return }
     if (id === getSelfWindowId()) desktopBridge()?.setDirty(dirty)
     set((state) => (state.windows.some((row) => row.id === id && row.dirty !== dirty)
       ? { windows: state.windows.map((row) => (row.id === id ? { ...row, dirty } : row)) }
       : {}))
   },
   setWindowTitle: (id, title, subtitle) => {
+    if (get().tabs.some((row) => row.id === id)) { get().setTabTitle(id, title, subtitle); return }
     if (id === getSelfWindowId()) desktopBridge()?.setTitle(title)
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, title, subtitle: subtitle ?? row.subtitle } : row)) }))
   },

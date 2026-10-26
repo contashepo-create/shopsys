@@ -9,20 +9,9 @@ import { userPrefsKey } from '../../core/userPreferences.ts'
 import { isFunctionKey, type ShortcutActionId } from '../../core/keyboardShortcuts.ts'
 import { setUnsavedChangeGuard } from './unsavedChangeRegistry.ts'
 
-const activeNavigationGuards = new Set<(continueNavigation: () => void) => void>()
-/** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودات غير محفوظة. */
-export function guardNavigation(continueNavigation: () => void): boolean {
-  const guards = [...activeNavigationGuards]
-  if (!guards.length) return false
-  const confirmNext = (index: number): void => {
-    if (index >= guards.length) { continueNavigation(); return }
-    const guard = guards[index]
-    if (!activeNavigationGuards.has(guard)) { confirmNext(index + 1); return }
-    guard(() => confirmNext(index + 1))
-  }
-  confirmNext(0)
-  return true
-}
+import { registerNavigationGuard, guardNavigation } from './navigationGuard.ts'
+
+export { guardNavigation }
 
 const F9_SAVE_WORDS = /حفظ|ترحيل|اعتماد|تسجيل|إنشاء|تنفيذ|تأكيد|استبدال|استلام|توليد القيد|وقيد|إقفال العقد|إقفال الوردية|إقفال المطابقة/
 const F9_PAYMENT_PHRASES = /سداد|تحصيل وت|تحصيل وق|صرف الدفعة|صرف الآن|صرف المواد|دفع وق|الفاتورة والدفع|شراء وقيد|بيع وقيد/
@@ -363,9 +352,7 @@ export function useUnsavedChangesGuard(signature: string, initialBaseline = sign
   }, [isDirty])
   useEffect(() => {
     if (!isDirty) return
-    const guard = (continueNavigation: () => void) => requestClose(continueNavigation)
-    activeNavigationGuards.add(guard)
-    return () => { activeNavigationGuards.delete(guard) }
+    return registerNavigationGuard((continueNavigation: () => void) => requestClose(continueNavigation))
   }, [isDirty, requestClose])
   const discard = useCallback(() => {
     const action = pendingDiscard.current
