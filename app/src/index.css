@@ -895,7 +895,9 @@ select { line-height: 1.25rem; }
 }
 .dark .app-window { background: #101827; border-color: #334155; }
 .app-window.is-maximized { border-radius: .75rem; }
-/* الفاتورة تفتح مستنداً يملأ الشاشة كالنموذج المعتمد: بلا شريط نافذة ولا إطار،
+/* الفاتورة المكبّرة تملأ مساحة العمل كاملة — لكن **شريط عنوان النافذة يبقى ظاهراً
+   دائماً**: إخفاؤه عند التكبير جعل النافذة تبدو صفحة مدمجة ملتصقة لا نافذة حرة
+   تُستعاد وتُصغَّر (قرار المالك 2026-10-22: شريط تحكم واحد لكل نافذة في كل حال).
    ويبقى شريط المهام أسفلها لتبديل النوافذ المفتوحة. */
 .app-window.is-maximized[data-window-kind$="-invoice"] {
   left: 0 !important; top: 0 !important;
@@ -1061,9 +1063,15 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc { display: flex; min-height: 100%; flex-direction: column; background: var(--doc-surface); color: var(--doc-ink-soft); }
 /* إلغاء هوامش «صفحة الفاتورة» القديمة داخل النافذة — هي سبب اختفاء الجدول لأسفل */
 .invoice-doc.invoice-pos-root {
+  position: relative;
   display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
   width: auto; height: 100dvh; max-height: 100dvh; margin: 0; gap: .4rem; padding: .4rem; overflow: hidden;
   background: var(--doc-surface); color: var(--doc-ink-soft);
+}
+.invoice-posting-overlay {
+  position: absolute; inset: 0; z-index: var(--z-in-window-overlay); display: grid; place-items: center; padding: 1rem;
+  background: color-mix(in srgb, var(--doc-surface) 78%, transparent); backdrop-filter: blur(2px);
+  color: var(--doc-ink); font-size: 1rem; font-weight: 800; text-align: center; cursor: wait;
 }
 
 /* ① الشريط العلوي الواحد */
@@ -1139,6 +1147,21 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-fields { display: grid; grid-template-columns: 1.95fr .82fr .82fr 1.02fr .92fr .95fr; gap: .25rem .35rem; align-content: start; }
 /* فاتورة البيع فيها حقل سابع (المندوب) — حقل الطرف يبقى الأعرض والبقية مضغوطة بقدرها */
 .invoice-doc-fields:has(> :nth-child(7)) { grid-template-columns: 2fr .8fr .8fr 1fr .9fr .92fr 1.05fr; }
+/* فاتورة البيع: الحقل الأول «نوع الطرف» قصير والثاني «العميل» صاحب الاسم الطويل —
+   كان العمود الأعرض يذهب للأول فيُقص نصف اسم العميل (شكوى المالك 2026-10-22).
+   تُبدَّل حصتا أول عمودين لفاتورة البيع فقط؛ الشراء (المورد أولاً) لا يتأثر. */
+.invoice-doc.invoice-pos-sale .invoice-doc-fields { grid-template-columns: .82fr 1.95fr .82fr 1.02fr .92fr .95fr; }
+.invoice-doc.invoice-pos-sale .invoice-doc-fields:has(> :nth-child(7)) { grid-template-columns: .8fr 2fr .8fr 1fr .9fr .92fr 1.05fr; }
+@media (max-width: 1280px) {
+  .invoice-doc.invoice-pos-sale .invoice-doc-fields { grid-template-columns: .8fr 1.85fr .8fr 1fr .9fr .92fr; }
+  .invoice-doc.invoice-pos-sale .invoice-doc-fields:has(> :nth-child(7)) { grid-template-columns: .78fr 1.9fr .78fr .98fr .88fr .9fr 1fr; }
+}
+@media (max-width: 900px) {
+  .invoice-doc.invoice-pos-sale .invoice-doc-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 660px) {
+  .invoice-doc.invoice-pos-sale .invoice-doc-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 /* شريط المرجع الخارجي: إطار متقطع كما في التصميم المرجعي */
 .invoice-doc-refbar { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; border: 1px dashed var(--doc-line); border-radius: .45rem; background: var(--doc-tint); padding: .3rem .45rem; }
 .invoice-doc-refbar .form-field { display: flex; min-width: 0; flex: 1 1 14rem; align-items: center; gap: .4rem; margin: 0; }
@@ -1728,6 +1751,13 @@ tr:hover .invoice-line-taxcheck, tr:focus-within .invoice-line-taxcheck { opacit
   padding: 0 .3rem !important; color: var(--doc-ink-soft); font-size: .63rem !important; font-weight: 700;
 }
 .invoice-doc-stripfield.is-warn > input { border-color: var(--doc-warn-line); background: var(--doc-warn-tint); color: var(--doc-warn); }
+/* حقل «المشروع» في شريط الطرف: سقف الـ10rem العام أعلاه كان يُخفي نصف اسم المشروع
+   (شكوى المالك 2026-10-22) — يتمدد المشروع بعرض الشريط المتاح، والشريط يلتف
+   عند الضيق بدلاً من قصّ المحتوى. */
+.invoice-doc-strip.is-party { overflow: visible; }
+.invoice-doc-strip.is-party > .invoice-doc-partymeta { flex-wrap: wrap; overflow: visible; row-gap: .25rem; }
+.invoice-doc-partymeta .invoice-doc-stripfield[data-invoice-project] { flex: 1 1 20rem; min-width: 15rem; }
+.invoice-doc-partymeta .invoice-doc-stripfield[data-invoice-project] select { flex: 1; min-width: 12rem; max-width: none; min-height: 1.45rem !important; height: 1.45rem; font-size: .7rem !important; }
 .invoice-doc-stripcheck { display: inline-flex; align-items: center; gap: .25rem; color: var(--doc-muted); font-size: .6rem; font-weight: 800; white-space: nowrap; cursor: pointer; }
 .invoice-doc-stripcheck input { width: .8rem; height: .8rem; min-height: .8rem !important; accent-color: var(--doc-accent); }
 
@@ -2453,7 +2483,12 @@ input, textarea, select, option,
 /* ③ تدريج بصري لصفوف حقول الترويسة — يخفّف إحساس الازدحام في النمط المتقدم */
 .invoice-doc .invoice-doc-fields > .form-field { border-radius: .4rem; padding: .05rem .18rem; transition: background .16s ease; }
 .invoice-doc .invoice-doc-fields > .form-field:nth-child(even) { background: color-mix(in srgb, var(--doc-tint) 55%, transparent); }
-.invoice-doc .invoice-doc-fields > .form-field:focus-within { background: color-mix(in srgb, var(--doc-accent) 9%, transparent); }
+/* طلب المالك: تمييز الحقل النشط يكون **داخل** الحقل نفسه لا على حاويته —
+   صبغة على خلفية الإدخال وحلقة داخلية (inset) لا تتجاوز حدوده أبداً */
+.invoice-doc .invoice-doc-fields > .form-field :is(input:not([type="checkbox"]), select, textarea):focus {
+  background: color-mix(in srgb, var(--doc-accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--doc-accent);
+}
 .invoice-doc .invoice-doc-strip { border-radius: .4rem; }
 .invoice-doc .invoice-doc-strip:nth-of-type(even) { background: color-mix(in srgb, var(--doc-tint) 45%, transparent); }
 
@@ -2871,42 +2906,37 @@ input, textarea, select, option,
    نقطة حالة، وتوهّج نابض هادئ يتوقف مع «تقليل الحركة».
    ───────────────────────────────────────────────────────────── */
 .branch-badge{
-  --bb-ink:#3730a3; --bb-bg1:#f6f8ff; --bb-bg2:#e9edff; --bb-line:#c7d2fe;
-  --bb-dot:#10b981; --bb-dot-ring:rgba(16,185,129,.16);
-  --bb-glow-0:rgba(99,102,241,.30); --bb-glow-ring:rgba(99,102,241,.09);
-  --bb-glow:rgba(99,102,241,.26); --bb-inset:rgba(255,255,255,.95);
-  position:relative; display:inline-flex; align-items:center; gap:.36rem;
-  min-width:0; max-width:100%; padding:.24rem .6rem;
+  /* شارة خفيفة صغيرة (طلب المالك): اسم واضح، نقطة حالة بنبضة هادئة، بلا توهج ضخم */
+  --bb-ink:#3730a3; --bb-bg:rgba(99,102,241,.08); --bb-line:rgba(99,102,241,.30);
+  --bb-dot:#10b981; --bb-dot-ring:rgba(16,185,129,.32);
+  position:relative; display:inline-flex; align-items:center; gap:.3rem;
+  min-width:0; max-width:100%; padding:.05rem .45rem;
   border:1px solid var(--bb-line); border-radius:999px;
-  background:linear-gradient(180deg,var(--bb-bg1),var(--bb-bg2));
-  color:var(--bb-ink); font-size:11px; font-weight:800; line-height:1.75;
+  background:var(--bb-bg);
+  color:var(--bb-ink); font-size:10.5px; font-weight:700; line-height:1.55;
   white-space:nowrap; vertical-align:middle;
-  box-shadow:0 0 0 0 var(--bb-glow-0), inset 0 1px 0 var(--bb-inset);
-  animation:branch-breathe 3.8s ease-in-out infinite;
 }
 .dark .branch-badge{
-  --bb-ink:#dbe3ff; --bb-bg1:rgba(99,102,241,.20); --bb-bg2:rgba(79,70,229,.12);
-  --bb-line:rgba(129,140,248,.42);
-  --bb-glow-0:rgba(129,140,248,.26); --bb-glow-ring:rgba(129,140,248,.08);
-  --bb-glow:rgba(129,140,248,.22); --bb-inset:rgba(255,255,255,.06);
-  background:linear-gradient(180deg,var(--bb-bg1),var(--bb-bg2));
-  color:var(--bb-ink); border-color:var(--bb-line);
+  --bb-ink:#c7d2fe; --bb-bg:rgba(99,102,241,.16); --bb-line:rgba(129,140,248,.40);
+  --bb-dot-ring:rgba(16,185,129,.28);
+  background:var(--bb-bg); color:var(--bb-ink); border-color:var(--bb-line);
 }
-.branch-badge--header{ font-size:11.5px; padding:.26rem .66rem; gap:.4rem; max-width:15rem; }
-.branch-badge--menubar{ max-width:14rem; }
+.branch-badge--header{ max-width:11rem; }
+.branch-badge--menubar{ max-width:11rem; }
 .branch-badge--sidebar{ width:100%; justify-content:flex-start; }
-.branch-badge.is-all{ --bb-dot:#f59e0b; --bb-dot-ring:rgba(245,158,11,.18); }
-.branch-badge-ico{ flex:0 0 auto; opacity:.9; }
+.branch-badge.is-all{ --bb-dot:#f59e0b; --bb-dot-ring:rgba(245,158,11,.32); }
+.branch-badge-ico{ flex:0 0 auto; opacity:.85; }
 .branch-badge-dot{
-  flex:0 0 auto; width:6px; height:6px; border-radius:999px;
-  background:var(--bb-dot); box-shadow:0 0 0 3px var(--bb-dot-ring);
+  flex:0 0 auto; width:5px; height:5px; border-radius:999px;
+  background:var(--bb-dot);
+  animation:branch-dot-pulse 2.8s ease-in-out infinite;
 }
 .branch-badge-name{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.branch-badge-caption{ font-size:9.5px; font-weight:700; color:#4f46e5; opacity:.85; }
+.branch-badge-caption{ font-size:9px; font-weight:700; color:#4f46e5; opacity:.8; }
 .dark .branch-badge-caption{ color:#a5b4fc; }
 .branch-badge-lock{ flex:0 0 auto; opacity:.6; }
 .branch-badge-select{
-  appearance:none; -webkit-appearance:none; min-width:0; max-width:12.5rem;
+  appearance:none; -webkit-appearance:none; min-width:0; max-width:9.5rem;
   margin:0; padding:0; border:0; background:transparent;
   color:inherit; font:inherit; line-height:inherit; cursor:pointer; outline:none;
 }
@@ -2915,13 +2945,13 @@ input, textarea, select, option,
 .branch-badge-select option{ color:#0f172a; background:#fff; font-weight:700; }
 .dark .branch-badge-select option{ color:#e2e8f0; background:#111c2e; }
 .branch-badge-chev{ flex:0 0 auto; opacity:.55; }
-.branch-badge.is-switchable:hover{ --bb-line:#a5b4fc; }
+.branch-badge.is-switchable:hover{ --bb-line:rgba(99,102,241,.55); }
 .dark .branch-badge.is-switchable:hover{ --bb-line:rgba(165,180,252,.65); }
 
-@keyframes branch-breathe{
-  0%,100%{ box-shadow:0 0 0 0 var(--bb-glow-0), 0 0 0 0 rgba(0,0,0,0), inset 0 1px 0 var(--bb-inset); }
-  50%{ box-shadow:0 0 0 3px var(--bb-glow-ring), 0 0 15px 2px var(--bb-glow), inset 0 1px 0 var(--bb-inset); }
+@keyframes branch-dot-pulse{
+  0%,100%{ box-shadow:0 0 0 0 var(--bb-dot-ring); }
+  50%{ box-shadow:0 0 0 3px transparent; }
 }
 @media (prefers-reduced-motion: reduce){
-  .branch-badge{ animation:none; }
+  .branch-badge-dot{ animation:none; }
 }

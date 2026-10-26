@@ -172,7 +172,11 @@ ${sheetXml}
 export function sheetToCsv(sheet: ExportSheet): string {
   const esc = (v: string | number | null | undefined) => {
     const raw = cellValue(v)
-    return /[",\r\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw
+    // Quoting a CSV cell does not stop spreadsheet formula evaluation. Escape
+    // user-controlled text whose first non-control/space character is a formula
+    // operator; preserve actual numeric values (including negative numbers).
+    const safe = typeof v === 'string' && /^[\s\u0000-\u001f]*[=+\-@]/u.test(raw) ? `'${raw}` : raw
+    return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
   }
   const lines = [sheet.headers.map(esc).join(','), ...sheet.rows.map((r) => r.map(esc).join(','))]
   return `\uFEFF${lines.join('\r\n')}`

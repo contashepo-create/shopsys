@@ -30,7 +30,7 @@ import { purchaseReceivingVarianceReport } from '../../core/purchases.ts'
 import { productionVarianceReport } from '../../core/recipes.ts'
 import { wastageRatioReport, wastageByItemReport } from '../../core/wastage.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
-import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
+import { expensesSummary, expenseDetails, expenseSourceTypes, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls, useToast } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
@@ -53,7 +53,7 @@ const TAB_ICONS: Record<TabId, typeof BarChart3> = {
 const EXP_SOURCE_LABELS: Record<string, string> = {
   sale: 'فاتورة بيع', purchase: 'فاتورة شراء', payment_voucher: 'سند صرف', payroll: 'رواتب',
   manual: 'قيد يدوي', depreciation: 'إهلاك', wastage: 'هالك', logistics_trip: 'نقلة',
-  reversal: 'قيد عاكس', adjustment: 'تسوية', asset_payment: 'سداد أصل', asset_disposal: 'استبعاد أصل', external_commission: 'عمولات',
+  reversal: 'قيد عاكس', adjustment: 'تسوية', opening: 'رصيد افتتاحي', asset_payment: 'سداد أصل', asset_disposal: 'استبعاد أصل', external_commission: 'عمولات',
   contracting: 'مقاولات', lab: 'معمل', sale_return: 'مرتجع بيع', purchase_return: 'مرتجع شراء',
 }
 
@@ -318,7 +318,7 @@ export function ReportsPage() {
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],
   )
-  const expSources = useMemo(() => [...new Set(journal.flatMap((e) => e.lines.some((l) => l.accountCode.startsWith('5') || customExpenseCodes.has(l.accountCode)) ? [e.sourceType] : []))], [journal, customExpenseCodes])
+  const expSources = useMemo(() => expenseSourceTypes(journal, customExpenseCodes), [journal, customExpenseCodes])
   const exportExpenses = () => {
     const csv = expAccount ? expenseDetailsCsv(expDetail.rows) : expenseSummaryCsv(expSummary.rows)
     const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }))

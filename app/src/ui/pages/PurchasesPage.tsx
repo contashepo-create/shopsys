@@ -7,7 +7,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal, MessageCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -24,6 +25,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { purchaseWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
@@ -112,6 +114,8 @@ export function PurchasesPage() {
   }
 
   const [open, setOpen] = useState(false)
+  const [isPosting, setIsPosting] = useState(false)
+  const postingRef = useRef(false)
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
   // طباعة فاتورة الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseInvoice | null>(null)
@@ -122,6 +126,7 @@ export function PurchasesPage() {
   /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
   /** نموذج الطباعة لفاتورة شراء — يُستعمل للطباعة وللإرسال عبر واتساب */
   const buildPurchaseModel = (inv: PurchaseInvoice) => {
+    const documentSettings = resolveDocumentPrintSettings(inv)
     return buildSimpleDocModel({
       docTitle: 'فاتورة شراء',
       invoiceNumber: inv.invoiceNumber,
@@ -138,19 +143,23 @@ export function PurchasesPage() {
       totalMinor: inv.grandTotalMinor,
       paidMinor: inv.paidMinor,
       operatorName: printOperatorName,
-      settings: receipt,
+      settings: documentSettings.receipt,
       extraFooter: [`${inv.supplierInvoiceNumber ? `فاتورة المورد ${inv.supplierInvoiceNumber}` : ''}${inv.purchaseOrderNumber ? ` · أمر شراء ${inv.purchaseOrderNumber}` : ''}${inv.dueDate ? ` · استحقاق ${inv.dueDate}` : ''}`, inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : ''].filter(Boolean).join(' — ') || undefined,
     })
   }
   const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
-    printModelWithTemplate(buildPurchaseModel(inv), cur, receipt, template)
+    const documentSettings = resolveDocumentPrintSettings(inv)
+    printModelWithTemplate(buildPurchaseModel(inv), cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(inv).receipt,
+    })
     toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
   }
   /** إرسال فاتورة الشراء PDF عبر واتساب إلى رقم المورد المسجّل في بطاقته */
   const sendPurchaseWhatsapp = (inv: PurchaseInvoice) => {
     const party = purchaseWaParty(inv.supplierId, suppliers)
     if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا المورد في بطاقته', 'error')
-    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, shopName: setup.shopName, toast })
+    const documentSettings = resolveDocumentPrintSettings(inv)
+    shareDocPdfViaWhatsapp({ model: buildPurchaseModel(inv), cur, settings: documentSettings.receipt, template: 'a4', docLabel: 'فاتورة شراء', docNumber: inv.invoiceNumber, partyPhone: party.phone, shopName: documentSettings.setup.shopName, toast })
   }
   const [supplierId, setSupplierId] = useState(0)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
@@ -261,26 +270,27 @@ export function PurchasesPage() {
   const editExpenseTotal = useMemo(() => editExpenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory').reduce((sum, expense) => sum + expense.amountMinor, 0), [editExpenses])
 
   const saveInvoiceEdit = () => {
-    if (!editing) return
-    try {
-      const updated = editPurchase({
-        purchaseId: editing.id,
-        lines: editLines.map((l) => ({ itemId: l.itemId, qty: Number(l.qty) || 0, unitPriceMinor: toMinor(l.unitPrice || '0', cur.decimals) })),
-        expenses: editExpenses,
-        paidMinor: toMinor(editPaid || '0', cur.decimals),
-        treasury: editTreasury,
-        supplierInvoiceNumber: editSupplierInvoiceNumber,
-        purchaseOrderNumber: editPurchaseOrderNumber,
-        dueDate: editDueDate,
-        notes: editNotes,
-        reason: editReason.trim(),
-        einvoiceActive,
-      })
+    if (!editing || postingRef.current) return
+    postingRef.current = true
+    setIsPosting(true)
+    const reason = editReason.trim()
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => editPurchase({
+      purchaseId: editing.id,
+      lines: editLines.map((l) => ({ itemId: l.itemId, qty: Number(l.qty) || 0, unitPriceMinor: toMinor(l.unitPrice || '0', cur.decimals) })),
+      expenses: editExpenses,
+      paidMinor: toMinor(editPaid || '0', cur.decimals),
+      treasury: editTreasury,
+      supplierInvoiceNumber: editSupplierInvoiceNumber,
+      purchaseOrderNumber: editPurchaseOrderNumber,
+      dueDate: editDueDate,
+      notes: editNotes,
+      reason,
+      einvoiceActive,
+    })).then((updated) => {
       toast.show(`عُدلت ${updated.invoiceNumber} — عُكس قيدها القديم وأُعيد الترحيل بتكلفة صحيحة ✓`)
       setEditing(null)
-    } catch (e) {
-      toast.show((e as Error).message, 'error')
-    }
+    }).catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين تعديل فاتورة الشراء', 'error'))
+      .finally(() => { postingRef.current = false; setIsPosting(false) })
   }
 
   const saveLateExpense = () => {
@@ -398,6 +408,10 @@ export function PurchasesPage() {
       toast.show(`الشراء النقدي يجب سداده بالكامل: ${fmt(preview.supplierDue)}`, 'error')
       return
     }
+    if (postingRef.current) return
+    postingRef.current = true
+    setIsPosting(true)
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
     try {
     // P2 (مراجعة المشتريات): المطابقة بالترتيب لا بالبحث — سطران بنفس الصنف والكمية
     // كانا يأخذان صلاحية/سيريالات السطر الأول معاً (computeLandedCosts يحفظ الترتيب)
@@ -456,11 +470,14 @@ export function PurchasesPage() {
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
-    unsaved.markClean()
-    setOpen(false)
+    return true
     } catch (e) {
       toast.show((e as Error).message, 'error')
+      return false
     }
+    }).then((completed) => { if (completed) { unsaved.markClean(); setOpen(false) } })
+      .catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة', 'error'))
+      .finally(() => { postingRef.current = false; setIsPosting(false) })
   }
 
   return (
@@ -578,8 +595,9 @@ export function PurchasesPage() {
       )}
 
       {/* مودال فاتورة جديدة */}
-      <Modal open={open} onClose={() => unsaved.requestClose(() => setOpen(false))} title="فاتورة شراء جديدة" wide>
-        <div className="space-y-5">
+      <Modal open={open} onClose={() => { if (!isPosting) unsaved.requestClose(() => setOpen(false)) }} title="فاتورة شراء جديدة" wide>
+        <div className="relative" aria-busy={isPosting}>
+        <div className={`space-y-5 ${isPosting ? 'pointer-events-none select-none' : ''}`}>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Field label="المورد (اختياري)">
               <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><PartyQuickPicker
@@ -942,8 +960,10 @@ export function PurchasesPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => unsaved.requestClose(() => setOpen(false))}>تراجع وإغلاق</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!preview || supplierId < 0}>🚀 ترحيل الفاتورة</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!preview || supplierId < 0 || isPosting}>🚀 ترحيل الفاتورة</Btn>
           </div>
+        </div>
+        {isPosting && <div className="absolute inset-0 z-50 grid place-items-center rounded-2xl bg-white/75 p-4 text-center font-black text-slate-700 backdrop-blur-sm dark:bg-slate-950/75 dark:text-white" role="status" aria-live="polite">جارٍ تأمين ترحيل الفاتورة وحفظها…</div>}
         </div>
       </Modal>
 
@@ -1239,7 +1259,7 @@ onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
-              <Btn onClick={saveInvoiceEdit} shortcut="F9" disabled={!editReason.trim() || !editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>💾 حفظ التعديل</Btn>
+              <Btn onClick={saveInvoiceEdit} shortcut="F9" disabled={isPosting || !editReason.trim() || !editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>{isPosting ? 'جارٍ عكس القيد وإعادة الترحيل…' : '💾 حفظ التعديل'}</Btn>
             </div>
           </div>
         )}
@@ -1250,7 +1270,7 @@ onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
       <PrintTemplateModal
         open={printTarget != null}
         onClose={() => setPrintTarget(null)}
-        defaultTemplate={receipt.defaultTemplate}
+        defaultTemplate={printTarget ? resolveDocumentPrintSettings(printTarget).receipt.defaultTemplate : receipt.defaultTemplate}
         title="🖨️ طباعة فاتورة الشراء"
         onPrint={(t) => { if (printTarget) printPurchase(printTarget, t) }}
       />

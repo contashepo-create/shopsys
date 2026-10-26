@@ -5,10 +5,11 @@
  * لها أي أثر محاسبي. أعلى الشاشة إعدادات النظام نفسها: تفعيل/إيقاف، النطاق،
  * حد المبلغ، المعتمِدون الإضافيون، ومن مستنداته معتمدة تلقائياً.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { BadgeCheck, ShieldCheck, ShieldX, Clock, FileText } from 'lucide-react'
 import { ApprovalSettingsCard } from '../components/ApprovalSettingsCard.tsx'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
@@ -35,6 +36,8 @@ export function ApprovalsPage() {
   const [filter, setFilter] = useState<'pending' | DocApprovalStatus | 'all'>('pending')
   const [reason, setReason] = useState('')
   const [rejecting, setRejecting] = useState<number | null>(null)
+  const [isDeciding, setIsDeciding] = useState(false)
+  const decidingRef = useRef(false)
 
   const rows = useMemo(() => {
     const list = filter === 'all' ? docApprovals : docApprovals.filter((row) => row.status === filter)
@@ -43,11 +46,16 @@ export function ApprovalsPage() {
   const pendingMine = pendingForUser(docApprovals, currentUserId, perms.has('docs.approve'))
 
   const decide = (id: number, status: 'approved' | 'rejected') => {
-    try {
-      const updated = decideDocApproval(id, { status, by: currentUserId, byName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك', reason: status === 'rejected' ? reason : undefined })
+    if (decidingRef.current) return
+    decidingRef.current = true
+    setIsDeciding(true)
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () =>
+      decideDocApproval(id, { status, by: currentUserId, byName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك', reason: status === 'rejected' ? reason : undefined }),
+    ).then((updated) => {
       toast.show(status === 'approved' ? `اعتُمد المستند ورُحِّل ${updated.postedDocumentRef ?? ''} بقيده ومخزونه ✓` : 'رُفض المستند ولم يُقيَّد شيء')
       setRejecting(null); setReason('')
-    } catch (error) { toast.show((error as Error).message, 'error') }
+    }).catch((error: unknown) => toast.show(error instanceof Error ? error.message : 'تعذّر تأمين قرار الاعتماد', 'error'))
+      .finally(() => { decidingRef.current = false; setIsDeciding(false) })
   }
 
   return (
@@ -121,7 +129,7 @@ export function ApprovalsPage() {
                       </div>
                     ) : (
                       <div className="flex items-center justify-center gap-1">
-                        <Btn onClick={() => decide(row.id, 'approved')}><span className="flex items-center gap-1"><ShieldCheck size={13} /> اعتماد</span></Btn>
+                        <Btn onClick={() => decide(row.id, 'approved')} disabled={isDeciding}><span className="flex items-center gap-1"><ShieldCheck size={13} /> {isDeciding ? 'جارٍ الترحيل…' : 'اعتماد'}</span></Btn>
                         <Btn variant="ghost" onClick={() => { setRejecting(row.id); setReason('') }}><span className="flex items-center gap-1"><ShieldX size={13} /> رفض</span></Btn>
                       </div>
                     )

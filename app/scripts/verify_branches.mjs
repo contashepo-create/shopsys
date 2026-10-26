@@ -28,13 +28,15 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
-const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+const { useDataStore, useRawDataStore, getBranchScopedDataState } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useAppStore, branchIdentityMissingFields, resolveBranchAppSettings, resolveDocumentBranchAppSettings } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
 const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
 useAppStore.getState().updateSetup({ allowNegativeTreasury: true, shopName: 'المنشأة الأساسية', vatPercent: 14, taxInclusive: true, taxRegistrationStatus: 'registered' })
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
+const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const st = () => useDataStore.getState()
+const raw = () => useRawDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }
 const EXT = { taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' }
@@ -128,6 +130,37 @@ console.log('\n═══ 3) بيع من كل فرع → المقارنة تعك�
   // مخزون: الرئيسي 50 × 6.00 = 300.00؛ المعادي 35 × 6.00 = 210.00
   assert.equal(rMain.stockValueMinor, 30000)
   assert.equal(rNew.stockValueMinor, 21000)
+
+  // تدقيق دفتر/ميزان كل فرع: جمع ميزاني الفروع يجب أن يعيد ميزان الشركة
+  // حساباً بحساب، بلا قيد مكرر أو مفقود (خصوصاً الحساب المشترك 4101).
+  // بعض القيود تُنسب بعلاقة مستندها/خزينتها بدلاً من ختم branchId عند العرض الشامل.
+  const companyJournal = st().journal
+  const companyTotals = new Map()
+  for (const entry of companyJournal) for (const line of entry.lines) {
+    const total = companyTotals.get(line.accountCode) ?? { debit: 0, credit: 0 }
+    total.debit += line.debit; total.credit += line.credit
+    companyTotals.set(line.accountCode, total)
+  }
+  const branchTotals = new Map()
+  const scopedEntryIds = []
+  for (const branch of st().branches.filter((row) => row.active)) {
+    st().setActiveBranchId(branch.id)
+    const scoped = getBranchScopedDataState(st())
+    for (const entry of scoped.journal) {
+      scopedEntryIds.push(entry.id)
+      for (const line of entry.lines) {
+        const total = branchTotals.get(line.accountCode) ?? { debit: 0, credit: 0 }
+        total.debit += line.debit; total.credit += line.credit
+        branchTotals.set(line.accountCode, total)
+      }
+    }
+  }
+  assert.equal(scopedEntryIds.length, companyJournal.length, 'كل قيد ظاهر في فرع واحد بالضبط')
+  assert.equal(new Set(scopedEntryIds).size, companyJournal.length, 'لا قيد متكرر بين ميزاني الفروع')
+  assert.deepEqual([...branchTotals.entries()].sort(), [...companyTotals.entries()].sort(), 'مجاميع كل حساب عبر الفروع تطابق ميزان الشركة')
+  assert.equal(branchTotals.get('4101')?.credit, companyTotals.get('4101')?.credit, 'الحساب المشترك 4101 لا يتضخم عند جمع الفروع')
+  st().setActiveBranchId(null)
+  ok('مطابقة دفترية حساباً بحساب: لا قيد مفقود/مكرر، ومجموع أرصدة الفروع يساوي الشركة')
   ok('المقارنة مطابقة للدفاتر: إيراد/تكلفة/ربح/خزينة/مخزون لكل فرع')
 }
 
@@ -138,10 +171,95 @@ console.log('\n═══ 4) تحويل نقدية بين خزينتي الفرع
   for (const e of st().journal) for (const l of e.lines) balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
   assert.equal(balances.get(branchNew.treasuryCode), 2000, 'خزينة المعادي 50.00−30.00=20.00')
   assert.equal(balances.get('1101'), -47000, 'خزينة المركز −500.00+30.00=−470.00')
-  ok('تحويل النقدية بين الفروع مستند سند موثق في اليومية')
+  const voucher = st().vouchers.at(-1)
+  const pair = st().journal.filter((entry) => entry.interBranchTransferId === voucher.id)
+  assert.equal(pair.length, 2, 'التحويل يُنشئ قيداً في دفتر كل فرع')
+  assert.deepEqual(new Set(pair.map((entry) => entry.branchId)), new Set([mainBranch.id, branchNew.id]))
+  assert.ok(pair.every((entry) => entry.lines.reduce((sum, line) => sum + line.debit, 0) === entry.lines.reduce((sum, line) => sum + line.credit, 0)), 'القيدان متوازنان منفردين')
+  const consolidated = trialBalance(st().journal, { from: '2026-01-01', to: '2026-12-31' })
+  assert.equal(consolidated.rows.some((row) => row.code === '1114' || row.code === '2118'), false, 'الرصيد البيني يُستبعد من التقرير المجمع بعد التحقق من اقتران القيدين')
+  const reversed = st().reverseVoucher(voucher.id, 'اختبار عكس مزدوج')
+  assert.ok(reversed.branchTransfer.destinationReversalEntryId, 'عكس السند يُنشئ قيد عكس ثانياً للفرع المقابل')
+  assert.equal(st().journal.filter((entry) => entry.interBranchTransferId === voucher.id).length, 4, 'العكس يضيف قيدين ولا يمحو الأصل')
+  ok('قيدان متوازنان مستقلان للتحويل، تسوية داخلية مستبعدة من التجميع، وعكس ذري مزدوج')
 }
 
-console.log('\n═══ 5) قواعد الصحة ═══')
+console.log('\n═══ 5) الأرصدة الافتتاحية: ملف ودفتر مستقلان لكل فرع ═══')
+{
+  const mainOpening = 125000
+  const branchOpening = 287000
+  st().setActiveBranchId(mainBranch.id)
+  st().setOpeningBalance({ kind: 'treasury', refId: mainBranch.treasuryCode, amountMinor: mainOpening, label: 'افتتاحي خزينة الرئيسي' })
+  const mainScope = getBranchScopedDataState(st())
+  assert.equal(mainScope.openingBalances[`treasury:${mainBranch.treasuryCode}`], mainOpening)
+  assert.ok(mainScope.journal.some((entry) => entry.sourceType === 'opening' && entry.branchId === mainBranch.id), 'قيد افتتاحي الرئيسي مختوم بالرئيسي')
+
+  st().setActiveBranchId(branchNew.id)
+  st().setOpeningBalance({ kind: 'treasury', refId: branchNew.treasuryCode, amountMinor: branchOpening, label: 'افتتاحي خزينة الفرع' })
+  const branchScope = getBranchScopedDataState(st())
+  assert.equal(branchScope.openingBalances[`treasury:${branchNew.treasuryCode}`], branchOpening)
+  assert.equal(branchScope.openingBalances[`treasury:${mainBranch.treasuryCode}`], undefined, 'لا يقرأ افتتاحي خزينة الرئيسي')
+  assert.ok(branchScope.journal.some((entry) => entry.sourceType === 'opening' && entry.branchId === branchNew.id), 'قيد افتتاحي الفرع مختوم بفرعه')
+  assert.equal(raw().branchOpeningBalances[branchNew.id].openingBalances[`treasury:${branchNew.treasuryCode}`], branchOpening)
+  assert.equal(raw().openingBalances[`treasury:${mainBranch.treasuryCode}`], mainOpening, 'افتتاحي الرئيسي محفوظ في ملفه')
+  st().setActiveBranchId(null)
+  ok('خزائن الفروع: رصيد الافتتاحي يُحفظ ويُرحّل بدفتر الفرع، لا يختلط بين الرئيسي والفرع')
+}
+
+console.log('\n═══ 6) سنوات مالية وإقفال مستقل لكل فرع ═══')
+{
+  const mainYear = { id: 901, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }
+  const branchYear = { id: 902, branchId: branchNew.id, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }
+  useAppStore.setState({ fiscalYears: [mainYear, branchYear] })
+  // قاعدة مطوّرة من إصدار قديم: السنة غير الموسومة تُربط بالرئيسي ولا تمتد للفروع.
+  useAppStore.getState().bindLegacyFiscalYearsToMain(mainBranch.id)
+  const postRevenue = (branch, amount) => {
+    st().setActiveBranchId(branch.id)
+    st().postManualEntry({
+      date: '2025-06-30', description: `إيراد اختبار ${branch.nameAr}`,
+      lines: [
+        { accountCode: branch.treasuryCode, debit: amount, credit: 0, note: 'تحصيل' },
+        { accountCode: '4101', debit: 0, credit: amount, note: 'إيراد' },
+      ],
+    })
+  }
+  postRevenue(mainBranch, 100000)
+  postRevenue(branchNew, 250000)
+  st().setActiveBranchId(mainBranch.id)
+  const mainClose = st().closeFiscalYear(mainYear, [mainYear])
+  assert.equal(useAppStore.getState().fiscalYears.find((year) => year.id === mainYear.id).status, 'closed', 'الإقفال يغيّر حالة سنة الرئيسي ضمن الإجراء نفسه')
+  assert.equal(useAppStore.getState().fiscalYears.find((year) => year.id === branchYear.id).status, 'open', 'إقفال الرئيسي لا يغيّر سنة الفرع')
+  st().setActiveBranchId(mainBranch.id)
+  assert.throws(() => postRevenue(mainBranch, 1), /السنة المالية المقفلة/, 'إقفال الرئيسي يمنع قيوده وحده')
+  st().setActiveBranchId(branchNew.id)
+  postRevenue(branchNew, 10000)
+  const branchClose = st().closeFiscalYear(branchYear, [branchYear])
+  const mainClosing = raw().journal.find((entry) => entry.id === mainClose.entryId)
+  const branchClosing = raw().journal.find((entry) => entry.id === branchClose.entryId)
+  assert.equal(mainClose.netProfitMinor, 100000)
+  assert.equal(branchClose.netProfitMinor, 260000)
+  assert.equal(mainClosing.branchId, mainBranch.id)
+  assert.equal(branchClosing.branchId, branchNew.id)
+  assert.equal(mainClosing.lines.find((line) => line.accountCode === '4101')?.debit, 100000)
+  assert.equal(branchClosing.lines.find((line) => line.accountCode === '4101')?.debit, 260000)
+  assert.equal(useAppStore.getState().fiscalYears.find((year) => year.id === branchYear.id).status, 'closed')
+  const reopened = st().reopenFiscalYear({ ...branchYear, status: 'closed' }, useAppStore.getState().fiscalYears)
+  assert.ok(reopened.reversedEntryId, 'إعادة الفتح تُرحّل قيداً عاكساً')
+  assert.equal(useAppStore.getState().fiscalYears.find((year) => year.id === branchYear.id).status, 'open')
+  assert.equal(useAppStore.getState().fiscalYears.find((year) => year.id === mainYear.id).status, 'closed', 'فتح الفرع لا يفتح سنة الرئيسي')
+  const branchReversal = raw().journal.find((entry) => entry.id === reopened.reversedEntryId)
+  assert.equal(branchReversal.branchId, branchNew.id, 'قيد إعادة الفتح مختوم بفرع السنة')
+  // أنهِ دورة التصحيح ثم افتح الفترة الحالية لكل فرع قبل متابعة حركات 2026.
+  st().setActiveBranchId(branchNew.id)
+  st().closeFiscalYear({ ...branchYear, status: 'open' }, useAppStore.getState().fiscalYears)
+  const currentYear = { nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31' }
+  useAppStore.getState().addBranchFiscalYear(mainBranch.id, currentYear)
+  useAppStore.getState().addBranchFiscalYear(branchNew.id, currentYear)
+  ok('فرعان لهما الفترة نفسها: إقفال وفتح وحظر قيود مستقل لكل فرع مع قيود عكسية موثقة')
+  st().setActiveBranchId(null)
+}
+
+console.log('\n═══ 7) قواعد الصحة ═══')
 {
   // مخزن مربوط بفرع آخر يُرفض
   const errs = validateBranch({ nameAr: 'فرع مكرر', warehouseId: whNew, treasuryCode: '1102' }, st().branches, st().warehouses, st().treasuries)
@@ -159,7 +277,7 @@ console.log('\n═══ 5) قواعد الصحة ═══')
   ok('قواعد الصحة: منع التكرار + حماية الرئيسي + منع حذف الفرع ذي التاريخ التشغيلي')
 }
 
-console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
+console.log('\n═══ 8) تخصيص الأقسام والأنشطة لكل فرع (فرع مقاولات وفرع لوجستيات وفرع شامل) ═══')
 {
   const companyModules = ['pos', 'inventory', 'purchases', 'contracting', 'logistics', 'equipment_rental']
   // إنشاء فرع مخصص للشحن واللوجستيات فقط
@@ -173,6 +291,7 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
     enabledModules: ['logistics', 'inventory', 'purchases'],
     activityId: 'logistics',
   }, 5)
+  useAppStore.getState().addBranchFiscalYear(logisticsBranch.id, { nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31' })
   const hqBranch = st().branches.find((x) => x.isMain)
   // تخصيص الفرع الرئيسي للمقاولات وإيجار المعدات
   st().updateBranch(hqBranch.id, {
@@ -182,28 +301,69 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   })
   const updatedHq = st().branches.find((x) => x.id === hqBranch.id)
 
-  // الاسم والضريبة ورقم التسجيل الإلكتروني إعدادات منفصلة لكل فرع؛ الملف القديم يُنسخ عند أول تفعيل فقط.
-  const baseEinvoice = { ...useAppStore.getState().einvoice }
+  // الهوية القانونية وتصميم الطباعة مستقلان: الفرع الجديد يبدأ باسمه وببيانات قانونية فارغة.
+  const mainIdentityBeforeBranchEdit = { ...useAppStore.getState().companySetup }
+  const mainReceiptBeforeBranchEdit = { ...useAppStore.getState().baseReceipt }
+  const mainReportPrintBeforeBranchEdit = { ...useAppStore.getState().baseReportPrint }
+  const baseEinvoice = { ...useAppStore.getState().baseEinvoice }
   st().setActiveBranchId(logisticsBranch.id)
-  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'الملف الأول يرث الاسم الحالي حفاظاً على التوافق')
-  useAppStore.getState().updateCompanyName('اسم فرع اللوجستيات')
+  const newBranchProfile = useAppStore.getState().branchBusinessProfiles[logisticsBranch.id]
+  assert.equal(useAppStore.getState().setup.shopName, logisticsBranch.nameAr, 'الفرع الجديد يبدأ باسمه لا باسم المنشأة الرئيسية')
+  assert.equal(useAppStore.getState().setup.phone, '', 'هاتف الفرع الجديد فارغ ولا يرث هاتف الرئيسي')
+  assert.equal(useAppStore.getState().setup.commercialRegister, '', 'سجل الفرع الجديد فارغ ولا يرث سجل الرئيسي')
+  assert.equal(useAppStore.getState().einvoice.taxNumber, '', 'رقم ضريبة الفرع الجديد فارغ ولا يرث الرئيسي')
+  assert.equal(useAppStore.getState().einvoice.address, '', 'عنوان الممول للفرع الجديد فارغ')
+  assert.equal(newBranchProfile.receipt.logoDataUrl, '', 'شعار الفرع الجديد لا ينسخ شعار الرئيسي')
+  assert.deepEqual(newBranchProfile.receipt.headerLines, [], 'ترويسة الفرع الجديد لا تنسخ بيانات الرئيسي')
+
+  useAppStore.getState().updateCompanyProfile({
+    shopName: 'اسم فرع اللوجستيات', phone: '01090000000', email: 'branch@example.com',
+    website: 'branch.example.com', city: 'المنصورة', street: 'شارع الجيش', buildingNo: '12',
+    postalCode: '35511', poBox: '44', commercialRegister: 'CR-BR-22',
+  })
   useAppStore.getState().updateTaxSettings({ vatPercent: 5, taxInclusive: false, taxRegistrationStatus: 'registered' })
   useAppStore.getState().updateSetup({ allowNegativeTreasury: false })
-  useAppStore.getState().updateEinvoice({ taxNumber: '123456789', address: 'عنوان فرع اللوجستيات' })
+  useAppStore.getState().updateEinvoice({ taxNumber: '123456789', address: 'عنوان ضريبي فرعي' })
+  useAppStore.getState().updateReceipt({
+    shopName: 'اسم إيصال اللوجستيات', logoDataUrl: 'data:image/png;base64,branch-logo',
+    headerLines: ['سطر فرع مستقل'], footerText: 'تذييل فرع مستقل',
+  })
+  useAppStore.getState().updateReportPrint({ headerLine: 'ترويسة تقرير فرعية', footerText: 'تذييل تقرير فرعي' })
   assert.equal(useAppStore.getState().setup.shopName, 'اسم فرع اللوجستيات')
   assert.equal(useAppStore.getState().setup.vatPercent, 5)
   assert.equal(useAppStore.getState().setup.allowNegativeTreasury, false)
   assert.equal(useAppStore.getState().einvoice.taxNumber, '123456789')
+  assert.equal(useAppStore.getState().receipt.logoDataUrl, 'data:image/png;base64,branch-logo')
+  assert.equal(useAppStore.getState().receipt.footerText, 'تذييل فرع مستقل')
+  assert.ok(useAppStore.getState().reportPrint.headerLine.includes('ترويسة تقرير فرعية'))
+  assert.ok(useAppStore.getState().reportPrint.headerLine.includes('CR-BR-22'))
+  assert.ok(useAppStore.getState().reportPrint.headerLine.includes('123456789'))
+  assert.deepEqual(useAppStore.getState().companySetup, mainIdentityBeforeBranchEdit, 'تعديل هوية الفرع لا يغير ملف الشركة الرئيسي')
+  assert.deepEqual(useAppStore.getState().baseReceipt, mainReceiptBeforeBranchEdit, 'تعديل تصميم إيصال الفرع لا يغير إيصال الرئيسي')
+  assert.deepEqual(useAppStore.getState().baseEinvoice, baseEinvoice, 'إعداد الضريبة الإلكترونية للفرع لا يغير الرئيسي')
+  assert.deepEqual(useAppStore.getState().baseReportPrint, mainReportPrintBeforeBranchEdit, 'تصميم تقارير الفرع لا يغير إعدادات الرئيسي')
+
   st().setActiveBranchId(hqBranch.id)
-  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'اسم الفرع لا يغير المنشأة الأساسية')
+  assert.equal(useAppStore.getState().setup.shopName, 'المنشأة الأساسية', 'اسم المنشأة الرئيسية الأصلي محفوظ')
   assert.equal(useAppStore.getState().setup.vatPercent, 14, 'ضريبة الفرع لا تغير ضريبة المنشأة الأساسية')
-  assert.equal(useAppStore.getState().setup.allowNegativeTreasury, true, 'سياسة الخزينة الخاصة بالفرع لا تغير سياسة المنشأة')
+  assert.equal(useAppStore.getState().setup.phone, '', 'هوية الرئيسي لا تتغير بسبب تعديل الفرع')
   assert.deepEqual(useAppStore.getState().einvoice, baseEinvoice, 'رقم الضريبة الإلكترونية لا ينتقل بين الفروع')
+  const resolvedBranchBWhileMainActive = resolveBranchAppSettings(useAppStore.getState(), logisticsBranch)
+  assert.equal(resolvedBranchBWhileMainActive.setup.shopName, 'اسم فرع اللوجستيات', 'محلل فرع ب يعيد هويته بينما الرئيسي نشط')
+  assert.equal(resolvedBranchBWhileMainActive.einvoice.taxNumber, '123456789')
+  assert.equal(resolvedBranchBWhileMainActive.receipt.logoDataUrl, 'data:image/png;base64,branch-logo')
+  const resolvedDocumentBWhileMainActive = resolveDocumentBranchAppSettings(
+    useAppStore.getState(), { warehouseId: logisticsBranch.warehouseId }, st().branches, st().warehouses, st().treasuries,
+  )
+  assert.equal(resolvedDocumentBWhileMainActive.branch.id, logisticsBranch.id, 'مخزن المستند يحدد فرعه مستقلاً عن الفرع النشط')
+  assert.equal(resolvedDocumentBWhileMainActive.setup.shopName, 'اسم فرع اللوجستيات')
+  assert.deepEqual(branchIdentityMissingFields({ shopName: logisticsBranch.nameAr, city: '', street: '', phone: '', commercialRegister: '' }, { taxNumber: '' }), ['الرقم الضريبي', 'السجل التجاري', 'العنوان', 'الهاتف'])
+
   st().setActiveBranchId(logisticsBranch.id)
   assert.equal(useAppStore.getState().setup.shopName, 'اسم فرع اللوجستيات', 'إعدادات فرع اللوجستيات محفوظة عند العودة إليه')
   useAppStore.getState().updateSetup({ allowNegativeTreasury: true })
   st().setActiveBranchId(null)
-  ok('عزل إعدادات الاسم والضريبة ورقم التسجيل الإلكتروني لكل فرع مع بقاء قيم المنشأة الأساسية')
+  ok('هوية وإيصال وتقارير وضريبة مستقلة؛ بذرة بلا نسخ للرئيسي؛ محلل مستند B يعمل والرئيسي نشط')
 
   // العرض الشامل (null) يعيد كل أقسام الشركة
   assert.deepEqual(resolveBranchModules(null, companyModules), companyModules)
@@ -239,7 +399,7 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.ok(emptyCustomErrs.some((e) => e.includes('اختر قسماً واحداً على الأقل')))
   ok('تخصيص الأقسام والأنشطة لكل فرع: شامل أو مخصص (مقاولات/لوجستيات) + تبديل الفرع النشط')
 
-  console.log('\n═══ 7) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
+  console.log('\n═══ 9) عزل كل فرع كشركة مستقلة بالكامل (عملاء · موردون · موظفون · أصناف · مخازن · خزائن وبنوك · فواتير · يومية) ═══')
   // تفعيل فرع اللوجستيات كشركة مستقلة
   st().setActiveBranchId(logisticsBranch.id)
   let scoped = getBranchScopedDataState(st())
@@ -395,7 +555,10 @@ console.log('\n═══ 6) تخصيص الأقسام والأنشطة لكل ف
   assert.throws(() => st().renameTreasury(hqBranch.treasuryCode, 'خزينة مخترقة'), /غير موجودة في هذا الفرع/)
   assert.throws(() => st().postTransfer({ fromWarehouseId: logisticsBranch.warehouseId, toWarehouseId: hqBranch.warehouseId, lines: [], notes: '' }), /المخزن المستقبل غير موجود في هذا الفرع/)
   assert.throws(() => st().setOwnerPin('new-owner-pin'), /متاح للمالك فقط/)
-  assert.throws(() => useAppStore.getState().updateSetup({ shopName: 'تغيير عام من فرع' }), /لا تُعدّل من داخل فرع مستقل/)
+  const companyIdentityBeforeBranchEdit = { ...useAppStore.getState().companySetup }
+  useAppStore.getState().updateCompanyProfile({ shopName: 'هوية فرع اللوجستيات' })
+  assert.equal(useAppStore.getState().setup.shopName, 'هوية فرع اللوجستيات')
+  assert.deepEqual(useAppStore.getState().companySetup, companyIdentityBeforeBranchEdit, 'تعديل هوية الفرع لا يغير ملف المنشأة الرئيسية')
 
   // حراس علاقة الأب: لا يكفي ختم السجل الجديد بفرعه إذا كان يشير إلى موظف/مشروع/عهدة من شركة أخرى.
   const custodyTxCountBefore = st().custodyTxs.length

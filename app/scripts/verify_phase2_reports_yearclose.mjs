@@ -7,6 +7,8 @@
  * تشغيل: node --experimental-strip-types scripts/verify_phase2_reports_yearclose.mjs
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { freshCase, assertInvariants, expectReject, balanceOf, addSimpleItem, addParty, reporter } from './auditKit.mjs'
 import { trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, toCsv } from '../src/core/financialReports.ts'
 
@@ -73,11 +75,14 @@ assertInvariants('بيانات التقارير', c)
   assert.ok(csv.startsWith('\ufeff'), 'CSV يبدأ بـ BOM ليفتح بالعربية في Excel')
   assert.ok(csv.includes('العملاء'))
   R.ok('2.12⑥ التصدير: CSV بترميز UTF-8 BOM فتقرؤه Excel بالعربية بلا رموز مشوهة')
+  const reportsPage = readFileSync(fileURLToPath(new URL('../src/ui/pages/ReportsPage.tsx', import.meta.url)), 'utf8')
+  assert.ok(reportsPage.includes("opening: 'رصيد افتتاحي'"), 'تفصيل المصروفات يوسم مصدر القيد الافتتاحي بالعربية لا بمفتاح خام')
+  R.ok('2.12⑦ التقرير التفصيلي يميّز القيود الافتتاحية بوسم عربي')
   // التقارير تحترم الفترة
   const emptyP = { from: '2024-01-01', to: '2024-12-31' }
   assert.equal(incomeStatement(c.st().journal, emptyP).netProfitMinor, 0, 'فترة بلا حركة = صفر')
   assert.equal(trialBalance(c.st().journal, emptyP).totalDebitMinor, 0)
-  R.ok('2.12⑦ حدود الفترة محترمة: فترة سابقة بلا حركة تعطي أصفاراً لا أرصدة مسربة')
+  R.ok('2.12⑧ حدود الفترة محترمة: فترة سابقة بلا حركة تعطي أصفاراً لا أرصدة مسربة')
 }
 
 /* ─── 2.13 الإقفال السنوي ─── */

@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Moon, Sun, BookOpenText, Calculator, Bell, UserCircle2, BellOff, LogOut } from 'lucide-react'
+import { Moon, Sun, BookOpenText, Calculator, Bell, UserCircle2, BellOff, LogOut, ChevronDown } from 'lucide-react'
 import { authRequired } from '../../core/auth.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -36,13 +36,11 @@ import { BranchBadge } from '../components/BranchBadge.tsx'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications, activatedPayload } = useAppStore()
-  const navigationMode = useAppStore((s) => s.appearance.navigationMode)
-  /* شارة الفرع فوق اسم المستخدم: تظهر في وضع الشريط الجانبي (موسّعاً أو
-     مطوياً) — وفي وضع القوائم العلوي تعرضها MenuBar أعلى هذا الموضع فلا
-     تتكرر في الرأس. (الشريط الجانبي الموسّع يعرض نسخة ثانية أعلى قائمته:
-     قرار المالك المعتمد — تُبقى كما هي حتى يقرر توحيدها.) */
+  /* شارة الفرع: موضع وحيد في التطبيق كله — فوق اسم المستخدم هنا في الرأس،
+     في وضعَي التنقل معاً (قرار المالك 2026-10-22: لا نسخة ثانية فوق الشريط
+     الجانبي ولا في شريط القوائم، وبحجم واحد ثابت). */
   const { branches: activeBranches, effectiveBranch, effectiveBranchId, isLockedToUserBranch, setActiveBranchId } = useEffectiveBranchScope()
-  const showHeaderBranchBadge = navigationMode !== 'topbar' && activeBranches.length > 0
+  const showHeaderBranchBadge = activeBranches.length > 0
   const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
@@ -75,6 +73,19 @@ export function Header({ title }: { title: string }) {
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [bellOpen])
+
+  /* قائمة المستخدم المنسدلة من الاسم (طلب المالك): حسابي + الوضع الفاتح/الداكن
+     + تسجيل الخروج — بدل أيقونات منفصلة تستهلك مساحة الشريط */
+  const [userOpen, setUserOpen] = useState(false)
+  const userRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!userOpen) return
+    const close = (e: MouseEvent) => {
+      if (userRef.current && !userRef.current.contains(e.target as Node)) setUserOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [userOpen])
 
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const shiftPolicy = salesShiftPolicy({
@@ -237,13 +248,13 @@ export function Header({ title }: { title: string }) {
   const readOnes = notificationsForMe.filter((n) => readSet.has(n.id))
 
   return (
-    <header className="sticky top-0 z-20 flex items-center gap-4 px-6 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-card-dark/70 glass">
-      <h1 className="text-lg font-extrabold text-slate-800 dark:text-white flex-1">{title}</h1>
+    <header className="sticky top-0 z-20 flex items-center gap-3 px-4 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-card-dark/70 glass">
+      <h1 className="text-[13px] font-extrabold text-slate-800 dark:text-white flex-1 truncate">{title}</h1>
 
       {/* مؤشر الاتصال/المزامنة — يظهر دائماً ليطمئن المستخدم أن العمل محفوظ محلياً */}
       <span
         title={connInfo.nameAr}
-        className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-full transition-colors ${
+        className={`flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full transition-colors ${
           connInfo.tone === 'ok' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
           : connInfo.tone === 'warn' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
           : connInfo.tone === 'danger' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
@@ -255,7 +266,7 @@ export function Header({ title }: { title: string }) {
       </span>
 
       {country && (
-        <span className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/70 px-3 py-1.5 rounded-full">
+        <span className="hidden md:flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/70 px-2.5 py-1 rounded-full">
           {country.flag} {country.nameAr} · {country.currency.symbol}
         </span>
       )}
@@ -279,7 +290,7 @@ export function Header({ title }: { title: string }) {
       <button
         onClick={() => setAccountingMode(setup.accountingMode === 'simple' ? 'full' : 'simple')}
         title={setup.accountingMode === 'simple' ? 'تفعيل الوضع المحاسبي الكامل' : 'العودة للوضع المبسّط'}
-        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all duration-200 hover:scale-105 active:scale-95 ${
+        className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full transition-all duration-200 hover:scale-105 active:scale-95 ${
           setup.accountingMode === 'full'
             ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold shadow-sm'
             : 'bg-slate-100 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400'
@@ -358,56 +369,78 @@ export function Header({ title }: { title: string }) {
         )}
       </div>
 
-      {/* تبديل الثيم */}
-      <button
-        onClick={toggleTheme}
-        className="p-2 rounded-xl text-slate-500 dark:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-all duration-300 hover:scale-110 hover:rotate-12"
-        title={theme === 'light' ? 'الوضع الداكن' : 'الوضع الفاتح'}
-      >
-        {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-      </button>
-
+      {/* الفرع + المستخدم في صف واحد رشيق: شارة فرع صغيرة بجانب اسم المستخدم،
+          والضغط على الاسم يفتح قائمة (حسابي · الوضع الفاتح/الداكن · خروج) */}
       <div className="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-700">
-        {/* شارة الفرع فوق اسم المستخدم — في وضع الشريط الجانبي فقط (في وضع
-            القوائم العلوي تعرضها MenuBar مباشرة فوق هذا الموضع فلا تتكرر) */}
-        <div className="flex flex-col items-end gap-1">
-          {showHeaderBranchBadge && (
-            <BranchBadge
-              branches={activeBranches}
-              value={effectiveBranchId}
-              fallbackName={effectiveBranch?.nameAr}
-              locked={isLockedToUserBranch}
-              onChange={setActiveBranchId}
-              placement="header"
-              showCaption
-            />
-          )}
-          <div className="flex items-center gap-2">
-            <div className="text-left hidden sm:block">
-              <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
-              <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
-                {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
-              </div>
-            </div>
-            <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
-              {(() => {
-                const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
-                return av
-                  ? <img src={av} alt="" className="w-8 h-8 rounded-xl object-cover border border-brand-500/40" />
-                  : <UserCircle2 size={30} className="text-brand-500" />
-              })()}
-            </button>
-          </div>
-        </div>
-        {authOn && (
-          <button
-            onClick={() => { logout(); clearSessionAuthenticated() }}
-            title="تسجيل خروج — العودة لشاشة الدخول"
-            className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-rose-500/10 hover:text-rose-500 transition-all duration-200 hover:scale-110"
-          >
-            <LogOut size={17} />
-          </button>
+        {showHeaderBranchBadge && (
+          <BranchBadge
+            branches={activeBranches}
+            value={effectiveBranchId}
+            fallbackName={effectiveBranch?.nameAr}
+            locked={isLockedToUserBranch}
+            onChange={setActiveBranchId}
+            placement="header"
+          />
         )}
+        <div ref={userRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setUserOpen((v) => !v)}
+            className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
+            title="قائمة المستخدم"
+            aria-haspopup="menu"
+            aria-expanded={userOpen}
+            data-user-menu-btn
+          >
+            {(() => {
+              const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
+              return av
+                ? <img src={av} alt="" className="w-6 h-6 rounded-lg object-cover border border-brand-500/40" />
+                : <UserCircle2 size={22} className="text-brand-500" />
+            })()}
+            <span className="hidden sm:block max-w-28 truncate text-[12px] font-bold leading-tight">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</span>
+            <ChevronDown size={13} className={`shrink-0 text-slate-400 transition-transform ${userOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {userOpen && (
+            <div className="absolute left-0 top-full z-[70] mt-1.5 w-56 rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700 shadow-2xl anim-in overflow-hidden" role="menu" data-user-menu>
+              <div className="px-3.5 py-2.5 border-b border-slate-100 dark:border-slate-800">
+                <div className="text-[12.5px] font-extrabold text-slate-800 dark:text-slate-100 truncate">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
+                <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
+                  {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
+                </div>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setUserOpen(false); goTo('/settings/profile') }}
+                className="w-full flex items-center gap-2 px-3.5 py-2 text-right text-[12px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+              >
+                <UserCircle2 size={15} className="text-brand-500" /> حسابي — بياناتي ورقمي السري
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { toggleTheme(); setUserOpen(false) }}
+                className="w-full flex items-center gap-2 px-3.5 py-2 text-right text-[12px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                data-theme-toggle
+              >
+                {theme === 'light' ? <Moon size={15} className="text-slate-500" /> : <Sun size={15} className="text-amber-400" />}
+                {theme === 'light' ? 'الوضع الداكن' : 'الوضع الفاتح'}
+              </button>
+              {authOn && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setUserOpen(false); logout(); clearSessionAuthenticated() }}
+                  className="w-full flex items-center gap-2 px-3.5 py-2 text-right text-[12px] font-bold text-rose-600 dark:text-rose-400 border-t border-slate-100 dark:border-slate-800 hover:bg-rose-500/5 transition-colors"
+                  data-logout-btn
+                >
+                  <LogOut size={15} /> تسجيل خروج
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </header>
   )

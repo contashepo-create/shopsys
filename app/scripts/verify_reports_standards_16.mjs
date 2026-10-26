@@ -55,7 +55,7 @@ for (const activityId of ACTIVITIES) {
   const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
   st().seed([])
-  // تمويلي: رأس مال 100000 | استثماري: أصل نقدي 12000 | تشغيلي: شراء 500 نقدي + بيع 500 + إيجار 50
+  // رصيد افتتاحي: رأس المال 100000 | استثماري: أصل نقدي 12000 | تشغيلي: شراء 500 نقدي + بيع 500 + إيجار 50
   st().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 10000000, label: 'خزينة' })
   st().addAsset({ nameAr: `أصل ${nameAr}`, costMinor: 1200000, salvageMinor: 0, lifeMonths: 24, paidMinor: 1200000, notes: '', funding: 'cash', treasury: '1101' })
   st().addItem({ nameAr: `صنف ${nameAr}`, barcode: '', categoryId: null, unit: 'قطعة', priceMinor: 10000, costMinor: 0, stockQty: 0, minQty: 0, expiryTracking: false })
@@ -87,8 +87,10 @@ for (const activityId of ACTIVITIES) {
   /* م3) التدفق النقدي IAS 7 */
   const cashCodes = st().treasuries.map((t) => t.code)
   const cf = cashFlowReport(st().journal, cashCodes, ALL)
+  assert.equal(cf.openingCashMinor, 0, `${activityId}: م3 قبل تاريخ افتتاح الفترة لا يوجد رصيد سابق`)
+  assert.equal(cf.openingBalanceAdjustmentsMinor, 10000000, `${activityId}: م3 إثبات الخزينة داخل الفترة تسوية رصيد افتتاحي لا تدفق تمويلي`)
   assert.equal(cf.investingNetMinor, -1200000, `${activityId}: م3 شراء الأصل استثماري خارج`)
-  assert.equal(cf.financingNetMinor, 10000000, `${activityId}: م3 رأس المال تمويلي داخل`)
+  assert.equal(cf.financingNetMinor, 0, `${activityId}: م3 لا يُصنَّف إثبات الرصيد الافتتاحي كتدفق تمويلي`)
   assert.equal(cf.operatingNetMinor, -5000, `${activityId}: م3 التشغيلي (بيع 500 − شراء 500 − إيجار 50)`)
   assert.equal(cf.operatingNetMinor + cf.investingNetMinor + cf.financingNetMinor, cf.netChangeMinor, `${activityId}: م3 مجموع الأنشطة = صافي التغير`)
   assert.equal(cf.closingCashMinor, cashCodes.reduce((s, c) => s + bal(c), 0), `${activityId}: م3 الختامي = الفعلي`)

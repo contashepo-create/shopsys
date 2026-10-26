@@ -4,7 +4,7 @@
  * والفواتير تظهر في كشوف حساب أطرافها، والتعديل يرث نوع الطرف، والنقدي الكامل لا ذمة فيه.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useDataStore } from '../src/data/repo.ts'
+import { EMPTY_EXTENDED, useDataStore } from '../src/data/repo.ts'
 import { buildSaleEntry, buildSaleEntryWithAllocations, computeTotals, SALE_PARTY_RECEIVABLE, type CartLine } from '../src/core/pos.ts'
 
 const original = useDataStore.getState()
@@ -92,6 +92,26 @@ describe('§91 المستودع — postSale لأي طرف', () => {
     const entry = useDataStore.getState().journal.find((e) => e.id === sale.journalEntryId)!
     expect(entry.lines.find((l) => l.accountCode === '1107')?.debit).toBe(6_000)
     expect(entry.lines.find((l) => l.accountCode === '1104')).toBeUndefined()
+  })
+
+  it('إعادة إرسال نفس مسودة فاتورة عميل لا تنشئ فاتورة أو قيداً ولا تخصم المخزون مرتين', () => {
+    const customer = {
+      ...EMPTY_EXTENDED, id: 3, nameAr: 'عميل اختبار', phone: '', creditLimitMinor: 0, notes: '', active: true,
+    }
+    useDataStore.setState({ customers: [customer] as never })
+    const args = {
+      sourceDraftId: 'draft-unique-1', lines: [line], customerId: customer.id,
+      partyKind: 'customer' as const, payment: 'cash' as const,
+      invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false,
+    }
+    const first = useDataStore.getState().postSale(args)
+    const second = useDataStore.getState().postSale(args)
+    const state = useDataStore.getState()
+    expect(first.customerId).toBe(customer.id)
+    expect(second.id).toBe(first.id)
+    expect(state.sales.filter((sale) => sale.sourceDraftId === args.sourceDraftId)).toHaveLength(1)
+    expect(state.journal.filter((entry) => entry.sourceType === 'sale')).toHaveLength(1)
+    expect(state.items[0].stockQty).toBe(47)
   })
 
   it('بيع نقدي كامل لمورد: لا ذمة أصلاً — النوع محفوظ للتاريخ فقط', () => {

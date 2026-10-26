@@ -17,8 +17,8 @@ import { buildReceiptModel } from '../../core/receipt.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
+import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { Btn, inputCls, useToast, EmptyState } from '../components/ui.tsx'
-import { useTaxBarcodeStamp } from '../hooks/useTaxBarcodeStamp.ts'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 
 type HubConfig = {
@@ -62,9 +62,8 @@ const HUBS: Record<'logistics' | 'rental' | 'realestate', HubConfig> = {
 function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
   const cfg = HUBS[activity]
   const { sales, customers, rentalInvoices, rentalContracts, trips, tripExpenses, vehicles, employees } = useDataStore()
-  const { setup, receipt } = useAppStore()
+  const { setup } = useAppStore()
   const toast = useToast()
-  const stampTax = useTaxBarcodeStamp()
   const Icon = cfg.icon
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -94,6 +93,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
 
   /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط مركز المقاولات) */
   const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
+    const documentSettings = resolveDocumentPrintSettings(s)
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
     const tx = s.taxPercent !== undefined
       ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true }
@@ -102,7 +102,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
       dateIso: s.date,
-      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? setup.vatPercent) : 0 }))],
+      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? documentSettings.setup.vatPercent) : 0 }))],
       totals: s.totals,
       payment: s.payment,
       paidMinor: s.paidMinor,
@@ -110,13 +110,15 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       customerName,
       taxPercent: tx.taxPercent,
       taxInclusive: tx.taxInclusive,
-      settings: receipt,
+      settings: documentSettings.receipt,
     })
     /* فاتورة بيع خدمية — تُطبع برمز زاتكا عند تفعيله (نفس فاتورة المبيعات العامة) */
     /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
-    if (s.taxQrPayload) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
-    else stampTax(model, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-    printModelWithTemplate(model, cur, receipt, template)
+    if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
+    else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, s, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
+    printModelWithTemplate(model, cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(s).receipt,
+    })
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
   }
 
@@ -233,6 +235,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                   const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)
                   const remain = Math.max(0, totalForCustomer - paid)
                   const printTripInvoice = (tpl: 'a4' | 'a5' | 'thermal') => {
+                    const documentSettings = resolveDocumentPrintSettings(t)
                     const veh = vehicles.find((v) => v.id === t.vehicleId)
                     const drv = employees.find((e) => e.id === t.driverId)
                     const tripLines = t.lines && t.lines.length > 0
@@ -306,10 +309,12 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
                       customerName: cust ? `${cust.nameAr}${extraContext ? ` (${extraContext})` : ''}` : `عميل نقدي${extraContext ? ` (${extraContext})` : ''}`,
                       taxPercent: t.vatPercent,
                       taxInclusive: false,
-                      settings: receipt,
+                      settings: documentSettings.receipt,
                     })
-                    stampTax(model, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor: totalForCustomer, taxMinor: t.totals.vatMinor })
-                    printModelWithTemplate(model, cur, receipt, tpl)
+                    stampDocumentTaxBarcode(model, t, { dateIso: t.date, invoiceNumber: t.tripNumber, totalMinor: totalForCustomer, taxMinor: t.totals.vatMinor })
+                    printModelWithTemplate(model, cur, documentSettings.receipt, tpl, {
+                      resolveSettings: () => resolveDocumentPrintSettings(t).receipt,
+                    })
                   }
                   return (
                     <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">

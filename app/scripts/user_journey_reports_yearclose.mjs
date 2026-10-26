@@ -32,6 +32,7 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', vatPercent: 14, taxInclusive: false, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
 const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
 const { trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, vatReport } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0
@@ -157,6 +158,7 @@ console.log('\n═══ 6) إقفال 2025: تصفير 4xxx/5xxx إلى 3102 + 
 {
   const fy25 = { id: 1, nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'open' }
   const fy26 = { id: 2, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' }
+  useAppStore.setState({ fiscalYears: [fy25, fy26] })
   // إقفال 2026 قبل 2025 مرفوض (الترتيب الزمني) وأيضاً لأنها لم تنته
   assert.throws(() => st().closeFiscalYear(fy26, [fy25, fy26]))
   const { netProfitMinor } = st().closeFiscalYear(fy25, [fy25, fy26])

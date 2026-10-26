@@ -9,9 +9,9 @@
 import { useRawDataStore } from './repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { syncOnce, validateSyncConfig, type SyncConfig } from './syncClient.ts'
-import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
-import { STANDARD_COA, type JournalEntry } from '../core/ledger.ts'
-import { fullCoa } from '../core/treasury.ts'
+import type { JournalEntry } from '../core/ledger.ts'
+import { assertJournalSnapshotSafe } from '../core/ledgerSnapshotGuard.ts'
+import { todayLocalIso } from '../core/time.ts'
 import { encryptForDevice, decryptForDevice } from './secureStorage.ts'
 
 let applyingPull = false // يمنع اعتبار «تطبيق المسحوب» تغييراً محلياً جديداً
@@ -42,20 +42,15 @@ function serializeStore(): string {
  * ويبقى الدفتر المحلي كما هو (لا تطبيق جزئي أبداً).
  */
 function assertIncomingLedgerSafe(parsed: Record<string, unknown>, previousJournal?: readonly JournalEntry[]): void {
-  const incoming = parsed.journal
-  if (!Array.isArray(incoming)) return // دفعة بلا دفتر — لا شيء يُحرس
-  const normalized = normalizeJournalDates(incoming as JournalEntry[]) as JournalEntry[]
-  parsed.journal = normalized
-  const treasuries = (Array.isArray(parsed.treasuries) ? parsed.treasuries : useRawDataStore.getState().treasuries) as Parameters<typeof fullCoa>[1]
-  const customAccounts = (Array.isArray(parsed.customAccounts) ? parsed.customAccounts : useRawDataStore.getState().customAccounts) as { code: string; nameAr: string; rootType: string; parentCode: string }[]
-  const coa = [
-    ...fullCoa(STANDARD_COA, treasuries),
-    ...customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr, rootType: a.rootType, parentCode: a.parentCode, isPostable: true } as never)),
-  ]
-  // Compare against the local ledger so existing posted entries cannot vanish
-  // or change during a pull. New cloud entries are still fully validated.
-  const prev = previousJournal ?? (useRawDataStore.getState().journal as JournalEntry[])
-  assertJournalIntegrity(prev, normalized, { coa, fiscalYears: useAppStore.getState().fiscalYears })
+  if (!Array.isArray(parsed.journal)) return // دفعة بلا دفتر — لا شيء يُحرس
+  // يبقى الدفتر المحلي مرجعاً لمنع الاختفاء/التعديل، بينما تُفحص مراجع كل القيود
+  // الواردة أيضاً باستخدام مجموعات المستندات داخل اللقطة نفسها.
+  assertJournalSnapshotSafe(
+    parsed,
+    useAppStore.getState().fiscalYears,
+    todayLocalIso(),
+    previousJournal ?? (useRawDataStore.getState().journal as JournalEntry[]),
+  )
 }
 
 /** بدء مراقبة التغييرات المحلية — يُستدعى مرة عند الإقلاع */
@@ -83,14 +78,15 @@ const CONFLICT_KEEP = 5
  * لقطة أمان قبل تطبيق حالة سحابية فوق تغييرات محلية غير مدفوعة:
  * تُحفظ محلياً (آخر 5) ويمكن استرجاعها يدوياً — «لا ضياع بيانات أبداً».
  */
-async function saveConflictSnapshot(data: string): Promise<void> {
+async function saveConflictSnapshot(data: string): Promise<boolean> {
   try {
     const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
     const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
     arr.push({ at: new Date().toISOString(), data: await encryptForDevice(data) })
     while (arr.length > CONFLICT_KEEP) arr.shift()
     localStorage.setItem(CONFLICT_SNAPSHOTS_KEY, JSON.stringify(arr))
-  } catch { /* storage full or unavailable — sync itself remains operational */ }
+    return true
+  } catch { return false }
 }
 
 /** لقطات التعارض تحتوي نسخة كاملة من المتجر؛ لا يطّلع عليها أو يسترجعها إلا المالك. */
@@ -137,7 +133,9 @@ export async function restoreConflictSnapshot(at: string): Promise<{ ok: boolean
   } catch {
     return { ok: false, message: 'اللقطة تالفة — لا يمكن قراءتها' }
   }
-  await saveConflictSnapshot(serializeStore()) // preserve current state before replacement
+  if (!(await saveConflictSnapshot(serializeStore()))) {
+    return { ok: false, message: 'تعذر حفظ الحالة الحالية قبل الاسترجاع — لم تُستبدل بيانات المتجر' }
+  }
   for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
   // AUDIT-016: اللقطة أيضاً تمر بالحارس — ملف محفوظ قد يكون تالفاً أو من نسخة قديمة مختلة
   try {
@@ -177,8 +175,10 @@ export async function runSyncCycle(): Promise<CycleResult> {
       // لو عندنا تغييرات محلية لم تُدفع بعد (dirty) وسنطبق حالة أحدث من جهاز آخر،
       // نحفظ لقطة كاملة من حالتنا المحلية أولاً — فلا يضيع إدخال أي جهاز أبداً،
       // ويستطيع المالك استرجاع اللقطة من النسخ الاحتياطية لو لزم.
-      if (useAppStore.getState().sync.dirty) {
-        await saveConflictSnapshot(serializeStore())
+      if (useAppStore.getState().sync.dirty && !(await saveConflictSnapshot(serializeStore()))) {
+        const message = 'تعذر حفظ لقطة العمل المحلي — لم تُطبَّق حالة السحابة حتى لا تضيع بيانات هذا الجهاز'
+        useAppStore.getState().updateSync({ lastResult: `⛔ ${message}` })
+        return { ok: false, message }
       }
       // التطبيق دفعة واحدة — البيانات اجتازت (بصمة + AES-GCM + JSON) في العميل
       const parsed = JSON.parse(outcome.pulledData) as Record<string, unknown>

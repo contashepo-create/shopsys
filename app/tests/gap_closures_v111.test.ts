@@ -49,6 +49,7 @@ describe('الفجوة ① — المواعيد والحجوزات (booking)', (
   it('المتجر: إضافة موعد وحالاته وحذفه — وتحذير التعارض قبل القبول الصريح', async () => {
     const { useDataStore } = await import('../src/data/repo.ts')
     const S = () => useDataStore.getState()
+    const journalCountBefore = S().journal.length
     // تعارض: أول إضافة تعاد بلا تسجيل (id=-1) حتى allowConflict
     const first = S().addBooking({ ...base, itemId: null })
     expect(first.booking.id).toBeGreaterThanOrEqual(0)
@@ -57,13 +58,23 @@ describe('الفجوة ① — المواعيد والحجوزات (booking)', (
     expect(clash.conflicts).toHaveLength(1)
     const forced = S().addBooking({ ...base, itemId: null, customerName: 'عميل آخر', time: '10:15', durationMin: 15, allowConflict: true })
     expect(forced.booking.id).toBeGreaterThan(first.booking.id)
-    // الحالات والتعديل والحذف
+    // الحالات والتعديل: التعارض عند التعديل لا يُحفظ بلا موافقة صريحة.
     S().setBookingStatus(forced.booking.id, 'done')
     expect(S().bookings.find((b) => b.id === forced.booking.id)?.status).toBe('done')
-    S().updateBooking(first.booking.id, { time: '12:00' })
-    expect(S().bookings.find((b) => b.id === first.booking.id)?.time).toBe('12:00')
+    const other = S().addBooking({ ...base, itemId: null, customerName: 'عميل ثالث', time: '12:00' }).booking
+    const blockedEdit = S().updateBooking(first.booking.id, { time: '12:15' })
+    expect(blockedEdit.conflicts.map((b) => b.id)).toContain(other.id)
+    expect(S().bookings.find((b) => b.id === first.booking.id)?.time).toBe('10:00')
+    const acceptedEdit = S().updateBooking(first.booking.id, { time: '12:15', allowConflict: true })
+    expect(acceptedEdit.conflicts.map((b) => b.id)).toContain(other.id)
+    expect(S().bookings.find((b) => b.id === first.booking.id)?.time).toBe('12:15')
+    expect(() => S().updateBooking(-99, { time: '12:00' })).toThrow('الموعد غير موجود')
     S().deleteBooking(forced.booking.id)
-    expect(S().bookings.some((b) => b.id === forced.booking.id)).toBe(false)
+    S().deleteBooking(other.id)
+    S().deleteBooking(first.booking.id)
+    expect(S().bookings.some((b) => [first.booking.id, forced.booking.id, other.id].includes(b.id))).toBe(false)
+    // الحجز وتغيير الحالة والتعديل لا ترحل مالياً — الدفع يسجل في البيع/الطلب الفعلي فقط.
+    expect(S().journal).toHaveLength(journalCountBefore)
   })
 })
 

@@ -14,18 +14,35 @@ import { join } from 'node:path'
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8')
 
 describe('مراجعة البوابات قبل الإرسال (v1.0.22)', () => {
+  it('App.tsx: تدقيق الترخيص يبدأ مع ترطيب متجر الإعدادات ولا ينتظر مخزن البيانات', () => {
+    const app = read('src/App.tsx')
+    expect(app).toMatch(/useAppStore\.persist\.hasHydrated\(\)\) audit\(\)[\s\S]*?useAppStore\.persist\.onFinishHydration\(audit\)/)
+    expect(app).toMatch(/reverifyActivation\(\)/)
+    expect(app).toMatch(/انتهت مهلة استجابة خدمة الترخيص المركزية/)
+    expect(app).not.toMatch(/reverifyActivation\(\)[\s\S]{0,120}\[storesHydrated\]/)
+  })
+
+  it('القمر لا يدخل مصافحة الإغلاق قبل تثبيت مستمع المسودات، ولا يتجاوز المصافحة بعد الجاهزية', () => {
+    const satellite = read('src/ui/windows/satellite.tsx')
+    const windows = read('desktop/satelliteWindows.ts')
+    expect(satellite).toMatch(/onRequestClose\([\s\S]*?setRendererReady\(true\)/)
+    expect(satellite).toMatch(/setRendererReady\(false\)/)
+    expect(windows).toMatch(/if \(!entry\.rendererReady && !entry\.dirty\)/)
+    expect(windows).toMatch(/انتهت مهلة مصافحة إغلاق/)
+  })
+
   it('App.tsx: كل إرسال يحمل معرّف الجهاز مشروط بقبول الاتفاقية الحالية', () => {
     const app = read('src/App.tsx')
     expect(app).toMatch(/const legalAccepted = legal !== null/)
     // تنبيهات المطوّر
     expect(app).toMatch(/if \(!legalAccepted \|\| !useAppStore\.getState\(\)\.setup\.completed\) return/)
-    expect(app).toMatch(/\}, \[setCloudData, legalAccepted\]\)/)
+    expect(app).toMatch(/\}, \[setCloudData, legalAccepted, satelliteBoot\]\)/)
     // مزامنة الترخيص/الأعلام
-    expect(app).toMatch(/useEffect\(\(\) => \{\n    if \(!legalAccepted\) return\n/)
-    expect(app).toMatch(/return \(\) => \{ cancelled = true; clearInterval\(t\) \}\n  \}, \[setCloudData, legalAccepted\]\)/)
+    expect(app).toMatch(/useEffect\(\(\) => \{\n    if \(!legalAccepted \|\| satelliteBoot\) return\n/)
+    expect(app).toMatch(/return \(\) => \{ cancelled = true; clearInterval\(t\) \}\n  \}, \[setCloudData, legalAccepted, satelliteBoot\]\)/)
     // بلاغ التسجيل
-    expect(app).toMatch(/if \(!setup\.completed \|\| !legalAccepted\) return/)
-    expect(app).toMatch(/\}, \[setup\.completed, legalAccepted\]\)/)
+    expect(app).toMatch(/if \(!setup\.completed \|\| !legalAccepted \|\| satelliteBoot\) return/)
+    expect(app).toMatch(/\}, \[setup\.completed, legalAccepted, satelliteBoot\]\)/)
   })
 
   it('worker.js: حدّ /register بالبايت عبر TextEncoder', () => {

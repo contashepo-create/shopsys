@@ -248,7 +248,7 @@ export function decodeLicenseKey(key: string): { payload: LicensePayload; body: 
 
 /* ─── توقيع وتحقق (WebCrypto Ed25519) ─── */
 
-export async function importPublicKey(pubB64u: string): Promise<CryptoKey> {
+export async function importPublicKey(pubB64u: string) {
   return crypto.subtle.importKey('raw', b64uDecode(pubB64u) as unknown as ArrayBuffer, 'Ed25519', true, ['verify'])
 }
 

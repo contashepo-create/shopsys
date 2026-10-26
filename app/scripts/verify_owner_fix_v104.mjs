@@ -27,8 +27,8 @@ const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8')
 /* ② repo: الفعل المادي والحارس والpersist */
 {
   const repo = read('src/data/repo.ts')
-  assert.ok(repo.includes('setOpeningItemStock: (args: { itemId: number; qty: number; unitCostMinor: number })'), 'فعل التقييم المادي غير معرف')
-  assert.ok(repo.includes('declareOpeningCapital: (declaredMinor: number)'), 'فعل إعلان رأس المال غير معرف')
+  assert.ok(/setOpeningItemStock: \(args: \{ itemId: number; qty: number; unitCostMinor: number; effectiveDate\?: string \}\)/.test(repo), 'فعل التقييم المادي أو تاريخه غير معرف')
+  assert.ok(repo.includes('declareOpeningCapital: (declaredMinor: number, effectiveDate?: string)'), 'فعل إعلان رأس المال أو تاريخه غير معرف')
   assert.ok(repo.includes('openingItems: Record<number, OpeningItemDetail>'), 'سجل الأصناف الافتتاحية غير محفوظ')
   assert.ok(repo.includes('openingDeclaredCapitalMinor: number | null'), 'رأس المال المعلن غير محفوظ')
   assert.ok(repo.includes('استخدم تسوية الجرد'), 'لا حارس ضد النزول تحت المستهلك')

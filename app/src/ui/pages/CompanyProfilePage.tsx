@@ -11,24 +11,39 @@
  * التخزين في مكانين، وتتيح تعبئته حتى لو ميزة الفاتورة الإلكترونية غير
  * مفعّلة بالترخيص (كانت شاشتها تُقفَل بالكامل فلا سبيل لإدخاله إطلاقاً).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Building2, User, Phone, MapPin, Hash, Landmark, Image as ImageIcon } from 'lucide-react'
-import { useAppStore } from '../../stores/app.store.ts'
-import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { AlertTriangle, Building2, User, Phone, MapPin, Hash, Landmark, Image as ImageIcon } from 'lucide-react'
+import { branchIdentityMissingFields, useAppStore } from '../../stores/app.store.ts'
+import { secureStorage } from '../../data/secureStorage.ts'
+import { Btn, Field, inputCls, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
 
 const isValidEmail = (v: string) => !v.trim() || /^\S+@\S+\.\S+$/.test(v.trim())
+type CompanyProfileDraft = Record<'shopName' | 'ownerName' | 'phone' | 'email' | 'website' | 'city' | 'street' | 'buildingNo' | 'postalCode' | 'poBox' | 'commercialRegister' | 'taxNumber', string>
+const COMPANY_DRAFT_FIELDS: readonly (keyof CompanyProfileDraft)[] = ['shopName', 'ownerName', 'phone', 'email', 'website', 'city', 'street', 'buildingNo', 'postalCode', 'poBox', 'commercialRegister', 'taxNumber']
+function readCompanyProfileDraft(serialized: string | null): CompanyProfileDraft | null {
+  try {
+    const parsed = JSON.parse(serialized ?? 'null') as { version?: unknown; fields?: unknown } | null
+    if (parsed?.version !== 1 || !parsed.fields || typeof parsed.fields !== 'object') return null
+    const fields = parsed.fields as Record<string, unknown>
+    if (!COMPANY_DRAFT_FIELDS.every((field) => typeof fields[field] === 'string')) return null
+    return fields as CompanyProfileDraft
+  } catch { return null }
+}
 
-export function CompanyProfilePage() {
+function CompanyProfileForm() {
   const { setup, updateCompanyProfile, einvoice, updateEinvoice, receipt, activeBranchContext } = useAppStore()
   const toast = useToast()
-  // بيانات المنشأة (الاسم/العنوان/السجل التجاري...) عامة للشركة كلها — لا تُعدَّل من داخل فرع مستقل
-  // (نفس قاعدة الإعدادات العامة الأخرى في app.store.ts/companySetupPatch). الرقم الضريبي وحده قد
-  // يختلف بالفرع فيبقى قابلاً للتعديل دائماً.
-  const canEditCompanyWideSettings = !activeBranchContext || activeBranchContext.isMain
+  // كل فرع يملك هويته القانونية وبيانات اتصاله وعنوانه وسجلّه التجاري
+  // بصورة مستقلة. setup/einvoice هنا هما القيم الفعالة للسياق الحالي،
+  // وتوجيه الحفظ إلى ملف الفرع أو ملف الرئيسي يتم داخل app.store.
+  const isBranchScope = !!activeBranchContext && !activeBranchContext.isMain
+  const draftStorageKey = `shopsys-company-profile-draft-v1:${isBranchScope ? activeBranchContext?.id ?? 'branch' : 'main'}`
+  const [restoredDraft, setRestoredDraft] = useState<CompanyProfileDraft | null>(null)
+  const [draftReady, setDraftReady] = useState(false)
 
   const [shopName, setShopName] = useState(setup.shopName)
-  const [ownerName, setOwnerName] = useState(setup.ownerName)
+  const [ownerName, setOwnerName] = useState(isBranchScope ? '' : setup.ownerName)
   const [phone, setPhone] = useState(setup.phone)
   const [email, setEmail] = useState(setup.email)
   const [website, setWebsite] = useState(setup.website ?? '')
@@ -39,6 +54,43 @@ export function CompanyProfilePage() {
   const [poBox, setPoBox] = useState(setup.poBox ?? '')
   const [commercialRegister, setCommercialRegister] = useState(setup.commercialRegister ?? '')
   const [taxNumber, setTaxNumber] = useState(einvoice.taxNumber)
+  useEffect(() => {
+    let active = true
+    void Promise.resolve(secureStorage.getItem(draftStorageKey)).then((serialized) => {
+      const draft = readCompanyProfileDraft(serialized)
+      // الكتابة المشفّرة التي تلي التهيئة ترحّل تلقائياً أي مسودة قديمة كانت
+      // كنص صريح إلى التنسيق المحمي من دون ترك كتابة ترحيل متسابقة بالخلفية.
+      if (!active) return
+      if (draft) {
+        setShopName(draft.shopName); setOwnerName(draft.ownerName); setPhone(draft.phone); setEmail(draft.email)
+        setWebsite(draft.website); setCity(draft.city); setStreet(draft.street); setBuildingNo(draft.buildingNo)
+        setPostalCode(draft.postalCode); setPoBox(draft.poBox); setCommercialRegister(draft.commercialRegister); setTaxNumber(draft.taxNumber)
+      }
+      setRestoredDraft(draft)
+      setDraftReady(true)
+    }).catch(() => { if (active) setDraftReady(true) })
+    return () => { active = false }
+  }, [draftStorageKey])
+  const profileDraft: CompanyProfileDraft = { shopName, ownerName, phone, email, website, city, street, buildingNo, postalCode, poBox, commercialRegister, taxNumber }
+  const profileDraftJson = JSON.stringify(profileDraft)
+  const profileDraftStorageJson = JSON.stringify({ version: 1, fields: profileDraft })
+  const savedProfileDraft: CompanyProfileDraft = {
+    shopName: setup.shopName, ownerName: isBranchScope ? '' : setup.ownerName, phone: setup.phone, email: setup.email,
+    website: setup.website ?? '', city: setup.city, street: setup.street, buildingNo: setup.buildingNo ?? '',
+    postalCode: setup.postalCode ?? '', poBox: setup.poBox ?? '', commercialRegister: setup.commercialRegister ?? '', taxNumber: einvoice.taxNumber,
+  }
+  const unsaved = useUnsavedChangesGuard(profileDraftJson, JSON.stringify(savedProfileDraft))
+  useEffect(() => {
+    if (!draftReady) return
+    void Promise.resolve(secureStorage.setItem(draftStorageKey, profileDraftStorageJson)).catch(() => {
+      /* يبقى حارس الإغلاق فعالاً حتى عند تعذر التخزين */
+    })
+  }, [draftReady, draftStorageKey, profileDraftStorageJson])
+
+
+  const identityMissing = isBranchScope
+    ? branchIdentityMissingFields({ shopName, phone, city, street, commercialRegister }, { taxNumber })
+    : []
 
   const card = 'anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3'
   const h3 = 'font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2'
@@ -47,23 +99,25 @@ export function CompanyProfilePage() {
     if (!shopName.trim()) return toast.show('اسم المنشأة مطلوب', 'error')
     if (!isValidEmail(email)) return toast.show('صيغة البريد الإلكتروني غير صحيحة', 'error')
     try {
-      if (canEditCompanyWideSettings) {
-        updateCompanyProfile({
-          shopName: shopName.trim(),
-          ownerName: ownerName.trim(),
-          phone: phone.trim(),
-          email: email.trim(),
-          website: website.trim(),
-          city: city.trim(),
-          street: street.trim(),
-          buildingNo: buildingNo.trim(),
-          postalCode: postalCode.trim(),
-          poBox: poBox.trim(),
-          commercialRegister: commercialRegister.trim(),
-        })
-      }
+      updateCompanyProfile({
+        shopName: shopName.trim(),
+        // اسم مالك الشركة الأم لا يدخل ملف هوية الفرع ولا يُعدَّل منه.
+        ...(isBranchScope ? {} : { ownerName: ownerName.trim() }),
+        phone: phone.trim(),
+        email: email.trim(),
+        website: website.trim(),
+        city: city.trim(),
+        street: street.trim(),
+        buildingNo: buildingNo.trim(),
+        postalCode: postalCode.trim(),
+        poBox: poBox.trim(),
+        commercialRegister: commercialRegister.trim(),
+      })
       updateEinvoice({ taxNumber: taxNumber.trim() })
-      toast.show('حُفظت بيانات المنشأة ✓')
+      unsaved.markClean()
+      setRestoredDraft(null)
+      void Promise.resolve(secureStorage.removeItem(draftStorageKey)).catch(() => { /* لا يؤثر في نجاح حفظ الإعدادات */ })
+      toast.show(isBranchScope ? `حُفظت هوية «${shopName.trim()}» المستقلة ✓` : 'حُفظت بيانات المنشأة ✓')
     } catch (err) {
       toast.show((err as Error).message, 'error')
     }
@@ -71,17 +125,25 @@ export function CompanyProfilePage() {
 
   return (
     <div className="max-w-3xl space-y-4" data-company-profile-page>
+      {unsaved.prompt}
+      {(unsaved.isDirty || restoredDraft) && <div role="status" className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-800 dark:text-amber-300" data-settings-unsaved>{restoredDraft ? 'استُعيدت مسودة بيانات المنشأة غير المحفوظة من هذا الجهاز؛ راجعها ثم احفظها.' : 'لديك تغييرات لم تحفظها كإعداد بعد؛ سيطلب التطبيق تأكيداً قبل المغادرة.'}</div>}
       <div className="anim-up flex items-center gap-2">
         <Building2 size={22} className="text-brand-500" />
-        <h1 className="text-lg font-black text-slate-800 dark:text-white">بيانات المنشأة</h1>
+        <h1 className="text-lg font-black text-slate-800 dark:text-white">
+          {isBranchScope ? `بيانات المنشأة — ${activeBranchContext?.nameAr}` : 'بيانات المنشأة'}
+        </h1>
       </div>
       <p className="text-[12px] text-slate-500 dark:text-slate-400 -mt-2">
-        كل بيانات منشأتك في مكان واحد — قابلة للتعديل متى شئت. اسم الإيصال المطبوع له حقل مستقل في
-        «إعدادات الطباعة» لو أردت اسماً مختلفاً عن اسم المنشأة الرسمي.
+        {isBranchScope
+          ? 'هذه الهوية القانونية تخص هذا الكيان وحده وتظهر على فواتيره وتقاريره، ولن تؤثر في هوية أي كيان آخر.'
+          : 'كل بيانات منشأتك في مكان واحد — قابلة للتعديل متى شئت. اسم الإيصال المطبوع له حقل مستقل في «إعدادات الطباعة» لو أردت اسماً مختلفاً عن اسم المنشأة الرسمي.'}
       </p>
-      {!canEditCompanyWideSettings && (
-        <p className="text-[12px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400 rounded-xl px-3 py-2">
-          أنت داخل فرع «{activeBranchContext?.nameAr}» — بيانات المنشأة عامة للشركة كلها وتُعدَّل من الفرع الرئيسي فقط (الرقم الضريبي وحده يمكن تخصيصه بالفرع).
+      {isBranchScope && identityMissing.length > 0 && (
+        <p className="flex items-start gap-2 text-[12px] font-bold text-amber-700 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl px-3 py-2" data-branch-identity-warning>
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            الهوية غير مكتملة ({identityMissing.join('، ')}). ستُطبع المستندات باسم المنشأة فقط، ولن تُستعار أي بيانات من المنشأة الرئيسية، حتى تستكمل هذه البيانات.
+          </span>
         </p>
       )}
 
@@ -90,11 +152,13 @@ export function CompanyProfilePage() {
         <h3 className={h3}><Building2 size={17} className="text-brand-500" /> هوية المنشأة</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="اسم المنشأة *">
-            <input value={shopName} onChange={(e) => setShopName(e.target.value)} className={inputCls} placeholder="اسم منشأتك" disabled={!canEditCompanyWideSettings} />
+            <input value={shopName} onChange={(e) => setShopName(e.target.value)} className={inputCls} placeholder="اسم منشأتك" />
           </Field>
-          <Field label="اسم المالك" icon={<User size={13} className="ml-1 inline" />}>
-            <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} className={inputCls} placeholder="اسم صاحب المنشأة" disabled={!canEditCompanyWideSettings} />
-          </Field>
+          {!isBranchScope && (
+            <Field label="اسم المالك" icon={<User size={13} className="ml-1 inline" />}>
+              <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} className={inputCls} placeholder="اسم صاحب المنشأة" />
+            </Field>
+          )}
         </div>
       </section>
 
@@ -102,9 +166,9 @@ export function CompanyProfilePage() {
       <section className={card}>
         <h3 className={h3}><Phone size={17} className="text-sky-500" /> بيانات التواصل</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01xxxxxxxxx" disabled={!canEditCompanyWideSettings} /></Field>
-          <Field label="البريد الإلكتروني"><input value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} dir="ltr" placeholder="name@example.com" disabled={!canEditCompanyWideSettings} /></Field>
-          <Field label="الموقع الإلكتروني"><input value={website} onChange={(e) => setWebsite(e.target.value)} className={inputCls} dir="ltr" placeholder="www.example.com" disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01xxxxxxxxx" /></Field>
+          <Field label="البريد الإلكتروني"><input value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} dir="ltr" placeholder="name@example.com" /></Field>
+          <Field label="الموقع الإلكتروني"><input value={website} onChange={(e) => setWebsite(e.target.value)} className={inputCls} dir="ltr" placeholder="www.example.com" /></Field>
         </div>
       </section>
 
@@ -112,11 +176,11 @@ export function CompanyProfilePage() {
       <section className={card}>
         <h3 className={h3}><MapPin size={17} className="text-emerald-500" /> العنوان</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="المدينة"><input value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} disabled={!canEditCompanyWideSettings} /></Field>
-          <Field label="الشارع / الحي"><input value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} disabled={!canEditCompanyWideSettings} /></Field>
-          <Field label="رقم المبنى"><input value={buildingNo} onChange={(e) => setBuildingNo(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} /></Field>
-          <Field label="الرمز البريدي"><input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} /></Field>
-          <Field label="صندوق البريد"><input value={poBox} onChange={(e) => setPoBox(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} /></Field>
+          <Field label="المدينة"><input value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} /></Field>
+          <Field label="الشارع / الحي"><input value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} /></Field>
+          <Field label="رقم المبنى"><input value={buildingNo} onChange={(e) => setBuildingNo(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          <Field label="الرمز البريدي"><input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          <Field label="صندوق البريد"><input value={poBox} onChange={(e) => setPoBox(e.target.value)} className={inputCls} dir="ltr" /></Field>
         </div>
       </section>
 
@@ -125,7 +189,7 @@ export function CompanyProfilePage() {
         <h3 className={h3}><Landmark size={17} className="text-violet-500" /> البيانات الرسمية</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="السجل التجاري" icon={<Hash size={13} className="ml-1 inline" />}>
-            <input value={commercialRegister} onChange={(e) => setCommercialRegister(e.target.value)} className={inputCls} dir="ltr" disabled={!canEditCompanyWideSettings} />
+            <input value={commercialRegister} onChange={(e) => setCommercialRegister(e.target.value)} className={inputCls} dir="ltr" />
           </Field>
           <Field label="الرقم الضريبي" hint="نفس الرقم المستخدم في الفاتورة الإلكترونية (إن فُعّلت) — مصدر واحد لا يتكرر">
             <input value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} className={inputCls} dir="ltr" />
@@ -138,7 +202,7 @@ export function CompanyProfilePage() {
 
       {/* ⑤ الشعار — رابط سريع فقط، لا تخزين مكرر */}
       <section className={card}>
-        <h3 className={h3}><ImageIcon size={17} className="text-amber-500" /> شعار المنشأة</h3>
+        <h3 className={h3}><ImageIcon size={17} className="text-amber-500" /> {isBranchScope ? 'شعار هذا الكيان' : 'شعار المنشأة'}</h3>
         <div className="flex items-center gap-3">
           {receipt.logoDataUrl ? (
             <img src={receipt.logoDataUrl} alt="الشعار" className="w-14 h-14 object-contain rounded-xl border border-slate-200 dark:border-slate-700 bg-white p-1" />
@@ -152,8 +216,17 @@ export function CompanyProfilePage() {
       </section>
 
       <div className="flex justify-end">
-        <Btn onClick={save}>💾 حفظ بيانات المنشأة</Btn>
+        <Btn onClick={save}>💾 {isBranchScope ? 'حفظ هوية هذا الكيان' : 'حفظ بيانات المنشأة'}</Btn>
       </div>
     </div>
   )
+}
+
+/** إعادة تركيب نموذج التحرير عند تبديل الكيان تمنع بقاء مسودة فرع سابق. */
+export function CompanyProfilePage() {
+  const activeBranchContext = useAppStore((state) => state.activeBranchContext)
+  const scopeKey = activeBranchContext
+    ? `${activeBranchContext.id}:${activeBranchContext.isMain ? 'main' : 'branch'}`
+    : 'main'
+  return <CompanyProfileForm key={scopeKey} />
 }

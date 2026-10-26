@@ -76,7 +76,7 @@ assertInvariants('قبل المزامنة', c)
 /* ② حارس الدفتر على الوارد (AUDIT-016) */
 {
   assert.ok(RUNNER.includes('assertIncomingLedgerSafe'), 'لا حارس للوارد من السحابة')
-  assert.ok(RUNNER.includes('assertJournalIntegrity'), 'الحارس لا يستدعي فحص سلامة الدفتر')
+  assert.ok(RUNNER.includes('assertJournalSnapshotSafe'), 'الحارس لا يستدعي فحص سلامة لقطة الدفتر')
   assert.ok(/rejected|رُفضت حالة السحابة/.test(RUNNER), 'لا رسالة رفض عربية للحالة السحابية المختلة')
   const pullIdx = RUNNER.indexOf("outcome.action === 'pulled'")
   const guardIdx = RUNNER.indexOf('assertIncomingLedgerSafe(parsed)', pullIdx)
@@ -123,6 +123,8 @@ assertInvariants('قبل المزامنة', c)
 /* ④ لا عمل محلي يُدهس بلا لقطة */
 {
   assert.ok(RUNNER.includes('saveConflictSnapshot(serializeStore())'), 'لا لقطة أمان قبل تطبيق حالة أحدث')
+  assert.ok(RUNNER.includes('sync.dirty && !(await saveConflictSnapshot(serializeStore()))'), 'تغييرات محلية معلقة يجب أن توقف السحب إذا فشل حفظ اللقطة')
+  assert.ok(RUNNER.includes('if (!(await saveConflictSnapshot(serializeStore())))'), 'استعادة اللقطة يجب أن تحفظ الحالة الحالية قبل استبدالها')
   assert.ok(RUNNER.includes('restoreConflictSnapshot'), 'لا استرجاع للقطات')
   const pullBlock = RUNNER.slice(RUNNER.indexOf("outcome.action === 'pulled'"), RUNNER.indexOf('applyingPull = true'))
   assert.ok(pullBlock.includes('saveConflictSnapshot'), 'اللقطة يجب أن تُحفظ قبل السحب المطبَّق')

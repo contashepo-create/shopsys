@@ -6,10 +6,23 @@
 
 export interface FiscalYear {
   id: number
+  /** معرف الفرع المالك للفترة. undefined = سنة تاريخية قديمة لم تُربط بعد بفرع. */
+  branchId?: number
   nameAr: string // «2026» أو «2025-2026»
   startDate: string // ISO yyyy-mm-dd
   endDate: string
   status: 'open' | 'closed'
+}
+
+/** الفترات التي تخص فرعاً بعينه. لا نُظهر السنوات القديمة غير المنسوبة إلا قبل إنشاء الفروع أو للفرع الرئيسي. */
+export function fiscalYearsForBranch(years: readonly FiscalYear[], branchId: number | null, isMain = false): FiscalYear[] {
+  if (branchId == null) return years.filter((year) => year.branchId == null)
+  return years.filter((year) => year.branchId === branchId || (isMain && year.branchId == null))
+}
+
+/** Legacy periods without branchId belong to the main branch, never to every branch. */
+export function bindLegacyFiscalYearsToMain(years: readonly FiscalYear[], mainBranchId: number): FiscalYear[] {
+  return years.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
 }
 
 /** اقتراح سنة ميلادية كاملة */
@@ -17,25 +30,52 @@ export function suggestFiscalYear(year: number): Omit<FiscalYear, 'id' | 'status
   return { nameAr: String(year), startDate: `${year}-01-01`, endDate: `${year}-12-31` }
 }
 
+function isValidFiscalDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(5, 7))
+  const day = Number(value.slice(8, 10))
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const monthDays = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= monthDays[month - 1]
+}
+
+function fiscalDayOrdinal(value: string): number {
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(5, 7))
+  const day = Number(value.slice(8, 10))
+  const priorYear = year - 1
+  const leapDaysBefore = Math.floor(priorYear / 4) - Math.floor(priorYear / 100) + Math.floor(priorYear / 400)
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const monthDays = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return priorYear * 365 + leapDaysBefore + monthDays.slice(0, month - 1).reduce((sum, days) => sum + days, 0) + day
+}
+
 export function validateFiscalYear(fy: { nameAr: string; startDate: string; endDate: string }, existing: FiscalYear[]): string[] {
   const errors: string[] = []
   if (!fy.nameAr.trim()) errors.push('اسم السنة المالية مطلوب')
-  if (!fy.startDate || !fy.endDate) errors.push('تاريخا البداية والنهاية مطلوبان')
-  else {
-    if (fy.endDate <= fy.startDate) errors.push('نهاية السنة يجب أن تكون بعد بدايتها')
-    const days = (new Date(fy.endDate).getTime() - new Date(fy.startDate).getTime()) / 86400000
-    if (days > 400) errors.push('السنة المالية لا تتجاوز ~13 شهراً')
-    if (days < 27) errors.push('السنة المالية قصيرة جداً (أقل من شهر)')
-    // تداخل مع سنوات موجودة
-    for (const ex of existing) {
-      if (fy.startDate <= ex.endDate && fy.endDate >= ex.startDate) {
-        errors.push(`تتداخل مع السنة «${ex.nameAr}» (${ex.startDate} → ${ex.endDate})`)
-      }
-    }
-    // (طلب المالك): سنة مالية واحدة مفتوحة فقط — لا تُفتح جديدة قبل إقفال المفتوحة
-    const open = existing.find((y) => y.status === 'open')
-    if (open) errors.push(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
+  if (!fy.startDate || !fy.endDate) {
+    errors.push('تاريخا البداية والنهاية مطلوبان')
+    return errors
   }
+  if (!isValidFiscalDate(fy.startDate)) errors.push('تاريخ بداية السنة غير صالح — استخدم تاريخاً صحيحاً بصيغة YYYY-MM-DD')
+  if (!isValidFiscalDate(fy.endDate)) errors.push('تاريخ نهاية السنة غير صالح — استخدم تاريخاً صحيحاً بصيغة YYYY-MM-DD')
+  // لا تُجرَ حسابات المدة أو التداخل على مدخلات غير تقويمية.
+  if (errors.some((error) => error.includes('تاريخ ') && error.includes('غير صالح'))) return errors
+
+  if (fy.endDate <= fy.startDate) errors.push('نهاية السنة يجب أن تكون بعد بدايتها')
+  const days = fiscalDayOrdinal(fy.endDate) - fiscalDayOrdinal(fy.startDate)
+  if (days > 400) errors.push('السنة المالية لا تتجاوز ~13 شهراً')
+  if (days < 27) errors.push('السنة المالية قصيرة جداً (أقل من شهر)')
+  // تداخل مع سنوات موجودة
+  for (const ex of existing) {
+    if (fy.startDate <= ex.endDate && fy.endDate >= ex.startDate) {
+      errors.push(`تتداخل مع السنة «${ex.nameAr}» (${ex.startDate} → ${ex.endDate})`)
+    }
+  }
+  // (طلب المالك): سنة مالية واحدة مفتوحة فقط — لا تُفتح جديدة قبل إقفال المفتوحة
+  const open = existing.find((y) => y.status === 'open')
+  if (open) errors.push(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
   return errors
 }
 
@@ -47,6 +87,28 @@ export function dateInOpenYear(date: string, years: FiscalYear[]): FiscalYear | 
 /** هل التاريخ داخل سنة مالية مقفلة؟ — يمنع التسجيل بأثر رجعي في فترة مقفلة (نمط Closing Date العالمي) */
 export function dateInClosedYear(date: string, years: readonly FiscalYear[]): FiscalYear | null {
   return years.find((y) => y.status === 'closed' && date >= y.startDate && date <= y.endDate) ?? null
+}
+
+/**
+ * Reconcile the fiscal-year flag against persisted closing/reversal journal entries
+ * after hydration. It returns state repairs only; it never creates accounting entries.
+ */
+export function fiscalCloseStateRepairs(
+  years: readonly FiscalYear[],
+  journal: readonly { sourceType?: string; sourceId?: number | null; branchId?: number | null; reversedByEntryId?: number | null }[],
+): { closeIds: number[]; reopenIds: number[] } {
+  const closeIds: number[] = []
+  const reopenIds: number[] = []
+  for (const year of years) {
+    const entries = journal.filter((entry) => entry.sourceType === 'year_closing'
+      && entry.sourceId === year.id
+      && (year.branchId == null || entry.branchId === year.branchId))
+    const activeClose = entries.some((entry) => !entry.reversedByEntryId)
+    const reversedClose = entries.some((entry) => !!entry.reversedByEntryId)
+    if (activeClose && year.status !== 'closed') closeIds.push(year.id)
+    else if (!activeClose && reversedClose && year.status !== 'open') reopenIds.push(year.id)
+  }
+  return { closeIds, reopenIds }
 }
 
 /* ─── إقفال السنة المالية (مراجعة البرامج العالمية: QuickBooks/Xero/SAP) ───
@@ -203,12 +265,18 @@ export function buildFiscalYearReport(
   return { rows, totalRevenueMinor: rev, totalExpenseMinor: exp, netProfitMinor: rev - exp }
 }
 
-/** تحقق قبل الإقفال: السنة منتهية فعلاً، ولا سنة أقدم منها ما زالت مفتوحة (الإقفال بالترتيب) */
+/**
+ * تحقق قبل الإقفال: السنة منتهية فعلاً، ولا سنة أقدم من الفرع نفسه ما زالت مفتوحة.
+ * تقاويم الفروع مستقلة؛ سنة مفتوحة في فرع آخر لا تعطل الإقفال هنا.
+ */
 export function validateYearClose(fy: FiscalYear, allYears: readonly FiscalYear[], todayIso: string): string[] {
   const errors: string[] = []
   if (fy.status === 'closed') errors.push('السنة مقفلة بالفعل')
   if (fy.endDate >= todayIso) errors.push(`لا تُقفل سنة قبل انتهائها — تنتهي في ${fy.endDate}`)
-  const olderOpen = allYears.find((y) => y.id !== fy.id && y.status === 'open' && y.endDate < fy.startDate)
+  const olderOpen = allYears.find((y) => y.id !== fy.id
+    && y.branchId === fy.branchId
+    && y.status === 'open'
+    && y.endDate < fy.startDate)
   if (olderOpen) errors.push(`أقفل السنة الأقدم «${olderOpen.nameAr}» أولاً — الإقفال يكون بالترتيب الزمني`)
   return errors
 }

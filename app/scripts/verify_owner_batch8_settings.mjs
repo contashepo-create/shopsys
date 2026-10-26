@@ -32,8 +32,9 @@ ok('effectiveModules تحسب الممنوح من النشاط + المفتاح 
 
 // ── ③ سنة مالية واحدة مفتوحة فقط ─────────────────────────────────────────
 const storeSrc = read('src/stores/app.store.ts')
-ok('addFiscalYear يرفض فتح سنة والمفتوحة موجودة', /ما زالت مفتوحة/.test(storeSrc))
-ok('الحارس داخل set (بلا فتح صامت)', /fiscalYears\.find\(\(y\) => y\.status === 'open'\)/.test(storeSrc))
+const addFiscalYearBlock = storeSrc.slice(storeSrc.lastIndexOf('      addFiscalYear: (fy)'), storeSrc.lastIndexOf('      markFiscalYearClosed:'))
+ok('addFiscalYear يرفض فتح سنة والمفتوحة موجودة عبر التحقق المشترك', /validateFiscalYear\(fy, scopedYears\)/.test(addFiscalYearBlock))
+ok('الحارس داخل set يمنع الفتح غير الصالح أو المتداخل مباشرةً', /if \(errors\.length\) throw new Error\(errors\.join/.test(addFiscalYearBlock))
 const { useAppStore } = await import(pathToFileURL(join(appRoot, 'src/stores/app.store.ts')).href)
 /* وضع سنة مفتوحة (كما بعد إكمال الإعداد) ثم محاولة فتح أخرى */
 useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' }] })

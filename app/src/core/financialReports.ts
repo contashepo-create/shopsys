@@ -9,6 +9,8 @@
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
 import { closingMechanismIds } from './fiscal.ts'
+import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferEntryIds } from './branchAccounting.ts'
+import { economicSourceResolver } from './journalSource.ts'
 
 export interface FinPeriod {
   from: string // YYYY-MM-DD شامل
@@ -49,7 +51,7 @@ export interface TrialBalance {
 
 export function trialBalance(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): TrialBalance {
   const t = new Map<string, { d: Minor; c: Minor }>()
-  for (const e of journal) {
+  for (const e of eliminatePairedInterBranchLines(journal)) {
     if (!inP(e.date, p)) continue
     for (const l of e.lines) {
       const cur = t.get(l.accountCode) ?? { d: 0, c: 0 }
@@ -94,11 +96,22 @@ export interface IncomeStatement {
   netProfitMinor: Minor // موجب = ربح
 }
 
-export function incomeStatement(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): IncomeStatement {
+export function incomeStatement(
+  journal: readonly JournalEntry[],
+  p: FinPeriod,
+  extraNames?: Record<string, string>,
+  options: { includeOpeningBalances?: boolean } = {},
+): IncomeStatement {
   // قيود إقفال السنة وعواكسها (إعادة فتح) آلية عرض لا أداء — تُستثنى معاً
-  // لتظل قائمة الدخل تعرض الأداء الحقيقي لأي فترة حتى بعد إقفال ثم إعادة فتح ثم إقفال جديد
+  // لتظل قائمة الدخل تعرض الأداء الحقيقي لأي فترة حتى بعد إقفال ثم إعادة فتح ثم إقفال جديد.
+  // قيد الرصيد الافتتاحي يثبت أرصدة سابقة بتاريخ الإدخال، فلا يصير أداء الفترة؛
+  // لكن المركز المالي يطلبه صراحةً لاحتساب الأرباح/الخسائر المدخلة ضمن الأرباح المرحلة.
   const closingIds = closingMechanismIds(journal)
-  const tb = trialBalance(journal.filter((e) => !closingIds.has(e.id)), p, extraNames)
+  const sourceOf = economicSourceResolver(journal)
+  const openingRelatedIds = options.includeOpeningBalances
+    ? null
+    : new Set(journal.filter((entry) => sourceOf(entry) === 'opening').map((entry) => entry.id))
+  const tb = trialBalance(journal.filter((e) => !closingIds.has(e.id) && (!openingRelatedIds || !openingRelatedIds.has(e.id))), p, extraNames)
   const revenues = tb.rows
     .filter((r) => r.rootType === 'revenue')
     .map((r) => ({ code: r.code, nameAr: r.nameAr, amountMinor: r.creditMinor - r.debitMinor }))
@@ -162,7 +175,9 @@ export function balanceSheet(journal: readonly JournalEntry[], asOf: string, ext
   const nonCurrentAssets = assets.filter((r) => isNonCurrentAsset(r.code))
   const liabilities = pick('liabilities')
   const equity = pick('equity')
-  const inc = incomeStatement(journal, p, extraNames)
+  // تضمين أرصدة حسابات الإيراد/المصروف الافتتاحية هنا فقط لمعادلة حقوق الملكية
+  // المقابلة لقيد رأس المال؛ قائمة الدخل الظاهرة تستبعدها كأرصدة سابقة.
+  const inc = incomeStatement(journal, p, extraNames, { includeOpeningBalances: true })
   // ما أُقفل رسمياً في 3102 صار ضمن حقوق الملكية أعلاه — يُطرح من نتيجة الفترة الجارية.
   // يحسب صافي آلية الإقفال كاملة (قيود الإقفال + عواكسها): الأصلي المعكوس يلغيه عكسه
   // تلقائياً فيبقى الصافي صحيحاً حتى بعد إعادة فتح وإقفال جديد
@@ -238,6 +253,8 @@ export interface CashFlowRow { label: string; amountMinor: Minor; activity: Cash
 
 export interface CashFlowReport {
   openingCashMinor: Minor
+  /** أرصدة افتتاحية effective داخل الفترة بعد بدايتها؛ ليست تدفقات تشغيلية لكنها جزء من رصيد الإقفال. */
+  openingBalanceAdjustmentsMinor: Minor
   inflows: CashFlowRow[]
   outflows: CashFlowRow[]
   totalInMinor: Minor
@@ -276,12 +293,31 @@ export function cashFlowReport(
 ): CashFlowReport {
   const cashSet = new Set(cashCodes)
   let opening = 0
+  let openingBalanceAdjustments = 0
   const inMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
   const outMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
   let operatingNetMinor = 0, investingNetMinor = 0, financingNetMinor = 0
+  const sourceOf = economicSourceResolver(journal)
+  const pairedTransfers = pairedInterBranchTransferEntryIds(journal)
   for (const e of journal) {
-    const cashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
+    const rawCashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
+    // In the company-wide view, matched due-to/due-from lines identify the
+    // internal principal. Remove that amount from gross cash movement while
+    // preserving real bank fees posted on the source entry. Branch-scoped
+    // reports contain only one side and intentionally retain the transfer.
+    const internalPrincipalDelta = pairedTransfers.has(e.id)
+      ? e.lines.filter((line) => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
+        .reduce((sum, line) => sum + line.debit - line.credit, 0)
+      : 0
+    const cashDelta = rawCashDelta + internalPrincipalDelta
     if (cashDelta === 0) continue
+    // قيد التأسيس ليس تدفقاً تشغيلياً. إن سبق بداية الفترة يدخل رصيد أولها؛
+    // وإن وقع داخلها يظهر كتسوية رصيد افتتاحي مستقلة حتى لا يُضخّم نقدية أول الفترة.
+    if (sourceOf(e) === 'opening') {
+      if (e.date <= p.from) opening += cashDelta
+      else if (e.date <= p.to) openingBalanceAdjustments += cashDelta
+      continue
+    }
     if (beforeP(e.date, p)) { opening += cashDelta; continue }
     if (!inP(e.date, p)) continue
     // Choose a counter-entry on the opposite side of the cash movement first.
@@ -314,7 +350,19 @@ export function cashFlowReport(
   const totalInMinor = inflows.reduce((a, r) => a + r.amountMinor, 0)
   const totalOutMinor = outflows.reduce((a, r) => a + r.amountMinor, 0)
   const netChangeMinor = totalInMinor - totalOutMinor
-  return { openingCashMinor: opening, inflows, outflows, totalInMinor, totalOutMinor, operatingNetMinor, investingNetMinor, financingNetMinor, netChangeMinor, closingCashMinor: opening + netChangeMinor }
+  return {
+    openingCashMinor: opening,
+    openingBalanceAdjustmentsMinor: openingBalanceAdjustments,
+    inflows,
+    outflows,
+    totalInMinor,
+    totalOutMinor,
+    operatingNetMinor,
+    investingNetMinor,
+    financingNetMinor,
+    netChangeMinor,
+    closingCashMinor: opening + openingBalanceAdjustments + netChangeMinor,
+  }
 }
 
 /* ─── ⑥ تقرير الضريبة ─── */
@@ -346,27 +394,16 @@ const VAT_SETTLEMENT_SOURCES = new Set(['payment_voucher', 'receipt_voucher', 'y
  */
 export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCode = '2102'): VatReport {
   let output = 0, input = 0, settled = 0
-  const entriesById = new Map(journal.map((entry) => [entry.id, entry]))
-  const economicSource = (entry: JournalEntry): JournalEntry['sourceType'] => {
-    let current = entry
-    const visited = new Set<number>()
-    while (current.sourceType === 'reversal' && current.reversesEntryId != null && !visited.has(current.id)) {
-      visited.add(current.id)
-      const original = entriesById.get(current.reversesEntryId)
-      if (!original) break
-      current = original
-    }
-    return current.sourceType
-  }
+  const sourceOf = economicSourceResolver(journal)
   for (const e of journal) {
-    if (!inP(e.date, p)) continue
+    if (!inP(e.date, p) || sourceOf(e) === 'opening') continue
     let credit = 0, debit = 0
     for (const l of e.lines) {
       if (l.accountCode !== vatCode) continue
       credit += l.credit; debit += l.debit
     }
     if (credit === 0 && debit === 0) continue
-    const st = e.sourceType === 'reversal' ? economicSource(e) : e.sourceType
+    const st = e.sourceType === 'reversal' ? sourceOf(e) : e.sourceType
     // قيود بلا مصدر (بيانات خارجية) والقيود اليدوية: تصنيف اتجاهي —
     // كانت اليدوية تقع في «مخرجات صافية» فيظهر قيد يدوي مدين على 2102
     // مخرجاتٍ سالبة تشوه بندي الإقرار (اكتشاف رحلة التقارير)

@@ -21,6 +21,18 @@ function getOrCreateSecret(): string {
 }
 
 let keyPromise: Promise<CryptoKey> | null = null
+const pendingWrites = new Map<string, Set<Promise<void>>>()
+
+/** انتظر كتابة مخزن بعينه (أو كل المخازن عند عدم تمرير اسم) قبل تحرير القفل. */
+export async function flushSecureStorageWrites(storeName?: string): Promise<void> {
+  while (true) {
+    const names = storeName ? [storeName] : [...pendingWrites.keys()]
+    const current = names.flatMap((name) => [...(pendingWrites.get(name) ?? [])])
+    if (!current.length) return
+    await Promise.all(current)
+  }
+}
+
 function key(): Promise<CryptoKey> {
   if (!keyPromise) keyPromise = deriveKey(getOrCreateSecret())
   return keyPromise
@@ -66,13 +78,22 @@ export const secureStorage: StateStorage = {
       return null
     }
   },
-  setItem: async (name, value) => {
+  setItem: (name, value) => {
     /* بعد استيراد سر جديد: القاعدة الحالية فُكّت بالسر القديم — أي كتابة
        الآن كانت ستحفظها بالسر الجديد وتُضلّل الجهاز؛ نتوقف حتى إعادة التشغيل */
-    if (sealedForTransfer) return
-    localStorage.setItem(name, await encryptText(value, await key()))
+    if (sealedForTransfer) return Promise.resolve()
+    const write = (async () => { localStorage.setItem(name, await encryptText(value, await key())) })()
+    const queue = pendingWrites.get(name) ?? new Set<Promise<void>>()
+    queue.add(write)
+    pendingWrites.set(name, queue)
+    void write.finally(() => {
+      queue.delete(write)
+      if (!queue.size && pendingWrites.get(name) === queue) pendingWrites.delete(name)
+    }).catch(() => undefined)
+    return write
   },
   removeItem: async (name) => {
+    await flushSecureStorageWrites(name)
     localStorage.removeItem(name)
   },
 }

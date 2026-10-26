@@ -1,19 +1,21 @@
-param([switch]$FromPublished23)
-# NSIS حقيقي على runner معزول: نفس الحزمة، أو v23 المنشور إلى المرشح. ليس فحص قناة HTTP.
+param([string]$FromPublishedVersion)
+# NSIS حقيقي على runner معزول: نفس الحزمة، أو آخر إصدار منشور سابق إلى المرشح. ليس فحص قناة HTTP.
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'CI Windows runner only — never run against the owner installation' }
 $install = Join-Path $env:RUNNER_TEMP 'Tahakom native smoke\previous install'
-$ud = Join-Path $env:APPDATA $(if ($FromPublished23) { 'app' } else { 'Tahakom' })
+$legacyAppProfile = $FromPublishedVersion -and ([version]$FromPublishedVersion -lt [version]'1.0.24')
+$ud = Join-Path $env:APPDATA $(if ($legacyAppProfile) { 'app' } else { 'Tahakom' })
 if (Test-Path $ud) { throw "Expected an isolated fresh runner; will not touch existing userdata: $ud" }
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+if ($FromPublishedVersion -and $FromPublishedVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid previous published version' }
 $installer = (Resolve-Path "release/tahakom-setup-$version.exe").Path
 $candidateInstaller = $installer
-if ($FromPublished23) { $installer = (Resolve-Path 'release-previous/tahakom-setup-1.0.23.exe').Path }
+if ($FromPublishedVersion) { $installer = (Resolve-Path "release-previous/tahakom-setup-$FromPublishedVersion.exe").Path }
 $electron = (Resolve-Path 'node_modules/electron/dist/electron.exe').Path
 $probe = (Resolve-Path 'scripts/windows_installer_db_probe.cjs').Path
 $exe = Join-Path $install 'Tahakom.exe'
 $ready = Join-Path $ud 'last-run.json'
-$results = Join-Path $env:RUNNER_TEMP $(if ($FromPublished23) { 'previous-release-upgrade.json' } else { 'native-smoke-results.json' })
+$results = Join-Path $env:RUNNER_TEMP $(if ($FromPublishedVersion) { 'previous-release-upgrade.json' } else { 'native-smoke-results.json' })
 
 function Wait-Until($description, [scriptblock]$predicate, $seconds = 90) {
   $deadline = (Get-Date).AddSeconds($seconds)
@@ -44,14 +46,14 @@ function Run-Installer([string[]]$arguments, [bool]$launchManually = $false) {
   }
   if ($p.ExitCode -ne 0) { throw "NSIS exit code $($p.ExitCode)" }
   if ($launchManually) {
-    if ($FromPublished23) {
+    if ($FromPublishedVersion) {
       # fixture فقط: لا تسمح لفحص التحديث الخلفي للنسخة القديمة أن يثبت إصداراً
       # مختلفاً وسط الاختبار. تنزيل القناة العامة مفحوص بشكل مستقل بHTTP حقيقي.
-      "provider: generic`nurl: http://127.0.0.1:9`nupdaterCacheDirName: ci-disabled-update" | Set-Content (Join-Path $install 'resources/app-update.yml') -Encoding utf8
+      "provider: generic`nurl: http://127.0.0.1:8123`nupdaterCacheDirName: ci-disabled-update" | Set-Content (Join-Path $install 'resources/app-update.yml') -Encoding utf8
     }
     $script:lastLaunch = Start-Process $exe -PassThru -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'native-app-stderr.log') -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'native-app-stdout.log')
   }
-  $expectedVersion = $(if ($FromPublished23 -and $installer -ne $candidateInstaller) { '1.0.23' } else { $version })
+  $expectedVersion = $(if ($FromPublishedVersion -and $installer -ne $candidateInstaller) { $FromPublishedVersion } else { $version })
   Wait-Until 'installed application startup with expected version/profile' {
     try { (Test-Path $ready) -and (Get-Content $ready -Raw | ConvertFrom-Json).version -eq $expectedVersion -and (App-Processes).Count -gt 0 } catch { $false }
   }
@@ -74,7 +76,7 @@ try {
   # التثبيت الأول ليس تحديثاً: اعزل إنهاء المثبت عن بدء التطبيق يدوياً.
   Run-Installer -arguments @('/S', '/currentuser', "/D=$install") -launchManually $true
   Stop-App-Gracefully
-  if ($FromPublished23 -and -not (Get-Item $exe).VersionInfo.ProductVersion.StartsWith('1.0.23')) { throw 'The old binary was not published v1.0.23' }
+  if ($FromPublishedVersion -and -not (Get-Item $exe).VersionInfo.ProductVersion.StartsWith($FromPublishedVersion)) { throw "The old binary was not the expected published version $FromPublishedVersion" }
   $key = Join-Path $ud 'device.key.enc'
   $keyHash = (Get-FileHash $key -Algorithm SHA256).Hash
   $defaultDb = Join-Path $ud 'shopsys.db'
@@ -90,25 +92,25 @@ try {
   Wait-Until 'protected database startup' { (Test-Path $ready) -and (App-Processes).Count -gt 0 }
   Stop-App-Gracefully
   $safePath = (Get-Content (Join-Path $ud 'db-location.json') -Raw | ConvertFrom-Json).customDbPath
-  if (-not $FromPublished23 -and (-not $safePath -or $safePath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase))) { throw 'Database was not protected outside installation' }
+  if (-not $FromPublishedVersion -and (-not $safePath -or $safePath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase))) { throw 'Database was not protected outside installation' }
   Run-Probe 'verify' $safePath
-  if ($FromPublished23) {
-    if ($safePath -ne $unsafeDb) { throw 'Published v23 did not use the requested owner installation database' }
+  if ($FromPublishedVersion) {
     $backupDir = Join-Path $env:USERPROFILE 'Documents/Tahakom-Backups/manual'
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
     $backup = Join-Path $backupDir 'owner-first-upgrade.db'
-    # اترك القاعدة الافتراضية القديمة أقدم عمداً؛ الاسترداد يجب أن يحفظ آخر عمل.
-    Run-Probe 'advance' $unsafeDb
-    Run-Probe 'verify-latest' $unsafeDb
-    Run-Probe 'copy-latest' $unsafeDb $backup
+    # الإصدارات الأقدم قد تترك القاعدة داخل التثبيت، والأحدث قد تحميها عند الإقلاع؛
+    # في الحالتين نضيف آخر حركة إلى المسار الفعلي ونحفظ نسخة قبل ترقية المرشح.
+    Run-Probe 'advance' $safePath
+    Run-Probe 'verify-latest' $safePath
+    Run-Probe 'copy-latest' $safePath $backup
     Run-Probe 'verify-latest' $backup
     $installer = $candidateInstaller
   }
   $marker = Join-Path $install 'old-installation-marker.txt'
   Set-Content $marker 'must be removed by actual NSIS update'
   # last-run دليل هوية حقيقي للنسخة القديمة؛ لا نحذفه من fixture أول انتقال.
-  if (-not $FromPublished23) { Remove-Item $ready }
-  if ($FromPublished23) {
+  if (-not $FromPublishedVersion) { Remove-Item $ready }
+  if ($FromPublishedVersion) {
     # أول انتقال من EXE لا يعرف الحماية: تثبيت فعلي من القديم إلى المرشح، ثم
     # فتحه يدوياً بوجهة fixture غير متصلة. --force-run مفحوص في job مستقل.
     Run-Installer -arguments @('/S', '--updated', "/D=$install") -launchManually $true
@@ -119,15 +121,16 @@ try {
   if (Test-Path $marker) { throw 'NSIS did not replace the old installation tree' }
   if (Test-Path $unsafeDb) { throw 'Old unsafe database unexpectedly survived installation removal' }
   $afterPath = (Get-Content (Join-Path $ud 'db-location.json') -Raw | ConvertFrom-Json).customDbPath
-  if ($FromPublished23) {
+  if ($FromPublishedVersion) {
     if (-not $afterPath -or $afterPath.StartsWith($install, [StringComparison]::OrdinalIgnoreCase)) { throw 'First upgrade did not recover the owner backup outside installation' }
-    if (Test-Path (Join-Path $env:APPDATA 'Tahakom/device.key.enc')) { throw 'First upgrade created a new profile/key instead of using v23 actual profile' }
+    $otherProfileName = if ($legacyAppProfile) { 'Tahakom' } else { 'app' }
+    if (Test-Path (Join-Path (Join-Path $env:APPDATA $otherProfileName) 'device.key.enc')) { throw 'First upgrade created a duplicate profile/key instead of preserving the previous release profile' }
     if ((Get-Content $ready -Raw | ConvertFrom-Json).version -ne $version) { throw 'Candidate application did not start on the original profile' }
   } elseif ($afterPath -ne $safePath) { throw 'Existing safe database pointer changed during update' }
   if ((Get-FileHash $key -Algorithm SHA256).Hash -ne $keyHash) { throw 'Device encryption key changed during update' }
-  Run-Probe $(if ($FromPublished23) { 'verify-latest' } else { 'verify' }) $afterPath
-  @{ ok = $true; version = $version; installation = $install; database = $afterPath; nativeNSIS = $true; samePackageReinstall = (-not $FromPublished23); oldBinaryExecuted = [bool]$FromPublished23; fromVersion = $(if ($FromPublished23) { '1.0.23' } else { $version }); actualProfile = $ud; feedDownloadTested = $false } | ConvertTo-Json | Set-Content $results
-  Write-Host "PASS: actual NSIS, oldBinaryExecuted=$FromPublished23, same profile and legacy enc:v1 snapshot key/data preserved; forced restart tested only in same-package mode."
+  Run-Probe $(if ($FromPublishedVersion) { 'verify-latest' } else { 'verify' }) $afterPath
+  @{ ok = $true; version = $version; installation = $install; database = $afterPath; nativeNSIS = $true; samePackageReinstall = (-not $FromPublishedVersion); oldBinaryExecuted = [bool]$FromPublishedVersion; fromVersion = $(if ($FromPublishedVersion) { $FromPublishedVersion } else { $version }); actualProfile = $ud; feedDownloadTested = $false } | ConvertTo-Json | Set-Content $results
+  Write-Host "PASS: actual NSIS, oldBinaryExecuted=$FromPublishedVersion, same profile and legacy enc:v1 snapshot key/data preserved; forced restart tested only in same-package mode."
 } catch {
   foreach ($profile in @('app', 'Tahakom')) {
     $log = Join-Path $env:APPDATA "$profile/main.log"

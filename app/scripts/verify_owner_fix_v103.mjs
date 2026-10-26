@@ -85,7 +85,7 @@ const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.ok(!po.includes('mode="simple"'), 'بقي الوضع المبسط في أمر الشراء')
   const frame = read('src/ui/components/InvoicePOSFrame.tsx')
   assert.ok(frame.includes('postLabel?: string'), 'زر الاعتماد غير قابل للتخصيص')
-  assert.ok(frame.includes("{postLabel ?? 'حفظ وترحيل'}"), 'النص الافتراضي للفواتير تغيّر')
+  assert.ok(frame.includes("postLabel ?? 'حفظ وترحيل'") && frame.includes("posting ? 'جارٍ الترحيل…'"), 'نص الزر الافتراضي أو حالة الترحيل المعلنة تغيّرا')
   assert.ok(po.includes('postLabel="اعتماد أمر الشراء"'), 'أمر الشراء لا يستعمل نص الاعتماد الصحيح')
   R.ok('أمر الشراء: الوضع المتقدم المطابق للفاتورة + زر «اعتماد أمر الشراء» — التزام تجاري لا ترحيل')
 }

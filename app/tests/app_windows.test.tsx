@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/react'
 import React, { useState } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
-const { useWindowStore, openSalesInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow, openItemLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
+const { useWindowStore, openSalesInvoiceWindow, openPurchaseInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow, openItemLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
 const { WindowHost } = await import('../src/ui/windows/WindowHost.tsx')
 const { Modal, Btn } = await import('../src/ui/components/ui.tsx')
 
@@ -52,6 +52,79 @@ describe('نظام النوافذ المستقلة', () => {
     expect(W().windows[1].z).toBeGreaterThan(W().windows[0].z)
     W().focusWindow(first)
     expect(W().windows.find((w) => w.id === first)!.z).toBeGreaterThan(W().windows.find((w) => w.id === second)!.z)
+  })
+
+  it('الترحيل من صفحة الفواتير التي فتحت نافذة جديدة يثبت العميل ويغلق نافذة المستند فقط', async () => {
+    const customerName = 'عميل إغلاق تلقائي'
+    S().addCustomer({ ...EMPTY, nameAr: customerName, phone: '', creditLimitMinor: 0, notes: '' } as never)
+    const customer = S().customers.at(-1)!
+    const itemName = 'صنف إغلاق تلقائي'
+    S().addItem({
+      nameAr: itemName, sku: 'AUTO-CLOSE-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
+      costMinor: 1000, stockQty: 10, priceMinor: 2500, minQty: 0, trackExpiry: false, trackSerial: false,
+      warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true,
+    })
+    const item = S().items.at(-1)!
+    const { InvoiceDocumentRoute } = await import('../src/ui/pages/InvoiceDocumentRoute.tsx')
+    render(
+      <MemoryRouter initialEntries={['/sales/invoices/new']}>
+        <Routes>
+          <Route path="/sales/invoices/new" element={<InvoiceDocumentRoute kind="sale" />} />
+          <Route path="/sales/invoices" element={<div data-testid="sales-invoice-list">قائمة فواتير المبيعات</div>} />
+        </Routes>
+        <WindowHost />
+      </MemoryRouter>,
+    )
+    const id = await waitFor(() => {
+      const invoiceWindow = W().windows.find((window) => window.kind === 'sales-invoice')
+      expect(invoiceWindow, 'المسار لم يفتح نافذة فاتورة البيع').toBeTruthy()
+      return invoiceWindow!.id
+    })
+    expect(document.querySelector('[data-testid="sales-invoice-list"]')?.textContent).toContain('قائمة فواتير المبيعات')
+
+    const customerInput = await waitFor(() => {
+      const input = document.querySelector('[aria-label="بحث العميل — F4"]')
+      expect(input).toBeTruthy()
+      return input as HTMLInputElement
+    })
+    fireEvent.change(customerInput, { target: { value: customerName } })
+    const customerOption = await waitFor(() => {
+      const option = document.querySelector(`[data-quick-option][data-value="${customer.id}"]`)
+      expect(option).toBeTruthy()
+      return option as HTMLElement
+    })
+    fireEvent.click(customerOption)
+    expect(document.querySelector(`[data-app-window="${id}"] .invoice-doc-infield-chip`)?.textContent).not.toBe('CASH')
+
+    const itemInput = document.querySelector('[aria-label="اسم الصنف — اكتب أو اضغط مرتين للبحث"]') as HTMLInputElement
+    fireEvent.change(itemInput, { target: { value: itemName } })
+    const itemOption = await waitFor(() => {
+      const option = document.querySelector(`#invoice-item-option-${item.id}`)
+      expect(option).toBeTruthy()
+      return option as HTMLElement
+    })
+    fireEvent.doubleClick(itemOption)
+    const invoiceWindow = document.querySelector(`[data-app-window="${id}"]`)
+    const saveDraftButton = Array.from(invoiceWindow!.querySelectorAll('button')).find((button) => button.textContent?.includes('حفظ مسودة')) as HTMLButtonElement
+    expect(saveDraftButton).toBeTruthy()
+    const salesBeforeDraft = S().sales.length
+    fireEvent.click(saveDraftButton)
+    await waitFor(() => expect(S().advancedInvoiceDrafts.length).toBeGreaterThan(0))
+    expect(S().sales, 'حفظ المسودة لا ينبغي أن يرحّل فاتورة').toHaveLength(salesBeforeDraft)
+    expect(W().windows.some((window) => window.id === id), 'حفظ المسودة لا ينبغي أن يغلق المحرر').toBe(true)
+
+    const postButton = Array.from(invoiceWindow!.querySelectorAll('button')).find((button) => button.textContent?.includes('حفظ وترحيل')) as HTMLButtonElement
+    expect(postButton).toBeTruthy()
+    const salesBeforePost = S().sales.length
+    fireEvent.click(postButton)
+
+    await waitFor(() => expect(W().windows.some((window) => window.id === id)).toBe(false))
+    expect(W().windows.filter((window) => window.kind === 'sales-invoice')).toHaveLength(0)
+    expect(document.querySelector('[data-testid="sales-invoice-list"]')?.textContent).toContain('قائمة فواتير المبيعات')
+    expect(S().sales).toHaveLength(salesBeforePost + 1)
+    const invoice = S().sales.at(-1)!
+    expect(invoice.customerId).toBe(customer.id)
+    expect(invoice.lines.some((line) => line.itemId === item.id)).toBe(true)
   })
 
   it('تعديل الصنف يفتح نافذة ابنة: إغلاقها لا يغلق الفاتورة، وإغلاق الفاتورة يغلق بناتها', () => {
@@ -193,6 +266,109 @@ describe('نظام النوافذ المستقلة', () => {
     await act(async () => { fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement) })
     await waitFor(() => expect(W().windows.find((row) => row.id === id)).toBeFalsy())
     expect(S().advancedInvoiceDrafts.length).toBe(before)
+  })
+
+  it('استعادة مسودة المبيعات تحفظ لاحقاً فوق نفس المسودة ولا تنشئ نسخة منفصلة', async () => {
+    const draftId = 'sales-draft-roundtrip'
+    const priorSalesDraftCount = S().advancedInvoiceDrafts.filter((draft) => draft.kind === 'sale' && !draft.isTemplate).length
+    S().upsertAdvancedInvoiceDraft({
+      id: draftId, kind: 'sale', name: 'مسودة اختبار العميل',
+      payload: JSON.stringify({ notes: 'ملاحظة محفوظة سابقاً', lines: [], customerId: 0 }),
+    })
+    const id = openSalesInvoiceWindow()
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    await waitFor(() => expect(document.querySelector('[data-window-kind="sales-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+
+    fireEvent.click([...document.querySelectorAll('button')].find((button) => button.textContent?.includes('المسودات')) as HTMLElement)
+    const row = await waitFor(() => {
+      const element = document.querySelector(`[data-draft-row="${draftId}"]`)
+      expect(element).toBeTruthy()
+      return element as HTMLElement
+    })
+    fireEvent.click(row.querySelector('button') as HTMLElement)
+    const notes = document.querySelector(`[data-app-window="${id}"] textarea`) as HTMLTextAreaElement
+    await waitFor(() => expect(notes.value).toBe('ملاحظة محفوظة سابقاً'))
+    fireEvent.change(notes, { target: { value: 'تعديل محفوظ على نفس المسودة' } })
+    fireEvent.click([...document.querySelectorAll('button')].find((button) => button.textContent?.includes('حفظ مسودة')) as HTMLElement)
+
+    await waitFor(() => {
+      const drafts = S().advancedInvoiceDrafts.filter((draft) => draft.kind === 'sale' && !draft.isTemplate)
+      const restoredDrafts = drafts.filter((draft) => draft.id === draftId)
+      expect(drafts).toHaveLength(priorSalesDraftCount + 1)
+      expect(restoredDrafts).toHaveLength(1)
+      expect(JSON.parse(restoredDrafts[0].payload).notes).toBe('تعديل محفوظ على نفس المسودة')
+    })
+  })
+
+  it('إلغاء مسودة مشتريات مستعادة يغلق النافذة ويحذف المسودة المحددة لا معرّفاً مؤقتاً', async () => {
+    const draftId = 'purchase-draft-discard'
+    S().upsertAdvancedInvoiceDraft({
+      id: draftId, kind: 'purchase', name: 'مسودة اختبار المورد',
+      payload: JSON.stringify({ notes: 'مسودة مشتريات محفوظة', lines: [], supplierId: 0 }),
+    })
+    const id = openPurchaseInvoiceWindow()
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    await waitFor(() => expect(document.querySelector('[data-window-kind="purchase-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+
+    fireEvent.click([...document.querySelectorAll('button')].find((button) => button.textContent?.includes('المسودات')) as HTMLElement)
+    const row = await waitFor(() => {
+      const element = document.querySelector(`[data-draft-row="${draftId}"]`)
+      expect(element).toBeTruthy()
+      return element as HTMLElement
+    })
+    fireEvent.click(row.querySelector('button') as HTMLElement)
+    const notes = document.querySelector(`[data-app-window="${id}"] textarea`) as HTMLTextAreaElement
+    await waitFor(() => expect(notes.value).toBe('مسودة مشتريات محفوظة'))
+    fireEvent.change(notes, { target: { value: 'تعديل مشتريات غير محفوظ' } })
+    await waitFor(() => expect(W().windows.find((window) => window.id === id)?.dirty).toBe(true))
+
+    fireEvent.click(document.querySelector(`[data-app-window="${id}"] [data-window-close]`) as HTMLElement)
+    await act(async () => { fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement) })
+    await waitFor(() => expect(W().windows.some((window) => window.id === id)).toBe(false))
+    expect(S().advancedInvoiceDrafts.some((draft) => draft.id === draftId)).toBe(false)
+  })
+
+  it('القمر المستقل يغلق فاتورة نظيفة فوراً ويطلب تأكيداً بعد تحريرها', async () => {
+    const previousDesktop = window.shopsysDesktop
+    let requestClose: ((event: { token: string }) => void) | undefined
+    const bridge = {
+      onRequestClose: (listener: (event: { token: string }) => void) => { requestClose = listener; return () => { requestClose = undefined } },
+      setRendererReady: vi.fn(),
+      setDirty: vi.fn(),
+      respondClose: vi.fn(),
+      closeSelf: vi.fn(),
+      setTitle: vi.fn(),
+      invokeProp: vi.fn(),
+    }
+    window.shopsysDesktop = { runtime: 'electron', windows: bridge } as unknown as NonNullable<typeof window.shopsysDesktop>
+    try {
+      const { SatelliteViewRoot } = await import('../src/ui/windows/satellite.tsx')
+      render(<MemoryRouter><SatelliteViewRoot descriptor={{ windowId: 'satellite-test', type: 'view', kind: 'sales-invoice', title: 'فاتورة اختبار' }} /></MemoryRouter>)
+      await waitFor(() => expect(document.querySelector('[data-satellite-view="sales-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+      await waitFor(() => expect(requestClose).toBeTypeOf('function'))
+      await act(async () => { requestClose?.({ token: 'clean-close' }) })
+      expect(bridge.respondClose).toHaveBeenCalledWith('clean-close', true)
+      expect(document.querySelector('[data-window-close-confirm]')).toBeNull()
+
+      const notes = document.querySelector('[data-satellite-view="sales-invoice"] textarea') as HTMLTextAreaElement
+      fireEvent.change(notes, { target: { value: 'تغيير غير محفوظ' } })
+      await waitFor(() => expect(bridge.setDirty).toHaveBeenCalledWith(true))
+      await act(async () => { requestClose?.({ token: 'dirty-close-cancel' }) })
+      expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+      expect(bridge.respondClose).not.toHaveBeenCalledWith('dirty-close-cancel', true)
+      fireEvent.click(document.querySelector('[data-window-close-cancel]') as HTMLElement)
+      expect(bridge.respondClose).toHaveBeenCalledWith('dirty-close-cancel', false)
+      expect(document.querySelector('[data-window-close-confirm]')).toBeNull()
+      expect(document.querySelector('[data-satellite-view="sales-invoice"] .invoice-pos-root')).toBeTruthy()
+
+      await act(async () => { requestClose?.({ token: 'dirty-close-confirm' }) })
+      expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+      fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement)
+      expect(bridge.respondClose).toHaveBeenCalledWith('dirty-close-confirm', true)
+    } finally {
+      if (previousDesktop) window.shopsysDesktop = previousDesktop
+      else delete window.shopsysDesktop
+    }
   })
 
   it('كشف حساب العميل يفتح كنافذة مستقلة بصفوف الحركة', () => {

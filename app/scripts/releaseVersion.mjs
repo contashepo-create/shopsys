@@ -26,6 +26,18 @@ export function completeRelease(release, tag) {
   const names = ['latest.yml', `tahakom-setup-${tag.slice(1)}.exe`, `tahakom-setup-${tag.slice(1)}.exe.blockmap`]
   return names.every(name => release.assets?.some(asset => asset.name === name && asset.size > 0 && (!asset.state || asset.state === 'uploaded')))
 }
+
+/** أحدث إصدار مستقر ومكتمل يسبق المرشح، لا يفترض وجود إصدار تاريخي ثابت. */
+export function previousCompleteRelease(releases, candidateTag) {
+  versionOf(candidateTag)
+  return releases
+    .filter(release => {
+      if (!release || typeof release.tag_name !== 'string') return false
+      try { return completeRelease(release, release.tag_name) && compareReleaseVersions(release.tag_name, candidateTag) < 0 }
+      catch { return false }
+    })
+    .sort((a, b) => compareReleaseVersions(b.tag_name, a.tag_name))[0] ?? null
+}
 export function planRelease({ version, head, message, tags, published = false }) {
   versionOf(version)
   const tag = `v${version}`

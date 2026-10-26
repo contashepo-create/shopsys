@@ -5,10 +5,11 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
-import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
@@ -21,6 +22,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
@@ -34,6 +36,8 @@ export function PurchaseReturnsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
+  const [isPosting, setIsPosting] = useState(false)
+  const postingRef = useRef(false)
   const [pickOpen, setPickOpen] = useState(false)
   const [pickQuery, setPickQuery] = useState('')
   const [pickIndex, setPickIndex] = useState(0)
@@ -56,6 +60,7 @@ export function PurchaseReturnsPage() {
   /** بناء موديل إشعار مدين للمورد — مشترك بين الطباعة وإرسال واتساب PDF (v1.0.13) */
   const buildPurchaseReturnModel = (r: PurchaseReturn) => {
     const orig = purchases.find((pv) => pv.id === r.purchaseId)
+    const documentSettings = resolveDocumentPrintSettings(orig ?? r)
     return buildSimpleDocModel({
       docTitle: 'مرتجع مشتريات (إشعار مدين)',
       invoiceNumber: r.returnNumber,
@@ -72,14 +77,19 @@ export function PurchaseReturnsPage() {
       totalMinor: r.supplierValueMinor ?? r.totalMinor,
       paidMinor: r.refund === 'cash' ? (r.supplierValueMinor ?? r.totalMinor) : 0,
       operatorName: printOperatorName,
-      settings: receipt,
+      settings: documentSettings.receipt,
       extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
     })
   }
 
   /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
   const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
-    printModelWithTemplate(buildPurchaseReturnModel(r), cur, receipt, template)
+    const orig = purchases.find((pv) => pv.id === r.purchaseId)
+    const documentRecord = orig ?? r
+    const documentSettings = resolveDocumentPrintSettings(documentRecord)
+    printModelWithTemplate(buildPurchaseReturnModel(r), cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(documentRecord).receipt,
+    })
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
 
@@ -87,7 +97,8 @@ export function PurchaseReturnsPage() {
   const whatsappPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
     const orig = purchases.find((pv) => pv.id === r.purchaseId)
     const phone = orig?.supplierId ? suppliers.find((s) => s.id === orig.supplierId)?.phone ?? '' : ''
-    shareDocPdfViaWhatsapp({ model: buildPurchaseReturnModel(r), cur, settings: receipt, template, docLabel: 'مرتجع مشتريات', docNumber: r.returnNumber, partyPhone: phone, shopName: setup.shopName, toast })
+    const documentSettings = resolveDocumentPrintSettings(orig ?? r)
+    shareDocPdfViaWhatsapp({ model: buildPurchaseReturnModel(r), cur, settings: documentSettings.receipt, template, docLabel: 'مرتجع مشتريات', docNumber: r.returnNumber, partyPhone: phone, shopName: documentSettings.setup.shopName, toast })
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -158,23 +169,27 @@ export function PurchaseReturnsPage() {
   // قاعدة المالك المعممة: كل المرتجعات باعتماد مشرف — مرتجع الشراء يخرج بضاعة ويرد مالاً
   const approval = useSupervisorApproval()
   const submit = () => {
-    if (!purchase) return
+    if (!purchase || postingRef.current) return
     approval.request((approvedBy) => {
-    try {
+      if (postingRef.current) return
+      postingRef.current = true
+      setIsPosting(true)
       const lineSpecs = Object.entries(qtys).flatMap(([indexText, value]) => {
         const lineIndex = Number(indexText)
         const qty = Number(value)
         if (!(qty > 0)) return []
         const source = purchase.lines[lineIndex]
-        const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
+        const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((w) => w.isMain)?.id ?? null
         return [{ lineIndex, qty, warehouseId }]
       })
-      const ret = postPurchaseReturn({ purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy })
-      toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
-      setPurchase(null)
-    } catch (e) {
-      toast.show((e as Error).message, 'error')
-    }
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postPurchaseReturn({
+        purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy,
+      })).then((ret) => {
+        toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
+        setPurchase(null)
+      }).catch((e: unknown) => {
+        toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل مرتجع الشراء', 'error')
+      }).finally(() => { postingRef.current = false; setIsPosting(false) })
     })
   }
 
@@ -350,7 +365,7 @@ export function PurchaseReturnsPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={closePurchase}>تراجع عن المرتجع</Btn>
-              <Btn onClick={submit} shortcut="F9" disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!anyQty || isPosting}>{isPosting ? 'جارٍ الترحيل…' : '📤 تنفيذ المرتجع'}</Btn>
             </div>
           </div>
         )}
@@ -415,7 +430,7 @@ export function PurchaseReturnsPage() {
       <PrintTemplateModal
         open={printTarget != null}
         onClose={() => setPrintTarget(null)}
-        defaultTemplate={receipt.defaultTemplate}
+        defaultTemplate={printTarget ? resolveDocumentPrintSettings(purchases.find((pv) => pv.id === printTarget.purchaseId) ?? printTarget).receipt.defaultTemplate : receipt.defaultTemplate}
         title="🖨️ طباعة إشعار مرتجع الشراء"
         onPrint={(t) => { if (printTarget) printPurchaseReturn(printTarget, t) }}
         onWhatsappPdf={(t) => { if (printTarget) whatsappPurchaseReturn(printTarget, t) }}

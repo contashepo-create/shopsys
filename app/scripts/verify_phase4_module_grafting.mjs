@@ -177,4 +177,98 @@ const ALL_FEATURES = ['price_lists', 'weight_scale', 'serial_warranty', 'expiry'
   R.ok('تركيب كل الوحدات على كل نشاط: لا تكرار ولا إسقاط لوحدة أصلية، والشجرة تعود كاملة كما هي قياسياً')
 }
 
+/* ⑦–⑬ دورات تخصصية على مضيف غير أصلي — لا يكفي فحص ظهور الحساب والمسار */
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['contracting'] })
+  const customer = addParty(c, 'customer', 'عميل عقد مطعّم')
+  const project = c.st().addProject({
+    nameAr: 'مشروع تجريبي', clientName: 'عميل عقد مطعّم', clientId: customer.id,
+    contractValueMinor: 5_000_000, retentionPercent: 5, startDate: '2026-01-01', notes: 'اختبار تطعيم',
+  })
+  const before = { revenue: bal(c, '4107'), ar: bal(c, '1104'), retained: bal(c, '1105') }
+  c.st().addProjectExtract({ projectId: project.id, grossMinor: 1_000_000, vatPercent: 14, payment: 'credit', description: 'مستخلص من نشاط مضيف' })
+  assert.equal(before.revenue - bal(c, '4107'), 1_000_000, 'تطعيم المقاولات: الإيراد لا يذهب إلى 4107')
+  assert.equal(bal(c, '1104') - before.ar, 1_090_000, 'تطعيم المقاولات: الذمة لا تطابق المستخلص والضريبة والمحتجز')
+  assert.equal(bal(c, '1105') - before.retained, 50_000, 'تطعيم المقاولات: المحتجز لا يذهب إلى 1105')
+  assertInvariants('بقالة + مقاولات: مستخلص آجل', c)
+  R.ok('تطعيم المقاولات على بقالة: مستخلص حقيقي يرحّل 4107/2102/1105 ويثبت ذمة العميل الصحيحة')
+}
+
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['lab'] })
+  const test = c.st().addLabTest({ code: 'CBC-X', nameAr: 'صورة دم', category: 'دم', sampleType: 'دم', unit: '', priceMinor: 20_000, costMinor: 4_000, refRanges: [] })
+  const patient = c.st().addLabPatient({ nameAr: 'مريض مطعّم', phone: '01000000001', gender: 'female', birthDate: '1990-04-01', notes: '' })
+  const beforeRevenue = bal(c, '4106')
+  const order = c.st().registerLabOrder({ patientId: patient.id, referrerId: null, testIds: [test.id], payment: 'mixed', paidMinor: 10_000, discountPercent: 0, vatPercent: 0, notes: 'اختبار تطعيم' })
+  const linkedPatient = c.st().labPatients.find((row) => row.id === patient.id)
+  assert.ok(linkedPatient?.linkedCustomerId, 'تطعيم المعمل: المتبقي لا ينشئ/يربط مديناً في نشاط المضيف')
+  assert.equal(beforeRevenue - bal(c, '4106'), 20_000, 'تطعيم المعمل: الإيراد لا يذهب إلى 4106')
+  assert.equal(c.st().getCustomerBalance(linkedPatient.linkedCustomerId), 10_000, 'تطعيم المعمل: المتبقي لا يطابق كشف المدين')
+  assert.ok(order.id > 0)
+  assertInvariants('بقالة + معمل: طلب جزئي', c)
+  R.ok('تطعيم المعمل على بقالة: طلب حقيقي يعترف بـ4106 ويربط المتبقي بكشف عميل بدلاً من ذمة شبحية')
+}
+
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['clinic'] })
+  const patient = c.st().addClinicPatient({ nameAr: 'مريض عيادة مطعّمة', phone: '01000000002', gender: 'male', birthDate: '1985-07-11', medicalHistory: '', notes: '' })
+  const visit = c.st().addClinicVisit({ patientId: patient.id, kind: 'new', complaint: 'كشف', diagnosis: 'تشخيص', treatment: 'علاج', feeMinor: 30_000, paidMinor: 20_000, vatPercent: 0, planId: null })
+  const linkedPatient = c.st().clinicPatients.find((row) => row.id === patient.id)
+  assert.ok(linkedPatient?.linkedCustomerId, 'تطعيم العيادة: المتبقي لا ينشئ مديناً مربوطاً')
+  assert.equal(c.st().getPatientBalance(patient.id), 10_000, 'تطعيم العيادة: دفتر المريض لا يطابق الجزء المتبقي')
+  assert.equal(c.st().getCustomerBalance(linkedPatient.linkedCustomerId), 10_000, 'تطعيم العيادة: كشف العميل لا يطابق دفتر المريض')
+  assert.ok(visit.id > 0)
+  assertInvariants('بقالة + عيادة: كشف جزئي', c)
+  R.ok('تطعيم العيادة على بقالة: كشف جزئي يثبت 4108 ويربط ذمة المريض ويطابق دفتره وكشفه')
+}
+
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['realestate'] })
+  const property = c.st().addProperty({ nameAr: 'عقار مطعّم', kind: 'residential', ownership: 'owned', ownerName: '', commissionPercent: 0, address: 'المنصورة', costMinor: 0, notes: '' })
+  const unit = c.st().addPropertyUnit({ propertyId: property.id, code: 'G-1', annualRentMinor: 0, costMinor: 500_000, salePriceMinor: 900_000, acquisitionPayment: 'cash' })
+  const beforeRevenue = bal(c, '4115')
+  c.st().sellPropertyUnit({ propertyId: property.id, unitId: unit.id, salePriceMinor: 900_000, payment: 'cash', buyerName: 'مشترٍ مطعّم' })
+  assert.equal(beforeRevenue - bal(c, '4115'), 900_000, 'تطعيم العقارات: ثمن الوحدة لا يذهب إلى 4115')
+  assert.equal(bal(c, '5116'), 500_000, 'تطعيم العقارات: تكلفة الوحدة لا تذهب إلى 5116')
+  assertInvariants('بقالة + عقارات: بيع وحدة', c)
+  R.ok('تطعيم العقارات على بقالة: بيع الوحدة يثبت 4115 والتكلفة 5116 ويوازن دفتر المضيف')
+}
+
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['logistics'] })
+  const customer = addParty(c, 'customer', 'عميل نقل مطعّم')
+  const beforeRevenue = bal(c, '4105')
+  c.st().postTrip({
+    customerId: customer.id, vehicleId: null, driverId: null, notes: 'اختبار نقل مطعّم',
+    input: { fromLoc: 'المنصورة', toLoc: 'القاهرة', qty: 1, unitPriceMinor: 150_000, expenses: [], payment: 'credit', vatPercent: 14, containerNumbers: [] },
+  })
+  assert.equal(beforeRevenue - bal(c, '4105'), 150_000, 'تطعيم اللوجستيات: الإيراد لا يذهب إلى 4105')
+  assert.equal(bal(c, '1104'), 171_000, 'تطعيم اللوجستيات: الذمة لا تطابق الأجرة والضريبة')
+  assertInvariants('بقالة + لوجستيات: نقلة آجلة', c)
+  R.ok('تطعيم اللوجستيات على بقالة: نقلة آجلة تثبت الإيراد والضريبة وذمة العميل')
+}
+
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['equipment_rental'] })
+  const customer = addParty(c, 'customer', 'عميل إيجار مطعّم')
+  const beforeRevenue = bal(c, '4104')
+  const contract = c.st().openRental({ customerId: customer.id, equipmentId: null, notes: 'تأجير مطعّم', input: { equipmentName: 'رافعة', days: 2, dailyRateMinor: 50_000, depositMinor: 10_000, payment: 'cash', vatPercent: 0 } })
+  assert.equal(beforeRevenue - bal(c, '4104'), 100_000, 'تطعيم التأجير: قيمة الإيجار لا تذهب إلى 4104')
+  assertInvariants('بقالة + تأجير معدات: عقد', c)
+  c.st().closeRental(contract.id, 0, undefined, '1101')
+  assertInvariants('بقالة + تأجير معدات: إقفال', c)
+  R.ok('تطعيم تأجير المعدات على بقالة: العقد والإقفال يعملان على 4104 بلا اعتماد على نشاط المضيف')
+}
+
+{
+  const c = await freshCase({ activityId: 'grocery', extraModules: ['cars'] })
+  const car = c.st().addCar({ make: 'تويوتا', model: 'كورولا', year: 2022, plateOrVin: 'VIN-GRAFT-1', purpose: 'sale', purchaseCostMinor: 4_000_000, odometerKm: 40_000, payment: 'cash', notes: 'سيارة لنشاط مطعّم' })
+  const beforeRevenue = bal(c, '4101')
+  c.st().sellCar({ carId: car.id, priceMinor: 4_800_000, vatPercent: 0, payment: 'cash', buyerName: 'مشترٍ مطعّم' })
+  assert.equal(beforeRevenue - bal(c, '4101'), 4_800_000, 'تطعيم السيارات: الثمن لا يذهب إلى 4101')
+  assert.equal(bal(c, '5101'), 4_000_000, 'تطعيم السيارات: التكلفة لا تذهب إلى 5101')
+  assertInvariants('بقالة + معرض سيارات: بيع', c)
+  R.ok('تطعيم السيارات على بقالة: الشراء والبيع يثبتان الإيراد والتكلفة والمخزون مع ثبات الثوابت')
+}
+
 R.done('— التطعيم آمن: الحساب يظهر، والشاشة تُفتح، والمحرك يعمل، والسحب لا يُخفي رصيداً')

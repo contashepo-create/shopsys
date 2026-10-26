@@ -68,4 +68,12 @@ describe('النسخ الاحتياطي والتصدير الشامل (بلاغ 
     expect(csv.startsWith('\uFEFF')).toBe(true) // BOM — العربية تفتح سليمة في Excel
     expect(csv).toContain('"صنف ""مميز"""') // اقتباس قياسي للفواصل داخل القيم
   })
+
+  it('CSV escapes spreadsheet formula prefixes in user text but preserves numeric values', () => {
+    const csv = sheetToCsv({ nameAr: 'اختبار', headers: ['قيمة'], rows: [['=1+1'], ['  @SUM(1,2)'], ['-3+4'], [-5]] })
+    expect(csv).toContain("'=1+1")
+    expect(csv).toContain("\"'  @SUM(1,2)\"")
+    expect(csv).toContain("'-3+4")
+    expect(csv).toContain('\r\n-5')
+  })
 })

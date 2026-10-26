@@ -174,6 +174,40 @@ export const COST_KIND_LABELS: Record<CostKind, { nameAr: string; icon: string }
   other: { nameAr: 'أخرى', icon: '📎' },
 }
 
+/**
+ * تصنيف مصروف مشروع حرّ يقرأه المستخدم بلغة الموقع («وقود ومحروقات»،
+ * «أتعاب مكتب هندسي»…) بينما يبقى `kind` هو حوض التجميع المحاسبي الخمسة
+ * الذي تقوم عليه الموازنات والانحرافات وربحية المشروع — فالحرية في التسمية
+ * لا تكسر أي تقرير قائم. التصنيفات تنمو من نافذة المصروف عبر «أخرى…»
+ * وتُحفظ دائماً في قائمة المنشأة (اعتماد المالك لنموذج N-04 الحي 2026-10-22).
+ */
+export interface ProjectExpenseCategory {
+  id: number
+  nameAr: string
+  /** حوض التجميع المحاسبي الذي تؤول إليه مصروفات هذا التصنيف */
+  kind: CostKind
+  /** تصنيف مزروع مع النظام (لا يفرّقه شيء وظيفياً — وسم توثيقي) */
+  system?: boolean
+}
+
+/** القائمة الافتراضية كما اعتمدها المالك في النموذج الحي + «مقاول باطن» لتغطية الأحواض الخمسة */
+export const DEFAULT_PROJECT_EXPENSE_CATEGORIES: readonly ProjectExpenseCategory[] = [
+  { id: 1, nameAr: 'مواد خام', kind: 'materials', system: true },
+  { id: 2, nameAr: 'وقود ومحروقات', kind: 'equipment', system: true },
+  { id: 3, nameAr: 'عمالة يومية', kind: 'labor', system: true },
+  { id: 4, nameAr: 'نقل وشحن', kind: 'other', system: true },
+  { id: 5, nameAr: 'صيانة معدات', kind: 'equipment', system: true },
+  { id: 6, nameAr: 'إيجار معدات', kind: 'equipment', system: true },
+  { id: 7, nameAr: 'رسوم وتراخيص', kind: 'other', system: true },
+  { id: 8, nameAr: 'ضيافة موقع', kind: 'other', system: true },
+  { id: 9, nameAr: 'مقاول باطن', kind: 'subcontract', system: true },
+]
+
+/** تطبيع اسم تصنيف للمقارنة ومنع التكرار (تشذيب + ضغط المسافات + حروف صغيرة) */
+export function normalizeExpenseCategoryName(nameAr: string): string {
+  return nameAr.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 /** قيد تكلفة: 5110 ← 1101 نقدي أو 2101 آجل (مورد/مقاول باطن) */
 /**
  * قيد تكلفة المشروع — عزل الضريبة (طلب المالك: ربحية المشروع صافية من الضريبة):
@@ -579,6 +613,129 @@ export const CHANGE_ORDER_STATUS_LABELS: Record<ChangeOrderStatus, { nameAr: str
 export function effectiveContractValue(baseMinor: Minor, orders: readonly ChangeOrder[]): Minor {
   // «مُستخلَص» = معتمد سبق فوترته — يبقى ضمن قيمة العقد الفعلية
   return baseMinor + orders.filter((o) => o.status === 'approved' || o.status === 'invoiced').reduce((a, o) => a + o.amountMinor, 0)
+}
+
+/* ─── حارس فوترة المشاريع — النموذج (أ) المعتمد من المالك (2026-10-22) ───
+   المستخلص هو الأصل المالي (4107/1104/1105/2102). فاتورة بيع المشروع إما:
+   • «توثيق» مقابل مستخلصات: مستند ضريبي لمبالغ سبق الاعتراف بها وإقرار
+     ضريبتها — سقفها ما استُخلص ولم يُوثَّق بعد، ولا تدخل سقف العقد ثانية.
+   • «إضافية»: فوترة كاملة جديدة تحت سقف موحد بصافي الأعمال قبل الضريبة:
+     مستخلصات + إضافيات ≤ قيمة العقد الفعلية بأوامر التغيير المعتمدة.
+   الفواتير التاريخية بلا طبيعة مسجلة تُحسب «إضافية» لأنها رُحّلت كاملة
+   فعلاً، ومرتجعات كل فاتورة تُخصم منها قبل أي حساب. */
+
+export type ProjectBillingNature = 'documentation' | 'extra'
+
+export interface ProjectBillingGuard {
+  /** قيمة العقد الفعلية صافية (أصلية + أوامر تغيير معتمدة) */
+  effectiveContractNetMinor: Minor
+  /** صافي أعمال المستخلصات بعد مرتجعات الخدمة */
+  extractedNetMinor: Minor
+  extractedVatMinor: Minor
+  /** صافي فواتير المشروع الإضافية (والتاريخية بلا طبيعة) بعد مرتجعاتها */
+  extraInvoicedNetMinor: Minor
+  /** إجمالي المفوتَر بصافي الأعمال (مستخلصات + إضافيات) */
+  billedNetMinor: Minor
+  /** ما وُثّق بفواتير توثيق حتى الآن (شامل الضريبة، بعد مرتجعاتها) */
+  documentedGrossMinor: Minor
+  /** المتاح الآن لفاتورة إضافية جديدة بصافي الأعمال — لا يقل عن صفر */
+  extraRoomNetMinor: Minor
+  /** المتاح الآن لتوثيق جديد شامل الضريبة (مستخلَص لم يُوثَّق) — لا يقل عن صفر */
+  availableToDocumentGrossMinor: Minor
+}
+
+export interface ProjectDocumentationInvoice {
+  id: number
+  projectBilling?: ProjectBillingNature
+  extractIds?: readonly number[]
+  totals: { totalMinor: Minor }
+}
+
+export interface ProjectDocumentationReturn {
+  saleId: number
+  totals: { totalMinor: Minor }
+}
+
+/** Remaining documentation capacity per extract, after prior document invoices and returns. */
+export function remainingDocumentableByExtract(
+  extracts: readonly { id: number; totals: { grossMinor: Minor; vatMinor: Minor }; refundedMinor?: Minor }[],
+  invoices: readonly ProjectDocumentationInvoice[],
+  returns: readonly ProjectDocumentationReturn[] = [],
+): Map<number, Minor> {
+  const ordered = [...extracts].sort((a, b) => a.id - b.id)
+  const remaining = new Map(ordered.map((extract) => [
+    extract.id,
+    Math.max(0, extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0)),
+  ]))
+  const returnedByInvoice = new Map<number, number>()
+  for (const ret of returns) returnedByInvoice.set(ret.saleId, (returnedByInvoice.get(ret.saleId) ?? 0) + ret.totals.totalMinor)
+
+  for (const invoice of invoices.filter((row) => row.projectBilling === 'documentation').slice().sort((a, b) => a.id - b.id)) {
+    let unallocated = Math.max(0, invoice.totals.totalMinor - (returnedByInvoice.get(invoice.id) ?? 0))
+    const selected = [...new Set(invoice.extractIds ?? [])]
+    for (const id of selected) {
+      if (unallocated <= 0) break
+      const room = remaining.get(id) ?? 0
+      const applied = Math.min(room, unallocated)
+      remaining.set(id, room - applied)
+      unallocated -= applied
+    }
+    // Legacy documents without links, or historically oversized links, are
+    // deterministically reconciled against oldest extracts as the UI displays.
+    for (const extract of ordered) {
+      if (unallocated <= 0) break
+      const room = remaining.get(extract.id) ?? 0
+      const applied = Math.min(room, unallocated)
+      remaining.set(extract.id, room - applied)
+      unallocated -= applied
+    }
+  }
+  return remaining
+}
+
+export function computeProjectBillingGuard(input: {
+  contractValueMinor: Minor
+  changeOrders: readonly ChangeOrder[]
+  extracts: readonly { totals: ExtractTotals; refundedMinor?: number; refundedTaxMinor?: number }[]
+  saleInvoices: readonly { id: number; projectBilling?: ProjectBillingNature; totals: { totalMinor: Minor; taxMinor: Minor } }[]
+  saleReturns?: readonly { saleId: number; totals: { totalMinor: Minor; taxMinor: Minor } }[]
+}): ProjectBillingGuard {
+  const effectiveContractNetMinor = effectiveContractValue(input.contractValueMinor, input.changeOrders)
+  let extractedNetMinor = 0
+  let extractedVatMinor = 0
+  let documentableGrossMinor = 0
+  for (const e of input.extracts) {
+    const refundedNet = Math.max(0, (e.refundedMinor ?? 0) - (e.refundedTaxMinor ?? 0))
+    extractedNetMinor += Math.max(0, e.totals.grossMinor - refundedNet)
+    extractedVatMinor += Math.max(0, e.totals.vatMinor - (e.refundedTaxMinor ?? 0))
+    documentableGrossMinor += Math.max(0, e.totals.grossMinor + e.totals.vatMinor - (e.refundedMinor ?? 0))
+  }
+  const returnedByInvoice = new Map<number, { total: number; tax: number }>()
+  for (const r of input.saleReturns ?? []) {
+    const prev = returnedByInvoice.get(r.saleId) ?? { total: 0, tax: 0 }
+    returnedByInvoice.set(r.saleId, { total: prev.total + r.totals.totalMinor, tax: prev.tax + r.totals.taxMinor })
+  }
+  let extraInvoicedNetMinor = 0
+  let documentedGrossMinor = 0
+  for (const inv of input.saleInvoices) {
+    const ret = returnedByInvoice.get(inv.id) ?? { total: 0, tax: 0 }
+    if (inv.projectBilling === 'documentation') {
+      documentedGrossMinor += Math.max(0, inv.totals.totalMinor - ret.total)
+    } else {
+      extraInvoicedNetMinor += Math.max(0, (inv.totals.totalMinor - inv.totals.taxMinor) - (ret.total - ret.tax))
+    }
+  }
+  const billedNetMinor = extractedNetMinor + extraInvoicedNetMinor
+  return {
+    effectiveContractNetMinor,
+    extractedNetMinor,
+    extractedVatMinor,
+    extraInvoicedNetMinor,
+    billedNetMinor,
+    documentedGrossMinor,
+    extraRoomNetMinor: Math.max(0, effectiveContractNetMinor - billedNetMinor),
+    availableToDocumentGrossMinor: Math.max(0, documentableGrossMinor - documentedGrossMinor),
+  }
 }
 
 /* ─── الدفعات المقدمة من العملاء — التزام 2109 يُسترد تدريجياً من المستخلصات ─── */
@@ -1014,11 +1171,19 @@ export interface ProjectExpenseLineInput {
   taxMode: ExpenseTaxMode
   vatPercent?: number
   boqItemId?: number | null
+  /** التصنيف الحر المختار من قائمة المنشأة؛ عند حضوره يفرض المستودع kind منه */
+  categoryId?: number | null
+  /** لقطة اسم التصنيف وقت التسجيل (يملؤها المستودع من القائمة) */
+  categoryNameAr?: string
 }
 
 export interface ProjectExpenseLineComputed {
   description: string
   kind: CostKind
+  /** التصنيف الحر المختار (قد يُحذف من القائمة لاحقاً — الاسم المحفوظ هو المرجع) */
+  categoryId?: number | null
+  /** لقطة اسم التصنيف وقت التسجيل؛ غيابه = بند قديم قبل التصنيفات الحرة */
+  categoryNameAr?: string
   qty: number
   unitPriceMinor: Minor
   taxMode: ExpenseTaxMode
@@ -1056,6 +1221,8 @@ export function computeProjectExpenseLine(
   return {
     description: input.description.trim(),
     kind: input.kind,
+    categoryId: input.categoryId ?? null,
+    ...(input.categoryNameAr?.trim() ? { categoryNameAr: input.categoryNameAr.trim() } : {}),
     qty,
     unitPriceMinor,
     taxMode,

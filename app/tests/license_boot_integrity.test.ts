@@ -241,7 +241,24 @@ describe('④ التخزين: الحمولة لا تُكتب ولا تُقرأ',
     expect(Object.hasOwn(written, 'setup')).toBe(true) // باقي الإعدادات كما هي
   })
 
-  it('الترطيب يسقط أي حمولة محفوظة ويعلّم الفحص إن وُجد مفتاح', () => {
+  it('إعادة ترطيب إعدادات غير متعلقة بالترخيص لا تعيد بوابة checking ولا تمس الحمولة الموثوقة', async () => {
+    await useAppStore.persist.rehydrate()
+    const signed = payloadFor({ plan: 'pro' })
+    const key = await harness.sign!(signed)
+    useAppStore.setState({ activatedKey: key, activatedPayload: null, revokedKeys: [] })
+    await A().reverifyActivation()
+    expect(A().licenseAudit.status).toBe('verified')
+    const trustedPayload = A().activatedPayload
+    const onRehydrate = useAppStore.persist.getOptions().onRehydrateStorage?.(A())
+    const state = { ...A(), activatedKey: key, activatedPayload: null, licenseAudit: { status: 'checking' as const } }
+
+    onRehydrate?.(state as never, undefined)
+
+    expect(state.activatedPayload).toEqual(trustedPayload)
+    expect(state.licenseAudit.status).toBe('verified')
+  })
+
+  it('الترطيب الأولي يسقط أي حمولة غير موثوقة ويعلّم الفحص إن وُجد مفتاح', () => {
     const onRehydrate = useAppStore.persist.getOptions().onRehydrateStorage?.(A())
     const state = { ...A(), activatedPayload: forgedLifetime(A().deviceId), activatedKey: 'SHOPSYS1.x.y', licenseAudit: { status: 'verified' as const } }
     onRehydrate?.(state as never, undefined)

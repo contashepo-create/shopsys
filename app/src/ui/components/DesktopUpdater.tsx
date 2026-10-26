@@ -7,7 +7,7 @@
  * الفحص الدوري التلقائي والتنزيل في الخلفية والتثبيت الصامت عند الإغلاق
  * — كلها كما هي في العملية الرئيسية؛ هذا المكوّن يعرضها ويسرّع الفحص فقط.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { RefreshCw, Rocket } from 'lucide-react'
 import { Btn } from './ui.tsx'
 import { desktopUpdaterBridge, type DesktopUpdaterState, type DesktopUpdaterStatus } from '../../data/desktopBridge.ts'
@@ -28,14 +28,23 @@ const LABELS: Record<DesktopUpdaterStatus, string> = {
 export function DesktopUpdater() {
   const [bridge] = useState(() => desktopUpdaterBridge())
   const [state, setState] = useState<DesktopUpdaterState | null>(null)
+  // IPC result for a point-in-time snapshot can arrive after a newer progress event.
+  // Keep the event revision so a late snapshot cannot rewind the visible progress.
+  const stateEventRevision = useRef(0)
   const [version, setVersion] = useState('')
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!bridge) return
-    const off = bridge.onState((next) => setState(next as DesktopUpdaterState))
-    void bridge.state().then((initial) => setState(initial as DesktopUpdaterState)).catch(() => undefined)
+    const revisionAtSubscribe = stateEventRevision.current
+    const off = bridge.onState((next) => {
+      stateEventRevision.current += 1
+      setState(next as DesktopUpdaterState)
+    })
+    void bridge.state().then((initial) => {
+      if (stateEventRevision.current === revisionAtSubscribe) setState(initial as DesktopUpdaterState)
+    }).catch(() => undefined)
     void (globalThis as { shopsysAppInfo?: () => Promise<{ version: string }> }).shopsysAppInfo?.()
       .then((info) => setVersion(info.version))
       .catch(() => undefined)
@@ -53,8 +62,15 @@ export function DesktopUpdater() {
   const runCheck = async () => {
     setActionError(null)
     setBusy(true)
+    const revisionBeforeRequest = stateEventRevision.current
     try {
-      await bridge.check()
+      const result = await bridge.check()
+      if (
+        stateEventRevision.current === revisionBeforeRequest
+        && typeof result === 'object'
+        && result !== null
+        && 'status' in result
+      ) setState(result as DesktopUpdaterState)
     } catch (error) {
       setActionError((error as Error).message)
     } finally {

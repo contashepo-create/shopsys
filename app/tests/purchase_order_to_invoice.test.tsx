@@ -9,7 +9,7 @@
  *   ولا يُستلم الأمر مرتين (الفاتورة الثانية لا تجد بنوداً متبقية).
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
-import { render, fireEvent, cleanup } from '@testing-library/react'
+import { render, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -74,6 +74,27 @@ function openReceipt(orderId: number) {
 }
 
 describe('دورة أمر الشراء ← فاتورة الاستلام ← الترحيل', () => {
+  it('حقلا الوزن والرطوبة يظهران لنشاط الأعلاف فقط ولا يُفرضان على بقية الأنشطة', async () => {
+    const order = createOrder([{ itemId, nameAr: 'سكر أبيض', qty: 3, unitPriceMinor: 4000 }])
+    const initialSetup = useAppStore.getState().setup
+    const hasReceivingFields = () => Boolean(document.querySelector('input[placeholder="الوزن المرسَل بالفاتورة (اختياري)"]'))
+
+    let view = openReceipt(order.id)
+    await waitFor(() => expect(document.querySelector('tbody tr')).toBeTruthy())
+    expect(hasReceivingFields(), 'نشاط البقالة لا يحتاج حقول فرق الوزن والرطوبة').toBe(false)
+    cleanup(); view.unmount()
+
+    useAppStore.setState((state) => ({ ...state, setup: { ...state.setup, activityId: 'feed_trade' } }))
+    try {
+      view = openReceipt(order.id)
+      await waitFor(() => expect(hasReceivingFields()).toBe(true))
+      expect(document.querySelector('input[placeholder="نسبة الرطوبة ٪ (اختياري)"]')).toBeTruthy()
+      cleanup(); view.unmount()
+    } finally {
+      useAppStore.setState((state) => ({ ...state, setup: initialSetup }))
+    }
+  })
+
   it('الفاتورة تُعبَّأ من البنود المتبقية بالكمية والسعر المكتوبين في الأمر', () => {
     const order = createOrder([{ itemId, nameAr: 'سكر أبيض', qty: 3, unitPriceMinor: 4000 }])
     const view = openReceipt(order.id)
@@ -85,7 +106,7 @@ describe('دورة أمر الشراء ← فاتورة الاستلام ← ا�
     S().deletePurchaseOrder(order.id)
   })
 
-  it('بعد الترحيل: مخزون زائد · تكلفة محدَّثة · ذمة المورد زادت · الأمر «مستلَم» بلا قيد مزدوج', () => {
+  it('بعد الترحيل: مخزون زائد · تكلفة محدَّثة · ذمة المورد زادت · الأمر «مستلَم» بلا قيد مزدوج', async () => {
     const stockBefore = S().items.find((item) => item.id === itemId)!.stockQty ?? 0
     const balanceBefore = S().getSupplierBalance(supplierId)
     const journalBefore = S().journal.length
@@ -98,6 +119,10 @@ describe('دورة أمر الشراء ← فاتورة الاستلام ← ا�
     const postButton = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('حفظ وترحيل'))
     expect(postButton, 'زر الترحيل غير موجود في شريط الفاتورة').toBeTruthy()
     fireEvent.click(postButton!)
+    await waitFor(() => expect(S().items.find((item) => item.id === itemId)!.stockQty).toBe(stockBefore + 3))
+    /* ترحيل الفاتورة ثم تحديث ارتباط الأمر عمليتان متتاليتان؛ انتظر اكتمال
+       الثانية بدلاً من قراءة الأمر في اللحظة بين حفظ المخزون وربط الفاتورة. */
+    await waitFor(() => expect(S().purchaseOrders.find((row) => row.id === order.id)?.status).toBe('closed'))
     cleanup(); view.unmount()
 
     /* ① المخزون زاد بكمية الأمر (والحركة مصدرها الفاتورة وحدها) */

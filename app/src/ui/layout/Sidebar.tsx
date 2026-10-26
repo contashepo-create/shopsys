@@ -12,13 +12,24 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
-import { BranchBadge } from '../components/BranchBadge.tsx'
+import { openSectionWindow } from '../windows/windowStore.ts'
+
+function titleForPath(path: string): string {
+  for (const sec of NAV_SECTIONS) {
+    const child = sec.children.find((c) => c.path === path)
+    if (child) return child.nameAr
+  }
+  return 'تَحَكَّم'
+}
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const guardLink = (event: ReactMouseEvent<HTMLAnchorElement>, path: string) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    /* سطح المكتب (قرار المالك): كل قسم يفتح في نافذة نظام حرة — الرئيسية مشغّل.
+       في الويب يعيد false فنكمل التنقل الداخلي كما هو. */
+    if (openSectionWindow(path, titleForPath(path))) { event.preventDefault(); return }
     if (guardNavigation(() => navigate(path))) event.preventDefault()
   }
   const { setup, updateAppearance } = useAppStore()
@@ -33,15 +44,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
   // صلاحيات المستخدم النشط (البند 4 — صفر تجاوز): ما لا يملكه لا يراه أصلاً
   const { appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
-  const {
-    branches: activeBranches,
-    effectiveBranch,
-    effectiveBranchId,
-    isLockedToUserBranch,
-    effectiveModules,
-    effectiveActivityId,
-    setActiveBranchId,
-  } = useEffectiveBranchScope()
+  const { effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
 
@@ -103,20 +106,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           <PanelTop size={14} />
         </button>
       </div>
-
-      {/* شارة الفرع النشط (عند تعدد الفروع): تصفي القائمة الجانبية حسب أقسام ونشاط الفرع */}
-      {!collapsed && activeBranches.length > 0 && (
-        <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
-          <BranchBadge
-            branches={activeBranches}
-            value={effectiveBranchId}
-            fallbackName={effectiveBranch?.nameAr}
-            locked={isLockedToUserBranch}
-            onChange={setActiveBranchId}
-            placement="sidebar"
-          />
-        </div>
-      )}
 
       {/* الأقسام */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-1">

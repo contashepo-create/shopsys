@@ -40,6 +40,7 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
@@ -201,6 +202,7 @@ export function PurchaseOrdersPage() {
   }
 
   /* ════ الطباعة: نفس محرك قوالب الفواتير ومفاتيح الطباعة ════ */
+  const currentPrintRecord = () => ({ warehouseId, lines })
   const buildPrintModel = () => buildSimpleDocModel({
     docTitle: 'أمر شراء (مسودة)',
     invoiceNumber: 'مسودة',
@@ -215,30 +217,33 @@ export function PurchaseOrdersPage() {
     totalMinor: totals.totalMinor,
     paidMinor: 0,
     operatorName: currentUser?.nameAr ?? setup.ownerName ?? 'المالك',
-    settings: useAppStore.getState().receipt,
+    settings: resolveDocumentPrintSettings(currentPrintRecord()).receipt,
     extraFooter: [reference.trim() && `المرجع: ${reference.trim()}`, notes.trim()].filter(Boolean).join('\n') || undefined,
   })
   const printDraft = (template: InvoiceTemplate) => {
     if (!lines.length) return toast.show('أضف أصنافاً قبل المعاينة', 'error')
     const model = buildPrintModel()
-    const live = useAppStore.getState().receipt
+    const live = resolveDocumentPrintSettings(currentPrintRecord()).receipt
     if (!printSwitches.silentPrint) {
       openPrintPreview({
         html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal',
         title: template !== 'thermal' ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال',
-        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(buildPrintModel(), cur, r, template) },
+        rebuild: () => { const r = resolveDocumentPrintSettings(currentPrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) },
       })
       return
     }
-    printModelWithTemplate(model, cur, live, template)
+    printModelWithTemplate(model, cur, live, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(currentPrintRecord()).receipt,
+    })
   }
   const exportPdf = () => { if (!lines.length) return toast.show('أضف أصنافاً قبل التصدير', 'error'); toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }
   const whatsappPdf = () => {
     if (!lines.length) return toast.show('أضف أصنافاً قبل الإرسال', 'error')
+    const documentSettings = resolveDocumentPrintSettings(currentPrintRecord())
     shareDocPdfViaWhatsapp({
-      model: buildPrintModel(), cur, settings: useAppStore.getState().receipt,
+      model: buildPrintModel(), cur, settings: documentSettings.receipt,
       docLabel: 'أمر شراء', docNumber: 'مسودة',
-      partyPhone: selectedSupplier?.phone ?? '', shopName: setup.shopName, toast,
+      partyPhone: selectedSupplier?.phone ?? '', shopName: documentSettings.setup.shopName, toast,
     })
   }
   /**
@@ -253,8 +258,8 @@ export function PurchaseOrdersPage() {
       docNumber: pendingDraftNumber(purchaseOrders),
       dateLabel: `التسليم المتوقع ${expectedDate}`,
       partyLabel: selectedSupplier?.nameAr ?? (supplierName.trim() || 'مورد نقدي'),
-      branchLabel: branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? branches.find((b) => b.isMain)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'الفرع الرئيسي',
-      companyName: setup.shopName ?? 'المنشأة',
+      branchLabel: resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName || (branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'المنشأة'),
+      companyName: resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName ?? 'المنشأة',
       userLabel: currentUser?.nameAr ?? setup.ownerName ?? 'المالك',
       lines: clean.map((line) => {
         const item = items.find((row) => row.id === line.itemId)
@@ -316,10 +321,11 @@ export function PurchaseOrdersPage() {
           modeLabel="أمر شراء"
           currencyLabel={`${cur.code} · ${cur.symbol}`}
           dateLabel={date}
-          branchLabel={branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? branches.find((b) => b.isMain)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'وضع الفرع الواحد'}
+          branchLabel={resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName || (branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'المنشأة')}
           userLabel={currentUser?.nameAr ?? setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
           documentNumber={pendingDraftNumber(purchaseOrders)}
+          posting={false}
           draftCount={advancedInvoiceDrafts.filter((d) => d.kind === 'purchase_order').length}
           onBack={() => unsaved.requestClose(closeEditor)}
           onNavigate={(path) => { if (!guardNavigation(() => nav(path))) nav(path) }}
@@ -521,7 +527,7 @@ export function PurchaseOrdersPage() {
           drafts={advancedInvoiceDrafts} currency={cur} currentDraftId={draftId}
           onPick={(draft) => { applyDraft(draft); setDraftsOpen(false) }} onDelete={deleteAdvancedInvoiceDraft}
         />
-        <PrintTemplateModal open={printOpen} onClose={() => setPrintOpen(false)} defaultTemplate={useAppStore.getState().receipt.defaultTemplate} title="معاينة نسخة المورد" onPrint={printDraft} />
+        <PrintTemplateModal open={printOpen} onClose={() => setPrintOpen(false)} defaultTemplate={resolveDocumentPrintSettings(currentPrintRecord()).receipt.defaultTemplate} title="معاينة نسخة المورد" onPrint={printDraft} />
         <PrintSettingsPopup open={printSettingsOpen} onClose={() => setPrintSettingsOpen(false)} wide={!printSwitches.cashierPrint} />
         <PartyQuickEditModal open={partyEditorOpen} target={selectedSupplier ? { kind: 'supplier', party: selectedSupplier } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
         <Modal open={notesLogOpen && !!selectedSupplier} onClose={() => setNotesLogOpen(false)} title={`سجل ملاحظات ${selectedSupplier?.nameAr ?? 'المورد'}`}>

@@ -37,8 +37,8 @@ export interface CustomerStatementInput {
   customerId: number
   /** رصيد افتتاحي مثبت بقيد 1104/3101 (اختياري) — يظهر أول الكشف ويدخل الرصيد الجاري */
   openingMinor?: Minor
-  sales: { invoiceNumber: string; date: string; customerId: number | null; payment: 'cash' | 'credit'; paidMinor?: number; totals: { totalMinor: Minor } }[]
-  saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit' | 'store_credit' | 'custom'; totals: { totalMinor: Minor }; creditRefundMinor?: Minor; storeCreditRefundMinor?: Minor }[]
+  sales: { invoiceNumber: string; date: string; customerId: number | null; payment: 'cash' | 'credit'; paidMinor?: number; totals: { totalMinor: Minor }; projectBilling?: 'documentation' | 'extra' }[]
+  saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit' | 'store_credit' | 'custom'; totals: { totalMinor: Minor }; creditRefundMinor?: Minor; storeCreditRefundMinor?: Minor; projectBilling?: 'documentation' | 'extra' }[]
   /** فواتير البيع كاملة لربط المرتجع بعميله */
   allSales: { id: number; customerId: number | null }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor; reversalEntryId?: number | null }[]
@@ -76,6 +76,9 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
   }
   for (const s of input.sales) {
     if (s.customerId !== input.customerId) continue
+    /* فاتورة توثيق مستخلصات (النموذج أ): الذمة نشأت بالمستخلص نفسه — ظهورها
+       هنا يضخّم مديونية العميل في كشفه، فتُستثنى (هي ورقة ضريبية فقط) */
+    if (s.projectBilling === 'documentation') continue
     // لا نسقط الفاتورة النقدية أو المسددة بالكامل: كشف الحساب يعرض العملية كلها،
     // ويضع المدفوع في الدائن حتى يبقى الرصيد الجاري هو المتبقي فعلاً.
     const total = Math.max(0, s.totals.totalMinor)
@@ -86,6 +89,7 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
   }
   const saleOwner = new Map(input.allSales.map((s) => [s.id, s.customerId]))
   for (const r of input.saleReturns) {
+    if (r.projectBilling === 'documentation') continue
     if (saleOwner.get(r.saleId) !== input.customerId) continue
     // الرد الهجين (R1) وإيداع الرصيد (G2): الجزء المخفِّض للذمم فقط.
     // المرتجع النقدي يظهر كسطر توثيقي حتى لا تختفي العملية، دون تغيير رصيد العميل.

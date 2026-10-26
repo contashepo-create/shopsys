@@ -1,5 +1,5 @@
 /**
- * جردٌ آليّ (لا بوابة CI) — «هل تتكيّف التقارير والسندات مع النشاط والوحدات المطعَّمة؟»
+ * فحصٌ آليّ لتكيّف التقارير والسندات مع النشاط والوحدات المطعَّمة، مستورد كلياً في بوابة verify_reports_activity_fit.mjs.
  * هذا السكربت هو **دليل الإغلاق** المُعاد تشغيله بعد سياسة النواة الموحّدة (v1.0.24):
  *  ① نشاط بلا كاشير (مغسلة): البطاقة الجديدة «إيراد الفترة من الدفتر» = قائمة الدخل = 300،
  *     وبطاقة فواتير الكاشير تبقى 0 لأنها **تفصيل** لا إجمالي.
@@ -10,6 +10,7 @@
  *
  * تشغيل: node --experimental-strip-types scripts/audit_reports_activity_fit.mjs
  */
+import assert from 'node:assert/strict'
 import { freshCase, addSimpleItem, balanceOf } from './auditKit.mjs'
 import { ACTIVITY_TEMPLATES, effectiveModules } from '../src/core/activities.ts'
 import { coaForModules, pathAllowedForSetup, ACCOUNT_MODULE_MAP } from '../src/core/coaVisibility.ts'
@@ -40,6 +41,10 @@ console.log('═══ ① نشاط بلا كاشير: مغسلة — البطا
   console.log(`  إيراد 4103 في اليومية: ${fmt(-balanceOf(st.journal, '4103'))}`)
   console.log(`  «إيراد الفترة من الدفتر» (الجديد): ${fmt(journalRev.totalMinor)} — البند: ${journalRev.rows.map((r) => `${r.accountCode} ${r.nameAr || ''} (${r.moduleNameAr ?? 'عام'})`).join(' · ')}`)
   console.log(`  قائمة الدخل: ${fmt(is.totalRevenueMinor)} · بطاقة فواتير الكاشير (تفصيل): ${fmt(center.totalMinor)}`)
+  assert.equal(-balanceOf(st.journal, '4103'), 30000, 'إيراد المغسلة في دفتر الأستاذ غير صحيح')
+  assert.equal(journalRev.totalMinor, 30000, 'بطاقة إيراد الدفتر للمغسلة غير صحيحة')
+  assert.equal(is.totalRevenueMinor, journalRev.totalMinor, 'بطاقة إيراد الدفتر لا تطابق قائمة الدخل')
+  assert.equal(center.totalMinor, 0, 'بطاقة مبيعات الكاشير يجب أن تبقى تفصيلاً لا إجمالي إيراد النشاط')
   console.log(`  ⇒ ${journalRev.totalMinor === is.totalRevenueMinor ? '✓ البطاقة تطابق القوائم المالية — التناقض انتهى (بطاقة الكاشير صارت تفصيلاً موسوماً)' : '⚠ ما زال هناك فرق'}`)
 }
 
@@ -70,6 +75,9 @@ console.log('\n═══ ② سوبرماركت + مغسلة (وحدة مطعَ�
   console.log(`  الوحدات المفعّلة: ${effectiveModules('grocery', ['laundry']).join(', ')}`)
   console.log(`  الإجمالي من الدفتر: ${fmt(journalRev.totalMinor)}`)
   for (const [name, amount] of [...byModule.entries()].sort((a, b) => b[1] - a[1])) console.log(`   • ${name}: ${fmt(amount)}`)
+  assert.equal(journalRev.totalMinor, 32000, 'إجمالي الإيراد الموزع بين النشاط الأصلي والوحدة المطعمة غير صحيح')
+  assert.equal([...byModule.values()].reduce((sum, amount) => sum + amount, 0), 32000, 'مجموع إيرادات الأقسام لا يطابق الإجمالي')
+  assert.deepEqual([...byModule.values()].sort((a, b) => a - b), [12000, 20000], 'توزيع الإيراد بين الكاشير والمغسلة غير صحيح')
   console.log(`  ⇒ ${journalRev.totalMinor === 32000 ? '✓ إيراد النشاط الأصلي وإيراد الوحدة المطعَّمة في بطاقة واحدة موزّعة بالأقسام' : '⚠ التوزيع غير مكتمل'}`)
 }
 
@@ -83,6 +91,8 @@ console.log('\n═══ ③ معرض سيارات (نشاط بلا كاشير):
   const used = new Set(c.st().journal.flatMap((e) => e.lines.map((l) => l.accountCode)))
   const after = coaForModules(c.coa, c.modules, used).map((a) => a.code)
   console.log(`  بعد شراء سيارة: 1103 ظاهر؟ ${after.includes('1103')} · 5101 ظاهر؟ ${after.includes('5101')}`)
+  assert.ok(before.includes('1103') && before.includes('5101'), 'حسابا مخزون وتكلفة السيارات يجب أن يظهرا قبل الحركة')
+  assert.ok(after.includes('1103') && after.includes('5101'), 'حسابا مخزون وتكلفة السيارات يجب أن يبقيا ظاهرين بعد الحركة')
   console.log(`  ⇒ ${before.includes('1103') && before.includes('5101') ? '✓ الشجرة مستقرة من البداية — لا حساب يظهر فجأة' : '⚠ ما زال مؤجلاً'}`)
 }
 
@@ -94,6 +104,10 @@ console.log('\n═══ ④ منح «كاشير» لنشاط لا يملكه: �
   console.log(`  الوحدات بعد المنح (إغلاق تلقائي): ${mods.join(', ')}`)
   console.log(`  مسار /pos؟ ${pathAllowedForSetup('/pos', mods, [], 'equipment_rental')} · /inventory؟ ${pathAllowedForSetup('/inventory', mods, [], 'equipment_rental')} · /purchases؟ ${pathAllowedForSetup('/purchases', mods, [], 'equipment_rental')}`)
   console.log(`  حسابات محرك الكاشير: 1103 ظاهر؟ ${vis.has('1103')} · 5101 ظاهر؟ ${vis.has('5101')} · 5111 ظاهر؟ ${vis.has('5111')}`)
+  assert.ok(pathAllowedForSetup('/pos', mods, [], 'equipment_rental'), 'مسار الكاشير غير متاح بعد تفعيل الوحدة')
+  assert.ok(pathAllowedForSetup('/inventory', mods, [], 'equipment_rental'), 'مسار المخزون غير متاح مع تبعية الكاشير')
+  assert.ok(pathAllowedForSetup('/purchases', mods, [], 'equipment_rental'), 'مسار المشتريات غير متاح مع تبعية الكاشير')
+  for (const code of ['1103', '5101', '5111']) assert.ok(vis.has(code), `حساب محرك الوحدة الممنوحة ${code} غير ظاهر`)
   console.log(`  ⇒ ${vis.has('1103') && vis.has('5101') ? '✓ الوحدة الممنوحة تعمل كاملة — لا ترحيل على حساب مخفي' : '⚠ الثقب باقٍ'}`)
 }
 
@@ -105,6 +119,8 @@ console.log('\n═══ ⑤ سندات القبض والصرف: الحسابا�
     return { id: t.id, rec: voucherCountersFor('receipt', mods), pay: voucherCountersFor('payment', mods) }
   })
   const empty = rows.filter((r) => !r.rec.length || !r.pay.length)
+  assert.equal(rows.length, ACTIVITY_TEMPLATES.length, 'لم تنتج قائمة مقابلات السندات صفاً لكل نشاط')
+  assert.deepEqual(empty, [], `أنشطة بلا حساب قبض أو صرف: ${empty.map((r) => r.id).join(', ')}`)
   console.log(`  أنشطة لها حساب قبض وحساب صرف متاح: ${rows.length - empty.length}/${rows.length}${empty.length ? ` — ناقص: ${empty.map((r) => r.id).join(', ')}` : ' ✓'}`)
   for (const id of ['logistics', 'lab', 'realestate', 'laundry', 'cars']) {
     const r = rows.find((x) => x.id === id)
@@ -117,6 +133,17 @@ console.log('\n═══ ⑤ سندات القبض والصرف: الحسابا�
     + ` · مقاولات ${extrasFor('contracting', 'payment').filter((c) => ['2108', '2112'].includes(c)).join(',')}`
     + ` · عقارات ${extrasFor('realestate', 'payment').filter((c) => ['2115', '2103'].includes(c)).join(',')}`)
   const leaked = extrasFor('grocery', 'payment').filter((c) => ['2111', '2113', '2108', '2115', '2110', '5109'].includes(c))
+  assert.deepEqual(leaked, [], `تسربت بنود صرف تخصصية إلى البقالة: ${leaked.join(', ')}`)
+  const expectedExpenseCodes = {
+    equipment_rental: ['5105', '2103'],
+    logistics: ['2111', '2113', '5106'],
+    contracting: ['2108', '2112'],
+    realestate: ['2103', '2115'],
+  }
+  for (const [activityId, codes] of Object.entries(expectedExpenseCodes)) {
+    const available = new Set(extrasFor(activityId, 'payment'))
+    for (const code of codes) assert.ok(available.has(code), `${activityId}: بند الصرف ${code} غير متاح`)
+  }
   console.log(`  بقالة (بلا أقسام): بند غريب؟ ${leaked.length === 0 ? 'لا ✓' : `نعم ${leaked.join(',')}`}`)
   console.log('  ⇒ أول حساب في القائمة هو الافتراضي في الشاشة (تُهيَّأ آلياً) — لا خانة فارغة ولا خطأ عند أول حفظ')
 }

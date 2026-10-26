@@ -16,6 +16,8 @@ const { useDataStore } = await import('../src/data/repo.ts')
 const { STANDARD_COA, accountNature } = await import('../src/core/ledger.ts')
 const { openingKey, OPENING_COVERED_SYSTEM_KEYS } = await import('../src/core/openingBalances.ts')
 const { keyFingerprint } = await import('../src/core/license.ts')
+const { todayLocalIso } = await import('../src/core/time.ts')
+const { trialBalance } = await import('../src/core/financialReports.ts')
 
 /* نفس منطق تبويب «الحسابات العامة» في الواجهة: كل حساب قابل بلا مخصص وبلا 3101 */
 const pickable = (rootType: string) => STANDARD_COA.find((a) => a.rootType === rootType && a.isPostable && !(a.systemKey && OPENING_COVERED_SYSTEM_KEYS.has(a.systemKey)) && a.code !== '3101')!
@@ -73,6 +75,26 @@ describe('الأرصدة الافتتاحية — الحساب العام (v1.0.
     expect(() => S().setOpeningBalance({ kind: 'account', refId: '1101', amountMinor: 100, label: 'خزينة' })).toThrow('نوع افتتاحي مخصص')
     expect(() => S().setOpeningBalance({ kind: 'account', refId: '3101', amountMinor: 100, label: 'رأس المال' })).toThrow('نوع افتتاحي مخصص')
     expect(() => S().setOpeningBalance({ kind: 'account', refId: '9999', amountMinor: 100, label: 'وهمي' })).toThrow('غير موجود')
+  })
+
+  it('يثبت تاريخ السريان لأول رصيد فقط ويرفض التاريخ غير التقويمي بلا أثر', () => {
+    const asset = STANDARD_COA.find((account) => account.rootType === 'assets' && account.isPostable
+      && !(account.systemKey && OPENING_COVERED_SYSTEM_KEYS.has(account.systemKey))
+      && account.code !== '3101' && !Object.prototype.hasOwnProperty.call(S().openingBalances, openingKey('account', account.code)))!
+    const before = S().journal.length
+    expect(() => S().setOpeningBalance({ kind: 'account', refId: asset.code, amountMinor: 10_000, label: 'تاريخ غير صالح', effectiveDate: '2026-02-30' })).toThrow('تاريخ سريان')
+    expect(S().journal).toHaveLength(before)
+
+    S().setOpeningBalance({ kind: 'account', refId: asset.code, amountMinor: 10_000, label: 'افتتاحي بتاريخ سابق', effectiveDate: '2026-04-01' })
+    const initial = S().journal.at(-1)!
+    expect(initial.date).toBe('2026-04-01')
+    expect(trialBalance(S().journal, { from: '2026-03-01', to: '2026-03-31' }).rows.some((row) => row.code === asset.code)).toBe(false)
+    expect(trialBalance(S().journal, { from: '2026-04-01', to: '2026-04-30' }).rows.some((row) => row.code === asset.code && row.debitMinor === 10_000)).toBe(true)
+
+    S().setOpeningBalance({ kind: 'account', refId: asset.code, amountMinor: 12_000, label: 'تعديل افتتاحي', effectiveDate: '2026-04-01' })
+    const adjustment = S().journal.at(-1)!
+    expect(adjustment.date).toBe(todayLocalIso())
+    expect(adjustment.date).not.toBe(initial.date)
   })
 
   it('كل قيود الافتتاحي مصدرها opening — بصمات الحرق دالة نصية خالصة مستقرة', () => {

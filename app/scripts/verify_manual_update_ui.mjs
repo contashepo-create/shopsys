@@ -30,7 +30,7 @@ check('المتصفح يحمل زر فحص مستقل عن electron-updater', ab
 
 console.log('— ② شريط التنزيل —')
 check('المكوّن يعرض شريط تقدم التنزيل', component.includes('desktop-updater-progress') && component.includes('style={{ width:') && component.includes('percent'))
-check('العملية الرئيسية ترسل الحالة إلى الواجهة', main.includes("mainWindow.webContents.send('updater:state', state)") && main.includes('updateDownloadPercent'))
+check('العملية الرئيسية تبث الحالة إلى النافذة الرئيسية ونوافذ الأقسام مع تقدم التنزيل', main.includes("webContents.send('updater:state', state)") && main.includes('satelliteWebContents()') && main.includes('updateDownloadPercent'))
 check('preload يمرّر الحالة كمشترك قابل للإلغاء', preload.includes("ipcRenderer.on('updater:state', wrapped)") && preload.includes('removeListener'))
 
 console.log('— ③ الفحص التلقائي الخلفي كما هو —')

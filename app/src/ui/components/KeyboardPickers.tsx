@@ -5,7 +5,7 @@ import { useAnchoredMenu } from './anchoredMenu.ts'
 import { parseSmartEntry, type SmartEntry } from './smartEntry.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { useWindowHost } from '../windows/windowHostContext.ts'
-import { openItemPickerWindow } from '../windows/windowStore.ts'
+import { openItemPickerWindow, openEntityPickerWindow, type EntityPickerKind } from '../windows/windowStore.ts'
 
 type QuickChoice = { value: string; content: ReactNode; label: string; searchText: string }
 
@@ -371,7 +371,8 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
 
 type Party = { id: number; nameAr: string; phone?: string; active?: boolean }
 export type PartyPickerInfo = { code?: string; balance?: string }
-export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, onConfirm, autoFocus = false, cashValue, showCash = true, partyInfo }: { parties: Party[]; value: number; onChange: (id: number) => void; cashLabel: string; label: string; onConfirm?: () => void; autoFocus?: boolean; cashValue?: number; showCash?: boolean; partyInfo?: (party: Party) => PartyPickerInfo }) {
+export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, onConfirm, autoFocus = false, cashValue, showCash = true, partyInfo, entityKind, commitOnClick = false }: { parties: Party[]; value: number; onChange: (id: number) => void; cashLabel: string; label: string; onConfirm?: () => void; autoFocus?: boolean; cashValue?: number; showCash?: boolean; partyInfo?: (party: Party) => PartyPickerInfo; /** يثبت اختيار الطرف بنقرة واحدة عند استخدامه في محرر فاتورة */ commitOnClick?: boolean; /** عند تحديد النوع: النقر المزدوج على الحقل يفتح المنتقي الحي (إنشاء/تعديل/كشف في نوافذ ابنة) */ entityKind?: EntityPickerKind }) {
+  const host = useWindowHost()
   const emptyValue = cashValue ?? (value === -1 ? -1 : 0)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -475,7 +476,7 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   const renderParty = (party: Party, row: number) => {
     const info = partyInfo?.(party) ?? {}
     const stopped = party.active === false ? 'موقوف' : undefined
-    return <button type="button" key={party.id} data-quick-option="true" data-value={String(party.id)} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => commit(party)} className={`invoice-search-result-row w-full rounded-lg p-2 text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`}>
+    return <button type="button" key={party.id} data-quick-option="true" data-value={String(party.id)} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (commitOnClick) commit(party); else setIndex(row) }} onDoubleClick={() => commit(party)} className={`invoice-search-result-row w-full rounded-lg p-2 text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0"><div className="flex items-center gap-2"><span className="font-mono text-[10px] text-slate-400" dir="ltr">{info.code}</span><b className="truncate">{party.nameAr}</b></div>{party.phone && <span className="text-[10px] text-slate-500" dir="ltr">{party.phone}</span>}</div>
         <div className="shrink-0 text-left text-[10px] font-bold">{info.balance && <div className="text-slate-500">{info.balance}</div>}{stopped && <div className="text-rose-600">{stopped}</div>}</div>
@@ -483,13 +484,235 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
     </button>
   }
   return <div ref={pickerRef} className="relative invoice-picker-root" data-enter-native="true" data-party-picker="true">
-    <input ref={inputRef} className={inputCls} value={open ? '' : (selected?.nameAr ?? cashLabel)} aria-label={open ? undefined : label} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) { setQuery(event.target.value); setIndex(0) } else openSearch(event.target.value) }} onKeyDown={handleKeyDown} />
+    <input ref={inputRef} className={inputCls} value={open ? '' : (selected?.nameAr ?? cashLabel)} aria-label={open ? undefined : label} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} title={entityKind ? 'انقر مرتين لفتح البحث الحي — إنشاء وتعديل بدون مغادرة الفاتورة' : undefined} data-live-picker-dblclick={entityKind || undefined} onDoubleClick={entityKind ? () => { setOpen(false); openEntityPickerWindow({ entity: entityKind, parentId: host?.windowId ?? null, onPick: (id) => { onChange(id); onConfirm?.() } }) } : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) { setQuery(event.target.value); setIndex(0) } else openSearch(event.target.value) }} onKeyDown={handleKeyDown} />
     {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-party-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
       <div role="dialog" aria-label={`${label} — نتائج البحث`} style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="invoice-search-header flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700"><div><b className="text-base">بحث {label.replace('بحث ', '')}</b><p className="text-xs text-slate-500">اكتب الاسم أو الهاتف أو الكود، ثم اختر بالأسهم أو الضغط مرتين</p></div><button type="button" aria-label="إغلاق البحث" className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-500/10" onClick={() => setOpen(false)}>✕</button></div>
+        <div className="invoice-search-header flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700"><div><b className="text-base">بحث {label.replace('بحث ', '')}</b><p className="text-xs text-slate-500">اكتب الاسم أو الهاتف أو الكود، {commitOnClick ? 'ثم اضغط على الطرف مرة واحدة' : 'ثم اضغط مرتين على الطرف'} أو اختر بالأسهم وEnter</p></div><button type="button" aria-label="إغلاق البحث" className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-500/10" onClick={() => setOpen(false)}>✕</button></div>
         <div className="invoice-search-inputbar border-b border-slate-200 p-3 dark:border-slate-700"><input ref={searchInputRef} className={inputCls} value={query} placeholder={`ابحث في ${label.replace('بحث ', '')}`} aria-label={label} autoComplete="off" onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown} /></div>
         <div role="listbox" aria-label={`${label} — نتائج البحث`} className="invoice-search-results overflow-auto p-2">{showCash && <button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(-1)} onDoubleClick={() => { onChange(emptyValue); setOpen(false); onConfirm?.() }} className={`invoice-search-result-row invoice-search-cash w-full rounded-xl border border-dashed border-brand-300 p-3 text-right font-bold text-brand-700 hover:bg-brand-500/10 dark:border-brand-700 dark:text-brand-300 ${index === -1 ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : ''}`}>{cashLabel}</button>}{matches.length ? matches.map(renderParty) : <div className="p-8 text-center text-sm text-slate-400">لا توجد نتائج مطابقة</div>}</div>
       </div>
     </div></OverlayPortal>}
   </div>
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   المنتقي الحي الموحّد (طلب المالك — بند ٩): نفس تصميم «بحث الأصناف — بحث حي»
+   الذي كان موجوداً من قبل، مُعمَّماً على العملاء والموردين والموظفين والمشاريع:
+   بحث فوري + مرشّحات + شريط إجراءات للعنصر المحدد (تعديل/كشف حساب في نوافذ
+   ابنة) + زر إنشاء سريع يفتح نافذة ابنة وتعود بالاختيار تلقائياً.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function LivePanelShell<T extends { id: number }>(props: {
+  panelId: string
+  searchLabel: string
+  placeholder: string
+  items: T[]
+  searchFields: (item: T) => (string | number | null | undefined)[]
+  columnsClass: string
+  headerCells: ReactNode
+  renderRow: (item: T) => ReactNode
+  currentTitle: (item: T) => ReactNode
+  currentActions?: (item: T) => ReactNode
+  filtersNode?: ReactNode
+  countLabel: (n: number) => string
+  emptyText: string
+  createLabel?: string
+  onCreate?: (name: string) => void
+  footerText: string
+  onPick: (id: number) => void
+  onEscape?: () => void
+  initialQuery?: string
+}) {
+  const [query, setQuery] = useState(props.initialQuery ?? '')
+  const [index, setIndex] = useState(0)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const { items, searchFields } = props
+  const matches = useMemo(() => {
+    const q = query.trim()
+    if (!q) return items
+    return items.filter((item) => matchesSearch(searchFields(item), q))
+  }, [items, searchFields, query])
+  /* الفهرس يُحصَر أثناء العرض بدل أثر جانبي عند تغيّر القوائم (بيانات حية) */
+  const safeIndex = Math.min(index, Math.max(0, matches.length - 1))
+  useEffect(() => {
+    const input = searchInputRef.current
+    if (!input) return
+    input.focus()
+    const position = input.value.length
+    input.setSelectionRange(position, position)
+  }, [])
+  const current = matches[safeIndex]
+  const keys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((v) => Math.min(Math.max(0, matches.length - 1), v + 1)) }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((v) => Math.max(0, v - 1)) }
+    else if (event.key === 'Enter') { event.preventDefault(); if (current) props.onPick(current.id) }
+    else if (event.key === 'Escape') { event.preventDefault(); props.onEscape?.() }
+  }
+  return <div className="flex min-h-0 flex-1 flex-col" data-live-picker-panel={props.panelId}>
+    <div className="invoice-search-inputbar border-b border-slate-200 p-2 dark:border-slate-700"><div className="relative">
+      <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <input ref={searchInputRef} className={`${inputCls} pr-9`} value={query} aria-label={props.searchLabel} title={props.placeholder}
+        placeholder={props.placeholder} onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={keys} data-live-picker-search />
+    </div></div>
+    <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-2 py-1.5 text-[11px] dark:border-slate-700" data-live-picker-filters>
+      {props.filtersNode}
+      <span className="ms-auto text-slate-400">{props.countLabel(matches.length)}</span>
+      {props.onCreate && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => props.onCreate?.(query.trim())} className="rounded-lg border border-emerald-300 px-2 py-0.5 font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300" data-live-picker-create>+ {props.createLabel ?? 'جديد'}</button>}
+    </div>
+    {current && props.currentActions && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-brand-500/5 px-3 py-2 dark:border-slate-700">
+      <div className="min-w-0">{props.currentTitle(current)}</div>
+      <div className="flex items-center gap-1">{props.currentActions(current)}</div>
+    </div>}
+    <div className={`grid ${props.columnsClass} gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800/50`} data-live-picker-head>
+      {props.headerCells}
+    </div>
+    <div role="listbox" aria-label={props.searchLabel} className="invoice-search-results min-h-0 flex-1 overflow-auto p-1">{matches.length ? matches.map((item, row) => (
+      <button type="button" key={item.id} role="option" aria-selected={row === safeIndex} data-quick-option data-live-picker-row={item.id}
+        onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => props.onPick(item.id)}
+        className={`grid w-full ${props.columnsClass} items-center gap-2 rounded-lg px-2.5 py-1.5 text-right ${row === safeIndex ? 'bg-brand-500/15' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+        {props.renderRow(item)}
+      </button>
+    )) : <div className="p-4 text-center text-sm text-slate-400">{props.emptyText}</div>}</div>
+    <div className="invoice-search-footer border-t border-slate-100 px-3 py-2 text-[10px] text-slate-400 dark:border-slate-800">{props.footerText}</div>
+  </div>
+}
+
+const liveActionBtn = 'rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold enabled:hover:bg-slate-50 disabled:opacity-35 dark:border-slate-700'
+
+export type LiveParty = { id: number; nameAr: string; phone?: string; active?: boolean }
+
+/** بحث حي للعملاء/الموردين: رصيد كل حساب، وذمم فقط، وتعديل وكشف حساب كنوافذ ابنة */
+export function PartySearchPanel({ kind, parties, balanceOf, fmtMoney, onPick, onCreate, onEdit, onLedger, onEscape, initialQuery }: {
+  kind: 'customer' | 'supplier'
+  parties: LiveParty[]
+  balanceOf: (id: number) => number
+  fmtMoney: (minor: number) => string
+  onPick: (id: number) => void
+  onCreate?: (name: string) => void
+  onEdit?: (id: number) => void
+  onLedger?: (id: number) => void
+  onEscape?: () => void
+  initialQuery?: string
+}) {
+  const [duesOnly, setDuesOnly] = useState(false)
+  const items = useMemo(() => (duesOnly ? parties.filter((p) => balanceOf(p.id) !== 0) : parties), [parties, duesOnly, balanceOf])
+  const noun = kind === 'customer' ? 'عميل' : 'مورد'
+  const balanceText = (party: LiveParty) => {
+    const balance = balanceOf(party.id)
+    if (balance === 0) return <span className="text-slate-400">متزن</span>
+    return <span className={balance > 0 ? 'text-rose-600' : 'text-emerald-500'}>{fmtMoney(Math.abs(balance))} {balance > 0 ? 'عليه' : 'له'}</span>
+  }
+  return <LivePanelShell<LiveParty>
+    panelId={kind}
+    searchLabel={`بحث ${noun}`}
+    placeholder="ابحث بالاسم أو الهاتف أو الرقم"
+    items={items}
+    searchFields={(p) => [p.nameAr, p.phone, p.id]}
+    columnsClass="grid-cols-[1fr_120px_140px_80px]"
+    headerCells={<><span>الاسم</span><span>الهاتف</span><span className="text-center">الرصيد</span><span className="text-center">الحالة</span></>}
+    renderRow={(p) => <>
+      <span className="min-w-0"><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">#{p.id}</span><b className="truncate align-middle">{p.nameAr}</b></span>
+      <span className="truncate text-[11px] text-slate-500" dir="ltr">{p.phone || '—'}</span>
+      <span className="text-center text-[11px] font-bold">{balanceText(p)}</span>
+      <span className={`text-center text-[10px] font-bold ${p.active === false ? 'text-rose-600' : 'text-emerald-500'}`}>{p.active === false ? 'موقوف' : 'نشط'}</span>
+    </>}
+    currentTitle={(p) => <><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">#{p.id}</span><b className="block truncate">{p.nameAr}</b></>}
+    currentActions={(p) => <>
+      <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onEdit?.(p.id)} disabled={!onEdit} data-live-picker-edit className={`${liveActionBtn} text-sky-700 dark:text-sky-300`}>✎ تعديل</button>
+      <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onLedger?.(p.id)} disabled={!onLedger} data-live-picker-ledger className={`${liveActionBtn} text-violet-700 dark:text-violet-300`}>↗ كشف الحساب</button>
+    </>}
+    filtersNode={<label className="flex cursor-pointer items-center gap-1 text-slate-600 dark:text-slate-300"><input type="checkbox" checked={duesOnly} onChange={(event) => setDuesOnly(event.target.checked)} data-live-picker-dues /> أصحاب الذمم فقط</label>}
+    countLabel={(n) => `${n} ${noun}`}
+    emptyText="لا توجد حسابات مطابقة"
+    createLabel={`${noun} جديد`}
+    onCreate={onCreate}
+    footerText="اختر بالسهم ثم Enter، أو اضغط مرتين · التعديل وكشف الحساب والإنشاء تفتح في نوافذ فوق هذه النافذة ولا تغلقها"
+    onPick={onPick}
+    onEscape={onEscape}
+    initialQuery={initialQuery}
+  />
+}
+
+export type LiveProject = { id: number; code: string; nameAr: string; clientName?: string; status: string; contractValueMinor: number }
+
+/** بحث حي للمشاريع: كود/اسم/عميل، وحالاتها وقيم عقودها، وإنشاء سريع كنافذة ابنة */
+export function ProjectSearchPanel({ projects, fmtMoney, onPick, onCreate, onEdit, onEscape, initialQuery }: {
+  projects: LiveProject[]
+  fmtMoney: (minor: number) => string
+  onPick: (id: number) => void
+  onCreate?: (name: string) => void
+  onEdit?: (id: number) => void
+  onEscape?: () => void
+  initialQuery?: string
+}) {
+  const [includeCompleted, setIncludeCompleted] = useState(false)
+  const items = useMemo(() => (includeCompleted ? projects : projects.filter((p) => p.status === 'active')), [projects, includeCompleted])
+  return <LivePanelShell<LiveProject>
+    panelId="project"
+    searchLabel="بحث مشروع"
+    placeholder="ابحث بكود المشروع أو اسمه أو اسم العميل"
+    items={items}
+    searchFields={(p) => [p.code, p.nameAr, p.clientName, p.id]}
+    columnsClass="grid-cols-[110px_1fr_1fr_120px_80px]"
+    headerCells={<><span>الكود</span><span>المشروع</span><span>العميل</span><span className="text-center">قيمة العقد</span><span className="text-center">الحالة</span></>}
+    renderRow={(p) => <>
+      <span className="truncate font-mono text-[11px] font-bold text-brand-600" dir="ltr">{p.code}</span>
+      <b className="truncate">{p.nameAr}</b>
+      <span className="truncate text-[11px] text-slate-500">{p.clientName || '—'}</span>
+      <span className="text-center text-[11px] font-bold">{fmtMoney(p.contractValueMinor)}</span>
+      <span className={`text-center text-[10px] font-bold ${p.status === 'active' ? 'text-emerald-500' : 'text-slate-400'}`}>{p.status === 'active' ? 'جارٍ' : 'مقفل'}</span>
+    </>}
+    currentTitle={(p) => <><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{p.code}</span><b className="block truncate">{p.nameAr}</b></>}
+    currentActions={(p) => <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onEdit?.(p.id)} disabled={!onEdit} data-live-picker-edit className={`${liveActionBtn} text-sky-700 dark:text-sky-300`}>✎ تعديل المشروع</button>}
+    filtersNode={<label className="flex cursor-pointer items-center gap-1 text-slate-600 dark:text-slate-300"><input type="checkbox" checked={includeCompleted} onChange={(event) => setIncludeCompleted(event.target.checked)} data-live-picker-include-completed /> تضمين المقفلة</label>}
+    countLabel={(n) => `${n} مشروع`}
+    emptyText="لا توجد مشاريع مطابقة"
+    createLabel="مشروع جديد"
+    onCreate={onCreate}
+    footerText="اختر بالسهم ثم Enter، أو اضغط مرتين · الإنشاء والتعديل يفتحان في نافذة فوق هذه النافذة ولا يغلقانها"
+    onPick={onPick}
+    onEscape={onEscape}
+    initialQuery={initialQuery}
+  />
+}
+
+export type LiveEmployee = { id: number; nameAr: string; phone?: string; jobTitle?: string; active?: boolean }
+
+/** بحث حي للموظفين: الاسم والمسمى والهاتف، وإنشاء سريع كنافذة ابنة */
+export function EmployeeSearchPanel({ employees, onPick, onCreate, onEdit, onEscape, initialQuery }: {
+  employees: LiveEmployee[]
+  onPick: (id: number) => void
+  onCreate?: (name: string) => void
+  onEdit?: (id: number) => void
+  onEscape?: () => void
+  initialQuery?: string
+}) {
+  const [activeOnly, setActiveOnly] = useState(true)
+  const items = useMemo(() => (activeOnly ? employees.filter((e) => e.active !== false) : employees), [employees, activeOnly])
+  return <LivePanelShell<LiveEmployee>
+    panelId="employee"
+    searchLabel="بحث موظف"
+    placeholder="ابحث بالاسم أو المسمى الوظيفي أو الهاتف"
+    items={items}
+    searchFields={(e) => [e.nameAr, e.jobTitle, e.phone, e.id]}
+    columnsClass="grid-cols-[1fr_150px_120px_80px]"
+    headerCells={<><span>الاسم</span><span>المسمى الوظيفي</span><span>الهاتف</span><span className="text-center">الحالة</span></>}
+    renderRow={(e) => <>
+      <b className="truncate">{e.nameAr}</b>
+      <span className="truncate text-[11px] text-slate-500">{e.jobTitle || '—'}</span>
+      <span className="truncate text-[11px] text-slate-500" dir="ltr">{e.phone || '—'}</span>
+      <span className={`text-center text-[10px] font-bold ${e.active === false ? 'text-slate-400' : 'text-emerald-500'}`}>{e.active === false ? 'متوقف' : 'على رأس العمل'}</span>
+    </>}
+    currentTitle={(e) => <b className="block truncate">{e.nameAr}</b>}
+    currentActions={(e) => <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onEdit?.(e.id)} disabled={!onEdit} data-live-picker-edit className={`${liveActionBtn} text-sky-700 dark:text-sky-300`}>✎ تعديل</button>}
+    filtersNode={<label className="flex cursor-pointer items-center gap-1 text-slate-600 dark:text-slate-300"><input type="checkbox" checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} data-live-picker-active /> على رأس العمل فقط</label>}
+    countLabel={(n) => `${n} موظف`}
+    emptyText="لا يوجد موظفون مطابقون"
+    createLabel="موظف جديد"
+    onCreate={onCreate}
+    footerText="اختر بالسهم ثم Enter، أو اضغط مرتين · الإنشاء والتعديل يفتحان في نافذة فوق هذه النافذة ولا يغلقانها"
+    onPick={onPick}
+    onEscape={onEscape}
+    initialQuery={initialQuery}
+  />
 }

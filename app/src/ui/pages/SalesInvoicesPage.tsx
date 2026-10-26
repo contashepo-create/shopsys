@@ -4,10 +4,11 @@
  *   التعديل يعكس القيد القديم ويولد قيداً جديداً فلا يفسد الدفتر أبداً.
  *   مع تفعيلها: يظهر بدلاً منه زرا «إشعار دائن» (مرتجع) و«إشعار مدين» (فاتورة إضافية).
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins, MessageCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type SaleInvoice } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { DocumentAttachmentsBox } from '../components/DocumentAttachments.tsx'
 import type { DocumentCharge } from '../../core/documentCharges.ts'
 import type { InternalExpense } from '../../core/advancedInvoice.ts'
@@ -19,7 +20,8 @@ import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.t
 import { effectiveVatPercent, PriceFloorError } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
-import { qrDataUrlFromPayload, taxBarcodePayload } from '../print/taxBarcode.ts'
+import { documentTaxBarcodePayload, resolveDocumentPrintSettings } from '../print/branchPrint.ts'
+import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { saleWaParty } from '../../core/whatsapp.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
@@ -66,6 +68,8 @@ export function SalesInvoicesPage() {
 
   /* ─── حالة نافذة التعديل ─── */
   const [editing, setEditing] = useState<SaleInvoice | null>(null)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const editPostingRef = useRef(false)
   const [editLines, setEditLines] = useState<CartLine[]>([])
   const [selectedEditLine, setSelectedEditLine] = useState<number | null>(null)
   const [editCustomerId, setEditCustomerId] = useState<number | null>(null)
@@ -142,43 +146,43 @@ export function SalesInvoicesPage() {
   useEffect(() => { unsavedEdit.markClean() }, [editing?.id, unsavedEdit])
 
   const saveEdit = (creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
-    if (!editing || !editTotals) return
-    try {
-      const paidMinor = toMinor(editPaid || '0', cur.decimals)
-      const payment = paidMinor >= editTotals.totalMinor ? 'cash' as const : 'credit' as const
-      const updated = editSale({
-        saleId: editing.id,
-        lines: editLines,
-        customerId: editCustomerId,
-        payment,
-        paidMinor: Math.min(paidMinor, editTotals.totalMinor),
-        treasury: editTreasury,
-        invoiceDiscountPercent: editDiscount,
-        customerReference: editCustomerReference,
-        dueDate: editDueDate,
-        notes: editNotes,
-        customerCharges: editCustomerCharges,
-        internalExpenses: editInternalExpenses,
-        reason: editReason.trim(),
-        einvoiceActive,
-        allowNegativeStock: setup.allowNegativeStock,
-        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
-        priceFloorOverrideBy: priceFloorOverrideBy ?? null,
-      })
+    if (!editing || !editTotals || editPostingRef.current) return
+    editPostingRef.current = true
+    setIsSavingEdit(true)
+    const paidMinor = toMinor(editPaid || '0', cur.decimals)
+    const payment = paidMinor >= editTotals.totalMinor ? 'cash' as const : 'credit' as const
+    void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => editSale({
+      saleId: editing.id,
+      lines: editLines,
+      customerId: editCustomerId,
+      payment,
+      paidMinor: Math.min(paidMinor, editTotals.totalMinor),
+      treasury: editTreasury,
+      invoiceDiscountPercent: editDiscount,
+      customerReference: editCustomerReference,
+      dueDate: editDueDate,
+      notes: editNotes,
+      customerCharges: editCustomerCharges,
+      internalExpenses: editInternalExpenses,
+      reason: editReason.trim(),
+      einvoiceActive,
+      allowNegativeStock: setup.allowNegativeStock,
+      creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+      priceFloorOverrideBy: priceFloorOverrideBy ?? null,
+    })).then((updated) => {
       toast.show(`عُدلت ${updated.invoiceNumber} — عُكس قيدها القديم وتولد قيد جديد صحيح ✓`)
       setEditing(null)
-    } catch (e) {
+    }).catch((e: unknown) => {
       if (e instanceof PriceFloorError) {
         editApproval.request((by) => saveEdit(creditLimitOverrideBy, by ?? 'المشرف'))
         return
       }
-      // التعديل رفع آجل العميل فوق حده — اعتماد مدير بصلاحية sales.credit.override
       if (e instanceof CreditLimitError) {
         creditApproval.request((by) => saveEdit(by ?? 'المشرف'))
         return
       }
-      toast.show((e as Error).message, 'error')
-    }
+      toast.show(e instanceof Error ? e.message : 'تعذّر تأمين تعديل الفاتورة', 'error')
+    }).finally(() => { editPostingRef.current = false; setIsSavingEdit(false) })
   }
   // البحث بالمرجع/رقم الفاتورة — المرجعي يُطبع على الإيصال فيقرأه العميل بالهاتف
   const [query, setQuery] = useState('')
@@ -192,24 +196,20 @@ export function SalesInvoicesPage() {
 
   /** نموذج الطباعة لفاتورة مبيعات — يُستعمل للطباعة وللإرسال عبر واتساب */
   const buildSaleModel = async (s: SaleInvoice) => {
+    const documentSettings = resolveDocumentPrintSettings(s)
     /* إعادة طباعة فاتورة قديمة: الرمز يُعاد من الحمولة المجمّدة وقت أول طباعة
        (اسم المنشأة/الرقم الضريبي/الأرقام كما كانت) — لا يُعاد توليده ببيانات اليوم.
-       وإن لم تكن مجمّدة بعد (فاتورة سابقة للتحديث) نولّدها مرة واحدة ونحفظها. */
+       وإن لم تكن مجمّدة بعد (فاتورة سابقة للتحديث) نولّدها مرة واحدة من
+       هوية فرع الفاتورة نفسه — ولو كان الفرع النشط مختلفاً — ثم نحفظها. */
     let qrDataUrl: string | undefined
-    if (s.taxQrPayload) {
+    if (s.taxQrPayload && documentSettings.identityComplete) {
       qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
-    } else {
-      const payload = taxBarcodePayload({
-        saFeatureActive: einvoice.enabled === true && hasFeature(licStateForQr(), 'einvoice_sa'),
-        egFeatureActive: einvoice.enabled === true && hasFeature(licStateForQr(), 'einvoice_eg'),
-        printEnabled: einvoice.printZatcaQr,
-        sellerName: setup.shopName,
-        taxNumber: einvoice.taxNumber,
+    } else if (documentSettings.identityComplete) {
+      const payload = documentTaxBarcodePayload(null, s, {
         invoiceNumber: s.invoiceNumber,
         dateIso: s.date,
         totalMinor: s.totals.totalMinor,
         taxMinor: s.totals.taxMinor,
-        decimals: cur.decimals,
       })
       if (payload) {
         qrDataUrl = qrDataUrlFromPayload(payload)
@@ -233,17 +233,19 @@ export function SalesInvoicesPage() {
       customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null,
       taxPercent: tx.taxPercent,
       taxInclusive: tx.taxInclusive,
-      settings: receipt,
+      settings: documentSettings.receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
-    if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${receipt.footerText ? ' — ' + receipt.footerText : ''}`
+    if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${documentSettings.receipt.footerText ? ' — ' + documentSettings.receipt.footerText : ''}`
     return model
   }
-  const licStateForQr = () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
 
   const printInvoice = async (s: SaleInvoice, template: InvoiceTemplate) => {
     const model = await buildSaleModel(s)
-    printModelWithTemplate(model, cur, receipt, template)
+    const documentSettings = resolveDocumentPrintSettings(s)
+    printModelWithTemplate(model, cur, documentSettings.receipt, template, {
+      resolveSettings: () => resolveDocumentPrintSettings(s).receipt,
+    })
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
   }
 
@@ -252,7 +254,8 @@ export function SalesInvoicesPage() {
     const party = saleWaParty(s, { customers, suppliers, employees })
     if (!party?.phone) return toast.show('لا يوجد رقم مسجّل لهذا الطرف في بطاقته', 'error')
     const model = await buildSaleModel(s)
-    shareDocPdfViaWhatsapp({ model, cur, settings: receipt, template: 'a4', docLabel: 'فاتورة مبيعات', docNumber: s.invoiceNumber, partyPhone: party.phone, shopName: setup.shopName, toast })
+    const documentSettings = resolveDocumentPrintSettings(s)
+    shareDocPdfViaWhatsapp({ model, cur, settings: documentSettings.receipt, template: 'a4', docLabel: 'فاتورة مبيعات', docNumber: s.invoiceNumber, partyPhone: party.phone, shopName: documentSettings.setup.shopName, toast })
   }
 
   const exportSales = () => {
@@ -488,7 +491,7 @@ export function SalesInvoicesPage() {
       </Modal>
 
       {/* ✏️ تعديل فاتورة (سياسة المالك: فقط عندما تكون الفاتورة الإلكترونية غير مفعلة) */}
-      <Modal open={!!editing} onClose={() => unsavedEdit.requestClose(() => setEditing(null))} title={editing ? `✏️ تعديل ${editing.invoiceNumber}` : ''} wide>
+      <Modal open={!!editing} onClose={() => { if (!isSavingEdit) unsavedEdit.requestClose(() => setEditing(null)) }} title={editing ? `✏️ تعديل ${editing.invoiceNumber}` : ''} wide>
         {editing && (
           <div className="space-y-4">
             <p className="text-[11.5px] text-slate-400 leading-relaxed p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
@@ -648,7 +651,7 @@ export function SalesInvoicesPage() {
       </Modal>
       {unsavedEdit.prompt}
       <PartyQuickEditModal open={partyEditorOpen} target={editCustomerId && customers.find((customer) => customer.id === editCustomerId) ? { kind: 'customer', party: customers.find((customer) => customer.id === editCustomerId)! } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
-      <PrintTemplateModal open={!!printTarget} onClose={()=>setPrintTarget(null)} defaultTemplate={receipt.defaultTemplate} title="طباعة الفاتورة" onPrint={(template)=>{if(printTarget)void printInvoice(printTarget,template)}}/>
+      <PrintTemplateModal open={!!printTarget} onClose={()=>setPrintTarget(null)} defaultTemplate={printTarget ? resolveDocumentPrintSettings(printTarget).receipt.defaultTemplate : receipt.defaultTemplate} title="طباعة الفاتورة" onPrint={(template)=>{if(printTarget)void printInvoice(printTarget,template)}}/>
       {editApproval.dialog}
       {creditApproval.dialog}
     </div>

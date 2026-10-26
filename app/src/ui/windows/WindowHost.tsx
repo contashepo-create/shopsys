@@ -1,10 +1,14 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { AppWindow as WindowIcon, FileText, PackageSearch, ReceiptText, UserRound, X } from 'lucide-react'
+import { AppWindow as WindowIcon, Building2, FileCheck2, FileText, Hammer, IdCard, PackageSearch, ReceiptText, UserRound, Users, X } from 'lucide-react'
 import { OverlayPortal, useToast } from '../components/ui.tsx'
 import { useWindowStore, restoreWindowSession, watchWindowSession, type AppWindow, type AppWindowKind } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
+import { ProjectExpenseWindowView } from './ProjectExpenseWindowView.tsx'
+import { ExtractWizardWindowView } from './ExtractWizardWindowView.tsx'
+import { EntityPickerWindowView, ProjectEditorWindowView, EmployeeEditorWindowView } from './EntityPickerWindows.tsx'
+import { isDesktopFreeWindows } from '../../data/desktopBridge.ts'
 
 /* الفواتير ثقيلة — تُحمَّل عند أول فتح نافذة فقط */
 const SalesInvoiceWindowView = lazy(() => import('../pages/AdvancedSalesInvoicePage.tsx').then((mod) => ({ default: mod.AdvancedSalesInvoicePage })))
@@ -40,10 +44,16 @@ const ICONS: Record<AppWindowKind, typeof FileText> = {
   'item-ledger': PackageSearch,
   'party-editor': UserRound,
   'party-ledger': UserRound,
+  'project-expense': Hammer,
+  'extract-wizard': FileCheck2,
+  'entity-picker': Users,
+  'project-editor': Building2,
+  'employee-editor': IdCard,
 }
 
-function WindowContent({ win }: { win: AppWindow }) {
-  switch (win.kind) {
+/** محتوى العرض بصنفه — يستعمله المضيف الداخلي (ويب) وجذر نافذة القمر (سطح المكتب) */
+export function WindowViewContent({ kind }: { kind: AppWindowKind }) {
+  switch (kind) {
     case 'sales-invoice': return <SalesInvoiceWindowView />
     case 'purchase-invoice': return <PurchaseInvoiceWindowView />
     case 'item-picker': return <ItemPickerWindowView />
@@ -52,8 +62,17 @@ function WindowContent({ win }: { win: AppWindow }) {
     case 'item-ledger': return <ItemLedgerWindowView />
     case 'party-editor': return <PartyEditorWindowView />
     case 'party-ledger': return <PartyLedgerWindowView />
+    case 'project-expense': return <ProjectExpenseWindowView />
+    case 'extract-wizard': return <ExtractWizardWindowView />
+    case 'entity-picker': return <EntityPickerWindowView />
+    case 'project-editor': return <ProjectEditorWindowView />
+    case 'employee-editor': return <EmployeeEditorWindowView />
     default: return null
   }
+}
+
+function WindowContent({ win }: { win: AppWindow }) {
+  return <WindowViewContent kind={win.kind} />
 }
 
 /**
@@ -75,6 +94,7 @@ export function WindowHost() {
   /* استعادة جلسة النوافذ بعد التحديث (طلب المالك): ما كان مفتوحاً يعود بمقاسه
      وموضعه، ثم يُحفظ أي تغيير تلقائياً. */
   useEffect(() => {
+    if (isDesktopFreeWindows()) return /* النوافذ نظامية — لا استعادة داخلية */
     const restored = restoreWindowSession()
     if (restored > 0) useToast.getState().show(`استُعيدت ${restored} نافذة من جلستك السابقة`)
     return watchWindowSession()

@@ -48,8 +48,14 @@ if (loaderOk) {
 }
 if (fullOk) {
   const full = readFileSync(out('main-full.cjs'), 'utf8')
-  /* التشويش: لا تعليقات عربية توثيقية بالمصدر (تُقصف بالminify) — علامة قصّ الأسماء */
-  const minified = full.length < 200_000 && !full.includes('/**') && !full.includes('tahakom — نسخة سطح المكتب')
+  /* لا نربط الحارس بحجم أقصى ثابت؛ نمو كود التطبيق لا يعني أن التشويش فشل.
+     نتحقق من إزالة التعليقات، وكثافة المسافات، ووجود أسطر مضغوطة طويلة في الأثر المبني. */
+  const lines = full.split('\n')
+  const whitespaceRatio = (full.match(/\s/g) || []).length / Math.max(full.length, 1)
+  const minified = !full.includes('/**')
+    && !full.includes('tahakom — نسخة سطح المكتب')
+    && whitespaceRatio < 0.08
+    && lines.some((line) => line.length > 1_000)
   check('④ التشويش: main-full.cjs مضغوط بلا تعليقات المصدر (minify فعلي)', minified && statSync(out('main-full.cjs')).size > 10_000)
 }
 

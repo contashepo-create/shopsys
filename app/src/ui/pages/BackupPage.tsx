@@ -9,6 +9,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
+import { assertJournalSnapshotSafe } from '../../core/ledgerSnapshotGuard.ts'
 import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
 import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime, desktopKeyRecoveryBridge } from '../../data/desktopBridge.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
@@ -16,7 +17,7 @@ import { DesktopKeyRecoveryCard } from '../components/DesktopKeyRecovery.tsx'
 import { getDeviceSecret, setDeviceSecret } from '../../data/secureStorage.ts'
 import { wrapSecretWithPassword, unwrapSecretWithPassword, parseKeyFile, keyFileName, type SecretKeyFile } from '../../core/secretTransfer.ts'
 import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
-import { localIsoTimestamp, localDateTimeLabel } from '../../core/time.ts'
+import { localIsoTimestamp, localDateTimeLabel, todayLocalIso } from '../../core/time.ts'
 
 
 export function BackupPage() {
@@ -124,12 +125,24 @@ export function BackupPage() {
     if (!pending) return
     try {
       const backup = parseBackup(pending.raw) // تحقق ثانٍ لحظة التنفيذ
+      const unwrapPersisted = (value: unknown): Record<string, unknown> => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('لقطة المتجر أو الإعدادات ليست كائناً صالحاً')
+        const envelope = value as Record<string, unknown>
+        const state = envelope.state
+        return state && typeof state === 'object' && !Array.isArray(state) ? { ...(state as Record<string, unknown>) } : { ...envelope }
+      }
+      const restoredStore = unwrapPersisted(backup.data.store)
+      const restoredApp = backup.data.app == null ? {} : unwrapPersisted(backup.data.app)
+      const restoredYears = Array.isArray(restoredApp.fiscalYears) ? restoredApp.fiscalYears as { id: number; branchId?: number | null; status: 'open' | 'closed'; nameAr: string; startDate: string; endDate: string }[] : []
+      assertJournalSnapshotSafe(restoredStore, restoredYears, todayLocalIso())
+      const storeEnvelope = backup.data.store as Record<string, unknown>
+      const restoredPersistedStore = 'state' in storeEnvelope ? { ...storeEnvelope, state: restoredStore } : restoredStore
       /* v1.0.6: الكتابة عبر نفس طبقة التخزين التي يقرأ منها التطبيق عند الإقلاع —
          localStorage المباشر كان يكتب في المكان الخطأ في النسخة المثبتة (persist
          يقرأ من SQLite) فلا تنجح الاستعادة. الترقيم المتفائل في DesktopStateStorage
          يمنع أي حفظ متأخر من المتجر القديم من الكتابة فوق النسخة المستعادة. */
       if (backup.data.app != null) await settingsAppStorage().setItem('shopsys-app', JSON.stringify(backup.data.app))
-      await appStorage().setItem('shopsys-data', JSON.stringify(backup.data.store))
+      await appStorage().setItem('shopsys-data', JSON.stringify(restoredPersistedStore))
       toast.show('استُعيدت النسخة — يُعاد تحميل التطبيق…')
       setTimeout(() => window.location.reload(), 800)
     } catch (err) {

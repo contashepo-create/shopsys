@@ -60,10 +60,14 @@ console.log('② محرك القيد: توازن وحراسة وتوزيع')
   const coa = [{ code: '1101', nameAr: 'خزينة', rootType: 'assets', parentCode: '11', isPostable: true }, { code: '11', nameAr: 'متداولة', rootType: 'assets', parentCode: '1', isPostable: false }]
   const mk = (id, num, lines, date = '2026-01-05') => ({ id, entryNumber: num, date, description: '', sourceType: 'manual', sourceId: null, lines, createdBy: 'x', createdAt: '2026-01-05T00:00:00Z', reversedByEntryId: null, reversesEntryId: null })
   const good = mk(1, 1, [{ accountCode: '1101', debit: 50, credit: 0 }, { accountCode: '1101', debit: 0, credit: 50 }])
-  assert.equal(validateEntry(good, { coa, fiscalYears: [{ nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'closed' }] }).length, 0)
+  const periods = [
+    { nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'closed' },
+    { nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' },
+  ]
+  assert.equal(validateEntry(good, { coa, fiscalYears: periods }).length, 0)
   const inClosed = mk(2, 2, good.lines, '2025-06-01')
-  assert.ok(validateEntry(inClosed, { coa, fiscalYears: [{ nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'closed' }] }).some((e) => e.includes('مقفلة')), 'تاريخ داخل سنة مقفلة يُرفض')
-  const closing = { ...inClosed, sourceType: 'year_closing' }
+  assert.ok(validateEntry(inClosed, { coa, fiscalYears: periods }).some((e) => e.includes('مقفلة')), 'تاريخ داخل سنة مقفلة يُرفض')
+  const closing = { ...inClosed, sourceType: 'year_closing', sourceId: 1 }
   assert.equal(validateEntry(closing, { coa, fiscalYears: [{ nameAr: '2025', startDate: '2025-01-01', endDate: '2025-12-31', status: 'closed' }] }).length, 0, 'قيد الإقفال نفسه معفى')
   const edited = mk(1, 1, [{ accountCode: '1101', debit: 60, credit: 0 }, { accountCode: '1101', debit: 0, credit: 60 }])
   assert.throws(() => assertJournalIntegrity([good], [edited], { coa }), /تعديل صامت/, 'ث9')
@@ -211,7 +215,7 @@ console.log('⑥ برهان بالممتلكات: شجرة/ذهاب-إياب/ض�
     const rootDigit = { assets: '1', liabilities: '2', equity: '3', revenue: '4', expenses: '5' }[a.rootType]
     if (a.code.length >= 2) assert.equal(a.code[0], rootDigit, `بادئة ${a.code}`)
   }
-  assert.equal(sysKeys.size, 71, "عدد مفاتيح النظام — 71 حساباً نظامياً (منها §93: fx_gain/fx_loss)")
+  assert.equal(sysKeys.size, 73, "عدد مفاتيح النظام — 73 حساباً نظامياً بعد إضافة حسابي التسوية البينية (منها §93: fx_gain/fx_loss)")
 
   /* ذهاب/إياب بكل الخانات وحدودها */
   const cfgs = { 0: { code: 'IQD', symbol: 'د.ع', decimals: 0, name: 'د' }, 2: { code: 'EGP', symbol: 'ج.م', decimals: 2, name: 'ج' }, 3: { code: 'KWD', symbol: 'د.ك', decimals: 3, name: 'د' } }
