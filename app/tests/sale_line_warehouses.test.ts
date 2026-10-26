@@ -31,7 +31,7 @@ describe('بيع متعدد المخازن على مستوى السطر', () => 
   it('يسمح باستقبال المرتجع السليم في مخزن مختلف لكل سطر', () => {
     const saleLines = [{
       itemId: 7, nameAr: 'صنف', qty: 2, unitPriceMinor: 100, unitCostMinor: 60,
-      discountPercent: 0, warehouseId: 1,
+      discountPercent: 0, soldByWeight: false, warehouseId: 1,
     }]
     const returned = buildReturnLinesPerLine(saleLines, [], [
       { lineIndex: 0, qty: 1, condition: 'resellable', warehouseId: 2 },

@@ -99,7 +99,7 @@ describe('opening balances are balances, not period activity', () => {
   it('labels and filters expense reversals by their economic source, not the technical reversal marker', () => {
     const original: JournalEntry = {
       ...openingEntry(8, [line('5102', 500, 0), line('1101', 0, 500)]),
-      sourceType: 'voucher', sourceId: 44,
+      sourceType: 'voucher' as unknown as JournalEntry['sourceType'], sourceId: 44,
     }
     const reversal: JournalEntry = {
       ...openingEntry(9, [line('5102', 0, 500), line('1101', 500, 0)]),

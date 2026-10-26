@@ -117,7 +117,7 @@ describe('M4 — قبول مفتاح التفعيل يطبّق الإبطال و
   const DEVICE = 'SHOP-AAAA-BBBB-CCCC'
 
   async function signedKey(payload: Record<string, unknown>) {
-    const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as CryptoKeyPair
+    const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as unknown as CryptoKeyPair
     const raw = new Uint8Array(await webcrypto.subtle.exportKey('raw', pair.publicKey))
     const body = { v: 1 as const, deviceId: DEVICE, customer: 'اختبار', plan: 'pro', features: [], issuedAt: '2026-10-01', expiresAt: '2099-01-01', activityId: 'retail', ...payload }
     const sig = new Uint8Array(await webcrypto.subtle.sign('Ed25519', pair.privateKey, new TextEncoder().encode(canonicalPayload(body as never))))

@@ -17,7 +17,7 @@ describe('تحليل مصروفات الفواتير حسب مركز التكل�
     const report = invoiceExpensesByCostCenter(docs, { projectId: 7, settlement: 'payable_later' })
     expect(report.totalMinor).toBe(500)
     expect(report.rows[0]).toMatchObject({ paidMinor: 0, accruedMinor: 500 })
-    expect(costCenterExpensesCsv(report.rows, () => 'مشروع, خاص')).toContain('\"مشروع, خاص\"')
+    expect(costCenterExpensesCsv(report.rows, () => 'مشروع, خاص')).toContain( '"مشروع, خاص"' )
   })
   it('يحلل الأنواع والعمولات والضريبة والمراكز وحالة السداد', () => {
     const report = invoiceExpensesByCategory([{ date: '2026-09-24', internalExpenses: [

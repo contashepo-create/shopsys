@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildVehicleReport, vehicleReportCategories } from '../src/core/vehicleReports.ts'
 
 const vehicle = { id: 1, plateNumber: '1', vehicleType: 'تريلا', defaultDriverId: null, notes: '' }
-const trip = (date: string, revenueMinor: number) => ({ id: 1, tripNumber: 'TR-1', date, customerId: null, vehicleId: 1, driverId: null, fromLoc: '', toLoc: '', qty: 1, unitPriceMinor: revenueMinor, payment: 'cash' as const, vatPercent: 0, containerNumbers: [], expenses: [], totals: { revenueMinor, taxMinor: 0, grandMinor: revenueMinor }, journalEntryId: 1, notes: '' })
+const trip = (date: string, revenueMinor: number) => ({ id: 1, tripNumber: 'TR-1', date, customerId: null, vehicleId: 1, driverId: null, fromLoc: '', toLoc: '', qty: 1, unitPriceMinor: revenueMinor, payment: 'cash' as const, vatPercent: 0, containerNumbers: [], expenses: [], totals: { baseMinor: revenueMinor, billableMinor: 0, revenueMinor, vatMinor: 0, grandMinor: revenueMinor, directCashMinor: 0, creditMinor: 0, custodyMinor: 0, costMinor: 0, profitMinor: revenueMinor }, journalEntryId: 1, notes: '' })
 
 describe('تقارير مراكز تكلفة السيارات', () => {
   it('يفصل إيرادات النقل والنولون عن التكاليف ويحسب المستحق والصافي', () => {

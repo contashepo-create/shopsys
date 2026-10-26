@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useDataStore } from '../src/data/repo.ts'
-const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
+const relDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const original = useDataStore.getState()
 const rawItem = { id: 1, nameAr: 'خامة', sku: 'RAW', barcodes: [], categoryId: 1, baseUnit: 'كجم', extraUnits: [], costMinor: 100, stockQty: 10, priceMinor: 150, minQty: 0, trackExpiry: true, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true, isService: false }

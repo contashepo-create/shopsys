@@ -101,7 +101,7 @@ describe('سد فجوة فورية #2 — النشاط #7 (قطع غيار): ط�
       setup: {
         ...app.setup, completed: true, countryCode: 'EG', activityId: 'spare_parts', shopName: 'محل قطع غيار الاختبار',
         ownerName: 'المالك', features: [], modules: ['pos', 'inventory', 'purchases'], accountingMode: 'full',
-        vatPercent: 0, taxRegistrationStatus: 'not_registered',
+        vatPercent: 0, taxRegistrationStatus: 'not_registered' as never,
       },
     })
     const s = useDataStore.getState()

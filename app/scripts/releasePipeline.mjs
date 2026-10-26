@@ -25,7 +25,9 @@ export function validateDesktopArtifacts(directory, expectedVersion) {
   return ['latest.yml', exe, blockmap]
 }
 
-/** جميع الأصول تُرفع إلى draft؛ الإصدار المنشور الكامل لا يُعاد استبداله. */
+/** جميع الأصول تُرفع إلى draft؛ الإصدار المنشور الكامل لا يُعاد استبداله.
+ * @param {{ tag: string, repo: string, target?: string | null, files: string[], expectedAssets?: Array<{ name: string, size: number, digest?: string }>, api: any }} opts
+ */
 export async function publishDesktopRelease({ tag, repo, target, files, expectedAssets = [], api }) {
   versionOf(tag)
   const existing = await api.read(repo, tag)

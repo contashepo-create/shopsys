@@ -93,7 +93,7 @@ beforeAll(() => {
   S().addCustomer({ ...party('مؤسسة المنصورة الحديثة'), creditLimitMinor: 0 })
   S().addEmployee({ ...party('حمدي أمين المخزن'), jobTitle: 'أمين مخزن', hireDate: '2025-01-01', baseSalaryMinor: 400000, allowancesMinor: 0, active: true })
   S().addEmployee({ ...party('م. وليد مهندس التنفيذ'), jobTitle: 'مهندس موقع', hireDate: '2025-01-01', baseSalaryMinor: 700000, allowancesMinor: 0, active: true })
-  S().addSupplier({ ...party('شركة أسمنت الدلتا'), creditLimitMinor: 0 })
+  S().addSupplier({ ...party('شركة أسمنت الدلتا') })
   S().addItem({
     nameAr: 'أسمنت بورتلاندي', sku: 'CEM-01', barcodes: [], categoryId: 1, baseUnit: 'شيكارة', extraUnits: [{ nameAr: 'طن', factor: 20, barcode: '', priceMinor: 0 }],
     costMinor: 21000, stockQty: 80, priceMinor: 26000, minQty: 0, trackExpiry: false, trackSerial: false,

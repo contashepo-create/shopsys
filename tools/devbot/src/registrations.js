@@ -67,6 +67,7 @@ const cleanEmail = (v) => {
 /**
  * تنقية بلاغ وارد — يعيد كائناً صالحاً أو null إن كان معرّف الجهاز غير صالح.
  * لا يُرمى استثناء أبداً: أي مدخل غريب ⇒ رفض نظيف 400.
+ * @returns {({ deviceId: string, shopName: string, ownerName: string, phone: string, email: string, city: string, street: string, activityNameAr: string, registeredAt: string, appVersion?: string, platform?: string, countryCode?: string, activityId?: string, accountingMode?: string, plan?: string, doctorSpecialty?: string, fiscalYearName?: string, fiscalYearStart?: string, fiscalYearEnd?: string } & Record<string, unknown>) | null}
  */
 export function sanitizeRegistration(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
@@ -283,6 +284,10 @@ export async function ensureDeviceRecord(cfg, report, now = new Date().toISOStri
 /**
  * زر «إصدار مفتاح» المرفق بتنبيه التسجيل وببطاقة التفاصيل.
  * callback_data ≤ 64 بايت (34 حرفاً هنا). المعرّف يُتحقق منه قبل بناء الزر.
+ */
+/**
+ * @param {string} deviceId
+ * @returns {{ reply_markup: { inline_keyboard: Array<Array<{ text: string, callback_data: string }>> }}}
  */
 export function registrationButtons(deviceId) {
   if (!DEVICE_RE.test(deviceId)) return {}

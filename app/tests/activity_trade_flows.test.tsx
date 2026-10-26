@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
@@ -162,7 +161,7 @@ describe('العقارات: سطر مستقل لكل وحدة', () => {
 
 describe('المقاولات: تكلفة مشروع على مقاول باطن', () => {
   it('سداد جزئي والباقي على مورد مسجل يظهر في كشف حسابه', () => {
-    const project = S().addProject({ nameAr: 'فيلا 12', clientName: 'عميل', clientId: null, managerId: null, contractValueMinor: 1_000_000_00, retentionPercent: 5, startDate: '2026-01-01', endDate: '2026-06-01', notes: '' })
+    const project = S().addProject({ nameAr: 'فيلا 12', clientName: 'عميل', clientId: null, contractValueMinor: 1_000_000_00, retentionPercent: 5, startDate: '2026-01-01', notes: '' })
     S().addSupplier({ ...EMPTY, nameAr: 'مقاول باطن — الكهرباء', phone: '', notes: '' })
     const sub = S().suppliers.at(-1)!
     const cost = S().addProjectCost({ projectId: project.id, kind: 'subcontract', amountMinor: 50_000_00, payment: 'mixed', paidMinor: 20_000_00, supplierId: sub.id, description: 'تأسيس كهرباء', treasury: '1101' })

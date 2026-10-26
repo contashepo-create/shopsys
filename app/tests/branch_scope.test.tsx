@@ -8,11 +8,12 @@
 import { createHash } from 'node:crypto'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
+import type { Branch } from '../src/core/branches.ts'
 import { useEffectiveBranchScope } from '../src/ui/hooks/useNavSections.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { useRawDataStore } from '../src/data/repo.ts'
 
-const branch = (over: Record<string, unknown> = {}) => ({
+const branch = (over: Partial<Branch> = {}): Branch => ({
   id: 1, nameAr: 'الفرع الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101',
   active: true, customModulesMode: 'all', enabledModules: [], ...over,
 })
@@ -22,7 +23,7 @@ const branch = (over: Record<string, unknown> = {}) => ({
 const resetScope = () => {
   useAppStore.getState().setActiveBranchContext(null)
   const app = useAppStore.getState()
-  useAppStore.setState({ setup: { ...app.setup, modules: [], activityId: 'general' }, companySetup: null })
+  useAppStore.setState({ setup: { ...app.setup, modules: [], activityId: 'general' }, companySetup: undefined })
   useRawDataStore.setState({
     branches: [branch(), branch({ id: 2, nameAr: 'فرع المنصورة', isMain: false, warehouseId: 2 })],
     appUsers: [],

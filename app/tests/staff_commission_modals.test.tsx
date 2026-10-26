@@ -9,7 +9,6 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, fireEvent, within } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -87,11 +86,11 @@ describe('نوافذ تعديل وإلغاء عمولة الموظف (لا promp
       fireEvent.click(within(row).getByTitle('إلغاء العمولة (قيد عاكس + سبب موثق)'))
 
       /* بلا سبب: يُرفض وتبقى النافذة */
-      fireEvent.click(screen.getByRole('button', { name: /إلغاء العمولة/, exact: false }))
+      fireEvent.click(screen.getByRole('button', { name: /إلغاء العمولة/ }))
       expect(useDataStore.getState().staffCommissions.find((c) => c.id === 2)?.status).toBe('accrued')
 
       fireEvent.change(screen.getByLabelText('سبب الإلغاء'), { target: { value: 'أُلغيت العملية المرتبطة' } })
-      fireEvent.click(screen.getByRole('button', { name: /إلغاء العمولة/, exact: false }))
+      fireEvent.click(screen.getByRole('button', { name: /إلغاء العمولة/ }))
 
       const cancelled = useDataStore.getState().staffCommissions.find((c) => c.id === 2)
       expect(cancelled?.status).toBe('cancelled')

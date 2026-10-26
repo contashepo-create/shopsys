@@ -12,7 +12,7 @@ import { withTaxBarcodeSync } from '../src/ui/print/taxBarcode.ts'
 import { deriveTaxConfig } from '../src/core/returns.ts'
 
 const line = (p: Partial<CartLine> & { unitPriceMinor: number }): CartLine => ({
-  itemId: 1, nameAr: 'صنف', qty: 1, unitPriceMinor: 0, unitCostMinor: 0,
+  itemId: 1, nameAr: 'صنف', qty: 1, unitCostMinor: 0,
   discountPercent: 0, soldByWeight: false, ...p,
 } as CartLine)
 
@@ -75,7 +75,7 @@ describe('نموذج الطباعة يرث الإجماليات كما هي', ()
   })
   it('buildSimpleDocModel: الأساس + الضريبة = الإجمالي', () => {
     const m = buildSimpleDocModel({
-      docTitle: 'فاتورة', invoiceNumber: 'X', dateIso: '2026-10-22', partyLabel: 'عميل', paymentLabel: 'نقدي',
+      docTitle: 'فاتورة', invoiceNumber: 'X', dateIso: '2026-10-22', partyLabel: 'عميل', paymentLabel: 'نقدي', refCode: '',
       rows: [{ nameAr: 'بند', qty: 2, unitPriceMinor: 5000, totalMinor: 10000 }],
       totalMinor: 11400, paidMinor: 11400, settings: DEFAULT_RECEIPT_SETTINGS,
       tax: { label: 'ض.ق.م 14٪', minor: 1400, baseMinor: 10000 },

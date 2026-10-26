@@ -48,7 +48,7 @@ describe('سلامة الترحيل عبر التحديثات (v1.0.10)', () => 
     expect(car.purchasePayment).toBeNull()
     expect(car.purchaseDueMinor).toBe(0) // لا دفع قديم ⇐ لا مستحق مفبرك
     const ticket = st.tickets.find((x) => x.id === 31)!
-    expect(ticket.totals.paidMinor).toBe(3000) // نقدية = مسددة كاملة
-    expect(ticket.totals.creditMinor).toBe(0)
+    expect(ticket.totals!.paidMinor).toBe(3000) // نقدية = مسددة كاملة
+    expect(ticket.totals!.creditMinor).toBe(0)
   })
 })

@@ -122,7 +122,7 @@ describe('سد فجوة النشاط #11 — الحد المالي للاعتم�
       setup: {
         ...app.setup, completed: true, countryCode: 'EG', activityId: 'contracting', shopName: 'مقاولات الاختبار',
         ownerName: 'المالك', features: [], modules: ['contracting'], accountingMode: 'full',
-        vatPercent: 0, taxRegistrationStatus: 'not_registered', allowNegativeTreasury: true,
+        vatPercent: 0, taxRegistrationStatus: 'not_registered' as never, allowNegativeTreasury: true,
       },
     })
     const s = useDataStore.getState()

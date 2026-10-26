@@ -4,9 +4,9 @@
  * printToRoute/printHtml منكّرة (يسجلان ولا يفتحان إطارات) — الفحص على
  * الاستدعاءات وترتيبها ومحتواها (بون المطبخ بلا أسعار · نسخة المحطة بعنوانها).
  */
+import type { SaleInvoice } from '../src/data/repo.ts'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
-import React from 'react'
 
 vi.mock('../src/ui/print/printReceipt.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/ui/print/printReceipt.ts')>()
@@ -19,7 +19,6 @@ const { DEFAULT_PRINTER_PROFILES } = await import('../src/core/printers.ts')
 const { printToRoute } = await import('../src/ui/print/printReceipt.ts')
 
 const originalData = useDataStore.getState()
-const originalApp = useAppStore.getState()
 
 const order = {
   id: 9, orderNumber: 'ORD-0009', type: 'dine_in', tableName: '5', notes: 'بصل زيادة',
@@ -33,7 +32,7 @@ const fakeSale = {
   id: 77, invoiceNumber: 'SAL-0077', refCode: 'R-77', date: '2026-10-04T12:00:00', payment: 'cash',
   paidMinor: 21500, lines: order.lines,
   totals: { subtotalMinor: 21500, discountMinor: 0, totalMinor: 21500, vatMinor: 0 },
-}
+} as unknown as SaleInvoice
 
 beforeEach(() => {
   localStorage.clear()

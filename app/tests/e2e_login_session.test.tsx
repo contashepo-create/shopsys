@@ -14,7 +14,6 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react'
-import React from 'react'
 
 vi.stubGlobal('fetch', vi.fn((url: string) => (
   String(url).includes('/register')

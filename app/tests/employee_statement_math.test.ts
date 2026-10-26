@@ -64,7 +64,7 @@ describe('كشف حساب الموظف — المعيار الدفتري (بلا
        المعادلة: 300 − 500 = −800؟ لا: رصيد الكشف له موجب 800، ومعادلة الدفتر:
        له = bal(2104 دائن) − bal(1107 مدين) = 300 − 500 = −200 !! */
 
-    for (const e of S().journal) for (const l of e.lines) {
+    for (const e of S().journal) for (const _l of e.lines) {
     }
     const rows = S().getEmployeeStatementRows(emp.id)
     const statementBalance = rows.reduce((sum, row) => sum + row.creditMinor - row.debitMinor, 0)

@@ -20,7 +20,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const payloads = JSON.parse(readFileSync(join(here, '..', 'demo-db', 'demo-payloads.json'))) as Record<string, Record<string, unknown>>
+const payloads = JSON.parse(readFileSync(join(here, '..', 'demo-db', 'demo-payloads.json'), 'utf8')) as Record<string, Record<string, unknown>>
 
 vi.stubGlobal('fetch', vi.fn(async (path: unknown) => {
   const url = String(path)

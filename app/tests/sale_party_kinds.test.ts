@@ -12,7 +12,7 @@ const item = { id: 910, nameAr: 'صنف بيع أي طرف', sku: 'SALE-910', ba
 const supplier = { id: 41, code: 'SUP-41', nameAr: 'مورد الحديد', phone: '', active: true }
 const employee = { id: 7, code: 'EMP-7', nameAr: 'عبد الرحمن السائق', role: 'driver', phone: '', active: true, hireDate: '2025-01-01', salaryBaseMinor: 0, notes: '' }
 
-const line: CartLine = { key: 'l1', itemId: item.id, nameAr: item.nameAr, qty: 3, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }
+const line: CartLine = { itemId: item.id, nameAr: item.nameAr, qty: 3, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }
 /** 3 × 2,000 = 6,000 إيراد · إيراد صافٍ 6,000 (بلا ضريبة) · تكلفة 3,000 */
 const totals = () => computeTotals([line], 0, 0, false)
 
@@ -150,7 +150,7 @@ describe('§91 المستودع — postSale لأي طرف', () => {
       saleId: sale.id,
       lines: [{ ...line, qty: 4 }], // 8,000 بدل 6,000
       customerId: null,
-      payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false,
+      payment: 'credit', invoiceDiscountPercent: 0, einvoiceActive: false,
       paidMinor: 0, treasury: '1101', reason: 'تصحيح كمية',
     })
     expect(edited.partyKind).toBe('supplier')

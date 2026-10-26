@@ -5,7 +5,6 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
-import React from 'react'
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 

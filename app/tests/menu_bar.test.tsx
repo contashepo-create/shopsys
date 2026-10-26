@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useAppStore } = await import('../src/stores/app.store.ts')
@@ -11,7 +10,7 @@ beforeAll(() => {
   const app = useAppStore.getState()
   useAppStore.setState({
     ...app,
-    setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'متجر تجريبي', ownerName: 'محمد', features: [], modules: ['sales', 'purchases', 'inventory', 'employees'], accountingMode: 'full' },
+    setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'متجر تجريبي', ownerName: 'محمد', features: [], modules: ['sales' as never, 'purchases', 'inventory', 'employees' as never], accountingMode: 'full' },
   })
 })
 

@@ -22,7 +22,7 @@ vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 /** جسر بين مصنع الـmock (يُولَّد قبل كل شيء) وجسم الاختبار */
 const harness = vi.hoisted(() => ({
   pub: '',
-  sign: null as null | ((payload: Record<string, unknown>) => Promise<string>),
+  sign: null as null | ((payload: LicensePayload) => Promise<string>),
 }))
 
 vi.mock('../src/core/license.ts', async (importOriginal) => {

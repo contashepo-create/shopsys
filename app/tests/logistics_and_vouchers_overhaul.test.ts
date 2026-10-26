@@ -44,7 +44,6 @@ describe('تحديثات اللوجستيات وسندات القبض للمشا
     const cust = S().customers[0]!
 
     const p1 = S().addProject({
-      code: 'PRJ-01',
       nameAr: 'مشروع برج النخيل',
       clientId: cust.id,
       clientName: cust.nameAr,
@@ -54,7 +53,6 @@ describe('تحديثات اللوجستيات وسندات القبض للمشا
       notes: '',
     })
     const p2 = S().addProject({
-      code: 'PRJ-02',
       nameAr: 'مشروع مستودعات الشرق',
       clientId: cust.id,
       clientName: cust.nameAr,

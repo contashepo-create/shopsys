@@ -6,7 +6,7 @@ describe('صلاحيات ماكينة الدفع', () => {
  it('يفصل صلاحية الرد عن الإلغاء', () => expect(() => assertTerminalOperation(access, 't1', 'void', 1)).toThrow('صلاحية'))
  it('يفرض الحد المالي', () => expect(() => assertTerminalOperation(access, 't1', 'refund', 10001)).toThrow('يتجاوز'))
  it('الصفر = بلا حد كما تعِد الواجهة «(0 = بلا حد)» (§78)', () => {
-   const zero = { grants: [{ terminalId: 't1', operations: ['charge'], maxAmountMinor: 0 }] }
+   const zero: PaymentTerminalAccess = { grants: [{ terminalId: 't1', operations: ['charge'], maxAmountMinor: 0 }] }
    expect(() => assertTerminalOperation(zero, 't1', 'charge', 999_999)).not.toThrow()
    expect(() => assertTerminalOperation({ grants: [{ terminalId: 't1', operations: ['charge'] }] }, 't1', 'charge', 5)).not.toThrow()
    expect(() => assertTerminalOperation({ grants: [{ terminalId: 't1', operations: ['charge'], maxAmountMinor: 7000 }] }, 't1', 'charge', 7001)).toThrow('يتجاوز')

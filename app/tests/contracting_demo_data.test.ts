@@ -13,6 +13,8 @@
 import { describe, expect, it, vi, beforeAll } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
+import type { loadDemoActivity } from '../src/dev/demoDatabase.ts'
+import type { useDataStore } from '../src/data/repo.ts'
 
 /* متصفح مصغّر كافٍ لترطيب متاجر zustand المستديمة (localStorage) داخل بيئة node */
 vi.hoisted(() => {

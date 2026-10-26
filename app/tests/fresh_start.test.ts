@@ -49,8 +49,8 @@ describe('البدء النظيف مع أرشفة القاعدة القديمة'
 
     const result = await startFreshDatabaseAt({ userData: s.userData, databasePath: active, installDir: s.installDir })
 
-    expect(existsSync(result.archivePath)).toBe(true)
-    expect(await readPayload(result.archivePath)).toBe('{"state":{"old":"latest"}}')
+    expect(existsSync(result.archivePath!)).toBe(true)
+    expect(await readPayload(result.archivePath!)).toBe('{"state":{"old":"latest"}}')
     expect(existsSync(active)).toBe(false)
     expect(existsSync(`${result.archivePath}.source`)).toBe(true)
     expect(existsSync(`${result.archivePath}.source-wal`)).toBe(true)
@@ -71,7 +71,7 @@ describe('البدء النظيف مع أرشفة القاعدة القديمة'
 
     expect(existsSync(custom)).toBe(true)
     expect(await readPayload(custom)).toBe('{"state":{"keep":true}}')
-    expect(await readPayload(result.archivePath)).toBe('{"state":{"keep":true}}')
+    expect(await readPayload(result.archivePath!)).toBe('{"state":{"keep":true}}')
     expect(resolveDbPathAt(s.userData)).toEqual({ dbPath: join(s.userData, 'shopsys.db'), isCustom: false })
   })
 

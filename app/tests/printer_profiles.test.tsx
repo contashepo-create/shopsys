@@ -7,7 +7,6 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
-import React from 'react'
 
 const { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, PRINT_ROUTES } = await import('../src/core/printers.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')

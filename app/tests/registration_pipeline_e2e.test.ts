@@ -23,7 +23,7 @@ const { buildRegistrationReport, sendRegistrationReport, normalizePhone } = awai
 const { verifyLicenseKey, b64uEncode } = await import('../src/core/license.ts')
 
 /* زوج مفاتيح مؤقت — يطابق الإعداد الحقيقي: الخاص عند المركز، والعام في التطبيق */
-const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as unknown as CryptoKeyPair
 const PRIV_B64U = Buffer.from(new Uint8Array(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey))).toString('base64url')
 const pubSpki = new Uint8Array(await webcrypto.subtle.exportKey('spki', pair.publicKey))
 const PUB_B64U = b64uEncode(pubSpki.slice(pubSpki.length - 32))

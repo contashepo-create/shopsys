@@ -10,7 +10,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react'
-import React from 'react'
 
 // عزل الشبكة: مزامنة السحابة تفشل بصمت (سلوك الأوفلاين المدعوم).
 // v1.0.22: إنشاء الحساب يتطلب تسجيل الجهاز لدى المطوّر ⇒ نقطة /register تُجاب بنجاح،

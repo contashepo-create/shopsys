@@ -9,7 +9,6 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, screen } from '@testing-library/react'
-import React from 'react'
 
 const { parseAccountMessage, fetchAccountMessage, LICENSE_CLOUD_BASE_URL } = await import('../src/core/cloud.ts')
 const devbotWorker = (await import('../../tools/devbot/src/worker.js')).default
@@ -70,7 +69,7 @@ describe('③ الجلب', () => {
     const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ plan: 'basic', message: 'تنبيه' }), { status: 200 })))
     vi.stubGlobal('fetch', fetchMock)
     expect(await fetchAccountMessage(`${LICENSE_CLOUD_BASE_URL}/`, 'id/with space')).toBe('تنبيه')
-    expect(fetchMock.mock.calls[0][0]).toBe(`${LICENSE_CLOUD_BASE_URL}/subscription/id%2Fwith%20space`)
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(`${LICENSE_CLOUD_BASE_URL}/subscription/id%2Fwith%20space`)
   })
 
   it('أوفلاين ⇒ null (لا يُمسّ المحفوظ)', async () => {

@@ -11,7 +11,8 @@ import { Header } from '../src/ui/layout/Header.tsx'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { useRawDataStore } from '../src/data/repo.ts'
 
-const branch = (over: Record<string, unknown> = {}) => ({
+import type { Branch } from '../src/core/branches.ts'
+const branch = (over: Partial<Branch> = {}): Branch => ({
   id: 2, nameAr: 'فرع المنصورة', isMain: false, warehouseId: 2, treasuryCode: '1102',
   active: true, customModulesMode: 'all', enabledModules: [], ...over,
 })

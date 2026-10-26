@@ -13,7 +13,7 @@ import { computeTotals, type CartLine } from '../src/core/pos.ts'
 
 const original = useDataStore.getState()
 const item = { id: 930, nameAr: 'صنف الاعتماد', sku: 'APR-930', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 1_000, stockQty: 50, priceMinor: 2_000, minQty: 0, trackExpiry: false, active: true }
-const line: CartLine = { key: 'a1', itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }
+const line: CartLine = { itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }
 const total = computeTotals([line], 0, 0, false).totalMinor
 
 const cashier = { id: 5, nameAr: 'كاشير الاعتماد', roleId: 'cashier', pinHash: '0'.repeat(64), active: true, branchId: null }

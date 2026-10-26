@@ -6,7 +6,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
@@ -36,12 +35,13 @@ describe('جرس التنبيهات — التعليم كمقروء يُزيل �
       allowNegativeTreasury: true,
     })
     useDataStore.setState({ items: [], categories: [], journal: [], treasuries: [], projects: [], projectBudgets: [], projectCosts: [], readNotificationIds: [] })
-    S().addCategory?.({ nameAr: 'عام' })
+    S().addCategory?.('عام', [])
     // صنف تحت حد إعادة الطلب ⇒ تنبيه «مخزون منخفض» حقيقي في الجرس
     S().addItem({
-      nameAr: 'أرز 1كجم', categoryId: null, unit: 'كيس', priceMinor: 6000, costMinor: 4800,
-      barcode: '', sku: '', isActive: true, trackExpiry: false, trackSerial: false, soldByWeight: false,
+      nameAr: 'أرز 1كجم', categoryId: 0, baseUnit: 'كيس', priceMinor: 6000, costMinor: 4800,
+      barcodes: [], sku: '', isActive: true, trackExpiry: false, trackSerial: false, soldByWeight: false,
       isService: false, minSalePriceMinor: 0, stockQty: 0, minQty: 5,
+      extraUnits: [], warrantyMonths: 0, variantColors: [], variantSizes: [],
     })
   })
 

@@ -107,7 +107,7 @@ describe('تكامل المتجر — النشاط #10 (معمل): دورة رف
       setup: {
         ...app.setup, completed: true, countryCode: 'EG', activityId: 'lab', shopName: 'معمل الاختبار',
         ownerName: 'المالك', features: [], modules: ['lab', 'booking'], accountingMode: 'full',
-        vatPercent: 0, taxRegistrationStatus: 'not_registered', allowNegativeTreasury: true,
+        vatPercent: 0, taxRegistrationStatus: 'not_registered' as never, allowNegativeTreasury: true,
       },
     })
     const s = useDataStore.getState()

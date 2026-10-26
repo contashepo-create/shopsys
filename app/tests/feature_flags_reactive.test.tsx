@@ -6,7 +6,6 @@
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, act, cleanup } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { useAppStore } = await import('../src/stores/app.store.ts')
