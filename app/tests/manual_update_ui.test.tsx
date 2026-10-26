@@ -37,7 +37,7 @@ describe('قرار الفحص اليدوي', () => {
 
 describe('واجهة التحديث اليدوي', () => {
   const listeners: ((state: unknown) => void)[] = []
-  const check = vi.fn(async () => undefined)
+  const check = vi.fn(async (): Promise<unknown> => undefined)
   const install = vi.fn(async () => undefined)
 
   beforeEach(() => {
@@ -66,6 +66,28 @@ describe('واجهة التحديث اليدوي', () => {
     await waitFor(() => expect(check).toHaveBeenCalled())
   })
 
+  it('يعرض فوراً الحالة التي أعادها طلب الفحص اليدوي حتى قبل بث الحدث', async () => {
+    check.mockResolvedValueOnce({ status: 'not-available' })
+    render(React.createElement(DesktopUpdater))
+    fireEvent.click(await screen.findByText('فحص التحديثات'))
+    await waitFor(() => expect(screen.getByTestId('desktop-updater').textContent).toContain('أنت على أحدث إصدار ✅'))
+  })
+
+  it('لا تسمح لقطة الفحص الأولية المتأخرة بإرجاع النسبة إلى الوراء', async () => {
+    let resolveInitial!: (state: unknown) => void
+    ;(window as unknown as { shopsysUpdater: unknown }).shopsysUpdater = {
+      state: () => new Promise((resolve) => { resolveInitial = resolve }),
+      check,
+      install,
+      onState: (listener: (state: unknown) => void) => { listeners.push(listener); return () => undefined },
+    }
+    render(React.createElement(DesktopUpdater))
+    await screen.findByText('فحص التحديثات')
+    listeners.forEach((listener) => listener({ status: 'downloading', percent: 90 }))
+    resolveInitial({ status: 'downloading', percent: 40 })
+    await waitFor(() => expect(screen.getByText('90%')).toBeTruthy())
+  })
+
   it('يعرض شريط التنزيل بنسبة التقدم من العملية الرئيسية', async () => {
     render(React.createElement(DesktopUpdater))
     await screen.findByText('فحص التحديثات')
@@ -91,6 +113,12 @@ describe('واجهة التحديث اليدوي', () => {
 describe('الفحص التلقائي والتحديث الصامت بقيا كما هما', () => {
   const main = read('desktop/main.ts')
   const lifecycle = read('desktop/updateLifecycle.ts')
+
+  it('يبث تغيّر حالة التحديث إلى كل النوافذ، ومنها نوافذ الأقسام المستقلة', () => {
+    const recordState = main.match(/function recordUpdaterState\([\s\S]*?\n\}/)?.[0] ?? ''
+    expect(recordState).toContain('satelliteWebContents()')
+    expect(recordState).toContain("webContents.send('updater:state', state)")
+  })
 
   it('الفحص الدوري التلقائي قائم', () => {
     expect(main).toContain('autoUpdater.autoDownload = true')

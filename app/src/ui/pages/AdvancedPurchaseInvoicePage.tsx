@@ -199,7 +199,7 @@ const buildPrintModel=()=>{const live=resolveDocumentPrintSettings(currentPrintR
    amountLabel={item => `متاح ${item.stockQty ?? 0} · تكلفة ${formatMinor(item.costMinor ?? 0, cur, false)}`}
    placeholder="اكتب اسم الصنف أو الكود؛ ثم اختر بالسهم + Enter أو مرتين"
    showPicker={false}
-   showReceivingTracking
+   showReceivingTracking={setup.activityId === 'feed_trade'}
   />
    </div>
   <Modal open={notesLogOpen&&!!selectedSupplier} onClose={() => setNotesLogOpen(false)} title={`سجل ملاحظات ${selectedSupplier?.nameAr??'المورد'}`}>

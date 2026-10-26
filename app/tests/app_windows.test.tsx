@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/react'
 import React, { useState } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
@@ -54,7 +54,7 @@ describe('نظام النوافذ المستقلة', () => {
     expect(W().windows.find((w) => w.id === first)!.z).toBeGreaterThan(W().windows.find((w) => w.id === second)!.z)
   })
 
-  it('ترحيل فاتورة البيع من نافذة مستقلة يثبت العميل ويغلق النافذة بعد النجاح', async () => {
+  it('الترحيل من صفحة الفواتير التي فتحت نافذة جديدة يثبت العميل ويغلق نافذة المستند فقط', async () => {
     const customerName = 'عميل إغلاق تلقائي'
     S().addCustomer({ ...EMPTY, nameAr: customerName, phone: '', creditLimitMinor: 0, notes: '' } as never)
     const customer = S().customers.at(-1)!
@@ -65,8 +65,22 @@ describe('نظام النوافذ المستقلة', () => {
       warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true,
     })
     const item = S().items.at(-1)!
-    const id = openSalesInvoiceWindow()
-    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    const { InvoiceDocumentRoute } = await import('../src/ui/pages/InvoiceDocumentRoute.tsx')
+    render(
+      <MemoryRouter initialEntries={['/sales/invoices/new']}>
+        <Routes>
+          <Route path="/sales/invoices/new" element={<InvoiceDocumentRoute kind="sale" />} />
+          <Route path="/sales/invoices" element={<div data-testid="sales-invoice-list">قائمة فواتير المبيعات</div>} />
+        </Routes>
+        <WindowHost />
+      </MemoryRouter>,
+    )
+    const id = await waitFor(() => {
+      const invoiceWindow = W().windows.find((window) => window.kind === 'sales-invoice')
+      expect(invoiceWindow, 'المسار لم يفتح نافذة فاتورة البيع').toBeTruthy()
+      return invoiceWindow!.id
+    })
+    expect(document.querySelector('[data-testid="sales-invoice-list"]')?.textContent).toContain('قائمة فواتير المبيعات')
 
     const customerInput = await waitFor(() => {
       const input = document.querySelector('[aria-label="بحث العميل — F4"]')
@@ -90,11 +104,24 @@ describe('نظام النوافذ المستقلة', () => {
       return option as HTMLElement
     })
     fireEvent.doubleClick(itemOption)
-    const postButton = Array.from(document.querySelectorAll(`[data-app-window="${id}"] button`)).find((button) => button.textContent?.includes('حفظ وترحيل')) as HTMLButtonElement
+    const invoiceWindow = document.querySelector(`[data-app-window="${id}"]`)
+    const saveDraftButton = Array.from(invoiceWindow!.querySelectorAll('button')).find((button) => button.textContent?.includes('حفظ مسودة')) as HTMLButtonElement
+    expect(saveDraftButton).toBeTruthy()
+    const salesBeforeDraft = S().sales.length
+    fireEvent.click(saveDraftButton)
+    await waitFor(() => expect(S().advancedInvoiceDrafts.length).toBeGreaterThan(0))
+    expect(S().sales, 'حفظ المسودة لا ينبغي أن يرحّل فاتورة').toHaveLength(salesBeforeDraft)
+    expect(W().windows.some((window) => window.id === id), 'حفظ المسودة لا ينبغي أن يغلق المحرر').toBe(true)
+
+    const postButton = Array.from(invoiceWindow!.querySelectorAll('button')).find((button) => button.textContent?.includes('حفظ وترحيل')) as HTMLButtonElement
     expect(postButton).toBeTruthy()
+    const salesBeforePost = S().sales.length
     fireEvent.click(postButton)
 
     await waitFor(() => expect(W().windows.some((window) => window.id === id)).toBe(false))
+    expect(W().windows.filter((window) => window.kind === 'sales-invoice')).toHaveLength(0)
+    expect(document.querySelector('[data-testid="sales-invoice-list"]')?.textContent).toContain('قائمة فواتير المبيعات')
+    expect(S().sales).toHaveLength(salesBeforePost + 1)
     const invoice = S().sales.at(-1)!
     expect(invoice.customerId).toBe(customer.id)
     expect(invoice.lines.some((line) => line.itemId === item.id)).toBe(true)

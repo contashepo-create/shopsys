@@ -998,9 +998,16 @@ function recordUpdaterState(state: UpdaterState): void {
       return null
     })
   }
-  /* واجهة التحديث اليدوية: زر «فحص التحديثات» + شريط التنزيل —
-     الحالة تصل للواجهة فوراً؛ الفحص الدوري والتثبيت الصامت يبقيان كما هما. */
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:state', state)
+  /* واجهة التحديث اليدوية قد تكون داخل نافذة قسم مستقلة، لا النافذة الرئيسية.
+     بث الحالة إلى كل مُصيّر حيّ يمنع شريط التقدم/زر الفحص من البقاء على لقطة قديمة
+     حتى يُعاد فتح الصفحة؛ يبقى الفحص الخلفي والتثبيت الصامت كما هما. */
+  const targets = [
+    ...(mainWindow && !mainWindow.isDestroyed() ? [mainWindow.webContents] : []),
+    ...satelliteWebContents(),
+  ]
+  for (const webContents of targets) {
+    if (!webContents.isDestroyed()) webContents.send('updater:state', state)
+  }
 }
 
 function reportUpdaterError(error: unknown): void {

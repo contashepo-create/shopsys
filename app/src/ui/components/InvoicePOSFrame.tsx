@@ -200,9 +200,9 @@ export function InvoicePOSFrame({
           )}
           <Btn variant="ghost" onClick={onRestoreDraft} title="فتح أي مسودة محفوظة باسم العميل"><FileClock size={13} /> المسودات{draftCount ? ` (${draftCount})` : ''}</Btn>
           {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}
-          <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
-          <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9" disabled={posting}><CheckCheck size={13} /> {posting ? 'جارٍ الترحيل…' : postLabel ?? 'حفظ وترحيل'}</Btn>
+          <Btn type="button" variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
+          <Btn type="button" variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
+          <Btn type="button" onClick={onPost} shortcut="F9" disabled={posting}><CheckCheck size={13} /> {posting ? 'جارٍ الترحيل…' : postLabel ?? 'حفظ وترحيل'}</Btn>
         </div>
       </header>
 
