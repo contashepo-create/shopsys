@@ -3,6 +3,31 @@ import { flushPendingDesktopSnapshots, refreshDesktopSnapshot } from './persiste
 import { flushSecureStorageWrites } from './secureStorage.ts'
 
 /**
+ * تصريف الكتابات المؤجلة بعد ترحيل ناجح، مع إعادة محاولة قصيرة.
+ *
+ * بلاغ المالك: «الفاتورة تُكتب ثم لا تُغلق النافذة». السبب الشائع فشل مؤقت
+ * في تصريف اللقطة بعد نجاح `commit` (IPC مشغول/SQLite يعيد محاولة/quota يفرغ)
+ * فيُرفض الوعد ويظن النموذج أن الترحيل فشل رغم أن المستند قائم — فتبقى
+ * النافذة مفتوحة وتهبط بوابة «تعذّر تأكيد الحفظ». المستند المُرحَّل لا يُلغى
+ * بفشل تصريف لحظي؛ نعيد المحاولة ثم نرفض فقط إن استعصى التصريف فعلاً
+ * (عندها تبقى النافذة مفتوحة للحفاظ على البيانات وإعادة المحاولة الآمنة).
+ */
+async function flushAfterCommit(flush: () => Promise<void>): Promise<void> {
+  const attempts = 3
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+    try {
+      await flush()
+      return
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
+}
+
+/**
  * Serialize invoice posting across independent renderer processes/tabs. The lock
  * is held while the latest snapshot is reloaded, domain guards run, and storage
  * confirms completion. Independent drafts remain editable in their own windows.
@@ -23,10 +48,11 @@ export async function withInvoiceCommitLock<T>(
       const result = await commit()
       // لا تجعل خطأ لقطة الإعدادات shopsys-app يترك فاتورة مُرحّلة مفتوحة
       // فيدفع المستخدم إلى إعادة الترحيل. نؤكد هنا لقطة دفتر المبيعات فقط.
-      await flushPendingDesktopSnapshots('shopsys-data')
+      await flushAfterCommit(() => flushPendingDesktopSnapshots('shopsys-data'))
       return result
     } finally {
-      lock.release(token)
+      /* تحرير القفل لا يُبطل مستنداً اكتمل — أخطأ التحرير يُسجَّل ويُهمَل */
+      try { lock.release(token) } catch { /* لا شيء */ }
     }
   }
 
@@ -40,7 +66,7 @@ export async function withInvoiceCommitLock<T>(
     await flushSecureStorageWrites('shopsys-data')
     await refreshLiveData()
     const result = await commit()
-    await flushSecureStorageWrites('shopsys-data')
+    await flushAfterCommit(() => flushSecureStorageWrites('shopsys-data'))
     return result
   })
 }

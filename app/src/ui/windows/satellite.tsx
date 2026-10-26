@@ -47,7 +47,12 @@ export function SatelliteLayout({ children }: { title?: string; children: ReactN
     const pending = closeTokens
     setCloseTokens([])
     if (allow) setDirty(false)
-    for (const token of pending) desktopWindowsBridge()?.respondClose(token, allow)
+    const bridge = desktopWindowsBridge()
+    for (const token of pending) bridge?.respondClose(token, allow)
+    /* بلاغ المالك: «حوار التأكيد لا يغلق النافذة». مصافحة الإغلاق في العملية
+       الرئيسية تُلغى بعد مهلتها إن بطأ المستخدم قراره — عند التأكيد نُغلق
+       نافذتنا مباشرة أيضاً، فلا يعتمد الإغلاق المضمون على بقاء التوكن حياً. */
+    if (allow) bridge?.closeSelf()
   }
   return (
     <div className={isInvoiceWorkspace ? 'invoice-embedded-layout' : 'min-h-screen'} dir="rtl" data-satellite-layout>
@@ -131,11 +136,15 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
     setCloseError(null)
     setAsk(null)
     if (!current) return
-    let localOnly = true
     for (const token of current.tokens) {
-      if (token) { localOnly = false; bridge?.respondClose(token, allow) }
+      if (token) bridge?.respondClose(token, allow)
     }
-    if (localOnly && allow) bridge?.closeSelf()
+    /* بلاغ المالك: «حوار التأكيد لا يغلق النافذة المستهدفة». مصافحة الإغلاق
+       عند العملية الرئيسية تُلغى بعد مهلتها (10 ثوانٍ) إن بطأ المستخدم قراره
+       أو طالت قراءته التحذير — عند التأكيد نُغلق نافذتنا مباشرة أيضاً، فيبقى
+       الإغلاق مضموناً حتى لو انتهت صلاحية التوكن. الإغلاق المزدوج آمن:
+       العملية الرئيسية تتجاهل التوكن المنتهي ولا تُغلق مفتوحاً مرّتين. */
+    if (allow) bridge?.closeSelf()
   }
 
   const kind = descriptor.kind as AppWindowKind | undefined
@@ -174,7 +183,7 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
                       {prompt.saveLabel ?? 'حفظ ثم إغلاق'}
                     </button>
                   )}
-                  <button type="button" className="is-discard" data-window-close-confirm-yes onClick={() => answerClose(true, () => prompt?.onDiscard?.())}>
+                  <button type="button" className="is-discard" data-window-close-confirm-yes onClick={() => answerClose(true, () => { try { prompt?.onDiscard?.() } catch { /* تنظيف أفضلية: حذف مسودة يفشل لا يمنع إغلاق النافذة المؤكَّد */ } })}>
                     {prompt?.discardLabel ?? 'إغلاق وفقد البيانات'}
                   </button>
                 </div>

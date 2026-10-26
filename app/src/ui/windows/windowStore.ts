@@ -342,8 +342,9 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
   },
   discardAndCloseWindow: (id) => {
     const win = get().windows.find((row) => row.id === id)
-    win?.closePrompt?.onDiscard?.()
-    get().closeWindow(id)
+    /* تنظيف الصفحة (حذف مسودة مثلاً) إن أخطأ لا يُبطل تأكيد المستخدم —
+       النافذة تُغلق في كل الأحوال حتى لا يبقى حوار الإغلاق عالقاً بلا فعل. */
+    try { win?.closePrompt?.onDiscard?.() } finally { get().closeWindow(id) }
   },
   cancelCloseWindow: (id) => {
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, askingClose: false } : row)) }))

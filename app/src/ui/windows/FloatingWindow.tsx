@@ -196,7 +196,14 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
                     type="button"
                     className="is-save"
                     data-window-close-save
-                    onClick={() => { const prompt = win.closePrompt; cancelCloseWindow(win.id); prompt?.onSave?.() }}
+                    onClick={() => {
+                      /* بلاغ المالك: زر الحفظ كان يُغلق الحوار أولاً ثم ينفّذ الحفظ —
+                         فشل الحفظ يُسقط الحوار وتبقى النافذة مفتوحة بلا سبب مرئي.
+                         الآن: الحفظ أولاً، والإغلاق المؤكد بعد نجاحه فقط. */
+                      const prompt = win.closePrompt
+                      try { prompt?.onSave?.(); cancelCloseWindow(win.id) }
+                      catch { /* فشل الحفظ يُبقي الحوار مفتوحاً لمحاولة أخرى */ }
+                    }}
                   >{win.closePrompt.saveLabel ?? 'حفظ ثم إغلاق'}</button>
                 )}
                 <button type="button" onClick={() => discardAndCloseWindow(win.id)} className="is-discard" data-window-close-confirm-yes>
