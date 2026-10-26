@@ -24,4 +24,17 @@ describe('دورة حياة نوافذ Electron المستقلة', () => {
     expect(handler).toMatch(/showLoadError\(win/)
     expect(handler?.indexOf('if (shuttingDown)')).toBeLessThan(handler?.indexOf('showLoadError(win'))
   })
+
+  it('يركّز النافذة المستهدفة أمام المستخدم قبل إرسال سؤال تأكيد الإغلاق', () => {
+    /* حوار التأكيد يُرسم داخل وثيقة القمر — إن بقي خلف نافذة أخرى لا يراه أحد
+       حتى تنتهي المهلة. الترتيب: focusEntry ثم windows:request-close. */
+    const source = read('../desktop/satelliteWindows.ts')
+    const handshake = source.match(/function handshakeClose\(entry: SatEntry\): Promise<boolean> \{[\s\S]*?\n\}/)?.[0]
+    expect(handshake).toBeTruthy()
+    const focusAt = handshake!.indexOf('focusEntry(entry)')
+    const sendAt = handshake!.indexOf("send('windows:request-close'")
+    expect(focusAt).toBeGreaterThan(-1)
+    expect(sendAt).toBeGreaterThan(-1)
+    expect(focusAt).toBeLessThan(sendAt)
+  })
 })

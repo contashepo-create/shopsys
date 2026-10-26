@@ -122,7 +122,7 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('اختيار الطرف بنقرة واحدة يثبّت العميل بدلاً من ترك الفاتورة نقدية', () => {
     const onChange = vi.fn()
     const onConfirm = vi.fn()
-    const view = render(<PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm} commitOnClick />)
+    const view = render(<PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm}/>)
     fireEvent.change(view.getByLabelText('العميل'), { target: { value: 'أحمد' } })
     fireEvent.click(document.querySelector('[data-quick-option][data-value="10"]')!)
     expect(onChange).toHaveBeenCalledWith(10)
