@@ -294,7 +294,10 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
       {/* ملاحة المفاتيح العامة تبقى مركّبة دائماً (F12/F7/Enter…) — حتى أثناء
           عرض تبويب محرر، فتبقى الاختصارات العالمية حيّة كما في نافذة قمر. */}
       <KeyboardNavigation />
-      {viewActiveTab ? <ActiveViewTab tab={viewActiveTab} /> : (
+      {/* key بمعرّف التبويب: كل تبويب عرض = مثيل مستقل تماماً كنافذة قمر —
+          بلا مفتاح كان محرّران لنفس النوع يتقاسمان الحالة فتنتقل قيم محرر
+          إلى آخر وتحفظ على صنف غلط (D7). */}
+      {viewActiveTab ? <ActiveViewTab key={viewActiveTab.id} tab={viewActiveTab} /> : (
         <>
       <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>}>
       <Routes>

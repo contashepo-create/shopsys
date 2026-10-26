@@ -361,12 +361,17 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
   openWindow: (input) => {
     const bridge = desktopBridge()
     if (bridge) {
-      /* من الرئيسية (لا أب/الأب 'main') وكل ما عدا الفواتير → تبويب داخلي.
-         الفواتير بجميع أنواعها وأبناء النوافذ (أبها قمر فعلي) تبقى نوافذ حرة. */
+      /* من الرئيسية (لا أب/الأب 'main') وكل ما عدا الفواتير والمنتقيات → تبويب
+         داخلي. الفواتير بجميع أنواعها وأبناء النوافذ (أبها قمر فعلي) تبقى
+         نوافذ حرة. والمنتقيات (entity/item-picker) تبقى نوافذ متكدسة حتى من
+         الرئيسية: أدوات تراكب تحمل onPick فوق محتوى لا يجوز إزاحته — تبويبها
+         من الرئيسية كان سيفكّ نداء الاختيار بعد تركيب الراوتر؛ وقبل كل ذلك
+         فالمنتقي يكدس فوق الصفحة لا يحل محلها (قرار المالك ㉧). */
       const parent = resolveOpenParent(input)
       const fromMain = !parent || parent === 'main'
       const invoiceKind = input.kind === 'sales-invoice' || input.kind === 'purchase-invoice'
-      if (fromMain && !invoiceKind) {
+      const overlayKind = input.kind === 'entity-picker' || input.kind === 'item-picker'
+      if (fromMain && !invoiceKind && !overlayKind) {
         const tabId = get().openTab({
           kind: input.kind,
           props: input.props,
@@ -502,7 +507,11 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
   confirmTabAsk: () => {
     const proceed = tabAskProceed
     tabAskProceed = null
-    set((state) => ({ tabs: state.tabs.map((row) => (row.askMode ? { ...row, askMode: null } : row)) }))
+    set((state) => ({ tabs: state.tabs.map((row) => (row.askMode
+      ? { ...row, askMode: null, /* مغادرة مؤكَّدة «فقد التغييرات»: محتوى التبويب
+          يُعاد قراءته من المخزن عند العودة — فالعلامة القذرة تُمحى مع الموافقة */
+        ...(row.askMode === 'switch' ? { dirty: false } : {}) }
+      : row)) }))
     proceed?.()
   },
   setTabDirty: (id, dirty) => {

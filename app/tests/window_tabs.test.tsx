@@ -87,6 +87,15 @@ describe('تبويبات النافذة الأم', () => {
     expect(id).toMatch(/^win-/)
   })
 
+  it('منتقي من الرئيسية يبقى نافذة متكدسة لا تبويباً (onPick يبقى حياً فوق المحتوى)', () => {
+    const { open } = installFakeDesktop()
+    const id = useWindowStore.getState().openWindow({ kind: 'entity-picker', title: 'منتقي عملاء', props: { entity: 'customer', onPick: () => undefined } })
+    expect(useWindowStore.getState().tabs).toHaveLength(0)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(id).toMatch(/^win-/)
+    /* ملاحظة: التبويب هنا كان سيركّب الراوتر مكان الطالب فيفكّ نداء الاختيار */
+  })
+
   it('محرر بلا أب من الرئيسية يفتح تبويب عرض ويحفظ خصائصه (بلا IPC)', () => {
     const { open } = installFakeDesktop()
     const onPick = vi.fn()

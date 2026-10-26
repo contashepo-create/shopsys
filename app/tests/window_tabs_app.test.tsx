@@ -8,7 +8,7 @@
  * يركّب <App/> ببيانات النشاط التجريبي كما في all_pages_render + جسر وهمي كامل.
  */
 import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest'
-import { cleanup, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import React from 'react'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -132,18 +132,58 @@ describe('أثر <App/> للتبويبات على سطح المكتب', () => {
     expect(useWindowStore.getState().tabs.some((tab) => tab.path === '/purchases/orders')).toBe(false)
   })
 
+  it('D7: تبديل تبويبَي محرّر لنفس النوع يعيد تهيئة الحالة — لا تسريب قيم ولا بقية قذرة', async () => {
+    installFakeDesktop()
+    const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
+    const { useDataStore } = await import('../src/data/repo.ts')
+    window.location.hash = '#/'
+    const view = render(<App />) /* تركيب أولاً كما في التطبيق الفعلي */
+    const items = useDataStore.getState().items
+    expect(items.length, 'البيانات التجريبية يجب أن تحوي صنفين على الأقل').toBeGreaterThanOrEqual(2)
+    const [itemA, itemB] = items
+    /* فتح محرَّري صنفين من الرئيسية — كلاهما تبويب عرض */
+    const tabA = useWindowStore.getState().openWindow({ kind: 'item-editor', title: `محرر ${itemA.nameAr}`, props: { itemId: itemA.id }, dedupeKey: `item-editor:${itemA.id}` })
+    const tabB = useWindowStore.getState().openWindow({ kind: 'item-editor', title: `محرر ${itemB.nameAr}`, props: { itemId: itemB.id }, dedupeKey: `item-editor:${itemB.id}` })
+    expect(useWindowStore.getState().tabs).toHaveLength(2)
+    expect(useWindowStore.getState().viewActiveTabId).toBe(tabB)
+    const nameInput = () => view.container.querySelector('[aria-label="اسم الصنف"]') as HTMLInputElement
+    await waitFor(() => expect(nameInput()).toBeTruthy(), { timeout: 8000 })
+    /* اكتب تعديلاً مؤقتاً في محرر B (يصنع حالة متسخة) */
+    fireEvent.change(nameInput(), { target: { value: 'قيمة مؤقتة لا يجب أن تنتقل' } })
+    expect(nameInput().value).toBe('قيمة مؤقتة لا يجب أن تنتقل')
+    expect(useWindowStore.getState().tabs.find((t) => t.id === tabB)?.dirty).toBe(true)
+    /* التبديل إلى تبويب A يسأل عن التغييرات غير المحفوظة أولاً */
+    useWindowStore.getState().activateTab(tabA)
+    expect(useWindowStore.getState().tabs.find((t) => t.id === tabB)?.askMode).toBe('switch')
+    useWindowStore.getState().confirmTabAsk()
+    expect(useWindowStore.getState().viewActiveTabId).toBe(tabA)
+    /* محرر A يعرض اسم A الحقيقي — لا قيمة B المؤقتة (بلا key كان المكوّن يتقاسم حالتها) */
+    await waitFor(() => expect(nameInput()).toBeTruthy(), { timeout: 8000 })
+    await waitFor(() => expect(nameInput().value).toBe(itemA.nameAr), { timeout: 8000 })
+    /* والمغادرة المؤكَّدة «فقد التغييرات» تُمحى علامتها — لا يبقى شيء متسخ */
+    expect(useWindowStore.getState().tabs.find((t) => t.id === tabB)?.dirty).toBe(false)
+    /* العودة إلى B: بلا سؤال (وافقت على الفقد) وبلا تعديلي المفقود — بياناته الأصلية */
+    useWindowStore.getState().activateTab(tabB)
+    expect(useWindowStore.getState().tabs.find((t) => t.id === tabB)?.askMode).toBeNull()
+    expect(useWindowStore.getState().viewActiveTabId).toBe(tabB)
+    await waitFor(() => expect(nameInput()).toBeTruthy(), { timeout: 8000 })
+    await waitFor(() => expect(nameInput().value).toBe(itemB.nameAr), { timeout: 8000 })
+  })
+
   it('D6: الاختصارات العالمية (F12 — دليل الاختصارات) تبقى حيّة أثناء عرض تبويب', async () => {
     installFakeDesktop()
     const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
-    /* تبويب عرض نشط: المحتوى يُصوَّر مكان الراوتر (بلا نوع = لا شيء يُرسم،
-       المهم أن الشفرة تدخل فرع viewActiveTab) */
-    const tabId = useWindowStore.getState().openTab({ title: 'تبويب عرض' })
+    window.location.hash = '#/'
+    const view = render(<App />)
+    /* تفعيل تبويب عرض بعد التركيب — كما يفعل المستخدم فعلياً (محرر صنف حقيقي) */
+    const { useDataStore } = await import('../src/data/repo.ts')
+    const firstItem = useDataStore.getState().items[0]
+    const tabId = useWindowStore.getState().openWindow({ kind: 'item-editor', title: 'محرر عرض', props: { itemId: firstItem.id }, dedupeKey: `item-editor:d6-${firstItem.id}` })
     expect(tabId).toBeTruthy()
     expect(useWindowStore.getState().viewActiveTabId).toBe(tabId)
-    window.location.hash = '#/'
-    render(<App />)
+    await waitFor(() => expect(view.container.querySelector('[data-view-tab]')).toBeTruthy(), { timeout: 8000 })
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }))
-    /* قبل الإصلاح كان KeyboardNavigation يُفكّ مع فرع التبويب فتموت الاختصارات */
+    /* قبل إصلاح D6 كان KeyboardNavigation يُفكّ مع فرع التبويب فتموت الاختصارات */
     await waitFor(() => expect(document.querySelector('[data-shortcut-help]')).toBeTruthy(), { timeout: 5000 })
   })
 })
