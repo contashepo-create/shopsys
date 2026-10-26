@@ -8,7 +8,7 @@
  *     طابع حوار إغلاق النوافذ) · حارس تنقل مسجّل يغطي الروابط الداخلية أيضاً.
  * يعمل فقط حيث تعمل النوافذ الحرة (سطح المكتب) ويختفي بلا تبويبات.
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { X } from 'lucide-react'
 import { OverlayPortal } from '../components/ui.tsx'
@@ -23,9 +23,17 @@ const tabBase = 'group flex items-center gap-1.5 h-7 px-2.5 rounded-t-lg border 
 
 /** محتوى تبويب عرض: نفس مضيف النوافذ مع خصائصه — يُرسم مكان الراوتر */
 export function ActiveViewTab({ tab }: { tab: AppWindowTab }) {
+  const bodyRef = useRef<HTMLDivElement>(null)
+  /* تركيز أول حقل عند فتح/تبديل التبويب — نفس سلوك نافذة القمر عند فتحها */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      bodyRef.current?.querySelector<HTMLElement>('[data-window-autofocus], input:not([type="hidden"]):not([disabled]), select, textarea, button:not([data-window-button])')?.focus()
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [tab.id])
   if (!tab.kind) return null
   return (
-    <div className="h-full min-h-0" data-view-tab={tab.id} data-view-tab-kind={tab.kind}>
+    <div ref={bodyRef} className="h-full min-h-0" data-view-tab={tab.id} data-view-tab-kind={tab.kind}>
       <WindowHostProvider windowId={tab.id} props={tab.props ?? {}}>
         <WindowViewContent kind={tab.kind} />
       </WindowHostProvider>
@@ -43,7 +51,13 @@ export function WindowTabBar() {
   useEffect(() => {
     if (!activeViewDirty || !viewActiveTabId) return
     return registerNavigationGuard((continueNavigation) => {
-      useWindowStore.getState().beginTabAsk(viewActiveTabId, 'switch', continueNavigation)
+      /* حارس قد يبقى مسجّلاً لحظة واحدة بعد مغادرة التبويب (أثر التحديث في
+         نفس دفعة التأثيرات) — يتحقق من الحالة الحية فلا يضاعف الحوار. */
+      const state = useWindowStore.getState()
+      const stillActive = state.viewActiveTabId === viewActiveTabId
+        && state.tabs.some((tab) => tab.id === viewActiveTabId && tab.dirty)
+      if (!stillActive) { continueNavigation(); return }
+      state.beginTabAsk(viewActiveTabId, 'switch', continueNavigation)
     })
   }, [activeViewDirty, viewActiveTabId])
   /* تنبيه إغلاق التطبيق نفسه أثناء وجود تبويب بتعديلات (بديل حارس النوافذ) */

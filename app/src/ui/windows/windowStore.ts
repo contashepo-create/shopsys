@@ -130,6 +130,11 @@ function tabKey(tab: Pick<AppWindowTab, 'path' | 'dedupeKey'>): string | null {
   return null
 }
 
+/** أمّ النافذة عند الفتح: صريحة إن وُجدت، وإلا هوية هذه الوثيقة ('main' في الرئيسية) */
+function resolveOpenParent(input: Pick<OpenWindowInput, 'parentId'>): string {
+  return input.parentId ?? getSelfWindowId()
+}
+
 const MIN_W = 360
 const MIN_H = 240
 const BASE_Z = 700
@@ -310,7 +315,7 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
   const hasCallbacks = Object.keys(fns).length > 0
   if (hasCallbacks) pendingCallbacks.set(requestId, fns)
   satelliteIds.set(id, hasCallbacks ? requestId : null)
-  const parentId = input.parentId ?? getSelfWindowId()
+  const parentId = resolveOpenParent(input)
   satelliteParent.set(id, parentId)
   if (input.dedupeKey) satelliteByDedupe.set(input.dedupeKey, id)
   void bridge.open({
@@ -358,7 +363,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     if (bridge) {
       /* من الرئيسية (لا أب/الأب 'main') وكل ما عدا الفواتير → تبويب داخلي.
          الفواتير بجميع أنواعها وأبناء النوافذ (أبها قمر فعلي) تبقى نوافذ حرة. */
-      const parent = input.parentId ?? getSelfWindowId()
+      const parent = resolveOpenParent(input)
       const fromMain = !parent || parent === 'main'
       const invoiceKind = input.kind === 'sales-invoice' || input.kind === 'purchase-invoice'
       if (fromMain && !invoiceKind) {

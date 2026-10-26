@@ -194,7 +194,7 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
   const Layout = (satellite ? SatelliteLayout : MainLayout) as React.ComponentType<{ title?: string; children: React.ReactNode }>
 
   /* ── تبويبات النافذة الأم (قرار المالك2026-10-26): الأقسام والعروض تُفتح
-     كتاباباً داخل الرئيسية — مزامنة الراوتر مع المتجر باتجاهين واحداً each. ── */
+     كتاباباً داخل الرئيسية — مزامنة الراوتر مع المتجر باتجاهين واحدة. ── */
   const windowTabs = useWindowStore((s) => s.tabs)
   const viewActiveTabId = useWindowStore((s) => s.viewActiveTabId)
   const pendingPath = useWindowStore((s) => s.pendingPath)
@@ -218,15 +218,23 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
   /* الرئيسية مشغّل — نسخة التبويبات (قرار المالك2026-10-26): أي تنقّل لغير
      لوحة التحكم على سطح المكتب يفتح القسم تبويباً داخل هذه النافذة نفسها
      بدل نافذة حرة مستقلة، ولا تعود الرئيسية للوحة التحكم — التبويب هو العرض.
-     عند بلوغ10 تبويبات يعود openSectionWindow لسلوكه القديم (نافذة قسم).
+     عند بلوغ10 تبويبات يعود openSectionWindow لسلوكه القديم (نافذة قسم)
+     وهنا يرتد المحتوى للوحة التحكم حتى لا يُعرض القسم مرتين (نافذة + الرئيسية).
      في الويب لا جسر: التنقل الداخلي كما هو حرفياً. */
   useEffect(() => {
     if (satellite || !isDesktopFreeWindows()) return
     if (!setupState.completed || location.pathname === '/') return
     const raw = useRawDataStore.getState()
     if (raw.loggedOut || !useSessionAuthStore.getState().authenticated) return
-    openSectionWindow(`${location.pathname}${location.search}`, title)
-  }, [satellite, location.pathname, location.search, title, setupState.completed])
+    /* الفواتير حرة (قرار المالك2026-10-26): مسار مستند الفاتورة يفتح نافذته
+       ثم يعود للقائمة بفعل InvoiceDocumentRoute نفسه — لا يحجز تبويباً هنا. */
+    if (location.pathname === '/sales/invoices/new' || location.pathname === '/purchases/invoices/new') return
+    const current = `${location.pathname}${location.search}`
+    openSectionWindow(current, title)
+    /* لم يحجز تبويب المسار (فتح نافذة حرة عند الحد الأقصى) → الرئيسية للوحة */
+    const claimed = useWindowStore.getState().tabs.some((tab) => tab.path === current)
+    if (!claimed) navigate('/', { replace: true })
+  }, [satellite, location.pathname, location.search, title, setupState.completed, navigate])
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
   /* الهوية والمصادقة من المتجر الخام (غير مصفّاة بالفرع): بوابة الدخول
