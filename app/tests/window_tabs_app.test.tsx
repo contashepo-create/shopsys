@@ -131,4 +131,19 @@ describe('أثر <App/> للتبويبات على سطح المكتب', () => {
     expect(useWindowStore.getState().tabs).toHaveLength(MAX_WINDOW_TABS)
     expect(useWindowStore.getState().tabs.some((tab) => tab.path === '/purchases/orders')).toBe(false)
   })
+
+  it('D6: الاختصارات العالمية (F12 — دليل الاختصارات) تبقى حيّة أثناء عرض تبويب', async () => {
+    installFakeDesktop()
+    const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
+    /* تبويب عرض نشط: المحتوى يُصوَّر مكان الراوتر (بلا نوع = لا شيء يُرسم،
+       المهم أن الشفرة تدخل فرع viewActiveTab) */
+    const tabId = useWindowStore.getState().openTab({ title: 'تبويب عرض' })
+    expect(tabId).toBeTruthy()
+    expect(useWindowStore.getState().viewActiveTabId).toBe(tabId)
+    window.location.hash = '#/'
+    render(<App />)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12', bubbles: true }))
+    /* قبل الإصلاح كان KeyboardNavigation يُفكّ مع فرع التبويب فتموت الاختصارات */
+    await waitFor(() => expect(document.querySelector('[data-shortcut-help]')).toBeTruthy(), { timeout: 5000 })
+  })
 })

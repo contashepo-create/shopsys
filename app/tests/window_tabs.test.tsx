@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { MAX_WINDOW_TABS, openSectionWindow, useWindowStore } from '../src/ui/windows/windowStore.ts'
 import { WindowTabBar } from '../src/ui/windows/WindowTabs.tsx'
+import { guardNavigation } from '../src/ui/components/navigationGuard.ts'
 
 function installFakeDesktop() {
   const open = vi.fn(async () => ({ ok: true as const }))
@@ -198,5 +199,43 @@ describe('تبويبات النافذة الأم', () => {
     expect(useWindowStore.getState().pendingPath).toBe('/parties/customers')
     fireEvent.click(screen.getByLabelText('إغلاق التقارير'))
     expect(useWindowStore.getState().tabs.map((tab) => tab.path)).toEqual(['/parties/customers'])
+  })
+
+  it('حارس متقادم: بعد خروج التبويب من العرض يستمر التنقل صامتاً بلا سؤال ثانٍ', () => {
+    installFakeDesktop()
+    const viewId = useWindowStore.getState().openWindow({ kind: 'item-editor', title: 'محرر صنف', dedupeKey: 'item-editor:stale' })
+    useWindowStore.getState().setWindowDirty(viewId, true)
+    render(<MemoryRouter><WindowTabBar /></MemoryRouter>)
+    expect(useWindowStore.getState().viewActiveTabId).toBe(viewId)
+    /* خروج التبويب من العرض في المتجر قبل تنظيف أثر React للحارس — نفس دفعة
+       التأثيرات التي كان يخاف منها البلاغ: الحارس يجري فيتحقق من الحالة الحية */
+    useWindowStore.setState({ viewActiveTabId: null })
+    const proceed = vi.fn()
+    expect(guardNavigation(proceed)).toBe(true) // الحارس ما زال مسجّلاً لحظتها
+    expect(proceed).toHaveBeenCalledTimes(1) // تجاوز صامت — بلا حوار «مغادرة» ثانٍ
+    expect(useWindowStore.getState().tabs[0]?.askMode).toBeNull()
+  })
+
+  it('فشل «حفظ ثم إغلاق» في حوار التبويب يُبقي الحوار والتبويب مفتوحين', () => {
+    installFakeDesktop()
+    const viewId = useWindowStore.getState().openWindow({ kind: 'party-editor', title: 'محرر عميل', dedupeKey: 'party-editor:save-fail' })
+    useWindowStore.getState().setWindowDirty(viewId, true)
+    useWindowStore.getState().setWindowClosePrompt(viewId, {
+      hint: 'اختبار فشل الحفظ',
+      saveLabel: 'حفظ ثم إغلاق', discardLabel: 'إغلاق وفقد التغييرات',
+      onSave: () => { throw new Error('قرص ممتلئ') },
+    })
+    render(<MemoryRouter><WindowTabBar /></MemoryRouter>)
+    fireEvent.click(screen.getByLabelText('إغلاق محرر عميل'))
+    expect(document.querySelector('[data-tab-close-confirm]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-tab-close-save]') as HTMLElement)
+    /* الحفظ فشل: لا إغلاق، والحوار يبقى لمحاولة أخرى */
+    expect(useWindowStore.getState().tabs).toHaveLength(1)
+    expect(useWindowStore.getState().tabs[0]?.askMode).toBe('close')
+    expect(document.querySelector('[data-tab-close-confirm]')).toBeTruthy()
+    /* والإلغاء ما زال يعمل بعد الفشل */
+    fireEvent.click(document.querySelector('[data-tab-close-cancel]') as HTMLElement)
+    expect(useWindowStore.getState().tabs).toHaveLength(1)
+    expect(document.querySelector('[data-tab-close-confirm]')).toBeFalsy()
   })
 })

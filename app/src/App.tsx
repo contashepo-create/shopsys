@@ -291,9 +291,11 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
 
   return (
     <Layout title={viewActiveTab ? viewActiveTab.title : title}>
+      {/* ملاحة المفاتيح العامة تبقى مركّبة دائماً (F12/F7/Enter…) — حتى أثناء
+          عرض تبويب محرر، فتبقى الاختصارات العالمية حيّة كما في نافذة قمر. */}
+      <KeyboardNavigation />
       {viewActiveTab ? <ActiveViewTab tab={viewActiveTab} /> : (
         <>
-      <KeyboardNavigation />
       <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>}>
       <Routes>
         <Route path="/" element={<Dashboard />} />

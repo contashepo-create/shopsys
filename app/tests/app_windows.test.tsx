@@ -212,6 +212,28 @@ describe('نظام النوافذ المستقلة', () => {
     expect(W().windows.length).toBe(0)
   })
 
+  it('فشل «حفظ ثم إغلاق» في نافذة داخلية يُبقي حوار التأكيد مفتوحاً', () => {
+    S().addItem({ nameAr: 'فاصولياء حبوب', sku: 'FAIL1', barcodes: [], categoryId: 0, baseUnit: 'كجم', costMinor: 2000, stockQty: 5, priceMinor: 2600, minQty: 1 } as never)
+    const item = S().items.at(-1)!
+    const id = openItemEditorWindow(item.id, null)
+    W().setWindowDirty(id, true)
+    W().setWindowClosePrompt(id, {
+      hint: 'اختبار فشل الحفظ',
+      saveLabel: 'حفظ ثم إغلاق', discardLabel: 'إغلاق وفقد التغييرات',
+      onSave: () => { throw new Error('قرص ممتلئ') },
+    })
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    fireEvent.click(document.querySelector('[data-window-close]') as HTMLElement)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-window-close-save]') as HTMLElement)
+    /* الحفظ فشل: النافذة تبقى مفتوحة والحوار يبقى لمحاولة أخرى (بلاغ المالك) */
+    expect(W().windows).toHaveLength(1)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-window-close-cancel]') as HTMLElement)
+    expect(W().windows).toHaveLength(1)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeFalsy()
+  })
+
   it('فاتورة المبيعات نفسها تعمل داخل النافذة المستقلة وتُغلق بزرها', async () => {
     const id = openSalesInvoiceWindow()
     render(<MemoryRouter><WindowHost /></MemoryRouter>)
