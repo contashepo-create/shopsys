@@ -77,6 +77,22 @@
 - **إغلاق العهدة**: `summarizeCustody` يفصل المصروف الفعلي عن المرتجع والعجز والزيادة. يظهر المرتجع والعجز في ملف التسوية؛ العجز يتحول إلى سلفة موظف على 1107، والزيادة تبقى مستحقاً على 2107 وتُعرض وتُسوّى اختيارياً في مسير الرواتب. البوابات المعنية: `verify_custody.mjs` و`verify_custody_payroll_project_pl.mjs`.
 - **نتيجة التحقق المسجلة**: **335** بوابة/رحلة أعمال (315 بوابة + 20 رحلة) و**216** ملف Vitest/**1509** اختباراً في آخر تشغيل ناجح بتاريخ 2026-10-22؛ أعد الفحوص بعد أي تعديل جديد.
 
+## 1.6) جلسة 2026-10-27 — بلاغان: «الفاتورة تُرحَّل ولا تُغلق» و«الدعم يطلب إنترنت وهو موجود»
+
+### ① فواتير البيع (خصوصاً المقاولات): «حفظ وترحيل» لا يُغلق الفاتورة
+- **السبب الجذري (مُعاد إنتاجه باختبار فعلي قبل الإصلاح)**: `AdvancedSalesInvoicePage.tsx` و`AdvancedPurchaseInvoicePage.tsx` كانا يستدعيان `finishDocument()` بعد نجاح `postSale`/`editSale` بـ`host.setDirty(false); host.close()` فقط، **دون** تنظيف حارس `useUnsavedChangesGuard`. الحارس يحتفظ بحرّاس في `navigationGuard.ts` و`unsavedChangeRegistry.ts` ما دام `isDirty`؛ وإغلاق تبويب العرض يمرّ بـ`requestCloseTab → guardNavigation` فيُفتح حوار «تعديلات غير محفوظة» ويمنع الإغلاق. `saveDraft()` وحدها كانت تستدعي `unsaved.markClean()` — ولهذا كان «حفظ كمسودة ثم حفظ وترحيل» يغلق الفاتورة. فواتير المقاولات أظهرت العطب أوضح لأن تعبئتها المسبقة (`prefill`) تجعلها متّسخة منذ فتحها.
+- **الإصلاح**: `useUnsavedChangesGuard` أضيفت إليه `release()` تُنهي المستند **تزامنياً** (تُسقط حارس التنقل والوسم القذر، وتغلق أي حوار عالق، وتمنع إعادة التسجيل بعد الإنهاء) — لأن `markClean()` وحدها `setState` غير متزامنة بينما الإغلاق يُطلب في نفس الدالة. `finishDocument()` في صفحتَي الفاتورة صار: `finishedRef = true` ← `unsaved.release()` ← `setDirty(false)` ← `setClosePrompt(null)` ← `close()`؛ وأثر وسم النافذة متسخة صار يتجاهل المستند المنتهي. و`requestCloseTab` صار لا يمرّ على حراس التنقل العامة لتبويب عرض **نظيف** (حمايته من `tab.dirty` وحدها)، فلا يوقف مستنداً رُحّل محررٌ آخر مفتوح.
+- **الاختبارات**: `tests/invoice_post_closes_document.test.tsx` (تبويب + نافذة حرة + مسار المسودة + بقاء سؤال الإغلاق للمستند غير المرحَّل) و3 اختبارات جديدة في `unsaved_navigation_guards.test.tsx`. أُثبت العطب قبل الإصلاح (`TAB_AFTER_POST=true` مع حوار) ثم زال بعده.
+
+### ② قناة الدعم: «لابد من اتصالك بالإنترنت» رغم أن الإنترنت موجود
+- **السبب الجذري**: وجهة الدعم في العميل كانت `APP_SERVICES_CLOUD_BASE_URL = https://shopsys-control.contashepo.workers.dev` — نطاق عامل قديم غير منشور/غير قابل للحل (فحص مباشر: `getent`/`fetch_page` يفشلان)، بينما العامل الحيّ هو `https://shopsys-control.mobileshop2026.workers.dev` (يخدم `/about` و`/revoked` و`/activate` ويردّ على `/support/...` بـ`not_found`). فكل إرسال يموت في طبقة النقل (`status 0`)، و`supportFailureReason(0)` كان يترجم **أي** فشل نقل إلى «تحقّق من اتصال الإنترنت». سبب إضافي: نسخة سطح المكتب كانت تعتمد على Node `fetch` في العملية الرئيسية وحدها (لا يحترم بروكسي/شهادات النظام) بلا بديل.
+- **الإصلاح (عميل)**: ثابت جديد `SUPPORT_CLOUD_BASE_URL = LICENSE_CLOUD_BASE_URL` هو الوجهة الأولى، والنطاق القديم بديل تلقائي عند فشل النقل أو 404؛ `core/support.ts` أضاف `supportBaseCandidates` و`probeSupportConnectivity` و`supportTransportReason` (يميّز «الإنترنت سليم وخدمة الدعم لا تستجيب» من «لا يصل أي خادم») ومحاولة ثانية عبر `fetch` المُصيّر إن فشل جسر العملية الرئيسية؛ `SupportPage` يعرض السبب الحقيقي في الشريط ويسجّل رمزه. `desktop/main.ts` يعيد المحاولة عبر `net.fetch` (شبكة Chromium) ويعيد `errorCode` تقنياً. `supportFailureReason(404)` صار يصف «مسار الخدمة غير منشور».
+- **الإصلاح (خادم)**: `tools/devbot/src/supportChannel.js` جديد يضيف `GET/POST /support/:deviceId` إلى **عامل التحكم الحيّ** بنفس بروتوكول HMAC v2 + TOFU + nonce + تحديد المعدل والتعقيم، والمحادثة في `chat:<deviceId>` داخل `SHOPSYS_CONTROL`، والإشعار عبر `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ADMIN_ID` المضبوطين أصلاً. `supportBridge.js` صار ينفّذ `inbox/thread/reply/telegram-reply` محلياً عند `[vars] SUPPORT_LOCAL_CHANNEL = "1"` (في `tools/devbot/wrangler.toml`) ويحتفظ بمسار الجسر القديم بدونه. ترويسات CORS في العامل توسّعت لتشمل ترويسات التوقيع. عامل `cloud/worker.js` بلا تغيير (توافق النسخ القديمة).
+- **⚠️ إجراء تشغيلي إلزامي**: يجب **نشر عامل التحكم** (Actions → «Deploy control worker» أو `npx wrangler deploy` داخل `tools/devbot`) ثم تحديث نسخة العميل. قبل النشر يبقى المسار `/support` غير موجود على النطاق الحيّ؛ عندها يعرض العميل سبباً صادقاً («الإنترنت سليم لكن خادم الدعم لم يستجب/مسار الخدمة غير منشور») بدل «لا يوجد إنترنت». لا حاجة لأسرار جديدة في Cloudflare.
+- **الاختبارات/البوابات**: `tests/support_live_channel.test.ts` (تكامل حقيقي: توقيع العميل → العامل → KV → تليجرام → رد المطوّر → قراءة العميل، ومنع replay، وتشخيص الفشل) + `scripts/verify_support_live_endpoint.mjs` (14 فحصاً، ضمن `verify:all`).
+
+- **التحقق الكامل لهذه الجولة**: `tsc -b --force` ✓ · `npm run build` ✓ · `lint:strict` صفر ✓ · `vitest` **242 ملفاً/1757 اختباراً** ✓ · `verify:all` **349/349** (329 بوابة + 20 رحلة) ✓ · `audit:all` **19/19** ✓ · `desktop:compile` ✓. لا بيانات تشغيلية تغيّرت، ولم يُنشر العامل من هذه الجولة (يحتاج إجراء المالك أعلاه).
+
 ## 2) البنية والتقنيات
 
 ```
@@ -87,7 +103,7 @@
 │   ├── خطة_التدقيق_المحاسبي_الشامل_2026.md ← خطة التدقيق المحاسبي (9 مراحل) — مرجع ملزم للتدقيق الجاري
 │   ├── مصفوفة_المحرك_المحاسبي.md        ← **مولَّدة آلياً**: 237 مسار ترحيل (دالة/مستند/مدين/دائن/وحدة/أنشطة)
 │   └── تقرير_مراجعة_الأنشطة_والمقارنة_المعيارية.md
-├── cloud/worker.js + wrangler.toml     ← Cloudflare Worker (shopsys-control.contashepo.workers.dev)
+├── cloud/worker.js + wrangler.toml     ← عامل الخدمات القديم (بديل الدعم/الأعلام) · tools/devbot = عامل التحكم الحيّ (انظر 1.6)
 └── app/                         ← تطبيق Vite + React 19 + TypeScript + Tailwind v4 + zustand v5
     ├── scripts/                 ← 315 بوابة verify_*.mjs + 20 رحلة user_journey_*.mjs (كلها داخل verify:all) + auditKit.mjs + gen_engine_matrix.mjs + license_tool.mjs
     ├── public/                  ← أيقونات وشعارات

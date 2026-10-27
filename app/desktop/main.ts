@@ -8,7 +8,7 @@
  *   • النسخ الدوّارة: ساعي 24 فقط = يوم واحد (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, net, Notification, safeStorage, shell, type WebContents } from 'electron'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -1667,13 +1667,17 @@ function wireIpc(): void {
     event.returnValue = resolveDeviceIdentity(candidate)
   })
 
-  /* بند 5 (طلب المالك): طلب دعم — من العملية_main (بلا Origin) + قائمة مضيفين */
+  /* بند 5 (طلب المالك): طلب دعم — من العملية_main (بلا Origin) + قائمة مضيفين.
+     بلاغ 2026-10-27: كان الناقل الوحيد هو Node `fetch` (undici) في العملية
+     الرئيسية — لا يمرّ ببروكسي النظام ولا يثق بشهاداته، فيفشل عند بعض العملاء
+     رغم أن الإنترنت سليم. نُعيد المحاولة عبر `net.fetch` (شبكة Chromium في
+     Electron) ونُعيد رمز سبب تقني بدل تشخيص «لا يوجد إنترنت» كاذب. */
   ipcMain.handle('support:request', async (_event, args: { url?: unknown; method?: unknown; headers?: unknown; body?: unknown }) => {
     const rawUrl = typeof args?.url === 'string' ? args.url : ''
     let parsed: URL
-    try { parsed = new URL(rawUrl) } catch { return { ok: false, status: 0, body: '', error: 'invalid-url' } }
+    try { parsed = new URL(rawUrl) } catch { return { ok: false, status: 0, body: '', error: 'invalid-url', errorCode: 'invalid-url' } }
     if (parsed.protocol !== 'https:' || !SUPPORT_ALLOWED_HOSTS.has(parsed.hostname)) {
-      return { ok: false, status: 0, body: '', error: 'host-not-allowed' }
+      return { ok: false, status: 0, body: '', error: 'host-not-allowed', errorCode: 'host-not-allowed' }
     }
     const method = args?.method === 'POST' ? 'POST' : 'GET'
     const headers: Record<string, string> = {}
@@ -1685,12 +1689,26 @@ function wireIpc(): void {
     const body = typeof args?.body === 'string' ? args.body : undefined
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 20_000)
+    const init: RequestInit = { method, headers, body, signal: controller.signal }
+    const attempts: (typeof globalThis.fetch)[] = [fetch]
+    const chromiumFetch = (net as { fetch?: typeof globalThis.fetch } | undefined)?.fetch
+    if (typeof chromiumFetch === 'function') attempts.push(chromiumFetch)
+    let lastError = ''
     try {
-      const res = await fetch(parsed.toString(), { method, headers, body, signal: controller.signal })
-      const text = await res.text()
-      return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
-    } catch (error) {
-      return { ok: false, status: 0, body: '', error: (error as Error).message }
+      for (const doFetch of attempts) {
+        try {
+          const res = await doFetch(parsed.toString(), init)
+          const text = await res.text()
+          return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
+        } catch (error) {
+          lastError = (error as Error).message || 'fetch failed'
+        }
+      }
+      return {
+        ok: false, status: 0, body: '',
+        error: lastError || 'network',
+        errorCode: /abort|timeout/i.test(lastError) ? 'timeout' : 'network',
+      }
     } finally {
       clearTimeout(timer)
     }

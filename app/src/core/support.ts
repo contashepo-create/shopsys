@@ -6,14 +6,28 @@
  * القناة: Cloudflare Worker وسيط (نفس ووركر التحكم):
  *   POST /support/:deviceId          → العميل يرسل رسالة (الووركر يعيد توجيهها لتليجرام المطوّر)
  *   GET  /support/:deviceId          → العميل يجلب المحادثة كاملة (رسائله وردود المطوّر)
- *   POST /tg-webhook                 → تليجرام يستدعيها عند رد المطوّر (Reply على رسالة العميل)
+ *   POST /support-bridge             → لوحة المطوّر/بوت تليجرام (سرّ مشترك)
  *
  * الحماية (طلب المالك — ضد الحقن والرفع):
  * - نصوص فقط: لا ملفات ولا وسائط إطلاقاً — الووركر يرفض أي شيء غير JSON نصي.
  * - كل نص يُعقَّم بـsanitizeText (لا وسوم ولا محارف تحكم) وبحد طول صارم.
  * - سجل التطبيق يُرفق فقط بموافقة صريحة (checkbox) ويُعلَم المستخدم بغرضه.
+ *
+ * ─── بلاغ المالك 2026-10-27: «إرسال رسالة للدعم يقول لازم اتصال بالإنترنت
+ *     رغم أن الإنترنت موجود». سببان حقيقيان عولجا في هذه الوحدة:
+ *   (أ) قناة الدعم كانت مربوطة حصراً بنطاق عامل قديم
+ *       `shopsys-control.contashepo.workers.dev` لم يعد منشوراً/قابلاً للحل،
+ *       بينما العامل الحيّ هو `shopsys-control.mobileshop2026.workers.dev`
+ *       (صفحة «حول» والترخيص تعمل منه). لذلك كان كل إرسال يفشل في طبقة
+ *       النقل (status 0) قبل أن يصل لأي خادم.
+ *   (ب) أي فشل نقل كان يُترجم حرفياً إلى «تحقّق من اتصال الإنترنت» — تشخيص
+ *       كاذب يخفي السبب (خادم ميت، DNS، شهادة، بروكسي، مضيف غير مسموح…).
+ *   الحل: عنوان حيّ + بديل تلقائي للعامل القديم، ومسبار اتصال حقيقي قبل اتهام
+ *   اتصال المستخدم، ومحاولة ثانية عبر شبكة Chromium في المُصيّر إن فشل طلب
+ *   العملية الرئيسية، وسبب عربي صادق يحمل رمز الخطأ التقني.
  */
 import { sanitizeText, isValidDeviceId } from './audit.ts'
+import { LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL, SUPPORT_CLOUD_FALLBACK_URLS, SUPPORT_PROBE_URLS } from './cloud.ts'
 
 export interface SupportMessage {
   id: number
@@ -84,6 +98,18 @@ export function supportUrl(baseUrl: string, deviceId: string): string {
   return `${baseUrl.replace(/\/$/, '')}/support/${deviceId}`
 }
 
+/**
+ * قائمة المضيفين التي تُجرَّب بالترتيب: الأساسي (عامل التحكم الحيّ) ثم البديل
+ * (عامل الخدمات القديم للتوافق مع المنشآت التي ما زالت تنشره). لا تكرار.
+ * `baseUrl` يبقى الوسيط الأول ليحتفظ الاختبار/الاستدعاء القديم بسلوکه.
+ */
+export function supportBaseCandidates(baseUrl: string): string[] {
+  const all = [baseUrl, ...SUPPORT_CLOUD_FALLBACK_URLS, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL]
+  return all
+    .map((url) => url.replace(/\/$/, ''))
+    .filter((url, index, list) => Boolean(url) && list.indexOf(url) === index)
+}
+
 /* ─── الجالبات (متسامحة مع الفشل — أوفلاين لا يكسر شيئاً) ─── */
 
 function base64Url(bytes: Uint8Array): string {
@@ -128,14 +154,13 @@ async function supportHeaders(token: string, method: string, url: string, body =
   }
 }
 
-/* ─── ناقل الطلب (بند 5: طلب المالك) ───────────────────────────────────────
-   كان الطلب يذهب من الواجهة مباشرة ⇒ في نسخة سطح المكتب (file://) يُرسل
-   المتصفح Origin: null ⇒ يرفضه العامل (403 ⇒ «تعذر الإرسال» بلا سبب)،
-   وكان أي فشل يُعرض للمستخدم كـ«لا يوجد اتصال بالإنترنت» حتى لو كان الخادم
-   قد ردّ 401/429.
-   الحل: في سطح Desktop يمرّ الطلب من **العملية الرئيسية** (طلب بلا Origin
-   ⇒ لا политиة مصدر متصفح)؛ ويبقى الاعتماد (HMAC + TOFU) هو الحماية الحقيقية.
-   والواجهة تستلم الآن **السبب الحقيقي** بدل رسالة عامة كاذبة. */
+/* ─── ناقل الطلب ────────────────────────────────────────────────────────────
+   في سطح Desktop يمرّ الطلب من **العملية الرئيسية** (بلا Origin ⇒ لا سياسة
+   مصدر متصفح)؛ ويبقى الاعتماد (HMAC + TOFU) هو الحماية الحقيقية.
+   الآن: لو فشل نقل العملية الرئيسية (Node fetch لا يمرّ ببروكسي النظام ولا
+   يثق بشهاداته دائماً)، نُعيد المحاولة عبر `fetch` في المُصيّر (شبكة Chromium)
+   قبل أن نُعلن الفشل — فالإنترنت قد يكون سليماً تماماً عند المستخدم.
+   والواجهة تستلم **السبب الحقيقي** بدل رسالة عامة كاذبة. */
 export interface SupportHttpRequest {
   url: string
   method: 'GET' | 'POST'
@@ -149,6 +174,8 @@ export interface SupportHttpResponse {
   body: string
   /** رسالة خطأ من العملية الرئيسية (فشل شبكة/مضيف غير مسموح) */
   error?: string
+  /** رمز سبب تقني من العملية الرئيسية (network | timeout | host-not-allowed …) */
+  errorCode?: string
 }
 
 /** نتيجة الإرسال — سبب مفهوم للمستخدم + هل المشكلة انقطاع شبكة */
@@ -157,8 +184,12 @@ export interface SupportSendResult {
   status: number
   /** سبب جاهز للعرض (عربي) */
   reason: string
-  /** تعذّر الوصول إلى الخادم أصلاً (شبكة) — لا خادم رافض */
+  /** تعذّر الوصول إلى أي خادم ⇒ لا إثبات أن اتصال العميل مقطوع */
   offline: boolean
+  /** تفصيل تقني مختصر (رسالة النقل/الرمز) للتشخيص واللوج */
+  detail?: string
+  /** عدد المضيفين/النواقل التي جُرّبت */
+  attempts: number
 }
 
 /** جسر سطح المكتب (إن وُجد) — من src/data/desktopBridge.ts */
@@ -176,7 +207,7 @@ function desktopSupportBridge(): {
 export function supportFailureReason(status: number, detail = ''): string {
   if (status === 401) return 'رفض الخادم اعتماد قناة الدعم لهذا الجهاز — اطلب من المطوّر إعادة ربط القناة'
   if (status === 403) return 'رفض الخادم الطلب — حدّث البرنامج ثم أعد المحاولة'
-  if (status === 404) return 'هذا الجهاز غير مسجَّل لدى خادم الدعم'
+  if (status === 404) return 'مسار خدمة الدعم غير منشور على الخادم (404) — حدّث البرنامج أو اطلب من المطوّر نشر عامل التحكم'
   if (status === 413) return 'اللوج المرفق أكبر من المسموح — أرسل الرسالة بلا لوج'
   if (status === 429) return 'تجاوزت حدّ الرسائل في هذه الساعة — انتظر قليلاً ثم أعد المحاولة'
   if (status >= 500) return 'خطأ في خادم الدعم — حاول بعد قليل'
@@ -184,42 +215,110 @@ export function supportFailureReason(status: number, detail = ''): string {
   return 'تعذّر الوصول إلى خادم الدعم — تحقّق من اتصال الإنترنت'
 }
 
-/** تنفيذ الطلب: من العملية الرئيسية على سطح المكتب، أو من المتصفح على الويب */
-async function requestSupport(
-  url: string,
-  method: 'GET' | 'POST',
-  headers: Record<string, string>,
-  body: string | undefined,
-  timeoutMs: number,
-): Promise<SupportHttpResponse> {
-  const bridge = desktopSupportBridge()
-  if (bridge) {
+/**
+ * مسبار الاتصال الحقيقي: هل يصل هذا الجهاز إلى **أي** خدمة سحابية يعتمد عليها
+ * التطبيق؟ يُستدعى فقط حين يفشل طلب الدعم في طبقة النقل (status 0). نجاح المسبار
+ * يعني أن الإنترنت سليم ⇒ لا يجوز اتهام اتصال المستخدم (بلاغ المالك).
+ */
+export async function probeSupportConnectivity(timeoutMs = 5000): Promise<boolean> {
+  if (typeof fetch !== 'function') return false
+  for (const url of SUPPORT_PROBE_URLS) {
     try {
-      return await bridge.request({ url, method, headers, body })
-    } catch (error) {
-      return { ok: false, status: 0, body: '', error: (error as Error).message }
-    }
+      const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) })
+      if (res.ok) return true
+    } catch { /* المسبار التالي */ }
   }
+  return false
+}
+
+/**
+ * سبب صادق لفشل النقل: يفرّق بين «الإنترنت سليم وخدمة الدعم لا تستجيب»
+ * و«لا يمكن الوصول لأي خادم». لا يُعرض «تحقّق من اتصال الإنترنت» إلا حين
+ * يفشل مسبار الاتصال فعلاً. التفصيل التقني يُقصّ ويُنقّى قبل العرض.
+ */
+export function supportTransportReason(input: {
+  online: boolean
+  detail?: string
+  errorCode?: string
+  attempts: number
+}): string {
+  const cleanDetail = sanitizeText(input.detail ?? '', 90)
+  const code = input.errorCode ? sanitizeText(input.errorCode, 24) : ''
+  const technical = [code, cleanDetail].filter(Boolean).join(' — ')
+  const suffix = technical ? ` (${technical})` : ''
+  const tried = input.attempts > 1 ? ` — جُرّب ${input.attempts} عنواناً للخدمة` : ''
+  if (input.online) {
+    return `الإنترنت عندك سليم ✓ لكن خادم الدعم لم يستجب — العطل في عنوان الخدمة أو الخادم نفسه لا في جهازك${tried}${suffix}. أعد المحاولة بعد قليل، وإن استمرّت أرسل هذه الرسالة للمطوّر.`
+  }
+  return `تعذّر الوصول إلى خدمات التحكّم السحابية — تحقّق من اتصال الإنترنت أو من جدار الحماية/البروكسي الذي قد يحجب نطاق workers.dev${tried}${suffix}.`
+}
+
+/** طلب عبر شبكة المتصفح/المُصيّر (Chromium) — يحترم بروكسي النظام وشهاداته */
+async function rendererFetch(url: string, method: 'GET' | 'POST', headers: Record<string, string>, body: string | undefined, timeoutMs: number): Promise<SupportHttpResponse> {
   try {
     const res = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(timeoutMs) })
     return { ok: res.ok, status: res.status, body: await res.text() }
   } catch (error) {
-    return { ok: false, status: 0, body: '', error: (error as Error).message }
+    const failure = error as Error
+    return { ok: false, status: 0, body: '', error: failure.message, errorCode: failure.name === 'TimeoutError' ? 'timeout' : 'network' }
   }
+}
+
+/**
+ * تنفيذ الطلب: من العملية الرئيسية على سطح المكتب، أو من المتصفح على الويب.
+ * كل محاولة نقل تُوقَّع من جديد (nonce/وقت جديدان): لو كان الطلب الأول قد وصل
+ * الخادم واستهلك الـnonce ثم ضاع رده، فإن إعادة التوقيع تمنع رفض المحاولة
+ * الثانية كـ«إعادة تشغيل» — وهو ما كان سيُظهر للمستخدم «أعد ربط القناة» كذباً.
+ */
+async function requestSupport(
+  url: string,
+  method: 'GET' | 'POST',
+  token: string,
+  body: string | undefined,
+  timeoutMs: number,
+  json: boolean,
+): Promise<SupportHttpResponse> {
+  const bridge = desktopSupportBridge()
+  if (bridge) {
+    let primary: SupportHttpResponse | null = null
+    try {
+      const headers = await supportHeaders(token, method, url, body, json)
+      primary = await bridge.request({ url, method, headers, body })
+      if (primary.ok || primary.status !== 0) return primary
+    } catch (error) {
+      primary = { ok: false, status: 0, body: '', error: (error as Error).message, errorCode: 'bridge' }
+    }
+    /* فشل نقل العملية الرئيسية ⇒ محاولة أخيرة عبر شبكة Chromium في المُصيّر.
+       نجاحها يعني أن المشكلة كانت في ناقل واحد لا في اتصال المستخدم. */
+    const retryHeaders = await supportHeaders(token, method, url, body, json)
+    const fallback = await rendererFetch(url, method, retryHeaders, body, timeoutMs)
+    if (fallback.ok || fallback.status !== 0) return fallback
+    return {
+      ...primary,
+      error: [primary?.error, fallback.error].filter(Boolean).join(' | ').slice(0, 180),
+      errorCode: primary?.errorCode ?? fallback.errorCode,
+    }
+  }
+  const headers = await supportHeaders(token, method, url, body, json)
+  return rendererFetch(url, method, headers, body, timeoutMs)
 }
 
 export async function fetchConversation(baseUrl: string, deviceId: string, token: string): Promise<SupportMessage[] | null> {
   try {
-    const url = supportUrl(baseUrl, deviceId)
-    const headers = await supportHeaders(token, 'GET', url)
-    const res = await requestSupport(url, 'GET', headers, undefined, 10_000)
-    if (!res.ok) return null
-    return parseConversation(JSON.parse(res.body) as unknown)
+    for (const base of supportBaseCandidates(baseUrl)) {
+      const url = supportUrl(base, deviceId)
+      const res = await requestSupport(url, 'GET', token, undefined, 10_000, false)
+      if (!res.ok) continue
+      return parseConversation(JSON.parse(res.body) as unknown)
+    }
+    return null
   } catch { return null }
 }
 
 /**
  * إرسال رسالة دعم — يعيد **السبب الحقيقي** عند الفشل (لا «لا يوجد اتصال»).
+ * يجرّب المضيف الحيّ ثم البديل عند انقطاع النقل أو 404 (عامل قديم بلا المسار).
+ * ردّ صريح من خادم (401/403/429/5xx…) لا يُعاد إرساله على مضيف آخر.
  */
 export async function sendSupportMessage(
   baseUrl: string,
@@ -227,28 +326,53 @@ export async function sendSupportMessage(
   token: string,
   payload: ClientSupportPayload,
 ): Promise<SupportSendResult> {
+  let attempts = 0
   try {
-    const url = supportUrl(baseUrl, deviceId)
     const body = JSON.stringify(payload)
-    const headers = await supportHeaders(token, 'POST', url, body, true)
-    const res = await requestSupport(url, 'POST', headers, body, 15_000)
-    if (res.ok) return { ok: true, status: res.status, reason: 'وصلت رسالتك للمطوّر', offline: false }
-    /* سبب من جسم الاستجابة إن وُجد (رسالة العامل) — يُقصّ ويُنقّى */
+    const urls = supportBaseCandidates(baseUrl).map((base) => supportUrl(base, deviceId))
+    let last: SupportHttpResponse = { ok: false, status: 0, body: '' }
+    for (const url of urls) {
+      attempts += 1
+      const res = await requestSupport(url, 'POST', token, body, 15_000, true)
+      if (res.ok) return { ok: true, status: res.status, reason: 'وصلت رسالتك للمطوّر', offline: false, attempts }
+      last = res
+      /* status 0 = لم يصل أي رد؛ 404 = العامل لا يخدم /support (غير منشور) */
+      if (res.status !== 0 && res.status !== 404) break
+    }
     let detail = ''
     try {
-      const parsed = JSON.parse(res.body) as { error?: unknown }
+      const parsed = JSON.parse(last.body) as { error?: unknown }
       if (typeof parsed?.error === 'string') detail = parsed.error.slice(0, 80)
     } catch { /* جسم غير JSON — نكتفي بالرمز */ }
-    return { ok: false, status: res.status, reason: supportFailureReason(res.status, detail), offline: res.status === 0 }
-  } catch (error) {
-    const message = (error as Error).message
+    if (last.status !== 0) {
+      return {
+        ok: false, status: last.status, reason: supportFailureReason(last.status, detail),
+        offline: false, detail: detail || last.error, attempts,
+      }
+    }
+    /* فشل نقل: لا نقول «لا يوجد إنترنت» قبل أن نختبر الاتصال فعلياً */
+    const online = await probeSupportConnectivity()
+    const technical = [last.errorCode, last.error, detail].filter(Boolean).join(' — ')
     return {
       ok: false,
       status: 0,
-      reason: message.includes('اعتماد قناة الدعم')
+      reason: supportTransportReason({ online, detail: technical, errorCode: last.errorCode, attempts }),
+      offline: !online,
+      detail: technical || undefined,
+      attempts,
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    const invalidCredential = message.includes('اعتماد قناة الدعم')
+    return {
+      ok: false,
+      status: 0,
+      reason: invalidCredential
         ? 'اعتماد قناة الدعم غير صالح على هذا الجهاز'
         : `تعذّر إرسال الرسالة: ${message.slice(0, 120)}`,
-      offline: true,
+      offline: false,
+      detail: message.slice(0, 120),
+      attempts,
     }
   }
 }
