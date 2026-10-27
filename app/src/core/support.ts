@@ -331,23 +331,28 @@ export async function sendSupportMessage(
     const body = JSON.stringify(payload)
     const urls = supportBaseCandidates(baseUrl).map((base) => supportUrl(base, deviceId))
     let last: SupportHttpResponse = { ok: false, status: 0, body: '' }
+    /* ردّ صريح من خادم (مثل 404 «المسار غير منشور») أدقّ من فشل نقل لاحق
+       على مضيف بديل ميت — لا يُستبدل به فيسبق تشخيصاً عاماً «الخادم لم يستجب». */
+    let serverFailure: SupportHttpResponse | null = null
     for (const url of urls) {
       attempts += 1
       const res = await requestSupport(url, 'POST', token, body, 15_000, true)
       if (res.ok) return { ok: true, status: res.status, reason: 'وصلت رسالتك للمطوّر', offline: false, attempts }
       last = res
+      if (res.status !== 0) serverFailure = res
       /* status 0 = لم يصل أي رد؛ 404 = العامل لا يخدم /support (غير منشور) */
       if (res.status !== 0 && res.status !== 404) break
     }
+    const decisive = last.status !== 0 ? last : serverFailure
     let detail = ''
     try {
-      const parsed = JSON.parse(last.body) as { error?: unknown }
+      const parsed = JSON.parse((decisive ?? last).body) as { error?: unknown }
       if (typeof parsed?.error === 'string') detail = parsed.error.slice(0, 80)
     } catch { /* جسم غير JSON — نكتفي بالرمز */ }
-    if (last.status !== 0) {
+    if (decisive && decisive.status !== 0) {
       return {
-        ok: false, status: last.status, reason: supportFailureReason(last.status, detail),
-        offline: false, detail: detail || last.error, attempts,
+        ok: false, status: decisive.status, reason: supportFailureReason(decisive.status, detail),
+        offline: false, detail: detail || decisive.error, attempts,
       }
     }
     /* فشل نقل: لا نقول «لا يوجد إنترنت» قبل أن نختبر الاتصال فعلياً */

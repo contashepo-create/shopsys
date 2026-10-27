@@ -62,6 +62,26 @@ const statementPrint = read('ui/print/printStatement.ts')
 ok('كروت كشف الحساب استُبدلت بجدول', !/class="cards"/.test(statementPrint) && /الرصيد الحالي/.test(statementPrint) && /<table/.test(statementPrint))
 ok('صفحة الكشف بلا بطاقة رصيد', !/anim-pop rounded-2xl border-2/.test(statements))
 
+/* ⑤ مراجعة 2026-10-27: سلامة الأرقام، وتعميم المعاينة على الكشوف المستقلة */
+const analyticalCore = read('core/analyticalProjectReport.ts')
+const analyticalView = read('ui/contracting/AnalyticalProjectReportView.tsx')
+ok('نواة buildExtractSettledMap تمنع تكرار التحصيل', /export function buildExtractSettledMap/.test(analyticalCore) && /openKeys\.has\(key\)/.test(analyticalCore))
+ok('العارض يستخدم النواة ولا يجمع التوزيعات يدوياً', /buildExtractSettledMap\(\{/.test(analyticalView) && !/openInvoiceSettled\.set\(a\.docKey/.test(analyticalView))
+ok('سطور التحصيل محصورة في مستخلصات المشروع', /extractKeys\.has\(a\.docKey\)/.test(analyticalCore))
+ok('القيمة الثانوية تصل للطباعة', /c\.sub \? `\$\{c\.value\}/.test(read('core/formalReport.ts')))
+ok('كروت دفتر الصنف استُبدلت بجدول', !/class="cards"/.test(read('ui/print/printItemLedger.ts')) && /class="summary"/.test(read('ui/print/printItemLedger.ts')))
+const standaloneReports = [
+  ['ui/pages/CoaPage.tsx', 'كشف حركة الحساب'],
+  ['ui/pages/HrPage.tsx', 'كشف الحضور'],
+  ['ui/pages/VouchersPage.tsx', 'سجل السندات'],
+  ['ui/pages/ItemsPage.tsx', 'كارت الصنف'],
+  ['ui/pages/ScaleSettingsPage.tsx', 'قائمة PLU'],
+]
+for (const [file, label] of standaloneReports) ok(`معاينة قبل طباعة ${label}`, /preview: \{ title/.test(read(file)))
+ok('تشخيص الدعم يحفظ رد الخادم الصريح', /serverFailure/.test(read('core/support.ts')) && /const decisive = last\.status !== 0 \? last : serverFailure/.test(read('core/support.ts')))
+ok('تبويب العرض لا يفكّك أشجار المسار', /<Activity mode=\{viewActiveTab \? 'hidden' : 'visible'\}>/.test(app) && /<TabRoutes \/>/.test(app))
+ok('اختبار بقاء الحالة عند فتح تبويب عرض موجود', /فتح تبويب عرض لا يفكّك/.test(readFileSync(join(root, '..', 'tests', 'tab_state_preservation.test.tsx'), 'utf8')))
+
 for (const c of checks) {
   if (c.ok) passed++
   else console.error(`✗ ${c.name}`)

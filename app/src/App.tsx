@@ -469,10 +469,18 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
       {/* ملاحة المفاتيح العامة تبقى مركّبة دائماً (F12/F7/Enter…) — حتى أثناء
           عرض تبويب محرر، فتبقى الاختصارات العالمية حيّة كما في نافذة قمر. */}
       <KeyboardNavigation />
+      {/* مراجعة 2026-10-27: فتح تبويب عرض (محرر/دفتر) كان يفكّك `<TabRoutes>`
+          بالكامل فتضيع فلاتر كل تبويبات المسار عند العودة إليها. تُبقى شجرة
+          المسارات مركّبة داخل Activity مخفي أثناء وجود تبويب عرض، فتعود كما هي
+          بلا إعادة تركيب. تبويبات العرض أنفسها تبقى بسلوكها القديم (مثيل واحد
+          بمفتاح مستقل D7) لأن حراس «تعديلات غير محفوظة» مبنية على تفكيكها. */}
+      <Activity mode={viewActiveTab ? 'hidden' : 'visible'}>
+        <TabRoutes />
+      </Activity>
       {/* key بمعرّف التبويب: كل تبويب عرض = مثيل مستقل تماماً كنافذة قمر —
           بلا مفتاح كان محرّران لنفس النوع يتقاسمان الحالة فتنتقل قيم محرر
           إلى آخر وتحفظ على صنف غلط (D7). */}
-      {viewActiveTab ? <ActiveViewTab key={viewActiveTab.id} tab={viewActiveTab} /> : <TabRoutes />}
+      {viewActiveTab && <ActiveViewTab key={viewActiveTab.id} tab={viewActiveTab} />}
     </Layout>
   )
 }

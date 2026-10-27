@@ -896,7 +896,7 @@ function HrReportsTab() {
       <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>يوم إضافي</th><th>بدل إضافي</th><th>مكافأة يوم إضافي</th><th>إجمالي الخصومات</th><th>صافي الأثر</th></tr></thead>
       <tbody>${body}</tbody>
       <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${totals.holidayWorked}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.holidayBonus)}</td><td class="n">${fmt(totals.deductions)}</td><td class="n">${fmt(totals.net)}</td></tr></tfoot></table>
-      </body></html>`)
+      </body></html>`, { preview: { title: `معاينة كشف الحضور ${month} قبل الطباعة` } })
   }
 
 

@@ -176,6 +176,26 @@ describe('تشخيص الفشل: لا «لا يوجد إنترنت» كاذبة'
     expect(result.reason).toContain('تحقّق من اتصال الإنترنت')
   })
 
+  it('رد 404 صريح من العامل الحيّ لا يضيع خلف فشل نقل المضيف البديل', async () => {
+    let supportCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const target = String(url)
+      if (target.includes('/support/')) {
+        supportCalls += 1
+        if (target.includes('mobileshop2026')) {
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'content-type': 'application/json' } })
+        }
+        throw new Error('ENOTFOUND old host')
+      }
+      return new Response('{}', { status: 200 }) /* المسبار */
+    }))
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
+    expect(result.ok).toBe(false)
+    expect(supportCalls).toBeGreaterThan(1)
+    expect(result.status).toBe(404)
+    expect(result.reason).toContain('غير منشور')
+  })
+
   it('الترجمة القديمة لرموز الخادم باقية كما هي', () => {
     expect(supportFailureReason(429)).toContain('حدّ الرسائل')
     expect(supportFailureReason(404)).toContain('غير منشور')

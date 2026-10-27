@@ -113,6 +113,29 @@ describe('الحفاظ على حالة تبويبات المسار (Activity)', 
     await waitFor(() => expect(document.querySelector('[data-route-tree="/reports"]')).toBeNull())
   })
 
+  it('⑤ فتح تبويب عرض لا يفكّك تبويبات المسار — الفلاتر تعود بعد الرجوع', async () => {
+    installFakeDesktop()
+    window.location.hash = '#/reports'
+    render(<App />)
+    const todayBtn = await screen.findByRole('button', { name: 'اليوم' }, { timeout: 20_000 })
+    fireEvent.click(todayBtn)
+    await waitFor(() => expect(todayBtn.className).toContain('bg-sky-600'))
+
+    const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
+    /* نوع وهمي ⇒ WindowViewContent يعيد null؛ المهم هو وجود تبويب عرض نشط */
+    const viewId = useWindowStore.getState().openTab({ kind: '__audit_probe__' as never, title: 'تبويب عرض', dedupeKey: 'audit-probe' })
+    expect(viewId).toBeTruthy()
+    await waitFor(() => expect(useWindowStore.getState().viewActiveTabId).toBe(viewId))
+    /* شجرة المسار ما زالت مركّبة (مخفية) لا مُفكَّكة */
+    expect(document.querySelector('[data-route-tree="/reports"]')).not.toBeNull()
+
+    const reportTab = useWindowStore.getState().tabs.find((t) => t.path === '/reports')!
+    useWindowStore.getState().activateTab(reportTab.id)
+    await waitFor(() => expect(useWindowStore.getState().viewActiveTabId).toBeNull(), { timeout: 10_000 })
+    const backBtn = await screen.findByRole('button', { name: 'اليوم' }, { timeout: 10_000 })
+    expect(backBtn.className).toContain('bg-sky-600')
+  })
+
   it('④ الويب بلا تبويبات: شجرة واحدة فقط (سلوك كما كان)', async () => {
     // بلا جسر سطح المكتب ⇒ isDesktopFreeWindows() خطأ
     window.location.hash = '#/reports'

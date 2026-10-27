@@ -107,7 +107,7 @@ export function CoaPage() {
   }
   const printStatement = () => {
     if (!statementAccount) return
-    printHtml(`<html dir="rtl"><head><meta charset="utf-8"><title>كشف حركة ${statementAccount.nameAr}</title><style>body{font-family:Arial;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:7px;text-align:right}h2{text-align:center}</style></head><body><h2>كشف حركة ${statementAccount.code} — ${statementAccount.nameAr}</h2><table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>${statementRows.map(r=>`<tr><td>${r.date}</td><td>#${r.number}</td><td>${r.description}</td><td>${fmt(r.debit)}</td><td>${fmt(r.credit)}</td><td>${fmt(r.balance)}</td></tr>`).join('')}</tbody></table></body></html>`)
+    printHtml(`<html dir="rtl"><head><meta charset="utf-8"><title>كشف حركة ${statementAccount.nameAr}</title><style>body{font-family:Arial;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:7px;text-align:right}h2{text-align:center}</style></head><body><h2>كشف حركة ${statementAccount.code} — ${statementAccount.nameAr}</h2><table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>${statementRows.map(r=>`<tr><td>${r.date}</td><td>#${r.number}</td><td>${r.description}</td><td>${fmt(r.debit)}</td><td>${fmt(r.credit)}</td><td>${fmt(r.balance)}</td></tr>`).join('')}</tbody></table></body></html>`, { preview: { title: `معاينة كشف حركة ${statementAccount.nameAr} قبل الطباعة` } })
   }
 
   const toggle = (code: string) =>

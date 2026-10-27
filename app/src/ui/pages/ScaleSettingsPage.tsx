@@ -108,7 +108,7 @@ export function ScaleSettingsPage() {
       <h1>⚖️ قائمة PLU — ${esc(setup.shopName || 'تَحَكَّم')}</h1>
       <p>أدخل هذه الأكواد في ذاكرة الميزان (زر PLU لكل صنف) بنفس الأرقام حرفياً — طول الكود حتى ${maxCodeLen} خانات.</p>
       <table><thead><tr><th>PLU</th><th>الصنف</th><th>سعر الكيلو</th><th>ملاحظات</th></tr></thead><tbody>${rows}</tbody></table>
-    </body></html>`)
+    </body></html>`, { preview: { title: 'معاينة قائمة PLU قبل الطباعة' } })
   }
 
   const VALUE_TYPE_LABEL: Record<string, string> = { weight: '⚖️ وزن', price: '💰 سعر' }

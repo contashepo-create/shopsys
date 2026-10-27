@@ -41,10 +41,10 @@ export interface AnalyticalProjectSource {
   }[]
   /** تحصيلات المستخلصات الآجلة من دفتر التوزيع (settledMinor لكل مستخلص) */
   openInvoiceSettled?: Map<string, number>
-  /** سندات القبض على العميل */
-  vouchers?: { date: string; number: string; description?: string; amountMinor: Minor; reversed?: boolean }[]
+  /** سندات القبض على العميل — التوزيعات إن وُجدت تحصر السطر في مستخلصات هذا المشروع */
+  vouchers?: { date: string; number: string; description?: string; amountMinor: Minor; reversed?: boolean; allocations?: readonly DocAllocation[] }[]
   /** تسويات العملاء (تحصيلات FIFO) */
-  clientSettlements?: { date: string; number: string; amountMinor: Minor; allocations?: { docKey: string; appliedMinor: Minor }[] }[]
+  clientSettlements?: { date: string; number: string; amountMinor: Minor; allocations?: readonly DocAllocation[] }[]
   /** الشيكات الواردة — تُعرض بحالتها وتُحتسب Non-bounced فقط */
   cheques?: (ChequeDuesLike & { chequeNumber: string; bankName?: string; createdAt?: string; settledAt?: string | null })[]
   /** مفاتيح مستخلصات هذا المشروع (docKey = extract:<id>) */
@@ -70,6 +70,57 @@ export interface ChequeCollectionRow {
   excluded?: boolean
 }
 
+/** توزيع تحصيل على مستند (سند قبض/تسوية) — نفس شكل حقول data/repo.ts */
+export interface DocAllocation { docKey: string; appliedMinor: Minor }
+
+/**
+ * بناء «ما خُصم فعلاً من ذمم مستخلصات المشروع» من مصدر واحد بلا تكرار
+ * (مراجعة 2026-10-27: كانت الواجهة تجمع `getOpenClientInvoices().settledMinor`
+ * — الذي يحتوي أصلاً توزيعات السندات والتسويات والشيكات — ثم تضيف توزيعات
+ * السندات والتسويات مرة ثانية فيتضاعف المحصَّل ويصغر المتبقي خطأً).
+ *
+ * القاعدة: المستند المفتوح ⇒ `settledMinor` هو المرجع الوحيد (لا نضيف عليه
+ * شيئاً). المستند غير المفتوح ⇒ سُدّد بالكامل؛ نقرأ توزيعاته الصريحة، فإن
+ * وُجد `extractDues` (صافي الاستحقاق بعد المقاصة) نرفع القيمة إليه — لأن
+ * الشيكات تُوزَّع FIFO داخل الدفتر بلا سجل توزيع صريح على المستخلص.
+ */
+export function buildExtractSettledMap(args: {
+  extractDocKeys: readonly string[]
+  /** نتيجة getOpenClientInvoices(clientId) — settledMinor يشمل كل التوزيعات */
+  openInvoices: readonly { docKey: string; settledMinor: Minor }[]
+  /** صافي استحقاق المستخلص الآجل بعد خصم استرداد الدفعة المقدمة — يُمرَّر فقط حين يتوفر دفتر العميل */
+  extractDues?: ReadonlyMap<string, Minor>
+  vouchers?: readonly { allocations?: readonly DocAllocation[] }[]
+  clientSettlements?: readonly { allocations?: readonly DocAllocation[] }[]
+}): Map<string, Minor> {
+  const keys = new Set(args.extractDocKeys)
+  const out = new Map<string, Minor>()
+  const openKeys = new Set<string>()
+  for (const inv of args.openInvoices) {
+    if (!keys.has(inv.docKey)) continue
+    out.set(inv.docKey, inv.settledMinor)
+    openKeys.add(inv.docKey)
+  }
+  /* توزيعات صريحة للمستندات التي سُدّدت بالكامل فغابت عن الدفتر المفتوح */
+  const raw = new Map<string, Minor>()
+  const collect = (rows?: readonly { allocations?: readonly DocAllocation[] }[]) => {
+    for (const row of rows ?? []) for (const a of row.allocations ?? []) {
+      if (!keys.has(a.docKey)) continue
+      raw.set(a.docKey, (raw.get(a.docKey) ?? 0) + a.appliedMinor)
+    }
+  }
+  collect(args.vouchers)
+  collect(args.clientSettlements)
+  for (const key of keys) {
+    if (openKeys.has(key)) continue
+    let settled = raw.get(key) ?? 0
+    const due = args.extractDues?.get(key) ?? 0
+    if (due > 0) settled = Math.max(settled, due)
+    if (settled > 0) out.set(key, settled)
+  }
+  return out
+}
+
 /**
  * يبني جدول التحصيلات مرتباً زمنياً مع المتبقي بعد كل عملية.
  * `collectedTarget` = إجمالي ما خُصم فعلاً من ذمم المستخلصات (المصدر الموثوق).
@@ -81,16 +132,26 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
   targetMinor: Minor
 } {
   const extractKeys = new Set(src.extractDocKeys ?? [])
+  const projectScoped = extractKeys.size > 0
   const rows: ChequeCollectionRow[] = []
 
   for (const v of src.vouchers ?? []) {
     if (v.reversed) continue
-    rows.push({ date: v.date, number: v.number, description: v.description ?? 'سند قبض', method: 'نقدي / بنكي', status: 'محصّل', amountMinor: v.amountMinor })
+    /* سندات القبض قد تخص فواتير أخرى لنفس العميل؛ إن وُجدت التوزيعات نأخذ
+       نصيب مستخلصات هذا المشروع وحدها فلا يظهر تحصيل غريب في «المتبقي». */
+    let amount = v.amountMinor
+    if (projectScoped && v.allocations) {
+      amount = v.allocations.filter((a) => extractKeys.has(a.docKey)).reduce((s, a) => s + a.appliedMinor, 0)
+      if (amount <= 0) continue
+    }
+    if (amount <= 0) continue
+    rows.push({ date: v.date, number: v.number, description: v.description ?? 'سند قبض', method: 'نقدي / بنكي', status: 'محصّل', amountMinor: amount })
   }
   for (const st of src.clientSettlements ?? []) {
-    const relevant = !extractKeys.size || (st.allocations ?? []).some((a) => extractKeys.has(a.docKey))
-    const amount = relevant && st.allocations?.length
-      ? st.allocations.filter((a) => !extractKeys.size || extractKeys.has(a.docKey)).reduce((s, a) => s + a.appliedMinor, 0)
+    /* تسوية بلا توزيع على مستخلصات المشروع ليست تحصيلاً له — كانت تُدرَج
+       بكامل قيمتها فينسخ «المتبقي بعد كل تحصيل» بلا سبب (مراجعة 2026-10-27). */
+    const amount = projectScoped
+      ? (st.allocations ?? []).filter((a) => extractKeys.has(a.docKey)).reduce((s, a) => s + a.appliedMinor, 0)
       : st.amountMinor
     if (amount <= 0) continue
     rows.push({ date: st.date, number: st.number, description: 'تحصيل على مستخلصات', method: 'توزيع FIFO', status: 'محصّل', amountMinor: amount })

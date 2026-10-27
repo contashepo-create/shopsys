@@ -9,7 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { buildAnalyticalProjectReport, type AnalyticalProjectSource } from '../../core/analyticalProjectReport.ts'
+import { buildAnalyticalProjectReport, buildExtractSettledMap, type AnalyticalProjectSource } from '../../core/analyticalProjectReport.ts'
 import { FormalReport } from '../components/FormalReport.tsx'
 import { EmptyState } from '../components/ui.tsx'
 import { todayLocalIso } from '../../core/time.ts'
@@ -39,34 +39,33 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     const extracts = projectExtracts.filter((e) => e.projectId === selected.id)
     const costs = projectCosts.filter((c) => c.projectId === selected.id)
     const orders = changeOrders.filter((o) => o.projectId === selected.id && (o.status === 'approved' || o.status === 'invoiced'))
-    const extractIds = new Set(extracts.map((e) => e.id))
     const extractDocKeys = extracts.map((e) => `extract:${e.id}`)
 
-    /* مصدر واحد للتحصيلات: دفتر التوزيع (يشمل الشيكات بعد الإصلاح) */
-    const openInvoiceSettled = new Map<string, number>()
-    if (selected.clientId != null) {
-      for (const inv of getOpenClientInvoices(selected.clientId)) {
-        if (extractDocKeys.includes(inv.docKey)) openInvoiceSettled.set(inv.docKey, inv.settledMinor)
-      }
-      /* المستندات المسددة بالكامل لا تظهر في getOpenClientInvoices → نقرأ
-         توزيعاتها من السندات والتسويات مباشرة */
-      for (const v of vouchers) {
-        if (v.reversalEntryId || v.kind !== 'receipt' || v.partyKind !== 'customer' || v.partyId !== selected.clientId) continue
-        for (const a of v.allocations ?? []) {
-          const id = Number(a.docKey.replace('extract:', ''))
-          if (!extractIds.has(id)) continue
-          openInvoiceSettled.set(a.docKey, (openInvoiceSettled.get(a.docKey) ?? 0) + a.appliedMinor)
-        }
-      }
-      for (const st of clientSettlements) {
-        if (st.customerId !== selected.clientId) continue
-        for (const a of st.allocations) {
-          const id = Number(a.docKey.replace('extract:', ''))
-          if (!extractIds.has(id)) continue
-          openInvoiceSettled.set(a.docKey, (openInvoiceSettled.get(a.docKey) ?? 0) + a.appliedMinor)
-        }
+    /* مصدر واحد للتحصيلات: دفتر التوزيع (يشمل الشيكات بعد الإصلاح).
+       مراجعة 2026-10-27: كان يُبنى بجمع `getOpenClientInvoices().settledMinor`
+       ثم إضافة توزيعات السندات والتسويات **مرة ثانية** فيتضاعف المحصَّل.
+       النواة buildExtractSettledMap تمنع ذلك: المفتوح يأخذ settledMinor وحده،
+       والمسدَّد بالكامل يُقرأ من توزيعاته الصريحة/صافي استحقاقه. */
+    const clientId = selected.clientId
+    const projectVouchers = clientId == null ? [] : vouchers.filter((v) =>
+      !v.reversalEntryId && v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId === clientId)
+    const projectSettlements = clientId == null ? [] : clientSettlements.filter((st) => st.customerId === clientId)
+    const openInvoices = clientId == null ? [] : getOpenClientInvoices(clientId)
+    /* صافي استحقاق المستخلص الآجل بعد المقاصة — لمعرفة ما سُدّد كاملاً بالشيكات
+       (الشيكات تُوزَّع داخل الدفتر بلا سجل توزيع صريح على المستخلص). */
+    const extractDues = new Map<string, number>()
+    if (clientId != null) {
+      for (const e of extracts) {
+        if (e.payment !== 'credit') continue
+        const recovery = Math.min(e.totals.dueMinor, Math.max(0, e.advanceRecoveryMinor ?? 0))
+        const due = e.totals.dueMinor - recovery
+        if (due > 0) extractDues.set(`extract:${e.id}`, due)
       }
     }
+    const openInvoiceSettled = buildExtractSettledMap({
+      extractDocKeys, openInvoices, extractDues,
+      vouchers: projectVouchers, clientSettlements: projectSettlements,
+    })
 
     const src: AnalyticalProjectSource = {
       project: {
@@ -88,15 +87,15 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
       })),
       openInvoiceSettled,
       extractDocKeys,
-      vouchers: selected.clientId == null ? [] : vouchers
-        .filter((v) => v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId === selected.clientId)
-        .map((v) => ({
-          date: v.date, number: v.voucherNumber, description: v.description,
-          amountMinor: v.amountMinor, reversed: !!v.reversalEntryId,
-        })),
-      clientSettlements: selected.clientId == null ? [] : clientSettlements
-        .filter((st) => st.customerId === selected.clientId)
-        .map((st) => ({ date: st.date, number: st.settlementNumber, amountMinor: st.amountMinor, allocations: st.allocations })),
+      vouchers: projectVouchers.map((v) => ({
+        date: v.date, number: v.voucherNumber, description: v.description,
+        amountMinor: v.amountMinor, reversed: false,
+        allocations: v.allocations?.map((a) => ({ docKey: a.docKey, appliedMinor: a.appliedMinor })),
+      })),
+      clientSettlements: projectSettlements.map((st) => ({
+        date: st.date, number: st.settlementNumber, amountMinor: st.amountMinor,
+        allocations: st.allocations?.map((a) => ({ docKey: a.docKey, appliedMinor: a.appliedMinor })),
+      })),
       cheques: selected.clientId == null ? [] : cheques
         .filter((c) => c.direction === 'incoming' && c.partyId === selected.clientId)
         .map((c) => ({

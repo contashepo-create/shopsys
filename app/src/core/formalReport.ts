@@ -55,7 +55,7 @@ export interface FormalReportModel {
   logoDataUrl?: string
   printedBy?: string
   period?: string
-  /** خانات التوقيع (تُؤخذ من إعدادات الطباعة 표시) */
+  /** خانات التوقيع (تُؤخذ من إعدادات الطباعة) */
   signatures?: boolean
 }
 
@@ -63,9 +63,10 @@ const toneClass: Record<NonNullable<FormalReportCell['tone']>, string> = {
   positive: 'fr-pos', negative: 'fr-neg', warning: 'fr-warn', muted: 'fr-muted',
 }
 
-/** يحوّل صفاً إلى مصفوفة نصوص آمنة لـ htmlTableHtml (بدون HTML خام من المستخدم) */
+/** يحوّل صفاً إلى مصفوفة نصوص آمنة لـ htmlTableHtml (بدون HTML خام من المستخدم).
+ *  القيمة الثانوية (اسم الطرف تحت البيان) تُرسل مع النص حتى لا يفقدها print. */
 function rowToStrings(row: FormalReportRow): string[] {
-  return row.cells.map((c) => typeof c === 'string' ? c : c.value)
+  return row.cells.map((c) => typeof c === 'string' ? c : c.sub ? `${c.value} — ${c.sub}` : c.value)
 }
 
 /** HTML الجسم داخل الغلاف الموحد (نواة خالصة) */
