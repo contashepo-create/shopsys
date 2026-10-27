@@ -84,8 +84,10 @@ export function StatementsPage() {
   const print = () => {
     /* طلب المالك: معاينة قبل الطباعة بها زر طباعة — بدل الطباعة الفورية */
     const build = () => renderStatementHtml({
-      shopName: setup.shopName || 'تَحَكَّم',
-      headerLines: receipt.headerLines,
+      /* قراءة الإعدادات وقت إعادة البناء: لو غيّر المستخدم اسم المنشأة أو
+         سطور الترويسة والمعاينة مفتوحة، تتحدث فوراً بدل لقطة قديمة. */
+      shopName: useAppStore.getState().setup.shopName || setup.shopName || 'تَحَكَّم',
+      headerLines: useAppStore.getState().receipt?.headerLines ?? receipt.headerLines,
       title: meta.nameAr,
       partyName,
       rows,

@@ -25,7 +25,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     projects, projectExtracts, projectCosts, changeOrders, suppliers,
     clientSettlements, vouchers, cheques, getOpenClientInvoices,
   } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, receipt } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -40,6 +40,12 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     const costs = projectCosts.filter((c) => c.projectId === selected.id)
     const orders = changeOrders.filter((o) => o.projectId === selected.id && (o.status === 'approved' || o.status === 'invoiced'))
     const extractDocKeys = extracts.map((e) => `extract:${e.id}`)
+    const projectCheques = selected.clientId == null ? [] : cheques
+      .filter((c) => c.direction === 'incoming' && c.partyId === selected.clientId)
+      .map((c) => ({
+        direction: c.direction, partyId: c.partyId, status: c.status, amountMinor: c.amountMinor,
+        chequeNumber: c.chequeNumber, bankName: c.bankName, createdAt: c.createdAt, settledAt: c.settledAt,
+      }))
 
     /* مصدر واحد للتحصيلات: دفتر التوزيع (يشمل الشيكات بعد الإصلاح).
        مراجعة 2026-10-27: كان يُبنى بجمع `getOpenClientInvoices().settledMinor`
@@ -62,10 +68,32 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         if (due > 0) extractDues.set(`extract:${e.id}`, due)
       }
     }
+    /* مفاتيح المستخلصات الآجلة فقط: توزيعات السندات على مستخلص نقدي ليست
+       تحصيلاً على الذمم (النقدي محصَّل وقته) ولا يجوز أن تُستنتج كتحصيل. */
+    const creditExtractDocKeys = extracts.filter((e) => e.payment !== 'cash').map((e) => `extract:${e.id}`)
+    const hasSettlementEvidence = projectVouchers.length > 0 || projectSettlements.length > 0
+      || projectCheques.some((c) => c.status !== 'bounced' && c.status !== 'cancelled' && c.amountMinor > 0)
     const openInvoiceSettled = buildExtractSettledMap({
-      extractDocKeys, openInvoices, extractDues,
+      extractDocKeys: creditExtractDocKeys, openInvoices, extractDues,
       vouchers: projectVouchers, clientSettlements: projectSettlements,
+      hasSettlementEvidence,
     })
+
+    /* قيمة الشيكات المخصومة فعلاً من مستخلصات هذا المشروع =
+       إجمالي ما سُدّد على المستخلصات − التوزيعات الصريحة (سندات/تسويات).
+       الفرق هو نصيب الشيكات وفق توزيع FIFO داخل دفتر العميل؛ تمريره يمنع
+       إدراج شيكات العميل كلها في كل مشروع (شيكات مستندات أخرى). */
+    const explicitOnExtracts = new Map<string, number>()
+    const creditKeySet = new Set(creditExtractDocKeys)
+    for (const row of [...projectVouchers, ...projectSettlements]) {
+      for (const a of row.allocations ?? []) {
+        if (!creditKeySet.has(a.docKey)) continue
+        explicitOnExtracts.set(a.docKey, (explicitOnExtracts.get(a.docKey) ?? 0) + a.appliedMinor)
+      }
+    }
+    const settledOnExtracts = [...openInvoiceSettled.values()].reduce((s, v) => s + v, 0)
+    const explicitTotal = [...openInvoiceSettled.keys()].reduce((s, k) => s + (explicitOnExtracts.get(k) ?? 0), 0)
+    const chequeAttributedMinor = Math.max(0, settledOnExtracts - explicitTotal)
 
     const src: AnalyticalProjectSource = {
       project: {
@@ -96,20 +124,18 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         date: st.date, number: st.settlementNumber, amountMinor: st.amountMinor,
         allocations: st.allocations?.map((a) => ({ docKey: a.docKey, appliedMinor: a.appliedMinor })),
       })),
-      cheques: selected.clientId == null ? [] : cheques
-        .filter((c) => c.direction === 'incoming' && c.partyId === selected.clientId)
-        .map((c) => ({
-          direction: c.direction, partyId: c.partyId, status: c.status, amountMinor: c.amountMinor,
-          chequeNumber: c.chequeNumber, bankName: c.bankName, createdAt: c.createdAt, settledAt: c.settledAt,
-        })),
+      cheques: projectCheques,
+      chequeAttributedMinor,
       currencySymbol: cur.symbol,
       companyName: setup.shopName || 'المنشأة',
-      printedBy: undefined,
+      /* توحيد ترويسة الشاشة والطباعة: نفس الشعار ونفس اسم المُعِدّ في الاثنتين. */
+      logoDataUrl: receipt.logoDataUrl || undefined,
+      printedBy: setup.ownerName || undefined,
       period: `حتى ${todayLocalIso()}`,
       fmt,
     }
     return buildAnalyticalProjectReport(src)
-  }, [selected, projectExtracts, projectCosts, changeOrders, suppliers, clientSettlements, vouchers, cheques, getOpenClientInvoices, cur.symbol, setup.shopName, fmt])
+  }, [selected, projectExtracts, projectCosts, changeOrders, suppliers, clientSettlements, vouchers, cheques, getOpenClientInvoices, cur.symbol, setup.shopName, setup.ownerName, receipt.logoDataUrl, fmt])
 
   return (
     <div className="space-y-3" data-analytical-report>

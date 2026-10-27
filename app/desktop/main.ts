@@ -1687,30 +1687,32 @@ function wireIpc(): void {
       }
     }
     const body = typeof args?.body === 'string' ? args.body : undefined
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 20_000)
-    const init: RequestInit = { method, headers, body, signal: controller.signal }
+    /* مراجعة 2026-10-27: المؤقّت والإشارة كانا **مشتركين** بين محاولتي
+       fetch و net.fetch؛ فإذا انتهت مهلة الأولى بدأت الثانية بإشارة ملغاة
+       مسبقاً فتفشل فوراً ويظهر «لا يوجد إنترنت» زوراً. لكل محاولة الآن
+       AbortController ومؤقّت مستقل (20 ثانية لكل محاولة). */
     const attempts: (typeof globalThis.fetch)[] = [fetch]
     const chromiumFetch = (net as { fetch?: typeof globalThis.fetch } | undefined)?.fetch
     if (typeof chromiumFetch === 'function') attempts.push(chromiumFetch)
     let lastError = ''
-    try {
-      for (const doFetch of attempts) {
-        try {
-          const res = await doFetch(parsed.toString(), init)
-          const text = await res.text()
-          return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
-        } catch (error) {
-          lastError = (error as Error).message || 'fetch failed'
-        }
+    for (const doFetch of attempts) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 20_000)
+      try {
+        const init: RequestInit = { method, headers, body, signal: controller.signal }
+        const res = await doFetch(parsed.toString(), init)
+        const text = await res.text()
+        return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
+      } catch (error) {
+        lastError = (error as Error).message || 'fetch failed'
+      } finally {
+        clearTimeout(timer)
       }
-      return {
-        ok: false, status: 0, body: '',
-        error: lastError || 'network',
-        errorCode: /abort|timeout/i.test(lastError) ? 'timeout' : 'network',
-      }
-    } finally {
-      clearTimeout(timer)
+    }
+    return {
+      ok: false, status: 0, body: '',
+      error: lastError || 'network',
+      errorCode: /abort|timeout/i.test(lastError) ? 'timeout' : 'network',
     }
   })
 

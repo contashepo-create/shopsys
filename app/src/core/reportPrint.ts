@@ -104,15 +104,59 @@ export function htmlTableHtml(args: {
  * الغلاف الموحّد لكل مطبوعات التقارير:
  * عنوان احترافي + ترويسة منشأة اختيارية + جسم HTML + تذييل — حسب الإعدادات.
  */
-export function renderReportShell(args: {
+export interface RenderReportShellArgs {
   title: string // «ميزان المراجعة»، «دفتر اليومية العامة»، «سجل طبي»…
   subtitle: string // الفترة أو وصف الفلاتر
   companyName: string
   logoDataUrl?: string
   printedBy?: string
+  /** سطور ترويسة إضافية (اختياري) — تظهر تحت اسم المنشأة في الترويسة */
+  headerLines?: readonly string[]
   bodyHtml: string
   settings: ReportPrintSettings
-}): string {
+}
+
+/**
+ * سجل آخر الأغلمة المولّدة (بدون إعداداتها) — يسمح بإعادة بناء المعاينة
+ * بالإعدادات الحالية **لحظة التغيير** لكل التقارير التي تستدعي
+ * `printHtml(renderReportShell(...))` بلا `rebuild` صريح. محدود الحجم.
+ */
+const SHELL_ARGS_LIMIT = 16
+const shellArgsCache = new Map<string, Omit<RenderReportShellArgs, 'settings'>>()
+
+/** مزوّد إعدادات التقارير الحيّة — تسجّله متاجر التطبيق عند التهيئة. */
+let reportPrintSettingsProvider: (() => ReportPrintSettings) | null = null
+export function registerReportPrintSettingsProvider(fn: () => ReportPrintSettings): void {
+  reportPrintSettingsProvider = fn
+}
+/** إعدادات التقارير وقت الاستدعاء (لا وقت فتح المعاينة). */
+export function freshReportPrintSettings(): ReportPrintSettings | null {
+  try { return reportPrintSettingsProvider?.() ?? null } catch { return null }
+}
+
+/** إعادة بناء غلاف تقرير سابق بإعدادات جديدة — null إن لم يكن مسجّلاً. */
+export function rebuildReportShellHtml(html: string, settings: ReportPrintSettings): string | null {
+  const args = shellArgsCache.get(html)
+  if (!args) return null
+  /* نبني مباشرة بلا تسجيل الناتج: لو سجّلناه لامتلأت الذاكرة المحدودة بنسخ
+     متتالية من نفس التقرير ولأُزيحت النسخة الأصلية التي يستخدمها مفتاح rebuild،
+     فتتوقف المعاينة عن التحديث بعد بضعة تغييرات. */
+  return buildReportShellHtml({ ...args, settings })
+}
+
+export function renderReportShell(args: RenderReportShellArgs): string {
+  const html = buildReportShellHtml(args)
+  const { settings: _settings, ...rest } = args
+  void _settings
+  shellArgsCache.set(html, rest)
+  if (shellArgsCache.size > SHELL_ARGS_LIMIT) {
+    const oldest = shellArgsCache.keys().next().value
+    if (oldest !== undefined) shellArgsCache.delete(oldest)
+  }
+  return html
+}
+
+function buildReportShellHtml(args: RenderReportShellArgs): string {
   const s = args.settings
   const size = s.paper === 'letter' ? 'letter' : s.paper
   const logoH = Math.min(40, Math.max(10, s.logoHeightMm ?? 18))
@@ -126,6 +170,7 @@ export function renderReportShell(args: {
       </div>`
     : ''
   const headBand = (s.headerStyle ?? 'band') === 'band'
+  const extraHeaderLines = (args.headerLines ?? []).filter((l) => typeof l === 'string' && l.trim())
   const meta: string[] = []
   if (s.showPrintedAt) meta.push(`طُبع ${new Date().toLocaleString('ar-EG')}`)
   if (s.showPrintedBy && args.printedBy) meta.push(`بواسطة ${esc(args.printedBy)}`)
@@ -152,11 +197,12 @@ export function renderReportShell(args: {
   </style></head><body>
     ${wm}
     <div class="rp-body">
-    ${s.showCompanyName || logo || s.headerLine ? `<div class="rp-head" style="${(s.logoPosition ?? 'end') === 'center' ? 'flex-direction:column;text-align:center' : ''}">
+    ${s.showCompanyName || logo || s.headerLine || extraHeaderLines.length ? `<div class="rp-head" style="${(s.logoPosition ?? 'end') === 'center' ? 'flex-direction:column;text-align:center' : ''}">
       ${(s.logoPosition ?? 'end') === 'start' ? logo : ''}
       <div>
         ${s.showCompanyName ? `<div class="rp-co">${esc(args.companyName)}</div>` : ''}
         ${s.headerLine ? `<div class="rp-hl">${esc(s.headerLine)}</div>` : ''}
+        ${extraHeaderLines.map((l) => `<div class="rp-hl">${esc(l)}</div>`).join('')}
       </div>
       ${(s.logoPosition ?? 'end') !== 'start' ? logo : ''}
     </div>` : ''}

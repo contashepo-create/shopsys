@@ -164,11 +164,14 @@ describe('مراجعة الدفتر التحليلي — سلامة التحصي
   })
 
   it('③ مستخلص سُدّد بشيك (توزيع FIFO بلا سجل صريح) يُحتسب بصافي استحقاقه', () => {
-    const map = buildExtractSettledMap({
-      extractDocKeys: ['extract:1'], openInvoices: [],
+    /* المراجعة الأدق: الاستنتاج مشروط بدليل سداد (شيك/سند/تسوية للعميل).
+       بلا دليل لا يجوز افتراض السداد لمجرد غياب المستند عن الدفتر المفتوح. */
+    const args = {
+      extractDocKeys: ['extract:1'], openInvoices: [] as { docKey: string; settledMinor: number }[],
       extractDues: new Map([['extract:1', 700_000]]),
-    })
-    expect(map.get('extract:1')).toBe(700_000)
+    }
+    expect(buildExtractSettledMap({ ...args, hasSettlementEvidence: true }).get('extract:1')).toBe(700_000)
+    expect(buildExtractSettledMap(args).has('extract:1')).toBe(false)
   })
 
   it('④ بلا دفتر عميل لا يُفترض السداد — التوزيعات الصريحة وحدها', () => {

@@ -82,6 +82,25 @@ ok('تشخيص الدعم يحفظ رد الخادم الصريح', /serverFailu
 ok('تبويب العرض لا يفكّك أشجار المسار', /<Activity mode=\{viewActiveTab \? 'hidden' : 'visible'\}>/.test(app) && /<TabRoutes \/>/.test(app))
 ok('اختبار بقاء الحالة عند فتح تبويب عرض موجود', /فتح تبويب عرض لا يفكّك/.test(readFileSync(join(root, '..', 'tests', 'tab_state_preservation.test.tsx'), 'utf8')))
 
+/* ⑥ المراجعة الأدق 2026-10-27: العيوب المحاسبية الأربعة + المعاينة الحية */
+ok('A — الشيكات مقيّدة بنصيب المشروع الفعلي', /chequeAttributedMinor/.test(analyticalCore) && /chequeAttributedMinor/.test(analyticalView) && /attributedLeft/.test(analyticalCore))
+ok('A — سطر خارج النطاق لا يُحسب ولا يُعدّ شيكاً مرتداً', /excludedReason/.test(analyticalCore) && /out-of-scope/.test(analyticalCore) && /خارج نطاق هذا المشروع/.test(analyticalCore))
+ok('B — استنتاج السداد مشروط بدليل', /hasSettlementEvidence/.test(analyticalCore) && /hasSettlementEvidence/.test(analyticalView) && /const evidence = explicit > 0 \|\| args\.hasSettlementEvidence === true/.test(analyticalCore))
+ok('B — مفاتيح المستخلصات الآجلة فقط تُمرَّر لخريطة الذمم', /creditExtractDocKeys/.test(analyticalView))
+ok('C — استرداد الدفعة المقدمة مقيّد ولا يُحصَّل مرتين', /capRecovery/.test(analyticalCore) && /netCash/.test(analyticalCore))
+ok('G — التسوية الختامية معادلتان مستقلتان', /بداية مستقلة/.test(analyticalCore) && /معادلتان مستقلتان/.test(analyticalCore))
+ok('اختبارات المراجعة الأدق موجودة', existsSync(join(root, '..', 'tests', 'analytical_project_report_deep_audit.test.ts')) && existsSync(join(root, '..', 'tests', 'report_print_live_preview.test.tsx')))
+const reportPrint = read('core/reportPrint.ts')
+ok('سطور الترويسة تصل للطباعة', /headerLines\?: readonly string\[\]/.test(reportPrint) && /extraHeaderLines/.test(reportPrint) && /headerLines/.test(read('core/formalReport.ts')))
+ok('الشعار/المُعِدّ يُوحَّدان بين الشاشة والطباعة', /logoDataUrl/.test(analyticalCore) && /logoDataUrl/.test(read('ui/components/FormalReport.tsx')) && /printedBy/.test(analyticalView))
+ok('حقن CSS يعتمد على DOM لا متغيّر وحدة', !/styleInjected/.test(read('ui/components/FormalReport.tsx')) && /querySelector\('style\[data-formal-report-css\]'\)/.test(read('ui/components/FormalReport.tsx')))
+ok('المعاينة الحية: rebuild عام لكل الأغلمة', /rebuildReportShellHtml/.test(reportPrint) && /rebuildReportShellHtml/.test(printReceipt) && /freshReportPrintSettings/.test(printReceipt))
+ok('المعاينة الحية: تراقب reportPrint أيضاً', /reportPrintRef/.test(read('ui/components/ThermalPreview.tsx')) && /registerReportPrintSettingsProvider/.test(read('stores/app.store.ts')))
+ok('المعاينة الحية: FormalReport يقرأ الإعدادات وقت الاستدعاء', /const live = useAppStore\.getState\(\)/.test(read('ui/components/FormalReport.tsx')))
+const desktopMain = readFileSync(join(root, '..', 'desktop', 'main.ts'), 'utf8')
+ok('دعم سطح المكتب: إشارة إلغاء مستقلة لكل محاولة', /for \(const doFetch of attempts\) \{[\s\S]{0,500}new AbortController\(\)/.test(desktopMain) && /clearTimeout\(timer\)/.test(desktopMain))
+ok('كشف العميل يستثني الشيك الملغي كدفتر الذمم', /c\.status === 'cancelled'\) continue/.test(read('core/statements.ts')))
+
 for (const c of checks) {
   if (c.ok) passed++
   else console.error(`✗ ${c.name}`)

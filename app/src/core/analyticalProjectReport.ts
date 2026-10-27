@@ -47,6 +47,14 @@ export interface AnalyticalProjectSource {
   clientSettlements?: { date: string; number: string; amountMinor: Minor; allocations?: readonly DocAllocation[] }[]
   /** الشيكات الواردة — تُعرض بحالتها وتُحتسب Non-bounced فقط */
   cheques?: (ChequeDuesLike & { chequeNumber: string; bankName?: string; createdAt?: string; settledAt?: string | null })[]
+  /**
+   * إجمالي ما خُصم **فعلاً** من ذمم مستخلصات هذا المشروع عبر الشيكات الواردة.
+   * الشيكات تُوزَّع FIFO على كل مستندات العميل (فواتير + مشاريع أخرى)، فلا يجوز
+   * عرض قيمتها كلها كتحصيل لهذا المشروع. يُمرَّر من العارض = (إجمالي المسدَّد
+   * على المستخلصات − توزيعات السندات/التسويات الصريحة). عند غيابه يبقى السلوك
+   * القديم (كل الشيكات) للتوافق مع النماذج المبنية يدوياً.
+   */
+  chequeAttributedMinor?: Minor
   /** مفاتيح مستخلصات هذا المشروع (docKey = extract:<id>) */
   extractDocKeys?: string[]
   /** هل الشيكات تُحتسب ضمن التحصيلات؟ (افتراضياً نعم — مصدر واحد للحقيقة) */
@@ -55,6 +63,9 @@ export interface AnalyticalProjectSource {
   companyName: string
   period?: string
   printedBy?: string
+  logoDataUrl?: string
+  /** سطور الترويسة المعتمدة — تُمرَّر للطباعة والعرض معاً */
+  headerLines?: string[]
   /** دالة تنسيق المبلغ (من money.formatMinor) */
   fmt: (m: Minor) => string
 }
@@ -66,8 +77,10 @@ export interface ChequeCollectionRow {
   method: string
   status: string
   amountMinor: Minor
-  /** true = لا يُحتسب في الإجمالي (مرتد/ملغي) */
+  /** true = لا يُحتسب في الإجمالي (مرتد/ملغي أو خارج نطاق المشروع) */
   excluded?: boolean
+  /** سبب الاستبعاد — يفرّق بين شيك مرتد (دين عاد) وشيك خارج نطاق المشروع (إيضاح فقط) */
+  excludedReason?: 'bounced' | 'out-of-scope'
 }
 
 /** توزيع تحصيل على مستند (سند قبض/تسوية) — نفس شكل حقول data/repo.ts */
@@ -92,6 +105,12 @@ export function buildExtractSettledMap(args: {
   extractDues?: ReadonlyMap<string, Minor>
   vouchers?: readonly { allocations?: readonly DocAllocation[] }[]
   clientSettlements?: readonly { allocations?: readonly DocAllocation[] }[]
+  /**
+   * دليل على وجود عملية سداد أصلاً (سند/تسوية/شيك للعميل). بدونه **لا** يُستنتج
+   * أن مستنداً غائباً عن الدفتر المفتوح «مسدَّد بالكامل» — قد يكون غاب بسبب
+   * تضارب ربط العميل لا بسبب السداد، فاستنتاج `due` عندها يخلق تحصيلاً وهمياً.
+   */
+  hasSettlementEvidence?: boolean
 }): Map<string, Minor> {
   const keys = new Set(args.extractDocKeys)
   const out = new Map<string, Minor>()
@@ -113,9 +132,13 @@ export function buildExtractSettledMap(args: {
   collect(args.clientSettlements)
   for (const key of keys) {
     if (openKeys.has(key)) continue
-    let settled = raw.get(key) ?? 0
+    const explicit = raw.get(key) ?? 0
+    let settled = explicit
     const due = args.extractDues?.get(key) ?? 0
-    if (due > 0) settled = Math.max(settled, due)
+    /* الاستنتاج مشروط بدليل سداد: توزيع صريح على هذا المستند أو وجود
+       سند/تسوية/شيك للعميل. بلا دليل نُبقي الصفرة ولا نخترع تحصيلاً. */
+    const evidence = explicit > 0 || args.hasSettlementEvidence === true
+    if (due > 0 && evidence) settled = Math.max(settled, due)
     if (settled > 0) out.set(key, settled)
   }
   return out
@@ -157,30 +180,56 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
     rows.push({ date: st.date, number: st.number, description: 'تحصيل على مستخلصات', method: 'توزيع FIFO', status: 'محصّل', amountMinor: amount })
   }
   if (src.includeCheques !== false) {
-    for (const c of src.cheques ?? []) {
+    /* ترتيب الشيكات زميناً قبل توزيع السقف، حتى يُنسَب التحصيل للأقدم أولاً
+       عند العرض — الدفتر يوزّع الإجمالي على المستندات الأقدم، ولا يربط شيكاً
+       بعينه بمستند؛ لذلك نعرض النصيب على أقدم الأوراق توضيحاً لا ربطاً نهائياً. */
+    const ordered = [...(src.cheques ?? [])].sort((a, b) =>
+      (a.settledAt ?? a.createdAt ?? '').localeCompare(b.settledAt ?? b.createdAt ?? ''))
+    let attributedLeft = src.chequeAttributedMinor ?? Number.POSITIVE_INFINITY
+    const capped = src.chequeAttributedMinor != null
+    for (const c of ordered) {
       if (c.direction !== 'incoming' || c.partyId == null) continue
       const bounced = c.status === 'bounced' || c.status === 'cancelled'
+      let amount = c.amountMinor
+      let scopeNote = ''
+      if (!bounced && capped) {
+        const taken = Math.max(0, Math.min(amount, attributedLeft))
+        attributedLeft -= taken
+        amount = taken
+        if (taken === 0) scopeNote = ' — خارج نطاق هذا المشروع (وُزّع على مستندات أخرى)'
+        else if (taken < c.amountMinor) scopeNote = ' — جزء مخصوم من ذمم هذا المشروع'
+      }
       rows.push({
         date: (c.settledAt ?? c.createdAt ?? '').slice(0, 10),
         number: c.chequeNumber,
-        description: `شيك وارد${c.bankName ? ` — ${c.bankName}` : ''}`,
+        description: `شيك وارد${c.bankName ? ` — ${c.bankName}` : ''}${scopeNote}`,
         method: 'ورقة قبض',
-        status: bounced ? 'مرتد ✗' : c.status === 'held' ? 'في الحافظة' : c.status === 'deposited' ? 'تحت التحصيل' : 'محصّل ✓',
-        amountMinor: c.amountMinor,
-        excluded: bounced,
+        status: bounced ? 'مرتد ✗' : amount === 0 ? 'خارج النطاق' : c.status === 'held' ? 'في الحافظة' : c.status === 'deposited' ? 'تحت التحصيل' : 'محصّل ✓',
+        amountMinor: amount,
+        excluded: bounced || amount === 0,
+        excludedReason: bounced ? 'bounced' : amount === 0 ? 'out-of-scope' : undefined,
       })
     }
   }
+  /* المقاصة مقيّدة بالمستحق (الحارس في core/contracting يمنع تجاوزها أصلاً). */
+  const capRecovery = (e: (typeof src.extracts)[number]) => Math.min(e.dueMinor, Math.max(0, e.advanceRecoveryMinor ?? 0))
   /* استرداد الدفعة المقدمة (مقاصة داخل المستخلص) */
   for (const e of src.extracts) {
-    const rec = e.advanceRecoveryMinor ?? 0
+    const rec = capRecovery(e)
     if (rec <= 0) continue
     rows.push({ date: e.date, number: e.extractNumber, description: 'استرداد دفعة مقدمة من المستخلص', method: 'مقاصة 2109', status: 'مقاصة', amountMinor: rec })
   }
-  /* المستخلصات النقدية حُصّلت وقتها */
+  /* المستخلصات النقدية: النقد المحصَّل فعلاً = المستحق − المقاصة.
+     collection سابقاً كان يضيف dueMinor كاملاً **و** المقاصة ⇒ تضخّم التحصيل. */
   for (const e of src.extracts) {
     if (e.payment !== 'cash') continue
-    rows.push({ date: e.date, number: e.extractNumber, description: 'مستخلص نقدي (محصّل وقت الاستخلاص)', method: 'نقدي', status: 'محصّل', amountMinor: e.dueMinor })
+    const netCash = e.dueMinor - capRecovery(e)
+    if (netCash <= 0) continue
+    rows.push({
+      date: e.date, number: e.extractNumber,
+      description: capRecovery(e) > 0 ? 'مستخلص نقدي (بعد استرداد الدفعة المقدمة)' : 'مستخلص نقدي (محصّل وقت الاستخلاص)',
+      method: 'نقدي', status: 'محصّل', amountMinor: netCash,
+    })
   }
 
   rows.sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number))
@@ -189,8 +238,8 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
   const creditSettled = [...(src.openInvoiceSettled ?? new Map<string, number>())]
     .filter(([k]) => !extractKeys.size || extractKeys.has(k))
     .reduce((s, [, v]) => s + v, 0)
-  const cashExtracts = src.extracts.filter((e) => e.payment === 'cash').reduce((s, e) => s + e.dueMinor, 0)
-  const recovered = src.extracts.reduce((s, e) => s + (e.advanceRecoveryMinor ?? 0), 0)
+  const cashExtracts = src.extracts.filter((e) => e.payment === 'cash').reduce((s, e) => s + (e.dueMinor - capRecovery(e)), 0)
+  const recovered = src.extracts.reduce((s, e) => s + capRecovery(e), 0)
   const targetMinor = creditSettled + cashExtracts + recovered
 
   let remaining = src.extracts.reduce((s, e) => s + e.dueMinor, 0)
@@ -244,7 +293,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   const collectionRows: FormalReportRow[] = collections.rows.map((r, i) => ({
     cells: [
       String(i + 1), r.date.slice(0, 10), r.number, r.description, r.method,
-      { value: r.status, tone: r.excluded ? 'negative' : 'positive' },
+      { value: r.status, tone: r.excluded ? (r.excludedReason === 'bounced' ? 'negative' : 'muted') : 'positive' },
       r.excluded ? `(${fmt(r.amountMinor)})` : fmt(r.amountMinor),
       fmt(collections.running[i] ?? 0),
     ],
@@ -259,11 +308,22 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   }
 
   const notes: string[] = []
-  const bouncedCount = collections.rows.filter((r) => r.excluded).length
+  const bouncedCount = collections.rows.filter((r) => r.excludedReason === 'bounced').length
+  const outOfScopeCount = collections.rows.filter((r) => r.excludedReason === 'out-of-scope').length
   if (bouncedCount) notes.push(`الشيكات المرتدة (${bouncedCount}) معروضة للإيضاح بين قوسين ولا تُحتسب ضمن التحصيلات — دينها عاد للعميل.`)
+  if (outOfScopeCount) notes.push(`شيكات خارج نطاق هذا المشروع (${outOfScopeCount}) معروضة بصفرة للإيضاح ولا تُحتسب ضمن تحصيلاته.`)
   if ((src.cheques ?? []).some((c) => c.direction === 'incoming' && c.status !== 'bounced' && c.status !== 'cancelled')) {
     notes.push('الشيكات الواردة مُدرَجة ضمن التحصيلات ومُخصومة من ذمم المستخلصات — مطابقة لكشف حساب العميل.')
   }
+  if (src.chequeAttributedMinor != null) {
+    const totalActiveCheques = (src.cheques ?? [])
+      .filter((c) => c.direction === 'incoming' && c.partyId != null && c.status !== 'bounced' && c.status !== 'cancelled')
+      .reduce((s, c) => s + c.amountMinor, 0)
+    if (totalActiveCheques > src.chequeAttributedMinor + 1) {
+      notes.push(`الشيكات الواردة للعميل (${fmt(totalActiveCheques)}) تخص مستندات أخرى أيضاً؛ المُخصوم فعلاً من مستخلصات هذا المشروع ${fmt(src.chequeAttributedMinor)} فقط — والباقي معروض بصفرة «خارج النطاق» للإيضاح.`)
+    }
+  }
+  notes.push('التسوية الختامية معادلتان مستقلتان: ① المستحق − التحصيلات = المتبقي (ذمة العميل) · ② الإيراد المستخلص − المصروفات = نتيجة المشروع. لا تُطرح المصروفات من رصيد التحصيل.')
   if (Math.abs(collections.totalMinor - collected) > 1) {
     notes.push(`تنبيه مراجعة: مجموع سطور التحصيلات (${fmt(collections.totalMinor)}) يختلف عن المُخصوم من الذمم (${fmt(collected)}) — افحص التوزيعات.`)
   }
@@ -274,6 +334,8 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     period: src.period,
     companyName: src.companyName,
     printedBy: src.printedBy,
+    logoDataUrl: src.logoDataUrl,
+    headerLines: src.headerLines,
     meta: [
       { label: 'اسم المشروع', value: src.project.nameAr },
       { label: 'رمز المشروع', value: src.project.code },
@@ -304,8 +366,12 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       { label: 'صافي المستحق على المستخلصات', value: fmt(dueTotal), emphasis: true },
       { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: `(${fmt(collected)})` },
       { label: 'المتبقي من التحصيل — رصيد العميل المدين', value: fmt(remainingCollection), emphasis: true },
+      /* بدء معادلة مستقلة: الإيراد − المصروفات. كان «يُطرح المصروفات» يأتي
+         مباشرة بعد «المتبقي» فيوحي بخصمها من رصيد العميل، بينما القيمة
+         المحسوبة كانت (الإيراد − المصروفات) — تناقض في التسوية الختامية. */
+      { label: 'بداية مستقلة — قيمة الأعمال المستخلصة (إيراد المشروع)', value: fmt(extracted) },
       { label: 'يُطرح: إجمالي مصروفات المشروع', value: `(${fmt(totalExpenses)})` },
-      { label: 'صافي نتيجة المشروع حتى تاريخه', value: fmt(extracted - totalExpenses) },
+      { label: 'صافي نتيجة المشروع حتى تاريخه', value: fmt(extracted - totalExpenses), emphasis: true },
     ],
   }
 }

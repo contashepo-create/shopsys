@@ -39,7 +39,30 @@ function cell(node: string | FormalReportCell, numeric: boolean, row: FormalRepo
 export function FormalReport({ model, filename = 'report', allowExport = true, allowPrint = true, toolbar, showSignatures }: Props) {
   const { setup, receipt, reportPrint } = useAppStore()
   const toast = useToast()
-  const buildHtml = () => renderFormalReportHtml(model, reportPrint)
+  /* توحيد الترويسة: نفس بيانات الشاشة تُرسل للطباعة/المعاينة. كان الشعار
+     واسم المُعِدّ يصلان للطباعة فقط إن ضبطهما بانِي التقرير، بينما تعرض
+     الشاشة سطور الترويسة من الإعدادات ⇒ تقريران بترويسة مختلفة. */
+  const resolved: FormalReportModel = {
+    ...model,
+    companyName: model.companyName || setup?.shopName || 'المنشأة',
+    headerLines: model.headerLines ?? receipt?.headerLines ?? [],
+    logoDataUrl: model.logoDataUrl ?? receipt?.logoDataUrl ?? undefined,
+    printedBy: model.printedBy ?? (setup?.ownerName || undefined),
+  }
+  const buildHtml = () => {
+    /* `rebuild` يُستدعى لاحقاً من نافذة المعاينة بعد تغيير الإعدادات؛ قراءة
+       المتجر وقت الاستدعاء (لا وقت فتح المعاينة) هي ما يجعلها معاينة حيّة فعلية. */
+    const live = useAppStore.getState()
+    const settings = live.reportPrint ?? reportPrint
+    const liveModel: FormalReportModel = {
+      ...model,
+      companyName: model.companyName || live.setup?.shopName || 'المنشأة',
+      headerLines: model.headerLines ?? live.receipt?.headerLines ?? [],
+      logoDataUrl: model.logoDataUrl ?? live.receipt?.logoDataUrl ?? undefined,
+      printedBy: model.printedBy ?? (live.setup?.ownerName || undefined),
+    }
+    return renderFormalReportHtml(liveModel, settings)
+  }
 
   const print = () => {
     /* طلب المالك: «عند طلب طباعة أي تقرير أعطني معاينة لها وبها زر طباعة»
@@ -109,9 +132,13 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
       <div className="fr-body">
         <div className="fr-head">
           <div>
-            <div className="fr-co">{model.companyName || setup.shopName || 'المنشأة'}</div>
-            {receipt.headerLines?.filter((l) => l.trim()).map((l, i) => <div className="fr-meta-sub" key={i}>{l}</div>)}
+            <div className="fr-co">{resolved.companyName}</div>
+            {resolved.headerLines?.filter((l) => l.trim()).map((l, i) => <div className="fr-meta-sub" key={i}>{l}</div>)}
+            {resolved.printedBy && <div className="fr-meta-sub">أعدّه: {resolved.printedBy}</div>}
           </div>
+          {resolved.logoDataUrl && reportPrint?.showLogo !== false && (
+            <img src={resolved.logoDataUrl} alt="" style={{ maxHeight: 48, maxWidth: 120, objectFit: 'contain' }} />
+          )}
           <div style={{ textAlign: 'center' }}>
             <div className="fr-title" style={{ margin: 0 }}>{model.title}</div>
             <div className="fr-meta-sub">{model.period ?? model.subtitle}</div>
@@ -188,15 +215,16 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
   )
 }
 
-/** تُحقن مرة واحدة في كل صفحة تستخدم التقرير الرسمي */
-let styleInjected = false
+/** تُحقن مرة واحدة في كل صفحة تستخدم التقرير الرسمي.
+ *  كان الاعتماد على راية وحدة محفوظة في الذاكرة يجعل التنسيق يختفي نهائياً
+ *  إذا أُعيد بناء `document.head` (اختبارات/تنظيف DOM) لأن المتغيّر يبقى true.
+ *  الفحص الحقيقي لوجود العنصر في DOM هو المصدر الوحيد للحقيقة. */
 function FormalReportStyle() {
-  if (!styleInjected) {
+  if (typeof document !== 'undefined' && document.head && !document.head.querySelector('style[data-formal-report-css]')) {
     const el = document.createElement('style')
     el.setAttribute('data-formal-report-css', '')
     el.textContent = FORMAL_REPORT_CSS
     document.head.appendChild(el)
-    styleInjected = true
   }
   return null
 }

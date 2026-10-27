@@ -54,6 +54,8 @@ export interface FormalReportModel {
   companyName: string
   logoDataUrl?: string
   printedBy?: string
+  /** سطور الترويسة (عنوان/هاتف/رقم ضريبي) — تُعرض على الشاشة وفي الطباعة معاً */
+  headerLines?: string[]
   period?: string
   /** خانات التوقيع (تُؤخذ من إعدادات الطباعة) */
   signatures?: boolean
@@ -125,6 +127,7 @@ export function renderFormalReportHtml(model: FormalReportModel, settings: Repor
     companyName: model.companyName,
     logoDataUrl: model.logoDataUrl,
     printedBy: model.printedBy,
+    headerLines: model.headerLines,
     bodyHtml: formalReportBodyHtml(model),
     settings,
   })

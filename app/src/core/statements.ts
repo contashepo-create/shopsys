@@ -105,6 +105,11 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
   }
   for (const c of input.cheques) {
     if (c.direction !== 'incoming' || c.partyId !== input.customerId) continue
+    /* المراجعة الأدق: الورقة «الملغاة» لم تُستلم أصلاً، وchequeSettlesCustomerDues
+       تستثنيها من الذمم — فلا يجوز أن تُخفض رصيد العميل هنا وحده (ينفصل الكشف
+       عن دفتر التحصيل). الارتداد يُظهر السطرين معاً لأنه سجّل فعلي ثم عكس. */
+    /* ملاحظة: المصدر الموحّد لخصم الذمم هو core/chequeDues.ts. */
+    if (c.status === 'cancelled') continue
     rows.push({ date: c.createdAt, docLabel: `شيك وارد ${c.chequeNumber}`, operationMinor: c.amountMinor, debitMinor: 0, creditMinor: c.amountMinor })
     if (c.status === 'bounced') {
       rows.push({ date: c.settledAt ?? c.createdAt, docLabel: `ارتداد شيك ${c.chequeNumber} ⚠️`, operationMinor: c.amountMinor, debitMinor: c.amountMinor, creditMinor: 0 })

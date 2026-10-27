@@ -27,6 +27,7 @@ export function ThermalPreview() {
   const nav = useNavigate()
   const { open, handle, mini, closePreview, setMini, refresh } = usePrintPreview()
   const receipt = useAppStore((s) => s.receipt)
+  const reportPrint = useAppStore((s) => s.reportPrint)
   const [quickOpen, setQuickOpen] = useState(false)
 
   const html = handle?.html ?? ''
@@ -54,6 +55,18 @@ export function ThermalPreview() {
     receiptRef.current = receipt
     if (usePrintPreview.getState().open) refresh()
   }, [receipt, refresh])
+
+  /* المراجعة الأدق 2026-10-27: إعدادات التقارير (لون/خط/توقيعات/علامة مائية)
+     كانت لا تُعيد بناء المعاينة لأن الأثر كان يراقب `receipt` وحدها — فيبقى
+     التقرير المعروض بإعدادات لحظة الفتح مهما غيّر المستخدم في اللوحة السريعة. */
+  const reportPrintRef = useRef(reportPrint)
+  const firstReportPrint = useRef(true)
+  useEffect(() => {
+    if (firstReportPrint.current) { firstReportPrint.current = false; reportPrintRef.current = reportPrint; return }
+    if (reportPrint === reportPrintRef.current) return
+    reportPrintRef.current = reportPrint
+    if (usePrintPreview.getState().open) refresh()
+  }, [reportPrint, refresh])
 
   /* الظهور في منتصف الشاشة عند **الفتح أو التكبير من الوضع المصغّر** فقط —
      تغيير عرض الورق (58↔80mm) من الإعدادات السريعة لا يعيد التمركز،

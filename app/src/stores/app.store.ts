@@ -25,7 +25,7 @@ import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoi
 import { branchOfRecord, resolveBranchActivityId, resolveBranchModules, type Branch, type BranchScopedRecord } from '../core/branches.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../core/taxRegistration.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
-import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
+import { DEFAULT_REPORT_PRINT, registerReportPrintSettingsProvider, type ReportPrintSettings } from '../core/reportPrint.ts'
 import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
 import { DEFAULT_FX_RATES_SETTINGS, normalizeFxRatesSettings, type FxRatesMap, type FxRatesSettings, type FxRateRecord } from '../core/fxRates.ts'
 import { DEFAULT_SCALE_RULES, validateScaleRule, type ScaleRule } from '../core/barcode.ts'
@@ -1695,3 +1695,8 @@ useAppStore.setState = ((partial, replace) => {
 registerExternalSnapshotApplier((storeName) => {
   if (storeName === 'shopsys-app') void useAppStore.persist.rehydrate()
 })
+
+/* ربط «المعاينة الحية» بإعدادات التقارير وقت التغيير: بدون هذا المزوّد
+   كانت نافذة المعاينة تُبنى بإعدادات لحظة الفتح ولا تتغير عند تعديل اللون/
+   حجم الخط/التوقيعات/العلامة المائية من لوحة الإعدادات السريعة. */
+registerReportPrintSettingsProvider(() => useAppStore.getState().reportPrint ?? DEFAULT_REPORT_PRINT)
