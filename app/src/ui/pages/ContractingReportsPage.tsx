@@ -15,6 +15,7 @@ import { COST_KIND_LABELS, type CostKind, projectReportCard, clientContractingCa
 import { toCsv } from '../../core/security.ts'
 import { buildProjectExpenseLedger } from '../../core/projectExpenseLedger.ts'
 import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
+import { AnalyticalProjectReportView } from '../contracting/AnalyticalProjectReportView.tsx'
 import type { ExportSheet } from '../../core/fullExport.ts'
 import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -48,11 +49,15 @@ export function ContractingReportsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   /* §99: مطبوعات الوحدة بالغلاف الموحد (تصدير PDF/Excel لكل تقارير الوحدات) */
   const printDoc = (title: string, subtitle: string, bodyHtml: string) => {
-    const { reportPrint, receipt } = useAppStore.getState()
-    printHtml(renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint }))
+    /* طلب المالك: معاينة قبل الطباعة بزر طباعة — بدل الطباعة الفورية */
+    const build = () => {
+      const { reportPrint, receipt } = useAppStore.getState()
+      return renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint })
+    }
+    printHtml(build(), { preview: { title: `معاينة ${title} قبل الطباعة`, rebuild: build } })
   }
   const sectionHtml = (label: string) => `<p class="sec" style="margin:12px 0 4px;padding:6px 10px">${escHtml(label)}</p>`
-  const [tab, setTab] = usePersistedSectionView('contracting-reports', 'projects', ['projects', 'project', 'client', 'dues'] as const)
+  const [tab, setTab] = usePersistedSectionView('contracting-reports', 'projects', ['projects', 'project', 'client', 'dues', 'formal'] as const)
   const [projectId, setProjectId] = useState('')
   const [clientId, setClientId] = useState('')
 
@@ -328,7 +333,7 @@ export function ContractingReportsPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><BarChart3 className="w-6 h-6 text-orange-500" /> مركز تقارير المقاولات</h1>
         <div className="flex gap-1.5">
-          {([['projects', 'لوحة المشاريع'], ['project', 'مشروع بعينه'], ['client', 'عميل بعينه'], ['dues', 'ذمم العملاء']] as const).map(([id, label]) => (
+          {([['projects', 'لوحة المشاريع'], ['project', 'مشروع بعينه'], ['formal', 'التقرير الرسمي ③'], ['client', 'عميل بعينه'], ['dues', 'ذمم العملاء']] as const).map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)} className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all ${tab === id ? 'bg-orange-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>{label}</button>
           ))}
         </div>
@@ -393,6 +398,13 @@ export function ContractingReportsPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* ═══ ①ب التقرير الرسمي التحليلي (تصميم ③ — قرار المالك 2026-10-27) ═══ */}
+          {tab === 'formal' && (
+            <div className="anim-up">
+              <AnalyticalProjectReportView projectId={projectId} onProjectChange={setProjectId} />
             </div>
           )}
 

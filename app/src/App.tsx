@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useMemo, useState, Activity } from 'react'
+import { HashRouter, Routes, Route, useLocation, useNavigate, type Location } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
 import { useDataStore, useRawDataStore } from './data/repo.ts'
 import { evaluateLicense, oldestValidDay, newestValidDay } from './core/license.ts'
@@ -167,6 +167,181 @@ function usePageTitle(): string {
   return 'TAHAKAM ERP'
 }
 
+/**
+ * شجرة المسارات كعنصر React ثابت — لا تُبنَى من جديد عند كل تصيير.
+ * (بلاغ المالك 2026-10-27: تبديل التاب كان يفكّك الصفحة فتضيع الفلاتر.)
+ */
+const APP_ROUTES = (<>
+
+<Route path="/" element={<Dashboard />} />
+<Route path="/settings/permissions" element={<PermissionsPage />} />
+<Route path="/settings/general" element={<GeneralSettingsPage />} />
+<Route path="/settings/company" element={<CompanyProfilePage />} />
+<Route path="/settings/lan" element={<LanSettingsPage />} />
+<Route path="/settings/cost-centers" element={<CostCentersPage />} />
+<Route path="/inventory/items" element={<ItemsPage />} />
+<Route path="/inventory/warehouses" element={<WarehousesPage />} />
+<Route path="/parties/customers" element={<CustomersPage />} />
+<Route path="/purchases/suppliers" element={<SuppliersPage />} />
+{/* شاشات المراحل القادمة — كلها مسجلة في الراوتر منذ الآن */}
+<Route path="/pos" element={<PosPage />} />
+<Route path="/sales/invoices" element={<SalesInvoicesPage />} />
+<Route path="/sales/invoices/new" element={<InvoiceDocumentRoute kind="sale" />} />
+<Route path="/sales/returns" element={<SaleReturnsPage />} />
+<Route path="/sales/shifts" element={<ShiftsPage />} />
+<Route path="/sales/price-lists" element={<PriceListsPage />} />
+<Route path="/sales/promotions" element={<PromotionsPage />} />
+<Route path="/inventory/transfers" element={<TransfersPage />} />
+<Route path="/inventory/counting" element={<StocktakePage />} />
+<Route path="/inventory/recipes" element={<RecipesPage />} />
+<Route path="/inventory/processing" element={<ProcessingPage />} />
+<Route path="/inventory/jewelry" element={<JewelryPage />} />
+<Route path="/purchases/invoices" element={<PurchasesPage />} />
+<Route path="/purchases/invoices/new" element={<InvoiceDocumentRoute kind="purchase" />} />
+<Route path="/purchases/orders" element={<PurchaseOrdersPage />} />
+<Route path="/settings/approvals" element={<DocApprovalsPage />} />
+<Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
+<Route path="/parties/employees" element={<EmployeesPage />} />
+<Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />
+<Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
+<Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
+<Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
+    {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير).
+مسار واحد ديناميكي يغطي كل التابات: المسارات الصريحة المكررة كانت تطابَق
+قبله فلا يصل :tab إلى useParams إطلاقاً — فتبقى الصفحة على «الحضور»
+مهما نقر المستخدم من التابات (عطل المالك: «التابات لا تعمل»). */}
+    <Route path="/hr" element={<HrPage />} />
+    <Route path="/hr/:tab" element={<HrPage />} />
+<Route path="/parties/installments" element={<InstallmentsPage />} />
+<Route path="/maintenance/tickets" element={<MaintenancePage />} />
+<Route path="/sales/delivery-tasks" element={<DeliveryTasksPage />} />
+<Route path="/laundry/orders" element={<LaundryPage />} />
+<Route path="/bookings" element={<BookingsPage />} />
+<Route path="/rental/fleet" element={<EquipmentPage />} />
+<Route path="/rental/invoices" element={<RentalInvoicesPage />} />
+<Route path="/rental/contracts" element={<RentalContractsPage />} />
+<Route path="/lab/orders" element={<LabOrdersPage />} />
+<Route path="/lab/tests" element={<LabTestsPage />} />
+<Route path="/lab/patients" element={<LabPatientsPage />} />
+<Route path="/lab/referrers" element={<LabReferrersPage />} />
+<Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
+      <Route path="/contracting/projects" element={<ProjectsPage />} />
+      <Route path="/contracting/extracts" element={<ProjectExtractsPage />} />
+      <Route path="/contracting/expenses" element={<ProjectExpensesPage />} />
+<Route path="/contracting/quotations" element={<QuotationsPage />} />
+<Route path="/contracting/boq" element={<BoqPage />} />
+<Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />
+<Route path="/contracting/bonds" element={<BondsPage />} />
+<Route path="/contracting/daily-workers" element={<DailyWorkersPage />} />
+<Route path="/contracting/material-issues" element={<MaterialIssuesPage />} />
+<Route path="/contracting/collections" element={<ClientCollectionsPage />} />
+<Route path="/contracting/evm" element={<EvmDashboardPage />} />
+<Route path="/contracting/reports" element={<ContractingReportsPage />} />
+<Route path="/rental/reports" element={<EquipmentReportsPage />} />
+<Route path="/restaurant/reports" element={<RestaurantReportsPage />} />
+<Route path="/realestate/properties" element={<PropertiesPage />} />
+<Route path="/realestate/leases" element={<LeasesPage />} />
+<Route path="/realestate/invoices" element={<RealestateInvoicesPage />} />
+<Route path="/contracting/budget" element={<ProjectBudgetPage />} />
+<Route path="/contracting/tasks" element={<ProjectTasksPage />} />
+<Route path="/contracting/approvals" element={<ApprovalsPage />} />
+<Route path="/parties/custody" element={<CustodyPage />} />
+<Route path="/clinic/patients" element={<ClinicPatientsPage />} />
+<Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
+<Route path="/cars" element={<CarsPage />} />
+<Route path="/logistics/trips" element={<TripsPage />} />
+<Route path="/logistics/expenses" element={<TripExpensesPage />} />
+<Route path="/logistics/invoices" element={<LogisticsInvoicesPage />} />
+<Route path="/logistics/fleet" element={<FleetPage />} />
+<Route path="/accounting/journal" element={<JournalPage />} />
+<Route path="/accounting/coa" element={<CoaPage />} />
+<Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
+<Route path="/accounting/vouchers" element={<VouchersPage />} />
+<Route path="/accounting/treasury" element={<TreasuryPage />} />
+<Route path="/accounting/payment-terminals" element={<PaymentTerminalsPage />} />
+<Route path="/accounting/cheques" element={<ChequesPage />} />
+<Route path="/accounting/assets" element={<AssetsPage />} />
+<Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
+<Route path="/branches" element={<BranchesPage />} />
+<Route path="/reports" element={<ReportsPage />} />
+<Route path="/reports/nasq" element={<NasqPage />} />
+<Route path="/reports/statements" element={<StatementsPage />} />
+<Route path="/settings/printing" element={<PrintSettingsPage />} />
+<Route path="/settings/backup" element={<BackupPage />} />
+<Route path="/settings/sync" element={<SyncPage />} />
+<Route path="/settings/telegram" element={<TelegramPage />} />
+<Route path="/settings/appearance" element={<AppearancePage />} />
+<Route path="/settings/einvoice" element={<EinvoicePage />} />
+<Route path="/settings/license" element={<LicensePage />} />
+<Route path="/settings/legal" element={<LegalPage />} />
+<Route path="/settings/profile" element={<ProfilePage />} />
+<Route path="/settings/about" element={<AboutPage />} />
+<Route path="/settings/audit" element={<AuditLogPage />} />
+<Route path="/settings/issues" element={<IssuesPage />} />
+<Route path="/settings/support" element={<SupportPage />} />
+<Route path="/settings/guides" element={<GuidesPage />} />
+<Route path="/wallets/ops" element={<WalletServicesPage />} />
+<Route path="/inventory/wastage" element={<WastagePage />} />
+<Route path="/inventory/consumption" element={<ConsumptionPage />} />
+<Route path="/inventory/barcode-center" element={<BarcodeCenterPage />} />
+<Route path="/inventory/scale" element={<ScaleSettingsPage />} />
+<Route path="/accounting/opening-balances" element={<OpeningBalancesPage />} />
+<Route path="/inventory/serials" element={<SerialsPage />} />
+<Route path="/accounting/settlements" element={<SettlementsPage />} />
+<Route path="/sales/exchange" element={<ExchangePage />} />
+<Route path="/sales/restaurant-orders" element={<RestaurantOrdersPage />} />
+<Route path="*" element={<Dashboard />} />
+</>)
+
+const routeFallback = <div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>
+
+/** تحويل «/reports?kind=customer&id=1» إلى كائن Location صالح لـ <Routes location> */
+function parseTabLocation(path: string): Partial<Location> {
+  const hashIndex = path.indexOf('#')
+  const withoutHash = hashIndex >= 0 ? path.slice(0, hashIndex) : path
+  const hash = hashIndex >= 0 ? path.slice(hashIndex) : ''
+  const queryIndex = withoutHash.indexOf('?')
+  const pathname = queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash
+  const search = queryIndex >= 0 ? withoutHash.slice(queryIndex) : ''
+  return { pathname: pathname || '/', search, hash, state: null, key: path }
+}
+
+/** نسخة واحدة من الشجرة لمسار بعينه (موقع صحيح داخلها لـ useSearchParams/useParams) */
+function RouteTreeForPath({ path }: { path?: string }) {
+  const location = path ? parseTabLocation(path) : undefined
+  return (
+    <div className="h-full min-h-0" data-route-tree={path ?? 'current'}>
+      <Suspense fallback={routeFallback}>
+        <Routes location={location}>{APP_ROUTES}</Routes>
+      </Suspense>
+    </div>
+  )
+}
+
+/**
+ * مضيف التابات — يُبقي كل تبويب مسار مركّباً عبر <Activity>، ويخفي غير النشط
+ * فيحفظ حالته الداخلية (الفلاتر، الاختيارات، التمرير) عند العودة إليه.
+ * في الويب/بلا تبويبات يعرض الشجرة العادية كما كانت تماماً.
+ */
+function TabRoutes() {
+  const tabs = useWindowStore((s) => s.tabs)
+  const here = useLocation()
+  const enabled = isDesktopFreeWindows()
+  const current = `${here.pathname}${here.search}`
+  const pathTabs = enabled ? tabs.filter((t) => !!t.path) : []
+  if (!enabled || pathTabs.length === 0) return <RouteTreeForPath />
+  return (
+    <>
+      {pathTabs.map((tab) => (
+        <Activity key={tab.id} mode={tab.path === current ? 'visible' : 'hidden'}>
+          <RouteTreeForPath path={tab.path} />
+        </Activity>
+      ))}
+      {!pathTabs.some((t) => t.path === current) && <RouteTreeForPath />}
+    </>
+  )
+}
+
 function Shell({ satellite = false }: { satellite?: boolean }) {
   const title = usePageTitle()
   const location = useLocation()
@@ -297,132 +472,7 @@ function Shell({ satellite = false }: { satellite?: boolean }) {
       {/* key بمعرّف التبويب: كل تبويب عرض = مثيل مستقل تماماً كنافذة قمر —
           بلا مفتاح كان محرّران لنفس النوع يتقاسمان الحالة فتنتقل قيم محرر
           إلى آخر وتحفظ على صنف غلط (D7). */}
-      {viewActiveTab ? <ActiveViewTab key={viewActiveTab.id} tab={viewActiveTab} /> : (
-        <>
-      <Suspense fallback={<div role="status" className="rounded-xl border border-slate-200 bg-white/80 px-4 py-6 text-center text-sm font-bold text-slate-500 dark:border-slate-700 dark:bg-card-dark">جارٍ تحميل الشاشة…</div>}>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/settings/permissions" element={<PermissionsPage />} />
-        <Route path="/settings/general" element={<GeneralSettingsPage />} />
-        <Route path="/settings/company" element={<CompanyProfilePage />} />
-        <Route path="/settings/lan" element={<LanSettingsPage />} />
-        <Route path="/settings/cost-centers" element={<CostCentersPage />} />
-        <Route path="/inventory/items" element={<ItemsPage />} />
-        <Route path="/inventory/warehouses" element={<WarehousesPage />} />
-        <Route path="/parties/customers" element={<CustomersPage />} />
-        <Route path="/purchases/suppliers" element={<SuppliersPage />} />
-        {/* شاشات المراحل القادمة — كلها مسجلة في الراوتر منذ الآن */}
-        <Route path="/pos" element={<PosPage />} />
-        <Route path="/sales/invoices" element={<SalesInvoicesPage />} />
-        <Route path="/sales/invoices/new" element={<InvoiceDocumentRoute kind="sale" />} />
-        <Route path="/sales/returns" element={<SaleReturnsPage />} />
-        <Route path="/sales/shifts" element={<ShiftsPage />} />
-        <Route path="/sales/price-lists" element={<PriceListsPage />} />
-        <Route path="/sales/promotions" element={<PromotionsPage />} />
-        <Route path="/inventory/transfers" element={<TransfersPage />} />
-        <Route path="/inventory/counting" element={<StocktakePage />} />
-        <Route path="/inventory/recipes" element={<RecipesPage />} />
-        <Route path="/inventory/processing" element={<ProcessingPage />} />
-        <Route path="/inventory/jewelry" element={<JewelryPage />} />
-        <Route path="/purchases/invoices" element={<PurchasesPage />} />
-        <Route path="/purchases/invoices/new" element={<InvoiceDocumentRoute kind="purchase" />} />
-        <Route path="/purchases/orders" element={<PurchaseOrdersPage />} />
-        <Route path="/settings/approvals" element={<DocApprovalsPage />} />
-        <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
-        <Route path="/parties/employees" element={<EmployeesPage />} />
-        <Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />
-        <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
-        <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
-        <Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
-    {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير).
-        مسار واحد ديناميكي يغطي كل التابات: المسارات الصريحة المكررة كانت تطابَق
-        قبله فلا يصل :tab إلى useParams إطلاقاً — فتبقى الصفحة على «الحضور»
-        مهما نقر المستخدم من التابات (عطل المالك: «التابات لا تعمل»). */}
-    <Route path="/hr" element={<HrPage />} />
-    <Route path="/hr/:tab" element={<HrPage />} />
-        <Route path="/parties/installments" element={<InstallmentsPage />} />
-        <Route path="/maintenance/tickets" element={<MaintenancePage />} />
-        <Route path="/sales/delivery-tasks" element={<DeliveryTasksPage />} />
-        <Route path="/laundry/orders" element={<LaundryPage />} />
-        <Route path="/bookings" element={<BookingsPage />} />
-        <Route path="/rental/fleet" element={<EquipmentPage />} />
-        <Route path="/rental/invoices" element={<RentalInvoicesPage />} />
-        <Route path="/rental/contracts" element={<RentalContractsPage />} />
-        <Route path="/lab/orders" element={<LabOrdersPage />} />
-        <Route path="/lab/tests" element={<LabTestsPage />} />
-        <Route path="/lab/patients" element={<LabPatientsPage />} />
-        <Route path="/lab/referrers" element={<LabReferrersPage />} />
-        <Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
-      <Route path="/contracting/projects" element={<ProjectsPage />} />
-      <Route path="/contracting/extracts" element={<ProjectExtractsPage />} />
-      <Route path="/contracting/expenses" element={<ProjectExpensesPage />} />
-        <Route path="/contracting/quotations" element={<QuotationsPage />} />
-        <Route path="/contracting/boq" element={<BoqPage />} />
-        <Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />
-        <Route path="/contracting/bonds" element={<BondsPage />} />
-        <Route path="/contracting/daily-workers" element={<DailyWorkersPage />} />
-        <Route path="/contracting/material-issues" element={<MaterialIssuesPage />} />
-        <Route path="/contracting/collections" element={<ClientCollectionsPage />} />
-        <Route path="/contracting/evm" element={<EvmDashboardPage />} />
-        <Route path="/contracting/reports" element={<ContractingReportsPage />} />
-        <Route path="/rental/reports" element={<EquipmentReportsPage />} />
-        <Route path="/restaurant/reports" element={<RestaurantReportsPage />} />
-        <Route path="/realestate/properties" element={<PropertiesPage />} />
-        <Route path="/realestate/leases" element={<LeasesPage />} />
-        <Route path="/realestate/invoices" element={<RealestateInvoicesPage />} />
-        <Route path="/contracting/budget" element={<ProjectBudgetPage />} />
-        <Route path="/contracting/tasks" element={<ProjectTasksPage />} />
-        <Route path="/contracting/approvals" element={<ApprovalsPage />} />
-        <Route path="/parties/custody" element={<CustodyPage />} />
-        <Route path="/clinic/patients" element={<ClinicPatientsPage />} />
-        <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
-        <Route path="/cars" element={<CarsPage />} />
-        <Route path="/logistics/trips" element={<TripsPage />} />
-        <Route path="/logistics/expenses" element={<TripExpensesPage />} />
-        <Route path="/logistics/invoices" element={<LogisticsInvoicesPage />} />
-        <Route path="/logistics/fleet" element={<FleetPage />} />
-        <Route path="/accounting/journal" element={<JournalPage />} />
-        <Route path="/accounting/coa" element={<CoaPage />} />
-        <Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
-        <Route path="/accounting/vouchers" element={<VouchersPage />} />
-        <Route path="/accounting/treasury" element={<TreasuryPage />} />
-        <Route path="/accounting/payment-terminals" element={<PaymentTerminalsPage />} />
-        <Route path="/accounting/cheques" element={<ChequesPage />} />
-        <Route path="/accounting/assets" element={<AssetsPage />} />
-        <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
-        <Route path="/branches" element={<BranchesPage />} />
-        <Route path="/reports" element={<ReportsPage />} />
-        <Route path="/reports/nasq" element={<NasqPage />} />
-        <Route path="/reports/statements" element={<StatementsPage />} />
-        <Route path="/settings/printing" element={<PrintSettingsPage />} />
-        <Route path="/settings/backup" element={<BackupPage />} />
-        <Route path="/settings/sync" element={<SyncPage />} />
-        <Route path="/settings/telegram" element={<TelegramPage />} />
-        <Route path="/settings/appearance" element={<AppearancePage />} />
-        <Route path="/settings/einvoice" element={<EinvoicePage />} />
-        <Route path="/settings/license" element={<LicensePage />} />
-        <Route path="/settings/legal" element={<LegalPage />} />
-        <Route path="/settings/profile" element={<ProfilePage />} />
-        <Route path="/settings/about" element={<AboutPage />} />
-        <Route path="/settings/audit" element={<AuditLogPage />} />
-        <Route path="/settings/issues" element={<IssuesPage />} />
-        <Route path="/settings/support" element={<SupportPage />} />
-        <Route path="/settings/guides" element={<GuidesPage />} />
-        <Route path="/wallets/ops" element={<WalletServicesPage />} />
-        <Route path="/inventory/wastage" element={<WastagePage />} />
-        <Route path="/inventory/consumption" element={<ConsumptionPage />} />
-        <Route path="/inventory/barcode-center" element={<BarcodeCenterPage />} />
-        <Route path="/inventory/scale" element={<ScaleSettingsPage />} />
-        <Route path="/accounting/opening-balances" element={<OpeningBalancesPage />} />
-        <Route path="/inventory/serials" element={<SerialsPage />} />
-        <Route path="/accounting/settlements" element={<SettlementsPage />} />
-        <Route path="/sales/exchange" element={<ExchangePage />} />
-        <Route path="/sales/restaurant-orders" element={<RestaurantOrdersPage />} />
-        <Route path="*" element={<Dashboard />} />
-      </Routes>
-      </Suspense>
-        </>
-      )}
+      {viewActiveTab ? <ActiveViewTab key={viewActiveTab.id} tab={viewActiveTab} /> : <TabRoutes />}
     </Layout>
   )
 }

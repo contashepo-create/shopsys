@@ -74,7 +74,8 @@ export function ThermalPreview() {
     /* مفتاح الطباعة الصامتة يُقرأ لحظة الطباعة لا لحظة فتح المعاينة —
        لو بدّله المستخدم والمعاينة مفتوحة (أو من قسم الطباعة والمصغّرة معلقة)
        ننفّذ القيمة الجديدة */
-    printHtml(current.html, { silent: useAppStore.getState().receipt.silentPrint ?? false })
+    /* fromPreview: هذا هو زر الطباعة داخل نافذة المعاينة نفسها — لا تفتح معاينة ثانية */
+    printHtml(current.html, { silent: useAppStore.getState().receipt.silentPrint ?? false, fromPreview: true })
     closePreview()
   }, [closePreview])
 

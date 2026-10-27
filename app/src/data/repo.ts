@@ -129,6 +129,7 @@ import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, valid
 import { validateRxLines, validateAttachment, migrateFreeHistory, EMPTY_VITALS, type RxLine, type MedicalHistory, type Vitals, type AttachmentKind } from '../core/prescription.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, buildConsignmentSaleEntry, buildConsignmentPayoutEntry, computeCarPurchaseInvoice, buildCarPurchaseInvoiceEntry, allocateByValue, type CarInput, type CarPurpose, type CarStatus, type CarPaymentMode, type CarInvoiceLine, type CarInvoiceExpense } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
+import { allocateChequeDues } from '../core/chequeDues.ts'
 import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDef } from '../core/treasury.ts'
 import { validateCostCenter, validateCostCenterBudget, type CostCenter, type CostCenterBudget } from '../core/costCenters.ts'
 import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCatalog.ts'
@@ -14740,6 +14741,16 @@ export const useRawDataStore = create<DataState>()(
           cars: state.cars,
           propertySales: state.propertySales,
         }))
+        /* بلاغ المالك 2026-10-27: الشيك الوارد يظهر في كشف حساب العميل لكن لا
+           يظهر خصمه في تقارير المشاريع. السبب أن هذا الدفتر كان يبني `settled`
+           من clientSettlements وvouchers فقط. نضيف الشيكات الواردة النشطة
+           كتوزيعات تحصيل FIFO على نفس المستندات — فتتطابق التقارير مع الكشف.
+           الارتداد مستثنى (يعيد الدين بسطر مدين في الكشف). */
+        for (const a of allocateChequeDues(state.cheques, customerId, open).allocations) {
+          settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
+          const doc = open.find((inv) => inv.docKey === a.docKey)
+          if (doc) doc.settledMinor += a.appliedMinor
+        }
         return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
 

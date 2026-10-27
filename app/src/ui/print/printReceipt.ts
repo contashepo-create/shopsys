@@ -17,6 +17,12 @@ import { formatMinor } from '../../core/money.ts'
 import { barcodeSvg } from '../../core/code128.ts'
 import { amountInWords } from './printInvoiceA4.ts'
 import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+
+/** فصل الاستيراد في دالة صغيرة يسهل تنكيره في الاختبارات */
+function requirePreview() {
+  return { openPrintPreview }
+}
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -184,7 +190,45 @@ ${large ? `
  * webContents.print بـ deviceName). في المتصفح لا وجود للجسر فيسقط إلى حوار
  * النظام كالعادة — لا ادعاء قدرة لا يملكها المتصفح.
  */
-export function printHtml(html: string, options?: { silent?: boolean; printerName?: string }): void {
+export interface PrintHtmlPreview {
+  /** عنوان نافذة المعاينة (مثل «معاينة ميزان المراجعة») */
+  title?: string
+  /**
+   * إعادة بناء HTML لحظة تغيير إعدادات الطباعة — معاينة حيّة.
+   * إن غابت يُعاد استخدام نفس HTML عند أي تحديث للإعدادات.
+   */
+  rebuild?: () => string
+}
+
+export function printHtml(
+  html: string,
+  options?: {
+    silent?: boolean
+    printerName?: string
+    preview?: PrintHtmlPreview
+    /** داخلي: الاستدعاء جاء من زر «طباعة» داخل نافذة المعاينة نفسها */
+    fromPreview?: boolean
+  },
+): void {
+  /* طلب المالك 2026-10-27: «عند طلب طباعة أي تقرير أعطني معاينة له وبها زر طباعة».
+     أي تقرير مبني بالغلاف الموحد renderReportShell يحمل <div class="rp-body">
+     ⇒ يُفتح تلقائياً في نافذة المعاينة الحية (زر طباعة + إعدادات سريعة) بدل
+     iframe مخفي يطبع فوراً. الفواتير والإيصالات الحرارية لا تحمل الوسم فتبقى
+     كما هي. زر الطباعة داخل المعاينة يمرّر fromPreview فيصل للطباعة الحقيقية
+     أدناه بلا حلقة لا نهائية. */
+  const explicitPreview = options?.preview
+  const isUnifiedReport = !explicitPreview && !options?.fromPreview && html.includes('class="rp-body"')
+  if (explicitPreview || isUnifiedReport) {
+    const { openPrintPreview } = requirePreview()
+    const match = /<title>([^<]*)<\/title>/.exec(html)
+    openPrintPreview({
+      html,
+      wide: true,
+      title: explicitPreview?.title ?? (match ? `معاينة ${match[1]} قبل الطباعة` : 'معاينة التقرير قبل الطباعة'),
+      rebuild: explicitPreview?.rebuild,
+    })
+    return
+  }
   const bridge = (globalThis as { shopsysPrint?: (html: string, silent: boolean, printerName?: string) => void }).shopsysPrint
   /* الطباعة المباشرة (صامتة أو إلى طابعة مسماة) متاحة فقط عبر جسر EXE */
   if (typeof bridge === 'function' && (options?.silent || options?.printerName)) {

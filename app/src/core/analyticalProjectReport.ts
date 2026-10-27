@@ -1,0 +1,255 @@
+/**
+ * نموذج «تقرير المشروع التحليلي» — التصميم ③ (طلب المالك 2026-10-27).
+ * ───────────────────────────────────────────────────────────────
+ * ترتيب الأقسام كما طلب المالك حرفياً:
+ *   اسم المشروع وقيمته ← ما حُصِّل منه ← المتبقي من التحصيل
+ *   ← كل المصروفات (برصيد تراكمي) ← كل التحصيلات (بالمتبقي بعد كل عملية)
+ *   ← تسوية ختامية بالمعادلة.
+ *
+ * التحصيلات من **مصدر واحد**: clientSettlements + سندات القبض + الشيكات
+ * الواردة النشطة + استرداد الدفعات المقدمة (مقاصة في المستخلص).
+ * نواة خالصة: تُبنى من لقطة بيانات فقط، بلا React/DOM/متاجر.
+ */
+import type { Minor } from './money.ts'
+import type { FormalReportModel, FormalReportRow, FormalReportSection } from './formalReport.ts'
+import type { OpenInvoice } from './projectOps.ts'
+import type { ChequeDuesLike } from './chequeDues.ts'
+
+export interface AnalyticalProjectSource {
+  project: { code: string; nameAr: string; clientName: string; status: string; startDate: string; contractValueMinor: Minor }
+  /** أوامر التغيير المعتمدة */
+  changeOrdersApprovedMinor?: Minor
+  /** المستخلصات (القيمة قبل الضريبة، المحتجز، المستحق، التاريخ، الرقم، نقدي/آجل) */
+  extracts: {
+    extractNumber: string
+    date: string
+    grossMinor: Minor
+    vatMinor?: Minor
+    retentionMinor: Minor
+    dueMinor: Minor
+    payment: 'cash' | 'credit'
+    advanceRecoveryMinor?: Minor
+  }[]
+  /** مصروفات المشروع (سطر لكل مستند) */
+  expenses: {
+    date: string
+    docNumber: string
+    description: string
+    party?: string
+    category?: string
+    amountMinor: Minor
+  }[]
+  /** تحصيلات المستخلصات الآجلة من دفتر التوزيع (settledMinor لكل مستخلص) */
+  openInvoiceSettled?: Map<string, number>
+  /** سندات القبض على العميل */
+  vouchers?: { date: string; number: string; description?: string; amountMinor: Minor; reversed?: boolean }[]
+  /** تسويات العملاء (تحصيلات FIFO) */
+  clientSettlements?: { date: string; number: string; amountMinor: Minor; allocations?: { docKey: string; appliedMinor: Minor }[] }[]
+  /** الشيكات الواردة — تُعرض بحالتها وتُحتسب Non-bounced فقط */
+  cheques?: (ChequeDuesLike & { chequeNumber: string; bankName?: string; createdAt?: string; settledAt?: string | null })[]
+  /** مفاتيح مستخلصات هذا المشروع (docKey = extract:<id>) */
+  extractDocKeys?: string[]
+  /** هل الشيكات تُحتسب ضمن التحصيلات؟ (افتراضياً نعم — مصدر واحد للحقيقة) */
+  includeCheques?: boolean
+  currencySymbol: string
+  companyName: string
+  period?: string
+  printedBy?: string
+  /** دالة تنسيق المبلغ (من money.formatMinor) */
+  fmt: (m: Minor) => string
+}
+
+export interface ChequeCollectionRow {
+  date: string
+  number: string
+  description: string
+  method: string
+  status: string
+  amountMinor: Minor
+  /** true = لا يُحتسب في الإجمالي (مرتد/ملغي) */
+  excluded?: boolean
+}
+
+/**
+ * يبني جدول التحصيلات مرتباً زمنياً مع المتبقي بعد كل عملية.
+ * `collectedTarget` = إجمالي ما خُصم فعلاً من ذمم المستخلصات (المصدر الموثوق).
+ */
+export function buildCollectionRows(src: AnalyticalProjectSource): {
+  rows: ChequeCollectionRow[]
+  totalMinor: Minor
+  running: Minor[]
+  targetMinor: Minor
+} {
+  const extractKeys = new Set(src.extractDocKeys ?? [])
+  const rows: ChequeCollectionRow[] = []
+
+  for (const v of src.vouchers ?? []) {
+    if (v.reversed) continue
+    rows.push({ date: v.date, number: v.number, description: v.description ?? 'سند قبض', method: 'نقدي / بنكي', status: 'محصّل', amountMinor: v.amountMinor })
+  }
+  for (const st of src.clientSettlements ?? []) {
+    const relevant = !extractKeys.size || (st.allocations ?? []).some((a) => extractKeys.has(a.docKey))
+    const amount = relevant && st.allocations?.length
+      ? st.allocations.filter((a) => !extractKeys.size || extractKeys.has(a.docKey)).reduce((s, a) => s + a.appliedMinor, 0)
+      : st.amountMinor
+    if (amount <= 0) continue
+    rows.push({ date: st.date, number: st.number, description: 'تحصيل على مستخلصات', method: 'توزيع FIFO', status: 'محصّل', amountMinor: amount })
+  }
+  if (src.includeCheques !== false) {
+    for (const c of src.cheques ?? []) {
+      if (c.direction !== 'incoming' || c.partyId == null) continue
+      const bounced = c.status === 'bounced' || c.status === 'cancelled'
+      rows.push({
+        date: (c.settledAt ?? c.createdAt ?? '').slice(0, 10),
+        number: c.chequeNumber,
+        description: `شيك وارد${c.bankName ? ` — ${c.bankName}` : ''}`,
+        method: 'ورقة قبض',
+        status: bounced ? 'مرتد ✗' : c.status === 'held' ? 'في الحافظة' : c.status === 'deposited' ? 'تحت التحصيل' : 'محصّل ✓',
+        amountMinor: c.amountMinor,
+        excluded: bounced,
+      })
+    }
+  }
+  /* استرداد الدفعة المقدمة (مقاصة داخل المستخلص) */
+  for (const e of src.extracts) {
+    const rec = e.advanceRecoveryMinor ?? 0
+    if (rec <= 0) continue
+    rows.push({ date: e.date, number: e.extractNumber, description: 'استرداد دفعة مقدمة من المستخلص', method: 'مقاصة 2109', status: 'مقاصة', amountMinor: rec })
+  }
+  /* المستخلصات النقدية حُصّلت وقتها */
+  for (const e of src.extracts) {
+    if (e.payment !== 'cash') continue
+    rows.push({ date: e.date, number: e.extractNumber, description: 'مستخلص نقدي (محصّل وقت الاستخلاص)', method: 'نقدي', status: 'محصّل', amountMinor: e.dueMinor })
+  }
+
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number))
+
+  /* الهدف = مجموع ما خُصم من ذمم المستخلصات + النقدي + المقاصة (مصدر واحد) */
+  const creditSettled = [...(src.openInvoiceSettled ?? new Map<string, number>())]
+    .filter(([k]) => !extractKeys.size || extractKeys.has(k))
+    .reduce((s, [, v]) => s + v, 0)
+  const cashExtracts = src.extracts.filter((e) => e.payment === 'cash').reduce((s, e) => s + e.dueMinor, 0)
+  const recovered = src.extracts.reduce((s, e) => s + (e.advanceRecoveryMinor ?? 0), 0)
+  const targetMinor = creditSettled + cashExtracts + recovered
+
+  let remaining = src.extracts.reduce((s, e) => s + e.dueMinor, 0)
+  const running: Minor[] = []
+  for (const r of rows) {
+    if (!r.excluded) remaining -= r.amountMinor
+    running.push(Math.max(0, remaining))
+  }
+  const totalMinor = rows.filter((r) => !r.excluded).reduce((s, r) => s + r.amountMinor, 0)
+  return { rows, totalMinor, running, targetMinor }
+}
+
+/** يبني نموذج التقرير الرسمي الكامل (التصميم ③) */
+export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): FormalReportModel {
+  const fmt = src.fmt
+  const contractOriginal = src.project.contractValueMinor
+  const contractEffective = contractOriginal + (src.changeOrdersApprovedMinor ?? 0)
+  const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0)
+  const vat = src.extracts.reduce((s, e) => s + (e.vatMinor ?? 0), 0)
+  const retention = src.extracts.reduce((s, e) => s + e.retentionMinor, 0)
+  const dueTotal = src.extracts.reduce((s, e) => s + e.dueMinor, 0)
+
+  const collections = buildCollectionRows(src)
+  const collected = collections.targetMinor
+  const remainingCollection = Math.max(0, dueTotal - collected)
+  const collectedPercent = dueTotal > 0 ? Math.round((collected / dueTotal) * 1000) / 10 : 0
+
+  /* ① المصروفات برصيد تراكمي */
+  const expenses = [...src.expenses].sort((a, b) => a.date.localeCompare(b.date) || a.docNumber.localeCompare(b.docNumber))
+  let cumulative = 0
+  const expenseRows: FormalReportRow[] = expenses.map((e, i) => {
+    cumulative += e.amountMinor
+    return {
+      cells: [
+        String(i + 1), e.date.slice(0, 10), e.docNumber,
+        { value: e.description, sub: e.party }, e.category ?? '—', fmt(e.amountMinor), fmt(cumulative),
+      ],
+    }
+  })
+  const totalExpenses = expenses.reduce((s, e) => s + e.amountMinor, 0)
+  const expensesSection: FormalReportSection = {
+    title: 'أولاً — المصروفات برصيد تراكمي',
+    note: `${expenses.length} مستند`,
+    headers: ['م', 'التاريخ', 'المستند', 'البيان', 'التصنيف', `المبلغ (${src.currencySymbol})`, `الرصيد التراكمي (${src.currencySymbol})`],
+    numCols: [0, 1, 2, 5, 6],
+    rows: expenseRows,
+    totalRow: ['', '', '', 'إجمالي المصروفات', '', fmt(totalExpenses), fmt(totalExpenses)],
+  }
+
+  /* ② التحصيلات بالمتبقي بعد كل عملية */
+  const collectionRows: FormalReportRow[] = collections.rows.map((r, i) => ({
+    cells: [
+      String(i + 1), r.date.slice(0, 10), r.number, r.description, r.method,
+      { value: r.status, tone: r.excluded ? 'negative' : 'positive' },
+      r.excluded ? `(${fmt(r.amountMinor)})` : fmt(r.amountMinor),
+      fmt(collections.running[i] ?? 0),
+    ],
+  }))
+  const collectionsSection: FormalReportSection = {
+    title: 'ثانياً — التحصيلات والمتبقي بعد كل عملية',
+    note: `${collections.rows.filter((r) => !r.excluded).length} عملية`,
+    headers: ['م', 'التاريخ', 'المستند', 'البيان', 'الوسيلة', 'الحالة', `المبلغ (${src.currencySymbol})`, `المتبقي بعد التحصيل (${src.currencySymbol})`],
+    numCols: [0, 1, 2, 6, 7],
+    rows: collectionRows,
+    totalRow: ['', '', '', 'إجمالي التحصيلات', '', '', fmt(collected), fmt(remainingCollection)],
+  }
+
+  const notes: string[] = []
+  const bouncedCount = collections.rows.filter((r) => r.excluded).length
+  if (bouncedCount) notes.push(`الشيكات المرتدة (${bouncedCount}) معروضة للإيضاح بين قوسين ولا تُحتسب ضمن التحصيلات — دينها عاد للعميل.`)
+  if ((src.cheques ?? []).some((c) => c.direction === 'incoming' && c.status !== 'bounced' && c.status !== 'cancelled')) {
+    notes.push('الشيكات الواردة مُدرَجة ضمن التحصيلات ومُخصومة من ذمم المستخلصات — مطابقة لكشف حساب العميل.')
+  }
+  if (Math.abs(collections.totalMinor - collected) > 1) {
+    notes.push(`تنبيه مراجعة: مجموع سطور التحصيلات (${fmt(collections.totalMinor)}) يختلف عن المُخصوم من الذمم (${fmt(collected)}) — افحص التوزيعات.`)
+  }
+
+  return {
+    title: 'تقرير متابعة مشروع',
+    subtitle: `${src.project.nameAr} · ${src.project.code}${src.period ? ` · ${src.period}` : ''}`,
+    period: src.period,
+    companyName: src.companyName,
+    printedBy: src.printedBy,
+    meta: [
+      { label: 'اسم المشروع', value: src.project.nameAr },
+      { label: 'رمز المشروع', value: src.project.code },
+      { label: 'العميل', value: src.project.clientName || '—' },
+      { label: 'الحالة', value: src.project.status },
+      { label: 'تاريخ البدء', value: src.project.startDate?.slice(0, 10) ?? '—' },
+      { label: 'العملة', value: src.currencySymbol },
+    ],
+    indicators: [
+      { label: 'قيمة العقد الأصلية', value: fmt(contractOriginal) },
+      { label: 'أوامر التغيير المعتمدة', value: fmt(src.changeOrdersApprovedMinor ?? 0) },
+      { label: 'قيمة العقد الفعلية', value: fmt(contractEffective), emphasis: true },
+      { label: 'قيمة الأعمال المستخلصة', value: fmt(extracted) },
+      { label: 'ض.ق.م محمّلة على العميل', value: fmt(vat) },
+      { label: 'محتجز ضمان أعمال', value: fmt(retention) },
+      { label: 'صافي المستحق على المستخلصات', value: fmt(dueTotal) },
+      { label: 'إجمالي ما تم تحصيله', value: fmt(collected) },
+      { label: 'المتبقي من التحصيل', value: fmt(remainingCollection), emphasis: true },
+      { label: 'نسبة التحصيل', value: `${collectedPercent}٪` },
+      { label: 'إجمالي المصروفات', value: fmt(totalExpenses) },
+    ],
+    sections: [expensesSection, collectionsSection],
+    notes,
+    equation: [
+      { label: 'قيمة الأعمال المستخلصة', value: fmt(extracted) },
+      { label: 'يُضاف: ض.ق.م محمّلة', value: fmt(vat) },
+      { label: 'يُطرح: محتجز ضمان أعمال', value: `(${fmt(retention)})` },
+      { label: 'صافي المستحق على المستخلصات', value: fmt(dueTotal), emphasis: true },
+      { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: `(${fmt(collected)})` },
+      { label: 'المتبقي من التحصيل — رصيد العميل المدين', value: fmt(remainingCollection), emphasis: true },
+      { label: 'يُطرح: إجمالي مصروفات المشروع', value: `(${fmt(totalExpenses)})` },
+      { label: 'صافي نتيجة المشروع حتى تاريخه', value: fmt(extracted - totalExpenses) },
+    ],
+  }
+}
+
+/** للاستخدام في الواجهة: هل المستند مفتوح (متبقٍ > 0)؟ */
+export function openRemaining(inv: Pick<OpenInvoice, 'dueMinor' | 'settledMinor'>): Minor {
+  return Math.max(0, inv.dueMinor - inv.settledMinor)
+}

@@ -82,7 +82,8 @@ export function StatementsPage() {
   }
 
   const print = () => {
-    printHtml(renderStatementHtml({
+    /* طلب المالك: معاينة قبل الطباعة بها زر طباعة — بدل الطباعة الفورية */
+    const build = () => renderStatementHtml({
       shopName: setup.shopName || 'تَحَكَّم',
       headerLines: receipt.headerLines,
       title: meta.nameAr,
@@ -92,8 +93,9 @@ export function StatementsPage() {
       creditLabel: meta.creditLabel,
       balanceMeaning: [meta.positive, meta.negative],
       cur,
-    }))
-    toast.show('أُرسل كشف الحساب للطباعة 🖨️')
+    })
+    printHtml(build(), { preview: { title: `معاينة ${meta.nameAr} قبل الطباعة`, rebuild: build } })
+    toast.show('فُتحت معاينة كشف الحساب — راجعها ثم اضغط طباعة 🖨️')
   }
 
   return (
@@ -135,17 +137,22 @@ export function StatementsPage() {
         </div>
       ) : (
         <>
-          {/* الرصيد النهائي */}
-          <div className={`anim-pop rounded-2xl border-2 p-4 flex items-center justify-between ${
-            balance > 0 ? 'border-rose-500/25 bg-rose-500/5' : balance < 0 ? 'border-emerald-500/25 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700'
-          }`}>
-            <div className="flex items-center gap-2 text-[13px] font-bold text-slate-600 dark:text-slate-300">
-              <FileSpreadsheet size={16} /> الرصيد النهائي — {partyName}
-            </div>
-            <div className={`font-black text-xl ${balance > 0 ? 'text-rose-600' : balance < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-              {fmt(Math.abs(balance))} {cur.symbol}
-              <span className="text-[11px] font-bold mr-2 opacity-80">{balance === 0 ? 'مُسدد بالكامل ✓' : balance > 0 ? meta.positive : meta.negative}</span>
-            </div>
+          {/* ملخص نظامي بجدول بدل بطاقة الرصيد (قرار المالك: لا كروت في الكشوف) */}
+          <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <table className="w-full text-[12.5px]">
+              <thead><tr className="bg-slate-50 dark:bg-slate-800/50 text-right text-[11px] font-black text-slate-500">
+                <th className="px-4 py-2.5">المؤشر</th>
+                <th className="px-4 py-2.5 text-left">القيمة ({cur.symbol})</th>
+              </tr></thead>
+              <tbody>
+                <tr className="border-t border-slate-100 dark:border-slate-800"><td className="px-4 py-2">إجمالي مدين</td><td className="px-4 py-2 text-left font-bold">{fmt(rows.reduce((s, r) => s + r.debitMinor, 0))}</td></tr>
+                <tr className="border-t border-slate-100 dark:border-slate-800"><td className="px-4 py-2">إجمالي دائن</td><td className="px-4 py-2 text-left font-bold">{fmt(rows.reduce((s, r) => s + r.creditMinor, 0))}</td></tr>
+                <tr className="border-t-2 border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 font-black">
+                  <td className="px-4 py-2.5">الرصيد النهائي — {partyName} <span className="text-[11px] font-bold opacity-70">{balance === 0 ? 'مُسدد بالكامل ✓' : balance > 0 ? meta.positive : meta.negative}</span></td>
+                  <td className={`px-4 py-2.5 text-left ${balance > 0 ? 'text-rose-600' : balance < 0 ? 'text-emerald-600' : ''}`}>{fmt(Math.abs(balance))}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">

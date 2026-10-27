@@ -1,0 +1,139 @@
+/**
+ * التصميم ③ «الدفتر التحليلي» — اختبارات النواة الخالصة.
+ * يثبت ترتيب الأقسام كما طلب المالك، وعمود الرصيد التراكمي، وعمود
+ * «المتبقي بعد كل تحصيل»، والتسوية، وإدراج الشيكات، وإظهار فرق المراجعة.
+ */
+import { describe, expect, it } from 'vitest'
+import { buildAnalyticalProjectReport, buildCollectionRows, type AnalyticalProjectSource } from '../src/core/analyticalProjectReport.ts'
+import { formalReportBodyHtml, renderFormalReportHtml } from '../src/core/formalReport.ts'
+import { DEFAULT_REPORT_PRINT } from '../src/core/reportPrint.ts'
+
+const fmt = (m: number) => (m / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+function base(over: Partial<AnalyticalProjectSource> = {}): AnalyticalProjectSource {
+  return {
+    project: { code: 'PRJ-1', nameAr: 'فيلا النخيل', clientName: 'شركة الأفق', status: 'جارٍ التنفيذ', startDate: '2026-01-01', contractValueMinor: 2_450_000_00 },
+    changeOrdersApprovedMinor: 85_000_00,
+    extracts: [
+      { extractNumber: 'EXT-1', date: '2026-02-01', grossMinor: 1_000_000_00, vatMinor: 0, retentionMinor: 50_000_00, dueMinor: 950_000_00, payment: 'credit' },
+      { extractNumber: 'EXT-2', date: '2026-03-01', grossMinor: 830_000_00, vatMinor: 0, retentionMinor: 0, dueMinor: 830_000_00, payment: 'credit' },
+    ],
+    expenses: [
+      { date: '2026-02-05', docNumber: 'EXP-1', description: 'حديد', amountMinor: 186_500_00, category: 'مواد' },
+      { date: '2026-03-10', docNumber: 'EXP-2', description: 'أجور', amountMinor: 74_250_00, category: 'أجور' },
+    ],
+    openInvoiceSettled: new Map([['extract:1', 565_000_00], ['extract:2', 700_000_00]]),
+    extractDocKeys: ['extract:1', 'extract:2'],
+    vouchers: [{ date: '2026-02-10', number: 'RV-1', amountMinor: 565_000_00, description: 'دفعة' }],
+    clientSettlements: [{ date: '2026-03-05', number: 'SET-1', amountMinor: 300_000_00, allocations: [{ docKey: 'extract:2', appliedMinor: 300_000_00 }] }],
+    cheques: [{ direction: 'incoming', partyId: 1, status: 'collected', amountMinor: 400_000_00, chequeNumber: 'CHQ-1', createdAt: '2026-03-20T00:00:00Z', bankName: 'بنك مصر' }],
+    currencySymbol: 'ر.س',
+    companyName: 'مجموعة البناء الحديث',
+    fmt,
+    ...over,
+  }
+}
+
+describe('نموذج التقرير التحليلي (التصميم ③)', () => {
+  it('① ترتيب الأقسام: مؤشرات ← مصروفات برصيد تراكمي ← تحصيلات بالمتبقي ← تسوية', () => {
+    const m = buildAnalyticalProjectReport(base())
+    expect(m.title).toBe('تقرير متابعة مشروع')
+    expect(m.meta[0]).toMatchObject({ label: 'اسم المشروع', value: 'فيلا النخيل' })
+    expect(m.sections).toHaveLength(2)
+    expect(m.sections[0]!.title).toContain('المصروفات')
+    expect(m.sections[0]!.headers).toContain('الرصيد التراكمي (ر.س)')
+    expect(m.sections[1]!.title).toContain('التحصيلات')
+    expect(m.sections[1]!.headers).toContain('المتبقي بعد التحصيل (ر.س)')
+    expect(m.equation?.at(-1)?.label).toContain('صافي نتيجة المشروع')
+  })
+
+  it('② الرصيد التراكمي للمصروفات صحيح ومتصاعد', () => {
+    const m = buildAnalyticalProjectReport(base())
+    const rows = m.sections[0]!.rows
+    expect(rows[0]!.cells[6]).toBe(fmt(186_500_00))
+    expect(rows[1]!.cells[6]).toBe(fmt(260_750_00))
+    expect(m.sections[0]!.totalRow?.[6]).toBe(fmt(260_750_00))
+  })
+
+  it('③ «المتبقي بعد كل تحصيل» يتناقص حتى يطابق المتبقي من التسوية', () => {
+    const src = base()
+    const m = buildAnalyticalProjectReport(src)
+    const rows = m.sections[1]!.rows
+    expect(rows.length).toBeGreaterThanOrEqual(3)
+    const running = rows.map((r) => r.cells[7] as string)
+    // آخر رصيد = المتبقي من التحصيل في التسوية
+    const remaining = m.equation?.find((e) => e.label.includes('المتبقي من التحصيل'))?.value
+    expect(running.at(-1)).toBe(remaining)
+  })
+
+  it('④ الشيك الوارد مُدرَج ضمن التحصيلات، والمرتد معروض بين قوسين بلا خصم', () => {
+    const active = buildAnalyticalProjectReport(base())
+    expect(active.sections[1]!.rows.some((r) => JSON.stringify(r.cells).includes('CHQ-1'))).toBe(true)
+    expect(active.notes?.some((n) => n.includes('الشيكات الواردة'))).toBe(true)
+
+    const bounced = buildAnalyticalProjectReport(base({
+      cheques: [{ direction: 'incoming', partyId: 1, status: 'bounced', amountMinor: 400_000_00, chequeNumber: 'CHQ-2', createdAt: '2026-03-20T00:00:00Z' }],
+      vouchers: [], clientSettlements: [],
+      openInvoiceSettled: new Map([['extract:1', 200_000_00], ['extract:2', 300_000_00]]),
+    }))
+    const row = bounced.sections[1]!.rows.find((r) => JSON.stringify(r.cells).includes('CHQ-2'))!
+    expect(JSON.stringify(row.cells)).toContain('مرتد')
+    expect(JSON.stringify(row.cells)).toContain('(400,000.00)') // بين قوسين
+    expect(bounced.notes?.some((n) => n.includes('مرتدة'))).toBe(true)
+  })
+
+  it('⑤ فرق المراجعة يظهر when سطور التحصيل لا تطابق المخصوم من الذمم', () => {
+    const m = buildAnalyticalProjectReport(base({
+      vouchers: [{ date: '2026-02-10', number: 'RV-1', amountMinor: 999_999_00 }],
+      clientSettlements: [], cheques: [],
+      openInvoiceSettled: new Map([['extract:1', 100_000_00]]),
+    }))
+    expect(m.notes?.some((n) => n.includes('تنبيه مراجعة'))).toBe(true)
+  })
+
+  it('⑥ no project ⇒ لا قسمة على صفر (نسبة التحصيل 0)', () => {
+    const m = buildAnalyticalProjectReport(base({ extracts: [], openInvoiceSettled: new Map(), vouchers: [], clientSettlements: [], cheques: [] }))
+    expect(m.indicators?.find((i) => i.label === 'نسبة التحصيل')?.value).toBe('0٪')
+    expect(m.indicators?.find((i) => i.label === 'المتبقي من التحصيل')?.value).toBe(fmt(0))
+    // المصروفات مستقلة عن المستخلصات: تظهر حتى لو لم يُستخلص شيء بعد
+    expect(m.sections[0]!.rows.length).toBeGreaterThan(0)
+    expect(m.sections[1]!.rows).toHaveLength(0)
+  })
+
+  it('⑦ buildCollectionRows يرتّب زمنياً ويحسب الإجمالي والجري', () => {
+    const r = buildCollectionRows(base())
+    expect(r.rows.map((x) => x.date)).toEqual([...r.rows.map((x) => x.date)].sort())
+    expect(r.totalMinor).toBeGreaterThan(0)
+    expect(r.running).toHaveLength(r.rows.length)
+  })
+})
+
+describe('مخرجات HTML الرسمية', () => {
+  it('① الجسم يحمل كل العناوين والأقسام دون كروت', () => {
+    const m = buildAnalyticalProjectReport(base())
+    const html = formalReportBodyHtml(m)
+    expect(html).toContain('الملخص المالي')
+    expect(html).toContain('الرصيد التراكمي')
+    expect(html).toContain('المتبقي بعد التحصيل')
+    expect(html).toContain('التسوية الختامية')
+    expect(html).toContain('class="total"')
+    expect(html).not.toContain('class="cards"')
+  })
+
+  it('② الغلاف الكامل يحمل rp-body (يُفتح به باب المعاينة) وتوقيعات عند الطلب', () => {
+    const m = buildAnalyticalProjectReport(base())
+    const html = renderFormalReportHtml(m, DEFAULT_REPORT_PRINT)
+    expect(html).toContain('class="rp-body"')
+    expect(html).toContain('فيلا النخيل')
+    const withSigs = renderFormalReportHtml(m, { ...DEFAULT_REPORT_PRINT, showSignatures: true })
+    expect(withSigs).toContain('اعتماد')
+  })
+
+  it('③ تهريب HTML: اسم مشروع فيه <script> لا يمرّ كـ HTML خام', () => {
+    const m = buildAnalyticalProjectReport(base())
+    m.subtitle = '<script>alert(1)</script>'
+    const html = renderFormalReportHtml(m, DEFAULT_REPORT_PRINT)
+    expect(html).not.toContain('<script>alert(1)</script>')
+    expect(html).toContain('&lt;script&gt;')
+  })
+})
