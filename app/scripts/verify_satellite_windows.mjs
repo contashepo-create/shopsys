@@ -5,7 +5,9 @@
  *     نافذة داخلية)، وردود النداء تُفصل (تبقى عند الأم، أسماؤها فقط تعبر)،
  *     ومنقّي الأصناف لا ترسل قائمتها ولا دوال عرضها (تُبنى من متجر القمر)،
  *     ومنع التكرار يركّز القمر القائم، واستدعاء القمر ينفّذ عند الأم.
- *  ب) الأقسام: openSectionWindow عبر IPC، والجذر '/' لا يفتح نافذة.
+ *  ب) الأقسام (قرار المالك 2026-10-26): تبويب داخل الأم عبر pendingPath،
+ *     وعند امتلاء تبويبات القسم (MAX_WINDOW_TABS) يعود سلوك IPC القديم،
+ *     والجذر '/' لا يفتح نافذة.
  *  ج) الويب سالم: بلا جسر (عملية منفصلة --web) تبقى الفتحة داخلية كما هي.
  *  د) الأسلاك البنيوية: جذر القمر في App.tsx مع مصادقة الجلسة وتعطيل
  *     خدمات الرئيسية عنه، ومصافحة الإغلاق، والقناة في preload والعملية
@@ -66,7 +68,7 @@ const stubBridge = {
 globalThis.window = { shopsysDesktop: { windows: stubBridge }, location: { search: '?sat=tok-gate' } }
 globalThis.localStorage = { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }
 
-const { useWindowStore, openSectionWindow } = await import(`${pathToFileURL(join(root, 'src/ui/windows/windowStore.ts')).href}?satgate=1`)
+const { useWindowStore, openSectionWindow, MAX_WINDOW_TABS } = await import(`${pathToFileURL(join(root, 'src/ui/windows/windowStore.ts')).href}?satgate=1`)
 const satelliteState = await import(`${pathToFileURL(join(root, 'src/ui/windows/satelliteState.ts')).href}?satgate=1`)
 
 /* أ) النقل: فصل الدوال، منع تكرار، تنفيذ عند الأم */
@@ -107,10 +109,17 @@ registryHandler([])
 useWindowStore.getState().openWindow({ kind: 'sales-invoice', title: 'فاتورة بيع', dedupeKey: 'entity:inv1' })
 eq(calls.open.length, 3, 'النقل: بعد إغلاق القمر تُفتح نسخة جديدة')
 
-/* ب) الأقسام */
+/* ب) الأقسام — تبويب في الأم أولاً (قرار 2026-10-26) ثم IPC عند الامتلاء */
 eq(openSectionWindow('/sales', 'المبيعات'), true, 'الأقسام: سطح المكتب يتولى الفتح')
-eq(calls.openSection.at(-1)?.path, '/sales', 'الأقسام: المسار والعنوان عبر IPC')
-eq(calls.openSection.at(-1)?.title, 'المبيعات', 'الأقسام: العنوان يرافق المسار')
+const salesTab = useWindowStore.getState().tabs.find((tab) => tab.path === '/sales')
+ok(!!salesTab, 'الأقسام: المسار يعبر كتب داخل الأم عبر pendingPath (لا IPC)')
+eq(salesTab?.title, 'المبيعات', 'الأقسام: العنوان يرافق المسار في التبويب')
+eq(calls.openSection.length, 0, 'الأقسام: بلا IPC ما لم يمتلئ تبويب القسم')
+for (let i = 1; i < MAX_WINDOW_TABS; i++) openSectionWindow(`/sales/seg${i}`, `قسم ${i}`)
+eq(useWindowStore.getState().tabs.length, MAX_WINDOW_TABS, 'الأقسام: الحد الأقصى للتبويبات مُحترم')
+eq(openSectionWindow('/orders', 'الطلبات'), true, 'الأقسام: بعد امتلاء التبويبات يعود سلوك IPC')
+eq(calls.openSection.at(-1)?.path, '/orders', 'الأقسام: المسار عبر IPC عند الامتلاء')
+eq(calls.openSection.at(-1)?.title, 'الطلبات', 'الأقسام: العنوان يرافق المسار عبر IPC')
 eq(openSectionWindow('/', 'الرئيسية'), false, 'الأقسام: لوحة التحكم تبقى في الرئيسية (المشغّل)')
 
 /* هوية القمر */

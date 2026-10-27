@@ -126,10 +126,13 @@ const layerOf = (name) => {
   const floatingSrc = readFileSync(`${APP_ROOT}/src/ui/windows/FloatingWindow.tsx`, 'utf8')
   const askBlock = floatingSrc.slice(floatingSrc.indexOf('win.askingClose'), floatingSrc.indexOf('app-window-resize'))
   assert.ok(/<OverlayPortal>/.test(askBlock), 'حوار تأكيد الإغلاق ما زال يُرسم داخل النافذة — سيغطيه رأس جدول لاصق يوماً ما')
-  assert.ok(askZ > layerOf('layer-window') && askZ > layerOf('layer-modal'),
-    `طبقة التأكيد ${askZ} يجب أن تعلو النوافذ والحوارات`)
-  assert.ok(askZ < layerOf('layer-picker'), 'طبقة التأكيد يجب أن تبقى تحت منتقيات البحث')
-  R.ok(`تأكيد الإغلاق ببورتال على body بطبقة ${askZ} — فوق النوافذ (${layerOf('layer-window')}) والحوارات (${layerOf('layer-modal')}) ولا شيء داخل الصفحة يعلوه`)
+  /* عقد المالك 514c353 + اختبار window_ask_layers: الحوار يعلو كل الطبقات
+     النشطة (حتى لا يختفي خلف أي شيء مفتوح) ويبقى تحت التنبيهات فقط. */
+  assert.ok(askZ > layerOf('layer-window') && askZ > layerOf('layer-modal')
+    && askZ > layerOf('layer-picker') && askZ > layerOf('layer-approval'),
+    `طبقة التأكيد ${askZ} يجب أن تعلو النوافذ والحوارات والمنتقيات واعتماد المشرف`)
+  assert.ok(askZ < layerOf('layer-toast'), 'طبقة التأكيد يجب أن تبقى تحت التنبيهات')
+  R.ok(`تأكيد الإغلاق ببورتال على body بطبقة ${askZ} — فوق النوافذ (${layerOf('layer-window')}) والحوارات (${layerOf('layer-modal')}) والمنتقيات (${layerOf('layer-picker')}) والاعتماد (${layerOf('layer-approval')}) وتحت التنبيهات (${layerOf('layer-toast')}) فقط`)
 }
 
 /* ⑦ لا عنصر داخل الصفحة/النافذة يتسلق فوق سقف المحتوى فيغطي أغطية التأكيد */
