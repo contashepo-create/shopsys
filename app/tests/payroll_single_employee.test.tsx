@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { validatePayrollRun, computePayrollLine } from '../src/core/payroll.ts'
 
@@ -17,10 +16,10 @@ const line = (employeeId: number, baseMinor: number) =>
 beforeAll(() => {
   localStorage.clear()
   const app = useAppStore.getState()
-  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'اختبار', ownerName: 'م', features: [], modules: ['employees'], accountingMode: 'full' } })
+  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'اختبار', ownerName: 'م', features: [], modules: ['employees' as never], accountingMode: 'full' } })
   S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 50000000, label: 'خزينة' })
-  S().addEmployee({ nameAr: 'أحمد سالم', phone: '01000000001', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, roleId: 'cashier', ext: undefined })
-  S().addEmployee({ nameAr: 'سعاد مصطفى', phone: '01000000002', jobTitle: 'محاسبة', hireDate: '2026-01-01', baseSalaryMinor: 700000, allowancesMinor: 0, active: true, roleId: 'accountant', ext: undefined })
+  S().addEmployee({ nameAr: 'أحمد سالم', phone: '01000000001', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, roleId: 'cashier', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
+  S().addEmployee({ nameAr: 'سعاد مصطفى', phone: '01000000002', jobTitle: 'محاسبة', hireDate: '2026-01-01', baseSalaryMinor: 700000, allowancesMinor: 0, active: true, roleId: 'accountant', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
 })
 
 describe('مسير راتب موظف واحد', () => {

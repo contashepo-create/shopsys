@@ -20,8 +20,8 @@ describe('مرتجع الشراء سطراً بسطر', () => {
 
   it('يحسب المرتجعات الحديثة والقديمة تراكمياً لكل سطر', () => {
     expect(remainingPurchaseByLine(lines, [
-      { itemId: 1, nameAr: 'صنف', qty: 2, landedUnitCostMinor: 110 },
-      { itemId: 1, nameAr: 'صنف', qty: 1, landedUnitCostMinor: 220, purchaseLineIndex: 1 },
+      { itemId: 1, qty: 2 },
+      { itemId: 1, qty: 1, purchaseLineIndex: 1 },
     ])).toEqual([0, 2])
   })
 

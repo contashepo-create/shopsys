@@ -13,14 +13,13 @@ vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
 const { useAppStore } = await import('../src/stores/app.store.ts')
 const license = await import('../src/core/license.ts')
-const { verifyActivityChangeKey, encodeActivityChangeKey, activityMatches, ACTIVITY_CHANGE_COOLDOWN_DAYS } = license
+const { verifyActivityChangeKey, encodeActivityChangeKey, activityMatches } = license
 type ActivityChangePayload = import('../src/core/license.ts').ActivityChangePayload
 const { ACTIVITY_TEMPLATES } = await import('../src/core/activities.ts')
 
 /* زوج Ed25519 مؤقت — التوقيع الذي سيستعمله المركز بعد النشر بنفس الخوارزمية */
 const { subtle } = crypto
 const pair = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as CryptoKeyPair
-const privPkcs8 = new Uint8Array(await subtle.exportKey('pkcs8', pair.privateKey))
 const pubRaw = new Uint8Array((await subtle.exportKey('spki', pair.publicKey)).slice(-32))
 const b64u = (b: Uint8Array) => { let s = ''; for (const x of b) s += String.fromCharCode(x); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
 const PUB = b64u(pubRaw)
@@ -71,7 +70,7 @@ describe('تغيير النشاط بمفتاح الدعم الموقّع (v1.0.7
     const key = await sign({ v: 1, deviceId: A().deviceId, fromActivityId, toActivityId, issuedAt: '2026-10-05' })
     A().setActiveBranchContext({
       id: 99, nameAr: 'فرع اختبار', isMain: false, warehouseId: 99,
-      customModulesMode: 'inherit', enabledModules: [], activityId: null,
+      customModulesMode: 'inherit' as never, enabledModules: [], activityId: null,
     })
     try {
       await expect(A().applyActivityChangeKey(key, PUB)).rejects.toThrow(/المنشأة الأساسية فقط/)
@@ -92,7 +91,7 @@ describe('تغيير النشاط بمفتاح الدعم الموقّع (v1.0.7
     const pending = A().applyActivityChangeKey(key, PUB)
     A().setActiveBranchContext({
       id: 100, nameAr: 'فرع اختبار متزامن', isMain: false, warehouseId: 100,
-      customModulesMode: 'inherit', enabledModules: [], activityId: null,
+      customModulesMode: 'inherit' as never, enabledModules: [], activityId: null,
     })
     try {
       await expect(pending).rejects.toThrow(/المنشأة الأساسية فقط/)

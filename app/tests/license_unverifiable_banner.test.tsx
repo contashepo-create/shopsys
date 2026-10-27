@@ -13,7 +13,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, screen } from '@testing-library/react'
-import React from 'react'
 
 const { LicensePage } = await import('../src/ui/pages/LicensePage.tsx')
 const { useAppStore } = await import('../src/stores/app.store.ts')

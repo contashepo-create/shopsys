@@ -122,10 +122,22 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('اختيار الطرف بنقرة واحدة يثبّت العميل بدلاً من ترك الفاتورة نقدية', () => {
     const onChange = vi.fn()
     const onConfirm = vi.fn()
-    const view = render(<PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm} commitOnClick />)
+    const view = render(<PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm}/>)
     fireEvent.change(view.getByLabelText('العميل'), { target: { value: 'أحمد' } })
     fireEvent.click(document.querySelector('[data-quick-option][data-value="10"]')!)
     expect(onChange).toHaveBeenCalledWith(10)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    expect(view.queryByRole('dialog')).toBeNull()
+  })
+
+  it('صف «نقدي» يُثبّت أيضاً بنقرة واحدة (نفس الافتراضي) ويغلق البحث', () => {
+    const onChange = vi.fn()
+    const onConfirm = vi.fn()
+    const view = render(<PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashValue={-1} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm}/>)
+    fireEvent.change(view.getByLabelText('العميل'), { target: { value: ' ' } })
+    /* النقر المفرد على صف النقد يثبت الاختيار ويغلق — لا يكتفي بالتمييز */
+    fireEvent.click(view.getByText('عميل نقدي'))
+    expect(onChange).toHaveBeenCalledWith(-1)
     expect(onConfirm).toHaveBeenCalledOnce()
     expect(view.queryByRole('dialog')).toBeNull()
   })

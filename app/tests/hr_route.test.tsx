@@ -48,7 +48,7 @@ describe('تبويبات شؤون الموظفين', () => {
           const map: Record<string, string> = { fingerprint: 'استيراد البصمة', leaves: 'الإجازات', shifts: 'الورديات', reports: 'تقارير' }
           return (b.textContent ?? '').includes(map[id])
         })
-        target?.click()
+        if (target instanceof HTMLElement) target.click()
       })
       await waitFor(() => expect(screen.getByTestId('path').textContent).toBe(`/hr/${id}`))
       expect(document.querySelector('[data-hr-tabs] button[aria-selected="true"]')?.textContent, `التاب ${id}`).toBeTruthy()

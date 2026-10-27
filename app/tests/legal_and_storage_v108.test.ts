@@ -21,7 +21,7 @@ describe('الاتفاقية والخصوصية والموافقة الموثق�
     expect(A().legal!.acceptedAt).toBeTruthy()
     // إصدار مستقبلي ⇒ الموافقة القديمة لا تكفي (البوابة تظهر مجدداً)
     useAppStore.setState({ legal: { version: '2020-01-01', acceptedAt: '2020-01-01T00:00:00Z' } })
-    expect(useAppStore.getState().legal.version === LEGAL_VERSION).toBe(false)
+    expect(useAppStore.getState().legal?.version === LEGAL_VERSION).toBe(false)
   })
 
   it('البنود القانونية الجوهرية موجودة حرفياً (حماية المالك من المساءلة)', () => {

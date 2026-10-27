@@ -17,7 +17,6 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, fireEvent, cleanup, screen } from '@testing-library/react'
-import React from 'react'
 
 const { parseCloudNotices } = await import('../src/core/cloud.ts')
 const {

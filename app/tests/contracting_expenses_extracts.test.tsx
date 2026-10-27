@@ -65,7 +65,7 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
       payrollRuns: [],
     })
     S().addCustomer({ ...party('هيئة المجتمعات العمرانية'), creditLimitMinor: 0 })
-    S().addSupplier({ ...party('شركة حديد عز'), creditLimitMinor: 0 })
+    S().addSupplier({ ...party('شركة حديد عز') })
     const p = S().addProject({
       nameAr: 'مشروع مول العاصمة',
       clientName: 'هيئة المجتمعات العمرانية',

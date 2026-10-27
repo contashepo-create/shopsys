@@ -340,7 +340,7 @@ describe('⑥ الاستعراض من اللوحة والأمر', () => {
     const server = formatRegistrationArServer(sanitizeRegistration(CUSTOMER)!)
     expect(server).not.toContain('/اصدر')
     expect(server).toContain('بقالة النور')
-    const buttons = registrationButtons(CUSTOMER.deviceId).reply_markup.inline_keyboard
+    const buttons = registrationButtons(CUSTOMER.deviceId)!.reply_markup.inline_keyboard
     expect(buttons[0][0].callback_data).toBe(`panel:issuereg:${CUSTOMER.deviceId}`)
     expect(buttons[0][0].callback_data.length).toBeLessThanOrEqual(64)
   })

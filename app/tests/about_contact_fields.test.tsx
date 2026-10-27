@@ -16,7 +16,6 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, cleanup, screen } from '@testing-library/react'
-import React from 'react'
 
 const { parseAbout, FALLBACK_ABOUT, hasAboutContact, whatsappLink, sanitizeAboutUrl,
   sanitizeAboutPhone, sanitizeAboutWhatsapp, sanitizeAboutTelegram, sanitizeAboutEmail,
@@ -74,7 +73,7 @@ const CONTACTS = {
 
 beforeEach(async () => {
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
-  useAppStore.setState({ cloudAbout: null, cloudAboutAt: 0 })
+  useAppStore.setState({ cloudAbout: null })
 })
 
 describe('③ التعقيم — لا تنفيذ كود عند العميل عبر روابط «حول»', () => {
@@ -261,7 +260,7 @@ describe('⑤ حقول حرة وقنوات إضافية من اللوحة', () =
     await addAboutExtraField({ kv } as never, { label: 'ب', value: '٢', url: '' })
     const del = await removeAboutExtraField({ kv } as never, 0)
     expect(del.ok).toBe(true)
-    expect((await readAbout({ kv } as never)).extraFields.map((f) => f.label)).toEqual(['ب'])
+    expect((await readAbout({ kv } as never)).extraFields.map((f: { label: string }) => f.label)).toEqual(['ب'])
     expect((await removeAboutExtraField({ kv } as never, 9)).ok).toBe(false)
     expect((await removeAboutExtraField({ kv } as never, 'abc')).ok).toBe(false)
   })
@@ -273,7 +272,7 @@ describe('⑤ حقول حرة وقنوات إضافية من اللوحة', () =
     expect((await addAboutSocialLink({ kv } as never, { label: 'سيئ', url: 'javascript:alert(1)' })).ok).toBe(false)
     const del = await removeAboutSocialLink({ kv } as never, 1)
     expect(del.ok).toBe(true)
-    expect((await readAbout({ kv } as never)).socialLinks.map((l) => l.label)).toEqual(['فيسبوك'])
+    expect((await readAbout({ kv } as never)).socialLinks.map((l: { label: string }) => l.label)).toEqual(['فيسبوك'])
   })
 
   it('المعاينة تعرض ما سيراه العميل وتحذّر عند نقص التواصل', async () => {

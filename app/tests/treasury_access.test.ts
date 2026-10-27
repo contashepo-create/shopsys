@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { UserTreasuryAccess } from '../src/core/treasuryAccess.ts'
 import { allowedTreasuryCodes, effectiveDefaultTreasury, validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../src/core/treasuryAccess.ts'
 
-const access = {
+const access: UserTreasuryAccess = {
   defaultTreasuryCode: '1101',
   grants: [
-    { treasuryCode: '1101', operations: ['receipt', 'payment', 'refund', 'transfer_from'] as const, maxAmountMinor: 50_000 },
-    { treasuryCode: '1102', operations: ['receipt', 'transfer_to'] as const },
+    { treasuryCode: '1101', operations: ['receipt', 'payment', 'refund', 'transfer_from'], maxAmountMinor: 50_000 },
+    { treasuryCode: '1102', operations: ['receipt', 'transfer_to'] },
   ],
 }
 

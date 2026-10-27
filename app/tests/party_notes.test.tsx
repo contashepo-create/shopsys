@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup } from '@testing-library/react'
-import React from 'react'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { buildPartyNote, normalizePartyNoteText, partyNotesFor, formatPartyNoteLine } = await import('../src/core/partyNotes.ts')
 const { useDataStore } = await import('../src/data/repo.ts')

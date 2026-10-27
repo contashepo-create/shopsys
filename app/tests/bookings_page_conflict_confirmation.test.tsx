@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
@@ -19,7 +18,7 @@ const fixtures = [
 beforeEach(() => {
   useDataStore.setState({ bookings: fixtures })
   const app = useAppStore.getState()
-  useAppStore.setState({ ...app, setup: { ...app.setup, activityId: 'salon', modules: [...new Set([...app.setup.modules, 'booking'])] } })
+  useAppStore.setState({ ...app, setup: { ...app.setup, activityId: 'salon', modules: [...new Set([...app.setup.modules, 'booking' as never])] } })
 })
 afterEach(() => cleanup())
 

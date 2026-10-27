@@ -32,7 +32,7 @@ function useActivity(activityId: string, modules: string[]) {
     ...app,
     setup: {
       ...app.setup, completed: true, countryCode: 'EG', activityId, shopName: 'اختبار',
-      ownerName: 'المالك', features: [], modules, accountingMode: 'full', vatPercent: 14,
+      ownerName: 'المالك', features: [], modules: modules as never[], accountingMode: 'full', vatPercent: 14,
     },
   })
 }

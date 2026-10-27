@@ -217,7 +217,7 @@ describe('③ الصندوق والمحادثة والرد', () => {
 
   it('inbox: المحادثات المنتظرة رداً أولاً', async () => {
     const res = await bridgePost({ action: 'inbox' })
-    const data = await res.json() as { conversations: { deviceId: string; awaitingReply: boolean; lastText: string; messages: number }[] }
+    const data = await res.json() as { ok: boolean; conversations: { deviceId: string; awaitingReply: boolean; lastText: string; messages: number }[] }
     expect(data.ok).toBe(true)
     expect(data.conversations.map((c) => c.deviceId)).toEqual(['SHOP-AAA1-1111-1111', 'SHOP-BBB2-2222-2222'])
     expect(data.conversations[0].awaitingReply).toBe(true)

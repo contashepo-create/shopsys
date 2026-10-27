@@ -42,7 +42,7 @@ describe('شاشة موازنة المشروع — الصفر لا يقارن', 
     })
     S().addSupplier({
       nameAr: 'مورد الحديد', phone: '', notes: '', taxNumber: '', commercialReg: '', email: '',
-      address: '', city: '', postalCode: '', buildingNo: '', nationalId: '', creditLimitMinor: 0,
+      address: '', city: '', postalCode: '', buildingNo: '', nationalId: '',
     })
     const project = S().addProject({
       nameAr: 'برج النيل', clientName: 'شركة التعمير', clientId: null,

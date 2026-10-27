@@ -164,9 +164,10 @@ html.dark { color-scheme: dark; }
    محتوى عادي 0 · رؤوس جداول لاصقة 2..20 · أشرطة وقوائم داخلية 40..60
    · أغطية التأكيد داخل النافذة 120 (يجب أن تعلو كل ما سبق). */
 /* سلّم ما بداخل النافذة/الصفحة: محتوى 0 · رؤوس لاصقة 2–20 · أشرطة وقوائم 40–60.
-   وتأكيد إغلاق النافذة يخرج إلى <body> ببورتال بطبقة 1200 — فوق النوافذ (700)
-   والحوارات (1000) — حتى لا يغطيه رأس جدول لاصق مهما كان سياق تكديسه. */
-:root { --z-in-window-content-max: 60; --z-in-window-overlay: 120; --z-window-ask: 1200; }
+   وتأكيد إغلاق النافذة يخرج إلى <body> ببورتال بطبقة 3500 — فوق النوافذ (700)
+   والحوارات (1000) والمنتقيات (2000) واعتماد المشرف (3000): حوار الإغلاق يجب
+   أن يعلو كل شيء مفتوح حتى يلاحظه المستخدم — تحت التنبيهات (4000) فقط. */
+:root { --z-in-window-content-max: 60; --z-in-window-overlay: 120; --z-window-ask: 3500; }
 
 .layer-modal { z-index: 1000; }
 .layer-picker { z-index: 2000; }
@@ -989,10 +990,10 @@ select { line-height: 1.25rem; }
 .app-window-resize.is-ne { right: -3px; top: -3px; width: 16px; height: 16px; cursor: nesw-resize; }
 .app-window-resize.is-nw { left: -3px; top: -3px; width: 16px; height: 16px; cursor: nwse-resize; }
 
-/* بلاغ المالك: رأس جدول الأصناف ظهر فوق نافذة تأكيد الإغلاق.
-   السبب: رأس الجدول `position: sticky; z-index: 2` عنصر مُموضَع، بينما غطاء التأكيد
-   كان بلا z-index (auto) — فأي عنصر مُموضَع داخل النافذة يعلوه. الغطاء الآن على قمة
-   طبقات ما بداخل النافذة (--z-in-window-overlay = 120 > أقصى محتوى داخلي 60). */
+/* بلاغ المالك: رأس جدول الأصناف ظهر فوق نافذة تأكيد الإغلاق، ثم ثُمّ خلف
+   قائمة منتقي مفتوحة (layer-picker 2000) وطلب اعتماد (layer-approval 3000).
+   الغطاء الآن بطبقة 3500 في مسار body نفسه — أعلى كل الطبقات النشطة ما عدا
+   التنبيهات (4000)، فلا يحجبه رأس لاصق ولا منتقٍ مفتوح ولا حوار اعتماد. */
 .layer-window-ask { z-index: var(--z-window-ask); }
 .app-window-ask { position: fixed; inset: 0; z-index: var(--z-window-ask); display: grid; place-items: center; background: rgba(15, 23, 42, .5); padding: 1rem; }
 .app-window-ask-card { max-width: 24rem; border-radius: 1rem; background: #fff; padding: 1.1rem; box-shadow: 0 20px 45px -15px rgba(15, 23, 42, .5); }

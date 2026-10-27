@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { SmartEntry } from '../components/smartEntry.ts'
+import { guardNavigation } from '../components/navigationGuard.ts'
 import { desktopWindowsBridge, type DesktopWindowsBridge, type SatelliteRegistryEntry } from '../../data/desktopBridge.ts'
 import { getSelfWindowId } from './satelliteState.ts'
 
@@ -88,6 +89,52 @@ export interface OpenWindowInput {
   y?: number
 }
 
+/**
+ * تبويب داخل النافذة الأم (طلب المالك 2026-10-26): كل قسم/عرض كان يفتح نافذة
+ * حرة مستقلة يُفتح الآن تبويباً في الرئيسية — رأس علوي، تنقّل بالنقر، وزر
+ * إغلاق بجانب الاسم — ماعدا الفواتير بجميع أنواعها (تبقى نوافذ حرة).
+ * تبويب المسار يرسم شاشة من الراوتر · تبويب العرض يرسم WindowViewContent.
+ */
+export interface AppWindowTab {
+  id: string
+  /** تبويب شاشة (قسم) — المسار يُنقل إليه عند التفعيل */
+  path?: string
+  /** تبويب عرض (محرر/دفتر/منتقي بلا أب) — يُرسم بمضيف النوافذ */
+  kind?: AppWindowKind
+  props?: Record<string, unknown>
+  title: string
+  subtitle: string
+  dedupeKey: string | null
+  /** تعديلات غير محفوظة (تبويبات العرض عبر host.setDirty) — الإغلاق يسأل */
+  dirty: boolean
+  /** حوار تأكيد مفتوح على هذا التبويب: إغلاق أو مغادرة */
+  askMode: 'close' | 'switch' | null
+  closePrompt: WindowClosePrompt | null
+}
+
+export interface OpenTabInput {
+  path?: string
+  kind?: AppWindowKind
+  props?: Record<string, unknown>
+  title: string
+  subtitle?: string
+  dedupeKey?: string | null
+}
+
+/** حتى 10 تبويبات — بعدها يُفتح القسم كنافذة حرة (السلوك القديم) كما هو. */
+export const MAX_WINDOW_TABS = 10
+
+function tabKey(tab: Pick<AppWindowTab, 'path' | 'dedupeKey'>): string | null {
+  if (tab.path) return `path:${tab.path}`
+  if (tab.dedupeKey) return `kind:${tab.dedupeKey}`
+  return null
+}
+
+/** أمّ النافذة عند الفتح: صريحة إن وُجدت، وإلا هوية هذه الوثيقة ('main' في الرئيسية) */
+function resolveOpenParent(input: Pick<OpenWindowInput, 'parentId'>): string {
+  return input.parentId ?? getSelfWindowId()
+}
+
 const MIN_W = 360
 const MIN_H = 240
 const BASE_Z = 700
@@ -141,7 +188,28 @@ function cascadeRect(count: number, width: number, height: number): WindowRect {
 export interface WindowStoreState {
   windows: AppWindow[]
   topZ: number
+  /* ── تبويبات النافذة الأم (سطح المكتب) ── */
+  tabs: AppWindowTab[]
+  /** تبويب العرض النشط — يرسم مكان محتوى الراوتر حتى يُغلق أو يُبدَّل */
+  viewActiveTabId: string | null
+  /** مسار تبويب مسار معلّق — مزامنته تنقل الراوتر (أثر واحد ثم يُصفَّر) */
+  pendingPath: string | null
+  /** آخر مسار عرضه الراوتر — يُستخدم لتحديد التبويب النشط عند الإغلاق */
+  currentPath: string
   openWindow: (input: OpenWindowInput) => string
+  /** فتح تبويب (مسار أو عرض) — يرجع null عند بلوغ الحد الأقصى 10 */
+  openTab: (input: OpenTabInput) => string | null
+  activateTab: (id: string) => void
+  requestCloseTab: (id: string) => void
+  closeTabNow: (id: string) => void
+  beginTabAsk: (id: string, mode: 'close' | 'switch', proceed: () => void) => void
+  cancelTabAsk: () => void
+  confirmTabAsk: () => void
+  setTabDirty: (id: string, dirty: boolean) => void
+  setTabTitle: (id: string, title: string, subtitle?: string) => void
+  setTabClosePrompt: (id: string, prompt: WindowClosePrompt | null) => void
+  setPendingPath: (path: string | null) => void
+  syncCurrentPath: (path: string) => void
   closeWindow: (id: string) => void
   requestCloseWindow: (id: string) => void
   cancelCloseWindow: (id: string) => void
@@ -169,7 +237,13 @@ type PropFn = (...args: unknown[]) => unknown
 const pendingCallbacks = new Map<string, Record<string, PropFn>>() // requestId → ردود النداء
 const satelliteByDedupe = new Map<string, string>() // dedupeKey → windowId
 const satelliteIds = new Map<string, string | null>() // windowId → requestId
+/** windowId → أمه (تبويب/قمر/'main') — لإغلاق أبناء التبويب معه */
+const satelliteParent = new Map<string, string | null>()
 let transportInstalled = false
+/** إجراء واحد معلّق لحوار تأكيد التبويب (إغلاق أو مغادرة) — يُنفّذ عند التأكيد فقط */
+let tabAskProceed: (() => void) | null = null
+/** أقمار عولج تعارضها مع تبويب قائمة (قاعدة «التبويب يسبق القمر») — مرة واحدة لكل قمر */
+const settledDedupeWindows = new Set<string>()
 
 function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
   const alive = new Set<string>()
@@ -178,10 +252,29 @@ function syncSatelliteMirror(entries: SatelliteRegistryEntry[]): void {
     alive.add(entry.windowId)
     if (entry.dedupeKey) satelliteByDedupe.set(entry.dedupeKey, entry.windowId)
     if (!satelliteIds.has(entry.windowId)) satelliteIds.set(entry.windowId, null)
+    satelliteParent.set(entry.windowId, entry.parentId)
+    /* قاعدة «التبويب يسبق القمر»: قمر فُتح من نافذة أخرى (قمر مفتوح خلفيّاً)
+       بنفس مفتاح تبويب قائمة في هذه النافذة — يُغلق القمر (مع حوار إغلاقه إن
+       كان متسخاً) وتُصعَّد هذه النافذة على التبويب، فيبقى مثيل واحد لكل مفتاح
+       مهما من أي نافذة بدأ الفتح. الباب مغلق من الطرفين: openTab لا يدّعِ
+       فوق قمر قائم، وopenSatelliteWindow لا يفتح قمراً فوق تبويب قائم. */
+    if (entry.dedupeKey && !settledDedupeWindows.has(entry.windowId)) {
+      const store = useWindowStore.getState()
+      const dupTab = store.tabs.find((row) => row.dedupeKey === entry.dedupeKey)
+      if (dupTab) {
+        settledDedupeWindows.add(entry.windowId)
+        const bridge = desktopBridge()
+        bridge?.requestClose(entry.windowId)
+        /* صعود للأمام أولاً حتى يظهر حوار التبديل إن كان التبويب متسخاً */
+        void bridge?.openSection({ path: '/', title: 'الرئيسية' }).catch(() => undefined)
+        useWindowStore.getState().activateTab(dupTab.id)
+      }
+    }
   }
   for (const [id, requestId] of [...satelliteIds]) {
     if (!alive.has(id)) {
       satelliteIds.delete(id)
+      satelliteParent.delete(id)
       if (requestId) pendingCallbacks.delete(requestId)
     }
   }
@@ -220,6 +313,15 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
   if (input.dedupeKey) {
     const existingId = satelliteByDedupe.get(input.dedupeKey)
     if (existingId) { bridge.focus(existingId); return existingId }
+    /* تبويب بنفس المفتاح مفتوح في هذه النافذة — لا يُفتح قمر ثانٍ لنفس
+       المحرر (تضارب نسختين على مستند واحد): التبويب يُفعَّل وتُصعَّد النافذة
+       لتراه. لا قناة تركيز مباشرة للأم — فُتح المسار الرئيسي يرفعها وحده. */
+    const existingTab = useWindowStore.getState().tabs.find((row) => row.dedupeKey === input.dedupeKey)
+    if (existingTab) {
+      void bridge.openSection({ path: '/', title: 'الرئيسية' }).catch(() => undefined)
+      useWindowStore.getState().activateTab(existingTab.id)
+      return existingTab.id
+    }
   }
   const id = newWindowId()
   const requestId = `req-${id}`
@@ -241,6 +343,8 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
   const hasCallbacks = Object.keys(fns).length > 0
   if (hasCallbacks) pendingCallbacks.set(requestId, fns)
   satelliteIds.set(id, hasCallbacks ? requestId : null)
+  const parentId = resolveOpenParent(input)
+  satelliteParent.set(id, parentId)
   if (input.dedupeKey) satelliteByDedupe.set(input.dedupeKey, id)
   void bridge.open({
     windowId: id,
@@ -250,7 +354,7 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
     props,
     callbackNames: Object.keys(fns),
     requestId,
-    parentId: input.parentId ?? getSelfWindowId(),
+    parentId,
     dedupeKey: input.dedupeKey ?? null,
     width: input.width ?? 1180,
     height: input.height ?? 760,
@@ -266,16 +370,65 @@ function openSatelliteWindow(bridge: DesktopWindowsBridge, input: OpenWindowInpu
 export function openSectionWindow(path: string, title: string): boolean {
   const bridge = desktopBridge()
   if (!bridge || !path || path === '/') return false
+  /* القرار (المالك 2026-10-26): القسم يفتح تبويباً داخل النافذة الأم لا نافذة
+     حرة — التبويب يفعّل الراوتر عبر pendingPath. عند بلوغ الحد الأقصى 10
+     يعود لسلوكه القديم (نافذة قسم مستقلة) فلا يُحجب عن المستخدم. */
+  const tabId = useWindowStore.getState().openTab({ path, title })
+  if (tabId) {
+    /* نافذة قسم بنفس المسار قد بقيت مفتوحة من أيام امتلاء الحد الأقصى —
+       التبويب يحل محلها الآن فتُغلق؛ إن كانت متسخة يظهر حوار إغلاقها. */
+    const stale = satelliteByDedupe.get(sectionDedupeKey(path))
+    if (stale) bridge.requestClose(stale)
+    return true
+  }
   void bridge.openSection({ path, title }).catch(() => undefined)
   return true
+}
+
+/** مطابقة مفتاح تكرار نوافذ الأقسام على العملية الرئيسية (normalizeSectionPath هناك) */
+function sectionDedupeKey(path: string): string {
+  const noQuery = String(path ?? '').trim().split('?')[0].split('#')[0]
+  if (!noQuery || noQuery === '/') return 'section:/'
+  return `section:${noQuery.startsWith('/') ? noQuery : `/${noQuery}`}`
 }
 
 export const useWindowStore = create<WindowStoreState>((set, get) => ({
   windows: [],
   topZ: BASE_Z,
+  tabs: [],
+  viewActiveTabId: null,
+  pendingPath: null,
+  currentPath: '/',
   openWindow: (input) => {
     const bridge = desktopBridge()
-    if (bridge) return openSatelliteWindow(bridge, input)
+    if (bridge) {
+      /* من الرئيسية (لا أب/الأب 'main') وكل ما عدا الفواتير والمنتقيات → تبويب
+         داخلي. الفواتير بجميع أنواعها وأبناء النوافذ (أبها قمر فعلي) تبقى
+         نوافذ حرة. والمنتقيات (entity/item-picker) تبقى نوافذ متكدسة حتى من
+         الرئيسية: أدوات تراكب تحمل onPick فوق محتوى لا يجوز إزاحته — تبويبها
+         من الرئيسية كان سيفكّ نداء الاختيار بعد تركيب الراوتر؛ وقبل كل ذلك
+         فالمنتقي يكدس فوق الصفحة لا يحل محلها (قرار المالك). */
+      const parent = resolveOpenParent(input)
+      const fromMain = !parent || parent === 'main'
+      const invoiceKind = input.kind === 'sales-invoice' || input.kind === 'purchase-invoice'
+      const overlayKind = input.kind === 'entity-picker' || input.kind === 'item-picker'
+      /* قمر بنفس المفتاح مفتوح أصلاً (فُتح كابنة فوق نافذة أخرى) — لا يُدَّخَل
+         تبويب ثانٍ لنفس المحرر؛ الفتح يُركِّز القمر القائم كي لا تتضارب نسختا
+         تعديل على مستند واحد. */
+      const satelliteOpen = input.dedupeKey != null && satelliteByDedupe.has(input.dedupeKey)
+      if (fromMain && !invoiceKind && !overlayKind && !satelliteOpen) {
+        const tabId = get().openTab({
+          kind: input.kind,
+          props: input.props,
+          title: input.title,
+          subtitle: input.subtitle,
+          dedupeKey: input.dedupeKey ?? null,
+        })
+        if (tabId) return tabId
+        /* الحد الأقصى 10: يُفتح كنافذة حرة — السلوك القديم نفسه */
+      }
+      return openSatelliteWindow(bridge, input)
+    }
     const state = get()
     if (input.dedupeKey) {
       const existing = state.windows.find((win) => win.dedupeKey === input.dedupeKey)
@@ -306,7 +459,125 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set(z > MAX_WINDOW_Z ? renumber(opened, id) : { windows: opened, topZ: z })
     return id
   },
+  /* ─── تبويبات النافذة الأم ─── */
+  openTab: (input) => {
+    const state = get()
+    const key = input.path ? `path:${input.path}` : input.dedupeKey ? `kind:${input.dedupeKey}` : null
+    const existing = key ? state.tabs.find((tab) => tabKey(tab) === key) : undefined
+    if (existing) {
+      if (state.viewActiveTabId === existing.id) return existing.id
+      const switchTo = () => set(existing.path
+        ? { pendingPath: existing.path, viewActiveTabId: null }
+        : { viewActiveTabId: existing.id })
+      /* مغادرة صفحة/عرض متسخ تحتاج تأكيداً أولاً */
+      if (guardNavigation(switchTo)) return existing.id
+      switchTo()
+      return existing.id
+    }
+    if (state.tabs.length >= MAX_WINDOW_TABS) return null
+    const id = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const tab: AppWindowTab = {
+      id,
+      path: input.path,
+      kind: input.kind,
+      props: input.props,
+      title: input.title,
+      subtitle: input.subtitle ?? '',
+      dedupeKey: input.dedupeKey ?? null,
+      dirty: false,
+      askMode: null,
+      closePrompt: null,
+    }
+    const createTab = () => set((current) => ({
+      tabs: [...current.tabs, tab],
+      ...(input.path ? { pendingPath: input.path, viewActiveTabId: null } : { viewActiveTabId: id }),
+    }))
+    if (guardNavigation(createTab)) return id
+    createTab()
+    return id
+  },
+  activateTab: (id) => {
+    const tab = get().tabs.find((row) => row.id === id)
+    if (!tab || get().viewActiveTabId === id) return
+    const activate = () => set(tab.path
+      ? { pendingPath: tab.path, viewActiveTabId: null }
+      : { viewActiveTabId: id })
+    if (guardNavigation(activate)) return
+    activate()
+  },
+  requestCloseTab: (id) => {
+    const tab = get().tabs.find((row) => row.id === id)
+    if (!tab) return
+    const proceed = () => get().closeTabNow(id)
+    if (!tab.path && tab.dirty) { get().beginTabAsk(id, 'close', proceed); return }
+    /* تبويب مسار: صفحة شاشتها نفسها تسأل عبر حارسها المسجّل */
+    if (guardNavigation(proceed)) return
+    proceed()
+  },
+  closeTabNow: (id) => {
+    const state = get()
+    const index = state.tabs.findIndex((row) => row.id === id)
+    if (index < 0) return
+    const tab = state.tabs[index]
+    const rest = state.tabs.filter((row) => row.id !== id)
+    const wasActiveView = state.viewActiveTabId === id
+    const wasActiveRoute = !!tab.path && state.currentPath === tab.path
+    const fallback = rest[Math.min(index, rest.length - 1)] ?? null
+    let viewActiveTabId = wasActiveView ? null : state.viewActiveTabId
+    let pendingPath: string | null = state.pendingPath
+    if (wasActiveRoute) {
+      /* إغلاق التبويب النشط: ينتقل الراوتر لجارٍه أو للوحة التحكم */
+      if (fallback?.path) { pendingPath = fallback.path; viewActiveTabId = null }
+      else if (fallback) { viewActiveTabId = fallback.id; pendingPath = null }
+      else { pendingPath = '/'; viewActiveTabId = null }
+    }
+    /* أبناء التبويب (نوافذ قمر فُتحت منه) تُغلق معه — نفس قاعدة «إغلاق الأم
+       يغلق بناتها»؛ كل ابنة تسأل عبر مصافحتها إن كانت متسخة. */
+    const bridge = desktopBridge()
+    if (bridge) {
+      for (const [childId, parentId] of satelliteParent) {
+        if (parentId === id && satelliteIds.has(childId)) bridge.requestClose(childId)
+      }
+    }
+    set({ tabs: rest, viewActiveTabId, pendingPath })
+  },
+  beginTabAsk: (id, mode, proceed) => {
+    tabAskProceed = proceed
+    set((state) => ({ tabs: state.tabs.map((row) => (row.id === id ? { ...row, askMode: mode } : row)) }))
+  },
+  cancelTabAsk: () => {
+    tabAskProceed = null
+    set((state) => ({ tabs: state.tabs.map((row) => (row.askMode ? { ...row, askMode: null } : row)) }))
+  },
+  confirmTabAsk: () => {
+    const proceed = tabAskProceed
+    tabAskProceed = null
+    set((state) => ({ tabs: state.tabs.map((row) => (row.askMode
+      ? { ...row, askMode: null, /* مغادرة مؤكَّدة «فقد التغييرات»: محتوى التبويب
+          يُعاد قراءته من المخزن عند العودة — فالعلامة القذرة تُمحى مع الموافقة */
+        ...(row.askMode === 'switch' ? { dirty: false } : {}) }
+      : row)) }))
+    proceed?.()
+  },
+  setTabDirty: (id, dirty) => {
+    set((state) => (state.tabs.some((row) => row.id === id && row.dirty !== dirty)
+      ? { tabs: state.tabs.map((row) => (row.id === id ? { ...row, dirty } : row)) }
+      : {}))
+  },
+  setTabTitle: (id, title, subtitle) => {
+    set((state) => (state.tabs.some((row) => row.id === id)
+      ? { tabs: state.tabs.map((row) => (row.id === id ? { ...row, title, subtitle: subtitle ?? row.subtitle } : row)) }
+      : {}))
+  },
+  setTabClosePrompt: (id, prompt) => {
+    set((state) => (state.tabs.some((row) => row.id === id && row.closePrompt !== prompt)
+      ? { tabs: state.tabs.map((row) => (row.id === id ? { ...row, closePrompt: prompt } : row)) }
+      : {}))
+  },
+  setPendingPath: (path) => set({ pendingPath: path }),
+  syncCurrentPath: (path) => { if (get().currentPath !== path) set({ currentPath: path }) },
   closeWindow: (id) => {
+    if (get().tabs.some((row) => row.id === id)) { get().requestCloseTab(id); return }
     const sat = satelliteBridgeFor(id)
     if (sat) { sat.requestClose(id); return }
     set((state) => {
@@ -323,6 +594,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     })
   },
   requestCloseWindow: (id) => {
+    if (get().tabs.some((row) => row.id === id)) { get().requestCloseTab(id); return }
     const sat = satelliteBridgeFor(id)
     if (sat) { sat.requestClose(id); return }
     const win = get().windows.find((row) => row.id === id)
@@ -336,13 +608,17 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, mode: row.mode === 'minimized' ? 'normal' : row.mode, askingClose: true } : row)) }))
   },
   setWindowClosePrompt: (id, prompt) => {
+    if (get().tabs.some((row) => row.id === id)) { get().setTabClosePrompt(id, prompt); return }
     set((state) => (state.windows.some((row) => row.id === id && row.closePrompt !== prompt)
       ? { windows: state.windows.map((row) => (row.id === id ? { ...row, closePrompt: prompt } : row)) }
       : state))
   },
   discardAndCloseWindow: (id) => {
     const win = get().windows.find((row) => row.id === id)
-    win?.closePrompt?.onDiscard?.()
+    /* تنظيف الصفحة (حذف مسودة مثلاً) إن أخطأ لا يُبطل تأكيد المستخدم —
+       النافذة تُغلق في كل الأحوال حتى لا يبقى حوار الإغلاق عالقاً بلا فعل،
+       ولا ينفلت الخطأ إلى معالج الحدث (متسق مع مسار القمر والتبويب). */
+    try { win?.closePrompt?.onDiscard?.() } catch { /* تنظيف أفضلية */ }
     get().closeWindow(id)
   },
   cancelCloseWindow: (id) => {
@@ -350,6 +626,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
   },
   closeAll: () => set({ windows: [] }),
   focusWindow: (id) => {
+    if (get().tabs.some((row) => row.id === id)) { get().activateTab(id); return }
     const sat = satelliteBridgeFor(id)
     if (sat) { sat.focus(id); return }
     const state = get()
@@ -389,12 +666,14 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, rect: clampRect(rect), lastRect: clampRect(rect) } : row)) }))
   },
   setWindowDirty: (id, dirty) => {
+    if (get().tabs.some((row) => row.id === id)) { get().setTabDirty(id, dirty); return }
     if (id === getSelfWindowId()) desktopBridge()?.setDirty(dirty)
     set((state) => (state.windows.some((row) => row.id === id && row.dirty !== dirty)
       ? { windows: state.windows.map((row) => (row.id === id ? { ...row, dirty } : row)) }
       : {}))
   },
   setWindowTitle: (id, title, subtitle) => {
+    if (get().tabs.some((row) => row.id === id)) { get().setTabTitle(id, title, subtitle); return }
     if (id === getSelfWindowId()) desktopBridge()?.setTitle(title)
     set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, title, subtitle: subtitle ?? row.subtitle } : row)) }))
   },

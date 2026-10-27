@@ -91,7 +91,7 @@ describe('مصفوفة سندات القبض/الصرف × الأطراف وال
 
   it('صرف رواتب 2104 بقسائم محددة: تُوسم مصروفة بسندها ولا تُسدد مرتين ولا قسيمة لموظف آخر', () => {
     const store = useDataStore.getState()
-    const voucher = store.postVoucher({
+    store.postVoucher({
       kind: 'payment', treasury: '1101', counterAccountCode: '2104', amountMinor: 5_000,
       description: 'صرف راتب سبتمبر', partyKind: 'employee', partyId: employee.id, settleSlipIds: [91],
     })
@@ -153,8 +153,8 @@ describe('مصفوفة سندات القبض/الصرف × الأطراف وال
     store.postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5102', amountMinor: 250, description: 'وقود', vehicleId: 44, vehicleCostCategory: 'fuel' })
     store.postCustodyExpense({ fileId: 61, amountMinor: 200, description: 'نثريات موقع' })
     for (const entry of useDataStore.getState().journal) {
-      const debit = entry.lines.reduce((a, l) => a + l.debitMinor, 0)
-      const credit = entry.lines.reduce((a, l) => a + l.creditMinor, 0)
+      const debit = entry.lines.reduce((a, l) => a + l.debit, 0)
+      const credit = entry.lines.reduce((a, l) => a + l.credit, 0)
       expect(debit, `القيد ${entry.entryNumber} غير متوازن`).toBe(credit)
     }
   })

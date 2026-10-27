@@ -118,6 +118,28 @@ describe('قفل ترحيل الفواتير عبر النوافذ', () => {
     expect(commit).not.toHaveBeenCalled()
   })
 
+  /**
+   * بلاغ المالك: «الفاتورة تُكتب ولا تُغلق النافذة». فشل تصريف لحظي بعد
+   * نجاح commit كان يُرفض به الوعد فتظن الصفحة أن الترحيل فشل وتبقى مفتوحة.
+   */
+  it('يعيد محاولة التصريف بعد الترحيل الناجح ولا يرفض مستنداً اكتمل بفشل لحظي', async () => {
+    mocks.flush
+      .mockRejectedValueOnce(new Error('IPC مشغول'))
+      .mockRejectedValueOnce(new Error('قاعدة مشغولة'))
+      .mockResolvedValueOnce(undefined)
+    const result = await withInvoiceCommitLock(async () => undefined, async () => 'posted')
+    expect(result).toBe('posted')
+    expect(mocks.flush).toHaveBeenCalledTimes(3)
+    expect(mocks.release).toHaveBeenCalledWith('lock-1')
+  })
+
+  it('يرفض بعد الترحيل فقط إن استعصى التصريف بعد كل المحاولات (بقاء مفتوحاً حفاظاً على البيانات)', async () => {
+    mocks.flush.mockRejectedValue(new Error('قرص ممتلئ'))
+    await expect(withInvoiceCommitLock(async () => undefined, async () => 'posted')).rejects.toThrow('قرص ممتلئ')
+    expect(mocks.flush).toHaveBeenCalledTimes(3)
+    expect(mocks.release).toHaveBeenCalledWith('lock-1')
+  })
+
   it('كل واجهات إنشاء أو اعتماد الفواتير تستخدم طبقة القفل نفسها قبل الترحيل', () => {
     const entrypoints = [
       'AdvancedSalesInvoicePage.tsx', 'AdvancedPurchaseInvoicePage.tsx', 'SalesInvoicesPage.tsx',

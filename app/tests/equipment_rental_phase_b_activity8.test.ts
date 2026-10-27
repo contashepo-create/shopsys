@@ -63,7 +63,7 @@ describe('سد فجوات فورية #2/#4 ومستقبلية #1/#2 — النش
       setup: {
         ...app.setup, completed: true, countryCode: 'EG', activityId: 'equipment_rental', shopName: 'تأجير معدات الاختبار',
         ownerName: 'المالك', features: [], modules: ['equipment_rental', 'installments'], accountingMode: 'full',
-        vatPercent: 0, taxRegistrationStatus: 'not_registered', allowNegativeTreasury: true,
+        vatPercent: 0, taxRegistrationStatus: 'not_registered' as never, allowNegativeTreasury: true,
       },
     })
     const s = useDataStore.getState()

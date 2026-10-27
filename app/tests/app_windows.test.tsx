@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/react'
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
@@ -197,7 +197,7 @@ describe('نظام النوافذ المستقلة', () => {
   it('الإغلاق مع تعديلات غير محفوظة يسأل أولاً ولا يغلق إلا بالتأكيد', () => {
     S().addItem({ nameAr: 'ذرة صفراء', sku: 'F2', barcodes: [], categoryId: 0, baseUnit: 'كجم', costMinor: 800, stockQty: 10, priceMinor: 1200, minQty: 1 } as never)
     const item = S().items.at(-1)!
-    const id = openItemEditorWindow(item.id, null)
+    openItemEditorWindow(item.id, null)
     render(<MemoryRouter><WindowHost /></MemoryRouter>)
     const nameInput = document.querySelector('[aria-label="اسم الصنف"]') as HTMLInputElement
     fireEvent.change(nameInput, { target: { value: 'ذرة صفراء مستوردة' } })
@@ -210,6 +210,28 @@ describe('نظام النوافذ المستقلة', () => {
     fireEvent.click(document.querySelector('[data-window-close]') as HTMLElement)
     fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement)
     expect(W().windows.length).toBe(0)
+  })
+
+  it('فشل «حفظ ثم إغلاق» في نافذة داخلية يُبقي حوار التأكيد مفتوحاً', () => {
+    S().addItem({ nameAr: 'فاصولياء حبوب', sku: 'FAIL1', barcodes: [], categoryId: 0, baseUnit: 'كجم', costMinor: 2000, stockQty: 5, priceMinor: 2600, minQty: 1 } as never)
+    const item = S().items.at(-1)!
+    const id = openItemEditorWindow(item.id, null)
+    W().setWindowDirty(id, true)
+    W().setWindowClosePrompt(id, {
+      hint: 'اختبار فشل الحفظ',
+      saveLabel: 'حفظ ثم إغلاق', discardLabel: 'إغلاق وفقد التغييرات',
+      onSave: () => { throw new Error('قرص ممتلئ') },
+    })
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    fireEvent.click(document.querySelector('[data-window-close]') as HTMLElement)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-window-close-save]') as HTMLElement)
+    /* الحفظ فشل: النافذة تبقى مفتوحة والحوار يبقى لمحاولة أخرى (بلاغ المالك) */
+    expect(W().windows).toHaveLength(1)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-window-close-cancel]') as HTMLElement)
+    expect(W().windows).toHaveLength(1)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeFalsy()
   })
 
   it('فاتورة المبيعات نفسها تعمل داخل النافذة المستقلة وتُغلق بزرها', async () => {
@@ -437,7 +459,7 @@ describe('نافذة حركة الصنف بفلاترها (قرار المالك
   it('تفتح فوق الفاتورة بفلتر فترة يبدأ من أول السنة المالية حتى اليوم + فلتر مخزن ونوع حركة', async () => {
     const app = useAppStore.getState()
     useAppStore.setState({ ...app, fiscalYears: [{ id: 1, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' }] })
-    act(() => { S().seed(['basic']) })
+    act(() => { S().seed([]) })
     act(() => {
       S().addItem({
         nameAr: 'زيت عباد', sku: 'OIL-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
@@ -458,7 +480,7 @@ describe('نافذة حركة الصنف بفلاترها (قرار المالك
     expect(filters.querySelector('[data-ledger-flow]')).toBeTruthy()
     expect(filters.querySelector('[data-ledger-doctype]')).toBeTruthy()
     // النافذة الأم (الفاتورة) لا تُفقد عند فتح حركة الصنف فوقها
-    act(() => { openSalesInvoiceWindow(null) })
+    act(() => { openSalesInvoiceWindow() })
     act(() => { openItemLedgerWindow(item.id, null) })
     expect(W().windows.filter((win) => win.kind === 'sales-invoice').length).toBe(1)
     expect(W().windows.filter((win) => win.kind === 'item-ledger').length).toBe(1)

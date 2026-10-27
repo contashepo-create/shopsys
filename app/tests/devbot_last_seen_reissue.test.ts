@@ -23,7 +23,7 @@ function memKv(seed: Record<string, string> = {}) {
 }
 
 beforeAll(async () => {
-  const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+  const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as unknown as CryptoKeyPair
   privB64 = b64uEncode(new Uint8Array(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey)))
 })
 

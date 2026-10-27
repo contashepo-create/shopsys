@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DesktopStateStorage, mergeConcurrentSnapshots, newAuditEvents, newJournalEntries, snapshotIdempotencyKey, appStorage, settingsAppStorage } from '../src/data/persistentStorage.ts'
+import { DesktopStateStorage, mergeConcurrentSnapshots, newAuditEvents, newJournalEntries, snapshotIdempotencyKey, appStorage, settingsAppStorage, registerExternalSnapshotApplier } from '../src/data/persistentStorage.ts'
 import { encryptLegacySnapshotForTest } from './legacy_snapshot_fixture.ts'
 import type { DesktopDatabaseBridge, DesktopSnapshot } from '../src/data/desktopBridge.ts'
 
@@ -260,4 +260,39 @@ it('flush يضم مخزن الإعدادات shopsys-app ومخزن الأعما
     await data.setItem('shopsys-data', '{"state":{"balance":54322}}')
     expect(calls).toHaveLength(4)
   } finally { window.shopsysDesktop = previous }
+})
+
+describe('التحديث اللحظي في النوافذ المستقلة', () => {
+  it('بثّ «تغيّرت اللقطة» من نافذة أخرى يُبطل الذاكرة وينبّه المتجر فتتحدث الحالة دون إعادة فتح', async () => {
+    const { database } = fakeDatabase()
+    const satellite = new DesktopStateStorage(database, null)
+    const other = new DesktopStateStorage(database, null)
+    /* محاكاة مطبّق المتجر المسجّل عبر registerExternalSnapshotApplier (repo/app stores) */
+    const notified: string[] = []
+    const applier = (storeName: string) => { notified.push(storeName) }
+    registerExternalSnapshotApplier(applier)
+    {
+      await satellite.getItem('shopsys-data') // النافذة تفتح وتثبّت لقطتها (rev 0)
+      await other.setItem('shopsys-data', '{"state":{"kpi":42}}')
+      expect(await satellite.getItem('shopsys-data')).toBe(null) // لقطتها القديمة كما هي
+
+      satellite.handleExternalChange('shopsys-data') // وصول broadcast من العملية الرئيسية
+      await satellite.drain('shopsys-data')
+      await vi.waitFor(() => expect(notified).toContain('shopsys-data'))
+      expect(await satellite.getItem('shopsys-data')).toBe('{"state":{"kpi":42}}')
+    }
+  })
+
+  it('إخطار بلا تغيير فعلي في القاعدة لا يُعيد ترطيب المتجر (حارس الصدى)', async () => {
+    const { database } = fakeDatabase()
+    const satellite = new DesktopStateStorage(database, null)
+    const notified: string[] = []
+    const applier = (storeName: string) => { notified.push(storeName) }
+    registerExternalSnapshotApplier(applier)
+    await satellite.setItem('shopsys-data', '{"state":{"only":1}}')
+    satellite.handleExternalChange('shopsys-data') // صدى بلا تغيير
+    await satellite.drain('shopsys-data')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(notified).not.toContain('shopsys-data')
+  })
 })

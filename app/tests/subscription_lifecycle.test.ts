@@ -28,7 +28,7 @@ let PRIV_B64U = ''
 let PUB_B64U = ''
 
 beforeAll(async () => {
-  const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+  const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as unknown as CryptoKeyPair
   PRIV_B64U = Buffer.from(new Uint8Array(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey))).toString('base64url')
   const spki = new Uint8Array(await webcrypto.subtle.exportKey('spki', pair.publicKey))
   PUB_B64U = b64uEncode(spki.slice(spki.length - 32))

@@ -12,13 +12,12 @@
  */
 import { describe, expect, it, vi, beforeAll, afterEach } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
-import React from 'react'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const payloads = JSON.parse(readFileSync(join(here, '..', 'demo-db', 'demo-payloads.json'))) as Record<string, Record<string, unknown>>
+const payloads = JSON.parse(readFileSync(join(here, '..', 'demo-db', 'demo-payloads.json'), 'utf8')) as Record<string, Record<string, unknown>>
 
 /* منكّر printHtml: يسجل النص المطبوع بدل فتح إطار طباعة */
 vi.mock('../src/ui/print/printReceipt.ts', async (importOriginal) => {

@@ -10,7 +10,6 @@
  */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
@@ -35,7 +34,7 @@ beforeAll(() => {
     setup: {
       ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'اختبار الدورة',
       ownerName: 'المالك', features: [], modules: ['pos', 'inventory', 'purchases'], accountingMode: 'full',
-      vatPercent: 0, taxRegistrationStatus: 'not_registered',
+      vatPercent: 0, taxRegistrationStatus: 'not_registered' as never,
     },
   })
   S().addCategory('بضائع', [])

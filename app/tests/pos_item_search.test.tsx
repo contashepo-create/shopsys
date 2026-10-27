@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))

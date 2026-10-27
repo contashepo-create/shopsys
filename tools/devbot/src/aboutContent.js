@@ -32,7 +32,7 @@ export const DEFAULT_ABOUT = {
   body: 'نظام عربي متكامل للمبيعات والمخازن والحسابات العامة — يدعم أنشطة متعددة ويعمل بلا إنترنت.',
   supportPhone: '', supportWhatsapp: '', supportTelegram: '', supportEmail: '',
   website: '', address: '', workHours: '',
-  socialLinks: [], extraFields: [], updatedAt: '',
+  socialLinks: /** @type {Array<{ label: string, url: string }>} */ [], extraFields: /** @type {Array<{ label: string, value: string }>} */ [], updatedAt: '',
 }
 
 /* ─── التعقيم (مطابق لمنطق العميل في app/src/core/cloud.ts) ─── */

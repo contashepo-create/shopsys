@@ -1254,6 +1254,8 @@ export interface VehicleCostCenterEntry {
 export interface PurchaseInvoice {
   id: number
   invoiceNumber: string
+  /** مفتاح مسودة المحرر لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
+  sourceDraftId?: string
   /** الرقم المرجعي الفريد للتتبع — PUR-YYMMDD-XXXXXC (يُطبع ويُبحث به) */
   refCode: string
   supplierId: number
@@ -2072,6 +2074,8 @@ interface DataState {
    * 3) يزيد رصيد المخزون
    */
   postPurchase: (inv: {
+    /** مفتاح مسودة واجهة الفاتورة؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر (نفس عقد postSale). */
+    sourceDraftId?: string
     /** صفر = شراء نقدي بلا مورد؛ لا يُنشأ مورد افتراضي ولا دين مورد */
     supplierId: number
     supplierInvoiceNumber?: string
@@ -6038,6 +6042,12 @@ export const useRawDataStore = create<DataState>()(
 
       postPurchase: (rawInv) => {
         const state = get()
+        /* منع التكرار عند إعادة المحاولة بعد ضياع رد الحفظ (عقد sourceDraftId) */
+        const sourceDraftId = rawInv.sourceDraftId?.trim()
+        if (sourceDraftId) {
+          const alreadyPosted = state.purchases.find((purchase) => purchase.sourceDraftId === sourceDraftId)
+          if (alreadyPosted) return alreadyPosted
+        }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const inv = activeBranch && !activeBranch.isMain
@@ -6300,6 +6310,7 @@ export const useRawDataStore = create<DataState>()(
         const invoice: PurchaseInvoice = {
           id: purchaseId,
           invoiceNumber,
+          sourceDraftId: sourceDraftId || undefined,
           refCode,
           supplierId: inv.supplierId,
           supplierInvoiceNumber: supplierDocument || undefined,

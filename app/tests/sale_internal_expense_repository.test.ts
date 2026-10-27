@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 
 const saleWithExpense = (expense: { settlement: 'paid_now' | 'payable_later'; treasury?: string; payableAccountCode?: string; beneficiaryName?: string }) => useDataStore.getState().postSale({
-  lines: [{ key: 'line-1', itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }],
+  lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }],
   customerId: null,
   payment: 'cash',
   invoiceDiscountPercent: 0,

@@ -21,21 +21,22 @@ let itemId = 0
 beforeEach(() => {
   localStorage.setItem('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } } }))
   useDataStore.setState({ ...original, sales: [], purchases: [], journal: [], customers: [], suppliers: [], items: [] })
-  S().addCustomer({ nameAr: 'عميل تصدير', phone: '', taxNumber: '', address: '', notes: '', isActive: true, creditLimitMinor: 0 })
+  S().addCustomer({ nameAr: 'عميل تصدير', phone: '', taxNumber: '', address: '', notes: '', active: true, creditLimitMinor: 0, commercialReg: '', email: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   customerId = S().customers[S().customers.length - 1].id
-  S().addSupplier({ nameAr: 'مورد استيراد', phone: '', taxNumber: '', address: '', notes: '', isActive: true })
+  S().addSupplier({ nameAr: 'مورد استيراد', phone: '', taxNumber: '', address: '', notes: '', active: true, commercialReg: '', email: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   supplierId = S().suppliers[S().suppliers.length - 1].id
   S().addItem({
-    nameAr: 'صنف تصدير', categoryId: null, unit: 'قطعة', priceMinor: 500000, barcode: '', sku: '', isActive: true,
+    nameAr: 'صنف تصدير', categoryId: 0, baseUnit: 'قطعة', priceMinor: 500000, barcodes: [], sku: '', isActive: true,
     trackExpiry: false, trackSerial: false, soldByWeight: false, isService: false,
     minSalePriceMinor: 0, costMinor: 200000, stockQty: 100,
+    extraUnits: [], minQty: 0, warrantyMonths: 0, variantColors: [], variantSizes: [],
   })
   itemId = S().items[S().items.length - 1].id
 })
 afterEach(() => useDataStore.setState(original))
 
 const saleArgs = (over: Record<string, unknown> = {}) => ({
-  lines: [{ itemId, qty: 1, unitPriceMinor: 485000, discountPercent: 0 }],
+  lines: [{ itemId, qty: 1, unitPriceMinor: 485000, discountPercent: 0, nameAr: 'صنف تصدير', unitCostMinor: 200000, soldByWeight: false }],
   customerId, payment: 'cash' as const, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false,
   treasury: '1101' as const, paidMinor: 485000, bookDecimals: 2, bookCurrencyCode: 'EGP', ...over,
 })

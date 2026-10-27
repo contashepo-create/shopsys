@@ -33,7 +33,7 @@ export function buildReturnLines(
   saleLines: CartLine[],
   priorReturnLines: CartLine[],
   qtyByItem: Map<number, number>,
-): CartLine[] {
+): ReturnLine[] {
   const remaining = remainingByLine(saleLines, priorReturnLines)
   const out: ReturnLine[] = []
   for (const [itemId, wanted] of qtyByItem) {

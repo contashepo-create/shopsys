@@ -16,7 +16,7 @@ const supplier = { id: 61, code: 'SUP-61', nameAr: 'مورد الأرصدة', ph
 const customer = { id: 62, code: 'CUS-62', nameAr: 'عميل الأرصدة', phone: '', active: true, loyaltyPoints: 0 }
 const employee = { id: 63, code: 'EMP-63', nameAr: 'موظف الأرصدة', role: 'cashier', phone: '', active: true, hireDate: '2025-01-01', salaryBaseMinor: 0, notes: '' }
 
-const line: CartLine = { key: 'b1', itemId: item.id, nameAr: item.nameAr, qty: 3, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }
+const line: CartLine = { itemId: item.id, nameAr: item.nameAr, qty: 3, unitPriceMinor: 2_000, unitCostMinor: 1_000, discountPercent: 0, soldByWeight: false }
 const total = computeTotals([line], 0, 0, false).totalMinor // 6,000
 
 beforeEach(() => {

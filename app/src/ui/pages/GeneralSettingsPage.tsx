@@ -719,7 +719,7 @@ function readGeneralSettingsDraft(key: string): GeneralSettingsDraft | null {
 function BranchBusinessSettingsDraft({ draftScope, setup, branchName, taxName, updateCompanyName, updateTaxSettings }: BranchBusinessSettingsDraftProps) {
   const toast = useToast()
   const draftStorageKey = `shopsys-general-settings-draft-v1:${draftScope}`
-  const [restoredDraft, setRestoredDraft] = useState(() => readGeneralSettingsDraft(draftStorageKey))
+  const [restoredDraft] = useState(() => readGeneralSettingsDraft(draftStorageKey))
   const [companyName, setCompanyName] = useState(restoredDraft?.companyName ?? setup.shopName)
   const [vat, setVat] = useState(restoredDraft?.vat ?? String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(restoredDraft?.taxInclusive ?? setup.taxInclusive)
@@ -738,10 +738,12 @@ function BranchBusinessSettingsDraft({ draftScope, setup, branchName, taxName, u
     } catch { /* يبقى حارس الإغلاق فعالاً حتى عند تعذر التخزين */ }
   }, [draftStorageKey, taxDraftStorageJson, companyDirty, taxDirty])
   const markUnsavedClean = unsaved.markClean
+  // مزامنة حارس «توجد تغييرات غير محفوظة» مع النظام الخارجي فقط عند عودة
+  // الحالة إلى نظيفة (حفظ/تراجع) — أما وضوح لافتة الاستعادة فيُشتق أثناء
+  // العرض من (restoredDraft × اتساخ الحقول) فلا حاجة لمسح الحالة هنا.
   useEffect(() => {
     if (companyDirty || taxDirty || !restoredDraft) return
     markUnsavedClean()
-    setRestoredDraft(null)
   }, [companyDirty, taxDirty, restoredDraft, markUnsavedClean])
 
   const saveCompanyName = () => {
@@ -768,7 +770,7 @@ function BranchBusinessSettingsDraft({ draftScope, setup, branchName, taxName, u
   return (
     <>
       {unsaved.prompt}
-      {(unsaved.isDirty || restoredDraft) && <div role="status" className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-800 dark:text-amber-300" data-settings-unsaved>{restoredDraft ? 'استُعيدت مسودة إعدادات غير محفوظة من هذا الجهاز؛ راجعها ثم احفظها.' : 'توجد تغييرات إعدادات لم تحفظها بعد؛ سيطلب التطبيق تأكيداً قبل مغادرة الصفحة أو إغلاق نافذتها.'}</div>}
+      {(unsaved.isDirty || (restoredDraft && (companyDirty || taxDirty))) && <div role="status" className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-800 dark:text-amber-300" data-settings-unsaved>{restoredDraft ? 'استُعيدت مسودة إعدادات غير محفوظة من هذا الجهاز؛ راجعها ثم احفظها.' : 'توجد تغييرات إعدادات لم تحفظها بعد؛ سيطلب التطبيق تأكيداً قبل مغادرة الصفحة أو إغلاق نافذتها.'}</div>}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '75ms' }}>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">🏢 اسم المنشأة والفاتورة</h3>
         <p className="text-[11.5px] text-slate-400 mb-3">

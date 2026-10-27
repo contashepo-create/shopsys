@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import React from 'react'
 import { guardNavigation, useUnsavedChangesGuard } from '../src/ui/components/ui.tsx'
 
 afterEach(() => cleanup())

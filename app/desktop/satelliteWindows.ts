@@ -259,6 +259,10 @@ function handshakeClose(entry: SatEntry): Promise<boolean> {
       resolve(false)
     }, 10_000)
     closeResponders.set(token, { wcId: entry.win.webContents.id, resolve: (allow) => { clearTimeout(timer); resolve(allow) } })
+    /* حوار التأكيد يُرسم داخل وثيقة القمر نفسه — لو كانت نافذة أخرى أمامه
+       يختفي السؤال حتى تنتهي المهلة صامتاً. نرفع النافذة أولاً ليظهر السؤال
+       أمام المستخدم فوراً (طلب المالك: «حتى ينتبه لها»). */
+    focusEntry(entry)
     entry.win.webContents.send('windows:request-close', { token })
   })
 }

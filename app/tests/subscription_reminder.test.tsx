@@ -14,7 +14,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, fireEvent, cleanup, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import React from 'react'
 
 // أوفلاين صريح: لو احتاج التذكير شبكةً لفشل هذا الملف كله
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))

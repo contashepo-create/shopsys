@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import { render, fireEvent, cleanup } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
@@ -14,9 +13,9 @@ const S = () => useDataStore.getState()
 beforeAll(() => {
   localStorage.clear()
   const app = useAppStore.getState()
-  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'اختبار', ownerName: 'م', features: [], modules: ['employees'], accountingMode: 'full' } })
+  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'اختبار', ownerName: 'م', features: [], modules: ['employees' as never], accountingMode: 'full' } })
   S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 50000000, label: 'خزينة' })
-  S().addEmployee({ nameAr: 'أحمد سالم', phone: '01000000001', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 10000, active: true, roleId: 'cashier', ext: undefined })
+  S().addEmployee({ nameAr: 'أحمد سالم', phone: '01000000001', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 10000, active: true, roleId: 'cashier', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   S().grantEmployeeAdvance({ employeeId: 1, amountMinor: 50000, treasury: '1101', notes: 'سلفة اختبار' })
   S().addEmployeeDeduction({ employeeId: 1, amountMinor: 20000, reason: 'تأخير', notes: '' })
   S().addLeaveRequest({ employeeId: 1, typeId: 'annual', from: '2026-01-05', to: '2026-01-07', reason: 'إجازة' })

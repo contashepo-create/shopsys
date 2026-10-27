@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 /**
@@ -20,17 +19,17 @@ const DRIVER_COMMISSION = 75_00
 beforeAll(() => {
   localStorage.clear()
   const app = useAppStore.getState()
-  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'logistics', shopName: 'نقل', ownerName: 'مالك', features: ['logistics'] } })
-  S().seed(['logistics'])
+  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'logistics', shopName: 'نقل', ownerName: 'مالك', features: ['logistics' as never] } })
+  S().seed(['logistics' as never])
   S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 500_000_00, label: 'خزينة' })
   S().addCustomer({
     nameAr: 'مصنع الدلتا', phone: '', notes: '', taxNumber: '', commercialReg: '', email: '', address: '',
-    city: '', postalCode: '', building: '', district: '', openingBalanceMinor: 0, creditLimitMinor: 0,
+    city: '', postalCode: '', buildingNo: '', creditLimitMinor: 0, nationalId: '',
   })
   S().addEmployee({
     nameAr: 'محمود السائق', phone: '01000000009', jobTitle: 'سائق', hireDate: '2026-01-01',
     baseSalaryMinor: 300000, allowancesMinor: 0, active: true, notes: '', taxNumber: '', commercialReg: '',
-    email: '', address: '', city: '', postalCode: '', building: '', district: '', openingBalanceMinor: 0,
+    email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '',
   })
   const driverId = S().employees.at(-1)!.id
   S().postTrip({

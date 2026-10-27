@@ -119,7 +119,7 @@ describe('سد فجوات فورية #3 ومستقبلية #1 — النشاط #
       setup: {
         ...app.setup, completed: true, countryCode: 'EG', activityId: 'logistics', shopName: 'نقل الاختبار',
         ownerName: 'المالك', features: [], modules: ['logistics'], accountingMode: 'full',
-        vatPercent: 0, taxRegistrationStatus: 'not_registered', allowNegativeTreasury: true,
+        vatPercent: 0, taxRegistrationStatus: 'not_registered' as never, allowNegativeTreasury: true,
       },
     })
     const s = useDataStore.getState()

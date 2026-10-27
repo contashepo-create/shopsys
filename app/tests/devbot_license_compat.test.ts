@@ -25,7 +25,7 @@ import {
   type LicensePayload,
 } from '../src/core/license.ts'
 
-const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])
+const pair = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']) as unknown as CryptoKeyPair
 const privPkcs8 = new Uint8Array(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey))
 const pubSpki = new Uint8Array(await webcrypto.subtle.exportKey('spki', pair.publicKey))
 // raw public = آخر 32 بايت من SPKI — الصيغة التي يستوردها العميل
@@ -145,23 +145,23 @@ describe('التوافق الذهبي: بوت المطوّر ↔ عميل الت
     const deviceId = 'SHOP-ABCD-1234-EFGH'
 
     const empty = await handlePanelButton('panel:clients', chatId, cfg)
-    expect(empty.text).toContain('لا يوجد عملاء')
+    expect(empty!.text).toContain('لا يوجد عملاء')
     await handlePanelButton('panel:new', chatId, cfg)
     await handlePanelText('متجر النور', chatId, cfg)
     const added = await handlePanelText(deviceId, chatId, cfg)
     expect(added?.text).toContain('أُضيف متجر النور')
 
     const customers = await handlePanelButton('panel:clients', chatId, cfg)
-    const groupHash = customers.opts.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1]
+    const groupHash = customers!.opts.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1]
     const group = await handlePanelButton(`group:${groupHash}`, chatId, cfg)
-    expect(group.text).toContain('أجهزة العميل')
+    expect(group!.text).toContain('أجهزة العميل')
 
     /* انحدار: بطاقة العميل كانت تنهار بـReferenceError (متغير `hash` غير معرّف
        في نطاق clientReply) — لا تُفتح إطلاقاً من قائمة الأجهزة. */
     const card = await handlePanelButton(`client:${deviceId}`, chatId, cfg)
-    expect(card.text).toContain('متجر النور')
-    const addDeviceData = card.opts.reply_markup.inline_keyboard
-      .flat().find((b) => String(b.callback_data).startsWith('adddevice:'))?.callback_data
+    expect(card!.text).toContain('متجر النور')
+    const addDeviceData = card!.opts.reply_markup.inline_keyboard
+      .flat().find((b: { callback_data?: string }) => String(b.callback_data).startsWith('adddevice:'))?.callback_data
     expect(addDeviceData).toBe(`adddevice:${groupHash}`)
 
     await handlePanelButton('g:plan:pro', chatId, cfg)
@@ -171,7 +171,7 @@ describe('التوافق الذهبي: بوت المطوّر ↔ عميل الت
     await handlePanelButton('g:feature:cloud_sync', chatId, cfg)
 
     const issued = await handlePanelButton(`issue:${deviceId}`, chatId, cfg)
-    const key = issued.text.match(/<code>(SHOPSYS1\.[^<]+)<\/code>/)?.[1]
+    const key = issued!.text.match(/<code>(SHOPSYS1\.[^<]+)<\/code>/)?.[1]
     expect(key).toBeTruthy()
     const verified = await verifyLicenseKey(key!, deviceId, PUB_B64U)
     expect(verified.plan).toBe('basic')

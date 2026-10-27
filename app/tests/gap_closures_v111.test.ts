@@ -3,14 +3,14 @@
  *   ① المواعيد والحجوزات (نمط Fresha/Booksy) — النواة النقية + المتجر
  *   ② إشعار حالة تذكرة الصيانة عبر واتساب (نمط RepairShopr) — بناء الرسالة والرابط
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
 const { validateBooking, bookingsForDate, bookingConflicts, bookingDayStats, BOOKING_STATUS_LABELS } = await import('../src/core/booking.ts')
 const { buildTicketStatusMessage, ticketWhatsappLink, TICKET_STATUS_LABELS } = await import('../src/core/maintenance.ts')
 
 describe('الفجوة ① — المواعيد والحجوزات (booking)', () => {
-  const base = { customerName: 'محمود علي', phone: '01000000000', serviceName: 'قص وشور', date: '2026-10-06', time: '10:00', durationMin: 30, notes: '' }
+  const base = { customerName: 'محمود علي', phone: '01000000000', serviceName: 'قص وشور', itemId: null, date: '2026-10-06', time: '10:00', durationMin: 30, notes: '' }
 
   it('تحقق صارم: اسم وتاريخ ووقت ومدة — ورفض الصيغ الفاسدة', () => {
     expect(validateBooking(base)).toEqual([])

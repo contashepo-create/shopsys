@@ -43,7 +43,7 @@ describe('sessionAuth — إجبار الدخول في كل فتح جديد لل
   it('بوابة App.tsx: بعد تسجيل دخول ناجح (markSessionAuthenticated) لا تُطلب شاشة الدخول مجدداً بلا تسجيل خروج', () => {
     const ownerPinHash = 'hash-xyz'
     markSessionAuthenticated()
-    const gate = authRequired(ownerPinHash, 0) && (false || !isSessionAuthenticated())
+    const gate = authRequired(ownerPinHash, 0) && !isSessionAuthenticated()
     expect(gate).toBe(false)
   })
 })
