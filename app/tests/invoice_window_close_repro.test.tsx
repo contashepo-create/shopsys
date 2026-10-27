@@ -230,6 +230,8 @@ describe('إغلاق تلقائي بعد حفظ وترحيل الفاتورة', 
       return option as HTMLElement
     })
     fireEvent.click(supplierOption)
+    /* تحقّق ارتباط المورد فوراً — رسالة الفشل تُسمّي السبب بدل انتظار عدّاد الشراء بصمت */
+    await waitFor(() => expect(supplierInput.value).toBe(supplier.nameAr))
 
     const itemInput = document.querySelector('[aria-label="اسم الصنف — اكتب أو اضغط مرتين للبحث"]') as HTMLInputElement
     fireEvent.change(itemInput, { target: { value: item.nameAr } })
@@ -239,10 +241,12 @@ describe('إغلاق تلقائي بعد حفظ وترحيل الفاتورة', 
       return option as HTMLElement
     })
     fireEvent.doubleClick(itemOption)
+    await waitFor(() => expect(document.querySelectorAll('[data-entry-row]').length).toBe(1))
 
     const invoiceWindow = document.querySelector(`[data-app-window="${id}"]`) as HTMLElement
     const postButton = Array.from(invoiceWindow.querySelectorAll('button')).find((button) => button.textContent?.includes('حفظ وترحيل')) as HTMLButtonElement
     expect(postButton).toBeTruthy()
+    expect(postButton.disabled).toBe(false)
     const purchasesBefore = S().purchases.length
     await act(async () => { fireEvent.click(postButton) })
 
