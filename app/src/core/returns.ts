@@ -298,6 +298,12 @@ export function allocationOf(
   return { cashMinor: s.cashMinor, creditMinor: s.creditMinor, storeCreditMinor: 0, waivedMinor: 0 }
 }
 
+/** رصيد العميل في مرتجع البيع، بما في ذلك سجلات الرصيد القديمة بلا تقسيم. */
+export function returnCreditRefundMinor(r: { refund: RefundMode; totals: { totalMinor: number }; creditRefundMinor?: number; storeCreditRefundMinor?: number }): number {
+  const total = Math.max(0, r.totals.totalMinor)
+  return Math.min(total, Math.max(0, r.creditRefundMinor ?? r.storeCreditRefundMinor ?? (r.refund === 'credit' || r.refund === 'store_credit' ? total : 0)))
+}
+
 /** النقدية الخارجة فعلاً من مرتجع (للورديات/الطباعة) — التوافق الخلفي: سجلات قديمة بلا تقسيم */
 export function returnCashRefundMinor(r: { refund: RefundMode; totals: { totalMinor: number }; cashRefundMinor?: number }): number {
   return r.cashRefundMinor ?? (r.refund === 'cash' ? r.totals.totalMinor : 0)

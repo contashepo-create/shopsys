@@ -9,6 +9,7 @@
  * كل صف بتاريخه ومستنده، والرصيد تراكمي.
  */
 import type { Minor } from './money.ts'
+import { returnCreditRefundMinor } from './returns.ts'
 
 export interface StatementRow {
   date: string
@@ -95,7 +96,7 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
     // المرتجع النقدي يظهر كسطر توثيقي حتى لا تختفي العملية، دون تغيير رصيد العميل.
     const total = Math.max(0, r.totals.totalMinor)
     if (total <= 0) continue
-    const creditPart = Math.min(total, Math.max(0, r.creditRefundMinor ?? r.storeCreditRefundMinor ?? (r.refund === 'credit' || r.refund === 'store_credit' ? total : 0)))
+    const creditPart = returnCreditRefundMinor(r)
     const mode = creditPart > 0 ? (creditPart < total ? 'هجين' : 'على الحساب') : 'نقدي'
     rows.push({ date: r.date, docLabel: `مرتجع ${r.returnNumber} (${mode})`, operationMinor: total, debitMinor: 0, creditMinor: creditPart })
   }

@@ -17,7 +17,7 @@ import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
-import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
+import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, isModernPinHash, hashPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { userPrefsKey, type UserPreferences } from '../core/userPreferences.ts'
@@ -7245,7 +7245,7 @@ export const useRawDataStore = create<DataState>()(
         //    ولا نخفض ذمم العميل أكثر من المتبقي المفتوح على الفاتورة
         const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
         const priorReturns = state.saleReturns.filter((r) => r.saleId === sale.id)
-        const priorCreditRefunds = priorReturns.reduce((a, r) => a + (r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)), 0)
+        const priorCreditRefunds = priorReturns.reduce((a, r) => a + returnCreditRefundMinor(r), 0)
         const priorCashRefunds = priorReturns.reduce((a, r) => a + returnCashRefundMinor(r), 0)
         // تحصيلات العميل المخصصة لهذه الفاتورة تحديداً: حوّلت جزءاً من الآجل إلى نقدية محصلة
         const saleKey = `sale:${sale.id}`
@@ -14826,7 +14826,7 @@ export const useRawDataStore = create<DataState>()(
           const creditPart = Math.max(0, sale.totals.totalMinor - paid)
           // الرد الهجين: ما قُيّد دائناً على الحساب، بما في ذلك رصيد المتجر.
           const returns = state.saleReturns.filter((r) => r.saleId === sale.id)
-          const creditReturns = returns.reduce((sum, r) => sum + (r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)), 0)
+          const creditReturns = returns.reduce((sum, r) => sum + returnCreditRefundMinor(r), 0)
           const key = `sale:${sale.id}`
           const explicitPaid = Math.max(0, settled.get(key) ?? 0)
           const unpaidBeforeReturn = Math.max(0, creditPart - explicitPaid)
@@ -17612,13 +17612,15 @@ export const useRawDataStore = create<DataState>()(
         const patient = state.labPatients.find((pt) => pt.id === order.patientId)
         const claim = state.insuranceClaims.find((c) => c.source === 'lab_order' && c.sourceId === order.id)
         const originalEntry = state.journal.find((entry) => entry.id === order.journalEntryId)
-        if (!claim && originalEntry?.sourceType === 'insured_sale' && originalEntry.sourceCollection === 'labOrders') throw new Error('مطالبة طلب المعمل المؤمّن مفقودة — راجع البيانات قبل المرتجع')
+        if (!claim && originalEntry?.sourceType === 'insured_sale') throw new Error('مطالبة طلب المعمل المؤمّن مفقودة — راجع البيانات قبل المرتجع')
         if (claim?.settled) throw new Error('مطالبة التأمين محصلة بالفعل — سوِّ الرد مع الجهة قبل ترحيل المرتجع')
         const priorProvider = claim?.reversedMinor ?? 0
         const claimOriginal = claim ? claim.claimMinor + priorProvider : 0
-        const providerShare = claim && order.totals.totalMinor > 0
-          ? Math.max(0, Math.min(claim.claimMinor, Math.round(claimOriginal * ((order.refundedMinor ?? 0) + args.amountMinor) / order.totals.totalMinor) - priorProvider))
-          : 0
+        const priorRefund = order.refundedMinor ?? 0
+        if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor > order.totals.totalMinor - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
+        const targetProvider = claim && order.totals.totalMinor > 0 ? Math.round(claimOriginal * (priorRefund + args.amountMinor) / order.totals.totalMinor) : 0
+        if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
+        const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor, targetProvider - priorProvider)) : 0
         const patientShare = args.amountMinor - providerShare
         if (args.mode === 'customer_credit' && patientShare > 0 && (patient?.linkedCustomerId == null || !state.customers.some((customer) => customer.id === patient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
         const built = buildServiceRefundEntry({
@@ -17693,10 +17695,12 @@ export const useRawDataStore = create<DataState>()(
         const priorProvider = claim?.reversedMinor ?? 0
         const providerOriginal = claim ? claim.claimMinor + priorProvider : 0
         const total = visit.totals.totalMinor
+        const priorRefund = visit.refundedMinor ?? 0
+        if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor > total - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
         // الحصة تراكمية حتى يعود التقريب في المرتجع الأخير إلى الأصل بدقة.
-        const providerShare = claim && total > 0
-          ? Math.max(0, Math.min(claim.claimMinor, Math.round(providerOriginal * ((visit.refundedMinor ?? 0) + args.amountMinor) / total) - priorProvider))
-          : 0
+        const targetProvider = claim && total > 0 ? Math.round(providerOriginal * (priorRefund + args.amountMinor) / total) : 0
+        if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
+        const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor, targetProvider - priorProvider)) : 0
         const patientShare = args.amountMinor - providerShare
         const linkedPatient = state.clinicPatients.find((patient) => patient.id === visit.patientId)
         if (args.mode === 'patient_credit' && patientShare > 0 && (!linkedPatient?.linkedCustomerId || !state.customers.some((customer) => customer.id === linkedPatient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')

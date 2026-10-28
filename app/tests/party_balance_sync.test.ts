@@ -221,3 +221,13 @@ describe('الأرصدة المعروضة في القوائم = الكشف (بل
     expect(state.getSupplierBalance(supplier.id)).toBe(statement)
   })
 })
+
+it('رصيد مرتجع قديم بلا حقول التقسيم يطابق الكشف وذمة المستخلص', () => {
+  const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, payment: 'cash', treasury: '1101', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+  const ret = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'store_credit', reason: 'رصيد قديم', __approvalBypass: true })
+  useDataStore.setState({ saleReturns: useDataStore.getState().saleReturns.map(r => r.id === ret.id ? { ...r, cashRefundMinor: undefined, creditRefundMinor: undefined, storeCreditRefundMinor: undefined } : r) })
+  const project = useDataStore.getState().addProject({ nameAr: 'مشروع', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 2000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const ex = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'مستخلص', grossMinor: 2000, vatPercent: 0, payment: 'credit' })
+  expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(0)
+  expect(useDataStore.getState().getOpenClientInvoices(customer.id, true).find(d => d.docKey === `extract:${ex.id}`)?.settledMinor).toBe(2000)
+})

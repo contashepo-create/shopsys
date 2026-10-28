@@ -67,3 +67,27 @@ it('تقريب مرتجعات المعمل المؤمّن الصغيرة ترا�
   expect(s.getCustomerBalance(customer.id)).toBe(-67)
   expect(useDataStore.getState().labOrders.find(o => o.id === order.id)?.refundedMinor).toBe(100)
 })
+
+it('يرفض مرتجع معمل مؤمّن إذا كان تاريخه القديم يجعل مطالبته أكبر من المتبقي', () => {
+  const s = useDataStore.getState()
+  const patient = s.addLabPatient({ nameAr: 'مريض قديم', phone: '', gender: 'male', birthDate: '', notes: '' })
+  const test = s.addLabTest({ code: 'LAB-OLD', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 100, costMinor: 0, refRanges: [] })
+  const insurer = s.addInsuranceProvider({ nameAr: 'تأمين قديم', coveragePercent: 33 })
+  const order = s.registerInsuredLabOrder({ patientId: patient.id, testIds: [test.id], providerId: insurer.id, referrerId: null, vatPercent: 0 })
+  useDataStore.setState({ labOrders: useDataStore.getState().labOrders.map(o => o.id === order.id ? { ...o, refundedMinor: 90, refundedTaxMinor: 0 } : o) })
+  const before = useDataStore.getState().journal.length
+  expect(() => s.refundLabOrder({ orderId: order.id, amountMinor: 1, mode: 'cash', reason: 'مراجعة' })).toThrow(/مراجعة مطالبة التأمين/)
+  expect(useDataStore.getState().journal).toHaveLength(before)
+})
+
+it('يرفض تحميل نقص حصة التأمين التاريخية على مرتجع صغير', () => {
+  const s = useDataStore.getState()
+  const patient = s.addLabPatient({ nameAr: 'مريض قديم', phone: '', gender: 'male', birthDate: '', notes: '' })
+  const test = s.addLabTest({ code: 'LAB-GAP', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 100, costMinor: 0, refRanges: [] })
+  const insurer = s.addInsuranceProvider({ nameAr: 'تأمين قديم', coveragePercent: 70 })
+  const order = s.registerInsuredLabOrder({ patientId: patient.id, testIds: [test.id], providerId: insurer.id, referrerId: null, vatPercent: 0 })
+  useDataStore.setState({ labOrders: useDataStore.getState().labOrders.map(o => o.id === order.id ? { ...o, refundedMinor: 5, refundedTaxMinor: 0 } : o) })
+  const before = useDataStore.getState().journal.length
+  expect(() => s.refundLabOrder({ orderId: order.id, amountMinor: 1, mode: 'cash', reason: 'مراجعة' })).toThrow(/لا يمكن تحميل الفرق/)
+  expect(useDataStore.getState().journal).toHaveLength(before)
+})

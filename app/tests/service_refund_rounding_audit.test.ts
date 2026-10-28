@@ -15,3 +15,11 @@ describe('ضريبة مرتجع الخدمة التراكمي', () => {
     expect(() => buildServiceRefundEntry({ refundValueMinor: 1, deliveredGrandMinor: 100, deliveredTaxMinor: 10, priorRefundedMinor: 10, priorRefundedTaxMinor: 11, mode: 'cash', note: 'اختبار' })).toThrow(/غير صالح/)
   })
 })
+
+it('يمنع تحميل فرق ضريبة قديمة على مرتجع صغير دون مراجعة', () => {
+  expect(() => buildServiceRefundEntry({ refundValueMinor: 1, deliveredGrandMinor: 115, deliveredTaxMinor: 15, priorRefundedMinor: 70, priorRefundedTaxMinor: 0, mode: 'cash', note: 'سجل قديم' })).toThrow(/مراجعة.*ضريب/)
+})
+
+it('يرفض سجلاً قديماً لا يكفي فيه المتبقي لعكس الضريبة غير المعكوسة', () => {
+  expect(() => buildServiceRefundEntry({ refundValueMinor: 1, deliveredGrandMinor: 115, deliveredTaxMinor: 15, priorRefundedMinor: 114, priorRefundedTaxMinor: 0, mode: 'cash', note: 'سجل قديم' })).toThrow(/مراجعة.*ضريب/)
+})

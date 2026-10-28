@@ -57,10 +57,11 @@ export function buildServiceRefundEntry(args: {
   note: string
 }): { lines: JournalLine[]; taxShareMinor: Minor; baseMinor: Minor } {
   const { refundValueMinor: v, deliveredGrandMinor: grand, deliveredTaxMinor: tax } = args
-  if (!Number.isInteger(v) || v <= 0) throw new Error('قيمة الاسترداد يجب أن تكون موجبة')
-  if (!Number.isInteger(grand) || grand <= 0) throw new Error('إجمالي المستند غير صالح')
+  if (!Number.isSafeInteger(v) || v <= 0) throw new Error('قيمة الاسترداد يجب أن تكون موجبة')
+  if (!Number.isSafeInteger(grand) || grand <= 0) throw new Error('إجمالي المستند غير صالح')
   if (!Number.isSafeInteger(tax) || tax < 0 || tax > grand || !Number.isSafeInteger(args.priorRefundedMinor) || args.priorRefundedMinor < 0 || args.priorRefundedMinor > grand || !Number.isSafeInteger(args.priorRefundedTaxMinor) || args.priorRefundedTaxMinor < 0 || args.priorRefundedTaxMinor > tax) throw new Error('رصيد مرتجعات المستند أو ضريبته غير صالح — راجع السجلات السابقة')
   const remaining = grand - args.priorRefundedMinor
+  if (args.priorRefundedTaxMinor > args.priorRefundedMinor || tax - args.priorRefundedTaxMinor > remaining) throw new Error('يلزم مراجعة سجلات الضريبة السابقة — الضريبة غير المعكوسة تتجاوز المتبقي القابل للرد')
   if (v > remaining) throw new Error(`قيمة الاسترداد تتجاوز المتبقي القابل للرد (${remaining})`)
   const providerShare = args.providerShareMinor ?? 0
   if (!Number.isInteger(providerShare) || providerShare < 0) throw new Error('نصيب جهة التأمين لا يكون سالباً')
@@ -68,6 +69,7 @@ export function buildServiceRefundEntry(args: {
   // تحسب الحصة على المردود التراكمي؛ تقريب كل جزء وحده كان يضيع
   // ضريبة المستند عند تكرار مرتجعات صغيرة، حتى عند رد المبلغ كاملاً.
   const taxTarget = tax > 0 ? Math.round((tax * (args.priorRefundedMinor + v)) / grand) : 0
+  if (taxTarget - args.priorRefundedTaxMinor > v) throw new Error('يلزم مراجعة سجلات الضريبة السابقة — لا يمكن تحميل فرقها على هذا المرتجع تلقائياً')
   const taxShare = Math.max(0, Math.min(taxTarget - args.priorRefundedTaxMinor, tax - args.priorRefundedTaxMinor))
   const base = v - taxShare
   const lines: JournalLine[] = [
