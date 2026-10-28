@@ -111,6 +111,14 @@ export function buildExtractSettledMap(args: {
    * تضارب ربط العميل لا بسبب السداد، فاستنتاج `due` عندها يخلق تحصيلاً وهمياً.
    */
   hasSettlementEvidence?: boolean
+  /**
+   * الدفتر **الكامل** (`getOpenClientInvoices(id, true)`): كل المستندات حاضرة
+   * بما فيها المسدَّدة، فـ `settledMinor` هو الحقيقة الوحيدة. عندئذٍ **لا**
+   * استنتاج إطلاقاً — المستخلص الغائب يعني «لا ذمة مرتبطة بهذا العميل»
+   * (تضارب ربط/مستخلص نقدي) لا «سُدّد بالكامل». كان الاستنتاج بدليل سداد
+   * على مستوى العميل يخلق تحصيلاً وهمياً حين يخصّ الشيك فاتورة أخرى.
+   */
+  fullLedger?: boolean
 }): Map<string, Minor> {
   const keys = new Set(args.extractDocKeys)
   const out = new Map<string, Minor>()
@@ -132,6 +140,9 @@ export function buildExtractSettledMap(args: {
   collect(args.clientSettlements)
   for (const key of keys) {
     if (openKeys.has(key)) continue
+    /* الدفتر الكامل ⇒ لا تخمين. الغياب هنا سببه تضارب ربط العميل أو
+       مستخلص نقدي، وليس سداداً؛ استنتاج السداد كان يضيف تحصيلاً وهمياً. */
+    if (args.fullLedger) continue
     const explicit = raw.get(key) ?? 0
     let settled = explicit
     const due = args.extractDues?.get(key) ?? 0
@@ -252,7 +263,13 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
     .reduce((s, [, v]) => s + v, 0)
   const cashExtracts = src.extracts.filter((e) => e.payment === 'cash').reduce((s, e) => s + (e.dueMinor - capRecovery(e)), 0)
   const recovered = src.extracts.reduce((s, e) => s + capRecovery(e), 0)
-  const targetMinor = creditSettled + cashExtracts + recovered
+  /* includeCheques=false ⇒ سطور الشيكات مستبعدة، فيجب استبعاد نصيبها من
+     `creditSettled` (الدفتر يحسبها ضمن المسدَّد) وإلا اختلف مجموع السطور
+     عن الهدف وظهر «تنبيه مراجعة» كاذب وتضخّم المتبقي. */
+  const excludedCheques = src.includeCheques === false
+    ? Math.max(0, Math.min(creditSettled, src.chequeAttributedMinor ?? 0))
+    : 0
+  const targetMinor = creditSettled - excludedCheques + cashExtracts + recovered
 
   let remaining = src.extracts.reduce((s, e) => s + e.dueMinor, 0)
   const running: Minor[] = []
@@ -276,8 +293,11 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
 
   const collections = buildCollectionRows(src)
   const collected = collections.targetMinor
+  const overCollected = Math.max(0, collected - dueTotal)
   const remainingCollection = Math.max(0, dueTotal - collected)
-  const collectedPercent = dueTotal > 0 ? Math.round((collected / dueTotal) * 1000) / 10 : 0
+  /* لا يجوز أن تتجاوز نسبة التحصيل 100٪ — التحصيل الزائد خلل في التوزيعات
+     يُنبَّه عليه في الملاحظات بدل عرض رقم محاسبياً مستحيل. */
+  const collectedPercent = dueTotal > 0 ? Math.min(100, Math.round((collected / dueTotal) * 1000) / 10) : 0
 
   /* ① المصروفات برصيد تراكمي */
   const expenses = [...src.expenses].sort((a, b) => a.date.localeCompare(b.date) || a.docNumber.localeCompare(b.docNumber))
@@ -339,6 +359,9 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     notes.push(`سندات قبض غير موزّعة على مستندات (${collections.unattributedVouchers} بقيمة ${fmt(collections.unattributedVoucherMinor)}) لم تُحتسب ضمن تحصيلات هذا المشروع — راجع كشف حساب العميل لتوزيعها.`)
   }
   notes.push('التسوية الختامية معادلتان مستقلتان: ① المستحق − التحصيلات = المتبقي (ذمة العميل) · ② الإيراد المستخلص − المصروفات = نتيجة المشروع. لا تُطرح المصروفات من رصيد التحصيل.')
+  if (overCollected > 1) {
+    notes.push(`تنبيه مراجعة — تحصيل زائد: التحصيلات (${fmt(collected)}) تتجاوز صافي المستحق (${fmt(dueTotal)}) بـ ${fmt(overCollected)} — راجع توزيعات السندات/الشيكات على مستندات العميل.`)
+  }
   if (Math.abs(collections.totalMinor - collected) > 1) {
     notes.push(`تنبيه مراجعة: مجموع سطور التحصيلات (${fmt(collections.totalMinor)}) يختلف عن المُخصوم من الذمم (${fmt(collected)}) — افحص التوزيعات.`)
   }

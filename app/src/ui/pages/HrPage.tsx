@@ -33,6 +33,7 @@ import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { todayLocalIso, localDateTimeLabel } from '../../core/time.ts'
+import { toCsv } from '../../core/security.ts'
 
 /* ثابت داخلي (سياسة Fast Refresh: الملف يصدّر مكونات فقط) */
 const HR_TABS = [
@@ -859,7 +860,10 @@ function HrReportsTab() {
 
   const exportCsv = () => {
     const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'يوم إضافي', 'دقائق تأخير', 'ساعات إضافي', `بدل إضافي (${cur.code})`, `مكافأة يوم إضافي (${cur.code})`, `خصم غياب (${cur.code})`, `خصم إجازة بلا أجر (${cur.code})`, `خصم تأخير (${cur.code})`, `صافي الأثر (${cur.code})`]
-    const body = rows.map(({ employee, impact, late, ot }) => [
+    /* الجولة السابعة: كان اسم الموظف يُكتب بـ join(',') بلا تهريب — فاصلة
+       أو تنصيص في الاسم يفسد الملف، ولا حماية من حقن صيغ Excel،
+       والرابط يُحرَّر فوراً فيُلغى التنزيل في بعض المتصفحات. */
+    const body = rows.map(({ employee, impact, late, ot }) => Object.fromEntries(head.map((h, i) => [h, [
       partyCode('EMP', employee.id), employee.nameAr,
       impact?.summary.presentDays ?? 0, impact?.summary.absentDays ?? 0, impact?.summary.paidLeaveDays ?? 0, impact?.summary.unpaidLeaveDays ?? 0,
       impact?.summary.permissionDays ?? 0, impact?.summary.holidayDays ?? 0, impact?.summary.missionDays ?? 0, impact?.summary.holidayWorkedDays ?? 0,
@@ -870,19 +874,21 @@ function HrReportsTab() {
       (impact?.unpaidLeaveDeductionMinor ?? 0) / 10 ** cur.decimals,
       (impact?.lateDeductionMinor ?? 0) / 10 ** cur.decimals,
       (impact?.netAdjustmentMinor ?? 0) / 10 ** cur.decimals,
-    ].join(','))
-    const blob = new Blob([[head.join(','), ...body].join('\n')], { type: 'text/csv;charset=utf-8' })
+    ][i]])))
+    const blob = new Blob([toCsv(body)], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `حضور-${month}.csv`
     a.click()
-    URL.revokeObjectURL(a.href)
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 
   }
 
   const print = () => {
+    /* §الأمان: أسماء الموظفين واسم المنشأة تدخل HTML المعاينة داخل iframe. */
+    const esc = (x: unknown) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     const body = rows.map(({ employee, impact, late, ot }) => `<tr>
-      <td>${employee.nameAr}</td><td class="n">${impact?.summary.presentDays ?? 0}</td><td class="n">${impact?.summary.absentDays ?? 0}</td>
+      <td>${esc(employee.nameAr)}</td><td class="n">${impact?.summary.presentDays ?? 0}</td><td class="n">${impact?.summary.absentDays ?? 0}</td>
       <td class="n">${impact?.summary.paidLeaveDays ?? 0}</td><td class="n">${impact?.summary.unpaidLeaveDays ?? 0}</td>
       <td class="n">${impact?.summary.permissionDays ?? 0}</td><td class="n">${late}</td><td class="n">${(ot / 60).toFixed(1)}</td><td class="n">${impact?.summary.holidayWorkedDays ?? 0}</td>
       <td class="n">${fmt(impact?.overtimeAllowanceMinor ?? 0)}</td><td class="n">${fmt(impact?.holidayWorkBonusMinor ?? 0)}</td><td class="n">${fmt((impact?.absenceDeductionMinor ?? 0) + (impact?.unpaidLeaveDeductionMinor ?? 0) + (impact?.lateDeductionMinor ?? 0))}</td>
@@ -892,7 +898,7 @@ function HrReportsTab() {
       <style>body{font-family:system-ui,'Segoe UI',Tahoma;padding:24px;color:#0f172a}h1{font-size:18px;margin:0 0 4px}p{color:#64748b;font-size:12px;margin:0 0 14px}
       table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:center}th{background:#f1f5f9}
       td:first-child{text-align:right;font-weight:700}.n{font-variant-numeric:tabular-nums}tfoot td{font-weight:800;background:#f8fafc}</style></head><body>
-      <h1>كشف الحضور والانصراف — ${monthLabelAr(month)}</h1><p>${setup.shopName ?? ''} · تاريخ الطباعة ${todayLocalIso()}</p>
+      <h1>كشف الحضور والانصراف — ${esc(monthLabelAr(month))}</h1><p>${esc(setup.shopName ?? '')} · تاريخ الطباعة ${esc(todayLocalIso())}</p>
       <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>يوم إضافي</th><th>بدل إضافي</th><th>مكافأة يوم إضافي</th><th>إجمالي الخصومات</th><th>صافي الأثر</th></tr></thead>
       <tbody>${body}</tbody>
       <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${totals.holidayWorked}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.holidayBonus)}</td><td class="n">${fmt(totals.deductions)}</td><td class="n">${fmt(totals.net)}</td></tr></tfoot></table>

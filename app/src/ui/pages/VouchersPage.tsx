@@ -25,6 +25,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { toCsv } from '../../core/security.ts'
 import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { localDateTimeLabel } from '../../core/time.ts'
@@ -355,10 +356,18 @@ export function VouchersPage() {
   }
 
   const exportVouchers = () => {
-    const rows = [['الرقم','التاريخ','النوع','الخزينة','الحساب المقابل','البيان','المبلغ'],...listed.map(v=>[v.voucherNumber,v.date.slice(0,10),v.kind==='receipt'?'قبض':'صرف',v.treasury,nameOf(v.counterAccountCode),v.description,fmt(v.amountMinor)])]
-    const csv='\ufeff'+rows.map(r=>r.map(x=>`"${String(x).replaceAll('"','""')}"`).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='vouchers.csv';a.click();URL.revokeObjectURL(url)
+    /* الجولة السابعة: توحيد التصدير على `toCsv` (تهريب + منع حقن الصيغ
+       + BOM واحد) وتأجيل تحرير الرابط حتى لا يُلغى التنزيل. */
+    const headers = ['الرقم','التاريخ','النوع','الخزينة','الحساب المقابل','البيان','المبلغ']
+    const rows = listed.map(v => Object.fromEntries(headers.map((h, i) => [h,
+      [v.voucherNumber, v.date.slice(0,10), v.kind === 'receipt' ? 'قبض' : 'صرف', v.treasury, nameOf(v.counterAccountCode), v.description, fmt(v.amountMinor)][i]])))
+    const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a'); a.href = url; a.download = 'vouchers.csv'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  const printVouchers = () => printHtml(`<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}</style></head><body><h2>سجل سندات القبض والصرف</h2><table><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr>${listed.map(v=>`<tr><td>${v.voucherNumber}</td><td>${v.date.slice(0,10)}</td><td>${v.kind==='receipt'?'قبض':'صرف'}</td><td>${v.description}</td><td>${fmt(v.amountMinor)}</td></tr>`).join('')}</table></body></html>`, { preview: { title: 'معاينة سجل السندات قبل الطباعة' } })
+  /* §الأمان: نفس مهرب `escapePrintText` المستخدم في طباعة السند المفرد —
+     بيان السند ورقمه يدخلان HTML المعاينة داخل iframe التطبيق. */
+  const printVouchers = () => printHtml(`<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}</style></head><body><h2>سجل سندات القبض والصرف</h2><table><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr>${listed.map(v=>`<tr><td>${escapePrintText(v.voucherNumber)}</td><td>${escapePrintText(v.date.slice(0,10))}</td><td>${v.kind==='receipt'?'قبض':'صرف'}</td><td>${escapePrintText(v.description)}</td><td>${escapePrintText(fmt(v.amountMinor))}</td></tr>`).join('')}</table></body></html>`, { preview: { title: 'معاينة سجل السندات قبل الطباعة' } })
 
   return (
     <div className="space-y-4">

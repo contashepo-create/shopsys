@@ -33,6 +33,10 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
   const fmt = useCallback((m: number) => formatMinor(m, cur, false), [cur])
 
   const selected = projects.find((p) => p.id === Number(projectId)) ?? null
+  /* الجولة السابعة: يُحسب اليوم خارج useMemo ويُوضع في تبعياته — كان
+     `todayLocalIso()` داخل useMemo فيبقى التقرير بتاريخ الأمس إن بقيت
+     الشاشة مفتوحة بعد منتصف الليل. */
+  const reportDay = todayLocalIso()
 
   const model = useMemo(() => {
     if (!selected) return null
@@ -56,7 +60,10 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     const projectVouchers = clientId == null ? [] : vouchers.filter((v) =>
       !v.reversalEntryId && v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId === clientId)
     const projectSettlements = clientId == null ? [] : clientSettlements.filter((st) => st.customerId === clientId)
-    const openInvoices = clientId == null ? [] : getOpenClientInvoices(clientId)
+    /* الدفتر الكامل (بما فيه المسدَّد بالكامل) ⇒ settledMinor حقيقي لكل
+       مستخلص بلا استنتاج. كان غياب مستخلص عن الدفتر المفتوح يُفسَّر
+       «مسدَّد بالكامل» لمجرد وجود شيك للعميل على مستند آخر. */
+    const openInvoices = clientId == null ? [] : getOpenClientInvoices(clientId, true)
     /* صافي استحقاق المستخلص الآجل بعد المقاصة — لمعرفة ما سُدّد كاملاً بالشيكات
        (الشيكات تُوزَّع داخل الدفتر بلا سجل توزيع صريح على المستخلص). */
     const extractDues = new Map<string, number>()
@@ -77,6 +84,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
       extractDocKeys: creditExtractDocKeys, openInvoices, extractDues,
       vouchers: projectVouchers, clientSettlements: projectSettlements,
       hasSettlementEvidence,
+      fullLedger: true,
     })
 
     /* قيمة الشيكات المخصومة فعلاً من مستخلصات هذا المشروع =
@@ -131,11 +139,11 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
       /* توحيد ترويسة الشاشة والطباعة: نفس الشعار ونفس اسم المُعِدّ في الاثنتين. */
       logoDataUrl: receipt.logoDataUrl || undefined,
       printedBy: setup.ownerName || undefined,
-      period: `حتى ${todayLocalIso()}`,
+      period: `حتى ${reportDay}`,
       fmt,
     }
     return buildAnalyticalProjectReport(src)
-  }, [selected, projectExtracts, projectCosts, changeOrders, suppliers, clientSettlements, vouchers, cheques, getOpenClientInvoices, cur.symbol, setup.shopName, setup.ownerName, receipt.logoDataUrl, fmt])
+  }, [selected, projectExtracts, projectCosts, changeOrders, suppliers, clientSettlements, vouchers, cheques, getOpenClientInvoices, cur.symbol, setup.shopName, setup.ownerName, receipt.logoDataUrl, fmt, reportDay])
 
   return (
     <div className="space-y-3" data-analytical-report>

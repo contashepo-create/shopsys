@@ -3,7 +3,7 @@
  * يعرض نفس نموذج النواة بشكل جداول نظامية بلا كروت، وكل زر طباعة يفتح
  * **معاينة** داخل التطبيق (openPrintPreview) تحمل زر طباعة وإعدادات حيّة.
  */
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, type ReactNode } from 'react'
 import { Printer, FileSpreadsheet } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useToast } from './ui.tsx'
@@ -71,16 +71,22 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     }
     return renderFormalReportHtml(liveModel, settings)
   }
+  /* الجولة السابعة: نافذة المعاينة تبقى مفتوحة أثناء تعديل الإعدادات، وقد
+     يتغيّر نموذج التقرير نفسه (إضافة شيك/مصروف) في نفس الجلسة. كان
+     `rebuild` يلتقط نموذج لحظة الضغط على الزر فيُعيد بناء بيانات قديمة.
+     المرجع الحيّ يضمن أن إعادة البناء تستخدم أحدث نموذج وأحدث إعدادات. */
+  const buildHtmlRef = useRef(buildHtml)
+  useEffect(() => { buildHtmlRef.current = buildHtml })
 
   const print = () => {
     /* طلب المالك: «عند طلب طباعة أي تقرير أعطني معاينة لها وبها زر طباعة»
        ⇒ openPrintPreview يعرض النافذة الحرة التي تحمل زر طباعة فعلي،
        وrebuild يقرأ إعدادات الطباعة لحظة التغيير (معاينة حيّة). */
     openPrintPreview({
-      html: buildHtml(),
+      html: buildHtmlRef.current(),
       wide: true,
       title: `معاينة ${model.title} قبل الطباعة`,
-      rebuild: buildHtml,
+      rebuild: () => buildHtmlRef.current(),
     })
   }
 
@@ -88,25 +94,35 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     /* الجولة السادسة: كان التصدير يُخرج سطور الأقسام وحدها — فيفقد الملف
        بيانات المستند والملخص المالي والتسوية والملاحظات وصفوف الإجمالي،
        أي أن «تصدير Excel» كان ناقصاً مقارنة بالتقرير الرسمي المعروض.
-       كما كان يُسقط القيمة الثانوية (اسم المورد) ويضيف BOMاً ثانياً. */
+       كما كان يُسقط القيمة الثانوية (اسم المورد) ويضيف BOMاً ثانياً.
+       الجولة السابعة: كانت الأعمدة الوصفية («البيان»/«القيمة») تتشارك
+       الاسم مع أعمدة جداول الأقسام، فتظهر قيمة مؤشر مالي وقيمة مصروف
+       في عمود واحد بلا تمييز. الحل: عمود وصفي يسمّى «البند»، وأعمدة
+       كل قسم تُسبق باسم القسم وترتيبه فتصبح مفاتيح فريدة — مع بقاء
+       رأس أعمدة واحد وBOM واحد كما يتوقّع مستورد الملف. */
     const rows: Record<string, string>[] = []
-    const add = (section: string, label: string, value: string, detail = '') =>
-      rows.push({ 'القسم': section, 'البيان': label, 'القيمة': value, 'التفاصيل': detail })
+    /* «البند» لا «البيان»: كثير من الجداول الرسمية تحوي عموداً اسمه
+       «البيان»، وتسمية العمود الوصفي به كانت سبب التصادم. */
+    const add = (section: string, item: string, value: string, detail = '') =>
+      rows.push({ 'القسم': section, 'البند': item, 'القيمة': value, 'التفاصيل': detail })
     add('التقرير', model.title, resolved.companyName, model.subtitle)
     for (const m of model.meta) add('بيانات المستند', m.label, m.value)
     for (const i of model.indicators ?? []) add('الملخص المالي', i.label, i.value)
-    for (const section of model.sections) {
+    model.sections.forEach((section, si) => {
+      /* مفتاح العمود = اسم القسم + ترتيبه + اسم العمود الأصلي: فريد حتى لو
+         تشابهت أسماء الأعمدة بين قسمين أو تكرر عنوان القسم. */
+      const col = (i: number) => `${section.title} [${si + 1}] · ${section.headers[i] ?? `ع${i + 1}`}`
       for (const row of section.rows) {
         const record: Record<string, string> = { 'القسم': section.title }
-        section.headers.forEach((h, i) => { record[h] = cellText(row.cells[i]) })
+        section.headers.forEach((_, i) => { record[col(i)] = cellText(row.cells[i]) })
         rows.push(record)
       }
       if (section.totalRow) {
         const record: Record<string, string> = { 'القسم': `${section.title} — الإجمالي` }
-        section.totalRow.forEach((c, i) => { record[section.headers[i] ?? `عمود ${i + 1}`] = cellText(c) })
+        section.totalRow.forEach((c, i) => { record[col(i)] = cellText(c) })
         rows.push(record)
       }
-    }
+    })
     for (const n of model.notes ?? []) add('ملاحظات المراجعة', n, '')
     for (const e of model.equation ?? []) add('التسوية الختامية', e.label, e.value)
     if (!rows.length) { toast.show('لا بيانات للتصدير', 'error'); return }
@@ -119,7 +135,9 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     toast.show('تم تصدير التقرير ✓')
   }
 
-  const signatures = showSignatures ?? reportPrint.showSignatures
+  /* الأولوية: طلب المستدعي الصريح → طلب بانِي النموذج → الإعداد العام.
+     كان model.signatures حقلًا بلا أثر في الشاشة والطباعة معاً. */
+  const signatures = showSignatures ?? model.signatures ?? reportPrint.showSignatures
 
   const renderSection = (section: FormalReportSection, index: number) => (
     <div key={`${section.title}-${index}`}>
@@ -164,7 +182,9 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
           )}
           <div style={{ textAlign: 'center' }}>
             <div className="fr-title" style={{ margin: 0 }}>{model.title}</div>
-            <div className="fr-meta-sub">{model.period ?? model.subtitle}</div>
+            {/* لا تُكرَّر الفترة هنا ثم في fr-sub — الترويسة تعرض وصف
+                التقرير إن لم تكن الفترة مدمجة أصلاً في العنوان الفرعي. */}
+            {model.period && !model.subtitle.includes(model.period) && <div className="fr-meta-sub">{model.period}</div>}
           </div>
         </div>
         <div className="fr-sub">{model.subtitle}</div>

@@ -104,7 +104,15 @@ export function supportUrl(baseUrl: string, deviceId: string): string {
  * `baseUrl` يبقى الوسيط الأول ليحتفظ الاختبار/الاستدعاء القديم بسلوکه.
  */
 export function supportBaseCandidates(baseUrl: string): string[] {
-  const all = [baseUrl, ...SUPPORT_CLOUD_FALLBACK_URLS, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL]
+  const primary = baseUrl.replace(/\/$/, '')
+  /* الجولة السابعة: إن ضُبط مضيف دعم **مخصص** (مؤسسة تستضيف خادمها)،
+     لا يجوز أن تُرسل رسائلها — التي قد تتضمن سجل التطبيق — تلقائياً إلى
+     خوادم المطوّر العامة عند فشل النقل. البدائل تُضاف فقط حين تكون
+     الوجهة أصلاً واحدة من عناوين الخدمة المعتمدة. */
+  const isKnownService = [LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL, ...SUPPORT_CLOUD_FALLBACK_URLS]
+    .some((url) => url.replace(/\/$/, '') === primary)
+  if (!isKnownService) return primary ? [primary] : []
+  const all = [primary, ...SUPPORT_CLOUD_FALLBACK_URLS, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL]
   return all
     .map((url) => url.replace(/\/$/, ''))
     .filter((url, index, list) => Boolean(url) && list.indexOf(url) === index)
@@ -224,10 +232,17 @@ export async function probeSupportConnectivity(timeoutMs = 5000): Promise<boolea
   if (typeof fetch !== 'function') return false
   for (const url of SUPPORT_PROBE_URLS) {
     try {
-      const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) })
-      if (res.ok) return true
+      /* الجولة السابعة: `mode: 'no-cors'` + قبول الرد `opaque`. كان المسبار
+         يطلب رداً مقروءاً (CORS) فيفشل على نطاق لا يرسل ترويسات CORS رغم
+         أن الإنترنت سليم — فيُعيد false فتظهر للمستخدم رسالة «تحقّق من
+         اتصال الإنترنت» الكاذبة، وهي نفس العلّة الأصلية التي أصلحناها.
+         مجرد اكتمال رحلة الشبكة (حتى بلا قراءة الجسم) دليل اتصال. */
+      const res = await fetch(url, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) })
+      if (res.ok || res.type === 'opaque') return true
     } catch { /* المسبار التالي */ }
   }
+  /* إن رمى كل مسبار استثناءً فالشبكة معطّلة فعلاً — لا نستند إلى
+     navigator.onLine لأنه يعكس وجود وصلة محلية لا الوصول للإنترنت. */
   return false
 }
 

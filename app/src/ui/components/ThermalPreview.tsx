@@ -156,6 +156,11 @@ export function ThermalPreview() {
               <iframe
                 ref={frameRef}
                 title="معاينة مصغّرة"
+                /* §الأمان: صلاحية الأصل فقط، بلا صلاحية تشغيل السكربتات —
+                   يُبقي contentDocument متاحاً لـ doc.write ويمنع تنفيذ أي
+                   سكربت أو معالج حدث مضمّن قد يأتي في HTML تقرير مبني من
+                   بيانات المستخدم. المعاينة للعرض فقط لا تحتاج سكربتات. */
+                sandbox="allow-same-origin"
                 style={{ width: paper, height: 306, transform: `scale(${miniPaper / paper})`, transformOrigin: 'top right' }}
               />
             </div>
@@ -206,7 +211,7 @@ export function ThermalPreview() {
 
         <div className="thermal-preview-paper">
           {/* العرض نسبي حتى لا يظهر أي تمرير أفقي مهما اختلفت هوامش المتصفح */}
-          <iframe ref={frameRef} title="معاينة المستند" style={{ width: '100%', maxWidth: paper }} />
+          <iframe ref={frameRef} title="معاينة المستند" sandbox="allow-same-origin" style={{ width: '100%', maxWidth: paper }} />
         </div>
         <footer>
           <button type="button" className="is-ghost" onClick={() => setQuickOpen((value) => !value)} data-thermal-settings><Settings2 size={12} /> إعدادات سريعة</button>

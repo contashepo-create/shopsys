@@ -115,6 +115,38 @@ ok('H7 — مهرّب السمات escAttr يهرّب علامات التنصي�
 ok('بوابة التهريب تغطي نواة التقارير الرسمية', /reportPrint\.ts/.test(readFileSync(join(root, 'verify_print_escaping.mjs'), 'utf8')))
 ok('اختبارات الجولة السادسة موجودة', existsSync(join(root, '..', 'tests', 'report_hardening_round6.test.tsx')))
 
+/* ⑧ الجولة السابعة (2026-10-28): مراجعة سطر بسطر لكل تعديلات الجلسة */
+const repo7 = read('data/repo.ts')
+const view7 = read('ui/contracting/AnalyticalProjectReportView.tsx')
+const core7 = read('core/analyticalProjectReport.ts')
+const formalCore7 = read('core/formalReport.ts')
+const formalView7 = read('ui/components/FormalReport.tsx')
+const support7 = read('core/support.ts')
+const printer7 = read('ui/print/printReceipt.ts')
+const preview7 = read('ui/components/ThermalPreview.tsx')
+ok('R7-1 — الدفتر الكامل متاح للتقارير (includeSettled)', /getOpenClientInvoices: \(customerId, includeSettled\)/.test(repo7) && /includeSettled \? open : open\.filter/.test(repo7))
+ok('R7-2 — العارض يقرأ الدفتر الكامل ويُلغي الاستنتاج', /getOpenClientInvoices\(clientId, true\)/.test(view7) && /fullLedger: true/.test(view7) && /if \(args\.fullLedger\) continue/.test(core7))
+ok('R7-3 — نسبة التحصيل بسقف 100٪ وتنبيه تحصيل زائد', /Math\.min\(100, Math\.round/.test(core7) && /تحصيل زائد/.test(core7))
+ok('R7-4 — includeCheques=false لا يكسر اتساق التحصيلات', /excludedCheques/.test(core7) && /creditSettled - excludedCheques/.test(core7))
+ok('R7-5 — تاريخ التقرير يتبع اليوم (خارج useMemo/في التبعيات)', /const reportDay = todayLocalIso\(\)/.test(view7) && /fmt, reportDay\]/.test(view7))
+ok('R7-6 — حقل signatures له أثر في الشاشة والطباعة', /\?\? model\.signatures \?\? reportPrint\.showSignatures/.test(formalView7) && /model\.signatures == null/.test(formalCore7))
+ok('R7-7 — صف الإجمالي المطبوع يحفظ القيمة الثانوية', /totalRow: section\.totalRow\?\.map/.test(formalCore7) && /c\.sub \? `\$\{c\.value\}/.test(formalCore7))
+ok('R7-8 — تصدير CSV بلا تصادم أسماء الأعمدة', /'البند': item/.test(formalView7) && /const col = \(i: number\)/.test(formalView7) && /\[\$\{si \+ 1\}\] ·/.test(formalView7))
+ok('R7-9 — الترويسة لا تُكرّر الفترة', /!model\.subtitle\.includes\(model\.period\)/.test(formalView7))
+ok('R7-10 — المعاينة تعيد البناء بأحدث نموذج', /buildHtmlRef/.test(formalView7) && /rebuild: \(\) => buildHtmlRef\.current\(\)/.test(formalView7))
+ok('R7-11 — iframe المعاينة وiframe الطباعة محصّنان', (preview7.match(/sandbox="allow-same-origin"/g) ?? []).length >= 2 && /setAttribute\('sandbox', 'allow-same-origin allow-modals'\)/.test(printer7))
+ok('R7-12 — صفحات المعاينة تهرّب HTML', /escHtml\(r\.description\)/.test(read('ui/pages/CoaPage.tsx')) && /escapePrintText\(v\.description\)/.test(read('ui/pages/VouchersPage.tsx')) && /esc\(employee\.nameAr\)/.test(read('ui/pages/HrPage.tsx')))
+ok('R7-13 — مسبار الدعم يتجاوز حجب CORS', /mode: 'no-cors'/.test(support7) && /res\.type === 'opaque'/.test(support7))
+ok('R7-14 — مضيف دعم مخصص لا تُرسل رسائله لخوادم عامة', /isKnownService/.test(support7) && /if \(!isKnownService\) return/.test(support7))
+ok('R7-15 — الطباعة الصامتة لا تفتح معاينة', /const directPrint = Boolean\(options\?\.silent \|\| options\?\.printerName\)/.test(printer7))
+const csvPages7 = ['CoaPage.tsx', 'VouchersPage.tsx', 'HrPage.tsx'].map((f) => read(`ui/pages/${f}`))
+const csvSafe7 = csvPages7.every((src) => {
+  return /toCsv\(/.test(src) && /setTimeout\(\(\) => URL\.revokeObjectURL/.test(src)
+})
+ok('R7-16 — تصادير الصفحات موحّد على toCsv مع تحرير مؤجّل', csvSafe7)
+ok('R7-17 — بوابة التهريب تغطي قوالب HTML في الصفحات', /RAW_HTML_PAGES/.test(readFileSync(join(root, 'verify_print_escaping.mjs'), 'utf8')) && /printHtmlRegions/.test(readFileSync(join(root, 'verify_print_escaping.mjs'), 'utf8')))
+ok('R7-18 — اختبارات الجولة السابعة موجودة', existsSync(join(root, '..', 'tests', 'report_hardening_round7.test.tsx')))
+
 for (const c of checks) {
   if (c.ok) passed++
   else console.error(`✗ ${c.name}`)

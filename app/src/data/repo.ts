@@ -2931,7 +2931,12 @@ interface DataState {
   /** إذن صرف مواد لمشروع: خصم مخزون بالمتوسط المرجح → 5110/1103 بصارف ومستلم إلزاميين */
   issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string }) => MaterialRequisition
   /** الفواتير المفتوحة لعميل (بيع آجل + مستخلصات مشاريعه الآجلة) بعد التحصيلات والمرتجعات */
-  getOpenClientInvoices: (customerId: number) => OpenInvoice[]
+  /**
+   * @param includeSettled إرجاع المستندات المسدّدة بالكامل أيضاً (للتقارير التحليلية
+   *   التي تحتاج `settledMinor` الحقيقي لكل مستند بدل افتراض «الغائب = مسدَّد»).
+   *   بدونه يبقى السلوك القديم: المستندات ذات الرصيد المفتوح فقط.
+   */
+  getOpenClientInvoices: (customerId: number, includeSettled?: boolean) => OpenInvoice[]
   /** فواتير المورد المفتوحة بعد المدفوعات الأولية وتوزيعات سندات الصرف */
   getOpenSupplierInvoices: (supplierId: number) => OpenInvoice[]
   /** تحصيل من عميل على مستوى الحساب: FIFO افتراضياً أو مطابقة فاتورة محددة اختيارياً */
@@ -14674,7 +14679,7 @@ export const useRawDataStore = create<DataState>()(
         return req
       },
 
-      getOpenClientInvoices: (customerId) => {
+      getOpenClientInvoices: (customerId, includeSettled) => {
         const state = getBranchScopedDataState(get())
         // المُحصَّل سابقاً لكل مستند من سجلات التحصيل
         const settled = new Map<string, number>()
@@ -14751,7 +14756,12 @@ export const useRawDataStore = create<DataState>()(
           const doc = open.find((inv) => inv.docKey === a.docKey)
           if (doc) doc.settledMinor += a.appliedMinor
         }
-        return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
+        /* الجولة السابعة: التقارير التحليلية تحتاج الدفتر كاملاً (بما فيه
+           المسدَّد بالكامل) حتى تقرأ settledMinor الفعلي ولا تستنتج سداداً
+           وهمياً لمجرد وجود شيك للعميل على مستند آخر. المستدعي القديم لا
+           يمرّر الوسيط فيبقى على التصفية الأصلية تماماً. */
+        const result = includeSettled ? open : open.filter((inv) => inv.dueMinor - inv.settledMinor > 0)
+        return result.sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
 
       getOpenSupplierInvoices: (supplierId) => {

@@ -20,11 +20,6 @@ import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { freshReportPrintSettings, rebuildReportShellHtml } from '../../core/reportPrint.ts'
 
-/** فصل الاستيراد في دالة صغيرة يسهل تنكيره في الاختبارات */
-function requirePreview() {
-  return { openPrintPreview }
-}
-
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -217,10 +212,13 @@ export function printHtml(
      iframe مخفي يطبع فوراً. الفواتير والإيصالات الحرارية لا تحمل الوسم فتبقى
      كما هي. زر الطباعة داخل المعاينة يمرّر fromPreview فيصل للطباعة الحقيقية
      أدناه بلا حلقة لا نهائية. */
-  const explicitPreview = options?.preview
-  const isUnifiedReport = !explicitPreview && !options?.fromPreview && html.includes('class="rp-body"')
+  /* الجولة السابعة: الطباعة الصامتة/إلى طابعة مسماة طلب **تنفيذ** لا معاينة
+     — كانت تمرّ على شرط `isUnifiedReport` فتُفتح نافذة معاينة بدل الطباعة
+     (مثلاً «طباعة تجريبية» أو طباعة تقارير آلية). */
+  const directPrint = Boolean(options?.silent || options?.printerName)
+  const explicitPreview = directPrint ? undefined : options?.preview
+  const isUnifiedReport = !directPrint && !explicitPreview && !options?.fromPreview && html.includes('class="rp-body"')
   if (explicitPreview || isUnifiedReport) {
-    const { openPrintPreview } = requirePreview()
     const match = /<title>([^<]*)<\/title>/.exec(html)
     /* معاينة حيّة لكل تقارير renderReportShell: إن لم يمرّر المستدعي
        `rebuild` خاصاً به نُعد بناء الغلاف من وسيطاته الأصلية بإعدادات
@@ -245,16 +243,27 @@ export function printHtml(
     return
   }
   const frame = document.createElement('iframe')
+  /* §الأمان الجولة السابعة: iframe الطباعة كان غير محصّن، فأي HTML يحوي
+     سكربتاً/معالج حدث (من بيانات مستخدم في تقرير) ينفّذ بأصل التطبيق
+     كاملاً بمجرد الضغط على زر «طباعة» داخل المعاينة. allow-same-origin
+     يُبقي contentDocument متاحاً لـ doc.write، وallow-modals يسمح بـ
+     contentWindow.print()، وبغياب صلاحية التشغيل تُعطَّل كل سكربتات الورقة. */
+  frame.setAttribute('sandbox', 'allow-same-origin allow-modals')
   frame.style.position = 'fixed'
   frame.style.left = '-9999px'
   frame.style.width = '0'
   frame.style.height = '0'
   document.body.appendChild(frame)
   const doc = frame.contentDocument
-  if (!doc) return
-  doc.open()
-  doc.write(html)
-  doc.close()
+  if (!doc) {
+    /* احتياط توافقي: إن منع متصفحٌ الوصول لـ contentDocument رغم
+       allow-same-origin، يبقى srcdoc يعرض الورقة داخل نفس الحصانة. */
+    frame.srcdoc = html
+  } else {
+    doc.open()
+    doc.write(html)
+    doc.close()
+  }
   let printed = false
   const doPrint = () => {
     if (printed) return

@@ -9,12 +9,12 @@ import { readFileSync, readdirSync } from 'node:fs'
 
 /* الجولة السادسة: الشعار والألوان تُستعاد من نسخة احتياطية وقد تحمل HTML/CSS
    خاماً داخل سمة src أو كتلة <style> — أضفناها لقائمة الحقول الخطرة. */
-const TEXT_FIELD = /\b(nameAr|descriptionAr|customerName|partyName|shopName|sellerName|buyerName|notes|address|phone|plateNumber|driverName|companyName|supplierName|itemName|branchName|employeeName|patientName|doctorName|clientName|projectName|vehicleName|expenseNameAr|serviceNameAr|terms|clauses|contractNumber|invoiceNumber|refCode|taxNumber|returnNumber|watermarkText|footerText|headerLines|logoDataUrl|accentColor|watermarkColor)\b/
+const TEXT_FIELD = /\b(nameAr|descriptionAr|customerName|partyName|shopName|sellerName|buyerName|notes|address|phone|plateNumber|driverName|companyName|supplierName|itemName|branchName|employeeName|patientName|doctorName|clientName|projectName|vehicleName|expenseNameAr|serviceNameAr|terms|clauses|contractNumber|invoiceNumber|refCode|taxNumber|returnNumber|watermarkText|footerText|headerLines|logoDataUrl|accentColor|watermarkColor|description|note|voucherNumber|chequeNumber|bankName|category|partyNameAr|itemDetails)\b/
 /** معرّفات تُمرَّر مهرَّبة إلى `kv` أو ثابتة — ليست حقول مستخدم خام */
 const ALLOWED_IDENTIFIERS = new Set(['label', 'value'])
 
 /** دوال تُنتج HTML مهرَّباً داخلياً أو أرقاماً فقط */
-const SAFE_CALLS = ['.map(esc)', 'esc(', 'escHtml(', 'escAttr(', 'safeHexColor(', 'safeLogoUrl(', 'safeColor(', 'fmt(', 'formatMinor(', 'amountInWords(', 'barcodeSvg(', 'headerLinesHtml(', 'whoBlock(', 'footer(', 'renderRows(', 'renderTotals(', 'kv(', 'labels.join(', 'money(', 'toFixed(', 'formatQty(', 'dateLabel', 'todayLocalIso(', 'localDateTimeLabel(', 'modelRows(', 'itemsHtml(']
+const SAFE_CALLS = ['.map(esc)', 'esc(', 'escapePrintText(', 'escHtml(', 'escAttr(', 'safeHexColor(', 'safeLogoUrl(', 'safeColor(', 'fmt(', 'formatMinor(', 'amountInWords(', 'barcodeSvg(', 'headerLinesHtml(', 'whoBlock(', 'footer(', 'renderRows(', 'renderTotals(', 'kv(', 'labels.join(', 'money(', 'toFixed(', 'formatQty(', 'dateLabel', 'todayLocalIso(', 'localDateTimeLabel(', 'modelRows(', 'itemsHtml(']
 
 /** يحذف استدعاءات دوال آمنة (مع أقواسها) من تعبير */
 function stripSafe(expr) {
@@ -48,13 +48,37 @@ const findings = []
 
 /* الجولة السادسة: غلاف التقارير الرسمية في core/ لم يكن مشمولاً بالفحص،
    فمرّ حقن accentColor/logoDataUrl خاماً. يُفحص الآن مع قوالب ui/print. */
+/* الجولة السابعة: صفحات تبني HTML الطباعة داخل قوالب نصية خاصة بها، ثم
+   صارت تُرسل إلى iframe المعاينة داخل التطبيق (بعد تعميم «معاينة قبل الطباعة»).
+   كانت البوابة تفحص ui/print وcore فقط فتمرّ قوالب الصفحات بلا تهريب. */
+const pageDir = new URL('../src/ui/pages/', import.meta.url)
+const RAW_HTML_PAGES = ['CoaPage.tsx', 'VouchersPage.tsx', 'HrPage.tsx', 'ScaleSettingsPage.tsx']
 const scanTargets = [
   ...readdirSync(dir).filter((f) => f.endsWith('.ts')).sort().map((f) => ({ label: f, url: new URL(f, dir) })),
   ...['reportPrint.ts', 'formalReport.ts'].map((f) => ({ label: `core/${f}`, url: new URL(f, coreDir) })),
+  ...RAW_HTML_PAGES.map((f) => ({ label: `pages/${f}`, url: new URL(f, pageDir) })),
 ]
+
+/** مناطق قوالب HTML الفعلية داخل الصفحات: من `printHtml(` إلى `</html>`.
+ *  الصفحات تحوي عشرات التعابير `${...}` في JSX والتوستات والعناوين — React
+ *  يهرّبها تلقائياً وليست HTML طباعة؛ فحصها يعطي إنذارات كاذبة. */
+function printHtmlRegions(src) {
+  const regions = []
+  let from = 0
+  for (;;) {
+    const call = src.indexOf('printHtml(', from)
+    if (call < 0) break
+    const close = src.indexOf('</html>', call)
+    const end = close >= 0 ? close + '</html>'.length : Math.min(src.length, call + 8000)
+    regions.push([call, end])
+    from = end
+  }
+  return regions
+}
 
 for (const { label: file, url } of scanTargets) {
   const src = readFileSync(url, 'utf8')
+  const regions = file.startsWith('pages/') ? printHtmlRegions(src) : []
   const exprs = []
   for (let i = 0; i < src.length - 1; i++) {
     if (src[i] !== '$' || src[i + 1] !== '{') continue
@@ -70,7 +94,9 @@ for (const { label: file, url } of scanTargets) {
       if (ch === '{' || ch === '(' || ch === '[') depth++
       else if (ch === '}' || ch === ')' || ch === ']') { depth--; if (depth === 0) break }
     }
-    if (depth === 0) { exprs.push([src.slice(i + 2, j), i]) }
+    if (depth === 0 && (!regions.length || regions.some(([a, b]) => i >= a && i < b))) {
+      exprs.push([src.slice(i + 2, j), i])
+    }
     i = j
   }
   let checked = 0

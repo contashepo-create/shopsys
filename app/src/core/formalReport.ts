@@ -106,7 +106,9 @@ export function formalReportBodyHtml(model: FormalReportModel): string {
       numCols: section.numCols,
       rows: section.rows.map(rowToStrings),
       rowClasses: section.rows.map((r) => r.emphasis === 'subtotal' ? 'sec' : r.emphasis ? 'total' : undefined),
-      totalRow: section.totalRow?.map((c) => typeof c === 'string' ? c : c.value),
+      /* صف الإجمالي يمرّ بنفس تحويل الصفوف العادية — كان يُسقط القيمة
+         الثانوية (sub) فيفقد التقرير المطبوع إيضاحاً موجوداً على الشاشة. */
+      totalRow: section.totalRow?.map((c) => typeof c === 'string' ? c : c.sub ? `${c.value} — ${c.sub}` : c.value),
     }))
   }
   if (model.notes?.length) {
@@ -126,6 +128,12 @@ export function formalReportBodyHtml(model: FormalReportModel): string {
 
 /** HTML كامل للطباعة/المعاينة */
 export function renderFormalReportHtml(model: FormalReportModel, settings: ReportPrintSettings): string {
+  /* `model.signatures` كان حقلًا معلناً بلا أثر: النسخة المطبوعة تقرأ
+     الإعداد العام فقط فيتجاهل بانِي التقرير طلبه الصريح. الآن يُحترم
+     الطلب الصريح (true/false) ثم يرجع للإعداد العام إن لم يُحدَّد. */
+  const effectiveSettings: ReportPrintSettings = model.signatures == null
+    ? settings
+    : { ...settings, showSignatures: model.signatures }
   return renderReportShell({
     title: model.title,
     subtitle: model.subtitle,
@@ -134,7 +142,7 @@ export function renderFormalReportHtml(model: FormalReportModel, settings: Repor
     printedBy: model.printedBy,
     headerLines: model.headerLines,
     bodyHtml: formalReportBodyHtml(model),
-    settings,
+    settings: effectiveSettings,
   })
 }
 

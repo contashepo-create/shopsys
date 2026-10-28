@@ -518,7 +518,9 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       proceed()
       return
     }
-    /* تبويب مسار: صفحة شاشتها نفسها تسأل عبر حارسها المسجّل */
+    /* تبويب مسار: صفحة شاشتها نفسها تسأل عبر حارسها المسجّل. هذا سلوك
+       مقصود ومُختبَر (window_actions_matrix) — صفحة مسار قد تحوي نموذجاً
+       بتعديلات غير محفوظة، فيجب ألا يُغلق تبويبها بلا سؤال. */
     if (guardNavigation(proceed)) return
     proceed()
   },
