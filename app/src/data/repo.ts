@@ -15,7 +15,7 @@ import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteK
 import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
-import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
+import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
@@ -41,6 +41,7 @@ import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignmen
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { buildInterBranchTransferLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE } from '../core/branchAccounting.ts'
 import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
+import { FinancialDataReviewError } from '../core/financialDataReview.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { SOURCE_REFERENCE_COLLECTIONS } from '../core/sourceTypes.ts'
 import type { SourceType } from '../core/ledger.ts'
@@ -3885,29 +3886,151 @@ function deniedBranchScope(state: DataState): DataState {
  * - عندما يكون العرض شاملاً (`activeBranch == null`) تُعاد `state` الأصلية كما هي بلا أي نسخ.
  * - عندما يُختار فرع محدد، تُعاد نسخة معزولة ومخزنة في `WeakMap` لضمان ثبات المراجع في React 19.
  */
-/** عرض طلبات المعمل المؤمن في دفتر العميل وفق القيد: مطالبة الجهة 1110
- * ليست ذمة 1104، والجزء الدائن للعميل في المرتجع يُقرأ من القيد نفسه. */
-function customerLabOrders(state: DataState): LabOrder[] {
-  const journal = new Map(state.journal.map((entry) => [entry.id, entry]))
-  const insured = new Set(state.insuranceClaims.filter((claim) => claim.source === 'lab_order').map((claim) => claim.sourceId))
-  return state.labOrders.map((order) => {
+/** القيد هو المرجع الوحيد لحصة المريض في مرتجع مؤمّن. لا نستبدل
+ * القيد المفقود بصفر ولا نفترض أن نصيب العميل يساوي إجمالي المرتجع. */
+function insuredRefundCustomerCredit(entry: JournalEntry | undefined, sourceType: 'lab_order' | 'clinic_visit', sourceId: number, refund: ServiceRefundRecord, label: string): number {
+  const fail = (): never => { throw new FinancialDataReviewError(label) }
+  if (!entry || entry.sourceType !== sourceType || entry.sourceId !== sourceId || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines)) return fail()
+  if (entry.sourceCollection != null && entry.sourceCollection !== (sourceType === 'lab_order' ? 'labOrders' : 'clinicVisits')) return fail()
+  if (!Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || entry.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit))) return fail()
+  try { assertBalanced(entry.lines) } catch { return fail() }
+  const customerLines = entry.lines.filter(l => l.accountCode === '1104')
+  const providerLines = entry.lines.filter(l => l.accountCode === '1110')
+  if ([...customerLines, ...providerLines].some(l => l.debit !== 0)) return fail()
+  const customer = customerLines.reduce((n, l) => n + l.credit, 0)
+  const provider = providerLines.reduce((n, l) => n + l.credit, 0)
+  if (!Number.isSafeInteger(customer) || !Number.isSafeInteger(provider) || customer + provider !== refund.amountMinor || (refund.customerCreditMinor != null && refund.customerCreditMinor !== customer)) return fail()
+  return customer
+}
+
+/** قيود تاريخية بلا فرع تُقبل فقط عند ربطها بالمستند المحدد في الفرع الحالي؛
+ * القيود ذات الفرع الصريح المخالف لا يجوز استعارتها. */
+function customerReviewJournal(raw: DataState): Map<number, JournalEntry> {
+  const branch = getEffectiveActiveBranch(raw)
+  return new Map(raw.journal.filter(entry => !branch || entry.branchId == null || entry.branchId === branch.id).map(entry => [entry.id, entry]))
+}
+
+function assertInsuredOriginal(entry: JournalEntry | undefined, sourceType: 'lab_order' | 'clinic_visit', sourceId: number, total: number, label: string): JournalEntry {
+  const fail = (): never => { throw new FinancialDataReviewError(label) }
+  const originalType = sourceType === 'lab_order' ? 'insured_sale' : 'clinic_visit'
+  const collection = sourceType === 'lab_order' ? 'labOrders' : 'clinicVisits'
+  if (!entry || entry.sourceType !== originalType || entry.sourceId !== sourceId || entry.reversedByEntryId != null || entry.reversesEntryId != null || (entry.sourceCollection != null && entry.sourceCollection !== collection) || !Array.isArray(entry.lines) || !Number.isSafeInteger(total) || total <= 0 || entry.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit))) return fail()
+  try { assertBalanced(entry.lines) } catch { return fail() }
+  const revenueAccount = sourceType === 'lab_order' ? '4106' : '4108'
+  const value = entry.lines.filter(l => l.accountCode === revenueAccount || l.accountCode === '2102').reduce((sum, l) => sum + l.credit - l.debit, 0)
+  if (value !== total) return fail()
+  return entry
+}
+
+function assertInsuredRefundRecords(refunds: readonly ServiceRefundRecord[], refunded: number, label: string): void {
+  const ids = new Set<number>()
+  let sum = 0
+  for (const refund of refunds) {
+    if (!Number.isSafeInteger(refund.journalEntryId) || ids.has(refund.journalEntryId) || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || (refund.mode !== 'customer_credit' && refund.mode !== 'cash')) throw new FinancialDataReviewError(label)
+    ids.add(refund.journalEntryId)
+    sum += refund.amountMinor
+  }
+  if (!Number.isSafeInteger(sum) || !Number.isSafeInteger(refunded) || refunded < 0 || sum !== refunded) throw new FinancialDataReviewError(label)
+}
+
+function customerLabOrders(state: DataState, raw: DataState, customerId: number): LabOrder[] {
+  const journal = customerReviewJournal(raw)
+  const patientIds = new Set(state.labPatients.filter(patient => patient.linkedCustomerId === customerId).map(patient => patient.id))
+  const insured = new Set(state.insuranceClaims.filter(claim => claim.source === 'lab_order').map(claim => claim.sourceId))
+  return state.labOrders.map(order => {
+    if (!patientIds.has(order.patientId)) return order
     const original = journal.get(order.journalEntryId)
-    const covered = insured.has(order.id) || (original?.sourceType === 'insured_sale' && original.sourceCollection === 'labOrders')
+    const covered = insured.has(order.id) || original?.sourceType === 'insured_sale'
+    if (!original && (order.payment !== 'cash' || (order.refunds ?? []).some(refund => refund.mode === 'customer_credit'))) throw new FinancialDataReviewError(`طلب المعمل ${order.orderNumber}`)
     if (!covered) return order
+    assertInsuredOriginal(original, 'lab_order', order.id, order.totals.totalMinor, `طلب المعمل ${order.orderNumber}`)
+    assertInsuredRefundRecords(order.refunds ?? [], order.refundedMinor ?? 0, `طلب المعمل ${order.orderNumber}`)
     return {
       ...order,
       paidMinor: order.totals.totalMinor,
-      refunds: (order.refunds ?? []).map((refund) => {
-        if (refund.mode !== 'customer_credit') return refund
-        const entry = journal.get(refund.journalEntryId)
-        // القيد المفقود أو غير المرتبط لا يُخمن منه نصيب العميل.
-        const amount = entry?.sourceType === 'lab_order' && entry.sourceId === order.id
-          ? entry.lines.filter((line) => line.accountCode === '1104').reduce((sum, line) => sum + line.credit - line.debit, 0)
-          : 0
-        return { ...refund, amountMinor: Math.max(0, Math.min(refund.amountMinor, amount)) }
+      refunds: (order.refunds ?? []).map(refund => refund.mode !== 'customer_credit' ? refund : {
+        ...refund,
+        amountMinor: insuredRefundCustomerCredit(journal.get(refund.journalEntryId), 'lab_order', order.id, refund, `طلب المعمل ${order.orderNumber}`),
       }),
     }
   })
+}
+
+function customerClinicVisits(state: DataState, raw: DataState, patientIds: ReadonlySet<number>): ClinicVisit[] {
+  const journal = customerReviewJournal(raw)
+  const insured = new Set(state.insuranceClaims.filter(claim => claim.source === 'clinic_visit').map(claim => claim.sourceId))
+  return state.clinicVisits.map(visit => {
+    if (!patientIds.has(visit.patientId)) return visit
+    const original = journal.get(visit.journalEntryId)
+    const evidence = visit.insuranceProviderId != null || insured.has(visit.id) || original?.lines?.some(line => line.accountCode === '1110' && line.debit > 0) || (visit.refunds ?? []).some(refund => refund.customerCreditMinor != null && refund.customerCreditMinor !== refund.amountMinor)
+    if (!evidence) return visit
+    assertInsuredOriginal(original, 'clinic_visit', visit.id, visit.totals.totalMinor, `زيارة العيادة ${visit.visitNumber}`)
+    assertInsuredRefundRecords(visit.refunds ?? [], visit.refundedMinor ?? 0, `زيارة العيادة ${visit.visitNumber}`)
+    return { ...visit, refunds: (visit.refunds ?? []).map(refund => refund.mode !== 'customer_credit' ? refund : {
+      ...refund,
+      customerCreditMinor: insuredRefundCustomerCredit(journal.get(refund.journalEntryId), 'clinic_visit', visit.id, refund, `زيارة العيادة ${visit.visitNumber}`),
+    }) }
+  })
+}
+
+/** قبل عرض أو تحصيل المطالبات، طابق عكس الجهة بالقيد؛ نقص القيد لا
+ * يُحوّل إلى مطالبات محصَّلة أو إلى مبلغ تقديري. */
+function assertClaimRefundIntegrity(state: DataState, raw: DataState, providerId: number, claimId?: number): void {
+  const journal = customerReviewJournal(raw)
+  for (const claim of state.insuranceClaims.filter(c => c.providerId === providerId && !c.settled && (claimId == null || c.id === claimId))) {
+    if (claim.source === 'sale') {
+      const label = `مطالبة بيع مؤمّن #${claim.id}`
+      const fail = (): never => { throw new FinancialDataReviewError(label) }
+      const original = journal.get(claim.sourceId)
+      if (!original || original.sourceType !== 'insured_sale' || original.sourceId !== claim.id || (original.sourceCollection != null && original.sourceCollection !== 'insuranceClaims') || original.reversesEntryId != null || !Array.isArray(original.lines) || original.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit))) return fail()
+      try { assertBalanced(original.lines) } catch { return fail() }
+      const providerLines = original.lines.filter(line => line.accountCode === '1110')
+      if (providerLines.some(line => line.credit !== 0)) return fail()
+      const provider = providerLines.reduce((sum, line) => sum + line.debit, 0)
+      const revenue = original.lines.filter(line => line.accountCode === '4101' || line.accountCode === '2102').reduce((sum, line) => sum + line.credit - line.debit, 0)
+      if (!Number.isSafeInteger(provider) || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(claim.reversedMinor ?? 0) || (claim.reversedMinor ?? 0) < 0 || revenue !== claim.totalMinor) return fail()
+      if (original.reversedByEntryId == null) {
+        if ((claim.reversedMinor ?? 0) !== 0 || claim.claimMinor !== provider) return fail()
+      } else {
+        const reversal = journal.get(original.reversedByEntryId)
+        if (!reversal || reversal.sourceType !== 'reversal' || reversal.reversesEntryId !== original.id || reversal.reversedByEntryId != null || !Array.isArray(reversal.lines) || reversal.lines.length !== original.lines.length || reversal.lines.some((line, index) => line.accountCode !== original.lines[index].accountCode || line.debit !== original.lines[index].credit || line.credit !== original.lines[index].debit) || claim.claimMinor !== 0 || (claim.reversedMinor ?? 0) !== provider) return fail()
+      }
+      continue
+    }
+    const sourceType = claim.source === 'lab_order' ? 'lab_order' : 'clinic_visit'
+    const doc = sourceType === 'lab_order' ? state.labOrders.find(o => o.id === claim.sourceId) : state.clinicVisits.find(v => v.id === claim.sourceId)
+    const label = sourceType === 'lab_order' ? `مطالبة طلب المعمل #${claim.sourceId}` : `مطالبة زيارة العيادة #${claim.sourceId}`
+    const fail = (): never => { throw new FinancialDataReviewError(label) }
+    if (!doc) return fail()
+    const refunds = doc.refunds ?? []
+    const refunded = doc.refundedMinor ?? 0
+    assertInsuredRefundRecords(refunds, refunded, label)
+    const reversed = claim.reversedMinor ?? 0
+    if (!Number.isSafeInteger(refunded) || refunded < 0 || !Number.isSafeInteger(reversed) || reversed < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0) return fail()
+    const original = assertInsuredOriginal(journal.get(doc.journalEntryId), sourceType, doc.id, doc.totals.totalMinor, label)
+    const originalProviderLines = original.lines.filter(l => l.accountCode === '1110')
+    if (originalProviderLines.some(l => !Number.isSafeInteger(l.debit) || l.debit < 0 || l.credit !== 0)) return fail()
+    const originalProvider = originalProviderLines.reduce((sum, l) => sum + l.debit, 0)
+    if (!Number.isSafeInteger(originalProvider) || originalProvider !== claim.claimMinor + reversed) return fail()
+    let refundTotal = 0, providerTotal = 0
+    for (const refund of refunds) {
+      const entry = journal.get(refund.journalEntryId)
+      if (!entry || entry.sourceType !== sourceType || entry.sourceId !== doc.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || entry.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit))) return fail()
+      if (entry.sourceCollection != null && entry.sourceCollection !== (sourceType === 'lab_order' ? 'labOrders' : 'clinicVisits')) return fail()
+      try { assertBalanced(entry.lines) } catch { return fail() }
+      const refundDebits = entry.lines.filter(l => l.accountCode === '4102' || l.accountCode === '2102').reduce((sum, l) => sum + l.debit - l.credit, 0)
+      if (refundDebits !== refund.amountMinor) return fail()
+      const providerLines = entry.lines.filter(l => l.accountCode === '1110')
+      if (providerLines.some(l => l.debit !== 0)) return fail()
+      const provider = providerLines.reduce((sum, l) => sum + l.credit, 0)
+      if (!Number.isSafeInteger(provider) || provider > refund.amountMinor) return fail()
+      if (refund.mode === 'customer_credit') insuredRefundCustomerCredit(entry, sourceType, doc.id, refund, label)
+      else if (refund.mode !== 'cash') return fail()
+      refundTotal += refund.amountMinor
+      providerTotal += provider
+    }
+    if (!Number.isSafeInteger(refundTotal) || !Number.isSafeInteger(providerTotal) || refundTotal !== refunded || providerTotal !== reversed) return fail()
+  }
 }
 
 export function getBranchScopedDataState(state: DataState): DataState {
@@ -8878,8 +9001,36 @@ export const useRawDataStore = create<DataState>()(
         // والمطالبة مفتوحة (تُحصَّل عن بيع أُلغي!): نرجع البضاعة ونغلق المطالبة معاً
         let updatedItems = state.items
         let updatedClaims = state.insuranceClaims
+        let updatedBatches = state.batches
         if (original.sourceType === 'insured_sale') {
+          if (original.sourceCollection === 'labOrders' || state.labOrders.some((order) => order.journalEntryId === original.id)) throw new Error('لا يُعكس قيد طلب معمل مؤمّن مباشرة — صححه من مستند المعمل ومطالبته')
           const claim = state.insuranceClaims.find((c) => c.source === 'sale' && c.sourceId === original.id)
+          if (!claim || (original.sourceCollection != null && original.sourceCollection !== 'insuranceClaims') || (original.sourceId != null && original.sourceId !== claim.id)) throw new Error('مطالبة البيع المؤمّن مفقودة أو غير مطابقة — راجع البيانات قبل العكس')
+          if (!Array.isArray(claim.saleLines) || claim.saleLines.some((line) => !state.items.some((item) => item.id === line.itemId) || !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isSafeInteger(line.valueMinor) || line.valueMinor < 0) || claim.saleLines.reduce((sum, line) => sum + line.valueMinor, 0) !== original.lines.filter(line => line.accountCode === '5101').reduce((sum, line) => sum + line.debit - line.credit, 0)) throw new Error('بيانات مخزون البيع المؤمّن غير مكتملة أو لا تطابق قيد التكلفة — راجعها قبل العكس')
+          if (claim.expiryBatches == null && claim.saleLines.some((line) => state.items.find((item) => item.id === line.itemId)?.trackExpiry)) throw new Error('دفعات الصلاحية للكمية المباعة غير محفوظة — راجعها قبل العكس')
+          if (claim.expiryBatches != null) {
+            if (!Array.isArray(claim.expiryBatches)) throw new Error('سجل دفعات الصلاحية غير صالح — راجعه قبل العكس')
+            const totals = new Map<number, number>()
+            const batchIds = new Set<number>()
+            for (const batch of claim.expiryBatches) {
+              const sold = claim.saleLines.find(line => line.itemId === batch.itemId)
+              if (!sold || !Number.isSafeInteger(batch.id) || batchIds.has(batch.id) || !Number.isFinite(batch.qty) || batch.qty <= 0 || (batch.expiryDate !== null && !isValidExpiryDate(batch.expiryDate))) throw new Error('سجل دفعات الصلاحية غير صالح — راجعه قبل العكس')
+              batchIds.add(batch.id)
+              totals.set(batch.itemId, Math.round(((totals.get(batch.itemId) ?? 0) + batch.qty) * 1000) / 1000)
+              if (totals.get(batch.itemId)! > sold.qty) throw new Error('كمية دفعات الصلاحية تتجاوز الكمية المباعة')
+            }
+            let freshBatchId = nextId(updatedBatches)
+            for (const batch of claim.expiryBatches) {
+              const current = updatedBatches.find(row => row.id === batch.id)
+              const same = current && current.itemId === batch.itemId && current.expiryDate === batch.expiryDate && current.purchaseId === batch.purchaseId && current.warehouseId === batch.warehouseId && current.lotNumber === batch.lotNumber && current.receivedAt === batch.receivedAt
+              if (same) updatedBatches = updatedBatches.map(row => row.id === current.id ? { ...row, qty: Math.round((row.qty + batch.qty) * 1000) / 1000 } : row)
+              else {
+                const id = current ? freshBatchId++ : batch.id
+                updatedBatches = [...updatedBatches, { ...batch, id }]
+                freshBatchId = Math.max(freshBatchId, id + 1)
+              }
+            }
+          }
           if (claim) {
             if (claim.settled) throw new Error('مطالبة هذا البيع حُصِّلت من جهة التأمين — لا يُعكس؛ سوِّ الفرق بسند صرف للجهة')
             // استرجاع المخزون بالكمية والقيمة التاريخية (متوسط مرجح بالقيمة — نفس نمط المرتجع)
@@ -8918,6 +9069,7 @@ export const useRawDataStore = create<DataState>()(
           ],
           vouchers: state.vouchers.map((voucher) => voucher.journalEntryId === original.id ? { ...voucher, reversalEntryId: newId } : voucher),
           items: updatedItems,
+          batches: updatedBatches,
           insuranceClaims: updatedClaims,
         })
         return reversal
@@ -11131,9 +11283,9 @@ export const useRawDataStore = create<DataState>()(
             rentalInvoices: state.rentalInvoices,
             customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
             customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
-            clinicVisits: state.clinicVisits, clinicCollections: state.clinicCollections,
+            clinicVisits: customerClinicVisits(state, get(), new Set(state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id))), clinicCollections: state.clinicCollections,
             linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
-            labOrders: customerLabOrders(state), linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
+            labOrders: customerLabOrders(state, get(), customerId), linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
             walletOps: state.walletOps,
             projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
             installmentPlans: state.installmentPlans,
@@ -12048,8 +12200,10 @@ export const useRawDataStore = create<DataState>()(
         const qtyByItem = new Map<number, number>()
         const valueByItem = new Map<number, number>()
         for (const l of args.lines) {
+          const item = state.items.find((row) => row.id === l.itemId)
+          if (!item) throw new Error('صنف غير موجود')
+          if (item.isService) continue
           qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + baseQty(l))
-          valueByItem.set(l.itemId, (valueByItem.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
         }
         for (const [itemId, qty] of qtyByItem) {
           const it = state.items.find((x) => x.id === itemId)
@@ -12067,16 +12221,17 @@ export const useRawDataStore = create<DataState>()(
           return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
         })
         // قيم المخزون الخارجة (للاسترجاع عند عكس القيد) تُبنى من التكلفة المثبتة لا المُمررة
-        valueByItem.clear()
-        for (const l of costedLines) {
-          if (state.items.find((x) => x.id === l.itemId)?.isService) continue
-          valueByItem.set(l.itemId, (valueByItem.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
+        for (const [itemId, qty] of qtyByItem) {
+          const item = state.items.find((row) => row.id === itemId)!
+          const currentValue = item.stockValueMinor ?? Math.round((item.stockQty ?? 0) * item.costMinor)
+          valueByItem.set(itemId, withdrawStockValue(item.stockQty ?? 0, currentValue, qty).withdrawnValueMinor)
         }
         // دفعات الصلاحية FEFO — الصيدلية نشاط expiry_batches أصلاً: بيع مؤمَّن لا يستهلك
         // الدفعات يترك أرصدة وهمية فيها (تنبيهات صلاحية كاذبة) — نفس سياسة postSale:
         // المنتهي محظور بيعه للمريض (لا تجاوز هنا — البيع المؤمَّن ليس له مسار override)
         const nowIso = localIsoTimestamp()
         let workingBatches = state.batches
+        const expiryBatches: StockBatch[] = []
         {
           const expiredNames: string[] = []
           for (const [itemId, qty] of qtyByItem) {
@@ -12084,6 +12239,11 @@ export const useRawDataStore = create<DataState>()(
             if (!it?.trackExpiry) continue
             const plan = planFefo(workingBatches, itemId, qty, nowIso)
             if (plan.touchesExpired) expiredNames.push(it.nameAr)
+            for (const allocation of plan.allocations) {
+              const batch = workingBatches.find(row => row.id === allocation.batchId)
+              if (!batch) throw new Error('دفعة الصلاحية المختارة غير موجودة')
+              expiryBatches.push({ ...batch, qty: allocation.qty })
+            }
             workingBatches = applyFefo(workingBatches, plan)
           }
           if (expiredNames.length) throw new Error(`أصناف منتهية الصلاحية لا تُباع — ${expiredNames.join('، ')} (أعدمها من شاشة الهالك)`)
@@ -12092,7 +12252,7 @@ export const useRawDataStore = create<DataState>()(
         const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
         const lines = buildInsuredEntry({
           patientShareMinor, providerShareMinor, revenueMinor: totals.taxBaseMinor,
-          revenueAccount: '4101', vatMinor: totals.taxMinor, cogsMinor: totals.cogsMinor,
+          revenueAccount: '4101', vatMinor: totals.taxMinor, cogsMinor: [...valueByItem.values()].reduce((sum, value) => sum + value, 0),
           treasury: args.treasury ?? '1101', providerName: provider.nameAr,
         })
         const now = localIsoTimestamp()
@@ -12110,6 +12270,7 @@ export const useRawDataStore = create<DataState>()(
           settled: false, settlementEntryId: null,
           // G10: سطور البيع بالوحدة الأساسية وقيمتها — ليسترجعها عكس القيد للمخزون
           saleLines: [...qtyByItem].map(([itemId, qty]) => ({ itemId, qty, valueMinor: valueByItem.get(itemId) ?? 0 })),
+          expiryBatches,
         }
         const updatedItems = state.items.map((it) =>
           qtyByItem.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyByItem.get(it.id)!) * 1000) / 1000 } : it,
@@ -12200,13 +12361,18 @@ export const useRawDataStore = create<DataState>()(
         return order
       },
       getClaimBalance: (providerId) => {
-        return getBranchScopedDataState(get()).insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
+        const state = getBranchScopedDataState(get())
+        assertClaimRefundIntegrity(state, get(), providerId)
+        return state.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
       },
       settleInsuranceClaims: (providerId, treasury = '1101', terminalPayment) => {
         const state = get()
-        const provider = state.insuranceProviders.find((p) => p.id === providerId)
-        if (!provider) throw new Error('الجهة غير موجودة')
-        const unsettled = state.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled)
+        const scoped = getBranchScopedDataState(state)
+        const provider = scoped.insuranceProviders.find((p) => p.id === providerId)
+        if (!provider) throw new Error('الجهة غير موجودة في الفرع الحالي')
+        assertClaimRefundIntegrity(scoped, state, providerId)
+        const unsettled = scoped.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled)
+        const unsettledIds = new Set(unsettled.map((claim) => claim.id))
         const total = unsettled.reduce((s2, c) => s2 + c.claimMinor, 0)
         const lines = buildClaimSettlementEntry(total, provider.nameAr, treasury) // يرمي لو صفر
         const now = localIsoTimestamp()
@@ -12228,7 +12394,7 @@ export const useRawDataStore = create<DataState>()(
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'insurance_claim', documentId: `${providerId}:${entryId}`, amountMinor: total, providerReference: terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPayment.cardLast4 })
         }
         set({
-          insuranceClaims: state.insuranceClaims.map((c) => (c.providerId === providerId && !c.settled ? { ...c, settled: true, settlementEntryId: entryId } : c)),
+          insuranceClaims: state.insuranceClaims.map((c) => (unsettledIds.has(c.id) ? { ...c, settled: true, settlementEntryId: entryId } : c)),
           journal: [...state.journal, entry],
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
@@ -14856,7 +15022,7 @@ export const useRawDataStore = create<DataState>()(
           customerId,
           settledOf: (docKey) => settled.get(docKey) ?? 0,
           allocateServiceRefunds: true,
-          labOrders: customerLabOrders(state),
+          labOrders: customerLabOrders(state, get(), customerId),
           linkedLabPatientIds: state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
           clinicVisits: state.clinicVisits,
           clinicCollections: state.clinicCollections,
@@ -14907,14 +15073,14 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         const labPatientIds = new Set(state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id))
-        for (const order of customerLabOrders(state)) if (labPatientIds.has(order.patientId)) addServiceCredits('lab', order.id, order.orderNumber, order.refunds)
+        for (const order of customerLabOrders(state, get(), customerId)) if (labPatientIds.has(order.patientId)) addServiceCredits('lab', order.id, order.orderNumber, order.refunds)
         for (const trip of state.trips) if (trip.customerId === customerId) addServiceCredits('trip', trip.id, trip.tripNumber, trip.refunds)
         for (const ticket of state.tickets) if (ticket.customerId === customerId && ticket.deliveredAt && ticket.totals) addServiceCredits('ticket', ticket.id, ticket.ticketNumber, ticket.refunds)
         for (const rental of state.rentalContracts) if (rental.customerId === customerId) addServiceCredits('rental', rental.id, rental.contractNumber, rental.refunds)
         // مرتجع الزيارة دائن على حساب العميل المرتبط بالمريض، ولا يظهر
         // تلقائياً في مستند الزيارة لأن تحصيلات العيادة مسجلة على المريض.
         const clinicPatientIds = new Set(state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id))
-        for (const visit of state.clinicVisits) {
+        for (const visit of customerClinicVisits(state, get(), clinicPatientIds)) {
           if (!clinicPatientIds.has(visit.patientId)) continue
           for (const refund of visit.refunds ?? []) {
             const credit = refund.customerCreditMinor ?? refund.amountMinor
@@ -15974,7 +16140,7 @@ export const useRawDataStore = create<DataState>()(
       getPatientBalance: (patientId) => {
         const state = getBranchScopedDataState(get())
         // مرتجعات الزيارات «على حساب المريض» تخفض ذمته مثل التحصيلات (مراجعة المرتجعات)
-        const creditRefunds = state.clinicVisits
+        const creditRefunds = customerClinicVisits(state, get(), new Set([patientId]))
           .filter((v) => v.patientId === patientId)
           .flatMap((v) => v.refunds ?? [])
           .filter((r) => r.mode === 'customer_credit')
@@ -17620,6 +17786,11 @@ export const useRawDataStore = create<DataState>()(
         if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor > order.totals.totalMinor - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
         const targetProvider = claim && order.totals.totalMinor > 0 ? Math.round(claimOriginal * (priorRefund + args.amountMinor) / order.totals.totalMinor) : 0
         if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
+        if (claim && !claim.settled) {
+          const scoped = getBranchScopedDataState(state)
+          if (!scoped.insuranceClaims.some((item) => item.id === claim.id)) throw new Error('المطالبة ليست في الفرع الحالي')
+          assertClaimRefundIntegrity(scoped, state, claim.providerId, claim.id)
+        }
         const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor, targetProvider - priorProvider)) : 0
         const patientShare = args.amountMinor - providerShare
         if (args.mode === 'customer_credit' && patientShare > 0 && (patient?.linkedCustomerId == null || !state.customers.some((customer) => customer.id === patient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
@@ -17690,7 +17861,9 @@ export const useRawDataStore = create<DataState>()(
         const visit = state.clinicVisits.find((v) => v.id === args.visitId)
         if (!visit) throw new Error('الزيارة غير موجودة')
         const claim = state.insuranceClaims.find((item) => item.source === 'clinic_visit' && item.sourceId === visit.id)
-        if (visit.insuranceProviderId != null && !claim) throw new Error('مطالبة الزيارة المؤمّنة مفقودة — راجع البيانات قبل ترحيل المرتجع')
+        const originalVisitEntry = state.journal.find((entry) => entry.id === visit.journalEntryId)
+        const insuranceEvidence = visit.insuranceProviderId != null || originalVisitEntry?.lines?.some(line => line.accountCode === '1110' && line.debit > 0) || (visit.refunds ?? []).some(refund => refund.customerCreditMinor != null && refund.customerCreditMinor !== refund.amountMinor)
+        if (insuranceEvidence && !claim) throw new Error('مطالبة الزيارة المؤمّنة مفقودة — راجع البيانات قبل ترحيل المرتجع')
         if (claim?.settled) throw new Error('مطالبة التأمين محصلة بالفعل — سوِّ الرد مع الجهة قبل ترحيل المرتجع')
         const priorProvider = claim?.reversedMinor ?? 0
         const providerOriginal = claim ? claim.claimMinor + priorProvider : 0
@@ -17700,6 +17873,11 @@ export const useRawDataStore = create<DataState>()(
         // الحصة تراكمية حتى يعود التقريب في المرتجع الأخير إلى الأصل بدقة.
         const targetProvider = claim && total > 0 ? Math.round(providerOriginal * (priorRefund + args.amountMinor) / total) : 0
         if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
+        if (claim && !claim.settled) {
+          const scoped = getBranchScopedDataState(state)
+          if (!scoped.insuranceClaims.some((item) => item.id === claim.id)) throw new Error('المطالبة ليست في الفرع الحالي')
+          assertClaimRefundIntegrity(scoped, state, claim.providerId, claim.id)
+        }
         const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor, targetProvider - priorProvider)) : 0
         const patientShare = args.amountMinor - providerShare
         const linkedPatient = state.clinicPatients.find((patient) => patient.id === visit.patientId)

@@ -13,6 +13,7 @@
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
 import type { Minor } from './money.ts'
+import type { StockBatch } from './batches.ts'
 
 export interface InsuranceProvider {
   id: number
@@ -55,6 +56,8 @@ export interface InsuranceClaim {
   reversedMinor?: Minor
   /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
   saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
+  /** لقطة الكمية المصروفة من دفعات الصلاحية — لازمة لإرجاع نفس تواريخها عند إلغاء البيع. */
+  expiryBatches?: StockBatch[]
 }
 
 /**

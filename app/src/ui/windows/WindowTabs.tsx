@@ -17,6 +17,7 @@ import { isDesktopFreeWindows } from '../../data/desktopBridge.ts'
 import { useWindowStore, type AppWindowTab } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { WindowViewContent } from './WindowHost.tsx'
+import { FinancialDataReviewBoundary } from '../components/FinancialDataReviewBoundary.tsx'
 
 const barCls = 'window-tab-bar flex items-center gap-1 px-2 pt-1 border-b border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-900/50 overflow-x-auto shrink-0'
 const tabBase = 'group flex items-center gap-1.5 h-7 px-2.5 rounded-t-lg border border-b-0 cursor-pointer text-[11px] font-bold whitespace-nowrap transition-colors'
@@ -35,7 +36,7 @@ export function ActiveViewTab({ tab }: { tab: AppWindowTab }) {
   return (
     <div ref={bodyRef} className="h-full min-h-0" data-view-tab={tab.id} data-view-tab-kind={tab.kind}>
       <WindowHostProvider windowId={tab.id} props={tab.props ?? {}}>
-        <WindowViewContent kind={tab.kind} />
+        <FinancialDataReviewBoundary><WindowViewContent kind={tab.kind} /></FinancialDataReviewBoundary>
       </WindowHostProvider>
     </div>
   )

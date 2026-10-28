@@ -37,6 +37,7 @@ import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
 import { LEGAL_VERSION } from './core/legal.ts'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
+import { FinancialDataReviewBoundary } from './ui/components/FinancialDataReviewBoundary.tsx'
 
 import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
 import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
@@ -309,11 +310,14 @@ function parseTabLocation(path: string): Partial<Location> {
 /** نسخة واحدة من الشجرة لمسار بعينه (موقع صحيح داخلها لـ useSearchParams/useParams) */
 function RouteTreeForPath({ path }: { path?: string }) {
   const location = path ? parseTabLocation(path) : undefined
+  const here = useLocation()
   return (
     <div className="h-full min-h-0" data-route-tree={path ?? 'current'}>
-      <Suspense fallback={routeFallback}>
-        <Routes location={location}>{APP_ROUTES}</Routes>
-      </Suspense>
+      <FinancialDataReviewBoundary resetKey={path ?? `${here.pathname}${here.search}`}>
+        <Suspense fallback={routeFallback}>
+          <Routes location={location}>{APP_ROUTES}</Routes>
+        </Suspense>
+      </FinancialDataReviewBoundary>
     </div>
   )
 }
