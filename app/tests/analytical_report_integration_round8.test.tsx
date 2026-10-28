@@ -193,7 +193,9 @@ it('سجل إشعار تاريخي ناقص يحجب النتيجة وينبه �
   useDataStore.setState({ projectExtracts: useDataStore.getState().projectExtracts.map(e => e.id === extract.id ? { ...e, refundedMinor: 4000, refundedTaxMinor: 0 } : e) })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(screen.getByText(/سجلات إشعارات المستخلصات ناقصة/)).toBeTruthy()
-  expect(indicator('صافي نتيجة المشروع حتى تاريخه')).toBe('تتطلب مراجعة إشعارات المستخلصات')
+  for (const label of ['صافي نتيجة المشروع حتى تاريخه', 'قيمة الأعمال المستخلصة', 'صافي المستحق على المستخلصات', 'إجمالي ما تم تحصيله', 'المتبقي من التحصيل', 'نسبة التحصيل']) {
+    expect(indicator(label)).toBe('تتطلب مراجعة إشعارات المستخلصات')
+  }
 })
 
 it('مقاصة مقدمة وإشعار دائن وضريبة تخفض الإيراد والذمة دون احتساب الإشعار تحصيلاً', () => {

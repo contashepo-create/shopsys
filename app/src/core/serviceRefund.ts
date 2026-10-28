@@ -24,6 +24,8 @@ export interface ServiceRefundRecord {
   mode: 'cash' | 'customer_credit'
   reason: string
   journalEntryId: number
+  /** نصيب العميل في رد مؤمن على الحساب؛ الباقي يخص مطالبة الجهة. */
+  customerCreditMinor?: Minor
   /** موافقة المشرف (نمط POS العالمي): من اعتمد ومن نفّذ — undefined = سجل قديم */
   approvedBy?: string
   requestedBy?: string
@@ -57,13 +59,16 @@ export function buildServiceRefundEntry(args: {
   const { refundValueMinor: v, deliveredGrandMinor: grand, deliveredTaxMinor: tax } = args
   if (!Number.isInteger(v) || v <= 0) throw new Error('قيمة الاسترداد يجب أن تكون موجبة')
   if (!Number.isInteger(grand) || grand <= 0) throw new Error('إجمالي المستند غير صالح')
+  if (!Number.isSafeInteger(tax) || tax < 0 || tax > grand || !Number.isSafeInteger(args.priorRefundedMinor) || args.priorRefundedMinor < 0 || args.priorRefundedMinor > grand || !Number.isSafeInteger(args.priorRefundedTaxMinor) || args.priorRefundedTaxMinor < 0 || args.priorRefundedTaxMinor > tax) throw new Error('رصيد مرتجعات المستند أو ضريبته غير صالح — راجع السجلات السابقة')
   const remaining = grand - args.priorRefundedMinor
   if (v > remaining) throw new Error(`قيمة الاسترداد تتجاوز المتبقي القابل للرد (${remaining})`)
   const providerShare = args.providerShareMinor ?? 0
   if (!Number.isInteger(providerShare) || providerShare < 0) throw new Error('نصيب جهة التأمين لا يكون سالباً')
   if (providerShare > v) throw new Error('نصيب جهة التأمين لا يتجاوز قيمة الاسترداد')
-  // حصة الضريبة النسبية بسقف ما لم يُعكس بعد (نفس منطق N2 في مرتجع الشراء)
-  const taxShare = tax > 0 ? Math.min(Math.round((tax * v) / grand), tax - args.priorRefundedTaxMinor) : 0
+  // تحسب الحصة على المردود التراكمي؛ تقريب كل جزء وحده كان يضيع
+  // ضريبة المستند عند تكرار مرتجعات صغيرة، حتى عند رد المبلغ كاملاً.
+  const taxTarget = tax > 0 ? Math.round((tax * (args.priorRefundedMinor + v)) / grand) : 0
+  const taxShare = Math.max(0, Math.min(taxTarget - args.priorRefundedTaxMinor, tax - args.priorRefundedTaxMinor))
   const base = v - taxShare
   const lines: JournalLine[] = [
     { accountCode: '4102', debit: base, credit: 0, note: args.note },

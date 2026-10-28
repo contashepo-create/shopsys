@@ -14917,8 +14917,9 @@ export const useRawDataStore = create<DataState>()(
         for (const visit of state.clinicVisits) {
           if (!clinicPatientIds.has(visit.patientId)) continue
           for (const refund of visit.refunds ?? []) {
-            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0) continue
-            credits.push({ key: `clinic-credit:${refund.journalEntryId}`, date: refund.date, number: visit.visitNumber, description: 'مرتجع زيارة عيادة (توزيع تقديري)', amountMinor: refund.amountMinor, specificDocKey: `visit:${visit.id}` })
+            const credit = refund.customerCreditMinor ?? refund.amountMinor
+            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(credit) || credit <= 0) continue
+            credits.push({ key: `clinic-credit:${refund.journalEntryId}`, date: refund.date, number: visit.visitNumber, description: 'مرتجع زيارة عيادة (توزيع تقديري)', amountMinor: credit, specificDocKey: `visit:${visit.id}` })
           }
         }
         // خدمة المغسلة محصلة كاملة عند التسليم؛ كل إشعار رصيد منها دائن
@@ -15977,7 +15978,7 @@ export const useRawDataStore = create<DataState>()(
           .filter((v) => v.patientId === patientId)
           .flatMap((v) => v.refunds ?? [])
           .filter((r) => r.mode === 'customer_credit')
-          .map((r) => ({ amountMinor: r.amountMinor }))
+          .map((r) => ({ amountMinor: r.customerCreditMinor ?? r.amountMinor }))
         return patientBalance(
           state.clinicVisits.filter((v) => v.patientId === patientId).map((v) => ({ dueMinor: v.totals.dueMinor })),
           [...state.clinicCollections.filter((c) => c.patientId === patientId).map((c) => ({ amountMinor: c.amountMinor })), ...creditRefunds],
@@ -17609,23 +17610,17 @@ export const useRawDataStore = create<DataState>()(
         const order = state.labOrders.find((o) => o.id === args.orderId)
         if (!order) throw new Error('الطلب غير موجود')
         const patient = state.labPatients.find((pt) => pt.id === order.patientId)
-        if (args.mode === 'customer_credit' && order.payment !== 'cash' && patient?.linkedCustomerId == null && order.payment !== 'credit') {
-          throw new Error('لا حساب عميل مرتبط — الاسترداد نقدي فقط')
-        }
-        if (args.mode === 'customer_credit' && order.payment === 'cash' && patient?.linkedCustomerId == null) {
-          throw new Error('طلب نقدي لمريض غير مرتبط بعميل — الاسترداد نقدي فقط')
-        }
-        // G9: طلب بتغطية تأمينية — نصيب الجهة من المردود يخفض المطالبة (1110)
-        // لا يُرد نقداً (لم يُحصَّل قط): نسبةً وتناسباً بسقف غير المعكوس وغير المسوَّى
         const claim = state.insuranceClaims.find((c) => c.source === 'lab_order' && c.sourceId === order.id)
-        let providerShare = 0
-        if (claim && !claim.settled && order.totals.totalMinor > 0) {
-          const claimOriginal = claim.claimMinor + (claim.reversedMinor ?? 0)
-          providerShare = Math.min(
-            Math.round((claimOriginal * args.amountMinor) / order.totals.totalMinor),
-            claim.claimMinor,
-          )
-        }
+        const originalEntry = state.journal.find((entry) => entry.id === order.journalEntryId)
+        if (!claim && originalEntry?.sourceType === 'insured_sale' && originalEntry.sourceCollection === 'labOrders') throw new Error('مطالبة طلب المعمل المؤمّن مفقودة — راجع البيانات قبل المرتجع')
+        if (claim?.settled) throw new Error('مطالبة التأمين محصلة بالفعل — سوِّ الرد مع الجهة قبل ترحيل المرتجع')
+        const priorProvider = claim?.reversedMinor ?? 0
+        const claimOriginal = claim ? claim.claimMinor + priorProvider : 0
+        const providerShare = claim && order.totals.totalMinor > 0
+          ? Math.max(0, Math.min(claim.claimMinor, Math.round(claimOriginal * ((order.refundedMinor ?? 0) + args.amountMinor) / order.totals.totalMinor) - priorProvider))
+          : 0
+        const patientShare = args.amountMinor - providerShare
+        if (args.mode === 'customer_credit' && patientShare > 0 && (patient?.linkedCustomerId == null || !state.customers.some((customer) => customer.id === patient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
           deliveredGrandMinor: order.totals.totalMinor,
@@ -17644,10 +17639,10 @@ export const useRawDataStore = create<DataState>()(
         const reversedSoFar = order.commissionReversedMinor ?? 0
         const originalCommission = order.commissionMinor + reversedSoFar
         if (originalCommission > 0 && !order.commissionPaid) {
-          commissionShare = Math.min(
-            Math.round((originalCommission * args.amountMinor) / order.totals.totalMinor),
+          commissionShare = Math.max(0, Math.min(
+            Math.round((originalCommission * ((order.refundedMinor ?? 0) + args.amountMinor)) / order.totals.totalMinor) - reversedSoFar,
             originalCommission - reversedSoFar,
-          )
+          ))
           if (commissionShare > 0) {
             lines.push({ accountCode: '2105', debit: commissionShare, credit: 0, note: 'عكس عمولة إحالة (مرتجع)' })
             lines.push({ accountCode: '5109', debit: 0, credit: commissionShare, note: 'تخفيض مصروف عمولات' })
@@ -17677,12 +17672,12 @@ export const useRawDataStore = create<DataState>()(
         if (args.terminalRefund) {
           const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(order.id))
           if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
-          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          if (args.mode !== 'cash' || patientShare <= 0) throw new Error('رد تحصيل الماكينة يتطلب رداً نقدياً موجباً للمريض')
           const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
           if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
           if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
-          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
-          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${order.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', patientShare)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${order.id}:refund:${entryId}`, amountMinor: patientShare, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
         set({ labOrders: state.labOrders.map((o) => (o.id === order.id ? updated : o)), insuranceClaims: updatedClaims, journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
@@ -17692,11 +17687,19 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const visit = state.clinicVisits.find((v) => v.id === args.visitId)
         if (!visit) throw new Error('الزيارة غير موجودة')
-        // المبلغ المؤمن لا يُرد بكامله من نقدية أو حساب المريض: نصيب
-        // الجهة يتطلب معالجة المطالبة. نوقف الترحيل بدلاً من قيد خاطئ.
-        if (state.insuranceClaims.some((claim) => claim.source === 'clinic_visit' && claim.sourceId === visit.id)) throw new Error('مرتجع الزيارة المؤمّنة غير مدعوم حالياً — راجع مطالبة التأمين محاسبياً')
+        const claim = state.insuranceClaims.find((item) => item.source === 'clinic_visit' && item.sourceId === visit.id)
+        if (visit.insuranceProviderId != null && !claim) throw new Error('مطالبة الزيارة المؤمّنة مفقودة — راجع البيانات قبل ترحيل المرتجع')
+        if (claim?.settled) throw new Error('مطالبة التأمين محصلة بالفعل — سوِّ الرد مع الجهة قبل ترحيل المرتجع')
+        const priorProvider = claim?.reversedMinor ?? 0
+        const providerOriginal = claim ? claim.claimMinor + priorProvider : 0
+        const total = visit.totals.totalMinor
+        // الحصة تراكمية حتى يعود التقريب في المرتجع الأخير إلى الأصل بدقة.
+        const providerShare = claim && total > 0
+          ? Math.max(0, Math.min(claim.claimMinor, Math.round(providerOriginal * ((visit.refundedMinor ?? 0) + args.amountMinor) / total) - priorProvider))
+          : 0
+        const patientShare = args.amountMinor - providerShare
         const linkedPatient = state.clinicPatients.find((patient) => patient.id === visit.patientId)
-        if (args.mode === 'patient_credit' && (!linkedPatient?.linkedCustomerId || !state.customers.some((customer) => customer.id === linkedPatient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
+        if (args.mode === 'patient_credit' && patientShare > 0 && (!linkedPatient?.linkedCustomerId || !state.customers.some((customer) => customer.id === linkedPatient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
           deliveredGrandMinor: visit.totals.totalMinor,
@@ -17704,7 +17707,7 @@ export const useRawDataStore = create<DataState>()(
           priorRefundedMinor: visit.refundedMinor ?? 0,
           priorRefundedTaxMinor: visit.refundedTaxMinor ?? 0,
           mode: args.mode === 'cash' ? 'cash' : 'customer_credit',
-          treasury: args.treasury,
+          treasury: args.treasury, providerShareMinor: providerShare,
           note: `مرتجع زيارة ${visit.visitNumber}`,
         })
         const patient = state.clinicPatients.find((pt) => pt.id === visit.patientId)
@@ -17720,20 +17723,20 @@ export const useRawDataStore = create<DataState>()(
           ...visit,
           refundedMinor: (visit.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (visit.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(visit.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode === 'cash' ? 'cash' : 'customer_credit', reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
+          refunds: [...(visit.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode === 'cash' ? 'cash' : 'customer_credit', ...(args.mode === 'patient_credit' ? { customerCreditMinor: patientShare } : {}), reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         let terminalRefund: PaymentTerminalTransaction | null = null
         if (args.terminalRefund) {
-          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(visit.patientId))
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(claim ? visit.id : visit.patientId))
           if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
-          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          if (args.mode !== 'cash' || patientShare <= 0) throw new Error('رد تحصيل الماكينة يتطلب رداً نقدياً موجباً للمريض')
           const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
           if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
           if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
-          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
-          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${visit.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', patientShare)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${visit.id}:refund:${entryId}`, amountMinor: patientShare, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
-        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
+        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), insuranceClaims: providerShare > 0 && claim ? state.insuranceClaims.map((item) => item.id === claim.id ? { ...item, claimMinor: item.claimMinor - providerShare, reversedMinor: (item.reversedMinor ?? 0) + providerShare } : item) : state.insuranceClaims, journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 

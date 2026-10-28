@@ -55,7 +55,7 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, paymentTerminalTransactions, registerLabOrder, advanceLabTest, acknowledgeCriticalLabResult, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, paymentTerminalTransactions, registerLabOrder, advanceLabTest, acknowledgeCriticalLabResult, refundLabOrder, insuranceProviders, insuranceClaims, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -458,7 +458,7 @@ export function LabOrdersPage() {
           <div className="space-y-4 text-sm">
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">المريض</div><div className="font-black">{viewing.patientName}</div></div>
-              <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">السداد</div><div className="font-black">{viewing.payment === 'cash' ? 'نقدي' : viewing.payment === 'mixed' ? 'جزئي' : 'آجل'}</div></div>
+              <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">السداد</div><div className="font-black">{insuranceClaims.some((claim) => claim.source === 'lab_order' && claim.sourceId === viewing.id) ? 'تغطية تأمينية' : viewing.payment === 'cash' ? 'نقدي' : viewing.payment === 'mixed' ? 'جزئي' : 'آجل'}</div></div>
               <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">الإجمالي</div><div className="font-black text-violet-600">{fmt(viewing.totals.totalMinor)} {cur.symbol}</div></div>
             </div>
             {viewing.commissionMinor > 0 && (
@@ -473,7 +473,7 @@ export function LabOrdersPage() {
               fmt={fmt}
               terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(viewing.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.payment !== 'cash' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
-              hint="فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
+              hint={insuranceClaims.some((claim) => claim.source === 'lab_order' && claim.sourceId === viewing.id) ? 'يخفض المرتجع نصيب التأمين من المطالبة ويرد للمريض نصيبه فقط؛ المطالبة المحصّلة تتطلب مراجعة الجهة.' : 'فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً.'}
               refundableItems={viewing.tests.map((t, ti) => ({ key: `test:${ti}`, label: `${t.nameAr} (${t.code})`, valueMinor: t.priceMinor }))}
               onSubmit={(a) => {
                 try {
