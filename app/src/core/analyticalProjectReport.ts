@@ -153,19 +153,31 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
   totalMinor: Minor
   running: Minor[]
   targetMinor: Minor
+  /** سندات قبض قديمة بلا توزيعات — لا يمكن نسبها لمشروع بعينه */
+  unattributedVouchers: number
+  unattributedVoucherMinor: Minor
 } {
   const extractKeys = new Set(src.extractDocKeys ?? [])
   const projectScoped = extractKeys.size > 0
   const rows: ChequeCollectionRow[] = []
+  let unattributedVouchers = 0
+  let unattributedVoucherMinor = 0
 
   for (const v of src.vouchers ?? []) {
     if (v.reversed) continue
     /* سندات القبض قد تخص فواتير أخرى لنفس العميل؛ إن وُجدت التوزيعات نأخذ
-       نصيب مستخلصات هذا المشروع وحدها فلا يظهر تحصيل غريب في «المتبقي». */
+       نصيب مستخلصات هذا المشروع وحدها فلا يظهر تحصيل غريب في «المتبقي».
+       الجولة السادسة: السند القديم **بلا توزيعات** كان يُدرج بكامل قيمته في
+       كل مشروع للعميل نفسه، مع أن دفتر الذمم لم يخصمه من أي مستخلص ⇒ تحصيل
+       وهمي مكرّر. لا يجوز نسبه لمشروع بعينه؛ يُستثنى ويُذكر في الملاحظات. */
     let amount = v.amountMinor
-    if (projectScoped && v.allocations) {
+    if (projectScoped) {
+      if (!v.allocations) {
+        unattributedVouchers += 1
+        unattributedVoucherMinor += Math.max(0, v.amountMinor)
+        continue
+      }
       amount = v.allocations.filter((a) => extractKeys.has(a.docKey)).reduce((s, a) => s + a.appliedMinor, 0)
-      if (amount <= 0) continue
     }
     if (amount <= 0) continue
     rows.push({ date: v.date, number: v.number, description: v.description ?? 'سند قبض', method: 'نقدي / بنكي', status: 'محصّل', amountMinor: amount })
@@ -249,7 +261,7 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
     running.push(Math.max(0, remaining))
   }
   const totalMinor = rows.filter((r) => !r.excluded).reduce((s, r) => s + r.amountMinor, 0)
-  return { rows, totalMinor, running, targetMinor }
+  return { rows, totalMinor, running, targetMinor, unattributedVouchers, unattributedVoucherMinor }
 }
 
 /** يبني نموذج التقرير الرسمي الكامل (التصميم ③) */
@@ -322,6 +334,9 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     if (totalActiveCheques > src.chequeAttributedMinor + 1) {
       notes.push(`الشيكات الواردة للعميل (${fmt(totalActiveCheques)}) تخص مستندات أخرى أيضاً؛ المُخصوم فعلاً من مستخلصات هذا المشروع ${fmt(src.chequeAttributedMinor)} فقط — والباقي معروض بصفرة «خارج النطاق» للإيضاح.`)
     }
+  }
+  if (collections.unattributedVouchers > 0) {
+    notes.push(`سندات قبض غير موزّعة على مستندات (${collections.unattributedVouchers} بقيمة ${fmt(collections.unattributedVoucherMinor)}) لم تُحتسب ضمن تحصيلات هذا المشروع — راجع كشف حساب العميل لتوزيعها.`)
   }
   notes.push('التسوية الختامية معادلتان مستقلتان: ① المستحق − التحصيلات = المتبقي (ذمة العميل) · ② الإيراد المستخلص − المصروفات = نتيجة المشروع. لا تُطرح المصروفات من رصيد التحصيل.')
   if (Math.abs(collections.totalMinor - collected) > 1) {

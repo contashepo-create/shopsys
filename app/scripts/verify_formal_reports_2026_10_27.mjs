@@ -101,6 +101,20 @@ const desktopMain = readFileSync(join(root, '..', 'desktop', 'main.ts'), 'utf8')
 ok('دعم سطح المكتب: إشارة إلغاء مستقلة لكل محاولة', /for \(const doFetch of attempts\) \{[\s\S]{0,500}new AbortController\(\)/.test(desktopMain) && /clearTimeout\(timer\)/.test(desktopMain))
 ok('كشف العميل يستثني الشيك الملغي كدفتر الذمم', /c\.status === 'cancelled'\) continue/.test(read('core/statements.ts')))
 
+/* ⑦ الجولة السادسة: اكتمال التصدير + منع الحقن + سلامة السندات غير الموزّعة */
+const formalView = read('ui/components/FormalReport.tsx')
+ok('H1 — تصدير Excel يشمل الملخص/التسوية/البيانات/الملاحظات/الإجمالي',
+  /add\('التقرير'/.test(formalView) && /الملخص المالي/.test(formalView) && /التسوية الختامية/.test(formalView) && /ملاحظات المراجعة/.test(formalView) && /— الإجمالي/.test(formalView))
+ok('H2 — لا BOM مكرر في التصدير (toCsv يضيفه وحده)',
+  !/new Blob\(\['\\ufeff' \+ csv\]/.test(formalView) && /new Blob\(\[csv\]/.test(formalView))
+ok('H3 — التصدير يحفظ القيمة الثانوية', /cellText/.test(formalView) && /node\.sub/.test(formalView))
+ok('H4 — السند غير الموزّع لا يُنسب للمشروع', /unattributedVouchers/.test(analyticalCore) && /if \(!v\.allocations\)/.test(analyticalCore) && /سندات قبض غير موزّعة/.test(analyticalCore))
+ok('H5 — الصفوف المؤكدة تصل للطباعة', /rowClasses/.test(read('core/formalReport.ts')) && /SAFE_ROW_CLASSES/.test(reportPrint))
+ok('H6 — الشعار واللون يُطبَّعان قبل الطباعة', /safeLogoUrl/.test(reportPrint) && /safeHexColor/.test(reportPrint) && /safeLogoUrl/.test(read('ui/print/printLabReport.ts')))
+ok('H7 — مهرّب السمات escAttr يهرّب علامات التنصيص', /export function escAttr/.test(reportPrint) && /&quot;/.test(reportPrint) && /&#39;/.test(reportPrint) && /escAttr\(logoSrc\)/.test(reportPrint))
+ok('بوابة التهريب تغطي نواة التقارير الرسمية', /reportPrint\.ts/.test(readFileSync(join(root, 'verify_print_escaping.mjs'), 'utf8')))
+ok('اختبارات الجولة السادسة موجودة', existsSync(join(root, '..', 'tests', 'report_hardening_round6.test.tsx')))
+
 for (const c of checks) {
   if (c.ok) passed++
   else console.error(`✗ ${c.name}`)

@@ -9,9 +9,10 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { useToast } from './ui.tsx'
 import { openPrintPreview } from './printPreviewStore.ts'
 import { toCsv } from '../../core/security.ts'
+import { safeLogoUrl } from '../../core/reportPrint.ts'
 import {
   FORMAL_REPORT_CSS, renderFormalReportHtml, toneClass,
-  type FormalReportModel, type FormalReportRow, type FormalReportCell, type FormalReportSection,
+  type FormalReportModel, type FormalReportCell, type FormalReportSection,
 } from '../../core/formalReport.ts'
 
 interface Props {
@@ -28,12 +29,19 @@ interface Props {
   showSignatures?: boolean
 }
 
-function cell(node: string | FormalReportCell, numeric: boolean, row: FormalReportRow) {
+/** نص الخلية كما يظهر في الطباعة: القيمة + قيمتها الثانوية (اسم المورد…) */
+function cellText(node: string | FormalReportCell | undefined): string {
+  if (node == null) return ''
+  if (typeof node === 'string') return node
+  return node.sub ? `${node.value} — ${node.sub}` : node.value
+}
+
+function cell(node: string | FormalReportCell, numeric: boolean) {
   const value = typeof node === 'string' ? node : node.value
   const sub = typeof node === 'string' ? undefined : node.sub
   const tone = typeof node === 'string' ? undefined : node.tone
   const cls = [numeric ? 'num' : '', tone ? toneClass[tone] : ''].filter(Boolean).join(' ')
-  return <td className={cls}>{value}{sub && <span className="fr-cell-sub">{sub}</span>}{void row}</td>
+  return <td className={cls}>{value}{sub && <span className="fr-cell-sub">{sub}</span>}</td>
 }
 
 export function FormalReport({ model, filename = 'report', allowExport = true, allowPrint = true, toolbar, showSignatures }: Props) {
@@ -77,22 +85,37 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
   }
 
   const exportCsv = () => {
+    /* الجولة السادسة: كان التصدير يُخرج سطور الأقسام وحدها — فيفقد الملف
+       بيانات المستند والملخص المالي والتسوية والملاحظات وصفوف الإجمالي،
+       أي أن «تصدير Excel» كان ناقصاً مقارنة بالتقرير الرسمي المعروض.
+       كما كان يُسقط القيمة الثانوية (اسم المورد) ويضيف BOMاً ثانياً. */
     const rows: Record<string, string>[] = []
+    const add = (section: string, label: string, value: string, detail = '') =>
+      rows.push({ 'القسم': section, 'البيان': label, 'القيمة': value, 'التفاصيل': detail })
+    add('التقرير', model.title, resolved.companyName, model.subtitle)
+    for (const m of model.meta) add('بيانات المستند', m.label, m.value)
+    for (const i of model.indicators ?? []) add('الملخص المالي', i.label, i.value)
     for (const section of model.sections) {
       for (const row of section.rows) {
         const record: Record<string, string> = { 'القسم': section.title }
-        section.headers.forEach((h, i) => {
-          const c = row.cells[i]
-          record[h] = typeof c === 'string' ? c : c?.value ?? ''
-        })
+        section.headers.forEach((h, i) => { record[h] = cellText(row.cells[i]) })
+        rows.push(record)
+      }
+      if (section.totalRow) {
+        const record: Record<string, string> = { 'القسم': `${section.title} — الإجمالي` }
+        section.totalRow.forEach((c, i) => { record[section.headers[i] ?? `عمود ${i + 1}`] = cellText(c) })
         rows.push(record)
       }
     }
+    for (const n of model.notes ?? []) add('ملاحظات المراجعة', n, '')
+    for (const e of model.equation ?? []) add('التسوية الختامية', e.label, e.value)
     if (!rows.length) { toast.show('لا بيانات للتصدير', 'error'); return }
+    /* toCsv يضيف BOM بنفسه — لا تُضفه مرة ثانية. */
     const csv = toCsv(rows)
-    const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }))
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a'); a.href = url; a.download = `${filename}.csv`; a.click()
-    URL.revokeObjectURL(url)
+    /* تأجيل التحرير: بعض المتصفحات تُلغي التنزيل لو حُرِّر الرابط فور النقر. */
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
     toast.show('تم تصدير التقرير ✓')
   }
 
@@ -107,12 +130,12 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
           <tbody>
             {section.rows.map((row, ri) => (
               <tr key={ri} className={row.emphasis ? `fr-em-${row.emphasis}` : ''}>
-                {section.headers.map((_, ci) => <Fragment key={ci}>{cell(row.cells[ci] ?? '', !!section.numCols?.includes(ci), row)}</Fragment>)}
+                {section.headers.map((_, ci) => <Fragment key={ci}>{cell(row.cells[ci] ?? '', !!section.numCols?.includes(ci))}</Fragment>)}
               </tr>
             ))}
             {section.totalRow && (
               <tr className="fr-em-total">
-                {section.totalRow.map((c, ci) => <Fragment key={ci}>{cell(c, !!section.numCols?.includes(ci), { cells: [] })}</Fragment>)}
+                {section.totalRow.map((c, ci) => <Fragment key={ci}>{cell(c, !!section.numCols?.includes(ci))}</Fragment>)}
               </tr>
             )}
           </tbody>
@@ -136,8 +159,8 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
             {resolved.headerLines?.filter((l) => l.trim()).map((l, i) => <div className="fr-meta-sub" key={i}>{l}</div>)}
             {resolved.printedBy && <div className="fr-meta-sub">أعدّه: {resolved.printedBy}</div>}
           </div>
-          {resolved.logoDataUrl && reportPrint?.showLogo !== false && (
-            <img src={resolved.logoDataUrl} alt="" style={{ maxHeight: 48, maxWidth: 120, objectFit: 'contain' }} />
+          {safeLogoUrl(resolved.logoDataUrl) && reportPrint?.showLogo !== false && (
+            <img src={safeLogoUrl(resolved.logoDataUrl)} alt="" style={{ maxHeight: 48, maxWidth: 120, objectFit: 'contain' }} />
           )}
           <div style={{ textAlign: 'center' }}>
             <div className="fr-title" style={{ margin: 0 }}>{model.title}</div>
@@ -208,7 +231,7 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
         )}
         <div className="fr-foot">
           <span>تَحَكَّم TAHAKAM ERP</span>
-          <span>{new Date().toLocaleString('ar-EG')}{model.printedBy ? ` · ${model.printedBy}` : ''}</span>
+          <span>{new Date().toLocaleString('ar-EG')}{resolved.printedBy ? ` · ${resolved.printedBy}` : ''}</span>
         </div>
       </div>
     </div>

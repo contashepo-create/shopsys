@@ -24,7 +24,7 @@ function base(over: Partial<AnalyticalProjectSource> = {}): AnalyticalProjectSou
     ],
     openInvoiceSettled: new Map([['extract:1', 565_000_00], ['extract:2', 700_000_00]]),
     extractDocKeys: ['extract:1', 'extract:2'],
-    vouchers: [{ date: '2026-02-10', number: 'RV-1', amountMinor: 565_000_00, description: 'دفعة' }],
+    vouchers: [{ date: '2026-02-10', number: 'RV-1', amountMinor: 565_000_00, description: 'دفعة', allocations: [{ docKey: 'extract:1', appliedMinor: 565_000_00 }] }],
     clientSettlements: [{ date: '2026-03-05', number: 'SET-1', amountMinor: 300_000_00, allocations: [{ docKey: 'extract:2', appliedMinor: 300_000_00 }] }],
     cheques: [{ direction: 'incoming', partyId: 1, status: 'collected', amountMinor: 400_000_00, chequeNumber: 'CHQ-1', createdAt: '2026-03-20T00:00:00Z', bankName: 'بنك مصر' }],
     currencySymbol: 'ر.س',

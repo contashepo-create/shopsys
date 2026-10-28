@@ -93,6 +93,9 @@ export function formalReportBodyHtml(model: FormalReportModel): string {
       headers: ['المؤشر', 'القيمة'],
       numCols: [1],
       rows: model.indicators.map((i) => [i.label, i.value]),
+      /* الصفوف المؤكدة على الشاشة يجب أن تظل مؤكدة في النسخة المطبوعة/PDF —
+         كانت تُرسل كنصوص فقط فيفقد التقرير المطبوع أهم أسطره بصرياً. */
+      rowClasses: model.indicators.map((i) => i.emphasis ? 'total' : undefined),
     }))
   }
   /* الأقسام التفصيلية */
@@ -102,6 +105,7 @@ export function formalReportBodyHtml(model: FormalReportModel): string {
       headers: section.headers,
       numCols: section.numCols,
       rows: section.rows.map(rowToStrings),
+      rowClasses: section.rows.map((r) => r.emphasis === 'subtotal' ? 'sec' : r.emphasis ? 'total' : undefined),
       totalRow: section.totalRow?.map((c) => typeof c === 'string' ? c : c.value),
     }))
   }
@@ -114,6 +118,7 @@ export function formalReportBodyHtml(model: FormalReportModel): string {
       headers: ['البند', 'القيمة'],
       numCols: [1],
       rows: model.equation.map((e) => [e.label, e.value]),
+      rowClasses: model.equation.map((e) => e.emphasis ? 'total' : undefined),
     }))
   }
   return parts.join('')

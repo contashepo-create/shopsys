@@ -7,12 +7,14 @@
  */
 import { readFileSync, readdirSync } from 'node:fs'
 
-const TEXT_FIELD = /\b(nameAr|descriptionAr|customerName|partyName|shopName|sellerName|buyerName|notes|address|phone|plateNumber|driverName|companyName|supplierName|itemName|branchName|employeeName|patientName|doctorName|clientName|projectName|vehicleName|expenseNameAr|serviceNameAr|terms|clauses|contractNumber|invoiceNumber|refCode|taxNumber|returnNumber|watermarkText|footerText|headerLines)\b/
+/* الجولة السادسة: الشعار والألوان تُستعاد من نسخة احتياطية وقد تحمل HTML/CSS
+   خاماً داخل سمة src أو كتلة <style> — أضفناها لقائمة الحقول الخطرة. */
+const TEXT_FIELD = /\b(nameAr|descriptionAr|customerName|partyName|shopName|sellerName|buyerName|notes|address|phone|plateNumber|driverName|companyName|supplierName|itemName|branchName|employeeName|patientName|doctorName|clientName|projectName|vehicleName|expenseNameAr|serviceNameAr|terms|clauses|contractNumber|invoiceNumber|refCode|taxNumber|returnNumber|watermarkText|footerText|headerLines|logoDataUrl|accentColor|watermarkColor)\b/
 /** معرّفات تُمرَّر مهرَّبة إلى `kv` أو ثابتة — ليست حقول مستخدم خام */
 const ALLOWED_IDENTIFIERS = new Set(['label', 'value'])
 
 /** دوال تُنتج HTML مهرَّباً داخلياً أو أرقاماً فقط */
-const SAFE_CALLS = ['.map(esc)', 'esc(', 'fmt(', 'formatMinor(', 'amountInWords(', 'barcodeSvg(', 'headerLinesHtml(', 'whoBlock(', 'footer(', 'renderRows(', 'renderTotals(', 'kv(', 'labels.join(', 'money(', 'toFixed(', 'formatQty(', 'dateLabel', 'todayLocalIso(', 'localDateTimeLabel(', 'modelRows(', 'itemsHtml(']
+const SAFE_CALLS = ['.map(esc)', 'esc(', 'escHtml(', 'escAttr(', 'safeHexColor(', 'safeLogoUrl(', 'safeColor(', 'fmt(', 'formatMinor(', 'amountInWords(', 'barcodeSvg(', 'headerLinesHtml(', 'whoBlock(', 'footer(', 'renderRows(', 'renderTotals(', 'kv(', 'labels.join(', 'money(', 'toFixed(', 'formatQty(', 'dateLabel', 'todayLocalIso(', 'localDateTimeLabel(', 'modelRows(', 'itemsHtml(']
 
 /** يحذف استدعاءات دوال آمنة (مع أقواسها) من تعبير */
 function stripSafe(expr) {
@@ -39,12 +41,20 @@ function stripSafe(expr) {
 }
 
 const dir = new URL('../src/ui/print/', import.meta.url)
+const coreDir = new URL('../src/core/', import.meta.url)
 let pass = 0, fail = 0
 const ok = (cond, name) => { if (cond) pass++; else { fail++; console.error(`❌ ${name}`) } }
 const findings = []
 
-for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()) {
-  const src = readFileSync(new URL(file, dir), 'utf8')
+/* الجولة السادسة: غلاف التقارير الرسمية في core/ لم يكن مشمولاً بالفحص،
+   فمرّ حقن accentColor/logoDataUrl خاماً. يُفحص الآن مع قوالب ui/print. */
+const scanTargets = [
+  ...readdirSync(dir).filter((f) => f.endsWith('.ts')).sort().map((f) => ({ label: f, url: new URL(f, dir) })),
+  ...['reportPrint.ts', 'formalReport.ts'].map((f) => ({ label: `core/${f}`, url: new URL(f, coreDir) })),
+]
+
+for (const { label: file, url } of scanTargets) {
+  const src = readFileSync(url, 'utf8')
   const exprs = []
   for (let i = 0; i < src.length - 1; i++) {
     if (src[i] !== '$' || src[i + 1] !== '{') continue

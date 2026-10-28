@@ -7913,3 +7913,30 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - `scripts/verify_formal_reports_2026_10_27.mjs`: **42 → 57** فحصاً (قسم ⑥ جديد يحرس A/B/C/G، الترويسة، حقن CSS، المعاينة الحية، إشارة الإلغاء، استبعاد الشيك الملغي).
 - `tsc -b --force` ✓ · `oxlint src --deny-warnings` **0/0** ✓ · `vite build` ✓ · `vitest run` **247 ملفاً / 1808 اختباراً** ✓ · `verify_formal_reports` **57/57** ✓ · `verify:all` **350/350** ✓ · `audit:all` **19/19** ✓ · `desktop/build.mjs` ✓.
 - **يبقى إجراء تشغيلي خارج الكود (دون تغيير)**: نشر عامل التحكم `Deploy control worker` ما زال مطلوباً لتفعيل `/support/:deviceId`؛ محاولات التشغيل من هذه البيئة رُفضت بصلاحيات تكامل GitHub (`403 Resource not accessible by integration`)، ولا تتوفر بيانات Cloudflare محلياً.
+
+## 1.11) جلسة 2026-10-28 (سادسة) — جولة أدق: 7 عيوب مثبتة + استعادة سلامة Git
+
+> **طلب المالك**: «راجع بجولة أخرى أكثر دقة وإن كان هناك مشكلة أصلحها».
+> أُعيدت البيئة من لقطة فكان `HEAD` محلياً `36efcbb` مع كل العمل كملفات معدّلة/غير متتبّعة.
+> **قبل أي تعديل** جُلب `FETCH_HEAD` وقورنت هاشات **1227 ملفاً** بالشجرة (0 مفقود · 0 مختلف)،
+> ثم `git reset --mixed FETCH_HEAD` ⇒ عاد `HEAD=4374725` ومساحة العمل نظيفة بلا فقدان أي ملف.
+
+### ① السبع مشكلات (كلها أُثبتت باختبارات فاشلة قبل الإصلاح)
+| # | الخلل | الإصلاح |
+|---|---|---|
+| H1 | «تصدير Excel» من التقرير الرسمي كان يُخرج **سطور الأقسام فقط** — بلا بيانات المستند، ولا الملخص المالي، ولا التسوية الختامية، ولا الملاحظات، ولا صفوف الإجمالي. | `FormalReport.exportCsv` صار يصدّر كل كتل النموذج مع أعمدة أصلية محفوظة + أعمدة وصفية. |
+| H2 | الملف يبدأ بـ **BOM مرتين** (`toCsv` يضيف واحداً والمكوّن يضيف آخر). | حُذف BOM الإضافي؛ وتأجيل `revokeObjectURL` حتى لا يُلغي التنزيل في بعض المتصفحات. |
+| H3 | التصدير يُسقط `sub` (اسم المورد تحت البيان) الموجود على الشاشة وفي الطباعة. | `cellText` يدمج القيمة الثانوية كما في `rowToStrings`. |
+| H4 | سند قبض **قديم بلا توزيعات** كان يُحتسب بكامل قيمته في **كل** مشروع لنفس العميل، مع أن دفتر الذمم لم يخصمه من أي مستخلص. | `buildCollectionRows` يستثنيه عند وجود نطاق مشروع، ويُعيد عدّه/قيمته في الملاحظات («سندات قبض غير موزّعة… راجع كشف العميل»). |
+| H5 | الصفوف المؤكدة (`emphasis`) على الشاشة كانت تُطبع كصفوف عادية — يفقد التقرير أهم أسطره بصرياً. | `htmlTableHtml.rowClasses` (قائمة بيضاء: total/sec/num) + تمرير إبراز المؤشرات/الأقسام/التسوية. |
+| H6 | **حقن HTML/CSS**: `renderReportShell` و`printLabReport` كانا يُدخلان `logoDataUrl` و`accentColor` و`watermarkColor` و`paper/orientation` **خاماً** — نسخة احتياطية معدّلة تسمح بـ `onerror` داخل iframe المعاينة. | `safeLogoUrl` (بيانات صورة أو https فقط) + `safeHexColor` + `clampNum` + قوائم بيضاء للورق/الاتجاه/موضع الشعار. |
+| H7 | لا يوجد مهرّب **للسمات**: `esc` يهرّب `& < >` فقط. | `escAttr` جديد للسمات؛ **وبقي `escHtml` للنصوص يحفظ علامات التنصيص مقروءة** احتراماً لقرار §99 الموثّق في `verify_unit_reports_print`. |
+
+### ② توسيع البوابات لئلا تعود الثغرات
+- `verify_print_escaping.mjs` كان يفحص `src/ui/print/` فقط ⇒ أُضيف `core/reportPrint.ts` و`core/formalReport.ts` (**20 → 22 ملفاً**)، وأُضيفت `logoDataUrl`/`accentColor`/`watermarkColor` للحقول الخطرة، و`safeHexColor`/`safeLogoUrl`/`escAttr` للدوال الآمنة.
+- `verify_formal_reports_2026_10_27.mjs`: **57 → 66** فحصاً (قسم ⑦ يحرس H1…H7).
+- اختبارات دائمة جديدة: `tests/report_hardening_round6.test.tsx` (14 حالة)، وتحديث `analytical_project_report.test.ts` (سند الأساس صار موزّعاً) و`report_print_live_preview.test.tsx` (ألوان صالحة بعد التطبيع).
+
+### ③ التحقق الكامل
+`tsc -b --force` ✓ · `oxlint src --deny-warnings` **0/0** ✓ · `vite build` ✓ · `vitest` **248 ملفاً / 1822 اختباراً** ✓ · `verify_formal_reports` **66/66** ✓ · `verify_print_escaping` **22/22** ✓ · `verify:all` **350/350** ✓ · `audit:all` **19/19** ✓ · `desktop/build.mjs` ✓.
+- **حدّ معروف لم يُغيَّر** (يتطلب تغيير بروتوكول): ربط TOFU لقناة الدعم يحدث عند أول طلب صالح، ولا توجد أداة «إعادة ربط» تمسح مرساة سطح المكتب. يبقى كما هو لتوافق العامل المنشور؛ ونشر عامل التحكم (`Deploy control worker`) ما زال إجراءً تشغيلياً على حساب المالك.

@@ -51,8 +51,9 @@ describe('المعاينة الحية لإعدادات التقارير', () => 
   it('إعادة البناء المتكررة لا تُزيح الغلاف الأصلي من السجل', () => {
     const html = renderReportShell({ ...args, settings: DEFAULT_REPORT_PRINT })
     for (let i = 0; i < 25; i++) {
-      const next = rebuildReportShellHtml(html, { ...DEFAULT_REPORT_PRINT, accentColor: `color-${i}`, baseFontPt: 12 + (i % 8) })
-      expect(next).toContain(`color-${i}`)
+      const color = `#${(0x100000 + i * 0x010101).toString(16).padStart(6, '0')}`
+      const next = rebuildReportShellHtml(html, { ...DEFAULT_REPORT_PRINT, accentColor: color, baseFontPt: 12 + (i % 8) })
+      expect(next).toContain(color)
     }
     /* بعد أكثر من حدّ الذاكرة (16) يظل المفتاح الأصلي صالحاً */
     expect(rebuildReportShellHtml(html, { ...DEFAULT_REPORT_PRINT, accentColor: '#00ff00' })).toContain('#00ff00')

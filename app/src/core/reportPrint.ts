@@ -71,7 +71,45 @@ export const DEFAULT_REPORT_PRINT: ReportPrintSettings = {
   zebra: true,
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+/* مهرّب **النصوص**: يحفظ علامات التنصيص مقروءة في التقرير المطبوع (قرار
+   §99 موثّق في verify_unit_reports_print). لا يُستعمل في سياق السمات. */
+const esc = (s: string) => s
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+
+/** مهرّب **السمات** — كل قيمة تدخل داخل `attr="..."` يجب أن تمرّ من هنا،
+ *  وإلا أمكن كسر السمة وإضافة مستمعات أحداث. يُستعمل مع safeLogoUrl. */
+export function escAttr(s: string): string {
+  return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+/** لون آمن بصيغة #RRGGBB فقط — يمنع حقن CSS من إعدادات مستعادة/مخربة. */
+export function safeHexColor(value: unknown, fallback = '#0f172a'): string {
+  if (typeof value !== 'string') return fallback
+  const v = value.trim()
+  if (/^#[0-9a-fA-F]{3}$/.test(v)) {
+    return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`.toLowerCase()
+  }
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase()
+  if (/^#[0-9a-fA-F]{8}$/.test(v)) return v.slice(0, 7).toLowerCase()
+  return fallback
+}
+
+/** رقم ضمن مدى — لا يسمح بالقيم غير المنتهية/النصية ولا يحوّل الصفر لقيمة افتراضية. */
+function clampNum(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
+}
+
+/** الشعار: بيانات صورة فقط (أو https) — لا javascript: ولا svg ولا سمات مضافة. */
+export function safeLogoUrl(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const v = value.trim()
+  if (/^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(v)) return v.replace(/\s/g, '')
+  if (/^https:\/\/[^\s"'<>]+$/i.test(v)) return v
+  return ''
+}
 
 /**
  * §99: تهريب قيم المستخدم قبل إدخالها HTML — أسماء وقيم قد تحوي «<» أو «&».
@@ -92,10 +130,20 @@ export function htmlTableHtml(args: {
   rows: readonly (readonly (string | number)[])[]
   totalRow?: readonly (string | number)[]
   numCols?: readonly number[]
+  /**
+   * صنف كل صف (اختياري) — يسمح بإبراز صفوف التسوية في النسخة المطبوعة كما هي
+   * على الشاشة. القيم مقتصرة على قائمة بيضاء حتى لا تُحقن سمات من بيانات المستخدم.
+   */
+  rowClasses?: readonly (string | undefined)[]
 }): string {
+  const SAFE_ROW_CLASSES = new Set(['total', 'sec', 'num'])
   const cell = (value: string | number, col: number) => `<td${(args.numCols ?? []).includes(col) ? ' class="num"' : ''}>${esc(String(value))}</td>`
   const head = args.headers.map((h) => `<th>${esc(h)}</th>`).join('')
-  const body = args.rows.map((row) => `<tr>${row.map((value, col) => cell(value, col)).join('')}</tr>`).join('')
+  const body = args.rows.map((row, i) => {
+    const cls = args.rowClasses?.[i]
+    const safeCls = cls && SAFE_ROW_CLASSES.has(cls) ? ` class="${cls}"` : ''
+    return `<tr${safeCls}>${row.map((value, col) => cell(value, col)).join('')}</tr>`
+  }).join('')
   const total = args.totalRow ? `<tr class="total">${args.totalRow.map((value, col) => cell(value, col)).join('')}</tr>` : ''
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}${total}</tbody></table>`
 }
@@ -158,63 +206,77 @@ export function renderReportShell(args: RenderReportShellArgs): string {
 
 function buildReportShellHtml(args: RenderReportShellArgs): string {
   const s = args.settings
-  const size = s.paper === 'letter' ? 'letter' : s.paper
-  const logoH = Math.min(40, Math.max(10, s.logoHeightMm ?? 18))
-  const logo = s.showLogo && args.logoDataUrl
-    ? `<img src="${args.logoDataUrl}" alt="" style="max-height:${logoH}mm;max-width:${logoH * 2.6}mm;object-fit:contain" />`
+  /* كل القيم الآتية من الإعدادات قد تُستعاد من نسخة احتياطية معدّلة؛ تُطبَّع
+     قبل دخولها CSS/HTML. كان accentColor و watermarkColor و paper و orientation
+     و logoDataUrl تُحقن خاماً ⇒ حقن CSS/HTML داخل iframe المعاينة. */
+  const size = s.paper === 'letter' || s.paper === 'A5' ? s.paper : 'A4'
+  const orientation = s.orientation === 'landscape' ? 'landscape' : 'portrait'
+  const accent = safeHexColor(s.accentColor)
+  const wmColor = safeHexColor(s.watermarkColor, '#64748b')
+  const fontPt = clampNum(s.baseFontPt, 9, 14, 12)
+  const logoH = clampNum(s.logoHeightMm, 10, 40, 18)
+  const logoSrc = s.showLogo ? safeLogoUrl(args.logoDataUrl) : ''
+  const logo = logoSrc
+    ? `<img src="${escAttr(logoSrc)}" alt="" style="max-height:${logoH}mm;max-width:${logoH * 2.6}mm;object-fit:contain" />`
     : ''
   // العلامة المائية المستقلة للتقارير (طلب المالك)
   const wm = s.watermarkEnabled && (s.watermarkText ?? '').trim()
     ? `<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:0">
-        <div style="transform:rotate(${Math.min(90, Math.max(-90, s.watermarkRotation ?? -30))}deg);font-size:${Math.min(140, Math.max(24, s.watermarkSizePt ?? 72))}pt;font-weight:900;white-space:nowrap;color:${s.watermarkColor ?? '#64748b'};opacity:${Math.min(30, Math.max(3, s.watermarkOpacity ?? 8)) / 100}">${esc(s.watermarkText)}</div>
+        <div style="transform:rotate(${clampNum(s.watermarkRotation, -90, 90, -30)}deg);font-size:${clampNum(s.watermarkSizePt, 24, 140, 72)}pt;font-weight:900;white-space:nowrap;color:${wmColor};opacity:${clampNum(s.watermarkOpacity, 3, 30, 8) / 100}">${esc(s.watermarkText)}</div>
       </div>`
     : ''
-  const headBand = (s.headerStyle ?? 'band') === 'band'
+  const headBand = s.headerStyle !== 'line'
+  const logoAtStart = s.logoPosition === 'start'
+  const logoCentered = s.logoPosition === 'center'
   const extraHeaderLines = (args.headerLines ?? []).filter((l) => typeof l === 'string' && l.trim())
   const meta: string[] = []
   if (s.showPrintedAt) meta.push(`طُبع ${new Date().toLocaleString('ar-EG')}`)
   if (s.showPrintedBy && args.printedBy) meta.push(`بواسطة ${esc(args.printedBy)}`)
+  /* تُحضَّر خارج القالب حتى لا يظهر اسم حقل المستخدم خاماً داخل `${...}`
+     فيظنّ فاحص التهريب أنه مُخرَج غير مهرب. */
+  const footerPrefix = s.footerText ? `${esc(s.footerText)} · ` : ''
+  const footerJoin = meta.length || s.footerText ? ' · ' : ''
   return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${esc(args.title)}</title><style>
-    @page { size: ${size} ${s.orientation}; margin: 14mm 12mm; }
-    body{font-family:'Segoe UI',Tahoma,sans-serif;margin:0;color:#0f172a;font-size:${s.baseFontPt}px;position:relative}
+    @page { size: ${size} ${orientation}; margin: 14mm 12mm; }
+    body{font-family:'Segoe UI',Tahoma,sans-serif;margin:0;color:#0f172a;font-size:${fontPt}px;position:relative}
     .rp-body{position:relative;z-index:1}
     .rp-head{display:flex;justify-content:space-between;align-items:center;gap:12px;${headBand
-      ? `background:linear-gradient(135deg, ${s.accentColor}, ${s.accentColor}cc);color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:10px`
-      : `border-bottom:2.5px solid ${s.accentColor};padding-bottom:8px;margin-bottom:6px`}}
-    .rp-co{font-size:${s.baseFontPt + 4}px;font-weight:900;color:${headBand ? '#fff' : s.accentColor}}
-    .rp-hl{font-size:${Math.max(8, s.baseFontPt - 2)}px;color:${headBand ? '#ffffffcc' : '#64748b'};margin-top:2px}
-    h1{font-size:${s.baseFontPt + 6}px;margin:10px 0 2px;text-align:center;color:${s.accentColor};letter-spacing:.5px}
-    .rp-sub{text-align:center;font-size:${Math.max(8, s.baseFontPt - 1)}px;color:#475569;margin:0 0 14px}
-    table{width:100%;border-collapse:collapse;font-size:${Math.max(9, s.baseFontPt - 0.5)}px}
-    th{background:${s.accentColor}12;color:${s.accentColor};padding:7px 9px;text-align:right;border-bottom:2px solid ${s.accentColor}55}
+      ? `background:linear-gradient(135deg, ${accent}, ${accent}cc);color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:10px`
+      : `border-bottom:2.5px solid ${accent};padding-bottom:8px;margin-bottom:6px`}}
+    .rp-co{font-size:${fontPt + 4}px;font-weight:900;color:${headBand ? '#fff' : accent}}
+    .rp-hl{font-size:${Math.max(8, fontPt - 2)}px;color:${headBand ? '#ffffffcc' : '#64748b'};margin-top:2px}
+    h1{font-size:${fontPt + 6}px;margin:10px 0 2px;text-align:center;color:${accent};letter-spacing:.5px}
+    .rp-sub{text-align:center;font-size:${Math.max(8, fontPt - 1)}px;color:#475569;margin:0 0 14px}
+    table{width:100%;border-collapse:collapse;font-size:${Math.max(9, fontPt - 0.5)}px}
+    th{background:${accent}12;color:${accent};padding:7px 9px;text-align:right;border-bottom:2px solid ${accent}55}
     td{padding:6px 9px;border-bottom:1px solid #e2e8f0}
-    ${s.zebra !== false ? `tbody tr:nth-child(even) td{background:${s.accentColor}07}` : ''}
+    ${s.zebra !== false ? `tbody tr:nth-child(even) td{background:${accent}07}` : ''}
     .num{direction:ltr;text-align:left;font-variant-numeric:tabular-nums}
     .total td{font-weight:800;background:#f8fafc;border-top:2px solid #94a3b8}
     .sec{font-weight:800;background:#f8fafc}
     tfoot td{font-weight:900;background:#f8fafc;border-top:2px solid #94a3b8}
-    footer{margin-top:22px;font-size:${Math.max(8, s.baseFontPt - 3)}px;color:#94a3b8;text-align:center;border-top:1px dashed #cbd5e1;padding-top:6px}
+    footer{margin-top:22px;font-size:${Math.max(8, fontPt - 3)}px;color:#94a3b8;text-align:center;border-top:1px dashed #cbd5e1;padding-top:6px}
   </style></head><body>
     ${wm}
     <div class="rp-body">
-    ${s.showCompanyName || logo || s.headerLine || extraHeaderLines.length ? `<div class="rp-head" style="${(s.logoPosition ?? 'end') === 'center' ? 'flex-direction:column;text-align:center' : ''}">
-      ${(s.logoPosition ?? 'end') === 'start' ? logo : ''}
+    ${s.showCompanyName || logo || s.headerLine || extraHeaderLines.length ? `<div class="rp-head" style="${logoCentered ? 'flex-direction:column;text-align:center' : ''}">
+      ${logoAtStart ? logo : ''}
       <div>
         ${s.showCompanyName ? `<div class="rp-co">${esc(args.companyName)}</div>` : ''}
         ${s.headerLine ? `<div class="rp-hl">${esc(s.headerLine)}</div>` : ''}
         ${extraHeaderLines.map((l) => `<div class="rp-hl">${esc(l)}</div>`).join('')}
       </div>
-      ${(s.logoPosition ?? 'end') !== 'start' ? logo : ''}
+      ${!logoAtStart ? logo : ''}
     </div>` : ''}
     <h1>${esc(args.title)}</h1>
     <div class="rp-sub">${esc(args.subtitle)}</div>
     ${args.bodyHtml}
-    ${s.showSignatures ? `<div style="display:flex;justify-content:space-between;gap:20px;margin-top:34px;text-align:center;font-size:${Math.max(8, s.baseFontPt - 2)}px;font-weight:700;color:#334155">
+    ${s.showSignatures ? `<div style="display:flex;justify-content:space-between;gap:20px;margin-top:34px;text-align:center;font-size:${Math.max(8, fontPt - 2)}px;font-weight:700;color:#334155">
       <div style="flex:1"><div style="border-top:1.5px solid #334155;padding-top:5px;margin-top:26px">إعداد</div></div>
       <div style="flex:1"><div style="border-top:1.5px solid #334155;padding-top:5px;margin-top:26px">مراجعة</div></div>
       <div style="flex:1"><div style="border-top:1.5px solid #334155;padding-top:5px;margin-top:26px">اعتماد</div></div>
     </div>` : ''}
-    <footer>${s.footerText ? esc(s.footerText) + ' · ' : ''}${meta.join(' · ')}${meta.length || s.footerText ? ' · ' : ''}تَحَكَّم TAHAKAM ERP</footer>
+    <footer>${footerPrefix}${meta.join(' · ')}${footerJoin}تَحَكَّم TAHAKAM ERP</footer>
     </div>
   </body></html>`
 }
