@@ -1670,8 +1670,8 @@ function wireIpc(): void {
   /* بند 5 (طلب المالك): طلب دعم — من العملية_main (بلا Origin) + قائمة مضيفين.
      بلاغ 2026-10-27: كان الناقل الوحيد هو Node `fetch` (undici) في العملية
      الرئيسية — لا يمرّ ببروكسي النظام ولا يثق بشهاداته، فيفشل عند بعض العملاء
-     رغم أن الإنترنت سليم. نُعيد المحاولة عبر `net.fetch` (شبكة Chromium في
-     Electron) ونُعيد رمز سبب تقني بدل تشخيص «لا يوجد إنترنت» كاذب. */
+     رغم أن الإنترنت سليم. نستخدم `net.fetch` (شبكة Chromium في Electron)
+     ونُعيد رمز سبب تقني بدل تشخيص «لا يوجد إنترنت» كاذب. */
   ipcMain.handle('support:request', async (_event, args: { url?: unknown; method?: unknown; headers?: unknown; body?: unknown }) => {
     const rawUrl = typeof args?.url === 'string' ? args.url : ''
     let parsed: URL
@@ -1687,32 +1687,23 @@ function wireIpc(): void {
       }
     }
     const body = typeof args?.body === 'string' ? args.body : undefined
-    /* مراجعة 2026-10-27: المؤقّت والإشارة كانا **مشتركين** بين محاولتي
-       fetch و net.fetch؛ فإذا انتهت مهلة الأولى بدأت الثانية بإشارة ملغاة
-       مسبقاً فتفشل فوراً ويظهر «لا يوجد إنترنت» زوراً. لكل محاولة الآن
-       AbortController ومؤقّت مستقل (20 ثانية لكل محاولة). */
-    const attempts: (typeof globalThis.fetch)[] = [fetch]
+    // ناقل واحد لكل طلب: إعادة POST بعد فقد الرد قد تكرر الرسالة، وإعادة
+    // GET بنفس nonce قد تعيد 401. المُصيّر يعيد GET بتوقيع جديد عند الحاجة.
     const chromiumFetch = (net as { fetch?: typeof globalThis.fetch } | undefined)?.fetch
-    if (typeof chromiumFetch === 'function') attempts.push(chromiumFetch)
-    let lastError = ''
-    for (const doFetch of attempts) {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 20_000)
-      try {
-        const init: RequestInit = { method, headers, body, signal: controller.signal }
-        const res = await doFetch(parsed.toString(), init)
-        const text = await res.text()
-        return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
-      } catch (error) {
-        lastError = (error as Error).message || 'fetch failed'
-      } finally {
-        clearTimeout(timer)
-      }
-    }
-    return {
-      ok: false, status: 0, body: '',
-      error: lastError || 'network',
-      errorCode: /abort|timeout/i.test(lastError) ? 'timeout' : 'network',
+    const doFetch = typeof chromiumFetch === 'function' ? chromiumFetch : fetch
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 20_000)
+    try {
+      const init: RequestInit = { method, headers, body, signal: controller.signal }
+      const res = await doFetch(parsed.toString(), init)
+      const text = await res.text()
+      return { ok: res.ok, status: res.status, body: text.slice(0, 400_000) }
+    } catch (error) {
+      const lastError = (error as Error).message || 'fetch failed'
+      return { ok: false, status: 0, body: '', error: lastError,
+        errorCode: controller.signal.aborted ? 'timeout' : 'network' }
+    } finally {
+      clearTimeout(timer)
     }
   })
 
@@ -1731,7 +1722,7 @@ function wireIpc(): void {
     const value = typeof token === 'string' ? token : ''
     if (!SUPPORT_TOKEN_RE.test(value)) return false
     try {
-      writeFileSync(supportTokenPath(), JSON.stringify({ token: value }), { encoding: 'utf8', mode: 0o600 })
+      writeFileSync(supportTokenPath(), JSON.stringify({ token: value }), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
       return true
     } catch (error) {
       logLine('support', `تعذّر حفظ اعتماد الدعم: ${(error as Error).message}`)

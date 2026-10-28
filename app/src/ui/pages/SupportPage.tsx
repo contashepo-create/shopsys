@@ -76,11 +76,12 @@ export function SupportPage() {
         logEvent('error', `support: فشل الإرسال (${result.status || 'transport'}، offline=${result.offline}، محاولات=${result.attempts}) — ${result.reason}${result.detail ? ` | ${result.detail}` : ''}`)
         return toast.show(result.reason, 'error')
       }
-      setChannel(null)
+      const fullyNotified = result.notified === true && (!payload.log || result.logNotified === true)
+      setChannel(fullyNotified ? null : { ok: false, text: result.reason })
       logEvent('info', `support: أُرسلت رسالة دعم${attachLog ? ' + لوج' : ''}`)
       setMessages((m) => [...m, { id: (m.at(-1)?.id ?? 0) + 1, from: 'client', text: payload.text, at: new Date().toISOString() }])
       setText(''); setAttachLog(false)
-      toast.show('وصلت رسالتك للمطوّر — سيصلك الرد هنا ✓')
+      toast.show(result.reason, fullyNotified ? 'success' : 'error')
     } catch (e) {
       setSending(false)
       toast.show((e as Error).message, 'error')

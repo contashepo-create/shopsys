@@ -109,11 +109,13 @@ export async function authorizeSupportRequest(request, cfg, deviceId, body = '')
 /* ─── تخزين المحادثة (نفس شكل chat:<deviceId> في عامل الدعم القديم) ────── */
 
 export async function readSupportChat(cfg, deviceId) {
-  try {
-    const raw = await cfg.kv.get(`chat:${deviceId}`)
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed) ? parsed : []
-  } catch { return [] }
+  // غياب المفتاح فقط يعني محادثة جديدة. فشل القراءة أو JSON تالف لا
+  // يعني محادثة فارغة، وإلا ستكتب الرسالة التالية فوق السجل الموجود.
+  const raw = await cfg.kv.get(`chat:${deviceId}`)
+  if (raw == null) return []
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed)) throw new Error('invalid support conversation')
+  return parsed
 }
 
 function chatMetadata(chat) {
@@ -153,14 +155,16 @@ async function tgSendPlain(cfg, text) {
 }
 
 async function tgSendLog(cfg, deviceId, logText) {
-  if (!cfg.token || !cfg.adminId || !logText) return
+  if (!cfg.token || !cfg.adminId || !logText) return false
   try {
     const form = new FormData()
     form.append('chat_id', cfg.adminId)
     form.append('document', new Blob([logText], { type: 'text/plain' }), `log-${deviceId}.txt`)
     form.append('caption', `سجل التطبيق — ${deviceId} (بموافقة العميل، للتشخيص فقط)`)
-    await fetch(`https://api.telegram.org/bot${cfg.token}/sendDocument`, { method: 'POST', body: form })
-  } catch { /* إرفاق اللوج تحسين — لا يُفقد الرسالة */ }
+    const res = await fetch(`https://api.telegram.org/bot${cfg.token}/sendDocument`, { method: 'POST', body: form })
+    const data = await res.json()
+    return res.ok && data?.ok === true
+  } catch { return false }
 }
 
 /* ─── نقطة العميل: GET/POST /support/:deviceId ──────────────────────────── */
@@ -186,7 +190,8 @@ export async function handleSupportClientRequest({ request, cfg, deviceId, cors 
   }
 
   if (request.method === 'GET') {
-    return supportJson(await readSupportChat(cfg, deviceId), 200, cors)
+    try { return supportJson(await readSupportChat(cfg, deviceId), 200, cors) }
+    catch { return supportJson({ error: 'conversation unavailable' }, 503, cors) }
   }
   if (request.method !== 'POST') return supportJson({ error: 'method' }, 405, cors)
 
@@ -204,15 +209,17 @@ export async function handleSupportClientRequest({ request, cfg, deviceId, cors 
   const activity = clean(body?.activity, 40)
   const appVersion = clean(body?.appVersion, 20)
 
-  await pushSupportChat(cfg, deviceId, 'client', text)
+  try { await pushSupportChat(cfg, deviceId, 'client', text) }
+  catch { return supportJson({ error: 'conversation unavailable' }, 503, cors) }
   const header = `📩 بلاغ دعم\n👤 ${customer}${activity ? ` · ${activity}` : ''}\n🖥️ ${deviceId}${appVersion ? ` · v${appVersion}` : ''}\n${'─'.repeat(20)}\n`
   const messageId = await tgSendPlain(cfg, `${header}${text}\n\n↩️ رد على هذه الرسالة (Reply) ليصل ردك للعميل داخل التطبيق`)
   if (messageId != null) await cfg.kv.put(`tgmap:${messageId}`, deviceId, { expirationTtl: 60 * 60 * 24 * 30 })
+  let logNotified
   if (typeof body?.log === 'string' && body.log.length > 0) {
     const logText = body.log.slice(-LOG_MAX).replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
-    await tgSendLog(cfg, deviceId, logText)
+    logNotified = await tgSendLog(cfg, deviceId, logText)
   }
-  return supportJson({ ok: true }, 200, cors)
+  return supportJson({ ok: true, notified: messageId != null, ...(logNotified === undefined ? {} : { logNotified }) }, 200, cors)
 }
 
 /* ─── أفعال اللوحة/البوت محلياً (بديل الجسر إلى العامل القديم) ──────────── */

@@ -14,7 +14,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); useDataStore.setState(original); useAppStore.setState(appOriginal) })
 
-it('التقرير يخصم مرتجع شراء المشروع ويتحدث عند إضافته بعد فتح الشاشة', () => {
+it('سجل مرتجع افتراضي/مستورد يُعرض في التقرير ويتحدث عند إضافته', () => {
   const store = useDataStore.getState()
   store.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
   const customer = useDataStore.getState().customers.at(-1)!
@@ -30,4 +30,23 @@ it('التقرير يخصم مرتجع شراء المشروع ويتحدث عن
   }))
   expect(total()).toContain(formatMinor(700, currency, false))
   expect(screen.getByText('مرتجع مشتريات المشروع')).toBeTruthy()
+})
+
+
+it('لا يُضاف سند موزّع خطأً على مستخلص نقدي كتحصيل ثانٍ', () => {
+  useDataStore.getState().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const customer = useDataStore.getState().customers.at(-1)!
+  const project = useDataStore.getState().addProject({ nameAr: 'مشروع نقدي', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const extract = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 1000, vatPercent: 0, payment: 'cash' })
+  useDataStore.setState({ vouchers: [{ kind: 'receipt', partyKind: 'customer', partyId: customer.id, date: '2026-01-01', voucherNumber: 'WRONG', amountMinor: 500, allocations: [{ docKey: `extract:${extract.id}`, appliedMinor: 500 }] }] as DataState['vouchers'] })
+  render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+  expect(screen.queryByText('WRONG')).toBeNull()
+  expect(screen.queryByText(/تنبيه مراجعة: مجموع سطور التحصيلات/)).toBeNull()
+})
+
+
+it('ترحيل مرتجع مخزني لفاتورة مربوطة بمشروع مرفوض في المسار الحالي', () => {
+  useDataStore.setState({ purchases: [{ id: 999, projectId: 1 }] as DataState['purchases'] })
+  expect(() => useDataStore.getState().postPurchaseReturn({ purchaseId: 999, qtyByItem: new Map(), refund: 'cash', reason: 'اختبار', __approvalBypass: true } as never))
+    .toThrow('فاتورة مشروع مقاولات')
 })

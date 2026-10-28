@@ -78,7 +78,7 @@ const standaloneReports = [
   ['ui/pages/ScaleSettingsPage.tsx', 'قائمة PLU'],
 ]
 for (const [file, label] of standaloneReports) ok(`معاينة قبل طباعة ${label}`, /preview: \{ title/.test(read(file)))
-ok('تشخيص الدعم يحفظ رد الخادم الصريح', /serverFailure/.test(read('core/support.ts')) && /const decisive = last\.status !== 0 \? last : serverFailure/.test(read('core/support.ts')))
+ok('تشخيص الدعم يميز 404 وفقد رد غير حاسم', /prior404/.test(read('core/support.ts')) && /قد تكون الرسالة وصلت/.test(read('core/support.ts')))
 ok('تبويب العرض لا يفكّك أشجار المسار', /<Activity mode=\{viewActiveTab \? 'hidden' : 'visible'\}>/.test(app) && /<TabRoutes \/>/.test(app))
 ok('اختبار بقاء الحالة عند فتح تبويب عرض موجود', /فتح تبويب عرض لا يفكّك/.test(readFileSync(join(root, '..', 'tests', 'tab_state_preservation.test.tsx'), 'utf8')))
 
@@ -98,7 +98,7 @@ ok('المعاينة الحية: rebuild عام لكل الأغلمة', /rebuild
 ok('المعاينة الحية: تراقب reportPrint أيضاً', /reportPrintRef/.test(read('ui/components/ThermalPreview.tsx')) && /registerReportPrintSettingsProvider/.test(read('stores/app.store.ts')))
 ok('المعاينة الحية: FormalReport يقرأ الإعدادات وقت الاستدعاء', /const live = useAppStore\.getState\(\)/.test(read('ui/components/FormalReport.tsx')))
 const desktopMain = readFileSync(join(root, '..', 'desktop', 'main.ts'), 'utf8')
-ok('دعم سطح المكتب: إشارة إلغاء مستقلة لكل محاولة', /for \(const doFetch of attempts\) \{[\s\S]{0,500}new AbortController\(\)/.test(desktopMain) && /clearTimeout\(timer\)/.test(desktopMain))
+ok('دعم سطح المكتب: ناقل واحد بمهلة وإلغاء', /const doFetch = typeof chromiumFetch/.test(desktopMain) && /new AbortController\(\)/.test(desktopMain) && /clearTimeout\(timer\)/.test(desktopMain))
 ok('كشف العميل يستثني الشيك الملغي كدفتر الذمم', /c\.status === 'cancelled'\) continue/.test(read('core/statements.ts')))
 
 /* ⑦ الجولة السادسة: اكتمال التصدير + منع الحقن + سلامة السندات غير الموزّعة */

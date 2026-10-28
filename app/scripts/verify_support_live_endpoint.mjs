@@ -103,12 +103,12 @@ ok('النواة: بدائل، مسبار، سبب صادق، لا ترجمة ع
   assert.match(core, /export function supportBaseCandidates/)
   assert.match(core, /export async function probeSupportConnectivity/)
   assert.match(core, /export function supportTransportReason/)
-  assert.match(core, /res\.status !== 0 && res\.status !== 404/)
+  assert.match(core, /res\.status !== 404/)
   assert.match(core, /rendererFetch\(url, method, headers, body, timeoutMs\)/)
 })
 ok('سبب الفشل لا يتهم الاتصال والمسبار ناجح', () => {
   const reason = supportTransportReason({ online: true, detail: 'ENOTFOUND', errorCode: 'network', attempts: 2 })
-  assert.match(reason, /الإنترنت عندك سليم/)
+  assert.match(reason, /وصل مسبار اتصال/)
   assert.ok(!reason.includes('تحقّق من اتصال الإنترنت'))
 })
 ok('قائمة البدائل بلا تكرار', () => {
@@ -116,7 +116,7 @@ ok('قائمة البدائل بلا تكرار', () => {
   assert.equal(list[0], SUPPORT_CLOUD_BASE_URL)
   assert.equal(new Set(list).size, list.length)
 })
-ok('العملية الرئيسية: محاولة ثانية عبر net.fetch (شبكة Chromium)', () => {
+ok('العملية الرئيسية: شبكة Chromium بناقل واحد' , () => {
   const main = read('desktop/main.ts')
   assert.match(main, /chromiumFetch/)
   assert.ok(/errorCode/.test(main) && /'network'/.test(main), 'رمز سبب تقني يُعاد للمُصيّر')
@@ -195,7 +195,7 @@ await okAsync('ردّ المطوّر وصندوق اللوحة يعملان مح
   assert.equal(chat.at(-1).from, 'developer')
 })
 
-await okAsync('عميل التطبيق يرسل ويقرأ الرد من العامل الحيّ', async () => {
+await okAsync('عميل التطبيق يرسل ويقرأ الرد من العامل المحلي المحاكى', async () => {
   const saved = globalThis.fetch
   globalThis.fetch = async (url, init = {}) => {
     const target = String(url)
@@ -210,7 +210,7 @@ await okAsync('عميل التطبيق يرسل ويقرأ الرد من الع�
   } finally { globalThis.fetch = saved }
 })
 
-await okAsync('خادم ميت + مسبار ناجح ⇒ «الإنترنت سليم» لا «تحقق من اتصالك»', async () => {
+await okAsync('فشل النقل مع وصول المسبار ⇒ لا اتهام قاطع بانقطاع الاتصال', async () => {
   const saved = globalThis.fetch
   globalThis.fetch = async (url) => {
     if (String(url).includes('/support/')) throw new Error('ENOTFOUND')
@@ -220,7 +220,7 @@ await okAsync('خادم ميت + مسبار ناجح ⇒ «الإنترنت سل
     const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, JSON.parse(BODY))
     assert.equal(result.ok, false)
     assert.equal(result.offline, false)
-    assert.match(result.reason, /الإنترنت عندك سليم/)
+    assert.match(result.reason, /وصل مسبار اتصال/)
     assert.ok(!result.reason.includes('تحقّق من اتصال الإنترنت'))
   } finally { globalThis.fetch = saved }
 })

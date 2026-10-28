@@ -148,6 +148,15 @@ describe('المراجعة الأدق — سلامة منطق الدفتر ال�
     expect(eq.at(-1)?.value).toBe(fmt(100_000_00 - 25_000_00))
   })
 
+  it('يوضّح أن ربط الشيكات الفردية تقديري وأن الحافظة ليست نقدية محصلة', () => {
+    const model = buildAnalyticalProjectReport(src({
+      chequeAttributedMinor: 100,
+      cheques: [{ direction: 'incoming', partyId: 1, status: 'held', amountMinor: 100, chequeNumber: 'H', createdAt: '2026-01-01' }],
+    }))
+    expect(model.notes?.join(' ')).toContain('تقديري')
+    expect(model.notes?.join(' ')).toContain('لا يعني دخول النقدية')
+  })
+
   it('H) سطور الترويسة تصل إلى HTML الطباعة كما تظهر على الشاشة', () => {
     const m = buildAnalyticalProjectReport(src({ headerLines: ['المنطقة الصناعية — المنصورة', 'الرقم الضريبي: 123456789'] }))
     const html = renderFormalReportHtml(m, DEFAULT_REPORT_PRINT)

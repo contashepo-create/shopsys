@@ -347,6 +347,12 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   if ((src.cheques ?? []).some((c) => c.direction === 'incoming' && c.status !== 'bounced' && c.status !== 'cancelled')) {
     notes.push('الشيكات الواردة مُدرَجة ضمن التحصيلات ومُخصومة من ذمم المستخلصات — مطابقة لكشف حساب العميل.')
   }
+  if ((src.cheques ?? []).some((c) => c.direction === 'incoming' && (c.status === 'held' || c.status === 'deposited'))) {
+    notes.push('الشيك في الحافظة أو تحت التحصيل يُخفض ذمة العميل، لكنه لا يعني دخول النقدية إلى البنك أو الخزينة بعد.')
+  }
+  if (src.chequeAttributedMinor != null && (src.cheques ?? []).some((c) => c.direction === 'incoming' && c.status !== 'bounced' && c.status !== 'cancelled')) {
+    notes.push('توزيع نصيب المشروع على أرقام الشيكات في الجدول تقديري للعرض فقط؛ دفتر الذمم لا يحفظ ربط كل شيك بمستخلص معين.')
+  }
   if (src.chequeAttributedMinor != null) {
     const totalActiveCheques = (src.cheques ?? [])
       .filter((c) => c.direction === 'incoming' && c.partyId != null && c.status !== 'bounced' && c.status !== 'cancelled')

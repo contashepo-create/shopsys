@@ -4,7 +4,7 @@
  * كان يُترجم إلى «تحقّق من اتصال الإنترنت».
  *
  * هذا اختبار تكامل حقيقي: عميل `core/support.ts` يوقّع HMAC v2 ويرسل إلى
- * **عامل التحكم الحيّ** (tools/devbot) عبر fetch موجّه إليه، فيُخزّن البلاغ في
+ * كود عامل التحكم المحلي (tools/devbot) عبر fetch تجريبي وKV ذاكرة، فيُخزّن البلاغ في
  * KV ويُرسل إشعاراً للمطوّر؛ ثم يردّ المطوّر فيقرأ العميل الرد. كما يُثبت أن
  * التشخيص لا يتهم اتصال العميل حين يكون المسبار ناجحاً.
  */
@@ -74,9 +74,9 @@ beforeEach(() => {
   telegram = []
   wireLive()
 })
-afterEach(() => { vi.unstubAllGlobals(); globalThis.fetch = realFetch })
+afterEach(() => { vi.unstubAllGlobals(); globalThis.fetch = realFetch; delete (window as { shopsysSupport?: unknown }).shopsysSupport })
 
-describe('قناة الدعم على عامل التحكم الحيّ', () => {
+describe('قناة الدعم على العامل المحلي وKV تجريبي', () => {
   it('الوجهة الأساسية هي العامل الحيّ، والقديم مجرد بديل', () => {
     expect(SUPPORT_CLOUD_BASE_URL).toContain('mobileshop2026.workers.dev')
     expect(SUPPORT_CLOUD_FALLBACK_URLS.join(',')).toContain('contashepo.workers.dev')
@@ -130,6 +130,13 @@ describe('قناة الدعم على عامل التحكم الحيّ', () => {
     expect(await kv.get(`chat:${DEVICE}`)).toBeNull()
   })
 
+  it('رفض اعتماد القراءة 401 لا يُخفى بالانتقال تلقائياً إلى خادم آخر', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async () => { calls++; return new Response('{}', { status: 401 }) }))
+    expect(await fetchConversation(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN)).toBeNull()
+    expect(calls).toBe(1)
+  })
+
   it('منع إعادة التشغيل: تكرار nonce مرفوض', async () => {
     const { authorizeSupportRequest } = await import('../../tools/devbot/src/supportChannel.js')
     /* نوقّع طلب GET يدوياً ثم نعيده حرفياً */
@@ -162,10 +169,10 @@ describe('تشخيص الفشل: لا «لا يوجد إنترنت» كاذبة'
     const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
     expect(result.ok).toBe(false)
     expect(result.offline).toBe(false)
-    expect(result.reason).toContain('الإنترنت عندك سليم')
+    expect(result.reason).toContain('وصل مسبار اتصال')
     expect(result.reason).toContain('خادم الدعم')
     expect(result.reason).not.toContain('تحقّق من اتصال الإنترنت')
-    expect(result.attempts).toBeGreaterThan(1)
+    expect(result.attempts).toBe(1)
   })
 
   it('لا يصل أي خادم ⇒ رسالة الاتصال صادقة (بما فيها البروكسي/الجدار)', async () => {
@@ -176,7 +183,7 @@ describe('تشخيص الفشل: لا «لا يوجد إنترنت» كاذبة'
     expect(result.reason).toContain('تحقّق من اتصال الإنترنت')
   })
 
-  it('رد 404 صريح من العامل الحيّ لا يضيع خلف فشل نقل المضيف البديل', async () => {
+  it('404 على الأساسي ثم انقطاع رد البديل يبيّن الحالتين دون افتراض عدم الوصول', async () => {
     let supportCalls = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
       const target = String(url)
@@ -192,13 +199,115 @@ describe('تشخيص الفشل: لا «لا يوجد إنترنت» كاذبة'
     const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
     expect(result.ok).toBe(false)
     expect(supportCalls).toBeGreaterThan(1)
-    expect(result.status).toBe(404)
+    expect(result.status).toBe(0)
     expect(result.reason).toContain('غير منشور')
+    expect(result.reason).toContain('قد تكون')
   })
 
   it('الترجمة القديمة لرموز الخادم باقية كما هي', () => {
     expect(supportFailureReason(429)).toContain('حدّ الرسائل')
     expect(supportFailureReason(404)).toContain('غير منشور')
     expect(supportTransportReason({ online: true, attempts: 2, detail: 'ENOTFOUND' })).toContain('جُرّب 2')
+  })
+})
+
+
+describe('إرسال الدعم عند فقد الرد أو فشل إشعار المطوّر', () => {
+  it('فشل قراءة المحادثة لا يستبدل السجل الموجود بمحادثة فارغة', async () => {
+    const key = `chat:${DEVICE}`
+    await kv.put(key, '[{"id":1,"from":"developer","text":"رسالة محفوظة"}]')
+    const originalGet = kv.get.bind(kv)
+    let chatWrites = 0
+    const originalPut = kv.put.bind(kv)
+    vi.spyOn(kv, 'get').mockImplementation(async (name) => {
+      if (name === key) throw new Error('KV unavailable')
+      return originalGet(name)
+    })
+    vi.spyOn(kv, 'put').mockImplementation(async (name, value, opts) => {
+      if (name === key) chatWrites++
+      return originalPut(name, value, opts)
+    })
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
+    expect(result.ok).toBe(false)
+    expect(chatWrites).toBe(0)
+    expect(await originalGet(key)).toContain('رسالة محفوظة')
+  })
+
+  it('بيانات محادثة تالفة لا تُستبدل برسالة جديدة بلا تحذير', async () => {
+    const key = `chat:${DEVICE}`
+    await kv.put(key, '{invalid')
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
+    expect(result.ok).toBe(false)
+    expect(await kv.get(key)).toBe('{invalid')
+  })
+
+  it('فقد رد POST بعد تخزين الرسالة لا يكرر الإرسال تلقائياً ويعرض نتيجة غير مؤكدة', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
+      const target = String(url)
+      if (target.includes('api.telegram.org')) return new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 })
+      if (target.includes('/support/')) {
+        calls++
+        await devbotWorker.fetch(new Request(target, init), env())
+        throw new Error('response lost')
+      }
+      return new Response('{}', { status: 200 })
+    }))
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
+    expect(calls).toBe(1)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('قد تكون')
+    const chat = JSON.parse((await kv.get(`chat:${DEVICE}`)) ?? '[]')
+    expect(chat).toHaveLength(1)
+  })
+
+  it('فقد رد الناقل الرئيسي لا يكرر POST في المتصفح', async () => {
+    let browserPosts = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
+      const target = String(url)
+      if (target.includes('api.telegram.org')) return new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 })
+      if (target.includes('/support/') && init.method === 'POST') browserPosts++
+      return new Response('{}', { status: 200 })
+    }))
+    Object.defineProperty(window, 'shopsysSupport', { configurable: true, value: {
+      getToken: async () => null, setToken: async () => true,
+      request: async (args: { url: string; method: string; headers: Record<string, string>; body: string }) => {
+        await devbotWorker.fetch(new Request(args.url, args), env())
+        return { ok: false, status: 0, body: '', error: 'response lost', errorCode: 'network' }
+      },
+    } })
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
+    expect(browserPosts).toBe(0)
+    expect(result.reason).toContain('قد تكون')
+    expect(JSON.parse((await kv.get(`chat:${DEVICE}`)) ?? '[]')).toHaveLength(1)
+  })
+
+  it('فشل إرسال السجل لا يختبئ وراء نجاح إشعار الرسالة', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
+      const target = String(url)
+      if (target.includes('sendDocument')) return new Response(JSON.stringify({ ok: false }), { status: 500 })
+      if (target.includes('sendMessage')) return new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 })
+      if (target.includes('/support/')) return devbotWorker.fetch(new Request(target, init), env())
+      return new Response('{}', { status: 200 })
+    }))
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, { ...PAYLOAD, log: 'سجل تشخيص' })
+    expect(result.ok).toBe(true)
+    expect(result.notified).toBe(true)
+    expect(result.logNotified).toBe(false)
+    expect(result.reason).toContain('السجل')
+  })
+
+  it('عدم وصول إشعار تليجرام لا يُقدّم للمستخدم على أنه وصل للمطوّر', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
+      const target = String(url)
+      if (target.includes('api.telegram.org')) return new Response(JSON.stringify({ ok: false }), { status: 500 })
+      if (target.includes('/support/')) return devbotWorker.fetch(new Request(target, init), env())
+      return new Response('{}', { status: 200 })
+    }))
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
+    expect(result.ok).toBe(true)
+    expect(result.reason).not.toContain('وصلت رسالتك للمطوّر')
+    expect(result.reason).toContain('الإشعار')
+    expect(JSON.parse((await kv.get(`chat:${DEVICE}`)) ?? '[]')).toHaveLength(1)
   })
 })

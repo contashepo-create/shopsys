@@ -23,8 +23,8 @@
  *   (ب) أي فشل نقل كان يُترجم حرفياً إلى «تحقّق من اتصال الإنترنت» — تشخيص
  *       كاذب يخفي السبب (خادم ميت، DNS، شهادة، بروكسي، مضيف غير مسموح…).
  *   الحل: عنوان حيّ + بديل تلقائي للعامل القديم، ومسبار اتصال حقيقي قبل اتهام
- *   اتصال المستخدم، ومحاولة ثانية عبر شبكة Chromium في المُصيّر إن فشل طلب
- *   العملية الرئيسية، وسبب عربي صادق يحمل رمز الخطأ التقني.
+ *   اتصال المستخدم، واستخدام شبكة Chromium في العملية الرئيسية، وسبب عربي
+ *   يوضّح عدم يقين وصول POST إذا فُقد الرد قبل تأكيد النتيجة.
  */
 import { sanitizeText, isValidDeviceId } from './audit.ts'
 import { LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL, SUPPORT_CLOUD_FALLBACK_URLS, SUPPORT_PROBE_URLS } from './cloud.ts'
@@ -165,10 +165,9 @@ async function supportHeaders(token: string, method: string, url: string, body =
 /* ─── ناقل الطلب ────────────────────────────────────────────────────────────
    في سطح Desktop يمرّ الطلب من **العملية الرئيسية** (بلا Origin ⇒ لا سياسة
    مصدر متصفح)؛ ويبقى الاعتماد (HMAC + TOFU) هو الحماية الحقيقية.
-   الآن: لو فشل نقل العملية الرئيسية (Node fetch لا يمرّ ببروكسي النظام ولا
-   يثق بشهاداته دائماً)، نُعيد المحاولة عبر `fetch` في المُصيّر (شبكة Chromium)
-   قبل أن نُعلن الفشل — فالإنترنت قد يكون سليماً تماماً عند المستخدم.
-   والواجهة تستلم **السبب الحقيقي** بدل رسالة عامة كاذبة. */
+   تستخدم العملية الرئيسية شبكة Chromium مباشرة. تُعاد قراءة GET بتوقيع
+   جديد عند تعذر النقل، بينما لا يُعاد POST تلقائياً بعد نتيجة غير مؤكدة
+   لئلا تتكرر الرسالة. تُعرض للمستخدم حدود ما يمكن استنتاجه من الاتصال. */
 export interface SupportHttpRequest {
   url: string
   method: 'GET' | 'POST'
@@ -196,7 +195,11 @@ export interface SupportSendResult {
   offline: boolean
   /** تفصيل تقني مختصر (رسالة النقل/الرمز) للتشخيص واللوج */
   detail?: string
-  /** عدد المضيفين/النواقل التي جُرّبت */
+  /** تأكيد إرسال إشعار تليجرام من الخادم (غير معروف عند الخوادم القديمة). */
+  notified?: boolean
+  /** تأكيد إرسال السجل المرفق؛ غائب للخوادم القديمة أو عند عدم إرفاقه. */
+  logNotified?: boolean
+  /** عدد عناوين الخدمة التي جُرّبت */
   attempts: number
 }
 
@@ -218,7 +221,7 @@ export function supportFailureReason(status: number, detail = ''): string {
   if (status === 404) return 'مسار خدمة الدعم غير منشور على الخادم (404) — حدّث البرنامج أو اطلب من المطوّر نشر عامل التحكم'
   if (status === 413) return 'اللوج المرفق أكبر من المسموح — أرسل الرسالة بلا لوج'
   if (status === 429) return 'تجاوزت حدّ الرسائل في هذه الساعة — انتظر قليلاً ثم أعد المحاولة'
-  if (status >= 500) return 'خطأ في خادم الدعم — حاول بعد قليل'
+  if (status >= 500) return 'حدث خطأ في خادم الدعم وقد تكون الرسالة حُفظت قبل الخطأ — حدّث المحادثة وتحقق منها قبل إعادة الإرسال'
   if (status >= 400) return `طلب غير مقبول من الخادم${detail ? ` (${detail})` : ''}`
   return 'تعذّر الوصول إلى خادم الدعم — تحقّق من اتصال الإنترنت'
 }
@@ -226,7 +229,7 @@ export function supportFailureReason(status: number, detail = ''): string {
 /**
  * مسبار الاتصال الحقيقي: هل يصل هذا الجهاز إلى **أي** خدمة سحابية يعتمد عليها
  * التطبيق؟ يُستدعى فقط حين يفشل طلب الدعم في طبقة النقل (status 0). نجاح المسبار
- * يعني أن الإنترنت سليم ⇒ لا يجوز اتهام اتصال المستخدم (بلاغ المالك).
+ * يعني أن هذا المسبار وصل إلى خدمة خارجية، لا أن كل الإنترنت سليم.
  */
 export async function probeSupportConnectivity(timeoutMs = 5000): Promise<boolean> {
   if (typeof fetch !== 'function') return false
@@ -241,15 +244,13 @@ export async function probeSupportConnectivity(timeoutMs = 5000): Promise<boolea
       if (res.ok || res.type === 'opaque') return true
     } catch { /* المسبار التالي */ }
   }
-  /* إن رمى كل مسبار استثناءً فالشبكة معطّلة فعلاً — لا نستند إلى
-     navigator.onLine لأنه يعكس وجود وصلة محلية لا الوصول للإنترنت. */
+  /* فشل المسبارات لا يثبت انقطاع الإنترنت عموماً: قد تحجب نطاقاتها أو CORS. */
   return false
 }
 
 /**
- * سبب صادق لفشل النقل: يفرّق بين «الإنترنت سليم وخدمة الدعم لا تستجيب»
- * و«لا يمكن الوصول لأي خادم». لا يُعرض «تحقّق من اتصال الإنترنت» إلا حين
- * يفشل مسبار الاتصال فعلاً. التفصيل التقني يُقصّ ويُنقّى قبل العرض.
+ * سبب صادق لفشل النقل: يفرّق بين وصول مسبار خارجي وفشل المسبارات.
+ * لا يثبت فشل المسبارات انقطاع الإنترنت، فقد تُحجب وجهاتها أو السياسة الأمنية. التفصيل التقني يُقصّ ويُنقّى قبل العرض.
  */
 export function supportTransportReason(input: {
   online: boolean
@@ -263,7 +264,7 @@ export function supportTransportReason(input: {
   const suffix = technical ? ` (${technical})` : ''
   const tried = input.attempts > 1 ? ` — جُرّب ${input.attempts} عنواناً للخدمة` : ''
   if (input.online) {
-    return `الإنترنت عندك سليم ✓ لكن خادم الدعم لم يستجب — العطل في عنوان الخدمة أو الخادم نفسه لا في جهازك${tried}${suffix}. أعد المحاولة بعد قليل، وإن استمرّت أرسل هذه الرسالة للمطوّر.`
+    return `وصل مسبار اتصال لخدمة خارجية، لكن لم يصل رد من خادم الدعم${tried}${suffix}.`
   }
   return `تعذّر الوصول إلى خدمات التحكّم السحابية — تحقّق من اتصال الإنترنت أو من جدار الحماية/البروكسي الذي قد يحجب نطاق workers.dev${tried}${suffix}.`
 }
@@ -281,9 +282,8 @@ async function rendererFetch(url: string, method: 'GET' | 'POST', headers: Recor
 
 /**
  * تنفيذ الطلب: من العملية الرئيسية على سطح المكتب، أو من المتصفح على الويب.
- * كل محاولة نقل تُوقَّع من جديد (nonce/وقت جديدان): لو كان الطلب الأول قد وصل
- * الخادم واستهلك الـnonce ثم ضاع رده، فإن إعادة التوقيع تمنع رفض المحاولة
- * الثانية كـ«إعادة تشغيل» — وهو ما كان سيُظهر للمستخدم «أعد ربط القناة» كذباً.
+ * محاولات GET أو الرفض المحلي قبل الإرسال تُوقّع من جديد؛ أمّا POST بعد
+ * فشل نقل غير محدد فلا يُكرر لأن فقد الرد لا يعني أن الخادم لم ينفذه.
  */
 async function requestSupport(
   url: string,
@@ -303,8 +303,10 @@ async function requestSupport(
     } catch (error) {
       primary = { ok: false, status: 0, body: '', error: (error as Error).message, errorCode: 'bridge' }
     }
-    /* فشل نقل العملية الرئيسية ⇒ محاولة أخيرة عبر شبكة Chromium في المُصيّر.
-       نجاحها يعني أن المشكلة كانت في ناقل واحد لا في اتصال المستخدم. */
+    // قد يكون POST قد نُفذ قبل فقد الرد. لا نكرره على ناقل آخر إلا إذا
+    // رفض الجسر المضيف محلياً قبل أي اتصال. GET لا ينشئ رسالة ويجوز إعادته.
+    if (method === 'POST' && primary?.errorCode !== 'host-not-allowed' && primary?.errorCode !== 'invalid-url') return primary!
+    /* GET أو رفض محلي قبل الإرسال: نجرب شبكة المُصيّر بتوقيع جديد. */
     const retryHeaders = await supportHeaders(token, method, url, body, json)
     const fallback = await rendererFetch(url, method, retryHeaders, body, timeoutMs)
     if (fallback.ok || fallback.status !== 0) return fallback
@@ -323,7 +325,11 @@ export async function fetchConversation(baseUrl: string, deviceId: string, token
     for (const base of supportBaseCandidates(baseUrl)) {
       const url = supportUrl(base, deviceId)
       const res = await requestSupport(url, 'GET', token, undefined, 10_000, false)
-      if (!res.ok) continue
+      if (!res.ok) {
+        // لا نخفي رفض الاعتماد أو خطأ الخادم بجلب محادثة مختلفة من مضيف آخر.
+        if (res.status === 0 || res.status === 404) continue
+        return null
+      }
       return parseConversation(JSON.parse(res.body) as unknown)
     }
     return null
@@ -332,7 +338,7 @@ export async function fetchConversation(baseUrl: string, deviceId: string, token
 
 /**
  * إرسال رسالة دعم — يعيد **السبب الحقيقي** عند الفشل (لا «لا يوجد اتصال»).
- * يجرّب المضيف الحيّ ثم البديل عند انقطاع النقل أو 404 (عامل قديم بلا المسار).
+ * يجرّب المضيف البديل فقط عند 404، لا بعد انقطاع النقل غير الحاسم.
  * ردّ صريح من خادم (401/403/429/5xx…) لا يُعاد إرساله على مضيف آخر.
  */
 export async function sendSupportMessage(
@@ -346,19 +352,30 @@ export async function sendSupportMessage(
     const body = JSON.stringify(payload)
     const urls = supportBaseCandidates(baseUrl).map((base) => supportUrl(base, deviceId))
     let last: SupportHttpResponse = { ok: false, status: 0, body: '' }
-    /* ردّ صريح من خادم (مثل 404 «المسار غير منشور») أدقّ من فشل نقل لاحق
-       على مضيف بديل ميت — لا يُستبدل به فيسبق تشخيصاً عاماً «الخادم لم يستجب». */
-    let serverFailure: SupportHttpResponse | null = null
+    let prior404 = false
     for (const url of urls) {
       attempts += 1
       const res = await requestSupport(url, 'POST', token, body, 15_000, true)
-      if (res.ok) return { ok: true, status: res.status, reason: 'وصلت رسالتك للمطوّر', offline: false, attempts }
+      if (res.ok) {
+        let result: { ok?: unknown; notified?: unknown; logNotified?: unknown } | null = null
+        try { result = JSON.parse(res.body) as { ok?: unknown; notified?: unknown; logNotified?: unknown } } catch { /* رد غير قابل للتفسير */ }
+        if (!result || result.ok !== true) {
+          return { ok: false, status: res.status, reason: 'رد خادم الدعم غير واضح؛ قد تكون الرسالة حُفظت — حدّث المحادثة قبل إعادة الإرسال', offline: false, attempts }
+        }
+        const notified = result.notified === true ? true : result.notified === false ? false : undefined
+        const logNotified = result.logNotified === true ? true : result.logNotified === false ? false : undefined
+        let reason = notified === true
+          ? 'حُفظت الرسالة وأُرسل إشعار إلى المطوّر'
+          : 'حُفظت الرسالة، لكن لم يتأكد إرسال الإشعار للمطوّر — تواصل معه إذا لم يصلك رد'
+        if (payload.log && logNotified !== true) reason += '؛ لم يتأكد إرسال السجل المرفق'
+        return { ok: true, status: res.status, reason, notified, logNotified, offline: false, attempts }
+      }
       last = res
-      if (res.status !== 0) serverFailure = res
-      /* status 0 = لم يصل أي رد؛ 404 = العامل لا يخدم /support (غير منشور) */
-      if (res.status !== 0 && res.status !== 404) break
+      if (res.status === 404) prior404 = true
+      // 404 استجابة صريحة قبل معالجة المسار؛ وحدها تسمح بتجربة عنوان آخر.
+      if (res.status !== 404) break
     }
-    const decisive = last.status !== 0 ? last : serverFailure
+    const decisive = last.status !== 0 ? last : null
     let detail = ''
     try {
       const parsed = JSON.parse((decisive ?? last).body) as { error?: unknown }
@@ -372,11 +389,11 @@ export async function sendSupportMessage(
     }
     /* فشل نقل: لا نقول «لا يوجد إنترنت» قبل أن نختبر الاتصال فعلياً */
     const online = await probeSupportConnectivity()
-    const technical = [last.errorCode, last.error, detail].filter(Boolean).join(' — ')
+    const technical = [last.error, detail].filter(Boolean).join(' — ')
     return {
       ok: false,
       status: 0,
-      reason: supportTransportReason({ online, detail: technical, errorCode: last.errorCode, attempts }),
+      reason: `${prior404 ? 'المسار غير منشور على العنوان الأساسي (404). ' : ''}${supportTransportReason({ online, detail: technical, errorCode: last.errorCode, attempts })} قد تكون الرسالة وصلت قبل انقطاع الرد؛ حدّث المحادثة وتحقق منها قبل إعادة الإرسال.`,
       offline: !online,
       detail: technical || undefined,
       attempts,

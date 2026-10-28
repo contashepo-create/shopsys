@@ -43,7 +43,6 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     const extracts = projectExtracts.filter((e) => e.projectId === selected.id)
     const costs = projectCosts.filter((c) => c.projectId === selected.id)
     const orders = changeOrders.filter((o) => o.projectId === selected.id && (o.status === 'approved' || o.status === 'invoiced'))
-    const extractDocKeys = extracts.map((e) => `extract:${e.id}`)
     const projectCheques = selected.clientId == null ? [] : cheques
       .filter((c) => c.direction === 'incoming' && c.partyId === selected.clientId)
       .map((c) => ({
@@ -128,7 +127,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         })),
       ],
       openInvoiceSettled,
-      extractDocKeys,
+      extractDocKeys: creditExtractDocKeys,
       vouchers: projectVouchers.map((v) => ({
         date: v.date, number: v.voucherNumber, description: v.description,
         amountMinor: v.amountMinor, reversed: false,
