@@ -291,7 +291,7 @@ export function customerUnitDocs(args: {
   customerEquipmentCosts?: readonly { date: string; description: string; customerId?: number | null; amountMinor: Minor; vatMinor?: Minor }[]
   customerTripExpenses?: readonly { expenseNumber?: string; tripNumber: string; nameAr: string; date: string; customerId?: number | null; amountMinor: Minor }[]
   /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
-  clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor } }[]
+  clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor; viaVoucherId?: number | null }[]
   /** معرفات المرضى المرتبطين بهذا العميل */
   linkedPatientIds?: readonly number[]
@@ -359,9 +359,11 @@ export function customerUnitDocs(args: {
   const patientSet = new Set(args.linkedPatientIds ?? [])
   for (const v of args.clinicVisits ?? []) {
     if (!patientSet.has(v.patientId) || v.totals.totalMinor <= 0) continue
-    const paid = Math.min(v.totals.totalMinor, Math.max(0, v.totals.paidMinor))
-    const status = paid >= v.totals.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
+    // حصة التأمين ليست ديناً على العميل؛ dueMinor هو دين المريض الفعلي.
+    const paid = Math.min(v.totals.totalMinor, Math.max(0, v.totals.totalMinor - v.totals.dueMinor))
+    const status = v.totals.dueMinor === 0 && v.totals.paidMinor < v.totals.totalMinor ? 'مسدد/تغطية' : paid >= v.totals.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
     rows.push({ docLabel: `زيارة عيادة ${v.visitNumber} (${status})`, date: v.date, operationMinor: v.totals.totalMinor, debitMinor: v.totals.totalMinor, creditMinor: paid })
+    for (const r of v.refunds ?? []) if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع زيارة ${v.visitNumber} (على الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.amountMinor })
   }
   for (const c of args.clinicCollections ?? []) {
     if (!patientSet.has(c.patientId)) continue

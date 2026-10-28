@@ -48,6 +48,13 @@ describe('المراجعة الأدق — سلامة منطق الدفتر ال�
     expect(collections.running.at(-1)).toBe(100_000_00 - 40_000_00)
   })
 
+  it('لا يصف متبقي المشروع بأنه الرصيد الإجمالي للعميل ولا يدّعي تطابق التوزيع التقديري', () => {
+    const m = buildAnalyticalProjectReport(src({ cheques: twoCheques, chequeAttributedMinor: 40_000_00 }))
+    expect(m.equation?.some((r) => r.label.includes('المتبقي من التحصيل — مستخلصات المشروع'))).toBe(true)
+    expect(m.equation?.some((r) => r.label.includes('رصيد العميل المدين'))).toBe(false)
+    expect(m.notes?.some((n) => n.includes('تقديري') && n.includes('كشف حساب العميل'))).toBe(true)
+  })
+
   it('A2) بدون سقف توزيع تبقى كل الشيكات محسوبة (توافق قديم)', () => {
     const collections = buildCollectionRows(src({ cheques: twoCheques }))
     expect(collections.totalMinor).toBe(100_000_00)
@@ -139,7 +146,7 @@ describe('المراجعة الأدق — سلامة منطق الدفتر ال�
       vouchers: [{ date: '2026-02-10', number: 'RV-1', amountMinor: 40_000_00, allocations: [{ docKey: 'extract:1', appliedMinor: 40_000_00 }] }],
     }))
     const eq = m.equation ?? []
-    const iRemain = eq.findIndex((e) => e.label.includes('المتبقي من التحصيل'))
+    const iRemain = eq.findIndex((e) => e.label.includes('المتبقي من التحصيل — مستخلصات المشروع'))
     const iRevenue = eq.findIndex((e) => e.label.includes('بداية مستقلة'))
     const iExpense = eq.findIndex((e) => e.label.includes('يُطرح: إجمالي مصروفات'))
     expect(iRemain).toBeGreaterThanOrEqual(0)

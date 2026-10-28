@@ -112,16 +112,22 @@ export function buildMaterialIssueEntry(totalCostMinor: Minor, label: string): J
 
 /* ═══════════════ 2) تحصيلات العملاء FIFO ═══════════════ */
 
-/** فاتورة مفتوحة قابلة للإطفاء (مستخلص آجل أو فاتورة بيع آجلة) */
+/** ذمة مفتوحة قابلة للإطفاء، بما فيها رصيد العميل الافتتاحي والمستندات الآجلة. */
 export interface OpenInvoice {
-  /** مفتاح المستند: sale:12 أو extract:3 — فريد عبر الأنواع */
+  /** مفتاح الذمة: sale:12 أو extract:3 أو customer-opening:1 — فريد عبر الأنواع */
   docKey: string
   docLabel: string
   date: string
   /** المستحق الآجل الأصلي */
   dueMinor: Minor
-  /** المُحصَّل منه حتى الآن */
+  /** ما أُطفئ من الذمة حتى الآن، بما فيه المقاصات غير النقدية */
   settledMinor: Minor
+  /** تقدير توزيع مقاصات الطرف على هذه الذمة؛ لا يغيّر مستند المقاصة الأصلي. */
+  offsetAllocations?: { offsetId: number; date: string; offsetNumber: string; amountMinor: Minor }[]
+  /** تعديلات دائنة تقديرية غير نقدية (قيد/تسوية/ولاء)، بحسب مصدرها. */
+  adjustmentAllocations?: { key: string; date: string; number: string; description: string; amountMinor: Minor }[]
+  /** تحصيل غير موزع (بما فيه الأقساط) نُسب تقديرياً دون تغيير سجله. */
+  estimatedReceiptAllocations?: { key: string; date: string; number: string; description: string; amountMinor: Minor }[]
 }
 
 export interface FifoAllocation {

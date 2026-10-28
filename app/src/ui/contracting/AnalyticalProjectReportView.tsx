@@ -98,9 +98,40 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         explicitOnExtracts.set(a.docKey, (explicitOnExtracts.get(a.docKey) ?? 0) + a.appliedMinor)
       }
     }
+    const offsetsById = new Map<number, { date: string; number: string; amountMinor: number }>()
+    for (const doc of openInvoices) {
+      if (!creditKeySet.has(doc.docKey)) continue
+      for (const offset of doc.offsetAllocations ?? []) {
+        const row = offsetsById.get(offset.offsetId) ?? { date: offset.date, number: offset.offsetNumber, amountMinor: 0 }
+        row.amountMinor += offset.amountMinor
+        offsetsById.set(offset.offsetId, row)
+      }
+    }
+    const projectOffsets = [...offsetsById.values()]
+    const adjustmentsByKey = new Map<string, { key: string; date: string; number: string; description: string; amountMinor: number }>()
+    for (const doc of openInvoices) {
+      if (!creditKeySet.has(doc.docKey)) continue
+      for (const adjustment of doc.adjustmentAllocations ?? []) {
+        const row = adjustmentsByKey.get(adjustment.key) ?? { key: adjustment.key, date: adjustment.date, number: adjustment.number, description: adjustment.description, amountMinor: 0 }
+        row.amountMinor += adjustment.amountMinor
+        adjustmentsByKey.set(adjustment.key, row)
+      }
+    }
+    const projectAdjustments = [...adjustmentsByKey.values()]
+    const receiptsByKey = new Map<string, { key: string; date: string; number: string; description: string; amountMinor: number }>()
+    for (const doc of openInvoices) {
+      if (!creditKeySet.has(doc.docKey)) continue
+      for (const receipt of doc.estimatedReceiptAllocations ?? []) {
+        const row = receiptsByKey.get(receipt.key) ?? { ...receipt, amountMinor: 0 }
+        row.amountMinor += receipt.amountMinor
+        receiptsByKey.set(receipt.key, row)
+      }
+    }
+    const projectEstimatedReceipts = [...receiptsByKey.values()]
+    const offsetTotal = [...projectOffsets, ...projectAdjustments, ...projectEstimatedReceipts].reduce((sum, row) => sum + row.amountMinor, 0)
     const settledOnExtracts = [...openInvoiceSettled.values()].reduce((s, v) => s + v, 0)
     const explicitTotal = [...openInvoiceSettled.keys()].reduce((s, k) => s + (explicitOnExtracts.get(k) ?? 0), 0)
-    const chequeAttributedMinor = Math.max(0, settledOnExtracts - explicitTotal)
+    const chequeAttributedMinor = Math.max(0, settledOnExtracts - explicitTotal - offsetTotal)
 
     const src: AnalyticalProjectSource = {
       project: {
@@ -113,6 +144,8 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         extractNumber: e.extractNumber, date: e.date, grossMinor: e.totals.grossMinor,
         vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, dueMinor: e.totals.dueMinor,
         payment: e.payment, advanceRecoveryMinor: e.advanceRecoveryMinor ?? 0,
+        refundedMinor: e.refundedMinor ?? 0, refundedTaxMinor: e.refundedTaxMinor ?? 0,
+        refunds: e.refunds ?? [],
       })),
       expenses: [
         ...costs.map((c) => ({
@@ -138,6 +171,9 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         allocations: st.allocations?.map((a) => ({ docKey: a.docKey, appliedMinor: a.appliedMinor })),
       })),
       cheques: projectCheques,
+      partyOffsets: projectOffsets,
+      customerAdjustments: projectAdjustments,
+      estimatedReceipts: projectEstimatedReceipts,
       chequeAttributedMinor,
       currencySymbol: cur.symbol,
       companyName: setup.shopName || 'المنشأة',

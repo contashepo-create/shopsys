@@ -20,6 +20,7 @@ const { useAppStore } = await import('../src/stores/app.store.ts')
 const { useToast } = await import('../src/ui/components/ui.tsx')
 const { hasUnsavedChangesInCurrentWindow } = await import('../src/ui/components/unsavedChangeRegistry.ts')
 const { CompanyProfilePage } = await import('../src/ui/pages/CompanyProfilePage.tsx')
+const { secureStorage } = await import('../src/data/secureStorage.ts')
 const { GeneralSettingsPage } = await import('../src/ui/pages/GeneralSettingsPage.tsx')
 const { EinvoicePage } = await import('../src/ui/pages/EinvoicePage.tsx')
 
@@ -78,6 +79,36 @@ describe('صفحة بيانات المنشأة', () => {
     expect(hasUnsavedChangesInCurrentWindow()).toBe(false)
     expect(useAppStore.getState().setup.email).toBe('draft@example.com')
     await waitFor(() => expect(localStorage.getItem(draftKey)).toBeNull())
+  })
+
+  it('ينتظر حفظ المسودة المتأخر عند فتح الصفحة مجدداً ولا يستعيد نسخة أقدم', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let started!: () => void
+    const writeStarted = new Promise<void>(resolve => { started = resolve })
+    const original = secureStorage.setItem
+    const spy = vi.spyOn(secureStorage, 'setItem').mockImplementation(async (key, value) => {
+      if (key === 'shopsys-company-profile-draft-v1:main' && value.includes('delayed@example.com')) {
+        started()
+        await gate
+      }
+      return original(key, value)
+    })
+    try {
+      const first = render(<MemoryRouter><CompanyProfilePage /></MemoryRouter>)
+      await waitFor(() => expect(localStorage.getItem('shopsys-company-profile-draft-v1:main')).not.toBeNull())
+      fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'delayed@example.com' } })
+      await writeStarted
+      first.unmount()
+      render(<MemoryRouter><CompanyProfilePage /></MemoryRouter>)
+      release()
+      await waitFor(() => expect((screen.getByPlaceholderText('name@example.com') as HTMLInputElement).value).toBe('delayed@example.com'))
+      fireEvent.click(screen.getByText('💾 حفظ بيانات المنشأة'))
+      await waitFor(() => expect(localStorage.getItem('shopsys-company-profile-draft-v1:main')).toBeNull())
+    } finally {
+      release()
+      spy.mockRestore()
+    }
   })
 
   it('يرحّل المسودة القديمة الصريحة إلى تخزين مشفّر مع الحفاظ على الاستعادة', async () => {

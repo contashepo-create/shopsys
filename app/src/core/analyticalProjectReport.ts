@@ -29,6 +29,10 @@ export interface AnalyticalProjectSource {
     dueMinor: Minor
     payment: 'cash' | 'credit'
     advanceRecoveryMinor?: Minor
+    /** إجمالي الإشعارات وحصتها الضريبية كما قُيدت، وسجل كل رد. */
+    refundedMinor?: Minor
+    refundedTaxMinor?: Minor
+    refunds?: readonly { date: string; amountMinor: Minor; taxShareMinor: Minor; mode: 'cash' | 'customer_credit'; journalEntryId: number }[]
   }[]
   /** مصروفات المشروع (سطر لكل مستند) */
   expenses: {
@@ -45,6 +49,12 @@ export interface AnalyticalProjectSource {
   vouchers?: { date: string; number: string; description?: string; amountMinor: Minor; reversed?: boolean; allocations?: readonly DocAllocation[] }[]
   /** تسويات العملاء (تحصيلات FIFO) */
   clientSettlements?: { date: string; number: string; amountMinor: Minor; allocations?: readonly DocAllocation[] }[]
+  /** مقاصات الطرف المنسوبة تقديرياً لمستخلصات المشروع — إطفاء غير نقدي. */
+  partyOffsets?: readonly { date: string; number: string; amountMinor: Minor }[]
+  /** تعديلات دائنة من كشف العميل، لا تحصيل نقدي، وإسنادها تقديري. */
+  customerAdjustments?: readonly { key?: string; date: string; number: string; description: string; amountMinor: Minor }[]
+  /** تحصيل غير موزع نُسب تقديرياً ولا يعد تخصيصاً محفوظاً. */
+  estimatedReceipts?: readonly { key: string; date: string; number: string; description: string; amountMinor: Minor }[]
   /** الشيكات الواردة — تُعرض بحالتها وتُحتسب Non-bounced فقط */
   cheques?: (ChequeDuesLike & { chequeNumber: string; bankName?: string; createdAt?: string; settledAt?: string | null })[]
   /**
@@ -68,6 +78,28 @@ export interface AnalyticalProjectSource {
   headerLines?: string[]
   /** دالة تنسيق المبلغ (من money.formatMinor) */
   fmt: (m: Minor) => string
+}
+
+/** لا نستنتج نوع الرد أو ضريبته من إجمالي قديم بلا مستندات مطابقة. */
+function extractRefundStatus(src: AnalyticalProjectSource) {
+  const keys = new Set<string>()
+  let amount = 0, tax = 0, cash = 0
+  let incomplete = false
+  for (const e of src.extracts) {
+    const records = e.refunds ?? []
+    let sum = 0, sumTax = 0
+    for (const r of records) {
+      if (!Number.isSafeInteger(r.amountMinor) || r.amountMinor <= 0 || !Number.isSafeInteger(r.taxShareMinor) || r.taxShareMinor < 0 || r.taxShareMinor > r.amountMinor || !Number.isSafeInteger(r.journalEntryId) || (r.mode !== 'cash' && r.mode !== 'customer_credit')) { incomplete = true; continue }
+      const key = `extract-credit:${r.journalEntryId}`
+      if (keys.has(key)) incomplete = true
+      keys.add(key)
+      sum += r.amountMinor; sumTax += r.taxShareMinor
+      if (r.mode === 'cash') cash += r.amountMinor
+    }
+    if (sum !== (e.refundedMinor ?? 0) || sumTax !== (e.refundedTaxMinor ?? 0) || sum > e.dueMinor || sumTax > (e.vatMinor ?? 0)) incomplete = true
+    amount += sum; tax += sumTax
+  }
+  return { keys, amount, tax, cash, incomplete }
 }
 
 export interface ChequeCollectionRow {
@@ -169,6 +201,8 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
   unattributedVoucherMinor: Minor
 } {
   const extractKeys = new Set(src.extractDocKeys ?? [])
+  const refunds = extractRefundStatus(src)
+  const ownRefundAdjustment = (a: { key?: string }) => !refunds.incomplete && a.key != null && refunds.keys.has(a.key)
   const projectScoped = src.extractDocKeys != null
   const rows: ChequeCollectionRow[] = []
   let unattributedVouchers = 0
@@ -201,6 +235,18 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
       : st.amountMinor
     if (amount <= 0) continue
     rows.push({ date: st.date, number: st.number, description: 'تحصيل على مستخلصات', method: 'توزيع FIFO', status: 'محصّل', amountMinor: amount })
+  }
+  for (const offset of src.partyOffsets ?? []) {
+    if (offset.amountMinor <= 0) continue
+    rows.push({ date: offset.date, number: offset.number, description: 'مقاصة الطرف (توزيع تقديري)', method: 'مقاصة غير نقدية', status: 'مقاصة', amountMinor: offset.amountMinor })
+  }
+  for (const receipt of src.estimatedReceipts ?? []) {
+    if (receipt.amountMinor <= 0) continue
+    rows.push({ date: receipt.date, number: receipt.number, description: receipt.description, method: 'نقدي / بنكي', status: 'تقديري', amountMinor: receipt.amountMinor })
+  }
+  for (const adjustment of src.customerAdjustments ?? []) {
+    if (adjustment.amountMinor <= 0 || ownRefundAdjustment(adjustment)) continue
+    rows.push({ date: adjustment.date, number: adjustment.number, description: adjustment.description, method: 'تسوية غير نقدية', status: 'تسوية', amountMinor: adjustment.amountMinor })
   }
   if (src.includeCheques !== false) {
     /* ترتيب الشيكات زميناً قبل توزيع السقف، حتى يُنسَب التحصيل للأقدم أولاً
@@ -255,6 +301,12 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
     })
   }
 
+  // الرد النقدي حركة خارجة لا تحصيل جديد؛ الإشعار الدائن يخفض المستحق
+  // بدلاً من احتسابه ثانية كتحصيل. رصيد إشعار مشروع آخر يبقى تسوية هنا.
+  if (!refunds.incomplete) for (const e of src.extracts) for (const refund of e.refunds ?? []) {
+    if (refund.mode !== 'cash') continue
+    rows.push({ date: refund.date, number: e.extractNumber, description: 'رد نقدي على مستخلص', method: 'نقدي / بنكي', status: 'رد', amountMinor: -refund.amountMinor })
+  }
   rows.sort((a, b) => a.date.localeCompare(b.date) || a.number.localeCompare(b.number))
 
   /* الهدف = مجموع ما خُصم من ذمم المستخلصات + النقدي + المقاصة (مصدر واحد) */
@@ -269,9 +321,10 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
   const excludedCheques = src.includeCheques === false
     ? Math.max(0, Math.min(creditSettled, src.chequeAttributedMinor ?? 0))
     : 0
-  const targetMinor = creditSettled - excludedCheques + cashExtracts + recovered
+  const ownCreditApplied = refunds.incomplete ? 0 : (src.customerAdjustments ?? []).filter(ownRefundAdjustment).reduce((sum, a) => sum + a.amountMinor, 0)
+  const targetMinor = creditSettled - excludedCheques + cashExtracts + recovered - ownCreditApplied - (refunds.incomplete ? 0 : refunds.cash)
 
-  let remaining = src.extracts.reduce((s, e) => s + e.dueMinor, 0)
+  let remaining = src.extracts.reduce((s, e) => s + e.dueMinor, 0) - (refunds.incomplete ? 0 : refunds.amount)
   const running: Minor[] = []
   for (const r of rows) {
     if (!r.excluded) remaining -= r.amountMinor
@@ -286,10 +339,11 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   const fmt = src.fmt
   const contractOriginal = src.project.contractValueMinor
   const contractEffective = contractOriginal + (src.changeOrdersApprovedMinor ?? 0)
-  const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0)
-  const vat = src.extracts.reduce((s, e) => s + (e.vatMinor ?? 0), 0)
+  const refunds = extractRefundStatus(src)
+  const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0) - (refunds.incomplete ? 0 : refunds.amount - refunds.tax)
+  const vat = src.extracts.reduce((s, e) => s + (e.vatMinor ?? 0), 0) - (refunds.incomplete ? 0 : refunds.tax)
   const retention = src.extracts.reduce((s, e) => s + e.retentionMinor, 0)
-  const dueTotal = src.extracts.reduce((s, e) => s + e.dueMinor, 0)
+  const dueTotal = src.extracts.reduce((s, e) => s + e.dueMinor, 0) - (refunds.incomplete ? 0 : refunds.amount)
 
   const collections = buildCollectionRows(src)
   const collected = collections.targetMinor
@@ -297,7 +351,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   const remainingCollection = Math.max(0, dueTotal - collected)
   /* لا يجوز أن تتجاوز نسبة التحصيل 100٪ — التحصيل الزائد خلل في التوزيعات
      يُنبَّه عليه في الملاحظات بدل عرض رقم محاسبياً مستحيل. */
-  const collectedPercent = dueTotal > 0 ? Math.min(100, Math.round((collected / dueTotal) * 1000) / 10) : 0
+  const collectedPercent = dueTotal > 0 ? Math.max(0, Math.min(100, Math.round((collected / dueTotal) * 1000) / 10)) : 0
 
   /* ① المصروفات برصيد تراكمي */
   const expenses = [...src.expenses].sort((a, b) => a.date.localeCompare(b.date) || a.docNumber.localeCompare(b.docNumber))
@@ -340,12 +394,14 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   }
 
   const notes: string[] = []
+  if (refunds.incomplete) notes.push('تنبيه محاسبي: سجلات إشعارات المستخلصات ناقصة أو غير متطابقة مع الإجماليات؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات.')
+  else if (refunds.amount > 0) notes.push('خُصمت إشعارات المستخلصات من الإيراد والضريبة والمستحق حسب قيودها؛ الرد النقدي حركة خارجة، والدائن ليس تحصيلاً. المتبقي بعد العمليات محسوب من المستحق الحالي بعد الإشعارات، لا كرصد تاريخي لكل تاريخ.')
   const bouncedCount = collections.rows.filter((r) => r.excludedReason === 'bounced').length
   const outOfScopeCount = collections.rows.filter((r) => r.excludedReason === 'out-of-scope').length
   if (bouncedCount) notes.push(`الشيكات المرتدة (${bouncedCount}) معروضة للإيضاح بين قوسين ولا تُحتسب ضمن التحصيلات — دينها عاد للعميل.`)
   if (outOfScopeCount) notes.push(`شيكات خارج نطاق هذا المشروع (${outOfScopeCount}) معروضة بصفرة للإيضاح ولا تُحتسب ضمن تحصيلاته.`)
   if ((src.cheques ?? []).some((c) => c.direction === 'incoming' && c.status !== 'bounced' && c.status !== 'cancelled')) {
-    notes.push('الشيكات الواردة مُدرَجة ضمن التحصيلات ومُخصومة من ذمم المستخلصات — مطابقة لكشف حساب العميل.')
+    notes.push('تُخفّض الشيكات الواردة ذمة العميل؛ توزيعها على مستخلصات المشروع تقديري وليس بديلاً عن كشف حساب العميل الكامل.')
   }
   if ((src.cheques ?? []).some((c) => c.direction === 'incoming' && (c.status === 'held' || c.status === 'deposited'))) {
     notes.push('الشيك في الحافظة أو تحت التحصيل يُخفض ذمة العميل، لكنه لا يعني دخول النقدية إلى البنك أو الخزينة بعد.')
@@ -361,12 +417,22 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       notes.push(`الشيكات الواردة للعميل (${fmt(totalActiveCheques)}) تخص مستندات أخرى أيضاً؛ المُخصوم فعلاً من مستخلصات هذا المشروع ${fmt(src.chequeAttributedMinor)} فقط — والباقي معروض بصفرة «خارج النطاق» للإيضاح.`)
     }
   }
+  if ((src.partyOffsets ?? []).length > 0) {
+    notes.push('مقاصة الطرف إطفاء غير نقدي؛ إسنادها إلى المستخلصات تقديري وفق الأقدم بعد التوزيعات الصريحة وقبل الشيكات، ولا يثبت ربطاً محفوظاً بالمشروع أو ترتيباً زمنياً فعلياً.')
+  }
+  if ((src.estimatedReceipts ?? []).length > 0) {
+    notes.push('إسناد التحصيلات غير الموزعة، بما فيها الأقساط والقبض تحت الحساب، إلى المستخلصات تقديري بالأقدم ولا يثبت اختيار المستند من العميل.')
+  }
+  if ((src.customerAdjustments ?? []).length > 0) {
+    notes.push('تعديلات رصيد العميل إطفاء غير نقدي، وتوزيعها على المستخلصات تقديري بعد التوزيعات الصريحة وقبل الشيكات؛ راجع كشف العميل والقيود الأصلية.')
+  }
+  if ((src.partyOffsets ?? []).length || (src.customerAdjustments ?? []).length) notes.push('إجمالي التحصيلات يشمل تسويات غير نقدية ومقاصات؛ لا يمثّل النقد الداخل إلى الخزينة وحده.')
   if (collections.unattributedVouchers > 0) {
     notes.push(`سندات قبض غير موزّعة على مستندات (${collections.unattributedVouchers} بقيمة ${fmt(collections.unattributedVoucherMinor)}) لم تُحتسب ضمن تحصيلات هذا المشروع — راجع كشف حساب العميل لتوزيعها.`)
   }
   notes.push('التسوية الختامية معادلتان مستقلتان: ① المستحق − التحصيلات = المتبقي (ذمة العميل) · ② الإيراد المستخلص − المصروفات = نتيجة المشروع. لا تُطرح المصروفات من رصيد التحصيل.')
   if (overCollected > 1) {
-    notes.push(`تنبيه مراجعة — تحصيل زائد: التحصيلات (${fmt(collected)}) تتجاوز صافي المستحق (${fmt(dueTotal)}) بـ ${fmt(overCollected)} — راجع توزيعات السندات/الشيكات على مستندات العميل.`)
+    notes.push(`تنبيه مراجعة — تحصيل زائد: التحصيلات (${fmt(collected)}) تتجاوز صافي المستحق (${fmt(dueTotal)}) بـ ${fmt(overCollected)} — قد يمثل الفائض رصيداً دائناً للعميل أو توزيعاً على مستند آخر؛ راجع كشف العميل.`)
   }
   if (Math.abs(collections.totalMinor - collected) > 1) {
     notes.push(`تنبيه مراجعة: مجموع سطور التحصيلات (${fmt(collections.totalMinor)}) يختلف عن المُخصوم من الذمم (${fmt(collected)}) — افحص التوزيعات.`)
@@ -409,13 +475,13 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       { label: 'يُطرح: محتجز ضمان أعمال', value: `(${fmt(retention)})` },
       { label: 'صافي المستحق على المستخلصات', value: fmt(dueTotal), emphasis: true },
       { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: `(${fmt(collected)})` },
-      { label: 'المتبقي من التحصيل — رصيد العميل المدين', value: fmt(remainingCollection), emphasis: true },
+      { label: 'المتبقي من التحصيل — مستخلصات المشروع', value: fmt(remainingCollection), emphasis: true },
       /* بدء معادلة مستقلة: الإيراد − المصروفات. كان «يُطرح المصروفات» يأتي
          مباشرة بعد «المتبقي» فيوحي بخصمها من رصيد العميل، بينما القيمة
          المحسوبة كانت (الإيراد − المصروفات) — تناقض في التسوية الختامية. */
       { label: 'بداية مستقلة — قيمة الأعمال المستخلصة (إيراد المشروع)', value: fmt(extracted) },
       { label: 'يُطرح: إجمالي مصروفات المشروع', value: `(${fmt(totalExpenses)})` },
-      { label: 'صافي نتيجة المشروع حتى تاريخه', value: fmt(extracted - totalExpenses), emphasis: true },
+      { label: 'صافي نتيجة المشروع حتى تاريخه', value: refunds.incomplete ? 'تتطلب مراجعة إشعارات المستخلصات' : fmt(extracted - totalExpenses), emphasis: true },
     ],
   }
 }
