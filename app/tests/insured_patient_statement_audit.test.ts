@@ -22,6 +22,7 @@ it('طلب معمل مؤمن لا يُحمّل العميل مطالبة الت�
   s.refundLabOrder({ orderId: order.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
   expect(s.getClaimBalance(insurer.id)).toBe(4200)
   expect(s.getCustomerBalance(customer.id)).toBe(8800)
+  expect(s.getCustomerStatementRows(customer.id).find(row => row.docLabel.includes('مرتجع تحاليل'))).toMatchObject({ operationMinor: 4000, creditMinor: 1200 })
   expect(s.getOpenClientInvoices(customer.id, true).find((d) => d.docKey === `extract:${extract.id}`)?.settledMinor).toBe(1200)
 })
 

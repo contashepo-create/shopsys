@@ -18,7 +18,7 @@ import { barcodeSvg } from '../../core/code128.ts'
 import { amountInWords } from './printInvoiceA4.ts'
 import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { freshReportPrintSettings, rebuildReportShellHtml } from '../../core/reportPrint.ts'
+import { captureReportShellRebuilder, freshReportPrintSettings } from '../../core/reportPrint.ts'
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -224,9 +224,10 @@ export function printHtml(
        `rebuild` خاصاً به نُعد بناء الغلاف من وسيطاته الأصلية بإعدادات
        التقارير الحالية (سجّلها reportPrint وقت التوليد). كان تغيير الإعدادات
        أثناء فتح المعاينة بلا أي أثر على العشرات من التقارير. */
+    const rebuildShell = captureReportShellRebuilder(html)
     const rebuild = explicitPreview?.rebuild ?? (() => {
       const settings = freshReportPrintSettings()
-      return settings ? rebuildReportShellHtml(html, settings) ?? html : html
+      return settings && rebuildShell ? rebuildShell(settings) : html
     })
     openPrintPreview({
       html,

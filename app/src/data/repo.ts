@@ -3950,7 +3950,7 @@ function customerLabOrders(state: DataState, raw: DataState, customerId: number)
       paidMinor: order.totals.totalMinor,
       refunds: (order.refunds ?? []).map(refund => refund.mode !== 'customer_credit' ? refund : {
         ...refund,
-        amountMinor: insuredRefundCustomerCredit(journal.get(refund.journalEntryId), 'lab_order', order.id, refund, `طلب المعمل ${order.orderNumber}`),
+        customerCreditMinor: insuredRefundCustomerCredit(journal.get(refund.journalEntryId), 'lab_order', order.id, refund, `طلب المعمل ${order.orderNumber}`),
       }),
     }
   })
@@ -15068,8 +15068,9 @@ export const useRawDataStore = create<DataState>()(
         // سداد سابق؛ يطفئ مستنده أولاً وما تبقى يوزَّع تقديرياً على الذمم.
         const addServiceCredits = (kind: string, id: number, number: string, refunds: readonly ServiceRefundRecord[] | undefined) => {
           for (const refund of refunds ?? []) {
-            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0) continue
-            credits.push({ key: `${kind}-credit:${refund.journalEntryId}`, date: refund.date, number, description: 'رصيد مرتجع خدمة (توزيع تقديري)', amountMinor: refund.amountMinor, specificDocKey: `${kind}:${id}` })
+            const credit = refund.customerCreditMinor ?? refund.amountMinor
+            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(credit) || credit <= 0) continue
+            credits.push({ key: `${kind}-credit:${refund.journalEntryId}`, date: refund.date, number, description: 'رصيد مرتجع خدمة (توزيع تقديري)', amountMinor: credit, specificDocKey: `${kind}:${id}` })
           }
         }
         const labPatientIds = new Set(state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id))

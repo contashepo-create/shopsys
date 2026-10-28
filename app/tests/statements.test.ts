@@ -51,6 +51,19 @@ describe('كشوف حساب الأطراف', () => {
     expect(rows[0].balanceMinor).toBe(0)
   })
 
+  it('يحافظ على قيمة عملية المستندات الإضافية في كشف العميل والمورد دون تغيير الرصيد', () => {
+    const customer = customerStatement({
+      customerId: 7, sales: [], saleReturns: [], allSales: [], vouchers: [], cheques: [],
+      extraDocs: [{ date: '2026-09-01', docLabel: 'مرتجع زيارة مؤمنة', operationMinor: 4000, debitMinor: 0, creditMinor: 1200 }],
+    })
+    const supplier = supplierStatement({
+      supplierId: 4, purchases: [], purchaseReturns: [], allPurchases: [], vouchers: [], cheques: [],
+      extraDocs: [{ date: '2026-09-01', docLabel: 'مستند مورد', operationMinor: 4000, debitMinor: 0, creditMinor: 1200 }],
+    })
+    expect(customer[0]).toMatchObject({ operationMinor: 4000, creditMinor: 1200, balanceMinor: -1200 })
+    expect(supplier[0]).toMatchObject({ operationMinor: 4000, creditMinor: 1200, balanceMinor: 1200 })
+  })
+
   it('يعرض مسير الموظف والعمولة والعهدة إلى جانب السلف', () => {
     const rows = employeeStatement({
       employeeId: 3,

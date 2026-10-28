@@ -182,6 +182,12 @@ export function freshReportPrintSettings(): ReportPrintSettings | null {
   try { return reportPrintSettingsProvider?.() ?? null } catch { return null }
 }
 
+/** احتفظ بوسائط التقرير المفتوح، فلا يؤدي توليد تقارير أخرى إلى طردها من المعاينة. */
+export function captureReportShellRebuilder(html: string): ((settings: ReportPrintSettings) => string) | null {
+  const args = shellArgsCache.get(html)
+  return args ? (settings) => buildReportShellHtml({ ...args, settings }) : null
+}
+
 /** إعادة بناء غلاف تقرير سابق بإعدادات جديدة — null إن لم يكن مسجّلاً. */
 export function rebuildReportShellHtml(html: string, settings: ReportPrintSettings): string | null {
   const args = shellArgsCache.get(html)

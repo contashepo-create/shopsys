@@ -78,6 +78,18 @@ describe('المعاينة الحية لإعدادات التقارير', () => 
     expect(rebuilt).toContain('اعتماد')
   })
 
+  it('يبقى التقرير المفتوح قابلاً للتحديث بعد إنتاج تقارير أخرى تتجاوز حد الذاكرة', () => {
+    let live: ReportPrintSettings = { ...DEFAULT_REPORT_PRINT, accentColor: '#111111' }
+    registerReportPrintSettingsProvider(() => live)
+    const html = renderReportShell({ ...args, settings: live })
+    printHtml(html)
+    for (let i = 0; i < 20; i++) renderReportShell({ ...args, title: `تقرير آخر ${i}`, settings: live })
+    live = { ...live, accentColor: '#ee2222' }
+    usePrintPreview.getState().refresh()
+    expect(usePrintPreview.getState().handle?.html).toContain('#ee2222')
+    expect(usePrintPreview.getState().handle?.html).toContain('محتوى التقرير')
+  })
+
   it('FormalReport: إعادة حقن CSS بعد إزالة العنصر من head', () => {
     const model: FormalReportModel = {
       title: 'تقرير رسمي', subtitle: 'اختبار', companyName: 'شركة', meta: [],
