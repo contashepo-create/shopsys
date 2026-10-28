@@ -169,7 +169,7 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
   unattributedVoucherMinor: Minor
 } {
   const extractKeys = new Set(src.extractDocKeys ?? [])
-  const projectScoped = extractKeys.size > 0
+  const projectScoped = src.extractDocKeys != null
   const rows: ChequeCollectionRow[] = []
   let unattributedVouchers = 0
   let unattributedVoucherMinor = 0
@@ -207,7 +207,7 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
        عند العرض — الدفتر يوزّع الإجمالي على المستندات الأقدم، ولا يربط شيكاً
        بعينه بمستند؛ لذلك نعرض النصيب على أقدم الأوراق توضيحاً لا ربطاً نهائياً. */
     const ordered = [...(src.cheques ?? [])].sort((a, b) =>
-      (a.settledAt ?? a.createdAt ?? '').localeCompare(b.settledAt ?? b.createdAt ?? ''))
+      (a.createdAt ?? a.settledAt ?? '').localeCompare(b.createdAt ?? b.settledAt ?? ''))
     let attributedLeft = src.chequeAttributedMinor ?? Number.POSITIVE_INFINITY
     const capped = src.chequeAttributedMinor != null
     for (const c of ordered) {
@@ -223,7 +223,7 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
         else if (taken < c.amountMinor) scopeNote = ' — جزء مخصوم من ذمم هذا المشروع'
       }
       rows.push({
-        date: (c.settledAt ?? c.createdAt ?? '').slice(0, 10),
+        date: (c.createdAt ?? c.settledAt ?? '').slice(0, 10),
         number: c.chequeNumber,
         description: `شيك وارد${c.bankName ? ` — ${c.bankName}` : ''}${scopeNote}`,
         method: 'ورقة قبض',
@@ -259,7 +259,7 @@ export function buildCollectionRows(src: AnalyticalProjectSource): {
 
   /* الهدف = مجموع ما خُصم من ذمم المستخلصات + النقدي + المقاصة (مصدر واحد) */
   const creditSettled = [...(src.openInvoiceSettled ?? new Map<string, number>())]
-    .filter(([k]) => !extractKeys.size || extractKeys.has(k))
+    .filter(([k]) => !projectScoped || extractKeys.has(k))
     .reduce((s, [, v]) => s + v, 0)
   const cashExtracts = src.extracts.filter((e) => e.payment === 'cash').reduce((s, e) => s + (e.dueMinor - capRecovery(e)), 0)
   const recovered = src.extracts.reduce((s, e) => s + capRecovery(e), 0)

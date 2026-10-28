@@ -201,8 +201,8 @@ export function toCsv(rows: readonly Record<string, unknown>[]): string {
   const escape = (v: unknown) => {
     let s = v == null ? '' : String(v)
     if (/^[=+\t\r@]/.test(s) || (/^-/.test(s) && !/^-\d[\d.,]*$/.test(s))) s = "'" + s
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))]
+  const lines = [headers.map(escape).join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))]
   return '\uFEFF' + lines.join('\n')
 }

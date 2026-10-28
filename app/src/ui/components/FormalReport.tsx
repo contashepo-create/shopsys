@@ -64,6 +64,7 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     const settings = live.reportPrint ?? reportPrint
     const liveModel: FormalReportModel = {
       ...model,
+      signatures: showSignatures ?? model.signatures,
       companyName: model.companyName || live.setup?.shopName || 'المنشأة',
       headerLines: model.headerLines ?? live.receipt?.headerLines ?? [],
       logoDataUrl: model.logoDataUrl ?? live.receipt?.logoDataUrl ?? undefined,
@@ -111,7 +112,7 @@ export function FormalReport({ model, filename = 'report', allowExport = true, a
     model.sections.forEach((section, si) => {
       /* مفتاح العمود = اسم القسم + ترتيبه + اسم العمود الأصلي: فريد حتى لو
          تشابهت أسماء الأعمدة بين قسمين أو تكرر عنوان القسم. */
-      const col = (i: number) => `${section.title} [${si + 1}] · ${section.headers[i] ?? `ع${i + 1}`}`
+      const col = (i: number) => `${section.title} [${si + 1}] · ${section.headers[i] ?? `ع${i + 1}`} [${i + 1}]`
       for (const row of section.rows) {
         const record: Record<string, string> = { 'القسم': section.title }
         section.headers.forEach((_, i) => { record[col(i)] = cellText(row.cells[i]) })

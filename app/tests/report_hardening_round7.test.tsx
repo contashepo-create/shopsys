@@ -1,6 +1,6 @@
 /**
- * إثبات أخطاء الجولة السابعة (مراجعة سطر بسطر لكل تعديلات الجلسة).
- * هذه الاختبارات مُصمَّمة لتفشل قبل الإصلاح — تُحوَّل لاختبارات انحدار بعده.
+ * انحدارات الجولة السابعة: تضم اختبارات سلوكية وفحوصاً نصية ومحاكاة؛
+ * الفحص النصي وحده لا يثبت عطلاً إنتاجياً أو مراجعة كل أسطر المشروع.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -20,7 +20,7 @@ const base = (over: Partial<AnalyticalProjectSource> = {}): AnalyticalProjectSou
 
 const readSrc = (p: string) => readFileSync(`${process.cwd()}/src/${p}`, 'utf8')
 
-describe('الجولة السابعة — أخطاء مثبتة', () => {
+describe('الجولة السابعة — اختبارات انحدار', () => {
   afterEach(() => { vi.restoreAllMocks() })
 
   /* ── P2: استنتاج سداد كامل بلا دليل مرتبط بهذا المستخلص ── */

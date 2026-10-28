@@ -1,3 +1,4 @@
+import { projectOpenBalances } from '../../core/projectReportBalances.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * مركز تقارير المقاولات (طلب المالك): وحدة تقارير مستقلة تخدم النشاط —
@@ -62,7 +63,7 @@ export function ContractingReportsPage() {
   const [clientId, setClientId] = useState('')
 
   /** بطاقة التقرير الخالصة لكل مشروع — من النواة مباشرة */
-  const cards = useMemo(() => projects.map((p) => {
+  const cards = projects.map((p) => {
     const extracts = projectExtracts.filter((e) => e.projectId === p.id)
     const released = retentionReleases.filter((r) => r.projectId === p.id).reduce((a, r) => a + r.amountMinor, 0)
     const orders = changeOrders.filter((o) => o.projectId === p.id)
@@ -77,24 +78,14 @@ export function ContractingReportsPage() {
       ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
     ]
     return { project: p, card: projectReportCard(p, flat, fullCosts, released, orders, advances), breakdown: bd }
-  }), [projects, projectExtracts, projectCosts, retentionReleases, changeOrders, clientAdvances, getProjectCostBreakdown])
+  })
 
   /** المفتوح من المستخلصات لكل مشروع: من دفتر التوزيع (docKey = extract:<id>) */
-  const openByProject = useMemo(() => {
-    const settled = new Map<string, number>()
-    for (const p of projects) {
-      if (p.clientId == null) continue
-      for (const inv of getOpenClientInvoices(p.clientId)) settled.set(inv.docKey, inv.settledMinor)
-    }
-    return new Map(projects.map((p) => {
-      const open = projectExtracts
-        .filter((e) => e.projectId === p.id && e.payment === 'credit')
-        .reduce((sum, e) => sum + Math.max(0, e.totals.dueMinor - (settled.get(`extract:${e.id}`) ?? 0)), 0)
-      return [p.id, open]
-    }))
-  }, [projects, projectExtracts, getOpenClientInvoices])
+  // الدفتر الكامل يُظهر المستند المسدّد برصيد صفر بدلاً من استنتاجه من الغياب.
+  // نحسبه مع كل عرض لأن السداد/الشيكات قد تتغير دون تغير دالة المتجر.
+  const openByProject = projectOpenBalances(projects, projectExtracts, getOpenClientInvoices)
 
-  const totals = useMemo(() => ({
+  const totals = ({
     contract: cards.reduce((a, r) => a + r.card.contractEffectiveMinor, 0),
     extracted: cards.reduce((a, r) => a + r.card.extractedMinor, 0),
     costs: cards.reduce((a, r) => a + r.card.costsMinor, 0),
@@ -102,27 +93,27 @@ export function ContractingReportsPage() {
     retention: cards.reduce((a, r) => a + r.card.retentionHeldMinor, 0),
     advances: cards.reduce((a, r) => a + r.card.advancesRemainingMinor, 0),
     open: cards.reduce((a, r) => a + (openByProject.get(r.project.id) ?? 0), 0),
-  }), [cards, openByProject])
+  })
 
   /* ═══ تبويب: مشروع بعينه ═══ */
   const selected = cards.find((r) => r.project.id === Number(projectId)) ?? null
   const selectedExtracts = selected ? projectExtracts.filter((e) => e.projectId === selected.project.id) : []
   const selectedCosts = selected ? projectCosts.filter((c) => c.projectId === selected.project.id) : []
   /* كشف المصروفات التفصيلي (طلب المالك — سطر لكل بند) من النواة الخالصة */
-  const selectedLedger = useMemo(() => buildProjectExpenseLedger(selected ? projectCosts.filter((c) => c.projectId === selected.project.id) : [], {
+  const selectedLedger = buildProjectExpenseLedger(selected ? projectCosts.filter((c) => c.projectId === selected.project.id) : [], {
     supplierName: (id) => (id == null ? '—' : suppliers.find((x) => x.id === id)?.nameAr ?? `#${id}`),
     treasuryName: (code) => (code ? treasuries.find((x) => x.code === code)?.nameAr ?? code : ''),
     custodyLabel: (fileId) => { const f = custodyFiles.find((x) => x.id === fileId); return f ? `عهدة ${f.fileNumber}` : 'عهدة موظف' },
     boqLabel: (id) => { const b = boqItems.find((x) => x.id === id); return b ? `${b.code} — ${b.descriptionAr}` : '' },
     journalEntryNumber: (entryId) => journal.find((e) => e.id === entryId)?.entryNumber ?? entryId,
-  }), [projectCosts, selected, suppliers, treasuries, custodyFiles, boqItems, journal])
+  })
   const selectedOrders = selected ? changeOrders.filter((o) => o.projectId === selected.project.id) : []
   const selectedOpenDocs = selected?.project.clientId != null
     ? getOpenClientInvoices(selected.project.clientId).filter((inv) => selectedExtracts.some((e) => `extract:${e.id}` === inv.docKey))
     : []
 
   /* ═══ تبويب: ذمم عملاء المقاولات ═══ */
-  const clientDues = useMemo(() => {
+  const clientDues = (() => {
     const byClient = new Map<number, { nameAr: string; extractedMinor: number; retentionMinor: number; openMinor: number; openDocs: number }>()
     for (const p of projects) {
       if (p.clientId == null) continue
@@ -132,11 +123,17 @@ export function ContractingReportsPage() {
         row.retentionMinor += e.totals.retentionMinor
       }
       row.openMinor += openByProject.get(p.id) ?? 0
-      row.openDocs += projectExtracts.filter((x) => x.projectId === p.id && x.payment === 'credit').length
+      const ledger = new Map(getOpenClientInvoices(p.clientId, true).map((doc) => [doc.docKey, doc]))
+      row.openDocs += projectExtracts.filter((e) => {
+        if (e.projectId !== p.id || e.payment !== 'credit') return false
+        const doc = ledger.get(`extract:${e.id}`)
+        const fallback = Math.max(0, e.totals.dueMinor - Math.max(0, e.advanceRecoveryMinor ?? 0))
+        return (doc ? Math.max(0, doc.dueMinor - doc.settledMinor) : fallback) > 0
+      }).length
       byClient.set(p.clientId, row)
     }
     return [...byClient.entries()].map(([customerId, row]) => ({ customerId, ...row })).sort((a, b) => b.openMinor - a.openMinor)
-  }, [projects, projectExtracts, customers, openByProject])
+  })()
 
   /* ═══ تبويب: عميل بعينه (§102 — العميل محور التقارير بنمط بطاقة المشروع) ═══ */
   const clientsWithProjects = useMemo(() => {
@@ -150,19 +147,24 @@ export function ContractingReportsPage() {
     return [...byClient.values()].sort((a, b) => b.projectsCount - a.projectsCount)
   }, [projects, customers])
 
-  /** مستندات العميل المفتوحة (دفتر التوزيع) — منها محصّل كل مستخلص آجل */
-  const clientOpenDocs = useMemo(() => (clientId ? getOpenClientInvoices(Number(clientId)) : []), [clientId, getOpenClientInvoices])
+  /** دفتر العميل الكامل — يشمل المستندات المفتوحة والمسددة. */
+  const clientOpenDocs = clientId ? getOpenClientInvoices(Number(clientId), true) : []
+  const extractSettlement = (e: (typeof projectExtracts)[number]) => {
+    if (e.payment === 'cash') return { settled: e.totals.dueMinor, remaining: 0 }
+    const recovery = Math.min(e.totals.dueMinor, Math.max(0, e.advanceRecoveryMinor ?? 0))
+    const netDue = e.totals.dueMinor - recovery
+    const fromLedger = Math.min(netDue, Math.max(0, clientOpenDocs.find((d) => d.docKey === `extract:${e.id}`)?.settledMinor ?? 0))
+    return { settled: recovery + fromLedger, remaining: netDue - fromLedger }
+  }
 
-  const clientRows: readonly ClientProjectRow[] = useMemo(() => {
+  const clientRows: readonly ClientProjectRow[] = (() => {
     if (!clientId) return []
     const cid = Number(clientId)
     return cards.filter((r) => r.project.clientId === cid).map(({ project: p, card: c }) => {
       let openMinor = 0, openCount = 0, settled = 0
       for (const e of projectExtracts.filter((x) => x.projectId === p.id)) {
-        if (e.payment !== 'credit') { settled += e.totals.dueMinor; continue } /* نقدي: حُصّل وقت الاستخلاص */
-        const st = Math.min(e.totals.dueMinor, clientOpenDocs.find((d) => d.docKey === `extract:${e.id}`)?.settledMinor ?? 0)
+        const { settled: st, remaining } = extractSettlement(e)
         settled += st
-        const remaining = Math.max(0, e.totals.dueMinor - st)
         openMinor += remaining
         if (remaining > 0) openCount += 1
       }
@@ -173,26 +175,25 @@ export function ContractingReportsPage() {
         openExtractsMinor: openMinor, openExtractsCount: openCount, settledOnExtractsMinor: settled,
       }
     })
-  }, [clientId, cards, projectExtracts, clientOpenDocs])
+  })()
 
   const clientCardView = clientRows.length ? clientContractingCard(clientRows) : null
   const clientName = clientsWithProjects.find((c) => c.customerId === Number(clientId))?.nameAr ?? ''
   /** مستخلصات العميل كلها عبر مشاريعه — مع محصّل/متبقٍ كل مستخلص */
-  const clientExtractRows = useMemo(() => {
+  const clientExtractRows = (() => {
     if (!clientRows.length) return []
     const pidToName = new Map(clientRows.map((r) => [r.projectId, `${r.projectCode} — ${r.projectName}`]))
     return projectExtracts
       .filter((e) => pidToName.has(e.projectId))
       .map((e) => {
-        const st = e.payment === 'cash' ? e.totals.dueMinor
-          : Math.min(e.totals.dueMinor, clientOpenDocs.find((d) => d.docKey === `extract:${e.id}`)?.settledMinor ?? 0)
+        const { settled: st, remaining } = extractSettlement(e)
         return {
           extract: e, projectName: pidToName.get(e.projectId) ?? '—',
-          settledMinor: st, remainingMinor: e.payment === 'cash' ? 0 : Math.max(0, e.totals.dueMinor - st),
+          settledMinor: st, remainingMinor: remaining,
         }
       })
       .sort((a, b) => b.extract.date.localeCompare(a.extract.date))
-  }, [clientRows, projectExtracts, clientOpenDocs])
+  })()
 
   /* ═══ §99: مطبوعات لوحة المشاريع / بطاقة المشروع / الذمم — كل جدول قابل للطباعة PDF ═══ */
   const printProjects = () => printDoc('لوحة مشاريع المقاولات', 'كل المشاريع — الأرقام من القيود المرحّلة', htmlTableHtml({

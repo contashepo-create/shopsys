@@ -128,7 +128,7 @@ ok('R7-1 — الدفتر الكامل متاح للتقارير (includeSettled
 ok('R7-2 — العارض يقرأ الدفتر الكامل ويُلغي الاستنتاج', /getOpenClientInvoices\(clientId, true\)/.test(view7) && /fullLedger: true/.test(view7) && /if \(args\.fullLedger\) continue/.test(core7))
 ok('R7-3 — نسبة التحصيل بسقف 100٪ وتنبيه تحصيل زائد', /Math\.min\(100, Math\.round/.test(core7) && /تحصيل زائد/.test(core7))
 ok('R7-4 — includeCheques=false لا يكسر اتساق التحصيلات', /excludedCheques/.test(core7) && /creditSettled - excludedCheques/.test(core7))
-ok('R7-5 — تاريخ التقرير يتبع اليوم (خارج useMemo/في التبعيات)', /const reportDay = todayLocalIso\(\)/.test(view7) && /fmt, reportDay\]/.test(view7))
+ok('R7-5 — تاريخ التقرير يحسب عند العرض ويُمرّر للنموذج', /const reportDay = todayLocalIso\(\)/.test(view7) && /period: `حتى \${reportDay}`/.test(view7))
 ok('R7-6 — حقل signatures له أثر في الشاشة والطباعة', /\?\? model\.signatures \?\? reportPrint\.showSignatures/.test(formalView7) && /model\.signatures == null/.test(formalCore7))
 ok('R7-7 — صف الإجمالي المطبوع يحفظ القيمة الثانوية', /totalRow: section\.totalRow\?\.map/.test(formalCore7) && /c\.sub \? `\$\{c\.value\}/.test(formalCore7))
 ok('R7-8 — تصدير CSV بلا تصادم أسماء الأعمدة', /'البند': item/.test(formalView7) && /const col = \(i: number\)/.test(formalView7) && /\[\$\{si \+ 1\}\] ·/.test(formalView7))

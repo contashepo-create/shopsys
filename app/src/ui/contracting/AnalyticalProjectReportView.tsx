@@ -23,7 +23,7 @@ interface Props {
 export function AnalyticalProjectReportView({ projectId, onProjectChange }: Props) {
   const {
     projects, projectExtracts, projectCosts, changeOrders, suppliers,
-    clientSettlements, vouchers, cheques, getOpenClientInvoices,
+    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useMemo(
@@ -33,12 +33,12 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
   const fmt = useCallback((m: number) => formatMinor(m, cur, false), [cur])
 
   const selected = projects.find((p) => p.id === Number(projectId)) ?? null
-  /* الجولة السابعة: يُحسب اليوم خارج useMemo ويُوضع في تبعياته — كان
-     `todayLocalIso()` داخل useMemo فيبقى التقرير بتاريخ الأمس إن بقيت
-     الشاشة مفتوحة بعد منتصف الليل. */
+  /* يُقرأ التاريخ عند إعادة عرض المكوّن؛ لا يضمن ذلك تحديثاً تلقائياً
+     عند منتصف الليل ما لم يحدث عرض جديد. */
   const reportDay = todayLocalIso()
 
-  const model = useMemo(() => {
+  // الحساب مباشر حتى ينعكس تغير فواتير العميل الأخرى التي تؤثر على توزيع الشيكات.
+  const model = (() => {
     if (!selected) return null
     const extracts = projectExtracts.filter((e) => e.projectId === selected.id)
     const costs = projectCosts.filter((c) => c.projectId === selected.id)
@@ -115,12 +115,18 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, dueMinor: e.totals.dueMinor,
         payment: e.payment, advanceRecoveryMinor: e.advanceRecoveryMinor ?? 0,
       })),
-      expenses: costs.map((c) => ({
-        date: c.date, docNumber: c.expenseNumber ?? `#${c.id}`,
-        description: c.description,
-        party: c.supplierId != null ? suppliers.find((s) => s.id === c.supplierId)?.nameAr ?? undefined : undefined,
-        category: c.kind, amountMinor: c.amountMinor,
-      })),
+      expenses: [
+        ...costs.map((c) => ({
+          date: c.date, docNumber: c.expenseNumber ?? `#${c.id}`,
+          description: c.description,
+          party: c.supplierId != null ? suppliers.find((s) => s.id === c.supplierId)?.nameAr ?? undefined : undefined,
+          category: c.kind, amountMinor: c.amountMinor,
+        })),
+        ...getProjectCostBreakdown(selected.id).purchaseReturns.map((r) => ({
+          date: r.date, docNumber: r.returnNumber, description: 'مرتجع مشتريات المشروع',
+          category: 'مرتجع مشتريات', amountMinor: -r.totalMinor,
+        })),
+      ],
       openInvoiceSettled,
       extractDocKeys,
       vouchers: projectVouchers.map((v) => ({
@@ -143,7 +149,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
       fmt,
     }
     return buildAnalyticalProjectReport(src)
-  }, [selected, projectExtracts, projectCosts, changeOrders, suppliers, clientSettlements, vouchers, cheques, getOpenClientInvoices, cur.symbol, setup.shopName, setup.ownerName, receipt.logoDataUrl, fmt, reportDay])
+  })()
 
   return (
     <div className="space-y-3" data-analytical-report>

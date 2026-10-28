@@ -9,6 +9,7 @@ import {
   activeIncomingChequesTotal, allocateChequeDues, chequeSettlesCustomerDues,
   type ChequeDuesLike,
 } from '../src/core/chequeDues.ts'
+import { projectOpenBalances } from '../src/core/projectReportBalances.ts'
 import type { ChequeStatus } from '../src/core/cheques.ts'
 
 const original = useDataStore.getState()
@@ -105,6 +106,17 @@ describe('ربط الشيكات الواردة بذمم المشاريع (مصد
       depositedAt: null, settledAt: null,
     } as DataState['cheques'][number])
     expect(S().getOpenClientInvoices(cust.id).find((d) => d.docKey === key)?.settledMinor ?? 0).toBe(0)
+  })
+
+  it('ملخص ذمم المشروع يتتبع الرصيد الفعلي قبل الشيك وبعد سداده وارتداده', () => {
+    const { cust, project } = setupCustomerWithExtract(10000)
+    const balance = () => projectOpenBalances(S().projects, S().projectExtracts, S().getOpenClientInvoices).get(project.id)
+    expect(balance()).toBe(10000)
+    receive(cust.id, 'BALANCE', 10000, 'deposited')
+    expect(balance()).toBe(0)
+    const cheque = S().cheques.find((c) => c.chequeNumber === 'BALANCE')!
+    S().setChequeStatus(cheque.id, 'bounced')
+    expect(balance()).toBe(10000)
   })
 
   it('⑤ الفائض عن الذمم يبقى غير موزَّع ولا يُنشئ رصيداً سالباً', () => {
