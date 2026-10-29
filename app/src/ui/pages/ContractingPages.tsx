@@ -1250,6 +1250,12 @@ export function ProjectsPage() {
           {legacyPreview && <>
             <p role="status">التغير الصافي في رصيد العميل {fmt(legacyPreview.dueMinor)} {cur.symbol} من {legacyPreview.extractCount} مستخلص. لا يُنشأ قيد أو تحصيل جديد.</p>
             <p>رصيد العميل قبل الربط: <strong>{fmt(legacyPreview.balanceBeforeMinor)} {cur.symbol}</strong> — بعده: <strong>{fmt(legacyPreview.balanceAfterMinor)} {cur.symbol}</strong> (الرصيد السالب لصالح العميل).</p>
+            <p>الأدلة التي فحصها النظام للمشروع (لا تعني وحدها إثبات ملكية العميل أو التحصيل خارج النظام):</p>
+            <div className="overflow-auto max-h-40">
+              <table className="w-full text-xs" aria-label="أدلة مراجعة المشروع"><thead><tr><th>المستند أو الحركة</th><th>المبلغ</th></tr></thead>
+                <tbody>{legacyPreview.evidence.map((item, index) => <tr key={index} className="border-t border-slate-200 dark:border-slate-700"><td className="p-2">{item.description}</td><td className="p-2">{fmt(item.amountMinor)} {cur.symbol}</td></tr>)}</tbody>
+              </table>
+            </div>
             <p>الجدول يعرض المستندات التي تتغير عند الربط؛ توزيع الشيكات والمبالغ تحت الحساب تقديري ولا يُعد تخصيصاً محفوظاً. يجب مطابقة أي تحصيل خارج النظام يدوياً.</p>
             <div className="overflow-auto max-h-64">
               <table className="w-full text-xs" aria-label="أثر الربط على المستندات">

@@ -17,6 +17,8 @@ import { assertBalanced, type JournalLine } from './ledger.ts'
 
 export type ProjectStatus = 'active' | 'completed'
 
+export interface LegacyCustomerReviewEvidence { description: string; amountMinor: Minor }
+
 export interface LegacyCustomerReviewDocument {
   docKey: string
   docLabel: string
@@ -36,7 +38,7 @@ export interface Project {
   /** المستخلصات تُنسب لكشف هذا العميل؛ null يعني أن المشروع بلا ربط. */
   clientId: number | null
   /** مراجعة صريحة لربط ذمة تاريخية يتيمة؛ لا تُنشئ قيداً ولا تحصيلاً. */
-  legacyCustomerResolution?: { customerId: number; dueMinor: Minor; extractIds: number[]; at: string; by: string; reason: string; balanceBeforeMinor?: Minor; balanceAfterMinor?: Minor; documents?: LegacyCustomerReviewDocument[] }
+  legacyCustomerResolution?: { customerId: number; dueMinor: Minor; extractIds: number[]; at: string; by: string; reason: string; balanceBeforeMinor?: Minor; balanceAfterMinor?: Minor; documents?: LegacyCustomerReviewDocument[]; evidence?: LegacyCustomerReviewEvidence[] }
   contractValueMinor: Minor // قيمة العقد (استرشادية للتقدم)
   retentionPercent: number // نسبة محتجز ضمان الأعمال من كل مستخلص
   startDate: string // YYYY-MM-DD

@@ -29,6 +29,7 @@ it('واجهة الربط تعرض مقدار الدين وتشترط مراجع
   fireEvent.change(screen.getByLabelText('عميل المستخلص التاريخي'), { target: { value: String(customer.id) } })
   fireEvent.click(screen.getByRole('button', { name: 'فحص قبل الربط' }))
   expect(screen.getByRole('status').textContent).toContain('80.00')
+  expect(screen.getByRole('table', { name: 'أدلة مراجعة المشروع' }).textContent).toContain('مستخلص')
   const save = screen.getByRole('button', { name: 'توثيق الربط' }) as HTMLButtonElement
   expect(save.disabled).toBe(true)
   fireEvent.change(screen.getByLabelText('سبب مراجعة الربط'), { target: { value: 'مطابقة المستندات والتحصيلات' } })

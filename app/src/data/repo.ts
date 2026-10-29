@@ -110,7 +110,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type LegacyCustomerReviewDocument, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type LegacyCustomerReviewDocument, type LegacyCustomerReviewEvidence, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
@@ -2805,7 +2805,7 @@ interface DataState {
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
-  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; balanceBeforeMinor: number; balanceAfterMinor: number; documents: LegacyCustomerReviewDocument[]; fingerprint: string }
+  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; balanceBeforeMinor: number; balanceAfterMinor: number; documents: LegacyCustomerReviewDocument[]; evidence: LegacyCustomerReviewEvidence[]; fingerprint: string }
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -13417,17 +13417,68 @@ export const useRawDataStore = create<DataState>()(
         if (!extracts.length || extracts.length !== scoped.projectExtracts.filter(item => item.projectId === projectId).length) throw new Error('المستخلصات غير مكتملة في الفرع الحالي')
         const keys = new Set(extracts.map(extract => `extract:${extract.id}`))
         if (keys.size !== extracts.length || extracts.some(extract => state.projectExtracts.filter(item => item.id === extract.id).length !== 1)) throw new Error('أرقام المستخلصات غير فريدة — راجع المحاسب')
-        // لا ننسب فواتير أو حركات ماكينة مجهولة؛ تخصيصات القبض لا تُقبل
-        // إلا مع طرف وقيد مطابقين، ولا نغيّرها أو نحذفها عند الربط.
-        if (state.sales.some(item => item.projectId === projectId)
-          || state.paymentTerminalTransactions.some(item => item.documentType === 'project_extract' && (extracts.some(ex => item.documentId === String(ex.id)) || item.documentId.startsWith(`advance:${projectId}:`)))) {
-          throw new Error('المشروع له فواتير أو حركات ماكينة مرتبطة — يلزم تدقيق منفصل')
-        }
+        // فواتير التوثيق الصامتة تقبل بأدلتها؛ الفواتير الإضافية
+        // المالية تحتاج مطابقة منفصلة ولا يُغيّر الإجراء مالكها.
+        const projectSales = state.sales.filter(item => item.projectId === projectId)
+        const projectReturns = state.saleReturns.filter(item => projectSales.some(sale => sale.id === item.saleId))
         const journal = customerReviewJournal(state)
-        const relatedVouchers = state.vouchers.filter(item => (item.kind === 'receipt' && item.projectId === projectId) || item.allocations?.some(a => keys.has(a.docKey)))
-        const relatedCollections = state.clientSettlements.filter(item => item.allocations?.some(a => keys.has(a.docKey)))
+        const sameCartTotals = (actual: CartTotals, expected: CartTotals) => {
+          const fields: (keyof CartTotals)[] = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor', 'cogsMinor']
+          return fields.every(field => Number.isSafeInteger(actual?.[field]) && actual[field] === expected[field])
+        }
+        const checkMemo = (entryId: number, type: 'sale' | 'sale_return', sourceId: number) => {
+          const entry = journal.get(entryId)
+          if (state.journal.filter(row => row.id === entryId).length !== 1 || !entry || entry.sourceType !== type || entry.sourceId !== sourceId || (entry.sourceCollection != null && entry.sourceCollection !== (type === 'sale' ? 'sales' : 'saleReturns')) || entry.memoOnly !== true || !Array.isArray(entry.lines) || entry.lines.length !== 0 || entry.reversedByEntryId != null || entry.reversesEntryId != null) throw new FinancialDataReviewError(`قيد توثيق #${sourceId}`)
+        }
+        for (const sale of projectSales) {
+          if (sale.projectBilling === 'extra') {
+            const fail = (): never => { throw new Error('الفاتورة الإضافية أو قيدها أو تحصيلها غير مطابق — يلزم تدقيق منفصل') }
+            if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || (sale.payment !== 'cash' && sale.payment !== 'credit') || sale.fx != null || (sale.editHistory?.length ?? 0) > 0 || (sale.paymentAllocations?.length ?? 0) > 0 || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Array.isArray(sale.lines) || !sale.lines.length || sale.lines.some(line => !state.items.some(item => item.id === line.itemId && item.isService) || state.items.filter(item => item.id === line.itemId).length !== 1) || sale.taxPercent == null || sale.taxInclusive == null || projectReturns.some(ret => ret.saleId === sale.id) || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale' && tx.documentId === String(sale.id)) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) return fail()
+            let expected: JournalLine[]
+            try {
+              const totals = computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive)
+              if (!sameCartTotals(sale.totals, totals) || sale.totals.totalMinor <= 0 || sale.totals.cogsMinor !== 0) return fail()
+              const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+              if (!Number.isSafeInteger(paid) || paid < 0 || paid > sale.totals.totalMinor || (paid > 0 && !state.treasuries.some(treasury => treasury.code === (sale.treasury ?? '1101')))) return fail()
+              expected = buildSaleEntry(sale.totals, sale.payment, sale.treasury ?? '1101', paid)
+            } catch { return fail() }
+            const entry = journal.get(sale.journalEntryId)
+            if (state.journal.filter(row => row.id === sale.journalEntryId).length !== 1 || !entry || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || (entry.sourceCollection != null && entry.sourceCollection !== 'sales') || entry.memoOnly || entry.reversesEntryId != null || entry.reversedByEntryId != null || !Array.isArray(entry.lines) || entry.lines.length !== expected.length || entry.lines.some((line, index) => line.accountCode !== expected[index].accountCode || line.debit !== expected[index].debit || line.credit !== expected[index].credit || line.partyKind != null || line.partyId != null)) return fail()
+            try { assertBalanced(entry.lines) } catch { return fail() }
+            continue
+          }
+          if (sale.projectBilling !== 'documentation') throw new Error('طبيعة فاتورة المشروع التاريخية غير مثبتة — يلزم تدقيق منفصل')
+          if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || sale.payment !== 'credit' || (sale.paidMinor ?? 0) !== 0 || sale.fx != null || (sale.paymentAllocations?.length ?? 0) > 0 || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Number.isSafeInteger(sale.totals?.totalMinor) || sale.totals.totalMinor <= 0 || !Array.isArray(sale.extractIds) || !sale.extractIds.length || new Set(sale.extractIds).size !== sale.extractIds.length || sale.extractIds.some(id => !extracts.some(extract => extract.id === id)) || !Array.isArray(sale.lines) || !sale.lines.length || sale.lines.some(line => !state.items.some(item => item.id === line.itemId && item.isService))) throw new Error('فاتورة التوثيق أو عميلها أو مستخلصاتها غير مطابقة — يلزم تدقيق منفصل')
+          try {
+            if (sale.taxPercent == null || sale.taxInclusive == null || !sameCartTotals(sale.totals, computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive)) || sale.totals.cogsMinor !== 0) throw new Error('totals')
+          } catch { throw new Error('إجمالي فاتورة التوثيق أو ضريبتها غير مطابق — يلزم تدقيق منفصل') }
+          if (state.vouchers.some(voucher => voucher.allocations?.some(allocation => allocation.docKey === `sale:${sale.id}`)) || state.clientSettlements.some(collection => collection.allocations?.some(allocation => allocation.docKey === `sale:${sale.id}`)) || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale' && tx.documentId === String(sale.id)) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) throw new Error('فاتورة التوثيق تحمل تحصيلاً أو أثراً تشغيلياً — يلزم تدقيق منفصل')
+          checkMemo(sale.journalEntryId, 'sale', sale.id)
+          let returned = 0
+          const returnedQty = new Map<number, number>()
+          for (const ret of projectReturns.filter(item => item.saleId === sale.id)) {
+            if (state.saleReturns.filter(item => item.id === ret.id).length !== 1 || !scoped.saleReturns.some(item => item.id === ret.id) || ret.projectBilling !== 'documentation' || ret.refund !== 'credit' || !Number.isSafeInteger(ret.totals?.totalMinor) || ret.totals.totalMinor <= 0 || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale_return' && (tx.documentId === String(ret.id) || tx.documentId.startsWith(`${ret.id}:`))) || state.stockMoves.some(move => move.docType === 'sale_return' && move.docId === ret.id)) throw new Error('مرتجع فاتورة التوثيق غير مطابق — يلزم تدقيق منفصل')
+            try {
+              if (!Array.isArray(ret.lines) || !ret.lines.length || !sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, sale.taxPercent!, sale.taxInclusive!)) || ret.totals.cogsMinor !== 0 || (ret.cashRefundMinor ?? 0) !== 0 || (ret.storeCreditRefundMinor ?? 0) !== 0 || (ret.waivedRefundMinor ?? 0) !== 0) throw new Error('totals')
+            } catch { throw new Error('إجمالي مرتجع التوثيق أو ضريبته غير مطابق — يلزم تدقيق منفصل') }
+            for (const line of ret.lines) {
+              const index = line.saleLineIndex
+              const original = index == null ? undefined : sale.lines[index]
+              if (!Number.isSafeInteger(index) || !original || !Number.isFinite(line.qty) || line.qty <= 0 || line.itemId !== original.itemId || line.unitPriceMinor !== original.unitPriceMinor || line.discountPercent !== original.discountPercent || (line.unitFactor ?? 1) !== (original.unitFactor ?? 1) || (line.vatPercentOverride ?? null) !== (original.vatPercentOverride ?? null) || (line.vatExemptPerUnitMinor ?? 0) !== (original.vatExemptPerUnitMinor ?? 0)) throw new Error('سطور مرتجع التوثيق لا تطابق الفاتورة الأصلية — يلزم التدقيق')
+              const quantity = Math.round(((returnedQty.get(index!) ?? 0) + line.qty) * 1000) / 1000
+              if (!Number.isFinite(original.qty) || quantity > original.qty + 1e-9) throw new Error('كميات مرتجع التوثيق تتجاوز الأصل — يلزم التدقيق')
+              returnedQty.set(index!, quantity)
+            }
+            checkMemo(ret.journalEntryId, 'sale_return', ret.id)
+            returned += ret.totals.totalMinor
+          }
+          if (!Number.isSafeInteger(returned) || returned > sale.totals.totalMinor) throw new Error('مرتجعات التوثيق تتجاوز الفاتورة — يلزم التدقيق')
+        }
+        const relatedKeys = new Set([...keys, ...projectSales.filter(sale => sale.projectBilling === 'extra').map(sale => `sale:${sale.id}`)])
+        const relatedVouchers = state.vouchers.filter(item => (item.kind === 'receipt' && item.projectId === projectId) || item.allocations?.some(a => relatedKeys.has(a.docKey)))
+        const relatedCollections = state.clientSettlements.filter(item => item.allocations?.some(a => relatedKeys.has(a.docKey)))
         const explicitlyAllocated = new Map<string, number>()
-        const checkReceipt = (kind: 'voucher' | 'collection', item: { id: number; amountMinor: number; treasury: string; journalEntryId: number; allocations?: FifoAllocation[]; unallocatedMinor?: number }) => {
+        const checkReceipt = (kind: 'voucher' | 'collection', item: { id: number; amountMinor: number; treasury: string; journalEntryId: number; allocations?: FifoAllocation[]; unallocatedMinor?: number; reversalEntryId?: number | null }) => {
           const fail = (): never => { throw new Error('تخصيصات التحصيل أو قيده غير مطابقة — يلزم تدقيق منفصل') }
           if (!Number.isSafeInteger(item.amountMinor) || item.amountMinor <= 0 || !Number.isSafeInteger(item.unallocatedMinor) || item.unallocatedMinor! < 0 || !Array.isArray(item.allocations)) return fail()
           const docKeys = new Set<string>()
@@ -13436,19 +13487,26 @@ export const useRawDataStore = create<DataState>()(
             if (!allocation.docKey || docKeys.has(allocation.docKey) || !Number.isSafeInteger(allocation.appliedMinor) || allocation.appliedMinor <= 0) return fail()
             docKeys.add(allocation.docKey)
             allocated += allocation.appliedMinor
-            if (keys.has(allocation.docKey)) explicitlyAllocated.set(allocation.docKey, (explicitlyAllocated.get(allocation.docKey) ?? 0) + allocation.appliedMinor)
+            if (!item.reversalEntryId && relatedKeys.has(allocation.docKey)) explicitlyAllocated.set(allocation.docKey, (explicitlyAllocated.get(allocation.docKey) ?? 0) + allocation.appliedMinor)
           }
           if (!Number.isSafeInteger(allocated) || allocated + item.unallocatedMinor! !== item.amountMinor) return fail()
           const entry = journal.get(item.journalEntryId)
-          if (state.journal.filter(row => row.id === item.journalEntryId).length !== 1 || !entry || entry.sourceType !== (kind === 'voucher' ? 'receipt_voucher' : 'client_payment') || entry.sourceId !== item.id || (entry.sourceCollection != null && entry.sourceCollection !== (kind === 'voucher' ? 'vouchers' : 'clientSettlements')) || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || (line.accountCode === '1104' && (line.partyKind != null || line.partyId != null)))) return fail()
+          if (state.journal.filter(row => row.id === item.journalEntryId).length !== 1 || !entry || entry.sourceType !== (kind === 'voucher' ? 'receipt_voucher' : 'client_payment') || entry.sourceId !== item.id || (entry.sourceCollection != null && entry.sourceCollection !== (kind === 'voucher' ? 'vouchers' : 'clientSettlements')) || (entry.reversedByEntryId ?? null) !== (item.reversalEntryId ?? null) || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || (line.accountCode === '1104' && (line.partyKind != null || line.partyId != null)))) return fail()
           try { assertBalanced(entry.lines) } catch { return fail() }
           const total = entry.lines.reduce((sum, line) => sum + line.debit, 0)
           const ar = entry.lines.filter(line => line.accountCode === '1104').reduce((sum, line) => sum + line.credit - line.debit, 0)
           const treasury = entry.lines.filter(line => line.accountCode === item.treasury).reduce((sum, line) => sum + line.debit - line.credit, 0)
           if (total !== item.amountMinor || ar !== item.amountMinor || treasury !== item.amountMinor) return fail()
+          if (item.reversalEntryId != null) {
+            const reverse = journal.get(item.reversalEntryId)
+            if (kind !== 'voucher' || state.journal.filter(row => row.id === item.reversalEntryId).length !== 1 || state.journal.filter(row => row.reversesEntryId === entry.id).length !== 1 || !reverse || reverse.sourceType !== 'reversal' || reverse.sourceId !== entry.id || reverse.reversesEntryId !== entry.id || reverse.reversedByEntryId != null || (entry.branchId != null && reverse.branchId != null && entry.branchId !== reverse.branchId) || !Array.isArray(reverse.lines) || reverse.lines.length !== entry.lines.length) return fail()
+            const expected = buildReversalLines(entry.lines)
+            if (reverse.lines.some((line, index) => { const original = expected[index]; return line.accountCode !== original.accountCode || line.debit !== original.debit || line.credit !== original.credit || (line.partyKind ?? null) !== (original.partyKind ?? null) || (line.partyId ?? null) !== (original.partyId ?? null) || (line.costCenterId ?? null) !== (original.costCenterId ?? null) || (line.relatedBranchId ?? null) !== (original.relatedBranchId ?? null) })) return fail()
+            try { assertBalanced(reverse.lines) } catch { return fail() }
+          }
         }
         for (const voucher of relatedVouchers) {
-          if (voucher.kind !== 'receipt' || voucher.counterAccountCode !== '1104' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId || voucher.reversalEntryId != null || state.vouchers.filter(item => item.id === voucher.id).length !== 1 || !scoped.vouchers.some(item => item.id === voucher.id)) throw new Error('تخصيصات أو سند المشروع تخص طرفاً آخر أو سنداً معكوساً — يلزم تدقيق منفصل')
+          if (voucher.kind !== 'receipt' || voucher.counterAccountCode !== '1104' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId || state.vouchers.filter(item => item.id === voucher.id).length !== 1 || !scoped.vouchers.some(item => item.id === voucher.id)) throw new Error('تخصيصات أو سند المشروع تخص طرفاً آخر أو فرعاً آخر — يلزم تدقيق منفصل')
           checkReceipt('voucher', voucher)
         }
         for (const collection of relatedCollections) {
@@ -13458,6 +13516,11 @@ export const useRawDataStore = create<DataState>()(
         for (const extract of extracts) {
           const allocated = explicitlyAllocated.get(`extract:${extract.id}`) ?? 0
           if (!Number.isSafeInteger(allocated) || (extract.payment !== 'credit' && allocated > 0) || allocated > extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0)) throw new Error('تخصيصات التحصيل تتجاوز أصل مستحق المستخلص — يلزم التدقيق')
+        }
+        for (const sale of projectSales.filter(item => item.projectBilling === 'extra')) {
+          const allocated = explicitlyAllocated.get(`sale:${sale.id}`) ?? 0
+          const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+          if (!Number.isSafeInteger(allocated) || allocated > sale.totals.totalMinor - paid) throw new Error('تخصيصات التحصيل تتجاوز مستحق الفاتورة الإضافية — يلزم التدقيق')
         }
         let dueMinor = 0
         for (const extract of extracts) {
@@ -13477,7 +13540,7 @@ export const useRawDataStore = create<DataState>()(
         }
         assertProjectExtractRefundIntegrity(extracts, journal)
         const advances = state.clientAdvances.filter(item => item.projectId === projectId)
-        if (advances.length !== scoped.clientAdvances.filter(item => item.projectId === projectId).length || new Set(advances.map(item => item.id)).size !== advances.length || advances.some(item => state.clientAdvances.filter(other => other.id === item.id).length !== 1) || new Set(advances.map(item => item.journalEntryId)).size !== advances.length) throw new Error('الدفعات المقدمة غير مكتملة أو مكررة — راجع المشروع')
+        if (advances.length !== scoped.clientAdvances.filter(item => item.projectId === projectId).length || new Set(advances.map(item => item.id)).size !== advances.length || advances.some(item => state.clientAdvances.filter(other => other.id === item.id).length !== 1 || state.clientAdvances.filter(other => other.journalEntryId === item.journalEntryId).length !== 1) || new Set(advances.map(item => item.journalEntryId)).size !== advances.length) throw new Error('الدفعات المقدمة غير مكتملة أو مكررة — راجع المشروع')
         let recovered = 0
         for (const advance of advances) {
           const entry = journal.get(advance.journalEntryId)
@@ -13491,6 +13554,47 @@ export const useRawDataStore = create<DataState>()(
           if (!Number.isSafeInteger(recovered)) fail()
         }
         if (recovered !== extracts.reduce((sum, extract) => sum + (extract.advanceRecoveryMinor ?? 0), 0)) throw new Error('استرداد المقدمات لا يطابق مستخلصات المشروع — راجع الدفعات والقيود')
+        // حركات الماكينة لا تثبت بذاتها قبضاً؛ يجب أن تطابق المستند
+        // والقيد وحساب الماكينة، وكل رد يجب أن يطابق إشعاراً محدداً.
+        const terminalRows = state.paymentTerminalTransactions.filter(tx =>
+          (tx.documentType === 'project_extract' && (extracts.some(extract => tx.documentId === String(extract.id) || tx.documentId.startsWith(`${extract.id}:refund:`)) || tx.documentId.startsWith(`advance:${projectId}:`))) ||
+          (tx.documentType === 'receipt_voucher' && relatedVouchers.some(voucher => tx.documentId === voucher.voucherNumber)) ||
+          (tx.documentType === 'client_collection' && relatedCollections.some(collection => tx.documentId === String(collection.id))))
+        const chargeIds = new Set(terminalRows.filter(row => row.kind === 'charge').map(row => row.id))
+        for (const tx of state.paymentTerminalTransactions) if (tx.originalTransactionId && chargeIds.has(tx.originalTransactionId) && !terminalRows.includes(tx)) terminalRows.push(tx)
+        for (const tx of terminalRows) {
+          const fail = (): never => { throw new Error('حركة الماكينة أو مصدرها أو قيدها غير مطابق — يلزم تدقيق منفصل') }
+          const terminal = state.paymentTerminals.find(item => item.id === tx.terminalId)
+          if (!terminal || state.paymentTerminals.filter(item => item.id === tx.terminalId).length !== 1 || terminal.branchId !== tx.branchId || (getEffectiveActiveBranch(state) && tx.branchId !== String(getEffectiveActiveBranch(state)!.id)) || state.paymentTerminalTransactions.filter(item => item.id === tx.id).length !== 1 || state.paymentTerminalTransactions.filter(item => item.idempotencyKey === tx.idempotencyKey).length !== 1 || state.paymentTerminalTransactions.filter(item => item.terminalId === tx.terminalId && item.kind === tx.kind && item.providerReference === tx.providerReference).length !== 1) return fail()
+          if (tx.kind === 'charge') {
+            if (tx.originalTransactionId != null || validateTerminalTransaction(tx).length || terminalRows.filter(row => row.kind === 'charge' && row.documentType === tx.documentType && row.documentId === tx.documentId).length !== 1) return fail()
+            let amount = -1
+            let entry: JournalEntry | undefined
+            if (tx.documentType === 'project_extract') {
+              const extract = extracts.find(item => String(item.id) === tx.documentId)
+              const advance = advances.find(item => `advance:${projectId}:${item.journalEntryId}` === tx.documentId)
+              if (extract?.payment === 'cash') { amount = extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0); entry = journal.get(extract.journalEntryId) }
+              else if (advance) { amount = advance.amountMinor; entry = journal.get(advance.journalEntryId) }
+            } else if (tx.documentType === 'receipt_voucher') {
+              const voucher = relatedVouchers.find(item => item.voucherNumber === tx.documentId)
+              if (voucher && !voucher.reversalEntryId && state.vouchers.filter(item => item.voucherNumber === tx.documentId).length === 1) { amount = voucher.amountMinor; entry = journal.get(voucher.journalEntryId) }
+            } else if (tx.documentType === 'client_collection') {
+              const collection = relatedCollections.find(item => String(item.id) === tx.documentId)
+              if (collection) { amount = collection.amountMinor; entry = journal.get(collection.journalEntryId) }
+            }
+            if (!entry || amount !== tx.amountMinor || entry.lines.filter(line => line.accountCode === terminal.settlementAccountCode).reduce((sum, line) => sum + line.debit - line.credit, 0) !== amount) return fail()
+            const refunded = state.paymentTerminalTransactions.filter(row => row.originalTransactionId === tx.id).reduce((sum, row) => sum + row.amountMinor, 0)
+            if (!Number.isSafeInteger(refunded) || refunded > tx.amountMinor) return fail()
+          } else {
+            const original = terminalRows.find(row => row.id === tx.originalTransactionId)
+            if (tx.kind !== 'refund' || !original || validateTerminalTransaction(tx, original).length || tx.branchId !== original.branchId || tx.documentType !== 'project_extract' || tx.documentType !== original.documentType) return fail()
+            const extract = extracts.find(item => String(item.id) === original.documentId)
+            const refund = extract?.refunds?.find(item => tx.documentId === `${extract.id}:refund:${item.journalEntryId}`)
+            const entry = refund && journal.get(refund.journalEntryId)
+            if (!refund || refund.mode !== 'cash' || refund.amountMinor !== tx.amountMinor || !entry || entry.lines.filter(line => line.accountCode === terminal.settlementAccountCode).reduce((sum, line) => sum + line.credit - line.debit, 0) !== tx.amountMinor) return fail()
+            if (terminalRows.filter(row => row.kind === 'refund' && row.documentId === tx.documentId && row.documentType === tx.documentType).length !== 1) return fail()
+          }
+        }
         // محاكاة على لقطة منفصلة: لا نغيّر Zustand ولا نحفظ توزيعاً جديداً.
         // قد يعاد إسناد الشيكات والمبالغ تحت الحساب تقديرياً؛ تُعرض جميع
         // المستندات المتأثرة قبل أن يقر المالك بالمراجعة.
@@ -13523,7 +13627,7 @@ export const useRawDataStore = create<DataState>()(
         if (beforeMap.size !== beforeDocs.length || afterMap.size !== afterDocs.length) throw new Error('مفاتيح ذمم العميل مكررة — يلزم تدقيق المستندات')
         // لا نعتمد بقية توزيع السند إن كان يحيل إلى مستند لا يمكن إثبات
         // انتمائه لحساب العميل ضمن الحالة قبل الربط أو بعده.
-        for (const receipt of [...relatedVouchers, ...relatedCollections]) for (const allocation of receipt.allocations ?? []) {
+        for (const receipt of [...relatedVouchers.filter(voucher => !voucher.reversalEntryId), ...relatedCollections]) for (const allocation of receipt.allocations ?? []) {
           if (!keys.has(allocation.docKey) && !beforeMap.has(allocation.docKey) && !afterMap.has(allocation.docKey)) throw new Error('تخصيص التحصيل يشير إلى مستند غير ظاهر في حساب العميل — يلزم تدقيق منفصل')
         }
         const docKeys = new Set([...beforeMap.keys(), ...afterMap.keys()])
@@ -13548,8 +13652,23 @@ export const useRawDataStore = create<DataState>()(
           if (before && after && JSON.stringify(before) === JSON.stringify(after)) return []
           return [{ docKey, docLabel: after?.docLabel ?? before?.docLabel ?? docKey, beforeRemainingMinor, afterRemainingMinor, beforeSettledMinor: before?.settledMinor ?? null, afterSettledMinor: after?.settledMinor ?? null, beforeSources: sources(before), afterSources: sources(after) }]
         })
-        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId)]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), beforeRows, afterRows, beforeDocs, afterDocs])
-        return { dueMinor, extractCount: extracts.length, balanceBeforeMinor, balanceAfterMinor, documents, fingerprint }
+        // أدلة المشروع ظاهرة حتى للمستندات النقدية/التذكارية التي لا
+        // تنشئ صف ذمة في جدول إعادة توزيع مستندات العميل.
+        const evidence: LegacyCustomerReviewEvidence[] = [
+          ...extracts.flatMap(extract => [
+            { description: `مستخلص ${extract.extractNumber} (${extract.payment === 'cash' ? 'نقدي' : 'آجل'}) — مستحق قبل استرداد المقدمة`, amountMinor: extract.totals.dueMinor },
+            ...((extract.advanceRecoveryMinor ?? 0) > 0 ? [{ description: `استرداد مقدمة في ${extract.extractNumber}`, amountMinor: extract.advanceRecoveryMinor! }] : []),
+            ...(extract.refunds ?? []).map(refund => ({ description: `${refund.mode === 'cash' ? 'رد نقدي' : 'إشعار دائن'} ${extract.extractNumber} — قيد #${refund.journalEntryId}`, amountMinor: refund.amountMinor })),
+          ]),
+          ...advances.map(advance => ({ description: `دفعة مقدمة #${advance.id} — قيد #${advance.journalEntryId}`, amountMinor: advance.amountMinor })),
+          ...relatedVouchers.map(voucher => ({ description: `سند ${voucher.voucherNumber}${voucher.reversalEntryId ? ' معكوس' : ' قائم'} — قيد #${voucher.journalEntryId}`, amountMinor: voucher.amountMinor })),
+          ...relatedCollections.map(collection => ({ description: `تحصيل ${collection.settlementNumber} — قيد #${collection.journalEntryId}`, amountMinor: collection.amountMinor })),
+          ...projectSales.map(sale => ({ description: sale.projectBilling === 'documentation' ? `فاتورة توثيق ${sale.invoiceNumber} (تذكارية بلا قيد مالي)` : `فاتورة إضافية ${sale.invoiceNumber} — قيد #${sale.journalEntryId}`, amountMinor: sale.totals.totalMinor })),
+          ...projectReturns.map(ret => ({ description: `مرتجع توثيق ${ret.returnNumber} (تذكاري بلا قيد مالي)`, amountMinor: ret.totals.totalMinor })),
+          ...terminalRows.map(tx => ({ description: `ماكينة ${tx.kind === 'charge' ? 'تحصيل' : 'رد'} — ${tx.documentId} — مرجع ${tx.providerReference}`, amountMinor: tx.amountMinor })),
+        ]
+        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId), voucher.reversalEntryId != null ? journal.get(voucher.reversalEntryId) : null]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), terminalRows.map(tx => [tx, state.paymentTerminals.find(terminal => terminal.id === tx.terminalId)]), projectSales.map(sale => [sale, journal.get(sale.journalEntryId)]), projectReturns.map(ret => [ret, journal.get(ret.journalEntryId)]), beforeRows, afterRows, beforeDocs, afterDocs])
+        return { dueMinor, extractCount: extracts.length, balanceBeforeMinor, balanceAfterMinor, documents, evidence, fingerprint }
       },
       resolveLegacyProjectCustomer: (args) => {
         const reason = args.reason.trim()
@@ -13562,7 +13681,7 @@ export const useRawDataStore = create<DataState>()(
         const by = activeUserName(state)
         const extractIds = state.projectExtracts.filter(item => item.projectId === args.projectId).map(item => item.id)
         set({
-          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, dueMinor: preview.dueMinor, extractIds, at, by, reason, balanceBeforeMinor: preview.balanceBeforeMinor, balanceAfterMinor: preview.balanceAfterMinor, documents: preview.documents } } : item),
+          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, dueMinor: preview.dueMinor, extractIds, at, by, reason, balanceBeforeMinor: preview.balanceBeforeMinor, balanceAfterMinor: preview.balanceAfterMinor, documents: preview.documents, evidence: preview.evidence } } : item),
           auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `مراجعة ربط مشروع #${args.projectId} بالعميل #${args.customerId} بذمة ${preview.dueMinor} — ${reason}` }]),
         })
       },
