@@ -24,7 +24,7 @@ interface Props {
 export function AnalyticalProjectReportView({ projectId, onProjectChange }: Props) {
   const {
     projects, projectExtracts, projectCosts, changeOrders, suppliers,
-    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds,
+    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds, assertProjectExtractOriginals,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useMemo(
@@ -42,6 +42,11 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
   const model = (() => {
     if (!selected) return null
     const extracts = projectExtracts.filter((e) => e.projectId === selected.id)
+    let originalLedgerIncomplete = false
+    try { assertProjectExtractOriginals(selected.id) } catch (error) {
+      if (!(error instanceof FinancialDataReviewError)) throw error
+      originalLedgerIncomplete = true
+    }
     let refundLedgerIncomplete = false
     try { assertProjectExtractRefunds(selected.id) } catch (error) {
       if (!(error instanceof FinancialDataReviewError)) throw error
@@ -146,7 +151,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         startDate: selected.startDate, contractValueMinor: selected.contractValueMinor,
       },
       changeOrdersApprovedMinor: orders.reduce((s, o) => s + o.amountMinor, 0),
-      refundLedgerIncomplete,
+      refundLedgerIncomplete, originalLedgerIncomplete,
       extracts: extracts.map((e) => ({
         extractNumber: e.extractNumber, date: e.date, grossMinor: e.totals.grossMinor,
         vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, dueMinor: e.totals.dueMinor,

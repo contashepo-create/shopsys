@@ -21,6 +21,8 @@ export interface AnalyticalProjectSource {
   changeOrdersApprovedMinor?: Minor
   /** قيد إشعار مفقود أو لا يطابق المستند؛ احجب القيم المتأثرة. */
   refundLedgerIncomplete?: boolean
+  /** القيد الأصلي للمستخلص مفقود أو مختلف. */
+  originalLedgerIncomplete?: boolean
   /** المستخلصات (القيمة قبل الضريبة، المحتجز، المستحق، التاريخ، الرقم، نقدي/آجل) */
   extracts: {
     extractNumber: string
@@ -86,7 +88,7 @@ export interface AnalyticalProjectSource {
 function extractRefundStatus(src: AnalyticalProjectSource) {
   const keys = new Set<string>()
   let amount = 0, tax = 0, cash = 0
-  let incomplete = src.refundLedgerIncomplete === true
+  let incomplete = src.refundLedgerIncomplete === true || src.originalLedgerIncomplete === true
   for (const e of src.extracts) {
     const records = e.refunds ?? []
     let sum = 0, sumTax = 0
@@ -342,7 +344,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   const contractOriginal = src.project.contractValueMinor
   const contractEffective = contractOriginal + (src.changeOrdersApprovedMinor ?? 0)
   const refunds = extractRefundStatus(src)
-  const unresolved = 'تتطلب مراجعة إشعارات المستخلصات'
+  const unresolved = src.originalLedgerIncomplete ? 'تتطلب مراجعة قيود المستخلصات الأصلية' : 'تتطلب مراجعة إشعارات المستخلصات'
   const safe = (value: Minor) => refunds.incomplete ? unresolved : fmt(value)
   const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0) - (refunds.incomplete ? 0 : refunds.amount - refunds.tax)
   const vat = src.extracts.reduce((s, e) => s + (e.vatMinor ?? 0), 0) - (refunds.incomplete ? 0 : refunds.tax)
@@ -398,7 +400,8 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   }
 
   const notes: string[] = []
-  if (refunds.incomplete) notes.push('تنبيه محاسبي: سجلات إشعارات المستخلصات ناقصة أو غير متطابقة مع الإجماليات؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات.')
+  if (src.originalLedgerIncomplete) notes.push('تنبيه محاسبي: قيد مستخلص أصلي مفقود أو غير مطابق؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات والدفتر.')
+  else if (refunds.incomplete) notes.push('تنبيه محاسبي: سجلات إشعارات المستخلصات ناقصة أو غير متطابقة مع الإجماليات؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات.')
   else if (refunds.amount > 0) notes.push('خُصمت إشعارات المستخلصات من الإيراد والضريبة والمستحق حسب قيودها؛ الرد النقدي حركة خارجة، والدائن ليس تحصيلاً. المتبقي بعد العمليات محسوب من المستحق الحالي بعد الإشعارات، لا كرصد تاريخي لكل تاريخ.')
   const bouncedCount = collections.rows.filter((r) => r.excludedReason === 'bounced').length
   const outOfScopeCount = collections.rows.filter((r) => r.excludedReason === 'out-of-scope').length
@@ -464,7 +467,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       { label: 'قيمة العقد الفعلية', value: fmt(contractEffective), emphasis: true },
       { label: 'قيمة الأعمال المستخلصة', value: safe(extracted) },
       { label: 'ض.ق.م محمّلة على العميل', value: safe(vat) },
-      { label: 'محتجز ضمان أعمال', value: fmt(retention) },
+      { label: 'محتجز ضمان أعمال', value: src.originalLedgerIncomplete ? unresolved : fmt(retention) },
       { label: 'صافي المستحق على المستخلصات', value: safe(dueTotal) },
       { label: 'إجمالي ما تم تحصيله', value: safe(collected) },
       { label: 'المتبقي من التحصيل', value: safe(remainingCollection), emphasis: true },
@@ -476,7 +479,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     equation: [
       { label: 'قيمة الأعمال المستخلصة', value: safe(extracted) },
       { label: 'يُضاف: ض.ق.م محمّلة', value: safe(vat) },
-      { label: 'يُطرح: محتجز ضمان أعمال', value: `(${fmt(retention)})` },
+      { label: 'يُطرح: محتجز ضمان أعمال', value: src.originalLedgerIncomplete ? unresolved : `(${fmt(retention)})` },
       { label: 'صافي المستحق على المستخلصات', value: safe(dueTotal), emphasis: true },
       { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: refunds.incomplete ? unresolved : `(${fmt(collected)})` },
       { label: 'المتبقي من التحصيل — مستخلصات المشروع', value: safe(remainingCollection), emphasis: true },

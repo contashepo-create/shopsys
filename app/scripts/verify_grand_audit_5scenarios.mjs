@@ -197,7 +197,8 @@ ok(`قائمة الدخل بالقرش: ${revenue} − مرتجعات ${returns}
 console.log('\n🏗️ S2: مقاولات السعودية (15٪) — الدورة الكاملة بعزل الضريبة')
 
 // كما تفعل الواجهة تماماً: قيمة العقد تُحسب من بنود BOQ قبل الإنشاء (100×50 + 50×300 = 20,000)
-st().addProject({ nameAr: 'فيلا العليا', clientName: 'أ. فهد', contractValueMinor: 2_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
+st().addCustomer({ nameAr: 'أ. فهد', phone: '', notes: '', creditLimitMinor: 0 })
+st().addProject({ nameAr: 'فيلا العليا', clientId: st().customers.at(-1).id, clientName: 'أ. فهد', contractValueMinor: 2_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
 const proj = st().projects.at(-1)
 st().addBoqItem({ projectId: proj.id, code: '1', descriptionAr: 'أعمال حفر', unit: 'م3', qty: 100, unitPriceMinor: 5000 })
 st().addBoqItem({ projectId: proj.id, code: '2', descriptionAr: 'هيكل خرساني', unit: 'م3', qty: 50, unitPriceMinor: 30000 })

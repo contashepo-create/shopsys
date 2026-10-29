@@ -41,7 +41,7 @@ export function ContractingReportsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
     suppliers, treasuries, custodyFiles, boqItems, journal,
-    getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds,
+    getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds, assertProjectExtractOriginals,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
@@ -65,6 +65,7 @@ export function ContractingReportsPage() {
 
   /** بطاقة التقرير الخالصة لكل مشروع — من النواة مباشرة */
   const cards = projects.map((p) => {
+    assertProjectExtractOriginals(p.id)
     assertProjectExtractRefunds(p.id)
     const extracts = projectExtracts.filter((e) => e.projectId === p.id)
     const released = retentionReleases.filter((r) => r.projectId === p.id).reduce((a, r) => a + r.amountMinor, 0)

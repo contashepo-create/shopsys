@@ -249,3 +249,13 @@ it('تقرير مستخلص نقدي يحجب أرقام الإشعار إذا �
   expect(indicator('صافي نتيجة المشروع حتى تاريخه')).toBe('تتطلب مراجعة إشعارات المستخلصات')
   expect(indicator('إجمالي ما تم تحصيله')).toBe('تتطلب مراجعة إشعارات المستخلصات')
 })
+
+it('تقرير مشروع بلا عميل يحجب الأرصدة عندما يفقد المستخلص قيده الأصلي', () => {
+  const s = useDataStore.getState()
+  const project = s.addProject({ nameAr: 'مشروع بلا ربط', clientName: 'جهة', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const extract = s.addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 10000, vatPercent: 0, payment: 'cash' })
+  useDataStore.setState({ journal: useDataStore.getState().journal.filter(e => e.id !== extract.journalEntryId) })
+  render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+  expect(screen.getAllByText('تتطلب مراجعة قيود المستخلصات الأصلية').length).toBeGreaterThan(0)
+  expect(screen.getByText(/قيد مستخلص أصلي مفقود أو غير مطابق/)).toBeTruthy()
+})

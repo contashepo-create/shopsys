@@ -50,7 +50,7 @@ import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyalt
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
-import { assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
+import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
 import { proportionalCommissionReturnMinor } from '../core/invoiceCommissions.ts'
@@ -2898,6 +2898,7 @@ interface DataState {
   /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
   getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   assertProjectExtractRefunds: (projectId: number) => void
+  assertProjectExtractOriginals: (projectId: number) => void
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
   addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
   /** §94-مراجعة: تعديل بيانات بند BOQ — الكمية/السعر مقفولان بعد بدء التنفيذ (نسب المستخلصات تاريخية) */
@@ -3937,7 +3938,10 @@ function assertInsuredRefundRecords(refunds: readonly ServiceRefundRecord[], ref
 
 function assertCustomerProjectRefunds(state: DataState, raw: DataState, customerId: number): void {
   const projectIds = new Set(state.projects.filter(project => project.clientId === customerId).map(project => project.id))
-  assertProjectExtractRefundIntegrity(state.projectExtracts.filter(extract => projectIds.has(extract.projectId)), customerReviewJournal(raw))
+  const extracts = state.projectExtracts.filter(extract => projectIds.has(extract.projectId))
+  const journal = customerReviewJournal(raw)
+  for (const extract of extracts) assertProjectExtractOriginalIntegrity(extract, journal)
+  assertProjectExtractRefundIntegrity(extracts, journal)
 }
 
 function customerLabOrders(state: DataState, raw: DataState, customerId: number): LabOrder[] {
@@ -13129,6 +13133,12 @@ export const useRawDataStore = create<DataState>()(
         const project = state.projects.find((p2) => p2.id === id)
         if (!project) throw new Error('المشروع غير موجود')
         const hasExtracts = state.projectExtracts.some((e) => e.projectId === id)
+        // ذمم المستخلصات وتوزيع تحصيلاتها يستنتجان العميل من المشروع؛ تغيير الرابط
+        // بأثر رجعي ينقل الدين وحده ويترك التحصيل على العميل القديم.
+        if (changes.clientId !== undefined && (changes.clientId ?? null) !== (project.clientId ?? null)
+          && (hasExtracts || state.clientAdvances.some(advance => advance.projectId === id))) {
+          throw new Error('لا يمكن تغيير عميل المشروع بعد إصدار مستخلص أو قبض دفعة مقدمة — راجع المحاسب لمعالجة الارتباط تاريخياً')
+        }
         if (changes.contractValueMinor !== undefined && changes.contractValueMinor !== project.contractValueMinor && hasExtracts) {
           throw new Error('صدرت مستخلصات على هذا المشروع — قيمة العقد لا تُعدَّل مباشرة؛ استخدم أمر تغيير (يدخل العقد الفعلي ونسب الإنجاز)')
         }
@@ -13556,12 +13566,14 @@ export const useRawDataStore = create<DataState>()(
         const extractNumber = `PRX-${String(id).padStart(4, '0')}`
         // استرداد الدفعة المقدمة (اختياري): يخصم من مستحق المستخلص ويطفئ 2109
         const recovery = args.advanceRecoveryMinor ?? 0
+        if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > totals.dueMinor) throw new Error('استرداد الدفعة يجب أن يكون مبلغاً صحيحاً بين صفر ومستحق المستخلص')
         if (recovery > 0) {
           const advBalance = state.clientAdvances.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
           if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
         }
         // حد الائتمان: المستخلص الآجل دين على عميل المشروع (المستحق بعد استرداد الدفعة)
         if (args.payment === 'credit') {
+          if (totals.dueMinor > recovery && (project.clientId == null || !state.customers.some(customer => customer.id === project.clientId))) throw new Error('المستخلص الآجل يتطلب ربط المشروع بعميل مسجل قبل إصدار ذمة')
           guardCreditLimit(get(), project.clientId ?? null, Math.max(totals.dueMinor - recovery, 0), args.creditLimitOverrideBy)
         }
         const lines = recovery > 0
@@ -13624,6 +13636,11 @@ export const useRawDataStore = create<DataState>()(
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تُعدَّل مستخلصاته')
         if (extract.refunds?.length) throw new Error('على المستخلص إشعار دائن قائم — عالجه أولاً (إلغاؤه أو مستخلص بديل)')
+        const extractKey = `extract:${extract.id}`
+        const hasAllocatedReceipt = scoped.vouchers.some(v => !v.reversalEntryId && v.kind === 'receipt' && v.allocations?.some(a => a.docKey === extractKey))
+          || scoped.clientSettlements.some(st => st.allocations?.some(a => a.docKey === extractKey))
+        if (hasAllocatedReceipt) throw new Error('لا يُعدّل مستخلص له تحصيل موزع عليه — عالج توزيع التحصيل أولاً أو أصدر إشعاراً مناسباً')
+        assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
         if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(extract.id))) throw new Error('المستخلص محصل بالماكينة — لا يُعدَّل؛ إشعار دائن ثم مستخلص جديد')
         const reason = args.reason.trim()
         if (!reason) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
@@ -13694,11 +13711,17 @@ export const useRawDataStore = create<DataState>()(
         }
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const recovery = args.advanceRecoveryMinor ?? 0
+        if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > totals.dueMinor) throw new Error('استرداد الدفعة يجب أن يكون مبلغاً صحيحاً بين صفر ومستحق المستخلص')
         if (recovery > 0) {
           const advBalance = advancesAfterRevert.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
           if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
         }
-        if (args.payment === 'credit') guardCreditLimit(get(), project.clientId ?? null, Math.max(totals.dueMinor - recovery, 0), args.creditLimitOverrideBy)
+        if (args.payment === 'credit') {
+          if (totals.dueMinor > recovery && (project.clientId == null || !state.customers.some(customer => customer.id === project.clientId))) throw new Error('المستخلص الآجل يتطلب ربط المشروع بعميل مسجل قبل إصدار ذمة')
+          const previousCredit = extract.payment === 'credit' ? Math.max(0, extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0)) : 0
+          const increase = Math.max(0, totals.dueMinor - recovery - previousCredit)
+          guardCreditLimit(get(), project.clientId ?? null, increase, args.creditLimitOverrideBy)
+        }
         const lines = recovery > 0
           ? buildExtractEntryWithAdvance(totals, args.payment, extract.extractNumber, args.treasury ?? '1101', recovery)
           : buildExtractEntry(totals, args.payment, extract.extractNumber, args.treasury ?? '1101')
@@ -14409,6 +14432,14 @@ export const useRawDataStore = create<DataState>()(
         })
         return { amount: remaining }
       },
+      assertProjectExtractOriginals: (projectId) => {
+        const raw = get()
+        const scoped = getBranchScopedDataState(raw)
+        if (!scoped.projects.some(project => project.id === projectId)) throw new Error('المشروع غير موجود في هذا الفرع')
+        const journal = customerReviewJournal(raw)
+        for (const extract of scoped.projectExtracts.filter(e => e.projectId === projectId)) assertProjectExtractOriginalIntegrity(extract, journal)
+      },
+
       assertProjectExtractRefunds: (projectId) => {
         const raw = get()
         const scoped = getBranchScopedDataState(raw)
@@ -14459,7 +14490,10 @@ export const useRawDataStore = create<DataState>()(
         const state = getBranchScopedDataState(get())
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
-        assertProjectExtractRefundIntegrity(state.projectExtracts.filter(e => e.projectId === projectId), customerReviewJournal(get()))
+        const projectExtracts = state.projectExtracts.filter(e => e.projectId === projectId)
+        const journal = customerReviewJournal(get())
+        for (const extract of projectExtracts) assertProjectExtractOriginalIntegrity(extract, journal)
+        assertProjectExtractRefundIntegrity(projectExtracts, journal)
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
         /* §95 (محاذاة pro-acc): التكاليف من كل مصادرها — اليدوية + شهادات الباطن
            (باطن) + أجور اليومية المسوّاة (عمالة) + المشتريات المرتبطة (مواد، بلا ض.مدخلات)
@@ -17998,8 +18032,9 @@ export const useRawDataStore = create<DataState>()(
         const project = scoped.projects.find((pr) => pr.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
-        if (args.mode === 'customer_credit' && extract.payment !== 'credit' && project?.clientId == null) {
-          throw new Error('مستخلص نقدي لمشروع بلا عميل مرتبط — الاسترداد نقدي فقط')
+        assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
+        if (args.mode === 'customer_credit' && (project.clientId == null || !scoped.customers.some(customer => customer.id === project.clientId))) {
+          throw new Error('المستخلص لمشروع بلا عميل مرتبط — لا يُنشأ رصيد عميل بلا صاحب')
         }
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,

@@ -26,7 +26,7 @@ const throws = (name, fn, part) => {
 const balanced = () => { let d = 0, c = 0; for (const e of S().journal) for (const l of e.lines) { d += l.debit; c += l.credit }; return d === c }
 
 console.log('🏗️ التأسيس: مشروع 1,000,000 قرش بمحتجز 10٪ وبندا BOQ')
-S().addProject({ nameAr: 'مجمع الوادي', clientName: 'العميل أ', contractValueMinor: 1_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
+S().addProject({ nameAr: 'مجمع الوادي', clientId: 9901, clientName: 'العميل أ', contractValueMinor: 1_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
 const proj = S().projects.at(-1)
 S().addBoqItem({ projectId: proj.id, code: '1-1', descriptionAr: 'حفر وأساسات', unit: 'م3', qty: 100, unitPriceMinor: 4000 }) // إجمالي 400,000
 S().addBoqItem({ projectId: proj.id, code: '2-1', descriptionAr: 'خرسانة مسلحة', unit: 'م3', qty: 60, unitPriceMinor: 10000 }) // إجمالي 600,000

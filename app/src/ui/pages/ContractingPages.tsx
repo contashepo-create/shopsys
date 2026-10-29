@@ -38,7 +38,7 @@ import { todayLocalIso } from '../../core/time.ts'
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances,
     addProject, updateProject, addBoqItem, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
@@ -57,7 +57,7 @@ export function ProjectsPage() {
   const [open, setOpen] = useState(false)
   const [nameAr, setNameAr] = useState('')
   const [clientName, setClientName] = useState('')
-  const [clientId, setClientId] = useState('') // ربط إداري — لا يمس رصيد العميل
+  const [clientId, setClientId] = useState('') // يحدد صاحب ذمم مستخلصات المشروع
   const [contractValue, setContractValue] = useState('')
   const [retention, setRetention] = useState('5')
   const [startDate, setStartDate] = useState(todayLocalIso())
@@ -89,7 +89,7 @@ export function ProjectsPage() {
   /* §92: أخطاء مانعة وتحذيرات قبل إنشاء المشروع — لوحة مثل فاتورة الأعلاف */
   const projectIssues: PrePostIssue[] = [
     ...(nameAr.trim() === '' ? [{ id: 'name', level: 'blocking' as const, text: 'اسم المشروع مطلوب' }] : []),
-    ...(clientName.trim() === '' ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا عميل/جهة — لن يظهر في تقارير ذمم العميل' }] : []),
+    ...(!clientId ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا سجل عميل مرتبط — اسم الجهة وحده لا يربط المستخلصات بكشف العميل' }] : []),
     ...(valueMode === 'boq' && validBoqLines.length === 0
       ? [{ id: 'boq-empty', level: 'blocking' as const, text: 'أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»' }]
       : []),
@@ -762,7 +762,7 @@ export function ProjectsPage() {
                   <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪ على قيمة الأعمال</span>
                 </label>
               </Field>
-              <Field label="التحصيل">
+              <Field label="التحصيل" hint={extractFor.clientId == null ? 'المستخلص الآجل ذو المتبقي يتطلب عميلاً مرتبطاً بالمشروع قبل الإصدار' : undefined}>
                 <div className="flex gap-2">
                   {(['credit', 'cash'] as const).map((p) => (
                     <button key={p} onClick={() => setExPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${exPayment === p ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
@@ -1215,11 +1215,12 @@ export function ProjectsPage() {
       <Modal open={!!editPrj} onClose={() => setEditPrj(null)} title={editPrj ? `تعديل ${editPrj.code} — ${editPrj.nameAr}` : ''} subtitle="بيانات العقد والمواعيد — الكود والحالة لا يتغيران">
         {editPrj && (() => {
           const locked = projectExtracts.some((e) => e.projectId === editPrj.id)
+          const clientLocked = locked || clientAdvances.some((advance) => advance.projectId === editPrj.id)
           return (
             <div className="grid grid-cols-2 gap-3" data-project-edit-modal>
               <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
               <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
-              <Field label="ربط سجل العميل" hint="إداري بحت — لا قيد ولا ذمة"><input className={inputCls} type="number" value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
+              <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}><input className={inputCls} type="number" disabled={clientLocked} value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
               <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
                 <input className={inputCls} type="number" disabled={locked} value={locked ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
               </Field>
@@ -2292,7 +2293,7 @@ export function ProjectExtractsPage() {
                 ))}
               </select>
             </Field>
-            <Field label="طريقة تحصيل الفاتورة">
+            <Field label="طريقة تحصيل الفاتورة" hint={selectedProject && selectedProject.clientId == null ? 'المستخلص الآجل ذو المتبقي يتطلب عميلاً مرتبطاً بالمشروع قبل الإصدار' : undefined}>
               <div className="flex gap-2">
                 {([
                   ['credit', 'آجل (على حساب العميل)'],
