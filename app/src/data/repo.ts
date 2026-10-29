@@ -3978,6 +3978,20 @@ function assertInsuredRefundRecords(refunds: readonly ServiceRefundRecord[], ref
 }
 
 function assertCustomerProjectRefunds(state: DataState, raw: DataState, customerId: number): void {
+  // افحص الأصل الكامل أيضاً: حصر المشروع في فرعه وحده قد يخفي التناقض
+  // عن كشف العميل في فرع آخر ويعرض رصيداً ناقصاً على أنه صحيح.
+  if (raw.branches.length) {
+    const customer = raw.customers.find(item => item.id === customerId)
+    for (const project of raw.projects.filter(item => item.clientId === customerId)) {
+      const extracts = raw.projectExtracts.filter(item => item.projectId === project.id)
+      if (!extracts.length) continue
+      const branches = raw.branches.filter(branch => belongsToBranch(project, branch, raw.branches))
+      if (branches.length !== 1 || !customer || !belongsToBranch(customer, branches[0], raw.branches)
+        || extracts.some(extract => !belongsToBranch(extract, branches[0], raw.branches))) {
+        throw new FinancialDataReviewError(`مشروع ${project.nameAr}`, 'الفروع المسجلة للمشروع أو المستخلصات أو العميل غير متطابقة أو غير واضحة')
+      }
+    }
+  }
   const projectIds = new Set(state.projects.filter(project => project.clientId === customerId).map(project => project.id))
   const extracts = state.projectExtracts.filter(extract => projectIds.has(extract.projectId))
   const journal = customerReviewJournal(raw)
@@ -4954,6 +4968,23 @@ export function getBranchScopedDataState(state: DataState): DataState {
   }
   byBranch.set(activeBranch.id, scoped)
   return scoped
+}
+
+/** إلى أن يُدعم عميل مستقل لكل فرع في المشروع الواحد، لا تُنشأ ذمة عابرة للفروع. */
+function assertProjectCustomerBranch(state: DataState, project: Project, extract?: ProjectExtract): void {
+  if (!state.branches.length) return
+  const active = getEffectiveActiveBranch(state)
+  const projectBranches = state.branches.filter(branch => belongsToBranch(project, branch, state.branches))
+  if (projectBranches.length !== 1 || (active && projectBranches[0].id !== active.id)) throw new Error('المشروع تابع لفرع آخر لا الفرع الحالي أو أن فرعه غير واضح')
+  const projectBranch = projectBranches[0]
+  if (!active && !projectBranch.isMain) throw new Error('اختر الفرع قبل إصدار أو تعديل مستخلص مشروع فرعي')
+  if ((extract && !belongsToBranch(extract, projectBranch, state.branches))
+    || state.projectExtracts.some(item => item.projectId === project.id && !belongsToBranch(item, projectBranch, state.branches))
+    || state.clientAdvances.some(item => item.projectId === project.id && !belongsToBranch(item, projectBranch, state.branches))) {
+    throw new Error('مستخلصات المشروع أو دفعاته المقدمة تتبع فرعاً آخر أو فرعها غير واضح — يلزم مراجعة الفروع')
+  }
+  const customer = state.customers.find(item => item.id === project.clientId)
+  if (customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر — يلزم مراجعة الفروع قبل المستخلص')
 }
 
 function assertEmployeeInActiveBranch(state: DataState, employeeId: number): void {
@@ -13419,6 +13450,11 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
         if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
+        const branch = getEffectiveActiveBranch(state)
+        const projectBranch = branch ?? state.branches.find(item => item.isMain) ?? null
+        if (state.branches.length && !projectBranch) throw new Error('حدد الفرع الرئيسي قبل إنشاء المشروع')
+        const customer = state.customers.find(c => c.id === p.clientId)
+        if (projectBranch && customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر')
         if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
         const id = nextId(state.projects)
         const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
@@ -14259,6 +14295,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
+        assertProjectCustomerBranch(state, project)
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
         /* §95 (محاذاة pro-acc — طلب المالك): سقف صارم — المستخلصات المتراكمة لا تتجاوز
            قيمة العقد الفعلية (الأصلية + أوامر التغيير المعتمدة/المستخلصة). الفارق؟ أمر تغيير. */
@@ -14370,6 +14407,7 @@ export const useRawDataStore = create<DataState>()(
         if (!extract) throw new Error('المستخلص غير موجود في هذا الفرع')
         const project = scoped.projects.find((p) => p.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
+        assertProjectCustomerBranch(state, project, extract)
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تُعدَّل مستخلصاته')
         if (extract.refunds?.length) throw new Error('على المستخلص إشعار دائن قائم — عالجه أولاً (إلغاؤه أو مستخلص بديل)')
@@ -18534,6 +18572,7 @@ export const useRawDataStore = create<DataState>()(
         if (!extract) throw new Error('المستخلص غير موجود في هذا الفرع')
         const project = scoped.projects.find((pr) => pr.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
+        assertProjectCustomerBranch(state, project, extract)
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
         if (args.mode === 'customer_credit' && (project.clientId == null || !scoped.customers.some(customer => customer.id === project.clientId))) {

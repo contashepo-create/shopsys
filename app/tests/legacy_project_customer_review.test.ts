@@ -762,3 +762,72 @@ it('يرفض نقل مشروع أو مستخلصات صريحة بين فرعي�
   expect(() => S().previewMissingProjectCustomerBackup(project.id, backup)).toThrow(/الفروع/)
   expect(S().customers).toHaveLength(0)
 })
+
+it('يمنع إصدار أو تعديل مستخلص فرع على عميل تابع لفرع آخر', () => {
+  const { customer, project, extract } = legacy()
+  const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
+  const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
+  useRawDataStore.setState({ branches: [main, second], activeBranchId: 1, customers: S().customers.map(c => ({ ...c, branchId: 2 })), projects: S().projects.map(p => ({ ...p, clientId: customer.id, branchId: 1 })), projectExtracts: S().projectExtracts.map(e => ({ ...e, branchId: 1 })) })
+  const before = useRawDataStore.getState()
+  expect(() => S().addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 1000, vatPercent: 0, payment: 'credit' })).toThrow(/فرع|الفرع/)
+  expect(() => S().editProjectExtract({ extractId: extract.id, grossMinor: 7000, vatPercent: 0, payment: 'credit', description: 'تعديل', reason: 'تصحيح' })).toThrow(/فرع|الفرع/)
+  expect(() => S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'تصحيح' })).toThrow(/فرع|الفرع/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+  useRawDataStore.setState({ activeBranchId: 2 })
+  expect(() => S().getCustomerBalance(customer.id)).toThrow(/مراجعة/)
+  expect(() => S().getOpenClientInvoices(customer.id)).toThrow(/مراجعة/)
+  useRawDataStore.setState({ activeBranchId: null })
+  expect(() => S().getCustomerBalance(customer.id)).toThrow(/مراجعة/)
+})
+
+it('يمنع إنشاء مشروع على عميل فرع آخر في الفرع أو العرض الشامل', () => {
+  const { customer } = legacy()
+  const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
+  const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
+  useRawDataStore.setState({ branches: [main, second], activeBranchId: 1, customers: S().customers.map(c => ({ ...c, branchId: 2 })) })
+  const input = { nameAr: 'مشروع آخر', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' }
+  expect(() => S().addProject(input)).toThrow(/فرع|الفرع/)
+  useRawDataStore.setState({ activeBranchId: null })
+  expect(() => S().addProject(input)).toThrow(/فرع|الفرع/)
+})
+
+
+it('يسمح بمستخلصات كل فرع على عميله ويمنع الإصدار من فرع آخر', () => {
+  const { customer, project } = legacy()
+  const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
+  const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
+  useRawDataStore.setState({ branches: [main, second], activeBranchId: 1, customers: S().customers.map(c => ({ ...c, branchId: 1 })), projects: S().projects.map(p => ({ ...p, clientId: customer.id, branchId: 1 })), projectExtracts: S().projectExtracts.map(e => ({ ...e, branchId: 1 })) })
+  const add = () => S().addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 1000, vatPercent: 0, payment: 'credit' })
+  useRawDataStore.setState({ activeBranchId: 2 })
+  expect(add).toThrow(/الفرع/)
+  useRawDataStore.setState({ activeBranchId: 1 })
+  const extract = add()
+  expect(useRawDataStore.getState().projectExtracts.find(e => e.id === extract.id)).toMatchObject({ branchId: 1 })
+  expect(S().getCustomerBalance(customer.id)).toBe(9000)
+  useRawDataStore.setState({ activeBranchId: 2 })
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل مستقل', phone: '', creditLimitMinor: 0, notes: '' })
+  const secondCustomer = S().customers.at(-1)!
+  const secondProject = S().addProject({ nameAr: 'مشروع الفرع الثاني', clientId: secondCustomer.id, clientName: secondCustomer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+  S().addProjectExtract({ projectId: secondProject.id, description: 'آجل', grossMinor: 2000, vatPercent: 0, payment: 'credit' })
+  expect(S().getCustomerBalance(secondCustomer.id)).toBe(2000)
+  expect(S().customers.some(c => c.id === customer.id)).toBe(false)
+  useRawDataStore.setState({ activeBranchId: null })
+  expect(() => S().addProjectExtract({ projectId: secondProject.id, description: 'آجل', grossMinor: 1000, vatPercent: 0, payment: 'credit' })).toThrow(/الفرع/)
+  useRawDataStore.setState({ activeBranchId: 1 })
+  expect(S().getCustomerBalance(customer.id)).toBe(9000)
+  expect(S().customers.some(c => c.id === secondCustomer.id)).toBe(false)
+})
+
+
+it('يحجب الحركة والحساب عند وجود مستخلص لفرع آخر داخل المشروع', () => {
+  const { customer, project, extract } = legacy()
+  const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
+  const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
+  useRawDataStore.setState({ branches: [main, second], activeBranchId: 1, customers: S().customers.map(c => ({ ...c, branchId: 1 })), projects: S().projects.map(p => ({ ...p, clientId: customer.id, branchId: 1 })), projectExtracts: S().projectExtracts.map(e => ({ ...e, branchId: 2 })) })
+  const before = useRawDataStore.getState().journal
+  expect(() => S().addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 1000, vatPercent: 0, payment: 'cash' })).toThrow(/الفروع/)
+  expect(() => S().getCustomerBalance(customer.id)).toThrow(/الفروع/)
+  useRawDataStore.setState({ activeBranchId: null })
+  expect(() => S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'cash', reason: 'تصحيح' })).toThrow(/الفروع/)
+  expect(useRawDataStore.getState().journal).toBe(before)
+})
