@@ -87,6 +87,8 @@ export function ContractingReportsPage() {
   // الدفتر الكامل يُظهر المستند المسدّد برصيد صفر بدلاً من استنتاجه من الغياب.
   // نحسبه مع كل عرض لأن السداد/الشيكات قد تتغير دون تغير دالة المتجر.
   const openByProject = projectOpenBalances(projects, projectExtracts, getOpenClientInvoices)
+  const unlinkedReceivables = new Set(projects.filter(p => (p.clientId == null || !customers.some(c => c.id === p.clientId)) && projectExtracts.some(e => e.projectId === p.id && e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0))).map(p => p.id))
+  const openProjectLabel = (id: number) => unlinkedReceivables.has(id) ? 'تتطلب مراجعة ربط العميل والتحصيلات' : fmt(openByProject.get(id) ?? 0)
 
   const totals = ({
     contract: cards.reduce((a, r) => a + r.card.contractEffectiveMinor, 0),
@@ -97,6 +99,8 @@ export function ContractingReportsPage() {
     advances: cards.reduce((a, r) => a + r.card.advancesRemainingMinor, 0),
     open: cards.reduce((a, r) => a + (openByProject.get(r.project.id) ?? 0), 0),
   })
+
+  const totalOpenLabel = unlinkedReceivables.size > 0 ? 'تتطلب مراجعة ربط العميل والتحصيلات' : fmt(totals.open)
 
   /* ═══ تبويب: مشروع بعينه ═══ */
   const selected = cards.find((r) => r.project.id === Number(projectId)) ?? null
@@ -111,7 +115,7 @@ export function ContractingReportsPage() {
     journalEntryNumber: (entryId) => journal.find((e) => e.id === entryId)?.entryNumber ?? entryId,
   })
   const selectedOrders = selected ? changeOrders.filter((o) => o.projectId === selected.project.id) : []
-  const selectedOpenDocs = selected?.project.clientId != null
+  const selectedOpenDocs = selected?.project.clientId != null && customers.some(c => c.id === selected.project.clientId)
     ? getOpenClientInvoices(selected.project.clientId).filter((inv) => selectedExtracts.some((e) => `extract:${e.id}` === inv.docKey))
     : []
 
@@ -119,7 +123,7 @@ export function ContractingReportsPage() {
   const clientDues = (() => {
     const byClient = new Map<number, { nameAr: string; extractedMinor: number; retentionMinor: number; openMinor: number; openDocs: number }>()
     for (const p of projects) {
-      if (p.clientId == null) continue
+      if (p.clientId == null || !customers.some(c => c.id === p.clientId)) continue
       const row = byClient.get(p.clientId) ?? { nameAr: customers.find((c) => c.id === p.clientId)?.nameAr ?? '—', extractedMinor: 0, retentionMinor: 0, openMinor: 0, openDocs: 0 }
       for (const e of projectExtracts.filter((x) => x.projectId === p.id)) {
         row.extractedMinor += netProjectExtractTotals(e).grossMinor
@@ -143,7 +147,7 @@ export function ContractingReportsPage() {
   const clientsWithProjects = useMemo(() => {
     const byClient = new Map<number, { customerId: number; nameAr: string; projectsCount: number }>()
     for (const p of projects) {
-      if (p.clientId == null) continue
+      if (p.clientId == null || !customers.some(c => c.id === p.clientId)) continue
       const row = byClient.get(p.clientId) ?? { customerId: p.clientId, nameAr: customers.find((c) => c.id === p.clientId)?.nameAr ?? '—', projectsCount: 0 }
       row.projectsCount += 1
       byClient.set(p.clientId, row)
@@ -201,10 +205,10 @@ export function ContractingReportsPage() {
     rows: cards.map(({ project: p, card: c }) => [
       `${p.code} — ${p.nameAr}`, p.clientName || '—', fmt(c.contractEffectiveMinor), `${c.progressPercent}٪`,
       fmt(c.extractedMinor), fmt(c.costsMinor), `${fmt(c.profitMinor)} (${c.marginPercent}٪)`,
-      fmt(c.retentionHeldMinor), fmt(c.advancesRemainingMinor), fmt(openByProject.get(p.id) ?? 0),
+      fmt(c.retentionHeldMinor), fmt(c.advancesRemainingMinor), openProjectLabel(p.id),
       p.status === 'active' ? 'جارٍ' : 'مُسلَّم',
     ]),
-    totalRow: ['الإجمالي', '', fmt(totals.contract), '', fmt(totals.extracted), fmt(totals.costs), fmt(totals.profit), fmt(totals.retention), fmt(totals.advances), fmt(totals.open), ''],
+    totalRow: ['الإجمالي', '', fmt(totals.contract), '', fmt(totals.extracted), fmt(totals.costs), fmt(totals.profit), fmt(totals.retention), fmt(totals.advances), totalOpenLabel, ''],
   }))
 
   const printProjectCard = () => {
@@ -228,7 +232,7 @@ export function ContractingReportsPage() {
       ['دفعات مقدمة مستلمة', fmt(c.advancesReceivedMinor)],
       ['دفعات مقدمة مستردة', fmt(c.advancesRecoveredMinor)],
       ['دفعات مقدمة متبقية', fmt(c.advancesRemainingMinor)],
-      ['ذمم مفتوحة (مستخلصات)', fmt(openByProject.get(selected.project.id) ?? 0)],
+      ['ذمم مفتوحة (مستخلصات)', openProjectLabel(selected.project.id)],
     ]
     const body = [
       htmlTableHtml({ headers: ['مؤشرات البطاقة', 'القيمة'], numCols: [1], rows: kpiRows }),
@@ -282,11 +286,11 @@ export function ContractingReportsPage() {
     printDoc(`بطاقة مشروع — ${selected.project.code}`, `${selected.project.nameAr}${selected.project.clientName ? ` · العميل: ${selected.project.clientName}` : ''}`, body)
   }
 
-  const printDues = () => printDoc('ذمم عملاء المقاولات', 'متابعة التحصيل — المفتوح من المستخلصات الآجلة', htmlTableHtml({
+  const printDues = () => printDoc('ذمم عملاء المقاولات', 'متابعة التحصيل — المفتوح من المستخلصات الآجلة', (unlinkedReceivables.size ? '<p>تنبيه: مستخلصات بلا سجل عميل صحيح مستبعدة من التقرير ويلزم مراجعة ربطها وتحصيلاتها.</p>' : '') + htmlTableHtml({
     headers: ['العميل', 'الأعمال المستخلصة', 'المحتجز لديه', 'ذمم مفتوحة', 'مستخلصات آجلة'],
     numCols: [1, 2, 3, 4],
     rows: clientDues.map((row) => [row.nameAr, fmt(row.extractedMinor), fmt(row.retentionMinor), row.openMinor > 0 ? fmt(row.openMinor) : '✓ مسددة', row.openDocs]),
-    totalRow: ['الإجمالي', fmt(clientDues.reduce((a, r) => a + r.extractedMinor, 0)), fmt(clientDues.reduce((a, r) => a + r.retentionMinor, 0)), fmt(clientDues.reduce((a, r) => a + r.openMinor, 0)), clientDues.reduce((a, r) => a + r.openDocs, 0)],
+    totalRow: [unlinkedReceivables.size ? 'إجمالي العملاء المرتبطين فقط' : 'الإجمالي', fmt(clientDues.reduce((a, r) => a + r.extractedMinor, 0)), fmt(clientDues.reduce((a, r) => a + r.retentionMinor, 0)), fmt(clientDues.reduce((a, r) => a + r.openMinor, 0)), clientDues.reduce((a, r) => a + r.openDocs, 0)],
   }))
 
   const printClientCard = () => {
@@ -330,6 +334,7 @@ export function ContractingReportsPage() {
 
   return (
     <div className="space-y-4">
+      {unlinkedReceivables.size > 0 && <p role="alert" className="text-amber-700 text-sm">توجد مستخلصات بعميل غير مرتبط أو مفقود؛ لا تُعتمد التحصيلات والذمم الإجمالية حتى مراجعتها، وقد تُستبعد من تقارير العملاء.</p>}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><BarChart3 className="w-6 h-6 text-orange-500" /> مركز تقارير المقاولات</h1>
         <div className="flex gap-1.5">
@@ -351,7 +356,7 @@ export function ContractingReportsPage() {
             {kpi('الأرباح', fmt(totals.profit), totals.profit >= 0 ? 'text-emerald-600' : 'text-rose-600')}
             {kpi('محتجز قائم', fmt(totals.retention), 'text-amber-600')}
             {kpi('دفعات مقدمة متبقية', fmt(totals.advances), 'text-sky-600')}
-            {kpi('ذمم مفتوحة', fmt(totals.open), 'text-rose-600')}
+            {kpi('ذمم مفتوحة', totalOpenLabel, 'text-rose-600')}
           </div>
 
           {/* ═══ ① لوحة المشاريع ═══ */}
@@ -366,7 +371,7 @@ export function ContractingReportsPage() {
                   'المستخلصات': fmt(r.card.extractedMinor), 'الإنجاز ٪': r.card.progressPercent,
                   'التكاليف': fmt(r.card.costsMinor), 'الربح': fmt(r.card.profitMinor), 'الهامش ٪': r.card.marginPercent,
                   'محتجز قائم': fmt(r.card.retentionHeldMinor), 'دفعات مقدمة متبقية': fmt(r.card.advancesRemainingMinor),
-                  'ذمم مفتوحة': fmt(openByProject.get(r.project.id) ?? 0), 'الحالة': r.project.status === 'active' ? 'جارٍ' : 'مُسلَّم',
+                  'ذمم مفتوحة': openProjectLabel(r.project.id), 'الحالة': r.project.status === 'active' ? 'جارٍ' : 'مُسلَّم',
                 })), `تقرير-مشاريع-المقاولات-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير اللوحة CSV</button>
               </div>
@@ -391,7 +396,7 @@ export function ContractingReportsPage() {
                         <td className="px-3 py-2.5 text-rose-600 font-bold whitespace-nowrap">{fmt(c.costsMinor)}</td>
                         <td className={`px-3 py-2.5 font-black whitespace-nowrap ${c.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(c.profitMinor)}<span className="block text-[10px] font-bold opacity-70">{c.marginPercent}٪</span></td>
                         <td className="px-3 py-2.5 text-amber-600 font-bold whitespace-nowrap">{fmt(c.retentionHeldMinor)}</td>
-                        <td className="px-3 py-2.5 font-bold whitespace-nowrap">{openByProject.get(p.id) ? <span className="text-rose-600">{fmt(openByProject.get(p.id)!)}</span> : <span className="text-emerald-600">✓</span>}</td>
+                        <td className="px-3 py-2.5 font-bold whitespace-nowrap">{unlinkedReceivables.has(p.id) ? <span className="text-amber-700">{openProjectLabel(p.id)}</span> : openByProject.get(p.id) ? <span className="text-rose-600">{openProjectLabel(p.id)}</span> : <span className="text-emerald-600">✓</span>}</td>
                         <td className="px-3 py-2.5"><span className={`px-2 py-1 rounded-lg text-[10.5px] font-bold ${p.status === 'active' ? 'bg-sky-500/10 text-sky-600' : 'bg-emerald-500/10 text-emerald-600'}`}>{p.status === 'active' ? 'جارٍ' : 'مُسلَّم'}</span></td>
                       </tr>
                     ))}
@@ -435,7 +440,7 @@ export function ContractingReportsPage() {
                       { 'البند': 'دفعات مقدمة مستلمة', 'القيمة': fmt(selected.card.advancesReceivedMinor) },
                       { 'البند': 'دفعات مقدمة مستردة', 'القيمة': fmt(selected.card.advancesRecoveredMinor) },
                       { 'البند': 'دفعات مقدمة متبقية', 'القيمة': fmt(selected.card.advancesRemainingMinor) },
-                      { 'البند': 'ذمم مفتوحة (مستخلصات)', 'القيمة': fmt(openByProject.get(selected.project.id) ?? 0) },
+                      { 'البند': 'ذمم مفتوحة (مستخلصات)', 'القيمة': openProjectLabel(selected.project.id) },
                     ], `تقرير-${selected.project.code}.csv`)}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير بطاقة المشروع</button>
                     </div>
@@ -459,7 +464,7 @@ export function ContractingReportsPage() {
                     {kpi('محتجز قائم', fmt(selected.card.retentionHeldMinor), 'text-amber-600')}
                     {kpi('مقدمة مستلمة', fmt(selected.card.advancesReceivedMinor), 'text-sky-600')}
                     {kpi('مقدمة متبقية', fmt(selected.card.advancesRemainingMinor), 'text-sky-600')}
-                    {kpi('ذمم مفتوحة', fmt(openByProject.get(selected.project.id) ?? 0), 'text-rose-600')}
+                    {kpi('ذمم مفتوحة', openProjectLabel(selected.project.id), 'text-rose-600')}
                   </div>
 
                   <div className="grid grid-cols-5 gap-1.5 text-center">
@@ -717,10 +722,13 @@ export function ContractingReportsPage() {
               <div className="flex justify-end gap-1.5">
                 <button onClick={printDues} data-print="dues"
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
-                <button onClick={() => downloadCsv(clientDues.map((row) => ({
-                  'العميل': row.nameAr, 'الأعمال المستخلصة': fmt(row.extractedMinor), 'المحتجز لدى العميل': fmt(row.retentionMinor),
-                  'ذمم مفتوحة': fmt(row.openMinor), 'مستخلصات آجلة': row.openDocs,
-                })), `ذمم-عملاء-المقاولات-${todayLocalIso()}.csv`)}
+                <button onClick={() => downloadCsv([
+                  ...clientDues.map((row) => ({
+                    'العميل': row.nameAr, 'الأعمال المستخلصة': fmt(row.extractedMinor), 'المحتجز لدى العميل': fmt(row.retentionMinor),
+                    'ذمم مفتوحة': fmt(row.openMinor), 'مستخلصات آجلة': row.openDocs,
+                  })),
+                  ...(unlinkedReceivables.size ? [{ 'العميل': 'تنبيه: مستخلصات بلا عميل صحيح مستبعدة؛ راجع الربط والتحصيلات', 'الأعمال المستخلصة': '', 'المحتجز لدى العميل': '', 'ذمم مفتوحة': '', 'مستخلصات آجلة': '' }] : []),
+                ], `ذمم-عملاء-المقاولات-${todayLocalIso()}.csv`)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير الذمم CSV</button>
               </div>
               <div className={`${card} overflow-x-auto`}>

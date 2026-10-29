@@ -23,7 +23,7 @@ interface Props {
 
 export function AnalyticalProjectReportView({ projectId, onProjectChange }: Props) {
   const {
-    projects, projectExtracts, projectCosts, changeOrders, suppliers,
+    projects, projectExtracts, projectCosts, changeOrders, suppliers, customers,
     clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds, assertProjectExtractOriginals,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
@@ -54,8 +54,9 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
     }
     const costs = projectCosts.filter((c) => c.projectId === selected.id)
     const orders = changeOrders.filter((o) => o.projectId === selected.id && (o.status === 'approved' || o.status === 'invoiced'))
-    const projectCheques = selected.clientId == null ? [] : cheques
-      .filter((c) => c.direction === 'incoming' && c.partyId === selected.clientId)
+    const clientId = selected.clientId != null && customers.some(customer => customer.id === selected.clientId) ? selected.clientId : null
+    const projectCheques = clientId == null ? [] : cheques
+      .filter((c) => c.direction === 'incoming' && c.partyId === clientId)
       .map((c) => ({
         direction: c.direction, partyId: c.partyId, status: c.status, amountMinor: c.amountMinor,
         chequeNumber: c.chequeNumber, bankName: c.bankName, createdAt: c.createdAt, settledAt: c.settledAt,
@@ -66,7 +67,6 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
        ثم إضافة توزيعات السندات والتسويات **مرة ثانية** فيتضاعف المحصَّل.
        النواة buildExtractSettledMap تمنع ذلك: المفتوح يأخذ settledMinor وحده،
        والمسدَّد بالكامل يُقرأ من توزيعاته الصريحة/صافي استحقاقه. */
-    const clientId = selected.clientId
     const projectVouchers = clientId == null ? [] : vouchers.filter((v) =>
       !v.reversalEntryId && v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId === clientId)
     const projectSettlements = clientId == null ? [] : clientSettlements.filter((st) => st.customerId === clientId)
@@ -152,6 +152,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
       },
       changeOrdersApprovedMinor: orders.reduce((s, o) => s + o.amountMinor, 0),
       refundLedgerIncomplete, originalLedgerIncomplete,
+      unlinkedReceivable: clientId == null && extracts.some(e => e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0)),
       extracts: extracts.map((e) => ({
         extractNumber: e.extractNumber, date: e.date, grossMinor: e.totals.grossMinor,
         vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, dueMinor: e.totals.dueMinor,

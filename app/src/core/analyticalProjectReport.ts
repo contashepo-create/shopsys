@@ -23,6 +23,8 @@ export interface AnalyticalProjectSource {
   refundLedgerIncomplete?: boolean
   /** القيد الأصلي للمستخلص مفقود أو مختلف. */
   originalLedgerIncomplete?: boolean
+  /** ذمة تاريخية بلا سجل عميل؛ التحصيل الحقيقي غير معروف. */
+  unlinkedReceivable?: boolean
   /** المستخلصات (القيمة قبل الضريبة، المحتجز، المستحق، التاريخ، الرقم، نقدي/آجل) */
   extracts: {
     extractNumber: string
@@ -346,6 +348,8 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   const refunds = extractRefundStatus(src)
   const unresolved = src.originalLedgerIncomplete ? 'تتطلب مراجعة قيود المستخلصات الأصلية' : 'تتطلب مراجعة إشعارات المستخلصات'
   const safe = (value: Minor) => refunds.incomplete ? unresolved : fmt(value)
+  const settlementUnresolved = refunds.incomplete ? unresolved : 'تتطلب مراجعة ربط العميل والتحصيلات'
+  const settlementSafe = (value: Minor) => refunds.incomplete || src.unlinkedReceivable ? settlementUnresolved : fmt(value)
   const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0) - (refunds.incomplete ? 0 : refunds.amount - refunds.tax)
   const vat = src.extracts.reduce((s, e) => s + (e.vatMinor ?? 0), 0) - (refunds.incomplete ? 0 : refunds.tax)
   const retention = src.extracts.reduce((s, e) => s + e.retentionMinor, 0)
@@ -387,7 +391,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       String(i + 1), r.date.slice(0, 10), r.number, r.description, r.method,
       { value: r.status, tone: r.excluded ? (r.excludedReason === 'bounced' ? 'negative' : 'muted') : 'positive' },
       r.excluded ? `(${fmt(r.amountMinor)})` : fmt(r.amountMinor),
-      safe(collections.running[i] ?? 0),
+      settlementSafe(collections.running[i] ?? 0),
     ],
   }))
   const collectionsSection: FormalReportSection = {
@@ -396,13 +400,14 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     headers: ['م', 'التاريخ', 'المستند', 'البيان', 'الوسيلة', 'الحالة', `المبلغ (${src.currencySymbol})`, `المتبقي بعد التحصيل (${src.currencySymbol})`],
     numCols: [0, 1, 2, 6, 7],
     rows: collectionRows,
-    totalRow: ['', '', '', 'إجمالي التحصيلات', '', '', safe(collected), safe(remainingCollection)],
+    totalRow: ['', '', '', 'إجمالي التحصيلات', '', '', settlementSafe(collected), settlementSafe(remainingCollection)],
   }
 
   const notes: string[] = []
   if (src.originalLedgerIncomplete) notes.push('تنبيه محاسبي: قيد مستخلص أصلي مفقود أو غير مطابق؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات والدفتر.')
   else if (refunds.incomplete) notes.push('تنبيه محاسبي: سجلات إشعارات المستخلصات ناقصة أو غير متطابقة مع الإجماليات؛ لا تعتمد المستحق أو التحصيل أو النتيجة حتى مراجعة المستندات.')
   else if (refunds.amount > 0) notes.push('خُصمت إشعارات المستخلصات من الإيراد والضريبة والمستحق حسب قيودها؛ الرد النقدي حركة خارجة، والدائن ليس تحصيلاً. المتبقي بعد العمليات محسوب من المستحق الحالي بعد الإشعارات، لا كرصد تاريخي لكل تاريخ.')
+  if (src.unlinkedReceivable) notes.push('تنبيه محاسبي: توجد مستخلصات آجلة بلا سجل عميل مرتبط أو بسجل مفقود؛ لا يمكن تحديد التحصيل والمتبقي من هذه البيانات وحدها. راجع العميل والتحصيلات داخل النظام وخارجه.')
   const bouncedCount = collections.rows.filter((r) => r.excludedReason === 'bounced').length
   const outOfScopeCount = collections.rows.filter((r) => r.excludedReason === 'out-of-scope').length
   if (bouncedCount) notes.push(`الشيكات المرتدة (${bouncedCount}) معروضة للإيضاح بين قوسين ولا تُحتسب ضمن التحصيلات — دينها عاد للعميل.`)
@@ -438,10 +443,10 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     notes.push(`سندات قبض غير موزّعة على مستندات (${collections.unattributedVouchers} بقيمة ${fmt(collections.unattributedVoucherMinor)}) لم تُحتسب ضمن تحصيلات هذا المشروع — راجع كشف حساب العميل لتوزيعها.`)
   }
   notes.push('التسوية الختامية معادلتان مستقلتان: ① المستحق − التحصيلات = المتبقي (ذمة العميل) · ② الإيراد المستخلص − المصروفات = نتيجة المشروع. لا تُطرح المصروفات من رصيد التحصيل.')
-  if (!refunds.incomplete && overCollected > 1) {
+  if (!refunds.incomplete && !src.unlinkedReceivable && overCollected > 1) {
     notes.push(`تنبيه مراجعة — تحصيل زائد: التحصيلات (${fmt(collected)}) تتجاوز صافي المستحق (${fmt(dueTotal)}) بـ ${fmt(overCollected)} — قد يمثل الفائض رصيداً دائناً للعميل أو توزيعاً على مستند آخر؛ راجع كشف العميل.`)
   }
-  if (!refunds.incomplete && Math.abs(collections.totalMinor - collected) > 1) {
+  if (!refunds.incomplete && !src.unlinkedReceivable && Math.abs(collections.totalMinor - collected) > 1) {
     notes.push(`تنبيه مراجعة: مجموع سطور التحصيلات (${fmt(collections.totalMinor)}) يختلف عن المُخصوم من الذمم (${fmt(collected)}) — افحص التوزيعات.`)
   }
 
@@ -469,9 +474,9 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       { label: 'ض.ق.م محمّلة على العميل', value: safe(vat) },
       { label: 'محتجز ضمان أعمال', value: src.originalLedgerIncomplete ? unresolved : fmt(retention) },
       { label: 'صافي المستحق على المستخلصات', value: safe(dueTotal) },
-      { label: 'إجمالي ما تم تحصيله', value: safe(collected) },
-      { label: 'المتبقي من التحصيل', value: safe(remainingCollection), emphasis: true },
-      { label: 'نسبة التحصيل', value: refunds.incomplete ? unresolved : `${collectedPercent}٪` },
+      { label: 'إجمالي ما تم تحصيله', value: settlementSafe(collected) },
+      { label: 'المتبقي من التحصيل', value: settlementSafe(remainingCollection), emphasis: true },
+      { label: 'نسبة التحصيل', value: refunds.incomplete || src.unlinkedReceivable ? settlementUnresolved : `${collectedPercent}٪` },
       { label: 'إجمالي المصروفات', value: fmt(totalExpenses) },
     ],
     sections: [expensesSection, collectionsSection],
@@ -481,8 +486,8 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       { label: 'يُضاف: ض.ق.م محمّلة', value: safe(vat) },
       { label: 'يُطرح: محتجز ضمان أعمال', value: src.originalLedgerIncomplete ? unresolved : `(${fmt(retention)})` },
       { label: 'صافي المستحق على المستخلصات', value: safe(dueTotal), emphasis: true },
-      { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: refunds.incomplete ? unresolved : `(${fmt(collected)})` },
-      { label: 'المتبقي من التحصيل — مستخلصات المشروع', value: safe(remainingCollection), emphasis: true },
+      { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: refunds.incomplete || src.unlinkedReceivable ? settlementUnresolved : `(${fmt(collected)})` },
+      { label: 'المتبقي من التحصيل — مستخلصات المشروع', value: settlementSafe(remainingCollection), emphasis: true },
       /* بدء معادلة مستقلة: الإيراد − المصروفات. كان «يُطرح المصروفات» يأتي
          مباشرة بعد «المتبقي» فيوحي بخصمها من رصيد العميل، بينما القيمة
          المحسوبة كانت (الإيراد − المصروفات) — تناقض في التسوية الختامية. */

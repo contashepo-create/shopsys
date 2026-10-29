@@ -259,3 +259,26 @@ it('تقرير مشروع بلا عميل يحجب الأرصدة عندما ي�
   expect(screen.getAllByText('تتطلب مراجعة قيود المستخلصات الأصلية').length).toBeGreaterThan(0)
   expect(screen.getByText(/قيد مستخلص أصلي مفقود أو غير مطابق/)).toBeTruthy()
 })
+
+it('المستخلص الآجل التاريخي بلا عميل يحجب إجمالي التحصيل والمتبقي بدلاً من افتراض عدم السداد', () => {
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'جهة قديمة', phone: '', creditLimitMinor: 0, notes: '' })
+  const customer = useDataStore.getState().customers.at(-1)!
+  const project = s.addProject({ nameAr: 'مشروع قديم بلا ربط', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  s.addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 8000, vatPercent: 0, payment: 'credit' })
+  useDataStore.setState({ projects: useDataStore.getState().projects.map(p => p.id === project.id ? { ...p, clientId: null } : p) })
+  render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+  expect(screen.getAllByText('تتطلب مراجعة ربط العميل والتحصيلات').length).toBeGreaterThan(0)
+  expect(screen.getByText(/لا يمكن تحديد التحصيل والمتبقي/)).toBeTruthy()
+})
+
+it('المستخلص الآجل الذي يشير إلى عميل محذوف لا يُعرض تحصيله كصفر مؤكد', () => {
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل محذوف', phone: '', creditLimitMinor: 0, notes: '' })
+  const customer = useDataStore.getState().customers.at(-1)!
+  const project = s.addProject({ nameAr: 'مشروع مفقود العميل', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  s.addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 8000, vatPercent: 0, payment: 'credit' })
+  useDataStore.setState({ customers: [] })
+  render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+  expect(screen.getAllByText('تتطلب مراجعة ربط العميل والتحصيلات').length).toBeGreaterThan(0)
+})

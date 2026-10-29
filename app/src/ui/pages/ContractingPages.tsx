@@ -43,7 +43,7 @@ export function ProjectsPage() {
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
-    ensureServiceItemForFreeLine,
+    ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -391,6 +391,27 @@ export function ProjectsPage() {
   // عمولة موظف عن المشروع (تعميم — أمر المالك): مهندس مبيعات جلب العقد مثلاً
   const [commFor, setCommFor] = useState<Project | null>(null)
   /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بيانات المشروع — قيمة العقد قبل أول مستخلص فقط */
+  const [legacyProject, setLegacyProject] = useState<Project | null>(null)
+  const [legacyCustomerId, setLegacyCustomerId] = useState('')
+  const [legacyReason, setLegacyReason] = useState('')
+  const [legacyConfirmed, setLegacyConfirmed] = useState(false)
+  const [legacyPreview, setLegacyPreview] = useState<{ dueMinor: number; extractCount: number; fingerprint: string } | null>(null)
+  const openLegacyReview = (project: Project) => {
+    setLegacyProject(project); setLegacyCustomerId(''); setLegacyReason(''); setLegacyConfirmed(false); setLegacyPreview(null)
+  }
+  const checkLegacyReview = () => {
+    if (!legacyProject || !legacyCustomerId) return
+    try { setLegacyPreview(previewLegacyProjectCustomer(legacyProject.id, Number(legacyCustomerId))) }
+    catch (error) { setLegacyPreview(null); toast.show((error as Error).message, 'error') }
+  }
+  const saveLegacyReview = () => {
+    if (!legacyProject || !legacyPreview || !legacyCustomerId) return
+    try {
+      resolveLegacyProjectCustomer({ projectId: legacyProject.id, customerId: Number(legacyCustomerId), expectedDueMinor: legacyPreview.dueMinor, fingerprint: legacyPreview.fingerprint, reason: legacyReason, confirmed: legacyConfirmed })
+      toast.show('تم توثيق ربط المستخلصات بالعميل دون إنشاء قيد أو تحصيل')
+      setLegacyProject(null); setLegacyPreview(null)
+    } catch (error) { setLegacyPreview(null); toast.show((error as Error).message, 'error') }
+  }
   const [editPrj, setEditPrj] = useState<Project | null>(null)
   const [epName, setEpName] = useState(''); const [epClient, setEpClient] = useState(''); const [epClientId, setEpClientId] = useState('')
   const [epValue, setEpValue] = useState(''); const [epRetention, setEpRetention] = useState('')
@@ -992,6 +1013,9 @@ export function ProjectsPage() {
                           title={staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'عليه عمولة موظف — إدارتها من شاشة الموظفين' : 'عمولة موظف عن المشروع'}
                           className={`p-2 rounded-lg transition-all hover:scale-110 ${staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
                         ><HandCoins className="w-4 h-4" /></button>
+                        {p.clientId == null && projectExtracts.some(e => e.projectId === p.id && e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0)) && (
+                          <button onClick={() => openLegacyReview(p)} data-legacy-project-review title="مراجعة ربط ذمة مستخلص تاريخي بلا عميل" className="px-2 py-1 rounded-lg text-xs font-bold text-amber-700 bg-amber-500/10">مراجعة الذمة</button>
+                        )}
                         <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
@@ -1209,6 +1233,26 @@ export function ProjectsPage() {
             ))}
           </div>
         )}
+      </Modal>
+
+      <Modal open={!!legacyProject} onClose={() => setLegacyProject(null)} title="مراجعة ربط مستخلصات تاريخية">
+        {legacyProject && <div className="space-y-3 text-sm" data-legacy-project-review-modal>
+          <p>المشروع {legacyProject.code} — {legacyProject.nameAr} بلا عميل مرتبط. لا يفترض النظام هوية الجهة أو عدم وجود تحصيل خارج سجلاته.</p>
+          <p>هذه المراجعة متاحة للمالك للحالة البسيطة فقط: مستخلصات آجلة بلا ردود أو مقدمات أو تخصيصات، وعميل بلا حركات سابقة. الحالات المختلطة تحتاج تسوية منفصلة.</p>
+          <Field label="العميل بعد مطابقة العقد والمستندات">
+            <select aria-label="عميل المستخلص التاريخي" className={inputCls} value={legacyCustomerId} onChange={e => { setLegacyCustomerId(e.target.value); setLegacyPreview(null); setLegacyConfirmed(false) }}>
+              <option value="">— اختر عميلاً —</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.nameAr} (#{c.id})</option>)}
+            </select>
+          </Field>
+          <Btn variant="soft" disabled={!legacyCustomerId} onClick={checkLegacyReview}>فحص قبل الربط</Btn>
+          {legacyPreview && <>
+            <p role="status">سيُضاف إلى كشف العميل دين {fmt(legacyPreview.dueMinor)} {cur.symbol} من {legacyPreview.extractCount} مستخلص. لا يُنشأ قيد أو تحصيل جديد.</p>
+            <Field label="سبب المراجعة"><input aria-label="سبب مراجعة الربط" className={inputCls} maxLength={300} value={legacyReason} onChange={e => setLegacyReason(e.target.value)} /></Field>
+            <label className="flex gap-2 items-start"><input type="checkbox" checked={legacyConfirmed} onChange={e => setLegacyConfirmed(e.target.checked)} /> أقرّ أنني طابقت هوية العميل والعقد والمستخلصات والدفتر والتحصيلات داخل النظام وخارجه، وأن الذمة المعروضة غير مسددة.</label>
+            <Btn disabled={!legacyConfirmed || !legacyReason.trim()} onClick={saveLegacyReview}>توثيق الربط</Btn>
+          </>}
+        </div>}
       </Modal>
 
       {/* §94-مراجعة: تعديل بيانات المشروع — القيمة مقفولة بعد أول مستخلص (أوامر التغيير هي الباب) */}

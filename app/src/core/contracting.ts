@@ -22,12 +22,10 @@ export interface Project {
   code: string // PRJ-0001
   nameAr: string
   clientName: string
-  /**
-   * ربط إداري بحت بسجل العميل (طلب المالك — أمر التعديل):
-   * لا يؤثر إطلاقاً على رصيد العميل المحاسبي؛ الذمة تنشأ فقط
-   * من مستخلص/فاتورة رسمية. null = بلا ربط.
-   */
+  /** المستخلصات تُنسب لكشف هذا العميل؛ null يعني أن المشروع بلا ربط. */
   clientId: number | null
+  /** مراجعة صريحة لربط ذمة تاريخية يتيمة؛ لا تُنشئ قيداً ولا تحصيلاً. */
+  legacyCustomerResolution?: { customerId: number; dueMinor: Minor; extractIds: number[]; at: string; by: string; reason: string }
   contractValueMinor: Minor // قيمة العقد (استرشادية للتقدم)
   retentionPercent: number // نسبة محتجز ضمان الأعمال من كل مستخلص
   startDate: string // YYYY-MM-DD

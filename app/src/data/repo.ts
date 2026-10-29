@@ -2805,6 +2805,8 @@ interface DataState {
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
+  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; fingerprint: string }
+  resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   setQuotationStatus: (id: number, status: QuotationStatus) => void
@@ -13150,6 +13152,73 @@ export const useRawDataStore = create<DataState>()(
         /* الكود والحالة لا يتغيران — التعديل للبيانات فقط */
         set({ projects: state.projects.map((p2) => (p2.id === id ? { ...merged, code: project.code, status: project.status } : p2)) })
         return merged
+      },
+
+      previewLegacyProjectCustomer: (projectId, customerId) => {
+        const state = get()
+        const user = state.appUsers.find(item => item.id === state.currentUserId)
+        if ((state.appUsers.length > 0 || state.currentUserId != null) && user?.roleId !== 'owner') throw new Error('مراجعة ربط المستخلصات التاريخية متاحة للمالك فقط')
+        const scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(item => item.id === projectId)
+        if (!project || state.projects.filter(item => item.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (project.clientId != null || project.legacyCustomerResolution) throw new Error('المشروع مرتبط بعميل أو روجع مسبقاً')
+        const customer = scoped.customers.find(item => item.id === customerId)
+        if (!customer || state.customers.filter(item => item.id === customerId).length !== 1) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        const extracts = state.projectExtracts.filter(item => item.projectId === projectId)
+        if (!extracts.length || extracts.length !== scoped.projectExtracts.filter(item => item.projectId === projectId).length) throw new Error('المستخلصات غير مكتملة في الفرع الحالي')
+        const keys = new Set(extracts.map(extract => `extract:${extract.id}`))
+        if (keys.size !== extracts.length || extracts.some(extract => state.projectExtracts.filter(item => item.id === extract.id).length !== 1)) throw new Error('أرقام المستخلصات غير فريدة — راجع المحاسب')
+        // المرحلة الآمنة فقط: لا ننسب رداً أو تحصيلاً أو فاتورة أو مقدمة تاريخية
+        // بالتخمين. الحالات المختلطة تتطلب إجراء تسوية منفصلاً بعد مراجعة الأدلة.
+        if (state.clientAdvances.some(item => item.projectId === projectId)
+          || state.sales.some(item => item.projectId === projectId)
+          || state.vouchers.some(item => item.projectId === projectId || item.allocations?.some(a => keys.has(a.docKey)))
+          || state.clientSettlements.some(item => item.allocations?.some(a => keys.has(a.docKey)))
+          || state.paymentTerminalTransactions.some(item => item.documentType === 'project_extract' && extracts.some(ex => item.documentId === String(ex.id)))) {
+          throw new Error('المشروع له دفعات أو فواتير أو تخصيصات مرتبطة — يلزم تسوية يدوية منفصلة ولا يمكن ربطه تلقائياً')
+        }
+        const journal = customerReviewJournal(state)
+        let dueMinor = 0
+        for (const extract of extracts) {
+          if (extract.payment !== 'credit' || (extract.advanceRecoveryMinor ?? 0) !== 0 || (extract.refunds?.length ?? 0) > 0 || (extract.refundedMinor ?? 0) !== 0 || (extract.refundedTaxMinor ?? 0) !== 0) throw new Error('المستخلصات تتضمن نقداً أو ردوداً أو استرداد مقدم — يلزم تسوية يدوية منفصلة')
+          if (state.journal.filter(entry => entry.id === extract.journalEntryId).length !== 1) throw new FinancialDataReviewError(`المستخلص ${extract.extractNumber}`)
+          assertProjectExtractOriginalIntegrity(extract, journal)
+          const entry = journal.get(extract.journalEntryId)!
+          if (entry.lines.some(line => line.accountCode === '1104' && (line.partyKind != null || line.partyId != null))) throw new Error('قيد المستخلص يحمل طرفاً صريحاً — يلزم تسوية يدوية منفصلة')
+          dueMinor += extract.totals.dueMinor
+          if (!Number.isSafeInteger(dueMinor)) throw new Error('مجموع الذمة غير صالح للمراجعة')
+        }
+        // لا نسمح أن تُعاد توزيعات العميل الأخرى بأثر رجعي: يجب أن يكون السجل
+        // المختار بلا تاريخ مالي، بما في ذلك الفروع الأخرى والشيكات المعكوسة.
+        const financialRows = [state.sales, state.vouchers, state.cheques, state.clientSettlements, state.settlements, state.partyOffsets, state.loyaltyRedemptions, state.clinicPatients, state.labPatients, state.projects, state.trips, state.tickets, state.rentalContracts, state.rentalInvoices, state.walletOps, state.laundryOrders, state.cars, state.consignmentCars, state.propertySales, state.installmentPlans, state.equipmentCosts, state.tripExpenses]
+        const hasReference = financialRows.some(rows => rows.some(item => {
+          const row = item as unknown as { customerId?: number | null; buyerCustomerId?: number | null; linkedCustomerId?: number | null; clientId?: number | null; partyKind?: string | null; partyId?: number | null; direction?: string; section?: string; refId?: string | number }
+          return row.customerId === customerId || row.buyerCustomerId === customerId || row.linkedCustomerId === customerId || row.clientId === customerId || (row.partyKind === 'customer' && row.partyId === customerId) || (row.direction === 'incoming' && row.partyId === customerId) || (row.section === 'customer' && Number(row.refId) === customerId)
+        }))
+        const openingKey = `customer:${customerId}`
+        if (hasReference || (state.openingBalances[openingKey] ?? 0) !== 0 || Object.values(state.branchOpeningBalances).some(branch => (branch.openingBalances[openingKey] ?? 0) !== 0)
+          || state.journal.some(entry => entry.lines.some(line => line.partyKind === 'customer' && line.partyId === customerId))
+          || get().getCustomerStatementRows(customerId).length > 0 || get().getOpenClientInvoices(customerId, true).length > 0) {
+          throw new Error('سجل العميل يحتوي حركات أو روابط سابقة — يلزم تسوية يدوية منفصلة دون إعادة توزيع تلقائية')
+        }
+        guardCreditLimit(get(), customerId, dueMinor)
+        const fingerprint = JSON.stringify([projectId, project.code, project.nameAr, project.clientName, customerId, customer.nameAr, customer.creditLimitMinor, extracts.map(extract => [extract.id, extract.extractNumber, extract.date, extract.journalEntryId, extract.totals, journal.get(extract.journalEntryId)!.lines])])
+        return { dueMinor, extractCount: extracts.length, fingerprint }
+      },
+      resolveLegacyProjectCustomer: (args) => {
+        const reason = args.reason.trim()
+        if (!args.confirmed) throw new Error('يلزم الإقرار بمراجعة العقد والتحصيلات التاريخية قبل الربط')
+        if (!reason || reason.length > 300) throw new Error('اكتب سبب المراجعة بحد أقصى 300 حرف')
+        const preview = get().previewLegacyProjectCustomer(args.projectId, args.customerId)
+        if (preview.dueMinor !== args.expectedDueMinor || preview.fingerprint !== args.fingerprint) throw new Error('تغيرت بيانات المراجعة — أعد الفحص قبل الربط')
+        const state = get()
+        const at = localIsoTimestamp()
+        const by = activeUserName(state)
+        const extractIds = state.projectExtracts.filter(item => item.projectId === args.projectId).map(item => item.id)
+        set({
+          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, dueMinor: preview.dueMinor, extractIds, at, by, reason } } : item),
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `مراجعة ربط مشروع #${args.projectId} بالعميل #${args.customerId} بذمة ${preview.dueMinor} — ${reason}` }]),
+        })
       },
 
       addQuotation: (q) => {
