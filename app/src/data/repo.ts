@@ -110,7 +110,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type LegacyCustomerReviewDocument, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
@@ -2805,7 +2805,7 @@ interface DataState {
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
-  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; fingerprint: string }
+  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; balanceBeforeMinor: number; balanceAfterMinor: number; documents: LegacyCustomerReviewDocument[]; fingerprint: string }
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -4044,6 +4044,315 @@ function assertClaimRefundIntegrity(state: DataState, raw: DataState, providerId
     }
     if (!Number.isSafeInteger(refundTotal) || !Number.isSafeInteger(providerTotal) || refundTotal !== refunded || providerTotal !== reversed) return fail()
   }
+}
+
+/** السند القديم بلا حساب مقابل لا يصلح دليلاً على حركة الذمة أو عدمها. */
+function assertPartyVoucherAccounts(state: DataState, kind: 'customer' | 'supplier' | 'employee', partyId: number): void {
+  const voucher = state.vouchers.find(item => !item.reversalEntryId && item.partyKind === kind && item.partyId === partyId && (kind === 'employee' ? item.kind === 'receipt' || item.kind === 'payment' : item.kind === (kind === 'customer' ? 'receipt' : 'payment')) && (typeof item.counterAccountCode !== 'string' || !item.counterAccountCode.trim()))
+  if (voucher) throw new FinancialDataReviewError(`حساب سند ${voucher.voucherNumber ?? `#${voucher.id}`}`)
+}
+
+function calculateCustomerStatementRows(raw: DataState, customerId: number): StatementRow[] {
+  const state = getBranchScopedDataState(raw)
+  assertPartyVoucherAccounts(state, 'customer', customerId)
+  assertCustomerProjectRefunds(state, raw, customerId)
+  // ربط القيود التاريخية من الدفتر الكامل بعد تقييد سجل الاستبدال للفرع؛
+  // القيد القديم قد يفتقد branchId رغم ارتباطه باستبدال العميل بالفرع.
+  const branch = getEffectiveActiveBranch(raw)
+  const loyaltyJournal = new Map(raw.journal.filter((entry) => !branch || entry.branchId == null || entry.branchId === branch.id).map((entry) => [entry.id, entry]))
+  return customerStatement({
+    customerId,
+    openingMinor: state.openingBalances[`customer:${customerId}`] ?? 0,
+    adjustments: [
+      ...state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === customerId).map((st) => ({
+        docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+        debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+        creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+      })),
+      // استبدالات نقاط الولاء: رصيد دائن للعميل يخصم من مشترياته القادمة (5115/1104)
+      ...state.loyaltyRedemptions.filter((r) => r.customerId === customerId).map((r) => ({
+        docLabel: `استبدال ${r.points} نقطة ولاء`, date: r.date,
+        debitMinor: 0, creditMinor: r.valueMinor,
+      })),
+      // عكس قديم فعلي للقيد: يُعرض في تاريخه ولا نعيد النقاط تلقائياً،
+      // لأن مالك البيانات قد يكون صححها يدوياً بعد العملية.
+      ...state.loyaltyRedemptions.filter((r) => r.customerId === customerId).flatMap((r) => {
+        const reversal = findLegacyLoyaltyReversal(r, loyaltyJournal)
+        return reversal ? [{ docLabel: `عكس استبدال ${r.points} نقطة ولاء`, date: reversal.date, debitMinor: r.valueMinor, creditMinor: 0 }] : []
+      }),
+      // مقاصات الطرف الواحد (AUDIT-012): تخفيض دين العميل مقابل مستحق المورد
+      ...state.partyOffsets.filter((o) => o.customerId === customerId).map((o) => ({
+        docLabel: `مقاصة ${o.offsetNumber}`, date: o.date,
+        debitMinor: 0, creditMinor: o.amountMinor,
+      })),
+      // قيود يدوية تحمل هذا العميل على 1104 (AUDIT-011) — تدخل كشفه فلا ينفصل عن الدفتر
+      ...state.journal.flatMap((entry) => entry.lines
+        .filter((line) => line.partyKind === 'customer' && line.partyId === customerId && line.accountCode === '1104')
+        .map((line) => ({
+          docLabel: `قيد يدوي #${entry.entryNumber}${line.note ? ` — ${line.note}` : ''}`, date: entry.date,
+          debitMinor: line.debit, creditMinor: line.credit,
+        }))),
+    ],
+    sales: state.sales, saleReturns: state.saleReturns, allSales: state.sales,
+    vouchers: [
+      ...state.vouchers.filter(voucher => voucher.counterAccountCode === '1104'),
+      ...state.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
+    ],
+    cheques: state.cheques,
+    extraDocs: customerUnitDocs({
+      customerId,
+      trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
+      rentalInvoices: state.rentalInvoices,
+      customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
+      customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
+      clinicVisits: customerClinicVisits(state, raw, new Set(state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id))), clinicCollections: state.clinicCollections,
+      linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
+      labOrders: customerLabOrders(state, raw, customerId), linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
+      walletOps: state.walletOps,
+      projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
+      installmentPlans: state.installmentPlans,
+      laundryOrders: state.laundryOrders,
+      cars: state.cars, consignmentCars: state.consignmentCars, propertySales: state.propertySales,
+    }),
+  })
+}
+
+function calculateOpenClientInvoices(raw: DataState, customerId: number, includeSettled?: boolean): OpenInvoice[] {
+  const state = getBranchScopedDataState(raw)
+  assertPartyVoucherAccounts(state, 'customer', customerId)
+  assertCustomerProjectRefunds(state, raw, customerId)
+  // المُحصَّل سابقاً لكل مستند من سجلات التحصيل
+  const settled = new Map<string, number>()
+  for (const st of state.clientSettlements) {
+    if (st.customerId !== customerId) continue
+    for (const a of st.allocations) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
+  }
+  // سند القبض من شاشة السندات يشارك نفس دفتر التوزيع، حتى لا يظهر
+  // الرصيد مسدداً في الكشف بينما تبقى الفاتورة مفتوحة في معالج التحصيل.
+  for (const voucher of state.vouchers) {
+    if (voucher.reversalEntryId || voucher.kind !== 'receipt' || voucher.counterAccountCode !== '1104' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId) continue
+    for (const a of voucher.allocations ?? []) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
+  }
+  const open: OpenInvoice[] = []
+  // الافتتاحي ذمة أقدم من المستندات، ويظهر أيضاً في كشف العميل. تجاهله
+  // يجعل الشيك يُسند للمستخلص رغم وجود دين أقدم، ويُظهر المشروع مسدداً خطأً.
+  // التحصيلات «تحت الحساب» بلا تخصيص صريح: توزع تقديرياً على
+  // الأقدم ومنها الافتتاحي، دون تعديل السجلات أو ادعاء تخصيص محفوظ.
+  const openingDue = Math.max(0, state.openingBalances[`customer:${customerId}`] ?? 0)
+  if (openingDue > 0) {
+    const openingKey = `customer-opening:${customerId}`
+    open.push({
+      docKey: openingKey, docLabel: 'رصيد افتتاحي للعميل', date: '0000-00-00', dueMinor: openingDue,
+      settledMinor: Math.min(openingDue, settled.get(openingKey) ?? 0),
+    })
+  }
+  // رصيد مرتجع يتجاوز ذمة الفاتورة غير المسددة يبقى دائناً، بما في
+  // ذلك مرتجع رصيد من فاتورة نقدية أو ذمة سُددت بسند صريح.
+  const returnCredits: { key: string; date: string; number: string; description: string; amountMinor: number }[] = []
+  // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
+  for (const sale of state.sales) {
+    if (sale.customerId !== customerId) continue
+    /* فاتورة توثيق مستخلصات (النموذج أ): لا ذمة بها — الذمة على
+       المستخلص نفسه؛ عرضها هنا يجعل معالج التحصيل يسدد الدين مرتين */
+    if (sale.projectBilling === 'documentation') continue
+    const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+    const creditPart = Math.max(0, sale.totals.totalMinor - paid)
+    // الرد الهجين: ما قُيّد دائناً على الحساب، بما في ذلك رصيد المتجر.
+    const returns = state.saleReturns.filter((r) => r.saleId === sale.id)
+    const creditReturns = returns.reduce((sum, r) => sum + returnCreditRefundMinor(r), 0)
+    const key = `sale:${sale.id}`
+    const explicitPaid = Math.max(0, settled.get(key) ?? 0)
+    const unpaidBeforeReturn = Math.max(0, creditPart - explicitPaid)
+    const overflow = Math.max(0, creditReturns - unpaidBeforeReturn)
+    if (overflow > 0) returnCredits.push({ key: `sale-return-credit:${sale.id}`, date: returns.at(-1)?.date ?? sale.date, number: sale.invoiceNumber, description: 'رصيد مرتجع بيع (توزيع تقديري)', amountMinor: overflow })
+    const due = Math.max(0, creditPart - creditReturns)
+    if (due <= 0) continue
+    open.push({ docKey: key, docLabel: `فاتورة ${sale.invoiceNumber}`, date: sale.date, dueMinor: due, settledMinor: Math.min(due, explicitPaid) })
+  }
+  // مستخلصات المشاريع المربوطة إدارياً بالعميل: الآجلة فقط (المستحق بعد المحتجز)
+  for (const ex of state.projectExtracts) {
+    if (ex.payment !== 'credit') continue
+    const project = state.projects.find((pr) => pr.id === ex.projectId)
+    if (!project || project.clientId !== customerId) continue
+    // إصلاح (مراجعة 2026-10-17): ذمة المستخلص = المستحق − ما استُرد من الدفعة
+    // المقدمة (القيد أطفأ 2109 به) — وإلا عرض معالج التحصيل FIFO ديناً أكبر من
+    // كشف الحساب وابتلع الفائض الدائن في توزيع وهمي (انفصال الكشف عن الدفتر §74)
+    const recovery = Math.min(ex.totals.dueMinor, Math.max(0, ex.advanceRecoveryMinor ?? 0))
+    const due = ex.totals.dueMinor - recovery
+    if (due <= 0) continue
+    const key = `extract:${ex.id}`
+    open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: due, settledMinor: settled.get(key) ?? 0 })
+  }
+  // مستندات الأنشطة المتخصصة (معمل · عيادة · تأجير · نقل · صيانة · محافظ ·
+  // معرض سيارات · وحدات عقارية) — بنفس قواعد استحقاق كشف الحساب حرفياً.
+  open.push(...openCustomerSpecializedDocuments({
+    customerId,
+    settledOf: (docKey) => settled.get(docKey) ?? 0,
+    allocateServiceRefunds: true,
+    labOrders: customerLabOrders(state, raw, customerId),
+    linkedLabPatientIds: state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
+    clinicVisits: state.clinicVisits,
+    clinicCollections: state.clinicCollections,
+    linkedPatientIds: state.clinicPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
+    rentals: state.rentalContracts,
+    rentalInvoices: state.rentalInvoices,
+    customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
+    customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
+    trips: state.trips,
+    tickets: state.tickets,
+    walletOps: state.walletOps,
+    cars: state.cars,
+    consignmentCars: state.consignmentCars,
+    propertySales: state.propertySales,
+  }))
+  // مدين/دائن الطرف في الكشف لا يقتصر على الفواتير: تسويات الرصيد،
+  // استبدال الولاء والقيود التي تحمل العميل على 1104 قد تغيّر الذمة.
+  // توزع هذه المصادر والتحصيلات غير المخصصة تقديرياً بعد التخصيصات
+  // الصريحة وقبل الشيكات؛ ويُميَّز النقد عن الإطفاء غير النقدي.
+  type CustomerCredit = { key: string; date: string; number: string; description: string; amountMinor: number; offsetId?: number; estimatedReceipt?: boolean; specificDocKey?: string }
+  const credits: CustomerCredit[] = [...returnCredits]
+  // النقد غير المخصص يظل في السجل الأصلي «تحت الحساب»؛ نعرض نصيبه
+  // التقديري على أقدم الذمم عند قراءة التقرير فقط، مع مصدره وقيمته.
+  for (const voucher of state.vouchers) {
+    if (voucher.reversalEntryId || voucher.kind !== 'receipt' || voucher.counterAccountCode !== '1104' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId || !Number.isSafeInteger(voucher.unallocatedMinor) || (voucher.unallocatedMinor ?? 0) <= 0) continue
+    credits.push({ key: `voucher:${voucher.id}`, date: voucher.date, number: voucher.voucherNumber, description: 'سند تحت الحساب (توزيع تقديري)', amountMinor: voucher.unallocatedMinor!, estimatedReceipt: true })
+  }
+  for (const receipt of state.clientSettlements) {
+    if (receipt.customerId !== customerId || !Number.isSafeInteger(receipt.unallocatedMinor) || receipt.unallocatedMinor <= 0) continue
+    credits.push({ key: `client-collection:${receipt.id}`, date: receipt.date, number: receipt.settlementNumber, description: 'تحصيل تحت الحساب (توزيع تقديري)', amountMinor: receipt.unallocatedMinor, estimatedReceipt: true })
+  }
+  // إشعار المستخلص مقيّد على مستنده أولاً، والباقي إن تجاوزه يبقى
+  // رصيداً دائناً يوزع تقديرياً على ذمم العميل الأخرى.
+  for (const extract of state.projectExtracts) {
+    const project = state.projects.find((item) => item.id === extract.projectId)
+    if (!project || project.clientId !== customerId) continue
+    for (const refund of extract.refunds ?? []) {
+      if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0) continue
+      credits.push({ key: `extract-credit:${refund.journalEntryId}`, date: refund.date, number: extract.extractNumber, description: 'إشعار دائن مستخلص (إطفاء غير نقدي)', amountMinor: refund.amountMinor, specificDocKey: `extract:${extract.id}` })
+    }
+  }
+  // لا نطرح رصيد الخدمة من أصل المستند ثم نفقد الفائض عند وجود
+  // سداد سابق؛ يطفئ مستنده أولاً وما تبقى يوزَّع تقديرياً على الذمم.
+  const addServiceCredits = (kind: string, id: number, number: string, refunds: readonly ServiceRefundRecord[] | undefined) => {
+    for (const refund of refunds ?? []) {
+      const credit = refund.customerCreditMinor ?? refund.amountMinor
+      if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(credit) || credit <= 0) continue
+      credits.push({ key: `${kind}-credit:${refund.journalEntryId}`, date: refund.date, number, description: 'رصيد مرتجع خدمة (توزيع تقديري)', amountMinor: credit, specificDocKey: `${kind}:${id}` })
+    }
+  }
+  const labPatientIds = new Set(state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id))
+  for (const order of customerLabOrders(state, raw, customerId)) if (labPatientIds.has(order.patientId)) addServiceCredits('lab', order.id, order.orderNumber, order.refunds)
+  for (const trip of state.trips) if (trip.customerId === customerId) addServiceCredits('trip', trip.id, trip.tripNumber, trip.refunds)
+  for (const ticket of state.tickets) if (ticket.customerId === customerId && ticket.deliveredAt && ticket.totals) addServiceCredits('ticket', ticket.id, ticket.ticketNumber, ticket.refunds)
+  for (const rental of state.rentalContracts) if (rental.customerId === customerId) addServiceCredits('rental', rental.id, rental.contractNumber, rental.refunds)
+  // مرتجع الزيارة دائن على حساب العميل المرتبط بالمريض، ولا يظهر
+  // تلقائياً في مستند الزيارة لأن تحصيلات العيادة مسجلة على المريض.
+  const clinicPatientIds = new Set(state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id))
+  for (const visit of customerClinicVisits(state, raw, clinicPatientIds)) {
+    if (!clinicPatientIds.has(visit.patientId)) continue
+    for (const refund of visit.refunds ?? []) {
+      const credit = refund.customerCreditMinor ?? refund.amountMinor
+      if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(credit) || credit <= 0) continue
+      credits.push({ key: `clinic-credit:${refund.journalEntryId}`, date: refund.date, number: visit.visitNumber, description: 'مرتجع زيارة عيادة (توزيع تقديري)', amountMinor: credit, specificDocKey: `visit:${visit.id}` })
+    }
+  }
+  // خدمة المغسلة محصلة كاملة عند التسليم؛ كل إشعار رصيد منها دائن
+  // مستقل ولا تخصم قيمته من ذمة مغسلة غير موجودة.
+  for (const order of state.laundryOrders) {
+    if (order.customerId !== customerId) continue
+    for (const refund of order.refunds ?? []) {
+      if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0) continue
+      credits.push({ key: `laundry-credit:${refund.journalEntryId}`, date: refund.date, number: order.orderNumber, description: 'رصيد مرتجع مغسلة (توزيع تقديري)', amountMinor: refund.amountMinor })
+    }
+  }
+  for (const plan of state.installmentPlans) {
+    if (plan.customerId !== customerId) continue
+    const interest = plan.interestMinor ?? 0
+    if (Number.isSafeInteger(interest) && interest > 0) {
+      const key = `installment-interest:${plan.id}`
+      open.push({ docKey: key, docLabel: `هامش تقسيط ${plan.planNumber}`, date: plan.createdAt, dueMinor: interest, settledMinor: settled.get(key) ?? 0 })
+    }
+    if (Number.isSafeInteger(plan.downPaymentMinor) && plan.downPaymentMinor > 0) credits.push({ key: `installment-down:${plan.id}`, date: plan.createdAt, number: plan.planNumber, description: 'مقدم خطة تقسيط (توزيع تقديري)', amountMinor: plan.downPaymentMinor, estimatedReceipt: true })
+    for (const item of plan.items) {
+      if (!Number.isSafeInteger(item.paidMinor) || item.paidMinor <= 0) continue
+      credits.push({ key: `installment-payment:${plan.id}:${item.seq}`, date: item.paidAt ?? item.dueDate, number: `${plan.planNumber}/${item.seq}`, description: 'سداد قسط (توزيع تقديري)', amountMinor: item.paidMinor, estimatedReceipt: true })
+    }
+  }
+  for (const st of state.settlements) {
+    if (st.section !== 'customer' || Number(st.refId) !== customerId || !Number.isSafeInteger(st.varianceMinor)) continue
+    const key = `customer-adjustment:${st.id}`
+    if (st.varianceMinor > 0) open.push({ docKey: key, docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10), dueMinor: st.varianceMinor, settledMinor: settled.get(key) ?? 0 })
+    else if (st.varianceMinor < 0) credits.push({ key, date: st.date, number: st.settlementNumber, description: 'تسوية رصيد العميل (تقديرية)', amountMinor: -st.varianceMinor })
+  }
+  const customerJournalNet = (entry: JournalEntry) => entry.lines
+    .filter((line) => line.partyKind === 'customer' && line.partyId === customerId && line.accountCode === '1104')
+    .reduce((sum, line) => sum + line.debit - line.credit, 0)
+  // قيد وعكسه الصريح يلغي أحدهما الآخر بدلاً من توزيع الدائن على
+  // مستخلص قديم وترك العكس ديناً جديداً. لا نلغي زوجاً عليه تخصيص
+  // محفوظ؛ عندئذٍ يجب الإبقاء على طرفيه للمحافظة على أثر التحصيل.
+  const journalById = new Map(state.journal.map((entry) => [entry.id, entry]))
+  const paired = new Set<number>()
+  for (const entry of state.journal) {
+    if (entry.reversedByEntryId == null || paired.has(entry.id)) continue
+    const reverse = journalById.get(entry.reversedByEntryId)
+    if (!reverse || reverse.reversesEntryId !== entry.id || paired.has(reverse.id)) continue
+    const net = customerJournalNet(entry)
+    if (!Number.isSafeInteger(net) || net === 0 || customerJournalNet(reverse) !== -net) continue
+    if ((settled.get(`customer-journal:${entry.id}`) ?? 0) !== 0 || (settled.get(`customer-journal:${reverse.id}`) ?? 0) !== 0) continue
+    paired.add(entry.id)
+    paired.add(reverse.id)
+  }
+  for (const entry of state.journal) {
+    if (paired.has(entry.id)) continue
+    const net = customerJournalNet(entry)
+    if (!Number.isSafeInteger(net) || net === 0) continue
+    const key = `customer-journal:${entry.id}`
+    if (net > 0) open.push({ docKey: key, docLabel: `قيد عميل #${entry.entryNumber}`, date: entry.date, dueMinor: net, settledMinor: settled.get(key) ?? 0 })
+    else credits.push({ key, date: entry.date, number: `#${entry.entryNumber}`, description: 'قيد دائن للعميل (توزيع تقديري)', amountMinor: -net })
+  }
+  const branch = getEffectiveActiveBranch(raw)
+  const loyaltyJournal = new Map(raw.journal.filter((entry) => !branch || entry.branchId == null || entry.branchId === branch.id).map((entry) => [entry.id, entry]))
+  for (const redemption of state.loyaltyRedemptions) {
+    if (redemption.customerId !== customerId || !Number.isSafeInteger(redemption.valueMinor) || redemption.valueMinor <= 0 || findLegacyLoyaltyReversal(redemption, loyaltyJournal)) continue
+    credits.push({ key: `customer-loyalty:${redemption.id}`, date: redemption.date, number: `LOY-${redemption.id}`, description: 'استبدال ولاء (توزيع تقديري)', amountMinor: redemption.valueMinor })
+  }
+  for (const offset of state.partyOffsets) {
+    if (offset.customerId !== customerId || !Number.isSafeInteger(offset.amountMinor) || offset.amountMinor <= 0) continue
+    credits.push({ key: `customer-offset:${offset.id}`, date: offset.date, number: offset.offsetNumber, description: 'مقاصة الطرف (توزيع تقديري)', amountMinor: offset.amountMinor, offsetId: offset.id })
+  }
+  for (const credit of credits.sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key))) {
+    const specific = credit.specificDocKey && open.some((doc) => doc.docKey === credit.specificDocKey && doc.dueMinor > doc.settledMinor) ? credit.specificDocKey : null
+    for (const allocation of allocateClientPayment(credit.amountMinor, open, specific).allocations) {
+      const doc = open.find((d) => d.docKey === allocation.docKey)
+      if (!doc) continue
+      doc.settledMinor += allocation.appliedMinor
+      if (credit.offsetId != null) {
+        const rows = doc.offsetAllocations ?? (doc.offsetAllocations = [])
+        rows.push({ offsetId: credit.offsetId, date: credit.date, offsetNumber: credit.number, amountMinor: allocation.appliedMinor })
+      } else {
+        const rows = credit.estimatedReceipt
+          ? doc.estimatedReceiptAllocations ?? (doc.estimatedReceiptAllocations = [])
+          : doc.adjustmentAllocations ?? (doc.adjustmentAllocations = [])
+        rows.push({ key: credit.key, date: credit.date, number: credit.number, description: credit.description, amountMinor: allocation.appliedMinor })
+      }
+    }
+  }
+  /* بلاغ المالك 2026-10-27: الشيك الوارد يظهر في كشف حساب العميل لكن لا
+     يظهر خصمه في تقارير المشاريع. السبب أن هذا الدفتر كان يبني `settled`
+     من clientSettlements وvouchers فقط. نضيف الشيكات الواردة النشطة
+     كتوزيعات تحصيل FIFO على نفس المستندات — فتتطابق التقارير مع الكشف.
+     الارتداد مستثنى (يعيد الدين بسطر مدين في الكشف). */
+  for (const a of allocateChequeDues(state.cheques, customerId, open).allocations) {
+    settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
+    const doc = open.find((inv) => inv.docKey === a.docKey)
+    if (doc) { doc.settledMinor += a.appliedMinor; doc.chequeSettledMinor = a.appliedMinor }
+  }
+  /* الجولة السابعة: التقارير التحليلية تحتاج الدفتر كاملاً (بما فيه
+     المسدَّد بالكامل) حتى تقرأ settledMinor الفعلي ولا تستنتج سداداً
+     وهمياً لمجرد وجود شيك للعميل على مستند آخر. المستدعي القديم لا
+     يمرّر الوسيط فيبقى على التصفية الأصلية تماماً. */
+  const result = includeSettled ? open : open.filter((inv) => inv.dueMinor - inv.settledMinor > 0)
+  return result.sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
 }
 
 export function getBranchScopedDataState(state: DataState): DataState {
@@ -11078,6 +11387,7 @@ export const useRawDataStore = create<DataState>()(
       getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),
       getEmployeeStatementRows: (employeeId) => {
         const state = getBranchScopedDataState(get())
+        assertPartyVoucherAccounts(state, 'employee', employeeId)
         const rows: { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[] = []
         /* ── §91: فواتير البيع الآجلة للموظف (على جاريه 1107) — تُسترد من مسير رواتبه ── */
         for (const sale of state.sales.filter((sl) => sl.partyKind === 'employee' && sl.partyId === employeeId)) {
@@ -11138,7 +11448,7 @@ export const useRawDataStore = create<DataState>()(
          * واحدة فقط — سطر «صرف راتب» للقسيمة نفسها موجود أعلاه، فكان السند
          * يُعدّ مديناً مرة ثانية بنفس المبلغ فينقلب رصيد الموظف سالباً بلا سبب.
          * يُعرض من السند فقط ما زاد عن مجموع القسائم التي سددها. */
-        for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
+        for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId && ['1107', '1108', '2104', '2107'].includes(row.counterAccountCode))) {
           const settledByVoucher = voucher.kind === 'payment'
             ? state.payrollSlips
               .filter((row) => row.employeeId === employeeId && row.status !== 'cancelled')
@@ -11245,74 +11555,13 @@ export const useRawDataStore = create<DataState>()(
         })
       },
 
-      getCustomerStatementRows: (customerId) => {
-        const state = getBranchScopedDataState(get())
-        assertCustomerProjectRefunds(state, get(), customerId)
-        // ربط القيود التاريخية من الدفتر الكامل بعد تقييد سجل الاستبدال للفرع؛
-        // القيد القديم قد يفتقد branchId رغم ارتباطه باستبدال العميل بالفرع.
-        const branch = getEffectiveActiveBranch(get())
-        const loyaltyJournal = new Map(get().journal.filter((entry) => !branch || entry.branchId == null || entry.branchId === branch.id).map((entry) => [entry.id, entry]))
-        return customerStatement({
-          customerId,
-          openingMinor: state.openingBalances[`customer:${customerId}`] ?? 0,
-          adjustments: [
-            ...state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === customerId).map((st) => ({
-              docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-              debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-              creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-            })),
-            // استبدالات نقاط الولاء: رصيد دائن للعميل يخصم من مشترياته القادمة (5115/1104)
-            ...state.loyaltyRedemptions.filter((r) => r.customerId === customerId).map((r) => ({
-              docLabel: `استبدال ${r.points} نقطة ولاء`, date: r.date,
-              debitMinor: 0, creditMinor: r.valueMinor,
-            })),
-            // عكس قديم فعلي للقيد: يُعرض في تاريخه ولا نعيد النقاط تلقائياً،
-            // لأن مالك البيانات قد يكون صححها يدوياً بعد العملية.
-            ...state.loyaltyRedemptions.filter((r) => r.customerId === customerId).flatMap((r) => {
-              const reversal = findLegacyLoyaltyReversal(r, loyaltyJournal)
-              return reversal ? [{ docLabel: `عكس استبدال ${r.points} نقطة ولاء`, date: reversal.date, debitMinor: r.valueMinor, creditMinor: 0 }] : []
-            }),
-            // مقاصات الطرف الواحد (AUDIT-012): تخفيض دين العميل مقابل مستحق المورد
-            ...state.partyOffsets.filter((o) => o.customerId === customerId).map((o) => ({
-              docLabel: `مقاصة ${o.offsetNumber}`, date: o.date,
-              debitMinor: 0, creditMinor: o.amountMinor,
-            })),
-            // قيود يدوية تحمل هذا العميل على 1104 (AUDIT-011) — تدخل كشفه فلا ينفصل عن الدفتر
-            ...state.journal.flatMap((entry) => entry.lines
-              .filter((line) => line.partyKind === 'customer' && line.partyId === customerId && line.accountCode === '1104')
-              .map((line) => ({
-                docLabel: `قيد يدوي #${entry.entryNumber}${line.note ? ` — ${line.note}` : ''}`, date: entry.date,
-                debitMinor: line.debit, creditMinor: line.credit,
-              }))),
-          ],
-          sales: state.sales, saleReturns: state.saleReturns, allSales: state.sales,
-          vouchers: [
-            ...state.vouchers,
-            ...state.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
-          ],
-          cheques: state.cheques,
-          extraDocs: customerUnitDocs({
-            customerId,
-            trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
-            rentalInvoices: state.rentalInvoices,
-            customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
-            customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
-            clinicVisits: customerClinicVisits(state, get(), new Set(state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id))), clinicCollections: state.clinicCollections,
-            linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
-            labOrders: customerLabOrders(state, get(), customerId), linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
-            walletOps: state.walletOps,
-            projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
-            installmentPlans: state.installmentPlans,
-            laundryOrders: state.laundryOrders,
-            cars: state.cars, consignmentCars: state.consignmentCars, propertySales: state.propertySales,
-          }),
-        })
-      },
+      getCustomerStatementRows: (customerId) => calculateCustomerStatementRows(get(), customerId),
 
       getSupplierBalance: (supplierId) => statementBalance(get().getSupplierStatementRows(supplierId)),
 
       getSupplierStatementRows: (supplierId) => {
         const state = getBranchScopedDataState(get())
+        assertPartyVoucherAccounts(state, 'supplier', supplierId)
         return supplierStatement({
           supplierId,
           openingMinor: state.openingBalances[`supplier:${supplierId}`] ?? 0,
@@ -11322,7 +11571,7 @@ export const useRawDataStore = create<DataState>()(
             remainderMinor: sl.totals.totalMinor - (sl.paidMinor ?? (sl.payment === 'cash' ? sl.totals.totalMinor : 0)),
           })),
           purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
-          vouchers: state.vouchers, cheques: state.cheques,
+          vouchers: state.vouchers.filter(voucher => voucher.counterAccountCode === '2101'), cheques: state.cheques,
           adjustments: [
             ...state.settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === supplierId).map((st) => ({
               docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
@@ -13168,42 +13417,139 @@ export const useRawDataStore = create<DataState>()(
         if (!extracts.length || extracts.length !== scoped.projectExtracts.filter(item => item.projectId === projectId).length) throw new Error('المستخلصات غير مكتملة في الفرع الحالي')
         const keys = new Set(extracts.map(extract => `extract:${extract.id}`))
         if (keys.size !== extracts.length || extracts.some(extract => state.projectExtracts.filter(item => item.id === extract.id).length !== 1)) throw new Error('أرقام المستخلصات غير فريدة — راجع المحاسب')
-        // المرحلة الآمنة فقط: لا ننسب رداً أو تحصيلاً أو فاتورة أو مقدمة تاريخية
-        // بالتخمين. الحالات المختلطة تتطلب إجراء تسوية منفصلاً بعد مراجعة الأدلة.
-        if (state.clientAdvances.some(item => item.projectId === projectId)
-          || state.sales.some(item => item.projectId === projectId)
-          || state.vouchers.some(item => item.projectId === projectId || item.allocations?.some(a => keys.has(a.docKey)))
-          || state.clientSettlements.some(item => item.allocations?.some(a => keys.has(a.docKey)))
-          || state.paymentTerminalTransactions.some(item => item.documentType === 'project_extract' && extracts.some(ex => item.documentId === String(ex.id)))) {
-          throw new Error('المشروع له دفعات أو فواتير أو تخصيصات مرتبطة — يلزم تسوية يدوية منفصلة ولا يمكن ربطه تلقائياً')
+        // لا ننسب فواتير أو حركات ماكينة مجهولة؛ تخصيصات القبض لا تُقبل
+        // إلا مع طرف وقيد مطابقين، ولا نغيّرها أو نحذفها عند الربط.
+        if (state.sales.some(item => item.projectId === projectId)
+          || state.paymentTerminalTransactions.some(item => item.documentType === 'project_extract' && (extracts.some(ex => item.documentId === String(ex.id)) || item.documentId.startsWith(`advance:${projectId}:`)))) {
+          throw new Error('المشروع له فواتير أو حركات ماكينة مرتبطة — يلزم تدقيق منفصل')
         }
         const journal = customerReviewJournal(state)
+        const relatedVouchers = state.vouchers.filter(item => (item.kind === 'receipt' && item.projectId === projectId) || item.allocations?.some(a => keys.has(a.docKey)))
+        const relatedCollections = state.clientSettlements.filter(item => item.allocations?.some(a => keys.has(a.docKey)))
+        const explicitlyAllocated = new Map<string, number>()
+        const checkReceipt = (kind: 'voucher' | 'collection', item: { id: number; amountMinor: number; treasury: string; journalEntryId: number; allocations?: FifoAllocation[]; unallocatedMinor?: number }) => {
+          const fail = (): never => { throw new Error('تخصيصات التحصيل أو قيده غير مطابقة — يلزم تدقيق منفصل') }
+          if (!Number.isSafeInteger(item.amountMinor) || item.amountMinor <= 0 || !Number.isSafeInteger(item.unallocatedMinor) || item.unallocatedMinor! < 0 || !Array.isArray(item.allocations)) return fail()
+          const docKeys = new Set<string>()
+          let allocated = 0
+          for (const allocation of item.allocations) {
+            if (!allocation.docKey || docKeys.has(allocation.docKey) || !Number.isSafeInteger(allocation.appliedMinor) || allocation.appliedMinor <= 0) return fail()
+            docKeys.add(allocation.docKey)
+            allocated += allocation.appliedMinor
+            if (keys.has(allocation.docKey)) explicitlyAllocated.set(allocation.docKey, (explicitlyAllocated.get(allocation.docKey) ?? 0) + allocation.appliedMinor)
+          }
+          if (!Number.isSafeInteger(allocated) || allocated + item.unallocatedMinor! !== item.amountMinor) return fail()
+          const entry = journal.get(item.journalEntryId)
+          if (state.journal.filter(row => row.id === item.journalEntryId).length !== 1 || !entry || entry.sourceType !== (kind === 'voucher' ? 'receipt_voucher' : 'client_payment') || entry.sourceId !== item.id || (entry.sourceCollection != null && entry.sourceCollection !== (kind === 'voucher' ? 'vouchers' : 'clientSettlements')) || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || (line.accountCode === '1104' && (line.partyKind != null || line.partyId != null)))) return fail()
+          try { assertBalanced(entry.lines) } catch { return fail() }
+          const total = entry.lines.reduce((sum, line) => sum + line.debit, 0)
+          const ar = entry.lines.filter(line => line.accountCode === '1104').reduce((sum, line) => sum + line.credit - line.debit, 0)
+          const treasury = entry.lines.filter(line => line.accountCode === item.treasury).reduce((sum, line) => sum + line.debit - line.credit, 0)
+          if (total !== item.amountMinor || ar !== item.amountMinor || treasury !== item.amountMinor) return fail()
+        }
+        for (const voucher of relatedVouchers) {
+          if (voucher.kind !== 'receipt' || voucher.counterAccountCode !== '1104' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId || voucher.reversalEntryId != null || state.vouchers.filter(item => item.id === voucher.id).length !== 1 || !scoped.vouchers.some(item => item.id === voucher.id)) throw new Error('تخصيصات أو سند المشروع تخص طرفاً آخر أو سنداً معكوساً — يلزم تدقيق منفصل')
+          checkReceipt('voucher', voucher)
+        }
+        for (const collection of relatedCollections) {
+          if (collection.customerId !== customerId || state.clientSettlements.filter(item => item.id === collection.id).length !== 1 || !scoped.clientSettlements.some(item => item.id === collection.id)) throw new Error('تخصيصات المشروع تخص عميلاً آخر أو فرعاً آخر — يلزم تدقيق منفصل')
+          checkReceipt('collection', collection)
+        }
+        for (const extract of extracts) {
+          const allocated = explicitlyAllocated.get(`extract:${extract.id}`) ?? 0
+          if (!Number.isSafeInteger(allocated) || (extract.payment !== 'credit' && allocated > 0) || allocated > extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0)) throw new Error('تخصيصات التحصيل تتجاوز أصل مستحق المستخلص — يلزم التدقيق')
+        }
         let dueMinor = 0
         for (const extract of extracts) {
-          if (extract.payment !== 'credit' || (extract.advanceRecoveryMinor ?? 0) !== 0 || (extract.refunds?.length ?? 0) > 0 || (extract.refundedMinor ?? 0) !== 0 || (extract.refundedTaxMinor ?? 0) !== 0) throw new Error('المستخلصات تتضمن نقداً أو ردوداً أو استرداد مقدم — يلزم تسوية يدوية منفصلة')
           if (state.journal.filter(entry => entry.id === extract.journalEntryId).length !== 1) throw new FinancialDataReviewError(`المستخلص ${extract.extractNumber}`)
           assertProjectExtractOriginalIntegrity(extract, journal)
           const entry = journal.get(extract.journalEntryId)!
           if (entry.lines.some(line => line.accountCode === '1104' && (line.partyKind != null || line.partyId != null))) throw new Error('قيد المستخلص يحمل طرفاً صريحاً — يلزم تسوية يدوية منفصلة')
-          dueMinor += extract.totals.dueMinor
+          if (extract.payment === 'cash' && entry.lines.some(line => line.debit > 0 && line.accountCode !== '1105' && line.accountCode !== '2109' && !state.treasuries.some(treasury => treasury.code === line.accountCode))) throw new FinancialDataReviewError(`خزينة المستخلص ${extract.extractNumber}`)
+          for (const refund of extract.refunds ?? []) {
+            if (state.journal.filter(entry => entry.id === refund.journalEntryId).length !== 1) throw new FinancialDataReviewError(`إشعارات المستخلص ${extract.extractNumber}`)
+            const refundEntry = journal.get(refund.journalEntryId)
+            if (refundEntry?.lines.some(line => line.accountCode === '1104' && (line.partyKind != null || line.partyId != null))) throw new Error('قيد الإشعار يحمل طرفاً صريحاً — يلزم تدقيق منفصل')
+            if (refund.mode === 'cash' && refundEntry?.lines.some(line => line.credit > 0 && !state.treasuries.some(treasury => treasury.code === line.accountCode))) throw new FinancialDataReviewError(`خزينة إشعار المستخلص ${extract.extractNumber}`)
+          }
+          dueMinor += (extract.payment === 'credit' ? extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0) : 0) - (extract.refunds ?? []).filter(refund => refund.mode === 'customer_credit').reduce((sum, refund) => sum + refund.amountMinor, 0)
           if (!Number.isSafeInteger(dueMinor)) throw new Error('مجموع الذمة غير صالح للمراجعة')
         }
-        // لا نسمح أن تُعاد توزيعات العميل الأخرى بأثر رجعي: يجب أن يكون السجل
-        // المختار بلا تاريخ مالي، بما في ذلك الفروع الأخرى والشيكات المعكوسة.
-        const financialRows = [state.sales, state.vouchers, state.cheques, state.clientSettlements, state.settlements, state.partyOffsets, state.loyaltyRedemptions, state.clinicPatients, state.labPatients, state.projects, state.trips, state.tickets, state.rentalContracts, state.rentalInvoices, state.walletOps, state.laundryOrders, state.cars, state.consignmentCars, state.propertySales, state.installmentPlans, state.equipmentCosts, state.tripExpenses]
-        const hasReference = financialRows.some(rows => rows.some(item => {
-          const row = item as unknown as { customerId?: number | null; buyerCustomerId?: number | null; linkedCustomerId?: number | null; clientId?: number | null; partyKind?: string | null; partyId?: number | null; direction?: string; section?: string; refId?: string | number }
-          return row.customerId === customerId || row.buyerCustomerId === customerId || row.linkedCustomerId === customerId || row.clientId === customerId || (row.partyKind === 'customer' && row.partyId === customerId) || (row.direction === 'incoming' && row.partyId === customerId) || (row.section === 'customer' && Number(row.refId) === customerId)
-        }))
-        const openingKey = `customer:${customerId}`
-        if (hasReference || (state.openingBalances[openingKey] ?? 0) !== 0 || Object.values(state.branchOpeningBalances).some(branch => (branch.openingBalances[openingKey] ?? 0) !== 0)
-          || state.journal.some(entry => entry.lines.some(line => line.partyKind === 'customer' && line.partyId === customerId))
-          || get().getCustomerStatementRows(customerId).length > 0 || get().getOpenClientInvoices(customerId, true).length > 0) {
-          throw new Error('سجل العميل يحتوي حركات أو روابط سابقة — يلزم تسوية يدوية منفصلة دون إعادة توزيع تلقائية')
+        assertProjectExtractRefundIntegrity(extracts, journal)
+        const advances = state.clientAdvances.filter(item => item.projectId === projectId)
+        if (advances.length !== scoped.clientAdvances.filter(item => item.projectId === projectId).length || new Set(advances.map(item => item.id)).size !== advances.length || advances.some(item => state.clientAdvances.filter(other => other.id === item.id).length !== 1) || new Set(advances.map(item => item.journalEntryId)).size !== advances.length) throw new Error('الدفعات المقدمة غير مكتملة أو مكررة — راجع المشروع')
+        let recovered = 0
+        for (const advance of advances) {
+          const entry = journal.get(advance.journalEntryId)
+          const fail = () => { throw new FinancialDataReviewError(`دفعة المشروع المقدمة #${advance.id}`) }
+          if (!Number.isSafeInteger(advance.amountMinor) || advance.amountMinor <= 0 || !Number.isSafeInteger(advance.recoveredMinor) || advance.recoveredMinor < 0 || advance.recoveredMinor > advance.amountMinor || state.journal.filter(item => item.id === advance.journalEntryId).length !== 1 || !entry || entry.sourceType !== 'client_advance' || entry.sourceId !== projectId || (entry.sourceCollection != null && entry.sourceCollection !== 'clientAdvances') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) { fail(); continue }
+          try { assertBalanced(entry.lines) } catch { fail() }
+          const credit = entry.lines.filter(line => line.accountCode === '2109').reduce((sum, line) => sum + line.credit - line.debit, 0)
+          const total = entry.lines.reduce((sum, line) => sum + line.debit, 0)
+          if (credit !== advance.amountMinor || total !== advance.amountMinor || entry.lines.some(line => line.debit > 0 && !state.treasuries.some(treasury => treasury.code === line.accountCode)) || entry.lines.some(line => line.accountCode === '1104' && (line.debit !== 0 || line.credit !== 0))) fail()
+          recovered += advance.recoveredMinor
+          if (!Number.isSafeInteger(recovered)) fail()
         }
+        if (recovered !== extracts.reduce((sum, extract) => sum + (extract.advanceRecoveryMinor ?? 0), 0)) throw new Error('استرداد المقدمات لا يطابق مستخلصات المشروع — راجع الدفعات والقيود')
+        // محاكاة على لقطة منفصلة: لا نغيّر Zustand ولا نحفظ توزيعاً جديداً.
+        // قد يعاد إسناد الشيكات والمبالغ تحت الحساب تقديرياً؛ تُعرض جميع
+        // المستندات المتأثرة قبل أن يقر المالك بالمراجعة.
+        const projected: DataState = { ...state, projects: state.projects.map(item => item.id === projectId ? { ...item, clientId: customerId } : item) }
+        // السجلات التاريخية بلا فرع قد تتبع العميل بعد الربط: لا ننقلها إلى
+        // فرع آخر بصمت، بما في ذلك فرع متوقف قد يُعاد تشغيله لاحقاً.
+        if (state.branches.length > 1 && !getEffectiveActiveBranch(state)) throw new Error('اختر فرع المشروع قبل مراجعة الربط التاريخي')
+        const reviewBranch = getEffectiveActiveBranch(state)
+        for (const branch of state.branches) {
+          const branches = state.branches.map(item => ({ ...item, active: true }))
+          const beforeScope = getBranchScopedDataState({ ...state, branches, activeBranchId: branch.id })
+          const afterScope = getBranchScopedDataState({ ...projected, branches, activeBranchId: branch.id })
+          const beforeProject = beforeScope.projects.some(item => item.id === projectId)
+          const afterProject = afterScope.projects.some(item => item.id === projectId)
+          const beforeExtractIds = beforeScope.projectExtracts.filter(item => item.projectId === projectId).map(item => item.id).sort((a, b) => a - b)
+          const afterExtractIds = afterScope.projectExtracts.filter(item => item.projectId === projectId).map(item => item.id).sort((a, b) => a - b)
+          if (beforeProject !== afterProject || JSON.stringify(beforeExtractIds) !== JSON.stringify(afterExtractIds)) throw new Error('تغيير الربط سيغيّر نطاق المشروع أو مستخلصاته بين الفروع — يلزم تدقيق الفروع أولاً')
+          if (reviewBranch && branch.id !== reviewBranch.id && (beforeProject || beforeExtractIds.length)) throw new Error('المشروع ظاهر في أكثر من فرع — يلزم تدقيق أثر الربط لكل فرع أولاً')
+        }
+        const beforeRows = calculateCustomerStatementRows(state, customerId)
+        const afterRows = calculateCustomerStatementRows(projected, customerId)
+        const balanceBeforeMinor = statementBalance(beforeRows)
+        const balanceAfterMinor = statementBalance(afterRows)
+        if (!Number.isSafeInteger(balanceBeforeMinor) || !Number.isSafeInteger(balanceAfterMinor) || balanceAfterMinor - balanceBeforeMinor !== dueMinor) throw new Error('لا تتطابق محاكاة رصيد العميل مع قيد المستخلصات — راجع البيانات')
         guardCreditLimit(get(), customerId, dueMinor)
-        const fingerprint = JSON.stringify([projectId, project.code, project.nameAr, project.clientName, customerId, customer.nameAr, customer.creditLimitMinor, extracts.map(extract => [extract.id, extract.extractNumber, extract.date, extract.journalEntryId, extract.totals, journal.get(extract.journalEntryId)!.lines])])
-        return { dueMinor, extractCount: extracts.length, fingerprint }
+        const beforeDocs = calculateOpenClientInvoices(state, customerId, true)
+        const afterDocs = calculateOpenClientInvoices(projected, customerId, true)
+        const beforeMap = new Map(beforeDocs.map(doc => [doc.docKey, doc]))
+        const afterMap = new Map(afterDocs.map(doc => [doc.docKey, doc]))
+        if (beforeMap.size !== beforeDocs.length || afterMap.size !== afterDocs.length) throw new Error('مفاتيح ذمم العميل مكررة — يلزم تدقيق المستندات')
+        // لا نعتمد بقية توزيع السند إن كان يحيل إلى مستند لا يمكن إثبات
+        // انتمائه لحساب العميل ضمن الحالة قبل الربط أو بعده.
+        for (const receipt of [...relatedVouchers, ...relatedCollections]) for (const allocation of receipt.allocations ?? []) {
+          if (!keys.has(allocation.docKey) && !beforeMap.has(allocation.docKey) && !afterMap.has(allocation.docKey)) throw new Error('تخصيص التحصيل يشير إلى مستند غير ظاهر في حساب العميل — يلزم تدقيق منفصل')
+        }
+        const docKeys = new Set([...beforeMap.keys(), ...afterMap.keys()])
+        const sources = (doc: OpenInvoice | undefined) => {
+          if (!doc) return []
+          const explicit = [
+            ...scoped.vouchers.filter(voucher => !voucher.reversalEntryId && voucher.kind === 'receipt' && voucher.counterAccountCode === '1104' && voucher.partyKind === 'customer' && voucher.partyId === customerId).flatMap(voucher => (voucher.allocations ?? []).filter(a => a.docKey === doc.docKey).map(a => ({ description: `سند ${voucher.voucherNumber} (تخصيص محفوظ)`, amountMinor: a.appliedMinor }))),
+            ...scoped.clientSettlements.filter(collection => collection.customerId === customerId).flatMap(collection => collection.allocations.filter(a => a.docKey === doc.docKey).map(a => ({ description: `تحصيل ${collection.settlementNumber} (تخصيص محفوظ)`, amountMinor: a.appliedMinor }))),
+          ]
+          return [...explicit,
+            ...(doc.offsetAllocations ?? []).map(a => ({ description: `مقاصة ${a.offsetNumber} (تقديري)`, amountMinor: a.amountMinor })),
+            ...(doc.adjustmentAllocations ?? []).map(a => ({ description: `${a.description} ${a.number}`, amountMinor: a.amountMinor })),
+            ...(doc.estimatedReceiptAllocations ?? []).map(a => ({ description: `${a.description} ${a.number}`, amountMinor: a.amountMinor })),
+            ...(doc.chequeSettledMinor ? [{ description: 'إجمالي الشيكات (توزيع تقديري دون نسبة شيك بعينه)', amountMinor: doc.chequeSettledMinor }] : []),
+          ]
+        }
+        const documents = [...docKeys].sort().flatMap(docKey => {
+          const before = beforeMap.get(docKey)
+          const after = afterMap.get(docKey)
+          const beforeRemainingMinor = before ? Math.max(0, before.dueMinor - before.settledMinor) : null
+          const afterRemainingMinor = after ? Math.max(0, after.dueMinor - after.settledMinor) : null
+          if (before && after && JSON.stringify(before) === JSON.stringify(after)) return []
+          return [{ docKey, docLabel: after?.docLabel ?? before?.docLabel ?? docKey, beforeRemainingMinor, afterRemainingMinor, beforeSettledMinor: before?.settledMinor ?? null, afterSettledMinor: after?.settledMinor ?? null, beforeSources: sources(before), afterSources: sources(after) }]
+        })
+        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId)]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), beforeRows, afterRows, beforeDocs, afterDocs])
+        return { dueMinor, extractCount: extracts.length, balanceBeforeMinor, balanceAfterMinor, documents, fingerprint }
       },
       resolveLegacyProjectCustomer: (args) => {
         const reason = args.reason.trim()
@@ -13216,7 +13562,7 @@ export const useRawDataStore = create<DataState>()(
         const by = activeUserName(state)
         const extractIds = state.projectExtracts.filter(item => item.projectId === args.projectId).map(item => item.id)
         set({
-          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, dueMinor: preview.dueMinor, extractIds, at, by, reason } } : item),
+          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, dueMinor: preview.dueMinor, extractIds, at, by, reason, balanceBeforeMinor: preview.balanceBeforeMinor, balanceAfterMinor: preview.balanceAfterMinor, documents: preview.documents } } : item),
           auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `مراجعة ربط مشروع #${args.projectId} بالعميل #${args.customerId} بذمة ${preview.dueMinor} — ${reason}` }]),
         })
       },
@@ -15073,248 +15419,14 @@ export const useRawDataStore = create<DataState>()(
         return req
       },
 
-      getOpenClientInvoices: (customerId, includeSettled) => {
-        const state = getBranchScopedDataState(get())
-        assertCustomerProjectRefunds(state, get(), customerId)
-        // المُحصَّل سابقاً لكل مستند من سجلات التحصيل
-        const settled = new Map<string, number>()
-        for (const st of state.clientSettlements) {
-          if (st.customerId !== customerId) continue
-          for (const a of st.allocations) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
-        }
-        // سند القبض من شاشة السندات يشارك نفس دفتر التوزيع، حتى لا يظهر
-        // الرصيد مسدداً في الكشف بينما تبقى الفاتورة مفتوحة في معالج التحصيل.
-        for (const voucher of state.vouchers) {
-          if (voucher.reversalEntryId || voucher.kind !== 'receipt' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId) continue
-          for (const a of voucher.allocations ?? []) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
-        }
-        const open: OpenInvoice[] = []
-        // الافتتاحي ذمة أقدم من المستندات، ويظهر أيضاً في كشف العميل. تجاهله
-        // يجعل الشيك يُسند للمستخلص رغم وجود دين أقدم، ويُظهر المشروع مسدداً خطأً.
-        // التحصيلات «تحت الحساب» بلا تخصيص صريح: توزع تقديرياً على
-        // الأقدم ومنها الافتتاحي، دون تعديل السجلات أو ادعاء تخصيص محفوظ.
-        const openingDue = Math.max(0, state.openingBalances[`customer:${customerId}`] ?? 0)
-        if (openingDue > 0) {
-          const openingKey = `customer-opening:${customerId}`
-          open.push({
-            docKey: openingKey, docLabel: 'رصيد افتتاحي للعميل', date: '0000-00-00', dueMinor: openingDue,
-            settledMinor: Math.min(openingDue, settled.get(openingKey) ?? 0),
-          })
-        }
-        // رصيد مرتجع يتجاوز ذمة الفاتورة غير المسددة يبقى دائناً، بما في
-        // ذلك مرتجع رصيد من فاتورة نقدية أو ذمة سُددت بسند صريح.
-        const returnCredits: { key: string; date: string; number: string; description: string; amountMinor: number }[] = []
-        // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
-        for (const sale of state.sales) {
-          if (sale.customerId !== customerId) continue
-          /* فاتورة توثيق مستخلصات (النموذج أ): لا ذمة بها — الذمة على
-             المستخلص نفسه؛ عرضها هنا يجعل معالج التحصيل يسدد الدين مرتين */
-          if (sale.projectBilling === 'documentation') continue
-          const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
-          const creditPart = Math.max(0, sale.totals.totalMinor - paid)
-          // الرد الهجين: ما قُيّد دائناً على الحساب، بما في ذلك رصيد المتجر.
-          const returns = state.saleReturns.filter((r) => r.saleId === sale.id)
-          const creditReturns = returns.reduce((sum, r) => sum + returnCreditRefundMinor(r), 0)
-          const key = `sale:${sale.id}`
-          const explicitPaid = Math.max(0, settled.get(key) ?? 0)
-          const unpaidBeforeReturn = Math.max(0, creditPart - explicitPaid)
-          const overflow = Math.max(0, creditReturns - unpaidBeforeReturn)
-          if (overflow > 0) returnCredits.push({ key: `sale-return-credit:${sale.id}`, date: returns.at(-1)?.date ?? sale.date, number: sale.invoiceNumber, description: 'رصيد مرتجع بيع (توزيع تقديري)', amountMinor: overflow })
-          const due = Math.max(0, creditPart - creditReturns)
-          if (due <= 0) continue
-          open.push({ docKey: key, docLabel: `فاتورة ${sale.invoiceNumber}`, date: sale.date, dueMinor: due, settledMinor: Math.min(due, explicitPaid) })
-        }
-        // مستخلصات المشاريع المربوطة إدارياً بالعميل: الآجلة فقط (المستحق بعد المحتجز)
-        for (const ex of state.projectExtracts) {
-          if (ex.payment !== 'credit') continue
-          const project = state.projects.find((pr) => pr.id === ex.projectId)
-          if (!project || project.clientId !== customerId) continue
-          // إصلاح (مراجعة 2026-10-17): ذمة المستخلص = المستحق − ما استُرد من الدفعة
-          // المقدمة (القيد أطفأ 2109 به) — وإلا عرض معالج التحصيل FIFO ديناً أكبر من
-          // كشف الحساب وابتلع الفائض الدائن في توزيع وهمي (انفصال الكشف عن الدفتر §74)
-          const recovery = Math.min(ex.totals.dueMinor, Math.max(0, ex.advanceRecoveryMinor ?? 0))
-          const due = ex.totals.dueMinor - recovery
-          if (due <= 0) continue
-          const key = `extract:${ex.id}`
-          open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: due, settledMinor: settled.get(key) ?? 0 })
-        }
-        // مستندات الأنشطة المتخصصة (معمل · عيادة · تأجير · نقل · صيانة · محافظ ·
-        // معرض سيارات · وحدات عقارية) — بنفس قواعد استحقاق كشف الحساب حرفياً.
-        open.push(...openCustomerSpecializedDocuments({
-          customerId,
-          settledOf: (docKey) => settled.get(docKey) ?? 0,
-          allocateServiceRefunds: true,
-          labOrders: customerLabOrders(state, get(), customerId),
-          linkedLabPatientIds: state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
-          clinicVisits: state.clinicVisits,
-          clinicCollections: state.clinicCollections,
-          linkedPatientIds: state.clinicPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
-          rentals: state.rentalContracts,
-          rentalInvoices: state.rentalInvoices,
-          customerEquipmentCosts: state.equipmentCosts.filter((c) => c.borneBy === 'customer' && c.customerId != null),
-          customerTripExpenses: state.tripExpenses.filter((e) => !e.reversedByEntryId && e.bearer === 'customer' && e.customerId != null),
-          trips: state.trips,
-          tickets: state.tickets,
-          walletOps: state.walletOps,
-          cars: state.cars,
-          consignmentCars: state.consignmentCars,
-          propertySales: state.propertySales,
-        }))
-        // مدين/دائن الطرف في الكشف لا يقتصر على الفواتير: تسويات الرصيد،
-        // استبدال الولاء والقيود التي تحمل العميل على 1104 قد تغيّر الذمة.
-        // توزع هذه المصادر والتحصيلات غير المخصصة تقديرياً بعد التخصيصات
-        // الصريحة وقبل الشيكات؛ ويُميَّز النقد عن الإطفاء غير النقدي.
-        type CustomerCredit = { key: string; date: string; number: string; description: string; amountMinor: number; offsetId?: number; estimatedReceipt?: boolean; specificDocKey?: string }
-        const credits: CustomerCredit[] = [...returnCredits]
-        // النقد غير المخصص يظل في السجل الأصلي «تحت الحساب»؛ نعرض نصيبه
-        // التقديري على أقدم الذمم عند قراءة التقرير فقط، مع مصدره وقيمته.
-        for (const voucher of state.vouchers) {
-          if (voucher.reversalEntryId || voucher.kind !== 'receipt' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId || !Number.isSafeInteger(voucher.unallocatedMinor) || (voucher.unallocatedMinor ?? 0) <= 0) continue
-          credits.push({ key: `voucher:${voucher.id}`, date: voucher.date, number: voucher.voucherNumber, description: 'سند تحت الحساب (توزيع تقديري)', amountMinor: voucher.unallocatedMinor!, estimatedReceipt: true })
-        }
-        for (const receipt of state.clientSettlements) {
-          if (receipt.customerId !== customerId || !Number.isSafeInteger(receipt.unallocatedMinor) || receipt.unallocatedMinor <= 0) continue
-          credits.push({ key: `client-collection:${receipt.id}`, date: receipt.date, number: receipt.settlementNumber, description: 'تحصيل تحت الحساب (توزيع تقديري)', amountMinor: receipt.unallocatedMinor, estimatedReceipt: true })
-        }
-        // إشعار المستخلص مقيّد على مستنده أولاً، والباقي إن تجاوزه يبقى
-        // رصيداً دائناً يوزع تقديرياً على ذمم العميل الأخرى.
-        for (const extract of state.projectExtracts) {
-          const project = state.projects.find((item) => item.id === extract.projectId)
-          if (!project || project.clientId !== customerId) continue
-          for (const refund of extract.refunds ?? []) {
-            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0) continue
-            credits.push({ key: `extract-credit:${refund.journalEntryId}`, date: refund.date, number: extract.extractNumber, description: 'إشعار دائن مستخلص (إطفاء غير نقدي)', amountMinor: refund.amountMinor, specificDocKey: `extract:${extract.id}` })
-          }
-        }
-        // لا نطرح رصيد الخدمة من أصل المستند ثم نفقد الفائض عند وجود
-        // سداد سابق؛ يطفئ مستنده أولاً وما تبقى يوزَّع تقديرياً على الذمم.
-        const addServiceCredits = (kind: string, id: number, number: string, refunds: readonly ServiceRefundRecord[] | undefined) => {
-          for (const refund of refunds ?? []) {
-            const credit = refund.customerCreditMinor ?? refund.amountMinor
-            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(credit) || credit <= 0) continue
-            credits.push({ key: `${kind}-credit:${refund.journalEntryId}`, date: refund.date, number, description: 'رصيد مرتجع خدمة (توزيع تقديري)', amountMinor: credit, specificDocKey: `${kind}:${id}` })
-          }
-        }
-        const labPatientIds = new Set(state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id))
-        for (const order of customerLabOrders(state, get(), customerId)) if (labPatientIds.has(order.patientId)) addServiceCredits('lab', order.id, order.orderNumber, order.refunds)
-        for (const trip of state.trips) if (trip.customerId === customerId) addServiceCredits('trip', trip.id, trip.tripNumber, trip.refunds)
-        for (const ticket of state.tickets) if (ticket.customerId === customerId && ticket.deliveredAt && ticket.totals) addServiceCredits('ticket', ticket.id, ticket.ticketNumber, ticket.refunds)
-        for (const rental of state.rentalContracts) if (rental.customerId === customerId) addServiceCredits('rental', rental.id, rental.contractNumber, rental.refunds)
-        // مرتجع الزيارة دائن على حساب العميل المرتبط بالمريض، ولا يظهر
-        // تلقائياً في مستند الزيارة لأن تحصيلات العيادة مسجلة على المريض.
-        const clinicPatientIds = new Set(state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id))
-        for (const visit of customerClinicVisits(state, get(), clinicPatientIds)) {
-          if (!clinicPatientIds.has(visit.patientId)) continue
-          for (const refund of visit.refunds ?? []) {
-            const credit = refund.customerCreditMinor ?? refund.amountMinor
-            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(credit) || credit <= 0) continue
-            credits.push({ key: `clinic-credit:${refund.journalEntryId}`, date: refund.date, number: visit.visitNumber, description: 'مرتجع زيارة عيادة (توزيع تقديري)', amountMinor: credit, specificDocKey: `visit:${visit.id}` })
-          }
-        }
-        // خدمة المغسلة محصلة كاملة عند التسليم؛ كل إشعار رصيد منها دائن
-        // مستقل ولا تخصم قيمته من ذمة مغسلة غير موجودة.
-        for (const order of state.laundryOrders) {
-          if (order.customerId !== customerId) continue
-          for (const refund of order.refunds ?? []) {
-            if (refund.mode !== 'customer_credit' || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0) continue
-            credits.push({ key: `laundry-credit:${refund.journalEntryId}`, date: refund.date, number: order.orderNumber, description: 'رصيد مرتجع مغسلة (توزيع تقديري)', amountMinor: refund.amountMinor })
-          }
-        }
-        for (const plan of state.installmentPlans) {
-          if (plan.customerId !== customerId) continue
-          const interest = plan.interestMinor ?? 0
-          if (Number.isSafeInteger(interest) && interest > 0) {
-            const key = `installment-interest:${plan.id}`
-            open.push({ docKey: key, docLabel: `هامش تقسيط ${plan.planNumber}`, date: plan.createdAt, dueMinor: interest, settledMinor: settled.get(key) ?? 0 })
-          }
-          if (Number.isSafeInteger(plan.downPaymentMinor) && plan.downPaymentMinor > 0) credits.push({ key: `installment-down:${plan.id}`, date: plan.createdAt, number: plan.planNumber, description: 'مقدم خطة تقسيط (توزيع تقديري)', amountMinor: plan.downPaymentMinor, estimatedReceipt: true })
-          for (const item of plan.items) {
-            if (!Number.isSafeInteger(item.paidMinor) || item.paidMinor <= 0) continue
-            credits.push({ key: `installment-payment:${plan.id}:${item.seq}`, date: item.paidAt ?? item.dueDate, number: `${plan.planNumber}/${item.seq}`, description: 'سداد قسط (توزيع تقديري)', amountMinor: item.paidMinor, estimatedReceipt: true })
-          }
-        }
-        for (const st of state.settlements) {
-          if (st.section !== 'customer' || Number(st.refId) !== customerId || !Number.isSafeInteger(st.varianceMinor)) continue
-          const key = `customer-adjustment:${st.id}`
-          if (st.varianceMinor > 0) open.push({ docKey: key, docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10), dueMinor: st.varianceMinor, settledMinor: settled.get(key) ?? 0 })
-          else if (st.varianceMinor < 0) credits.push({ key, date: st.date, number: st.settlementNumber, description: 'تسوية رصيد العميل (تقديرية)', amountMinor: -st.varianceMinor })
-        }
-        const customerJournalNet = (entry: JournalEntry) => entry.lines
-          .filter((line) => line.partyKind === 'customer' && line.partyId === customerId && line.accountCode === '1104')
-          .reduce((sum, line) => sum + line.debit - line.credit, 0)
-        // قيد وعكسه الصريح يلغي أحدهما الآخر بدلاً من توزيع الدائن على
-        // مستخلص قديم وترك العكس ديناً جديداً. لا نلغي زوجاً عليه تخصيص
-        // محفوظ؛ عندئذٍ يجب الإبقاء على طرفيه للمحافظة على أثر التحصيل.
-        const journalById = new Map(state.journal.map((entry) => [entry.id, entry]))
-        const paired = new Set<number>()
-        for (const entry of state.journal) {
-          if (entry.reversedByEntryId == null || paired.has(entry.id)) continue
-          const reverse = journalById.get(entry.reversedByEntryId)
-          if (!reverse || reverse.reversesEntryId !== entry.id || paired.has(reverse.id)) continue
-          const net = customerJournalNet(entry)
-          if (!Number.isSafeInteger(net) || net === 0 || customerJournalNet(reverse) !== -net) continue
-          if ((settled.get(`customer-journal:${entry.id}`) ?? 0) !== 0 || (settled.get(`customer-journal:${reverse.id}`) ?? 0) !== 0) continue
-          paired.add(entry.id)
-          paired.add(reverse.id)
-        }
-        for (const entry of state.journal) {
-          if (paired.has(entry.id)) continue
-          const net = customerJournalNet(entry)
-          if (!Number.isSafeInteger(net) || net === 0) continue
-          const key = `customer-journal:${entry.id}`
-          if (net > 0) open.push({ docKey: key, docLabel: `قيد عميل #${entry.entryNumber}`, date: entry.date, dueMinor: net, settledMinor: settled.get(key) ?? 0 })
-          else credits.push({ key, date: entry.date, number: `#${entry.entryNumber}`, description: 'قيد دائن للعميل (توزيع تقديري)', amountMinor: -net })
-        }
-        const branch = getEffectiveActiveBranch(get())
-        const loyaltyJournal = new Map(get().journal.filter((entry) => !branch || entry.branchId == null || entry.branchId === branch.id).map((entry) => [entry.id, entry]))
-        for (const redemption of state.loyaltyRedemptions) {
-          if (redemption.customerId !== customerId || !Number.isSafeInteger(redemption.valueMinor) || redemption.valueMinor <= 0 || findLegacyLoyaltyReversal(redemption, loyaltyJournal)) continue
-          credits.push({ key: `customer-loyalty:${redemption.id}`, date: redemption.date, number: `LOY-${redemption.id}`, description: 'استبدال ولاء (توزيع تقديري)', amountMinor: redemption.valueMinor })
-        }
-        for (const offset of state.partyOffsets) {
-          if (offset.customerId !== customerId || !Number.isSafeInteger(offset.amountMinor) || offset.amountMinor <= 0) continue
-          credits.push({ key: `customer-offset:${offset.id}`, date: offset.date, number: offset.offsetNumber, description: 'مقاصة الطرف (توزيع تقديري)', amountMinor: offset.amountMinor, offsetId: offset.id })
-        }
-        for (const credit of credits.sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key))) {
-          const specific = credit.specificDocKey && open.some((doc) => doc.docKey === credit.specificDocKey && doc.dueMinor > doc.settledMinor) ? credit.specificDocKey : null
-          for (const allocation of allocateClientPayment(credit.amountMinor, open, specific).allocations) {
-            const doc = open.find((d) => d.docKey === allocation.docKey)
-            if (!doc) continue
-            doc.settledMinor += allocation.appliedMinor
-            if (credit.offsetId != null) {
-              const rows = doc.offsetAllocations ?? (doc.offsetAllocations = [])
-              rows.push({ offsetId: credit.offsetId, date: credit.date, offsetNumber: credit.number, amountMinor: allocation.appliedMinor })
-            } else {
-              const rows = credit.estimatedReceipt
-                ? doc.estimatedReceiptAllocations ?? (doc.estimatedReceiptAllocations = [])
-                : doc.adjustmentAllocations ?? (doc.adjustmentAllocations = [])
-              rows.push({ key: credit.key, date: credit.date, number: credit.number, description: credit.description, amountMinor: allocation.appliedMinor })
-            }
-          }
-        }
-        /* بلاغ المالك 2026-10-27: الشيك الوارد يظهر في كشف حساب العميل لكن لا
-           يظهر خصمه في تقارير المشاريع. السبب أن هذا الدفتر كان يبني `settled`
-           من clientSettlements وvouchers فقط. نضيف الشيكات الواردة النشطة
-           كتوزيعات تحصيل FIFO على نفس المستندات — فتتطابق التقارير مع الكشف.
-           الارتداد مستثنى (يعيد الدين بسطر مدين في الكشف). */
-        for (const a of allocateChequeDues(state.cheques, customerId, open).allocations) {
-          settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
-          const doc = open.find((inv) => inv.docKey === a.docKey)
-          if (doc) doc.settledMinor += a.appliedMinor
-        }
-        /* الجولة السابعة: التقارير التحليلية تحتاج الدفتر كاملاً (بما فيه
-           المسدَّد بالكامل) حتى تقرأ settledMinor الفعلي ولا تستنتج سداداً
-           وهمياً لمجرد وجود شيك للعميل على مستند آخر. المستدعي القديم لا
-           يمرّر الوسيط فيبقى على التصفية الأصلية تماماً. */
-        const result = includeSettled ? open : open.filter((inv) => inv.dueMinor - inv.settledMinor > 0)
-        return result.sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
-      },
+      getOpenClientInvoices: (customerId, includeSettled) => calculateOpenClientInvoices(get(), customerId, includeSettled),
 
       getOpenSupplierInvoices: (supplierId) => {
         const state = getBranchScopedDataState(get())
+        assertPartyVoucherAccounts(state, 'supplier', supplierId)
         const settled = new Map<string, number>()
         for (const voucher of state.vouchers) {
-          if (voucher.reversalEntryId || voucher.kind !== 'payment' || voucher.partyKind !== 'supplier' || voucher.partyId !== supplierId) continue
+          if (voucher.reversalEntryId || voucher.kind !== 'payment' || voucher.counterAccountCode !== '2101' || voucher.partyKind !== 'supplier' || voucher.partyId !== supplierId) continue
           for (const allocation of voucher.allocations ?? []) settled.set(allocation.docKey, (settled.get(allocation.docKey) ?? 0) + allocation.appliedMinor)
         }
         const purchaseInvoices = state.purchases

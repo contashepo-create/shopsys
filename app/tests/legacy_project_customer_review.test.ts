@@ -56,21 +56,21 @@ it('يرفض قيداً أصلياً مفقوداً أو لقيد مستخلص �
   expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/طرفاً صريحاً/)
 })
 
-it('يرفض مشروعاً له رد أو مقدمة أو تخصيص محفوظ ولو لعميل آخر', () => {
+it('يرفض رداً أو مقدمة فاسدة وتخصيصاً محفوظاً لعميل آخر', () => {
   const { customer, project, extract } = legacy()
   const base = useRawDataStore.getState()
   useRawDataStore.setState({ clientAdvances: [{ id: 1, projectId: project.id, amountMinor: 1000, recoveredMinor: 0, date: '2025-01-01', journalEntryId: 20 }] })
-  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/دفعات/)
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/مراجعة/)
   useRawDataStore.setState({ clientAdvances: [], projectExtracts: base.projectExtracts.map(e => e.id === extract.id ? { ...e, refundedMinor: 1000 } : e) })
-  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/ردود/)
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/مراجعة/)
   useRawDataStore.setState({ projectExtracts: base.projectExtracts, vouchers: [{ id: 3, projectId: null, kind: 'receipt', partyKind: 'customer', partyId: customer.id + 9, allocations: [{ docKey: `extract:${extract.id}`, appliedMinor: 500 }] }] as never })
   expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/تخصيصات/)
 })
 
-it('يرفض حساباً ذا حركات سابقة وحد ائتمان غير كاف ويقبل بعد تصحيحه', () => {
+it('يعاين حساباً ذا حركات سابقة ويحترم حد الائتمان', () => {
   const { customer, project } = legacy()
   S().postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 1000, description: 'قبض سابق' })
-  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/حركات/)
+  expect(S().previewLegacyProjectCustomer(project.id, customer.id)).toMatchObject({ balanceBeforeMinor: -1000, balanceAfterMinor: 7000 })
   useRawDataStore.setState({ vouchers: [], journal: S().journal.filter(e => e.sourceType !== 'payment_voucher'), customers: S().customers.map(c => ({ ...c, creditLimitMinor: 7000 })) })
   expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/ائتمان/)
   useRawDataStore.setState({ customers: S().customers.map(c => ({ ...c, creditLimitMinor: 8000 })) })
@@ -115,8 +115,13 @@ it('يحفظ لقطة المراجعة ويستعيدها بعد إغلاق وف
   const { ShopsysDatabase } = await import('../desktop/sqlite/storage.ts')
   const dir = mkdtempSync(join(tmpdir(), 'shopsys-legacy-project-'))
   try {
-    const { customer, project } = legacy()
+    const { customer, project, extract } = legacy()
+    useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+    S().postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, projectId: project.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 3000, description: 'قبض محفوظ' })
+    S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'إشعار' })
+    useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
     const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
+    expect(preview.balanceAfterMinor).toBe(4000)
     S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة نسخة SQLite', confirmed: true })
     await flushSecureStorageWrites('shopsys-data')
     const payload = await secureStorage.getItem('shopsys-data')
@@ -133,8 +138,10 @@ it('يحفظ لقطة المراجعة ويستعيدها بعد إغلاق وف
     await flushSecureStorageWrites('shopsys-data')
     await secureStorage.setItem('shopsys-data', saved!)
     await useRawDataStore.persist.rehydrate()
-    expect(S().getCustomerBalance(customer.id)).toBe(8000)
-    expect(S().projects.find(p => p.id === project.id)?.legacyCustomerResolution?.reason).toBe('مطابقة نسخة SQLite')
+    expect(S().getCustomerBalance(customer.id)).toBe(4000)
+    const review = S().projects.find(p => p.id === project.id)?.legacyCustomerResolution
+    expect(review?.reason).toBe('مطابقة نسخة SQLite')
+    expect(review?.documents?.find(doc => doc.docKey === `extract:${extract.id}`)?.afterSources).toContainEqual({ description: 'سند RV-0001 (تخصيص محفوظ)', amountMinor: 3000 })
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
@@ -148,4 +155,139 @@ it('يرفض تكرار هوية المستخلص أو تغيّر بياناته
   const before = S()
   expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/تغير/)
   expect(S().projects).toBe(before.projects)
+})
+
+it('معاينة العميل ذي الحركات تُظهر أثر إعادة توزيع الشيك قبل الربط دون تغيير أي سجل', () => {
+  const { customer, project, extract } = legacy()
+  const s = S()
+  const other = s.addProject({ nameAr: 'مشروع آخر للعميل', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const newer = s.addProjectExtract({ projectId: other.id, description: 'آخر', grossMinor: 5000, vatPercent: 0, payment: 'credit' })
+  useRawDataStore.setState({ projectExtracts: S().projectExtracts.map(e => ({ ...e, date: e.id === extract.id ? '2025-01-01' : '2026-01-01' })) })
+  s.receiveCheque({ chequeNumber: 'HISTORY-CH', partyId: customer.id, bankName: 'بنك', amountMinor: 3000, dueDate: '2026-11-01', notes: '' })
+  const before = S()
+  expect(s.getCustomerBalance(customer.id)).toBe(2000)
+  const preview = s.previewLegacyProjectCustomer(project.id, customer.id)
+  expect(preview).toMatchObject({ dueMinor: 8000, balanceBeforeMinor: 2000, balanceAfterMinor: 10000 })
+  expect(preview.documents.find(d => d.docKey === `extract:${newer.id}`)).toMatchObject({ beforeRemainingMinor: 2000, afterRemainingMinor: 5000 })
+  expect(preview.documents.find(d => d.docKey === `extract:${extract.id}`)).toMatchObject({ beforeRemainingMinor: null, afterRemainingMinor: 5000 })
+  expect(S().projects).toBe(before.projects)
+  expect(S().journal).toBe(before.journal)
+  const afterPreviewJournal = S().journal
+  s.resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة العقد والتحصيلات', confirmed: true })
+  expect(s.getCustomerBalance(customer.id)).toBe(10000)
+  expect(s.getOpenClientInvoices(customer.id, true).find(d => d.docKey === `extract:${newer.id}`)?.settledMinor).toBe(0)
+  expect(S().journal).toBe(afterPreviewJournal)
+})
+
+
+it('يُعاين إشعاراً دائناً مطابقاً ويفصله عن التحصيل دون تعديل قيد', () => {
+  const { customer, project, extract } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().refundProjectExtract({ extractId: extract.id, amountMinor: 2000, mode: 'customer_credit', reason: 'أعمال مردودة' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const journal = S().journal
+  const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(preview).toMatchObject({ dueMinor: 6000, balanceBeforeMinor: 0, balanceAfterMinor: 6000 })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة الإشعار والعقد', confirmed: true })
+  expect(S().getCustomerBalance(customer.id)).toBe(6000)
+  expect(S().journal).toBe(journal)
+})
+
+it('يراجع قيد الدفعة المقدمة واستردادها قبل حساب الذمة الصافية', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().receiveClientAdvance({ projectId: project.id, amountMinor: 1000, treasury: '1101' })
+  S().addProjectExtract({ projectId: project.id, grossMinor: 2000, vatPercent: 0, payment: 'credit', description: 'الختامي', advanceRecoveryMinor: 1000 })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ dueMinor: 9000, balanceAfterMinor: 9000 })
+  const before = S().clientAdvances
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة المقدمة والاسترداد', confirmed: true })
+  expect(S().getAdvanceBalance(project.id)).toBe(0)
+  expect(S().getCustomerBalance(customer.id)).toBe(9000)
+  expect(S().clientAdvances).toBe(before)
+})
+
+
+it('يحافظ على التخصيص الصريح لسند قبض مطابق للمشروع والعميل', () => {
+  const { customer, project, extract } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, projectId: project.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 3000, description: 'قبض مرتبط' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const vouchers = S().vouchers
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ dueMinor: 8000, balanceBeforeMinor: -3000, balanceAfterMinor: 5000 })
+  expect(p.documents.find(d => d.docKey === `extract:${extract.id}`)?.afterRemainingMinor).toBe(5000)
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة سند القبض', confirmed: true })
+  expect(S().vouchers).toBe(vouchers)
+  expect(S().getCustomerBalance(customer.id)).toBe(5000)
+})
+
+it('يفصل المستخلص النقدي عن الذمة ويضيف إشعاره الدائن فقط عند مطابقة قيده', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  const cash = S().addProjectExtract({ projectId: project.id, grossMinor: 2000, vatPercent: 0, payment: 'cash', description: 'نقدي' })
+  S().refundProjectExtract({ extractId: cash.id, amountMinor: 500, mode: 'customer_credit', reason: 'رد نقدي على الحساب' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ dueMinor: 7500, balanceAfterMinor: 7500 })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة النقد والإشعار', confirmed: true })
+  expect(S().getCustomerBalance(customer.id)).toBe(7500)
+})
+
+it('يرفض الحفظ بعد تغير توزيع شيك سابق حتى لو لم يتغير أصل المستخلص', () => {
+  const { customer, project } = legacy()
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  S().receiveCheque({ chequeNumber: 'CH-NEW', partyId: customer.id, bankName: 'بنك', amountMinor: 1200, dueDate: '2026-11-01', notes: '' })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/تغير/)
+  expect(S().projects.find(item => item.id === project.id)?.clientId).toBeNull()
+})
+
+it('يمنع إسقاط عميل محذوف أو نقل مشروع تاريخي بين فروع بمجرد اختيار عميل', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id + 100 })) })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/مرتبط/)
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
+  const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
+  useRawDataStore.setState({ branches: [main, second], activeBranchId: null, customers: S().customers.map(c => ({ ...c, branchId: 2 })) } as never)
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/فرع/)
+})
+
+it('يطابق تحصيل العميل الصريح وقيده ويرفض تلفه قبل الكتابة', () => {
+  const { customer, project, extract } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().receiveClientPayment({ customerId: customer.id, amountMinor: 2400, treasury: '1101', specificDocKey: `extract:${extract.id}` })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const collection = S().clientSettlements.at(-1)!
+  const good = S().journal
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p.documents.find(doc => doc.docKey === `extract:${extract.id}`)?.afterSources).toContainEqual({ description: `تحصيل ${collection.settlementNumber} (تخصيص محفوظ)`, amountMinor: 2400 })
+  useRawDataStore.setState({ journal: good.filter(entry => entry.id !== collection.journalEntryId) })
+  const before = S().projects
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة التحصيل', confirmed: true })).toThrow(/تخصيصات/)
+  expect(S().projects).toBe(before)
+  useRawDataStore.setState({ journal: good })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة التحصيل', confirmed: true })
+  expect(S().getCustomerBalance(customer.id)).toBe(5600)
+})
+
+it('يمنع حفظ المقدمة عند اختلاف إجمالي استردادها عن المستخلصات', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().receiveClientAdvance({ projectId: project.id, amountMinor: 1000, treasury: '1101' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })), clientAdvances: S().clientAdvances.map(a => ({ ...a, recoveredMinor: 500 })) })
+  const projects = S().projects
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/استرداد/)
+  expect(S().projects).toBe(projects)
+})
+
+it('يرفض تخصيص تحصيل مختلط يشير إلى مستند آخر لا يمكن إثبات انتمائه للعميل', () => {
+  const { customer, project, extract } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, projectId: project.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 3000, description: 'قبض' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })), vouchers: S().vouchers.map(v => ({ ...v, allocations: [{ docKey: `extract:${extract.id}`, docLabel: 'مستخلص', appliedMinor: 2000 }, { docKey: 'sale:999999', docLabel: 'فاتورة مجهولة', appliedMinor: 1000 }] })) })
+  const before = S().projects
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/مستند غير ظاهر/)
+  expect(S().projects).toBe(before)
 })

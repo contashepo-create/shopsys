@@ -38,7 +38,7 @@ it('لا يُضاف سند موزّع خطأً على مستخلص نقدي كت
   const customer = useDataStore.getState().customers.at(-1)!
   const project = useDataStore.getState().addProject({ nameAr: 'مشروع نقدي', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 1000, vatPercent: 0, payment: 'cash' })
-  useDataStore.setState({ vouchers: [{ kind: 'receipt', partyKind: 'customer', partyId: customer.id, date: '2026-01-01', voucherNumber: 'WRONG', amountMinor: 500, allocations: [{ docKey: `extract:${extract.id}`, appliedMinor: 500 }] }] as DataState['vouchers'] })
+  useDataStore.setState({ vouchers: [{ kind: 'receipt', counterAccountCode: '1104', partyKind: 'customer', partyId: customer.id, date: '2026-01-01', voucherNumber: 'WRONG', amountMinor: 500, allocations: [{ docKey: `extract:${extract.id}`, appliedMinor: 500 }] }] as DataState['vouchers'] })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(screen.queryByText('WRONG')).toBeNull()
   expect(screen.queryByText(/تنبيه مراجعة: مجموع سطور التحصيلات/)).toBeNull()

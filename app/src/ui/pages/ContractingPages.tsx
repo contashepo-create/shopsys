@@ -395,12 +395,13 @@ export function ProjectsPage() {
   const [legacyCustomerId, setLegacyCustomerId] = useState('')
   const [legacyReason, setLegacyReason] = useState('')
   const [legacyConfirmed, setLegacyConfirmed] = useState(false)
-  const [legacyPreview, setLegacyPreview] = useState<{ dueMinor: number; extractCount: number; fingerprint: string } | null>(null)
+  const [legacyPreview, setLegacyPreview] = useState<ReturnType<typeof previewLegacyProjectCustomer> | null>(null)
   const openLegacyReview = (project: Project) => {
     setLegacyProject(project); setLegacyCustomerId(''); setLegacyReason(''); setLegacyConfirmed(false); setLegacyPreview(null)
   }
   const checkLegacyReview = () => {
     if (!legacyProject || !legacyCustomerId) return
+    setLegacyConfirmed(false)
     try { setLegacyPreview(previewLegacyProjectCustomer(legacyProject.id, Number(legacyCustomerId))) }
     catch (error) { setLegacyPreview(null); toast.show((error as Error).message, 'error') }
   }
@@ -1238,7 +1239,7 @@ export function ProjectsPage() {
       <Modal open={!!legacyProject} onClose={() => setLegacyProject(null)} title="مراجعة ربط مستخلصات تاريخية">
         {legacyProject && <div className="space-y-3 text-sm" data-legacy-project-review-modal>
           <p>المشروع {legacyProject.code} — {legacyProject.nameAr} بلا عميل مرتبط. لا يفترض النظام هوية الجهة أو عدم وجود تحصيل خارج سجلاته.</p>
-          <p>هذه المراجعة متاحة للمالك للحالة البسيطة فقط: مستخلصات آجلة بلا ردود أو مقدمات أو تخصيصات، وعميل بلا حركات سابقة. الحالات المختلطة تحتاج تسوية منفصلة.</p>
+          <p>هذه المراجعة للمالك بعد مطابقة العقد والدفتر والتحصيلات. يفحص النظام القيود والتخصيصات المسجلة، ويمنع الحالات غير المطابقة أو غير المدعومة بدلاً من تخمين تسويتها.</p>
           <Field label="العميل بعد مطابقة العقد والمستندات">
             <select aria-label="عميل المستخلص التاريخي" className={inputCls} value={legacyCustomerId} onChange={e => { setLegacyCustomerId(e.target.value); setLegacyPreview(null); setLegacyConfirmed(false) }}>
               <option value="">— اختر عميلاً —</option>
@@ -1247,9 +1248,29 @@ export function ProjectsPage() {
           </Field>
           <Btn variant="soft" disabled={!legacyCustomerId} onClick={checkLegacyReview}>فحص قبل الربط</Btn>
           {legacyPreview && <>
-            <p role="status">سيُضاف إلى كشف العميل دين {fmt(legacyPreview.dueMinor)} {cur.symbol} من {legacyPreview.extractCount} مستخلص. لا يُنشأ قيد أو تحصيل جديد.</p>
+            <p role="status">التغير الصافي في رصيد العميل {fmt(legacyPreview.dueMinor)} {cur.symbol} من {legacyPreview.extractCount} مستخلص. لا يُنشأ قيد أو تحصيل جديد.</p>
+            <p>رصيد العميل قبل الربط: <strong>{fmt(legacyPreview.balanceBeforeMinor)} {cur.symbol}</strong> — بعده: <strong>{fmt(legacyPreview.balanceAfterMinor)} {cur.symbol}</strong> (الرصيد السالب لصالح العميل).</p>
+            <p>الجدول يعرض المستندات التي تتغير عند الربط؛ توزيع الشيكات والمبالغ تحت الحساب تقديري ولا يُعد تخصيصاً محفوظاً. يجب مطابقة أي تحصيل خارج النظام يدوياً.</p>
+            <div className="overflow-auto max-h-64">
+              <table className="w-full text-xs" aria-label="أثر الربط على المستندات">
+                <thead><tr><th>المستند</th><th>قبل الربط</th><th>بعد الربط</th></tr></thead>
+                <tbody>{legacyPreview.documents.map(doc => (
+                  <tr key={doc.docKey} className="border-t border-slate-200 dark:border-slate-700">
+                    <td className="p-2">{doc.docLabel}</td>
+                    {([['before', doc.beforeRemainingMinor, doc.beforeSettledMinor, doc.beforeSources], ['after', doc.afterRemainingMinor, doc.afterSettledMinor, doc.afterSources]] as const).map(([side, remaining, settled, sources]) => (
+                      <td key={side} className="p-2 align-top">
+                        {remaining == null ? 'لم يكن منسوباً للعميل' : <>
+                          <div>المتبقي {fmt(remaining)} {cur.symbol} — المطفأ {fmt(settled ?? 0)} {cur.symbol}</div>
+                          {sources.map((source, index) => <div key={index}>{source.description}: {fmt(source.amountMinor)} {cur.symbol}</div>)}
+                        </>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
             <Field label="سبب المراجعة"><input aria-label="سبب مراجعة الربط" className={inputCls} maxLength={300} value={legacyReason} onChange={e => setLegacyReason(e.target.value)} /></Field>
-            <label className="flex gap-2 items-start"><input type="checkbox" checked={legacyConfirmed} onChange={e => setLegacyConfirmed(e.target.checked)} /> أقرّ أنني طابقت هوية العميل والعقد والمستخلصات والدفتر والتحصيلات داخل النظام وخارجه، وأن الذمة المعروضة غير مسددة.</label>
+            <label className="flex gap-2 items-start"><input type="checkbox" checked={legacyConfirmed} onChange={e => setLegacyConfirmed(e.target.checked)} /> أقرّ أنني طابقت هوية العميل والعقد والمستخلصات والدفتر والتحصيلات داخل النظام وخارجه، والأرصدة والتوزيعات المعروضة، وأعلم أن التوزيعات التقديرية ليست تخصيصات محفوظة.</label>
             <Btn disabled={!legacyConfirmed || !legacyReason.trim()} onClick={saveLegacyReview}>توثيق الربط</Btn>
           </>}
         </div>}

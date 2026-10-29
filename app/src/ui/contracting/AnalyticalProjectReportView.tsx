@@ -68,7 +68,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
        النواة buildExtractSettledMap تمنع ذلك: المفتوح يأخذ settledMinor وحده،
        والمسدَّد بالكامل يُقرأ من توزيعاته الصريحة/صافي استحقاقه. */
     const projectVouchers = clientId == null ? [] : vouchers.filter((v) =>
-      !v.reversalEntryId && v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId === clientId)
+      !v.reversalEntryId && v.kind === 'receipt' && v.counterAccountCode === '1104' && v.partyKind === 'customer' && v.partyId === clientId)
     const projectSettlements = clientId == null ? [] : clientSettlements.filter((st) => st.customerId === clientId)
     /* الدفتر الكامل (بما فيه المسدَّد بالكامل) ⇒ settledMinor حقيقي لكل
        مستخلص بلا استنتاج. كان غياب مستخلص عن الدفتر المفتوح يُفسَّر

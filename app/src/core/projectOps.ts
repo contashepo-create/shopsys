@@ -122,6 +122,8 @@ export interface OpenInvoice {
   dueMinor: Minor
   /** ما أُطفئ من الذمة حتى الآن، بما فيه المقاصات غير النقدية */
   settledMinor: Minor
+  /** إجمالي الشيكات الموزع تقديرياً، دون ادعاء ربط شيك بعينه بالمستند. */
+  chequeSettledMinor?: Minor
   /** تقدير توزيع مقاصات الطرف على هذه الذمة؛ لا يغيّر مستند المقاصة الأصلي. */
   offsetAllocations?: { offsetId: number; date: string; offsetNumber: string; amountMinor: Minor }[]
   /** تعديلات دائنة تقديرية غير نقدية (قيد/تسوية/ولاء)، بحسب مصدرها. */

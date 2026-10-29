@@ -231,3 +231,39 @@ it('رصيد مرتجع قديم بلا حقول التقسيم يطابق ال�
   expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(0)
   expect(useDataStore.getState().getOpenClientInvoices(customer.id, true).find(d => d.docKey === `extract:${ex.id}`)?.settledMinor).toBe(2000)
 })
+
+it('إسناد طرف لسند إيراد أو مصروف لا يخفض ذمته إن لم يتحرك حساب مراقبة الطرف', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '4101', amountMinor: 500, description: 'إيراد مباشر' })
+  store.postVoucher({ kind: 'payment', partyKind: 'supplier', partyId: supplier.id, treasury: '1101', counterAccountCode: '5110', amountMinor: 700, description: 'مصروف مباشر' })
+  const state = useDataStore.getState()
+  expect(state.getCustomerBalance(customer.id)).toBe(0)
+  expect(state.getSupplierBalance(supplier.id)).toBe(0)
+  expect(state.getCustomerStatementRows(customer.id).some(row => row.docLabel.includes('سند قبض'))).toBe(false)
+  expect(state.getSupplierStatementRows(supplier.id).some(row => row.docLabel.includes('سند صرف'))).toBe(false)
+})
+
+it('لا يخمّن رصيد طرف عندما يفقد سند تاريخي حسابه المقابل', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 500, description: 'قبض' })
+  useDataStore.setState({ vouchers: useDataStore.getState().vouchers.map(v => ({ ...v, counterAccountCode: undefined as never })) })
+  expect(() => useDataStore.getState().getCustomerBalance(customer.id)).toThrow(/مراجعة/)
+  expect(() => useDataStore.getState().getOpenClientInvoices(customer.id)).toThrow(/مراجعة/)
+})
+
+it('سند دخل أو مصروف باسم الموظف لا يغيّر جاريه ما لم يتحرك حساب الموظفين', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '4101', amountMinor: 500, description: 'إيراد مباشر' })
+  expect(useDataStore.getState().getEmployeeBalance(employee.id)).toBe(0)
+  store.postVoucher({ kind: 'payment', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '5110', amountMinor: 700, description: 'مصروف مباشر' })
+  expect(useDataStore.getState().getEmployeeBalance(employee.id)).toBe(0)
+})
+
+it('حساب سلف الموظفين والرواتب في السندات يبقي أثره ويُحجب عند فقد الحساب', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '1107', amountMinor: 200, description: 'رد سلفة' })
+  store.postVoucher({ kind: 'payment', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '2104', amountMinor: 100, description: 'صرف راتب' })
+  expect(useDataStore.getState().getEmployeeBalance(employee.id)).toBe(100)
+  useDataStore.setState({ vouchers: useDataStore.getState().vouchers.map((voucher, index) => index === 0 ? { ...voucher, counterAccountCode: undefined as never } : voucher) })
+  expect(() => useDataStore.getState().getEmployeeBalance(employee.id)).toThrow(/مراجعة/)
+})
