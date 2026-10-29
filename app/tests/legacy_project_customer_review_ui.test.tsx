@@ -1,10 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ProjectsPage } from '../src/ui/pages/ContractingPages.tsx'
 import { ContractingReportsPage } from '../src/ui/pages/ContractingReportsPage.tsx'
 import { EMPTY_EXTENDED, useRawDataStore, useDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
+import { buildBackup } from '../src/core/backup.ts'
 
 vi.mock('../src/ui/print/printReceipt.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/ui/print/printReceipt.ts')>()
@@ -84,4 +85,32 @@ it('تُظهر المعاينة مستندات العميل المتأثرة و�
   expect(table.textContent).toContain(newExtract.extractNumber)
   expect(table.textContent).toContain('إجمالي الشيكات (توزيع تقديري')
   expect(screen.getByText(/رصيد العميل قبل الربط/).textContent).toContain('100.00')
+})
+
+it('يعرض سجل النسخة وكشف العميل ويشترط الإقرار قبل استعادة السجل وحده', async () => {
+  useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG', allowNegativeTreasury: true } })
+  useRawDataStore.setState({ ...original, branches: [], activeBranchId: null, appUsers: [], currentUserId: null, customers: [], projects: [], projectExtracts: [], clientAdvances: [], sales: [], journal: [], vouchers: [], clientSettlements: [], cheques: [], openingBalances: {}, branchOpeningBalances: {}, insuranceClaims: [], clinicPatients: [], labPatients: [], auditLog: [] })
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'جهة أصلية', phone: '010', creditLimitMinor: 0, notes: '' })
+  const customer = useDataStore.getState().customers.at(-1)!
+  const project = s.addProject({ nameAr: 'مشروع مفقود العميل', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+  s.addProjectExtract({ projectId: project.id, grossMinor: 8000, vatPercent: 0, payment: 'credit', description: 'آجل' })
+  const backup = JSON.stringify(buildBackup({ appState: null, storeState: { state: JSON.parse(JSON.stringify(useRawDataStore.getState())), version: 25 }, appDataVersion: 25, shopName: 'منشأة' }))
+  useRawDataStore.setState({ customers: [] })
+  render(<MemoryRouter><ProjectsPage /></MemoryRouter>)
+  fireEvent.click(screen.getByRole('button', { name: 'مراجعة الذمة' }))
+  fireEvent.change(screen.getByLabelText('ملف نسخة العميل المفقود'), { target: { files: [new File([backup], 'backup.json', { type: 'application/json' })] } })
+  const check = screen.getByRole('button', { name: 'فحص نسخة العميل' }) as HTMLButtonElement
+  await waitFor(() => expect(check.disabled).toBe(false))
+  fireEvent.click(check)
+  expect(screen.getByRole('status').textContent).toContain('جهة أصلية')
+  expect(screen.getByRole('table', { name: 'كشف العميل قبل استعادة السجل' }).textContent).toContain('مستخلص')
+  const save = screen.getByRole('button', { name: 'استعادة سجل العميل فقط' }) as HTMLButtonElement
+  expect(save.disabled).toBe(true)
+  fireEvent.change(screen.getByLabelText('سبب استعادة العميل'), { target: { value: 'مطابقة النسخة والهوية' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: /أقرّ بمطابقة أصل النسخة/ }))
+  expect(save.disabled).toBe(false)
+  fireEvent.click(save)
+  expect(useDataStore.getState().customers).toContainEqual(customer)
+  expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(8000)
 })

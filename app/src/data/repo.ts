@@ -7,6 +7,7 @@
  * ثم PostgreSQL للفروع — دون أي تغيير في الواجهات أو النواة.
  */
 import { create } from 'zustand'
+import { parseBackup } from '../core/backup.ts'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { appStorage, registerExternalSnapshotApplier } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
@@ -2805,7 +2806,9 @@ interface DataState {
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
-  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; balanceBeforeMinor: number; balanceAfterMinor: number; documents: LegacyCustomerReviewDocument[]; evidence: LegacyCustomerReviewEvidence[]; fingerprint: string }
+  previewMissingProjectCustomerBackup: (projectId: number, backup: string) => { customer: Customer; backupShopName: string; backupDate: string; backupChecksum: string; scopeName: string; balanceMinor: number; statement: StatementRow[]; fingerprint: string }
+  restoreMissingProjectCustomerBackup: (args: { projectId: number; backup: string; fingerprint: string; reason: string; confirmed: boolean }) => void
+  previewLegacyProjectCustomer: (projectId: number, customerId: number) => { dueMinor: number; extractCount: number; previousCustomerId: number | null; balanceBeforeMinor: number; balanceAfterMinor: number; documents: LegacyCustomerReviewDocument[]; evidence: LegacyCustomerReviewEvidence[]; fingerprint: string }
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -3302,6 +3305,42 @@ interface DataState {
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
+
+// لا يُعاد استعمال رقم عميل ما زال يظهر في أي سجل تاريخي، حتى إن
+// كان سجل العميل نفسه مفقوداً. يشمل الفروع غير النشطة والقيود والمراكز.
+function referencedCustomerIds(state: DataState): Set<number> {
+  const ids = new Set<number>()
+  const add = (value: unknown) => {
+    const number = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN
+    if (Number.isSafeInteger(number) && number > 0) ids.add(number)
+  }
+  const seen = new WeakSet<object>()
+  const stack: unknown[] = [state]
+  while (stack.length) {
+    const value = stack.pop()
+    if (!value || typeof value !== 'object' || seen.has(value)) continue
+    seen.add(value)
+    if (Array.isArray(value)) { for (const item of value) stack.push(item); continue }
+    const row = value as Record<string, unknown>
+    for (const key of ['customerId', 'linkedCustomerId', 'buyerCustomerId', 'clientId']) add(row[key])
+    if (row.partyKind === 'customer' || row.direction === 'incoming') add(row.partyId)
+    if (row.section === 'customer') add(row.refId)
+    for (const [key, child] of Object.entries(row)) {
+      const match = /^customer:(\d+)$/.exec(key)
+      if (match) add(match[1])
+      if (typeof child === 'string') {
+        const doc = /^customer-opening:(\d+)$/.exec(child)
+        if (doc) add(doc[1])
+        // بعض المسودات تخزن النموذج JSON كنص، بما فيه رقم العميل.
+        if (key === 'payload' && /^[\s]*[{[]/.test(child)) {
+          try { stack.push(JSON.parse(child)) } catch { /* مسودة غير مقروءة لا تُفسر بالتخمين */ }
+        }
+      } else if (child && typeof child === 'object') stack.push(child)
+    }
+  }
+  return ids
+}
+
 
 /**
  * ختم موافقة المرتجع (نمط POS العالمي): requestedBy = المستخدم النشط،
@@ -10796,10 +10835,18 @@ export const useRawDataStore = create<DataState>()(
         if (!nameAr) throw new Error('اسم العميل مطلوب')
         if (c.priceListId != null && !get().priceLists.some((list) => list.id === c.priceListId && list.isActive)) throw new Error('فئة الخصم غير موجودة أو معطلة')
         if (getBranchScopedDataState(get()).customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
-        set((s) => ({ customers: [...s.customers, { ...c, nameAr, id: nextId(s.customers) }] }))
+        set((s) => {
+          const reserved = referencedCustomerIds(s)
+          let id = nextId(s.customers)
+          while (Number.isSafeInteger(id) && reserved.has(id)) id++
+          if (!Number.isSafeInteger(id)) throw new Error('تعذر إنشاء رقم عميل فريد — راجع السجلات التاريخية')
+          return { customers: [...s.customers, { ...c, nameAr, id }] }
+        })
       },
       updateCustomer: (id, patch) => {
         const currentCustomer = get().customers.find((customer) => customer.id === id)
+        if (patch.id !== undefined && patch.id !== id) throw new Error('لا يمكن تغيير رقم العميل بعد إنشائه')
+        if (currentCustomer && patch.branchId !== undefined && (patch.branchId ?? null) !== (currentCustomer.branchId ?? null) && referencedCustomerIds(get()).has(id)) throw new Error('لا يمكن نقل عميل له سجلات بين الفروع دون تسوية مستقلة')
         if (patch.priceListId != null && !get().priceLists.some((list) => list.id === patch.priceListId && list.isActive) && currentCustomer?.priceListId !== patch.priceListId) throw new Error('فئة الخصم غير موجودة أو معطلة')
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
@@ -10833,7 +10880,7 @@ export const useRawDataStore = create<DataState>()(
           s.laundryOrders.some((o) => o.customerId === id) ||
           s.cars.some((c) => c.buyerCustomerId === id) ||
           s.consignmentCars.some((c) => c.buyerCustomerId === id)
-        if (referenced) throw new Error('لا يمكن حذف عميل له معاملات مسجلة — يبقى للسجل والتدقيق (فواتيره وكشفه تاريخ لا يُمحى)')
+        if (referenced || referencedCustomerIds(s).has(id)) throw new Error('لا يمكن حذف عميل له معاملات مسجلة — يبقى للسجل والتدقيق (فواتيره وكشفه تاريخ لا يُمحى)')
         set((st2) => ({ customers: st2.customers.filter((c) => c.id !== id) }))
       },
 
@@ -13403,6 +13450,66 @@ export const useRawDataStore = create<DataState>()(
         return merged
       },
 
+      previewMissingProjectCustomerBackup: (projectId, backupText) => {
+        const state = get()
+        const user = state.appUsers.find(item => item.id === state.currentUserId)
+        if ((state.appUsers.length > 0 || state.currentUserId != null) && user?.roleId !== 'owner') throw new Error('استعادة سجل عميل مفقود متاحة للمالك فقط')
+        const project = state.projects.find(item => item.id === projectId)
+        if (!project || state.projects.filter(item => item.id === projectId).length !== 1 || project.clientId == null || !Number.isSafeInteger(project.clientId) || project.clientId <= 0) throw new Error('لا يوجد رقم عميل مفقود فريد لهذا المشروع')
+        if (state.customers.some(item => item.id === project.clientId)) throw new Error('سجل العميل موجود بالفعل — لا تستبدله')
+        const backup = parseBackup(backupText)
+        if (backup.appDataVersion !== DATA_VERSION || typeof backup.createdAt !== 'string' || !Number.isFinite(Date.parse(backup.createdAt)) || typeof backup.shopName !== 'string' || backup.shopName.length > 200) throw new Error('إصدار النسخة أو تاريخها غير مطابق — استخدم نسخة من إصدار البيانات الحالي')
+        const envelope = backup.data.store
+        if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw new Error('لقطة النسخة غير صالحة')
+        const env = envelope as Record<string, unknown>
+        if ('state' in env && env.version !== DATA_VERSION) throw new Error('إصدار لقطة النسخة غير مطابق')
+        const saved = (env.state && typeof env.state === 'object' && !Array.isArray(env.state) ? env.state : env) as Record<string, unknown>
+        if (!Array.isArray(saved.customers)) throw new Error('النسخة لا تحتوي سجلات العملاء')
+        const candidates = saved.customers.filter((item: unknown) => item && typeof item === 'object' && (item as Customer).id === project.clientId) as Customer[]
+        if (candidates.length !== 1) throw new Error('سجل العميل الأصلي مفقود أو مكرر في النسخة')
+        const customer = candidates[0]
+        const stringFields: (keyof Customer)[] = ['nameAr', 'phone', 'notes', 'taxNumber', 'commercialReg', 'email', 'address', 'city', 'postalCode', 'buildingNo', 'nationalId']
+        const customerFields = new Set<string>([...stringFields, 'id', 'creditLimitMinor', 'active', 'priceListId', 'loyaltyPoints', 'branchId'])
+        if (Object.keys(customer).some(key => !customerFields.has(key)) || stringFields.some(key => typeof customer[key] !== 'string') || !customer.nameAr.trim() || !Number.isSafeInteger(customer.creditLimitMinor) || customer.creditLimitMinor < 0 || !Number.isSafeInteger(customer.loyaltyPoints ?? 0) || (customer.loyaltyPoints ?? 0) < 0 || (customer.active != null && typeof customer.active !== 'boolean') || (customer.branchId != null && !state.branches.some(branch => branch.id === customer.branchId)) || (customer.priceListId != null && !state.priceLists.some(list => list.id === customer.priceListId))) throw new Error('بيانات العميل في النسخة غير صالحة أو تشير لفرع أو قائمة مفقودة')
+        // لا نستبدل اللقطة: نسمح باستعادة السجل وحده فقط إذا كانت كل
+        // البيانات الأخرى متطابقة مع النسخة، بما فيها العملاء الآخرون.
+        // هذه المطابقة تكشف تغير السجل لا تثبت أصالة الملف أو هوية الجهة.
+        const ignored = new Set(['customers', 'auditLog', 'currentUserId', 'loggedOut', 'activeBranchId'])
+        const comparable = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).filter(([key, value]) => !ignored.has(key) && value !== undefined && typeof value !== 'function').sort(([a], [b]) => a.localeCompare(b)))
+        if (JSON.stringify(comparable(saved)) !== JSON.stringify(comparable(state as unknown as Record<string, unknown>))) throw new Error('بيانات النسخة تختلف عن البيانات الحالية — لا يمكن استعادة العميل منفرداً بأمان')
+        const otherCustomers = (saved.customers as Customer[]).filter(item => item.id !== project.clientId).sort((a, b) => a.id - b.id)
+        const currentCustomers = [...state.customers].sort((a, b) => a.id - b.id)
+        if (JSON.stringify(otherCustomers) !== JSON.stringify(currentCustomers)) throw new Error('سجلات العملاء الأخرى تغيرت منذ النسخة — يلزم تدقيق مستقل')
+        const projected: DataState = { ...state, customers: [...state.customers, customer] }
+        // لا نضيف سجلات إلى فرع لم تكن مرئية فيه لمجرد استعادة الاسم.
+        const scopedKeys = ['projects', 'projectExtracts', 'clientAdvances', 'sales', 'saleReturns', 'vouchers', 'clientSettlements', 'journal', 'cheques'] as const
+        for (const branch of state.branches) {
+          const branches = state.branches.map(item => ({ ...item, active: true }))
+          const before = getBranchScopedDataState({ ...state, branches, activeBranchId: branch.id })
+          const after = getBranchScopedDataState({ ...projected, branches, activeBranchId: branch.id })
+          if (scopedKeys.some(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]))) throw new Error('استعادة العميل ستغير نطاق مستندات بين الفروع — يلزم تدقيق الفروع أولاً')
+          const beforeBranch = { ...state, branches, activeBranchId: branch.id }
+          const afterBranch = { ...projected, branches, activeBranchId: branch.id }
+          if (JSON.stringify(calculateCustomerStatementRows(beforeBranch, customer.id)) !== JSON.stringify(calculateCustomerStatementRows(afterBranch, customer.id)) || JSON.stringify(calculateOpenClientInvoices(beforeBranch, customer.id, true)) !== JSON.stringify(calculateOpenClientInvoices(afterBranch, customer.id, true))) throw new Error('استعادة العميل ستغير كشفاً أو توزيعاً في فرع — يلزم التدقيق')
+        }
+        const statement = calculateCustomerStatementRows(projected, customer.id)
+        const balanceMinor = statementBalance(statement)
+        if (!Number.isSafeInteger(balanceMinor)) throw new Error('رصيد العميل غير صالح للمراجعة')
+        if (JSON.stringify(calculateCustomerStatementRows(state, customer.id)) !== JSON.stringify(statement) || JSON.stringify(calculateOpenClientInvoices(state, customer.id, true)) !== JSON.stringify(calculateOpenClientInvoices(projected, customer.id, true))) throw new Error('استعادة العميل ستغير الكشف أو توزيع المستندات — يلزم التدقيق')
+        const fingerprint = JSON.stringify([backup.checksum, backup.createdAt, backup.shopName, customer, currentCustomers, comparable(state as unknown as Record<string, unknown>), state.activeBranchId, statement])
+        return { customer, backupShopName: backup.shopName, backupDate: backup.createdAt, backupChecksum: backup.checksum, scopeName: getEffectiveActiveBranch(state)?.nameAr ?? 'كل الفروع', balanceMinor, statement, fingerprint }
+      },
+      restoreMissingProjectCustomerBackup: (args) => {
+        if (!args.confirmed) throw new Error('يلزم إقرار المالك بمطابقة العميل والنسخة وأرصدته')
+        const reason = args.reason.trim()
+        if (!reason || reason.length > 300) throw new Error('اكتب سبب المراجعة بحد أقصى 300 حرف')
+        const preview = get().previewMissingProjectCustomerBackup(args.projectId, args.backup)
+        if (preview.fingerprint !== args.fingerprint) throw new Error('تغيرت بيانات الاستعادة — أعد الفحص')
+        const state = get()
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ customers: [...state.customers, preview.customer], auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `استعادة سجل العميل المفقود #${preview.customer.id} من نسخة ${preview.backupDate} ببصمة ${preview.backupChecksum} للمشروع #${args.projectId} بعد إقرار المالك — ${reason}` }]) })
+      },
+
       previewLegacyProjectCustomer: (projectId, customerId) => {
         const state = get()
         const user = state.appUsers.find(item => item.id === state.currentUserId)
@@ -13410,7 +13517,15 @@ export const useRawDataStore = create<DataState>()(
         const scoped = getBranchScopedDataState(state)
         const project = scoped.projects.find(item => item.id === projectId)
         if (!project || state.projects.filter(item => item.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
-        if (project.clientId != null || project.legacyCustomerResolution) throw new Error('المشروع مرتبط بعميل أو روجع مسبقاً')
+        if (project.legacyCustomerResolution) throw new Error('المشروع روجع مسبقاً — لا تستبدل قرار المراجعة')
+        const previousCustomerId = project.clientId ?? null
+        if (previousCustomerId != null) {
+          if (!Number.isSafeInteger(previousCustomerId) || previousCustomerId <= 0) throw new Error('رقم العميل المفقود غير صالح — يلزم التدقيق')
+          if (state.customers.some(item => item.id === previousCustomerId)) throw new Error('المشروع مرتبط بعميل موجود — لا يمكن استبداله')
+          // لا يُنقل أي سجل آخر من حساب مفقود إلى حساب جديد. يستثنى
+          // المشروع نفسه فقط من الفحص، وتبقى بقية الفروع والمصادر داخله.
+          if (referencedCustomerIds({ ...state, projects: state.projects.filter(item => item.id !== projectId) }).has(previousCustomerId)) throw new Error('رقم العميل المفقود مرتبط بسجلات أخرى — يلزم استعادة الأصل وتسوية مستقلة')
+        }
         const customer = scoped.customers.find(item => item.id === customerId)
         if (!customer || state.customers.filter(item => item.id === customerId).length !== 1) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
         const extracts = state.projectExtracts.filter(item => item.projectId === projectId)
@@ -13426,29 +13541,87 @@ export const useRawDataStore = create<DataState>()(
           const fields: (keyof CartTotals)[] = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor', 'cogsMinor']
           return fields.every(field => Number.isSafeInteger(actual?.[field]) && actual[field] === expected[field])
         }
+        const safeCartLines = (lines: CartLine[]) => lines.every(line => Number.isSafeInteger(line.itemId) && line.itemId > 0 && Number.isFinite(line.qty) && line.qty > 0 && Number.isSafeInteger(line.unitPriceMinor) && line.unitPriceMinor >= 0 && Number.isSafeInteger(line.unitCostMinor) && line.unitCostMinor >= 0 && Number.isFinite(line.discountPercent) && line.discountPercent >= 0 && line.discountPercent <= 100 && (line.unitFactor == null || (Number.isFinite(line.unitFactor) && line.unitFactor > 0)) && (line.vatPercentOverride == null || (Number.isFinite(line.vatPercentOverride) && line.vatPercentOverride >= 0)) && (line.vatExemptPerUnitMinor == null || (Number.isSafeInteger(line.vatExemptPerUnitMinor) && line.vatExemptPerUnitMinor >= 0 && line.vatExemptPerUnitMinor <= line.unitPriceMinor)))
+        const isFinancialSale = (sale: SaleInvoice) => sale.projectBilling === 'extra' || sale.projectBilling == null
+        const returnAllocation = (ret: SaleReturn): RefundAllocation => {
+          let cash = ret.cashRefundMinor, credit = ret.creditRefundMinor
+          let store = ret.storeCreditRefundMinor ?? 0
+          if (cash == null && credit == null) {
+            if (ret.waivedRefundMinor != null || ret.storeCreditRefundMinor != null || !['cash', 'credit', 'store_credit'].includes(ret.refund)) throw new Error('توزيع المرتجع القديم غير مثبت')
+            cash = returnCashRefundMinor(ret)
+            credit = returnCreditRefundMinor(ret)
+            if (ret.refund === 'store_credit') store = credit
+          }
+          if (!Number.isSafeInteger(cash) || !Number.isSafeInteger(credit) || !Number.isSafeInteger(store) || !Number.isSafeInteger(ret.waivedRefundMinor ?? 0) || store < 0 || store > credit!) throw new Error('توزيع المرتجع غير صالح')
+          return { cashMinor: cash!, creditMinor: credit! - store, storeCreditMinor: store, waivedMinor: ret.waivedRefundMinor ?? 0 }
+        }
         const checkMemo = (entryId: number, type: 'sale' | 'sale_return', sourceId: number) => {
           const entry = journal.get(entryId)
           if (state.journal.filter(row => row.id === entryId).length !== 1 || !entry || entry.sourceType !== type || entry.sourceId !== sourceId || (entry.sourceCollection != null && entry.sourceCollection !== (type === 'sale' ? 'sales' : 'saleReturns')) || entry.memoOnly !== true || !Array.isArray(entry.lines) || entry.lines.length !== 0 || entry.reversedByEntryId != null || entry.reversesEntryId != null) throw new FinancialDataReviewError(`قيد توثيق #${sourceId}`)
         }
         for (const sale of projectSales) {
-          if (sale.projectBilling === 'extra') {
+          if (isFinancialSale(sale)) {
             const fail = (): never => { throw new Error('الفاتورة الإضافية أو قيدها أو تحصيلها غير مطابق — يلزم تدقيق منفصل') }
-            if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || (sale.payment !== 'cash' && sale.payment !== 'credit') || sale.fx != null || (sale.editHistory?.length ?? 0) > 0 || (sale.paymentAllocations?.length ?? 0) > 0 || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Array.isArray(sale.lines) || !sale.lines.length || sale.lines.some(line => !state.items.some(item => item.id === line.itemId && item.isService) || state.items.filter(item => item.id === line.itemId).length !== 1) || sale.taxPercent == null || sale.taxInclusive == null || projectReturns.some(ret => ret.saleId === sale.id) || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale' && tx.documentId === String(sale.id)) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) return fail()
+            if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || (sale.payment !== 'cash' && sale.payment !== 'credit') || sale.fx != null || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Array.isArray(sale.lines) || !sale.lines.length || !safeCartLines(sale.lines) || !Number.isFinite(sale.invoiceDiscountPercent) || (sale.taxPercent != null && (!Number.isFinite(sale.taxPercent) || sale.taxPercent < 0)) || (sale.taxInclusive != null && typeof sale.taxInclusive !== 'boolean') || sale.lines.some(line => !state.items.some(item => item.id === line.itemId) || state.items.filter(item => item.id === line.itemId).length !== 1) || (sale.taxPercent == null && sale.taxInclusive != null) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) return fail()
             let expected: JournalLine[]
+            const tax = sale.taxPercent == null ? deriveTaxConfig(sale.totals, sale.lines) : { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
             try {
-              const totals = computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive)
-              if (!sameCartTotals(sale.totals, totals) || sale.totals.totalMinor <= 0 || sale.totals.cogsMinor !== 0) return fail()
+              const totals = computeTotals(sale.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive)
+              if (!sameCartTotals(sale.totals, totals) || sale.totals.totalMinor <= 0 || sale.totals.cogsMinor < 0) return fail()
               const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
-              if (!Number.isSafeInteger(paid) || paid < 0 || paid > sale.totals.totalMinor || (paid > 0 && !state.treasuries.some(treasury => treasury.code === (sale.treasury ?? '1101')))) return fail()
-              expected = buildSaleEntry(sale.totals, sale.payment, sale.treasury ?? '1101', paid)
+              if (!Number.isSafeInteger(paid) || paid < 0 || paid > sale.totals.totalMinor) return fail()
+              if (sale.paymentAllocations?.length) {
+                if (sale.paymentAllocations.some(a => !Number.isSafeInteger(a.amountMinor) || a.amountMinor <= 0 || a.employeeId != null || !state.treasuries.some(t => t.code === a.accountCode)) || sale.paymentAllocations.reduce((sum, a) => sum + a.amountMinor, 0) !== paid) return fail()
+                expected = buildSaleEntryWithAllocations(sale.totals, sale.paymentAllocations)
+              } else {
+                if (paid > 0 && !state.treasuries.some(t => t.code === (sale.treasury ?? '1101'))) return fail()
+                expected = buildSaleEntry(sale.totals, sale.payment, sale.treasury ?? '1101', paid)
+              }
             } catch { return fail() }
             const entry = journal.get(sale.journalEntryId)
             if (state.journal.filter(row => row.id === sale.journalEntryId).length !== 1 || !entry || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || (entry.sourceCollection != null && entry.sourceCollection !== 'sales') || entry.memoOnly || entry.reversesEntryId != null || entry.reversedByEntryId != null || !Array.isArray(entry.lines) || entry.lines.length !== expected.length || entry.lines.some((line, index) => line.accountCode !== expected[index].accountCode || line.debit !== expected[index].debit || line.credit !== expected[index].credit || line.partyKind != null || line.partyId != null)) return fail()
             try { assertBalanced(entry.lines) } catch { return fail() }
+            const history = sale.editHistory ?? []
+            if (!Array.isArray(history) || new Set(history.map(row => row.previousEntryId)).size !== history.length || new Set(history.map(row => row.reversalEntryId)).size !== history.length) return fail()
+            for (let i = 0; i < history.length; i++) {
+              const record = history[i]
+              const old = journal.get(record.previousEntryId), reverse = journal.get(record.reversalEntryId)
+              const nextId = history[i + 1]?.previousEntryId ?? sale.journalEntryId
+              if (!Number.isSafeInteger(record.previousEntryId) || !Number.isSafeInteger(record.reversalEntryId) || nextId !== record.reversalEntryId + 1 || record.previousEntryId >= record.reversalEntryId || !record.at || !record.reason?.trim() || state.journal.filter(row => row.id === record.previousEntryId).length !== 1 || state.journal.filter(row => row.id === record.reversalEntryId).length !== 1 || state.journal.filter(row => row.reversesEntryId === record.previousEntryId).length !== 1 || !old || old.sourceType !== 'sale' || old.sourceId !== sale.id || (old.sourceCollection != null && old.sourceCollection !== 'sales') || old.reversesEntryId != null || old.reversedByEntryId !== record.reversalEntryId || old.memoOnly || !Array.isArray(old.lines) || !reverse || reverse.sourceType !== 'reversal' || reverse.sourceId !== old.id || reverse.reversesEntryId !== old.id || reverse.reversedByEntryId != null || (old.branchId != null && reverse.branchId != null && old.branchId !== reverse.branchId) || !Array.isArray(reverse.lines) || reverse.lines.length !== old.lines.length) return fail()
+              const reversedLines = buildReversalLines(old.lines)
+              if (reverse.lines.some((line, index) => { const expected = reversedLines[index]; return line.accountCode !== expected.accountCode || line.debit !== expected.debit || line.credit !== expected.credit || (line.partyKind ?? null) !== (expected.partyKind ?? null) || (line.partyId ?? null) !== (expected.partyId ?? null) || (line.costCenterId ?? null) !== (expected.costCenterId ?? null) || (line.relatedBranchId ?? null) !== (expected.relatedBranchId ?? null) })) return fail()
+              try { assertBalanced(old.lines); assertBalanced(reverse.lines) } catch { return fail() }
+            }
+            const returnedQty = new Map<number, number>()
+            let returned = 0
+            for (const ret of projectReturns.filter(row => row.saleId === sale.id)) {
+              if (state.saleReturns.filter(row => row.id === ret.id).length !== 1 || !scoped.saleReturns.some(row => row.id === ret.id) || ret.projectBilling === 'documentation' || !Array.isArray(ret.lines) || !ret.lines.length || !safeCartLines(ret.lines) || !Number.isSafeInteger(ret.totals?.totalMinor) || ret.totals.totalMinor <= 0 || state.stockMoves.some(move => move.docType === 'sale_return' && move.docId === ret.id)) return fail()
+              let expectedReturn: JournalLine[]
+              try {
+                if (!sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive)) || ret.totals.cogsMinor < 0) return fail()
+                const allocation = returnAllocation(ret)
+                const refundTreasury = ret.treasury ?? sale.treasury ?? '1101'
+                if (allocation.cashMinor > 0 && !state.treasuries.some(t => t.code === refundTreasury)) return fail()
+                expectedReturn = buildReturnEntryAlloc(ret.totals, allocation, refundTreasury, damagedCostOf(ret.lines))
+              } catch { return fail() }
+              for (const line of ret.lines) {
+                const index = line.saleLineIndex
+                const original = index == null ? undefined : sale.lines[index]
+                if (!Number.isSafeInteger(index) || !original || !Number.isFinite(line.qty) || line.qty <= 0 || line.itemId !== original.itemId || line.unitPriceMinor !== original.unitPriceMinor || line.unitCostMinor !== original.unitCostMinor || line.discountPercent !== original.discountPercent || (line.unitFactor ?? 1) !== (original.unitFactor ?? 1) || (line.vatPercentOverride ?? null) !== (original.vatPercentOverride ?? null) || (line.vatExemptPerUnitMinor ?? 0) !== (original.vatExemptPerUnitMinor ?? 0)) return fail()
+                const quantity = (returnedQty.get(index!) ?? 0) + line.qty
+                if (!Number.isFinite(original.qty) || quantity > original.qty + 1e-9) return fail()
+                returnedQty.set(index!, quantity)
+              }
+              const returnEntry = journal.get(ret.journalEntryId)
+              if (state.journal.filter(row => row.id === ret.journalEntryId).length !== 1 || !returnEntry || returnEntry.sourceType !== 'sale_return' || returnEntry.sourceId !== ret.id || (returnEntry.sourceCollection != null && returnEntry.sourceCollection !== 'saleReturns') || returnEntry.memoOnly || returnEntry.reversesEntryId != null || returnEntry.reversedByEntryId != null || !Array.isArray(returnEntry.lines) || returnEntry.lines.length !== expectedReturn.length || returnEntry.lines.some((line, index) => line.accountCode !== expectedReturn[index].accountCode || line.debit !== expectedReturn[index].debit || line.credit !== expectedReturn[index].credit || line.partyKind != null || line.partyId != null)) return fail()
+              try { assertBalanced(returnEntry.lines) } catch { return fail() }
+              returned += ret.totals.totalMinor
+            }
+            if (!Number.isSafeInteger(returned) || returned > sale.totals.totalMinor) return fail()
             continue
           }
           if (sale.projectBilling !== 'documentation') throw new Error('طبيعة فاتورة المشروع التاريخية غير مثبتة — يلزم تدقيق منفصل')
-          if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || sale.payment !== 'credit' || (sale.paidMinor ?? 0) !== 0 || sale.fx != null || (sale.paymentAllocations?.length ?? 0) > 0 || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Number.isSafeInteger(sale.totals?.totalMinor) || sale.totals.totalMinor <= 0 || !Array.isArray(sale.extractIds) || !sale.extractIds.length || new Set(sale.extractIds).size !== sale.extractIds.length || sale.extractIds.some(id => !extracts.some(extract => extract.id === id)) || !Array.isArray(sale.lines) || !sale.lines.length || sale.lines.some(line => !state.items.some(item => item.id === line.itemId && item.isService))) throw new Error('فاتورة التوثيق أو عميلها أو مستخلصاتها غير مطابقة — يلزم تدقيق منفصل')
+          if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || sale.payment !== 'credit' || (sale.paidMinor ?? 0) !== 0 || sale.fx != null || (sale.paymentAllocations?.length ?? 0) > 0 || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Number.isSafeInteger(sale.totals?.totalMinor) || sale.totals.totalMinor <= 0 || !Array.isArray(sale.extractIds) || !sale.extractIds.length || new Set(sale.extractIds).size !== sale.extractIds.length || sale.extractIds.some(id => !extracts.some(extract => extract.id === id)) || !Array.isArray(sale.lines) || !sale.lines.length || !safeCartLines(sale.lines) || !Number.isFinite(sale.invoiceDiscountPercent) || sale.lines.some(line => !state.items.some(item => item.id === line.itemId && item.isService))) throw new Error('فاتورة التوثيق أو عميلها أو مستخلصاتها غير مطابقة — يلزم تدقيق منفصل')
           try {
             if (sale.taxPercent == null || sale.taxInclusive == null || !sameCartTotals(sale.totals, computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive)) || sale.totals.cogsMinor !== 0) throw new Error('totals')
           } catch { throw new Error('إجمالي فاتورة التوثيق أو ضريبتها غير مطابق — يلزم تدقيق منفصل') }
@@ -13459,13 +13632,13 @@ export const useRawDataStore = create<DataState>()(
           for (const ret of projectReturns.filter(item => item.saleId === sale.id)) {
             if (state.saleReturns.filter(item => item.id === ret.id).length !== 1 || !scoped.saleReturns.some(item => item.id === ret.id) || ret.projectBilling !== 'documentation' || ret.refund !== 'credit' || !Number.isSafeInteger(ret.totals?.totalMinor) || ret.totals.totalMinor <= 0 || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale_return' && (tx.documentId === String(ret.id) || tx.documentId.startsWith(`${ret.id}:`))) || state.stockMoves.some(move => move.docType === 'sale_return' && move.docId === ret.id)) throw new Error('مرتجع فاتورة التوثيق غير مطابق — يلزم تدقيق منفصل')
             try {
-              if (!Array.isArray(ret.lines) || !ret.lines.length || !sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, sale.taxPercent!, sale.taxInclusive!)) || ret.totals.cogsMinor !== 0 || (ret.cashRefundMinor ?? 0) !== 0 || (ret.storeCreditRefundMinor ?? 0) !== 0 || (ret.waivedRefundMinor ?? 0) !== 0) throw new Error('totals')
+              if (!Array.isArray(ret.lines) || !ret.lines.length || !safeCartLines(ret.lines) || !sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, sale.taxPercent!, sale.taxInclusive!)) || ret.totals.cogsMinor !== 0 || (ret.cashRefundMinor ?? 0) !== 0 || (ret.storeCreditRefundMinor ?? 0) !== 0 || (ret.waivedRefundMinor ?? 0) !== 0) throw new Error('totals')
             } catch { throw new Error('إجمالي مرتجع التوثيق أو ضريبته غير مطابق — يلزم تدقيق منفصل') }
             for (const line of ret.lines) {
               const index = line.saleLineIndex
               const original = index == null ? undefined : sale.lines[index]
               if (!Number.isSafeInteger(index) || !original || !Number.isFinite(line.qty) || line.qty <= 0 || line.itemId !== original.itemId || line.unitPriceMinor !== original.unitPriceMinor || line.discountPercent !== original.discountPercent || (line.unitFactor ?? 1) !== (original.unitFactor ?? 1) || (line.vatPercentOverride ?? null) !== (original.vatPercentOverride ?? null) || (line.vatExemptPerUnitMinor ?? 0) !== (original.vatExemptPerUnitMinor ?? 0)) throw new Error('سطور مرتجع التوثيق لا تطابق الفاتورة الأصلية — يلزم التدقيق')
-              const quantity = Math.round(((returnedQty.get(index!) ?? 0) + line.qty) * 1000) / 1000
+              const quantity = (returnedQty.get(index!) ?? 0) + line.qty
               if (!Number.isFinite(original.qty) || quantity > original.qty + 1e-9) throw new Error('كميات مرتجع التوثيق تتجاوز الأصل — يلزم التدقيق')
               returnedQty.set(index!, quantity)
             }
@@ -13474,7 +13647,7 @@ export const useRawDataStore = create<DataState>()(
           }
           if (!Number.isSafeInteger(returned) || returned > sale.totals.totalMinor) throw new Error('مرتجعات التوثيق تتجاوز الفاتورة — يلزم التدقيق')
         }
-        const relatedKeys = new Set([...keys, ...projectSales.filter(sale => sale.projectBilling === 'extra').map(sale => `sale:${sale.id}`)])
+        const relatedKeys = new Set([...keys, ...projectSales.filter(isFinancialSale).map(sale => `sale:${sale.id}`)])
         const relatedVouchers = state.vouchers.filter(item => (item.kind === 'receipt' && item.projectId === projectId) || item.allocations?.some(a => relatedKeys.has(a.docKey)))
         const relatedCollections = state.clientSettlements.filter(item => item.allocations?.some(a => relatedKeys.has(a.docKey)))
         const explicitlyAllocated = new Map<string, number>()
@@ -13517,10 +13690,13 @@ export const useRawDataStore = create<DataState>()(
           const allocated = explicitlyAllocated.get(`extract:${extract.id}`) ?? 0
           if (!Number.isSafeInteger(allocated) || (extract.payment !== 'credit' && allocated > 0) || allocated > extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0)) throw new Error('تخصيصات التحصيل تتجاوز أصل مستحق المستخلص — يلزم التدقيق')
         }
-        for (const sale of projectSales.filter(item => item.projectBilling === 'extra')) {
+        for (const sale of projectSales.filter(isFinancialSale)) {
           const allocated = explicitlyAllocated.get(`sale:${sale.id}`) ?? 0
           const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
-          if (!Number.isSafeInteger(allocated) || allocated > sale.totals.totalMinor - paid) throw new Error('تخصيصات التحصيل تتجاوز مستحق الفاتورة الإضافية — يلزم التدقيق')
+          const returns = projectReturns.filter(ret => ret.saleId === sale.id)
+          const appliedRefunds = returns.reduce((sum, ret) => sum + returnAllocation(ret).creditMinor, 0)
+          const cashRefunds = returns.reduce((sum, ret) => sum + returnAllocation(ret).cashMinor, 0)
+          if (!Number.isSafeInteger(allocated) || !Number.isSafeInteger(appliedRefunds) || !Number.isSafeInteger(cashRefunds) || allocated + appliedRefunds > sale.totals.totalMinor - paid || cashRefunds > paid + allocated) throw new Error('تخصيصات التحصيل أو المرتجعات تتجاوز مستحق الفاتورة الإضافية — يلزم التدقيق')
         }
         let dueMinor = 0
         for (const extract of extracts) {
@@ -13558,8 +13734,14 @@ export const useRawDataStore = create<DataState>()(
         // والقيد وحساب الماكينة، وكل رد يجب أن يطابق إشعاراً محدداً.
         const terminalRows = state.paymentTerminalTransactions.filter(tx =>
           (tx.documentType === 'project_extract' && (extracts.some(extract => tx.documentId === String(extract.id) || tx.documentId.startsWith(`${extract.id}:refund:`)) || tx.documentId.startsWith(`advance:${projectId}:`))) ||
+          (tx.documentType === 'sale' && projectSales.some(sale => isFinancialSale(sale) && tx.documentId === String(sale.id))) ||
+          (tx.documentType === 'sale_return' && projectReturns.some(ret => ret.projectBilling !== 'documentation' && tx.documentId === String(ret.id))) ||
           (tx.documentType === 'receipt_voucher' && relatedVouchers.some(voucher => tx.documentId === voucher.voucherNumber)) ||
           (tx.documentType === 'client_collection' && relatedCollections.some(collection => tx.documentId === String(collection.id))))
+        for (const sale of projectSales.filter(isFinancialSale)) {
+          const marked = (sale.paymentAllocations ?? []).filter(a => a.note?.startsWith('ماكينة'))
+          if (marked.length > 1 || (marked.length === 1 && terminalRows.filter(tx => tx.kind === 'charge' && tx.documentType === 'sale' && tx.documentId === String(sale.id)).length !== 1)) throw new Error('تحصيل ماكينة الفاتورة الإضافية مفقود أو ملتبس — يلزم التدقيق')
+        }
         const chargeIds = new Set(terminalRows.filter(row => row.kind === 'charge').map(row => row.id))
         for (const tx of state.paymentTerminalTransactions) if (tx.originalTransactionId && chargeIds.has(tx.originalTransactionId) && !terminalRows.includes(tx)) terminalRows.push(tx)
         for (const tx of terminalRows) {
@@ -13569,12 +13751,24 @@ export const useRawDataStore = create<DataState>()(
           if (tx.kind === 'charge') {
             if (tx.originalTransactionId != null || validateTerminalTransaction(tx).length || terminalRows.filter(row => row.kind === 'charge' && row.documentType === tx.documentType && row.documentId === tx.documentId).length !== 1) return fail()
             let amount = -1
+            let accountAmount: number | null = null
             let entry: JournalEntry | undefined
             if (tx.documentType === 'project_extract') {
               const extract = extracts.find(item => String(item.id) === tx.documentId)
               const advance = advances.find(item => `advance:${projectId}:${item.journalEntryId}` === tx.documentId)
               if (extract?.payment === 'cash') { amount = extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0); entry = journal.get(extract.journalEntryId) }
               else if (advance) { amount = advance.amountMinor; entry = journal.get(advance.journalEntryId) }
+            } else if (tx.documentType === 'sale') {
+              const sale = projectSales.find(item => isFinancialSale(item) && String(item.id) === tx.documentId)
+              if (sale) {
+                if (sale.paymentAllocations?.length) {
+                  const matching = sale.paymentAllocations.filter(a => a.accountCode === terminal.settlementAccountCode && a.note?.startsWith('ماكينة'))
+                  if (matching.length !== 1) return fail()
+                  amount = matching[0].amountMinor
+                  accountAmount = sale.paymentAllocations.filter(a => a.accountCode === terminal.settlementAccountCode).reduce((sum, a) => sum + a.amountMinor, 0)
+                } else amount = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+                entry = journal.get(sale.journalEntryId)
+              }
             } else if (tx.documentType === 'receipt_voucher') {
               const voucher = relatedVouchers.find(item => item.voucherNumber === tx.documentId)
               if (voucher && !voucher.reversalEntryId && state.vouchers.filter(item => item.voucherNumber === tx.documentId).length === 1) { amount = voucher.amountMinor; entry = journal.get(voucher.journalEntryId) }
@@ -13582,16 +13776,24 @@ export const useRawDataStore = create<DataState>()(
               const collection = relatedCollections.find(item => String(item.id) === tx.documentId)
               if (collection) { amount = collection.amountMinor; entry = journal.get(collection.journalEntryId) }
             }
-            if (!entry || amount !== tx.amountMinor || entry.lines.filter(line => line.accountCode === terminal.settlementAccountCode).reduce((sum, line) => sum + line.debit - line.credit, 0) !== amount) return fail()
+            if (!entry || amount !== tx.amountMinor || entry.lines.filter(line => line.accountCode === terminal.settlementAccountCode).reduce((sum, line) => sum + line.debit - line.credit, 0) !== (accountAmount ?? amount)) return fail()
             const refunded = state.paymentTerminalTransactions.filter(row => row.originalTransactionId === tx.id).reduce((sum, row) => sum + row.amountMinor, 0)
             if (!Number.isSafeInteger(refunded) || refunded > tx.amountMinor) return fail()
           } else {
             const original = terminalRows.find(row => row.id === tx.originalTransactionId)
-            if (tx.kind !== 'refund' || !original || validateTerminalTransaction(tx, original).length || tx.branchId !== original.branchId || tx.documentType !== 'project_extract' || tx.documentType !== original.documentType) return fail()
-            const extract = extracts.find(item => String(item.id) === original.documentId)
-            const refund = extract?.refunds?.find(item => tx.documentId === `${extract.id}:refund:${item.journalEntryId}`)
-            const entry = refund && journal.get(refund.journalEntryId)
-            if (!refund || refund.mode !== 'cash' || refund.amountMinor !== tx.amountMinor || !entry || entry.lines.filter(line => line.accountCode === terminal.settlementAccountCode).reduce((sum, line) => sum + line.credit - line.debit, 0) !== tx.amountMinor) return fail()
+            if (tx.kind !== 'refund' || !original || validateTerminalTransaction(tx, original).length || tx.branchId !== original.branchId) return fail()
+            let refundAmount = -1
+            let entry: JournalEntry | undefined
+            if (tx.documentType === 'project_extract' && original.documentType === 'project_extract') {
+              const extract = extracts.find(item => String(item.id) === original.documentId)
+              const refund = extract?.refunds?.find(item => tx.documentId === `${extract.id}:refund:${item.journalEntryId}`)
+              if (refund?.mode === 'cash') { refundAmount = refund.amountMinor; entry = journal.get(refund.journalEntryId) }
+            } else if (tx.documentType === 'sale_return' && original.documentType === 'sale') {
+              const sale = projectSales.find(item => isFinancialSale(item) && String(item.id) === original.documentId)
+              const ret = projectReturns.find(item => item.saleId === sale?.id && String(item.id) === tx.documentId && item.projectBilling !== 'documentation')
+              if (ret) { refundAmount = returnAllocation(ret).cashMinor; entry = journal.get(ret.journalEntryId) }
+            }
+            if (refundAmount !== tx.amountMinor || !entry || entry.lines.filter(line => line.accountCode === terminal.settlementAccountCode).reduce((sum, line) => sum + line.credit - line.debit, 0) !== tx.amountMinor) return fail()
             if (terminalRows.filter(row => row.kind === 'refund' && row.documentId === tx.documentId && row.documentType === tx.documentType).length !== 1) return fail()
           }
         }
@@ -13664,11 +13866,12 @@ export const useRawDataStore = create<DataState>()(
           ...relatedVouchers.map(voucher => ({ description: `سند ${voucher.voucherNumber}${voucher.reversalEntryId ? ' معكوس' : ' قائم'} — قيد #${voucher.journalEntryId}`, amountMinor: voucher.amountMinor })),
           ...relatedCollections.map(collection => ({ description: `تحصيل ${collection.settlementNumber} — قيد #${collection.journalEntryId}`, amountMinor: collection.amountMinor })),
           ...projectSales.map(sale => ({ description: sale.projectBilling === 'documentation' ? `فاتورة توثيق ${sale.invoiceNumber} (تذكارية بلا قيد مالي)` : `فاتورة إضافية ${sale.invoiceNumber} — قيد #${sale.journalEntryId}`, amountMinor: sale.totals.totalMinor })),
-          ...projectReturns.map(ret => ({ description: `مرتجع توثيق ${ret.returnNumber} (تذكاري بلا قيد مالي)`, amountMinor: ret.totals.totalMinor })),
+          ...projectSales.flatMap(sale => (sale.editHistory ?? []).map(edit => ({ description: `عكس تعديل ${sale.invoiceNumber} — القيدان #${edit.previousEntryId} و#${edit.reversalEntryId} (إجمالي طرف القيد)`, amountMinor: journal.get(edit.previousEntryId)?.lines.reduce((sum, line) => sum + line.debit, 0) ?? 0 }))),
+          ...projectReturns.map(ret => ({ description: ret.projectBilling === 'documentation' ? `مرتجع توثيق ${ret.returnNumber} (تذكاري بلا قيد مالي)` : `مرتجع فاتورة إضافية ${ret.returnNumber} — قيد #${ret.journalEntryId}`, amountMinor: ret.totals.totalMinor })),
           ...terminalRows.map(tx => ({ description: `ماكينة ${tx.kind === 'charge' ? 'تحصيل' : 'رد'} — ${tx.documentId} — مرجع ${tx.providerReference}`, amountMinor: tx.amountMinor })),
         ]
-        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId), voucher.reversalEntryId != null ? journal.get(voucher.reversalEntryId) : null]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), terminalRows.map(tx => [tx, state.paymentTerminals.find(terminal => terminal.id === tx.terminalId)]), projectSales.map(sale => [sale, journal.get(sale.journalEntryId)]), projectReturns.map(ret => [ret, journal.get(ret.journalEntryId)]), beforeRows, afterRows, beforeDocs, afterDocs])
-        return { dueMinor, extractCount: extracts.length, balanceBeforeMinor, balanceAfterMinor, documents, evidence, fingerprint }
+        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId), voucher.reversalEntryId != null ? journal.get(voucher.reversalEntryId) : null]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), terminalRows.map(tx => [tx, state.paymentTerminals.find(terminal => terminal.id === tx.terminalId)]), projectSales.map(sale => [sale, journal.get(sale.journalEntryId), (sale.editHistory ?? []).map(edit => [journal.get(edit.previousEntryId), journal.get(edit.reversalEntryId)])]), projectReturns.map(ret => [ret, journal.get(ret.journalEntryId)]), beforeRows, afterRows, beforeDocs, afterDocs])
+        return { dueMinor, extractCount: extracts.length, previousCustomerId, balanceBeforeMinor, balanceAfterMinor, documents, evidence, fingerprint }
       },
       resolveLegacyProjectCustomer: (args) => {
         const reason = args.reason.trim()
@@ -13681,8 +13884,8 @@ export const useRawDataStore = create<DataState>()(
         const by = activeUserName(state)
         const extractIds = state.projectExtracts.filter(item => item.projectId === args.projectId).map(item => item.id)
         set({
-          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, dueMinor: preview.dueMinor, extractIds, at, by, reason, balanceBeforeMinor: preview.balanceBeforeMinor, balanceAfterMinor: preview.balanceAfterMinor, documents: preview.documents, evidence: preview.evidence } } : item),
-          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `مراجعة ربط مشروع #${args.projectId} بالعميل #${args.customerId} بذمة ${preview.dueMinor} — ${reason}` }]),
+          projects: state.projects.map(item => item.id === args.projectId ? { ...item, clientId: args.customerId, legacyCustomerResolution: { customerId: args.customerId, previousCustomerId: preview.previousCustomerId, dueMinor: preview.dueMinor, extractIds, at, by, reason, balanceBeforeMinor: preview.balanceBeforeMinor, balanceAfterMinor: preview.balanceAfterMinor, documents: preview.documents, evidence: preview.evidence } } : item),
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `مراجعة ربط مشروع #${args.projectId} بالعميل #${args.customerId}${preview.previousCustomerId != null ? ` بدلاً من الرقم المفقود #${preview.previousCustomerId}` : ""} بذمة ${preview.dueMinor} — ${reason}` }]),
         })
       },
 

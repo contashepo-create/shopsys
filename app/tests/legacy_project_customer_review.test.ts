@@ -247,8 +247,8 @@ it('يرفض الحفظ بعد تغير توزيع شيك سابق حتى لو �
 
 it('يمنع إسقاط عميل محذوف أو نقل مشروع تاريخي بين فروع بمجرد اختيار عميل', () => {
   const { customer, project } = legacy()
-  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id + 100 })) })
-  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/مرتبط/)
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id + 100 })), loyaltyRedemptions: [{ id: 9, date: '2025-01-01', customerId: customer.id + 100, points: 1, valueMinor: 0, journalEntryId: 7 }] })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/العميل المفقود/)
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
   const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
   const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
@@ -463,4 +463,302 @@ it('يطابق ماكينة تحصيل العميل ويرفض حفظ معاين
   useRawDataStore.setState({ paymentTerminals: S().paymentTerminals.map(t => ({ ...t, nameAr: 'اسم جديد' })) })
   expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/تغير/)
   expect(S().projects.find(p => p.id === project.id)?.clientId).toBeNull()
+})
+
+it('يعاين فاتورة إضافية خدمية ومرتجعها المالي المطابق دون تكرار ذمتها', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة إضافية مرتجعة' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'خدمة إضافية', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  const ret = S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'credit', reason: 'مرتجع' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const journal = S().journal
+  const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(preview).toMatchObject({ dueMinor: 8000, balanceBeforeMinor: 1000, balanceAfterMinor: 9000 })
+  expect(preview.evidence.some(e => e.description.includes(ret.returnNumber))).toBe(true)
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة المرتجع', confirmed: true })
+  expect(S().journal).toBe(journal)
+  expect(S().getCustomerBalance(customer.id)).toBe(9000)
+})
+
+it('يعاين فاتورة إضافية لبضاعة ومرتجعاً مالياً بقيد تكلفة مطابق دون تغيير المخزون', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  S().addItem({ nameAr: 'مواد', sku: 'MAT-X', barcodes: [], categoryId: 0, baseUnit: 'قطعة', extraUnits: [], costMinor: 300, stockQty: 10, priceMinor: 1000, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
+  const item = S().items.at(-1)!
+  const sale = S().postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 1000, unitCostMinor: 300, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'credit', reason: 'مرتجع' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const stock = S().items.find(row => row.id === item.id)!.stockQty
+  const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(preview).toMatchObject({ balanceBeforeMinor: 1000, balanceAfterMinor: 9000 })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة', confirmed: true })
+  expect(S().items.find(row => row.id === item.id)!.stockQty).toBe(stock)
+})
+
+it('يطابق ماكينة فاتورة إضافية وردها مع قيود البيع والمرتجع', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminals: [], paymentTerminalTransactions: [] })
+  S().addPaymentTerminal({ id: 'sale-term', code: 'TERM-04', nameAr: 'ماكينة بيع', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'ps', status: 'active' })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'بيع إضافي' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'بيع إضافي', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'cash', treasury: '1101', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra', terminalPayment: { terminalId: 'sale-term', providerReference: 'SALE-PAY' } })
+  const charge = S().paymentTerminalTransactions[0]
+  S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'cash', reason: 'رد', terminalRefund: { originalTransactionId: charge.id, providerReference: 'SALE-REF' } })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p.balanceAfterMinor).toBe(8000)
+  expect(p.evidence.some(e => e.description.includes('SALE-REF'))).toBe(true)
+  const good = S().paymentTerminalTransactions
+  useRawDataStore.setState({ paymentTerminalTransactions: good.map(tx => tx.kind === 'refund' ? { ...tx, amountMinor: tx.amountMinor - 1 } : tx) })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/ماكينة/)
+  useRawDataStore.setState({ paymentTerminalTransactions: good.map(tx => tx.kind === 'refund' ? { ...tx, originalTransactionId: 'missing' } : tx) })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/ماكينة/)
+})
+
+it('يطابق فاتورة إضافية بتحصيل مجزأ نقدي وماكينة وآجل دون احتساب الماكينة مرتين', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminals: [], paymentTerminalTransactions: [] })
+  S().addPaymentTerminal({ id: 'mixed-term', code: 'TERM-05', nameAr: 'ماكينة', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'pm', status: 'active' })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'عمل إضافي' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'عمل إضافي', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra', paymentAllocations: [{ accountCode: '1101', amountMinor: 1000, note: 'نقدي' }, { accountCode: '1101', amountMinor: 500, note: 'ماكينة بطاقة' }], terminalPayment: { terminalId: 'mixed-term', providerReference: 'MIXED' } })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 500, balanceAfterMinor: 8500 })
+  expect(S().sales.find(row => row.id === sale.id)?.paidMinor).toBe(1500)
+  expect(p.evidence.some(e => e.description.includes('MIXED'))).toBe(true)
+})
+
+it('لا يعيد استخدام رقم عميل مفقود له مشروع تاريخي عند إنشاء عميل آخر', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ customers: [], projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل مختلف', phone: '', creditLimitMinor: 0, notes: '' })
+  expect(S().customers[0].id).not.toBe(customer.id)
+  expect(S().projects.find(p => p.id === project.id)?.clientId).toBe(customer.id)
+})
+
+it('يحجز رقم العميل المفقود حتى لو ظهر فقط في افتتاحي فرع أو قيد طرف', () => {
+  useRawDataStore.setState({ customers: [], branchOpeningBalances: { 2: { openingBalances: { 'customer:1': 500 }, openingItems: {}, declaredCapitalMinor: null } }, journal: [{ id: 1, entryNumber: 1, date: '2025-01-01', description: '', sourceType: 'manual', sourceId: 1, lines: [{ accountCode: '1104', debit: 0, credit: 0, partyKind: 'customer', partyId: 2 }], createdBy: 'مالك', createdAt: '2025-01-01' }] as never })
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'جديد', phone: '', creditLimitMinor: 0, notes: '' })
+  expect(S().customers[0].id).toBe(3)
+})
+
+it('يمنع حذف عميل مشار إليه في سجل غير مشمول بحارس الحذف القديم', () => {
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const customer = S().customers[0]
+  useRawDataStore.setState({ loyaltyRedemptions: [{ id: 1, date: '2025-01-01', customerId: customer.id, points: 1, valueMinor: 0, journalEntryId: 7 }] })
+  expect(() => S().removeCustomer(customer.id)).toThrow(/سجل|مراجعة/)
+  expect(S().customers).toContainEqual(customer)
+})
+
+it('يرفض ضياع حركة ماكينة مذكورة صراحة في تخصيص فاتورة إضافية', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminals: [], paymentTerminalTransactions: [] })
+  S().addPaymentTerminal({ id: 'marked', code: 'TM-6', nameAr: 'ماكينة', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'pm6', status: 'active' })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'عمل إضافي' })
+  S().postSale({ lines: [{ itemId, nameAr: 'عمل إضافي', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra', paymentAllocations: [{ accountCode: '1101', amountMinor: 1000, note: 'ماكينة بطاقة' }], terminalPayment: { terminalId: 'marked', providerReference: 'MARKED' } })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })), paymentTerminalTransactions: [] })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/ماكينة/)
+})
+
+it('لا يسمح بتغيير رقم العميل أو نقله لفرع بعد ارتباطه بمستخلص', () => {
+  const { customer } = legacy()
+  const journal = S().journal
+  expect(() => S().updateCustomer(customer.id, { id: customer.id + 100 })).toThrow(/رقم العميل/)
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  expect(() => S().updateCustomer(customer.id, { branchId: 2 })).toThrow(/الفروع|الفرع|فرع/)
+  expect(S().customers.find(c => c.id === customer.id)).toBeDefined()
+  expect(S().journal).toBe(journal)
+})
+
+it('يراجع عميلاً مفقوداً إذا لم تبق أي سجلات أخرى على رقمه بعد مطابقة المالك', () => {
+  const { customer: missing, project } = legacy()
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'الجهة المطابقة', phone: '010', creditLimitMinor: 0, notes: '' })
+  const selected = S().customers.at(-1)!
+  useRawDataStore.setState({ customers: [selected], projects: S().projects.map(p => ({ ...p, clientId: missing.id })) })
+  const beforeJournal = S().journal
+  const p = S().previewLegacyProjectCustomer(project.id, selected.id)
+  expect(p).toMatchObject({ dueMinor: 8000, balanceBeforeMinor: 0, balanceAfterMinor: 8000, previousCustomerId: missing.id })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: selected.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'طابقت هوية الجهة ومستنداتها', confirmed: true })
+  expect(S().projects[0].legacyCustomerResolution?.previousCustomerId).toBe(missing.id)
+  expect(S().journal).toBe(beforeJournal)
+  expect(S().getCustomerBalance(selected.id)).toBe(8000)
+})
+
+it('يلغي مراجعة العميل المفقود إذا ظهر حسابه في فرع آخر بعد المعاينة', () => {
+  const { customer: missing, project } = legacy()
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'الجهة الجديدة', phone: '', creditLimitMinor: 0, notes: '' })
+  const target = S().customers.at(-1)!
+  useRawDataStore.setState({ customers: [target], projects: S().projects.map(p => ({ ...p, clientId: missing.id })) })
+  const preview = S().previewLegacyProjectCustomer(project.id, target.id)
+  useRawDataStore.setState({ branchOpeningBalances: { 99: { openingBalances: { [`customer:${missing.id}`]: 1000 }, openingItems: {}, declaredCapitalMinor: null } } })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: target.id, expectedDueMinor: preview.dueMinor, fingerprint: preview.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/العميل المفقود/)
+  expect(S().projects[0].clientId).toBe(missing.id)
+})
+
+it('يطابق مرتجعاً نقدياً عن تحصيل محفوظ للفاتورة الإضافية ويرفض فساد قيده', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'إضافي' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'إضافي', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  S().receiveClientPayment({ customerId: customer.id, amountMinor: 1000, treasury: '1101', specificDocKey: `sale:${sale.id}` })
+  const ret = S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'cash', reason: 'رد نقدي' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 1000, balanceAfterMinor: 9000 })
+  const good = S().journal
+  useRawDataStore.setState({ journal: good.map(e => e.id === ret.journalEntryId ? { ...e, sourceId: ret.id + 100 } : e) })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/الفاتورة/)
+  useRawDataStore.setState({ journal: good, saleReturns: S().saleReturns.map(r => r.id === ret.id ? { ...r, lines: r.lines.map(l => ({ ...l, unitPriceMinor: l.unitPriceMinor + 1 })) } : r) })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/الفاتورة/)
+})
+
+it('يعرض رصيد مرتجع الفاتورة الإضافية المسددة دون تحويله لتحصيل مشروع', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'إضافي' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'إضافي', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  S().receiveClientPayment({ customerId: customer.id, amountMinor: 2000, treasury: '1101', specificDocKey: `sale:${sale.id}` })
+  S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'store_credit', reason: 'رصيد للعميل' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: -1000, balanceAfterMinor: 7000 })
+})
+
+it('يطابق فاتورة إضافية قديمة بلا وسم أو إعداد ضريبة محفوظ مع مرتجع مطابق للقيد', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'إضافي قديم' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'إضافي قديم', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  const ret = S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'credit', reason: 'مرتجع قديم' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })), sales: S().sales.map(row => ({ ...row, projectBilling: undefined, taxPercent: undefined, taxInclusive: undefined })), saleReturns: S().saleReturns.map(row => row.id === ret.id ? { ...row, cashRefundMinor: undefined, creditRefundMinor: undefined } : row) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 1000, balanceAfterMinor: 9000 })
+})
+
+it('يستعيد سجل العميل المفقود وحده من نسخة مطابقة دون استبدال البيانات أو القيود', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  const backup = JSON.stringify(buildBackup({ appState: null, storeState: { state: JSON.parse(JSON.stringify(useRawDataStore.getState())), version: 25 }, appDataVersion: 25, shopName: 'منشأة الاختبار' }))
+  useRawDataStore.setState({ customers: [] })
+  const beforeJournal = S().journal
+  const preview = S().previewMissingProjectCustomerBackup(project.id, backup)
+  expect(preview.customer).toMatchObject({ id: customer.id, nameAr: customer.nameAr })
+  expect(preview.balanceMinor).toBe(8000)
+  S().restoreMissingProjectCustomerBackup({ projectId: project.id, backup, fingerprint: preview.fingerprint, reason: 'مطابقة هوية الجهة والنسخة', confirmed: true })
+  expect(S().journal).toBe(beforeJournal)
+  expect(S().customers).toContainEqual(customer)
+  expect(S().projects[0].clientId).toBe(customer.id)
+  expect(S().getCustomerBalance(customer.id)).toBe(8000)
+  expect(() => S().restoreMissingProjectCustomerBackup({ projectId: project.id, backup, fingerprint: preview.fingerprint, reason: 'تكرار', confirmed: true })).toThrow(/موجود/)
+})
+
+it('يرفض نسخة غير مطابقة أو مالكاً غير مخول واستعادة تغيرت بياناتها بعد الفحص', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  const backup = JSON.stringify(buildBackup({ appState: null, storeState: { state: JSON.parse(JSON.stringify(useRawDataStore.getState())), version: 25 }, appDataVersion: 25, shopName: 'منشأة الاختبار' }))
+  useRawDataStore.setState({ customers: [] })
+  const preview = S().previewMissingProjectCustomerBackup(project.id, backup)
+  const args = { projectId: project.id, backup, fingerprint: preview.fingerprint, reason: 'مطابقة', confirmed: true }
+  expect(() => S().restoreMissingProjectCustomerBackup({ ...args, confirmed: false })).toThrow(/إقرار/)
+  expect(() => S().previewMissingProjectCustomerBackup(project.id, backup.replace('منشأة الاختبار', 'نسخة أخرى').replace('"checksum":"', '"checksum":"x'))).toThrow(/بصمة/)
+  useRawDataStore.setState({ openingBalances: { 'customer:123': 1 } })
+  expect(() => S().restoreMissingProjectCustomerBackup(args)).toThrow(/تختلف/)
+  expect(S().customers).toHaveLength(0)
+  useRawDataStore.setState({ openingBalances: {}, appUsers: [{ id: 91, nameAr: 'موظف', roleId: 'cashier', pinHash: '0'.repeat(64), active: true }], currentUserId: 91 })
+  expect(() => S().previewMissingProjectCustomerBackup(project.id, backup)).toThrow(/للمالك فقط/)
+})
+
+it('يرفض استعادة سجل عميل من نسخة إذا تغيرت بيانات عميل آخر', () => {
+  const { customer, project } = legacy()
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'آخر', phone: '', creditLimitMinor: 0, notes: '' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  const backup = JSON.stringify(buildBackup({ appState: null, storeState: { state: JSON.parse(JSON.stringify(useRawDataStore.getState())), version: 25 }, appDataVersion: 25, shopName: 'منشأة الاختبار' }))
+  useRawDataStore.setState({ customers: S().customers.filter(c => c.id !== customer.id).map(c => ({ ...c, phone: '010' })) })
+  expect(() => S().previewMissingProjectCustomerBackup(project.id, backup)).toThrow(/العملاء الأخرى/)
+})
+
+it('يعاين فاتورة إضافية معدلة بعد مطابقة سلسلة قيود العكس دون تعديل التاريخ', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'عمل إضافي معدل' })
+  const line = { itemId, nameAr: 'عمل إضافي', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  const edited = S().editSale({ saleId: sale.id, lines: [{ ...line, unitPriceMinor: 1500 }], customerId: customer.id, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تصحيح', einvoiceActive: false, allowNegativeStock: true })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const journal = S().journal
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 1500, balanceAfterMinor: 9500 })
+  expect(p.evidence.some(e => e.description.includes('عكس تعديل'))).toBe(true)
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة سلسلة التعديل', confirmed: true })
+  expect(S().journal).toBe(journal)
+  expect(edited.editHistory).toHaveLength(1)
+})
+
+it('يحجب تغيير أو فقد قيد عكس تعديل فاتورة إضافية', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], paymentTerminalTransactions: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة معدلة' })
+  const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  const edited = S().editSale({ saleId: sale.id, lines: [{ ...line, unitPriceMinor: 1500 }], customerId: customer.id, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تصحيح', einvoiceActive: false, allowNegativeStock: true })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  const journal = S().journal
+  const oldId = edited.editHistory![0].previousEntryId, reverseId = edited.editHistory![0].reversalEntryId
+  useRawDataStore.setState({ journal: journal.filter(e => e.id !== reverseId) })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/الفاتورة/)
+  useRawDataStore.setState({ journal: journal.map(e => e.id === oldId ? { ...e, description: 'تغيرت بيانات القيد' } : e) })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/تغير/)
+  expect(S().projects[0].clientId).toBeNull()
+})
+
+it('لا يعيد استخدام رقم عميل باقٍ في مسودة فاتورة محفوظة كنص', () => {
+  useRawDataStore.setState({ customers: [], advancedInvoiceDrafts: [{ id: 'draft-x', kind: 'sale', name: 'مسودة', payload: JSON.stringify({ customerId: 1 }), createdAt: '2025', updatedAt: '2025' }] })
+  S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل جديد', phone: '', creditLimitMinor: 0, notes: '' })
+  expect(S().customers[0].id).toBe(2)
+})
+
+it('يستعيد عميل النسخة الفعلية ويصمد بعد حفظ SQLite وإعادة تحميل المتجر', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { ShopsysDatabase } = await import('../desktop/sqlite/storage.ts')
+  const dir = mkdtempSync(join(tmpdir(), 'shopsys-customer-recovery-'))
+  try {
+    const { customer, project } = legacy()
+    useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+    await flushSecureStorageWrites('shopsys-data')
+    const stored = await secureStorage.getItem('shopsys-data')
+    const backup = JSON.stringify(buildBackup({ appState: {}, storeState: JSON.parse(stored!), appDataVersion: 25, shopName: 'منشأة' }))
+    useRawDataStore.setState({ customers: [] })
+    const p = S().previewMissingProjectCustomerBackup(project.id, backup)
+    S().restoreMissingProjectCustomerBackup({ projectId: project.id, backup, fingerprint: p.fingerprint, reason: 'مطابقة نسخة فعلية', confirmed: true })
+    await flushSecureStorageWrites('shopsys-data')
+    const saved = await secureStorage.getItem('shopsys-data')
+    const path = join(dir, 'shopsys.db')
+    const db = await ShopsysDatabase.open(path)
+    db.saveSnapshot({ storeName: 'shopsys-data', expectedRevision: 0, payloadJson: saved! })
+    db.close()
+    const reopened = await ShopsysDatabase.open(path)
+    const persisted = reopened.getSnapshot('shopsys-data').payloadJson
+    reopened.close()
+    useRawDataStore.setState({ customers: [], projects: [], projectExtracts: [], journal: [] })
+    await flushSecureStorageWrites('shopsys-data')
+    await secureStorage.setItem('shopsys-data', persisted!)
+    await useRawDataStore.persist.rehydrate()
+    expect(S().customers.find(row => row.id === customer.id)).toEqual(customer)
+    expect(S().getCustomerBalance(customer.id)).toBe(8000)
+    expect(S().auditLog.some(event => event.title.includes('استعادة سجل العميل المفقود'))).toBe(true)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+it('يرفض نقل مشروع أو مستخلصات صريحة بين فرعين بمجرد استعادة سجل العميل', () => {
+  const { customer, project } = legacy()
+  const main = { id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }
+  const second = { id: 2, nameAr: 'الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }
+  useRawDataStore.setState({ branches: [main, second], activeBranchId: null, customers: S().customers.map(c => ({ ...c, branchId: 2 })), projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
+  const backup = JSON.stringify(buildBackup({ appState: null, storeState: { state: JSON.parse(JSON.stringify(useRawDataStore.getState())), version: 25 }, appDataVersion: 25, shopName: 'منشأة' }))
+  useRawDataStore.setState({ customers: [] })
+  expect(() => S().previewMissingProjectCustomerBackup(project.id, backup)).toThrow(/الفروع/)
+  expect(S().customers).toHaveLength(0)
 })

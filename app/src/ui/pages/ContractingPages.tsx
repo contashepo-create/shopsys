@@ -4,7 +4,7 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * ProjectsPage — مشروعات بمستخلصات (PRX) وتكاليف ببنود ومحتجزات وربحية
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, ShoppingCart, Truck, Users2, FileText } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
@@ -43,7 +43,7 @@ export function ProjectsPage() {
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
-    ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer,
+    ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer, previewMissingProjectCustomerBackup, restoreMissingProjectCustomerBackup,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -396,8 +396,38 @@ export function ProjectsPage() {
   const [legacyReason, setLegacyReason] = useState('')
   const [legacyConfirmed, setLegacyConfirmed] = useState(false)
   const [legacyPreview, setLegacyPreview] = useState<ReturnType<typeof previewLegacyProjectCustomer> | null>(null)
+  const [recoveryBackup, setRecoveryBackup] = useState('')
+  const [recoveryPreview, setRecoveryPreview] = useState<ReturnType<typeof previewMissingProjectCustomerBackup> | null>(null)
+  const [recoveryReason, setRecoveryReason] = useState('')
+  const [recoveryConfirmed, setRecoveryConfirmed] = useState(false)
+  const recoveryRead = useRef(0)
   const openLegacyReview = (project: Project) => {
+    recoveryRead.current++
+    setRecoveryBackup(''); setRecoveryPreview(null); setRecoveryReason(''); setRecoveryConfirmed(false)
     setLegacyProject(project); setLegacyCustomerId(''); setLegacyReason(''); setLegacyConfirmed(false); setLegacyPreview(null)
+  }
+  const pickRecoveryBackup = (file: File | undefined) => {
+    const read = ++recoveryRead.current
+    setRecoveryBackup(''); setRecoveryPreview(null); setRecoveryConfirmed(false)
+    if (!file) return
+    const reader = new FileReader()
+    reader.onerror = () => { if (read === recoveryRead.current) toast.show('تعذرت قراءة النسخة', 'error') }
+    reader.onload = () => { if (read === recoveryRead.current) setRecoveryBackup(String(reader.result ?? '')) }
+    reader.readAsText(file)
+  }
+  const checkRecovery = () => {
+    if (!legacyProject || !recoveryBackup) return
+    setRecoveryConfirmed(false)
+    try { setRecoveryPreview(previewMissingProjectCustomerBackup(legacyProject.id, recoveryBackup)) }
+    catch (error) { setRecoveryPreview(null); toast.show((error as Error).message, 'error') }
+  }
+  const saveRecovery = () => {
+    if (!legacyProject || !recoveryPreview) return
+    try {
+      restoreMissingProjectCustomerBackup({ projectId: legacyProject.id, backup: recoveryBackup, fingerprint: recoveryPreview.fingerprint, reason: recoveryReason, confirmed: recoveryConfirmed })
+      toast.show('استُعيد سجل العميل الأصلي وحده دون استبدال البيانات أو إنشاء قيود')
+      recoveryRead.current++; setRecoveryBackup(''); setRecoveryPreview(null); setLegacyProject(null)
+    } catch (error) { setRecoveryPreview(null); toast.show((error as Error).message, 'error') }
   }
   const checkLegacyReview = () => {
     if (!legacyProject || !legacyCustomerId) return
@@ -1014,7 +1044,7 @@ export function ProjectsPage() {
                           title={staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'عليه عمولة موظف — إدارتها من شاشة الموظفين' : 'عمولة موظف عن المشروع'}
                           className={`p-2 rounded-lg transition-all hover:scale-110 ${staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
                         ><HandCoins className="w-4 h-4" /></button>
-                        {p.clientId == null && projectExtracts.some(e => e.projectId === p.id && e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0)) && (
+                        {((p.clientId != null && !customers.some(c => c.id === p.clientId)) || (p.clientId == null && projectExtracts.some(e => e.projectId === p.id && e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0)))) && (
                           <button onClick={() => openLegacyReview(p)} data-legacy-project-review title="مراجعة ربط ذمة مستخلص تاريخي بلا عميل" className="px-2 py-1 rounded-lg text-xs font-bold text-amber-700 bg-amber-500/10">مراجعة الذمة</button>
                         )}
                         <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
@@ -1238,8 +1268,25 @@ export function ProjectsPage() {
 
       <Modal open={!!legacyProject} onClose={() => setLegacyProject(null)} title="مراجعة ربط مستخلصات تاريخية">
         {legacyProject && <div className="space-y-3 text-sm" data-legacy-project-review-modal>
-          <p>المشروع {legacyProject.code} — {legacyProject.nameAr} بلا عميل مرتبط. لا يفترض النظام هوية الجهة أو عدم وجود تحصيل خارج سجلاته.</p>
+          <p>المشروع {legacyProject.code} — {legacyProject.nameAr}؛ الجهة المسجلة: {legacyProject.clientName}. {legacyProject.clientId == null ? 'بلا عميل مرتبط.' : `رقم العميل السابق #${legacyProject.clientId} غير ظاهر هنا؛ لا يقبل الاستبدال إذا كان موجوداً في فرع آخر أو له سجلات أخرى.`} لا يفترض النظام هوية الجهة أو عدم وجود تحصيل خارج سجلاته.</p>
           <p>هذه المراجعة للمالك بعد مطابقة العقد والدفتر والتحصيلات. يفحص النظام القيود والتخصيصات المسجلة، ويمنع الحالات غير المطابقة أو غير المدعومة بدلاً من تخمين تسويتها.</p>
+          {legacyProject.clientId != null && <section className="space-y-2 border-t border-b border-slate-300 py-3">
+            <h3 className="font-bold">استعادة السجل الأصلي من نسخة احتياطية مطابقة</h3>
+            <p>لا يستبدل هذا الإجراء قاعدة البيانات أو ينقل القيود. تُقبل فقط نسخة من إصدار البيانات الحالي تطابق بقية السجلات والعملاء الآخرين؛ بصمة الملف تكشف التلف ولا تثبت مصدر النسخة أو صحة الهوية. راجع النقاط وحد الائتمان وسجل العميل بنفسك قبل التأكيد.</p>
+            <Field label="ملف النسخة الاحتياطية JSON"><input aria-label="ملف نسخة العميل المفقود" type="file" accept=".json,application/json" onChange={e => pickRecoveryBackup(e.target.files?.[0])} /></Field>
+            <Btn variant="soft" disabled={!recoveryBackup} onClick={checkRecovery}>فحص نسخة العميل</Btn>
+            {recoveryPreview && <>
+              <p role="status">النسخة: {recoveryPreview.backupShopName} — {recoveryPreview.backupDate} — بصمة الملف {recoveryPreview.backupChecksum}. العميل #{recoveryPreview.customer.id}: {recoveryPreview.customer.nameAr} — الهاتف {recoveryPreview.customer.phone || 'غير مسجل'} — الفرع {recoveryPreview.customer.branchId ?? 'الرئيسي الافتراضي'}.</p>
+              <p>العنوان: {recoveryPreview.customer.address || 'غير مسجل'}، {recoveryPreview.customer.city || 'غير مسجل'} — رقم المبنى: {recoveryPreview.customer.buildingNo || 'غير مسجل'} — الرمز البريدي: {recoveryPreview.customer.postalCode || 'غير مسجل'} — البريد: {recoveryPreview.customer.email || 'غير مسجل'} — الرقم القومي: {recoveryPreview.customer.nationalId || 'غير مسجل'} — الرقم الضريبي: {recoveryPreview.customer.taxNumber || 'غير مسجل'} — السجل التجاري: {recoveryPreview.customer.commercialReg || 'غير مسجل'}.</p>
+              <p>حد الائتمان: {fmt(recoveryPreview.customer.creditLimitMinor)} {cur.symbol} — نقاط الولاء: {recoveryPreview.customer.loyaltyPoints ?? 0} — الحالة: {recoveryPreview.customer.active === false ? 'موقوف' : 'نشط'} — قائمة الأسعار: {recoveryPreview.customer.priceListId ?? 'الافتراضية'} — ملاحظات: {recoveryPreview.customer.notes || 'لا يوجد'}.</p>
+              <p>الرصيد المحسوب من السجلات الحالية ({recoveryPreview.scopeName}): <strong>{fmt(recoveryPreview.balanceMinor)} {cur.symbol}</strong> (السالب لصالح العميل). يجب مطابقة التحصيلات خارج النظام أيضاً.</p>
+              <div className="overflow-auto max-h-48"><table className="w-full text-xs" aria-label="كشف العميل قبل استعادة السجل"><thead><tr><th>التاريخ</th><th>المستند</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{recoveryPreview.statement.map((row, index) => <tr key={index}><td>{row.date}</td><td>{row.docLabel}</td><td>{fmt(row.debitMinor)}</td><td>{fmt(row.creditMinor)}</td><td>{fmt(row.balanceMinor)}</td></tr>)}</tbody></table></div>
+              <Field label="سبب استعادة السجل"><input aria-label="سبب استعادة العميل" className={inputCls} maxLength={300} value={recoveryReason} onChange={e => setRecoveryReason(e.target.value)} /></Field>
+              <label className="flex gap-2 items-start"><input type="checkbox" checked={recoveryConfirmed} onChange={e => setRecoveryConfirmed(e.target.checked)} /> أقرّ بمطابقة أصل النسخة وهوية العميل وجميع بياناته وحده ونقاطه وكشفه والتحصيلات خارج النظام، وأفهم أن النسخة قديمة وأن مطابقة الملف ليست إثبات ملكية.</label>
+              <Btn disabled={!recoveryConfirmed || !recoveryReason.trim()} onClick={saveRecovery}>استعادة سجل العميل فقط</Btn>
+            </>}
+          </section>}
+
           <Field label="العميل بعد مطابقة العقد والمستندات">
             <select aria-label="عميل المستخلص التاريخي" className={inputCls} value={legacyCustomerId} onChange={e => { setLegacyCustomerId(e.target.value); setLegacyPreview(null); setLegacyConfirmed(false) }}>
               <option value="">— اختر عميلاً —</option>
