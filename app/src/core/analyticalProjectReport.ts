@@ -19,6 +19,8 @@ export interface AnalyticalProjectSource {
   project: { code: string; nameAr: string; clientName: string; status: string; startDate: string; contractValueMinor: Minor }
   /** أوامر التغيير المعتمدة */
   changeOrdersApprovedMinor?: Minor
+  /** قيد إشعار مفقود أو لا يطابق المستند؛ احجب القيم المتأثرة. */
+  refundLedgerIncomplete?: boolean
   /** المستخلصات (القيمة قبل الضريبة، المحتجز، المستحق، التاريخ، الرقم، نقدي/آجل) */
   extracts: {
     extractNumber: string
@@ -84,7 +86,7 @@ export interface AnalyticalProjectSource {
 function extractRefundStatus(src: AnalyticalProjectSource) {
   const keys = new Set<string>()
   let amount = 0, tax = 0, cash = 0
-  let incomplete = false
+  let incomplete = src.refundLedgerIncomplete === true
   for (const e of src.extracts) {
     const records = e.refunds ?? []
     let sum = 0, sumTax = 0

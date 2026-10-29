@@ -914,7 +914,7 @@ export function ProjectsPage() {
                 </div>
               ) : (
                 <div className="p-4">
-                  <Field label={`قيمة الأعمال المنفذة في هذا المستخلص (${cur.symbol}) *`} hint={`قيمة العقد: ${fmt(extractFor.contractValueMinor)} · مفوتر سابقاً: ${fmt(getProjectProfit(extractFor.id).extractedMinor)}`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                  <Field label={`قيمة الأعمال المنفذة في هذا المستخلص (${cur.symbol}) *`} hint={`قيمة العقد: ${fmt(extractFor.contractValueMinor)} · مفوتر سابقاً قبل الإشعارات: ${fmt(projectExtracts.filter((e) => e.projectId === extractFor.id).reduce((sum, e) => sum + e.totals.grossMinor, 0))}`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
                 </div>
               )}
             </div>

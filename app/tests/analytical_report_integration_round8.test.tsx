@@ -217,3 +217,35 @@ it('مقاصة مقدمة وإشعار دائن وضريبة تخفض الإير
   expect(s.getCustomerBalance(customer.id)).toBe(3900)
   expect(screen.queryByText(/تنبيه مراجعة: مجموع سطور التحصيلات/)).toBeNull()
 })
+
+it('بطاقة عميل المقاولات تفصل الإشعار الدائن عن المحصّل وتعرض صافي المستحق', async () => {
+  const { ContractingReportsPage } = await import('../src/ui/pages/ContractingReportsPage.tsx')
+  const { fireEvent, within } = await import('@testing-library/react')
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل كشف الإشعار', phone: '', creditLimitMinor: 0, notes: '' })
+  const customer = useDataStore.getState().customers.at(-1)!
+  const project = s.addProject({ nameAr: 'مشروع كشف الإشعار', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const extract = s.addProjectExtract({ projectId: project.id, description: 'مستخلص', grossMinor: 10000, vatPercent: 0, payment: 'credit' })
+  s.refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
+  render(<ContractingReportsPage />)
+  fireEvent.click(screen.getAllByText('عميل بعينه')[0])
+  fireEvent.change(screen.getByTestId('client-select'), { target: { value: String(customer.id) } })
+  const row = screen.getAllByText(extract.extractNumber).map(el => el.closest('tr')).find(el => el && within(el).queryByText(amount(4000)))
+  expect(row).toBeUndefined()
+  const detail = screen.getAllByText(extract.extractNumber).map(el => el.closest('tr')).find(el => el && el.children.length === 8)!
+  expect([...detail.children].slice(3).map(el => el.textContent)).toEqual([amount(6000), amount(0), amount(6000), amount(0), amount(6000)])
+})
+
+
+it('تقرير مستخلص نقدي يحجب أرقام الإشعار إذا فُقد قيده', () => {
+  const s = useDataStore.getState()
+  const project = s.addProject({ nameAr: 'مشروع نقدي', clientId: null, clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const extract = s.addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 10000, vatPercent: 0, payment: 'cash' })
+  const updated = s.refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'cash', reason: 'رد', treasury: '1101' })
+  const id = updated.refunds!.at(-1)!.journalEntryId
+  useDataStore.setState({ journal: useDataStore.getState().journal.filter(entry => entry.id !== id) })
+  render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+  expect(screen.getByText(/سجلات إشعارات المستخلصات ناقصة/)).toBeTruthy()
+  expect(indicator('صافي نتيجة المشروع حتى تاريخه')).toBe('تتطلب مراجعة إشعارات المستخلصات')
+  expect(indicator('إجمالي ما تم تحصيله')).toBe('تتطلب مراجعة إشعارات المستخلصات')
+})

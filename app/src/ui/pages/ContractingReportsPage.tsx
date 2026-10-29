@@ -1,4 +1,4 @@
-import { projectOpenBalances } from '../../core/projectReportBalances.ts'
+import { projectExtractSettlement, projectOpenBalances } from '../../core/projectReportBalances.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * مركز تقارير المقاولات (طلب المالك): وحدة تقارير مستقلة تخدم النشاط —
@@ -13,6 +13,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind, projectReportCard, clientContractingCard, type ClientProjectRow } from '../../core/contracting.ts'
+import { netProjectExtractTotals } from '../../core/projectExtractRefundIntegrity.ts'
 import { toCsv } from '../../core/security.ts'
 import { buildProjectExpenseLedger } from '../../core/projectExpenseLedger.ts'
 import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
@@ -40,7 +41,7 @@ export function ContractingReportsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
     suppliers, treasuries, custodyFiles, boqItems, journal,
-    getOpenClientInvoices, getProjectCostBreakdown,
+    getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
@@ -64,11 +65,12 @@ export function ContractingReportsPage() {
 
   /** بطاقة التقرير الخالصة لكل مشروع — من النواة مباشرة */
   const cards = projects.map((p) => {
+    assertProjectExtractRefunds(p.id)
     const extracts = projectExtracts.filter((e) => e.projectId === p.id)
     const released = retentionReleases.filter((r) => r.projectId === p.id).reduce((a, r) => a + r.amountMinor, 0)
     const orders = changeOrders.filter((o) => o.projectId === p.id)
     const advances = clientAdvances.filter((a) => a.projectId === p.id)
-    const flat = extracts.map((e) => ({ grossMinor: e.totals.grossMinor, vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, date: e.date }))
+    const flat = extracts.map((e) => ({ ...netProjectExtractTotals(e), retentionMinor: e.totals.retentionMinor, date: e.date }))
     /* §95 (محاذاة pro-acc — طلب المالك): التكاليف = بنود projectCosts نفسها (بكل
        مصادرها الموسومة: يدوي/شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف) − مرتجعات
        الشراء التي عكست 5110 — فتطابق البطاقة صافي 5110 بالدفتر بلا جمع مزدوج. */
@@ -119,7 +121,7 @@ export function ContractingReportsPage() {
       if (p.clientId == null) continue
       const row = byClient.get(p.clientId) ?? { nameAr: customers.find((c) => c.id === p.clientId)?.nameAr ?? '—', extractedMinor: 0, retentionMinor: 0, openMinor: 0, openDocs: 0 }
       for (const e of projectExtracts.filter((x) => x.projectId === p.id)) {
-        row.extractedMinor += e.totals.grossMinor
+        row.extractedMinor += netProjectExtractTotals(e).grossMinor
         row.retentionMinor += e.totals.retentionMinor
       }
       row.openMinor += openByProject.get(p.id) ?? 0
@@ -127,7 +129,8 @@ export function ContractingReportsPage() {
       row.openDocs += projectExtracts.filter((e) => {
         if (e.projectId !== p.id || e.payment !== 'credit') return false
         const doc = ledger.get(`extract:${e.id}`)
-        const fallback = Math.max(0, e.totals.dueMinor - Math.max(0, e.advanceRecoveryMinor ?? 0))
+        const creditRefund = (e.refunds ?? []).filter(r => r.mode === 'customer_credit').reduce((sum, r) => sum + r.amountMinor, 0)
+        const fallback = Math.max(0, e.totals.dueMinor - Math.max(0, e.advanceRecoveryMinor ?? 0) - creditRefund)
         return (doc ? Math.max(0, doc.dueMinor - doc.settledMinor) : fallback) > 0
       }).length
       byClient.set(p.clientId, row)
@@ -149,13 +152,8 @@ export function ContractingReportsPage() {
 
   /** دفتر العميل الكامل — يشمل المستندات المفتوحة والمسددة. */
   const clientOpenDocs = clientId ? getOpenClientInvoices(Number(clientId), true) : []
-  const extractSettlement = (e: (typeof projectExtracts)[number]) => {
-    if (e.payment === 'cash') return { settled: e.totals.dueMinor, remaining: 0 }
-    const recovery = Math.min(e.totals.dueMinor, Math.max(0, e.advanceRecoveryMinor ?? 0))
-    const netDue = e.totals.dueMinor - recovery
-    const fromLedger = Math.min(netDue, Math.max(0, clientOpenDocs.find((d) => d.docKey === `extract:${e.id}`)?.settledMinor ?? 0))
-    return { settled: recovery + fromLedger, remaining: netDue - fromLedger }
-  }
+  const extractSettlement = (e: (typeof projectExtracts)[number]) =>
+    projectExtractSettlement(e, clientOpenDocs.find((d) => d.docKey === `extract:${e.id}`))
 
   const clientRows: readonly ClientProjectRow[] = (() => {
     if (!clientId) return []
@@ -250,7 +248,7 @@ export function ContractingReportsPage() {
         sectionHtml(`المستخلصات (${selectedExtracts.length})`),
         htmlTableHtml({
           headers: ['المستخلص', 'التاريخ', 'قيمة الأعمال', 'محتجز', 'المستحق'], numCols: [2, 3, 4],
-          rows: selectedExtracts.map((e) => [`${e.extractNumber}${e.isFinal ? ' (ختامي)' : ''}`, e.date.slice(0, 10), fmt(e.totals.grossMinor), fmt(e.totals.retentionMinor), fmt(e.totals.dueMinor)]),
+          rows: selectedExtracts.map((e) => [`${e.extractNumber}${e.isFinal ? ' (ختامي)' : ''}`, e.date.slice(0, 10), fmt(netProjectExtractTotals(e).grossMinor), fmt(e.totals.retentionMinor), fmt(e.totals.dueMinor - (e.refundedMinor ?? 0))]),
         }),
       ] : []),
       ...(selectedOpenDocs.length ? [
@@ -317,7 +315,7 @@ export function ContractingReportsPage() {
           headers: ['المستخلص', 'المشروع', 'التاريخ', 'قيمة الأعمال', 'محتجز', 'المستحق', 'محصّل', 'متبقٍ'], numCols: [3, 4, 5, 6, 7],
           rows: clientExtractRows.map(({ extract: e, projectName, settledMinor, remainingMinor }) => [
             `${e.extractNumber}${e.isFinal ? ' (ختامي)' : ''}`, projectName, e.date.slice(0, 10),
-            fmt(e.totals.grossMinor), fmt(e.totals.retentionMinor), fmt(e.totals.dueMinor), fmt(settledMinor), remainingMinor > 0 ? fmt(remainingMinor) : '✓',
+            fmt(netProjectExtractTotals(e).grossMinor), fmt(e.totals.retentionMinor), fmt(e.totals.dueMinor - (e.refundedMinor ?? 0)), fmt(settledMinor), remainingMinor > 0 ? fmt(remainingMinor) : '✓',
           ]),
         }),
       ] : []),
@@ -527,7 +525,7 @@ export function ContractingReportsPage() {
                     const extractsSheet: ExportSheet = {
                       nameAr: 'المستخلصات',
                       headers: ['رقم المستخلص', 'التاريخ', 'الأعمال (شامل الضريبة)', 'الضريبة', 'الاحتفاظ', 'صافي المستحق', 'الحالة'],
-                      rows: selectedExtracts.map((e) => [e.extractNumber, e.date.slice(0, 10), mny(e.totals.grossMinor), mny(e.totals.vatMinor), mny(e.totals.retentionMinor), mny(e.totals.dueMinor), e.isFinal ? 'ختامي' : 'جاري']),
+                      rows: selectedExtracts.map((e) => [e.extractNumber, e.date.slice(0, 10), mny(netProjectExtractTotals(e).grossMinor), mny(netProjectExtractTotals(e).vatMinor), mny(e.totals.retentionMinor), mny(e.totals.dueMinor - (e.refundedMinor ?? 0)), e.isFinal ? 'ختامي' : 'جاري']),
                     }
                     return (
                       <ProjectExpenseLedgerCard
@@ -550,9 +548,9 @@ export function ContractingReportsPage() {
                               <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/50">
                                 <td className="px-3 py-2 font-bold">{e.extractNumber}{e.isFinal && <span className="text-[9.5px] bg-rose-500/10 text-rose-600 px-1.5 py-0.5 rounded mr-1">ختامي</span>}</td>
                                 <td className="px-3 py-2 text-slate-400 text-[11px]">{e.date.slice(0, 10)}</td>
-                                <td className="px-3 py-2">أعمال {fmt(e.totals.grossMinor)}</td>
+                                <td className="px-3 py-2">أعمال {fmt(netProjectExtractTotals(e).grossMinor)}</td>
                                 <td className="px-3 py-2 text-amber-600">محتجز {fmt(e.totals.retentionMinor)}</td>
-                                <td className="px-3 py-2 font-bold text-left">{fmt(e.totals.dueMinor)}</td>
+                                <td className="px-3 py-2 font-bold text-left">{fmt(e.totals.dueMinor - (e.refundedMinor ?? 0))}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -636,7 +634,7 @@ export function ContractingReportsPage() {
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                     <button onClick={() => downloadCsv([
                       ...clientRows.map((r) => ({ 'نوع الصف': 'مشروع', 'المشروع': `${r.projectCode} — ${r.projectName}`, 'العقد الفعلي': fmt(r.contractEffectiveMinor), 'المستخلصات': fmt(r.extractedMinor), 'محتجز قائم': fmt(r.retentionHeldMinor), 'مقدمة متبقية': fmt(r.advancesRemainingMinor), 'مفتوح': fmt(r.openExtractsMinor), 'محصّل': fmt(r.settledOnExtractsMinor), 'الحالة': r.status === 'active' ? 'جارٍ' : r.status === 'completed' ? 'مكتمل' : 'مُسلَّم' })),
-                      ...clientExtractRows.map(({ extract: e, projectName, settledMinor, remainingMinor }) => ({ 'نوع الصف': 'مستخلص', 'المشروع': projectName, 'العقد الفعلي': '', 'المستخلصات': fmt(e.totals.grossMinor), 'محتجز قائم': fmt(e.totals.retentionMinor), 'مقدمة متبقية': '', 'مفتوح': fmt(remainingMinor), 'محصّل': fmt(settledMinor), 'الحالة': e.payment === 'cash' ? 'نقدي' : remainingMinor > 0 ? 'آجل مفتوح' : 'آجل مسدد' })),
+                      ...clientExtractRows.map(({ extract: e, projectName, settledMinor, remainingMinor }) => ({ 'نوع الصف': 'مستخلص', 'المشروع': projectName, 'العقد الفعلي': '', 'المستخلصات': fmt(netProjectExtractTotals(e).grossMinor), 'محتجز قائم': fmt(e.totals.retentionMinor), 'مقدمة متبقية': '', 'مفتوح': fmt(remainingMinor), 'محصّل': fmt(settledMinor), 'الحالة': e.payment === 'cash' ? 'نقدي' : remainingMinor > 0 ? 'آجل مفتوح' : 'آجل مسدد' })),
                     ], `بطاقة-عميل-${clientName || clientId}-${todayLocalIso()}.csv`)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير البطاقة CSV</button>
                     <button onClick={() => { window.location.hash = `#/reports/statements?kind=customer&id=${clientId}` }}
@@ -691,9 +689,9 @@ export function ContractingReportsPage() {
                               <td className="px-3 py-2.5 font-bold">{e.extractNumber}{e.isFinal ? ' (ختامي)' : ''}</td>
                               <td className="px-3 py-2.5 text-[11.5px] text-slate-500">{projectName}</td>
                               <td className="px-3 py-2.5">{e.date.slice(0, 10)}</td>
-                              <td className="px-3 py-2.5 text-orange-600 font-bold">{fmt(e.totals.grossMinor)}</td>
+                              <td className="px-3 py-2.5 text-orange-600 font-bold">{fmt(netProjectExtractTotals(e).grossMinor)}</td>
                               <td className="px-3 py-2.5 text-amber-600">{fmt(e.totals.retentionMinor)}</td>
-                              <td className="px-3 py-2.5">{fmt(e.totals.dueMinor)}</td>
+                              <td className="px-3 py-2.5">{fmt(e.totals.dueMinor - (e.refundedMinor ?? 0))}</td>
                               <td className="px-3 py-2.5 text-emerald-600 font-bold">{fmt(settledMinor)}</td>
                               <td className={`px-3 py-2.5 font-bold ${remainingMinor > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{remainingMinor > 0 ? fmt(remainingMinor) : '✓'}</td>
                             </tr>

@@ -13,6 +13,7 @@ import { buildAnalyticalProjectReport, buildExtractSettledMap, type AnalyticalPr
 import { FormalReport } from '../components/FormalReport.tsx'
 import { EmptyState } from '../components/ui.tsx'
 import { todayLocalIso } from '../../core/time.ts'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 
 interface Props {
   /** معرّف المشروع المختار (نص) — يشارك التاب «مشروع بعينه» اختياره */
@@ -23,7 +24,7 @@ interface Props {
 export function AnalyticalProjectReportView({ projectId, onProjectChange }: Props) {
   const {
     projects, projectExtracts, projectCosts, changeOrders, suppliers,
-    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown,
+    clientSettlements, vouchers, cheques, getOpenClientInvoices, getProjectCostBreakdown, assertProjectExtractRefunds,
   } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useMemo(
@@ -41,6 +42,11 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
   const model = (() => {
     if (!selected) return null
     const extracts = projectExtracts.filter((e) => e.projectId === selected.id)
+    let refundLedgerIncomplete = false
+    try { assertProjectExtractRefunds(selected.id) } catch (error) {
+      if (!(error instanceof FinancialDataReviewError)) throw error
+      refundLedgerIncomplete = true
+    }
     const costs = projectCosts.filter((c) => c.projectId === selected.id)
     const orders = changeOrders.filter((o) => o.projectId === selected.id && (o.status === 'approved' || o.status === 'invoiced'))
     const projectCheques = selected.clientId == null ? [] : cheques
@@ -140,6 +146,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         startDate: selected.startDate, contractValueMinor: selected.contractValueMinor,
       },
       changeOrdersApprovedMinor: orders.reduce((s, o) => s + o.amountMinor, 0),
+      refundLedgerIncomplete,
       extracts: extracts.map((e) => ({
         extractNumber: e.extractNumber, date: e.date, grossMinor: e.totals.grossMinor,
         vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, dueMinor: e.totals.dueMinor,
