@@ -1,3 +1,5 @@
+import type { CartTotals } from './pos.ts'
+
 export type DocumentChargeKind = 'discount' | 'shipping' | 'insurance' | 'customs' | 'service' | 'other'
 export interface DocumentCharge { kind: DocumentChargeKind; nameAr: string; amountMinor: number; taxable: boolean }
 export interface ChargeAllocation { lineIndex: number; amountMinor: number }
@@ -9,6 +11,20 @@ export function validateDocumentCharges(charges: DocumentCharge[]): string[] {
     if (!Number.isInteger(charge.amountMinor) || charge.amountMinor < 0) errors.push(`قيمة «${charge.nameAr || 'رسم'}» غير صالحة`)
   }
   return errors
+}
+
+
+/** رسوم العميل في فاتورة البيع: الأصل الإيرادي يشمل الخاضع والمعفى، والضريبة للخاضع فقط. */
+export function applySaleCustomerCharges(base: CartTotals, charges: DocumentCharge[], taxPercent: number): CartTotals {
+  if (!Array.isArray(charges) || !Number.isFinite(taxPercent) || taxPercent < 0) throw new Error('رسوم البيع أو نسبة الضريبة غير صالحة')
+  for (const charge of charges) {
+    if (!charge || typeof charge.nameAr !== 'string' || !charge.nameAr.trim() || !Number.isSafeInteger(charge.amountMinor) || charge.amountMinor < 0 || typeof charge.taxable !== 'boolean' || !['shipping', 'insurance', 'customs', 'service', 'other'].includes(charge.kind)) throw new Error('رسم العميل غير صالح أو الخصم غير مدعوم')
+  }
+  const chargeNet = charges.reduce((sum, charge) => sum + charge.amountMinor, 0)
+  const chargeTax = charges.reduce((sum, charge) => sum + (charge.taxable ? Math.round(charge.amountMinor * taxPercent / 100) : 0), 0)
+  const result = { ...base, netMinor: base.netMinor + chargeNet, taxBaseMinor: base.taxBaseMinor + chargeNet, taxMinor: base.taxMinor + chargeTax, totalMinor: base.totalMinor + chargeNet + chargeTax }
+  if (![chargeNet, chargeTax, result.netMinor, result.taxBaseMinor, result.taxMinor, result.totalMinor].every(Number.isSafeInteger)) throw new Error('إجمالي رسوم البيع غير صالح')
+  return result
 }
 
 /**

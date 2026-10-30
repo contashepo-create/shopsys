@@ -18,6 +18,8 @@
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { reporter } from './auditKit.mjs'
+import { computeTotals } from '../src/core/pos.ts'
+import { applySaleCustomerCharges } from '../src/core/documentCharges.ts'
 
 const R = reporter('دفعة المالك ⑩ح على الفاتورة')
 import { fileURLToPath } from 'node:url'
@@ -224,7 +226,11 @@ const ruleOf = (selector) => {
 /* ⑭ ما يتحمله المحل أو المخزون لا يدخل إجمالي فاتورة الطرف */
 {
   // البيع: الإجمالي من totals (بنود − خصم + ضريبة + مصروفات العميل) والمصروف الداخلي سطر معلومة
-  assert.ok(/totalMinor:base\.totalMinor\+chargeNet\+chargeTax/.test(sales), 'إجمالي فاتورة البيع لا يقتصر على البنود ومصروفات العميل')
+  assert.ok(sales.includes('applySaleCustomerCharges(base,customerCharges,effectiveTaxPercent)'), 'معاينة البيع لا تستخدم حساب الرسوم المشترك')
+  const base = computeTotals([{ itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0 }], 0, 10, false)
+  const totals = applySaleCustomerCharges(base, [{ kind: 'shipping', nameAr: 'نقل', amountMinor: 200, taxable: false }], 10)
+  assert.equal(totals.totalMinor, 1300, 'إجمالي البيع يجب أن يشمل رسم العميل دون مصروف المنشأة')
+  assert.equal(totals.taxBaseMinor + totals.taxMinor, totals.totalMinor, 'يجب أن يتوازن أساس الإيراد مع الضريبة والإجمالي')
   const totalsMemo = sales.slice(sales.indexOf('const totals=useMemo('), sales.indexOf('customerCharges]);'))
   assert.ok(!/internal|expenses|commission/i.test(totalsMemo), 'المصروفات الداخلية/العمولات تسرّبت إلى حساب إجمالي فاتورة العميل')
   assert.ok(sales.includes('مصاريف على المحل — لا تدخل إجمالي العميل'), 'فاتورة البيع: المصروف الداخلي غير معلَّم كخارج الإجمالي')

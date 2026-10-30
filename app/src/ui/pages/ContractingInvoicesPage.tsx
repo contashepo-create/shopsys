@@ -214,7 +214,8 @@ export function ContractingInvoicesPage() {
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
       dateIso: s.date,
-      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? documentSettings.setup.vatPercent) : 0 }))],
+      lines: s.lines,
+      customerCharges: s.customerCharges,
       totals: s.totals,
       payment: s.payment,
       paidMinor: s.paidMinor,
@@ -315,7 +316,8 @@ export function ContractingInvoicesPage() {
                             const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
                             const documentRecord = salePrintRecord(s)
                             const documentSettings = resolveDocumentPrintSettings(documentRecord)
-                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: s.taxPercent ?? documentSettings.setup.vatPercent, taxInclusive: s.taxInclusive ?? documentSettings.setup.taxInclusive, settings: documentSettings.receipt })
+                            const tx = s.taxPercent !== undefined ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true } : deriveTaxConfig(s.totals, s.lines)
+                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, customerCharges: s.customerCharges, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: tx.taxPercent, taxInclusive: tx.taxInclusive, settings: documentSettings.receipt })
                             /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
                             if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
                             else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })

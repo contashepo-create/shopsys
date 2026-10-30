@@ -831,3 +831,166 @@ it('يحجب الحركة والحساب عند وجود مستخلص لفرع �
   expect(() => S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'cash', reason: 'تصحيح' })).toThrow(/الفروع/)
   expect(useRawDataStore.getState().journal).toBe(before)
 })
+
+it('يطابق فاتورة إضافية برسوم خاضعة ومعفاة ومصروف مدفوع وإشعار مرتجع دون تغيير القيود', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [] })
+  S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 10000, label: 'الخزينة' })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة مع رسوم' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: false, projectId: project.id, projectBilling: 'extra', customerCharges: [{ kind: 'shipping', nameAr: 'نقل', amountMinor: 200, taxable: true }, { kind: 'service', nameAr: 'إضافة معفاة', amountMinor: 100, taxable: false }], internalExpenses: [{ id: 'exp-1', label: 'مصروف', amountMinor: 150, accountCode: '5108', settlement: 'paid_now', treasury: '1101', taxTreatment: 'exclusive', taxPercent: 15, affectsProfit: true, landedCostAllocation: 'none' }] })
+  S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'credit', reason: 'مرتجع خدمة' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const journal = S().journal
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(sale.totals.totalMinor).toBe(2630)
+  expect(p).toMatchObject({ balanceBeforeMinor: 1480, balanceAfterMinor: 9480 })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة الفاتورة ومصروفاتها', confirmed: true })
+  expect(S().journal).toBe(journal)
+})
+
+it('يرفض تلف رسوم أو قيد المصروف أو تغييرها بعد معاينة ربط المشروع', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [] })
+  S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 10000, label: 'الخزينة' })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة برسوم' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 10, taxInclusive: false, projectId: project.id, projectBilling: 'extra', customerCharges: [{ kind: 'shipping', nameAr: 'نقل', amountMinor: 100, taxable: true }], internalExpenses: [{ id: 'exp-1', label: 'مصروف', amountMinor: 150, accountCode: '5108', settlement: 'paid_now', treasury: '1101', taxTreatment: 'exempt', taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' }] })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  const sales = S().sales, journal = S().journal
+  useRawDataStore.setState({ sales: sales.map(row => row.id === sale.id ? { ...row, customerCharges: [{ ...row.customerCharges![0], amountMinor: 101 }] } : row) })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/الفاتورة|تغير/)
+  useRawDataStore.setState({ sales, journal: journal.map(e => e.id === sale.journalEntryId ? { ...e, lines: e.lines.map(l => l.accountCode === '5108' ? { ...l, debit: l.debit + 1 } : l) } : e) })
+  expect(() => S().previewLegacyProjectCustomer(project.id, customer.id)).toThrow(/الفاتورة/)
+  expect(S().projects.find(row => row.id === project.id)?.clientId).toBeNull()
+})
+
+it('يقبل إضافة رسم معفى في تعديل فاتورة بيع ويرفض الخصم الإضافي دون تعديلها', () => {
+  const { customer } = legacy()
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة للفاتورة' })
+  const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 10, taxInclusive: false })
+  const args = { saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit' as const, paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'إضافة رسم', einvoiceActive: false, allowNegativeStock: true }
+  const edited = S().editSale({ ...args, customerCharges: [{ kind: 'other', nameAr: 'رسم معفى', amountMinor: 200, taxable: false }] })
+  expect(edited.totals).toMatchObject({ taxBaseMinor: 1200, taxMinor: 100, totalMinor: 1300 })
+  const entry = S().journal.find(row => row.id === edited.journalEntryId)!
+  expect(entry.lines.find(row => row.accountCode === '4101')?.credit).toBe(1200)
+  expect(S().getCustomerBalance(customer.id)).toBe(1300)
+  const journal = S().journal
+  expect(() => S().editSale({ ...args, customerCharges: [{ kind: 'discount', nameAr: 'خصم غير مدعوم', amountMinor: 100, taxable: false }] })).toThrow(/خصم/)
+  expect(S().journal).toBe(journal)
+})
+
+it('يقبل تحصيلاً مختلطاً لفاتورة ذات رسم معفى ويطابق طرفي القيد', () => {
+  const { customer } = legacy()
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة مختلطة' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', paymentAllocations: [{ accountCode: '1101', amountMinor: 400 }], invoiceDiscountPercent: 0, taxPercent: 10, taxInclusive: false, customerCharges: [{ kind: 'other', nameAr: 'رسم معفى', amountMinor: 200, taxable: false }] })
+  const entry = S().journal.find(row => row.id === sale.journalEntryId)!
+  expect(sale.totals).toMatchObject({ taxBaseMinor: 1200, taxMinor: 100, totalMinor: 1300 })
+  expect(entry.lines.reduce((sum, row) => sum + row.debit, 0)).toBe(1300)
+  expect(entry.lines.reduce((sum, row) => sum + row.credit, 0)).toBe(1300)
+  expect(S().getCustomerBalance(customer.id)).toBe(900)
+})
+
+it('لا يخمن ضريبة فاتورة قديمة ذات رسوم عند المرتجع أو التعديل', () => {
+  const { customer } = legacy()
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة قديمة' })
+  const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: false, customerCharges: [{ kind: 'other', nameAr: 'رسم معفى', amountMinor: 200, taxable: false }] })
+  useRawDataStore.setState({ sales: S().sales.map(row => row.id === sale.id ? { ...row, taxPercent: undefined, taxInclusive: undefined } : row) })
+  const journal = S().journal
+  expect(() => S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'credit', reason: 'مرتجع' })).toThrow(/الضريبية/)
+  expect(() => S().editSale({ saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تصحيح', einvoiceActive: false, allowNegativeStock: true })).toThrow(/الضريبية/)
+  expect(S().journal).toBe(journal)
+})
+
+it('لا يعدّل فاتورة محصلة على حساب موظف أو ينشئ التحصيل الموظفي عبر مسار التعديل', () => {
+  const { customer } = legacy()
+  S().addEmployee({ nameAr: 'موظف التحصيل', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
+  const employee = S().employees.at(-1)!
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة محصلة' })
+  const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', paymentAllocations: [{ accountCode: '1107', employeeId: employee.id, amountMinor: 500 }], invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+  expect(S().getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(500)
+  const journal = S().journal, advances = S().employeeAdvances
+  const args = { saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit' as const, paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تعديل', einvoiceActive: false, allowNegativeStock: true }
+  expect(() => S().editSale(args)).toThrow(/موظف/)
+  expect(S().journal).toBe(journal)
+  expect(S().employeeAdvances).toBe(advances)
+  const ordinary = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+  const before = S().journal
+  expect(() => S().editSale({ ...args, saleId: ordinary.id, paidMinor: 500, paymentAllocations: [{ accountCode: '1107', amountMinor: 500 }] })).toThrow(/موظف/)
+  expect(S().journal).toBe(before)
+})
+
+it('يراجع تحصيل الفاتورة الإضافية على موظف بعد مطابقة سجله دون نقل حسابه', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [], employeeAdvances: [], advanceRepayments: [] })
+  S().addEmployee({ nameAr: 'محصل', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
+  const employee = S().employees.at(-1)!
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  S().postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', paymentAllocations: [{ accountCode: '1107', employeeId: employee.id, amountMinor: 500 }], invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const advances = S().employeeAdvances, journal = S().journal
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 1500, balanceAfterMinor: 9500 })
+  expect(p.evidence.some(item => item.description.includes('الموظف'))).toBe(true)
+  useRawDataStore.setState({ employeeAdvances: advances.map(row => ({ ...row, recoveredMinor: 1 })) })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة', confirmed: true })).toThrow(/الفاتورة|تغير/)
+  useRawDataStore.setState({ employeeAdvances: advances })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة', confirmed: true })
+  expect(S().employeeAdvances).toBe(advances)
+  expect(S().journal).toBe(journal)
+  expect(S().getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(500)
+})
+
+it('يطابق مصروف الفاتورة المستحق على حساب المصروفات المستحقة دون اعتباره دين عميل', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra', internalExpenses: [{ id: 'later', label: 'نقل داخلي', beneficiaryName: 'جهة النقل', amountMinor: 500, accountCode: '5108', settlement: 'payable_later', payableAccountCode: '2117', taxTreatment: 'exempt', taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' }] })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const journal = S().journal
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 2000, balanceAfterMinor: 10000 })
+  expect(journal.find(entry => entry.id === sale.journalEntryId)?.lines.some(line => line.accountCode === '2117' && line.credit === 500)).toBe(true)
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة المصروف', confirmed: true })
+  expect(S().journal).toBe(journal)
+})
+
+it('لا يعدّل فاتورة محصلة بعملة أجنبية مع ترك ساق الصرف القديمة', () => {
+  const { customer } = legacy()
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة عملة' })
+  const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', paidMinor: 1000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookCurrencyCode: 'EGP', bookDecimals: 2 })
+  const journal = S().journal
+  expect(() => S().editSale({ saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تصحيح', einvoiceActive: false, allowNegativeStock: true })).toThrow(/عملة أجنبية/)
+  expect(S().journal).toBe(journal)
+  expect(S().sales.find(row => row.id === sale.id)?.fx).toEqual(sale.fx)
+})
+
+it('يراجع فاتورة إضافية محصلة بعملة أجنبية عند مطابقة ساق الصرف والقيد', () => {
+  const { customer, project } = legacy()
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })), sales: [], saleReturns: [] })
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة بعملة أجنبية' })
+  const sale = S().postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', paidMinor: 1000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookCurrencyCode: 'EGP', bookDecimals: 2 })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
+  const p = S().previewLegacyProjectCustomer(project.id, customer.id)
+  expect(p).toMatchObject({ balanceBeforeMinor: 1000, balanceAfterMinor: 9000 })
+  expect(p.evidence.some(item => item.description.includes('USD'))).toBe(true)
+  const journal = S().journal, sales = S().sales
+  useRawDataStore.setState({ sales: sales.map(row => row.id === sale.id ? { ...row, fx: { ...row.fx!, ratePpm: 20000000 } } : row) })
+  expect(() => S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة التحصيل', confirmed: true })).toThrow(/الفاتورة|العملة|تغير/)
+  useRawDataStore.setState({ sales })
+  S().resolveLegacyProjectCustomer({ projectId: project.id, customerId: customer.id, expectedDueMinor: p.dueMinor, fingerprint: p.fingerprint, reason: 'مطابقة التحصيل', confirmed: true })
+  expect(S().journal).toBe(journal)
+})
+
+it('يرفض محرر الفاتورة توجيه تحصيلها إلى حساب غير خزينة', () => {
+  const { customer } = legacy()
+  const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+  const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+  const journal = S().journal
+  expect(() => S().editSale({ saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit', paidMinor: 300, treasury: '1101', paymentAllocations: [{ accountCode: '4101', amountMinor: 300 }], invoiceDiscountPercent: 0, reason: 'تعديل', einvoiceActive: false, allowNegativeStock: true })).toThrow(/حساب التحصيل/)
+  expect(S().journal).toBe(journal)
+})

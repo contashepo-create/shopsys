@@ -158,7 +158,7 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
     rows.push(`<div class="tr"><span>إجمالي الخصم</span><b>-${fmt(m.discountMinor)}</b></div>`)
   }
   if (m.taxLabel) {
-    rows.push(`<div class="tr"><span>الوعاء الضريبي</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
+    rows.push(`<div class="tr"><span>${esc(m.taxBaseLabel ?? 'الوعاء الضريبي')}</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
     rows.push(`<div class="tr"><span>${esc(m.taxLabel)}</span><b>${fmt(m.taxMinor)}</b></div>`)
     /* مستندات فيها مبالغ على حساب العميل بلا ضريبة (مصاريف نقلات مستقلة):
        الأساس + الضريبة لا يساوي الإجمالي، فيُظهر الفارق صراحةً بدل رقم لا يُجمع. */

@@ -75,7 +75,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
     totals.push(kv('إجمالي الخصم', `-${fmt(model.discountMinor)}`))
   }
   if (model.taxLabel) {
-    if (model.taxBaseMinor > 0) totals.push(kv('الأساس الخاضع للضريبة', fmt(model.taxBaseMinor)))
+    if (model.taxBaseMinor > 0) totals.push(kv(esc(model.taxBaseLabel ?? 'الأساس الخاضع للضريبة'), fmt(model.taxBaseMinor)))
     totals.push(kv(esc(model.taxLabel), fmt(model.taxMinor)))
     /* نفس منطق A4: مبالغ على حساب العميل بلا ضريبة تُعرض صراحةً ليُجمع المستند */
     const nonTaxableMinor = model.totalMinor - model.taxBaseMinor - model.taxMinor

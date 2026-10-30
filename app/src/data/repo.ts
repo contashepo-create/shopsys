@@ -73,7 +73,7 @@ import {
   type ExpenseBearer, type EquipmentCostLayer, type RentalResponsibilityMatrix, type RentalInvoice,
 } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
-import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
+import { applySaleCustomerCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateBooking, bookingConflicts, type Booking, type BookingStatus } from '../core/booking.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
@@ -2424,7 +2424,7 @@ interface DataState {
     payment: PaymentMethod
     paidMinor: number
     treasury: TreasuryAccount
-    /** تحصيلات متعددة تُحفظ كما هي عند التعديل (خزينة/ماكينة/موظف) */
+    /** تحصيلات خزائن متعددة؛ الماكينة وتحميل موظف يتطلبان إجراءً منفصلاً. */
     paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
     invoiceDiscountPercent: number
     customerReference?: string
@@ -7407,12 +7407,7 @@ export const useRawDataStore = create<DataState>()(
         })
         const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
         const customerCharges = args.customerCharges ?? []
-        const chargeErrors = validateDocumentCharges(customerCharges)
-        if (chargeErrors.length) throw new Error(chargeErrors.join(' — '))
-        if (customerCharges.some((charge) => charge.kind === 'discount')) throw new Error('خصم الإضافات غير مدعوم هنا؛ استخدم الخصم العام أو خصم السطر')
-        const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
-        const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * args.taxPercent / 100), 0)
-        const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
+        const totals = applySaleCustomerCharges(baseTotals, customerCharges, args.taxPercent)
         /* ── حارس فوترة المشاريع — النموذج (أ) (أ-١ سقف «extra»، أ-٢ توثيق) ──
            يُفرض فقط حين تُرسل الواجهة طبيعة الفوترة صراحة؛ المسار التاريخي
            (بلا طبيعة) لا يتغيّر حتى تُلزم الواجهة الطبيعة لفواتير المشروعات.
@@ -7708,6 +7703,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) throw new Error('المعاملة الضريبية لفاتورة الرسوم غير محفوظة — يلزم مراجعتها قبل المرتجع')
         /* مرتجع توثيق (النموذج أ — أ-٢): يخفض «الموثَّق» في حارس المشروع فقط —
            لا نقد يعود ولا ذمة تتغير، لأن مال الفاتورة لم يتحرك بدفترها أصلاً */
         const isDocReturn = sale.projectBilling === 'documentation'
@@ -9618,6 +9614,14 @@ export const useRawDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (sale.fx != null) throw new Error('لا يمكن تعديل فاتورة محصلة بعملة أجنبية — صحّحها بمستند مستقل مع مراجعة ساق العملة')
+        if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) throw new Error('المعاملة الضريبية لفاتورة الرسوم غير محفوظة — يلزم مراجعتها قبل التعديل')
+        const saleEntryIds = new Set([sale.journalEntryId, ...(sale.editHistory ?? []).map(edit => edit.previousEntryId)])
+        if (sale.paymentAllocations?.some(allocation => allocation.accountCode === '1107' || allocation.employeeId != null)
+          || state.employeeAdvances.some(advance => advance.source === 'sale_collection' && saleEntryIds.has(advance.journalEntryId))
+          || args.paymentAllocations?.some(allocation => allocation.accountCode === '1107' || allocation.employeeId != null)) {
+          throw new Error('تعديل تحصيل الفاتورة على حساب موظف غير مدعوم — يلزم معالجة حساب الموظف والفاتورة بمستند مستقل')
+        }
         if (sale.projectBilling === 'documentation') throw new Error('فاتورة التوثيق لا تُعدَّل — صحّحها بمرتجع توثيق ثم فاتورة توثيق جديدة (تعديلها يرحّلها فوترة كاملة مكررة فوق المستخلصات)')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'sale' && row.documentId === String(sale.id))) throw new Error('لا يمكن تعديل فاتورة محصلة بالماكينة؛ استخدم مرتجعاً مرتبطاً بالأصل ثم أصدر فاتورة جديدة')
@@ -9684,11 +9688,7 @@ export const useRawDataStore = create<DataState>()(
           : deriveTaxConfig(sale.totals, sale.lines)
         const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
         const customerCharges = args.customerCharges ?? sale.customerCharges ?? []
-        const chargeErrors = validateDocumentCharges(customerCharges)
-        if (chargeErrors.length) throw new Error(chargeErrors.join(' — '))
-        const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
-        const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * taxPercent / 100), 0)
-        const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
+        const totals = applySaleCustomerCharges(baseTotals, customerCharges, taxPercent)
         const paidM = args.paidMinor
         if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
         if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
@@ -9754,6 +9754,12 @@ export const useRawDataStore = create<DataState>()(
           : (paidM > 0 ? [{ accountCode: args.treasury, amountMinor: paidM, note: 'تحصيل نقدي/بنكي' }] : [])
         const allocatedPaid = freshAllocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
         if (allocatedPaid !== paidM) throw new Error(`إجمالي وسائل التحصيل (${allocatedPaid}) لا يساوي المبلغ المستلم (${paidM}) — راجع مبالغ التحصيل قبل الحفظ`)
+        const availableTreasuries = getBranchScopedDataState(state).treasuries
+        for (const allocation of freshAllocations) {
+          if (!availableTreasuries.some(treasury => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود في الفرع (${allocation.accountCode})`)
+          const errors = validateTreasuryAccess(user?.treasuryAccess, allocation.accountCode, 'receipt', allocation.amountMinor)
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         const newEntryLines = freshAllocations.length
           ? buildSaleEntryWithAllocations(totals, freshAllocations, editReceivable)
           : buildSaleEntry(totals, args.payment, args.treasury, paidM, editReceivable)
@@ -9874,6 +9880,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const inv = state.purchases.find((p) => p.id === args.purchaseId)
         if (!inv) throw new Error('فاتورة الشراء غير موجودة')
+        if (inv.fx != null) throw new Error('لا يمكن تعديل فاتورة مسددة بعملة أجنبية — صحّحها بمستند مستقل مع مراجعة ساق العملة')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         const editedSupplierId = args.supplierId ?? inv.supplierId
         if (editedSupplierId !== 0 && !state.suppliers.some((supplier) => supplier.id === editedSupplierId && supplier.active !== false)) throw new Error('المورد المحدد غير موجود أو غير نشط')
@@ -13598,25 +13605,51 @@ export const useRawDataStore = create<DataState>()(
         for (const sale of projectSales) {
           if (isFinancialSale(sale)) {
             const fail = (): never => { throw new Error('الفاتورة الإضافية أو قيدها أو تحصيلها غير مطابق — يلزم تدقيق منفصل') }
-            if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || (sale.payment !== 'cash' && sale.payment !== 'credit') || sale.fx != null || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Array.isArray(sale.lines) || !sale.lines.length || !safeCartLines(sale.lines) || !Number.isFinite(sale.invoiceDiscountPercent) || (sale.taxPercent != null && (!Number.isFinite(sale.taxPercent) || sale.taxPercent < 0)) || (sale.taxInclusive != null && typeof sale.taxInclusive !== 'boolean') || sale.lines.some(line => !state.items.some(item => item.id === line.itemId) || state.items.filter(item => item.id === line.itemId).length !== 1) || (sale.taxPercent == null && sale.taxInclusive != null) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) return fail()
+            if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || (sale.payment !== 'cash' && sale.payment !== 'credit') || (sale.internalExpenses != null && !Array.isArray(sale.internalExpenses)) || (sale.customerCharges != null && !Array.isArray(sale.customerCharges)) || !Array.isArray(sale.lines) || !sale.lines.length || !safeCartLines(sale.lines) || !Number.isFinite(sale.invoiceDiscountPercent) || (sale.taxPercent != null && (!Number.isFinite(sale.taxPercent) || sale.taxPercent < 0)) || (sale.taxInclusive != null && typeof sale.taxInclusive !== 'boolean') || sale.lines.some(line => !state.items.some(item => item.id === line.itemId) || state.items.filter(item => item.id === line.itemId).length !== 1) || (sale.taxPercent == null && sale.taxInclusive != null) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) return fail()
             let expected: JournalLine[]
             const tax = sale.taxPercent == null ? deriveTaxConfig(sale.totals, sale.lines) : { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
             try {
-              const totals = computeTotals(sale.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive)
+              if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) return fail()
+              const totals = applySaleCustomerCharges(computeTotals(sale.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive), sale.customerCharges ?? [], tax.taxPercent)
               if (!sameCartTotals(sale.totals, totals) || sale.totals.totalMinor <= 0 || sale.totals.cogsMinor < 0) return fail()
               const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
               if (!Number.isSafeInteger(paid) || paid < 0 || paid > sale.totals.totalMinor) return fail()
               if (sale.paymentAllocations?.length) {
-                if (sale.paymentAllocations.some(a => !Number.isSafeInteger(a.amountMinor) || a.amountMinor <= 0 || a.employeeId != null || !state.treasuries.some(t => t.code === a.accountCode)) || sale.paymentAllocations.reduce((sum, a) => sum + a.amountMinor, 0) !== paid) return fail()
+                if (sale.paymentAllocations.some(a => !Number.isSafeInteger(a.amountMinor) || a.amountMinor <= 0 || (a.accountCode === '1107'
+                  ? !Number.isSafeInteger(a.employeeId) || !scoped.employees.some(employee => employee.id === a.employeeId) || state.employees.filter(employee => employee.id === a.employeeId).length !== 1
+                  : a.employeeId != null || !state.treasuries.some(t => t.code === a.accountCode))) || sale.paymentAllocations.reduce((sum, a) => sum + a.amountMinor, 0) !== paid) return fail()
                 expected = buildSaleEntryWithAllocations(sale.totals, sale.paymentAllocations)
               } else {
                 if (paid > 0 && !state.treasuries.some(t => t.code === (sale.treasury ?? '1101'))) return fail()
                 expected = buildSaleEntry(sale.totals, sale.payment, sale.treasury ?? '1101', paid)
               }
+              const expenses = sale.internalExpenses ?? []
+              if (new Set(expenses.map(expense => expense.id)).size !== expenses.length || expenses.some(expense => {
+                if (!expense || typeof expense.id !== 'string' || !expense.id.trim() || typeof expense.label !== 'string' || !expense.label.trim() || !Number.isSafeInteger(expense.amountMinor) || expense.amountMinor <= 0 || typeof expense.accountCode !== 'string' || !expense.accountCode.startsWith('5') || expense.custodyFileId != null || expense.vehicleId != null || expense.projectId != null || expense.partyId != null || !['exempt', 'inclusive', 'exclusive'].includes(expense.taxTreatment) || !Number.isFinite(expense.taxPercent) || expense.taxPercent < 0 || typeof expense.affectsProfit !== 'boolean' || expense.landedCostAllocation !== 'none') return true
+                if (expense.costCenterId != null && (state.costCenters.filter(center => center.id === expense.costCenterId).length !== 1 || !scoped.costCenters.some(center => center.id === expense.costCenterId))) return true
+                if (expense.settlement === 'paid_now') return !scoped.treasuries.some(t => t.code === (expense.treasury ?? sale.treasury ?? '1101'))
+                if (expense.settlement === 'payable_later') return (expense.payableAccountCode ?? '2117') !== '2117' || typeof expense.beneficiaryName !== 'string' || !expense.beneficiaryName.trim()
+                return true
+              })) return fail()
+              const employeePayments = (sale.paymentAllocations ?? []).filter(allocation => allocation.accountCode === '1107')
+              const collections = state.employeeAdvances.filter(advance => advance.journalEntryId === sale.journalEntryId)
+              if (state.custodyTxs.some(tx => tx.journalEntryId === sale.journalEntryId) || collections.length !== employeePayments.length || collections.some(advance => advance.source !== 'sale_collection' || !Number.isSafeInteger(advance.id) || state.employeeAdvances.filter(row => row.id === advance.id).length !== 1 || !scoped.employeeAdvances.some(row => row.id === advance.id) || !Number.isSafeInteger(advance.amountMinor) || advance.amountMinor <= 0 || advance.recoveredMinor !== 0 || advance.custodyFileId != null)) return fail()
+              const allocationKeys = employeePayments.map(item => `${item.employeeId}:${item.amountMinor}`).sort()
+              const collectionKeys = collections.map(item => `${item.employeeId}:${item.amountMinor}`).sort()
+              if (JSON.stringify(allocationKeys) !== JSON.stringify(collectionKeys)) return fail()
+              expected.push(...buildInternalExpenseLines(expenses, sale.treasury ?? '1101'))
             } catch { return fail() }
             const entry = journal.get(sale.journalEntryId)
-            if (state.journal.filter(row => row.id === sale.journalEntryId).length !== 1 || !entry || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || (entry.sourceCollection != null && entry.sourceCollection !== 'sales') || entry.memoOnly || entry.reversesEntryId != null || entry.reversedByEntryId != null || !Array.isArray(entry.lines) || entry.lines.length !== expected.length || entry.lines.some((line, index) => line.accountCode !== expected[index].accountCode || line.debit !== expected[index].debit || line.credit !== expected[index].credit || line.partyKind != null || line.partyId != null)) return fail()
+            if (state.journal.filter(row => row.id === sale.journalEntryId).length !== 1 || !entry || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || (entry.sourceCollection != null && entry.sourceCollection !== 'sales') || entry.memoOnly || entry.reversesEntryId != null || entry.reversedByEntryId != null || !Array.isArray(entry.lines) || entry.lines.length !== expected.length || entry.lines.some((line, index) => line.accountCode !== expected[index].accountCode || line.debit !== expected[index].debit || line.credit !== expected[index].credit || line.partyKind != null || line.partyId != null || (line.costCenterId ?? null) !== (expected[index].costCenterId ?? null) || (line.relatedBranchId ?? null) !== (expected[index].relatedBranchId ?? null))) return fail()
             try { assertBalanced(entry.lines) } catch { return fail() }
+            if (sale.fx != null) {
+              const fx = sale.fx
+              const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+              if (typeof fx.currencyCode !== 'string' || fx.currencyCode !== fx.currencyCode.trim().toUpperCase() || !Number.isSafeInteger(fx.amountMinor) || !Number.isSafeInteger(fx.ratePpm) || ![0, 2, 3].includes(fx.decimals) || !Number.isSafeInteger(paid) || paid <= 0 || validateFxLeg(fx, bookCurrencyOf().code).length || (sale.editHistory?.length ?? 0) > 0 || (sale.paymentAllocations?.length ?? 0) > 1 || sale.paymentAllocations?.some(allocation => allocation.accountCode === '1107') || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale' && tx.documentId === String(sale.id))) return fail()
+              const matches = [0, 2, 3].filter(decimals => convertFxToBookMinor(fx, decimals) === paid && entry.description === `فاتورة بيع ${sale.invoiceNumber} — ${describeFxLeg(fx, paid, decimals)}`)
+              if (matches.length !== 1) return fail()
+              // كود عملة الدفتر التاريخي غير محفوظ؛ يظهر القيد كدليل ولا يثبت تحصيلاً خارج التطبيق.
+            }
             const history = sale.editHistory ?? []
             if (!Array.isArray(history) || new Set(history.map(row => row.previousEntryId)).size !== history.length || new Set(history.map(row => row.reversalEntryId)).size !== history.length) return fail()
             for (let i = 0; i < history.length; i++) {
@@ -13624,6 +13657,7 @@ export const useRawDataStore = create<DataState>()(
               const old = journal.get(record.previousEntryId), reverse = journal.get(record.reversalEntryId)
               const nextId = history[i + 1]?.previousEntryId ?? sale.journalEntryId
               if (!Number.isSafeInteger(record.previousEntryId) || !Number.isSafeInteger(record.reversalEntryId) || nextId !== record.reversalEntryId + 1 || record.previousEntryId >= record.reversalEntryId || !record.at || !record.reason?.trim() || state.journal.filter(row => row.id === record.previousEntryId).length !== 1 || state.journal.filter(row => row.id === record.reversalEntryId).length !== 1 || state.journal.filter(row => row.reversesEntryId === record.previousEntryId).length !== 1 || !old || old.sourceType !== 'sale' || old.sourceId !== sale.id || (old.sourceCollection != null && old.sourceCollection !== 'sales') || old.reversesEntryId != null || old.reversedByEntryId !== record.reversalEntryId || old.memoOnly || !Array.isArray(old.lines) || !reverse || reverse.sourceType !== 'reversal' || reverse.sourceId !== old.id || reverse.reversesEntryId !== old.id || reverse.reversedByEntryId != null || (old.branchId != null && reverse.branchId != null && old.branchId !== reverse.branchId) || !Array.isArray(reverse.lines) || reverse.lines.length !== old.lines.length) return fail()
+              if (old.lines.some(line => line.accountCode === '1107') || state.employeeAdvances.some(advance => advance.journalEntryId === old.id)) return fail()
               const reversedLines = buildReversalLines(old.lines)
               if (reverse.lines.some((line, index) => { const expected = reversedLines[index]; return line.accountCode !== expected.accountCode || line.debit !== expected.debit || line.credit !== expected.credit || (line.partyKind ?? null) !== (expected.partyKind ?? null) || (line.partyId ?? null) !== (expected.partyId ?? null) || (line.costCenterId ?? null) !== (expected.costCenterId ?? null) || (line.relatedBranchId ?? null) !== (expected.relatedBranchId ?? null) })) return fail()
               try { assertBalanced(old.lines); assertBalanced(reverse.lines) } catch { return fail() }
@@ -13632,6 +13666,7 @@ export const useRawDataStore = create<DataState>()(
             let returned = 0
             for (const ret of projectReturns.filter(row => row.saleId === sale.id)) {
               if (state.saleReturns.filter(row => row.id === ret.id).length !== 1 || !scoped.saleReturns.some(row => row.id === ret.id) || ret.projectBilling === 'documentation' || !Array.isArray(ret.lines) || !ret.lines.length || !safeCartLines(ret.lines) || !Number.isSafeInteger(ret.totals?.totalMinor) || ret.totals.totalMinor <= 0 || state.stockMoves.some(move => move.docType === 'sale_return' && move.docId === ret.id)) return fail()
+              if (sale.fx != null && returnAllocation(ret).cashMinor > 0) return fail()
               let expectedReturn: JournalLine[]
               try {
                 if (!sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive)) || ret.totals.cogsMinor < 0) return fail()
@@ -13901,12 +13936,16 @@ export const useRawDataStore = create<DataState>()(
           ...advances.map(advance => ({ description: `دفعة مقدمة #${advance.id} — قيد #${advance.journalEntryId}`, amountMinor: advance.amountMinor })),
           ...relatedVouchers.map(voucher => ({ description: `سند ${voucher.voucherNumber}${voucher.reversalEntryId ? ' معكوس' : ' قائم'} — قيد #${voucher.journalEntryId}`, amountMinor: voucher.amountMinor })),
           ...relatedCollections.map(collection => ({ description: `تحصيل ${collection.settlementNumber} — قيد #${collection.journalEntryId}`, amountMinor: collection.amountMinor })),
+          ...projectSales.filter(sale => isFinancialSale(sale) && sale.fx != null).map(sale => ({ description: `تحصيل ${sale.invoiceNumber} بعملة ${sale.fx!.currencyCode} — عملة الدفتر التاريخية والتحصيل الخارجي يحتاجان مطابقة المالك`, amountMinor: sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0) })),
+          ...projectSales.filter(isFinancialSale).flatMap(sale => (sale.customerCharges ?? []).map(charge => ({ description: `رسم ${charge.nameAr} على ${sale.invoiceNumber} (${charge.taxable ? 'خاضع للضريبة' : 'معفى'})`, amountMinor: charge.amountMinor }))),
+          ...projectSales.filter(isFinancialSale).flatMap(sale => (sale.internalExpenses ?? []).map(expense => ({ description: `مصروف ${expense.label} — فاتورة ${sale.invoiceNumber} (${expense.settlement === 'paid_now' ? 'مدفوع' : `مستحق لـ ${expense.beneficiaryName}`})`, amountMinor: expense.amountMinor }))),
+          ...state.employeeAdvances.filter(advance => projectSales.some(sale => sale.journalEntryId === advance.journalEntryId)).map(advance => ({ description: `تحصيل فاتورة على حساب الموظف #${advance.employeeId} — سجل #${advance.id}`, amountMinor: advance.amountMinor })),
           ...projectSales.map(sale => ({ description: sale.projectBilling === 'documentation' ? `فاتورة توثيق ${sale.invoiceNumber} (تذكارية بلا قيد مالي)` : `فاتورة إضافية ${sale.invoiceNumber} — قيد #${sale.journalEntryId}`, amountMinor: sale.totals.totalMinor })),
           ...projectSales.flatMap(sale => (sale.editHistory ?? []).map(edit => ({ description: `عكس تعديل ${sale.invoiceNumber} — القيدان #${edit.previousEntryId} و#${edit.reversalEntryId} (إجمالي طرف القيد)`, amountMinor: journal.get(edit.previousEntryId)?.lines.reduce((sum, line) => sum + line.debit, 0) ?? 0 }))),
           ...projectReturns.map(ret => ({ description: ret.projectBilling === 'documentation' ? `مرتجع توثيق ${ret.returnNumber} (تذكاري بلا قيد مالي)` : `مرتجع فاتورة إضافية ${ret.returnNumber} — قيد #${ret.journalEntryId}`, amountMinor: ret.totals.totalMinor })),
           ...terminalRows.map(tx => ({ description: `ماكينة ${tx.kind === 'charge' ? 'تحصيل' : 'رد'} — ${tx.documentId} — مرجع ${tx.providerReference}`, amountMinor: tx.amountMinor })),
         ]
-        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId), voucher.reversalEntryId != null ? journal.get(voucher.reversalEntryId) : null]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), terminalRows.map(tx => [tx, state.paymentTerminals.find(terminal => terminal.id === tx.terminalId)]), projectSales.map(sale => [sale, journal.get(sale.journalEntryId), (sale.editHistory ?? []).map(edit => [journal.get(edit.previousEntryId), journal.get(edit.reversalEntryId)])]), projectReturns.map(ret => [ret, journal.get(ret.journalEntryId)]), beforeRows, afterRows, beforeDocs, afterDocs])
+        const fingerprint = JSON.stringify([project, customer, state.activeBranchId, state.branches, bookCurrencyOf().code, extracts.map(extract => [extract, journal.get(extract.journalEntryId), (extract.refunds ?? []).map(refund => journal.get(refund.journalEntryId))]), advances.map(advance => [advance, journal.get(advance.journalEntryId)]), relatedVouchers.map(voucher => [voucher, journal.get(voucher.journalEntryId), voucher.reversalEntryId != null ? journal.get(voucher.reversalEntryId) : null]), relatedCollections.map(collection => [collection, journal.get(collection.journalEntryId)]), terminalRows.map(tx => [tx, state.paymentTerminals.find(terminal => terminal.id === tx.terminalId)]), projectSales.map(sale => [sale, journal.get(sale.journalEntryId), (sale.editHistory ?? []).map(edit => [journal.get(edit.previousEntryId), journal.get(edit.reversalEntryId)])]), projectReturns.map(ret => [ret, journal.get(ret.journalEntryId)]), state.employeeAdvances.filter(advance => projectSales.some(sale => sale.journalEntryId === advance.journalEntryId)).map(advance => [advance, state.employees.find(employee => employee.id === advance.employeeId)]), beforeRows, afterRows, beforeDocs, afterDocs])
         return { dueMinor, extractCount: extracts.length, previousCustomerId, balanceBeforeMinor, balanceAfterMinor, documents, evidence, fingerprint }
       },
       resolveLegacyProjectCustomer: (args) => {

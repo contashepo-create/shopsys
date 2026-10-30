@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { useDataStore, useRawDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { DocumentAttachmentsBox } from '../components/DocumentAttachments.tsx'
-import type { DocumentCharge } from '../../core/documentCharges.ts'
+import { applySaleCustomerCharges, type DocumentCharge } from '../../core/documentCharges.ts'
 import type { InternalExpense } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -134,11 +134,9 @@ export function SalesInvoicesPage() {
     const { taxPercent, taxInclusive } = editing.taxPercent !== undefined
       ? { taxPercent: editing.taxPercent, taxInclusive: editing.taxInclusive ?? true }
       : deriveTaxConfig(editing.totals, editing.lines)
-    const base = computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
-    const charges = editCustomerCharges
-    const chargeNet = charges.reduce((sum, charge) => sum + charge.amountMinor, 0)
-    const chargeTax = charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * taxPercent / 100), 0)
-    return { ...base, netMinor: base.netMinor + chargeNet, taxBaseMinor: base.taxBaseMinor + charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: base.taxMinor + chargeTax, totalMinor: base.totalMinor + chargeNet + chargeTax }
+    try {
+      return applySaleCustomerCharges(computeTotals(editLines, editDiscount, taxPercent, taxInclusive), editCustomerCharges, taxPercent)
+    } catch { return null }
   }, [editing, editLines, editDiscount, editCustomerCharges])
 
   const editSignature = JSON.stringify({ editingId: editing?.id ?? null, editLines, editCustomerId, editPaid, editTreasury, editDiscount, editCustomerReference, editDueDate, editNotes, editCustomerCharges, editInternalExpenses, editReason })
@@ -225,7 +223,8 @@ export function SalesInvoicesPage() {
       invoiceNumber: s.invoiceNumber,
       refCode: s.refCode,
       dateIso: s.date,
-      lines: [...s.lines, ...(s.customerCharges ?? []).map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? (s.taxPercent ?? countryVatPercent) : 0 }))],
+      lines: s.lines,
+      customerCharges: s.customerCharges,
       totals: s.totals,
       payment: s.payment,
       paidMinor: s.paidMinor, // الدفع المجزأ: المدفوع/المتبقي على المطبوعة (بلاغ المالك)
