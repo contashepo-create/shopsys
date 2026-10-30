@@ -36,8 +36,13 @@ const css = read('index.css')
   assert.ok(/if\(printSwitches\.printAfterSave\)\{try\{printDraft\(printSwitches\.cashierPrint\?'thermal':'a4'\)/.test(sales),
     'الطباعة بعد الحفظ لا تحترم مفتاح الكاشير')
   /* §102: التوقيع اتسع بخيار printerName (توجيه النسخة لطابعتها المسماة عبر
-     جسر سطح المكتب) — الصمت والجسر باقيان، فالمقصود الأصلي محفوظ وموسّع. */
-  assert.ok(/export function printHtml\(html: string, options\?: \{ silent\?: boolean; printerName\?: string \}\)/.test(printer),
+     جسر سطح المكتب)، ثم بخيار preview/fromPreview في 2026-10-27 (معاينة كل
+     تقرير قبل طباعته). الصمت والجسر باقيان، فالمقصود الأصلي محفوظ وموسّع. */
+  assert.ok(/export function printHtml\(/.test(printer)
+    && /silent\?: boolean/.test(printer)
+    && /printerName\?: string/.test(printer)
+    && /options\?\.silent/.test(printer)
+    && /shopsysPrint/.test(printer),
     'الطباعة الصامتة غير مدعومة في طبقة الطباعة')
   R.ok('الطباعة بعد الحفظ تتبع نمط الكاشير · والطباعة الصامتة مدعومة عبر جسر سطح المكتب')
 }

@@ -17,6 +17,8 @@ import { formatMinor } from '../../core/money.ts'
 import { barcodeSvg } from '../../core/code128.ts'
 import { amountInWords } from './printInvoiceA4.ts'
 import { localDateTimeLabel, localIsoTimestamp } from '../../core/time.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { captureReportShellRebuilder, freshReportPrintSettings } from '../../core/reportPrint.ts'
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -73,7 +75,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
     totals.push(kv('إجمالي الخصم', `-${fmt(model.discountMinor)}`))
   }
   if (model.taxLabel) {
-    if (model.taxBaseMinor > 0) totals.push(kv('الأساس الخاضع للضريبة', fmt(model.taxBaseMinor)))
+    if (model.taxBaseMinor > 0) totals.push(kv(esc(model.taxBaseLabel ?? 'الأساس الخاضع للضريبة'), fmt(model.taxBaseMinor)))
     totals.push(kv(esc(model.taxLabel), fmt(model.taxMinor)))
     /* نفس منطق A4: مبالغ على حساب العميل بلا ضريبة تُعرض صراحةً ليُجمع المستند */
     const nonTaxableMinor = model.totalMinor - model.taxBaseMinor - model.taxMinor
@@ -184,7 +186,57 @@ ${large ? `
  * webContents.print بـ deviceName). في المتصفح لا وجود للجسر فيسقط إلى حوار
  * النظام كالعادة — لا ادعاء قدرة لا يملكها المتصفح.
  */
-export function printHtml(html: string, options?: { silent?: boolean; printerName?: string }): void {
+export interface PrintHtmlPreview {
+  /** عنوان نافذة المعاينة (مثل «معاينة ميزان المراجعة») */
+  title?: string
+  /**
+   * إعادة بناء HTML لحظة تغيير إعدادات الطباعة — معاينة حيّة.
+   * إن غابت يُعاد استخدام نفس HTML عند أي تحديث للإعدادات.
+   */
+  rebuild?: () => string
+}
+
+export function printHtml(
+  html: string,
+  options?: {
+    silent?: boolean
+    printerName?: string
+    preview?: PrintHtmlPreview
+    /** داخلي: الاستدعاء جاء من زر «طباعة» داخل نافذة المعاينة نفسها */
+    fromPreview?: boolean
+  },
+): void {
+  /* طلب المالك 2026-10-27: «عند طلب طباعة أي تقرير أعطني معاينة له وبها زر طباعة».
+     أي تقرير مبني بالغلاف الموحد renderReportShell يحمل <div class="rp-body">
+     ⇒ يُفتح تلقائياً في نافذة المعاينة الحية (زر طباعة + إعدادات سريعة) بدل
+     iframe مخفي يطبع فوراً. الفواتير والإيصالات الحرارية لا تحمل الوسم فتبقى
+     كما هي. زر الطباعة داخل المعاينة يمرّر fromPreview فيصل للطباعة الحقيقية
+     أدناه بلا حلقة لا نهائية. */
+  /* الجولة السابعة: الطباعة الصامتة/إلى طابعة مسماة طلب **تنفيذ** لا معاينة
+     — كانت تمرّ على شرط `isUnifiedReport` فتُفتح نافذة معاينة بدل الطباعة
+     (مثلاً «طباعة تجريبية» أو طباعة تقارير آلية). */
+  const directPrint = Boolean(options?.silent || options?.printerName)
+  const explicitPreview = directPrint ? undefined : options?.preview
+  const isUnifiedReport = !directPrint && !explicitPreview && !options?.fromPreview && html.includes('class="rp-body"')
+  if (explicitPreview || isUnifiedReport) {
+    const match = /<title>([^<]*)<\/title>/.exec(html)
+    /* معاينة حيّة لكل تقارير renderReportShell: إن لم يمرّر المستدعي
+       `rebuild` خاصاً به نُعد بناء الغلاف من وسيطاته الأصلية بإعدادات
+       التقارير الحالية (سجّلها reportPrint وقت التوليد). كان تغيير الإعدادات
+       أثناء فتح المعاينة بلا أي أثر على العشرات من التقارير. */
+    const rebuildShell = captureReportShellRebuilder(html)
+    const rebuild = explicitPreview?.rebuild ?? (() => {
+      const settings = freshReportPrintSettings()
+      return settings && rebuildShell ? rebuildShell(settings) : html
+    })
+    openPrintPreview({
+      html,
+      wide: true,
+      title: explicitPreview?.title ?? (match ? `معاينة ${match[1]} قبل الطباعة` : 'معاينة التقرير قبل الطباعة'),
+      rebuild,
+    })
+    return
+  }
   const bridge = (globalThis as { shopsysPrint?: (html: string, silent: boolean, printerName?: string) => void }).shopsysPrint
   /* الطباعة المباشرة (صامتة أو إلى طابعة مسماة) متاحة فقط عبر جسر EXE */
   if (typeof bridge === 'function' && (options?.silent || options?.printerName)) {
@@ -192,16 +244,27 @@ export function printHtml(html: string, options?: { silent?: boolean; printerNam
     return
   }
   const frame = document.createElement('iframe')
+  /* §الأمان الجولة السابعة: iframe الطباعة كان غير محصّن، فأي HTML يحوي
+     سكربتاً/معالج حدث (من بيانات مستخدم في تقرير) ينفّذ بأصل التطبيق
+     كاملاً بمجرد الضغط على زر «طباعة» داخل المعاينة. allow-same-origin
+     يُبقي contentDocument متاحاً لـ doc.write، وallow-modals يسمح بـ
+     contentWindow.print()، وبغياب صلاحية التشغيل تُعطَّل كل سكربتات الورقة. */
+  frame.setAttribute('sandbox', 'allow-same-origin allow-modals')
   frame.style.position = 'fixed'
   frame.style.left = '-9999px'
   frame.style.width = '0'
   frame.style.height = '0'
   document.body.appendChild(frame)
   const doc = frame.contentDocument
-  if (!doc) return
-  doc.open()
-  doc.write(html)
-  doc.close()
+  if (!doc) {
+    /* احتياط توافقي: إن منع متصفحٌ الوصول لـ contentDocument رغم
+       allow-same-origin، يبقى srcdoc يعرض الورقة داخل نفس الحصانة. */
+    frame.srcdoc = html
+  } else {
+    doc.open()
+    doc.write(html)
+    doc.close()
+  }
   let printed = false
   const doPrint = () => {
     if (printed) return

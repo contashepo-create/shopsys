@@ -104,6 +104,62 @@ describe('الأرصدة المعروضة في القوائم = الكشف (بل
     expect(s.getSupplierBalance(supplier.id)).toBe(-total) // المصدر الصحيح
   })
 
+  it('مرتجع نقدي بعد سند قبض مخصص للفاتورة يرد من المبلغ المحصل ولا يحوله لخصم ذمة', () => {
+    const sale = useDataStore.getState().postSale({
+      lines: [line], customerId: customer.id, partyKind: 'customer', partyId: customer.id, partyName: customer.nameAr,
+      payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false,
+    } as never)
+    const voucher = useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 3_000, description: 'تحصيل', partyKind: 'customer', partyId: customer.id })
+    expect(voucher.allocations?.[0]?.docKey).toBe(`sale:${sale.id}`)
+    const ret = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'رد نقدي', __approvalBypass: true })
+    expect(ret.cashRefundMinor).toBe(2_000)
+    expect(ret.creditRefundMinor).toBe(0)
+    expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(3_000)
+  })
+
+  it('لا يرد ثانيةً نقود سند ماكينة سبق ردها لدى المزود', () => {
+    const terminal = { id: 't', code: 'T-1', nameAr: 'ماكينة', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'T-1', status: 'active' as const }
+    useDataStore.setState({ branches: [], paymentTerminals: [], paymentTerminalTransactions: [] })
+    useDataStore.getState().addPaymentTerminal(terminal)
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, partyKind: 'customer', partyId: customer.id, partyName: customer.nameAr, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+    useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 3_000, description: 'تحصيل بطاقة', partyKind: 'customer', partyId: customer.id, terminalPayment: { terminalId: 't', providerReference: 'CHARGE' } })
+    const charge = useDataStore.getState().paymentTerminalTransactions[0]
+    useDataStore.getState().recordPaymentTerminalTransaction({ id: 'refund-t', idempotencyKey: 'refund-t', kind: 'refund', terminalId: 't', branchId: '', userId: 0, documentType: 'receipt_voucher', documentId: 'external-refund', amountMinor: 3000, providerReference: 'REFUND', occurredAt: '2026-10-28T10:00:00Z', originalTransactionId: charge.id })
+    const before = useDataStore.getState().saleReturns.length
+    expect(() => useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'رد', __approvalBypass: true })).toThrow(/رد.*ماكينة.*مراجعة/)
+    expect(useDataStore.getState().saleReturns).toHaveLength(before)
+  })
+
+  it('رد خارجي لتحصيل عميل مرتبط بفاتورة يوقف المرتجع بلا أثر', () => {
+    const terminal = { id: 't', code: 'T-1', nameAr: 'ماكينة', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'T-1', status: 'active' as const }
+    useDataStore.setState({ branches: [], paymentTerminals: [], paymentTerminalTransactions: [] })
+    useDataStore.getState().addPaymentTerminal(terminal)
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+    useDataStore.getState().receiveClientPayment({ customerId: customer.id, treasury: '1101', amountMinor: 3000, terminalPayment: { terminalId: 't', providerReference: 'C2' } })
+    const charge = useDataStore.getState().paymentTerminalTransactions[0]
+    useDataStore.getState().recordPaymentTerminalTransaction({ id: 'refund-2', idempotencyKey: 'refund-2', kind: 'refund', terminalId: 't', branchId: '', userId: 0, documentType: 'client_collection', documentId: 'external-refund', amountMinor: 1000, providerReference: 'R2', occurredAt: '2026-10-28T10:00:00Z', originalTransactionId: charge.id })
+    const before = useDataStore.getState().saleReturns.length
+    expect(() => useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'رد', __approvalBypass: true })).toThrow(/رد.*ماكينة.*مراجعة/)
+    expect(useDataStore.getState().saleReturns).toHaveLength(before)
+  })
+
+  it('سند معكوس لا يعد نقداً متاحاً للمرتجع', () => {
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, partyKind: 'customer', partyId: customer.id, partyName: customer.nameAr, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+    const voucher = useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 3_000, description: 'تحصيل يعكس', partyKind: 'customer', partyId: customer.id })
+    useDataStore.getState().reverseVoucher(voucher.id, 'تصحيح')
+    const ret = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'رد', __approvalBypass: true })
+    expect(ret.cashRefundMinor).toBe(0)
+    expect(ret.creditRefundMinor).toBe(2_000)
+  })
+
+  it('مرتجعان لا يردان أكثر من المحصَّل بسند القبض', () => {
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, partyKind: 'customer', partyId: customer.id, partyName: customer.nameAr, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+    useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 3_000, description: 'تحصيل', partyKind: 'customer', partyId: customer.id })
+    const first = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'رد أول', __approvalBypass: true })
+    const second = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'رد ثان', __approvalBypass: true })
+    expect([first.cashRefundMinor, second.cashRefundMinor, second.creditRefundMinor]).toEqual([2_000, 1_000, 1_000])
+  })
+
   it('شراء آجل من مورد ⇒ دينه علينا 3000 (موجب) ويطابق كشفه', () => {
     const store = useDataStore.getState()
     store.postPurchase({
@@ -129,6 +185,29 @@ describe('الأرصدة المعروضة في القوائم = الكشف (بل
     expect(state.getCustomerBalance(customer.id)).toBe(statement)
   })
 
+  it('رصيد مرتجع لبيع مسدد يظل متاحاً تقديرياً لمستخلص لاحق', () => {
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+    useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 6_000, description: 'تحصيل', partyKind: 'customer', partyId: customer.id })
+    const ret = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'store_credit', reason: 'رصيد عميل', __approvalBypass: true })
+    expect(ret.creditRefundMinor).toBe(2_000)
+    const project = useDataStore.getState().addProject({ nameAr: 'مشروع لاحق', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 2000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+    const ex = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 2000, vatPercent: 0, payment: 'credit' })
+    expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(0)
+    expect(useDataStore.getState().getOpenClientInvoices(customer.id, true).find((d) => d.docKey === `extract:${ex.id}`)?.settledMinor).toBe(2000)
+  })
+
+  it('رصيد مرتجع لبيع نقدي يُطفئ مستخلصاً لاحقاً كتسوية غير نقدية', () => {
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, payment: 'cash', treasury: '1101', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+    const ret = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'store_credit', reason: 'رصيد عميل', __approvalBypass: true })
+    expect(ret.creditRefundMinor).toBe(2000)
+    const project = useDataStore.getState().addProject({ nameAr: 'مشروع لاحق', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 2000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+    const ex = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 2000, vatPercent: 0, payment: 'credit' })
+    expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(0)
+    const doc = useDataStore.getState().getOpenClientInvoices(customer.id, true).find((d) => d.docKey === `extract:${ex.id}`)
+    expect(doc?.settledMinor).toBe(2000)
+    expect(doc?.adjustmentAllocations?.[0]?.description).toContain('رصيد مرتجع')
+  })
+
   it('مرتجع شراء آجل بموافقة داخلية ⇒ يخفض دين المورد (3000 ⇒ 2000)', () => {
     const store = useDataStore.getState()
     const purchase = store.postPurchase({
@@ -141,4 +220,50 @@ describe('الأرصدة المعروضة في القوائم = الكشف (بل
     const statement = state.getSupplierStatementRows(supplier.id).reduce((sum, row) => sum + row.creditMinor - row.debitMinor, 0)
     expect(state.getSupplierBalance(supplier.id)).toBe(statement)
   })
+})
+
+it('رصيد مرتجع قديم بلا حقول التقسيم يطابق الكشف وذمة المستخلص', () => {
+  const sale = useDataStore.getState().postSale({ lines: [line], customerId: customer.id, payment: 'cash', treasury: '1101', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false } as never)
+  const ret = useDataStore.getState().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'store_credit', reason: 'رصيد قديم', __approvalBypass: true })
+  useDataStore.setState({ saleReturns: useDataStore.getState().saleReturns.map(r => r.id === ret.id ? { ...r, cashRefundMinor: undefined, creditRefundMinor: undefined, storeCreditRefundMinor: undefined } : r) })
+  const project = useDataStore.getState().addProject({ nameAr: 'مشروع', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 2000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  const ex = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'مستخلص', grossMinor: 2000, vatPercent: 0, payment: 'credit' })
+  expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(0)
+  expect(useDataStore.getState().getOpenClientInvoices(customer.id, true).find(d => d.docKey === `extract:${ex.id}`)?.settledMinor).toBe(2000)
+})
+
+it('إسناد طرف لسند إيراد أو مصروف لا يخفض ذمته إن لم يتحرك حساب مراقبة الطرف', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '4101', amountMinor: 500, description: 'إيراد مباشر' })
+  store.postVoucher({ kind: 'payment', partyKind: 'supplier', partyId: supplier.id, treasury: '1101', counterAccountCode: '5110', amountMinor: 700, description: 'مصروف مباشر' })
+  const state = useDataStore.getState()
+  expect(state.getCustomerBalance(customer.id)).toBe(0)
+  expect(state.getSupplierBalance(supplier.id)).toBe(0)
+  expect(state.getCustomerStatementRows(customer.id).some(row => row.docLabel.includes('سند قبض'))).toBe(false)
+  expect(state.getSupplierStatementRows(supplier.id).some(row => row.docLabel.includes('سند صرف'))).toBe(false)
+})
+
+it('لا يخمّن رصيد طرف عندما يفقد سند تاريخي حسابه المقابل', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 500, description: 'قبض' })
+  useDataStore.setState({ vouchers: useDataStore.getState().vouchers.map(v => ({ ...v, counterAccountCode: undefined as never })) })
+  expect(() => useDataStore.getState().getCustomerBalance(customer.id)).toThrow(/مراجعة/)
+  expect(() => useDataStore.getState().getOpenClientInvoices(customer.id)).toThrow(/مراجعة/)
+})
+
+it('سند دخل أو مصروف باسم الموظف لا يغيّر جاريه ما لم يتحرك حساب الموظفين', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '4101', amountMinor: 500, description: 'إيراد مباشر' })
+  expect(useDataStore.getState().getEmployeeBalance(employee.id)).toBe(0)
+  store.postVoucher({ kind: 'payment', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '5110', amountMinor: 700, description: 'مصروف مباشر' })
+  expect(useDataStore.getState().getEmployeeBalance(employee.id)).toBe(0)
+})
+
+it('حساب سلف الموظفين والرواتب في السندات يبقي أثره ويُحجب عند فقد الحساب', () => {
+  const store = useDataStore.getState()
+  store.postVoucher({ kind: 'receipt', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '1107', amountMinor: 200, description: 'رد سلفة' })
+  store.postVoucher({ kind: 'payment', partyKind: 'employee', partyId: employee.id, treasury: '1101', counterAccountCode: '2104', amountMinor: 100, description: 'صرف راتب' })
+  expect(useDataStore.getState().getEmployeeBalance(employee.id)).toBe(100)
+  useDataStore.setState({ vouchers: useDataStore.getState().vouchers.map((voucher, index) => index === 0 ? { ...voucher, counterAccountCode: undefined as never } : voucher) })
+  expect(() => useDataStore.getState().getEmployeeBalance(employee.id)).toThrow(/مراجعة/)
 })

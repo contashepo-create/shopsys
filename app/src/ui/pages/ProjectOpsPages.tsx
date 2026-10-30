@@ -226,7 +226,7 @@ export function ClientCollectionsPage() {
       </div>
       <div className="text-sm text-slate-500">
         التحصيل على مستوى حساب العميل الإجمالي: يُطفئ الفواتير والمستخلصات المفتوحة تلقائياً بالأقدم أولاً (FIFO) —
-        وبمفتاح اختياري تُطابق دفعةً بفاتورة محددة. رصيد العميل لا ينشأ إلا من فاتورة/مستخلص رسمي.
+        وبمفتاح اختياري تُطابق دفعةً بفاتورة محددة. يشمل الرصيد الافتتاحي والذمم المستندية؛ وتخصيص الشيكات وما لم يوزَّع من التحصيلات تقديري.
       </div>
 
       <div className={`anim-up ${card} p-4 space-y-4`}>
@@ -265,7 +265,7 @@ export function ClientCollectionsPage() {
                               <input type="radio" name="specificInv" checked={specificKey === inv.docKey} onChange={() => setSpecificKey(inv.docKey)} className="ml-2 accent-emerald-600" />
                             )}
                             <span className="font-bold">{inv.docLabel}</span>
-                            <span className="text-[11px] text-slate-400 mr-2">{inv.date.slice(0, 10)}</span>
+                            <span className="text-[11px] text-slate-400 mr-2">{inv.date === '0000-00-00' ? '—' : inv.date.slice(0, 10)}</span>
                           </td>
                           <td className="px-3 py-2 text-left font-black">{fmt(remaining)}</td>
                         </tr>

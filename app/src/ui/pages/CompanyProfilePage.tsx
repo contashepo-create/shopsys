@@ -18,6 +18,17 @@ import { branchIdentityMissingFields, useAppStore } from '../../stores/app.store
 import { secureStorage } from '../../data/secureStorage.ts'
 import { Btn, Field, inputCls, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
 
+// عمليات المسودة لنفس الكيان تُنفّذ بترتيبها حتى لو استغرق التشفير أو فكّه
+// وقتاً أطول؛ تبقى الطوابير حية بين فك الصفحة وإعادة تركيبها.
+const profileDraftQueues = new Map<string, Promise<unknown>>()
+function queueProfileDraft<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const previous = profileDraftQueues.get(key) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(operation)
+  profileDraftQueues.set(key, next)
+  void next.finally(() => { if (profileDraftQueues.get(key) === next) profileDraftQueues.delete(key) }).catch(() => undefined)
+  return next
+}
+
 const isValidEmail = (v: string) => !v.trim() || /^\S+@\S+\.\S+$/.test(v.trim())
 type CompanyProfileDraft = Record<'shopName' | 'ownerName' | 'phone' | 'email' | 'website' | 'city' | 'street' | 'buildingNo' | 'postalCode' | 'poBox' | 'commercialRegister' | 'taxNumber', string>
 const COMPANY_DRAFT_FIELDS: readonly (keyof CompanyProfileDraft)[] = ['shopName', 'ownerName', 'phone', 'email', 'website', 'city', 'street', 'buildingNo', 'postalCode', 'poBox', 'commercialRegister', 'taxNumber']
@@ -56,7 +67,7 @@ function CompanyProfileForm() {
   const [taxNumber, setTaxNumber] = useState(einvoice.taxNumber)
   useEffect(() => {
     let active = true
-    void Promise.resolve(secureStorage.getItem(draftStorageKey)).then((serialized) => {
+    void queueProfileDraft(draftStorageKey, () => Promise.resolve(secureStorage.getItem(draftStorageKey))).then((serialized) => {
       const draft = readCompanyProfileDraft(serialized)
       // الكتابة المشفّرة التي تلي التهيئة ترحّل تلقائياً أي مسودة قديمة كانت
       // كنص صريح إلى التنسيق المحمي من دون ترك كتابة ترحيل متسابقة بالخلفية.
@@ -82,7 +93,7 @@ function CompanyProfileForm() {
   const unsaved = useUnsavedChangesGuard(profileDraftJson, JSON.stringify(savedProfileDraft))
   useEffect(() => {
     if (!draftReady) return
-    void Promise.resolve(secureStorage.setItem(draftStorageKey, profileDraftStorageJson)).catch(() => {
+    void queueProfileDraft(draftStorageKey, () => Promise.resolve(secureStorage.setItem(draftStorageKey, profileDraftStorageJson))).catch(() => {
       /* يبقى حارس الإغلاق فعالاً حتى عند تعذر التخزين */
     })
   }, [draftReady, draftStorageKey, profileDraftStorageJson])
@@ -116,7 +127,7 @@ function CompanyProfileForm() {
       updateEinvoice({ taxNumber: taxNumber.trim() })
       unsaved.markClean()
       setRestoredDraft(null)
-      void Promise.resolve(secureStorage.removeItem(draftStorageKey)).catch(() => { /* لا يؤثر في نجاح حفظ الإعدادات */ })
+      void queueProfileDraft(draftStorageKey, () => Promise.resolve(secureStorage.removeItem(draftStorageKey))).catch(() => { /* لا يؤثر في نجاح حفظ الإعدادات */ })
       toast.show(isBranchScope ? `حُفظت هوية «${shopName.trim()}» المستقلة ✓` : 'حُفظت بيانات المنشأة ✓')
     } catch (err) {
       toast.show((err as Error).message, 'error')

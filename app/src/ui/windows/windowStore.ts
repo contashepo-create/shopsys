@@ -509,8 +509,18 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     const tab = get().tabs.find((row) => row.id === id)
     if (!tab) return
     const proceed = () => get().closeTabNow(id)
-    if (!tab.path && tab.dirty) { get().beginTabAsk(id, 'close', proceed); return }
-    /* تبويب مسار: صفحة شاشتها نفسها تسأل عبر حارسها المسجّل */
+    if (!tab.path) {
+      if (tab.dirty) { get().beginTabAsk(id, 'close', proceed); return }
+      /* بلاغ المالك 2026-10-27: تبويب نظيف (رُحّل مستنده للتو) لا يمرّ على
+         حراس التنقل العامة — فهي مجموعة على مستوى النافذة كلها، وقد يبقى فيها
+         حارس محرر آخر فيُفتح حوار «تعديلات غير محفوظة» ويمنع إغلاق مستند
+         ليس به ما يُفقد. حماية تبويب العرض المتسخ تتم بـ tab.dirty أعلاه. */
+      proceed()
+      return
+    }
+    /* تبويب مسار: صفحة شاشتها نفسها تسأل عبر حارسها المسجّل. هذا سلوك
+       مقصود ومُختبَر (window_actions_matrix) — صفحة مسار قد تحوي نموذجاً
+       بتعديلات غير محفوظة، فيجب ألا يُغلق تبويبها بلا سؤال. */
     if (guardNavigation(proceed)) return
     proceed()
   },

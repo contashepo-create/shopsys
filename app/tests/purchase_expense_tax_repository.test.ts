@@ -97,4 +97,15 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
     expect(entry.lines.find(line => line.accountCode === '5108')?.debit).toBe(1000)
     expect(purchase.supplierDueMinor).toBe(10000)
   })
+
+  it('لا يترك ساق صرف قديمة عند تعديل فاتورة شراء أجنبية', () => {
+    const state = useDataStore.getState()
+    const purchase = state.postPurchase({ supplierId: 801, date: '2026-09-24', lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000, warehouseId: 1 }], expenses: [], paidMinor: 1000, treasury: '1101', warehouseId: 1, notes: '', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookCurrencyCode: 'EGP', bookDecimals: 2 })
+    const journal = useDataStore.getState().journal
+    const items = useDataStore.getState().items
+    expect(() => state.editPurchase({ purchaseId: purchase.id, lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000, warehouseId: 1 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false })).toThrow(/عملة أجنبية/)
+    expect(useDataStore.getState().journal).toBe(journal)
+    expect(useDataStore.getState().items).toBe(items)
+  })
+
 })

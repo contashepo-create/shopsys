@@ -15,7 +15,7 @@ vi.mock('../src/core/security.ts', () => ({
   isEncrypted: (value: string) => value.startsWith('SSENC1.'),
 }))
 
-const { secureStorage, flushSecureStorageWrites } = await import('../src/data/secureStorage.ts')
+const { secureStorage, flushSecureStorageWrites, setDeviceSecret, unsealStorageAfterReload } = await import('../src/data/secureStorage.ts')
 
 describe('انتظار كتابات secureStorage حسب المخزن', () => {
   it('يفرّغ shopsys-data من دون انتظار أو تفريغ shopsys-app', async () => {
@@ -39,4 +39,36 @@ describe('انتظار كتابات secureStorage حسب المخزن', () => {
     await flushSecureStorageWrites()
     expect(localStorage.getItem('shopsys-app')).toBe('SSENC1.app-settings')
   })
+
+  it('يحفظ اللقطة الأحدث ولو انتهى تشفيرها قبل الأقدم', async () => {
+    localStorage.clear()
+    cryptoMocks.resolvers.clear()
+    cryptoMocks.encryptText.mockClear()
+    const first = secureStorage.setItem('shopsys-data', 'old')
+    const second = secureStorage.setItem('shopsys-data', 'new')
+    await vi.waitFor(() => expect(cryptoMocks.encryptText).toHaveBeenCalledTimes(2))
+    cryptoMocks.resolvers.get('new')!('SSENC1.new')
+    // أعطِ الكتابة السريعة فرصة للإنجاز قبل اكتمال التشفير البطيء.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    cryptoMocks.resolvers.get('old')!('SSENC1.old')
+    await Promise.all([first, second])
+    await flushSecureStorageWrites('shopsys-data')
+    expect(localStorage.getItem('shopsys-data')).toBe('SSENC1.new')
+  })
+
+
+  it('لا تكتب عملية بدأت قبل تغيير السر حتى لو فُتح الختم قبل اكتمال التشفير', async () => {
+    localStorage.clear()
+    localStorage.setItem('shopsys-k', 'a'.repeat(64))
+    cryptoMocks.resolvers.clear()
+    cryptoMocks.encryptText.mockClear()
+    const pending = secureStorage.setItem('shopsys-data', 'old-key-data')
+    await vi.waitFor(() => expect(cryptoMocks.encryptText).toHaveBeenCalledTimes(1))
+    setDeviceSecret('b'.repeat(64))
+    unsealStorageAfterReload()
+    cryptoMocks.resolvers.get('old-key-data')!('SSENC1.old-key-data')
+    await pending
+    expect(localStorage.getItem('shopsys-data')).toBeNull()
+  })
+
 })

@@ -27,6 +27,7 @@ export function ThermalPreview() {
   const nav = useNavigate()
   const { open, handle, mini, closePreview, setMini, refresh } = usePrintPreview()
   const receipt = useAppStore((s) => s.receipt)
+  const reportPrint = useAppStore((s) => s.reportPrint)
   const [quickOpen, setQuickOpen] = useState(false)
 
   const html = handle?.html ?? ''
@@ -55,6 +56,18 @@ export function ThermalPreview() {
     if (usePrintPreview.getState().open) refresh()
   }, [receipt, refresh])
 
+  /* المراجعة الأدق 2026-10-27: إعدادات التقارير (لون/خط/توقيعات/علامة مائية)
+     كانت لا تُعيد بناء المعاينة لأن الأثر كان يراقب `receipt` وحدها — فيبقى
+     التقرير المعروض بإعدادات لحظة الفتح مهما غيّر المستخدم في اللوحة السريعة. */
+  const reportPrintRef = useRef(reportPrint)
+  const firstReportPrint = useRef(true)
+  useEffect(() => {
+    if (firstReportPrint.current) { firstReportPrint.current = false; reportPrintRef.current = reportPrint; return }
+    if (reportPrint === reportPrintRef.current) return
+    reportPrintRef.current = reportPrint
+    if (usePrintPreview.getState().open) refresh()
+  }, [reportPrint, refresh])
+
   /* الظهور في منتصف الشاشة عند **الفتح أو التكبير من الوضع المصغّر** فقط —
      تغيير عرض الورق (58↔80mm) من الإعدادات السريعة لا يعيد التمركز،
      فتبقى النافذة حيث سحبها المستخدم */
@@ -74,7 +87,8 @@ export function ThermalPreview() {
     /* مفتاح الطباعة الصامتة يُقرأ لحظة الطباعة لا لحظة فتح المعاينة —
        لو بدّله المستخدم والمعاينة مفتوحة (أو من قسم الطباعة والمصغّرة معلقة)
        ننفّذ القيمة الجديدة */
-    printHtml(current.html, { silent: useAppStore.getState().receipt.silentPrint ?? false })
+    /* fromPreview: هذا هو زر الطباعة داخل نافذة المعاينة نفسها — لا تفتح معاينة ثانية */
+    printHtml(current.html, { silent: useAppStore.getState().receipt.silentPrint ?? false, fromPreview: true })
     closePreview()
   }, [closePreview])
 
@@ -142,6 +156,11 @@ export function ThermalPreview() {
               <iframe
                 ref={frameRef}
                 title="معاينة مصغّرة"
+                /* §الأمان: صلاحية الأصل فقط، بلا صلاحية تشغيل السكربتات —
+                   يُبقي contentDocument متاحاً لـ doc.write ويمنع تنفيذ أي
+                   سكربت أو معالج حدث مضمّن قد يأتي في HTML تقرير مبني من
+                   بيانات المستخدم. المعاينة للعرض فقط لا تحتاج سكربتات. */
+                sandbox="allow-same-origin"
                 style={{ width: paper, height: 306, transform: `scale(${miniPaper / paper})`, transformOrigin: 'top right' }}
               />
             </div>
@@ -192,7 +211,7 @@ export function ThermalPreview() {
 
         <div className="thermal-preview-paper">
           {/* العرض نسبي حتى لا يظهر أي تمرير أفقي مهما اختلفت هوامش المتصفح */}
-          <iframe ref={frameRef} title="معاينة المستند" style={{ width: '100%', maxWidth: paper }} />
+          <iframe ref={frameRef} title="معاينة المستند" sandbox="allow-same-origin" style={{ width: '100%', maxWidth: paper }} />
         </div>
         <footer>
           <button type="button" className="is-ghost" onClick={() => setQuickOpen((value) => !value)} data-thermal-settings><Settings2 size={12} /> إعدادات سريعة</button>

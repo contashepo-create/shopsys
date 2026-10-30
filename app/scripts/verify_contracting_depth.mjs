@@ -24,7 +24,8 @@ const bal = (code) => { let v = 0; for (const e of S().journal) for (const l of 
 const balanced = () => { let d = 0, c = 0; for (const e of S().journal) for (const l of e.lines) { d += l.debit; c += l.credit }; return d === c }
 
 console.log('🏗️ التأسيس: مشروع بعقد 10م ومحتجز 10٪')
-S().addProject({ nameAr: 'برج النيل', clientName: 'شركة التعمير', contractValueMinor: 10_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
+S().addCustomer({ nameAr: 'شركة التعمير', phone: '', notes: '', creditLimitMinor: 0 })
+S().addProject({ nameAr: 'برج النيل', clientId: S().customers.at(-1).id, clientName: 'شركة التعمير', contractValueMinor: 10_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
 const proj = S().projects.at(-1)
 
 console.log('📐 جدول الكميات BOQ')
@@ -64,7 +65,7 @@ ok('العملاء عليهم المستحق − الاسترداد', bal('1104'
 ok('2109 انخفض للباقي (400 ألف)', bal('2109') === -400_000)
 ok('الإيراد بكامل الأعمال 3م', bal('4107') === -3_000_000)
 ok('رصيد الدفعات = 400 ألف', S().getAdvanceBalance(proj.id) === 400_000)
-throws('استرداد أكبر من الرصيد يُرفض', () => S().addProjectExtract({ projectId: proj.id, grossMinor: 100_000, vatPercent: 0, payment: 'cash', description: 'x', treasury: '1101', advanceRecoveryMinor: 999_999_999 }), 'أكبر')
+throws('استرداد أكبر من الرصيد يُرفض', () => S().addProjectExtract({ projectId: proj.id, grossMinor: 1_000_000, vatPercent: 0, payment: 'cash', description: 'x', treasury: '1101', advanceRecoveryMinor: 500_000 }), 'أكبر')
 
 console.log('👷 مقاول الباطن: عقد ← شهادتان ← دفعة ← إفراج')
 const sc = S().addSubContract({ projectId: proj.id, contractorName: 'شركة الحفر العميق', scopeAr: 'أعمال الحفر', contractValueMinor: 1_500_000, retentionPercent: 10, startDate: '2026-09-05' })

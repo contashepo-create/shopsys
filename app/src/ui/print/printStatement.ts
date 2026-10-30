@@ -61,14 +61,9 @@ export function renderStatementHtml(a: StatementPrintArgs): string {
   .party { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
   .pname { font-weight: 800; font-size: 14px; }
   .pdet { color: #64748b; font-size: 10.5px; }
-  .cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-  .card { border-radius: 8px; padding: 8px 12px; border: 1px solid; }
-  .card .cl { font-size: 10px; font-weight: 700; }
-  .card .cv { font-size: 15px; font-weight: 900; margin-top: 2px; }
-  .card.deb { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
-  .card.cred { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
-  .card.bal { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
-  .card .cm { font-size: 9.5px; color: #64748b; margin-top: 1px; }
+  /* جداول نظامية بلا بطاقات (التصميم ③) */
+  .num { direction: ltr; text-align: left; font-variant-numeric: tabular-nums; font-weight: 700; }
+  .total td { background: #f1f5f9; border-top: 2px solid #0f172a; font-weight: 900; }
   table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
   thead th { background: #0f172a; color: #fff; padding: 7px 10px; text-align: right; font-size: 10.5px; }
   td { padding: 6px 10px; border-bottom: 1px solid #e2e8f0; }
@@ -102,11 +97,15 @@ export function renderStatementHtml(a: StatementPrintArgs): string {
     <div class="pdet">عدد الحركات: ${a.rows.length}</div>
   </div>
 
-  <div class="cards">
-    <div class="card deb"><div class="cl">إجمالي مدين</div><div class="cv">${fmt(totalDebit)} ${esc(a.cur.symbol)}</div></div>
-    <div class="card cred"><div class="cl">إجمالي دائن</div><div class="cv">${fmt(totalCredit)} ${esc(a.cur.symbol)}</div></div>
-    <div class="card bal"><div class="cl">الرصيد الحالي</div><div class="cv">${fmt(Math.abs(balance))} ${esc(a.cur.symbol)}</div><div class="cm">${esc(meaning)}</div></div>
-  </div>
+  <!-- ملخص نظامي بجدول بدل البطاقات (قرار المالك 2026-10-27: لا كروت في الكشوف) -->
+  <table style="margin-bottom:12px">
+    <thead><tr><th>المؤشر</th><th style="text-align:left">القيمة (${esc(a.cur.symbol)})</th></tr></thead>
+    <tbody>
+      <tr><td>إجمالي مدين</td><td class="num">${fmt(totalDebit)}</td></tr>
+      <tr><td>إجمالي دائن</td><td class="num">${fmt(totalCredit)}</td></tr>
+      <tr class="total"><td><b>الرصيد الحالي — ${esc(meaning)}</b></td><td class="num"><b>${fmt(Math.abs(balance))}</b></td></tr>
+    </tbody>
+  </table>
 
   <table>
     <thead><tr><th>التاريخ</th><th>المستند / البيان</th><th style="text-align:left">قيمة العملية</th><th style="text-align:left">${esc(a.debitLabel)}</th><th style="text-align:left">${esc(a.creditLabel)}</th><th style="text-align:left">الرصيد</th></tr></thead>

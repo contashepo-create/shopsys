@@ -51,6 +51,19 @@ describe('كشوف حساب الأطراف', () => {
     expect(rows[0].balanceMinor).toBe(0)
   })
 
+  it('يحافظ على قيمة عملية المستندات الإضافية في كشف العميل والمورد دون تغيير الرصيد', () => {
+    const customer = customerStatement({
+      customerId: 7, sales: [], saleReturns: [], allSales: [], vouchers: [], cheques: [],
+      extraDocs: [{ date: '2026-09-01', docLabel: 'مرتجع زيارة مؤمنة', operationMinor: 4000, debitMinor: 0, creditMinor: 1200 }],
+    })
+    const supplier = supplierStatement({
+      supplierId: 4, purchases: [], purchaseReturns: [], allPurchases: [], vouchers: [], cheques: [],
+      extraDocs: [{ date: '2026-09-01', docLabel: 'مستند مورد', operationMinor: 4000, debitMinor: 0, creditMinor: 1200 }],
+    })
+    expect(customer[0]).toMatchObject({ operationMinor: 4000, creditMinor: 1200, balanceMinor: -1200 })
+    expect(supplier[0]).toMatchObject({ operationMinor: 4000, creditMinor: 1200, balanceMinor: 1200 })
+  })
+
   it('يعرض مسير الموظف والعمولة والعهدة إلى جانب السلف', () => {
     const rows = employeeStatement({
       employeeId: 3,
@@ -65,5 +78,29 @@ describe('كشوف حساب الأطراف', () => {
     expect(rows.map((row) => row.docLabel)).toEqual(['مسير SAL-0001', 'عمولة SCM-0001 — عمولة بيع (مستحقة)', 'تعزيز عهدة (fund)'])
     expect(rows[0].operationMinor).toBe(5500)
     expect(rows.at(-1)?.balanceMinor).toBe(600)
+  })
+})
+
+/* المراجعة الأدق 2026-10-27: مصدر واحد للحقيقة بين كشف العميل وذمم المشاريع */
+describe('اتساق الشيكات مع دفتر الذمم', () => {
+  const base = {
+    customerId: 7,
+    sales: [{ invoiceNumber: 'S-0001', date: '2026-09-01', customerId: 7, payment: 'credit', paidMinor: 0, totals: { totalMinor: 1000 } }],
+    saleReturns: [], allSales: [], vouchers: [],
+  }
+  const chq = (status: string) => [{ chequeNumber: 'C-1', direction: 'incoming', partyId: 7, amountMinor: 400, status, createdAt: '2026-09-05' }]
+
+  it('الشيك الوارد النشط يخفض رصيد العميل', () => {
+    expect(customerStatement({ ...base, cheques: chq('held') }).at(-1)?.balanceMinor).toBe(600)
+  })
+  it('الشيك المرتد يُظهر الخصم ثم إعادته فيبقى الدين كما كان', () => {
+    const rows = customerStatement({ ...base, cheques: chq('bounced') })
+    expect(rows.at(-1)?.balanceMinor).toBe(1000)
+    expect(rows.some((r) => r.docLabel.includes('ارتداد'))).toBe(true)
+  })
+  it('الشيك الملغي لا يخفض الرصيد — مطابقة لاستبعاده من chequeSettlesCustomerDues', () => {
+    const rows = customerStatement({ ...base, cheques: chq('cancelled') })
+    expect(rows.at(-1)?.balanceMinor).toBe(1000)
+    expect(rows.some((r) => r.docLabel.includes('شيك'))).toBe(false)
   })
 })

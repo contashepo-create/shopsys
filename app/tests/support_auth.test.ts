@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearSupportToken, getOrCreateSupportToken, isSupportToken } from '../src/data/supportAuth.ts'
 import { fetchConversation, sendSupportMessage } from '../src/core/support.ts'
 
 describe('توثيق قناة الدعم', () => {
+  afterEach(() => { delete (window as { shopsysSupport?: unknown }).shopsysSupport; vi.unstubAllGlobals() })
   beforeEach(() => {
     localStorage.clear()
     clearSupportToken()
@@ -15,6 +16,31 @@ describe('توثيق قناة الدعم', () => {
     expect(isSupportToken(first)).toBe(true)
     expect(second).toBe(first)
     expect(localStorage.getItem('tahakam-support-token-v1')).not.toContain(first)
+  })
+
+  it('القراءة والإرسال المتزامنان عند أول تشغيل يستخدمان اعتماداً واحداً', async () => {
+    const tokens = await Promise.all(Array.from({ length: 8 }, () => getOrCreateSupportToken()))
+    expect(new Set(tokens).size).toBe(1)
+    expect(await getOrCreateSupportToken()).toBe(tokens[0])
+  })
+
+  it('عند سباق نافذتين تُستخدم مرساة سطح المكتب الفائزة لا اعتماد مختلف', async () => {
+    const winning = 'W'.repeat(43)
+    let reads = 0
+    Object.defineProperty(window, 'shopsysSupport', { configurable: true, value: {
+      request: vi.fn(),
+      getToken: async () => ++reads === 1 ? null : winning,
+      setToken: async () => false,
+    } })
+    expect(await getOrCreateSupportToken()).toBe(winning)
+    expect(await getOrCreateSupportToken()).toBe(winning)
+  })
+
+  it('لا يربط الخادم باعتماد مؤقت إذا تعذر حفظ المرساة', async () => {
+    Object.defineProperty(window, 'shopsysSupport', { configurable: true, value: {
+      request: vi.fn(), getToken: async () => null, setToken: async () => false,
+    } })
+    await expect(getOrCreateSupportToken()).rejects.toThrow('تعذّر حفظ اعتماد الدعم')
   })
 
   it('يرسل الاعتماد في Authorization عند القراءة والكتابة', async () => {

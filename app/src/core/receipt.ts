@@ -6,6 +6,7 @@
  */
 import type { Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
+import type { DocumentCharge } from './documentCharges.ts'
 import { localDateTimeLabel } from './time.ts'
 
 export type PaperWidth = '80' | '58'
@@ -159,7 +160,8 @@ export interface ReceiptModel {
   itemCount: number // عدد الأسطر
   totalQty: number // إجمالي القطع (الوزني يُحسب بقيمته)
   grossMinor: Minor
-  taxBaseMinor: Minor // الأساس الضريبي (يظهر في فاتورة A4)
+  taxBaseMinor: Minor // الصافي قبل الضريبة (قد يشمل مبالغ معفاة)
+  taxBaseLabel?: string
   discountMinor: Minor // إجمالي الخصومات (يظهر فقط إن وجد)
   taxLabel: string | null // «ض.ق.م 14٪ (مشمولة)» أو null
   taxMinor: Minor
@@ -178,6 +180,8 @@ export function buildReceiptModel(args: {
   refCode?: string
   dateIso: string
   lines: CartLine[]
+  /** رسوم لا تُخصم بخصم السطور، تضاف كصفوف منفصلة في الطباعة. */
+  customerCharges?: readonly DocumentCharge[]
   totals: CartTotals
   payment: PaymentMethod
   /** المحصل وقت البيع (الدفع المجزأ) — undefined = حسب payment */
@@ -189,7 +193,9 @@ export function buildReceiptModel(args: {
   taxInclusive: boolean
   settings: ReceiptSettings
 }): ReceiptModel {
-  const { lines, totals, settings } = args
+  const { totals, settings } = args
+  const charges = args.customerCharges ?? []
+  const lines: CartLine[] = [...args.lines, ...charges.map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? args.taxPercent : 0 }))]
   const rows: ReceiptRow[] = lines.map((l) => {
     const gross = Math.round(l.unitPriceMinor * l.qty)
     const net = Math.round(gross * (1 - l.discountPercent / 100))
@@ -214,7 +220,7 @@ export function buildReceiptModel(args: {
   const vatLabel = vatSet.filter((p) => p > 0).map((p) => `${p}٪`).join(' / ')
   const taxLabel =
     settings.showTaxSummary && totals.taxMinor > 0 && vatLabel
-      ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
+      ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? (charges.some(charge => charge.taxable && charge.amountMinor > 0) ? '(ضريبة الأصناف مشمولة والرسوم مضافة)' : '(مشمولة في الإجمالي)') : '(مضافة)'}`
       : null
   return {
     shopName: settings.shopName || 'تَحَكَّم',
@@ -228,8 +234,9 @@ export function buildReceiptModel(args: {
     rows,
     itemCount: rows.length,
     totalQty,
-    grossMinor: totals.grossMinor,
+    grossMinor: totals.grossMinor + charges.reduce((sum, charge) => sum + charge.amountMinor, 0),
     taxBaseMinor: totals.taxBaseMinor,
+    ...(lines.some(line => line.vatPercentOverride === 0 || (line.vatExemptPerUnitMinor ?? 0) > 0) ? { taxBaseLabel: 'صافي القيمة قبل الضريبة' } : {}),
     discountMinor: totals.discountMinor,
     taxLabel,
     taxMinor: totals.taxMinor,

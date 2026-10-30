@@ -25,6 +25,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { toCsv } from '../../core/security.ts'
 import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { localDateTimeLabel } from '../../core/time.ts'
@@ -355,10 +356,18 @@ export function VouchersPage() {
   }
 
   const exportVouchers = () => {
-    const rows = [['الرقم','التاريخ','النوع','الخزينة','الحساب المقابل','البيان','المبلغ'],...listed.map(v=>[v.voucherNumber,v.date.slice(0,10),v.kind==='receipt'?'قبض':'صرف',v.treasury,nameOf(v.counterAccountCode),v.description,fmt(v.amountMinor)])]
-    const csv='\ufeff'+rows.map(r=>r.map(x=>`"${String(x).replaceAll('"','""')}"`).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='vouchers.csv';a.click();URL.revokeObjectURL(url)
+    /* الجولة السابعة: توحيد التصدير على `toCsv` (تهريب + منع حقن الصيغ
+       + BOM واحد) وتأجيل تحرير الرابط حتى لا يُلغى التنزيل. */
+    const headers = ['الرقم','التاريخ','النوع','الخزينة','الحساب المقابل','البيان','المبلغ']
+    const rows = listed.map(v => Object.fromEntries(headers.map((h, i) => [h,
+      [v.voucherNumber, v.date.slice(0,10), v.kind === 'receipt' ? 'قبض' : 'صرف', v.treasury, nameOf(v.counterAccountCode), v.description, fmt(v.amountMinor)][i]])))
+    const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a'); a.href = url; a.download = 'vouchers.csv'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  const printVouchers = () => printHtml(`<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}</style></head><body><h2>سجل سندات القبض والصرف</h2><table><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr>${listed.map(v=>`<tr><td>${v.voucherNumber}</td><td>${v.date.slice(0,10)}</td><td>${v.kind==='receipt'?'قبض':'صرف'}</td><td>${v.description}</td><td>${fmt(v.amountMinor)}</td></tr>`).join('')}</table></body></html>`)
+  /* §الأمان: نفس مهرب `escapePrintText` المستخدم في طباعة السند المفرد —
+     بيان السند ورقمه يدخلان HTML المعاينة داخل iframe التطبيق. */
+  const printVouchers = () => printHtml(`<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}</style></head><body><h2>سجل سندات القبض والصرف</h2><table><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr>${listed.map(v=>`<tr><td>${escapePrintText(v.voucherNumber)}</td><td>${escapePrintText(v.date.slice(0,10))}</td><td>${v.kind==='receipt'?'قبض':'صرف'}</td><td>${escapePrintText(v.description)}</td><td>${escapePrintText(fmt(v.amountMinor))}</td></tr>`).join('')}</table></body></html>`, { preview: { title: 'معاينة سجل السندات قبل الطباعة' } })
 
   return (
     <div className="space-y-4">
@@ -690,10 +699,10 @@ export function VouchersPage() {
                       return <tr key={invoice.docKey} className={`hover:opacity-90 ${voucherProjectId && invProject?.id === voucherProjectId ? 'bg-amber-500/5' : ''}`}><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => {
                         const autoFill = parsedAmountMinor > 0 ? Math.min(remaining, Math.max(0, parsedAmountMinor - (manualAllocatedMinor - applied))) || Math.min(remaining, parsedAmountMinor) : remaining
                         setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(autoFill).replaceAll(',', '') : '' }))
-                      }} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}<span className="ms-1.5 rounded doc-tint px-1.5 py-0.5 text-[9.5px] font-bold doc-muted">{documentKindLabel(invoice.docKey)}</span>{invProject && <span className="ms-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300">🏗️ {invProject.code}</span>}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="تلقائي FIFO" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
+                      }} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}<span className="ms-1.5 rounded doc-tint px-1.5 py-0.5 text-[9.5px] font-bold doc-muted">{documentKindLabel(invoice.docKey)}</span>{invProject && <span className="ms-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300">🏗️ {invProject.code}</span>}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date === '0000-00-00' ? '—' : invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="تلقائي FIFO" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
                     })}
                   </tbody>
-                  <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono doc-ink">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
+                  <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono doc-ink">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
                 </table>
               </div>
               {hasManualAllocation

@@ -10,7 +10,7 @@
  *   النتيجة: رصيد دائن للعميل يقابل مشترياته القادمة تلقائياً.
  */
 import type { Minor } from './money.ts'
-import { assertBalanced, type JournalLine } from './ledger.ts'
+import { assertBalanced, type JournalEntry, type JournalLine } from './ledger.ts'
 
 export interface LoyaltySettings {
   enabled: boolean
@@ -78,4 +78,41 @@ export function buildLoyaltyRedeemEntry(valueMinor: Minor, customerLabel: string
   ]
   assertBalanced(lines)
   return lines
+}
+
+/**
+ * عكس قديم لاستبدال الولاء: لا نثق بعلامة reversedBy وحدها إذا كان القيد
+ * مفقوداً أو غير مطابق. قيود الولاء القديمة لا تحمل طرفاً على 1104؛ سطور
+ * ذات طرف تُراجع منفردة حتى لا يُضاف أثرها مرتين في كشف العميل.
+ */
+export function findLegacyLoyaltyReversal(
+  redemption: { journalEntryId: number; valueMinor: number },
+  journalById: ReadonlyMap<number, JournalEntry>,
+): JournalEntry | null {
+  const original = journalById.get(redemption.journalEntryId)
+  if (!original || original.sourceType !== 'manual' || original.reversedByEntryId == null || !Number.isSafeInteger(redemption.valueMinor) || redemption.valueMinor <= 0) return null
+  const reversal = journalById.get(original.reversedByEntryId)
+  if (!reversal || reversal.sourceType !== 'reversal' || reversal.reversesEntryId !== original.id || reversal.sourceId !== original.id) return null
+  if (original.branchId != null && reversal.branchId != null && original.branchId !== reversal.branchId) return null
+  const originalLines = original.lines.filter((line) => line.accountCode === '1104')
+  const reversalLines = reversal.lines.filter((line) => line.accountCode === '1104')
+  if (!originalLines.length || !reversalLines.length || [...originalLines, ...reversalLines].some((line) => line.partyKind != null || line.partyId != null)) return null
+  const originalNet = originalLines.reduce((sum, line) => sum + line.credit - line.debit, 0)
+  const reversalNet = reversalLines.reduce((sum, line) => sum + line.debit - line.credit, 0)
+  if (originalNet !== redemption.valueMinor || reversalNet !== redemption.valueMinor) return null
+  // تحقق أيضاً من عكس بقية الحسابات، لا من حساب العميل وحده؛ وإلا قد
+  // نستعيد نقاطاً على أساس قيد عكسي مستورد غير مكتمل أو تالف.
+  const grouped = (lines: JournalLine[], reversed: boolean) => {
+    const totals = new Map<string, number>()
+    for (const line of lines) {
+      if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) return null
+      const value = reversed ? line.credit - line.debit : line.debit - line.credit
+      totals.set(line.accountCode, (totals.get(line.accountCode) ?? 0) + value)
+    }
+    return totals
+  }
+  const before = grouped(original.lines, false)
+  const after = grouped(reversal.lines, true)
+  if (!before || !after || before.size !== after.size || [...before].some(([account, amount]) => after.get(account) !== amount)) return null
+  return reversal
 }

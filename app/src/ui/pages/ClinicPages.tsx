@@ -696,13 +696,13 @@ export function ClinicPatientsPage() {
             refundedMinor={refundingVisit.refundedMinor ?? 0}
             currencySymbol={cur.symbol}
             fmt={fmt}
-            terminalOriginal={(() => { const xs = paymentTerminalTransactions.filter((row) => row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(refundingVisit.patientId)); const x = xs[xs.length - 1]; return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
+            terminalOriginal={(() => { const xs = paymentTerminalTransactions.filter((row) => row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(refundingVisit.insuranceProviderId != null ? refundingVisit.id : refundingVisit.patientId)); const x = xs[xs.length - 1]; return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             allowCredit={true}
             creditLabel="حساب المريض"
             refundableItems={[
               { key: 'fee', label: `أتعاب الزيارة ${refundingVisit.visitNumber}`, valueMinor: refundingVisit.totals.feeMinor },
             ]}
-            hint="كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت."
+            hint={refundingVisit.insuranceProviderId != null ? 'المرتجع يخفض مطالبة التأمين بنصيب الجهة، ويرد للمريض نصيبه فقط؛ بعد تحصيل المطالبة تتطلب التسوية مراجعة الجهة.' : 'كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت.'}
             onSubmit={(a) => {
               try {
                 const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
@@ -714,7 +714,7 @@ export function ClinicPatientsPage() {
             }}
           />
         )}
-      <DocOutcome>الأثر: <b>4102 مرتجعات المبيعات</b> مديناً بصافي المردود و<b>2102</b> مديناً بحصته الضريبية (عكس الإيراد) · <b>الخزينة</b> دائناً بالمردود نقداً أو <b>1104 ذمم العملاء</b> دائناً عند الردّ على حساب المريض — والمرتجع لا يتجاوز المتبقي القابل للرد من المستند.</DocOutcome>
+      <DocOutcome>الأثر: <b>4102 مرتجعات المبيعات</b> مديناً بصافي المردود و<b>2102</b> مديناً بحصته الضريبية (عكس الإيراد) · <b>الخزينة</b> أو <b>1104 ذمم العملاء</b> دائناً بنصيب المريض، و<b>1110 مطالبات التأمين</b> دائناً بنصيب الجهة عند وجود تأمين — والمرتجع لا يتجاوز المتبقي القابل للرد من المستند.</DocOutcome>
       </Modal>
 
       {/* تعديل التاريخ المرضي */}

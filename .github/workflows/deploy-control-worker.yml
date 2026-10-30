@@ -1,5 +1,10 @@
 name: Deploy control worker
 
+# ⚠️ إلزامي بعد أي تعديل داخل tools/devbot/ — بما فيه قناة الدعم الفني
+# (/support/:deviceId في supportChannel.js). عدم النشر يُبقي مسار الدعم
+# غير موجود على النطاق الحيّ فيظهر للعميل «خدمة الدعم غير منشورة/لا تستجيب».
+# شغّل السير من الفرع الذي يحوي التعديل: gh workflow run deploy-control-worker.yml --ref <branch>
+# (أو من واجهة Actions مع اختيار الفرع نفسه). درس بلاغ 2026-10-27.
 on:
   workflow_dispatch:
 
