@@ -1050,6 +1050,9 @@ export interface MaintenanceTicket {
   refunds?: ServiceRefundRecord[]
   /** قطع غيار أُرجعت للمخزون مع مرتجعات الخدمة (بسقف المصروف لكل قطعة) */
   returnedParts?: { itemId: number; qty: number; at: string }[]
+  /** لقطة الدفعات المصروفة عند صرف قطع الصيانة؛ غيابها في القديم ليس دليلاً على تاريخ الصلاحية. */
+  partExpiryBatches?: StockBatch[]
+  expiryTrackedPartIds?: number[]
 }
 
 /**
@@ -3951,7 +3954,18 @@ function insuredRefundCustomerCredit(entry: JournalEntry | undefined, sourceType
  * القيود ذات الفرع الصريح المخالف لا يجوز استعارتها. */
 function customerReviewJournal(raw: DataState): Map<number, JournalEntry> {
   const branch = getEffectiveActiveBranch(raw)
-  return new Map(raw.journal.filter(entry => !branch || entry.branchId == null || entry.branchId === branch.id).map(entry => [entry.id, entry]))
+  const journal = new Map<number, JournalEntry>()
+  const duplicateIds = new Set<number>()
+  const seenIds = new Set<number>()
+  // الهوية عالمية؛ التصفية قبل فحص التكرار قد تخفي قيداً بالرقم نفسه في فرع آخر.
+  for (const entry of raw.journal) {
+    if (seenIds.has(entry.id)) duplicateIds.add(entry.id)
+    else seenIds.add(entry.id)
+    if (!branch || entry.branchId == null || entry.branchId === branch.id) journal.set(entry.id, entry)
+  }
+  // المستند المتأثر يفشل مطابقة القيد كدليل ملتبس، دون حجب القيود السليمة الأخرى.
+  for (const id of duplicateIds) journal.delete(id)
+  return journal
 }
 
 function assertInsuredOriginal(entry: JournalEntry | undefined, sourceType: 'lab_order' | 'clinic_visit', sourceId: number, total: number, label: string): JournalEntry {
@@ -17373,9 +17387,13 @@ export const useRawDataStore = create<DataState>()(
         }
 
         // 1) إثراء القطع بأسمائها ومتوسط تكلفتها المرجح وقت التسليم (القرار 14)
+        const partIds = new Set<number>()
         const parts = input.parts.map((p) => {
+          if (partIds.has(p.itemId)) throw new Error('قطعة مكررة في التسليم — اجمع الكمية في سطر واحد')
+          partIds.add(p.itemId)
           const item = state.items.find((it) => it.id === p.itemId)
           if (!item) throw new Error('قطعة غيار غير موجودة بالمخزون')
+          if (item.trackSerial) throw new Error('صرف قطعة تتبع السيريال يحتاج تحديد السيريال الأصلي — راجع سجل الصيانة')
           if ((item.stockQty ?? 0) < p.qty) throw new Error(`المخزون لا يكفي من «${item.nameAr}» (المتاح ${item.stockQty ?? 0})`)
           return { itemId: p.itemId, nameAr: item.nameAr, qty: p.qty, unitPriceMinor: p.unitPriceMinor, unitCostMinor: item.costMinor }
         })
@@ -17423,9 +17441,19 @@ export const useRawDataStore = create<DataState>()(
           qtyByItem.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyByItem.get(it.id)!) * 1000) / 1000 } : it,
         )
         let ticketBatches = state.batches
+        const partExpiryBatches: StockBatch[] = []
+        const expiryTrackedPartIds: number[] = []
         for (const [itemId, qty] of qtyByItem) {
           if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
-          ticketBatches = applyFefo(ticketBatches, planFefo(ticketBatches, itemId, qty, now))
+          expiryTrackedPartIds.push(itemId)
+          const plan = planFefo(ticketBatches, itemId, qty, now)
+          if (plan.touchesExpired) throw new Error('لا يمكن صرف قطعة صيانة منتهية الصلاحية — راجع المخزون أولاً')
+          for (const allocation of plan.allocations) {
+            const batch = ticketBatches.find((row) => row.id === allocation.batchId)
+            if (!batch) throw new Error('دفعة الصلاحية المصروفة غير موجودة')
+            partExpiryBatches.push({ ...batch, qty: allocation.qty })
+          }
+          ticketBatches = applyFefo(ticketBatches, plan)
         }
 
         const updated: MaintenanceTicket = {
@@ -17433,6 +17461,8 @@ export const useRawDataStore = create<DataState>()(
           status: 'delivered',
           statusHistory: [...ticket.statusHistory, { status: 'delivered', at: now }],
           parts,
+          partExpiryBatches,
+          expiryTrackedPartIds,
           services: input.services ?? [],
           totals,
           payment: totals.creditMinor > 0 ? 'credit' : 'cash',
@@ -18303,16 +18333,46 @@ export const useRawDataStore = create<DataState>()(
         // ما أُرجع سابقاً، وتُقيَّم بتكلفتها التاريخية على التذكرة
         let restockCost = 0
         const restockQty = new Map<number, number>()
+        let updatedBatches = state.batches
         for (const rp of args.returnParts ?? []) {
-          if (rp.qty <= 0) continue
-          const part = ticket.parts.find((p) => p.itemId === rp.itemId)
-          if (!part) throw new Error('قطعة ليست من قطع هذه التذكرة')
-          const prevReturned = (ticket.returnedParts ?? []).filter((x) => x.itemId === rp.itemId).reduce((a, x) => a + x.qty, 0)
+          if (!Number.isSafeInteger(rp.qty) || rp.qty < 0) throw new Error('كمية القطعة المرتجعة يجب أن تكون عدداً صحيحاً غير سالب')
+          if (rp.qty === 0) continue
+          if (restockQty.has(rp.itemId)) throw new Error('قطعة مكررة في المرتجع — اجمع الكمية في سطر واحد')
+          const parts = ticket.parts.filter((p) => p.itemId === rp.itemId)
+          if (parts.length !== 1) throw new Error('قطعة ليست من التذكرة أو سطورها مكررة — راجع سجل الصيانة')
+          const part = parts[0]
+          const item = state.items.find((row) => row.id === rp.itemId)
+          if (!item) throw new Error('قطعة التذكرة غير موجودة بالمخزون — راجع سجل الصيانة')
+          if (item.trackSerial) throw new Error('استرجاع قطعة بسيريال يحتاج توثيق السيريال الأصلي — راجع سجل الصيانة')
+          const prior = (ticket.returnedParts ?? []).filter((x) => x.itemId === rp.itemId)
+          if (!Number.isSafeInteger(part.qty) || part.qty <= 0 || !Number.isSafeInteger(part.unitCostMinor) || part.unitCostMinor < 0 || prior.some((x) => !Number.isSafeInteger(x.qty) || x.qty <= 0)) throw new Error('سجل قطع الصيانة غير صالح — راجعه قبل المرتجع')
+          const prevReturned = prior.reduce((a, x) => a + x.qty, 0)
           if (rp.qty > part.qty - prevReturned + 1e-9) {
             throw new Error(`«${part.nameAr}»: المطلوب إرجاع ${rp.qty} والمصروف المتبقي ${part.qty - prevReturned}`)
           }
-          restockCost += Math.round(rp.qty * part.unitCostMinor)
-          restockQty.set(rp.itemId, (restockQty.get(rp.itemId) ?? 0) + rp.qty)
+          if ((ticket.expiryTrackedPartIds != null || ticket.partExpiryBatches != null)
+            && (!Array.isArray(ticket.expiryTrackedPartIds) || !Array.isArray(ticket.partExpiryBatches))) throw new Error('سجل دفعات الصلاحية غير صالح — راجعه قبل المرتجع')
+          const wasTracked = ticket.expiryTrackedPartIds?.includes(rp.itemId)
+          if (wasTracked || (ticket.expiryTrackedPartIds == null && item.trackExpiry)) {
+            const batches = ticket.partExpiryBatches?.filter((batch) => batch.itemId === rp.itemId)
+            // لا يمكن معرفة الدفعة العائدة عند اختلاط دفعات أو وجود كمية بلا تتبع.
+            if (!batches || batches.length !== 1 || !Number.isFinite(batches[0].qty) || Math.abs(batches[0].qty - part.qty) > 1e-9 || !Number.isSafeInteger(batches[0].id) || (batches[0].expiryDate !== null && !isValidExpiryDate(batches[0].expiryDate))) throw new Error('دفعات صلاحية القطعة غير محفوظة أو مختلطة — راجعها قبل إرجاع المخزون')
+            const snapshot = batches[0]
+            const matches = updatedBatches.filter((row) => row.itemId === snapshot.itemId && row.expiryDate === snapshot.expiryDate && row.purchaseId === snapshot.purchaseId && row.warehouseId === snapshot.warehouseId && row.lotNumber === snapshot.lotNumber && row.receivedAt === snapshot.receivedAt)
+            if (matches.length > 1) throw new Error('دفعة الصلاحية ملتبسة — راجع المخزون قبل المرتجع')
+            if (matches.length === 1) {
+              const match = matches[0]
+              if (!Number.isFinite(match.qty) || match.qty < 0) throw new Error('رصيد دفعة الصلاحية غير صالح — راجعه قبل المرتجع')
+              updatedBatches = updatedBatches.map((row) => row === match ? { ...row, qty: Math.round((row.qty + rp.qty) * 1000) / 1000 } : row)
+            } else {
+              const id = updatedBatches.some((row) => row.id === snapshot.id) ? nextId(updatedBatches) : snapshot.id
+              updatedBatches = [...updatedBatches, { ...snapshot, id, qty: rp.qty }]
+            }
+          }
+          const cost = rp.qty * part.unitCostMinor
+          if (!Number.isSafeInteger(cost) || !Number.isSafeInteger(restockCost + cost)) throw new Error('تكلفة القطعة المرتجعة غير صالحة')
+          restockCost += cost
+          restockQty.set(rp.itemId, rp.qty)
         }
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
@@ -18367,7 +18427,7 @@ export const useRawDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
           terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${ticket.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
-        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry], items: updatedItems, ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
+        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry], items: updatedItems, batches: updatedBatches, ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 

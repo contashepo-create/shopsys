@@ -994,3 +994,21 @@ it('يرفض محرر الفاتورة توجيه تحصيلها إلى حساب
   expect(() => S().editSale({ saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit', paidMinor: 300, treasury: '1101', paymentAllocations: [{ accountCode: '4101', amountMinor: 300 }], invoiceDiscountPercent: 0, reason: 'تعديل', einvoiceActive: false, allowNegativeStock: true })).toThrow(/حساب التحصيل/)
   expect(S().journal).toBe(journal)
 })
+
+it('معرف القيد المكرر لا يخفي نسخة تالفة في المستخلص المتأثر ولا يحجب مشروعاً آخر', () => {
+  const first = legacy()
+  const otherProject = S().addProject({ nameAr: 'مشروع آخر', clientId: null, clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+  S().addProjectExtract({ projectId: otherProject.id, description: 'نقدي', grossMinor: 5000, vatPercent: 0, payment: 'cash' })
+  const journal = useRawDataStore.getState().journal
+  const originalEntry = journal.find(e => e.id === first.extract.journalEntryId)!
+  const conflicting = { ...originalEntry, description: 'نسخة متعارضة', lines: originalEntry.lines.map(l => ({ ...l, debit: 0, credit: 0 })) }
+  // النسخة الصحيحة آخر المصفوفة: Map القديمة كانت تخفي التعارض.
+  useRawDataStore.setState({ journal: [conflicting, ...journal] })
+  expect(() => S().assertProjectExtractOriginals(first.project.id)).toThrow(/مراجعة/)
+  expect(() => S().assertProjectExtractOriginals(otherProject.id)).not.toThrow()
+  expect(() => S().previewLegacyProjectCustomer(first.project.id, first.customer.id)).toThrow(/مراجعة/)
+  // تكرار المعرف في فرع مختلف لا يصبح دليلاً صالحاً لمجرد ترشيح العرض.
+  useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], activeBranchId: 1, journal: [{ ...conflicting, branchId: 2 }, ...journal] })
+  expect(() => S().assertProjectExtractOriginals(first.project.id)).toThrow(/مراجعة/)
+  expect(() => S().assertProjectExtractOriginals(otherProject.id)).not.toThrow()
+})

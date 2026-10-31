@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from 'vitest'
-import { EMPTY_EXTENDED, useDataStore } from '../src/data/repo.ts'
+import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 const original = useDataStore.getState()
 const app = useAppStore.getState()
@@ -91,4 +91,23 @@ it('يرفض تحميل نقص حصة التأمين التاريخية على �
   const before = useDataStore.getState().journal.length
   expect(() => s.refundLabOrder({ orderId: order.id, amountMinor: 1, mode: 'cash', reason: 'مراجعة' })).toThrow(/لا يمكن تحميل الفرق/)
   expect(useDataStore.getState().journal).toHaveLength(before)
+})
+
+
+it('حارس الفرع يمنع مرتجع معمل غير مؤمّن من فرع آخر دون تغيير أي سجلات', () => {
+  const s = useDataStore.getState()
+  const patient = s.addLabPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', notes: '' })
+  const test = s.addLabTest({ code: 'BRANCH', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 4000, costMinor: 0, refRanges: [] })
+  const order = s.registerLabOrder({ patientId: patient.id, testIds: [test.id], referrerId: null, payment: 'cash', discountPercent: 0, vatPercent: 0, notes: '' })
+  const state = useRawDataStore.getState()
+  useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], activeBranchId: 1, labPatients: state.labPatients.map(p => ({ ...p, branchId: 2 })), labOrders: state.labOrders.map(o => ({ ...o, branchId: 2 })) })
+  const before = useRawDataStore.getState()
+  try {
+    expect(() => useDataStore.getState().refundLabOrder({ orderId: order.id, amountMinor: 1000, mode: 'cash', reason: 'رد' })).toThrow(/فرع آخر/)
+    expect(useRawDataStore.getState().journal).toEqual(before.journal)
+    expect(useRawDataStore.getState().labOrders).toEqual(before.labOrders)
+    expect(useRawDataStore.getState().insuranceClaims).toEqual(before.insuranceClaims)
+  } finally {
+    useRawDataStore.setState({ activeBranchId: null, branches: [] })
+  }
 })
