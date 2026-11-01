@@ -71,7 +71,7 @@ export type SourceType =
   | 'production' | 'processing' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost' | 'vehicle_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
   | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage' | 'internal_use'
-  | 'insured_sale' | 'claim_settlement'
+  | 'insured_sale' | 'claim_settlement' | 'claim_refund_payment'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
@@ -189,7 +189,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2114', nameAr: 'عمولات مستحقة للغير', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'commissions_payable_others' },
   { code: '2115', nameAr: 'مستحق لملاك العقارات المدارة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'property_owners_payable' },
   { code: '2116', nameAr: 'عمولات موظفين مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'staff_commissions_payable' },
-  { code: '2117', nameAr: 'مصروفات داخلية مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'internal_expenses_payable' },
+  { code: '2117', nameAr: 'مستحقات متنوعة ومصروفات داخلية', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'internal_expenses_payable' },
   { code: '2118', nameAr: 'مستحق إلى فروع أخرى', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'interbranch_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },

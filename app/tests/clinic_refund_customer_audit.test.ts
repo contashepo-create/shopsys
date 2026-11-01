@@ -55,7 +55,7 @@ it('مرتجع مؤمن على الحساب يخفض مطالبة الجهة و�
   expect(entry.lines.find(l => l.accountCode === '1104')?.credit).toBe(1200)
 })
 
-it('مرتجع الزيارة المؤمنة النقدي لا يرد من الخزينة إلا حصة المريض ويرفض المطالبة المسددة', () => {
+it('مرتجع الزيارة المؤمنة يرد حصة المريض ويسجل التزام الجهة بعد التحصيل', () => {
   const s = useDataStore.getState()
   const patient = s.addClinicPatient({ nameAr: 'مريض نقدي', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '' })
   const insurer = s.addInsuranceProvider({ nameAr: 'جهة نقدية', coveragePercent: 70 })
@@ -65,9 +65,10 @@ it('مرتجع الزيارة المؤمنة النقدي لا يرد من ال�
   expect(entry.lines.find(l => l.accountCode === '1101')?.credit).toBe(1200)
   expect(entry.lines.find(l => l.accountCode === '1110')?.credit).toBe(2800)
   s.settleInsuranceClaims(insurer.id)
-  const before = useDataStore.getState().journal.length
-  expect(() => s.refundClinicVisit({ visitId: visit.id, amountMinor: 1000, mode: 'cash', reason: 'مراجعة' })).toThrow(/محصلة بالفعل/)
-  expect(useDataStore.getState().journal).toHaveLength(before)
+  const after = s.refundClinicVisit({ visitId: visit.id, amountMinor: 1000, mode: 'cash', reason: 'رد بعد التحصيل' })
+  const afterEntry = useDataStore.getState().journal.find(e => e.id === after.refunds?.at(-1)?.journalEntryId)!
+  expect(afterEntry.lines.find(l => l.accountCode === '2117')?.credit).toBe(700)
+  expect(afterEntry.lines.find(l => l.accountCode === '1101')?.credit).toBe(300)
 })
 
 it('رد ماكينة زيارة مؤمنة يرتبط بالزيارة لا برقم المريض ويعيد نصيب المريض فقط', () => {

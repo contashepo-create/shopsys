@@ -10,10 +10,11 @@ import { Plus } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { formatMinor } from '../../core/money.ts'
+import { formatMinor, toMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, Modal, useToast } from './ui.tsx'
 import { type TerminalPaymentDraft } from './TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from './PaymentMethodPicker.tsx'
+import { TreasuryPicker } from './TreasuryPicker.tsx'
 import { DocSectionHead, DocOutcome } from './DocSection.tsx'
 
 function useCur() {
@@ -22,7 +23,7 @@ function useCur() {
 }
 
 export function InsuranceProvidersSection() {
-  const { insuranceProviders, insuranceClaims, paymentTerminals, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
+  const { insuranceProviders, insuranceClaims, paymentTerminals, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims, getInsuranceRefundBalance, payInsuranceRefund } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -48,6 +49,19 @@ export function InsuranceProvidersSection() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  const [refundClaimId, setRefundClaimId] = useState<number | null>(null)
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refundReason, setRefundReason] = useState('')
+  const [refundTreasury, setRefundTreasury] = useState('1101')
+  const recordRefundPayment = () => {
+    try {
+      if (refundClaimId == null) return
+      payInsuranceRefund({ claimId: refundClaimId, amountMinor: toMinor(refundAmount, cur.decimals), treasury: refundTreasury, reason: refundReason })
+      toast.show('سُجل صرف رد التأمين المؤكد ✅')
+      setRefundClaimId(null); setRefundAmount(''); setRefundReason('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between pt-2">
@@ -68,11 +82,17 @@ export function InsuranceProvidersSection() {
               {insuranceProviders.map((pv) => {
                 const balance = getClaimBalance(pv.id)
                 const count = insuranceClaims.filter((c) => c.providerId === pv.id && !c.settled).length
+                const refundClaims = insuranceClaims.filter((c) => c.providerId === pv.id && c.settled && c.source !== 'sale' && (c.settledRefundMinor != null || c.refundPayments != null)).map((claim) => {
+                  try { return { claim, balance: getInsuranceRefundBalance(claim.id), error: false } }
+                  catch { return { claim, balance: 0, error: true } }
+                })
                 return (
                   <tr key={pv.id} className={`border-t border-slate-100 dark:border-slate-800 ${!pv.isActive ? 'opacity-50' : ''}`}>
                     <td className="px-4 py-2.5 font-bold">{pv.nameAr}</td>
                     <td className="px-4 py-2.5 text-[12px]">تتحمل {pv.coveragePercent}٪</td>
-                    <td className="px-4 py-2.5 font-black text-violet-600 tabular-nums">{balance > 0 ? `${fmt(balance)} (${count} مطالبة)` : 'لا مطالبات'}</td>
+                    <td className="px-4 py-2.5 font-black text-violet-600 tabular-nums">{balance > 0 ? `${fmt(balance)} (${count} مطالبة)` : 'لا مطالبات'}
+                      {refundClaims.map(({ claim, balance: due, error }) => error ? <div key={claim.id} className="text-rose-600">مرتجع المطالبة #{claim.id} يحتاج مراجعة</div> : due > 0 ? <div key={claim.id} className="text-amber-700">مستحق للجهة عن المطالبة #{claim.id}: {fmt(due)} <button className="underline" onClick={() => { setRefundClaimId(claim.id); setRefundAmount(''); setRefundReason('') }}>تسجيل صرف</button></div> : null)}
+                    </td>
                     <td className="px-4 py-2.5 text-left">
                       <div className="flex gap-1 justify-end">
                         {balance > 0 && <Btn variant="soft" onClick={() => doSettleClaims(pv.id, pv.nameAr)}>تحصيل الكل</Btn>}
@@ -86,6 +106,17 @@ export function InsuranceProvidersSection() {
           </table>
         </div>
       )}
+
+      <Modal open={refundClaimId != null} onClose={() => setRefundClaimId(null)} title="تسجيل صرف رد لجهة التأمين" subtitle={`المطالبة #${refundClaimId ?? ''} — لا تسجل إلا الصرف الفعلي المثبت`}>
+        <div className="space-y-3">
+          <p className="text-sm">هذا إجراء مستقل عن المرتجع والتحصيل السابق. لا تضغط التسجيل إلا بعد صرف المبلغ فعلياً للجهة؛ الصرف الجزئي متاح.</p>
+          <Field label="المبلغ المصروف"><input aria-label="المبلغ المصروف للجهة" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+          <Field label="الخزينة أو البنك"><TreasuryPicker operation="payment" value={refundTreasury} onChange={setRefundTreasury} /></Field>
+          <Field label="سبب الصرف ومرجع العملية"><input aria-label="سبب ومرجع صرف التأمين" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} className={inputCls} /></Field>
+          <DocOutcome>الأثر: مدين <b>2117 مستحقات متنوعة (رد التأمين)</b> ودائن الخزينة أو البنك، دون تغيير قيد التحصيل الأصلي.</DocOutcome>
+          <Btn className="w-full" onClick={recordRefundPayment} disabled={!refundAmount.trim() || !refundReason.trim()}>تأكيد تسجيل الصرف الفعلي</Btn>
+        </div>
+      </Modal>
 
       <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة" subtitle="ملف تعاقد: نسبة تحمّل الجهة وما يدفعه المريض نقداً">
         <div className="space-y-3"><DocSectionHead step="١" title="الجهة ونسبة تحمّلها وشروط التحصيل" hint="حصة الجهة ذمة عليها لا نقدية في الخزينة" />

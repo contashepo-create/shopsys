@@ -43,8 +43,8 @@ export function buildServiceRefundEntry(args: {
   treasury?: string
   /**
    * G9 (مستند بتغطية تأمينية): نصيب جهة التأمين من المردود — يُقيَّد دائناً على
-   * حساب المطالبات (1110) تخفيضاً لها، لا نقداً من الخزينة: هذا الجزء لم يُحصَّل
-   * أصلاً بل هو ذمة على الجهة، وردُّه نقداً يُخرج نقدية لم تدخل قط.
+   * حساب المطالبات (1110) تخفيضاً لها إن لم تُحصّل، أو حساب المستحقات
+   * المتنوعة (2117) كالتزام للجهة بعد تحصيلها. لا يُفترض دفع نقدي للجهة هنا.
    */
   providerShareMinor?: Minor
   providerAccount?: string
@@ -76,8 +76,8 @@ export function buildServiceRefundEntry(args: {
     { accountCode: '4102', debit: base, credit: 0, note: args.note },
   ]
   if (taxShare > 0) lines.push({ accountCode: '2102', debit: taxShare, credit: 0, note: 'تخفيض ض.ق.م' })
-  // G9: نصيب الجهة يخفض المطالبة (1110 دائن) — والباقي فقط للمريض نقداً/على حسابه
-  if (providerShare > 0) lines.push({ accountCode: args.providerAccount ?? '1110', debit: 0, credit: providerShare, note: 'تخفيض مطالبة جهة التأمين' })
+  // قبل التحصيل تخفيض مطالبة؛ بعده التزام مستقل لا يعني أن الصرف وقع.
+  if (providerShare > 0) lines.push({ accountCode: args.providerAccount ?? '1110', debit: 0, credit: providerShare, note: args.providerAccount === '2117' ? 'مستحق رد لجهة التأمين بعد التحصيل' : 'تخفيض مطالبة جهة التأمين' })
   const patientPart = v - providerShare
   if (patientPart > 0) {
     if (args.mode === 'cash') lines.push({ accountCode: args.treasury ?? '1101', debit: 0, credit: patientPart, note: 'رد نقدية' })

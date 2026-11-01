@@ -38,7 +38,7 @@ it('زيارة مؤمنة لا تُظهر نصيب جهة التأمين كذم�
   expect(s.getClaimBalance(insurer.id)).toBe(7000)
 })
 
-it('مرتجع معمل مؤمن عبر الماكينة يسجل حصة المريض فقط ويمنع رداً بعد تسوية المطالبة', () => {
+it('مرتجع معمل مؤمن عبر الماكينة يسجل حصة المريض ويثبت التزام الجهة بعد التحصيل', () => {
   const s = useDataStore.getState()
   const patient = s.addLabPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', notes: '' })
   const test = s.addLabTest({ code: 'LAB-T', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 10000, costMinor: 0, refRanges: [] })
@@ -50,9 +50,10 @@ it('مرتجع معمل مؤمن عبر الماكينة يسجل حصة الم�
   expect(useDataStore.getState().paymentTerminalTransactions.find(t => t.providerReference === 'LAB-REFUND')?.amountMinor).toBe(1200)
   expect(s.getClaimBalance(insurer.id)).toBe(4200)
   s.settleInsuranceClaims(insurer.id)
-  const before = useDataStore.getState().journal.length
-  expect(() => s.refundLabOrder({ orderId: order.id, amountMinor: 1000, mode: 'cash', reason: 'مراجعة' })).toThrow(/محصلة بالفعل/)
-  expect(useDataStore.getState().journal).toHaveLength(before)
+  const after = s.refundLabOrder({ orderId: order.id, amountMinor: 1000, mode: 'cash', reason: 'رد بعد التحصيل' })
+  const entry = useDataStore.getState().journal.find(e => e.id === after.refunds?.at(-1)?.journalEntryId)!
+  expect(entry.lines.find(l => l.accountCode === '2117')?.credit).toBe(700)
+  expect(entry.lines.find(l => l.accountCode === '1101')?.credit).toBe(300)
 })
 
 it('تقريب مرتجعات المعمل المؤمّن الصغيرة تراكمي ولا يترك مطالبة وهمية', () => {

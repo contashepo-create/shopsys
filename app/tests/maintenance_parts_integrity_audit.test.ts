@@ -104,3 +104,18 @@ it('يمنع صرف قطعة من دفعة منتهية للصيانة دون ا
   expect(useDataStore.getState().journal).toEqual(before.journal)
   expect(useDataStore.getState().batches).toEqual(before.batches)
 })
+
+it('يعيد كل دفعات القطعة عند إرجاع كامل الكمية المصروفة دون تخمين الدفعة', () => {
+  const { s, item, t } = ticket(2)
+  const batches = [
+    { id: 7, itemId: item.id, lotNumber: 'A', expiryDate: '2028-01-01', qty: 1, purchaseId: null, receivedAt: '2026-01-01' },
+    { id: 8, itemId: item.id, lotNumber: 'B', expiryDate: '2029-01-01', qty: 1, purchaseId: null, receivedAt: '2026-01-01' },
+  ]
+  useDataStore.setState({ items: useDataStore.getState().items.map(i => ({ ...i, trackExpiry: true })), batches })
+  s.deliverTicket(t.id, { laborMinor: 10000, parts: [{ itemId: item.id, qty: 2, unitPriceMinor: 5000 }], payment: 'cash', vatPercent: 0 })
+  expect(useDataStore.getState().batches).toHaveLength(0)
+  s.refundMaintenanceTicket({ ticketId: t.id, amountMinor: 10000, mode: 'cash', reason: 'إرجاع الكمية كلها', returnParts: [{ itemId: item.id, qty: 2 }] })
+  expect(useDataStore.getState().batches).toEqual(batches)
+  expect(useDataStore.getState().items[0].stockQty).toBe(2)
+  expect(useDataStore.getState().journal.at(-1)?.lines.find(l => l.accountCode === '1103')?.debit).toBe(6000)
+})

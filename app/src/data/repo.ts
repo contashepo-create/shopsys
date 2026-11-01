@@ -2663,6 +2663,8 @@ interface DataState {
   registerInsuredLabOrder: (args: { patientId: number; referrerId: number | null; testIds: number[]; providerId: number; vatPercent: number; notes?: string; treasury?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => LabOrder
   /** رصيد مطالبات جهة غير محصلة */
   getClaimBalance: (providerId: number) => number
+  getInsuranceRefundBalance: (claimId: number) => number
+  payInsuranceRefund: (args: { claimId: number; amountMinor: number; treasury: string; reason: string }) => void
   /** تحصيل كل مطالبات جهة دفعة واحدة */
   settleInsuranceClaims: (providerId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { total: number; count: number }
 
@@ -3942,7 +3944,7 @@ function insuredRefundCustomerCredit(entry: JournalEntry | undefined, sourceType
   if (!Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || entry.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit))) return fail()
   try { assertBalanced(entry.lines) } catch { return fail() }
   const customerLines = entry.lines.filter(l => l.accountCode === '1104')
-  const providerLines = entry.lines.filter(l => l.accountCode === '1110')
+  const providerLines = entry.lines.filter(l => l.accountCode === '1110' || l.accountCode === '2117')
   if ([...customerLines, ...providerLines].some(l => l.debit !== 0)) return fail()
   const customer = customerLines.reduce((n, l) => n + l.credit, 0)
   const provider = providerLines.reduce((n, l) => n + l.credit, 0)
@@ -4053,11 +4055,22 @@ function customerClinicVisits(state: DataState, raw: DataState, patientIds: Read
   })
 }
 
+/** تحصيل/رد التأمين لا يستعمل حساب إيراد أو مصروف كأنه نقدية. */
+function assertInsuranceTreasury(state: DataState, code: string, operation: 'receipt' | 'payment' | 'refund', amount: number): void {
+  if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل تسجيل حركة التأمين')
+  const scoped = getBranchScopedDataState(state)
+  if (!scoped.treasuries.some(t => t.code === code) || state.treasuries.filter(t => t.code === code).length !== 1) throw new Error('الخزينة أو البنك غير موجود أو ليس في الفرع الحالي')
+  const user = state.appUsers.find(u => u.id === state.currentUserId)
+  const errors = validateTreasuryAccess(user?.roleId === 'owner' ? undefined : user?.treasuryAccess, code, operation, amount)
+  if (errors.length) throw new Error(errors.join(' — '))
+}
+
 /** قبل عرض أو تحصيل المطالبات، طابق عكس الجهة بالقيد؛ نقص القيد لا
  * يُحوّل إلى مطالبات محصَّلة أو إلى مبلغ تقديري. */
 function assertClaimRefundIntegrity(state: DataState, raw: DataState, providerId: number, claimId?: number): void {
   const journal = customerReviewJournal(raw)
-  for (const claim of state.insuranceClaims.filter(c => c.providerId === providerId && !c.settled && (claimId == null || c.id === claimId))) {
+  for (const claim of state.insuranceClaims.filter(c => c.providerId === providerId && (claimId == null ? !c.settled : c.id === claimId))) {
+    if (raw.insuranceClaims.filter(c => c.id === claim.id).length !== 1 || raw.insuranceClaims.filter(c => c.source === claim.source && c.sourceId === claim.sourceId).length !== 1) throw new FinancialDataReviewError(`مطالبة التأمين #${claim.id}`, 'معرّف المطالبة أو مستندها مكرر')
     if (claim.source === 'sale') {
       const label = `مطالبة بيع مؤمّن #${claim.id}`
       const fail = (): never => { throw new FinancialDataReviewError(label) }
@@ -4077,6 +4090,19 @@ function assertClaimRefundIntegrity(state: DataState, raw: DataState, providerId
       }
       continue
     }
+    if (claim.settled) {
+      const label = `تحصيل مطالبة التأمين #${claim.id}`
+      const fail = (): never => { throw new FinancialDataReviewError(label) }
+      const settlement = claim.settlementEntryId == null ? undefined : journal.get(claim.settlementEntryId)
+      const group = raw.insuranceClaims.filter(c => c.settlementEntryId === claim.settlementEntryId)
+      const branch = getEffectiveActiveBranch(raw)
+      if (branch && group.some(c => !belongsToBranch(c, branch, raw.branches))) return fail()
+      if (!settlement || settlement.sourceType !== 'claim_settlement' || settlement.sourceId !== providerId || settlement.reversedByEntryId != null || settlement.reversesEntryId != null || !Array.isArray(settlement.lines) || settlement.lines.length !== 2 || !group.length || group.some(c => !c.settled || c.providerId !== providerId || !Number.isSafeInteger(c.claimMinor) || c.claimMinor < 0) || new Set(group.map(c => c.id)).size !== group.length) return fail()
+      try { assertBalanced(settlement.lines) } catch { return fail() }
+      const amount = group.reduce((sum, c) => sum + c.claimMinor, 0)
+      const providerLines = settlement.lines.filter(l => l.accountCode === '1110')
+      if (!Number.isSafeInteger(amount) || amount <= 0 || providerLines.length !== 1 || providerLines[0].debit !== 0 || providerLines[0].credit !== amount || settlement.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit)) || !settlement.lines.some(l => l.accountCode !== '1110' && l.debit === amount && l.credit === 0 && raw.treasuries.some(t => t.code === l.accountCode))) return fail()
+    }
     const sourceType = claim.source === 'lab_order' ? 'lab_order' : 'clinic_visit'
     const doc = sourceType === 'lab_order' ? state.labOrders.find(o => o.id === claim.sourceId) : state.clinicVisits.find(v => v.id === claim.sourceId)
     const label = sourceType === 'lab_order' ? `مطالبة طلب المعمل #${claim.sourceId}` : `مطالبة زيارة العيادة #${claim.sourceId}`
@@ -4092,7 +4118,7 @@ function assertClaimRefundIntegrity(state: DataState, raw: DataState, providerId
     if (originalProviderLines.some(l => !Number.isSafeInteger(l.debit) || l.debit < 0 || l.credit !== 0)) return fail()
     const originalProvider = originalProviderLines.reduce((sum, l) => sum + l.debit, 0)
     if (!Number.isSafeInteger(originalProvider) || originalProvider !== claim.claimMinor + reversed) return fail()
-    let refundTotal = 0, providerTotal = 0
+    let refundTotal = 0, providerTotal = 0, settledRefundTotal = 0
     for (const refund of refunds) {
       const entry = journal.get(refund.journalEntryId)
       if (!entry || entry.sourceType !== sourceType || entry.sourceId !== doc.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || entry.lines.some(l => !Number.isSafeInteger(l.debit) || !Number.isSafeInteger(l.credit))) return fail()
@@ -4100,16 +4126,30 @@ function assertClaimRefundIntegrity(state: DataState, raw: DataState, providerId
       try { assertBalanced(entry.lines) } catch { return fail() }
       const refundDebits = entry.lines.filter(l => l.accountCode === '4102' || l.accountCode === '2102').reduce((sum, l) => sum + l.debit - l.credit, 0)
       if (refundDebits !== refund.amountMinor) return fail()
-      const providerLines = entry.lines.filter(l => l.accountCode === '1110')
-      if (providerLines.some(l => l.debit !== 0)) return fail()
+      const providerLines = entry.lines.filter(l => l.accountCode === '1110' || l.accountCode === '2117')
+      if (providerLines.some(l => l.debit !== 0) || (!claim.settled && providerLines.some(l => l.accountCode === '2117'))) return fail()
       const provider = providerLines.reduce((sum, l) => sum + l.credit, 0)
+      settledRefundTotal += providerLines.filter(l => l.accountCode === '2117').reduce((sum, l) => sum + l.credit, 0)
       if (!Number.isSafeInteger(provider) || provider > refund.amountMinor) return fail()
       if (refund.mode === 'customer_credit') insuredRefundCustomerCredit(entry, sourceType, doc.id, refund, label)
       else if (refund.mode !== 'cash') return fail()
       refundTotal += refund.amountMinor
       providerTotal += provider
     }
-    if (!Number.isSafeInteger(refundTotal) || !Number.isSafeInteger(providerTotal) || refundTotal !== refunded || providerTotal !== reversed) return fail()
+    const postSettlement = claim.settledRefundMinor ?? 0
+    if (!Number.isSafeInteger(postSettlement) || postSettlement < 0 || postSettlement > claim.claimMinor || !Number.isSafeInteger(refundTotal) || !Number.isSafeInteger(providerTotal) || refundTotal !== refunded || providerTotal !== reversed + postSettlement || settledRefundTotal !== postSettlement) return fail()
+    let paid = 0
+    const paymentIds = new Set<number>()
+    for (const payment of claim.refundPayments ?? []) {
+      const entry = journal.get(payment.journalEntryId)
+      if (!claim.settled || paymentIds.has(payment.journalEntryId) || !Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0 || !payment.reason?.trim() || !entry || entry.sourceType !== 'claim_refund_payment' || entry.sourceId !== claim.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.date !== payment.date || !Array.isArray(entry.lines) || entry.lines.length !== 2) return fail()
+      paymentIds.add(payment.journalEntryId)
+      const debit = entry.lines.find(l => l.accountCode === '2117')
+      const credit = entry.lines.find(l => l.accountCode === payment.treasury)
+      if (!debit || !credit || debit.debit !== payment.amountMinor || debit.credit !== 0 || credit.credit !== payment.amountMinor || credit.debit !== 0 || !raw.treasuries.some(t => t.code === payment.treasury)) return fail()
+      paid += payment.amountMinor
+    }
+    if (!Number.isSafeInteger(paid) || paid > postSettlement) return fail()
   }
 }
 
@@ -9352,6 +9392,7 @@ export const useRawDataStore = create<DataState>()(
           adjustment: 'تسوية جرد/افتتاحي عدّلت أرصدة المخزون — صححها بجرد جديد لا بعكس القيد',
           maintenance_ticket: 'تذكرة صيانة حركت قطع غيار ومدفوعات — استخدم استرداد التذكرة من صفحة الصيانة',
           claim_settlement: 'تحصيل مطالبات تأمين أقفل مطالبات في سجلها — سوِّ الفرق بسند لا بعكس القيد',
+          claim_refund_payment: 'صرف رد التأمين مرتبط بسجل المطالبة — لا يعكس منفرداً',
           scrap_purchase: 'شراء كسر أضاف وزناً لدفتر الكسر — صححه ببيع كسر لا بعكس القيد',
           scrap_sale: 'بيع كسر خصم وزناً من دفتر الكسر — صححه بشراء كسر لا بعكس القيد',
           car_purchase: 'شراء سيارة سجّلها في دفتر السيارات — صحح من صفحة المعرض لا بعكس القيد',
@@ -12727,6 +12768,39 @@ export const useRawDataStore = create<DataState>()(
         assertClaimRefundIntegrity(state, get(), providerId)
         return state.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
       },
+      getInsuranceRefundBalance: (claimId) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const claims = scoped.insuranceClaims.filter(c => c.id === claimId)
+        if (claims.length !== 1 || state.insuranceClaims.filter(c => c.id === claimId).length !== 1 || !claims[0].settled || claims[0].source === 'sale') throw new Error('المطالبة المحصلة غير موجودة أو غير فريدة في هذا الفرع')
+        const claim = claims[0]
+        assertClaimRefundIntegrity(scoped, state, claim.providerId, claim.id)
+        return (claim.settledRefundMinor ?? 0) - (claim.refundPayments ?? []).reduce((sum, payment) => sum + payment.amountMinor, 0)
+      },
+      payInsuranceRefund: (args) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const claims = scoped.insuranceClaims.filter(c => c.id === args.claimId)
+        if (claims.length !== 1 || state.insuranceClaims.filter(c => c.id === args.claimId).length !== 1 || !claims[0].settled || claims[0].source === 'sale') throw new Error('المطالبة المحصلة غير موجودة أو غير فريدة في هذا الفرع')
+        const claim = claims[0]
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('قيمة الصرف يجب أن تكون عدداً صحيحاً موجباً')
+        if (!args.reason.trim()) throw new Error('اكتب سبب الصرف ومرجع العملية الفعلية')
+        assertInsuranceTreasury(state, args.treasury, 'payment', args.amountMinor)
+        const remaining = get().getInsuranceRefundBalance(claim.id)
+        if (args.amountMinor > remaining) throw new Error('قيمة الصرف تتجاوز المتبقي المستحق للجهة')
+        const now = localIsoTimestamp()
+        const entryId = nextId(state.journal)
+        const date = now.slice(0, 10)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date, description: `صرف رد تأمين للمطالبة #${claim.id} — ${args.reason.trim()}`,
+          sourceType: 'claim_refund_payment', sourceId: claim.id, lines: [
+            { accountCode: '2117', debit: args.amountMinor, credit: 0, note: 'تسوية مستحق جهة التأمين' },
+            { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'صرف مؤكد للجهة' },
+          ], createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const payment = { journalEntryId: entryId, amountMinor: args.amountMinor, treasury: args.treasury, date, reason: args.reason.trim() }
+        set({ insuranceClaims: state.insuranceClaims.map(c => c.id === claim.id ? { ...c, refundPayments: [...(c.refundPayments ?? []), payment] } : c), journal: [...state.journal, entry] })
+      },
       settleInsuranceClaims: (providerId, treasury = '1101', terminalPayment) => {
         const state = get()
         const scoped = getBranchScopedDataState(state)
@@ -12736,6 +12810,7 @@ export const useRawDataStore = create<DataState>()(
         const unsettled = scoped.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled)
         const unsettledIds = new Set(unsettled.map((claim) => claim.id))
         const total = unsettled.reduce((s2, c) => s2 + c.claimMinor, 0)
+        assertInsuranceTreasury(state, treasury, 'receipt', total)
         const lines = buildClaimSettlementEntry(total, provider.nameAr, treasury) // يرمي لو صفر
         const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
@@ -18355,18 +18430,23 @@ export const useRawDataStore = create<DataState>()(
           const wasTracked = ticket.expiryTrackedPartIds?.includes(rp.itemId)
           if (wasTracked || (ticket.expiryTrackedPartIds == null && item.trackExpiry)) {
             const batches = ticket.partExpiryBatches?.filter((batch) => batch.itemId === rp.itemId)
-            // لا يمكن معرفة الدفعة العائدة عند اختلاط دفعات أو وجود كمية بلا تتبع.
-            if (!batches || batches.length !== 1 || !Number.isFinite(batches[0].qty) || Math.abs(batches[0].qty - part.qty) > 1e-9 || !Number.isSafeInteger(batches[0].id) || (batches[0].expiryDate !== null && !isValidExpiryDate(batches[0].expiryDate))) throw new Error('دفعات صلاحية القطعة غير محفوظة أو مختلطة — راجعها قبل إرجاع المخزون')
-            const snapshot = batches[0]
-            const matches = updatedBatches.filter((row) => row.itemId === snapshot.itemId && row.expiryDate === snapshot.expiryDate && row.purchaseId === snapshot.purchaseId && row.warehouseId === snapshot.warehouseId && row.lotNumber === snapshot.lotNumber && row.receivedAt === snapshot.receivedAt)
-            if (matches.length > 1) throw new Error('دفعة الصلاحية ملتبسة — راجع المخزون قبل المرتجع')
-            if (matches.length === 1) {
-              const match = matches[0]
-              if (!Number.isFinite(match.qty) || match.qty < 0) throw new Error('رصيد دفعة الصلاحية غير صالح — راجعه قبل المرتجع')
-              updatedBatches = updatedBatches.map((row) => row === match ? { ...row, qty: Math.round((row.qty + rp.qty) * 1000) / 1000 } : row)
-            } else {
-              const id = updatedBatches.some((row) => row.id === snapshot.id) ? nextId(updatedBatches) : snapshot.id
-              updatedBatches = [...updatedBatches, { ...snapshot, id, qty: rp.qty }]
+            // رد جميع الكمية المثبتة يعيد كل الدفعات دون افتراض أي دفعة منفردة.
+            // الرد الجزئي من دفعات مختلطة يظل مرفوضاً حتى تُحدد الدفعة الفعلية.
+            if (!batches?.length || batches.some(b => !Number.isFinite(b.qty) || b.qty <= 0 || !Number.isSafeInteger(b.id) || (b.expiryDate !== null && !isValidExpiryDate(b.expiryDate))) || new Set(batches.map(b => b.id)).size !== batches.length || Math.abs(batches.reduce((sum, b) => sum + b.qty, 0) - part.qty) > 1e-9 || (batches.length > 1 && (prevReturned !== 0 || rp.qty !== part.qty))) throw new Error('دفعات صلاحية القطعة غير محفوظة أو مختلطة — راجعها قبل إرجاع المخزون')
+            const sameBatch = (a: StockBatch, b: StockBatch) => a.itemId === b.itemId && a.expiryDate === b.expiryDate && a.purchaseId === b.purchaseId && a.warehouseId === b.warehouseId && a.lotNumber === b.lotNumber && a.receivedAt === b.receivedAt
+            if (batches.some((batch, index) => batches.some((other, otherIndex) => index !== otherIndex && sameBatch(batch, other)))) throw new Error('دفعات الصلاحية مكررة أو ملتبسة — راجعها قبل المرتجع')
+            for (const snapshot of batches) {
+              const qty = batches.length === 1 ? rp.qty : snapshot.qty
+              const matches = updatedBatches.filter(row => sameBatch(row, snapshot))
+              if (matches.length > 1) throw new Error('دفعة الصلاحية ملتبسة — راجع المخزون قبل المرتجع')
+              if (matches.length === 1) {
+                const match = matches[0]
+                if (!Number.isFinite(match.qty) || match.qty < 0) throw new Error('رصيد دفعة الصلاحية غير صالح — راجعه قبل المرتجع')
+                updatedBatches = updatedBatches.map((row) => row === match ? { ...row, qty: Math.round((row.qty + qty) * 1000) / 1000 } : row)
+              } else {
+                const id = updatedBatches.some((row) => row.id === snapshot.id) ? nextId(updatedBatches) : snapshot.id
+                updatedBatches = [...updatedBatches, { ...snapshot, id, qty }]
+              }
             }
           }
           const cost = rp.qty * part.unitCostMinor
@@ -18470,23 +18550,25 @@ export const useRawDataStore = create<DataState>()(
         const order = state.labOrders.find((o) => o.id === args.orderId)
         if (!order) throw new Error('الطلب غير موجود')
         const patient = state.labPatients.find((pt) => pt.id === order.patientId)
-        const claim = state.insuranceClaims.find((c) => c.source === 'lab_order' && c.sourceId === order.id)
+        const matchingClaims = state.insuranceClaims.filter((c) => c.source === 'lab_order' && c.sourceId === order.id)
+        if (matchingClaims.length > 1 || (matchingClaims[0] && state.insuranceClaims.filter(c => c.id === matchingClaims[0].id).length !== 1)) throw new Error('مطالبات التأمين مكررة — راجع البيانات قبل المرتجع')
+        const claim = matchingClaims[0]
         const originalEntry = state.journal.find((entry) => entry.id === order.journalEntryId)
         if (!claim && originalEntry?.sourceType === 'insured_sale') throw new Error('مطالبة طلب المعمل المؤمّن مفقودة — راجع البيانات قبل المرتجع')
-        if (claim?.settled) throw new Error('مطالبة التأمين محصلة بالفعل — سوِّ الرد مع الجهة قبل ترحيل المرتجع')
-        const priorProvider = claim?.reversedMinor ?? 0
-        const claimOriginal = claim ? claim.claimMinor + priorProvider : 0
+        const priorProvider = (claim?.reversedMinor ?? 0) + (claim?.settledRefundMinor ?? 0)
+        const claimOriginal = claim ? claim.claimMinor + (claim.reversedMinor ?? 0) : 0
         const priorRefund = order.refundedMinor ?? 0
-        if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor > order.totals.totalMinor - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
+        if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor - (claim.settledRefundMinor ?? 0) > order.totals.totalMinor - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
         const targetProvider = claim && order.totals.totalMinor > 0 ? Math.round(claimOriginal * (priorRefund + args.amountMinor) / order.totals.totalMinor) : 0
         if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
-        if (claim && !claim.settled) {
+        if (claim) {
           const scoped = getBranchScopedDataState(state)
           if (!scoped.insuranceClaims.some((item) => item.id === claim.id)) throw new Error('المطالبة ليست في الفرع الحالي')
           assertClaimRefundIntegrity(scoped, state, claim.providerId, claim.id)
         }
-        const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor, targetProvider - priorProvider)) : 0
+        const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor - (claim.settledRefundMinor ?? 0), targetProvider - priorProvider)) : 0
         const patientShare = args.amountMinor - providerShare
+        if (claim && args.mode === 'cash' && patientShare > 0) assertInsuranceTreasury(state, args.treasury ?? '1101', 'refund', patientShare)
         if (args.mode === 'customer_credit' && patientShare > 0 && (patient?.linkedCustomerId == null || !state.customers.some((customer) => customer.id === patient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
@@ -18495,7 +18577,7 @@ export const useRawDataStore = create<DataState>()(
           priorRefundedMinor: order.refundedMinor ?? 0,
           priorRefundedTaxMinor: order.refundedTaxMinor ?? 0,
           mode: args.mode, treasury: args.treasury,
-          providerShareMinor: providerShare,
+          providerShareMinor: providerShare, providerAccount: claim?.settled ? '2117' : '1110',
           note: `مرتجع تحاليل ${order.orderNumber}`,
         })
         const lines = [...built.lines]
@@ -18533,7 +18615,7 @@ export const useRawDataStore = create<DataState>()(
         }
         // G9: تخفيض مطالبة الجهة بنصيبها من المردود — يوازي سطر 1110 الدائن في القيد
         const updatedClaims = providerShare > 0 && claim
-          ? state.insuranceClaims.map((c) => (c.id === claim.id ? { ...c, claimMinor: c.claimMinor - providerShare, reversedMinor: (c.reversedMinor ?? 0) + providerShare } : c))
+          ? state.insuranceClaims.map((c) => (c.id === claim.id ? (c.settled ? { ...c, settledRefundMinor: (c.settledRefundMinor ?? 0) + providerShare } : { ...c, claimMinor: c.claimMinor - providerShare, reversedMinor: (c.reversedMinor ?? 0) + providerShare }) : c))
           : state.insuranceClaims
         let terminalRefund: PaymentTerminalTransaction | null = null
         if (args.terminalRefund) {
@@ -18554,26 +18636,28 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const visit = state.clinicVisits.find((v) => v.id === args.visitId)
         if (!visit) throw new Error('الزيارة غير موجودة')
-        const claim = state.insuranceClaims.find((item) => item.source === 'clinic_visit' && item.sourceId === visit.id)
+        const matchingClaims = state.insuranceClaims.filter((item) => item.source === 'clinic_visit' && item.sourceId === visit.id)
+        if (matchingClaims.length > 1 || (matchingClaims[0] && state.insuranceClaims.filter(c => c.id === matchingClaims[0].id).length !== 1)) throw new Error('مطالبات التأمين مكررة — راجع البيانات قبل المرتجع')
+        const claim = matchingClaims[0]
         const originalVisitEntry = state.journal.find((entry) => entry.id === visit.journalEntryId)
         const insuranceEvidence = visit.insuranceProviderId != null || originalVisitEntry?.lines?.some(line => line.accountCode === '1110' && line.debit > 0) || (visit.refunds ?? []).some(refund => refund.customerCreditMinor != null && refund.customerCreditMinor !== refund.amountMinor)
         if (insuranceEvidence && !claim) throw new Error('مطالبة الزيارة المؤمّنة مفقودة — راجع البيانات قبل ترحيل المرتجع')
-        if (claim?.settled) throw new Error('مطالبة التأمين محصلة بالفعل — سوِّ الرد مع الجهة قبل ترحيل المرتجع')
-        const priorProvider = claim?.reversedMinor ?? 0
-        const providerOriginal = claim ? claim.claimMinor + priorProvider : 0
+        const priorProvider = (claim?.reversedMinor ?? 0) + (claim?.settledRefundMinor ?? 0)
+        const providerOriginal = claim ? claim.claimMinor + (claim.reversedMinor ?? 0) : 0
         const total = visit.totals.totalMinor
         const priorRefund = visit.refundedMinor ?? 0
-        if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor > total - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
+        if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor - (claim.settledRefundMinor ?? 0) > total - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
         // الحصة تراكمية حتى يعود التقريب في المرتجع الأخير إلى الأصل بدقة.
         const targetProvider = claim && total > 0 ? Math.round(providerOriginal * (priorRefund + args.amountMinor) / total) : 0
         if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
-        if (claim && !claim.settled) {
+        if (claim) {
           const scoped = getBranchScopedDataState(state)
           if (!scoped.insuranceClaims.some((item) => item.id === claim.id)) throw new Error('المطالبة ليست في الفرع الحالي')
           assertClaimRefundIntegrity(scoped, state, claim.providerId, claim.id)
         }
-        const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor, targetProvider - priorProvider)) : 0
+        const providerShare = claim ? Math.max(0, Math.min(claim.claimMinor - (claim.settledRefundMinor ?? 0), targetProvider - priorProvider)) : 0
         const patientShare = args.amountMinor - providerShare
+        if (claim && args.mode === 'cash' && patientShare > 0) assertInsuranceTreasury(state, args.treasury ?? '1101', 'refund', patientShare)
         const linkedPatient = state.clinicPatients.find((patient) => patient.id === visit.patientId)
         if (args.mode === 'patient_credit' && patientShare > 0 && (!linkedPatient?.linkedCustomerId || !state.customers.some((customer) => customer.id === linkedPatient.linkedCustomerId))) throw new Error('اربط المريض بعميل قبل إضافة رصيد على الحساب')
         const built = buildServiceRefundEntry({
@@ -18583,7 +18667,7 @@ export const useRawDataStore = create<DataState>()(
           priorRefundedMinor: visit.refundedMinor ?? 0,
           priorRefundedTaxMinor: visit.refundedTaxMinor ?? 0,
           mode: args.mode === 'cash' ? 'cash' : 'customer_credit',
-          treasury: args.treasury, providerShareMinor: providerShare,
+          treasury: args.treasury, providerShareMinor: providerShare, providerAccount: claim?.settled ? '2117' : '1110',
           note: `مرتجع زيارة ${visit.visitNumber}`,
         })
         const patient = state.clinicPatients.find((pt) => pt.id === visit.patientId)
@@ -18612,7 +18696,7 @@ export const useRawDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', patientShare)
           terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${visit.id}:refund:${entryId}`, amountMinor: patientShare, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
-        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), insuranceClaims: providerShare > 0 && claim ? state.insuranceClaims.map((item) => item.id === claim.id ? { ...item, claimMinor: item.claimMinor - providerShare, reversedMinor: (item.reversedMinor ?? 0) + providerShare } : item) : state.insuranceClaims, journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
+        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), insuranceClaims: providerShare > 0 && claim ? state.insuranceClaims.map((item) => item.id === claim.id ? (item.settled ? { ...item, settledRefundMinor: (item.settledRefundMinor ?? 0) + providerShare } : { ...item, claimMinor: item.claimMinor - providerShare, reversedMinor: (item.reversedMinor ?? 0) + providerShare }) : item) : state.insuranceClaims, journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 

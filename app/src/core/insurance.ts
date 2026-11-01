@@ -54,6 +54,9 @@ export interface InsuranceClaim {
   settlementEntryId: number | null
   /** G9: ما عُكس من المطالبة بمرتجعات (تخفيض 1110) — undefined = سجل قديم */
   reversedMinor?: Minor
+  /** جزء الجهة الذي نشأ التزاماً بعد تحصيل المطالبة، لا يعد ردّاً نقدياً. */
+  settledRefundMinor?: Minor
+  refundPayments?: { journalEntryId: number; amountMinor: Minor; treasury: string; date: string; reason: string }[]
   /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
   saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
   /** لقطة الكمية المصروفة من دفعات الصلاحية — لازمة لإرجاع نفس تواريخها عند إلغاء البيع. */

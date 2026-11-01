@@ -473,7 +473,7 @@ export function LabOrdersPage() {
               fmt={fmt}
               terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(viewing.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.payment !== 'cash' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
-              hint={insuranceClaims.some((claim) => claim.source === 'lab_order' && claim.sourceId === viewing.id) ? 'يخفض المرتجع نصيب التأمين من المطالبة ويرد للمريض نصيبه فقط؛ المطالبة المحصّلة تتطلب مراجعة الجهة.' : 'فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً.'}
+              hint={insuranceClaims.some((claim) => claim.source === 'lab_order' && claim.sourceId === viewing.id) ? 'يرد للمريض نصيبه فقط؛ قبل التحصيل يخصم نصيب الجهة من المطالبة، وبعد التحصيل يسجل التزاماً لها دون صرف تلقائي.' : 'فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً.'}
               refundableItems={viewing.tests.map((t, ti) => ({ key: `test:${ti}`, label: `${t.nameAr} (${t.code})`, valueMinor: t.priceMinor }))}
               onSubmit={(a) => {
                 try {

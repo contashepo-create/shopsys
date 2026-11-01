@@ -10,6 +10,9 @@ import { Btn, Field } from './ui.tsx'
 import { TreasuryPicker } from './TreasuryPicker.tsx'
 import { useSupervisorApproval } from './SupervisorPinDialog.tsx'
 import { computeItemizedRefund, type RefundableServiceItem } from '../../core/serviceRefund.ts'
+import { toMinor } from '../../core/money.ts'
+import { getCountry } from '../../core/countries.ts'
+import { useAppStore } from '../../stores/app.store.ts'
 
 export function ServiceRefundBox(props: {
   /** إجمالي المستند شامل الضريبة (وعاء الاسترداد) */
@@ -46,6 +49,8 @@ export function ServiceRefundBox(props: {
     terminalRefund?: { originalTransactionId: string; providerReference: string }
   }) => void
 }) {
+  const countryCode = useAppStore((state) => state.setup.countryCode)
+  const decimals = (countryCode ? getCountry(countryCode)?.currency.decimals : undefined) ?? 2
   const hasItems = (props.refundableItems?.length ?? 0) > 0
   const [pickMode, setPickMode] = useState<'items' | 'amount'>(hasItems ? 'items' : 'amount')
   const [selected, setSelected] = useState<string[]>([])
@@ -71,7 +76,7 @@ export function ServiceRefundBox(props: {
     } catch { return null }
   }, [pickMode, hasItems, selected, props.refundableItems, props.grandMinor, props.refundedMinor])
 
-  const effectiveAmount = pickMode === 'items' ? (itemized?.amountMinor ?? 0) : Math.round(Number(amount) * 100)
+  const effectiveAmount = pickMode === 'items' ? (itemized?.amountMinor ?? 0) : (() => { try { return toMinor(amount, decimals) } catch { return 0 } })()
 
   if (remaining <= 0) {
     return (
