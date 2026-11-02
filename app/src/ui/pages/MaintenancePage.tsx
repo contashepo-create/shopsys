@@ -598,7 +598,7 @@ export function MaintenancePage() {
                   <button onClick={() => dropPart(i)} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
                 </div>
                 {items.find(item => item.id === Number(p.itemId))?.trackSerial && <fieldset className="p-2 text-xs space-y-1"><legend>حدد السيريالات المصروفة ({p.serials.length}/{p.qty})</legend>
-                  {serials.filter(unit => unit.itemId === Number(p.itemId) && unit.status === 'in_stock').map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={p.serials.includes(unit.serial)} onChange={e => patchPart(i, { serials: e.target.checked ? [...p.serials, unit.serial] : p.serials.filter(serial => serial !== unit.serial) })} />{unit.serial}</label>)}
+                  {serials.filter(unit => unit.itemId === Number(p.itemId) && unit.status === 'in_stock').map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={p.serials.includes(unit.serial)} onChange={e => patchPart(i, { serials: e.target.checked ? [...p.serials, unit.serial] : p.serials.filter(serial => serial !== unit.serial) })} />{unit.serial}{unit.expiryBatch && ` · دفعة ${unit.expiryBatch.lotNumber || unit.batchId} · صلاحية ${unit.expiryBatch.expiryDate ?? 'غير مسجلة'}`}</label>)}
                 </fieldset>}
                 </div>
               ))}

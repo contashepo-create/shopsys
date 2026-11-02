@@ -903,7 +903,7 @@ it('لا يخمن ضريبة فاتورة قديمة ذات رسوم عند ال
   expect(S().journal).toBe(journal)
 })
 
-it('لا يعدّل فاتورة محصلة على حساب موظف أو ينشئ التحصيل الموظفي عبر مسار التعديل', () => {
+it('يعزل تحصيل الموظف الملغى ويرفض تحصيلاً غير مرتبط بموظف عند التعديل', () => {
   const { customer } = legacy()
   S().addEmployee({ nameAr: 'موظف التحصيل', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
   const employee = S().employees.at(-1)!
@@ -911,11 +911,10 @@ it('لا يعدّل فاتورة محصلة على حساب موظف أو ينش
   const line = { itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
   const sale = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', paymentAllocations: [{ accountCode: '1107', employeeId: employee.id, amountMinor: 500 }], invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
   expect(S().getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(500)
-  const journal = S().journal, advances = S().employeeAdvances
   const args = { saleId: sale.id, lines: [line], customerId: customer.id, payment: 'credit' as const, paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تعديل', einvoiceActive: false, allowNegativeStock: true }
-  expect(() => S().editSale(args)).toThrow(/موظف/)
-  expect(S().journal).toBe(journal)
-  expect(S().employeeAdvances).toBe(advances)
+  S().editSale(args)
+  expect(S().getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(0)
+  expect(S().employeeAdvances[0].saleCollectionRetired?.previousAmountMinor).toBe(500)
   const ordinary = S().postSale({ lines: [line], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
   const before = S().journal
   expect(() => S().editSale({ ...args, saleId: ordinary.id, paidMinor: 500, paymentAllocations: [{ accountCode: '1107', amountMinor: 500 }] })).toThrow(/موظف/)

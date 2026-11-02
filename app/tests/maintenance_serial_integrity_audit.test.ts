@@ -60,3 +60,22 @@ it('يحجب إرجاع السيريال إن فقد ارتباطه بالتذك
   expect(() => s.refundMaintenanceTicket({ ticketId: t.id, amountMinor: 1000, mode: 'cash', reason: 'رد', returnParts: [{ itemId: item.id, qty: 1, serials: ['SER-2'] }] })).toThrow(/سيريالات مرتجع سابق/)
   expect(useRawDataStore.getState().journal).toBe(after.journal)
 })
+it('يربط سيريال الشراء بدفعته ويصرف ويعيد الدفعة المطابقة في الصيانة لا أقدم دفعة', () => {
+  const s = useDataStore.getState()
+  s.addSupplier({ nameAr: 'مورد', phone: '', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
+  s.addItem({ nameAr: 'بطارية', sku: '', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 0, priceMinor: 1000, minQty: 0, trackExpiry: true, trackSerial: true, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
+  const { items, suppliers } = useDataStore.getState(), item = items[0]
+  s.postPurchase({ supplierId: suppliers.at(-1)!.id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 100, expiryDate: '2098-01-01', lotNumber: 'OLD', serialsRaw: 'SER-OLD' }, { itemId: item.id, qty: 1, unitPriceMinor: 100, expiryDate: '2099-01-01', lotNumber: 'NEW', serialsRaw: 'SER-NEW' }], expenses: [], paidMinor: 0, notes: '' })
+  const acquired = useDataStore.getState(), first = acquired.batches.find(b => b.lotNumber === 'OLD')!, second = acquired.batches.find(b => b.lotNumber === 'NEW')!
+  expect(acquired.serials.find(u => u.serial === 'SER-OLD')?.batchId).toBe(first.id)
+  expect(acquired.serials.find(u => u.serial === 'SER-NEW')?.batchId).toBe(second.id)
+  const t = s.openTicket({ customerId: null, customerName: 'عميل', customerPhone: '', deviceName: 'جهاز', issue: 'عطل', estimateMinor: 0, notes: '' })
+  s.setTicketStatus(t.id, 'in_progress'); s.setTicketStatus(t.id, 'ready')
+  s.deliverTicket(t.id, { laborMinor: 1000, parts: [{ itemId: item.id, qty: 1, unitPriceMinor: 1000, serials: ['SER-NEW'] }], payment: 'cash', vatPercent: 0 })
+  expect(useDataStore.getState().batches.map(b => b.lotNumber)).toEqual(['OLD'])
+  s.refundMaintenanceTicket({ ticketId: t.id, amountMinor: 1000, mode: 'cash', reason: 'رد', returnParts: [{ itemId: item.id, qty: 1, serials: ['SER-NEW'] }] })
+  const after = useDataStore.getState()
+  expect(after.batches.find(b => b.id === second.id)).toMatchObject({ lotNumber: 'NEW', qty: 1 })
+  expect(after.serials.find(u => u.serial === 'SER-NEW')).toMatchObject({ status: 'in_stock', batchId: second.id })
+  expect(after.tickets[0].returnedParts?.[0].batches).toEqual([{ batchId: second.id, qty: 1 }])
+})

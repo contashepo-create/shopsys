@@ -69,7 +69,7 @@ const ruleOf = (selector) => {
   assert.ok(audit.includes('عُدِّلت') && audit.includes('بواسطة') && audit.includes('السبب:'), 'صيغة سطر التدقيق ناقصة')
   assert.ok(!/\\n/.test(audit.slice(audit.indexOf('const parts'), audit.indexOf('return parts'))), 'سطر التدقيق يُبنى على أكثر من سطر')
   assert.ok(repo.includes('reversalEntryId: number; by?: string'), 'سجل التعديل بلا اسم من عدّل')
-  assert.equal((repo.match(/by: activeUserName\(state\)/g) ?? []).length, 2, 'البيع والشراء لا يختمان اسم من عدّل في سجل التعديل')
+  assert.equal((repo.match(/previousEntryId: oldEntry\.id, reversalEntryId: reversalId, by: activeUserName\(state\)/g) ?? []).length, 2, 'البيع والشراء لا يختمان اسم من عدّل في سجل التعديل')
   for (const [label, src] of PAGES) {
     assert.ok(src.includes('formatInvoiceAuditLine') && src.includes('auditLabel'), `${label}: الفاتورة المرحّلة بلا سطر تدقيق في الشريط السفلي`)
   }

@@ -73,3 +73,22 @@ it('ينبه في الشاشة والمعاينة إلى سند أجنبي سا�
   fireEvent.click(screen.getByRole('button', { name: /طباعة/ }))
   expect(usePrintPreview.getState().handle?.html).toContain(voucher.voucherNumber)
 })
+
+it('يعرض مسار تصحيح ساق قبض البيع ويتطلب إثبات الإيصال', () => {
+  useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG', allowNegativeTreasury: true }, fxRates: {} })
+  useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, customers: [], items: [], sales: [], vouchers: [], purchases: [], journal: [], fxConversions: [] })
+  const s = useDataStore.getState(), itemId = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  const sale = s.postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', treasury: '1101', paidMinor: 2000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 200, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  render(<FxTreasuryTab cur={cur} companyName="متجر" />)
+  fireEvent.click(screen.getByRole('button', { name: 'تصحيح ساق القبض' }))
+  const submit = screen.getByRole('button', { name: /تأكيد تصحيح ساق القبض/ }) as HTMLButtonElement
+  expect(submit.disabled).toBe(true)
+  fireEvent.change(screen.getByLabelText('عملة القبض المصححة'), { target: { value: 'KWD' } })
+  fireEvent.change(screen.getByLabelText('مبلغ القبض المصحح'), { target: { value: '0.200' } })
+  fireEvent.change(screen.getByLabelText('سعر القبض المصحح'), { target: { value: '100' } })
+  fireEvent.change(screen.getByLabelText('مرجع تصحيح القبض'), { target: { value: 'الإيصال 123' } })
+  fireEvent.click(screen.getByLabelText(/أؤكد مطابقة العملة/))
+  fireEvent.click(submit)
+  expect(useDataStore.getState().sales.find(row => row.id === sale.id)?.fx?.currencyCode).toBe('KWD')
+  expect(useDataStore.getState().sales.find(row => row.id === sale.id)?.fxCorrectionHistory?.[0].reason).toBe('الإيصال 123')
+})

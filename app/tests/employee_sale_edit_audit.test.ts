@@ -34,11 +34,8 @@ it('يحافظ على السداد الجزئي ولا يعيده أو يضاع�
   expect(useDataStore.getState().employeeAdvances[0]).toMatchObject({ id: previous.id, amountMinor: 500, recoveredMinor: 200, journalEntryId: edit.journalEntryId })
   expect(s.getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(300)
 })
-it('يحجب تغيير تحصيل الموظف أو غياب سجل السلفة بلا أي أثر', () => {
+it('يحجب غياب سجل سلفة تحصيل الموظف بلا أي أثر', () => {
   const { s, args } = fixture()
-  const before = useRawDataStore.getState()
-  expect(() => s.editSale({ ...args, paymentAllocations: [{ ...args.paymentAllocations[0], amountMinor: 400 }], paidMinor: 400 })).toThrow(/موظف/)
-  expect(useRawDataStore.getState().journal).toBe(before.journal)
   useRawDataStore.setState({ employeeAdvances: [] })
   const missing = useRawDataStore.getState()
   expect(() => s.editSale(args)).toThrow(/سلفة|موظف/)
@@ -57,5 +54,32 @@ it('يسمح بتعديل ثانٍ مع سلسلة قيود موثقة، وير�
   useRawDataStore.setState({ journal: [...state.journal, entry] })
   const before = useRawDataStore.getState()
   expect(() => s.editSale(args)).toThrow(/قيد.*موظف/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يغير مبلغ تحصيل الموظف مع إبقاء السداد المثبت وتاريخ السلفة', () => {
+  const { s, employee, args } = fixture()
+  s.repayEmployeeAdvance({ employeeId: employee.id, amountMinor: 200, treasury: '1101' })
+  const edit = s.editSale({ ...args, paidMinor: 700, paymentAllocations: [{ ...args.paymentAllocations[0], amountMinor: 700 }] })
+  expect(s.getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(500)
+  expect(useDataStore.getState().employeeAdvances[0]).toMatchObject({ amountMinor: 700, recoveredMinor: 200, journalEntryId: edit.journalEntryId })
+  expect(() => s.editSale({ ...args, paidMinor: 100, paymentAllocations: [{ ...args.paymentAllocations[0], amountMinor: 100 }] })).toThrow(/المسترد|المستقطع/)
+})
+it('يستبدل موظف التحصيل غير المسترد بموظف آخر مع حفظ أثر الأصل', () => {
+  const { s, employee, args } = fixture()
+  s.addEmployee({ nameAr: 'موظف ثان', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
+  const other = useDataStore.getState().employees.at(-1)!
+  s.editSale({ ...args, paymentAllocations: [{ ...args.paymentAllocations[0], employeeId: other.id }] })
+  expect(s.getEmployeeAdvanceBalance(employee.id).remainingMinor).toBe(0)
+  expect(s.getEmployeeAdvanceBalance(other.id).remainingMinor).toBe(500)
+  expect(useDataStore.getState().employeeAdvances).toHaveLength(2)
+  expect(() => s.editSale({ ...args, paymentAllocations: [{ ...args.paymentAllocations[0], employeeId: other.id }] })).not.toThrow()
+})
+it('لا ينقل السداد الذي أجراه الموظف إلى موظف آخر دون تسوية مثبتة', () => {
+  const { s, employee, args } = fixture()
+  s.repayEmployeeAdvance({ employeeId: employee.id, amountMinor: 200, treasury: '1101' })
+  s.addEmployee({ nameAr: 'موظف ثان', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
+  const other = useDataStore.getState().employees.at(-1)!
+  const before = useRawDataStore.getState()
+  expect(() => s.editSale({ ...args, paymentAllocations: [{ ...args.paymentAllocations[0], employeeId: other.id }] })).toThrow(/المسترد|تسوية/)
   expect(useRawDataStore.getState().journal).toBe(before.journal)
 })

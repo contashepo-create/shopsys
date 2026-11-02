@@ -11,6 +11,7 @@
  * - المرتجع يعيد السيريال متاحاً، والضمان يُستعلم عنه بأي سيريال
  */
 import { addCalendarMonths, localDateIso } from './time.ts'
+import type { StockBatch } from './batches.ts'
 
 export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier' | 'maintenance' | 'damaged'
 
@@ -20,6 +21,11 @@ export interface SerialUnit {
   serial: string // IMEI أو رقم تسلسلي — فريد عبر كل الأصناف
   status: SerialStatus
   purchaseId: number | null // فاتورة الشراء (null = رصيد افتتاحي/إدخال يدوي)
+  /** هوية دفعة الصلاحية عند استلام هذه الوحدة؛ لا تُخمّن للوحدات القديمة. */
+  batchId?: number
+  expiryBatch?: StockBatch
+  /** إثبات المستخدم لوحدة قديمة لم تكن تحمل رابط الدفعة عند الاستلام. */
+  expiryLinkEvidence?: { reason: string; at: string; by: string }
   saleId: number | null
   /** التذكرة التي استهلكت القطعة، إن كانت في الصيانة. */
   maintenanceTicketId?: number | null

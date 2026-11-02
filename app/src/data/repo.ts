@@ -103,6 +103,7 @@ import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, mergeOrderLines, linesReduceExistingQty, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, assetDisposalPreview, buildAssetDisposalEntry, type AssetDisposalMode, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
 import { parseSerialsInput, markSold, normalizeSerial, isValidSerial, type SerialUnit } from '../core/serials.ts'
+import { planSerialBatches, sameSerialBatch } from '../core/serialBatch.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, isCriticalFlag, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import {
@@ -1036,7 +1037,7 @@ export interface MaintenanceTicket {
   /** جلسات عمل الفني على التذكرة (سد فجوة مستقبلية: تتبع وقت العمل بدقة الدقيقة لا الحالة فقط) */
   workSessions?: { startedAt: string; endedAt: string | null }[]
   // تُملأ عند التسليم فقط:
-  parts: { itemId: number; nameAr: string; qty: number; unitPriceMinor: number; unitCostMinor: number; costTotalMinor?: number; serials?: string[] }[]
+  parts: { itemId: number; nameAr: string; qty: number; unitPriceMinor: number; unitCostMinor: number; costTotalMinor?: number; serials?: string[]; serialBatches?: { serial: string; batchId: number }[] }[]
   /** خدمات مقدمة من الكتالوج بتكلفة وسعر (الأمر 23) — التكلفة لا تُطبع للعميل */
   services?: TicketServiceInput[]
   totals: TicketTotals | null
@@ -1437,7 +1438,9 @@ export interface EmployeeAdvance {
   notes: string
   journalEntryId: number
   /** تسلسل قيود الفاتورة التي استُبدلت دون تغيير تحصيل الموظف. */
-  saleCollectionEditHistory?: { previousEntryId: number; reversalEntryId: number; at: string }[]
+  saleCollectionEditHistory?: { previousEntryId: number; reversalEntryId: number; at: string; previousAmountMinor?: number; nextAmountMinor?: number; reason?: string }[]
+  /** سجل تحصيل أُلغي دون استرداد؛ الأصل التاريخي محفوظ ولا يمثل رصيداً مفتوحاً. */
+  saleCollectionRetired?: { previousAmountMinor: number; reversalEntryId: number; replacementEntryId: number; reason: string; at: string }
 }
 
 /** مسودة محرر فاتورة متقدمة — تحفظ محلياً داخل مخزن التطبيق وتنتقل مع النسخ الاحتياطي. */
@@ -1484,6 +1487,10 @@ export interface SaleInvoice {
   treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
   paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
   lines: CartLine[]
+  /** لقطة دفعة الصلاحية لكل وحدة سيريال محددة عند البيع. */
+  serialExpiryBatches?: { serial: string; itemId: number; batch: StockBatch }[]
+  /** تصحيح موثق لساق قبض أجنبية دون تغيير قيمة القيد الدفترية. */
+  fxCorrectionHistory?: { previousFx: FxLeg; correctedFx: FxLeg; journalEntryId: number; treasury: string; paidMinor: number; reason: string; at: string; by: string }[]
   invoiceDiscountPercent: number
   totals: CartTotals
   journalEntryId: number // القيد المتولد — كل مستند مربوط بقيده (القرار 9)
@@ -1797,8 +1804,10 @@ interface DataState {
   fxConversions: FxConversionDoc[]
   getFxFlows: () => FxFlow[]
   getFxHoldings: () => FxHolding[]
+  correctSaleFx: (args: { saleId: number; fx: FxLeg; reason: string; confirmed: boolean }) => void
   transferFx: (args: { currency: string; decimals: 0 | 2 | 3; fromTreasury: string; toTreasury: string; amountMinor: number; date?: string; notes?: string }) => FxConversionDoc
   reverseFxTransfer: (args: { conversionId: number; reason: string }) => void
+  reverseFxConversion: (args: { conversionId: number; reason: string }) => void
   convertFx: (args: {
     fromCurrency: string
     fromDecimals: 0 | 2 | 3
@@ -1924,6 +1933,7 @@ interface DataState {
   customAccounts: CustomAccount[] // حسابات مخصصة يضيفها المالك للشجرة (بند شجرة الحسابات المفتوحة)
   laundryOrders: LaundryOrder[] // أوامر الغسيل (وحدة المغاسل)
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
+  linkLegacySerialBatch: (args: { serial: string; batchId: number; reason: string; confirmed: boolean }) => void
   cheques: Cheque[] // أوراق القبض والدفع (الشيكات)
   purchases: PurchaseInvoice[]
   purchaseExpensePayables: PurchaseExpensePayable[]
@@ -4149,9 +4159,9 @@ function assertFxConversionJournal(journal: JournalEntry[], doc: FxConversionDoc
 }
 
 /** لا يُحذف تدفق تحويل معكوس إلا إذا ثبتت هويتا القيدين وعكسهما حرفياً. */
-function assertFxTransferReversal(journal: JournalEntry[], doc: FxConversionDoc, book: { code: string; decimals: 0 | 2 | 3 }): void {
+function assertFxConversionReversal(journal: JournalEntry[], doc: FxConversionDoc, book: { code: string; decimals: 0 | 2 | 3 }): void {
   const fail = (): never => { throw new Error(`عكس تحويل العملة ${doc.docNumber} غير مثبت — يلزم المراجعة`) }
-  if (doc.kind !== 'treasury_transfer' || !Number.isSafeInteger(doc.reversalEntryId)) return fail()
+  if (!Number.isSafeInteger(doc.reversalEntryId)) return fail()
   const originals = journal.filter(entry => entry.id === doc.journalEntryId), reversals = journal.filter(entry => entry.id === doc.reversalEntryId)
   if (originals.length !== 1 || reversals.length !== 1) return fail()
   const original = originals[0], reversal = reversals[0]
@@ -4180,6 +4190,12 @@ function assertFxWithdrawalJournal(journal: JournalEntry[], entryId: number | nu
 /** ساق أجنبية واحدة لا تحدد توزيع العملة بين خزائن أو موظف. */
 function assertSingleFxTreasury(treasury: string, paidMinor: number, allocations: { accountCode: string; amountMinor: number; employeeId?: number }[] | undefined, label: string): void {
   if (allocations?.length && (allocations.length !== 1 || allocations[0].accountCode !== treasury || allocations[0].employeeId != null || allocations[0].amountMinor !== paidMinor)) throw new Error(`${label}: العملة الأجنبية تحتاج خزينة واحدة مطابقة لكامل المبلغ — راجع توزيع التحصيل أو السداد`)
+}
+
+/** لا تحرك وحدة مرتبطة بدفعة عبر شاشة لا تحفظ اختيار السيريال وهويته. */
+function assertSerialBatchMovementSupported(state: DataState, itemId: number): void {
+  const item = state.items.find(row => row.id === itemId)
+  if ((item?.trackSerial && item.trackExpiry) || state.serials.some(unit => unit.itemId === itemId && unit.expiryBatch != null)) throw new Error('هذه العملية لا توثق السيريال ودفعة صلاحيته — استخدم مساراً يدعم الوحدات المحددة أو راجع المخزون')
 }
 
 /** الحركة النقدية لا تستعمل حساب إيراد أو مصروف كأنه خزينة. */
@@ -6658,6 +6674,7 @@ export const useRawDataStore = create<DataState>()(
       updateItem: (id, patch) => {
         const current = get().items.find((it) => it.id === id)
         if (!current) return
+        if ((patch.trackExpiry === false || patch.trackSerial === false) && get().serials.some(unit => unit.itemId === id && unit.expiryBatch != null)) throw new Error('لا يمكن تعطيل تتبع السيريال أو الصلاحية مع وجود وحدات مرتبطة بدفعات — يلزم معالجة المخزون أولاً')
         // §81: التحرير الجزئي يُحرَس على الصورة المدموجة كاملة — لا يمر تحرير
         // (نافذة سريعة/قائمة أسعار) بمعامل وحدة فاسد أو باركود مكرر أو سيريال+وزن.
         const blockers = itemBlockers({ ...current, ...patch }, get().items.filter((it) => it.id !== id), id)
@@ -6942,6 +6959,7 @@ export const useRawDataStore = create<DataState>()(
         const parsedByLine = new Map<number, string[]>()
         inv.lines.forEach((l, li) => {
           const item = state.items.find((it) => it.id === l.itemId)
+          if (item?.trackSerial && item.trackExpiry && inv.projectId == null && !l.serialsRaw?.trim()) throw new Error(`«${item.nameAr}»: حدد سيريال كل وحدة لربطه بدفعة الصلاحية`)
           if (!item?.trackSerial || !l.serialsRaw?.trim()) return
           const { accepted, errors } = parseSerialsInput(l.serialsRaw, existingSerialSet)
           if (errors.length) throw new Error(`سيريالات «${item.nameAr}»: ${errors.join('، ')}`)
@@ -7192,10 +7210,11 @@ export const useRawDataStore = create<DataState>()(
         // (لا دفعات ولا سيريالات لفاتورة المشروع — بضاعتها ليست مخزوناً)
         let batchId = nextId(state.batches)
         const newBatches: StockBatch[] = []
-        for (const l of linkedProject ? [] : inv.lines) {
+        const purchaseBatchesByLine = new Map<number, StockBatch>()
+        for (const [lineIndex, l] of (linkedProject ? [] : inv.lines).entries()) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item?.trackExpiry) continue
-          newBatches.push({
+          const batch: StockBatch = {
             id: batchId++,
             itemId: l.itemId,
             warehouseId: l.warehouseId ?? inv.warehouseId ?? null,
@@ -7204,7 +7223,9 @@ export const useRawDataStore = create<DataState>()(
             qty: l.qty,
             purchaseId: purchaseId,
             receivedAt: nowIso,
-          })
+          }
+          newBatches.push(batch)
+          purchaseBatchesByLine.set(lineIndex, batch)
         }
 
         // تسجيل وحدات السيريال الداخلة مع هذه الفاتورة
@@ -7222,6 +7243,7 @@ export const useRawDataStore = create<DataState>()(
               serial: s,
               status: 'in_stock',
               purchaseId,
+              ...(purchaseBatchesByLine.has(li) ? { batchId: purchaseBatchesByLine.get(li)!.id, expiryBatch: { ...purchaseBatchesByLine.get(li)!, qty: 1 } } : {}),
               saleId: null,
               soldAt: null,
               warrantyMonths: item?.warrantyMonths ?? 0,
@@ -7598,10 +7620,26 @@ export const useRawDataStore = create<DataState>()(
         const qtyPlanned = stockNeeds
         let workingBatches = state.batches
         const expiredNames: string[] = []
+        const serialExpiryBatches: { serial: string; itemId: number; batch: StockBatch }[] = []
+        const scopedSaleSerials = getBranchScopedDataState(state).serials
         for (const [itemId, qty] of qtyPlanned) {
           const item = state.items.find((it) => it.id === itemId)
           if (!item?.trackExpiry) continue
-          const plan = planFefo(workingBatches, itemId, qty, now0)
+          let plan
+          if (item.trackSerial) {
+            const lines = saleLines.filter(line => line.itemId === itemId)
+            const serials = lines.flatMap(line => (line.serials ?? []).map(normalizeSerial))
+            if (!Number.isSafeInteger(qty) || serials.length !== qty || new Set(serials).size !== serials.length || lines.some(line => (line.unitFactor ?? 1) !== 1 || !Number.isSafeInteger(line.qty))) throw new Error('حدد سيريالاً مرتبطاً بالصلاحية لكل وحدة مباعة')
+            if (serials.some(serial => state.serials.filter(unit => normalizeSerial(unit.serial) === serial).length !== 1)) throw new Error('السيريال غير فريد — يلزم مراجعة ربط الصلاحية')
+            plan = planSerialBatches(scopedSaleSerials, workingBatches, itemId, serials, now0)
+            for (const line of lines) for (const raw of line.serials ?? []) {
+              const serial = normalizeSerial(raw), unit = scopedSaleSerials.find(row => row.serial === serial)!
+              const batch = workingBatches.find(row => row.id === unit.batchId)!
+              if (line.warehouseId != null && batch.warehouseId != null && line.warehouseId !== batch.warehouseId) throw new Error('مخزن السيريال لا يطابق مخزن سطر البيع')
+              if (state.warehouses.length > 1 && batch.warehouseId == null) throw new Error('مخزن السيريال غير مثبت — يلزم المراجعة')
+              serialExpiryBatches.push({ serial, itemId, batch: { ...batch, qty: 1 } })
+            }
+          } else plan = planFefo(workingBatches, itemId, qty, now0)
           if (plan.touchesExpired && !args.expiryOverrideBy) expiredNames.push(item.nameAr)
           workingBatches = applyFefo(workingBatches, plan)
         }
@@ -7851,6 +7889,7 @@ export const useRawDataStore = create<DataState>()(
           treasury: args.treasury ?? '1101',
           paymentAllocations: args.paymentAllocations,
           lines: costedLines,
+          ...(serialExpiryBatches.length ? { serialExpiryBatches } : {}),
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           totals,
           journalEntryId: entryId,
@@ -8011,7 +8050,6 @@ export const useRawDataStore = create<DataState>()(
             if (line.serials?.length) throw new Error('السيريالات غير مثبتة في سطر البيع')
             continue
           }
-          if (item?.trackExpiry) throw new Error('لا يمكن إرجاع صنف بسيريال وصلاحية دون إثبات ربط السيريال بالدفعة')
           if (!originals?.length && !current.length) throw new Error('سيريالات البيع الأصلي غير مثبتة — راجع المستند')
           if (!originals?.length && sale.lines.filter(row => row.itemId === line.itemId).length !== 1) throw new Error('سيريالات البيع القديم غير مرتبطة بالسطر — يلزم المراجعة')
           if ((line.unitFactor ?? 1) !== 1 || !Number.isSafeInteger(line.qty)) throw new Error('مرتجع السيريال يحتاج كمية قطع صحيحة بالوحدة الأساسية')
@@ -8019,8 +8057,8 @@ export const useRawDataStore = create<DataState>()(
           const selected = line.serials?.map(normalizeSerial) ?? []
           if (selected.length !== line.qty || new Set(selected).size !== selected.length) throw new Error('حدد السيريال الفعلي لكل قطعة مرتجعة')
           for (const serial of selected) {
-            const units = state.serials.filter(unit => unit.serial === serial)
-            if (selectedReturnSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].saleId !== sale.id || units[0].status !== 'sold') throw new Error(`السيريال ${serial} غير مثبت على سطر البيع أو أعيد سابقاً`)
+            const units = state.serials.filter(unit => normalizeSerial(unit.serial) === serial)
+            if (selectedReturnSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || units[0].serial !== serial || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].saleId !== sale.id || units[0].status !== 'sold') throw new Error(`السيريال ${serial} غير مثبت على سطر البيع أو أعيد سابقاً`)
             selectedReturnSerials.set(serial, line.condition ?? 'resellable')
           }
           line.serials = selected
@@ -8202,12 +8240,28 @@ export const useRawDataStore = create<DataState>()(
           const newValue = currentValue + valueBack.get(it.id)!
           return withExactStockValue({ ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue })
         })
+        let saleReturnBatches = state.batches
+        const restoredBatchBySerial = new Map<string, number>()
+        for (const [serial, condition] of selectedReturnSerials) {
+          const unit = state.serials.find(row => row.serial === serial)!
+          const item = state.items.find(row => row.id === unit.itemId)!
+          if (!item.trackExpiry && !unit.expiryBatch) continue
+          const saved = sale.serialExpiryBatches?.filter(row => row.serial === serial && row.itemId === unit.itemId) ?? []
+          if (saved.length !== 1 || !unit.expiryBatch || !sameSerialBatch(saved[0].batch, unit.expiryBatch)) throw new Error(`ربط السيريال ${serial} بدفعة البيع غير مثبت — يلزم المراجعة`)
+          if (condition === 'damaged') continue
+          const batch = saved[0].batch
+          const matches = saleReturnBatches.filter(row => sameSerialBatch(row, batch))
+          if (matches.length > 1 || (matches.length === 1 && (saleReturnBatches.filter(row => row.id === matches[0].id).length !== 1 || !Number.isSafeInteger(matches[0].qty) || matches[0].qty < 0))) throw new Error('دفعة صلاحية المرتجع ملتبسة — يلزم المراجعة')
+          const id = matches[0]?.id ?? (saleReturnBatches.some(row => row.id === batch.id) ? nextId(saleReturnBatches) : batch.id)
+          saleReturnBatches = matches.length ? saleReturnBatches.map(row => row === matches[0] ? { ...row, qty: row.qty + 1 } : row) : [...saleReturnBatches, { ...batch, id, qty: 1 }]
+          restoredBatchBySerial.set(serial, id)
+        }
         const updatedSerials = selectedReturnSerials.size ? state.serials.map(unit => {
           const condition = selectedReturnSerials.get(unit.serial)
           if (!condition) return unit
           return condition === 'damaged'
             ? { ...unit, status: 'damaged' as const, saleReturnId: returnId }
-            : { ...unit, status: 'in_stock' as const, saleId: null, soldAt: null, saleReturnId: returnId }
+            : { ...unit, status: 'in_stock' as const, saleId: null, soldAt: null, saleReturnId: returnId, ...(restoredBatchBySerial.has(unit.serial) ? { batchId: restoredBatchBySerial.get(unit.serial)! } : {}) }
         }) : state.serials
 
         // إعادة أرصدة التركيبات (سطور البيع تحمل اللون/المقاس)
@@ -8263,6 +8317,7 @@ export const useRawDataStore = create<DataState>()(
           employeeDeductions: returnDeductions,
           items: updatedItems,
           serials: updatedSerials,
+          batches: saleReturnBatches,
           variantStocks: updatedVariantStocks,
           installmentPlans: updatedPlans,
           ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}),
@@ -8318,15 +8373,14 @@ export const useRawDataStore = create<DataState>()(
             if (line.serials?.length) throw new Error('سيريالات سطر الشراء غير مثبتة')
             continue
           }
-          if (item?.trackExpiry) throw new Error('لا يمكن إرجاع صنف بسيريال وصلاحية دون إثبات ربط السيريال بالدفعة')
           if (getBranchScopedDataState(state).warehouses.length > 1) throw new Error('لا يمكن إثبات مخزن السيريال مع تعدد المخازن — يلزم المراجعة')
           if (!originals?.length && purchase.lines.filter(row => row.itemId === line.itemId).length !== 1) throw new Error('سيريالات الشراء القديم غير مرتبطة بالسطر — يلزم المراجعة')
           if (!Number.isSafeInteger(line.qty)) throw new Error('كمية مرتجع السيريال يجب أن تكون عدداً صحيحاً')
           const selected = line.serials?.map(normalizeSerial) ?? []
           if (selected.length !== line.qty || new Set(selected).size !== selected.length) throw new Error('حدد السيريال الفعلي لكل قطعة عائدة للمورد')
           for (const serial of selected) {
-            const units = state.serials.filter(unit => unit.serial === serial)
-            if (selectedSupplierSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].purchaseId !== purchase.id || units[0].status !== 'in_stock') throw new Error(`السيريال ${serial} غير متاح من فاتورة الشراء الأصلية`)
+            const units = state.serials.filter(unit => normalizeSerial(unit.serial) === serial)
+            if (selectedSupplierSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || units[0].serial !== serial || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].purchaseId !== purchase.id || units[0].status !== 'in_stock') throw new Error(`السيريال ${serial} غير متاح من فاتورة الشراء الأصلية`)
             selectedSupplierSerials.add(serial)
           }
           line.serials = selected
@@ -8464,6 +8518,14 @@ export const useRawDataStore = create<DataState>()(
         let workingBatches = state.batches
         for (const [itemId, qty] of qtyOut) {
           if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
+          const item = state.items.find(row => row.id === itemId)!
+          if (item.trackSerial || [...selectedSupplierSerials].some(serial => state.serials.some(unit => unit.serial === serial && unit.itemId === itemId && unit.expiryBatch != null))) {
+            const selected = [...selectedSupplierSerials].filter(serial => state.serials.find(unit => unit.serial === serial)?.itemId === itemId)
+            if (selected.length !== qty) throw new Error('ربط سيريالات مرتجع المورد بالدفعات غير مكتمل')
+            const plan = planSerialBatches(state.serials, workingBatches, itemId, selected, now)
+            workingBatches = applyFefo(workingBatches, plan)
+            continue
+          }
           const own = workingBatches.filter((b) => b.itemId === itemId && b.purchaseId === purchase.id)
           const ownPlan = planFefo(own, itemId, qty, now.slice(0, 10))
           workingBatches = applyFefo(workingBatches, ownPlan)
@@ -8496,6 +8558,7 @@ export const useRawDataStore = create<DataState>()(
         for (const c of counts) {
           const it = state.items.find((row) => row.id === c.itemId)
           if (!it) throw new Error(`«${c.nameAr}» (#${c.itemId}) ليس صنفاً مسجلاً — أزل سطر الجرد`)
+          if (Math.round(c.countedQty * 1000) !== Math.round(c.expectedQty * 1000)) assertSerialBatchMovementSupported(state, c.itemId)
           if (Math.round((it.stockQty ?? 0) * 1000) !== Math.round(c.expectedQty * 1000)) {
             throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${it.stockQty ?? 0} حالياً) — أعد الجرد على الرصيد الحالي`)
           }
@@ -8571,6 +8634,7 @@ export const useRawDataStore = create<DataState>()(
         const lines = args.lines.map((l) => {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item) throw new Error('صنف غير موجود بالمخزون')
+          assertSerialBatchMovementSupported(state, item.id)
           return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
         })
         const errors = validateWastage(
@@ -8638,6 +8702,7 @@ export const useRawDataStore = create<DataState>()(
         const lines = args.lines.map((l) => {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item) throw new Error('صنف غير موجود بالمخزون')
+          assertSerialBatchMovementSupported(state, item.id)
           return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
         })
         const isExpense = (code: string) => {
@@ -9948,6 +10013,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (sale.fxCorrectionHistory?.length) throw new Error('فاتورة بساق عملة مصححة — استخدم مستند تصحيح مستقل للحفاظ على سجل الإثبات')
         if (sale.fx != null) {
           if (args.paidMinor !== sale.paidMinor || args.treasury !== (sale.treasury ?? '1101') || args.customerId !== sale.customerId) throw new Error('لا يمكن تغيير تحصيل أو خزينة أو عميل فاتورة بعملة أجنبية بالتعديل — يلزم مستند مستقل')
           assertSingleFxTreasury(args.treasury, args.paidMinor, args.paymentAllocations, 'تعديل الفاتورة')
@@ -9964,13 +10030,17 @@ export const useRawDataStore = create<DataState>()(
         const oldStaff = (sale.paymentAllocations ?? []).filter(row => row.accountCode === '1107' || row.employeeId != null)
         const newStaff = (args.paymentAllocations ?? []).filter(row => row.accountCode === '1107' || row.employeeId != null)
         const staffKey = (rows: typeof oldStaff) => rows.map(row => `${row.employeeId}:${row.amountMinor}`).sort().join('|')
-        const oldStaffRecords = state.employeeAdvances.filter(advance => saleEntryIds.has(advance.journalEntryId))
+        const oldStaffRecords = state.employeeAdvances.filter(advance => saleEntryIds.has(advance.journalEntryId) && !advance.saleCollectionRetired)
         if (oldStaff.length || newStaff.length || oldStaffRecords.length) {
           const scoped = getBranchScopedDataState(state)
           const sourceEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
           const source = sourceEntries[0]
           const badStaff = (rows: typeof oldStaff) => rows.some(row => row.accountCode !== '1107' || !Number.isSafeInteger(row.employeeId) || !Number.isSafeInteger(row.amountMinor) || row.amountMinor <= 0 || !scoped.employees.some(employee => employee.id === row.employeeId))
-          if (sale.partyKind != null || badStaff(oldStaff) || badStaff(newStaff) || staffKey(oldStaff) !== staffKey(newStaff)) throw new Error('لا يمكن تغيير تحصيل الموظف بالتعديل — استخدم مستنداً مستقلاً')
+          if (sale.partyKind != null || badStaff(oldStaff) || badStaff(newStaff) || new Set(oldStaff.map(row => row.employeeId)).size !== oldStaff.length || new Set(newStaff.map(row => row.employeeId)).size !== newStaff.length) throw new Error('تحصيل الموظف غير صالح أو مكرر — يلزم المراجعة')
+          for (const advance of oldStaffRecords) {
+            const replacement = newStaff.find(row => row.employeeId === advance.employeeId)
+            if (advance.recoveredMinor > (replacement?.amountMinor ?? 0)) throw new Error('لا يمكن تخفيض أو تغيير الموظف لأقل من المسترد من السلفة — يلزم تسوية مثبتة مستقلة')
+          }
           if (sourceEntries.length !== 1 || !scoped.journal.some(entry => entry.id === source.id) || source.sourceType !== 'sale' || source.sourceId !== sale.id || source.reversedByEntryId != null || source.reversesEntryId != null || !Array.isArray(source.lines)) throw new Error('قيد تحصيل الموظف غير مثبت — يلزم مراجعة السلفة')
           try { assertBalanced(source.lines) } catch { throw new Error('قيد تحصيل الموظف غير متزن — يلزم المراجعة') }
           const staffTotal = oldStaff.reduce((sum, row) => sum + row.amountMinor, 0)
@@ -9991,6 +10061,7 @@ export const useRawDataStore = create<DataState>()(
           shiftClosed: sale.shiftId != null && state.shifts.some((sh) => sh.id === sale.shiftId && sh.status === 'closed'),
         })
         if (blocks.length) throw new Error(`لا يمكن تعديل هذه الفاتورة: ${blocks.join('؛ ')}`)
+        for (const line of [...sale.lines, ...args.lines]) assertSerialBatchMovementSupported(state, line.itemId)
         // أصناف الوصفات والمتغيرات تعديلها له تشعبات (خامات مطبوخة/تركيبات) — الأسلم مرتجع + فاتورة جديدة
         const isDishItem = (id2: number) => state.recipes.some((r) => r.productItemId === id2 && r.mode === 'made_to_order')
         const usesRecipes = sale.lines.some((l) => isDishItem(l.itemId)) || args.lines.some((l) => isDishItem(l.itemId))
@@ -10112,7 +10183,7 @@ export const useRawDataStore = create<DataState>()(
         if (allocatedPaid !== paidM) throw new Error(`إجمالي وسائل التحصيل (${allocatedPaid}) لا يساوي المبلغ المستلم (${paidM}) — راجع مبالغ التحصيل قبل الحفظ`)
         const availableTreasuries = getBranchScopedDataState(state).treasuries
         for (const allocation of freshAllocations) {
-          if (allocation.accountCode === '1107' && allocation.employeeId != null && oldStaff.length) continue
+          if (allocation.accountCode === '1107' && allocation.employeeId != null && newStaff.includes(allocation)) continue
           if (!availableTreasuries.some(treasury => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود في الفرع (${allocation.accountCode})`)
           const errors = validateTreasuryAccess(user?.treasuryAccess, allocation.accountCode, 'receipt', allocation.amountMinor)
           if (errors.length) throw new Error(errors.join(' — '))
@@ -10216,6 +10287,20 @@ export const useRawDataStore = create<DataState>()(
           excessMinor: 0, description: `[sale:${sale.id}] ${expense.label}`, treasury: null, projectId: expense.projectId ?? null, purchaseId: null, journalEntryId: newEntryId,
         }))
         const keptCustodyTxs = state.custodyTxs.filter((row) => !row.description.includes(`[sale:${sale.id}]`))
+        let nextAdvanceId = nextId(state.employeeAdvances)
+        const updatedAdvances = state.employeeAdvances.map(advance => {
+          if (!oldStaffRecords.some(row => row.id === advance.id)) return advance
+          const replacement = newStaff.find(row => row.employeeId === advance.employeeId)
+          const history = [...(advance.saleCollectionEditHistory ?? []), { previousEntryId: oldEntry.id, reversalEntryId: reversalId, at: now, previousAmountMinor: advance.amountMinor, nextAmountMinor: replacement?.amountMinor ?? 0, reason: args.reason.trim() }]
+          return replacement
+            ? { ...advance, amountMinor: replacement.amountMinor, journalEntryId: newEntryId, saleCollectionEditHistory: history }
+            : { ...advance, amountMinor: 0, saleCollectionEditHistory: history, saleCollectionRetired: { previousAmountMinor: advance.amountMinor, reversalEntryId: reversalId, replacementEntryId: newEntryId, reason: args.reason.trim(), at: now } }
+        })
+        for (const allocation of newStaff) {
+          if (oldStaffRecords.some(advance => advance.employeeId === allocation.employeeId)) continue
+          const id = nextAdvanceId++
+          updatedAdvances.push({ id, advanceNumber: `ADV-${String(id).padStart(4, '0')}`, employeeId: allocation.employeeId!, date: now.slice(0, 10), amountMinor: allocation.amountMinor, recoveredMinor: 0, source: 'sale_collection', custodyFileId: null, treasury: args.treasury as TreasuryAccount, notes: `تحصيل فاتورة ${sale.invoiceNumber} على حساب الموظف`, journalEntryId: newEntryId, saleCollectionEditHistory: [{ previousEntryId: oldEntry.id, reversalEntryId: reversalId, at: now, previousAmountMinor: 0, nextAmountMinor: allocation.amountMinor, reason: args.reason.trim() }] })
+        }
         set({
           sales: state.sales.map((s) => (s.id === sale.id ? updatedSale : s)),
           journal: [
@@ -10224,7 +10309,7 @@ export const useRawDataStore = create<DataState>()(
             newEntry,
           ],
           items: updatedItems,
-          employeeAdvances: oldStaffRecords.length ? state.employeeAdvances.map(advance => oldStaffRecords.some(row => row.id === advance.id) ? { ...advance, journalEntryId: newEntryId, saleCollectionEditHistory: [...(advance.saleCollectionEditHistory ?? []), { previousEntryId: oldEntry.id, reversalEntryId: reversalId, at: now }] } : advance) : state.employeeAdvances,
+          employeeAdvances: updatedAdvances,
           custodyTxs: [...keptCustodyTxs, ...editCustodyExpenseTxs],
         })
         return updatedSale
@@ -12908,6 +12993,7 @@ export const useRawDataStore = create<DataState>()(
         for (const l of args.lines) {
           const item = state.items.find((row) => row.id === l.itemId)
           if (!item) throw new Error('صنف غير موجود')
+          if (item.trackSerial && item.trackExpiry) throw new Error('البيع المؤمّن لهذا الصنف يحتاج اختيار سيريال مرتبط بدفعة الصلاحية — هذا المسار غير مدعوم بعد')
           if (item.isService) continue
           qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + baseQty(l))
         }
@@ -14680,9 +14766,18 @@ export const useRawDataStore = create<DataState>()(
         const flows: FxFlow[] = []
         /* مبيعات حُصّلت بعملة أجنبية — دخول بسعر التحصيل (قيمته الدفترية يومها) */
         for (const sale of state.sales) {
-          if (!sale.fx) continue
+          if (!sale.fx) {
+            if (sale.fxCorrectionHistory?.length) throw new Error(`ساق العملة المصححة للفاتورة ${sale.invoiceNumber} مفقودة — يلزم المراجعة`)
+            continue
+          }
           assertRecordedFxLeg(sale.fx, book.code, sale.invoiceNumber)
           const treasury = sale.treasury ?? '1101'
+          if (sale.fxCorrectionHistory?.length) {
+            const history = sale.fxCorrectionHistory
+            const key = (leg: FxLeg) => JSON.stringify([leg.currencyCode, leg.amountMinor, leg.ratePpm, leg.decimals])
+            if (history.some((row, index) => !row.reason?.trim() || !row.by?.trim() || validateFxLeg(row.previousFx, book.code).length > 0 || validateFxLeg(row.correctedFx, book.code).length > 0 || row.journalEntryId !== sale.journalEntryId || row.treasury !== treasury || row.paidMinor !== sale.paidMinor || (index > 0 && key(history[index - 1].correctedFx) !== key(row.previousFx)) || convertFxToBookMinor(row.previousFx, book.decimals) !== row.paidMinor || convertFxToBookMinor(row.correctedFx, book.decimals) !== row.paidMinor) || key(history[history.length - 1].correctedFx) !== key(sale.fx)) throw new Error(`سجل تصحيح عملة ${sale.invoiceNumber} غير مطابق — يلزم المراجعة`)
+            assertFxSourceJournal(raw.journal, sale.journalEntryId, 'sale', sale.id, treasury, sale.paidMinor!, 'debit', sale.invoiceNumber)
+          }
           assertSingleFxTreasury(treasury, sale.paidMinor ?? 0, sale.paymentAllocations, sale.invoiceNumber)
           if (!Number.isSafeInteger(sale.paidMinor) || sale.paidMinor! <= 0 || convertFxToBookMinor(sale.fx, book.decimals) !== sale.paidMinor) throw new Error(`ساق العملة الأجنبية للفاتورة ${sale.invoiceNumber} لا تطابق المحصل — يلزم المراجعة`)
           assertFxSourceJournal(state.journal, sale.journalEntryId, 'sale', sale.id, treasury, sale.paidMinor!, 'debit', sale.invoiceNumber)
@@ -14731,7 +14826,7 @@ export const useRawDataStore = create<DataState>()(
         /* تحويلات العملة المسجلة — كل مستند حركتاه (خروج بمتوسط التكلفة/دخول بتكلفة الشراء) */
         for (const doc of state.fxConversions) {
           if (raw.fxConversions.filter(row => row.id === doc.id).length !== 1) throw new Error(`معرّف تحويل العملة ${doc.docNumber} مكرر — يلزم المراجعة`)
-          if (doc.reversalEntryId != null) { assertFxTransferReversal(raw.journal, doc, book); assertFxTransferReversal(state.journal, doc, book); continue }
+          if (doc.reversalEntryId != null) { assertFxConversionReversal(raw.journal, doc, book); assertFxConversionReversal(state.journal, doc, book); continue }
           assertFxConversionJournal(raw.journal, doc, book)
           assertFxConversionJournal(state.journal, doc, book)
           flows.push(...fxConversionFlows(doc, book.code, book.decimals))
@@ -14740,6 +14835,33 @@ export const useRawDataStore = create<DataState>()(
       },
       getFxHoldings: () => fxHoldingsFromFlows(get().getFxFlows(), bookCurrencyOf().decimals),
 
+      correctSaleFx: (args) => {
+        const state = get(), scoped = getBranchScopedDataState(state), book = bookCurrencyOf()
+        if (!args.confirmed || !args.reason.trim()) throw new Error('يلزم تأكيد مطابقة إيصال القبض وكتابة مرجع التصحيح')
+        const matches = state.sales.filter(row => row.id === args.saleId)
+        if (matches.length !== 1 || !scoped.sales.some(row => row.id === args.saleId) || !matches[0].fx) throw new Error('فاتورة العملة غير موجودة أو غير فريدة في الفرع')
+        const sale = matches[0], previous = sale.fx!, treasury = sale.treasury ?? '1101', paid = sale.paidMinor ?? 0
+        assertTreasuryForPosting(state, treasury, 'receipt', paid)
+        const corrected = { currencyCode: args.fx.currencyCode.trim().toUpperCase(), amountMinor: args.fx.amountMinor, ratePpm: args.fx.ratePpm, decimals: args.fx.decimals }
+        const errors = validateFxLeg(corrected, book.code)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (!Number.isSafeInteger(paid) || paid <= 0 || convertFxToBookMinor(corrected, book.decimals) !== paid) throw new Error('الساق المصححة يجب أن تطابق القيمة الدفترية المحصلة — تصحيح فرق القيمة يحتاج قيداً مستقلاً')
+        if (JSON.stringify(corrected) === JSON.stringify(previous)) throw new Error('الساق المصححة مطابقة للساق المسجلة')
+        assertSingleFxTreasury(treasury, paid, sale.paymentAllocations, sale.invoiceNumber)
+        assertFxSourceJournal(state.journal, sale.journalEntryId, 'sale', sale.id, treasury, paid, 'debit', sale.invoiceNumber)
+        const flows = get().getFxFlows()
+        const existing = flows.filter(flow => flow.seq === sale.journalEntryId && flow.ref === sale.invoiceNumber && flow.kind === 'in' && flow.treasury === treasury && flow.currency === previous.currencyCode)
+        if (existing.length !== 1) throw new Error('ساق الفاتورة الأصلية غير مثبتة — يلزم المراجعة')
+        if (flows.some(flow => flow.seq > sale.journalEntryId && flow.treasury === treasury && (flow.currency === previous.currencyCode || flow.currency === corrected.currencyCode))) throw new Error('توجد حركات لاحقة للعملة الأصلية أو المصححة — صححها بترتيبها أولاً')
+        const oldIssues = fxConversionHistoryIssues(scoped.fxConversions, flows, book.code, book.decimals)
+        if (oldIssues.length) throw new Error(`تاريخ العملة يحتاج مراجعة: ${oldIssues.join('، ')}`)
+        const adjusted = flows.map(flow => flow === existing[0] ? { ...flow, currency: corrected.currencyCode, decimals: corrected.decimals, amountMinor: corrected.amountMinor } : flow)
+        fxHoldingsFromFlows(adjusted, book.decimals)
+        const issues = fxConversionHistoryIssues(scoped.fxConversions, adjusted, book.code, book.decimals)
+        if (issues.length) throw new Error(`التصحيح يتعارض مع تاريخ العملة: ${issues.join('، ')}`)
+        const record = { previousFx: { ...previous }, correctedFx: { ...corrected }, journalEntryId: sale.journalEntryId, treasury, paidMinor: paid, reason: args.reason.trim(), at: localIsoTimestamp(), by: activeUserName(state) }
+        set({ sales: state.sales.map(row => row.id === sale.id ? { ...row, fx: corrected, fxCorrectionHistory: [...(row.fxCorrectionHistory ?? []), record] } : row) })
+      },
       transferFx: (args) => {
         const state = get(), scoped = getBranchScopedDataState(state), book = bookCurrencyOf()
         const currency = args.currency.trim().toUpperCase()
@@ -14770,21 +14892,33 @@ export const useRawDataStore = create<DataState>()(
         return doc
       },
       reverseFxTransfer: (args) => {
+        const matches = get().fxConversions.filter(row => row.id === args.conversionId)
+        if (matches.length !== 1 || matches[0].kind !== 'treasury_transfer') throw new Error('تحويل الخزائن غير موجود أو غير فريد')
+        get().reverseFxConversion(args)
+      },
+      reverseFxConversion: (args) => {
         const state = get(), scoped = getBranchScopedDataState(state), book = bookCurrencyOf()
         const matches = state.fxConversions.filter(row => row.id === args.conversionId)
         if (matches.length !== 1 || !scoped.fxConversions.some(row => row.id === args.conversionId)) throw new Error('تحويل العملة غير فريد أو غير موجود في الفرع')
         const doc = matches[0]
-        if (doc.kind !== 'treasury_transfer') throw new Error('تصحيح تحويل العملات يحتاج مساراً مستقلاً؛ هذا المسار لتحويل الخزائن فقط')
-        if (doc.reversalEntryId != null) throw new Error('تحويل الخزائن معكوس مسبقاً')
+        if (doc.reversalEntryId != null) throw new Error('تحويل العملة معكوس مسبقاً')
         if (!args.reason.trim()) throw new Error('سبب تصحيح التحويل مطلوب')
+        if (!scoped.treasuries.some(row => row.code === doc.fromTreasury) || !scoped.treasuries.some(row => row.code === doc.toTreasury)) throw new Error('خزائن التحويل غير مثبتة في الفرع')
         const flows = get().getFxFlows()
         const issues = fxConversionHistoryIssues(scoped.fxConversions, flows, book.code, book.decimals)
         if (issues.length) throw new Error(`حركات العملة تحتاج مراجعة قبل التصحيح: ${issues.join('، ')}`)
-        if (flows.some(flow => flow.seq > doc.journalEntryId && flow.currency === doc.fromCurrency && (flow.treasury === doc.fromTreasury || flow.treasury === doc.toTreasury))) throw new Error('توجد حركات عملة لاحقة في إحدى الخزينتين — صححها أولاً')
-        const user = state.appUsers.find(row => row.id === state.currentUserId)
-        const errors = validateTreasuryTransfer(user?.treasuryAccess, doc.toTreasury, doc.fromTreasury, doc.outBookValueMinor ?? 0)
-        if (errors.length) throw new Error(errors.join(' — '))
+        const ownFlows = flows.filter(flow => flow.seq === doc.journalEntryId && flow.ref === doc.docNumber)
+        if (!ownFlows.length) throw new Error('تدفقات التحويل غير مثبتة — يلزم المراجعة')
+        if (flows.some(flow => flow.seq > doc.journalEntryId && ownFlows.some(original => original.currency === flow.currency && original.treasury === flow.treasury))) throw new Error('توجد حركات عملة لاحقة على أحد الأرصدة المتأثرة — صححها أولاً')
         const original = state.journal.find(entry => entry.id === doc.journalEntryId)!
+        const user = state.appUsers.find(row => row.id === state.currentUserId)
+        const amount = original.lines.reduce((sum, row) => sum + row.debit, 0)
+        const errors = [...validateTreasuryAccess(user?.treasuryAccess, doc.toTreasury, 'transfer_from', amount), ...validateTreasuryAccess(user?.treasuryAccess, doc.fromTreasury, 'transfer_to', amount)]
+        if (errors.length) throw new Error(errors.join(' — '))
+        const afterFlows = flows.filter(flow => !ownFlows.includes(flow))
+        fxHoldingsFromFlows(afterFlows, book.decimals)
+        const afterIssues = fxConversionHistoryIssues(scoped.fxConversions.filter(row => row.id !== doc.id), afterFlows, book.code, book.decimals)
+        if (afterIssues.length) throw new Error(`عكس التحويل يتعارض مع تاريخ العملة: ${afterIssues.join('، ')}`)
         const now = localIsoTimestamp(), id = nextId(state.journal)
         if (!isValidExpiryDate(doc.date) || doc.date > now.slice(0, 10)) throw new Error('تاريخ التحويل غير صالح أو لاحق لتاريخ التصحيح — يلزم المراجعة')
         const reversal: JournalEntry = { id, entryNumber: id, date: now.slice(0, 10), description: `عكس تحويل ${doc.docNumber} — ${args.reason.trim()}`, sourceType: 'reversal', sourceId: original.id, lines: buildReversalLines(original.lines), createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: original.id }
@@ -16281,6 +16415,7 @@ export const useRawDataStore = create<DataState>()(
         const lines: MaterialIssueLine[] = args.lines.map((input) => {
           const item = state.items.find((it) => it.id === input.itemId)
           if (!item) throw new Error('صنف غير موجود في إذن الصرف')
+          assertSerialBatchMovementSupported(state, item.id)
           const line = buildIssueLine(input, item, planned.get(item.id) ?? 0)
           planned.set(item.id, (planned.get(item.id) ?? 0) + line.baseQty)
           return line
@@ -16611,6 +16746,8 @@ export const useRawDataStore = create<DataState>()(
         const availableInWarehouse = (itemId: number, warehouseId: number | null) => warehouseStock.get(warehouseId ?? -1)?.get(itemId) ?? 0
         const ingredients: { itemId: number; qty: number; warehouseId?: number | null }[] = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches, warehouseId: ingredientWarehouseId }))
         const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
+        assertSerialBatchMovementSupported(state, productItemId)
+        for (const ingredient of ingredients) assertSerialBatchMovementSupported(state, ingredient.itemId)
         if (!state.items.some((item) => item.id === productItemId && item.isActive)) throw new Error('اختر صنفاً ناتجاً مسجلاً ونشطاً في المخزون')
         if (!(producedQty > 0)) throw new Error('كمية المنتج الناتج يجب أن تكون أكبر من صفر')
         if (!ingredients.length) throw new Error('أضف خامة واحدة على الأقل')
@@ -16702,6 +16839,8 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors[0])
         const source = state.items.find((it) => it.id === args.sourceItemId)
         if (!source) throw new Error('الصنف الخام غير موجود')
+        assertSerialBatchMovementSupported(state, source.id)
+        for (const output of args.outputs) assertSerialBatchMovementSupported(state, output.itemId)
         if (args.outputs.some((o) => o.itemId === args.sourceItemId)) throw new Error('لا يكون الخام نفسه ضمن النواتج — أنشئ صنفاً لكل جزء/درجة')
         for (const o of args.outputs) {
           if (!state.items.some((it) => it.id === o.itemId)) throw new Error('صنف ناتج غير موجود — أضفه في الأصناف أولاً')
@@ -17808,11 +17947,33 @@ export const useRawDataStore = create<DataState>()(
         set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
         return updated
       },
+      linkLegacySerialBatch: (args) => {
+        const state = get(), scoped = getBranchScopedDataState(state), serial = normalizeSerial(args.serial)
+        if (!args.confirmed || !args.reason.trim()) throw new Error('يلزم تأكيد مطابقة السيريال والدفعة وكتابة مرجع الإثبات')
+        const units = state.serials.filter(row => normalizeSerial(row.serial) === serial), unit = units[0]
+        if (units.length !== 1 || unit.serial !== serial || state.serials.filter(row => row.id === unit.id).length !== 1 || !scoped.serials.some(row => row.id === unit.id) || unit.status !== 'in_stock' || unit.saleId != null || unit.soldAt != null || unit.maintenanceTicketId != null || unit.saleReturnId != null || unit.expiryBatch != null || unit.batchId != null) throw new Error('السيريال غير متاح أو ليس سجلاً قديماً غير مربوط — يلزم المراجعة')
+        const item = scoped.items.find(row => row.id === unit.itemId)
+        if (!item?.trackSerial || !item.trackExpiry || unit.purchaseId == null) throw new Error('الربط اليدوي متاح لوحدة شراء تتبع السيريال والصلاحية فقط')
+        const purchases = state.purchases.filter(row => row.id === unit.purchaseId)
+        if (purchases.length !== 1 || !scoped.purchases.some(row => row.id === unit.purchaseId)) throw new Error('فاتورة شراء السيريال غير مثبتة في الفرع')
+        const lines = purchases[0].lines.filter(row => row.itemId === unit.itemId)
+        if (!lines.length || (lines.length > 1 && !lines.some(line => line.serials?.map(normalizeSerial).includes(serial))) || (lines.length === 1 && lines[0].serials?.length && !lines[0].serials.map(normalizeSerial).includes(serial))) throw new Error('سطر شراء السيريال غير مثبت — يلزم المراجعة')
+        if (state.sales.some(sale => sale.lines.some(line => line.serials?.map(normalizeSerial).includes(serial))) || state.tickets.some(ticket => (ticket.parts ?? []).some(part => part.serials?.map(normalizeSerial).includes(serial)))) throw new Error('للسيريال حركات بيع أو صيانة سابقة — يلزم مراجعة تاريخه كاملاً')
+        const batches = state.batches.filter(row => row.id === args.batchId), batch = batches[0]
+        if (batches.length !== 1 || !scoped.batches.some(row => row.id === args.batchId) || batch.itemId !== unit.itemId || batch.purchaseId !== unit.purchaseId || (batch.warehouseId == null && scoped.warehouses.length > 1) || (batch.warehouseId != null && !scoped.warehouses.some(row => row.id === batch.warehouseId)) || !Number.isSafeInteger(batch.qty) || batch.qty < 1 || (batch.expiryDate != null && !isValidExpiryDate(batch.expiryDate))) throw new Error('دفعة الشراء غير مثبتة أو لا تملك رصيداً صالحاً')
+        const matching = state.batches.filter(row => sameSerialBatch(row, batch))
+        if (matching.length !== 1) throw new Error('دفعات الشراء ملتبسة — يلزم المراجعة')
+        const alreadyLinked = state.serials.filter(row => row.status === 'in_stock' && row.expiryBatch && sameSerialBatch(row.expiryBatch, batch))
+        if (alreadyLinked.length >= batch.qty || alreadyLinked.some(row => row.batchId !== batch.id)) throw new Error('رصيد الدفعة لا يكفي لربط سيريال آخر أو سجلاتها متعارضة')
+        const expiryLinkEvidence = { reason: args.reason.trim(), at: localIsoTimestamp(), by: activeUserName(state) }
+        set({ serials: state.serials.map(row => row.id === unit.id ? { ...row, batchId: batch.id, expiryBatch: { ...batch, qty: 1 }, expiryLinkEvidence } : row) })
+      },
       registerTradeIn: (args) => {
         const state = get()
         const item = state.items.find((it) => it.id === args.itemId)
         if (!item) throw new Error('الصنف غير موجود')
         if (!item.trackSerial) throw new Error('الصنف المختار لا يتتبع السيريال — فعّل تتبع السيريال له أولاً')
+        if (item.trackExpiry) throw new Error('استبدال صنف بسيريال وصلاحية يحتاج تسجيل الدفعة الفعلية — هذا المسار غير مدعوم بعد')
         const serial = normalizeSerial(args.serial)
         if (!isValidSerial(serial)) throw new Error('سيريال/IMEI غير صالح (4-30 حرفاً أو رقماً)')
         if (state.serials.some((u) => u.serial === serial)) throw new Error('هذا السيريال مسجل من قبل')
@@ -17904,11 +18065,10 @@ export const useRawDataStore = create<DataState>()(
           if (!item) throw new Error('قطعة غيار غير موجودة بالمخزون')
           const serials = p.serials?.map(normalizeSerial) ?? []
           if (item.trackSerial) {
-            if (item.trackExpiry) throw new Error('تتبع السيريال والصلاحية معاً يحتاج ربط كل سيريال بدفعته — راجع المخزون قبل الصرف')
             if (serials.length !== p.qty || new Set(serials).size !== serials.length) throw new Error('حدد السيريال المختلف لكل قطعة صيانة')
             for (const serial of serials) {
               const units = scopedSerials.filter(unit => unit.serial === serial)
-              if (serialAssignments.has(serial) || units.length !== 1 || state.serials.filter(unit => unit.serial === serial).length !== 1 || units[0].itemId !== item.id || units[0].status !== 'in_stock' || units[0].saleId != null || units[0].maintenanceTicketId != null) throw new Error(`السيريال ${serial} غير متاح لهذا الصنف في الفرع`)
+              if (serialAssignments.has(serial) || units.length !== 1 || state.serials.filter(unit => normalizeSerial(unit.serial) === serial).length !== 1 || units[0].itemId !== item.id || units[0].status !== 'in_stock' || units[0].saleId != null || units[0].maintenanceTicketId != null) throw new Error(`السيريال ${serial} غير متاح لهذا الصنف في الفرع`)
               serialAssignments.add(serial)
             }
           } else if (serials.length) throw new Error('الصنف لا يتتبع السيريال — راجع اختيار القطعة')
@@ -17916,7 +18076,8 @@ export const useRawDataStore = create<DataState>()(
           if ((item.stockQty ?? 0) < p.qty) throw new Error(`المخزون لا يكفي من «${item.nameAr}» (المتاح ${item.stockQty ?? 0})`)
           const value = item.stockValueMinor ?? Math.round((item.stockQty ?? 0) * item.costMinor)
           const costTotalMinor = withdrawStockValue(item.stockQty ?? 0, value, p.qty).withdrawnValueMinor
-          return { itemId: p.itemId, nameAr: item.nameAr, qty: p.qty, unitPriceMinor: p.unitPriceMinor, unitCostMinor: item.costMinor, costTotalMinor, ...(serials.length ? { serials } : {}) }
+          const serialBatches = item.trackExpiry && item.trackSerial ? serials.map(serial => ({ serial, batchId: scopedSerials.find(unit => unit.serial === serial)?.batchId ?? -1 })) : undefined
+          return { itemId: p.itemId, nameAr: item.nameAr, qty: p.qty, unitPriceMinor: p.unitPriceMinor, unitCostMinor: item.costMinor, costTotalMinor, ...(serials.length ? { serials } : {}), ...(serialBatches ? { serialBatches } : {}) }
         })
 
         // 2) تحقق وإجماليات وقيد بالنواة الخالصة (خدمات + تحصيل مجزأ — الأمر 23)
@@ -17967,7 +18128,8 @@ export const useRawDataStore = create<DataState>()(
         for (const [itemId, qty] of qtyByItem) {
           if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
           expiryTrackedPartIds.push(itemId)
-          const plan = planFefo(ticketBatches, itemId, qty, now)
+          const part = parts.find(row => row.itemId === itemId)!
+          const plan = part.serials?.length ? planSerialBatches(scopedSerials, ticketBatches, itemId, part.serials, now) : planFefo(ticketBatches, itemId, qty, now)
           if (plan.touchesExpired) throw new Error('لا يمكن صرف قطعة صيانة منتهية الصلاحية — راجع المخزون أولاً')
           for (const allocation of plan.allocations) {
             const batch = ticketBatches.find((row) => row.id === allocation.batchId)
@@ -18120,6 +18282,7 @@ export const useRawDataStore = create<DataState>()(
         )
         for (const l of args.lines) {
           if (!state.items.some((it) => it.id === l.itemId)) errors.push('صنف غير موجود بالمخزون')
+          assertSerialBatchMovementSupported(state, l.itemId)
         }
         if (errors.length) throw new Error(errors.join(' — '))
 
@@ -18914,7 +19077,7 @@ export const useRawDataStore = create<DataState>()(
             const scoped = getBranchScopedDataState(state).serials
             for (const serial of selected) {
               const units = scoped.filter(unit => unit.serial === serial)
-              if (units.length !== 1 || state.serials.filter(unit => unit.serial === serial).length !== 1 || units[0].itemId !== part.itemId || units[0].status !== 'maintenance' || units[0].maintenanceTicketId !== ticket.id) throw new Error(`السيريال ${serial} غير مثبت على تذكرة الصيانة`)
+              if (units.length !== 1 || state.serials.filter(unit => normalizeSerial(unit.serial) === serial).length !== 1 || units[0].itemId !== part.itemId || units[0].status !== 'maintenance' || units[0].maintenanceTicketId !== ticket.id) throw new Error(`السيريال ${serial} غير مثبت على تذكرة الصيانة`)
             }
             restockSerials.set(part.itemId, selected)
           } else if (rp.serials?.length) throw new Error('القطعة لا تملك سيريالات موثقة في التذكرة')
@@ -18946,7 +19109,25 @@ export const useRawDataStore = create<DataState>()(
               if (total !== previous.qty * 1000) throw new Error('دفعات مرتجع سابق لا تطابق كمية القطعة')
             }
             const remaining = batches.map(batch => ({ batchId: batch.id, qty: (original.get(batch.id)! - (returned.get(batch.id) ?? 0)) / 1000 })).filter(row => row.qty > 0)
-            const selections = rp.batches ?? (batches.length === 1 ? [{ batchId: batches[0].id, qty: rp.qty }] : rp.qty === part.qty - prevReturned ? remaining : null)
+            let serialSelections: { batchId: number; qty: number }[] | undefined
+            if (part.serials?.length) {
+              const links = part.serialBatches
+              if (!Array.isArray(links) || links.length !== part.serials.length || new Set(links.map(link => link.serial)).size !== links.length || links.some(link => !part.serials!.includes(link.serial) || !batches.some(batch => batch.id === link.batchId))) throw new Error('ربط السيريال بدفعة الصلاحية غير مثبت على التذكرة — يلزم المراجعة')
+              const counts = new Map<number, number>()
+              for (const serial of restockSerials.get(part.itemId) ?? []) {
+                const link = links.find(row => row.serial === serial)!, unit = state.serials.find(row => row.serial === serial)!, batch = batches.find(row => row.id === link.batchId)!
+                if (!unit.expiryBatch || !sameSerialBatch(unit.expiryBatch, batch)) throw new Error(`دفعة صلاحية السيريال ${serial} لا تطابق التذكرة`)
+                counts.set(link.batchId, (counts.get(link.batchId) ?? 0) + 1)
+              }
+              serialSelections = [...counts].map(([batchId, qty]) => ({ batchId, qty }))
+              if (rp.batches && JSON.stringify([...rp.batches].sort((a, b) => a.batchId - b.batchId)) !== JSON.stringify([...serialSelections].sort((a, b) => a.batchId - b.batchId))) throw new Error('دفعات المرتجع لا تطابق سيريالاته')
+              for (const previous of prior) {
+                const expected = new Map<number, number>()
+                for (const serial of previous.serials ?? []) { const link = links.find(row => row.serial === serial); if (!link) throw new Error('ربط سيريالات المرتجع السابق غير مثبت'); expected.set(link.batchId, (expected.get(link.batchId) ?? 0) + 1) }
+                if (JSON.stringify([...(previous.batches ?? [])].sort((a, b) => a.batchId - b.batchId)) !== JSON.stringify([...expected].map(([batchId, qty]) => ({ batchId, qty })).sort((a, b) => a.batchId - b.batchId))) throw new Error('دفعات سيريالات المرتجع السابق غير مطابقة')
+              }
+            }
+            const selections = serialSelections ?? rp.batches ?? (batches.length === 1 ? [{ batchId: batches[0].id, qty: rp.qty }] : rp.qty === part.qty - prevReturned ? remaining : null)
             if (!selections?.length || new Set(selections.map(row => row.batchId)).size !== selections.length) throw new Error('حدد دفعات صلاحية القطعة العائدة وكمياتها قبل المرتجع')
             let selectedTotal = 0
             for (const selection of selections) {
@@ -18964,7 +19145,7 @@ export const useRawDataStore = create<DataState>()(
               if (matches.length > 1) throw new Error('دفعة الصلاحية ملتبسة — راجع المخزون قبل المرتجع')
               if (matches.length === 1) {
                 const match = matches[0]
-                if (!Number.isFinite(match.qty) || match.qty < 0) throw new Error('رصيد دفعة الصلاحية غير صالح — راجعه قبل المرتجع')
+                if (updatedBatches.filter(row => row.id === match.id).length !== 1 || !Number.isFinite(match.qty) || match.qty < 0) throw new Error('رصيد دفعة الصلاحية غير صالح أو معرفها مكرر — راجعه قبل المرتجع')
                 updatedBatches = updatedBatches.map((row) => row === match ? { ...row, qty: Math.round((row.qty + selection.qty) * 1000) / 1000 } : row)
               } else {
                 const id = updatedBatches.some((row) => row.id === snapshot.id) ? nextId(updatedBatches) : snapshot.id
@@ -19046,7 +19227,12 @@ export const useRawDataStore = create<DataState>()(
           terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${ticket.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
         const returnedSerials = new Set([...restockSerials.values()].flat())
-        const updatedSerials = returnedSerials.size ? state.serials.map(unit => returnedSerials.has(unit.serial) ? { ...unit, status: 'in_stock' as const, maintenanceTicketId: null } : unit) : state.serials
+        const updatedSerials = returnedSerials.size ? state.serials.map(unit => {
+          if (!returnedSerials.has(unit.serial)) return unit
+          const matched = unit.expiryBatch ? updatedBatches.filter(batch => sameSerialBatch(batch, unit.expiryBatch!)) : []
+          if (unit.expiryBatch && matched.length !== 1) throw new Error(`دفعة صلاحية السيريال ${unit.serial} غير فريدة بعد المرتجع`)
+          return { ...unit, status: 'in_stock' as const, maintenanceTicketId: null, ...(matched.length ? { batchId: matched[0].id } : {}) }
+        }) : state.serials
         set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry], items: updatedItems, batches: updatedBatches, serials: updatedSerials, ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },

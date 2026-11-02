@@ -28,7 +28,7 @@ type BookCur = { code: string; symbol: string; decimals: 0 | 2 | 3; name: string
 const fxMetaOf = (code: string) => COMMON_FX_CURRENCIES.find((row) => row.code === code.toUpperCase())
 
 export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName: string }) {
-  const { getFxHoldings, getFxFlows, fxConversions, treasuries, convertFx, transferFx, reverseFxTransfer } = useDataStore()
+  const { getFxHoldings, getFxFlows, fxConversions, treasuries, sales, convertFx, transferFx, reverseFxConversion, correctSaleFx } = useDataStore()
   const fxRates = useAppStore((s) => s.fxRates)
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -61,6 +61,14 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
   })()
 
   /* ═══ نافذة تحويل العملة ═══ */
+  const [correctSaleId, setCorrectSaleId] = useState<number | null>(null)
+  const [correctCurrency, setCorrectCurrency] = useState('USD')
+  const [correctAmount, setCorrectAmount] = useState('')
+  const [correctRate, setCorrectRate] = useState('')
+  const [correctReason, setCorrectReason] = useState('')
+  const [correctConfirmed, setCorrectConfirmed] = useState(false)
+  const selectedSale = sales.find(sale => sale.id === correctSaleId)
+  const correctDecimals = fxMetaOf(correctCurrency)?.decimals ?? 2
   const [reverseDocId, setReverseDocId] = useState<number | null>(null)
   const [reverseReason, setReverseReason] = useState('')
   const [convOpen, setConvOpen] = useState(false)
@@ -221,7 +229,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
                   <td className="p-1.5 text-center font-mono">{doc.feeMinor > 0 ? fmt(doc.feeMinor) : '—'}</td>
                   <td className="p-1.5 text-center font-mono font-bold text-emerald-600">{doc.gainMinor > 0 ? fmt(doc.gainMinor) : '—'}</td>
                   <td className="p-1.5 text-center font-mono font-bold text-rose-600">{doc.lossMinor > 0 ? fmt(doc.lossMinor) : '—'}</td>
-                  <td className="p-1.5 text-center font-mono text-slate-400">#{doc.journalEntryId}{doc.kind === 'treasury_transfer' && (doc.reversalEntryId != null ? <div>عُكس بالقيد #{doc.reversalEntryId}</div> : <button type="button" className="underline text-rose-600" onClick={() => { setReverseDocId(doc.id); setReverseReason('') }}>تصحيح التحويل</button>)}</td>
+                  <td className="p-1.5 text-center font-mono text-slate-400">#{doc.journalEntryId}{(doc.reversalEntryId != null ? <div>عُكس بالقيد #{doc.reversalEntryId}</div> : <button type="button" className="underline text-rose-600" onClick={() => { setReverseDocId(doc.id); setReverseReason('') }}>تصحيح التحويل</button>)}</td>
                 </tr>
               ))}
             </tbody>
@@ -241,7 +249,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
               {recentFlows.map((flow, index) => (
                 <tr key={`${flow.seq}-${flow.ref}-${index}`} className="border-t border-slate-100 dark:border-slate-800">
                   <td className="p-1.5 text-center font-mono">{flow.date}</td>
-                  <td className="p-1.5 text-center font-mono">{flow.ref}</td>
+                  <td className="p-1.5 text-center font-mono">{flow.ref}{sales.filter(sale => sale.fx && sale.journalEntryId === flow.seq && sale.invoiceNumber === flow.ref && flow.kind === 'in').map(sale => <div key={sale.id}><button type="button" className="underline text-amber-700" onClick={() => { setCorrectSaleId(sale.id); setCorrectCurrency(sale.fx!.currencyCode); setCorrectAmount((sale.fx!.amountMinor / 10 ** sale.fx!.decimals).toFixed(sale.fx!.decimals)); setCorrectRate(formatRate(sale.fx!.ratePpm)); setCorrectReason(''); setCorrectConfirmed(false) }}>تصحيح ساق القبض</button>{sale.fxCorrectionHistory?.length ? <span> · تصحيحات {sale.fxCorrectionHistory.length}</span> : null}</div>)}</td>
                   <td className={`p-1.5 text-center font-bold ${flow.kind === 'in' ? 'text-emerald-600' : 'text-rose-600'}`}>{flow.kind === 'in' ? 'دخول' : 'خروج'}</td>
                   <td className="p-1.5 text-center font-mono font-black">{flow.currency}</td>
                   <td className="p-1.5 text-center font-mono">{(flow.amountMinor / 10 ** flow.decimals).toFixed(flow.decimals)}</td>
@@ -255,10 +263,23 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
         </div>
       </div>
 
-      <Modal open={reverseDocId != null} onClose={() => setReverseDocId(null)} title="تصحيح تحويل الخزائن" subtitle="يُعكس آخر تحويل بقيد جديد فقط بعد التحقق من عدم وجود حركة لاحقة في أي من الخزينتين.">
+      <Modal open={correctSaleId != null} onClose={() => setCorrectSaleId(null)} title="تصحيح ساق قبض فاتورة" subtitle="يُحفظ الأصل والمرجع، ولا يتغير القيد أو قيمته الدفترية. التصحيح متاح فقط دون حركات لاحقة على العملتين.">
+        <div className="space-y-3">
+          {selectedSale && <p>الفاتورة {selectedSale.invoiceNumber} · المحصل بالدفتر {fmt(selectedSale.paidMinor ?? 0)} · الخزينة {treasuryName(selectedSale.treasury ?? '1101')}</p>}
+          {selectedSale?.fxCorrectionHistory?.map((row, index) => <p key={`${row.at}-${index}`} className="text-xs">{row.at} — {row.previousFx.currencyCode} إلى {row.correctedFx.currencyCode} · {row.reason} · {row.by}</p>)}
+          <Field label="العملة الفعلية"><select aria-label="عملة القبض المصححة" className={inputCls} value={correctCurrency} onChange={event => setCorrectCurrency(event.target.value)}>{COMMON_FX_CURRENCIES.filter(row => row.code !== cur.code).map(row => <option key={row.code} value={row.code}>{row.code} — {row.nameAr}</option>)}</select></Field>
+          <Field label="المبلغ الفعلي"><input aria-label="مبلغ القبض المصحح" className={inputCls} value={correctAmount} onChange={event => setCorrectAmount(event.target.value)} inputMode="decimal" /></Field>
+          <Field label="سعر الصرف الفعلي"><input aria-label="سعر القبض المصحح" className={inputCls} value={correctRate} onChange={event => setCorrectRate(event.target.value)} inputMode="decimal" /></Field>
+          <Field label="السبب ومرجع إيصال القبض"><input aria-label="مرجع تصحيح القبض" className={inputCls} value={correctReason} onChange={event => setCorrectReason(event.target.value)} /></Field>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={correctConfirmed} onChange={event => setCorrectConfirmed(event.target.checked)} /> أؤكد مطابقة العملة والمبلغ والسعر مع الإيصال الفعلي</label>
+          <Btn disabled={!correctConfirmed || !correctReason.trim()} onClick={() => { try { if (correctSaleId == null) return; correctSaleFx({ saleId: correctSaleId, fx: { currencyCode: correctCurrency, decimals: correctDecimals, amountMinor: toMinor(correctAmount, correctDecimals), ratePpm: parseRateToPpm(correctRate) }, reason: correctReason, confirmed: correctConfirmed }); toast.show('حُفظ تصحيح ساق القبض دون تغيير القيد'); setCorrectSaleId(null) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذر تصحيح ساق القبض', 'error') } }}>تأكيد تصحيح ساق القبض</Btn>
+        </div>
+      </Modal>
+
+      <Modal open={reverseDocId != null} onClose={() => setReverseDocId(null)} title="تصحيح تحويل العملة" subtitle="يُعكس آخر تحويل بقيد جديد فقط بعد التحقق من عدم وجود حركة لاحقة على الأرصدة المتأثرة.">
         <div className="space-y-3">
           <Field label="سبب التصحيح ومرجع التأكد من التحويل"><input aria-label="سبب تصحيح التحويل" value={reverseReason} onChange={event => setReverseReason(event.target.value)} className={inputCls} /></Field>
-          <Btn disabled={!reverseReason.trim()} onClick={() => { try { if (reverseDocId == null) return; reverseFxTransfer({ conversionId: reverseDocId, reason: reverseReason }); toast.show('سُجل قيد عكس التحويل بعد التحقق'); setReverseDocId(null) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذّر تصحيح التحويل', 'error') } }}>تأكيد عكس التحويل</Btn>
+          <Btn disabled={!reverseReason.trim()} onClick={() => { try { if (reverseDocId == null) return; reverseFxConversion({ conversionId: reverseDocId, reason: reverseReason }); toast.show('سُجل قيد عكس التحويل بعد التحقق'); setReverseDocId(null) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذّر تصحيح التحويل', 'error') } }}>تأكيد عكس التحويل</Btn>
         </div>
       </Modal>
 

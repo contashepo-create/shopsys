@@ -40,6 +40,8 @@ export interface TicketPartInput {
   costTotalMinor?: Minor
   /** السيريالات المحددة عند الصرف؛ غائبة عن السجلات القديمة. */
   serials?: string[]
+  /** ربط الوحدات المصروفة بلقطات دفعاتها، لا بأقدم دفعة افتراضياً. */
+  serialBatches?: { serial: string; batchId: number }[]
 }
 
 /**
