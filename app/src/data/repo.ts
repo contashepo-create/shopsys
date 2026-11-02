@@ -96,7 +96,7 @@ import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMEN
 import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, supplierUnitDocs, type StatementRow } from '../core/statements.ts'
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
-import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxHoldingsFromFlows, validateFxConversion, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
+import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxConversionHistoryIssues, fxHoldingsFromFlows, proportionalFxCost, validateFxConversion, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
 import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
@@ -14334,7 +14334,7 @@ export const useRawDataStore = create<DataState>()(
         for (const sale of state.sales) {
           if (!sale.fx || sale.fx.amountMinor <= 0) continue
           flows.push({
-            date: sale.date.slice(0, 10), seq: sale.journalEntryId, treasury: sale.treasury ?? '1101', currency: sale.fx.currencyCode,
+            date: sale.date.slice(0, 10), seq: sale.journalEntryId, treasury: sale.treasury ?? '1101', currency: sale.fx.currencyCode, decimals: sale.fx.decimals,
             amountMinor: sale.fx.amountMinor,
             bookValueMinor: convertFxToBookMinor({ currencyCode: sale.fx.currencyCode, amountMinor: sale.fx.amountMinor, ratePpm: sale.fx.ratePpm, decimals: sale.fx.decimals }, book.decimals),
             kind: 'in', ref: sale.invoiceNumber,
@@ -14344,7 +14344,7 @@ export const useRawDataStore = create<DataState>()(
         for (const purchase of state.purchases) {
           if (!purchase.fx || purchase.fx.amountMinor <= 0) continue
           flows.push({
-            date: purchase.date.slice(0, 10), seq: purchase.journalEntryId ?? 0, treasury: purchase.treasury ?? '1101', currency: purchase.fx.currencyCode,
+            date: purchase.date.slice(0, 10), seq: purchase.journalEntryId ?? 0, treasury: purchase.treasury ?? '1101', currency: purchase.fx.currencyCode, decimals: purchase.fx.decimals,
             amountMinor: purchase.fx.amountMinor,
             bookValueMinor: convertFxToBookMinor({ currencyCode: purchase.fx.currencyCode, amountMinor: purchase.fx.amountMinor, ratePpm: purchase.fx.ratePpm, decimals: purchase.fx.decimals }, book.decimals),
             kind: 'out', ref: purchase.invoiceNumber,
@@ -14354,7 +14354,7 @@ export const useRawDataStore = create<DataState>()(
         for (const voucher of state.vouchers) {
           if (!voucher.fx || voucher.fx.amountMinor <= 0 || voucher.reversalEntryId) continue
           flows.push({
-            date: voucher.date.slice(0, 10), seq: voucher.journalEntryId, treasury: voucher.treasury, currency: voucher.fx.currencyCode,
+            date: voucher.date.slice(0, 10), seq: voucher.journalEntryId, treasury: voucher.treasury, currency: voucher.fx.currencyCode, decimals: voucher.fx.decimals,
             amountMinor: voucher.fx.amountMinor, bookValueMinor: voucher.amountMinor,
             kind: voucher.kind === 'receipt' ? 'in' : 'out', ref: voucher.voucherNumber,
           })
@@ -14363,7 +14363,7 @@ export const useRawDataStore = create<DataState>()(
         for (const doc of state.fxConversions) flows.push(...fxConversionFlows(doc, book.code, book.decimals))
         return flows
       },
-      getFxHoldings: () => fxHoldingsFromFlows(get().getFxFlows()),
+      getFxHoldings: () => fxHoldingsFromFlows(get().getFxFlows(), bookCurrencyOf().decimals),
 
       convertFx: (args) => {
         const state = get()
@@ -14376,8 +14376,14 @@ export const useRawDataStore = create<DataState>()(
         if (!state.treasuries.some((t) => t.code === args.fromTreasury)) throw new Error('الخزينة المصروفة منها غير موجودة')
         if (!state.treasuries.some((t) => t.code === args.toTreasury)) throw new Error('الخزينة المستلمة غير موجودة')
         /* حارس الرصيد المذكرة: لا تحويل من عملة أجنبية أكثر من رصيدها الفعلي في الخزينة */
-        const holdings = get().getFxHoldings()
+        const flows = get().getFxFlows()
+        const holdings = fxHoldingsFromFlows(flows, book.decimals)
+        const issues = fxConversionHistoryIssues(getBranchScopedDataState(state).fxConversions, flows, book.code, book.decimals)
+        if (issues.length) throw new Error(`تحويلات عملة سابقة تحتاج مراجعة محاسبية قبل تحويل جديد: ${issues.join('، ')} — لم يُعدّل أي قيد`)
+        if (flows.some(flow => (flow.treasury === args.fromTreasury && flow.currency.toUpperCase() === from && flow.decimals !== args.fromDecimals) || (flow.treasury === args.toTreasury && flow.currency.toUpperCase() === to && flow.decimals !== args.toDecimals))) throw new Error('خانات العملة تتعارض مع تاريخ الخزينة — يلزم المراجعة قبل التحويل')
         const holding = fromIsBook ? null : holdings.find((h) => h.treasury === args.fromTreasury && h.currency === from)
+        const receivingHolding = toIsBook ? null : holdings.find((h) => h.treasury === args.toTreasury && h.currency === to)
+        if ((fromIsBook && args.fromDecimals !== book.decimals) || (toIsBook && args.toDecimals !== book.decimals) || (holding && holding.decimals !== args.fromDecimals) || (receivingHolding && receivingHolding.decimals !== args.toDecimals)) throw new Error('خانات العملة لا تطابق الرصيد أو عملة الدفتر — راجعها قبل التحويل')
         const acquisitionRatePpm = holding?.avgRatePpm ?? (fromIsBook ? 1_000_000 : 0)
         const input = {
           fromCurrency: from, fromDecimals: args.fromDecimals, toCurrency: to, toDecimals: args.toDecimals,
@@ -14386,6 +14392,7 @@ export const useRawDataStore = create<DataState>()(
           fromRatePpm: fromIsBook ? 1_000_000 : args.fromRatePpm,
           toRatePpm: toIsBook ? 1_000_000 : args.toRatePpm,
           feeMinor: args.feeMinor, bookDecimals: book.decimals, bookCurrencyCode: book.code, acquisitionRatePpm,
+          acquisitionBookValueMinor: holding ? proportionalFxCost(holding.bookValueMinor, holding.amountMinor, args.fromAmountMinor) : undefined,
         }
         const errors = validateFxConversion(input, holding ? holding.amountMinor : null)
         if (errors.length) throw new Error(errors.join(' — '))
@@ -14410,7 +14417,7 @@ export const useRawDataStore = create<DataState>()(
           fromCurrency: from, fromDecimals: args.fromDecimals, toCurrency: to, toDecimals: args.toDecimals,
           fromTreasury: args.fromTreasury, toTreasury: args.toTreasury,
           fromAmountMinor: args.fromAmountMinor, toAmountMinor: computed.toAmountMinor,
-          fromRatePpm: input.fromRatePpm, toRatePpm: input.toRatePpm, acquisitionRatePpm,
+          fromRatePpm: input.fromRatePpm, toRatePpm: input.toRatePpm, acquisitionRatePpm, outBookValueMinor: computed.outBookValueMinor,
           feeMinor: args.feeMinor, gainMinor: computed.gainMinor, lossMinor: computed.lossMinor,
           journalEntryId: entryId, notes: args.notes?.trim() || undefined,
           createdBy: activeUserName(state), createdAt: now,
