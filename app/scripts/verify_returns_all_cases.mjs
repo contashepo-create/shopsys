@@ -190,11 +190,11 @@ S().addItem(item({ nameAr: 'موبايل', trackSerial: true, warrantyMonths: 12
 const mob = S().items.at(-1)
 S().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: mob.id, qty: 3, unitPriceMinor: 500000, expiryDate: null, serialsRaw: 'IMEI-111\nIMEI-222\nIMEI-333' }], expenses: [], paidMinor: 0, notes: '' })
 const mobInv = S().purchases.at(-1)
-S().postPurchaseReturn({ purchaseId: mobInv.id, qtyByItem: new Map([[mob.id, 2]]), refund: 'debt', reason: 'عيب مصنعي' })
+S().postPurchaseReturn({ purchaseId: mobInv.id, lineSpecs: [{ lineIndex: 0, qty: 2, warehouseId: S().warehouses.find(w => w.isMain).id, serials: ['IMEI-222', 'IMEI-333'] }], refund: 'debt', reason: 'عيب مصنعي' })
 const retSupp = S().serials.filter((u) => u.itemId === mob.id && u.status === 'returned_supplier')
 const stillIn = S().serials.filter((u) => u.itemId === mob.id && u.status === 'in_stock')
 ok('G5: سيريالان عُلّما «مرتجعة للمورد» وواحد بقي متاحاً', retSupp.length === 2 && stillIn.length === 1, `مرتجع=${retSupp.length} متاح=${stillIn.length}`)
-ok('G5: المرتجع FIFO — الأقدم دخولاً أولاً (IMEI-111 خرج)', retSupp.some((u) => u.serial === 'IMEI-111'))
+ok('G5: المرتجع يخرج السيريالات المحددة فقط', retSupp.some((u) => u.serial === 'IMEI-222') && retSupp.some((u) => u.serial === 'IMEI-333') && stillIn.some((u) => u.serial === 'IMEI-111'))
 ok('الميزان متوازن بعد G5', balanced())
 
 console.log(`\n${'═'.repeat(50)}\nالنتيجة: نجح ${pass} — فشل ${fail}`)

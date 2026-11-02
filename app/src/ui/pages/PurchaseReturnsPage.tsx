@@ -14,6 +14,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { remainingPurchaseByLine } from '../../core/purchases.ts'
+import { normalizeSerial } from '../../core/serials.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
@@ -29,13 +30,14 @@ import { rowOpenProps } from '../components/rowOpen.ts'
 import { localDateTimeLabel } from '../../core/time.ts'
 
 export function PurchaseReturnsPage() {
-  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
+  const { purchases, purchaseReturns, suppliers, items, serials, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
+  const [serialsByLine, setSerialsByLine] = useState<Record<number, string[]>>({})
   const [isPosting, setIsPosting] = useState(false)
   const postingRef = useRef(false)
   const [pickOpen, setPickOpen] = useState(false)
@@ -52,7 +54,7 @@ export function PurchaseReturnsPage() {
   // طباعة إشعار مرتجع الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseReturn | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
-  const returnSignature = JSON.stringify({ qtys, returnWarehouses, refund, treasury, reason })
+  const returnSignature = JSON.stringify({ qtys, serialsByLine, returnWarehouses, refund, treasury, reason })
   const unsaved = useUnsavedChangesGuard(returnSignature)
   useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
   const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
@@ -142,6 +144,7 @@ export function PurchaseReturnsPage() {
   const startReturn = useCallback((p: PurchaseInvoice) => {
     setPurchase(p)
     setQtys({})
+    setSerialsByLine({})
     setReturnWarehouses({})
     setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
     setReason('')
@@ -158,9 +161,13 @@ export function PurchaseReturnsPage() {
     // oxlint-disable-next-line
     startReturn(target)
     if (prefillItemId && prefillQty > 0) {
-      setQtys((q) => ({ ...q, [prefillItemId]: String(prefillQty) }))
-      const wh = target.lines.find((l) => l.itemId === prefillItemId)?.warehouseId
-      if (wh) setReturnWarehouses((r) => ({ ...r, [prefillItemId]: wh }))
+      const matching = target.lines.flatMap((line, index) => line.itemId === prefillItemId ? [index] : [])
+      if (matching.length === 1) {
+        const index = matching[0]
+        setQtys((q) => ({ ...q, [index]: String(prefillQty) }))
+        const wh = target.lines[index].warehouseId
+        if (wh) setReturnWarehouses((r) => ({ ...r, [index]: wh }))
+      }
       setReason('انتهاء صلاحية — إرجاع للمورد')
     }
     setSearchParams({}, { replace: true })
@@ -180,7 +187,7 @@ export function PurchaseReturnsPage() {
         if (!(qty > 0)) return []
         const source = purchase.lines[lineIndex]
         const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((w) => w.isMain)?.id ?? null
-        return [{ lineIndex, qty, warehouseId }]
+        return [{ lineIndex, qty, warehouseId, serials: serialsByLine[lineIndex] }]
       })
       void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postPurchaseReturn({
         purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy,
@@ -330,6 +337,9 @@ export function PurchaseReturnsPage() {
                           disabled={rem <= 0}
                           className={`${inputCls} text-center py-1.5 disabled:opacity-40`}
                         />
+                        {Number(qtys[lineIndex]) > 0 && (items.find(item => item.id === l.itemId)?.trackSerial || l.serials?.length) && <fieldset className="mt-2 space-y-1 text-xs"><legend>حدد السيريال للمورد</legend>
+                          {serials.filter(unit => unit.itemId === l.itemId && unit.purchaseId === purchase.id && unit.status === 'in_stock' && (l.serials?.length ? l.serials.map(normalizeSerial).includes(unit.serial) : purchase.lines.filter(line => line.itemId === l.itemId).length === 1)).map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={serialsByLine[lineIndex]?.includes(unit.serial) ?? false} onChange={event => setSerialsByLine(prev => ({ ...prev, [lineIndex]: event.target.checked ? [...(prev[lineIndex] ?? []), unit.serial] : (prev[lineIndex] ?? []).filter(serial => serial !== unit.serial) }))} />{unit.serial}</label>)}
+                        </fieldset>}
                         {warehouses.length > 0 && (l.warehouseId ?? purchase.warehouseId) == null && (
                           <QuickSelect
                             value={selectedWarehouseId ?? ''}
@@ -392,7 +402,7 @@ export function PurchaseReturnsPage() {
               <tbody>
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                    <td className="px-3 py-2 font-bold">{l.nameAr}</td>
+                    <td className="px-3 py-2 font-bold">{l.nameAr}{l.serials?.length ? <div className="text-xs font-normal" dir="ltr">{l.serials.join('، ')}</div> : null}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.landedUnitCostMinor)}</td>
                     <td className="px-3 py-2 font-bold">{fmt(Math.round(l.qty * l.landedUnitCostMinor))}</td>

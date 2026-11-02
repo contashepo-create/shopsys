@@ -16,6 +16,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
+import { normalizeSerial } from '../../core/serials.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
@@ -39,12 +40,13 @@ interface WizardLine {
   condition: ReturnCondition
   /** null/undefined = مخزن سطر البيع الأصلي */
   warehouseId?: number | null
+  serials?: string[]
 }
 
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
+  const { sales, saleReturns, customers, items, serials, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -124,7 +126,7 @@ export function SaleReturnsPage() {
     for (const [idxStr, w] of Object.entries(wiz)) {
       const idx = Number(idxStr)
       const q = Number(w.qty)
-      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition, warehouseId: w.warehouseId ?? sale.lines[idx]?.warehouseId ?? sale.warehouseId ?? null })
+      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition, serials: w.serials, warehouseId: w.warehouseId ?? sale.lines[idx]?.warehouseId ?? sale.warehouseId ?? null })
     }
     return out
   }, [sale, wiz])
@@ -136,9 +138,11 @@ export function SaleReturnsPage() {
     for (const s of specs) {
       const can = remaining[s.lineIndex] ?? 0
       if (s.qty > can + 1e-9) errs.push(`«${sale.lines[s.lineIndex].nameAr}»: المطلوب ${s.qty} والمتبقي ${can}`)
+      const line = sale.lines[s.lineIndex]
+      if ((items.find(item => item.id === line.itemId)?.trackSerial || line.serials?.length || serials.some(unit => unit.itemId === line.itemId && unit.saleId === sale.id && unit.status === 'sold')) && (s.serials?.length ?? 0) !== s.qty) errs.push(`«${line.nameAr}»: حدد سيريالاً لكل قطعة`)
     }
     return errs
-  }, [sale, specs, remaining])
+  }, [sale, specs, remaining, items, serials])
 
   /** معاينة الإجماليات والرد الهجين (نفس منطق النواة تماماً — للعرض قبل التأكيد) */
   const preview = useMemo(() => {
@@ -467,6 +471,9 @@ export function SaleReturnsPage() {
                           <span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.soldByWeight && '⚖️ '}{l.nameAr}
                           {(l.variantColor || l.variantSize) && <span className="text-[10px] text-fuchsia-500 mr-1">({[l.variantColor, l.variantSize].filter(Boolean).join('/')})</span>}
                           {l.unitLabel && <span className="text-[10px] text-sky-500 mr-1">[{l.unitLabel}]</span>}
+                          {Number(w?.qty) > 0 && (items.find(item => item.id === l.itemId)?.trackSerial || l.serials?.length) && <fieldset className="mt-2 space-y-1 text-xs"><legend>حدد السيريال العائد</legend>
+                            {serials.filter(unit => unit.itemId === l.itemId && unit.saleId === sale.id && unit.status === 'sold' && (l.serials?.length ? l.serials.map(normalizeSerial).includes(unit.serial) : sale.lines.filter(line => line.itemId === l.itemId).length === 1)).map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={w?.serials?.includes(unit.serial) ?? false} onChange={event => setWiz(prev => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: prev[idx]?.condition ?? 'resellable', serials: event.target.checked ? [...(prev[idx]?.serials ?? []), unit.serial] : (prev[idx]?.serials ?? []).filter(serial => serial !== unit.serial) } }))} />{unit.serial}</label>)}
+                          </fieldset>}
                         </td>
                         <td className="px-3 py-2 text-center">{l.qty}</td>
                         <td className="px-3 py-2 text-center text-[11px] text-slate-500">{fmt(l.unitPriceMinor)}{l.discountPercent > 0 && <span className="text-rose-400"> −{l.discountPercent}٪</span>}</td>
@@ -677,7 +684,7 @@ export function SaleReturnsPage() {
                       const l = sale.lines[s.lineIndex]
                       return (
                         <tr key={s.lineIndex} className="border-b border-slate-50 dark:border-slate-800/50">
-                          <td className="px-4 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
+                          <td className="px-4 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}{s.serials?.length ? <div className="text-xs font-normal" dir="ltr">{s.serials.join('، ')}</div> : null}</td>
                           <td className="px-4 py-2">{s.qty} × {fmt(l.unitPriceMinor)}{l.discountPercent > 0 && ` −${l.discountPercent}٪`}</td>
                           <td className="px-4 py-2">
                             {s.condition === 'damaged'
@@ -768,7 +775,7 @@ export function SaleReturnsPage() {
               <tbody>
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                          <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
+                          <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}{l.serialSelectionRecorded && l.serials?.length ? <div className="text-xs font-normal" dir="ltr">{l.serials.join('، ')}</div> : null}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2 text-[11px]">{l.condition === 'damaged' ? <span className="text-rose-500 font-bold">🗑️ تالف</span> : <span className="text-emerald-600">✅ سليم</span>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>

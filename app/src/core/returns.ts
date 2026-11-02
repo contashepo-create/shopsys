@@ -48,7 +48,7 @@ export function buildReturnLines(
       const l = saleLines[i]
       if (l.itemId !== itemId || remaining[i] <= 0) continue
       const take = Math.min(left, remaining[i])
-      out.push({ ...l, qty: Math.round(take * 1000) / 1000, saleLineIndex: i })
+      out.push({ ...l, serials: undefined, qty: Math.round(take * 1000) / 1000, saleLineIndex: i })
       remaining[i] = Math.round((remaining[i] - take) * 1000) / 1000
       left = Math.round((left - take) * 1000) / 1000
     }
@@ -175,6 +175,8 @@ export function returnReasonName(id: string): string {
 export type ReturnLine = CartLine & {
   /** فهرس السطر في فاتورة البيع الأصلية — undefined = سجل قديم (قبل الترقية) */
   saleLineIndex?: number
+  /** صُحح السيريال المختار صراحة في مسار المرتجع الجديد. */
+  serialSelectionRecorded?: boolean
   /** حالة البضاعة — undefined = سجل قديم (عوملت resellable) */
   condition?: ReturnCondition
 }
@@ -184,6 +186,8 @@ export interface ReturnLineSpec {
   lineIndex: number
   qty: number
   condition: ReturnCondition
+  /** وحدات السيريال العائدة فعلياً لهذا السطر. */
+  serials?: string[]
   /** مخزن استقبال المرتجع السليم؛ غيابه يعني مخزن سطر البيع الأصلي */
   warehouseId?: number | null
 }
@@ -238,6 +242,7 @@ export function buildReturnLinesPerLine(
     }
     out.push({
       ...src,
+      serials: spec.serials?.map(serial => serial.trim().toUpperCase()),
       qty: Math.round(spec.qty * 1000) / 1000,
       saleLineIndex: spec.lineIndex,
       condition: spec.condition,

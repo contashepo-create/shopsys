@@ -12,7 +12,7 @@
  */
 import { addCalendarMonths, localDateIso } from './time.ts'
 
-export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier' | 'maintenance'
+export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier' | 'maintenance' | 'damaged'
 
 export interface SerialUnit {
   id: number
@@ -23,6 +23,8 @@ export interface SerialUnit {
   saleId: number | null
   /** التذكرة التي استهلكت القطعة، إن كانت في الصيانة. */
   maintenanceTicketId?: number | null
+  /** المرتجع الذي وثّق تلف الجهاز. */
+  saleReturnId?: number | null
   soldAt: string | null // ISO وقت البيع
   warrantyMonths: number // مدة الضمان بالأشهر (تُثبت وقت البيع)
   receivedAt: string // ISO وقت الدخول
@@ -122,6 +124,7 @@ export function markSold(
           ...u,
           status: 'sold' as const,
           saleId,
+          saleReturnId: null,
           soldAt: soldAtIso,
           extendedWarrantyMonths: extByNormalizedSerial.get(u.serial) ?? u.extendedWarrantyMonths,
           extendedWarrantyProvider: providerByNormalizedSerial.get(u.serial) ?? u.extendedWarrantyProvider,

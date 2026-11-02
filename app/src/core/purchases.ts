@@ -256,6 +256,8 @@ export interface PurchaseReturnLine {
   unitPriceMinor?: Minor
   /** فهرس سطر فاتورة الشراء الأصلية — undefined لسجل قديم مجمع بالصنف */
   purchaseLineIndex?: number
+  /** سيريالات الوحدات المرتجعة فعلياً. */
+  serials?: string[]
   /** المخزن الذي خرج منه المرتجع؛ يثبت عند الترحيل */
   warehouseId?: number | null
 }
@@ -263,6 +265,7 @@ export interface PurchaseReturnLine {
 export interface PurchaseReturnLineSpec {
   lineIndex: number
   qty: number
+  serials?: string[]
   warehouseId?: number | null
 }
 
@@ -375,6 +378,7 @@ export function buildPurchaseReturnLinesPerLine(
       landedUnitCostMinor: source.landedUnitCostMinor,
       unitPriceMinor: source.unitPriceMinor,
       purchaseLineIndex: spec.lineIndex,
+      serials: spec.serials?.map(serial => serial.trim().toUpperCase()),
       warehouseId: spec.warehouseId ?? source.warehouseId ?? null,
     })
   }

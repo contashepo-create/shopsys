@@ -102,7 +102,7 @@ import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, mergeOrderLines, linesReduceExistingQty, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, assetDisposalPreview, buildAssetDisposalEntry, type AssetDisposalMode, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
-import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, normalizeSerial, isValidSerial, type SerialUnit } from '../core/serials.ts'
+import { parseSerialsInput, markSold, normalizeSerial, isValidSerial, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, isCriticalFlag, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import {
@@ -1176,6 +1176,8 @@ export interface PurchaseLine {
   warehouseId?: number | null
   /** ملاحظة البند (مواصفة/ملاحظة المنتج في السطر) */
   notes?: string
+  /** السيريالات المعيّنة لسطر الشراء عند الترحيل. */
+  serials?: string[]
 }
 
 export interface PurchaseExpense {
@@ -1317,6 +1319,10 @@ export interface PurchaseReturn {
   refund: 'cash' | 'debt' // استرداد نقدي أو تخفيض دين المورد
   lines: PurchaseReturnLine[]
   totalMinor: number
+  /** القيمة الدفترية الفعلية الخارجة من المخزون؛ غائبة عن المرتجعات القديمة. */
+  inventoryOutMinor?: number
+  /** فرق القيمة الأصلية عن القيمة الدفترية، يرحّل إلى تكلفة المبيعات. */
+  inventoryVarianceMinor?: number
   journalEntryId: number
   reason: string
   /** N2: حصة ض.ق.م المدخلات المعكوسة عن هذا المرتجع (2102 دائن) — undefined = سجل قديم/فاتورة بلا ضريبة */
@@ -7038,6 +7044,7 @@ export const useRawDataStore = create<DataState>()(
             inputVatMinor: inv.lines[i]?.inputVatMinor,
             warehouseId: inv.lines[i]?.warehouseId ?? effectivePurchaseWarehouseId,
             notes: inv.lines[i]?.notes?.trim() || undefined,
+            ...(parsedByLine.has(i) ? { serials: parsedByLine.get(i)! } : {}),
           })),
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,
@@ -7902,6 +7909,32 @@ export const useRawDataStore = create<DataState>()(
         // تبقى تكلفتها في 5101 (هالك اقتصادياً) ويُرد للعميل السعر فقط
         const isDish = (itemId: number) => state.recipes.some((r) => r.productItemId === itemId && r.mode === 'made_to_order')
         const lines = rawLines.map((l) => (isDish(l.itemId) ? { ...l, unitCostMinor: 0 } : l))
+        const selectedReturnSerials = new Map<string, 'resellable' | 'damaged'>()
+        for (const line of lines) {
+          const source = sale.lines[line.saleLineIndex ?? -1]
+          const current = state.serials.filter(unit => unit.itemId === line.itemId && unit.saleId === sale.id && unit.status === 'sold')
+          const item = state.items.find(row => row.id === line.itemId)
+          const originals = source?.serials?.map(normalizeSerial)
+          const tracksSerial = Boolean(originals?.length || current.length || item?.trackSerial)
+          if (!tracksSerial) {
+            if (line.serials?.length) throw new Error('السيريالات غير مثبتة في سطر البيع')
+            continue
+          }
+          if (item?.trackExpiry) throw new Error('لا يمكن إرجاع صنف بسيريال وصلاحية دون إثبات ربط السيريال بالدفعة')
+          if (!originals?.length && !current.length) throw new Error('سيريالات البيع الأصلي غير مثبتة — راجع المستند')
+          if (!originals?.length && sale.lines.filter(row => row.itemId === line.itemId).length !== 1) throw new Error('سيريالات البيع القديم غير مرتبطة بالسطر — يلزم المراجعة')
+          if ((line.unitFactor ?? 1) !== 1 || !Number.isSafeInteger(line.qty)) throw new Error('مرتجع السيريال يحتاج كمية قطع صحيحة بالوحدة الأساسية')
+          if (priorLines.some(row => row.itemId === line.itemId && row.condition === 'damaged' && (!row.serialSelectionRecorded || !row.serials || row.serials.length !== row.qty))) throw new Error('سيريالات المرتجع التالف السابق غير مثبتة — يلزم المراجعة')
+          const selected = line.serials?.map(normalizeSerial) ?? []
+          if (selected.length !== line.qty || new Set(selected).size !== selected.length) throw new Error('حدد السيريال الفعلي لكل قطعة مرتجعة')
+          for (const serial of selected) {
+            const units = state.serials.filter(unit => unit.serial === serial)
+            if (selectedReturnSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].saleId !== sale.id || units[0].status !== 'sold') throw new Error(`السيريال ${serial} غير مثبت على سطر البيع أو أعيد سابقاً`)
+            selectedReturnSerials.set(serial, line.condition ?? 'resellable')
+          }
+          line.serials = selected
+          line.serialSelectionRecorded = true
+        }
         // تكلفة الجزء التالف: لا يعود للمخزون — يذهب لبند الهالك 5111 في القيد
         const damagedCost = damagedCostOf(lines)
         // 2) نفس المعاملة الضريبية وقت البيع (حتى لو تغيرت الإعدادات لاحقاً) —
@@ -8078,13 +8111,13 @@ export const useRawDataStore = create<DataState>()(
           const newValue = currentValue + valueBack.get(it.id)!
           return withExactStockValue({ ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue })
         })
-        // سيريالات هذه الفاتورة تعود متاحة بعدد الكمية المرتجعة (الأقدم بيعاً أولاً)
-        const serialsToReturn: string[] = []
-        for (const [itemId, qty] of qtyBack) {
-          const soldUnits = state.serials.filter((u) => u.saleId === sale.id && u.itemId === itemId && u.status === 'sold')
-          for (const u of soldUnits.slice(0, Math.floor(qty))) serialsToReturn.push(u.serial)
-        }
-        const updatedSerials = serialsToReturn.length ? markReturned(state.serials, sale.id, serialsToReturn) : state.serials
+        const updatedSerials = selectedReturnSerials.size ? state.serials.map(unit => {
+          const condition = selectedReturnSerials.get(unit.serial)
+          if (!condition) return unit
+          return condition === 'damaged'
+            ? { ...unit, status: 'damaged' as const, saleReturnId: returnId }
+            : { ...unit, status: 'in_stock' as const, saleId: null, soldAt: null, saleReturnId: returnId }
+        }) : state.serials
 
         // إعادة أرصدة التركيبات (سطور البيع تحمل اللون/المقاس)
         let updatedVariantStocks = state.variantStocks
@@ -8184,6 +8217,30 @@ export const useRawDataStore = create<DataState>()(
               },
             )
 
+        const selectedSupplierSerials = new Set<string>()
+        for (const line of lines) {
+          const source = purchase.lines[line.purchaseLineIndex ?? -1]
+          const item = state.items.find(row => row.id === line.itemId)
+          const unitsFromPurchase = state.serials.filter(unit => unit.purchaseId === purchase.id && unit.itemId === line.itemId)
+          const originals = source?.serials?.map(normalizeSerial)
+          if (!item?.trackSerial && !originals?.length && !unitsFromPurchase.length) {
+            if (line.serials?.length) throw new Error('سيريالات سطر الشراء غير مثبتة')
+            continue
+          }
+          if (item?.trackExpiry) throw new Error('لا يمكن إرجاع صنف بسيريال وصلاحية دون إثبات ربط السيريال بالدفعة')
+          if (getBranchScopedDataState(state).warehouses.length > 1) throw new Error('لا يمكن إثبات مخزن السيريال مع تعدد المخازن — يلزم المراجعة')
+          if (!originals?.length && purchase.lines.filter(row => row.itemId === line.itemId).length !== 1) throw new Error('سيريالات الشراء القديم غير مرتبطة بالسطر — يلزم المراجعة')
+          if (!Number.isSafeInteger(line.qty)) throw new Error('كمية مرتجع السيريال يجب أن تكون عدداً صحيحاً')
+          const selected = line.serials?.map(normalizeSerial) ?? []
+          if (selected.length !== line.qty || new Set(selected).size !== selected.length) throw new Error('حدد السيريال الفعلي لكل قطعة عائدة للمورد')
+          for (const serial of selected) {
+            const units = state.serials.filter(unit => unit.serial === serial)
+            if (selectedSupplierSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].purchaseId !== purchase.id || units[0].status !== 'in_stock') throw new Error(`السيريال ${serial} غير متاح من فاتورة الشراء الأصلية`)
+            selectedSupplierSerials.add(serial)
+          }
+          line.serials = selected
+        }
+
         // فحص الرصيد في مخزن الإخراج الفعلي لكل سطر قبل أي قيد أو كتابة.
         if (args.lineSpecs?.length) {
           const warehouseStock = computeWarehouseStock(
@@ -8242,7 +8299,30 @@ export const useRawDataStore = create<DataState>()(
           const errors = validateTreasuryAccess(user?.treasuryAccess, treasuryCode, 'receipt', supplierValue + inputVatShare)
           if (errors.length) throw new Error(errors.join(' — '))
         }
+        // المخزون يُقيّم بمتوسطه المتحرك الحالي، لا بسعر الفاتورة المسترد من المورد.
+        // الفرق المحقق يُثبت في تكلفة المبيعات دون تغيير ذمة المورد أو الضريبة.
+        const qtyOut = new Map<number, number>()
+        for (const line of lines) qtyOut.set(line.itemId, (qtyOut.get(line.itemId) ?? 0) + line.qty)
+        const withdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
+        let inventoryOutMinor = 0
+        for (const [itemId, qty] of qtyOut) {
+          const item = state.items.find(row => row.id === itemId)
+          if (!item || !getBranchScopedDataState(state).items.some(row => row.id === itemId)) throw new Error('صنف المرتجع غير موجود في الفرع')
+          const currentQty = item.stockQty ?? 0
+          const currentValue = item.stockValueMinor ?? Math.round(currentQty * item.costMinor)
+          const withdrawal = withdrawStockValue(currentQty, currentValue, qty)
+          inventoryOutMinor += withdrawal.withdrawnValueMinor
+          if (!Number.isSafeInteger(inventoryOutMinor)) throw new Error('قيمة المخزون المرتجع خارج النطاق الآمن')
+          withdrawals.set(itemId, withdrawal)
+        }
+        const inventoryVarianceMinor = total - inventoryOutMinor
         const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101', inputVatShare, supplierValue)
+        const stockLine = entryLines.find(line => line.accountCode === '1103' && line.credit === total)
+        if (!stockLine) throw new Error('قيد مخزون مرتجع الشراء غير مطابق')
+        stockLine.credit = inventoryOutMinor
+        if (inventoryVarianceMinor > 0) entryLines.push({ accountCode: '5101', debit: 0, credit: inventoryVarianceMinor, note: 'فرق تكلفة مرتجع الشراء عن متوسط المخزون' })
+        if (inventoryVarianceMinor < 0) entryLines.push({ accountCode: '5101', debit: -inventoryVarianceMinor, credit: 0, note: 'فرق تكلفة مرتجع الشراء عن متوسط المخزون' })
+        assertBalanced(entryLines)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
@@ -8271,6 +8351,8 @@ export const useRawDataStore = create<DataState>()(
           refund: args.refund,
           lines,
           totalMinor: total,
+          inventoryOutMinor,
+          inventoryVarianceMinor,
           journalEntryId: entryId,
           reason: args.reason,
           inputVatShareMinor: inputVatShare,
@@ -8279,19 +8361,11 @@ export const useRawDataStore = create<DataState>()(
           requestedBy: stamp.requestedBy,
           costCenterIds: [...new Set(purchase.expenses.flatMap((expense) => expense.costCenterId != null ? [expense.costCenterId] : []))],
         }
-        // 3) خصم الكميات من المخزون بتكلفة الشراء الأصلية (نفس قيمة القيد 1103 دائن)
-        //    مع إعادة حساب المتوسط المرجح بالقيمة — يبقي دفتر الأستاذ = كمية × متوسط
-        const qtyOut = new Map<number, number>()
-        const valueOut = new Map<number, number>()
-        for (const l of lines) {
-          qtyOut.set(l.itemId, (qtyOut.get(l.itemId) ?? 0) + l.qty)
-          valueOut.set(l.itemId, (valueOut.get(l.itemId) ?? 0) + Math.round(l.qty * l.landedUnitCostMinor))
-        }
+        // نفس قيمة الخروج التي قُيّدت أعلاه، مع الاحتفاظ بباقي كسور التقييم.
         const updatedItems = state.items.map((it) => {
-          if (!qtyOut.has(it.id)) return it
-          const newQty = Math.round(((it.stockQty ?? 0) - qtyOut.get(it.id)!) * 1000) / 1000
-          const currentValue = it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)
-          const newValue = Math.max(0, currentValue - valueOut.get(it.id)!)
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          const newQty = withdrawal.remainingQty, newValue = withdrawal.remainingValueMinor
           return withExactStockValue({ ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue })
         })
         // G5: تخفيض دفعات الصلاحية — البضاعة العائدة للمورد تخرج من دفعات فاتورتها
@@ -8308,11 +8382,7 @@ export const useRawDataStore = create<DataState>()(
             workingBatches = applyFefo(workingBatches, rest)
           }
         }
-        // G5: السيريالات العائدة مع المرتجع تُعلَّم returned_supplier — لا تبقى «متاحة للبيع»
-        let updatedSerials = state.serials
-        for (const [itemId, qty] of qtyOut) {
-          updatedSerials = markReturnedToSupplier(updatedSerials, purchase.id, itemId, qty)
-        }
+        const updatedSerials = selectedSupplierSerials.size ? state.serials.map(unit => selectedSupplierSerials.has(unit.serial) ? { ...unit, status: 'returned_supplier' as const } : unit) : state.serials
         // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
         // يترك كميات «المستلم» في الأمر كما كانت — يُعاد احتسابها الآن صافية
         const updatedOrdersAfterReturn = (() => {
