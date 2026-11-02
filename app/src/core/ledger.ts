@@ -71,7 +71,7 @@ export type SourceType =
   | 'production' | 'processing' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost' | 'vehicle_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
   | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage' | 'internal_use'
-  | 'insured_sale' | 'claim_settlement' | 'claim_refund_payment'
+  | 'insured_sale' | 'insured_sale_return' | 'claim_settlement' | 'claim_refund_payment'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'

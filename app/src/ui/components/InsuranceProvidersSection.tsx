@@ -23,7 +23,7 @@ function useCur() {
 }
 
 export function InsuranceProvidersSection() {
-  const { insuranceProviders, insuranceClaims, paymentTerminals, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims, getInsuranceRefundBalance, payInsuranceRefund } = useDataStore()
+  const { insuranceProviders, insuranceClaims, paymentTerminals, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims, getInsuranceRefundBalance, payInsuranceRefund, refundSettledInsuredSale } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -62,6 +62,20 @@ export function InsuranceProvidersSection() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  const [saleReturnClaimId, setSaleReturnClaimId] = useState<number | null>(null)
+  const [saleReturnReason, setSaleReturnReason] = useState('')
+  const [saleReturnTreasury, setSaleReturnTreasury] = useState('1101')
+  const [saleReturnConfirmed, setSaleReturnConfirmed] = useState(false)
+  const saleReturnClaim = insuranceClaims.find(claim => claim.id === saleReturnClaimId)
+  const doSaleReturn = () => {
+    try {
+      if (saleReturnClaimId == null) return
+      refundSettledInsuredSale({ claimId: saleReturnClaimId, treasury: saleReturnTreasury, reason: saleReturnReason, confirmReturnedStock: saleReturnConfirmed })
+      toast.show('سُجل رد البيع كاملاً وأُثبت مستحق الجهة؛ لم يُصرف للجهة تلقائياً')
+      setSaleReturnClaimId(null)
+    } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذر رد البيع', 'error') }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between pt-2">
@@ -82,7 +96,7 @@ export function InsuranceProvidersSection() {
               {insuranceProviders.map((pv) => {
                 const balance = getClaimBalance(pv.id)
                 const count = insuranceClaims.filter((c) => c.providerId === pv.id && !c.settled).length
-                const refundClaims = insuranceClaims.filter((c) => c.providerId === pv.id && c.settled && c.source !== 'sale' && (c.settledRefundMinor != null || c.refundPayments != null)).map((claim) => {
+                const refundClaims = insuranceClaims.filter((c) => c.providerId === pv.id && c.settled && (c.settledRefundMinor != null || c.refundPayments != null)).map((claim) => {
                   try { return { claim, balance: getInsuranceRefundBalance(claim.id), error: false } }
                   catch { return { claim, balance: 0, error: true } }
                 })
@@ -91,6 +105,7 @@ export function InsuranceProvidersSection() {
                     <td className="px-4 py-2.5 font-bold">{pv.nameAr}</td>
                     <td className="px-4 py-2.5 text-[12px]">تتحمل {pv.coveragePercent}٪</td>
                     <td className="px-4 py-2.5 font-black text-violet-600 tabular-nums">{balance > 0 ? `${fmt(balance)} (${count} مطالبة)` : 'لا مطالبات'}
+                      {insuranceClaims.filter(claim => claim.providerId === pv.id && claim.source === 'sale' && claim.settled && !claim.saleRefund).map(claim => <div key={claim.id} className="text-[11px] text-slate-600">بيع مؤمّن #{claim.id} — {fmt(claim.totalMinor)} <button type="button" className="underline text-rose-600" onClick={() => { setSaleReturnClaimId(claim.id); setSaleReturnReason(''); setSaleReturnConfirmed(false) }}>رد البيع كاملاً</button></div>)}
                       {refundClaims.map(({ claim, balance: due, error }) => error ? <div key={claim.id} className="text-rose-600">مرتجع المطالبة #{claim.id} يحتاج مراجعة</div> : due > 0 ? <div key={claim.id} className="text-amber-700">مستحق للجهة عن المطالبة #{claim.id}: {fmt(due)} <button className="underline" onClick={() => { setRefundClaimId(claim.id); setRefundAmount(''); setRefundReason('') }}>تسجيل صرف</button></div> : null)}
                     </td>
                     <td className="px-4 py-2.5 text-left">
@@ -106,6 +121,16 @@ export function InsuranceProvidersSection() {
           </table>
         </div>
       )}
+
+      <Modal open={saleReturnClaimId != null} onClose={() => setSaleReturnClaimId(null)} title="رد بيع مؤمّن محصّل بالكامل" subtitle="يُسجّل رد حصة المريض الآن ويُثبت مستحق الجهة، دون دفعه تلقائياً. الرد الجزئي يحتاج مساراً مستقلاً.">
+        <div className="space-y-3">
+          {saleReturnClaim && <p>حصة المريض التي ستُصرف: {fmt(saleReturnClaim.totalMinor - saleReturnClaim.claimMinor)} · مستحق جهة التأمين: {fmt(saleReturnClaim.claimMinor)}</p>}
+          <Field label="خزينة رد المريض"><TreasuryPicker value={saleReturnTreasury} onChange={setSaleReturnTreasury} /></Field>
+          <Field label="سبب المرتجع ومرجع رد المريض"><input aria-label="سبب رد البيع المؤمن" value={saleReturnReason} onChange={event => setSaleReturnReason(event.target.value)} className={inputCls} /></Field>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={saleReturnConfirmed} onChange={event => setSaleReturnConfirmed(event.target.checked)} /> أؤكد استلام كامل البضاعة وصرف حصة المريض فعلياً</label>
+          <Btn disabled={!saleReturnConfirmed || !saleReturnReason.trim()} onClick={doSaleReturn}>تأكيد رد البيع كاملاً</Btn>
+        </div>
+      </Modal>
 
       <Modal open={refundClaimId != null} onClose={() => setRefundClaimId(null)} title="تسجيل صرف رد لجهة التأمين" subtitle={`المطالبة #${refundClaimId ?? ''} — لا تسجل إلا الصرف الفعلي المثبت`}>
         <div className="space-y-3">

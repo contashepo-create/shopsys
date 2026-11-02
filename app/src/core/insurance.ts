@@ -57,6 +57,8 @@ export interface InsuranceClaim {
   /** جزء الجهة الذي نشأ التزاماً بعد تحصيل المطالبة، لا يعد ردّاً نقدياً. */
   settledRefundMinor?: Minor
   refundPayments?: { journalEntryId: number; amountMinor: Minor; treasury: string; date: string; reason: string }[]
+  /** رد كامل بيع مخزني محصّل، بحركة المريض والمخزون المؤكدة. */
+  saleRefund?: { journalEntryId: number; treasury: string; reason: string; date: string }
   /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
   saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
   /** لقطة الكمية المصروفة من دفعات الصلاحية — لازمة لإرجاع نفس تواريخها عند إلغاء البيع. */

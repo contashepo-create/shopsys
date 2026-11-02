@@ -22,10 +22,15 @@ export const FX_CONVERSION_FEE_ACCOUNT = '5108' // مصروفات عمومية �
 export const FX_GAIN_ACCOUNT = '4117' // أرباح فروق عملة
 export const FX_LOSS_ACCOUNT = '5119' // خسائر فروق عملة
 
+/** النوع الغائب في السجلات القديمة هو تحويل العملات المعتاد. */
+export type FxConversionKind = 'currency_conversion' | 'treasury_transfer'
+
 /** مستند تحويل عملة — سجل دائم قابل للمراجعة من قيده */
 export interface FxConversionDoc {
   id: number
   docNumber: string // FXC-0001
+  /** تحويل نفس العملة بين خزينتين دون صرف أو فرق سعر. */
+  kind?: FxConversionKind
   date: string
   fromCurrency: string
   fromDecimals: 0 | 2 | 3
@@ -52,6 +57,8 @@ export interface FxConversionDoc {
   /** خسارة فرق العملة بعملة الدفتر */
   lossMinor: number
   journalEntryId: number
+  /** قيد عكس مثبت لتحويل الخزائن الملغى؛ الأصل محفوظ. */
+  reversalEntryId?: number | null
   notes?: string
   createdBy: string
   createdAt: string
@@ -129,6 +136,7 @@ export function fxHoldingsFromFlows(flows: FxFlow[], bookDecimals: 0 | 2 | 3 = 2
 export function fxConversionHistoryIssues(docs: FxConversionDoc[], flows: FxFlow[], bookCurrencyCode: string, bookDecimals: 0 | 2 | 3): string[] {
   const issues: string[] = []
   for (const doc of docs) {
+    if (doc.reversalEntryId != null) continue
     if (doc.fromCurrency.toUpperCase() === bookCurrencyCode.toUpperCase()) continue
     const before = fxHoldingsFromFlows(flows.filter(flow => flow.seq < doc.journalEntryId), bookDecimals)
     const holding = before.find(row => row.treasury === doc.fromTreasury && row.currency.toUpperCase() === doc.fromCurrency.toUpperCase())
@@ -249,6 +257,11 @@ export function buildFxConversionEntry(
 
 /** حركة مذكرة التحويل: خروج من عملة المصروف ودخول لعملة الاستلام (إن كانتا أجنبيتين) */
 export function fxConversionFlows(doc: FxConversionDoc, bookCurrencyCode: string, bookDecimals: 0 | 2 | 3): FxFlow[] {
+  if (doc.kind === 'treasury_transfer') {
+    if (!/^[A-Z]{3}$/.test(doc.fromCurrency) || doc.fromCurrency === bookCurrencyCode.toUpperCase() || doc.toCurrency !== doc.fromCurrency || doc.fromTreasury === doc.toTreasury || doc.fromDecimals !== doc.toDecimals || doc.fromAmountMinor !== doc.toAmountMinor || !Number.isSafeInteger(doc.outBookValueMinor) || doc.outBookValueMinor! <= 0 || doc.feeMinor !== 0 || doc.gainMinor !== 0 || doc.lossMinor !== 0) throw new Error(`بيانات تحويل الخزائن ${doc.docNumber} غير مطابقة — يلزم المراجعة`)
+    const common = { date: doc.date, seq: doc.journalEntryId, currency: doc.fromCurrency, decimals: doc.fromDecimals, amountMinor: doc.fromAmountMinor, bookValueMinor: doc.outBookValueMinor!, ref: doc.docNumber }
+    return [{ ...common, treasury: doc.fromTreasury, kind: 'out' }, { ...common, treasury: doc.toTreasury, kind: 'in' }]
+  }
   const flows: FxFlow[] = []
   const fromIsBook = doc.fromCurrency.toUpperCase() === bookCurrencyCode.toUpperCase()
   const toIsBook = doc.toCurrency.toUpperCase() === bookCurrencyCode.toUpperCase()

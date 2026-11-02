@@ -28,7 +28,7 @@ type BookCur = { code: string; symbol: string; decimals: 0 | 2 | 3; name: string
 const fxMetaOf = (code: string) => COMMON_FX_CURRENCIES.find((row) => row.code === code.toUpperCase())
 
 export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName: string }) {
-  const { getFxHoldings, getFxFlows, fxConversions, treasuries, convertFx } = useDataStore()
+  const { getFxHoldings, getFxFlows, fxConversions, treasuries, convertFx, transferFx, reverseFxTransfer } = useDataStore()
   const fxRates = useAppStore((s) => s.fxRates)
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -61,6 +61,8 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
   })()
 
   /* ═══ نافذة تحويل العملة ═══ */
+  const [reverseDocId, setReverseDocId] = useState<number | null>(null)
+  const [reverseReason, setReverseReason] = useState('')
   const [convOpen, setConvOpen] = useState(false)
   const [fromCurrency, setFromCurrency] = useState(cur.code.toUpperCase())
   const [toCurrency, setToCurrency] = useState('USD')
@@ -91,8 +93,16 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
     acquisitionRatePpm: fromIsBook ? 1_000_000 : (fromHolding?.avgRatePpm ?? 0),
     acquisitionBookValueMinor: fromHolding && Number.isSafeInteger(enteredFromMinor) && enteredFromMinor >= 0 ? proportionalFxCost(fromHolding.bookValueMinor, fromHolding.amountMinor, enteredFromMinor) : undefined,
   }
-  const convErrors = validateFxConversion(convInput, fromIsBook ? null : (fromHolding?.amountMinor ?? 0))
-  const convComputed = convErrors.length ? null : computeFxConversion(convInput)
+  const sameFx = !fromIsBook && fromCurrency === toCurrency
+  const transferValue = fromHolding && enteredFromMinor > 0 && enteredFromMinor <= fromHolding.amountMinor ? proportionalFxCost(fromHolding.bookValueMinor, fromHolding.amountMinor, enteredFromMinor) : 0
+  const convErrors = sameFx ? [
+    ...(fromTreasury === toTreasury ? ['اختر خزانتين مختلفتين'] : []),
+    ...(!fromHolding || enteredFromMinor <= 0 || enteredFromMinor > fromHolding.amountMinor ? ['رصيد العملة غير كافٍ أو المبلغ غير صالح'] : []),
+    ...(toHolding && toHolding.decimals !== fromDecimals ? ['خانات العملة غير متطابقة بين الخزائن'] : []),
+    ...(fee.trim() && convInput.feeMinor !== 0 ? ['لا تُسجَّل مصاريف في تحويل نفس العملة؛ سجّل المصروف منفصلاً'] : []),
+    ...(transferValue <= 0 ? ['القيمة الدفترية المحولة غير مثبتة أو صفر'] : []),
+  ] : validateFxConversion(convInput, fromIsBook ? null : (fromHolding?.amountMinor ?? 0))
+  const convComputed = convErrors.length ? null : sameFx ? { toAmountMinor: enteredFromMinor, outBookValueMinor: transferValue, gainMinor: 0, lossMinor: 0 } : computeFxConversion(convInput)
 
   const openConversion = () => {
     setFromTreasury(treasuries[0]?.code ?? '1101')
@@ -105,7 +115,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
 
   const postConversion = () => {
     try {
-      const doc = convertFx({
+      const doc = sameFx ? transferFx({ currency: fromCurrency, decimals: fromDecimals, fromTreasury, toTreasury, amountMinor: enteredFromMinor, date: convDate || undefined, notes: convNotes.trim() || undefined }) : convertFx({
         fromCurrency, fromDecimals, toCurrency, toDecimals, fromTreasury, toTreasury,
         fromAmountMinor: convInput.fromAmountMinor,
         fromRatePpm: convInput.fromRatePpm, toRatePpm: convInput.toRatePpm,
@@ -211,7 +221,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
                   <td className="p-1.5 text-center font-mono">{doc.feeMinor > 0 ? fmt(doc.feeMinor) : '—'}</td>
                   <td className="p-1.5 text-center font-mono font-bold text-emerald-600">{doc.gainMinor > 0 ? fmt(doc.gainMinor) : '—'}</td>
                   <td className="p-1.5 text-center font-mono font-bold text-rose-600">{doc.lossMinor > 0 ? fmt(doc.lossMinor) : '—'}</td>
-                  <td className="p-1.5 text-center font-mono text-slate-400">#{doc.journalEntryId}</td>
+                  <td className="p-1.5 text-center font-mono text-slate-400">#{doc.journalEntryId}{doc.kind === 'treasury_transfer' && (doc.reversalEntryId != null ? <div>عُكس بالقيد #{doc.reversalEntryId}</div> : <button type="button" className="underline text-rose-600" onClick={() => { setReverseDocId(doc.id); setReverseReason('') }}>تصحيح التحويل</button>)}</td>
                 </tr>
               ))}
             </tbody>
@@ -245,6 +255,13 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
         </div>
       </div>
 
+      <Modal open={reverseDocId != null} onClose={() => setReverseDocId(null)} title="تصحيح تحويل الخزائن" subtitle="يُعكس آخر تحويل بقيد جديد فقط بعد التحقق من عدم وجود حركة لاحقة في أي من الخزينتين.">
+        <div className="space-y-3">
+          <Field label="سبب التصحيح ومرجع التأكد من التحويل"><input aria-label="سبب تصحيح التحويل" value={reverseReason} onChange={event => setReverseReason(event.target.value)} className={inputCls} /></Field>
+          <Btn disabled={!reverseReason.trim()} onClick={() => { try { if (reverseDocId == null) return; reverseFxTransfer({ conversionId: reverseDocId, reason: reverseReason }); toast.show('سُجل قيد عكس التحويل بعد التحقق'); setReverseDocId(null) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذّر تصحيح التحويل', 'error') } }}>تأكيد عكس التحويل</Btn>
+        </div>
+      </Modal>
+
       {/* ═══ نافذة تحويل العملة ═══ */}
       <Modal open={convOpen} onClose={() => setConvOpen(false)} title="تحويل عملة" subtitle="سعر تنفيذ + مصاريف التحويل + فرق العملة عن متوسط التكلفة — قيد متوازن بمستند رسمي" data-fx-convert-modal>
         <div className="space-y-3">
@@ -261,7 +278,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
             <Field label={`المبلغ المصروف بالـ${fromCurrency}`}>
               <input className={inputCls + ' text-center font-mono font-bold'} value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} inputMode="decimal" placeholder="0.00" dir="ltr" data-fx-conv-amount />
             </Field>
-            {!fromIsBook && (
+            {!fromIsBook && !sameFx && (
               <Field label={`سعر تنفيذ ${fromCurrency} (دفتر لكل وحدة)`} hint={fromHolding && fromHolding.avgRatePpm > 0 ? `متوسط تكلفتك ${formatRate(fromHolding.avgRatePpm)} — فارق السعر يُقيَّد ربحاً أو خسارة` : 'لا رصيد سابق — سيكون هذا سعر تكلفتك'}>
                 <input className={inputCls + ' text-center font-mono font-bold'} value={fromRate} onChange={(e) => setFromRate(e.target.value)} inputMode="decimal" placeholder="0.00" dir="ltr" data-fx-conv-from-rate />
               </Field>
@@ -275,12 +292,12 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
             <Field label="الخزينة/البنك المستلمة">
               <TreasuryPicker value={toTreasury} onChange={setToTreasury} />
             </Field>
-            {!toIsBook && (
+            {!toIsBook && !sameFx && (
               <Field label={`سعر تنفيذ ${toCurrency} (دفتر لكل وحدة)`} hint={toHolding && toHolding.avgRatePpm > 0 ? `متوسط تكلفة رصيدك الحالي ${formatRate(toHolding.avgRatePpm)}` : fxRates[toCurrency]?.ratePpm ? `سعر اليوم المحفوظ ${formatRate(fxRates[toCurrency].ratePpm)}` : 'لا سعر محفوظ — اكتبه'}>
                 <input className={inputCls + ' text-center font-mono font-bold'} value={toRate} onChange={(e) => setToRate(e.target.value)} inputMode="decimal" placeholder="0.00" dir="ltr" data-fx-conv-to-rate />
               </Field>
             )}
-            <Field label={`مصاريف التحويل (${cur.code})`} hint="عمولة الصراف/البنك — مصروف عمومي 5108">
+            <Field label={`مصاريف التحويل (${cur.code})`} hint={sameFx ? 'تحويل نفس العملة بلا مصاريف؛ امسح المبلغ إن كان مدخلاً وسجّل المصروف منفصلاً' : 'عمولة الصراف/البنك — مصروف عمومي 5108'}>
               <input className={inputCls + ' text-center font-mono font-bold'} value={fee} onChange={(e) => setFee(e.target.value)} inputMode="decimal" placeholder="0.00" dir="ltr" data-fx-conv-fee />
             </Field>
             <Field label="التاريخ">
@@ -303,7 +320,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
                     <span>القيمة الدفترية الخارجة: {fmt(convComputed.outBookValueMinor)}</span>
                     {convComputed.gainMinor > 0 && <span className="text-emerald-700 dark:text-emerald-300">ربح فرق عملة: {fmt(convComputed.gainMinor)} → 4117</span>}
                     {convComputed.lossMinor > 0 && <span className="text-rose-700 dark:text-rose-300">خسارة فرق عملة: {fmt(convComputed.lossMinor)} → 5119</span>}
-                    {convComputed.gainMinor === 0 && convComputed.lossMinor === 0 && <span>لا فرق عملة (شراء بسعر التنفيذ)</span>}
+                    {convComputed.gainMinor === 0 && convComputed.lossMinor === 0 && <span>لا فرق عملة ({sameFx ? 'تحويل بين خزائن بالتكلفة' : 'شراء بسعر التنفيذ'})</span>}
                     {convInput.feeMinor > 0 && <span>مصاريف: {fmt(convInput.feeMinor)} → 5108</span>}
                   </div>
                 </>
