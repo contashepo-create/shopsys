@@ -135,7 +135,16 @@ export function fxConversionHistoryIssues(docs: FxConversionDoc[], flows: FxFlow
     const recordedCost = doc.outBookValueMinor ?? convertFxToBookMinor({ currencyCode: doc.fromCurrency, amountMinor: doc.fromAmountMinor, ratePpm: doc.acquisitionRatePpm, decimals: doc.fromDecimals }, bookDecimals)
     if (!holding || holding.decimals !== doc.fromDecimals || holding.amountMinor < doc.fromAmountMinor || holding.avgRatePpm !== doc.acquisitionRatePpm || recordedCost !== proportionalFxCost(holding.bookValueMinor, holding.amountMinor, doc.fromAmountMinor)) issues.push(doc.docNumber)
   }
-  return issues
+  // سندات/مشتريات أجنبية سابقة تخرج بالسعر الاسمي من الخزينة، بينما
+  // رصيد المذكرة ينقص بتكلفة الحيازة. لا نخمّن قيد فروقها بعد الترحيل.
+  const conversionKeys = new Set(docs.map(doc => `${doc.journalEntryId}|${doc.docNumber}`))
+  for (const flow of flows) {
+    if (flow.kind !== 'out' || conversionKeys.has(`${flow.seq}|${flow.ref}`)) continue
+    const before = fxHoldingsFromFlows(flows.filter(previous => previous.seq < flow.seq), bookDecimals)
+    const holding = before.find(row => row.treasury === flow.treasury && row.currency.toUpperCase() === flow.currency.toUpperCase())
+    if (!holding || holding.decimals !== flow.decimals || holding.amountMinor < flow.amountMinor || proportionalFxCost(holding.bookValueMinor, holding.amountMinor, flow.amountMinor) !== flow.bookValueMinor) issues.push(flow.ref)
+  }
+  return [...new Set(issues)]
 }
 
 export interface FxConversionInput {

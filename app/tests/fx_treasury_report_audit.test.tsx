@@ -29,7 +29,7 @@ it('يحدث التقرير بعد البيع ويعرض كسور العملة �
 it('يعرض التعارض التاريخي بدلاً من تقرير فارغ أو انهيار الشاشة', () => {
   useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG' }, fxRates: {} })
   useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, sales: [], purchases: [], journal: [], fxConversions: [], vouchers: [
-    { id: 1, voucherNumber: 'V1', kind: 'receipt', treasury: '1101', date: '2026-01-01', journalEntryId: 1, amountMinor: 100, fx: { currencyCode: 'KWD', amountMinor: 100, decimals: 3, ratePpm: 1000000 } },
+    { id: 1, voucherNumber: 'V1', kind: 'receipt', treasury: '1101', date: '2026-01-01', journalEntryId: 1, amountMinor: 10, fx: { currencyCode: 'KWD', amountMinor: 100, decimals: 3, ratePpm: 1000000 } },
     { id: 2, voucherNumber: 'V2', kind: 'receipt', treasury: '1101', date: '2026-01-02', journalEntryId: 2, amountMinor: 100, fx: { currencyCode: 'KWD', amountMinor: 100, decimals: 2, ratePpm: 1000000 } },
   ] as never })
   render(<FxTreasuryTab cur={cur} companyName="متجر" />)
@@ -50,7 +50,21 @@ it('يظهر تنبيه التحويل التاريخي في الشاشة وال
   render(<FxTreasuryTab cur={cur} companyName="متجر" />)
   expect(screen.getByRole('alert').textContent).toContain(doc.docNumber)
   fireEvent.click(screen.getByRole('button', { name: /طباعة/ }))
-  expect(usePrintPreview.getState().handle?.html).toContain('تحويلات سابقة تحتاج مراجعة')
+  expect(usePrintPreview.getState().handle?.html).toContain('حركات عملة سابقة تحتاج مراجعة')
   expect(usePrintPreview.getState().handle?.html).toContain(doc.docNumber)
   expect(() => s.convertFx(args)).toThrow(/مراجعة محاسبية/)
+})
+
+it('ينبه في الشاشة والمعاينة إلى سند أجنبي سابق بتكلفة غير مطابقة', () => {
+  useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG', allowNegativeTreasury: true }, fxRates: {} })
+  useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, customers: [], items: [], sales: [], vouchers: [], purchases: [], journal: [], fxConversions: [] })
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const itemId = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  s.postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: useDataStore.getState().customers[0].id, payment: 'cash', treasury: '1101', paidMinor: 2000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 200, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  const voucher = s.postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5108', amountMinor: 1500, description: 'صرف', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 15000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  render(<FxTreasuryTab cur={cur} companyName="متجر" />)
+  expect(screen.getByRole('alert').textContent).toContain(voucher.voucherNumber)
+  fireEvent.click(screen.getByRole('button', { name: /طباعة/ }))
+  expect(usePrintPreview.getState().handle?.html).toContain(voucher.voucherNumber)
 })

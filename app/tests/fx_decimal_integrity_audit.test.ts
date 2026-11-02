@@ -32,7 +32,7 @@ it('يوقف التحويل الجديد إذا كان متوسط تحويل ق�
   useRawDataStore.setState(state => ({ fxConversions: state.fxConversions.map(row => ({ ...row, acquisitionRatePpm: 10000000, gainMinor: 9000 })) }))
   const journal = useRawDataStore.getState().journal
   const docs = useRawDataStore.getState().fxConversions
-  expect(() => s.convertFx(args)).toThrow(/تحويلات عملة سابقة تحتاج مراجعة/)
+  expect(() => s.convertFx(args)).toThrow(/حركات عملة سابقة تحتاج مراجعة/)
   expect(useRawDataStore.getState().journal).toBe(journal)
   expect(useRawDataStore.getState().fxConversions).toBe(docs)
 })
@@ -90,4 +90,69 @@ it('لا يخفي صرفاً أجنبياً يفوق التدفقات المتا
   const out = { date: '2026-01-01', seq: 1, treasury: '1101', currency: 'USD', decimals: 2 as const, amountMinor: 1000, bookValueMinor: 1000, kind: 'out' as const, ref: 'PAY-1' }
   const later = { ...out, seq: 2, amountMinor: 2000, bookValueMinor: 2000, kind: 'in' as const, ref: 'SAL-1' }
   expect(() => fxHoldingsFromFlows([out, later], 2)).toThrow(/رصيد.*غير مثبت/)
+})
+
+it('يحجب تحويلاً جديداً بعد سند أجنبي تاريخي صُرف بسعر لا يطابق تكلفة الحيازة', () => {
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const item = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  s.postSale({ lines: [{ itemId: item, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: useDataStore.getState().customers[0].id, payment: 'cash', treasury: '1101', paidMinor: 2000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 200, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  const voucher = s.postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5108', amountMinor: 1500, description: 'صرف', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 15000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  const before = useRawDataStore.getState().journal
+  expect(() => s.convertFx({ fromCurrency: 'USD', fromDecimals: 2, fromTreasury: '1101', fromAmountMinor: 100, toCurrency: 'EGP', toDecimals: 2, toTreasury: '1101', fromRatePpm: 10000000, toRatePpm: 1000000, feeMinor: 0 })).toThrow(/مراجعة محاسبية/)
+  expect(useRawDataStore.getState().journal).toBe(before)
+  expect(useDataStore.getState().vouchers.find(v => v.id === voucher.id)).toBeTruthy()
+})
+
+it('يرفض تحويل خزائن بعملة أجنبية لا يحفظ تدفقاً للخزينة الوجهة', () => {
+  const s = useDataStore.getState(), before = useRawDataStore.getState()
+  expect(() => s.postVoucher({ kind: 'transfer', treasury: '1101', counterAccountCode: '1102', amountMinor: 1000, description: 'تحويل عملة', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })).toThrow(/تحويل.*عملة أجنبية/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+  expect(useRawDataStore.getState().vouchers).toBe(before.vouchers)
+})
+
+it('يرفض تحصيلاً أجنبياً موزعاً بين خزائن لا توثق ساقها الأجنبية', () => {
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const itemId = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  const before = useRawDataStore.getState()
+  expect(() => s.postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: useDataStore.getState().customers[0].id, payment: 'cash', treasury: '1101', paidMinor: 1000, paymentAllocations: [{ accountCode: '1101', amountMinor: 500 }, { accountCode: '1102', amountMinor: 500 }], invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })).toThrow(/العملة الأجنبية.*خزينة/)
+  expect(useRawDataStore.getState().sales).toBe(before.sales)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+
+it('يحجب تقرير العملة عند توزيع فاتورة تاريخية أجنبية على خزائن مختلفة', () => {
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const itemId = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  s.postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: useDataStore.getState().customers[0].id, payment: 'cash', treasury: '1101', paidMinor: 1000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  useRawDataStore.setState(state => ({ sales: state.sales.map(row => ({ ...row, paymentAllocations: [{ accountCode: '1101', amountMinor: 500 }, { accountCode: '1102', amountMinor: 500 }] })) }))
+  expect(() => s.getFxFlows()).toThrow(/العملة الأجنبية.*خزينة/)
+})
+
+it('يرفض سداد شراء أجنبي موزعاً على خزائن غير موثقة في ساق العملة', () => {
+  const s = useDataStore.getState()
+  s.addSupplier({ ...EMPTY_EXTENDED, nameAr: 'مورد', phone: '', notes: '' })
+  const itemId = s.ensureServiceItemForFreeLine({ nameAr: 'صنف' })
+  const before = useRawDataStore.getState()
+  expect(() => s.postPurchase({ supplierId: useDataStore.getState().suppliers.at(-1)!.id, date: '2026-01-01', lines: [{ itemId, qty: 1, unitPriceMinor: 1000 }], expenses: [], paidMinor: 1000, treasury: '1101', paymentAllocations: [{ accountCode: '1101', amountMinor: 500 }, { accountCode: '1102', amountMinor: 500 }], notes: '', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })).toThrow(/العملة الأجنبية.*خزينة/)
+  expect(useRawDataStore.getState().purchases).toBe(before.purchases)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+
+it('لا يخفي ساق عملة تاريخية ذات مبلغ صفر من التقرير', () => {
+  const s = useDataStore.getState()
+  s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+  const itemId = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
+  s.postSale({ lines: [{ itemId, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: useDataStore.getState().customers[0].id, payment: 'cash', treasury: '1101', paidMinor: 1000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  useRawDataStore.setState(state => ({ sales: state.sales.map(row => ({ ...row, fx: { ...row.fx!, amountMinor: 0 } })) }))
+  expect(() => s.getFxFlows()).toThrow(/عملة.*غير صالحة|عملة.*المراجعة/)
+})
+
+it('يطابق خروج السندات وفواتير الشراء القديمة مع تكلفة الرصيد ولا يوقف المطابق منها', async () => {
+  const { fxConversionHistoryIssues } = await import('../src/core/fxTreasury.ts')
+  const incoming = { date: '2026-01-01', seq: 1, treasury: '1101', currency: 'USD', decimals: 2 as const, amountMinor: 200, bookValueMinor: 2000, kind: 'in' as const, ref: 'S-1' }
+  const payment = { ...incoming, seq: 2, amountMinor: 100, bookValueMinor: 1000, kind: 'out' as const, ref: 'P-1' }
+  expect(fxConversionHistoryIssues([], [incoming, payment], 'EGP', 2)).toEqual([])
+  expect(fxConversionHistoryIssues([], [incoming, { ...payment, bookValueMinor: 1500 }], 'EGP', 2)).toEqual(['P-1'])
 })

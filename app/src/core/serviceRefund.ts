@@ -118,8 +118,10 @@ export function computeItemizedRefund(args: {
   selectedKeys: string[]
   grandMinor: Minor // إجمالي المستند النهائي (وعاء الاسترداد)
   refundedMinor: Minor // المردود سابقاً
+  /** وعاء البنود الأصلي عند إخفاء البنود التي أُرجعت من قائمة الاختيار. */
+  referenceValueMinor?: Minor
 }): { amountMinor: Minor; restockCostMinor: Minor; labels: string[] } {
-  const sumAll = args.items.reduce((a, i) => a + i.valueMinor, 0)
+  const sumAll = args.referenceValueMinor ?? args.items.reduce((a, i) => a + i.valueMinor, 0)
   if (sumAll <= 0) throw new Error('لا بنود قابلة للاسترداد في المستند')
   const chosen = args.items.filter((i) => args.selectedKeys.includes(i.key))
   if (!chosen.length) throw new Error('اختر بنداً واحداً على الأقل')

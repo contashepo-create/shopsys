@@ -21,6 +21,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
+import { maintenanceRefundChoices } from '../../core/maintenanceRefundChoices.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState, OverlayPortal } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
@@ -256,6 +257,7 @@ export function MaintenancePage() {
   const tvColumns: TicketStatus[] = ['received', 'in_progress', 'ready']
   const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(viewing.id)) : undefined
   const viewEntry = viewing?.journalEntryId != null ? journal.find((e) => e.id === viewing.journalEntryId) : null
+  const refundChoices = viewing ? maintenanceRefundChoices(viewing) : null
 
   /* ─── تقرير ─── */
   const presets = useMemo(() => periodPresets(todayLocalIso()), [])
@@ -849,7 +851,7 @@ export function MaintenancePage() {
                       <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                         <td className="px-4 py-1.5 font-bold">{p.nameAr}</td>
                         <td className="px-4 py-1.5 text-slate-400">{p.qty} × {fmt(p.unitPriceMinor)}</td>
-                        <td className="px-4 py-1.5 text-slate-500 text-[11px]">تكلفة {fmt(p.unitCostMinor * p.qty)}</td>
+                        <td className="px-4 py-1.5 text-slate-500 text-[11px]">تكلفة {fmt(p.costTotalMinor ?? p.unitCostMinor * p.qty)}</td>
                         <td className="px-4 py-1.5 font-bold text-left">{fmt(p.unitPriceMinor * p.qty)}</td>
                       </tr>
                     ))}
@@ -867,26 +869,23 @@ export function MaintenancePage() {
                 allowCredit={viewing.customerId != null}
                 hint="عميل غير راضٍ؟ اختر ما يُرد: أجر الفني، خدمات، أو قطع غيار — القطعة السليمة المختارة تعود للمخزون بتكلفتها تلقائياً."
                 terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
-                refundableItems={[
-                  ...(viewing.totals.laborMinor > 0 ? [{ key: 'labor', label: 'أجر الفني (المصنعية)', valueMinor: viewing.totals.laborMinor }] : []),
-                  ...(viewing.services ?? []).map((s, si) => ({ key: `svc:${si}`, label: s.nameAr, valueMinor: Math.round(s.qty * s.unitPriceMinor), qty: s.qty })),
-                  ...viewing.parts.map((p, pi) => {
-                    const returned = (viewing.returnedParts ?? []).filter((x) => x.itemId === p.itemId).reduce((a, x) => a + x.qty, 0)
-                    const avail = p.qty - returned
-                    return avail > 0 ? [{ key: `part:${pi}`, label: `قطعة: ${p.nameAr}`, valueMinor: Math.round(avail * p.unitPriceMinor), qty: avail, restockCostMinor: Math.round(avail * p.unitCostMinor) }] : []
-                  }).flat(),
-                ]}
+                refundableItems={refundChoices?.items}
+                partialQuantityKeys={refundChoices?.partKeys}
+                referenceValueMinor={(viewing.totals.laborMinor ?? 0) + (viewing.services ?? []).reduce((sum, service) => sum + service.qty * service.unitPriceMinor, 0) + viewing.parts.reduce((sum, part) => sum + part.qty * part.unitPriceMinor, 0)}
                 onSubmit={(a) => {
                   try {
-                    // القطع المختارة تعود للمخزون بكامل كميتها المتبقية
-                    const returnParts = (a.selectedKeys ?? [])
-                      .filter((k) => k.startsWith('part:'))
-                      .map((k) => {
-                        const p = viewing.parts[Number(k.slice(5))]
-                        const returned = (viewing.returnedParts ?? []).filter((x) => x.itemId === p.itemId).reduce((s, x) => s + x.qty, 0)
-                        return { itemId: p.itemId, qty: p.qty - returned }
-                      })
-                      .filter((rp) => rp.qty > 0)
+                    const grouped = new Map<number, { itemId: number; thousandths: number; batches: { batchId: number; qty: number }[] }>()
+                    for (const key of a.selectedKeys ?? []) {
+                      const choice = refundChoices?.parts[key]
+                      if (!choice) continue
+                      const quantity = a.selectedQuantities?.[key]
+                      if (quantity == null || !Number.isFinite(quantity) || quantity <= 0) throw new Error('حدد كمية القطعة المرتجعة')
+                      const entry = grouped.get(choice.itemId) ?? { itemId: choice.itemId, thousandths: 0, batches: [] }
+                      entry.thousandths += Math.round(quantity * 1000)
+                      if (choice.batchId != null) entry.batches.push({ batchId: choice.batchId, qty: quantity })
+                      grouped.set(choice.itemId, entry)
+                    }
+                    const returnParts = [...grouped.values()].map(row => ({ itemId: row.itemId, qty: row.thousandths / 1000, ...(row.batches.length ? { batches: row.batches } : {}) }))
                     const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts, terminalRefund: a.terminalRefund })
                     setViewing(u)
                     toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅${returnParts.length ? ' — عادت القطع للمخزون 📦' : ''}`)

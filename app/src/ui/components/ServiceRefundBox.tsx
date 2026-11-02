@@ -36,6 +36,10 @@ export function ServiceRefundBox(props: {
    * وجودها يفعّل وضع «اختر البنود»؛ غيابها يبقي المبلغ الحر فقط (مستند بلا بنود).
    */
   refundableItems?: RefundableServiceItem[]
+  /** قيمة البنود الأصلية كاملة، حتى لا يتغير المقام بعد مرتجع سابق. */
+  referenceValueMinor?: number
+  /** مفاتيح تسمح بتحديد كمية بدلاً من رد الرصيد كله. */
+  partialQuantityKeys?: string[]
   onSubmit: (args: {
     amountMinor: number
     mode: 'cash' | 'customer_credit'
@@ -44,6 +48,7 @@ export function ServiceRefundBox(props: {
     approvedBy?: string
     /** مفاتيح البنود المختارة (وضع البنود) — للأنشطة التي تعيد قطعاً للمخزون */
     selectedKeys?: string[]
+    selectedQuantities?: Record<string, number>
     /** تكلفة القطع المخزنية المختارة (الصيانة) — لإرجاعها للمخزون */
     restockCostMinor?: number
     terminalRefund?: { originalTransactionId: string; providerReference: string }
@@ -54,6 +59,7 @@ export function ServiceRefundBox(props: {
   const hasItems = (props.refundableItems?.length ?? 0) > 0
   const [pickMode, setPickMode] = useState<'items' | 'amount'>(hasItems ? 'items' : 'amount')
   const [selected, setSelected] = useState<string[]>([])
+  const [quantities, setQuantities] = useState<Record<string, string>>({})
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState<'cash' | 'customer_credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
@@ -67,14 +73,21 @@ export function ServiceRefundBox(props: {
   const itemized = useMemo(() => {
     if (pickMode !== 'items' || !hasItems || !selected.length) return null
     try {
+      const items = props.refundableItems!.map(item => {
+        if (!selected.includes(item.key) || !props.partialQuantityKeys?.includes(item.key) || item.qty == null) return item
+        const qty = Number(quantities[item.key] ?? item.qty)
+        if (!Number.isFinite(qty) || qty <= 0 || qty > item.qty || Math.abs(Math.round(qty * 1000) / 1000 - qty) > 1e-9) throw new Error('كمية غير صالحة')
+        return { ...item, valueMinor: Math.round(item.valueMinor * qty / item.qty), restockCostMinor: item.restockCostMinor == null ? undefined : Math.round(item.restockCostMinor * qty / item.qty) }
+      })
       return computeItemizedRefund({
-        items: props.refundableItems!,
+        items,
         selectedKeys: selected,
         grandMinor: props.grandMinor,
         refundedMinor: props.refundedMinor,
+        referenceValueMinor: props.referenceValueMinor,
       })
     } catch { return null }
-  }, [pickMode, hasItems, selected, props.refundableItems, props.grandMinor, props.refundedMinor])
+  }, [pickMode, hasItems, selected, quantities, props.refundableItems, props.grandMinor, props.refundedMinor, props.partialQuantityKeys, props.referenceValueMinor])
 
   const effectiveAmount = pickMode === 'items' ? (itemized?.amountMinor ?? 0) : (() => { try { return toMinor(amount, decimals) } catch { return 0 } })()
 
@@ -97,6 +110,7 @@ export function ServiceRefundBox(props: {
         reason: reason.trim() || (itemized ? `رد بنود: ${itemized.labels.join('، ')}` : ''),
         approvedBy,
         selectedKeys: pickMode === 'items' ? selected : undefined,
+        selectedQuantities: pickMode === 'items' ? Object.fromEntries((props.refundableItems ?? []).filter(item => selected.includes(item.key) && props.partialQuantityKeys?.includes(item.key) && item.qty != null).map(item => [item.key, Number(quantities[item.key] ?? item.qty)])) : undefined,
         restockCostMinor: pickMode === 'items' ? itemized?.restockCostMinor : undefined,
         terminalRefund: mode === 'cash' && props.terminalOriginal ? { originalTransactionId: props.terminalOriginal.transactionId, providerReference: terminalRefundReference.trim() } : undefined,
       }),
@@ -126,8 +140,8 @@ export function ServiceRefundBox(props: {
       {pickMode === 'items' && hasItems && (
         <div className="space-y-1.5">
           {props.refundableItems!.map((it) => (
+            <div key={it.key}>
             <button
-              key={it.key}
               onClick={() => toggle(it.key)}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border text-[12px] transition-all ${selected.includes(it.key) ? 'border-amber-500/60 bg-amber-500/10' : 'border-slate-200 dark:border-slate-700 hover:border-amber-500/30'}`}
             >
@@ -141,6 +155,11 @@ export function ServiceRefundBox(props: {
               </span>
               <b className="text-slate-600 dark:text-slate-300">{props.fmt(it.valueMinor)}</b>
             </button>
+            {selected.includes(it.key) && props.partialQuantityKeys?.includes(it.key) && it.qty != null && <label className="flex items-center gap-2 px-3 py-1 text-xs">كمية {it.label}
+              <input type="number" min="0.001" step="0.001" max={it.qty} value={quantities[it.key] ?? it.qty} onChange={event => setQuantities(previous => ({ ...previous, [it.key]: event.target.value }))} className="w-24 border p-1 bg-transparent" />
+              <span>المتاح {it.qty}</span>
+            </label>}
+            </div>
           ))}
           {itemized && (
             <div className="flex justify-between items-center px-3 py-2 rounded-xl bg-amber-500/10 text-[12px] font-black text-amber-700 dark:text-amber-300">

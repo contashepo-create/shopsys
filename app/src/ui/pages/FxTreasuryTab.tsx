@@ -124,7 +124,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
       const today = saved ? convertFxToBookMinor({ currencyCode: h.currency, amountMinor: h.amountMinor, ratePpm: saved, decimals: h.decimals }, cur.decimals) : null
       return `<tr><td>${esc(h.currency)}</td><td>${esc(treasuryName(h.treasury))}</td><td class="num">${(h.amountMinor / 10 ** h.decimals).toFixed(h.decimals)}</td><td class="num">${formatRate(h.avgRatePpm)}</td><td class="num">${fmt(h.bookValueMinor)}</td><td class="num">${today == null ? '—' : fmt(today)}</td><td class="num">${today == null ? '—' : fmt(today - h.bookValueMinor)}</td></tr>`
     }).join('')
-    const warning = historyIssues.length ? `<p>تنبيه: تحويلات سابقة تحتاج مراجعة محاسبية: ${historyIssues.map(esc).join('، ')}. الأرصدة مشتقة من التدفقات ولا تصحح القيود القديمة.</p>` : ''
+    const warning = historyIssues.length ? `<p>تنبيه: حركات عملة سابقة تحتاج مراجعة محاسبية: ${historyIssues.map(esc).join('، ')}. الأرصدة مشتقة من التدفقات ولا تصحح القيود القديمة.</p>` : ''
     const body = `${warning}<table><thead><tr><th>العملة</th><th>المكان (الخزينة/البنك)</th><th>الرصيد</th><th>متوسط التكلفة</th><th>القيمة الدفترية</th><th>بسعر اليوم</th><th>غير محقق</th></tr></thead><tbody>${rows}<tr class="total"><td colspan="4">إجمالي القيمة الدفترية</td><td class="num">${fmt(summary.book)}</td><td class="num">${summary.today == null ? '—' : fmt(summary.today)}</td><td class="num">${summary.unrealized == null ? '—' : fmt(summary.unrealized)}</td></tr></tbody></table>`
     const rebuild = () => {
       const { reportPrint, receipt } = useAppStore.getState()
@@ -189,7 +189,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
         </div>
       </div>
 
-      {historyIssues.length > 0 && <p role="alert" className="border border-amber-500 p-3 text-amber-700" data-fx-history-review>تحويلات سابقة تحتاج مراجعة محاسبية: {historyIssues.join('، ')}. الأرصدة المعروضة مشتقة من التدفقات ولا تصحح القيود القديمة؛ أُوقفت التحويلات الجديدة حتى المراجعة.</p>}
+      {historyIssues.length > 0 && <p role="alert" className="border border-amber-500 p-3 text-amber-700" data-fx-history-review>حركات عملة سابقة تحتاج مراجعة محاسبية: {historyIssues.join('، ')}. الأرصدة المعروضة مشتقة من التدفقات ولا تصحح القيود القديمة؛ أُوقفت التحويلات الجديدة حتى المراجعة.</p>}
 
       {/* سجل التحويلات */}
       <div className={`${card} p-3`}>
