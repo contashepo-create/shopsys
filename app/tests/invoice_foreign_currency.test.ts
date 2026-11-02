@@ -3,7 +3,7 @@
  *
  * تحرس هذه الاختبارات ثلاث قواعد لا يجوز كسرها:
  *   ① المرحَّل بعملة الدفتر = حاصل التحويل حرفياً — وأي اختلاف يُرفض قبل الكتابة.
- *   ② الساق الأجنبية توثيق على المستند وفي وصف القيد، ولا تُنشئ أي حساب فروق عملة.
+ *   ② الساق الأجنبية توثيق على المستند وفي وصف القيد؛ الصرف يُقيّد بتكلفة الحيازة والفرق إن وجد.
  *   ③ الذمة تنقص بالمحوَّل فقط — لا في الدفتر رقمان لنفس التحصيل.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -20,7 +20,7 @@ let itemId = 0
 
 beforeEach(() => {
   localStorage.setItem('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } } }))
-  useDataStore.setState({ ...original, sales: [], purchases: [], journal: [], customers: [], suppliers: [], items: [] })
+  useDataStore.setState({ ...original, sales: [], purchases: [], vouchers: [], fxConversions: [], journal: [], customers: [], suppliers: [], items: [] })
   S().addCustomer({ nameAr: 'عميل تصدير', phone: '', taxNumber: '', address: '', notes: '', active: true, creditLimitMinor: 0, commercialReg: '', email: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   customerId = S().customers[S().customers.length - 1].id
   S().addSupplier({ nameAr: 'مورد استيراد', phone: '', taxNumber: '', address: '', notes: '', active: true, commercialReg: '', email: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
@@ -91,6 +91,7 @@ describe('فاتورة الشراء بعملة ثانية', () => {
   })
 
   it('ينقص دين المورد بالمحوَّل فقط ويوثق الساق في القيد', () => {
+    S().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '4101', amountMinor: 485000, description: 'حيازة عملة', fx: USD, bookDecimals: 2, bookCurrencyCode: 'EGP' })
     const invoice = S().postPurchase(purchaseArgs({ fx: USD }))
     expect(invoice.paidMinor).toBe(485000)
     expect(invoice.fx).toEqual(USD)

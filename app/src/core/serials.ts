@@ -12,7 +12,7 @@
  */
 import { addCalendarMonths, localDateIso } from './time.ts'
 
-export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier'
+export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier' | 'maintenance'
 
 export interface SerialUnit {
   id: number
@@ -21,6 +21,8 @@ export interface SerialUnit {
   status: SerialStatus
   purchaseId: number | null // فاتورة الشراء (null = رصيد افتتاحي/إدخال يدوي)
   saleId: number | null
+  /** التذكرة التي استهلكت القطعة، إن كانت في الصيانة. */
+  maintenanceTicketId?: number | null
   soldAt: string | null // ISO وقت البيع
   warrantyMonths: number // مدة الضمان بالأشهر (تُثبت وقت البيع)
   receivedAt: string // ISO وقت الدخول

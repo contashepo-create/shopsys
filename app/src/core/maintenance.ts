@@ -38,6 +38,8 @@ export interface TicketPartInput {
   unitCostMinor: Minor // متوسط التكلفة المرجح وقت التسليم
   /** قيمة الصرف الفعلية بعد توزيع كسور المتوسط، إن حُفظت عند التسليم. */
   costTotalMinor?: Minor
+  /** السيريالات المحددة عند الصرف؛ غائبة عن السجلات القديمة. */
+  serials?: string[]
 }
 
 /**

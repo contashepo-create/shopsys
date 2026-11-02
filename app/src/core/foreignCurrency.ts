@@ -4,9 +4,9 @@
  *
  * **القرار المحاسبي**: الدفتر يبقى أحادي العملة — كل قيد يُرحَّل بعملة الدفتر.
  * ما يضيفه هذا الملف هو **ساق العملة الأجنبية** داخل السند: المبلغ الأجنبي وسعر
- * الصرف المستعمل، وتحويلٌ صحيح إلى عملة الدفتر يُخزَّن هو ما يُرحَّل. لا فروق
- * عملة تُقيَّد لأن الذمة نفسها مسجَّلة بعملة الدفتر: من دفع 100 دولاراً بسعر
- * 48.50 يكون قد سدَّد 4,850 جنيهاً من دينه، والباقي يظل ديناً بالجنيه.
+ * الصرف المستعمل، وتحويلٌ صحيح إلى عملة الدفتر يُخزَّن لتسوية الذمة.
+ * في الخروج من خزينة أجنبية تُخصم تكلفة الحيازة، ويُرحَّل الفرق عن قيمة
+ * السداد بسعر العملية كربح أو خسارة، دون تغيير مقدار الذمة المسددة.
  *
  * الحساب كله بأعداد صحيحة (BigInt داخلياً) — لا كسور عائمة في المال إطلاقاً.
  */
@@ -67,8 +67,8 @@ export function validateFxLeg(leg: FxLeg, bookCurrencyCode: string): string[] {
   const code = (leg.currencyCode ?? '').trim().toUpperCase()
   if (!/^[A-Z]{3}$/.test(code)) errors.push('رمز العملة يجب أن يكون ثلاثة حروف لاتينية (USD مثلاً)')
   if (code && code === bookCurrencyCode.toUpperCase()) errors.push('عملة السند هي عملة الدفتر نفسها — لا حاجة لسعر صرف')
-  if (!Number.isInteger(leg.amountMinor) || leg.amountMinor <= 0) errors.push('مبلغ العملة الأجنبية يجب أن يكون أكبر من صفر')
-  if (!Number.isInteger(leg.ratePpm) || leg.ratePpm <= 0) errors.push('سعر الصرف مطلوب وأكبر من صفر')
+  if (!Number.isSafeInteger(leg.amountMinor) || leg.amountMinor <= 0) errors.push('مبلغ العملة الأجنبية يجب أن يكون أكبر من صفر')
+  if (!Number.isSafeInteger(leg.ratePpm) || leg.ratePpm <= 0) errors.push('سعر الصرف مطلوب وأكبر من صفر')
   if (leg.ratePpm > 1_000_000 * FX_RATE_SCALE) errors.push('سعر الصرف غير معقول')
   if (![0, 2, 3].includes(leg.decimals)) errors.push('خانات العملة العشرية غير مدعومة')
   return errors

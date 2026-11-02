@@ -100,6 +100,7 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
 
   it('لا يترك ساق صرف قديمة عند تعديل فاتورة شراء أجنبية', () => {
     const state = useDataStore.getState()
+    state.postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '4101', amountMinor: 1000, description: 'حيازة العملة', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookCurrencyCode: 'EGP', bookDecimals: 2 })
     const purchase = state.postPurchase({ supplierId: 801, date: '2026-09-24', lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000, warehouseId: 1 }], expenses: [], paidMinor: 1000, treasury: '1101', warehouseId: 1, notes: '', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 10000000, decimals: 2 }, bookCurrencyCode: 'EGP', bookDecimals: 2 })
     const journal = useDataStore.getState().journal
     const items = useDataStore.getState().items

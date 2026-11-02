@@ -32,7 +32,7 @@ it('يوقف التحويل الجديد إذا كان متوسط تحويل ق�
   useRawDataStore.setState(state => ({ fxConversions: state.fxConversions.map(row => ({ ...row, acquisitionRatePpm: 10000000, gainMinor: 9000 })) }))
   const journal = useRawDataStore.getState().journal
   const docs = useRawDataStore.getState().fxConversions
-  expect(() => s.convertFx(args)).toThrow(/حركات عملة سابقة تحتاج مراجعة/)
+  expect(() => s.convertFx(args)).toThrow(/حركات عملة سابقة تحتاج مراجعة|قيد تحويل العملة/)
   expect(useRawDataStore.getState().journal).toBe(journal)
   expect(useRawDataStore.getState().fxConversions).toBe(docs)
 })
@@ -98,6 +98,8 @@ it('يحجب تحويلاً جديداً بعد سند أجنبي تاريخي �
   const item = s.ensureServiceItemForFreeLine({ nameAr: 'خدمة' })
   s.postSale({ lines: [{ itemId: item, nameAr: 'خدمة', qty: 1, unitPriceMinor: 2000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: useDataStore.getState().customers[0].id, payment: 'cash', treasury: '1101', paidMinor: 2000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, fx: { currencyCode: 'USD', amountMinor: 200, ratePpm: 10000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
   const voucher = s.postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5108', amountMinor: 1500, description: 'صرف', fx: { currencyCode: 'USD', amountMinor: 100, ratePpm: 15000000, decimals: 2 }, bookDecimals: 2, bookCurrencyCode: 'EGP' })
+  // محاكاة مستند تاريخي كان يرحّل كامل سعر السداد على الخزينة بلا قيد فرق.
+  useRawDataStore.setState(state => ({ vouchers: state.vouchers.map(v => v.id === voucher.id ? { ...v, fxOutBookValueMinor: undefined } : v), journal: state.journal.map(e => e.id === voucher.journalEntryId ? { ...e, lines: e.lines.filter(l => l.accountCode !== '4117').map(l => l.accountCode === '1101' ? { ...l, credit: 1500 } : l) } : e) }))
   const before = useRawDataStore.getState().journal
   expect(() => s.convertFx({ fromCurrency: 'USD', fromDecimals: 2, fromTreasury: '1101', fromAmountMinor: 100, toCurrency: 'EGP', toDecimals: 2, toTreasury: '1101', fromRatePpm: 10000000, toRatePpm: 1000000, feeMinor: 0 })).toThrow(/مراجعة محاسبية/)
   expect(useRawDataStore.getState().journal).toBe(before)

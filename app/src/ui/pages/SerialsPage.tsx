@@ -20,6 +20,7 @@ import { todayLocalIso } from '../../core/time.ts'
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   in_stock: { label: 'بالمخزون', cls: 'bg-emerald-500/10 text-emerald-600' },
   sold: { label: 'مباعة', cls: 'bg-sky-500/10 text-sky-600' },
+  maintenance: { label: 'مستخدمة في الصيانة', cls: 'bg-amber-500/10 text-amber-600' },
   returned_supplier: { label: 'مرتجعة للمورد', cls: 'bg-rose-500/10 text-rose-600' },
 }
 
@@ -29,7 +30,7 @@ export function SerialsPage() {
   const toast = useToast()
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier' | 'maintenance'>('all')
   const today = todayLocalIso()
 
   /* ─── استبدال/مقايضة جهاز قديم (Trade-In) — سد فجوة مستقبلية من تقرير النشاط #3 ───
@@ -139,7 +140,7 @@ export function SerialsPage() {
             style={{ textAlign: 'right' }}
           />
         </div>
-        {(['all', 'in_stock', 'sold', 'returned_supplier'] as const).map((st) => (
+        {(['all', 'in_stock', 'sold', 'returned_supplier', 'maintenance'] as const).map((st) => (
           <button
             key={st}
             onClick={() => setStatusFilter(st)}

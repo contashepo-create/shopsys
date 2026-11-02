@@ -27,3 +27,17 @@ it('يختار كمية دفعة محددة ويحافظ على مقام الف�
   fireEvent.click(screen.getByRole('button', { name: /تنفيذ المرتجع/ }))
   expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ amountMinor: 5000, selectedKeys: ['part:0:batch:7'], selectedQuantities: { 'part:0:batch:7': 1 } }))
 })
+
+it('يعرض سيريال القطعة المتبقي للاختيار الفردي ويحفظ مفتاحه عند الإرسال', () => {
+  useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG' } })
+  useRawDataStore.setState({ appUsers: [], currentUserId: null })
+  const choices = maintenanceRefundChoices({ totals: { laborMinor: 1000 }, parts: [{ itemId: 1, nameAr: 'قطعة', qty: 2, unitPriceMinor: 1000, unitCostMinor: 100, serials: ['SER-1', 'SER-2'] }], returnedParts: [{ itemId: 1, qty: 1, serials: ['SER-1'] }] })
+  const onSubmit = vi.fn()
+  render(<ServiceRefundBox grandMinor={3000} refundedMinor={1000} currencySymbol="ج" fmt={String} allowCredit={false} refundableItems={choices.items} partialQuantityKeys={choices.partKeys} referenceValueMinor={3000} onSubmit={onSubmit} />)
+  expect(screen.queryByRole('button', { name: /SER-1/ })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /SER-2/ }))
+  expect(screen.queryByLabelText(/كمية.*SER-2/)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /تنفيذ المرتجع/ }))
+  expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ amountMinor: 1000, selectedKeys: ['part:0:serial:SER-2'] }))
+  expect(choices.parts['part:0:serial:SER-2']).toEqual({ itemId: 1, serial: 'SER-2' })
+})
