@@ -77,3 +77,11 @@ it('يرد ضريبة البيع المؤمّن كما قُيّدت ولا يص�
   expect(entry.lines).toEqual(expect.arrayContaining([expect.objectContaining({ accountCode: '4102', debit: 10000 }), expect.objectContaining({ accountCode: '2102', debit: 1500 }), expect.objectContaining({ accountCode: '1101', credit: 3450 }), expect.objectContaining({ accountCode: '2117', credit: 8050 })]))
   expect(s.getInsuranceRefundBalance(claim.id)).toBe(8050)
 })
+it('يحجب البيع المؤمن بالسيريال حتى دون صلاحية لأن مساره لا يثبت الوحدة المباعة', () => {
+ const s = useDataStore.getState()
+ s.addItem({ nameAr: 'جهاز', sku: '', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 1000, stockQty: 1, priceMinor: 5000, minQty: 0, trackExpiry: false, trackSerial: true, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
+ const item = useDataStore.getState().items[0], provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 }), before = useRawDataStore.getState()
+ expect(() => s.postInsuredSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 5000, unitCostMinor: 1000, discountPercent: 0, soldByWeight: false }], providerId: provider.id, taxPercent: 0, taxInclusive: false })).toThrow(/سيريال/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().items).toBe(before.items)
+})
