@@ -68,6 +68,8 @@ export function InsuranceProvidersSection() {
   const [saleReturnTreasury, setSaleReturnTreasury] = useState('1101')
   const [saleReturnConfirmed, setSaleReturnConfirmed] = useState(false)
   const saleReturnClaim = insuranceClaims.find(claim => claim.id === saleReturnClaimId)
+  const saleReturned = Array.isArray(saleReturnClaim?.salePartialRefunds) ? saleReturnClaim.salePartialRefunds.reduce((sum, row) => sum + row.qty, 0) : 0
+  const saleReturnAmounts = (() => { try { const basis = saleReturnClaim?.salePartialBasis; return basis && saleReturned ? insuredPartialAmounts(basis, saleReturned, basis.qty - saleReturned) : null } catch { return null } })()
   const doSaleReturn = () => {
     try {
       if (saleReturnClaimId == null) return
@@ -82,13 +84,18 @@ export function InsuranceProvidersSection() {
   const [partialReason, setPartialReason] = useState('')
   const [partialTreasury, setPartialTreasury] = useState('1101')
   const [partialConfirmed, setPartialConfirmed] = useState(false)
+  const [partialBatches, setPartialBatches] = useState<Record<number, string>>({})
+  const [partialSerials, setPartialSerials] = useState<string[]>([])
   const partialClaim = insuranceClaims.find(claim => claim.id === partialClaimId)
   const partialPrevious = Array.isArray(partialClaim?.salePartialRefunds) ? partialClaim.salePartialRefunds.reduce((sum, row) => sum + row.qty, 0) : 0
   const partialPreview = (() => { try { return partialClaim?.salePartialBasis ? insuredPartialAmounts(partialClaim.salePartialBasis, partialPrevious, Number(partialQty)) : null } catch { return null } })()
+  const allocations = Object.entries(partialBatches).filter(([, value]) => value.trim() !== '').map(([batchId, value]) => ({ batchId: Number(batchId), qty: Number(value) }))
+  const serialTracking = partialClaim?.salePartialBasis?.tracking === 'serial' || partialClaim?.salePartialBasis?.tracking === 'serial_expiry'
+  const allocationValid = serialTracking ? partialSerials.length === Number(partialQty) && partialSerials.length > 0 : partialClaim?.salePartialBasis?.tracking !== 'expiry' || (allocations.length > 0 && allocations.every(row => Number.isSafeInteger(row.qty) && row.qty > 0) && allocations.reduce((sum, row) => sum + row.qty, 0) === Number(partialQty))
   const doPartialReturn = () => {
     try {
       if (partialClaimId == null) return
-      refundSettledInsuredSalePartial({ claimId: partialClaimId, qty: Number(partialQty), treasury: partialTreasury, reason: partialReason, confirmReturnedStock: partialConfirmed })
+      refundSettledInsuredSalePartial({ claimId: partialClaimId, qty: Number(partialQty), treasury: partialTreasury, reason: partialReason, confirmReturnedStock: partialConfirmed, ...(partialClaim?.salePartialBasis?.tracking === 'expiry' ? { batchAllocations: allocations } : {}), ...(serialTracking ? { serials: partialSerials } : {}) })
       toast.show('سُجل رد الكمية المؤكدة ومستحق الجهة دون صرفه تلقائياً')
       setPartialClaimId(null)
     } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذر رد الكمية', 'error') }
@@ -127,7 +134,7 @@ export function InsuranceProvidersSection() {
                         const returned = Array.isArray(claim.salePartialRefunds) ? claim.salePartialRefunds.reduce((sum, row) => sum + row.qty, 0) : 0
                         const remaining = claim.salePartialBasis ? claim.salePartialBasis.qty - returned : 0
                         if (claim.salePartialBasis && remaining <= 0) return null
-                        return <div key={claim.id} className="text-[11px] text-slate-600">بيع مؤمّن #{claim.id} — {fmt(claim.totalMinor)} {returned === 0 && <button type="button" className="underline text-rose-600" onClick={() => { setSaleReturnClaimId(claim.id); setSaleReturnReason(''); setSaleReturnConfirmed(false) }}>رد البيع كاملاً</button>} {claim.salePartialBasis && remaining > 0 && <button type="button" className="underline text-rose-600" onClick={() => { setPartialClaimId(claim.id); setPartialQty(''); setPartialReason(''); setPartialConfirmed(false) }}>رد كمية من البيع</button>}</div>
+                        return <div key={claim.id} className="text-[11px] text-slate-600">بيع مؤمّن #{claim.id} — {fmt(claim.totalMinor)} <button type="button" className="underline text-rose-600" onClick={() => { setSaleReturnClaimId(claim.id); setSaleReturnReason(''); setSaleReturnConfirmed(false) }}>{returned ? 'رد المتبقي كاملاً' : 'رد البيع كاملاً'}</button> {claim.salePartialBasis && remaining > 0 && <button type="button" className="underline text-rose-600" onClick={() => { setPartialClaimId(claim.id); setPartialQty(''); setPartialReason(''); setPartialConfirmed(false); setPartialBatches({}); setPartialSerials([]) }}>رد كمية من البيع</button>}</div>
                       })}
                       {refundClaims.map(({ claim, balance: due, error }) => error ? <div key={claim.id} className="text-rose-600">مرتجع المطالبة #{claim.id} يحتاج مراجعة</div> : due > 0 ? <div key={claim.id} className="text-amber-700">مستحق للجهة عن المطالبة #{claim.id}: {fmt(due)} <button className="underline" onClick={() => { setRefundClaimId(claim.id); setRefundAmount(''); setRefundReason('') }}>تسجيل صرف</button></div> : null)}
                     </td>
@@ -145,26 +152,35 @@ export function InsuranceProvidersSection() {
         </div>
       )}
 
-      <Modal open={saleReturnClaimId != null} onClose={() => setSaleReturnClaimId(null)} title="رد بيع مؤمّن محصّل بالكامل" subtitle="يُسجّل رد حصة المريض الآن ويُثبت مستحق الجهة، دون دفعه تلقائياً. الرد الجزئي يحتاج مساراً مستقلاً.">
+      <Modal open={saleReturnClaimId != null} onClose={() => setSaleReturnClaimId(null)} title="رد بيع مؤمّن محصّل بالكامل" subtitle="يُسجّل رد حصة المريض للكمية المتبقية ويُثبت مستحق الجهة، دون دفعه تلقائياً.">
         <div className="space-y-3">
-          {saleReturnClaim && <p>حصة المريض التي ستُصرف: {fmt(saleReturnClaim.totalMinor - saleReturnClaim.claimMinor)} · مستحق جهة التأمين: {fmt(saleReturnClaim.claimMinor)}</p>}
-          {Array.isArray(saleReturnClaim?.saleSerials) && saleReturnClaim.saleSerials.length > 0 && <p>الوحدات التي يجب استلامها: {saleReturnClaim.saleSerials.map(row => `${row.serial}${row.batch ? ` (دفعة ${row.batch.lotNumber || row.batch.id}، صلاحية ${row.batch.expiryDate})` : ''}`).join('، ')}</p>}
+          {saleReturnClaim && (saleReturned > 0 && !saleReturnAmounts ? <p className="text-rose-600">سجل المرتجعات الجزئية غير صالح — يلزم المراجعة.</p> : <p>حصة المريض التي ستُصرف: {fmt(saleReturnAmounts?.patient ?? (saleReturnClaim.totalMinor - saleReturnClaim.claimMinor))} · مستحق جهة التأمين: {fmt(saleReturnAmounts?.provider ?? saleReturnClaim.claimMinor)}{saleReturned > 0 && saleReturnClaim.salePartialBasis && ` · الكمية المتبقية: ${saleReturnClaim.salePartialBasis.qty - saleReturned}`}</p>)}
+          {saleReturned > 0 && (saleReturnClaim?.salePartialBasis?.tracking === 'expiry' || saleReturnClaim?.salePartialBasis?.tracking === 'serial_expiry') && <p>يجب استلام كامل المتبقي من كل دفعات البيع الأصلية، بعد استبعاد الكميات المرتجعة سابقاً: {(Array.isArray(saleReturnClaim.expiryBatches) ? saleReturnClaim.expiryBatches : []).map(batch => {
+            const used = (Array.isArray(saleReturnClaim.salePartialRefunds) ? saleReturnClaim.salePartialRefunds : []).flatMap(row => row.batchAllocations ?? []).filter(row => row.batchId === batch.id).reduce((sum, row) => sum + row.qty, 0)
+            return `${batch.lotNumber || batch.id}: ${batch.qty - used}`
+          }).join('، ')}</p>}
+          {Array.isArray(saleReturnClaim?.saleSerials) && saleReturnClaim.saleSerials.length > 0 && <p>الوحدات التي يجب استلامها: {saleReturnClaim.saleSerials.filter(row => !(Array.isArray(saleReturnClaim.salePartialRefunds) ? saleReturnClaim.salePartialRefunds : []).some(refund => refund.serials?.includes(row.serial))).map(row => `${row.serial}${row.batch ? ` (دفعة ${row.batch.lotNumber || row.batch.id}، صلاحية ${row.batch.expiryDate})` : ''}`).join('، ')}</p>}
           <Field label="خزينة رد المريض"><TreasuryPicker operation="refund" value={saleReturnTreasury} onChange={value => { setSaleReturnTreasury(value); setSaleReturnConfirmed(false) }} /></Field>
           <Field label="سبب المرتجع ومرجع رد المريض"><input aria-label="سبب رد البيع المؤمن" value={saleReturnReason} onChange={event => { setSaleReturnReason(event.target.value); setSaleReturnConfirmed(false) }} className={inputCls} /></Field>
           <label className="flex items-center gap-2"><input type="checkbox" checked={saleReturnConfirmed} onChange={event => setSaleReturnConfirmed(event.target.checked)} /> أؤكد استلام كامل البضاعة وصرف حصة المريض فعلياً</label>
-          <Btn disabled={!saleReturnConfirmed || !saleReturnReason.trim()} onClick={doSaleReturn}>تأكيد رد البيع كاملاً</Btn>
+          <Btn disabled={!saleReturnConfirmed || !saleReturnReason.trim() || (saleReturned > 0 && !saleReturnAmounts)} onClick={doSaleReturn}>تأكيد رد البيع كاملاً</Btn>
         </div>
       </Modal>
 
-      <Modal open={partialClaimId != null} onClose={() => setPartialClaimId(null)} title="رد كمية من بيع مؤمّن محصّل" subtitle="لبيع صنف واحد بوحدات كاملة مثبتة، بلا صلاحية أو سيريال. توزّع الكسور تراكمياً ويُحفظ أصل البيع.">
+      <Modal open={partialClaimId != null} onClose={() => setPartialClaimId(null)} title="رد كمية من بيع مؤمّن محصّل" subtitle="لبيع صنف واحد بوحدات كاملة مثبتة؛ حدد السيريالات أو دفعات الصلاحية المستلمة فعلياً.">
         <div className="space-y-3">
           {partialClaim?.salePartialBasis && <p>الصنف: {items.find(item => item.id === partialClaim.salePartialBasis!.itemId)?.nameAr ?? `#${partialClaim.salePartialBasis.itemId}`} · الكمية المتبقية: {partialClaim.salePartialBasis.qty - partialPrevious} من {partialClaim.salePartialBasis.qty}</p>}
           <Field label="الكمية المرتجعة"><input aria-label="كمية مرتجع البيع المؤمن" className={inputCls} value={partialQty} inputMode="numeric" onChange={event => { setPartialQty(event.target.value); setPartialConfirmed(false) }} /></Field>
+          {serialTracking && <fieldset><legend>حدد السيريالات المستلمة فعلياً</legend>{(Array.isArray(partialClaim?.saleSerials) ? partialClaim.saleSerials : []).filter(row => !(Array.isArray(partialClaim?.salePartialRefunds) ? partialClaim.salePartialRefunds : []).some(refund => refund.serials?.includes(row.serial))).map(row => <label key={row.serial} className="flex gap-2"><input type="checkbox" checked={partialSerials.includes(row.serial)} onChange={event => { setPartialSerials(prev => event.target.checked ? [...prev, row.serial] : prev.filter(value => value !== row.serial)); setPartialConfirmed(false) }} />{row.serial}{row.batch && ` — دفعة ${row.batch.lotNumber || row.batch.id}، صلاحية ${row.batch.expiryDate}`}</label>)}</fieldset>}
+          {partialClaim?.salePartialBasis?.tracking === 'expiry' && <fieldset><legend>حدد كمية كل دفعة مستلمة فعلياً</legend>{(Array.isArray(partialClaim.expiryBatches) ? partialClaim.expiryBatches : []).map(batch => {
+            const returned = (Array.isArray(partialClaim.salePartialRefunds) ? partialClaim.salePartialRefunds : []).flatMap(row => row.batchAllocations ?? []).filter(row => row.batchId === batch.id).reduce((sum, row) => sum + row.qty, 0)
+            return <Field key={batch.id} label={`دفعة ${batch.lotNumber || batch.id} — صلاحية ${batch.expiryDate} — المتبقي ${batch.qty - returned}`}><input aria-label={`كمية الدفعة ${batch.lotNumber || batch.id}`} value={partialBatches[batch.id] ?? ''} inputMode="numeric" className={inputCls} onChange={event => { setPartialBatches(prev => ({ ...prev, [batch.id]: event.target.value })); setPartialConfirmed(false) }} /></Field>
+          })}</fieldset>}
           {partialPreview && <p>حصة المريض المصروفة: {fmt(partialPreview.patient)} · مستحق الجهة: {fmt(partialPreview.provider)} · الضريبة: {fmt(partialPreview.tax)} · تكلفة المخزون: {fmt(partialPreview.cost)}</p>}
           <Field label="خزينة رد المريض"><TreasuryPicker value={partialTreasury} operation="refund" onChange={value => { setPartialTreasury(value); setPartialConfirmed(false) }} /></Field>
           <Field label="سبب المرتجع ومرجع رد المريض"><input aria-label="سبب رد كمية البيع المؤمن" value={partialReason} onChange={event => { setPartialReason(event.target.value); setPartialConfirmed(false) }} className={inputCls} /></Field>
           <label className="flex items-center gap-2"><input type="checkbox" checked={partialConfirmed} onChange={event => setPartialConfirmed(event.target.checked)} /> أؤكد استلام الكمية المحددة وصرف حصة المريض الموضحة فعلياً</label>
-          <Btn disabled={!partialConfirmed || !partialReason.trim() || !partialPreview || partialPreview.total <= 0} onClick={doPartialReturn}>تأكيد رد الكمية</Btn>
+          <Btn disabled={!partialConfirmed || !partialReason.trim() || !partialPreview || partialPreview.total <= 0 || !allocationValid} onClick={doPartialReturn}>تأكيد رد الكمية</Btn>
         </div>
       </Modal>
 

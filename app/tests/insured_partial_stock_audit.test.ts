@@ -35,10 +35,11 @@ it('يحجب الكمية غير المثبتة والمطالبة التاري�
  expect(() => s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true })).toThrow(/مثبت|مراجعة/)
  expect(useRawDataStore.getState().journal).toBe(legacy.journal)
 })
-it('يحجب رد كامل بعد رد جزئي ويحجب العبث بقيد مرتجع سابق', () => {
+it('يرد المتبقي بعد جزئي ويحجب العبث بقيد مرتجع سابق', () => {
  const { s, claim } = fixture()
  s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد أول', confirmReturnedStock: true })
- expect(() => s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'تكرار', confirmReturnedStock: true })).toThrow(/جزئي/)
+ s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'رد المتبقي', confirmReturnedStock: true })
+ expect(s.getInsuranceRefundBalance(claim.id)).toBe(16100)
  const saved = useRawDataStore.getState(), id = saved.insuranceClaims[0].salePartialRefunds![0].journalEntryId
  useRawDataStore.setState({ journal: saved.journal.filter(e => e.id !== id) })
  expect(() => s.getInsuranceRefundBalance(claim.id)).toThrow(/مراجعة/)

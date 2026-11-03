@@ -110,3 +110,68 @@ it('لا يقبل وحدة باسم فريد إذا كان معرفها الدا
  expect(() => s.postInsuredSale(args)).toThrow(/سيريال/)
  expect(useRawDataStore.getState().journal).toBe(before.journal)
 })
+it('يرد سيريالاً محدداً من بيع محصل ثم يرد الوحدة المتبقية دون إعادة الأولى', () => {
+ const { s, provider, args } = fixture()
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 2, serials: ['SER-1', 'SER-2'] }] })
+ s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ expect(() => s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true })).toThrow(/سيريال/)
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true, serials: ['SER-2'] })
+ expect(useDataStore.getState().serials.find(u => u.serial === 'SER-2')?.status).toBe('in_stock')
+ expect(useDataStore.getState().serials.find(u => u.serial === 'SER-1')?.status).toBe('sold')
+ s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'باقي', confirmReturnedStock: true })
+ expect(useDataStore.getState().serials.every(u => u.status === 'in_stock')).toBe(true)
+ expect(s.getInsuranceRefundBalance(claim.id)).toBe(1400)
+})
+it('يرد سيريالاً بدفعة صلاحيته المختارة دون استعادة دفعة أخرى', () => {
+ const { s, provider, args } = expiryFixture()
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 2, serials: ['SER-OLD', 'SER-NEW'] }] }); s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true, serials: ['SER-NEW'] })
+ const after = useDataStore.getState(), unit = after.serials.find(u => u.serial === 'SER-NEW')!
+ expect(after.batches.find(b => b.id === unit.batchId)?.lotNumber).toBe('NEW')
+ expect(after.batches.some(b => b.lotNumber === 'OLD')).toBe(false)
+ s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'باقي', confirmReturnedStock: true })
+ expect(useDataStore.getState().batches.map(b => b.lotNumber).sort()).toEqual(['NEW', 'OLD'])
+})
+it('لا يعيد السيريال الذي بيع مجدداً بعد مرتجع جزئي', () => {
+ const { s, provider, args } = fixture()
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 2, serials: ['SER-1', 'SER-2'] }] }); s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true, serials: ['SER-2'] })
+ s.postSale({ lines: args.lines, customerId: null, payment: 'cash', treasury: '1101', paidMinor: 1000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'باقي', confirmReturnedStock: true })
+ expect(useDataStore.getState().serials.find(u => u.serial === 'SER-2')?.status).toBe('sold')
+ expect(useDataStore.getState().serials.find(u => u.serial === 'SER-1')?.status).toBe('in_stock')
+})
+it('يحجب التكرار أو فقد ربط سيريال متبقٍ قبل كتابة مرتجع جديد', () => {
+ const { s, provider, args } = fixture()
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 2, serials: ['SER-1', 'SER-2'] }] }); s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true, serials: ['SER-2'] })
+ const before = useRawDataStore.getState()
+ expect(() => s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true, serials: ['SER-2'] })).toThrow(/سيريال/)
+ useRawDataStore.setState({ serials: before.serials.map(unit => unit.serial === 'SER-1' ? { ...unit, insuredClaimId: null } : unit) })
+ const corrupted = useRawDataStore.getState()
+ expect(() => s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'باقي', confirmReturnedStock: true })).toThrow(/سيريال/)
+ expect(useRawDataStore.getState().journal).toBe(corrupted.journal)
+})
+it('يحجب مرتجع السيريال عند تغيير رقم رابط دفعته رغم بقاء لقطة الصلاحية', () => {
+ const { s, provider, args } = expiryFixture(); s.postInsuredSale(args); s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ useRawDataStore.setState(state => ({ serials: state.serials.map(unit => unit.serial === 'SER-NEW' ? { ...unit, batchId: 999 } : unit) }))
+ const before = useRawDataStore.getState()
+ expect(() => s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'رد', confirmReturnedStock: true })).toThrow(/سيريال|دفعة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('بعد إعادة ربط دفعة برقم جديد يُباع السيريال ويُرد مرة أخرى بدفعة صحيحة', () => {
+ const { s, provider, args } = expiryFixture(); s.postInsuredSale(args); s.settleInsuranceClaims(provider.id)
+ const original = useRawDataStore.getState(), claim = original.insuranceClaims[0], batch = claim.expiryBatches![0]
+ useRawDataStore.setState({ batches: [...original.batches, { ...batch, lotNumber: 'OTHER', qty: 1 }] })
+ s.refundSettledInsuredSale({ claimId: claim.id, treasury: '1101', reason: 'رد أول', confirmReturnedStock: true })
+ s.postInsuredSale(args); s.settleInsuranceClaims(provider.id)
+ const nextClaim = useDataStore.getState().insuranceClaims.find(c => c.id !== claim.id)!
+ s.refundSettledInsuredSale({ claimId: nextClaim.id, treasury: '1101', reason: 'رد ثان', confirmReturnedStock: true })
+ const state = useDataStore.getState(), unit = state.serials.find(u => u.serial === 'SER-NEW')!
+ expect(state.batches.find(b => b.id === unit.batchId)?.lotNumber).toBe('NEW')
+})

@@ -49,6 +49,8 @@ export interface InsuredPartialBasis {
   taxMinor: Minor
   providerMinor: Minor
   costMinor: Minor
+  /** تسجل عند البيع فقط، ولا يُستنتج تاريخ الدفعات لسجل قديم. */
+  tracking?: 'expiry' | 'serial' | 'serial_expiry'
 }
 
 /** توزيع تراكمي موثق: المبلغ أولاً، ثم الضريبة والتغطية؛ يستهلك الباقي عند آخر وحدة. */
@@ -88,7 +90,7 @@ export interface InsuranceClaim {
   saleRefund?: { journalEntryId: number; treasury: string; reason: string; date: string }
   /** أصل وحدوي محدد للبيع الجديد وسجل مرتجعاته؛ لا يتوفر للسجلات القديمة. */
   salePartialBasis?: InsuredPartialBasis
-  salePartialRefunds?: { qty: number; journalEntryId: number; treasury: string; reason: string; date: string }[]
+  salePartialRefunds?: { qty: number; journalEntryId: number; treasury: string; reason: string; date: string; batchAllocations?: { batchId: number; qty: number }[]; serials?: string[] }[]
   /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
   saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
   /** الوحدات المختارة فعلياً ولقطة دفعة كل وحدة إن تتبعت الصلاحية. */
