@@ -1261,6 +1261,22 @@ export interface VehicleCostCenterEntry {
   partQty?: number
 }
 
+/** إصلاح ساق أجنبي موثق؛ التاريخ يخص المذكرة لا تاريخ القيد الأصلي. */
+export interface FxExternalRepair {
+  previousFx: FxLeg | null
+  previousDate: string | null
+  fx: FxLeg
+  date: string
+  documentDate: string | null
+  journalEntryId: number
+  treasury: string
+  amountMinor: number
+  outBookValueMinor: number | null
+  reason: string
+  at: string
+  by: string
+}
+
 export interface PurchaseInvoice {
   id: number
   invoiceNumber: string
@@ -1303,6 +1319,7 @@ export interface PurchaseInvoice {
   fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
   /** التكلفة الدفترية الدقيقة للعملة المصروفة (تغيب عن المستندات القديمة). */
   fxOutBookValueMinor?: number
+  fxRepairHistory?: FxExternalRepair[]
   /** سجل تدقيق التعديلات (طلب المالك) */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string }[]
   /** المخزن الذي وردت إليه البضاعة — null = فاتورة مختلطة تُقرأ مخازنها من السطور أو سجل قديم */
@@ -1386,6 +1403,7 @@ export interface Voucher {
   fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
   /** التكلفة الدفترية الدقيقة للعملة المصروفة (تغيب عن المستندات القديمة). */
   fxOutBookValueMinor?: number
+  fxRepairHistory?: FxExternalRepair[]
   /** قيد العكس، إن عُكس السند من مسار التصحيح */
   reversalEntryId?: number | null
 }
@@ -1811,6 +1829,7 @@ interface DataState {
   correctSaleFx: (args: { saleId: number; fx: FxLeg; reason: string; confirmed: boolean }) => void
   reconstructSaleFx: (args: { saleId: number; fx: FxLeg; receiptDate: string; reason: string; confirmed: boolean }) => void
   correctSaleFxMemoDate: (args: { saleId: number; date: string; reason: string; confirmed: boolean }) => void
+  repairExternalFx: (args: { kind: 'purchase' | 'voucher'; id: number; fx: FxLeg; date: string; reason: string; confirmed: boolean }) => void
   transferFx: (args: { currency: string; decimals: 0 | 2 | 3; fromTreasury: string; toTreasury: string; amountMinor: number; date?: string; notes?: string }) => FxConversionDoc
   reverseFxTransfer: (args: { conversionId: number; reason: string }) => void
   reverseFxConversion: (args: { conversionId: number; reason: string }) => void
@@ -4193,6 +4212,22 @@ function assertFxWithdrawalJournal(journal: JournalEntry[], entryId: number | nu
   if (difference < 0 && !entry.lines.some(line => line.accountCode === FX_LOSS_ACCOUNT && line.debit === -difference && line.credit === 0)) return fail()
 }
 
+/** تطابق كامل حساب الخزينة وفروق العملة، لا مجرد وجود بند جزئي يساوي المبلغ. */
+function assertFxRepairLines(journal: JournalEntry[], entryId: number | null, treasury: string, amount: number, out: boolean, cost: number | null, label: string): void {
+  const matches = journal.filter(entry => entry.id === entryId)
+  const fail = (): never => { throw new Error(`قيد العملة ${label} يحتوي حركة خزينة أو فرق عملة غير مثبت — يلزم المراجعة`) }
+  if (matches.length !== 1 || !Array.isArray(matches[0].lines)) return fail()
+  const lines = matches[0].lines, cash = lines.filter(line => line.accountCode === treasury)
+  const expected = out ? (cost ?? amount) : amount
+  if (cash.length !== 1 || cash[0].debit !== (out ? 0 : expected) || cash[0].credit !== (out ? expected : 0)) return fail()
+  if (out) {
+    const difference = amount - expected
+    const gains = lines.filter(line => line.accountCode === FX_GAIN_ACCOUNT)
+    const losses = lines.filter(line => line.accountCode === FX_LOSS_ACCOUNT)
+    if (difference > 0 ? gains.length !== 1 || gains[0].debit !== 0 || gains[0].credit !== difference || losses.length !== 0 : difference < 0 ? losses.length !== 1 || losses[0].credit !== 0 || losses[0].debit !== -difference || gains.length !== 0 : gains.length !== 0 || losses.length !== 0) return fail()
+  }
+}
+
 /** ساق أجنبية واحدة لا تحدد توزيع العملة بين خزائن أو موظف. */
 function assertSingleFxTreasury(treasury: string, paidMinor: number, allocations: { accountCode: string; amountMinor: number; employeeId?: number }[] | undefined, label: string): void {
   if (allocations?.length && (allocations.length !== 1 || allocations[0].accountCode !== treasury || allocations[0].employeeId != null || allocations[0].amountMinor !== paidMinor)) throw new Error(`${label}: العملة الأجنبية تحتاج خزينة واحدة مطابقة لكامل المبلغ — راجع توزيع التحصيل أو السداد`)
@@ -5270,14 +5305,39 @@ function assertFxRepairPermission(state: DataState): void {
   if (!user || !effectivePermissionsFor(user, roles).has('acc.journal.reverse')) throw new Error('تصحيح تاريخ العملة يتطلب صلاحية عكس قيد في الفرع')
 }
 
+function assertSaleFxHistoryShape(sale: SaleInvoice): void {
+  if ((sale.fxCorrectionHistory != null && !Array.isArray(sale.fxCorrectionHistory)) || (sale.fxMemoDateHistory != null && !Array.isArray(sale.fxMemoDateHistory))) throw new Error(`سجل تصحيح عملة الفاتورة ${sale.invoiceNumber} تالف — يلزم المراجعة`)
+}
+
+function fxLegKey(leg: FxLeg | null): string { return JSON.stringify(leg == null ? null : [leg.currencyCode, leg.amountMinor, leg.ratePpm, leg.decimals]) }
+
+/** طابق سلسلة الإثبات مع الأصل الحالي؛ القيد وتاريخ المستند لا يُستبدلان. */
+function externalFxMemoDate(doc: { fx?: FxLeg | null; date: string; journalEntryId: number | null; fxRepairHistory?: FxExternalRepair[] }, treasury: string, amount: number, outBookValueMinor: number | null, label: string, bookCode: string, bookDecimals: 0 | 2 | 3): string {
+  const originalDate = typeof doc.date === 'string' ? doc.date.slice(0, 10) : null
+  if (doc.fxRepairHistory != null && !Array.isArray(doc.fxRepairHistory)) throw new Error(`سجل إصلاح العملة ${label} غير مطابق — يلزم المراجعة`)
+  const history = doc.fxRepairHistory ?? []
+  if (!history.length) return originalDate ?? ''
+  if (!doc.fx) throw new Error(`ساق العملة المصححة ${label} مفقودة — يلزم المراجعة`)
+  let date = originalDate || null
+  let previousFx: FxLeg | null = history[0].previousFx
+  for (const row of history) {
+    if (!row.reason?.trim() || !row.by?.trim() || !row.at?.trim() || row.documentDate !== originalDate || row.previousDate !== date || fxLegKey(row.previousFx) !== fxLegKey(previousFx) || !isValidExpiryDate(row.date) || row.date > todayLocalIso() || row.journalEntryId !== doc.journalEntryId || row.treasury !== treasury || row.amountMinor !== amount || row.outBookValueMinor !== outBookValueMinor || !row.fx || validateFxLeg(row.fx, bookCode).length || convertFxToBookMinor(row.fx, bookDecimals) !== amount) throw new Error(`سجل إصلاح العملة ${label} غير مطابق — يلزم المراجعة`)
+    previousFx = row.fx
+    date = row.date
+  }
+  if (fxLegKey(previousFx) !== fxLegKey(doc.fx)) throw new Error(`سجل إصلاح العملة ${label} غير مطابق — يلزم المراجعة`)
+  return date ?? ''
+}
+
 /** حساب محلي من لقطة ثابتة؛ الاستثناء الداخلي يستخدم لمعاينة إصلاح الساق قبل الكتابة. */
-function collectFxFlows(raw: DataState, excludedSaleId?: number): FxFlow[] {
+function collectFxFlows(raw: DataState, exclude?: { kind: 'sale' | 'purchase' | 'voucher'; id: number }): FxFlow[] {
   const state = getBranchScopedDataState(raw)
   const book = bookCurrencyOf()
   const flows: FxFlow[] = []
   /* مبيعات حُصّلت بعملة أجنبية — دخول بسعر التحصيل (قيمته الدفترية يومها) */
   for (const sale of state.sales) {
-    if (sale.id === excludedSaleId) continue
+    if (exclude?.kind === 'sale' && sale.id === exclude.id) continue
+    assertSaleFxHistoryShape(sale)
     if (!sale.fx) {
       if (sale.fxCorrectionHistory?.length || sale.fxReconstructionEvidence || sale.fxMemoDateHistory?.length) throw new Error(`ساق العملة المصححة للفاتورة ${sale.invoiceNumber} مفقودة — يلزم المراجعة`)
       continue
@@ -5286,9 +5346,11 @@ function collectFxFlows(raw: DataState, excludedSaleId?: number): FxFlow[] {
     const treasury = sale.treasury ?? '1101'
     const fxKey = (leg: FxLeg) => JSON.stringify([leg.currencyCode, leg.amountMinor, leg.ratePpm, leg.decimals])
     const evidence = sale.fxReconstructionEvidence
-    if (evidence || sale.fxMemoDateHistory?.length) {
+    if (evidence || sale.fxMemoDateHistory?.length || sale.fxCorrectionHistory?.length) {
       if (raw.sales.filter(row => row.id === sale.id).length !== 1) throw new Error(`فاتورة العملة ${sale.invoiceNumber} غير فريدة — يلزم المراجعة`)
       assertFxSourceJournal(raw.journal, sale.journalEntryId, 'sale', sale.id, treasury, sale.paidMinor!, 'debit', sale.invoiceNumber)
+      assertFxRepairLines(raw.journal, sale.journalEntryId, treasury, sale.paidMinor!, false, null, sale.invoiceNumber)
+      assertFxRepairLines(state.journal, sale.journalEntryId, treasury, sale.paidMinor!, false, null, sale.invoiceNumber)
     }
     if (evidence && (!evidence.reason?.trim() || !evidence.by?.trim() || !evidence.at?.trim() || evidence.journalEntryId !== sale.journalEntryId || evidence.treasury !== treasury || evidence.paidMinor !== sale.paidMinor || fxKey(evidence.fx) !== fxKey(sale.fx))) throw new Error(`إثبات ساق العملة المستعادة للفاتورة ${sale.invoiceNumber} غير مطابق — يلزم المراجعة`)
     const originalDate = typeof sale.date === 'string' ? sale.date.slice(0, 10) : null
@@ -5318,16 +5380,25 @@ function collectFxFlows(raw: DataState, excludedSaleId?: number): FxFlow[] {
   }
   /* مشتريات سُدّدت بعملة أجنبية — خروج بسعر السداد */
   for (const purchase of state.purchases) {
-    if (!purchase.fx) continue
+    if (exclude?.kind === 'purchase' && purchase.id === exclude.id) continue
+    if (!purchase.fx) { if (purchase.fxRepairHistory != null && (!Array.isArray(purchase.fxRepairHistory) || purchase.fxRepairHistory.length)) throw new Error(`ساق العملة المصححة ${purchase.invoiceNumber} مفقودة أو سجلها تالف — يلزم المراجعة`); continue }
     assertRecordedFxLeg(purchase.fx, book.code, purchase.invoiceNumber)
     if (purchase.custodyFileId != null) throw new Error(`سداد ${purchase.invoiceNumber} بعملة أجنبية من عهدة غير موثق كرصيد خزينة — يلزم المراجعة`)
     const treasury = purchase.treasury ?? '1101'
+    const memoDate = externalFxMemoDate(purchase, treasury, purchase.paidMinor, purchase.fxOutBookValueMinor ?? null, purchase.invoiceNumber, book.code, book.decimals)
+    if (purchase.fxRepairHistory?.length && raw.purchases.filter(row => row.id === purchase.id).length !== 1) throw new Error('فاتورة الشراء المصححة غير فريدة — يلزم المراجعة')
+    if (purchase.fxRepairHistory?.length) { assertFxRepairLines(raw.journal, purchase.journalEntryId, treasury, purchase.paidMinor, true, purchase.fxOutBookValueMinor ?? null, purchase.invoiceNumber); assertFxRepairLines(state.journal, purchase.journalEntryId, treasury, purchase.paidMinor, true, purchase.fxOutBookValueMinor ?? null, purchase.invoiceNumber) }
     assertSingleFxTreasury(treasury, purchase.paidMinor, purchase.paymentAllocations, purchase.invoiceNumber)
     if (!Number.isSafeInteger(purchase.paidMinor) || purchase.paidMinor <= 0 || convertFxToBookMinor(purchase.fx, book.decimals) !== purchase.paidMinor) throw new Error(`ساق العملة الأجنبية للفاتورة ${purchase.invoiceNumber} لا تطابق المسدد — يلزم المراجعة`)
-    if (purchase.fxOutBookValueMinor !== undefined) assertFxWithdrawalJournal(state.journal, purchase.journalEntryId, 'purchase', purchase.id, treasury, purchase.paidMinor, purchase.fxOutBookValueMinor, purchase.invoiceNumber)
-    else assertFxSourceJournal(state.journal, purchase.journalEntryId, 'purchase', purchase.id, treasury, purchase.paidMinor, 'credit', purchase.invoiceNumber)
+    if (purchase.fxOutBookValueMinor !== undefined) {
+      assertFxWithdrawalJournal(state.journal, purchase.journalEntryId, 'purchase', purchase.id, treasury, purchase.paidMinor, purchase.fxOutBookValueMinor, purchase.invoiceNumber)
+      if (purchase.fxRepairHistory?.length) assertFxWithdrawalJournal(raw.journal, purchase.journalEntryId, 'purchase', purchase.id, treasury, purchase.paidMinor, purchase.fxOutBookValueMinor, purchase.invoiceNumber)
+    } else {
+      assertFxSourceJournal(state.journal, purchase.journalEntryId, 'purchase', purchase.id, treasury, purchase.paidMinor, 'credit', purchase.invoiceNumber)
+      if (purchase.fxRepairHistory?.length) assertFxSourceJournal(raw.journal, purchase.journalEntryId, 'purchase', purchase.id, treasury, purchase.paidMinor, 'credit', purchase.invoiceNumber)
+    }
     flows.push({
-      date: purchase.date.slice(0, 10), seq: purchase.journalEntryId ?? 0, treasury: purchase.treasury ?? '1101', currency: purchase.fx.currencyCode, decimals: purchase.fx.decimals,
+      date: memoDate, seq: purchase.journalEntryId ?? 0, treasury: purchase.treasury ?? '1101', currency: purchase.fx.currencyCode, decimals: purchase.fx.decimals,
       amountMinor: purchase.fx.amountMinor,
       bookValueMinor: purchase.fxOutBookValueMinor ?? purchase.paidMinor,
       kind: 'out', ref: purchase.invoiceNumber,
@@ -5335,18 +5406,25 @@ function collectFxFlows(raw: DataState, excludedSaleId?: number): FxFlow[] {
   }
   /* سندات قبض/صرف بعملة أجنبية — المعكوس يُحسب من حركة العملة نفسها */
   for (const voucher of state.vouchers) {
-    if (!voucher.fx) continue
-    if (voucher.reversalEntryId != null) { assertFxVoucherReversal(state.journal, voucher); continue }
+    if (exclude?.kind === 'voucher' && voucher.id === exclude.id) continue
+    if (!voucher.fx) { if (voucher.fxRepairHistory != null && (!Array.isArray(voucher.fxRepairHistory) || voucher.fxRepairHistory.length)) throw new Error(`ساق العملة المصححة ${voucher.voucherNumber} مفقودة أو سجلها تالف — يلزم المراجعة`); continue }
+    const memoDate = externalFxMemoDate(voucher, voucher.treasury, voucher.amountMinor, voucher.fxOutBookValueMinor ?? null, voucher.voucherNumber, book.code, book.decimals)
+    if (voucher.fxRepairHistory?.length && raw.vouchers.filter(row => row.id === voucher.id).length !== 1) throw new Error('سند العملة المصحح غير فريد — يلزم المراجعة')
+    if (voucher.fxRepairHistory?.length) { assertFxRepairLines(raw.journal, voucher.journalEntryId, voucher.treasury, voucher.amountMinor, voucher.kind === 'payment', voucher.fxOutBookValueMinor ?? null, voucher.voucherNumber); assertFxRepairLines(state.journal, voucher.journalEntryId, voucher.treasury, voucher.amountMinor, voucher.kind === 'payment', voucher.fxOutBookValueMinor ?? null, voucher.voucherNumber) }
+    if (voucher.reversalEntryId != null) { assertFxVoucherReversal(state.journal, voucher); if (voucher.fxRepairHistory?.length) assertFxVoucherReversal(raw.journal, voucher); continue }
     assertRecordedFxLeg(voucher.fx, book.code, voucher.voucherNumber)
     if (!Number.isSafeInteger(voucher.amountMinor) || voucher.amountMinor <= 0 || convertFxToBookMinor(voucher.fx, book.decimals) !== voucher.amountMinor) throw new Error(`ساق عملة ${voucher.voucherNumber} لا تطابق مبلغ السند — يلزم المراجعة`)
     if (voucher.kind === 'transfer') throw new Error(`تحويل خزائن أجنبي ${voucher.voucherNumber} لا يحفظ تدفق الوجهة — يلزم مراجعة المستند قبل عرض أرصدة العملات`)
     if (voucher.fxOutBookValueMinor !== undefined) {
       if (voucher.kind !== 'payment') throw new Error(`قيمة صرف العملة للسند ${voucher.voucherNumber} لا تطابق نوعه — يلزم المراجعة`)
       assertFxWithdrawalJournal(state.journal, voucher.journalEntryId, 'payment_voucher', voucher.id, voucher.treasury, voucher.amountMinor, voucher.fxOutBookValueMinor, voucher.voucherNumber)
+      if (voucher.fxRepairHistory?.length) assertFxWithdrawalJournal(raw.journal, voucher.journalEntryId, 'payment_voucher', voucher.id, voucher.treasury, voucher.amountMinor, voucher.fxOutBookValueMinor, voucher.voucherNumber)
+    } else {
+      assertFxSourceJournal(state.journal, voucher.journalEntryId, voucher.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher', voucher.id, voucher.treasury, voucher.amountMinor, voucher.kind === 'receipt' ? 'debit' : 'credit', voucher.voucherNumber)
+      if (voucher.fxRepairHistory?.length) assertFxSourceJournal(raw.journal, voucher.journalEntryId, voucher.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher', voucher.id, voucher.treasury, voucher.amountMinor, voucher.kind === 'receipt' ? 'debit' : 'credit', voucher.voucherNumber)
     }
-    else assertFxSourceJournal(state.journal, voucher.journalEntryId, voucher.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher', voucher.id, voucher.treasury, voucher.amountMinor, voucher.kind === 'receipt' ? 'debit' : 'credit', voucher.voucherNumber)
     flows.push({
-      date: voucher.date.slice(0, 10), seq: voucher.journalEntryId, treasury: voucher.treasury, currency: voucher.fx.currencyCode, decimals: voucher.fx.decimals,
+      date: memoDate, seq: voucher.journalEntryId, treasury: voucher.treasury, currency: voucher.fx.currencyCode, decimals: voucher.fx.decimals,
       amountMinor: voucher.fx.amountMinor, bookValueMinor: voucher.kind === 'payment' ? (voucher.fxOutBookValueMinor ?? voucher.amountMinor) : voucher.amountMinor,
       kind: voucher.kind === 'receipt' ? 'in' : 'out', ref: voucher.voucherNumber,
     })
@@ -10120,6 +10198,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        assertSaleFxHistoryShape(sale)
         if (sale.fxCorrectionHistory?.length || sale.fxReconstructionEvidence || sale.fxMemoDateHistory?.length) throw new Error('فاتورة بسجل عملة مصحح — استخدم مستند تصحيح مستقل للحفاظ على سجل الإثبات')
         if (sale.fx != null) {
           if (args.paidMinor !== sale.paidMinor || args.treasury !== (sale.treasury ?? '1101') || args.customerId !== sale.customerId) throw new Error('لا يمكن تغيير تحصيل أو خزينة أو عميل فاتورة بعملة أجنبية بالتعديل — يلزم مستند مستقل')
@@ -10430,6 +10509,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const inv = state.purchases.find((p) => p.id === args.purchaseId)
         if (!inv) throw new Error('فاتورة الشراء غير موجودة')
+        if (inv.fxRepairHistory != null && (!Array.isArray(inv.fxRepairHistory) || inv.fxRepairHistory.length)) throw new Error('فاتورة بسجل عملة مصحح أو تالف — يلزم المراجعة')
         if (inv.fx != null) throw new Error('لا يمكن تعديل فاتورة مسددة بعملة أجنبية — صحّحها بمستند مستقل مع مراجعة ساق العملة')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         const editedSupplierId = args.supplierId ?? inv.supplierId
@@ -14886,6 +14966,8 @@ export const useRawDataStore = create<DataState>()(
         if (JSON.stringify(corrected) === JSON.stringify(previous)) throw new Error('الساق المصححة مطابقة للساق المسجلة')
         assertSingleFxTreasury(treasury, paid, sale.paymentAllocations, sale.invoiceNumber)
         assertFxSourceJournal(state.journal, sale.journalEntryId, 'sale', sale.id, treasury, paid, 'debit', sale.invoiceNumber)
+        assertFxRepairLines(state.journal, sale.journalEntryId, treasury, paid, false, null, sale.invoiceNumber)
+        assertFxRepairLines(scoped.journal, sale.journalEntryId, treasury, paid, false, null, sale.invoiceNumber)
         const flows = get().getFxFlows()
         const existing = flows.filter(flow => flow.seq === sale.journalEntryId && flow.ref === sale.invoiceNumber && flow.kind === 'in' && flow.treasury === treasury && flow.currency === previous.currencyCode)
         if (existing.length !== 1) throw new Error('ساق الفاتورة الأصلية غير مثبتة — يلزم المراجعة')
@@ -14905,6 +14987,7 @@ export const useRawDataStore = create<DataState>()(
         assertFxRepairPermission(state)
         if (!args.confirmed || !args.reason.trim()) throw new Error('يلزم تأكيد إيصال القبض وكتابة مرجع إثبات الساق')
         const matches = state.sales.filter(row => row.id === args.saleId), sale = matches[0]
+        if (matches.length === 1) assertSaleFxHistoryShape(sale)
         if (matches.length !== 1 || !scoped.sales.some(row => row.id === args.saleId) || sale.fxReconstructionEvidence || sale.fxCorrectionHistory?.length || sale.fxMemoDateHistory?.length) throw new Error('الفاتورة ليست سجلاً فريداً بساق قابلة للاستعادة — يلزم المراجعة')
         if (sale.fx != null) {
           if (typeof sale.fx !== 'object') throw new Error('الساق القديمة تالفة بشكل لا يسمح بحفظها للمراجعة')
@@ -14920,11 +15003,13 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isSafeInteger(paid) || paid <= 0 || convertFxToBookMinor(fx, book.decimals) !== paid) throw new Error('قيمة الإيصال لا تطابق التحصيل بالدفتر — تحتاج قيداً مستقلاً')
         assertSingleFxTreasury(treasury, paid, sale.paymentAllocations, sale.invoiceNumber)
         assertFxSourceJournal(state.journal, sale.journalEntryId, 'sale', sale.id, treasury, paid, 'debit', sale.invoiceNumber)
+        assertFxRepairLines(state.journal, sale.journalEntryId, treasury, paid, false, null, sale.invoiceNumber)
+        assertFxRepairLines(scoped.journal, sale.journalEntryId, treasury, paid, false, null, sale.invoiceNumber)
         assertFxSourceJournal(scoped.journal, sale.journalEntryId, 'sale', sale.id, treasury, paid, 'debit', sale.invoiceNumber)
         const documentDate = typeof sale.date === 'string' ? sale.date.slice(0, 10) : null
         const date = args.receiptDate
         if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ إيصال القبض غير صالح أو مستقبلي — أدخله من المستند')
-        const flows = collectFxFlows(state, sale.id)
+        const flows = collectFxFlows(state, { kind: 'sale', id: sale.id })
         if (flows.some(flow => flow.seq === sale.journalEntryId)) throw new Error('قيد الفاتورة مرتبط بحركة عملة أخرى — يلزم المراجعة')
         const candidate: FxFlow = { date, seq: sale.journalEntryId, treasury, currency: fx.currencyCode, decimals: fx.decimals, amountMinor: fx.amountMinor, bookValueMinor: paid, kind: 'in', ref: sale.invoiceNumber }
         for (const other of flows.filter(flow => flow.treasury === treasury && flow.currency === fx.currencyCode)) {
@@ -14950,6 +15035,8 @@ export const useRawDataStore = create<DataState>()(
         assertTreasuryForPosting(state, treasury, 'receipt', paid)
         assertSingleFxTreasury(treasury, paid, sale.paymentAllocations, sale.invoiceNumber)
         assertFxSourceJournal(state.journal, sale.journalEntryId, 'sale', sale.id, treasury, paid, 'debit', sale.invoiceNumber)
+        assertFxRepairLines(state.journal, sale.journalEntryId, treasury, paid, false, null, sale.invoiceNumber)
+        assertFxRepairLines(scoped.journal, sale.journalEntryId, treasury, paid, false, null, sale.invoiceNumber)
         assertFxSourceJournal(scoped.journal, sale.journalEntryId, 'sale', sale.id, treasury, paid, 'debit', sale.invoiceNumber)
         const flows = get().getFxFlows()
         const own = flows.filter(flow => flow.seq === sale.journalEntryId && flow.ref === sale.invoiceNumber && flow.kind === 'in' && flow.treasury === treasury && flow.currency === sale.fx!.currencyCode)
@@ -14964,6 +15051,59 @@ export const useRawDataStore = create<DataState>()(
         if (issues.length) throw new Error(`تاريخ العملة غير مثبت: ${issues.join('، ')}`)
         const record = { previousDate: own[0].date || null, correctedDate: args.date, documentDate: typeof sale.date === 'string' ? sale.date.slice(0, 10) : null, fx: { ...sale.fx }, journalEntryId: sale.journalEntryId, treasury, reason: args.reason.trim(), at: localIsoTimestamp(), by: activeUserName(state) }
         set({ sales: state.sales.map(row => row.id === sale.id ? { ...row, fxMemoDateHistory: [...(row.fxMemoDateHistory ?? []), record] } : row) })
+      },
+      repairExternalFx: (args) => {
+        const state = get(), scoped = getBranchScopedDataState(state), book = bookCurrencyOf()
+        assertFxRepairPermission(state)
+        if ((args.kind !== 'purchase' && args.kind !== 'voucher') || !Number.isSafeInteger(args.id) || args.id <= 0) throw new Error('نوع أو رقم مستند العملة غير صالح')
+        if (!args.confirmed || !args.reason.trim()) throw new Error('يلزم تأكيد مستند العملة وكتابة مرجع الإثبات')
+        if (!isValidExpiryDate(args.date) || args.date > todayLocalIso()) throw new Error('تاريخ مستند العملة غير صالح أو مستقبلي')
+        const records = args.kind === 'purchase' ? state.purchases.filter(row => row.id === args.id) : state.vouchers.filter(row => row.id === args.id)
+        const visible = args.kind === 'purchase' ? scoped.purchases : scoped.vouchers
+        if (records.length !== 1 || !visible.some(row => row.id === args.id)) throw new Error('مستند العملة غير فريد أو خارج الفرع')
+        const doc = records[0], purchase = args.kind === 'purchase' ? doc as PurchaseInvoice : null, voucher = args.kind === 'voucher' ? doc as Voucher : null
+        if (doc.fxRepairHistory != null && !Array.isArray(doc.fxRepairHistory)) throw new Error('سجل إصلاح العملة تالف — يلزم المراجعة')
+        if (voucher?.reversalEntryId != null) throw new Error('السند معكوس ولا يمكن تصحيح ساقه')
+        if (voucher && voucher.kind !== 'receipt' && voucher.kind !== 'payment') throw new Error('تحويل السند القديم لا يثبت تدفق الوجهة — يلزم مسار تسوية مستقل')
+        if (purchase?.custodyFileId != null) throw new Error('سداد العهدة لا يثبت رصيد خزينة العملة — يلزم المراجعة')
+        if (doc.fx != null && typeof doc.fx !== 'object') throw new Error('الساق القديمة تالفة بشكل لا يسمح بحفظها للمراجعة')
+        const treasury = purchase?.treasury ?? voucher?.treasury ?? '1101', amount = purchase?.paidMinor ?? voucher?.amountMinor ?? 0
+        const out = voucher?.kind === 'receipt' ? false : true
+        const cost = doc.fxOutBookValueMinor ?? null
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('مبلغ المستند الدفتري غير صالح')
+        if (!out && cost != null) throw new Error('تكلفة الصرف على سند القبض متعارضة — يلزم المراجعة')
+        assertTreasuryForPosting(state, treasury, out ? 'payment' : 'receipt', amount)
+        if (purchase) assertSingleFxTreasury(treasury, amount, purchase.paymentAllocations, purchase.invoiceNumber)
+        const fx = { currencyCode: args.fx.currencyCode.trim().toUpperCase(), amountMinor: args.fx.amountMinor, ratePpm: args.fx.ratePpm, decimals: args.fx.decimals }
+        const errors = validateFxLeg(fx, book.code)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (convertFxToBookMinor(fx, book.decimals) !== amount) throw new Error('قيمة الساق لا تطابق قيمة الدفتر — يلزم قيد مستقل')
+        const sourceType = purchase ? 'purchase' : out ? 'payment_voucher' : 'receipt_voucher'
+        const label = purchase?.invoiceNumber ?? voucher!.voucherNumber
+        if (out && cost != null) {
+          assertFxWithdrawalJournal(state.journal, doc.journalEntryId, sourceType, doc.id, treasury, amount, cost, label)
+          assertFxWithdrawalJournal(scoped.journal, doc.journalEntryId, sourceType, doc.id, treasury, amount, cost, label)
+        } else {
+          assertFxSourceJournal(state.journal, doc.journalEntryId, sourceType, doc.id, treasury, amount, out ? 'credit' : 'debit', label)
+          assertFxSourceJournal(scoped.journal, doc.journalEntryId, sourceType, doc.id, treasury, amount, out ? 'credit' : 'debit', label)
+        }
+        assertFxRepairLines(state.journal, doc.journalEntryId, treasury, amount, out, cost, label)
+        assertFxRepairLines(scoped.journal, doc.journalEntryId, treasury, amount, out, cost, label)
+        const previousDate = doc.fxRepairHistory?.length ? externalFxMemoDate(doc, treasury, amount, cost, label, book.code, book.decimals) : (typeof doc.date === 'string' ? doc.date.slice(0, 10) || null : null)
+        if (fxLegKey(doc.fx ?? null) === fxLegKey(fx) && previousDate === args.date) throw new Error('الساق والتاريخ مطابقان للسجل الحالي')
+        const flows = collectFxFlows(state, { kind: args.kind, id: args.id })
+        if (flows.some(flow => flow.seq === doc.journalEntryId)) throw new Error('قيد المستند مرتبط بحركة عملة أخرى — يلزم المراجعة')
+        const candidate: FxFlow = { date: args.date, seq: doc.journalEntryId!, treasury, currency: fx.currencyCode, decimals: fx.decimals, amountMinor: fx.amountMinor, bookValueMinor: out ? (cost ?? amount) : amount, kind: out ? 'out' : 'in', ref: label }
+        for (const other of flows.filter(flow => flow.treasury === treasury && flow.currency === fx.currencyCode)) {
+          if (!isValidExpiryDate(other.date) || (other.seq < candidate.seq && other.date > args.date) || (other.seq > candidate.seq && other.date < args.date)) throw new Error('تاريخ المستند يتعارض مع ترتيب حركات العملة — يلزم المراجعة')
+        }
+        const adjusted = [...flows, candidate]
+        fxHoldingsFromFlows(adjusted, book.decimals)
+        const issues = fxConversionHistoryIssues(scoped.fxConversions, adjusted, book.code, book.decimals)
+        if (issues.length) throw new Error(`الساق تتعارض مع تكاليف حركات العملة: ${issues.join('، ')}`)
+        const record: FxExternalRepair = { previousFx: doc.fx == null ? null : { ...doc.fx }, previousDate, fx: { ...fx }, date: args.date, documentDate: typeof doc.date === 'string' ? doc.date.slice(0, 10) : null, journalEntryId: doc.journalEntryId!, treasury, amountMinor: amount, outBookValueMinor: cost, reason: args.reason.trim(), at: localIsoTimestamp(), by: activeUserName(state) }
+        if (purchase) set({ purchases: state.purchases.map(row => row.id === doc.id ? { ...row, fx, fxRepairHistory: [...(row.fxRepairHistory ?? []), record] } : row) })
+        else set({ vouchers: state.vouchers.map(row => row.id === doc.id ? { ...row, fx, fxRepairHistory: [...(row.fxRepairHistory ?? []), record] } : row) })
       },
       transferFx: (args) => {
         const state = get(), scoped = getBranchScopedDataState(state), book = bookCurrencyOf()
