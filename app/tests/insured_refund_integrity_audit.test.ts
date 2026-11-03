@@ -277,3 +277,16 @@ it('تستمر لقطة دفعات البيع المؤمّن بعد تخزين �
   useDataStore.getState().reverseEntry(entryId, 'إلغاء بعد الاستعادة')
   expect(useDataStore.getState().batches[0].qty).toBe(4)
 })
+it('لا يعكس بيعاً مؤمّناً بدفعات جزئية أو مفقودة رغم وجود مصفوفة فارغة', () => {
+ const s = useDataStore.getState()
+ const item = { id: 42, nameAr: 'دواء', sku: 'AUDIT', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 100, stockQty: 2, priceMinor: 1000, minQty: 0, trackExpiry: true, active: true }
+ useDataStore.setState({ items: [item] as never, batches: [{ id: 42, itemId: item.id, expiryDate: '2099-01-01', qty: 2, purchaseId: null, receivedAt: '2026-01-01' }] })
+ const provider = s.addInsuranceProvider({ nameAr: 'جهة', coveragePercent: 70 })
+ s.postInsuredSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 1000, unitCostMinor: 100, discountPercent: 0, soldByWeight: false }], providerId: provider.id, taxPercent: 0, taxInclusive: false })
+ const entry = useDataStore.getState().journal.find(e => e.sourceType === 'insured_sale')!
+ useDataStore.setState({ insuranceClaims: useDataStore.getState().insuranceClaims.map(c => ({ ...c, expiryBatches: [] })) })
+ const before = useDataStore.getState()
+ expect(() => s.reverseEntry(entry.id, 'إلغاء')).toThrow(/دفعات/)
+ expect(useDataStore.getState().journal).toEqual(before.journal)
+ expect(useDataStore.getState().items).toEqual(before.items)
+})

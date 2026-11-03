@@ -195,3 +195,15 @@ it('تُحفظ التسوية والالتزام والدفعات عبر الن�
   expect(useDataStore.getState().getInsuranceRefundBalance(claim.id)).toBe(1800)
   expect(useDataStore.getState().insuranceClaims.find(c => c.id === claim.id)?.refundPayments?.[0].amountMinor).toBe(1000)
 })
+it('لا يخفي صرف جهة مسجل في اليومية إذا فُقد سجل صرف مطالبة زيارة', () => {
+ const s = useDataStore.getState()
+ const patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '' })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 })
+ const visit = s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 10000, vatPercent: 0 })
+ s.settleInsuranceClaims(provider.id)
+ s.refundClinicVisit({ visitId: visit.id, amountMinor: 4000, mode: 'cash', reason: 'رد' })
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.payInsuranceRefund({ claimId: claim.id, amountMinor: 500, treasury: '1101', reason: 'تحويل' })
+ useRawDataStore.setState(state => ({ insuranceClaims: state.insuranceClaims.map(row => ({ ...row, refundPayments: [] })) }))
+ expect(() => s.getInsuranceRefundBalance(claim.id)).toThrow(/مراجعة/)
+})

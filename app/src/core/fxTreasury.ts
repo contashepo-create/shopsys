@@ -59,6 +59,8 @@ export interface FxConversionDoc {
   journalEntryId: number
   /** قيد عكس مثبت لتحويل الخزائن الملغى؛ الأصل محفوظ. */
   reversalEntryId?: number | null
+  /** تصحيح تاريخ مذكرة العملة فقط، دون تغيير تاريخ مستند التحويل أو قيده. */
+  memoDateHistory?: { previousDate: string; date: string; documentDate: string; journalEntryId: number; snapshot: string; reason: string; by: string; at: string }[]
   notes?: string
   createdBy: string
   createdAt: string

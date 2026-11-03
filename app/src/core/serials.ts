@@ -27,6 +27,8 @@ export interface SerialUnit {
   /** إثبات المستخدم لوحدة قديمة لم تكن تحمل رابط الدفعة عند الاستلام. */
   expiryLinkEvidence?: { reason: string; at: string; by: string }
   saleId: number | null
+  /** بيع مخزني مؤمّن له مطالبة مستقلة وليس معرف فاتورة بيع عادية. */
+  insuredClaimId?: number | null
   /** التذكرة التي استهلكت القطعة، إن كانت في الصيانة. */
   maintenanceTicketId?: number | null
   /** المرتجع الذي وثّق تلف الجهاز. */

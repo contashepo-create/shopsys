@@ -24,6 +24,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 import { FxHistoryRepair } from './FxHistoryRepair.tsx'
 import { FxExternalHistoryRepair } from './FxExternalHistoryRepair.tsx'
+import { FxConversionDateRepair } from './FxConversionDateRepair.tsx'
 
 type BookCur = { code: string; symbol: string; decimals: 0 | 2 | 3; name: string }
 
@@ -154,7 +155,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
   }
 
   const card = 'border-t border-slate-300 dark:border-slate-700'
-  if (calculationError) return <section data-fx-treasury-tab><p role="alert" className="border border-amber-500 p-3 text-amber-700">تعذر عرض تقرير العملات أو إجراء تحويل: {calculationError}. لم تُعدّل القيود؛ راجع بيانات التدفقات.</p><FxHistoryRepair bookCode={cur.code} bookDecimals={cur.decimals} /><FxExternalHistoryRepair bookCode={cur.code} /></section>
+  if (calculationError) return <section data-fx-treasury-tab><p role="alert" className="border border-amber-500 p-3 text-amber-700">تعذر عرض تقرير العملات أو إجراء تحويل: {calculationError}. لم تُعدّل القيود؛ راجع بيانات التدفقات.</p><FxHistoryRepair bookCode={cur.code} bookDecimals={cur.decimals} /><FxExternalHistoryRepair bookCode={cur.code} /><FxConversionDateRepair /></section>
 
   return (
     <section className="anim-up space-y-3" data-fx-treasury-tab>
@@ -211,7 +212,7 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
 
       {historyIssues.length > 0 && <p role="alert" className="border border-amber-500 p-3 text-amber-700" data-fx-history-review>حركات عملة سابقة تحتاج مراجعة محاسبية: {historyIssues.join('، ')}. الأرصدة المعروضة مشتقة من التدفقات ولا تصحح القيود القديمة؛ أُوقفت التحويلات الجديدة حتى المراجعة.</p>}
 
-      <FxHistoryRepair bookCode={cur.code} bookDecimals={cur.decimals} /><FxExternalHistoryRepair bookCode={cur.code} />
+      <FxHistoryRepair bookCode={cur.code} bookDecimals={cur.decimals} /><FxExternalHistoryRepair bookCode={cur.code} /><FxConversionDateRepair />
 
       {/* سجل التحويلات */}
       <div className={`${card} p-3`}>
