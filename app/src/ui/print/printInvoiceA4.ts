@@ -40,6 +40,8 @@ export function numberToArabicWords(n: number): string {
   if (n === 0) return 'صفر'
   if (n < 0) return `سالب ${numberToArabicWords(-n)}`
   const scales: [number, string, string, string][] = [
+    [1_000_000_000_000_000, 'كوادريليون', 'كوادريليونان', 'كوادريليونات'],
+    [1_000_000_000_000, 'تريليون', 'تريليونان', 'تريليونات'],
     [1_000_000_000, 'مليار', 'ملياران', 'مليارات'],
     [1_000_000, 'مليون', 'مليونان', 'ملايين'],
     [1_000, 'ألف', 'ألفان', 'آلاف'],
@@ -63,8 +65,8 @@ export function numberToArabicWords(n: number): string {
 export function amountInWords(minor: number, cur: CurrencyConfig): string {
   const major = Math.floor(Math.abs(minor) / 10 ** cur.decimals)
   const frac = Math.abs(minor) % 10 ** cur.decimals
-  let s = `${numberToArabicWords(major)} ${cur.name || cur.symbol}`
-  if (frac > 0) s += ` و${numberToArabicWords(frac)} من المائة`
+  let s = `${minor < 0 ? 'سالب ' : ''}${numberToArabicWords(major)} ${cur.name || cur.symbol}`
+  if (frac > 0) s += ` و${numberToArabicWords(frac)} من ${cur.decimals === 3 ? 'الألف' : 'المائة'}`
   return `${s} فقط لا غير`
 }
 
