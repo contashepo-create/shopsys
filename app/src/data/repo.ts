@@ -18,7 +18,7 @@ import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { roundNonNegativeRatio } from '../core/money.ts'
-import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, normalizeMovementQty, normalizeSaleMovementLine, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { cumulativeSaleReturnTotals, buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, isModernPinHash, hashPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
@@ -1517,6 +1517,8 @@ export interface SaleInvoice {
   invoiceDiscountPercent: number
   /** 2 للحساب العشري الدقيق؛ الغياب يخص الفواتير التاريخية. */
   roundingVersion?: 2
+  /** نسخة تثبيت نوع كل سطر، تقابل قائمة الأنواع في القيد. */
+  saleLineKindVersion?: 1
   totals: CartTotals
   journalEntryId: number // القيد المتولد — كل مستند مربوط بقيده (القرار 9)
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
@@ -4428,6 +4430,43 @@ function restoreInsuredSerials(state: DataState, records: NonNullable<InsuranceC
     restoredIds.set(row.serial, matches[0].id)
   }
   return state.serials.map(unit => records.some(row => row.serial === unit.serial) ? { ...unit, status: 'in_stock' as const, insuredClaimId: null, saleId: null, soldAt: null, ...(restoredIds.has(unit.serial) ? { batchId: restoredIds.get(unit.serial), expiryBatch: unit.expiryBatch ? { ...unit.expiryBatch, id: restoredIds.get(unit.serial)! } : unit.expiryBatch } : {}) } : unit)
+}
+
+/** رسوم المطعم اصطلاح قديم موثق: -1 سطر خدمة صناعي بلا مخزون. */
+function isSyntheticSaleService(line: CartLine): boolean {
+  return line.itemId === -1 && typeof line.nameAr === 'string' && line.nameAr.trim() !== '' && line.qty === 1 && line.unitCostMinor === 0 && (line.unitFactor ?? 1) === 1 && !line.serials?.length && !line.variantColor && !line.variantSize && !line.extendedWarrantyMonths && !line.extendedWarrantyProvider
+}
+
+/** لا يُنشأ قيد مبيعات لصنف مفقود أو غير فريد أو خارج الفرع. */
+function assertSaleItemsExist(state: DataState, lines: readonly CartLine[], requireActive: boolean): void {
+  const scoped = getBranchScopedDataState(state)
+  for (const line of lines) {
+    if (isSyntheticSaleService(line)) continue
+    const matches = state.items.filter(item => item.id === line.itemId)
+    if (matches.length !== 1 || !scoped.items.some(item => item.id === line.itemId) || (requireActive && matches[0].isActive === false)) throw new Error('صنف البيع غير موجود أو غير فريد أو غير نشط في الفرع')
+  }
+}
+
+/** لا نستنتج أن خدمة قديمة لم تخصم مخزوناً من نوع الصنف الحالي وحده. */
+function assertSaleServiceKinds(state: DataState, sale: SaleInvoice): void {
+  const entries = state.journal.filter(entry => entry.id === sale.journalEntryId), entry = entries[0]
+  if (sale.saleLineKindVersion != null || entries.some(row => row.saleLineKinds != null)) {
+    if (sale.saleLineKindVersion !== 1 || entries.length !== 1 || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || entry.reversedByEntryId != null || !Array.isArray(entry.saleLineKinds) || !Array.isArray(sale.lines) || entry.saleLineKinds.length !== sale.lines.length || sale.lines.some((line, i) => typeof line.isServiceAtSale !== 'boolean' || entry.saleLineKinds![i]?.itemId !== line.itemId || entry.saleLineKinds![i]?.service !== line.isServiceAtSale)) throw new Error('إثبات نوع سطور البيع غير مطابق للقيد — يلزم المراجعة')
+  } else if (sale.lines.some(line => line.isServiceAtSale != null)) {
+    throw new Error('إثبات نوع سطور البيع مفقود — يلزم المراجعة')
+  }
+  for (const line of sale.lines) {
+    if (isSyntheticSaleService(line)) {
+      if (line.isServiceAtSale != null && line.isServiceAtSale !== true) throw new Error('نوع رسوم الخدمة غير مطابق — يلزم المراجعة')
+      continue
+    }
+    const matches = state.items.filter(item => item.id === line.itemId)
+    const item = matches[0]
+    if (line.isServiceAtSale != null && typeof line.isServiceAtSale !== 'boolean') throw new Error('نوع صنف البيع غير صالح — يلزم المراجعة')
+    if (line.isServiceAtSale != null && (matches.length !== 1 || line.isServiceAtSale !== (item.isService === true))) throw new Error('نوع صنف البيع تغير أو غير مثبت — يلزم المراجعة')
+    if (line.isServiceAtSale === true && line.unitCostMinor !== 0) throw new Error('تكلفة خدمة البيع غير مثبتة — يلزم المراجعة')
+    if (line.isServiceAtSale == null && item?.isService === true) throw new Error('نوع الخدمة وقت البيع القديم غير مثبت — يلزم المراجعة')
+  }
 }
 
 /** تحقق قابل للتكرار من أساس السطر الوحيد ومطابقته للمطالبة والقيد الأصلي. */
@@ -7716,7 +7755,8 @@ export const useRawDataStore = create<DataState>()(
           const batch: StockBatch = {
             id: batchId++,
             itemId: l.itemId,
-            warehouseId: l.warehouseId ?? inv.warehouseId ?? null,
+            // المستند طبّع المخزن الفعلي أعلاه؛ الدفعة تتبع السطر نفسه لا المدخل الخام.
+            warehouseId: invoice.lines[lineIndex]?.warehouseId ?? invoice.warehouseId ?? null,
             lotNumber: l.lotNumber ?? null,
             expiryDate: l.expiryDate ?? null,
             qty: l.qty,
@@ -7988,19 +8028,21 @@ export const useRawDataStore = create<DataState>()(
           const alreadyPosted = state.sales.find((sale) => sale.sourceDraftId === sourceDraftId)
           if (alreadyPosted) return alreadyPosted
         }
+        const normalizedArgs = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
+        assertSaleItemsExist(state, normalizedArgs.lines, true)
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const args = activeBranch && !activeBranch.isMain
           ? {
-              ...rawArgs,
-              warehouseId: rawArgs.warehouseId == null || rawArgs.warehouseId === mainWhId ? activeBranch.warehouseId : rawArgs.warehouseId,
-              treasury: !rawArgs.treasury || rawArgs.treasury === '1101' ? activeBranch.treasuryCode : rawArgs.treasury,
-              lines: rawArgs.lines.map((l) => ({
+              ...normalizedArgs,
+              warehouseId: normalizedArgs.warehouseId == null || normalizedArgs.warehouseId === mainWhId ? activeBranch.warehouseId : normalizedArgs.warehouseId,
+              treasury: !normalizedArgs.treasury || normalizedArgs.treasury === '1101' ? activeBranch.treasuryCode : normalizedArgs.treasury,
+              lines: normalizedArgs.lines.map((l) => ({
                 ...l,
                 warehouseId: l.warehouseId == null || l.warehouseId === mainWhId ? activeBranch.warehouseId : l.warehouseId,
               })),
             }
-          : rawArgs
+          : normalizedArgs
         // بوابة اعتماد المستندات (خطة ③): بيع خاضع للنظام ⇒ يُخزَّن طلباً كاملاً
         // ولا يُخصم مخزون ولا يُنشأ قيد حتى يعتمده صاحب الصلاحية.
         if (!args.__approvalBypass) {
@@ -8028,11 +8070,12 @@ export const useRawDataStore = create<DataState>()(
         // مخازن أصلاً يبقى البيع على رصيد الصنف العام، ولا نخترع مخزناً وهمياً.
         // أما عند وجود أي مخزن فاختياره إلزامي حتى لا تختلط أرصدة الفروع.
         if (hasWarehouses && effectiveSaleWarehouseId == null) throw new Error('لا يوجد مخزن متاح لترحيل البيع')
-        const saleLines = args.lines.map((line) => ({ ...line, warehouseId: line.warehouseId ?? effectiveSaleWarehouseId }))
+        const saleLines = args.lines.map((line) => ({ ...line, isServiceAtSale: isSyntheticSaleService(line) || state.items.find(item => item.id === line.itemId)?.isService === true, warehouseId: line.warehouseId ?? effectiveSaleWarehouseId }))
         const unknownWarehouse = hasWarehouses
           ? saleLines.find((line) => !state.warehouses.some((warehouse) => warehouse.id === line.warehouseId))
           : undefined
         if (unknownWarehouse) throw new Error(`مخزن سطر الصنف غير موجود (${unknownWarehouse.warehouseId})`)
+        if (activeBranch && saleLines.some(line => line.warehouseId != null && !getBranchScopedDataState(state).warehouses.some(warehouse => warehouse.id === line.warehouseId))) throw new Error('مخزن سطر البيع خارج الفرع الحالي')
 
         // وصفات «يُجهَّز عند الطلب» (مطاعم): الطبق بلا مخزون —
         // تُفكَّك سطوره إلى احتياجات خامات تُفحص وتُخصم بدلاً منه.
@@ -8040,7 +8083,7 @@ export const useRawDataStore = create<DataState>()(
         const saleQty = new Map<number, number>()
         // البيع بوحدة أكبر (صيدلية: شريط/علبة) — المخزون يُخصم بالوحدة الأساسية qty×factor
         // أصناف الخدمة (isService — نمط Square): لا فحص مخزون ولا خصم ولا تكلفة
-        const isServiceItem = (itemId: number) => state.items.find((it) => it.id === itemId)?.isService === true
+        const isServiceItem = (itemId: number) => itemId === -1 || state.items.find((it) => it.id === itemId)?.isService === true
         /* فاتورة توثيق مستخلصات (النموذج أ — أ-٢): مستند ضريبي صامت دفترياً.
            التحققات المبكرة هنا قبل أي تخطيط مخزون: سطورها بنود خدمية فقط
            (أعمال المستخلص)، ولا تحصيل/عمولات/مصروفات عليها — المال والذمة
@@ -8062,6 +8105,21 @@ export const useRawDataStore = create<DataState>()(
           saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
         }
         const stockNeeds = explodeIngredientNeeds(saleQty, recipeOf)
+        const scopedItems = getBranchScopedDataState(state).items
+        for (const itemId of stockNeeds.keys()) {
+          if (state.items.filter(item => item.id === itemId).length !== 1 || !scopedItems.some(item => item.id === itemId)) throw new Error('صنف أو خامة البيع غير موجودة أو غير فريدة في الفرع')
+        }
+        if (state.warehouses.length > 1) {
+          const homeOf = (itemId: number) => {
+            const home = state.items.find(item => item.id === itemId)?.warehouseId
+            return home != null && state.warehouses.some(warehouse => warehouse.id === home) ? home : mainWarehouseId
+          }
+          for (const line of saleLines) {
+            if (!recipeOf(line.itemId)) continue
+            const ingredients = explodeIngredientNeeds(new Map([[line.itemId, baseQty(line)]]), recipeOf)
+            if (homeOf(line.itemId) !== line.warehouseId || [...ingredients.keys()].some(itemId => homeOf(itemId) !== line.warehouseId)) throw new Error('بيع الوصفة من مخزن مختلف لا يوثق حركة الخامات — يلزم مسار مخزني مثبت')
+          }
+        }
         // 0.5) أرضية السعر (سد فجوة DEXEF/الأمين): بيع تحت الحد الأدنى للسعر
         // مرفوض إلا بموافقة مدير موثقة — حماية من البيع بخسارة سهواً أو تلاعباً
         {
@@ -8138,6 +8196,26 @@ export const useRawDataStore = create<DataState>()(
               if (state.warehouses.length > 1 && batch.warehouseId == null) throw new Error('مخزن السيريال غير مثبت — يلزم المراجعة')
               serialExpiryBatches.push({ serial, itemId, batch: { ...batch, qty: 1 } })
             }
+          } else if (state.warehouses.length > 1) {
+            // FEFO لا يختار من بقية مخازن الشركة أو من دفعة مجهولة المخزن.
+            // تُحسب الاحتياجات لكل سطر ومخزنه، بما فيها خامات الوصفات.
+            const needsByWarehouse = new Map<number, number>()
+            for (const line of saleLines) {
+              if (isServiceItem(line.itemId)) continue
+              const amount = explodeIngredientNeeds(new Map([[line.itemId, baseQty(line)]]), recipeOf).get(itemId) ?? 0
+              if (!amount) continue
+              if (line.warehouseId == null) throw new Error('مخزن دفعات الصلاحية غير مثبت')
+              needsByWarehouse.set(line.warehouseId, (needsByWarehouse.get(line.warehouseId) ?? 0) + amount)
+            }
+            for (const [warehouseId, amount] of needsByWarehouse) {
+              const batches = workingBatches.filter(batch => batch.itemId === itemId && batch.warehouseId === warehouseId)
+              if (batches.some(batch => state.batches.filter(row => row.id === batch.id).length !== 1)) throw new Error('دفعات الصلاحية غير فريدة — يلزم المراجعة')
+              const warehousePlan = planFefo(batches, itemId, amount, now0)
+              if (warehousePlan.untrackedQty > 1e-9) throw new Error('دفعات الصلاحية المثبتة في مخزن البيع لا تكفي — يلزم المراجعة')
+              if (warehousePlan.touchesExpired && !args.expiryOverrideBy) expiredNames.push(item.nameAr)
+              workingBatches = applyFefo(workingBatches, warehousePlan)
+            }
+            continue
           } else plan = planFefo(workingBatches, itemId, qty, now0)
           if (plan.touchesExpired && !args.expiryOverrideBy) expiredNames.push(item.nameAr)
           workingBatches = applyFefo(workingBatches, plan)
@@ -8364,6 +8442,7 @@ export const useRawDataStore = create<DataState>()(
           sourceType: 'sale',
           sourceId: saleId,
           saleRoundingVersion: 2,
+          saleLineKinds: costedLines.map(line => ({ itemId: line.itemId, service: line.isServiceAtSale === true })),
           lines: entryLines,
           ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
@@ -8392,6 +8471,7 @@ export const useRawDataStore = create<DataState>()(
           ...(serialExpiryBatches.length ? { serialExpiryBatches } : {}),
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           roundingVersion: 2,
+          saleLineKindVersion: 1,
           totals,
           journalEntryId: entryId,
           expiryOverrideBy: args.expiryOverrideBy ?? null,
@@ -8500,8 +8580,11 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        assertSaleServiceKinds(state, sale)
         if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) throw new Error('المعاملة الضريبية لفاتورة الرسوم غير محفوظة — يلزم مراجعتها قبل المرتجع')
         const roundingVersion = checkedSaleRoundingVersion(state, sale)
+        for (const spec of args.lineSpecs ?? []) normalizeMovementQty(spec.qty, true)
+        for (const qty of (args.qtyByItem ?? new Map<number, number>()).values()) normalizeMovementQty(qty, true)
         /* مرتجع توثيق (النموذج أ — أ-٢): يخفض «الموثَّق» في حارس المشروع فقط —
            لا نقد يعود ولا ذمة تتغير، لأن مال الفاتورة لم يتحرك بدفترها أصلاً */
         const isDocReturn = sale.projectBilling === 'documentation'
@@ -8534,9 +8617,14 @@ export const useRawDataStore = create<DataState>()(
           (spec) => spec.condition === 'resellable' && spec.warehouseId != null && !state.warehouses.some((warehouse) => warehouse.id === spec.warehouseId),
         )
         if (invalidReturnWarehouse) throw new Error(`مخزن استقبال المرتجع غير موجود (${invalidReturnWarehouse.warehouseId})`)
-        const rawLines: ReturnLine[] = args.lineSpecs?.length
+        const rawLines: ReturnLine[] = (args.lineSpecs?.length
           ? buildReturnLinesPerLine(sale.lines, priorLines, args.lineSpecs)
-          : buildReturnLines(sale.lines, priorLines, args.qtyByItem ?? new Map())
+          : buildReturnLines(sale.lines, priorLines, args.qtyByItem ?? new Map())).map(normalizeSaleMovementLine)
+        // السليم يجب أن يرجع إلى دفعة مثبتة، لا إلى كمية عامة بلا تاريخ صلاحية.
+        if (rawLines.some(line => {
+          const item = state.items.find(row => row.id === line.itemId)
+          return line.isServiceAtSale !== true && line.condition !== 'damaged' && item?.trackExpiry && !item.trackSerial
+        })) throw new Error('دفعة الصلاحية المستلمة في المرتجع غير مثبتة — يلزم مسار موثق قبل إعادة المخزون')
         // أطباق الوصفات «عند الطلب»: الخامات طُهيت ولا تعود للمخزون —
         // تبقى تكلفتها في 5101 (هالك اقتصادياً) ويُرد للعميل السعر فقط
         const isDish = (itemId: number) => state.recipes.some((r) => r.productItemId === itemId && r.mode === 'made_to_order')
@@ -8732,7 +8820,7 @@ export const useRawDataStore = create<DataState>()(
         const valueBack = new Map<number, number>()
         for (const l of lines) {
           if (isDocReturn) break // أعمال موثَّقة خدمية — لم يُخصم مخزون أصلاً كي يرجع
-          if (isDish(l.itemId)) continue // الطبق بلا مخزون — لا عودة
+          if (isDish(l.itemId) || l.isServiceAtSale === true) continue // الخدمة والطبق لا يعودان مخزوناً
           if (l.condition === 'damaged') continue // تالف: لا يدخل المخزون — تكلفته في 5111 بالقيد
           // سطر بوحدة أكبر: يعود للمخزون بالوحدة الأساسية qty×factor وبقيمته الكاملة
           qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + baseQty(l))
@@ -10532,7 +10620,8 @@ export const useRawDataStore = create<DataState>()(
       attachSaleReturnTaxQr: (returnId, payload) => set((state) => ({
         saleReturns: state.saleReturns.map((ret) => (ret.id === returnId && !ret.taxQrPayload ? { ...ret, taxQrPayload: payload } : ret)),
       })),
-      editSale: (args) => {
+      editSale: (rawArgs) => {
+        const args = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
         const state = get()
         // ⛔ سياسة المالك: الفاتورة الضريبية الإلكترونية مفعلة ⇒ لا تعديل — إشعار دائن/مدين فقط
         if (args.einvoiceActive) {
@@ -10576,6 +10665,9 @@ export const useRawDataStore = create<DataState>()(
           const recorded = oldStaffRecords.map(row => `${row.employeeId}:${row.amountMinor}`).sort().join('|')
           if (recorded !== staffKey(oldStaff)) throw new Error('سجل سلفة تحصيل الموظف لا يطابق الفاتورة')
         }
+        assertSaleItemsExist(state, sale.lines, false)
+        assertSaleItemsExist(state, args.lines, true)
+        assertSaleServiceKinds(state, sale)
         if (sale.projectBilling === 'documentation') throw new Error('فاتورة التوثيق لا تُعدَّل — صحّحها بمرتجع توثيق ثم فاتورة توثيق جديدة (تعديلها يرحّلها فوترة كاملة مكررة فوق المستخلصات)')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'sale' && row.documentId === String(sale.id))) throw new Error('لا يمكن تعديل فاتورة محصلة بالماكينة؛ استخدم مرتجعاً مرتبطاً بالأصل ثم أصدر فاتورة جديدة')
@@ -10589,7 +10681,10 @@ export const useRawDataStore = create<DataState>()(
           shiftClosed: sale.shiftId != null && state.shifts.some((sh) => sh.id === sale.shiftId && sh.status === 'closed'),
         })
         if (blocks.length) throw new Error(`لا يمكن تعديل هذه الفاتورة: ${blocks.join('؛ ')}`)
-        for (const line of [...sale.lines, ...args.lines]) assertSerialBatchMovementSupported(state, line.itemId)
+        for (const line of [...sale.lines, ...args.lines]) {
+          assertSerialBatchMovementSupported(state, line.itemId)
+          if (state.items.find(item => item.id === line.itemId)?.trackExpiry) throw new Error('تعديل فاتورة الصلاحية لا يوثق تسوية الدفعات — استخدم مساراً موثقاً أو راجع المخزون')
+        }
         // أصناف الوصفات والمتغيرات تعديلها له تشعبات (خامات مطبوخة/تركيبات) — الأسلم مرتجع + فاتورة جديدة
         const isDishItem = (id2: number) => state.recipes.some((r) => r.productItemId === id2 && r.mode === 'made_to_order')
         const usesRecipes = sale.lines.some((l) => isDishItem(l.itemId)) || args.lines.some((l) => isDishItem(l.itemId))
@@ -10605,6 +10700,7 @@ export const useRawDataStore = create<DataState>()(
         }
         // G7: الكمية بالوحدة الأساسية qty×unitFactor (صيدلية: علبة/شريط) — والقيمة بقيمة السطر كاملة
         for (const l of sale.lines) {
+          if (l.isServiceAtSale === true) continue
           const cur = stockAfterRestore.get(l.itemId)
           if (!cur) continue
           const newQty = Math.round((cur.qty + baseQty(l)) * 1000) / 1000
@@ -10614,7 +10710,10 @@ export const useRawDataStore = create<DataState>()(
         // ② فحص كفاية المخزون للسطور الجديدة (بعد الإعادة)
         if (!args.allowNegativeStock) {
           const need = new Map<number, number>()
-          for (const l of args.lines) need.set(l.itemId, (need.get(l.itemId) ?? 0) + baseQty(l))
+          for (const l of args.lines) {
+            if (isSyntheticSaleService(l) || state.items.find(item => item.id === l.itemId)?.isService === true) continue
+            need.set(l.itemId, (need.get(l.itemId) ?? 0) + baseQty(l))
+          }
           const shortages: string[] = []
           for (const [itemId, qty] of need) {
             const cur = stockAfterRestore.get(itemId)
@@ -10631,8 +10730,10 @@ export const useRawDataStore = create<DataState>()(
           if (!Number.isInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) throw new Error('سعر البيع لا يمكن أن يكون سالباً')
         }
         const costedLines = args.lines.map((l) => {
+          const service = isSyntheticSaleService(l) || state.items.find(item => item.id === l.itemId)?.isService === true
+          if (service) return { ...l, isServiceAtSale: true, unitCostMinor: 0 }
           const cur = stockAfterRestore.get(l.itemId)
-          return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: Math.round(cur.costMinor * (l.unitFactor ?? 1)) } : l
+          return { ...l, isServiceAtSale: false, unitCostMinor: cur && Number.isInteger(cur.costMinor) ? Math.round(cur.costMinor * (l.unitFactor ?? 1)) : l.unitCostMinor }
         })
         const floorBad = priceFloorViolations(costedLines, state.items)
         if (floorBad.length && !args.priceFloorOverrideBy) throw new PriceFloorError(floorBad)
@@ -10767,6 +10868,7 @@ export const useRawDataStore = create<DataState>()(
           description: `فاتورة بيع ${sale.invoiceNumber} (معدلة)${sale.fx ? ` — ${describeFxLeg(sale.fx, paidM, bookCurrencyOf().decimals)}` : ''}`,
           sourceType: 'sale', sourceId: sale.id,
           ...(roundingVersion ? { saleRoundingVersion: roundingVersion } : {}),
+          saleLineKinds: costedLines.map(line => ({ itemId: line.itemId, service: line.isServiceAtSale === true })),
           lines: newEntryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -10774,6 +10876,7 @@ export const useRawDataStore = create<DataState>()(
         // ⑥ المخزون النهائي = بعد الإعادة − السطور الجديدة (متوسط التكلفة لا يتغير بالبيع)
         const finalStock = new Map(stockAfterRestore)
         for (const l of costedLines) {
+          if (l.isServiceAtSale === true) continue
           const cur = finalStock.get(l.itemId)
           if (!cur) continue
           const nextQty = Math.round((cur.qty - baseQty(l)) * 1000) / 1000
@@ -10781,6 +10884,7 @@ export const useRawDataStore = create<DataState>()(
           finalStock.set(l.itemId, { qty: nextQty, costMinor: reconciled.costMinor, valueMinor: reconciled.stockValueMinor })
         }
         const updatedItems = state.items.map((it) => {
+          if (it.isService === true) return it
           const f = finalStock.get(it.id)
           if (!f) return it
           if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor && f.valueMinor === it.stockValueMinor) return it
@@ -10798,6 +10902,7 @@ export const useRawDataStore = create<DataState>()(
           // مبالغ المحصَّل القديمة على الفاتورة المعدلة (تشويش المرتجعات والتعديل التالي)
           paymentAllocations: freshAllocations,
           lines: costedLines,
+          saleLineKindVersion: 1,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           customerReference: args.customerReference?.trim() || undefined,
           dueDate: args.dueDate || undefined,
@@ -13513,12 +13618,13 @@ export const useRawDataStore = create<DataState>()(
         set({ insuranceProviders: state.insuranceProviders.map((p) => (p.id === id ? { ...p, nameAr: args.nameAr.trim(), coveragePercent: args.coveragePercent, phone: args.phone ?? p.phone, notes: args.notes ?? p.notes } : p)) })
       },
       toggleInsuranceProvider: (id) => set((s) => ({ insuranceProviders: s.insuranceProviders.map((p) => (p.id === id ? { ...p, isActive: !p.isActive } : p)) })),
-      postInsuredSale: (args) => {
+      postInsuredSale: (rawArgs) => {
+        if (!Array.isArray(rawArgs.lines) || !rawArgs.lines.length) throw new Error('لا أصناف')
+        const args = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
         const state = get(), scoped = getBranchScopedDataState(state)
         const providers = state.insuranceProviders.filter(p => p.id === args.providerId)
         const provider = providers[0]
         if (providers.length !== 1 || !provider.isActive || !scoped.insuranceProviders.some(p => p.id === provider.id)) throw new Error('جهة التأمين غير موجودة أو غير فريدة أو معطلة في الفرع')
-        if (!Array.isArray(args.lines) || !args.lines.length) throw new Error('لا أصناف')
         if (state.warehouses.length > 1) throw new Error('البيع المؤمّن لا يوثق حركة المخزن مع تعدد مخازن الشركة — يلزم المراجعة')
         const shiftPolicy = salesShiftPolicyForState(state)
         if (shiftPolicy.required && !currentOpenShift(scoped.shifts)) throw new Error(`لا توجد وردية مفتوحة — ${shiftPolicy.messageAr}`)
@@ -19009,6 +19115,7 @@ export const useRawDataStore = create<DataState>()(
         for (const l of args.lines) {
           if (!state.items.some((it) => it.id === l.itemId)) errors.push('صنف غير موجود بالمخزون')
           assertSerialBatchMovementSupported(state, l.itemId)
+          if (state.items.find(item => item.id === l.itemId)?.trackExpiry) throw new Error('تحويل الصلاحية لا يحدد الدفعات المنقولة — يلزم مسار موثق للدفعات')
         }
         if (errors.length) throw new Error(errors.join(' — '))
 
@@ -19023,7 +19130,8 @@ export const useRawDataStore = create<DataState>()(
           lines: args.lines.map((l) => ({
             itemId: l.itemId,
             nameAr: state.items.find((it) => it.id === l.itemId)?.nameAr ?? '',
-            qty: l.qty,
+            // احفظ ما تحققنا منه، لا ضجيج حسابات المتصفح الثنائية.
+            qty: Math.round(l.qty * 1000) / 1000,
           })),
           totalQty: transferTotalQty(args.lines),
           notes: args.notes.trim(),

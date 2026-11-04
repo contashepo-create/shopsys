@@ -18,6 +18,8 @@ export interface CartLine {
   unitCostMinor: Minor // تكلفة الوحدة (متوسط مرجح) لقيد COGS
   discountPercent: number // خصم السطر
   soldByWeight: boolean
+  /** لقطة نوع الصنف لحظة البيع؛ تُثبتها طبقة الترحيل لا المتصل. */
+  isServiceAtSale?: boolean
   /** سيريالات القطع المعيّنة (أصناف الموبايلات/الأجهزة) — طولها = qty عند الاستخدام */
   serials?: string[]
   /** تركيبة المتغير (ملابس): لون/مقاس — إلزامية لو للصنف مصفوفة برصيد */
@@ -55,6 +57,28 @@ export interface CartLine {
    * النفيس نفسه. undefined/0 = كل السعر خاضع كالمعتاد (أي صنف غير ذهبي).
    */
   vatExemptPerUnitMinor?: Minor
+}
+
+/**
+ * حارس إدخال الحركات الجديدة فقط: مخزون النظام محفوظ بأجزاء الألف، فلا
+ * نقرّب طلباً أكثر دقة بصمت ولا نحسب سعراً لكمية تختلف عن المصروفة.
+ * يُسمح بضجيج الكسور الثنائية البسيط ثم تُحفظ الكمية المطبَّعة.
+ */
+export function normalizeMovementQty(qty: number, allowZero = false): number {
+  const scaled = Math.round(qty * 1000)
+  const normalized = scaled / 1000
+  if (!Number.isFinite(qty) || !Number.isSafeInteger(scaled) || qty < 0 || (normalized === 0 && (!allowZero || qty !== 0)) || Math.abs(qty - normalized) > 1e-9) {
+    throw new RangeError('كمية الحركة يجب أن تكون صالحة حتى ثلاث خانات عشرية')
+  }
+  return normalized
+}
+
+export function normalizeSaleMovementLine<T extends { qty: number; unitFactor?: number }>(line: T): T {
+  const qty = normalizeMovementQty(line.qty)
+  const factor = line.unitFactor ?? 1
+  if (!Number.isFinite(factor) || factor <= 0) throw new RangeError('معامل وحدة الكمية غير صالح')
+  normalizeMovementQty(qty * factor)
+  return { ...line, qty }
 }
 
 /** كمية السطر بالوحدة الأساسية (للمخزون/الدفعات) — qty × unitFactor */

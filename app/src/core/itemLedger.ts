@@ -24,8 +24,8 @@ export interface ItemLedgerInput {
   openingQty: number // رصيد الصنف الافتتاحي (وقت إنشائه)
   purchases: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; expenseShareMinor?: number; warehouseId?: number | null }[] }[]
   purchaseReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitCostMinor: number; warehouseId?: number | null }[] }[]
-  sales: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number; warehouseId?: number | null }[] }[]
-  saleReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; condition?: string; warehouseId?: number | null }[] }[]
+  sales: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[]
+  saleReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; condition?: string; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[]
   stocktakes: { stocktakeNumber: string; date: string; warehouseId?: number | null; userName?: string | null; rows: { itemId: number; systemQty: number; countedQty: number }[] }[]
   productionOrders: { orderNumber: string; date: string; productItemId: number; qty: number; ingredients: { itemId: number; qty: number }[] }[]
   materialRequisitions: { reqNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number }[] }[]
@@ -72,7 +72,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
   }
   for (const s of input.sales) {
     for (const l of s.lines) {
-      if (l.itemId !== id || l.qty <= 0) continue
+      if (l.itemId !== id || l.qty <= 0 || l.isServiceAtSale === true) continue
       const gross = Math.round(l.qty * l.unitPriceMinor)
       raw.push({
         date: s.date, docLabel: `فاتورة بيع ${s.invoiceNumber}`, docType: 'sale',
@@ -84,7 +84,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
   }
   for (const r of input.saleReturns) {
     for (const l of r.lines) {
-      if (l.itemId !== id || l.qty <= 0) continue
+      if (l.itemId !== id || l.qty <= 0 || l.isServiceAtSale === true) continue
       // المرتجع التالف لا يدخل المخزون (تكلفته للهالك 5111) — يظهر في الكارت
       // كسطر توثيقي بلا وارد كي لا ينحرف الرصيد الجاري عن الواقع
       const damaged = l.condition === 'damaged'

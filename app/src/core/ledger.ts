@@ -96,6 +96,8 @@ export interface JournalEntry {
   sourceCollection?: string
   /** إثبات إصدار قواعد حساب فاتورة البيع، يُطابق مع المستند. */
   saleRoundingVersion?: 2
+  /** نوع كل سطر من فاتورة البيع، لمراجعة حركة المخزون مقابل المستند. */
+  saleLineKinds?: { itemId: number; service: boolean }[]
   /** لقطة حركة صندوق الوردية للبيع المؤمّن أو رده؛ تُطابق مع سجل المطالبة. */
   insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   lines: JournalLine[]
