@@ -215,6 +215,7 @@ export function ContractingInvoicesPage() {
       refCode: s.refCode,
       dateIso: s.date,
       lines: s.lines,
+      roundingVersion: s.roundingVersion,
       customerCharges: s.customerCharges,
       totals: s.totals,
       payment: s.payment,
@@ -317,7 +318,7 @@ export function ContractingInvoicesPage() {
                             const documentRecord = salePrintRecord(s)
                             const documentSettings = resolveDocumentPrintSettings(documentRecord)
                             const tx = s.taxPercent !== undefined ? { taxPercent: s.taxPercent, taxInclusive: s.taxInclusive ?? true } : deriveTaxConfig(s.totals, s.lines)
-                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, customerCharges: s.customerCharges, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: tx.taxPercent, taxInclusive: tx.taxInclusive, settings: documentSettings.receipt })
+                            const model = buildReceiptModel({ invoiceNumber: s.invoiceNumber, refCode: s.refCode, dateIso: s.date, lines: s.lines, roundingVersion: s.roundingVersion, customerCharges: s.customerCharges, totals: s.totals, payment: s.payment, paidMinor: s.paidMinor, operatorName: setup.ownerName ?? 'المالك', customerName, taxPercent: tx.taxPercent, taxInclusive: tx.taxInclusive, settings: documentSettings.receipt })
                             /* نفس مسار الطباعة: PDF المرسل مستند ضريبي كامل — بلا رمز يفقد حجيته */
                             if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
                             else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })

@@ -226,7 +226,7 @@ const ruleOf = (selector) => {
 /* ⑭ ما يتحمله المحل أو المخزون لا يدخل إجمالي فاتورة الطرف */
 {
   // البيع: الإجمالي من totals (بنود − خصم + ضريبة + مصروفات العميل) والمصروف الداخلي سطر معلومة
-  assert.ok(sales.includes('applySaleCustomerCharges(base,customerCharges,effectiveTaxPercent)'), 'معاينة البيع لا تستخدم حساب الرسوم المشترك')
+  assert.ok(sales.includes('applySaleCustomerCharges(base,customerCharges,effectiveTaxPercent,roundingVersion)'), 'معاينة البيع لا تستخدم حساب الرسوم المشترك')
   const base = computeTotals([{ itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0 }], 0, 10, false)
   const totals = applySaleCustomerCharges(base, [{ kind: 'shipping', nameAr: 'نقل', amountMinor: 200, taxable: false }], 10)
   assert.equal(totals.totalMinor, 1300, 'إجمالي البيع يجب أن يشمل رسم العميل دون مصروف المنشأة')

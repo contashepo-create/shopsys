@@ -630,7 +630,7 @@ it('يطابق فاتورة إضافية قديمة بلا وسم أو إعدا�
   const itemId = S().ensureServiceItemForFreeLine({ nameAr: 'إضافي قديم' })
   const sale = S().postSale({ lines: [{ itemId, nameAr: 'إضافي قديم', qty: 2, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }], customerId: customer.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, projectId: project.id, projectBilling: 'extra' })
   const ret = S().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[itemId, 1]]), refund: 'credit', reason: 'مرتجع قديم' })
-  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })), sales: S().sales.map(row => ({ ...row, projectBilling: undefined, taxPercent: undefined, taxInclusive: undefined })), saleReturns: S().saleReturns.map(row => row.id === ret.id ? { ...row, cashRefundMinor: undefined, creditRefundMinor: undefined } : row) })
+  useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })), sales: S().sales.map(row => ({ ...row, projectBilling: undefined, taxPercent: undefined, taxInclusive: undefined, roundingVersion: undefined })), journal: S().journal.map(row => row.id === sale.journalEntryId ? { ...row, saleRoundingVersion: undefined } : row), saleReturns: S().saleReturns.map(row => row.id === ret.id ? { ...row, cashRefundMinor: undefined, creditRefundMinor: undefined } : row) })
   const p = S().previewLegacyProjectCustomer(project.id, customer.id)
   expect(p).toMatchObject({ balanceBeforeMinor: 1000, balanceAfterMinor: 9000 })
 })

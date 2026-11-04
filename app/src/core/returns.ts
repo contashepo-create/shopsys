@@ -7,7 +7,7 @@
  * القيد العاكس: دائن خزينة/عملاء، مدين مرتجعات مبيعات + ض.ق.م،
  * والبضاعة تعود للمخزون بتكلفتها (مدين مخزون / دائن تكلفة مبيعات).
  */
-import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
+import { computeTotals, type CartLine, type CartTotals, type PaymentMethod } from './pos.ts'
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
 
@@ -71,6 +71,52 @@ export function deriveTaxConfig(totals: CartTotals, lines: readonly CartLine[] =
       ? Math.round((totals.taxMinor / totals.taxBaseMinor) * 10000) / 100
       : 0
   return { taxPercent, taxInclusive: totals.totalMinor === totals.netMinor }
+}
+
+/**
+ * توزيع بواقي تقريب فاتورة v2 بين مرتجعاتها: إجمالي الجزء المردود حتى الآن
+ * مطروحاً منه الإجمالي المثبت سابقاً. لا تُعاد كتابة مرتجع سابق. يجب أن تبقى
+ * فروق مكونات كل مرتجع غير سالبة؛ الحالات الملتبسة تُحجب بدلاً من التخمين.
+ */
+export function cumulativeSaleReturnTotals(
+  saleLines: readonly CartLine[], invoiceDiscountPercent: number, taxPercent: number, taxInclusive: boolean,
+  priorReturns: readonly { lines: readonly ReturnLine[]; totals: CartTotals }[], currentLines: readonly ReturnLine[],
+): CartTotals {
+  const keys = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor'] as const
+  const quantities = new Map<number, number>()
+  const costs = new Map<number, number>()
+  let previous: CartTotals = { grossMinor: 0, discountMinor: 0, netMinor: 0, taxBaseMinor: 0, taxMinor: 0, totalMinor: 0, cogsMinor: 0 }
+  const increment = (lines: readonly ReturnLine[]): CartTotals => {
+    if (!lines.length) throw new Error('سطور المرتجع غير مثبتة — يلزم المراجعة')
+    for (const line of lines) {
+      const index = line.saleLineIndex
+      const original = index == null ? undefined : saleLines[index]
+      if (!Number.isSafeInteger(index) || !original || !Number.isFinite(line.qty) || line.qty <= 0 || line.itemId !== original.itemId || line.unitPriceMinor !== original.unitPriceMinor || line.discountPercent !== original.discountPercent || (line.unitFactor ?? 1) !== (original.unitFactor ?? 1) || (line.vatPercentOverride ?? null) !== (original.vatPercentOverride ?? null) || (line.vatExemptPerUnitMinor ?? 0) !== (original.vatExemptPerUnitMinor ?? 0)) throw new Error('سطر المرتجع أو أصله غير مثبت — يلزم المراجعة')
+      if (!Number.isSafeInteger(line.unitCostMinor) || line.unitCostMinor < 0 || (costs.has(index!) && costs.get(index!) !== line.unitCostMinor)) throw new Error('تكلفة سطر المرتجع غير مثبتة — يلزم المراجعة')
+      costs.set(index!, line.unitCostMinor)
+      const qty = Math.round(((quantities.get(index!) ?? 0) + line.qty) * 1000) / 1000
+      if (qty > original.qty + 1e-9) throw new Error('كمية المرتجع تتجاوز الأصل')
+      quantities.set(index!, qty)
+    }
+    const aggregated = [...quantities.entries()].sort(([a], [b]) => a - b).map(([index, qty]) => ({ ...saleLines[index], qty, unitCostMinor: costs.get(index)! }))
+    const cumulative = computeTotals(aggregated, invoiceDiscountPercent, taxPercent, taxInclusive, 2)
+    const standalone = computeTotals([...lines], invoiceDiscountPercent, taxPercent, taxInclusive, 2)
+    const diff = { ...standalone }
+    if (cumulative.cogsMinor - previous.cogsMinor !== standalone.cogsMinor) throw new Error('تقريب تكلفة المرتجع المجزأ غير مثبت — يلزم تسوية مستقلة')
+    for (const key of keys) {
+      const amount = cumulative[key] - previous[key]
+      if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('توزيع بواقي المرتجع غير مثبت — يلزم المراجعة')
+      diff[key] = amount
+    }
+    if (diff.taxBaseMinor + diff.taxMinor !== diff.totalMinor || (!taxInclusive && diff.netMinor !== diff.taxBaseMinor) || (taxInclusive && diff.netMinor !== diff.totalMinor)) throw new Error('توزيع ضريبة المرتجع غير متوافق — يلزم المراجعة')
+    previous = cumulative
+    return diff
+  }
+  for (const prior of priorReturns) {
+    const expected = increment(prior.lines)
+    if (!prior.totals || keys.some(key => prior.totals[key] !== expected[key]) || prior.totals.cogsMinor !== expected.cogsMinor) throw new Error('إجمالي مرتجع سابق غير مطابق — يلزم المراجعة')
+  }
+  return increment(currentLines)
 }
 
 /**

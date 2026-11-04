@@ -133,6 +133,21 @@ export function exactNonNegativePercent(baseMinor: Minor, percent: number, round
   return Number(result)
 }
 
+/** فصل ضريبة شاملة بمعدل عشري محفوظ، بالتقريب نصفاً لأعلى دون ضرب عائم. */
+export function splitExactInclusiveTax(grossMinor: Minor, taxPercent: number): [Minor, Minor] {
+  if (!Number.isSafeInteger(grossMinor) || grossMinor < 0 || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100) throw new RangeError('money: مبلغ أو ضريبة غير صالحة')
+  const [mantissa, exponentText = '0'] = taxPercent.toString().split('e')
+  const [whole, fraction = ''] = mantissa.split('.')
+  const scale = fraction.length - Number(exponentText)
+  const multiplier = scale < 0 ? 10n ** BigInt(-scale) : 1n
+  const rate = BigInt(whole + fraction) * multiplier
+  const baseDenominator = 100n * (scale > 0 ? 10n ** BigInt(scale) : 1n)
+  const denominator = baseDenominator + rate
+  const numerator = BigInt(grossMinor) * baseDenominator
+  const base = Number((numerator * 2n + denominator) / (2n * denominator))
+  return [base, grossMinor - base]
+}
+
 /** نسبة مئوية من مبلغ (للخصومات والضرائب) */
 export function percentOf(baseMinor: Minor, percent: number): Minor {
   assertMinor(baseMinor)

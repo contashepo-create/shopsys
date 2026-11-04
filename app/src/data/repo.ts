@@ -19,7 +19,7 @@ import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { roundNonNegativeRatio } from '../core/money.ts'
 import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
-import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
+import { cumulativeSaleReturnTotals, buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, isModernPinHash, hashPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { userPrefsKey, type UserPreferences } from '../core/userPreferences.ts'
@@ -1515,6 +1515,8 @@ export interface SaleInvoice {
   /** تاريخ القبض في مذكرة العملة فقط؛ لا يغيّر تاريخ الفاتورة أو اليومية. */
   fxMemoDateHistory?: { previousDate: string | null; correctedDate: string; documentDate: string | null; fx: FxLeg; journalEntryId: number; treasury: string; reason: string; at: string; by: string }[]
   invoiceDiscountPercent: number
+  /** 2 للحساب العشري الدقيق؛ الغياب يخص الفواتير التاريخية. */
+  roundingVersion?: 2
   totals: CartTotals
   journalEntryId: number // القيد المتولد — كل مستند مربوط بقيده (القرار 9)
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
@@ -5563,6 +5565,44 @@ function assertFxRepairPermission(state: DataState): void {
   if (!user || !effectivePermissionsFor(user, roles).has('acc.journal.reverse')) throw new Error('تصحيح تاريخ العملة يتطلب صلاحية عكس قيد في الفرع')
 }
 
+function checkedSaleRoundingVersion(state: DataState, sale: SaleInvoice): 2 | undefined {
+  const entries = state.journal.filter(entry => entry.id === sale.journalEntryId)
+  const stamped = entries.some(entry => entry.saleRoundingVersion != null)
+  if (sale.roundingVersion !== undefined && sale.roundingVersion !== 2) throw new FinancialDataReviewError(`تقريب فاتورة ${sale.invoiceNumber}`)
+  if (sale.roundingVersion != null || stamped) {
+    if (entries.length !== 1 || entries[0].sourceType !== 'sale' || entries[0].sourceId !== sale.id || entries[0].saleRoundingVersion !== sale.roundingVersion || entries[0].reversedByEntryId != null || entries[0].reversesEntryId != null) throw new FinancialDataReviewError(`تقريب فاتورة ${sale.invoiceNumber}`)
+  }
+  if (sale.roundingVersion === 2) {
+    try {
+      if (sale.taxPercent == null || typeof sale.taxInclusive !== 'boolean' || !Array.isArray(sale.lines)) throw new Error('sale')
+      const actual = applySaleCustomerCharges(computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive, 2), sale.customerCharges ?? [], sale.taxPercent, 2)
+      const fields: (keyof CartTotals)[] = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor', 'cogsMinor']
+      if (fields.some(key => !Number.isSafeInteger(sale.totals?.[key]) || sale.totals[key] !== actual[key])) throw new Error('totals')
+    } catch { throw new FinancialDataReviewError(`تقريب فاتورة ${sale.invoiceNumber}`) }
+  }
+  return sale.roundingVersion
+}
+
+/** لا يُعتمد رصيد مرتجعات v2 السابق دون قيده وتوزيعه المثبتين. */
+function assertVersionedSaleReturnEntries(state: DataState, sale: SaleInvoice, returns: SaleReturn[]): void {
+  const scoped = getBranchScopedDataState(state)
+  for (const ret of returns) {
+    const fail = (): never => { throw new FinancialDataReviewError(`مرتجع فاتورة ${sale.invoiceNumber}`) }
+    const entries = state.journal.filter(row => row.id === ret.journalEntryId), entry = entries[0]
+    if (state.saleReturns.filter(row => row.id === ret.id).length !== 1 || !scoped.saleReturns.some(row => row.id === ret.id) || entries.length !== 1 || !scoped.journal.some(row => row.id === entry.id) || entry.sourceType !== 'sale_return' || entry.sourceId !== ret.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines)) return fail()
+    if (sale.projectBilling === 'documentation') {
+      if (ret.projectBilling !== 'documentation' || entry.memoOnly !== true || entry.lines.length) return fail()
+      continue
+    }
+    const cash = ret.cashRefundMinor, credit = ret.creditRefundMinor, store = ret.storeCreditRefundMinor ?? 0, waived = ret.waivedRefundMinor ?? 0
+    if (![cash, credit, store, waived].every(Number.isSafeInteger) || cash! < 0 || credit! < 0 || store < 0 || store > credit! || waived < 0 || cash! + credit! + waived !== ret.totals.totalMinor) return fail()
+    const allocation = { cashMinor: cash!, creditMinor: credit! - store, storeCreditMinor: store, waivedMinor: waived }
+    let expected: JournalLine[]
+    try { expected = buildReturnEntryAlloc(ret.totals, allocation, ret.treasury ?? sale.treasury ?? '1101', damagedCostOf(ret.lines)); assertBalanced(entry.lines) } catch { return fail() }
+    if (entry.memoOnly || entry.lines.length !== expected.length || entry.lines.some((line, index) => line.accountCode !== expected[index].accountCode || line.debit !== expected[index].debit || line.credit !== expected[index].credit)) return fail()
+  }
+}
+
 function assertSaleFxHistoryShape(sale: SaleInvoice): void {
   if ((sale.fxCorrectionHistory != null && !Array.isArray(sale.fxCorrectionHistory)) || (sale.fxMemoDateHistory != null && !Array.isArray(sale.fxMemoDateHistory))) throw new Error(`سجل تصحيح عملة الفاتورة ${sale.invoiceNumber} تالف — يلزم المراجعة`)
 }
@@ -8158,9 +8198,9 @@ export const useRawDataStore = create<DataState>()(
           const expected = Math.round((current as number) * (l.unitFactor ?? 1))
           return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
         })
-        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive, 2)
         const customerCharges = args.customerCharges ?? []
-        const totals = applySaleCustomerCharges(baseTotals, customerCharges, args.taxPercent)
+        const totals = applySaleCustomerCharges(baseTotals, customerCharges, args.taxPercent, 2)
         /* ── حارس فوترة المشاريع — النموذج (أ) (أ-١ سقف «extra»، أ-٢ توثيق) ──
            يُفرض فقط حين تُرسل الواجهة طبيعة الفوترة صراحة؛ المسار التاريخي
            (بلا طبيعة) لا يتغيّر حتى تُلزم الواجهة الطبيعة لفواتير المشروعات.
@@ -8323,6 +8363,7 @@ export const useRawDataStore = create<DataState>()(
           description: isDocumentation ? `فاتورة توثيق ${invoiceNumber} — مستند ضريبي مقابل مستخلصات مشروع (بلا أثر دفتري)` : `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: 'sale',
           sourceId: saleId,
+          saleRoundingVersion: 2,
           lines: entryLines,
           ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
@@ -8350,6 +8391,7 @@ export const useRawDataStore = create<DataState>()(
           lines: costedLines,
           ...(serialExpiryBatches.length ? { serialExpiryBatches } : {}),
           invoiceDiscountPercent: args.invoiceDiscountPercent,
+          roundingVersion: 2,
           totals,
           journalEntryId: entryId,
           expiryOverrideBy: args.expiryOverrideBy ?? null,
@@ -8459,6 +8501,7 @@ export const useRawDataStore = create<DataState>()(
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
         if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) throw new Error('المعاملة الضريبية لفاتورة الرسوم غير محفوظة — يلزم مراجعتها قبل المرتجع')
+        const roundingVersion = checkedSaleRoundingVersion(state, sale)
         /* مرتجع توثيق (النموذج أ — أ-٢): يخفض «الموثَّق» في حارس المشروع فقط —
            لا نقد يعود ولا ذمة تتغير، لأن مال الفاتورة لم يتحرك بدفترها أصلاً */
         const isDocReturn = sale.projectBilling === 'documentation'
@@ -8531,7 +8574,10 @@ export const useRawDataStore = create<DataState>()(
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
           ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
           : deriveTaxConfig(sale.totals, sale.lines)
-        const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
+        if (roundingVersion === 2) assertVersionedSaleReturnEntries(state, sale, state.saleReturns.filter(ret => ret.saleId === sale.id))
+        const totals = roundingVersion === 2
+          ? cumulativeSaleReturnTotals(sale.lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive, state.saleReturns.filter(ret => ret.saleId === sale.id), lines)
+          : computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
         // 3) الرد الهجين للدفع المجزأ (إصلاح R1): لا نرد نقداً أكثر مما حُصِّل فعلاً،
         //    ولا نخفض ذمم العميل أكثر من المتبقي المفتوح على الفاتورة
         const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
@@ -10595,9 +10641,10 @@ export const useRawDataStore = create<DataState>()(
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
           ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
           : deriveTaxConfig(sale.totals, sale.lines)
-        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
+        const roundingVersion = checkedSaleRoundingVersion(state, sale)
+        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive, roundingVersion)
         const customerCharges = args.customerCharges ?? sale.customerCharges ?? []
-        const totals = applySaleCustomerCharges(baseTotals, customerCharges, taxPercent)
+        const totals = applySaleCustomerCharges(baseTotals, customerCharges, taxPercent, roundingVersion)
         const paidM = args.paidMinor
         if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
         if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
@@ -10719,6 +10766,7 @@ export const useRawDataStore = create<DataState>()(
           id: newEntryId, entryNumber: newEntryId, date: now.slice(0, 10),
           description: `فاتورة بيع ${sale.invoiceNumber} (معدلة)${sale.fx ? ` — ${describeFxLeg(sale.fx, paidM, bookCurrencyOf().decimals)}` : ''}`,
           sourceType: 'sale', sourceId: sale.id,
+          ...(roundingVersion ? { saleRoundingVersion: roundingVersion } : {}),
           lines: newEntryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -13546,7 +13594,7 @@ export const useRawDataStore = create<DataState>()(
           }
           if (expiredNames.length) throw new Error(`أصناف منتهية الصلاحية لا تُباع — ${expiredNames.join('، ')} (أعدمها من شاشة الهالك)`)
         }
-        const totals = computeTotals(costedLines, 0, args.taxPercent, args.taxInclusive)
+        const totals = computeTotals(costedLines, 0, args.taxPercent, args.taxInclusive, 2)
         if (Object.values(totals).some(value => !Number.isSafeInteger(value) || value < 0) || totals.totalMinor <= 0) throw new Error('إجماليات البيع المؤمّن غير صالحة')
         const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
         assertInsuredSaleWorkflow(state, 'sale', totals.totalMinor)
@@ -14717,7 +14765,7 @@ export const useRawDataStore = create<DataState>()(
             const tax = sale.taxPercent == null ? deriveTaxConfig(sale.totals, sale.lines) : { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
             try {
               if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) return fail()
-              const totals = applySaleCustomerCharges(computeTotals(sale.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive), sale.customerCharges ?? [], tax.taxPercent)
+              const totals = applySaleCustomerCharges(computeTotals(sale.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive, checkedSaleRoundingVersion(state, sale)), sale.customerCharges ?? [], tax.taxPercent, sale.roundingVersion)
               if (!sameCartTotals(sale.totals, totals) || sale.totals.totalMinor <= 0 || sale.totals.cogsMinor < 0) return fail()
               const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
               if (!Number.isSafeInteger(paid) || paid < 0 || paid > sale.totals.totalMinor) return fail()
@@ -14771,12 +14819,13 @@ export const useRawDataStore = create<DataState>()(
             }
             const returnedQty = new Map<number, number>()
             let returned = 0
+            const validatedReturns: SaleReturn[] = []
             for (const ret of projectReturns.filter(row => row.saleId === sale.id)) {
               if (state.saleReturns.filter(row => row.id === ret.id).length !== 1 || !scoped.saleReturns.some(row => row.id === ret.id) || ret.projectBilling === 'documentation' || !Array.isArray(ret.lines) || !ret.lines.length || !safeCartLines(ret.lines) || !Number.isSafeInteger(ret.totals?.totalMinor) || ret.totals.totalMinor <= 0 || state.stockMoves.some(move => move.docType === 'sale_return' && move.docId === ret.id)) return fail()
               if (sale.fx != null && returnAllocation(ret).cashMinor > 0) return fail()
               let expectedReturn: JournalLine[]
               try {
-                if (!sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive)) || ret.totals.cogsMinor < 0) return fail()
+                if (!sameCartTotals(ret.totals, (checkedSaleRoundingVersion(state, sale) === 2 ? cumulativeSaleReturnTotals(sale.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive, validatedReturns, ret.lines) : computeTotals(ret.lines, sale.invoiceDiscountPercent, tax.taxPercent, tax.taxInclusive))) || ret.totals.cogsMinor < 0) return fail()
                 const allocation = returnAllocation(ret)
                 const refundTreasury = ret.treasury ?? sale.treasury ?? '1101'
                 if (allocation.cashMinor > 0 && !state.treasuries.some(t => t.code === refundTreasury)) return fail()
@@ -14794,6 +14843,7 @@ export const useRawDataStore = create<DataState>()(
               if (state.journal.filter(row => row.id === ret.journalEntryId).length !== 1 || !returnEntry || returnEntry.sourceType !== 'sale_return' || returnEntry.sourceId !== ret.id || (returnEntry.sourceCollection != null && returnEntry.sourceCollection !== 'saleReturns') || returnEntry.memoOnly || returnEntry.reversesEntryId != null || returnEntry.reversedByEntryId != null || !Array.isArray(returnEntry.lines) || returnEntry.lines.length !== expectedReturn.length || returnEntry.lines.some((line, index) => line.accountCode !== expectedReturn[index].accountCode || line.debit !== expectedReturn[index].debit || line.credit !== expectedReturn[index].credit || line.partyKind != null || line.partyId != null)) return fail()
               try { assertBalanced(returnEntry.lines) } catch { return fail() }
               returned += ret.totals.totalMinor
+              validatedReturns.push(ret)
             }
             if (!Number.isSafeInteger(returned) || returned > sale.totals.totalMinor) return fail()
             continue
@@ -14801,16 +14851,17 @@ export const useRawDataStore = create<DataState>()(
           if (sale.projectBilling !== 'documentation') throw new Error('طبيعة فاتورة المشروع التاريخية غير مثبتة — يلزم تدقيق منفصل')
           if (state.sales.filter(row => row.id === sale.id).length !== 1 || !scoped.sales.some(row => row.id === sale.id) || sale.customerId !== customerId || sale.partyKind != null || sale.partyId != null || sale.payment !== 'credit' || (sale.paidMinor ?? 0) !== 0 || sale.fx != null || (sale.paymentAllocations?.length ?? 0) > 0 || (sale.internalExpenses?.length ?? 0) > 0 || (sale.customerCharges?.length ?? 0) > 0 || !Number.isSafeInteger(sale.totals?.totalMinor) || sale.totals.totalMinor <= 0 || !Array.isArray(sale.extractIds) || !sale.extractIds.length || new Set(sale.extractIds).size !== sale.extractIds.length || sale.extractIds.some(id => !extracts.some(extract => extract.id === id)) || !Array.isArray(sale.lines) || !sale.lines.length || !safeCartLines(sale.lines) || !Number.isFinite(sale.invoiceDiscountPercent) || sale.lines.some(line => !state.items.some(item => item.id === line.itemId && item.isService))) throw new Error('فاتورة التوثيق أو عميلها أو مستخلصاتها غير مطابقة — يلزم تدقيق منفصل')
           try {
-            if (sale.taxPercent == null || sale.taxInclusive == null || !sameCartTotals(sale.totals, computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive)) || sale.totals.cogsMinor !== 0) throw new Error('totals')
+            if (sale.taxPercent == null || sale.taxInclusive == null || !sameCartTotals(sale.totals, computeTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent, sale.taxInclusive, checkedSaleRoundingVersion(state, sale))) || sale.totals.cogsMinor !== 0) throw new Error('totals')
           } catch { throw new Error('إجمالي فاتورة التوثيق أو ضريبتها غير مطابق — يلزم تدقيق منفصل') }
           if (state.vouchers.some(voucher => voucher.allocations?.some(allocation => allocation.docKey === `sale:${sale.id}`)) || state.clientSettlements.some(collection => collection.allocations?.some(allocation => allocation.docKey === `sale:${sale.id}`)) || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale' && tx.documentId === String(sale.id)) || state.stockMoves.some(move => move.docType === 'sale' && move.docId === sale.id) || state.staffCommissions.some(commission => commission.source === 'sale' && commission.sourceId === sale.id)) throw new Error('فاتورة التوثيق تحمل تحصيلاً أو أثراً تشغيلياً — يلزم تدقيق منفصل')
           checkMemo(sale.journalEntryId, 'sale', sale.id)
           let returned = 0
           const returnedQty = new Map<number, number>()
+          const validatedReturns: SaleReturn[] = []
           for (const ret of projectReturns.filter(item => item.saleId === sale.id)) {
             if (state.saleReturns.filter(item => item.id === ret.id).length !== 1 || !scoped.saleReturns.some(item => item.id === ret.id) || ret.projectBilling !== 'documentation' || ret.refund !== 'credit' || !Number.isSafeInteger(ret.totals?.totalMinor) || ret.totals.totalMinor <= 0 || state.paymentTerminalTransactions.some(tx => tx.documentType === 'sale_return' && (tx.documentId === String(ret.id) || tx.documentId.startsWith(`${ret.id}:`))) || state.stockMoves.some(move => move.docType === 'sale_return' && move.docId === ret.id)) throw new Error('مرتجع فاتورة التوثيق غير مطابق — يلزم تدقيق منفصل')
             try {
-              if (!Array.isArray(ret.lines) || !ret.lines.length || !safeCartLines(ret.lines) || !sameCartTotals(ret.totals, computeTotals(ret.lines, sale.invoiceDiscountPercent, sale.taxPercent!, sale.taxInclusive!)) || ret.totals.cogsMinor !== 0 || (ret.cashRefundMinor ?? 0) !== 0 || (ret.storeCreditRefundMinor ?? 0) !== 0 || (ret.waivedRefundMinor ?? 0) !== 0) throw new Error('totals')
+              if (!Array.isArray(ret.lines) || !ret.lines.length || !safeCartLines(ret.lines) || !sameCartTotals(ret.totals, (checkedSaleRoundingVersion(state, sale) === 2 ? cumulativeSaleReturnTotals(sale.lines, sale.invoiceDiscountPercent, sale.taxPercent!, sale.taxInclusive!, validatedReturns, ret.lines) : computeTotals(ret.lines, sale.invoiceDiscountPercent, sale.taxPercent!, sale.taxInclusive!))) || ret.totals.cogsMinor !== 0 || (ret.cashRefundMinor ?? 0) !== 0 || (ret.storeCreditRefundMinor ?? 0) !== 0 || (ret.waivedRefundMinor ?? 0) !== 0) throw new Error('totals')
             } catch { throw new Error('إجمالي مرتجع التوثيق أو ضريبته غير مطابق — يلزم تدقيق منفصل') }
             for (const line of ret.lines) {
               const index = line.saleLineIndex
@@ -14822,6 +14873,7 @@ export const useRawDataStore = create<DataState>()(
             }
             checkMemo(ret.journalEntryId, 'sale_return', ret.id)
             returned += ret.totals.totalMinor
+            validatedReturns.push(ret)
           }
           if (!Number.isSafeInteger(returned) || returned > sale.totals.totalMinor) throw new Error('مرتجعات التوثيق تتجاوز الفاتورة — يلزم التدقيق')
         }

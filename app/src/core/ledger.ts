@@ -94,6 +94,8 @@ export interface JournalEntry {
   sourceId: number | null
   /** اسم مجموعة المستند المالكة عندما يحتمل sourceType أكثر من نوع مستند. */
   sourceCollection?: string
+  /** إثبات إصدار قواعد حساب فاتورة البيع، يُطابق مع المستند. */
+  saleRoundingVersion?: 2
   /** لقطة حركة صندوق الوردية للبيع المؤمّن أو رده؛ تُطابق مع سجل المطالبة. */
   insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   lines: JournalLine[]

@@ -135,7 +135,7 @@ export function SalesInvoicesPage() {
       ? { taxPercent: editing.taxPercent, taxInclusive: editing.taxInclusive ?? true }
       : deriveTaxConfig(editing.totals, editing.lines)
     try {
-      return applySaleCustomerCharges(computeTotals(editLines, editDiscount, taxPercent, taxInclusive), editCustomerCharges, taxPercent)
+      return applySaleCustomerCharges(computeTotals(editLines, editDiscount, taxPercent, taxInclusive, editing.roundingVersion), editCustomerCharges, taxPercent, editing.roundingVersion)
     } catch { return null }
   }, [editing, editLines, editDiscount, editCustomerCharges])
 
@@ -224,6 +224,7 @@ export function SalesInvoicesPage() {
       refCode: s.refCode,
       dateIso: s.date,
       lines: s.lines,
+      roundingVersion: s.roundingVersion,
       customerCharges: s.customerCharges,
       totals: s.totals,
       payment: s.payment,

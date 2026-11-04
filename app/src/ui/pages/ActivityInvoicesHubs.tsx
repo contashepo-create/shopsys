@@ -103,6 +103,7 @@ function ActivityInvoicesHub({ activity }: { activity: keyof typeof HUBS }) {
       refCode: s.refCode,
       dateIso: s.date,
       lines: s.lines,
+      roundingVersion: s.roundingVersion,
       customerCharges: s.customerCharges,
       totals: s.totals,
       payment: s.payment,

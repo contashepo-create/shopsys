@@ -13,7 +13,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
-import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { computeTotals, lineTotal, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
@@ -470,7 +470,7 @@ export function PosPage() {
   const totals = useMemo(() => {
     try {
       if (!cart.length) return null
-      return computeTotals(cart, invoiceDiscount, effectiveCountryVatPercent, setup.taxInclusive)
+      return computeTotals(cart, invoiceDiscount, effectiveCountryVatPercent, setup.taxInclusive, 2)
     } catch { return null }
   }, [cart, invoiceDiscount, effectiveCountryVatPercent, setup.taxInclusive])
 
@@ -519,7 +519,7 @@ export function PosPage() {
     taxMinor: sale.totals.taxMinor,
   })
 
-  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number; taxQrPayload?: string; branchId?: number | null; warehouseId?: number | null; treasury?: string; taxPercent?: number; taxInclusive?: boolean }) => {
+  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number; taxQrPayload?: string; branchId?: number | null; warehouseId?: number | null; treasury?: string; taxPercent?: number; taxInclusive?: boolean; roundingVersion?: 2 }) => {
     const documentSettings = resolveDocumentPrintSettings(sale)
     /* الرمز المجمّد على الفاتورة أولاً — إيصال فاتورة قديمة يجب أن يطابق
        الرمز الذي طُبع يوم البيع، لا رمزاً ببيانات إعدادات اليوم. */
@@ -531,6 +531,7 @@ export function PosPage() {
       refCode: sale.refCode,
       dateIso: sale.date,
       lines: sale.lines,
+      roundingVersion: sale.roundingVersion,
       totals: sale.totals,
       payment: sale.payment,
       paidMinor: sale.paidMinor, // الدفع المجزأ: يطبع المدفوع/المتبقي (بلاغ المالك)
@@ -1155,7 +1156,7 @@ export function PosPage() {
                   {/* إجمالي السطر */}
                   <div className="text-left">
                     <div className="font-black text-[12px] text-slate-800 dark:text-white">
-                      {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}
+                      {fmt(lineTotal(l, 2))}
                     </div>
                     {l.discountPercent > 0 && (
                       <div className="text-[10px] text-rose-400 line-through">{fmt(Math.round(l.unitPriceMinor * l.qty))}</div>

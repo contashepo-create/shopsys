@@ -14,7 +14,7 @@ import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
+import { cumulativeSaleReturnTotals, remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { normalizeSerial } from '../../core/serials.ts'
 import { partyCode } from '../../core/partyCodes.ts'
@@ -46,7 +46,7 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, items, serials, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
+  const { sales, saleReturns, customers, items, serials, recipes, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -148,13 +148,15 @@ export function SaleReturnsPage() {
   const preview = useMemo(() => {
     if (!sale || !specs.length || lineErrors.length) return null
     try {
-      const lines = specs.map((s) => ({ ...sale.lines[s.lineIndex], qty: s.qty }))
+      const lines = specs.map((s) => ({ ...sale.lines[s.lineIndex], qty: s.qty, saleLineIndex: s.lineIndex, ...(recipes.some(r => r.productItemId === sale.lines[s.lineIndex].itemId && r.mode === 'made_to_order') ? { unitCostMinor: 0 } : {}) }))
       const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
         ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
         : deriveTaxConfig(sale.totals, sale.lines)
-      const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
-      const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
       const priorReturns = saleReturns.filter((r) => r.saleId === sale.id)
+      const totals = sale.roundingVersion === 2
+        ? cumulativeSaleReturnTotals(sale.lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive, priorReturns, lines)
+        : computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
+      const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
       const priorCredit = priorReturns.reduce((a, r) => a + (r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)), 0)
       const priorCash = priorReturns.reduce((a, r) => a + returnCashRefundMinor(r), 0)
       const settled = clientSettlements.reduce(
@@ -186,7 +188,7 @@ export function SaleReturnsPage() {
         .reduce((a, s) => a + Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor), 0)
       return { totals, alloc, allocErrors, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
     } catch { return null }
-  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
+  }, [sale, specs, lineErrors, refund, saleReturns, recipes, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
 
   const approval = useSupervisorApproval()
   const submit = () => {
@@ -223,11 +225,18 @@ export function SaleReturnsPage() {
     const orig = sales.find((s) => s.id === r.saleId)
     const documentRecord = orig ?? r
     const documentSettings = resolveDocumentPrintSettings(documentRecord)
+    const taxPercent = orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent
+    const taxInclusive = orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive
+    const roundingAdjustmentMinor = orig?.roundingVersion === 2
+      ? r.totals.netMinor - computeTotals(r.lines, orig.invoiceDiscountPercent, taxPercent, taxInclusive, 2).netMinor
+      : 0
     const model = buildReceiptModel({
       invoiceNumber: r.returnNumber,
       refCode: r.refCode,
       dateIso: r.date,
       lines: r.lines,
+      roundingVersion: orig?.roundingVersion,
+      roundingAdjustmentMinor,
       totals: r.totals,
       payment: r.refund === 'cash' ? 'cash' : 'credit',
       paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
@@ -238,8 +247,8 @@ export function SaleReturnsPage() {
          المعدل العام بعد إصدارها؛ الإجماليات تأتي من المرتجع نفسه أصلاً. */
       /* من الفاتورة الأصلية إن كانت النسبة مخزنة؛ وإلا تُستنتج من إجماليات
          المرتجع نفسه — لا من إعدادات اليوم التي قد تخالف المستند القديم. */
-      taxPercent: orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent,
-      taxInclusive: orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive,
+      taxPercent,
+      taxInclusive,
       settings: documentSettings.receipt,
     })
     model.docTitle = 'مرتجع مبيعات'

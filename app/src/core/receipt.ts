@@ -4,7 +4,7 @@
  * منطق خالص: يحوّل فاتورة البيع إلى نموذج إيصال جاهز للقالب
  * (80مم أو 58مم) — الواجهة ترسمه والطابعة تطبعه، بلا حسابات في القالب.
  */
-import type { Minor } from './money.ts'
+import { exactNonNegativePercent, type Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
 import type { DocumentCharge } from './documentCharges.ts'
 import { localDateTimeLabel } from './time.ts'
@@ -191,6 +191,10 @@ export function buildReceiptModel(args: {
   customerName: string | null
   taxPercent: number
   taxInclusive: boolean
+  /** النسخة المثبتة على فاتورة البيع؛ عدم وجودها يبقي مظهر القديم كما كان. */
+  roundingVersion?: 2
+  /** فرق تقريبات المرتجع التراكمي عن سطوره منفردة، يطبع كسطر توضيحي. */
+  roundingAdjustmentMinor?: Minor
   settings: ReceiptSettings
 }): ReceiptModel {
   const { totals, settings } = args
@@ -198,7 +202,7 @@ export function buildReceiptModel(args: {
   const lines: CartLine[] = [...args.lines, ...charges.map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? args.taxPercent : 0 }))]
   const rows: ReceiptRow[] = lines.map((l) => {
     const gross = Math.round(l.unitPriceMinor * l.qty)
-    const net = Math.round(gross * (1 - l.discountPercent / 100))
+    const net = args.roundingVersion === 2 ? gross - exactNonNegativePercent(gross, l.discountPercent) : Math.round(gross * (1 - l.discountPercent / 100))
     return {
       nameAr: l.nameAr,
       qtyLabel: l.soldByWeight ? `${l.qty} كجم` : String(l.qty),
@@ -210,6 +214,10 @@ export function buildReceiptModel(args: {
       notes: l.notes ?? '',
     }
   })
+  if (args.roundingAdjustmentMinor) {
+    if (!Number.isSafeInteger(args.roundingAdjustmentMinor)) throw new Error('تسوية تقريب المرتجع غير صالحة')
+    rows.push({ nameAr: 'تسوية تقريب المرتجع التراكمي', qtyLabel: '—', unitPriceMinor: 0, totalMinor: args.roundingAdjustmentMinor, discountPercent: 0, vatPercent: null, serials: [] })
+  }
   const totalQty = Math.round(lines.reduce((a, l) => a + l.qty, 0) * 1000) / 1000
   // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يُطبعان — لا قيمة الفاتورة وحدها
   const paid = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
@@ -232,7 +240,7 @@ export function buildReceiptModel(args: {
     customerName: args.customerName ?? 'عميل نقدي',
     paymentLabel: remaining <= 0 ? 'نقدي' : paid > 0 ? 'مجزأ — جزء محصل والباقي آجل' : 'آجل',
     rows,
-    itemCount: rows.length,
+    itemCount: lines.length,
     totalQty,
     grossMinor: totals.grossMinor + charges.reduce((sum, charge) => sum + charge.amountMinor, 0),
     taxBaseMinor: totals.taxBaseMinor,
