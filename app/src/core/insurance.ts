@@ -69,6 +69,9 @@ export function insuredPartialAmounts(basis: InsuredPartialBasis, previousQty: n
   return { total: b.total - a.total, revenue: b.revenue - a.revenue, tax: b.tax - a.tax, provider: b.provider - a.provider, patient: b.patient - a.patient, cost: b.cost - a.cost }
 }
 
+/** إثبات حركة صندوق الوردية ووجهتها وقت الترحيل، لا يغيّر سجل الوردية المغلقة. */
+export interface InsuredShiftStamp { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
+
 /** مطالبة على جهة — تتجمع حتى التحصيل */
 export interface InsuranceClaim {
   id: number
@@ -81,16 +84,20 @@ export interface InsuranceClaim {
   claimMinor: Minor // نصيب الجهة (يتناقص مع مرتجعات G9)
   settled: boolean
   settlementEntryId: number | null
+  settlementShift?: InsuredShiftStamp
   /** G9: ما عُكس من المطالبة بمرتجعات (تخفيض 1110) — undefined = سجل قديم */
   reversedMinor?: Minor
   /** جزء الجهة الذي نشأ التزاماً بعد تحصيل المطالبة، لا يعد ردّاً نقدياً. */
   settledRefundMinor?: Minor
-  refundPayments?: { journalEntryId: number; amountMinor: Minor; treasury: string; date: string; reason: string }[]
+  refundPayments?: { journalEntryId: number; amountMinor: Minor; treasury: string; date: string; reason: string; shift?: InsuredShiftStamp }[]
   /** رد كامل بيع مخزني محصّل، بحركة المريض والمخزون المؤكدة. */
-  saleRefund?: { journalEntryId: number; treasury: string; reason: string; date: string }
+  saleRefund?: { journalEntryId: number; treasury: string; reason: string; date: string; shift?: InsuredShiftStamp }
   /** أصل وحدوي محدد للبيع الجديد وسجل مرتجعاته؛ لا يتوفر للسجلات القديمة. */
+  serviceShift?: InsuredShiftStamp
+  saleShift?: InsuredShiftStamp
+  saleReversal?: { journalEntryId: number; shift: InsuredShiftStamp }
   salePartialBasis?: InsuredPartialBasis
-  salePartialRefunds?: { qty: number; journalEntryId: number; treasury: string; reason: string; date: string; batchAllocations?: { batchId: number; qty: number }[]; serials?: string[] }[]
+  salePartialRefunds?: { qty: number; journalEntryId: number; treasury: string; reason: string; date: string; shift?: InsuredShiftStamp; batchAllocations?: { batchId: number; qty: number }[]; serials?: string[] }[]
   /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
   saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
   /** الوحدات المختارة فعلياً ولقطة دفعة كل وحدة إن تتبعت الصلاحية. */

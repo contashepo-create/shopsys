@@ -31,16 +31,15 @@ it('يرفض كمية تتلاشى بعد التقريب أو دفعة صلاح�
  useRawDataStore.setState({ items: before.items.map(row => ({ ...row, trackExpiry: true })), batches: [{ id: 10, itemId: item.id, purchaseId: 1, warehouseId: 1, lotNumber: 'L', expiryDate: 'not-date', qty: 5, receivedAt: '2026-01-01' }] })
  expect(() => s.postInsuredSale(args)).toThrow(/صلاحية|دفعة/)
 })
-it('لا يسجل بيعاً يخفي نقدية من وردية مفتوحة أو يتجاوز الفاتورة الإلكترونية', () => {
- const { s, args } = fixture(), before = useRawDataStore.getState()
- s.openShift('مدير', 0)
- const withShift = useRawDataStore.getState()
- expect(() => s.postInsuredSale(args)).toThrow(/وردية/)
- expect(useRawDataStore.getState().journal).toBe(withShift.journal)
- useRawDataStore.setState({ shifts: [] })
+it('يسجل نصيب المريض في الوردية ولا يتجاوز الفاتورة الإلكترونية', () => {
+ const { s, args } = fixture(), shift = s.openShift('مدير', 0)
+ s.postInsuredSale(args)
+ expect(s.getShiftSummary(shift.id).expectedCashMinor).toBe(600)
+ s.closeShift(600)
  useAppStore.setState(state => ({ einvoice: { ...state.einvoice, enabled: true } }))
+ const before = useRawDataStore.getState()
  expect(() => s.postInsuredSale(args)).toThrow(/إلكترون|ضريب/)
- expect(useRawDataStore.getState().items).toEqual(before.items)
+ expect(useRawDataStore.getState().items).toBe(before.items)
 })
 it('لا يتجاوز نطاق اعتماد المبيعات المفعّل', () => {
  const { s, args } = fixture()

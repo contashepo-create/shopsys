@@ -24,6 +24,8 @@ export interface ServiceRefundRecord {
   mode: 'cash' | 'customer_credit'
   reason: string
   journalEntryId: number
+  /** حركة صندوق مريض مؤمّن عند رد نقدي، مثبتة أيضاً على القيد. */
+  insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   /** نصيب العميل في رد مؤمن على الحساب؛ الباقي يخص مطالبة الجهة. */
   customerCreditMinor?: Minor
   /** موافقة المشرف (نمط POS العالمي): من اعتمد ومن نفّذ — undefined = سجل قديم */
