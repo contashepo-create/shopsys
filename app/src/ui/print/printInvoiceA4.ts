@@ -322,12 +322,14 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   const style: A4Style = settings.a4Style ?? 'modern'
   const accent = safeColor(settings.accentColor, STYLE_ACCENTS[style] ?? '#6366f1')
   const a5 = paper === 'a5'
+  // إخفاء المستخدم يسري على كل الأنماط، كما في الإيصال الحراري.
+  const visibleModel = settings.showOperator === false ? { ...model, operatorName: undefined } : model
   const body =
-    style === 'classic' ? renderClassic(model, cur, settings, accent)
-    : style === 'compact' ? renderCompact(model, cur, settings, accent)
-    : style === 'elegant' ? renderElegant(model, cur, settings, accent)
-    : style === 'royal' ? renderRoyal(model, cur, settings, accent)
-    : renderModern(model, cur, settings, accent)
+    style === 'classic' ? renderClassic(visibleModel, cur, settings, accent)
+    : style === 'compact' ? renderCompact(visibleModel, cur, settings, accent)
+    : style === 'elegant' ? renderElegant(visibleModel, cur, settings, accent)
+    : style === 'royal' ? renderRoyal(visibleModel, cur, settings, accent)
+    : renderModern(visibleModel, cur, settings, accent)
 
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">

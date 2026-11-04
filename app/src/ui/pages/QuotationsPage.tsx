@@ -9,7 +9,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  */
 import { useMemo, useState } from 'react'
 import { Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, CheckCircle2 } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -40,6 +40,10 @@ const QUOTE_TERMS = ['الأسعار سارية حتى تاريخ صلاحية �
 export function QuotationsPage() {
   const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject, updateQuotation, advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft } = useDataStore()
   const { setup } = useAppStore()
+  // «طبع بواسطة» هو المستخدم الذي ينفذ الطباعة، لا مالك المنشأة أو منشئ العرض.
+  const currentUserId = useRawDataStore((state) => state.currentUserId)
+  const currentUser = useRawDataStore((state) => state.appUsers.find((user) => user.id === state.currentUserId))
+  const operatorName = currentUserId == null ? (setup.ownerName?.trim() || 'المالك') : (currentUser?.nameAr?.trim() || 'مستخدم غير معروف')
   const toast = useToast()
   const printSwitches = usePrintSwitches()
   const cur = useMemo(
@@ -179,7 +183,7 @@ export function QuotationsPage() {
       totalMinor: draftTax.grossMinor,
       /* عرض السعر ليس مستند تحصيل: بلا «مدفوع/متبقي» إطلاقاً (بلاغ المالك) */
       paidMinor: draftTax.grossMinor,
-      operatorName: setup.ownerName ?? 'المالك',
+      operatorName,
       settings: resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt,
       extraFooter: notes.trim() || undefined,
       tax: { label: 'الضريبة', minor: draftTax.taxMinor, baseMinor: draftTax.netMinor },
@@ -207,7 +211,7 @@ export function QuotationsPage() {
       rows: q.lines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
       totalMinor: t.grossMinor,
       paidMinor: t.grossMinor,
-      operatorName: setup.ownerName ?? 'المالك',
+      operatorName,
       settings: resolveDocumentPrintSettings(q).receipt,
       extraFooter: q.notes?.trim() || undefined,
       tax: { label: 'الضريبة', minor: t.taxMinor, baseMinor: t.netMinor },
@@ -255,7 +259,7 @@ export function QuotationsPage() {
           currencyLabel={`${cur.code} · ${cur.symbol}`}
           dateLabel={todayLocalIso()}
           branchLabel={resolveDocumentPrintSettings(currentQuotePrintRecord()).setup.shopName ?? ''}
-          userLabel={setup.ownerName ?? 'المالك'}
+          userLabel={operatorName}
           activityLabel={setup.activityId ?? 'نشاط عام'}
           documentNumber={editingQuote ? editingQuote.quoteNumber : "QT-DRAFT"}
           onBack={() => { setOpen(false); setEditingQuote(null) }}
