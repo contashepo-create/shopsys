@@ -10,7 +10,7 @@
  * - عمولة المُحيل: استحقاق 5109 ← 2105 عند الطلب، وصرف 2105 ← 1101 شهرياً
  * كل الأموال أعداد صحيحة (Minor) — لا كسور عائمة.
  */
-import type { Minor } from './money.ts'
+import { addMinor, exactNonNegativePercent, type Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
 /* ─── كتالوج الفحوصات ─── */
@@ -163,16 +163,16 @@ export interface LabOrderTotals {
 }
 
 export function computeLabTotals(prices: readonly Minor[], discountPercent: number, vatPercent: number): LabOrderTotals {
-  if (discountPercent < 0 || discountPercent > 100) throw new Error('نسبة الخصم بين 0 و100')
-  if (vatPercent < 0 || vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
+  if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) throw new Error('نسبة الخصم بين 0 و100')
+  if (!Number.isFinite(vatPercent) || vatPercent < 0 || vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
   const gross = prices.reduce((a, p) => {
-    if (!Number.isInteger(p) || p <= 0) throw new Error('سعر فحص غير صحيح')
-    return a + p
+    if (!Number.isSafeInteger(p) || p <= 0) throw new Error('سعر فحص غير صحيح')
+    return addMinor(a, p)
   }, 0)
-  const discount = Math.round((gross * discountPercent) / 100)
+  const discount = exactNonNegativePercent(gross, discountPercent)
   const net = gross - discount
-  const vat = Math.round((net * vatPercent) / 100)
-  return { grossMinor: gross, discountMinor: discount, netMinor: net, vatMinor: vat, totalMinor: net + vat }
+  const vat = exactNonNegativePercent(net, vatPercent)
+  return { grossMinor: gross, discountMinor: discount, netMinor: net, vatMinor: vat, totalMinor: addMinor(net, vat) }
 }
 
 /**

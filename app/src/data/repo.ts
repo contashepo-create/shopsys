@@ -17,6 +17,7 @@ import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/ite
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
+import { roundNonNegativeRatio } from '../core/money.ts'
 import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, returnCreditRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
@@ -19958,7 +19959,8 @@ export const useRawDataStore = create<DataState>()(
         const claimOriginal = claim ? claim.claimMinor + (claim.reversedMinor ?? 0) : 0
         const priorRefund = order.refundedMinor ?? 0
         if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor - (claim.settledRefundMinor ?? 0) > order.totals.totalMinor - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
-        const targetProvider = claim && order.totals.totalMinor > 0 ? Math.round(claimOriginal * (priorRefund + args.amountMinor) / order.totals.totalMinor) : 0
+        if (claim && (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0 || args.amountMinor > order.totals.totalMinor - priorRefund)) throw new Error('قيمة المرتجع غير صالحة أو تتجاوز المتبقي')
+        const targetProvider = claim && order.totals.totalMinor > 0 ? roundNonNegativeRatio(claimOriginal, priorRefund + args.amountMinor, order.totals.totalMinor) : 0
         if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
         if (claim) {
           const scoped = getBranchScopedDataState(state)
@@ -20048,7 +20050,8 @@ export const useRawDataStore = create<DataState>()(
         const priorRefund = visit.refundedMinor ?? 0
         if (claim && (!Number.isSafeInteger(priorProvider) || priorProvider < 0 || !Number.isSafeInteger(claim.claimMinor) || claim.claimMinor < 0 || !Number.isSafeInteger(priorRefund) || priorRefund < 0 || priorProvider > priorRefund || claim.claimMinor - (claim.settledRefundMinor ?? 0) > total - priorRefund)) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق قبل الرد')
         // الحصة تراكمية حتى يعود التقريب في المرتجع الأخير إلى الأصل بدقة.
-        const targetProvider = claim && total > 0 ? Math.round(providerOriginal * (priorRefund + args.amountMinor) / total) : 0
+        if (claim && (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0 || args.amountMinor > total - priorRefund)) throw new Error('قيمة المرتجع غير صالحة أو تتجاوز المتبقي')
+        const targetProvider = claim && total > 0 ? roundNonNegativeRatio(providerOriginal, priorRefund + args.amountMinor, total) : 0
         if (claim && targetProvider - priorProvider > args.amountMinor) throw new Error('يلزم مراجعة مطالبة التأمين وسجل المرتجعات السابق — لا يمكن تحميل الفرق على هذا المرتجع تلقائياً')
         if (claim) {
           const scoped = getBranchScopedDataState(state)

@@ -12,7 +12,7 @@
  */
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
-import type { Minor } from './money.ts'
+import { exactNonNegativePercent, type Minor } from './money.ts'
 import type { StockBatch } from './batches.ts'
 
 export interface InsuranceProvider {
@@ -35,8 +35,10 @@ export function validateProvider(nameAr: string, coveragePercent: number, existi
 
 /** تقسيم الفاتورة: نصيب الجهة يُقرَّب لأسفل والباقي على المريض (المريض لا يظلم بكسور) */
 export function splitCoverage(totalMinor: Minor, coveragePercent: number): { providerShareMinor: Minor; patientShareMinor: Minor } {
-  if (totalMinor <= 0) throw new Error('الإجمالي يجب أن يكون موجباً')
-  const provider = Math.floor((totalMinor * coveragePercent) / 100)
+  if (!Number.isSafeInteger(totalMinor) || totalMinor <= 0) throw new Error('الإجمالي يجب أن يكون عدداً صحيحاً آمناً وموجباً')
+  if (!Number.isFinite(coveragePercent) || coveragePercent <= 0 || coveragePercent > 100) throw new Error('نسبة التحمل بين 1 و100')
+  // 375 × 18.4٪ = 69 بالضبط لا 68 بسبب التقريب الثنائي.
+  const provider = exactNonNegativePercent(totalMinor, coveragePercent, 'down')
   return { providerShareMinor: provider, patientShareMinor: totalMinor - provider }
 }
 

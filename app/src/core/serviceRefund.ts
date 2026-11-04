@@ -13,7 +13,7 @@
  * تراكمي بسقف إجمالي المستند: refunds متتالية على نفس المستند لا تتجاوز قيمته،
  * وكسور الضريبة لا تضيع (السقف يضمن أن مجموع الحصص = ضريبة المستند بالضبط).
  */
-import type { Minor } from './money.ts'
+import { roundNonNegativeRatio, type Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
 /** سجل استرداد واحد على مستند خدمة — يُخزن على المستند نفسه (تتبع تراكمي) */
@@ -70,7 +70,7 @@ export function buildServiceRefundEntry(args: {
   if (providerShare > v) throw new Error('نصيب جهة التأمين لا يتجاوز قيمة الاسترداد')
   // تحسب الحصة على المردود التراكمي؛ تقريب كل جزء وحده كان يضيع
   // ضريبة المستند عند تكرار مرتجعات صغيرة، حتى عند رد المبلغ كاملاً.
-  const taxTarget = tax > 0 ? Math.round((tax * (args.priorRefundedMinor + v)) / grand) : 0
+  const taxTarget = tax > 0 ? roundNonNegativeRatio(tax, args.priorRefundedMinor + v, grand) : 0
   if (taxTarget - args.priorRefundedTaxMinor > v) throw new Error('يلزم مراجعة سجلات الضريبة السابقة — لا يمكن تحميل فرقها على هذا المرتجع تلقائياً')
   const taxShare = Math.max(0, Math.min(taxTarget - args.priorRefundedTaxMinor, tax - args.priorRefundedTaxMinor))
   const base = v - taxShare

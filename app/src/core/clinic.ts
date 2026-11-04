@@ -8,7 +8,7 @@
  * المحاسبة: قيد الزيارة 1101|1104 ← 4108 إيراد كشف وعلاج + 2102 ضريبة،
  * والسداد الجزئي مدعوم (المتبقي على حساب المريض 1104).
  */
-import type { Minor } from './money.ts'
+import { addMinor, exactNonNegativePercent, type Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
 /* ─── أنواع الزيارات ─── */
@@ -38,11 +38,11 @@ export interface VisitTotals {
 }
 
 export function computeVisitTotals(v: VisitInput): VisitTotals {
-  if (!Number.isInteger(v.feeMinor) || v.feeMinor <= 0) throw new Error('قيمة الزيارة يجب أن تكون موجبة')
-  if (!Number.isInteger(v.paidMinor) || v.paidMinor < 0) throw new Error('المسدد لا يكون سالباً')
-  if (v.vatPercent < 0 || v.vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
-  const vat = Math.round((v.feeMinor * v.vatPercent) / 100)
-  const total = v.feeMinor + vat
+  if (!Number.isSafeInteger(v.feeMinor) || v.feeMinor <= 0) throw new Error('قيمة الزيارة يجب أن تكون موجبة')
+  if (!Number.isSafeInteger(v.paidMinor) || v.paidMinor < 0) throw new Error('المسدد لا يكون سالباً')
+  if (!Number.isFinite(v.vatPercent) || v.vatPercent < 0 || v.vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
+  const vat = exactNonNegativePercent(v.feeMinor, v.vatPercent)
+  const total = addMinor(v.feeMinor, vat)
   if (v.paidMinor > total) throw new Error('المسدد أكبر من إجمالي الزيارة')
   return { feeMinor: v.feeMinor, vatMinor: vat, totalMinor: total, paidMinor: v.paidMinor, dueMinor: total - v.paidMinor }
 }
@@ -104,10 +104,10 @@ export interface InsuredVisitTotals {
 
 /** إجمالي زيارة بتغطية تأمينية — بلا خصم (الخصومات ليست نمطاً شائعاً لرسم الكشف) */
 export function computeInsuredVisitTotals(feeMinor: Minor, vatPercent: number): InsuredVisitTotals {
-  if (!Number.isInteger(feeMinor) || feeMinor <= 0) throw new Error('قيمة الزيارة يجب أن تكون موجبة')
-  if (vatPercent < 0 || vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
-  const vat = Math.round((feeMinor * vatPercent) / 100)
-  return { netMinor: feeMinor, vatMinor: vat, totalMinor: feeMinor + vat }
+  if (!Number.isSafeInteger(feeMinor) || feeMinor <= 0) throw new Error('قيمة الزيارة يجب أن تكون موجبة')
+  if (!Number.isFinite(vatPercent) || vatPercent < 0 || vatPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
+  const vat = exactNonNegativePercent(feeMinor, vatPercent)
+  return { netMinor: feeMinor, vatMinor: vat, totalMinor: addMinor(feeMinor, vat) }
 }
 
 /* ─── رصيد المريض وملفه ─── */
