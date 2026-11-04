@@ -37,7 +37,7 @@ const VISIBILITY_KEYS: { key: keyof ReceiptSettings; label: string; scope: 'ال
   { key: 'showItemCounts', label: 'عدد الأصناف والقطع', scope: 'الكل' },
   { key: 'showDiscount', label: 'الخصومات', scope: 'الكل' },
   { key: 'showTaxSummary', label: 'ملخص الضريبة', scope: 'الكل' },
-  { key: 'showOperator', label: 'اسم القائم بالطباعة (الكاشير/المالك)', scope: 'حراري' },
+  { key: 'showOperator', label: 'اسم القائم بالطباعة (الكاشير/المالك)', scope: 'الكل' },
   { key: 'showWords', label: 'المبلغ كتابةً (تفقيط)', scope: 'A4' },
   { key: 'showSignatures', label: 'خانتا التوقيع', scope: 'A4' },
   { key: 'showFooter', label: 'نص التذييل', scope: 'الكل' },
@@ -338,7 +338,7 @@ export function PrintSettingsPage() {
             </div>
           </Field>
 
-          <Field label="نمط فاتورة A4" hint="أربعة تصاميم احترافية — جرّبها وشاهد المعاينة تتغير فوراً">
+          <Field label="نمط فاتورة A4" hint="عشرة تصاميم مختلفة — جرّبها وشاهد المعاينة تتغير فوراً">
             <div className="grid grid-cols-2 gap-2">
               {A4_STYLES.map((st) => (
                 <button

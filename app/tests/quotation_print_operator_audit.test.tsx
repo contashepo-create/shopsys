@@ -11,11 +11,12 @@ import { renderInvoiceA4Html } from '../src/ui/print/printInvoiceA4.ts'
 const raw = useRawDataStore.getState(), app = useAppStore.getState()
 const quote = { id: 7, branchId: 2, quoteNumber: 'QT-7', kind: 'quotation' as const, clientName: 'عميل', clientId: null, titleAr: 'اختبار', date: '2026-11-04', validUntil: '2027-01-01', lines: [{ nameAr: 'خدمة', descriptionAr: 'تفاصيل', qty: 1, unitAr: 'قطعة', unitPriceMinor: 1000, estCostMinor: 0, vatPercent: 0 }], status: 'draft' as const, notes: '', projectId: null, winProbability: 50, bidBondMinor: 0 }
 beforeEach(() => {
- useAppStore.setState({ ...app, setup: { ...app.setup, ownerName: 'المالك الرئيسي', countryCode: 'EG' }, receipt: { ...app.receipt, silentPrint: false, showOperator: true } })
+ useAppStore.getState().setActiveBranchContext(null)
+ useAppStore.setState({ setup: { ...app.setup, ownerName: 'المالك الرئيسي', countryCode: 'EG' }, receipt: { ...app.receipt, silentPrint: false, showOperator: true } })
  useRawDataStore.setState({ ...raw, branches: [{ id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'الفرع الثاني', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], activeBranchId: 2, appUsers: [{ id: 12, nameAr: 'موظف الفرع', roleId: 'cashier', active: true, pinHash: '', branchId: 2 }], currentUserId: 12, quotations: [quote] })
- useAppStore.getState().setActiveBranchContext(2)
+ useAppStore.getState().setActiveBranchContext({ id: 2, nameAr: 'الفرع الثاني', isMain: false, warehouseId: 2 })
 })
-afterEach(() => { cleanup(); usePrintPreview.getState().closePreview(); useRawDataStore.setState(raw); useAppStore.setState(app) })
+afterEach(() => { cleanup(); usePrintPreview.getState().closePreview(); useRawDataStore.setState(raw); useAppStore.getState().setActiveBranchContext(null); if (!app.branchBusinessProfiles[2]) useAppStore.getState().removeBranchBusinessProfile(2); useAppStore.setState({ setup: app.setup, receipt: app.receipt }) })
 it('طباعة عرض محفوظ تظهر المستخدم الحالي لا اسم مالك المنشأة', () => {
  render(<MemoryRouter><QuotationsPage /></MemoryRouter>)
  fireEvent.click(screen.getByTitle('طباعة العرض (A4)'))
@@ -70,4 +71,14 @@ it('نسخة PDF للعرض المحفوظ تستخدم المستخدم الح�
   expect(bridge.mock.calls[0][0]).toContain('موظف الفرع')
   expect(bridge.mock.calls[0][0]).not.toContain('المالك الرئيسي')
  } finally { context.shopsysPdfShare = original }
+})
+it('معاينة عرض الفرع المحفوظ تعيد بناء النمط المختار من إعدادات الفرع نفسه', () => {
+ render(<MemoryRouter><QuotationsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('طباعة العرض (A4)'))
+ const preview = usePrintPreview.getState().handle!
+ useAppStore.getState().updateReceipt({ a4Style: 'project' })
+ const rebuilt = preview.rebuild?.() ?? ''
+ expect(rebuilt).toContain('sheet project')
+ expect(rebuilt).toContain('موظف الفرع')
+ expect(rebuilt).toContain('QT-7')
 })

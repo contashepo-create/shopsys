@@ -25,7 +25,7 @@ export const INVOICE_TEMPLATE_OPTIONS: { id: InvoiceTemplate; label: string; sub
 ]
 
 /** أنماط فاتورة A4 الاحترافية — منقولة ومكيّفة من قوالب logistics-web */
-export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant' | 'royal'
+export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant' | 'royal' | 'ledger' | 'split' | 'letter' | 'register' | 'project'
 
 export const A4_STYLES: { id: A4Style; nameAr: string; desc: string; accent: string }[] = [
   { id: 'modern', nameAr: 'عصري', desc: 'شريط متدرج وبطاقات معلومات أنيقة', accent: '#2563eb' },
@@ -33,6 +33,11 @@ export const A4_STYLES: { id: A4Style; nameAr: string; desc: string; accent: str
   { id: 'compact', nameAr: 'مدمج', desc: 'اقتصادي يضغط كل شيء في ورقة واحدة', accent: '#0d9488' },
   { id: 'elegant', nameAr: 'فاخر', desc: 'زوايا ناعمة وهوية بصرية قوية', accent: '#7c3aed' },
   { id: 'royal', nameAr: 'ملكي', desc: 'تدرج ذهبي داكن وترويسة بارزة — الأجمل للمطبوعات الرسمية (طلب المالك)', accent: '#b45309' },
+  { id: 'ledger', nameAr: 'الدفتر الرسمي', desc: 'عنوان وسجل بيانات وجدول محاسبي واضح', accent: '#24364b' },
+  { id: 'split', nameAr: 'العمودان', desc: 'هوية المنشأة وبيانات المستند في عمودين', accent: '#285a68' },
+  { id: 'letter', nameAr: 'الورقة التجارية', desc: 'ترويسة مراسلات وعنوان مستقل قبل البنود', accent: '#344054' },
+  { id: 'register', nameAr: 'السجل التفصيلي', desc: 'بيانات متتابعة وبنود مسطرة وإجماليات أسفلها', accent: '#4a3a2a' },
+  { id: 'project', nameAr: 'الأعمال والمشاريع', desc: 'عنوان أعمال بارز وشروط وتوقيعات واضحة', accent: '#24575a' },
 ]
 
 export interface ReceiptSettings {

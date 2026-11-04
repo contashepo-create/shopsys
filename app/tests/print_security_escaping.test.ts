@@ -4,7 +4,7 @@
  * حقلاً غير مهرَّب إلى أي قالب، يسقط هذا الملف فوراً.
  */
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_RECEIPT_SETTINGS, type A4Style, type ReceiptModel } from '../src/core/receipt.ts'
+import { A4_STYLES, DEFAULT_RECEIPT_SETTINGS, type ReceiptModel } from '../src/core/receipt.ts'
 import { renderInvoiceA4Html } from '../src/ui/print/printInvoiceA4.ts'
 import { renderReceiptHtml } from '../src/ui/print/printReceipt.ts'
 
@@ -42,7 +42,7 @@ const assertNoRawInjection = (html: string, label: string) => {
 }
 
 describe('أمن قوالب الطباعة — حقن HTML في كل الحقول', () => {
-  const styles: A4Style[] = ['modern', 'classic', 'compact', 'elegant', 'royal']
+  const styles = A4_STYLES.map((style) => style.id)
   for (const a4Style of styles) {
     it(`A4 ${a4Style}: كل الحقول مهرَّبة`, () => {
       const html = renderInvoiceA4Html(evilModel, cur, { ...DEFAULT_RECEIPT_SETTINGS, a4Style }, 'a4')
