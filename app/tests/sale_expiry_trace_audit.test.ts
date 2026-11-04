@@ -1,0 +1,70 @@
+import { beforeEach, expect, it } from 'vitest'
+import { useDataStore, useRawDataStore } from '../src/data/repo.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+const initial = useRawDataStore.getState(), app = useAppStore.getState()
+const line = { itemId: 1, nameAr: 'دواء', qty: 3, unitPriceMinor: 2000, unitCostMinor: 1000, discountPercent: 0, soldByWeight: false }
+beforeEach(() => {
+ useAppStore.getState().setActiveBranchContext(null)
+ useAppStore.setState({ setup: { ...app.setup, countryCode: 'EG', allowNegativeTreasury: true } })
+ useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, items: [{ id: 1, nameAr: 'دواء', sku: 'D', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 1000, stockValueMinor: 10000, stockQty: 10, priceMinor: 2000, minQty: 0, isActive: true, trackExpiry: true }] as never, warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }] as never, transfers: [], purchases: [], sales: [], saleReturns: [], journal: [], batches: [{ id: 1, itemId: 1, qty: 2, expiryDate: '2099-01-01', purchaseId: 1, receivedAt: '2026-01-01', warehouseId: 1 }, { id: 2, itemId: 1, qty: 8, expiryDate: '2099-02-01', purchaseId: 2, receivedAt: '2026-01-02', warehouseId: 1 }] })
+})
+it('يثبت دفعات البيع المصروفة حتى لو استنفدت وحذفت من الرصيد، مع نسخة مقابلة في القيد', () => {
+ const sale = useDataStore.getState().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ expect(sale.saleExpiryBatches?.map(b => [b.id, b.qty])).toEqual([[1, 2], [2, 1]])
+ expect(useRawDataStore.getState().journal.find(e => e.id === sale.journalEntryId)?.saleExpiryBatches).toEqual(sale.saleExpiryBatches)
+ expect(useRawDataStore.getState().batches.map(b => [b.id, b.qty])).toEqual([[2, 7]])
+})
+it('لا يرحل بيعا مع معرف دفعة مكرر حتى لو كان التكرار لصنف آخر', () => {
+ const state = useRawDataStore.getState()
+ useRawDataStore.setState({ batches: [...state.batches, { ...state.batches[0], itemId: 99 }] })
+ const before = useRawDataStore.getState()
+ expect(() => useDataStore.getState().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })).toThrow(/دفعة/)
+ const after = useRawDataStore.getState()
+ expect(after.sales).toBe(before.sales)
+ expect(after.journal).toBe(before.journal)
+ expect(after.batches).toBe(before.batches)
+})
+it('لا يحوّل كمية غير متتبعة إلى دفعة مختلقة، ولا يشارك نفس الكائن بين البيع والقيد', () => {
+ const state = useRawDataStore.getState()
+ useRawDataStore.setState({ batches: [{ ...state.batches[0], qty: 1 }] })
+ const sale = useDataStore.getState().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ const proof = useRawDataStore.getState().journal.find(e => e.id === sale.journalEntryId)!.saleExpiryBatches!
+ expect(sale.saleExpiryBatches?.map(b => b.qty)).toEqual([1])
+ expect(proof).toEqual(sale.saleExpiryBatches)
+ expect(proof).not.toBe(sale.saleExpiryBatches)
+ expect(proof[0]).not.toBe(sale.saleExpiryBatches![0])
+})
+it('يظل تعديل فاتورة الدفعات محجوباً حتى إذا أوقف تتبع الصلاحية للصنف لاحقاً', () => {
+ const sale = useDataStore.getState().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ const state = useRawDataStore.getState()
+ useRawDataStore.setState({ items: state.items.map(i => ({ ...i, trackExpiry: false })) })
+ expect(() => useDataStore.getState().editSale({ saleId: sale.id, lines: [line], customerId: null, payment: 'cash', paidMinor: 6000, treasury: '1101', invoiceDiscountPercent: 0, reason: 'تعديل', einvoiceActive: false })).toThrow(/الصلاحية/)
+})
+it('لا يسمح بتجاوز حارس مرتجع الدفعة بتعطيل صلاحية الصنف بعد البيع', () => {
+ const s = useDataStore.getState(), sale = s.postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ useRawDataStore.setState({ items: useRawDataStore.getState().items.map(i => ({ ...i, trackExpiry: false })) })
+ const before = useRawDataStore.getState()
+ expect(() => s.postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[1, 1]]), refund: 'cash', reason: 'رد' })).toThrow(/دفعة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يحفظ دفعات البيع موزعة على المخازن المصدرة لها', () => {
+ useRawDataStore.setState({ warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }, { id: 2, nameAr: 'فرعي', isMain: false }] as never, transfers: [{ id: 1, transferNumber: 'T', date: '2026-01-01', fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 5, nameAr: 'دواء' }], totalQty: 5, notes: '' }], batches: [{ id: 1, itemId: 1, qty: 5, expiryDate: '2099-01-01', purchaseId: null, receivedAt: '2026-01-01', warehouseId: 1 }, { id: 2, itemId: 1, qty: 5, expiryDate: '2099-02-01', purchaseId: null, receivedAt: '2026-01-01', warehouseId: 2 }] })
+ const sale = useDataStore.getState().postSale({ lines: [{ ...line, qty: 1, warehouseId: 1 }, { ...line, qty: 3, warehouseId: 2 }], warehouseId: 1, customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ expect(sale.saleExpiryBatches?.map(b => [b.id, b.warehouseId, b.qty])).toEqual([[1, 1, 1], [2, 2, 3]])
+})
+it('يبقى إثبات الدفعات على البيع والقيد بعد النسخة الاحتياطية والاستعادة', async () => {
+ const { flushSecureStorageWrites, secureStorage } = await import('../src/data/secureStorage.ts')
+ const { buildBackup, parseBackup } = await import('../src/core/backup.ts')
+ const sale = useDataStore.getState().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ await flushSecureStorageWrites('shopsys-data')
+ const stored = await secureStorage.getItem('shopsys-data')
+ const backup = buildBackup({ appState: {}, storeState: JSON.parse(stored!), appDataVersion: 1, shopName: 'اختبار' })
+ const restored = parseBackup(JSON.stringify(backup))
+ useRawDataStore.setState({ sales: [], journal: [] })
+ await flushSecureStorageWrites('shopsys-data')
+ await secureStorage.setItem('shopsys-data', JSON.stringify(restored.data.store))
+ await useRawDataStore.persist.rehydrate()
+ const current = useRawDataStore.getState()
+ expect(current.sales.find(s => s.id === sale.id)?.saleExpiryBatches).toEqual(sale.saleExpiryBatches)
+ expect(current.journal.find(e => e.id === sale.journalEntryId)?.saleExpiryBatches).toEqual(sale.saleExpiryBatches)
+})

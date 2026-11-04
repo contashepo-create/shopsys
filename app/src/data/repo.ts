@@ -1508,6 +1508,8 @@ export interface SaleInvoice {
   lines: CartLine[]
   /** لقطة دفعة الصلاحية لكل وحدة سيريال محددة عند البيع. */
   serialExpiryBatches?: { serial: string; itemId: number; batch: StockBatch }[]
+  /** دفعات FEFO المصروفة فعلياً للأصناف غير المسلسلة؛ لا تثبت وحدها دفعة مرتجعة. */
+  saleExpiryBatches?: StockBatch[]
   /** تصحيح موثق لساق قبض أجنبية دون تغيير قيمة القيد الدفترية. */
   fxCorrectionHistory?: { previousFx: FxLeg; correctedFx: FxLeg; journalEntryId: number; treasury: string; paidMinor: number; reason: string; at: string; by: string }[]
   /** إثبات صريح لساق غائبة؛ لا يغيّر القيد الأصلي. */
@@ -8178,6 +8180,14 @@ export const useRawDataStore = create<DataState>()(
         let workingBatches = state.batches
         const expiredNames: string[] = []
         const serialExpiryBatches: { serial: string; itemId: number; batch: StockBatch }[] = []
+        const saleExpiryBatches: StockBatch[] = []
+        const recordSoldBatches = (plan: ReturnType<typeof planFefo>) => {
+          for (const allocation of plan.allocations) {
+            const matches = workingBatches.filter(batch => batch.id === allocation.batchId)
+            if (matches.length !== 1 || state.batches.filter(batch => batch.id === allocation.batchId).length !== 1 || saleExpiryBatches.some(batch => batch.id === allocation.batchId) || !Number.isSafeInteger(allocation.batchId) || allocation.batchId <= 0 || !Number.isFinite(allocation.qty) || allocation.qty <= 0) throw new Error('هوية دفعة البيع غير فريدة أو صالحة — يلزم المراجعة')
+            saleExpiryBatches.push({ ...matches[0], qty: allocation.qty })
+          }
+        }
         const scopedSaleSerials = getBranchScopedDataState(state).serials
         for (const [itemId, qty] of qtyPlanned) {
           const item = state.items.find((it) => it.id === itemId)
@@ -8213,10 +8223,14 @@ export const useRawDataStore = create<DataState>()(
               const warehousePlan = planFefo(batches, itemId, amount, now0)
               if (warehousePlan.untrackedQty > 1e-9) throw new Error('دفعات الصلاحية المثبتة في مخزن البيع لا تكفي — يلزم المراجعة')
               if (warehousePlan.touchesExpired && !args.expiryOverrideBy) expiredNames.push(item.nameAr)
+              recordSoldBatches(warehousePlan)
               workingBatches = applyFefo(workingBatches, warehousePlan)
             }
             continue
-          } else plan = planFefo(workingBatches, itemId, qty, now0)
+          } else {
+            plan = planFefo(workingBatches, itemId, qty, now0)
+            recordSoldBatches(plan)
+          }
           if (plan.touchesExpired && !args.expiryOverrideBy) expiredNames.push(item.nameAr)
           workingBatches = applyFefo(workingBatches, plan)
         }
@@ -8443,6 +8457,7 @@ export const useRawDataStore = create<DataState>()(
           sourceId: saleId,
           saleRoundingVersion: 2,
           saleLineKinds: costedLines.map(line => ({ itemId: line.itemId, service: line.isServiceAtSale === true })),
+          saleExpiryBatches: saleExpiryBatches.map(batch => ({ ...batch })),
           lines: entryLines,
           ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
@@ -8469,6 +8484,7 @@ export const useRawDataStore = create<DataState>()(
           paymentAllocations: args.paymentAllocations,
           lines: costedLines,
           ...(serialExpiryBatches.length ? { serialExpiryBatches } : {}),
+          saleExpiryBatches,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           roundingVersion: 2,
           saleLineKindVersion: 1,
@@ -8623,7 +8639,8 @@ export const useRawDataStore = create<DataState>()(
         // السليم يجب أن يرجع إلى دفعة مثبتة، لا إلى كمية عامة بلا تاريخ صلاحية.
         if (rawLines.some(line => {
           const item = state.items.find(row => row.id === line.itemId)
-          return line.isServiceAtSale !== true && line.condition !== 'damaged' && item?.trackExpiry && !item.trackSerial
+          const hasSoldBatches = sale.saleExpiryBatches?.some(batch => batch.itemId === line.itemId)
+          return line.isServiceAtSale !== true && line.condition !== 'damaged' && (hasSoldBatches || (item?.trackExpiry && !item.trackSerial))
         })) throw new Error('دفعة الصلاحية المستلمة في المرتجع غير مثبتة — يلزم مسار موثق قبل إعادة المخزون')
         // أطباق الوصفات «عند الطلب»: الخامات طُهيت ولا تعود للمخزون —
         // تبقى تكلفتها في 5101 (هالك اقتصادياً) ويُرد للعميل السعر فقط
@@ -10681,6 +10698,7 @@ export const useRawDataStore = create<DataState>()(
           shiftClosed: sale.shiftId != null && state.shifts.some((sh) => sh.id === sale.shiftId && sh.status === 'closed'),
         })
         if (blocks.length) throw new Error(`لا يمكن تعديل هذه الفاتورة: ${blocks.join('؛ ')}`)
+        if (sale.saleExpiryBatches?.length) throw new Error('تعديل فاتورة الصلاحية لا يوثق تسوية الدفعات — استخدم مساراً مووثقاً أو راجع المخزون')
         for (const line of [...sale.lines, ...args.lines]) {
           assertSerialBatchMovementSupported(state, line.itemId)
           if (state.items.find(item => item.id === line.itemId)?.trackExpiry) throw new Error('تعديل فاتورة الصلاحية لا يوثق تسوية الدفعات — استخدم مساراً موثقاً أو راجع المخزون')
@@ -10869,6 +10887,7 @@ export const useRawDataStore = create<DataState>()(
           sourceType: 'sale', sourceId: sale.id,
           ...(roundingVersion ? { saleRoundingVersion: roundingVersion } : {}),
           saleLineKinds: costedLines.map(line => ({ itemId: line.itemId, service: line.isServiceAtSale === true })),
+          saleExpiryBatches: [],
           lines: newEntryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -10903,6 +10922,7 @@ export const useRawDataStore = create<DataState>()(
           paymentAllocations: freshAllocations,
           lines: costedLines,
           saleLineKindVersion: 1,
+          saleExpiryBatches: [],
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           customerReference: args.customerReference?.trim() || undefined,
           dueDate: args.dueDate || undefined,

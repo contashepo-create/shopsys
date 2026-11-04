@@ -9,6 +9,7 @@
  * 4. كل المبالغ Minor (أعداد صحيحة) — يمر عبر محرك النقود حصراً.
  */
 import type { Minor } from './money.ts'
+import type { StockBatch } from './batches.ts'
 import { addMinor } from './money.ts'
 
 export type AccountNature = 'debit' | 'credit'
@@ -98,6 +99,8 @@ export interface JournalEntry {
   saleRoundingVersion?: 2
   /** نوع كل سطر من فاتورة البيع، لمراجعة حركة المخزون مقابل المستند. */
   saleLineKinds?: { itemId: number; service: boolean }[]
+  /** نسخة مقابلة للقيد من دفعات FEFO المصروفة عند البيع. */
+  saleExpiryBatches?: StockBatch[]
   /** لقطة حركة صندوق الوردية للبيع المؤمّن أو رده؛ تُطابق مع سجل المطالبة. */
   insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   lines: JournalLine[]
