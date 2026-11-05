@@ -184,3 +184,11 @@ it('يرفض تغيير سيريال مرتجع سابق وقيده إلى سي�
  expect(() => s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-4'] }], refund: 'debt', reason: 'رد' })).toThrow(/سيريال/)
  expect(useRawDataStore.getState().journal).toBe(before.journal)
 })
+it('يحجب أول رد لسيريال تاريخي عندما غاب دليل السيريالات من سطر الشراء', () => {
+  const { s, purchase } = fixture()
+  useRawDataStore.setState(state => ({ purchases: state.purchases.map(row => row.id === purchase.id ? { ...row, lines: row.lines.map(line => ({ ...line, serials: undefined })) } : row) }))
+  const before = useRawDataStore.getState()
+  expect(() => s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-1'] }], refund: 'debt', reason: 'رد' })).toThrow(/سيريالات.*السطر/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+  expect(useRawDataStore.getState().serials).toBe(before.serials)
+})

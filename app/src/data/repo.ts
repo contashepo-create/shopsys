@@ -9078,7 +9078,8 @@ export const useRawDataStore = create<DataState>()(
             continue
           }
           if (getBranchScopedDataState(state).warehouses.length > 1) throw new Error('لا يمكن إثبات مخزن السيريال مع تعدد المخازن — يلزم المراجعة')
-          if (!originals?.length && purchase.lines.filter(row => row.itemId === line.itemId).length !== 1) throw new Error('سيريالات الشراء القديم غير مرتبطة بالسطر — يلزم المراجعة')
+          // لا نبدأ ردّاً لا يمكن لاحقاً مطابقة سيرياله مع دليل سطر الشراء.
+          if (!originals?.length) throw new Error('سيريالات الشراء القديم غير مثبتة في السطر — يلزم المراجعة')
           if (!Number.isSafeInteger(line.qty)) throw new Error('كمية مرتجع السيريال يجب أن تكون عدداً صحيحاً')
           const selected = line.serials?.map(normalizeSerial) ?? []
           if (selected.length !== line.qty || new Set(selected).size !== selected.length) throw new Error('حدد السيريال الفعلي لكل قطعة عائدة للمورد')
