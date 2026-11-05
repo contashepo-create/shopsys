@@ -341,7 +341,14 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     const specs = (ret.lines ?? []).flatMap((line) => {
       const id = itemId.get(str(line.item_ref)) ?? -1
       const lineIndex = sale.lines.findIndex((l) => l.itemId === id)
-      return lineIndex >= 0 ? [{ lineIndex, qty: num(line.qty), condition: (str(line.condition, 'resellable') === 'damaged' ? 'damaged' : 'resellable') as 'resellable' | 'damaged' }] : []
+      if (lineIndex < 0) return []
+      // لا يُختار FEFO تلقائياً للمرتجع. بيانات العرض وحدها قد تحدد شراء
+      // الدفعة صراحة؛ إن لم يطابق دفعة واحدة تبقى العملية محجوبة للمراجعة.
+      const purchaseRef = str(line.batch_purchase_ref)
+      const purchaseId = purchaseIdByRef.get(purchaseRef)
+      const batches = purchaseRef && purchaseId != null ? (sale.saleExpiryBatches ?? []).filter(batch => batch.itemId === id && batch.purchaseId === purchaseId) : []
+      const batchAllocations = batches.length === 1 ? [{ batchId: batches[0].id, qty: num(line.qty) * (sale.lines[lineIndex].unitFactor ?? 1) }] : undefined
+      return [{ lineIndex, qty: num(line.qty), condition: (str(line.condition, 'resellable') === 'damaged' ? 'damaged' : 'resellable') as 'resellable' | 'damaged', ...(batchAllocations ? { batchAllocations } : {}) }]
     })
     if (!specs.length) { skipped.push(`مرتجع بيع ${str(ret.ref)}: لا سطور مطابقة للفاتورة`); continue }
     const refundRaw = str(ret.refund, 'cash')

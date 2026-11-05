@@ -447,7 +447,8 @@ CREATE TABLE IF NOT EXISTS sale_return_lines (
   return_ref TEXT NOT NULL,
   item_ref   TEXT NOT NULL,
   qty        REAL NOT NULL,
-  condition  TEXT NOT NULL DEFAULT 'resellable' CHECK (condition IN ('resellable', 'damaged'))
+  condition  TEXT NOT NULL DEFAULT 'resellable' CHECK (condition IN ('resellable', 'damaged')),
+  batch_purchase_ref TEXT NOT NULL DEFAULT '' -- اختيار صريح للدفعة في بيانات العرض، لا استنتاج تلقائي
 );
 
 CREATE TABLE IF NOT EXISTS purchase_returns (

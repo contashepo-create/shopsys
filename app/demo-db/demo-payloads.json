@@ -200,7 +200,7 @@
     "stock_qty": 120,
     "min_qty": 24,
     "is_service": 0,
-    "track_expiry": 0,
+    "track_expiry": 1,
     "track_serial": 0,
     "sold_by_weight": 0,
     "warranty_months": 0,
@@ -351,7 +351,7 @@
     "extra_units": "",
     "cost_minor": 21000,
     "price_minor": 26500,
-    "stock_qty": 18,
+    "stock_qty": 0,
     "min_qty": 0,
     "is_service": 0,
     "track_expiry": 1,
@@ -823,7 +823,7 @@
       "item_ref": "oil1",
       "qty": 60,
       "unit_price_minor": 4500,
-      "expiry_date": ""
+      "expiry_date": "2099-12-31"
      },
      {
       "id": 2,
@@ -890,6 +890,29 @@
       "expiry_date": "2026-09-25"
      }
     ]
+   },
+   {
+    "id": 4,
+    "activity": "grocery",
+    "ref": "p4",
+    "doc_date": "2026-09-01",
+    "supplier_ref": "s3",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "SI-CHEESE",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "grocery",
+      "purchase_ref": "p4",
+      "item_ref": "cheese",
+      "qty": 18,
+      "unit_price_minor": 21000,
+      "expiry_date": "2099-12-31"
+     }
+    ]
    }
   ],
   "saleReturns": [
@@ -901,7 +924,7 @@
     "doc_date": "2026-09-19",
     "refund": "credit",
     "treasury_ref": "",
-    "reason": "عبوات زيت تالفة عند الاستلام",
+    "reason": "عبوات زيت غير مطلوبة عند الاستلام",
     "lines": [
      {
       "id": 1,
@@ -909,7 +932,8 @@
       "return_ref": "sr1",
       "item_ref": "oil1",
       "qty": 2,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": "p1"
      }
     ]
    },
@@ -929,7 +953,8 @@
       "return_ref": "sr2",
       "item_ref": "cheese",
       "qty": 1,
-      "condition": "damaged"
+      "condition": "damaged",
+      "batch_purchase_ref": "p4"
      }
     ]
    }
@@ -1544,7 +1569,7 @@
   ],
   "purchases": [
    {
-    "id": 4,
+    "id": 5,
     "activity": "pharmacy",
     "ref": "p1",
     "doc_date": "2026-09-05",
@@ -1556,7 +1581,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 6,
+      "id": 7,
       "activity": "pharmacy",
       "purchase_ref": "p1",
       "item_ref": "augm",
@@ -1565,7 +1590,7 @@
       "expiry_date": ""
      },
      {
-      "id": 7,
+      "id": 8,
       "activity": "pharmacy",
       "purchase_ref": "p1",
       "item_ref": "panad",
@@ -1576,7 +1601,7 @@
     ]
    },
    {
-    "id": 5,
+    "id": 6,
     "activity": "pharmacy",
     "ref": "p2",
     "doc_date": "2026-09-15",
@@ -1588,7 +1613,7 @@
     "notes": "دفعة قصيرة الصلاحية — للتنبيه",
     "lines": [
      {
-      "id": 8,
+      "id": 9,
       "activity": "pharmacy",
       "purchase_ref": "p2",
       "item_ref": "panad",
@@ -1616,7 +1641,8 @@
       "return_ref": "sr1",
       "item_ref": "augm",
       "qty": 1,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      },
      {
       "id": 4,
@@ -1624,7 +1650,8 @@
       "return_ref": "sr1",
       "item_ref": "brufen",
       "qty": 2,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -2334,7 +2361,7 @@
   ],
   "purchases": [
    {
-    "id": 6,
+    "id": 7,
     "activity": "restaurant",
     "ref": "p1",
     "doc_date": "2026-09-12",
@@ -2346,7 +2373,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 9,
+      "id": 10,
       "activity": "restaurant",
       "purchase_ref": "p1",
       "item_ref": "meat",
@@ -2357,7 +2384,7 @@
     ]
    },
    {
-    "id": 7,
+    "id": 8,
     "activity": "restaurant",
     "ref": "p2",
     "doc_date": "2026-09-14",
@@ -2369,7 +2396,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 10,
+      "id": 11,
       "activity": "restaurant",
       "purchase_ref": "p2",
       "item_ref": "cola",
@@ -2397,7 +2424,8 @@
       "return_ref": "sr1",
       "item_ref": "kofta",
       "qty": 2,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -3093,7 +3121,7 @@
   ],
   "purchases": [
    {
-    "id": 8,
+    "id": 9,
     "activity": "clothing",
     "ref": "p1",
     "doc_date": "2026-09-03",
@@ -3105,7 +3133,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 11,
+      "id": 12,
       "activity": "clothing",
       "purchase_ref": "p1",
       "item_ref": "shirt",
@@ -3114,7 +3142,7 @@
       "expiry_date": ""
      },
      {
-      "id": 12,
+      "id": 13,
       "activity": "clothing",
       "purchase_ref": "p1",
       "item_ref": "jeans",
@@ -3142,7 +3170,8 @@
       "return_ref": "sr1",
       "item_ref": "shirt",
       "qty": 1,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      },
      {
       "id": 7,
@@ -3150,7 +3179,8 @@
       "return_ref": "sr1",
       "item_ref": "sneaker",
       "qty": 1,
-      "condition": "damaged"
+      "condition": "damaged",
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -3759,7 +3789,7 @@
   ],
   "purchases": [
    {
-    "id": 9,
+    "id": 10,
     "activity": "feed_trade",
     "ref": "p1",
     "doc_date": "2026-09-08",
@@ -3771,7 +3801,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 13,
+      "id": 14,
       "activity": "feed_trade",
       "purchase_ref": "p1",
       "item_ref": "broiler5",
@@ -3782,7 +3812,7 @@
     ]
    },
    {
-    "id": 10,
+    "id": 11,
     "activity": "feed_trade",
     "ref": "p2",
     "doc_date": "2026-09-16",
@@ -3794,7 +3824,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 14,
+      "id": 15,
       "activity": "feed_trade",
       "purchase_ref": "p2",
       "item_ref": "corn",
@@ -3803,7 +3833,7 @@
       "expiry_date": ""
      },
      {
-      "id": 15,
+      "id": 16,
       "activity": "feed_trade",
       "purchase_ref": "p2",
       "item_ref": "wheatbran",
@@ -3831,7 +3861,8 @@
       "return_ref": "sr1",
       "item_ref": "broiler5",
       "qty": 3,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -4919,7 +4950,7 @@
   ],
   "purchases": [
    {
-    "id": 11,
+    "id": 12,
     "activity": "contracting",
     "ref": "p1",
     "doc_date": "2026-09-06",
@@ -4931,7 +4962,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 16,
+      "id": 17,
       "activity": "contracting",
       "purchase_ref": "p1",
       "item_ref": "cement",
@@ -4942,7 +4973,7 @@
     ]
    },
    {
-    "id": 12,
+    "id": 13,
     "activity": "contracting",
     "ref": "p2",
     "doc_date": "2026-09-14",
@@ -4954,7 +4985,7 @@
     "notes": "قسط حديد أول — الباقي مع المستخلص الثاني",
     "lines": [
      {
-      "id": 17,
+      "id": 18,
       "activity": "contracting",
       "purchase_ref": "p2",
       "item_ref": "steel",
@@ -4982,7 +5013,8 @@
       "return_ref": "sr1",
       "item_ref": "brick",
       "qty": 200,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -5819,7 +5851,7 @@
   ],
   "purchases": [
    {
-    "id": 13,
+    "id": 14,
     "activity": "equipment_rental",
     "ref": "p1",
     "doc_date": "2026-09-09",
@@ -5831,7 +5863,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 18,
+      "id": 19,
       "activity": "equipment_rental",
       "purchase_ref": "p1",
       "item_ref": "dieselfilter",
@@ -5840,7 +5872,7 @@
       "expiry_date": ""
      },
      {
-      "id": 19,
+      "id": 20,
       "activity": "equipment_rental",
       "purchase_ref": "p1",
       "item_ref": "trackshoe",
@@ -5868,7 +5900,8 @@
       "return_ref": "sr1",
       "item_ref": "loader",
       "qty": 1,
-      "condition": "resellable"
+      "condition": "resellable",
+      "batch_purchase_ref": ""
      }
     ]
    }

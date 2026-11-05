@@ -223,6 +223,8 @@ export type ReturnLine = CartLine & {
   saleLineIndex?: number
   /** صُحح السيريال المختار صراحة في مسار المرتجع الجديد. */
   serialSelectionRecorded?: boolean
+  /** الدفعات المستلمة فعلياً وكمياتها بالوحدة الأساسية. */
+  expiryBatchAllocations?: { batchId: number; qty: number }[]
   /** حالة البضاعة — undefined = سجل قديم (عوملت resellable) */
   condition?: ReturnCondition
 }
@@ -234,6 +236,8 @@ export interface ReturnLineSpec {
   condition: ReturnCondition
   /** وحدات السيريال العائدة فعلياً لهذا السطر. */
   serials?: string[]
+  /** دفعات البيع التي استلمها المستخدم فعلياً، بالوحدة الأساسية. */
+  batchAllocations?: { batchId: number; qty: number }[]
   /** مخزن استقبال المرتجع السليم؛ غيابه يعني مخزن سطر البيع الأصلي */
   warehouseId?: number | null
 }
@@ -289,6 +293,7 @@ export function buildReturnLinesPerLine(
     out.push({
       ...src,
       serials: spec.serials?.map(serial => serial.trim().toUpperCase()),
+      ...(spec.batchAllocations !== undefined ? { expiryBatchAllocations: spec.batchAllocations.map(a => ({ ...a })) } : {}),
       qty: Math.round(spec.qty * 1000) / 1000,
       saleLineIndex: spec.lineIndex,
       condition: spec.condition,

@@ -101,6 +101,9 @@ export interface JournalEntry {
   saleLineKinds?: { itemId: number; service: boolean }[]
   /** نسخة مقابلة للقيد من دفعات FEFO المصروفة عند البيع. */
   saleExpiryBatches?: StockBatch[]
+  saleExpiryItemIds?: number[]
+  /** توزيع الدفعات المستلمة فعلياً في مرتجع البيع لمطابقته بالمستند. */
+  saleReturnExpiryBatches?: { saleLineIndex: number; itemId: number; warehouseId: number | null; condition: 'resellable' | 'damaged'; allocations: { batchId: number; qty: number }[] }[]
   /** لقطة حركة صندوق الوردية للبيع المؤمّن أو رده؛ تُطابق مع سجل المطالبة. */
   insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   lines: JournalLine[]
