@@ -1294,6 +1294,8 @@ export interface PurchaseInvoice {
   approvedBy?: string | null
   date: string
   lines: PurchaseLine[]
+  /** دفعات الصلاحية المنشأة مع كل سطر شراء؛ لا تُستنتج في المستندات القديمة. */
+  purchaseExpiryBatches?: { lineIndex: number; batch: StockBatch }[]
   expenses: PurchaseExpense[]
   goodsTotalMinor: number
   /** خصم الفاتورة قبل المصروفات المحملة — اختياري للتوافق مع الفواتير القديمة */
@@ -7407,19 +7409,20 @@ export const useRawDataStore = create<DataState>()(
           const alreadyPosted = state.purchases.find((purchase) => purchase.sourceDraftId === sourceDraftId)
           if (alreadyPosted) return alreadyPosted
         }
+        const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const inv = activeBranch && !activeBranch.isMain
           ? {
-              ...rawInv,
-              warehouseId: rawInv.warehouseId == null || rawInv.warehouseId === mainWhId ? activeBranch.warehouseId : rawInv.warehouseId,
-              treasury: !rawInv.treasury || rawInv.treasury === '1101' ? activeBranch.treasuryCode : rawInv.treasury,
-              lines: rawInv.lines.map((l) => ({
+              ...normalizedInv,
+              warehouseId: normalizedInv.warehouseId == null || normalizedInv.warehouseId === mainWhId ? activeBranch.warehouseId : normalizedInv.warehouseId,
+              treasury: !normalizedInv.treasury || normalizedInv.treasury === '1101' ? activeBranch.treasuryCode : normalizedInv.treasury,
+              lines: normalizedInv.lines.map((l) => ({
                 ...l,
                 warehouseId: l.warehouseId == null || l.warehouseId === mainWhId ? activeBranch.warehouseId : l.warehouseId,
               })),
             }
-          : rawInv
+          : normalizedInv
         // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!inv.__approvalBypass) {
           const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
@@ -7458,8 +7461,9 @@ export const useRawDataStore = create<DataState>()(
           purchaseFxCost = fxWithdrawalCost(leg, inv.treasury ?? '1101', get().getFxFlows(), getBranchScopedDataState(state).fxConversions, book)
           purchaseFxLeg = leg
         }
+        const scopedPurchaseItems = getBranchScopedDataState(state).items
         for (const l of inv.lines) {
-          if (!state.items.some((it) => it.id === l.itemId)) throw new Error(`صنف غير موجود بالمخزون (#${l.itemId})`)
+          if (state.items.filter(it => it.id === l.itemId).length !== 1 || !scopedPurchaseItems.some(it => it.id === l.itemId)) throw new Error(`صنف غير موجود أو غير فريد في نطاق الفرع (#${l.itemId})`)
         }
         for (const l of inv.lines) {
           if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية مستلمة يجب أن تكون رقماً موجباً')
@@ -7775,6 +7779,8 @@ export const useRawDataStore = create<DataState>()(
           newBatches.push(batch)
           purchaseBatchesByLine.set(lineIndex, batch)
         }
+        invoice.purchaseExpiryBatches = [...purchaseBatchesByLine].map(([lineIndex, batch]) => ({ lineIndex, batch: { ...batch } }))
+        entry.purchaseExpiryBatches = invoice.purchaseExpiryBatches.map(row => ({ lineIndex: row.lineIndex, batch: { ...row.batch } }))
 
         // تسجيل وحدات السيريال الداخلة مع هذه الفاتورة
         let serialId = nextId(state.serials)
@@ -9016,7 +9022,13 @@ export const useRawDataStore = create<DataState>()(
         return ret
       },
 
-      postPurchaseReturn: (args) => {
+      postPurchaseReturn: (rawArgs) => {
+        // لا نرحّل سعراً لكمية تُقرّب لاحقاً إلى كمية مخزنية مختلفة.
+        const args = {
+          ...rawArgs,
+          lineSpecs: rawArgs.lineSpecs?.map(spec => ({ ...spec, qty: normalizeMovementQty(spec.qty, true) })),
+          qtyByItem: rawArgs.qtyByItem && new Map([...rawArgs.qtyByItem].map(([itemId, qty]) => [itemId, normalizeMovementQty(qty, true)])),
+        }
         const state = get()
         const purchase = state.purchases.find((p) => p.id === args.purchaseId)
         if (!purchase) throw new Error('فاتورة الشراء الأصلية غير موجودة')
@@ -9203,8 +9215,17 @@ export const useRawDataStore = create<DataState>()(
           const newQty = withdrawal.remainingQty, newValue = withdrawal.remainingValueMinor
           return withExactStockValue({ ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue })
         })
-        // G5: تخفيض دفعات الصلاحية — البضاعة العائدة للمورد تخرج من دفعات فاتورتها
-        // أولاً (هي المعيبة عادة) ثم الأقرب انتهاءً؛ نظام استشاري: لو السجل أقل لا نحبس
+        // تعطيل العلم لا يلغي الدفعات المثبتة تاريخياً ولا يبرر تركها بلا خصم.
+        if ([...qtyOut.keys()].some(itemId => !state.items.find(row => row.id === itemId)?.trackExpiry && (state.batches.some(batch => batch.itemId === itemId) || purchase.purchaseExpiryBatches?.some(row => row.batch.itemId === itemId)))) throw new Error('دفعات صلاحية موجودة رغم تعطيل تتبع الصنف — يلزم المراجعة')
+        // لا يملك المرتجع غير المسلسل بعد اختياراً مثبتاً للدفعة: في تعدد المخازن
+        // كانت FEFO تسحب من مخزن آخر. هذا حظر مؤقت لا يمثل دعماً للتحويل بين الدفعات.
+        if (state.warehouses.length > 1 && [...qtyOut.keys()].some(itemId => {
+          const item = state.items.find(row => row.id === itemId)
+          const hasExpiryEvidence = item?.trackExpiry || state.batches.some(batch => batch.itemId === itemId) || purchase.purchaseExpiryBatches?.some(row => row.batch.itemId === itemId)
+          const hasSelectedSerial = [...selectedSupplierSerials].some(serial => state.serials.some(unit => unit.serial === serial && unit.itemId === itemId && unit.expiryBatch != null))
+          return hasExpiryEvidence && !hasSelectedSerial
+        })) throw new Error('مرتجع صلاحية غير مسلسل مع تعدد المخازن يحتاج اختياراً مثبتاً للدفعة والمخزن — يلزم المراجعة')
+        // في المخزن الوحيد يبقى التوزيع القديم استشارياً، ولا يثبت الاستلام الفعلي.
         let workingBatches = state.batches
         for (const [itemId, qty] of qtyOut) {
           if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
@@ -9217,13 +9238,10 @@ export const useRawDataStore = create<DataState>()(
             continue
           }
           const own = workingBatches.filter((b) => b.itemId === itemId && b.purchaseId === purchase.id)
+          if (own.some(batch => !Number.isSafeInteger(batch.id) || batch.id <= 0 || workingBatches.filter(row => row.id === batch.id).length !== 1)) throw new Error('هوية دفعة الشراء غير فريدة — يلزم المراجعة')
           const ownPlan = planFefo(own, itemId, qty, now.slice(0, 10))
+          if (ownPlan.untrackedQty > 0) throw new Error('دفعات فاتورة الشراء المتاحة لا تكفي — لا يمكن تخمين دفعة بديلة للمرتجع')
           workingBatches = applyFefo(workingBatches, ownPlan)
-          if (ownPlan.untrackedQty > 0) {
-            // ما زاد عن دفعات الفاتورة يُصرف من باقي دفعات الصنف (الأقرب انتهاءً)
-            const rest = planFefo(workingBatches, itemId, ownPlan.untrackedQty, now.slice(0, 10))
-            workingBatches = applyFefo(workingBatches, rest)
-          }
         }
         const updatedSerials = selectedSupplierSerials.size ? state.serials.map(unit => selectedSupplierSerials.has(unit.serial) ? { ...unit, status: 'returned_supplier' as const } : unit) : state.serials
         // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
@@ -11052,7 +11070,8 @@ export const useRawDataStore = create<DataState>()(
         return updatedSale
       },
 
-      editPurchase: (args) => {
+      editPurchase: (rawArgs) => {
+        const args = { ...rawArgs, lines: rawArgs.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
         const state = get()
         // ⛔ نفس سياسة المالك: منظومة إلكترونية مفعلة ⇒ لا تعديل
         if (args.einvoiceActive) {
@@ -11070,14 +11089,21 @@ export const useRawDataStore = create<DataState>()(
         if (args.dueDate && args.dueDate < inv.date) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ فاتورة المورد')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
         if (inv.journalEntryId == null) throw new Error('فاتورة قديمة بلا قيد — لا تُعدَّل')
+        if (state.purchaseReturns.some((r) => r.purchaseId === inv.id)) {
+          throw new Error('عليها مرتجعات شراء — صحّح بمرتجع إضافي أو فاتورة جديدة')
+        }
+        const scopedPurchaseItems = getBranchScopedDataState(state).items
+        if (inv.purchaseExpiryBatches?.length || state.journal.some(entry => entry.id === inv.journalEntryId && entry.purchaseExpiryBatches?.length)) throw new Error('تعديل شراء الصلاحية لا يثبت تسوية الدفعات — استخدم مرتجعاً أو راجع المخزون')
+        for (const line of [...inv.lines, ...args.lines]) {
+          const matches = state.items.filter(item => item.id === line.itemId)
+          if (matches.length !== 1 || !scopedPurchaseItems.some(item => item.id === line.itemId)) throw new Error('صنف الشراء غير موجود أو غير فريد في الفرع — يلزم المراجعة')
+          if (matches[0].trackExpiry || state.batches.some(batch => batch.purchaseId === inv.id && batch.itemId === line.itemId)) throw new Error('تعديل فاتورة الصلاحية لا يثبت تسوية الدفعات — استخدم مرتجعاً أو راجع المخزون')
+        }
         for (const l of args.lines) {
           if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
         }
         // موانع السلامة: مستندات لاحقة بُنيت على الفاتورة
-        if (state.purchaseReturns.some((r) => r.purchaseId === inv.id)) {
-          throw new Error('عليها مرتجعات شراء — صحّح بمرتجع إضافي أو فاتورة جديدة')
-        }
         if (state.serials.some((u) => u.purchaseId === inv.id)) {
           throw new Error('سُجلت سيريالات من هذه الفاتورة — صحّح بمرتجع شراء ثم فاتورة جديدة')
         }
@@ -11188,6 +11214,7 @@ export const useRawDataStore = create<DataState>()(
           id: newEntryId, entryNumber: newEntryId, date: now.slice(0, 10),
           description: `فاتورة شراء ${inv.invoiceNumber} (معدلة)`,
           sourceType: 'purchase', sourceId: inv.id,
+          purchaseExpiryBatches: [],
           lines: newEntryLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -11222,6 +11249,7 @@ export const useRawDataStore = create<DataState>()(
 
         const updatedInv: PurchaseInvoice = {
           ...inv,
+          purchaseExpiryBatches: [],
           supplierId: editedSupplierId,
           lines: landed.map((l, i) => ({
             itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
@@ -19206,6 +19234,7 @@ export const useRawDataStore = create<DataState>()(
         const scoped = getBranchScopedDataState(state)
         if (!scoped.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود في هذا الفرع')
         if (!scoped.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود في هذا الفرع')
+        if (state.warehouses.filter(w => w.id === args.fromWarehouseId).length !== 1 || state.warehouses.filter(w => w.id === args.toWarehouseId).length !== 1) throw new Error('هوية مخزن التحويل غير فريدة — يلزم المراجعة')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
         const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
@@ -19215,9 +19244,14 @@ export const useRawDataStore = create<DataState>()(
           (itemId) => sourceMap?.get(itemId) ?? 0,
         )
         for (const l of args.lines) {
-          if (!state.items.some((it) => it.id === l.itemId)) errors.push('صنف غير موجود بالمخزون')
+          const matching = state.items.filter(item => item.id === l.itemId)
+          if (!matching.length) { errors.push('صنف غير موجود بالمخزون'); continue }
+          if (matching.length !== 1 || !scoped.items.some(item => item.id === l.itemId)) throw new Error('صنف التحويل غير فريد أو غير موجود في الفرع — يلزم المراجعة')
+          const item = matching[0]
+          if (item.isService) throw new Error('الخدمة لا تُحوَّل كمخزون')
+          if (item.trackSerial || state.serials.some(unit => unit.itemId === l.itemId && unit.status === 'in_stock')) throw new Error('تحويل السيريال لا يحدد وحداته ومخازنها — يلزم مسار موثق')
           assertSerialBatchMovementSupported(state, l.itemId)
-          if (state.items.find(item => item.id === l.itemId)?.trackExpiry) throw new Error('تحويل الصلاحية لا يحدد الدفعات المنقولة — يلزم مسار موثق للدفعات')
+          if (item.trackExpiry || state.batches.some(batch => batch.itemId === item.id)) throw new Error('تحويل الصلاحية لا يحدد الدفعات المنقولة — يلزم مسار موثق للدفعات')
         }
         if (errors.length) throw new Error(errors.join(' — '))
 

@@ -1,0 +1,105 @@
+import { beforeEach, expect, it } from 'vitest'
+import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+const initial = useRawDataStore.getState(), app = useAppStore.getState()
+beforeEach(() => {
+ useAppStore.getState().setActiveBranchContext(null)
+ useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG', allowNegativeTreasury: true } })
+ useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, items: [], suppliers: [], purchases: [], purchaseReturns: [], journal: [], warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }] as never })
+})
+function purchase() {
+ const s = useDataStore.getState()
+ s.addSupplier({ ...EMPTY_EXTENDED, nameAr: 'مورد', phone: '', notes: '' })
+ s.addItem({ nameAr: 'صنف', sku: '', barcodes: [], categoryId: 1, baseUnit: 'كجم', extraUnits: [], costMinor: 0, stockQty: 0, priceMinor: 10000, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: true, variantColors: [], variantSizes: [], isActive: true })
+ const state = useDataStore.getState(), item = state.items[0]
+ const doc = s.postPurchase({ supplierId: state.suppliers[0].id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, notes: '' })
+ return { s, item, doc }
+}
+it.each(['line', 'item'] as const)('يرفض الكمية غير الممثلة قبل مرتجع الشراء (%s) بلا أي أثر', (mode) => {
+ const { s, item, doc } = purchase(), before = useRawDataStore.getState()
+ const payload = mode === 'line' ? { lineSpecs: [{ lineIndex: 0, qty: 0.1234, warehouseId: 1 }] } : { qtyByItem: new Map([[item.id, 0.1234]]) }
+ expect(() => s.postPurchaseReturn({ purchaseId: doc.id, ...payload, refund: 'debt', reason: 'رد' })).toThrow(/كمية/)
+ const after = useRawDataStore.getState()
+ expect(after.purchaseReturns).toBe(before.purchaseReturns)
+ expect(after.journal).toBe(before.journal)
+ expect(after.items).toBe(before.items)
+})
+it('يقبل أجزاء الألف المضبوطة ويخفض الرصيد والذمة بالقيمة نفسها', () => {
+ const { s, item, doc } = purchase()
+ const r = s.postPurchaseReturn({ purchaseId: doc.id, lineSpecs: [{ lineIndex: 0, qty: 0.125, warehouseId: 1 }], refund: 'debt', reason: 'رد' })
+ expect(r.lines[0].qty).toBe(0.125)
+ expect(r.supplierValueMinor).toBe(1250)
+ expect(useRawDataStore.getState().items.find(i => i.id === item.id)?.stockQty).toBe(0.875)
+})
+it('يرفض شراء كمية لا تمثل بثلاث خانات قبل إحداث تكلفة أو مخزون', () => {
+ const { s, item } = purchase(), before = useRawDataStore.getState()
+ expect(() => s.postPurchase({ supplierId: before.suppliers[0].id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 0.0004, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, notes: '' })).toThrow(/كمية/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().items).toBe(before.items)
+})
+it('يرفض تعديل الشراء إلى كمية أدق من المخزون دون عكس القيد القديم', () => {
+ const { s, item, doc } = purchase(), before = useRawDataStore.getState()
+ expect(() => s.editPurchase({ purchaseId: doc.id, lines: [{ itemId: item.id, qty: 0.1234, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false })).toThrow(/كمية/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().purchases).toBe(before.purchases)
+})
+it('لا يقيد تعديل شراء لصنف غير موجود ثم يتجاهل تأثيره المخزني', () => {
+ const { s, doc } = purchase(), before = useRawDataStore.getState()
+ expect(() => s.editPurchase({ purchaseId: doc.id, lines: [{ itemId: 9999, qty: 1, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false })).toThrow(/صنف/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().purchases).toBe(before.purchases)
+})
+it('لا يعيد بناء شراء صلاحية بعدما استنفدت دفعته وأزيلت من الرصيد', () => {
+ const { s, item } = purchase()
+ useRawDataStore.setState(state => ({ items: state.items.map(row => row.id === item.id ? { ...row, trackExpiry: true } : row) }))
+ const doc = s.postPurchase({ supplierId: useRawDataStore.getState().suppliers[0].id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 10000, expiryDate: '2099-01-01' }], expenses: [], paidMinor: 0, notes: '' })
+ s.postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 12000, unitCostMinor: 10000, discountPercent: 0, soldByWeight: false }], payment: 'cash', customerId: null, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+ expect(useRawDataStore.getState().batches.filter(batch => batch.purchaseId === doc.id)).toHaveLength(0)
+ expect(doc.purchaseExpiryBatches?.[0].batch.expiryDate).toBe('2099-01-01')
+ expect(useRawDataStore.getState().journal.find(entry => entry.id === doc.journalEntryId)?.purchaseExpiryBatches).toEqual(doc.purchaseExpiryBatches)
+ useRawDataStore.setState(state => ({ items: state.items.map(row => row.id === item.id ? { ...row, trackExpiry: false } : row) }))
+ const before = useRawDataStore.getState()
+ expect(() => s.editPurchase({ purchaseId: doc.id, lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false })).toThrow(/صلاحية|دفعة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يطبع ضجيج الكسر الثنائي في فاتورة الشراء والمرتجع دون اختلاف القيمة عن الكمية', () => {
+ const { s, item } = purchase()
+ const doc = s.postPurchase({ supplierId: useRawDataStore.getState().suppliers[0].id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 0.1 + 0.2, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, notes: '' })
+ expect(doc.lines[0].qty).toBe(0.3)
+ expect(doc.goodsTotalMinor).toBe(3000)
+ const r = s.postPurchaseReturn({ purchaseId: doc.id, qtyByItem: new Map([[item.id, 0.1 + 0.2]]), refund: 'debt', reason: 'رد' })
+ expect(r.lines[0].qty).toBe(0.3)
+ expect(r.supplierValueMinor).toBe(3000)
+})
+it.each([NaN, Infinity, -0.1, 0.0001])('يرفض مدخل مرتجع غير صالح %s قبل حفظ المستند', qty => {
+ const { s, item, doc } = purchase(), before = useRawDataStore.getState()
+ expect(() => s.postPurchaseReturn({ purchaseId: doc.id, qtyByItem: new Map([[item.id, qty]]), refund: 'debt', reason: 'رد' })).toThrow(/كمية/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يحفظ نسخة مستقلة لدليل دفعة شراء الصلاحية في المستند والقيد حتى بعد النسخ والاستعادة', async () => {
+ const { s, item } = purchase()
+ useRawDataStore.setState(state => ({ items: state.items.map(row => row.id === item.id ? { ...row, trackExpiry: true } : row) }))
+ const doc = s.postPurchase({ supplierId: useRawDataStore.getState().suppliers[0].id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 10000, expiryDate: '2099-01-01', lotNumber: 'LOT-A' }], expenses: [], paidMinor: 0, notes: '' })
+ const entry = useRawDataStore.getState().journal.find(e => e.id === doc.journalEntryId)!
+ expect(entry.purchaseExpiryBatches).toEqual(doc.purchaseExpiryBatches)
+ expect(entry.purchaseExpiryBatches?.[0].batch).not.toBe(doc.purchaseExpiryBatches?.[0].batch)
+ const { flushSecureStorageWrites, secureStorage } = await import('../src/data/secureStorage.ts')
+ const { buildBackup, parseBackup } = await import('../src/core/backup.ts')
+ await flushSecureStorageWrites('shopsys-data')
+ const saved = await secureStorage.getItem('shopsys-data')
+ const backup = parseBackup(JSON.stringify(buildBackup({ appState: {}, storeState: JSON.parse(saved!), appDataVersion: 1, shopName: 'اختبار' })))
+ useRawDataStore.setState({ purchases: [], journal: [], batches: [] })
+ await flushSecureStorageWrites('shopsys-data')
+ await secureStorage.setItem('shopsys-data', JSON.stringify(backup.data.store))
+ await useRawDataStore.persist.rehydrate()
+ expect(useRawDataStore.getState().purchases.find(p => p.id === doc.id)?.purchaseExpiryBatches).toEqual(doc.purchaseExpiryBatches)
+ expect(useRawDataStore.getState().journal.find(e => e.id === doc.journalEntryId)?.purchaseExpiryBatches).toEqual(doc.purchaseExpiryBatches)
+})
+it('يرفض شراء صنف بوجود معرف مكرر قبل مضاعفة حركته المخزنية', () => {
+ const { s, item } = purchase()
+ useRawDataStore.setState(state => ({ items: [...state.items, { ...item, nameAr: 'هوية مكررة' }] }))
+ const before = useRawDataStore.getState()
+ expect(() => s.postPurchase({ supplierId: before.suppliers[0].id, date: '2026-01-01', lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 10000 }], expenses: [], paidMinor: 0, notes: '' })).toThrow(/صنف|فريد/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().items).toBe(before.items)
+})
