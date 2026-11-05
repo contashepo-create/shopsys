@@ -212,6 +212,8 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'contracting', nameAr: 'المقاولات', icon: HardHat, color: 'orange', module: 'contracting',
     children: [
+      // يحتفظ مستخدم المقاولات بموضع العروض المعتاد، إلى جانب القسم العام لكل الأنشطة.
+      { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
       { id: 'project-extracts', nameAr: 'المستخلصات (فواتير الأعمال)', icon: Receipt, path: '/contracting/extracts' },
       { id: 'project-expenses', nameAr: 'مصروفات المشروعات', icon: Banknote, path: '/contracting/expenses' },
