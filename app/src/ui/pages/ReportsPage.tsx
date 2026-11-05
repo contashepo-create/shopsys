@@ -5,7 +5,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * أرصدة العملاء والموردين، تنبيهات وقيمة المخزون — بفترات جاهزة أو مخصصة.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, TrendingUp, PackageSearch, Users, Truck, AlertTriangle, Boxes, ReceiptText, Coins } from 'lucide-react'
+import { BarChart3, TrendingUp, PackageSearch, Users, Truck, AlertTriangle, Boxes, ReceiptText, Coins, ShoppingCart } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -36,6 +36,7 @@ import { inputCls, useToast } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
 import { RepresentativeSalesTab } from './RepresentativeSalesTab.tsx'
 import { FxTreasuryTab } from './FxTreasuryTab.tsx'
+import { PurchasesInvoicesReportTab, SalesInvoicesReportTab } from './InvoiceReportsTabs.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
@@ -46,8 +47,8 @@ import { todayLocalIso, localIsoTimestamp } from '../../core/time.ts'
 /* التبويبات من السجل الواحد `core/reportTabs.ts` — لا نسخة محلية تتقادم (سدّ ف1) */
 type TabId = ReportTabId
 const TAB_ICONS: Record<TabId, typeof BarChart3> = {
-  sales: BarChart3, items: Boxes, parties: Users, inventory: PackageSearch,
-  expenses: ReceiptText, financial: Landmark, currencies: Coins, representatives: Users,
+  sales: BarChart3, salesInvoices: ReceiptText, items: Boxes, parties: Users, inventory: PackageSearch,
+  expenses: ReceiptText, purchaseInvoices: ShoppingCart, financial: Landmark, currencies: Coins, representatives: Users,
 }
 
 /** تسميات مصادر العمليات لتقرير المصروفات */
@@ -397,10 +398,12 @@ export function ReportsPage() {
   const tabHasData = (id: TabId): boolean => {
     switch (id) {
       case 'sales': return daily.length > 0
+      case 'salesInvoices': return sales.length > 0
       case 'items': return top.length > 0
       case 'parties': return customers.length > 0 || suppliers.length > 0
       case 'inventory': return items.length > 0
       case 'expenses': return purchases.length > 0 || vouchers.length > 0
+      case 'purchaseInvoices': return purchases.length > 0
       case 'representatives': return sales.length > 0 || saleReturns.length > 0 || vouchers.some(voucher => voucher.kind === 'receipt')
       case 'financial': return journal.length > 0
       case 'currencies': return customAccounts.length > 0
@@ -801,6 +804,10 @@ export function ReportsPage() {
             </table>
           )}
         </div>
+      )}
+
+      {tab === 'salesInvoices' && (
+        <SalesInvoicesReportTab cur={cur} companyName={setup.shopName || 'المنشأة'} initialFrom={period.from} initialTo={period.to} />
       )}
 
       {tab === 'items' && (
@@ -1654,6 +1661,10 @@ export function ReportsPage() {
             {expenseCategories.rows.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">النوع</th><th>الحساب</th><th>الحركات</th><th>المراكز</th><th>مدفوع</th><th>مستحق</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>{expenseCategories.rows.map((row) => <tr key={`${row.accountCode}:${row.label}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{row.label}</td><td className="font-mono">{row.accountCode}</td><td>{row.txCount}</td><td>{row.costCenterCount}</td><td className="text-emerald-600">{fmt(row.paidMinor)}</td><td className="text-amber-600">{fmt(row.accruedMinor)}</td><td>{fmt(row.taxMinor)}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد أنواع مصروفات في الفترة</div>}
           </div>
         </div>
+      )}
+
+      {tab === 'purchaseInvoices' && (
+        <PurchasesInvoicesReportTab cur={cur} companyName={setup.shopName || 'المنشأة'} initialFrom={period.from} initialTo={period.to} />
       )}
 
       {tab === 'representatives' && <RepresentativeSalesTab period={period} cur={cur} />}

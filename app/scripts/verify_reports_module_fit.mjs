@@ -33,9 +33,18 @@ const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 console.log('\n📊 تطابق تبويبات مركز التقارير\n')
 
 /* ① سجل واحد + رسم من السجل */
-assert.equal(REPORT_TABS.length, 8, 'عدد التبويبات تغيّر — راجع السجل')
-assert.equal(new Set(REPORT_TABS.map((t) => t.id)).size, 8, 'معرّف تبويب مكرر في السجل')
-ok('سجل التبويبات: ٨ تبويبات بمعرّفات فريدة')
+assert.equal(REPORT_TABS.length, 10, 'عدد التبويبات تغيّر — راجع السجل')
+assert.equal(new Set(REPORT_TABS.map((t) => t.id)).size, 10, 'معرّف تبويب مكرر في السجل')
+ok('سجل التبويبات: ١٠ تبويبات بمعرّفات فريدة')
+/* تقريرا الفواتير التفصيليان (طلب المالك 2026-11-05): يظهران لكل نشاط */
+for (const id of ['salesInvoices', 'purchaseInvoices']) {
+  const tab = REPORT_TABS.find((item) => item.id === id)
+  assert.ok(tab, `تبويب ${id} غير معرّف في السجل`)
+  assert.equal(tab.always, true, `تبويب ${id} يجب أن يظهر لكل نشاط`)
+  assert.ok(/تقرير/.test(tab.labelAr), `عنوان تبويب ${id} لا يصرّح أنه تقرير`)
+  assert.ok(/تاريخ/.test(tab.dataHintAr), `تبويب ${id} لا يذكر فلترة التاريخ`)
+}
+ok('تقريرا المبيعات والمشتريات تبويبان دائمان لكل نشاط (١٠/١٠)')
 assert.ok(/visibleReportTabs\(enabledModules, tabHasData\)/.test(page), 'الصفحة لا تُصفّي التبويبات من السجل')
 assert.ok(/visibleTabs\.map\(/.test(page), 'الصفحة لا ترسم التبويبات من السجل')
 assert.ok(!/setTab\('sales'\)/.test(page), 'بقي زر تبويب ثابت مكتوب يدوياً في الصفحة')
@@ -59,6 +68,8 @@ for (const template of ACTIVITY_TEMPLATES) {
   const coreTabs = tabs.filter((tab) => tab.always === true)
   coreTabCount += coreTabs.length
   assert.ok(coreTabs.some((tab) => tab.id === 'financial'), `النشاط ${template.id} بلا تبويب القوائم المالية`)
+  assert.ok(coreTabs.some((tab) => tab.id === 'salesInvoices'), `النشاط ${template.id} بلا تقرير المبيعات`)
+  assert.ok(coreTabs.some((tab) => tab.id === 'purchaseInvoices'), `النشاط ${template.id} بلا تقرير المشتريات`)
   const salesTab = tabs.find((tab) => tab.id === 'sales')
   if (modules.includes('pos')) assert.ok(salesTab, `النشاط ${template.id} له كاشير ولا يرى تبويب المبيعات`)
   else assert.ok(!salesTab, `النشاط ${template.id} بلا كاشير ومع ذلك يرى تبويب المبيعات بلا بيانات`)
