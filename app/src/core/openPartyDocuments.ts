@@ -34,6 +34,8 @@ export interface CustomerSpecializedInput {
   customerId: number
   /** ما خُصِّص سابقاً لكل مفتاح مستند من سندات القبض/سجلات التحصيل */
   settledOf: (docKey: string) => Minor
+  /** الدفتر الكامل يوزع إشعارات الخدمات بنفسه مع مراعاة الفائض. */
+  allocateServiceRefunds?: boolean
   labOrders?: readonly { id: number; orderNumber: string; date: string; patientId: number; payment: string; paidMinor?: number; totals: { totalMinor: Minor }; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   linkedLabPatientIds?: readonly number[]
   clinicVisits?: readonly { id: number; visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor } }[]
@@ -48,6 +50,7 @@ export interface CustomerSpecializedInput {
   tickets?: readonly { id: number; ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { grandMinor: Minor; paidMinor: Minor } | null; refunds?: readonly { mode: string; amountMinor: Minor }[] }[]
   walletOps?: readonly { id: number; opNumber: string; date: string; customerId: number | null; status: string; chargeMinor: Minor; paidMinor: Minor }[]
   cars?: readonly { id: number; make: string; model: string; plateOrVin: string; buyerCustomerId?: number | null; salePayment?: string | null; salePaidMinor?: number | null; saleTotalMinor?: number | null; soldAt?: string | null }[]
+  consignmentCars?: readonly { id: number; make: string; model: string; plateOrVin: string; buyerCustomerId?: number | null; salePayment?: string | null; salePriceMinor?: number | null; soldAt?: string | null }[]
   propertySales?: readonly { id: number; saleNumber: string; date: string; buyerCustomerId: number | null; dueMinor: Minor }[]
 }
 
@@ -90,7 +93,7 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
   for (const order of input.labOrders ?? []) {
     if (!labPatients.has(order.patientId) || order.totals.totalMinor <= 0) continue
     const paid = order.paidMinor ?? (order.payment === 'cash' ? order.totals.totalMinor : 0)
-    push(`lab:${order.id}`, `طلب معمل ${order.orderNumber}`, order.date, order.totals.totalMinor - positive(paid) - creditRefunds(order.refunds))
+    push(`lab:${order.id}`, `طلب معمل ${order.orderNumber}`, order.date, order.totals.totalMinor - positive(paid) - (input.allocateServiceRefunds ? 0 : creditRefunds(order.refunds)))
   }
 
   rows.push(...openClinicVisits(input))
@@ -98,7 +101,7 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
   for (const rental of input.rentals ?? []) {
     if (rental.customerId !== input.customerId) continue
     if (rental.billingMode !== 'reference') {
-      push(`rental:${rental.id}`, `عقد إيجار ${rental.contractNumber}`, rental.date, positive(rental.totals.collectCreditMinor) - creditRefunds(rental.refunds))
+      push(`rental:${rental.id}`, `عقد إيجار ${rental.contractNumber}`, rental.date, positive(rental.totals.collectCreditMinor) - (input.allocateServiceRefunds ? 0 : creditRefunds(rental.refunds)))
     }
     if ((rental.extraMinor ?? 0) > 0 && rental.payment !== 'cash') {
       const extraVat = Math.round(((rental.extraMinor ?? 0) * (rental.vatPercent ?? 0)) / 100)
@@ -121,7 +124,7 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
   for (const trip of input.trips ?? []) {
     if (trip.customerId !== input.customerId || trip.totals.grandMinor <= 0) continue
     const paid = trip.paidMinor ?? (trip.payment === 'cash' ? trip.totals.grandMinor : 0)
-    push(`trip:${trip.id}`, `نقلة ${trip.tripNumber}`, trip.date, trip.totals.grandMinor - positive(paid) - creditRefunds(trip.refunds))
+    push(`trip:${trip.id}`, `نقلة ${trip.tripNumber}`, trip.date, trip.totals.grandMinor - positive(paid) - (input.allocateServiceRefunds ? 0 : creditRefunds(trip.refunds)))
   }
 
   for (const exp of input.customerTripExpenses ?? []) {
@@ -132,7 +135,7 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
   for (const ticket of input.tickets ?? []) {
     // التذكرة لا تصير ذمة قبل التسليم — إيرادها لم يُعترف به بعد (نفس قاعدة الكشف)
     if (ticket.customerId !== input.customerId || !ticket.deliveredAt || !ticket.totals || ticket.totals.grandMinor <= 0) continue
-    push(`ticket:${ticket.id}`, `أمر صيانة ${ticket.ticketNumber}`, ticket.deliveredAt, ticket.totals.grandMinor - positive(ticket.totals.paidMinor) - creditRefunds(ticket.refunds))
+    push(`ticket:${ticket.id}`, `أمر صيانة ${ticket.ticketNumber}`, ticket.deliveredAt, ticket.totals.grandMinor - positive(ticket.totals.paidMinor) - (input.allocateServiceRefunds ? 0 : creditRefunds(ticket.refunds)))
   }
 
   for (const op of input.walletOps ?? []) {
@@ -145,6 +148,11 @@ export function openCustomerSpecializedDocuments(input: CustomerSpecializedInput
     const total = positive(car.saleTotalMinor)
     if (total <= 0) continue
     push(`carsale:${car.id}`, `بيع سيارة ${car.make} ${car.model} (${car.plateOrVin})`, car.soldAt, total - Math.min(total, positive(car.salePaidMinor)))
+  }
+
+  for (const car of input.consignmentCars ?? []) {
+    if (car.buyerCustomerId !== input.customerId || car.salePayment !== 'credit' || !car.soldAt) continue
+    push(`consignment:${car.id}`, `بيع أمانة ${car.make} ${car.model} (${car.plateOrVin})`, car.soldAt, positive(car.salePriceMinor))
   }
 
   for (const sale of input.propertySales ?? []) {
@@ -195,6 +203,7 @@ export function openSupplierSpecializedDocuments(input: SupplierSpecializedInput
 export function documentKindLabel(docKey: string): string {
   const prefix = docKey.split(':')[0]
   const labels: Record<string, string> = {
+    'customer-opening': 'رصيد افتتاحي',
     sale: 'فاتورة بيع',
     purchase: 'فاتورة شراء',
     extract: 'مستخلص مقاولات',
@@ -209,6 +218,8 @@ export function documentKindLabel(docKey: string): string {
     ticket: 'صيانة',
     wallet: 'محافظ إلكترونية',
     carsale: 'معرض سيارات',
+    consignment: 'بيع أمانة',
+    'installment-interest': 'هامش تقسيط',
     propsale: 'وحدات عقارية',
     car: 'شراء سيارة',
     carinv: 'فاتورة سيارات',

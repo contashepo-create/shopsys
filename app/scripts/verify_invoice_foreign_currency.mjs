@@ -4,7 +4,7 @@
  * العقد المحاسبي المحروس هنا:
  *   ① الدفتر أحادي العملة: كل القيد بعملة الدفتر، والساق الأجنبية توثيق على المستند وفي وصف القيد.
  *   ② المحصَّل/المسدَّد بعملة الدفتر = حاصل التحويل حرفياً، وإلا رُفض المستند قبل أي كتابة.
- *   ③ الذمة (العميل/المورد) تنقص بالمحوَّل فقط — لا فروق عملة ولا قيود تسوية.
+ *   ③ الذمة تنقص بالمحوَّل فقط؛ خروج العملة يقيد بتكلفة الحيازة والفرق ربحاً أو خسارة.
  *   ④ لا يجتمع التحصيل بعملة أجنبية مع ماكينة الدفع (سياستان مختلفتان للتسوية).
  */
 import { readFileSync } from 'node:fs'
@@ -81,6 +81,7 @@ const USD = { currencyCode: 'USD', amountMinor: 10000, ratePpm: 48_500_000, deci
   const supplier = addParty(c, 'supplier', 'مورد مستورد')
   const item = addSimpleItem(c, { nameAr: 'خامة مستوردة', priceMinor: 200000, extra: { costMinor: 100000 } })
   const bookMinor = convertFxToBookMinor(USD, 2)
+  c.st().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '4101', amountMinor: bookMinor, description: 'حيازة دولار مثبتة', fx: USD, bookDecimals: 2, bookCurrencyCode: 'EGP' })
   const invoice = c.st().postPurchase({
     supplierId: supplier.id, date: '2026-05-01', lines: [{ itemId: item.id, qty: 10, unitPriceMinor: 100000, vatPercent: 0 }],
     expenses: [], paidMinor: bookMinor, treasury: '1101', notes: '', fx: USD, bookDecimals: 2, bookCurrencyCode: 'EGP',

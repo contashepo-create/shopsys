@@ -17,6 +17,7 @@ import { hasUnsavedChangesInCurrentWindow } from '../components/unsavedChangeReg
 import { WindowHostContext, type WindowHostApi } from './windowHostContext.ts'
 import { useWindowStore, type AppWindowKind, type WindowClosePrompt } from './windowStore.ts'
 import { WindowViewContent } from './WindowHost.tsx'
+import { FinancialDataReviewBoundary } from '../components/FinancialDataReviewBoundary.tsx'
 
 /** غلاف قسم داخل نافذة قمر: المحتوى وحده بملء النافذة */
 export function SatelliteLayout({ children }: { title?: string; children: ReactNode }) {
@@ -164,9 +165,11 @@ export function SatelliteViewRoot({ descriptor }: { descriptor: SatelliteDescrip
         }}
       >
         <div className="app-window-body">
-          <Suspense fallback={<div className="grid h-full place-items-center p-10 text-sm text-slate-500">جارٍ فتح النافذة…</div>}>
-            {kind ? <WindowViewContent kind={kind} /> : <div className="p-6 text-sm text-slate-500">عرض نافذة غير معروف.</div>}
-          </Suspense>
+          <FinancialDataReviewBoundary>
+            <Suspense fallback={<div className="grid h-full place-items-center p-10 text-sm text-slate-500">جارٍ فتح النافذة…</div>}>
+              {kind ? <WindowViewContent kind={kind} /> : <div className="p-6 text-sm text-slate-500">عرض نافذة غير معروف.</div>}
+            </Suspense>
+          </FinancialDataReviewBoundary>
         </div>
 
         {ask && (

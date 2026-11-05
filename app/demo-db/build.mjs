@@ -43,9 +43,9 @@ export function buildDemoDatabase(target = DB_PATH) {
   const insertPurchaseLine = db.prepare('INSERT INTO purchase_lines (activity, purchase_ref, item_ref, qty, unit_price_minor, expiry_date) VALUES (?,?,?,?,?,?)')
   /* ─── §100: بذور أعمق — مرتجعات وسندات ─── */
   const insertSaleReturn = db.prepare('INSERT INTO sale_returns (activity, ref, sale_ref, doc_date, refund, treasury_ref, reason) VALUES (?,?,?,?,?,?,?)')
-  const insertSaleReturnLine = db.prepare('INSERT INTO sale_return_lines (activity, return_ref, item_ref, qty, condition) VALUES (?,?,?,?,?)')
+  const insertSaleReturnLine = db.prepare('INSERT INTO sale_return_lines (activity, return_ref, item_ref, qty, condition, batch_purchase_ref) VALUES (?,?,?,?,?,?)')
   const insertPurchaseReturn = db.prepare('INSERT INTO purchase_returns (activity, ref, purchase_ref, doc_date, refund, treasury_ref, reason) VALUES (?,?,?,?,?,?,?)')
-  const insertPurchaseReturnLine = db.prepare('INSERT INTO purchase_return_lines (activity, return_ref, item_ref, qty) VALUES (?,?,?,?)')
+  const insertPurchaseReturnLine = db.prepare('INSERT INTO purchase_return_lines (activity, return_ref, item_ref, qty, batch_purchase_ref) VALUES (?,?,?,?,?)')
   const insertVoucher = db.prepare('INSERT INTO vouchers (activity, ref, kind, doc_date, treasury_ref, party_kind, party_ref, amount_minor, description) VALUES (?,?,?,?,?,?,?,?,?)')
   /* ─── توسعة المرحلة ⑥: موارد بشرية ومستندات تجارية ─── */
   const insertEmployee = db.prepare('INSERT INTO employees (activity, ref, name_ar, phone, job_title, hire_date, base_salary_minor, allowances_minor, active, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
@@ -143,12 +143,12 @@ export function buildDemoDatabase(target = DB_PATH) {
     for (const ret of activity.sales_returns ?? []) {
       insertSaleReturn.run(activity.id, ret.ref, ret.sale_ref, ret.doc_date, ret.refund ?? 'cash', ret.treasury_ref ?? '', ret.reason ?? '')
       for (const line of ret.lines ?? [])
-        insertSaleReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty, line.condition ?? 'resellable')
+        insertSaleReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty, line.condition ?? 'resellable', line.batch_purchase_ref ?? '')
     }
     for (const ret of activity.purchase_returns ?? []) {
       insertPurchaseReturn.run(activity.id, ret.ref, ret.purchase_ref, ret.doc_date, ret.refund ?? 'debt', ret.treasury_ref ?? '', ret.reason ?? '')
       for (const line of ret.lines ?? [])
-        insertPurchaseReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty)
+        insertPurchaseReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty, line.batch_purchase_ref ?? '')
     }
     for (const v of activity.vouchers ?? [])
       insertVoucher.run(activity.id, v.ref, v.kind, v.doc_date, v.treasury_ref ?? '', v.party_kind ?? 'customer', v.party_ref ?? '', v.amount_minor, v.description ?? '')

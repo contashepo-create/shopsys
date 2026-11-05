@@ -4,8 +4,9 @@
  * منطق خالص: يحوّل فاتورة البيع إلى نموذج إيصال جاهز للقالب
  * (80مم أو 58مم) — الواجهة ترسمه والطابعة تطبعه، بلا حسابات في القالب.
  */
-import type { Minor } from './money.ts'
+import { exactNonNegativePercent, type Minor } from './money.ts'
 import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
+import type { DocumentCharge } from './documentCharges.ts'
 import { localDateTimeLabel } from './time.ts'
 
 export type PaperWidth = '80' | '58'
@@ -24,7 +25,7 @@ export const INVOICE_TEMPLATE_OPTIONS: { id: InvoiceTemplate; label: string; sub
 ]
 
 /** أنماط فاتورة A4 الاحترافية — منقولة ومكيّفة من قوالب logistics-web */
-export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant' | 'royal'
+export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant' | 'royal' | 'ledger' | 'split' | 'letter' | 'register' | 'project'
 
 export const A4_STYLES: { id: A4Style; nameAr: string; desc: string; accent: string }[] = [
   { id: 'modern', nameAr: 'عصري', desc: 'شريط متدرج وبطاقات معلومات أنيقة', accent: '#2563eb' },
@@ -32,6 +33,11 @@ export const A4_STYLES: { id: A4Style; nameAr: string; desc: string; accent: str
   { id: 'compact', nameAr: 'مدمج', desc: 'اقتصادي يضغط كل شيء في ورقة واحدة', accent: '#0d9488' },
   { id: 'elegant', nameAr: 'فاخر', desc: 'زوايا ناعمة وهوية بصرية قوية', accent: '#7c3aed' },
   { id: 'royal', nameAr: 'ملكي', desc: 'تدرج ذهبي داكن وترويسة بارزة — الأجمل للمطبوعات الرسمية (طلب المالك)', accent: '#b45309' },
+  { id: 'ledger', nameAr: 'الدفتر الرسمي', desc: 'عنوان وسجل بيانات وجدول محاسبي واضح', accent: '#24364b' },
+  { id: 'split', nameAr: 'العمودان', desc: 'هوية المنشأة وبيانات المستند في عمودين', accent: '#285a68' },
+  { id: 'letter', nameAr: 'الورقة التجارية', desc: 'ترويسة مراسلات وعنوان مستقل قبل البنود', accent: '#344054' },
+  { id: 'register', nameAr: 'السجل التفصيلي', desc: 'بيانات متتابعة وبنود مسطرة وإجماليات أسفلها', accent: '#4a3a2a' },
+  { id: 'project', nameAr: 'الأعمال والمشاريع', desc: 'عنوان أعمال بارز وشروط وتوقيعات واضحة', accent: '#24575a' },
 ]
 
 export interface ReceiptSettings {
@@ -65,6 +71,10 @@ export interface ReceiptSettings {
   // ─── تحكم كامل في إظهار/إخفاء عناصر الفاتورة ───
   showLogo: boolean
   showHeaderLines: boolean
+  /** رقم هاتف المنشأة المسجل وسطور الهاتف في ترويسة الفاتورة. */
+  showShopPhone: boolean
+  /** قيمة هوية الفرع الفعلية؛ تُحقن عند حل إعدادات الطباعة ولا يحررها مفتاح الإظهار. */
+  identityPhone?: string
   showDate: boolean
   showCustomer: boolean
   showPayment: boolean
@@ -112,6 +122,7 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   watermarkColor: '#64748b',
   showLogo: true,
   showHeaderLines: true,
+  showShopPhone: true,
   showDate: true,
   showCustomer: true,
   showPayment: true,
@@ -145,6 +156,8 @@ export interface ReceiptRow {
 export interface ReceiptModel {
   shopName: string
   headerLines: string[]
+  /** رقم هوية الفرع لحظة بناء النموذج، لا هوية الفرع المعروض عند المعاينة. */
+  identityPhone?: string
   /** عنوان المستند المطبوع — الافتراضي «فاتورة مبيعات»؛ للمرتجع: «مرتجع مبيعات» */
   docTitle?: string
   /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
@@ -159,7 +172,8 @@ export interface ReceiptModel {
   itemCount: number // عدد الأسطر
   totalQty: number // إجمالي القطع (الوزني يُحسب بقيمته)
   grossMinor: Minor
-  taxBaseMinor: Minor // الأساس الضريبي (يظهر في فاتورة A4)
+  taxBaseMinor: Minor // الصافي قبل الضريبة (قد يشمل مبالغ معفاة)
+  taxBaseLabel?: string
   discountMinor: Minor // إجمالي الخصومات (يظهر فقط إن وجد)
   taxLabel: string | null // «ض.ق.م 14٪ (مشمولة)» أو null
   taxMinor: Minor
@@ -172,12 +186,27 @@ export interface ReceiptModel {
   qrDataUrl?: string
 }
 
+/** سطور الترويسة المرئية في كل قوالب الفواتير، دون تغيير النموذج أو الإعدادات المحفوظة. */
+export function invoiceHeaderLines(model: ReceiptModel, settings: ReceiptSettings): string[] {
+  if (!settings.showHeaderLines) return []
+  if (settings.showShopPhone !== false) return model.headerLines
+  const digits = (value: string) => value.replace(/[٠-٩۰-۹]/g, char => String('٠١٢٣٤٥٦٧٨٩'.indexOf(char) >= 0 ? '٠١٢٣٤٥٦٧٨٩'.indexOf(char) : '۰۱۲۳۴۵۶۷۸۹'.indexOf(char))).replace(/[^0-9]/g, '')
+  const registeredPhone = digits(model.identityPhone ?? '')
+  return model.headerLines.filter(line => {
+    if (/(?:هاتف|تليفون|تلفون|جوال|موبايل|(?:^|[^a-z])(?:phone|tel|mobile)(?:[^a-z]|$))/i.test(line)) return false
+    // يحجب الرقم المسجل أيضاً عند تكراره في سطر مخصص دون تسمية.
+    return registeredPhone.length < 6 || !digits(line).includes(registeredPhone)
+  })
+}
+
 /** بناء نموذج الإيصال من الفاتورة — كل الأرقام من totals المحفوظة (لا إعادة حساب) */
 export function buildReceiptModel(args: {
   invoiceNumber: string
   refCode?: string
   dateIso: string
   lines: CartLine[]
+  /** رسوم لا تُخصم بخصم السطور، تضاف كصفوف منفصلة في الطباعة. */
+  customerCharges?: readonly DocumentCharge[]
   totals: CartTotals
   payment: PaymentMethod
   /** المحصل وقت البيع (الدفع المجزأ) — undefined = حسب payment */
@@ -187,12 +216,18 @@ export function buildReceiptModel(args: {
   customerName: string | null
   taxPercent: number
   taxInclusive: boolean
+  /** النسخة المثبتة على فاتورة البيع؛ عدم وجودها يبقي مظهر القديم كما كان. */
+  roundingVersion?: 2
+  /** فرق تقريبات المرتجع التراكمي عن سطوره منفردة، يطبع كسطر توضيحي. */
+  roundingAdjustmentMinor?: Minor
   settings: ReceiptSettings
 }): ReceiptModel {
-  const { lines, totals, settings } = args
+  const { totals, settings } = args
+  const charges = args.customerCharges ?? []
+  const lines: CartLine[] = [...args.lines, ...charges.map((charge, index) => ({ itemId: -(index + 1), nameAr: charge.nameAr, qty: 1, unitPriceMinor: charge.amountMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false, vatPercentOverride: charge.taxable ? args.taxPercent : 0 }))]
   const rows: ReceiptRow[] = lines.map((l) => {
     const gross = Math.round(l.unitPriceMinor * l.qty)
-    const net = Math.round(gross * (1 - l.discountPercent / 100))
+    const net = args.roundingVersion === 2 ? gross - exactNonNegativePercent(gross, l.discountPercent) : Math.round(gross * (1 - l.discountPercent / 100))
     return {
       nameAr: l.nameAr,
       qtyLabel: l.soldByWeight ? `${l.qty} كجم` : String(l.qty),
@@ -204,6 +239,10 @@ export function buildReceiptModel(args: {
       notes: l.notes ?? '',
     }
   })
+  if (args.roundingAdjustmentMinor) {
+    if (!Number.isSafeInteger(args.roundingAdjustmentMinor)) throw new Error('تسوية تقريب المرتجع غير صالحة')
+    rows.push({ nameAr: 'تسوية تقريب المرتجع التراكمي', qtyLabel: '—', unitPriceMinor: 0, totalMinor: args.roundingAdjustmentMinor, discountPercent: 0, vatPercent: null, serials: [] })
+  }
   const totalQty = Math.round(lines.reduce((a, l) => a + l.qty, 0) * 1000) / 1000
   // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يُطبعان — لا قيمة الفاتورة وحدها
   const paid = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
@@ -214,11 +253,12 @@ export function buildReceiptModel(args: {
   const vatLabel = vatSet.filter((p) => p > 0).map((p) => `${p}٪`).join(' / ')
   const taxLabel =
     settings.showTaxSummary && totals.taxMinor > 0 && vatLabel
-      ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
+      ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? (charges.some(charge => charge.taxable && charge.amountMinor > 0) ? '(ضريبة الأصناف مشمولة والرسوم مضافة)' : '(مشمولة في الإجمالي)') : '(مضافة)'}`
       : null
   return {
     shopName: settings.shopName || 'تَحَكَّم',
     headerLines: settings.headerLines.filter((l) => l.trim()),
+    identityPhone: settings.identityPhone,
     operatorName: args.operatorName?.trim() || 'المالك',
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode ?? '',
@@ -226,10 +266,11 @@ export function buildReceiptModel(args: {
     customerName: args.customerName ?? 'عميل نقدي',
     paymentLabel: remaining <= 0 ? 'نقدي' : paid > 0 ? 'مجزأ — جزء محصل والباقي آجل' : 'آجل',
     rows,
-    itemCount: rows.length,
+    itemCount: lines.length,
     totalQty,
-    grossMinor: totals.grossMinor,
+    grossMinor: totals.grossMinor + charges.reduce((sum, charge) => sum + charge.amountMinor, 0),
     taxBaseMinor: totals.taxBaseMinor,
+    ...(lines.some(line => line.vatPercentOverride === 0 || (line.vatExemptPerUnitMinor ?? 0) > 0) ? { taxBaseLabel: 'صافي القيمة قبل الضريبة' } : {}),
     discountMinor: totals.discountMinor,
     taxLabel,
     taxMinor: totals.taxMinor,
@@ -281,6 +322,7 @@ export function buildSimpleDocModel(args: {
   return {
     shopName: args.settings.shopName || 'تَحَكَّم',
     headerLines: args.settings.headerLines.filter((l) => l.trim()),
+    identityPhone: args.settings.identityPhone,
     operatorName: args.operatorName?.trim() || 'المالك',
     docTitle: args.docTitle,
     invoiceNumber: args.invoiceNumber,

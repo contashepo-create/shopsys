@@ -110,6 +110,44 @@ export function mulQty(priceMinor: Minor, qty: number): Minor {
   return roundHalfUp(priceMinor * qty)
 }
 
+/** ضرب عددين صحيحين غير سالبين وقسمتهما مع تقريب النصف لأعلى، دون فقد دقة حاصل الضرب. */
+export function roundNonNegativeRatio(value: number, numerator: number, denominator: number): number {
+  if (![value, numerator, denominator].every(Number.isSafeInteger) || value < 0 || numerator < 0 || denominator <= 0) throw new RangeError('money: بيانات النسبة غير صالحة')
+  const divisor = BigInt(denominator)
+  const rounded = (BigInt(value) * BigInt(numerator) * 2n + divisor) / (2n * divisor)
+  if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('money: تجاوز النطاق الآمن')
+  return Number(rounded)
+}
+
+/** نسبة عشرية محدودة لمبلغ غير سالب، بدقة عشرية لا عائمة؛ التقريب اختياري. */
+export function exactNonNegativePercent(baseMinor: Minor, percent: number, rounding: 'down' | 'half-up' = 'half-up'): Minor {
+  if (!Number.isSafeInteger(baseMinor) || baseMinor < 0) throw new RangeError('money: مبلغ غير صالح أو خارج النطاق الآمن')
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new RangeError('money: نسبة غير صالحة')
+  const [mantissa, exponentText = '0'] = percent.toString().split('e')
+  const [whole, fractional = ''] = mantissa.split('.')
+  const scale = fractional.length - Number(exponentText)
+  const coefficient = BigInt(whole + fractional)
+  const numerator = BigInt(baseMinor) * coefficient * (scale < 0 ? 10n ** BigInt(-scale) : 1n)
+  const denominator = 100n * (scale > 0 ? 10n ** BigInt(scale) : 1n)
+  const result = rounding === 'down' ? numerator / denominator : (numerator * 2n + denominator) / (denominator * 2n)
+  return Number(result)
+}
+
+/** فصل ضريبة شاملة بمعدل عشري محفوظ، بالتقريب نصفاً لأعلى دون ضرب عائم. */
+export function splitExactInclusiveTax(grossMinor: Minor, taxPercent: number): [Minor, Minor] {
+  if (!Number.isSafeInteger(grossMinor) || grossMinor < 0 || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100) throw new RangeError('money: مبلغ أو ضريبة غير صالحة')
+  const [mantissa, exponentText = '0'] = taxPercent.toString().split('e')
+  const [whole, fraction = ''] = mantissa.split('.')
+  const scale = fraction.length - Number(exponentText)
+  const multiplier = scale < 0 ? 10n ** BigInt(-scale) : 1n
+  const rate = BigInt(whole + fraction) * multiplier
+  const baseDenominator = 100n * (scale > 0 ? 10n ** BigInt(scale) : 1n)
+  const denominator = baseDenominator + rate
+  const numerator = BigInt(grossMinor) * baseDenominator
+  const base = Number((numerator * 2n + denominator) / (2n * denominator))
+  return [base, grossMinor - base]
+}
+
 /** نسبة مئوية من مبلغ (للخصومات والضرائب) */
 export function percentOf(baseMinor: Minor, percent: number): Minor {
   assertMinor(baseMinor)

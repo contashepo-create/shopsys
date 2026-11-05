@@ -9,6 +9,7 @@
  * 4. كل المبالغ Minor (أعداد صحيحة) — يمر عبر محرك النقود حصراً.
  */
 import type { Minor } from './money.ts'
+import type { StockBatch } from './batches.ts'
 import { addMinor } from './money.ts'
 
 export type AccountNature = 'debit' | 'credit'
@@ -71,7 +72,7 @@ export type SourceType =
   | 'production' | 'processing' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost' | 'vehicle_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
   | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage' | 'internal_use'
-  | 'insured_sale' | 'claim_settlement'
+  | 'insured_sale' | 'insured_sale_return' | 'claim_settlement' | 'claim_refund_payment'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
@@ -94,6 +95,32 @@ export interface JournalEntry {
   sourceId: number | null
   /** اسم مجموعة المستند المالكة عندما يحتمل sourceType أكثر من نوع مستند. */
   sourceCollection?: string
+  /** هوية مندوب البيع المصرّح بها عند الترحيل؛ مستقلة عن المحصّل والعمولة. */
+  saleRepresentativeId?: number | null
+  /** محصّل سند القبض المعيّن صراحةً، لا مستخدم النظام أو طرف السند. */
+  receiptCollectorId?: number | null
+  /** نسخة مستقلة من إسناد عهد الموظفين في فاتورة البيع؛ لا تمثل هوية المحصّل. */
+  saleCollectionAllocations?: { employeeId: number; amountMinor: number }[]
+  /** أصل مرتجع البيع ومندوبه لحظة إنشاء المرتجع؛ لا علاقة لهما بالمحصّل. */
+  saleReturnOriginalSaleId?: number
+  saleReturnRepresentativeId?: number | null
+  /** إثبات إصدار قواعد حساب فاتورة البيع، يُطابق مع المستند. */
+  saleRoundingVersion?: 2
+  /** نوع كل سطر من فاتورة البيع، لمراجعة حركة المخزون مقابل المستند. */
+  saleLineKinds?: { itemId: number; service: boolean }[]
+  /** نسخة مقابلة للقيد من دفعات FEFO المصروفة عند البيع. */
+  saleExpiryBatches?: StockBatch[]
+  saleExpiryItemIds?: number[]
+  /** توزيع الدفعات المستلمة فعلياً في مرتجع البيع لمطابقته بالمستند. */
+  saleReturnExpiryBatches?: { saleLineIndex: number; itemId: number; warehouseId: number | null; condition: 'resellable' | 'damaged'; allocations: { batchId: number; qty: number }[] }[]
+  /** نسخة مقابلة من دفعات شراء الصلاحية وقت إنشائها. */
+  purchaseExpiryBatches?: { lineIndex: number; batch: StockBatch }[]
+  /** الدفعات المخرجة فعلياً في مرتجع الشراء، لمطابقتها بالمستند. */
+  purchaseReturnExpiryBatches?: { purchaseLineIndex: number; itemId: number; warehouseId: number; batchId: number; sourceBatchId: number; qty: number }[]
+  /** السيريالات المسلمة للمورد في كل سطر من المرتجع. */
+  purchaseReturnSerials?: { purchaseLineIndex: number; itemId: number; warehouseId: number; serials: string[] }[]
+  /** لقطة حركة صندوق الوردية للبيع المؤمّن أو رده؛ تُطابق مع سجل المطالبة. */
+  insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   lines: JournalLine[]
   createdBy: string
   createdAt: string
@@ -189,7 +216,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2114', nameAr: 'عمولات مستحقة للغير', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'commissions_payable_others' },
   { code: '2115', nameAr: 'مستحق لملاك العقارات المدارة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'property_owners_payable' },
   { code: '2116', nameAr: 'عمولات موظفين مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'staff_commissions_payable' },
-  { code: '2117', nameAr: 'مصروفات داخلية مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'internal_expenses_payable' },
+  { code: '2117', nameAr: 'مستحقات متنوعة ومصروفات داخلية', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'internal_expenses_payable' },
   { code: '2118', nameAr: 'مستحق إلى فروع أخرى', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'interbranch_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },

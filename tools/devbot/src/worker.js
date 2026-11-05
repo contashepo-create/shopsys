@@ -33,6 +33,7 @@ import {
   consumeRegistrationAlert, REG_TG_DAILY_CAP,
 } from './registrations.js'
 import { supportBridge } from './supportBridge.js'
+import { SUPPORT_CLIENT_PATH, handleSupportClientRequest } from './supportChannel.js'
 import { verifyActivation } from './activation.js'
 import { tgEscape } from './tgHtml.js'
 import { sendTelegram } from './tgSend.js'
@@ -49,6 +50,10 @@ const env_ = env => ({
      أوامر الدعم معطّلة برسالة إرشادية ولا ينهار شيء آخر. */
   supportBridgeUrl: String(env.SUPPORT_BRIDGE_URL ?? '').replace(/\/$/, ''),
   supportBridgeSecret: String(env.SUPPORT_BRIDGE_SECRET ?? ''),
+  /* بلاغ 2026-10-27: قناة الدعم انتقلت إلى هذا العامل نفسه (بوت واحد/KV واحد)
+     ⇒ اللوحة وردود Reply تقرأ المحادثة محلياً بدل الجسر إلى العامل القديم
+     غير المنشور. يُضبط من wrangler.toml [vars] — بدونه يبقى سلوك الجسر كما هو. */
+  supportLocal: String(env.SUPPORT_LOCAL_CHANNEL ?? '') === '1',
 })
 
 const PLANS = new Set(['trial', 'basic', 'pro', 'lifetime'])
@@ -68,7 +73,7 @@ const MODULES = new Set(['pos', 'inventory', 'purchases', 'installments', 'recip
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  'access-control-allow-headers': 'content-type, authorization, x-support-protocol, x-support-timestamp, x-support-nonce, x-support-signature',
   'access-control-max-age': '86400',
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
@@ -81,6 +86,15 @@ export default {
     const url = new URL(request.url)
 
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS })
+
+    /* ─── قناة الدعم الفني داخل عامل التحكم (بلاغ 2026-10-27) ───────────────
+       GET/POST /support/:deviceId — HMAC v2 + TOFU + nonce + تحديد المعدل،
+       والمحادثة في KV هذا العامل، والإشعار عبر بوت المطوّر نفسه. كان العميل
+       يرسل لنطاق عامل قديم ميت فيُقال له «لا يوجد إنترنت» وهو متصل. */
+    const supportClient = url.pathname.match(SUPPORT_CLIENT_PATH)
+    if (supportClient) {
+      return await handleSupportClientRequest({ request, cfg, deviceId: supportClient[1], cors: CORS })
+    }
 
     /* نقاط العملاء — عامة القراءة فقط: محتوى «حول» والإبطال وحالة الاشتراك. */
     if (url.pathname === '/about') {

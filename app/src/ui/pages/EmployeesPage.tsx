@@ -688,7 +688,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       <td className="px-4 py-3 font-black text-rose-500">{fmt(a.amountMinor)}</td>
                       <td className="px-4 py-3 font-bold text-emerald-600" title={advanceRepayments.some((r) => r.employeeId === a.employeeId) ? 'يشمل سداداً نقدياً خارج المسير' : 'استقطاع من مسيرات الرواتب'}>{a.recoveredMinor ? fmt(a.recoveredMinor) : '—'}</td>
                       <td className="px-4 py-3">
-                        {a.amountMinor - (a.recoveredMinor ?? 0) === 0
+                        {a.saleCollectionRetired ? <span className="text-[11px] font-bold text-slate-500" title={`الأصل ${fmt(a.saleCollectionRetired.previousAmountMinor)} — ${a.saleCollectionRetired.reason}`}>ملغاة بتصحيح الفاتورة</span> : a.amountMinor - (a.recoveredMinor ?? 0) === 0
                           ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مُسدَّدة ✓</span>
                           : <span className="font-black text-amber-600">{fmt(a.amountMinor - (a.recoveredMinor ?? 0))}</span>}
                       </td>

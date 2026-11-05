@@ -45,6 +45,10 @@ export interface ShiftSummary {
   bankSalesMinor: Minor // المحصل على بنوك/محافظ (لا يدخل عدّ الدرج)
   creditSalesMinor: Minor // الجزء الآجل فقط (الدفع المجزأ يقسم الفاتورة)
   cashRefundsMinor: Minor
+  cashInsuranceReceiptsMinor: Minor
+  bankInsuranceReceiptsMinor: Minor
+  cashInsurancePaymentsMinor: Minor
+  bankInsurancePaymentsMinor: Minor
   /** المتوقع في الدرج = الافتتاحي + محصل نقدي − مرتجعات نقدية */
   expectedCashMinor: Minor
   /** المعدود − المتوقع (null قبل العد): سالب = عجز، موجب = زيادة */
@@ -57,7 +61,7 @@ function paidOf(d: ShiftDoc): Minor {
 }
 
 /** تلخيص وردية من مستنداتها — منطق خالص قابل للفحص */
-export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDoc[]): ShiftSummary {
+export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDoc[], insuranceReceipts: ShiftDoc[] = [], insurancePayments: ShiftDoc[] = []): ShiftSummary {
   /* مستندات التوثيق الضريبية لا مبيعات وردية ولا تحصيل بها — خارج التلخيص */
   const mySales = sales.filter((s) => s.shiftId === shift.id && s.projectBilling !== 'documentation')
   const myReturns = returns.filter((r) => r.shiftId === shift.id && r.projectBilling !== 'documentation')
@@ -70,7 +74,10 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
     creditSales += s.totalMinor - paid // الجزء الآجل فقط — لا الفاتورة كلها
   }
   const cashRefunds = myReturns.filter((r) => r.payment === 'cash' && r.treasuryKind !== 'bank').reduce((a, r) => a + r.totalMinor, 0)
-  const expected = shift.openingCashMinor + cashSales - cashRefunds
+  const movementTotal = (docs: ShiftDoc[], kind: 'cash' | 'bank') => docs.filter(d => d.shiftId === shift.id && (d.treasuryKind ?? 'cash') === kind).reduce((sum, d) => sum + d.totalMinor, 0)
+  const cashInsuranceReceiptsMinor = movementTotal(insuranceReceipts, 'cash'), bankInsuranceReceiptsMinor = movementTotal(insuranceReceipts, 'bank')
+  const cashInsurancePaymentsMinor = movementTotal(insurancePayments, 'cash'), bankInsurancePaymentsMinor = movementTotal(insurancePayments, 'bank')
+  const expected = shift.openingCashMinor + cashSales - cashRefunds + cashInsuranceReceiptsMinor - cashInsurancePaymentsMinor
   return {
     invoiceCount: mySales.length,
     returnCount: myReturns.length,
@@ -78,6 +85,7 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
     bankSalesMinor: bankSales,
     creditSalesMinor: creditSales,
     cashRefundsMinor: cashRefunds,
+    cashInsuranceReceiptsMinor, bankInsuranceReceiptsMinor, cashInsurancePaymentsMinor, bankInsurancePaymentsMinor,
     expectedCashMinor: expected,
     varianceMinor: shift.countedCashMinor === null ? null : shift.countedCashMinor - expected,
   }

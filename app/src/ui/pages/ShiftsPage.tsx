@@ -6,14 +6,13 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * − المرتجعات النقدية. المحصل على بنوك/محافظ يُعرض منفصلاً ولا يدخل عدّ الدرج.
  * والفارق يظهر عجزاً أو زيادة، ويُسوَّى كمصروف/إيراد أو سلفة على الموظف (طلب المالك).
  */
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { CalendarClock, LockOpen, Lock, Banknote, Landmark, TrendingUp, RotateCcw, AlertTriangle, CheckCircle2, Scale } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { summarizeShift, currentOpenShift, type Shift } from '../../core/shifts.ts'
-import { returnCashRefundMinor } from '../../core/returns.ts'
+import { currentOpenShift, type Shift } from '../../core/shifts.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { localDateTimeLabel } from '../../core/time.ts'
@@ -28,7 +27,7 @@ function StatCard({ label, value, icon: Icon, tone }: { label: string; value: st
 }
 
 export function ShiftsPage() {
-  const { shifts, sales, saleReturns, treasuries, employees, openShift, closeShift, settleShiftVariance, appUsers, currentUserId } = useDataStore()
+  const { shifts, employees, openShift, closeShift, settleShiftVariance, getShiftSummary, appUsers, currentUserId } = useDataStore()
   // تسوية فرق الدرج تحرك نقدية وتحمل موظفين سلفاً — خلف اعتماد المشرف
   const settleApproval = useSupervisorApproval('trs.payment.approve')
   const closeApproval = useSupervisorApproval('trs.payment.approve')
@@ -48,22 +47,8 @@ export function ShiftsPage() {
 
   const open = currentOpenShift(shifts)
 
-  // الدفع المجزأ + وجهة التحصيل (طلب المالك): المحصل على بنك لا يدخل عدّ الدرج
-  const kindOf = (code?: string) => treasuries.find((t) => t.code === (code ?? '1101'))?.kind ?? 'cash'
-  const saleDocs = useMemo(
-    () => sales.map((s) => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury) })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sales, treasuries],
-  )
-  const returnDocs = useMemo(
-    // المرتجع يُرد من نفس خزينة فاتورته الأصلية — بنكيّ الأصل لا يمس الدرج
-    // الرد الهجين (R1): النقدية الخارجة فعلاً فقط — لا كامل قيمة المرتجع
-    () => saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? sales.find((s) => s.id === r.saleId)?.treasury) })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [saleReturns, sales, treasuries],
-  )
-
-  const openSummary = open ? summarizeShift(open, saleDocs, returnDocs) : null
+  // ملخص واحد يُستخدم أيضاً في المتجر عند الإقفال وتسوية الفرق.
+  const openSummary = open ? getShiftSummary(open.id) : null
 
   const doOpen = () => {
     try {
@@ -83,7 +68,7 @@ export function ShiftsPage() {
       const approvalNote = projectedVariance === 0 ? null : (projectedVariance < 0 ? `اعتماد عجز ${fmt(-projectedVariance)}` : `اعتماد زيادة ${fmt(projectedVariance)}`)
       const closerName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
       const s = closeShift(counted, projectedVariance === 0 ? null : (approvedBy ?? closerName), approvalNote)
-      const sum = summarizeShift(s, saleDocs, returnDocs)
+      const sum = getShiftSummary(s.id)
       const v = sum.varianceMinor ?? 0
       toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`, v < 0 ? 'error' : 'success')
       setCloseModal(false)
@@ -128,6 +113,7 @@ export function ShiftsPage() {
             <StatCard label="مرتجعات نقدية" value={openSummary.cashRefundsMinor ? `-${fmt(openSummary.cashRefundsMinor)}` : fmt(0)} icon={RotateCcw} tone="border-rose-500/30 text-rose-600 dark:text-rose-400" />
             <StatCard label="المتوقع في الدرج" value={fmt(openSummary.expectedCashMinor)} icon={Banknote} tone="border-sky-500/40 text-sky-700 dark:text-sky-300" />
           </div>
+          <div className="text-[12px] text-slate-600 dark:text-slate-300">تحصيل التأمين: نقداً {fmt(openSummary.cashInsuranceReceiptsMinor)} · بنك {fmt(openSummary.bankInsuranceReceiptsMinor)} — صرف التأمين: نقداً {fmt(openSummary.cashInsurancePaymentsMinor)} · بنك {fmt(openSummary.bankInsurancePaymentsMinor)}</div>
           <p className="text-[11px] text-slate-400">
             💡 الدفع المجزأ يقسم الفاتورة: المحصل وقتها «نقدي/بنكي» والباقي فقط «آجل». المحصل على البنوك لا يدخل عدّ الدرج.
           </p>
@@ -169,7 +155,7 @@ export function ShiftsPage() {
             </thead>
             <tbody>
               {[...shifts].filter((s) => s.status === 'closed').reverse().map((s: Shift, i) => {
-                const sum = summarizeShift(s, saleDocs, returnDocs)
+                const sum = getShiftSummary(s.id)
                 const v = sum.varianceMinor ?? 0
                 return (
                   <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.03] transition-colors">
@@ -180,8 +166,8 @@ export function ShiftsPage() {
                     <td className="px-4 py-3 text-[12px] text-slate-500">
                       {s.openedAt.slice(5, 16).replace('T', ' ')} ← {s.closedAt?.slice(5, 16).replace('T', ' ')}
                     </td>
-                    <td className="px-4 py-3 font-bold text-emerald-600">{fmt(sum.cashSalesMinor)}</td>
-                    <td className="px-4 py-3 font-bold text-sky-600">{fmt(sum.bankSalesMinor)}</td>
+                    <td className="px-4 py-3 font-bold text-emerald-600">{fmt(sum.cashSalesMinor)}<div className="text-[11px] font-normal">تأمين +{fmt(sum.cashInsuranceReceiptsMinor)} −{fmt(sum.cashInsurancePaymentsMinor)}</div></td>
+                    <td className="px-4 py-3 font-bold text-sky-600">{fmt(sum.bankSalesMinor)}<div className="text-[11px] font-normal">تأمين +{fmt(sum.bankInsuranceReceiptsMinor)} −{fmt(sum.bankInsurancePaymentsMinor)}</div></td>
                     <td className="px-4 py-3 text-violet-600">{fmt(sum.creditSalesMinor)}</td>
                     <td className="px-4 py-3">{fmt(sum.expectedCashMinor)}</td>
                     <td className="px-4 py-3">{s.countedCashMinor !== null ? fmt(s.countedCashMinor) : '—'}</td>
@@ -238,7 +224,7 @@ export function ShiftsPage() {
             <div className="text-center p-4 rounded-2xl bg-sky-500/5 border border-sky-500/20">
               <div className="text-[12px] text-slate-400">المتوقع في الدرج</div>
               <div className="font-black text-2xl text-sky-600 dark:text-sky-400 mt-1">{fmt(openSummary.expectedCashMinor)} {cur.symbol}</div>
-              <div className="text-[11px] text-slate-400 mt-1">افتتاحي {fmt(open?.openingCashMinor ?? 0)} + كاش {fmt(openSummary.cashSalesMinor)} − مرتجعات {fmt(openSummary.cashRefundsMinor)}</div>
+              <div className="text-[11px] text-slate-400 mt-1">افتتاحي {fmt(open?.openingCashMinor ?? 0)} + كاش {fmt(openSummary.cashSalesMinor)} − مرتجعات {fmt(openSummary.cashRefundsMinor)} + تحصيل تأمين {fmt(openSummary.cashInsuranceReceiptsMinor)} − صرف تأمين {fmt(openSummary.cashInsurancePaymentsMinor)}</div>
             </div>
           )}
           <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="إذا ظهر عجز أو زيادة فلن تُقفل الوردية إلا باعتماد مشرف/مالك، ثم تُسوّى كإجراء مستقل.">
@@ -254,7 +240,7 @@ export function ShiftsPage() {
       {/* تسوية فرق الوردية (طلب المالك): مصروف/إيراد أو سلفة على الموظف تُخصم من رواتبه */}
       <Modal open={!!settleShift} onClose={() => setSettleShift(null)} title={settleShift ? `⚖️ تسوية فرق وردية #${settleShift.id}` : ''}>
         {settleShift && (() => {
-          const sum = summarizeShift(settleShift, saleDocs, returnDocs)
+          const sum = getShiftSummary(settleShift.id)
           const v = sum.varianceMinor ?? 0
           return (
             <div className="space-y-4">

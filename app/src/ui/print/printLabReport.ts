@@ -6,7 +6,9 @@
  */
 import type { ReceiptSettings } from '../../core/receipt.ts'
 import type { LabOrder, LabPatient } from '../../data/repo.ts'
+import { escAttr, safeHexColor, safeLogoUrl } from '../../core/reportPrint.ts'
 
+/* مهرّب النصوص — تبقى علامات التنصيص مقروءة؛ السمات تستخدم escAttr. */
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 function fmtRange(low: number | null, high: number | null): string {
@@ -22,7 +24,10 @@ export function renderLabReportHtml(
   referrerName: string | null,
   settings: ReceiptSettings,
 ): string {
-  const accent = settings.accentColor || '#7c3aed'
+  /* اللون والشعار قد يُستعادان من نسخة احتياطية معدّلة — يُطبَّعان قبل
+     دخولهما CSS/سمة src. كانا يُحقنان خاماً داخل قالب التقرير. */
+  const accent = safeHexColor(settings.accentColor, '#7c3aed')
+  const logoSrc = safeLogoUrl(settings.logoDataUrl)
   const d = new Date(order.date)
   const dateStr = d.toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' })
   const timeStr = d.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
@@ -76,7 +81,7 @@ ${watermark}
 <div style="position:relative;z-index:1">
   <div class="head">
     <div>
-      ${settings.showLogo && settings.logoDataUrl ? `<img src="${settings.logoDataUrl}" style="height:52px;margin-bottom:4px" />` : ''}
+      ${settings.showLogo && logoSrc ? `<img src="${escAttr(logoSrc)}" style="height:52px;margin-bottom:4px" />` : ''}
       <div style="font-size:20px;font-weight:900;color:${accent}">${esc(settings.shopName || 'المعمل')}</div>
       ${settings.showHeaderLines ? settings.headerLines.filter(Boolean).map((l) => `<div style="color:#475569;font-size:11px">${esc(l)}</div>`).join('') : ''}
     </div>

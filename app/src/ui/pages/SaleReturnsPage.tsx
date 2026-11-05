@@ -14,8 +14,9 @@ import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
+import { cumulativeSaleReturnTotals, remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
+import { normalizeSerial } from '../../core/serials.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
@@ -39,12 +40,18 @@ interface WizardLine {
   condition: ReturnCondition
   /** null/undefined = مخزن سطر البيع الأصلي */
   warehouseId?: number | null
+  serials?: string[]
+  /** الكميات التي قرأها المستخدم على الدفعات المرتجعة، بالوحدة الأساسية. */
+  batchQty?: Record<number, string>
+  batchConfirmation?: string
 }
+
+const batchConfirmationKey = (line: WizardLine) => JSON.stringify([line.qty, line.condition, line.warehouseId ?? null, line.batchQty ?? {}])
 
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
+  const { sales, saleReturns, customers, items, serials, recipes, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId, attachSaleReturnTaxQr } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -124,7 +131,8 @@ export function SaleReturnsPage() {
     for (const [idxStr, w] of Object.entries(wiz)) {
       const idx = Number(idxStr)
       const q = Number(w.qty)
-      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition, warehouseId: w.warehouseId ?? sale.lines[idx]?.warehouseId ?? sale.warehouseId ?? null })
+      const enteredBatches = Object.entries(w.batchQty ?? {}).filter(([, qty]) => qty.trim() !== '')
+      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition, serials: w.serials, ...(enteredBatches.length ? { batchAllocations: enteredBatches.map(([id, qty]) => ({ batchId: Number(id), qty: Number(qty) })) } : {}), warehouseId: w.warehouseId ?? sale.lines[idx]?.warehouseId ?? sale.warehouseId ?? null })
     }
     return out
   }, [sale, wiz])
@@ -136,21 +144,34 @@ export function SaleReturnsPage() {
     for (const s of specs) {
       const can = remaining[s.lineIndex] ?? 0
       if (s.qty > can + 1e-9) errs.push(`«${sale.lines[s.lineIndex].nameAr}»: المطلوب ${s.qty} والمتبقي ${can}`)
+      const line = sale.lines[s.lineIndex]
+      const item = items.find(row => row.id === line.itemId)
+      if ((item?.trackSerial || line.serials?.length || serials.some(unit => unit.itemId === line.itemId && unit.saleId === sale.id && unit.status === 'sold')) && (s.serials?.length ?? 0) !== s.qty) errs.push(`«${line.nameAr}»: حدد سيريالاً لكل قطعة`)
+      const batches = sale.saleExpiryBatches?.filter(batch => batch.itemId === line.itemId) ?? []
+      const expiryTracked = !item?.trackSerial && (item?.trackExpiry || batches.length > 0 || sale.saleExpiryItemIds?.includes(line.itemId))
+      if (expiryTracked && (s.condition !== 'damaged' || s.batchAllocations !== undefined)) {
+        const selected = s.batchAllocations ?? []
+        if (!batches.length || !selected.length || selected.some(row => !Number.isFinite(row.qty) || row.qty <= 0) || Math.abs(selected.reduce((sum, row) => sum + row.qty, 0) - s.qty * (line.unitFactor ?? 1)) > 1e-9) errs.push(`«${line.nameAr}»: حدد كميات الدفعات المستلمة بالوحدة الأساسية لتساوي الكمية المرتجعة`)
+        const wizardLine = wiz[s.lineIndex]
+        if (!wizardLine || wizardLine.batchConfirmation !== batchConfirmationKey(wizardLine)) errs.push(`«${line.nameAr}»: أكد فحص الدفعات المستلمة فعلياً`)
+      }
     }
     return errs
-  }, [sale, specs, remaining])
+  }, [sale, specs, remaining, items, serials, wiz])
 
   /** معاينة الإجماليات والرد الهجين (نفس منطق النواة تماماً — للعرض قبل التأكيد) */
   const preview = useMemo(() => {
     if (!sale || !specs.length || lineErrors.length) return null
     try {
-      const lines = specs.map((s) => ({ ...sale.lines[s.lineIndex], qty: s.qty }))
+      const lines = specs.map((s) => ({ ...sale.lines[s.lineIndex], qty: s.qty, saleLineIndex: s.lineIndex, ...(recipes.some(r => r.productItemId === sale.lines[s.lineIndex].itemId && r.mode === 'made_to_order') ? { unitCostMinor: 0 } : {}) }))
       const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
         ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
         : deriveTaxConfig(sale.totals, sale.lines)
-      const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
-      const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
       const priorReturns = saleReturns.filter((r) => r.saleId === sale.id)
+      const totals = sale.roundingVersion === 2
+        ? cumulativeSaleReturnTotals(sale.lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive, priorReturns, lines)
+        : computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
+      const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
       const priorCredit = priorReturns.reduce((a, r) => a + (r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)), 0)
       const priorCash = priorReturns.reduce((a, r) => a + returnCashRefundMinor(r), 0)
       const settled = clientSettlements.reduce(
@@ -182,7 +203,7 @@ export function SaleReturnsPage() {
         .reduce((a, s) => a + Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor), 0)
       return { totals, alloc, allocErrors, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
     } catch { return null }
-  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
+  }, [sale, specs, lineErrors, refund, saleReturns, recipes, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
 
   const approval = useSupervisorApproval()
   const submit = () => {
@@ -219,11 +240,18 @@ export function SaleReturnsPage() {
     const orig = sales.find((s) => s.id === r.saleId)
     const documentRecord = orig ?? r
     const documentSettings = resolveDocumentPrintSettings(documentRecord)
+    const taxPercent = orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent
+    const taxInclusive = orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive
+    const roundingAdjustmentMinor = orig?.roundingVersion === 2
+      ? r.totals.netMinor - computeTotals(r.lines, orig.invoiceDiscountPercent, taxPercent, taxInclusive, 2).netMinor
+      : 0
     const model = buildReceiptModel({
       invoiceNumber: r.returnNumber,
       refCode: r.refCode,
       dateIso: r.date,
       lines: r.lines,
+      roundingVersion: orig?.roundingVersion,
+      roundingAdjustmentMinor,
       totals: r.totals,
       payment: r.refund === 'cash' ? 'cash' : 'credit',
       paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
@@ -234,8 +262,8 @@ export function SaleReturnsPage() {
          المعدل العام بعد إصدارها؛ الإجماليات تأتي من المرتجع نفسه أصلاً. */
       /* من الفاتورة الأصلية إن كانت النسبة مخزنة؛ وإلا تُستنتج من إجماليات
          المرتجع نفسه — لا من إعدادات اليوم التي قد تخالف المستند القديم. */
-      taxPercent: orig?.taxPercent ?? deriveTaxConfig(r.totals, r.lines).taxPercent,
-      taxInclusive: orig?.taxInclusive ?? deriveTaxConfig(r.totals, r.lines).taxInclusive,
+      taxPercent,
+      taxInclusive,
       settings: documentSettings.receipt,
     })
     model.docTitle = 'مرتجع مبيعات'
@@ -467,6 +495,23 @@ export function SaleReturnsPage() {
                           <span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.soldByWeight && '⚖️ '}{l.nameAr}
                           {(l.variantColor || l.variantSize) && <span className="text-[10px] text-fuchsia-500 mr-1">({[l.variantColor, l.variantSize].filter(Boolean).join('/')})</span>}
                           {l.unitLabel && <span className="text-[10px] text-sky-500 mr-1">[{l.unitLabel}]</span>}
+                          {Number(w?.qty) > 0 && (items.find(item => item.id === l.itemId)?.trackSerial || l.serials?.length) && <fieldset className="mt-2 space-y-1 text-xs"><legend>حدد السيريال العائد</legend>
+                            {serials.filter(unit => unit.itemId === l.itemId && unit.saleId === sale.id && unit.status === 'sold' && (l.serials?.length ? l.serials.map(normalizeSerial).includes(unit.serial) : sale.lines.filter(line => line.itemId === l.itemId).length === 1)).map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={w?.serials?.includes(unit.serial) ?? false} onChange={event => setWiz(prev => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: prev[idx]?.condition ?? 'resellable', serials: event.target.checked ? [...(prev[idx]?.serials ?? []), unit.serial] : (prev[idx]?.serials ?? []).filter(serial => serial !== unit.serial) } }))} />{unit.serial}{unit.expiryBatch && ` · دفعة ${unit.expiryBatch.lotNumber || unit.batchId} · صلاحية ${unit.expiryBatch.expiryDate ?? 'غير مسجلة'}`}</label>)}
+                          </fieldset>}
+                          {Number(w?.qty) > 0 && !items.find(item => item.id === l.itemId)?.trackSerial && !l.serials?.length && (items.find(item => item.id === l.itemId)?.trackExpiry || sale.saleExpiryBatches?.some(batch => batch.itemId === l.itemId) || sale.saleExpiryItemIds?.includes(l.itemId)) && <fieldset className="mt-2 space-y-1 text-xs">
+                            <legend>حدد الدفعات المستلمة فعلياً بالوحدة الأساسية</legend>
+                            {(sale.saleExpiryBatches?.filter(batch => batch.itemId === l.itemId) ?? []).map(batch => {
+                              const prior = saleReturns.filter(ret => ret.saleId === sale.id).flatMap(ret => ret.lines).filter(row => row.itemId === l.itemId)
+                              const unproved = prior.some(row => !row.expiryBatchAllocations)
+                              const used = prior.flatMap(row => row.expiryBatchAllocations ?? []).filter(row => row.batchId === batch.id).reduce((sum, row) => sum + row.qty, 0)
+                              return <label key={batch.id} className="block">دفعة {batch.lotNumber || `#${batch.id}`} · صلاحية {batch.expiryDate ?? 'غير مسجلة'} · المباع {batch.qty} · {unproved ? 'مرتجع سابق يحتاج مراجعة' : `المتبقي ${Math.max(0, Math.round((batch.qty - used) * 1000) / 1000)}`}
+                                <input aria-label={`كمية الدفعة ${batch.lotNumber || batch.id} المرتجعة بالوحدة الأساسية`} inputMode="decimal" className={`${inputCls} mt-1`} value={w?.batchQty?.[batch.id] ?? ''} onChange={event => setWiz(prev => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: prev[idx]?.condition ?? 'resellable', batchConfirmation: undefined, batchQty: { ...prev[idx]?.batchQty, [batch.id]: event.target.value.replace(/[^\d.]/g, '') } } }))} />
+                              </label>
+                            })}
+                            {(sale.saleExpiryBatches?.some(batch => batch.itemId === l.itemId) && (w?.condition !== 'damaged' || Object.values(w?.batchQty ?? {}).some(qty => qty.trim() !== ''))) && <label className="flex items-center gap-2"><input type="checkbox" checked={Boolean(w && w.batchConfirmation === batchConfirmationKey(w))} onChange={event => setWiz(prev => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: prev[idx]?.condition ?? 'resellable', batchConfirmation: event.target.checked ? batchConfirmationKey(prev[idx]) : undefined } }))} />أؤكد فحص الدفعات والكميات المستلمة فعلياً</label>}
+                            {!sale.saleExpiryBatches?.some(batch => batch.itemId === l.itemId) && <p className="text-amber-600">لا يوجد إثبات للدفعات على البيع القديم؛ يلزم مراجعة المستند قبل إعادة المخزون.</p>}
+                            {sale.lines.filter(row => row.itemId === l.itemId).length > 1 && <p className="text-amber-600">توزيع الدفعات على سطور الصنف المتكررة غير مثبت؛ يلزم المراجعة.</p>}
+                          </fieldset>}
                         </td>
                         <td className="px-3 py-2 text-center">{l.qty}</td>
                         <td className="px-3 py-2 text-center text-[11px] text-slate-500">{fmt(l.unitPriceMinor)}{l.discountPercent > 0 && <span className="text-rose-400"> −{l.discountPercent}٪</span>}</td>
@@ -474,7 +519,7 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <input
                             value={w?.qty ?? ''}
-                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
+                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable', batchConfirmation: undefined } }))}
                             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector<HTMLElement>('td[tabindex="0"]'))?.focus() } }}
                             placeholder="0"
                             inputMode="decimal" autoComplete="off"
@@ -486,12 +531,12 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <div className="flex gap-1">
                             <button
-                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'resellable' } }))}
+                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'resellable', batchConfirmation: undefined } }))}
                               disabled={rem <= 0}
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${(w?.condition ?? 'resellable') === 'resellable' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >✅ سليم</button>
                             <button
-                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'damaged' } }))}
+                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'damaged', batchConfirmation: undefined } }))}
                               disabled={rem <= 0}
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${w?.condition === 'damaged' ? 'border-rose-500/50 bg-rose-500/10 text-rose-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >🗑️ تالف</button>
@@ -505,6 +550,7 @@ export function SaleReturnsPage() {
                                 qty: prev[idx]?.qty ?? '',
                                 condition: prev[idx]?.condition ?? 'resellable',
                                 warehouseId: e.target.value === '' ? null : Number(e.target.value),
+                                batchConfirmation: undefined,
                               },
                             }))}
                             disabled={rem <= 0 || w?.condition === 'damaged'}
@@ -536,7 +582,7 @@ export function SaleReturnsPage() {
                     setReasonCode(e.target.value)
                     // السبب التالف يقترح حالة تالف على السطور المختارة (يبقى قابلاً للتعديل)
                     const def = RETURN_REASONS.find((r) => r.id === e.target.value)?.defaultCondition
-                    if (def) setWiz((prev) => Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, Number(v.qty) > 0 ? { ...v, condition: def } : v])))
+                    if (def) setWiz((prev) => Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, Number(v.qty) > 0 ? { ...v, condition: def, batchConfirmation: undefined } : v])))
                   }}
                   className={inputCls}
                 >
@@ -677,7 +723,7 @@ export function SaleReturnsPage() {
                       const l = sale.lines[s.lineIndex]
                       return (
                         <tr key={s.lineIndex} className="border-b border-slate-50 dark:border-slate-800/50">
-                          <td className="px-4 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
+                          <td className="px-4 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}{s.serials?.length ? <div className="text-xs font-normal" dir="ltr">{s.serials.join('، ')}</div> : null}{s.batchAllocations?.map(row => { const batch = sale.saleExpiryBatches?.find(b => b.id === row.batchId); return <div key={row.batchId} className="text-xs font-normal">دفعة {batch?.lotNumber || `#${row.batchId}`} · صلاحية {batch?.expiryDate ?? 'غير مسجلة'} · كمية {row.qty} بالوحدة الأساسية</div> })}</td>
                           <td className="px-4 py-2">{s.qty} × {fmt(l.unitPriceMinor)}{l.discountPercent > 0 && ` −${l.discountPercent}٪`}</td>
                           <td className="px-4 py-2">
                             {s.condition === 'damaged'
@@ -768,7 +814,7 @@ export function SaleReturnsPage() {
               <tbody>
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                          <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
+                          <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}{l.serialSelectionRecorded && l.serials?.length ? <div className="text-xs font-normal" dir="ltr">{l.serials.join('، ')}</div> : null}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2 text-[11px]">{l.condition === 'damaged' ? <span className="text-rose-500 font-bold">🗑️ تالف</span> : <span className="text-emerald-600">✅ سليم</span>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>

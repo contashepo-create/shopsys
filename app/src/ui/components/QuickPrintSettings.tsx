@@ -5,7 +5,7 @@
  * كل تغيير يُكتب في إعدادات الطباعة مباشرة، والمعاينة الحية تتحدث فوراً.
  */
 import { useAppStore } from '../../stores/app.store.ts'
-import type { PaperWidth } from '../../core/receipt.ts'
+import { A4_STYLES, type PaperWidth } from '../../core/receipt.ts'
 
 export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
   const receipt = useAppStore((s) => s.receipt)
@@ -38,6 +38,7 @@ export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
       <div className="thermal-preview-quick-toggles">
         {([
           ['showLogo', 'الشعار'],
+          ['showShopPhone', 'هاتف المنشأة'],
           ['showDate', 'التاريخ'],
           ['showOperator', 'القائم بالطباعة'],
           ['showTaxSummary', 'ملخص الضريبة'],
@@ -48,7 +49,7 @@ export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
             <input
               type="checkbox"
               data-quick-toggle={key}
-              checked={receipt[key] === true}
+              checked={key === 'showShopPhone' ? receipt.showShopPhone !== false : receipt[key] === true}
               onChange={(event) => updateReceipt({ [key]: event.target.checked })}
             />
             {labelAr}
@@ -64,11 +65,7 @@ export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
             value={receipt.a4Style}
             onChange={(event) => updateReceipt({ a4Style: event.target.value as typeof receipt.a4Style })}
           >
-            <option value="modern">عصري</option>
-            <option value="classic">كلاسيكي</option>
-            <option value="compact">مضغوط</option>
-            <option value="elegant">أنيق</option>
-            <option value="royal">فخم</option>
+            {A4_STYLES.map((style) => <option key={style.id} value={style.id}>{style.nameAr}</option>)}
           </select>
         </label>
       )}

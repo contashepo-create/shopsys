@@ -21,6 +21,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
+import { maintenanceRefundChoices } from '../../core/maintenanceRefundChoices.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState, OverlayPortal } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
@@ -39,7 +40,7 @@ const STATUS_COLORS: Record<TicketStatus, string> = {
   cancelled: 'bg-rose-500/10 text-rose-500',
 }
 
-interface DraftPart { itemId: string; qty: string; unitPrice: string }
+interface DraftPart { itemId: string; qty: string; unitPrice: string; serials: string[] }
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
@@ -180,12 +181,12 @@ export function MaintenancePage() {
   const draftServices = () => svcLines
     .filter((sv) => sv.nameAr.trim())
     .map((sv) => ({ serviceId: sv.serviceId ? Number(sv.serviceId) : null, nameAr: sv.nameAr.trim(), qty: Number(sv.qty) || 1, unitPriceMinor: toM(sv.unitPrice), unitCostMinor: toM(sv.unitCost) }))
-  const addPart = () => setParts((p) => [...p, { itemId: '', qty: '1', unitPrice: '' }])
+  const addPart = () => setParts((p) => [...p, { itemId: '', qty: '1', unitPrice: '', serials: [] }])
   const patchPart = (i: number, patch: Partial<DraftPart>) => setParts((p) => p.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const dropPart = (i: number) => setParts((p) => p.filter((_, j) => j !== i))
   const pickPartItem = (i: number, itemId: string) => {
     const item = items.find((x) => x.id === Number(itemId))
-    patchPart(i, { itemId, unitPrice: item && item.priceMinor > 0 ? formatMinor(item.priceMinor, cur, false).replace(/,/g, '') : '' })
+    patchPart(i, { itemId, serials: [], unitPrice: item && item.priceMinor > 0 ? formatMinor(item.priceMinor, cur, false).replace(/,/g, '') : '' })
   }
 
   const deliverPreview = useMemo(() => {
@@ -214,7 +215,7 @@ export function MaintenancePage() {
       const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
       const t = deliverTicket(delivering.id, {
         laborMinor: toM(labor),
-        parts: parts.filter((p) => p.itemId).map((p) => ({ itemId: Number(p.itemId), qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice) })),
+        parts: parts.filter((p) => p.itemId).map((p) => ({ itemId: Number(p.itemId), qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice), ...(p.serials.length ? { serials: p.serials } : {}) })),
         services: draftServices(),
         payment,
         paidMinor: paidNow !== '' ? toM(paidNow) : undefined,
@@ -256,6 +257,7 @@ export function MaintenancePage() {
   const tvColumns: TicketStatus[] = ['received', 'in_progress', 'ready']
   const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(viewing.id)) : undefined
   const viewEntry = viewing?.journalEntryId != null ? journal.find((e) => e.id === viewing.journalEntryId) : null
+  const refundChoices = viewing ? maintenanceRefundChoices(viewing) : null
 
   /* ─── تقرير ─── */
   const presets = useMemo(() => periodPresets(todayLocalIso()), [])
@@ -588,11 +590,16 @@ export function MaintenancePage() {
                 <button onClick={addPart} className="text-[11px] font-bold text-orange-600 hover:underline">+ إضافة قطعة</button>
               </div>
               {parts.map((p, i) => (
-                <div key={i} className="grid grid-cols-[1fr_60px_90px_28px] gap-1.5 items-center">
+                <div key={i}>
+                <div className="grid grid-cols-[1fr_60px_90px_28px] gap-1.5 items-center">
                   <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => pickPartItem(i, String(id))} placeholder="ابحث عن قطعة ثم Enter" />
                   <input value={p.qty} onChange={(e) => patchPart(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                   <input value={p.unitPrice} onChange={(e) => patchPart(i, { unitPrice: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="السعر" />
                   <button onClick={() => dropPart(i)} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
+                </div>
+                {items.find(item => item.id === Number(p.itemId))?.trackSerial && <fieldset className="p-2 text-xs space-y-1"><legend>حدد السيريالات المصروفة ({p.serials.length}/{p.qty})</legend>
+                  {serials.filter(unit => unit.itemId === Number(p.itemId) && unit.status === 'in_stock').map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={p.serials.includes(unit.serial)} onChange={e => patchPart(i, { serials: e.target.checked ? [...p.serials, unit.serial] : p.serials.filter(serial => serial !== unit.serial) })} />{unit.serial}{unit.expiryBatch && ` · دفعة ${unit.expiryBatch.lotNumber || unit.batchId} · صلاحية ${unit.expiryBatch.expiryDate ?? 'غير مسجلة'}`}</label>)}
+                </fieldset>}
                 </div>
               ))}
             </div>
@@ -849,7 +856,7 @@ export function MaintenancePage() {
                       <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                         <td className="px-4 py-1.5 font-bold">{p.nameAr}</td>
                         <td className="px-4 py-1.5 text-slate-400">{p.qty} × {fmt(p.unitPriceMinor)}</td>
-                        <td className="px-4 py-1.5 text-slate-500 text-[11px]">تكلفة {fmt(p.unitCostMinor * p.qty)}</td>
+                        <td className="px-4 py-1.5 text-slate-500 text-[11px]">تكلفة {fmt(p.costTotalMinor ?? p.unitCostMinor * p.qty)}</td>
                         <td className="px-4 py-1.5 font-bold text-left">{fmt(p.unitPriceMinor * p.qty)}</td>
                       </tr>
                     ))}
@@ -867,26 +874,24 @@ export function MaintenancePage() {
                 allowCredit={viewing.customerId != null}
                 hint="عميل غير راضٍ؟ اختر ما يُرد: أجر الفني، خدمات، أو قطع غيار — القطعة السليمة المختارة تعود للمخزون بتكلفتها تلقائياً."
                 terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
-                refundableItems={[
-                  ...(viewing.totals.laborMinor > 0 ? [{ key: 'labor', label: 'أجر الفني (المصنعية)', valueMinor: viewing.totals.laborMinor }] : []),
-                  ...(viewing.services ?? []).map((s, si) => ({ key: `svc:${si}`, label: s.nameAr, valueMinor: Math.round(s.qty * s.unitPriceMinor), qty: s.qty })),
-                  ...viewing.parts.map((p, pi) => {
-                    const returned = (viewing.returnedParts ?? []).filter((x) => x.itemId === p.itemId).reduce((a, x) => a + x.qty, 0)
-                    const avail = p.qty - returned
-                    return avail > 0 ? [{ key: `part:${pi}`, label: `قطعة: ${p.nameAr}`, valueMinor: Math.round(avail * p.unitPriceMinor), qty: avail, restockCostMinor: Math.round(avail * p.unitCostMinor) }] : []
-                  }).flat(),
-                ]}
+                refundableItems={refundChoices?.items}
+                partialQuantityKeys={refundChoices?.partKeys}
+                referenceValueMinor={(viewing.totals.laborMinor ?? 0) + (viewing.services ?? []).reduce((sum, service) => sum + service.qty * service.unitPriceMinor, 0) + viewing.parts.reduce((sum, part) => sum + part.qty * part.unitPriceMinor, 0)}
                 onSubmit={(a) => {
                   try {
-                    // القطع المختارة تعود للمخزون بكامل كميتها المتبقية
-                    const returnParts = (a.selectedKeys ?? [])
-                      .filter((k) => k.startsWith('part:'))
-                      .map((k) => {
-                        const p = viewing.parts[Number(k.slice(5))]
-                        const returned = (viewing.returnedParts ?? []).filter((x) => x.itemId === p.itemId).reduce((s, x) => s + x.qty, 0)
-                        return { itemId: p.itemId, qty: p.qty - returned }
-                      })
-                      .filter((rp) => rp.qty > 0)
+                    const grouped = new Map<number, { itemId: number; thousandths: number; batches: { batchId: number; qty: number }[]; serials: string[] }>()
+                    for (const key of a.selectedKeys ?? []) {
+                      const choice = refundChoices?.parts[key]
+                      if (!choice) continue
+                      const quantity = choice.serial ? 1 : a.selectedQuantities?.[key]
+                      if (quantity == null || !Number.isFinite(quantity) || quantity <= 0) throw new Error('حدد كمية القطعة المرتجعة')
+                      const entry = grouped.get(choice.itemId) ?? { itemId: choice.itemId, thousandths: 0, batches: [], serials: [] }
+                      entry.thousandths += Math.round(quantity * 1000)
+                      if (choice.batchId != null) entry.batches.push({ batchId: choice.batchId, qty: quantity })
+                      if (choice.serial) entry.serials.push(choice.serial)
+                      grouped.set(choice.itemId, entry)
+                    }
+                    const returnParts = [...grouped.values()].map(row => ({ itemId: row.itemId, qty: row.thousandths / 1000, ...(row.batches.length ? { batches: row.batches } : {}), ...(row.serials.length ? { serials: row.serials } : {}) }))
                     const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts, terminalRefund: a.terminalRefund })
                     setViewing(u)
                     toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅${returnParts.length ? ' — عادت القطع للمخزون 📦' : ''}`)

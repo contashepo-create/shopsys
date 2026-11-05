@@ -58,14 +58,14 @@ export const DEMO_ACTIVITIES = [
       { ref: 'detergents', name_ar: 'منظفات' },
     ],
     items: [
-      item('oil1', 'زيت عباد الشمس 1 لتر', 'OIL-1', 'oils', 4500, 6000, 120, { barcode: '6221031492016', extra_units: 'كرتونة:12', min_qty: 24 }),
+      item('oil1', 'زيت عباد الشمس 1 لتر', 'OIL-1', 'oils', 4500, 6000, 120, { barcode: '6221031492016', extra_units: 'كرتونة:12', min_qty: 24, track_expiry: 1 }),
       item('ghee', 'سمن نباتي 700 جم', 'GHE-700', 'oils', 5200, 6900, 64, { barcode: '6221031492023', min_qty: 12 }),
       item('rice', 'أرز مصري 5 كجم', 'RICE-5', 'grains', 12000, 15500, 45, { barcode: '6221031492030', extra_units: 'شيكارة:10' }),
       item('sugar', 'سكر ناعم', 'SUG-KG', 'grains', 2800, 3600, 310, { base_unit: 'كجم', sold_by_weight: 1, min_qty: 50 }),
       item('tea', 'شاي أكياس 100 ظرف', 'TEA-100', 'grains', 5200, 7000, 38, { barcode: '6221031492047' }),
       item('milk', 'لبن كامل الدسم 1 لتر', 'MLK-1', 'dairy', 3200, 4200, 90, { track_expiry: 1, min_qty: 20 }),
       item('yogurt', 'زبادي 105 جم', 'YOG-105', 'dairy', 600, 900, 240, { track_expiry: 1, min_qty: 48 }),
-      item('cheese', 'جبن رومي', 'CHS-KG', 'dairy', 21000, 26500, 18, { base_unit: 'كجم', sold_by_weight: 1, track_expiry: 1 }),
+      item('cheese', 'جبن رومي', 'CHS-KG', 'dairy', 21000, 26500, 0, { base_unit: 'كجم', sold_by_weight: 1, track_expiry: 1 }),
       item('soap', 'مسحوق غسيل 2.5 كجم', 'DET-25', 'detergents', 9800, 12500, 52, { barcode: '6221031492054' }),
       item('bleach', 'كلور مركّز 1 لتر', 'DET-CL', 'detergents', 1500, 2200, 0, { min_qty: 24 }),
       item('delivery', 'خدمة توصيل داخل المدينة', 'SRV-DLV', '', 0, 2500, 0, { is_service: 1, base_unit: 'طلب' }),
@@ -83,13 +83,16 @@ export const DEMO_ACTIVITIES = [
     ],
     purchases: [
       { ref: 'p1', doc_date: '2026-09-02', supplier_ref: 's1', warehouse_ref: 'wh-main', supplier_doc: 'SI-9001', paid_minor: 300000, treasury_ref: 'cash-main',
-        lines: [{ item_ref: 'oil1', qty: 60, unit_price_minor: 4500 }, { item_ref: 'ghee', qty: 30, unit_price_minor: 5200 }] },
+        lines: [{ item_ref: 'oil1', qty: 60, unit_price_minor: 4500, expiry_date: '2099-12-31' }, { item_ref: 'ghee', qty: 30, unit_price_minor: 5200 }] },
       { ref: 'p2', doc_date: '2026-09-10', supplier_ref: 's2', warehouse_ref: 'wh-main', supplier_doc: 'SI-9002', paid_minor: 0,
         lines: [{ item_ref: 'milk', qty: 50, unit_price_minor: 3200 }, { item_ref: 'yogurt', qty: 120, unit_price_minor: 600 }] },
       /* دفعة زبادي منتهية الصلاحية — تظهر في لوحة فرز «منتهي الصلاحية» بثلاثة إجراءات */
       { ref: 'p3', doc_date: '2026-08-20', supplier_ref: 's2', warehouse_ref: 'wh-main', supplier_doc: 'SI-8990', paid_minor: 36000, treasury_ref: 'cash-main',
         notes: 'دفعة قديمة قصيرة الصلاحية — للفرز',
         lines: [{ item_ref: 'yogurt', qty: 60, unit_price_minor: 600, expiry_date: '2026-09-25' }] },
+      /* رصيد الجبن التجريبي يأتي من شراء مثبت بدلاً من افتتاحي مجهول الدفعة. */
+      { ref: 'p4', doc_date: '2026-09-01', supplier_ref: 's3', warehouse_ref: 'wh-main', supplier_doc: 'SI-CHEESE', paid_minor: 0,
+        lines: [{ item_ref: 'cheese', qty: 18, unit_price_minor: 21000, expiry_date: '2099-12-31' }] },
     ],
     employees: [
       { ref: 'e1', name_ar: 'محمود عبد الله', phone: '01001112233', job_title: 'كاشير أول', hire_date: '2025-03-01', base_salary_minor: 900000, allowances_minor: 50000 },
@@ -128,16 +131,16 @@ export const DEMO_ACTIVITIES = [
     ],
     /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
     sales_returns: [
-      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-19', refund: 'credit', reason: 'عبوات زيت تالفة عند الاستلام',
-        lines: [{ item_ref: 'oil1', qty: 2, condition: 'resellable' }] },
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-19', refund: 'credit', reason: 'عبوات زيت غير مطلوبة عند الاستلام',
+        lines: [{ item_ref: 'oil1', qty: 2, condition: 'resellable', batch_purchase_ref: 'p1' }] },
       /* i2 (زبادي بصلاحية) لا تُرحَّل أصلاً — اليتطلب موافقة المدير (القرار 8) —
          فالمرتجع التالف هنا على i3 المرحّلة فعلاً */
       { ref: 'sr2', sale_ref: 'i3', doc_date: '2026-09-23', refund: 'cash', treasury_ref: 'cash-main', reason: 'جبن رومي تعيب أثناء النقل — رد نقدي',
-        lines: [{ item_ref: 'cheese', qty: 1, condition: 'damaged' }] },
+        lines: [{ item_ref: 'cheese', qty: 1, condition: 'damaged', batch_purchase_ref: 'p4' }] },
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-24', refund: 'debt', reason: 'عبوات لبن منتفخة من التوريد',
-        lines: [{ item_ref: 'milk', qty: 5 }] },
+        lines: [{ item_ref: 'milk', qty: 5, batch_purchase_ref: 'p2' }] },
     ],
     vouchers: [
       { ref: 'v1', kind: 'receipt', doc_date: '2026-09-25', treasury_ref: 'cash-main', party_kind: 'customer', party_ref: 'c1', amount_minor: 18000, description: 'تحصيل دفعة من فاتورة الأسبوع' },
@@ -231,7 +234,7 @@ export const DEMO_ACTIVITIES = [
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p1', doc_date: '2026-09-22', refund: 'cash', treasury_ref: 'bank-qnb', reason: 'قرب انتهاء الصلاحية',
-        lines: [{ item_ref: 'panad', qty: 5 }] },
+        lines: [{ item_ref: 'panad', qty: 5, batch_purchase_ref: 'p1' }] },
     ],
     vouchers: [
       { ref: 'v1', kind: 'receipt', doc_date: '2026-09-23', treasury_ref: 'bank-qnb', party_kind: 'customer', party_ref: 'c1', amount_minor: 60000, description: 'تحصيل تعاقد المستشفى' },
@@ -335,7 +338,7 @@ export const DEMO_ACTIVITIES = [
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-25', refund: 'debt', reason: 'عبوات تالفة من التوريد',
-        lines: [{ item_ref: 'cola', qty: 24 }] },
+        lines: [{ item_ref: 'cola', qty: 24, batch_purchase_ref: 'p2' }] },
     ],
     vouchers: [
       { ref: 'v1', kind: 'receipt', doc_date: '2026-09-26', treasury_ref: 'cash-main', party_kind: 'customer', party_ref: 'c1', amount_minor: 60000, description: 'تحصيل حساب الطاولات' },

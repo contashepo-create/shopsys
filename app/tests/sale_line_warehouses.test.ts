@@ -48,3 +48,32 @@ describe('بيع متعدد المخازن على مستوى السطر', () => 
     expect(stock.get(1)?.get(7)).toBe(14)
   })
 })
+
+describe('توزيع كمية المرتجع على سطور الأصل', () => {
+  it('يستهلك المرتجع التالف كميته من سطر الأصل دون إدخاله المخزون، فلا يستعيرها مرتجع لاحق', () => {
+    const sales = [{ id: 20, warehouseId: 1, lines: [{ itemId: 7, qty: 2, warehouseId: 1 }, { itemId: 7, qty: 2, warehouseId: 2 }] }]
+    const returns = [
+      { saleId: 20, lines: [{ itemId: 7, qty: 2, condition: 'damaged', saleLineIndex: 0 }] },
+      { saleId: 20, lines: [{ itemId: 7, qty: 2, condition: 'resellable' }] },
+    ]
+    const docs = buildWarehouseDocs([], sales, returns)
+    expect(docs.filter(doc => doc.lines[0].qtyDelta > 0).map(doc => [doc.warehouseId, doc.lines[0].qtyDelta])).toEqual([[2, 2]])
+    // الإجمالي النهائي = 8، وتحويل سابق 5 من المخزن 1 إلى 2.
+    const stock = computeWarehouseStock([{ id: 7, stockQty: 8 }], warehouses, [{ fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }], docs)
+    expect(stock.get(1)?.get(7)).toBe(3)
+    expect(stock.get(2)?.get(7)).toBe(5)
+  })
+})
+
+it('لا يضيف البيع أو المرتجع المثبت كخدمة إلى حركات المخازن', () => {
+  const sales = [{ id: 30, warehouseId: 2, lines: [{ itemId: 7, qty: 2, isServiceAtSale: true }] }]
+  const returns = [{ saleId: 30, lines: [{ itemId: 7, qty: 1, saleLineIndex: 0, condition: 'resellable' }] }]
+  expect(buildWarehouseDocs([], sales, returns)).toEqual([])
+})
+
+it('كارت المخزون لا يحسب سطور الخدمة المثبتة كصادر ووارد', async () => {
+  const { buildItemLedger } = await import('../src/core/itemLedger.ts')
+  const ledger = buildItemLedger({ itemId: 7, openingQty: 0, purchases: [], purchaseReturns: [], stocktakes: [], productionOrders: [], materialRequisitions: [], sales: [{ invoiceNumber: 'S1', date: '2026-01-01', lines: [{ itemId: 7, qty: 2, unitPriceMinor: 100, discountPercent: 0, isServiceAtSale: true }] }], saleReturns: [{ returnNumber: 'R1', date: '2026-01-02', lines: [{ itemId: 7, qty: 1, unitPriceMinor: 100, isServiceAtSale: true }] }] })
+  expect(ledger.rows).toEqual([])
+  expect(ledger.closingQty).toBe(0)
+})

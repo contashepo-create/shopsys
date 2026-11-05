@@ -36,6 +36,7 @@ const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts
 const { supplierStatement, statementBalance } = await import(pathToFileURL(join(root, 'src/core/statements.ts')).href)
 const { computeTrialBalance } = await import(pathToFileURL(join(root, 'src/core/accounting.ts')).href)
 const st = () => useDataStore.getState()
+st().addWarehouse('المخزن الرئيسي')
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
 const item = (nameAr, extra = {}) => {
@@ -116,7 +117,7 @@ console.log('\n— م3) موبايلات: سيريالات الشراء ودور
   )
   ok('إرجاع 3 للمورد بعد بيع واحدة — مرفوض «لا يمكن إرجاع بضاعة بيعت»')
   // إرجاع 2: السيريالات تُعلَّم returned_supplier
-  st().postPurchaseReturn({ purchaseId: inv.id, qtyByItem: new Map([[phone.id, 2]]), refund: 'cash', reason: 'عيب مصنعي', approvedBy: 'المشرف' })
+  st().postPurchaseReturn({ purchaseId: inv.id, lineSpecs: [{ lineIndex: 0, qty: 2, warehouseId: st().warehouses.find(w => w.isMain).id, serials: ['SN1002', 'SN1003'] }], refund: 'cash', reason: 'عيب مصنعي', approvedBy: 'المشرف' })
   assert.equal(st().serials.filter((u) => u.purchaseId === inv.id && u.status === 'returned_supplier').length, 2)
   ok('مرتجع الشراء علَّم وحدتي السيريال returned_supplier — لا تُعرض للبيع')
 }
@@ -189,7 +190,8 @@ console.log('\n— م6) مرتجع نقدي: استرداد من المورد �
   const inv = st().purchases.filter((p) => p.supplierId === sup.id)[0]
   const cashBefore = bal('1101')
   const stockBefore = st().items.find((i) => i.id === dawa.id).stockQty
-  const ret = st().postPurchaseReturn({ purchaseId: inv.id, qtyByItem: new Map([[dawa.id, 5]]), refund: 'cash', reason: 'عبوات مكسورة', approvedBy: 'المشرف' })
+  const chosenBatch = inv.purchaseExpiryBatches[0].batch
+  const ret = st().postPurchaseReturn({ purchaseId: inv.id, lineSpecs: [{ lineIndex: 0, qty: 5, warehouseId: chosenBatch.warehouseId, batchAllocations: [{ batchId: chosenBatch.id, qty: 5 }] }], refund: 'cash', reason: 'عبوات مكسورة', approvedBy: 'المشرف' })
   assert.equal(bal('1101') - cashBefore, 2500)
   assert.equal(st().items.find((i) => i.id === dawa.id).stockQty, stockBefore - 5)
   ok('المرتجع النقدي: 25 دخلت الخزينة و5 عبوات خرجت من المخزون')

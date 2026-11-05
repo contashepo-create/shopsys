@@ -47,11 +47,11 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
     }
   })
 
-  it('لا وثيقة عمق سقطت أثناء التحميل', () => {
+  it('لا وثيقة عمق سقطت أثناء التحميل بعد اختيار دفعة اللبن صراحة', () => {
+    expect(result.skipped.filter((m) => /مرتجع|سند/.test(m))).toEqual([])
     expect(result.saleReturns).toBe(2)
     expect(result.purchaseReturns).toBe(1)
     expect(result.vouchers).toBe(2)
-    expect(result.skipped.filter((m) => /مرتجع|سند/.test(m))).toEqual([])
   })
 
   it('مرتجعات البيع مرحّلة بقيد عاكس — التالف للهالك والسليم للمخزن', () => {
@@ -66,17 +66,17 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
     /* الزيت السليم يعود للمخزن: افتتاحي 120 + شراء 60 − بيع 12 + مرتجع 2 = 170 */
     const oil = state.items.find((it) => it.nameAr.includes('زيت عباد الشمس'))!
     expect(Math.round(oil.stockQty)).toBe(170)
-    /* الجبن التالف لا يعود للمخزن (يكلفته للهالك 5111): افتتاحي 18 − بيع 2 = 16 */
+    /* الجبن التالف لا يعود للمخزن (تكلفته للهالك 5111): شراء موثق 18 − بيع 2 = 16 */
     const cheese = state.items.find((it) => it.nameAr.includes('جبن رومي'))!
     expect(Math.round(cheese.stockQty)).toBe(16)
   })
 
-  it('مرتجع الشراء يخفض دين المورد ويعيد الكمية للمورد لا للمخزن', () => {
+  it('مرتجع اللبن يخفض المخزون وذمة المورد بالدفعة المحددة في البذرة', () => {
     const state = useDataStore.getState()
     expect(state.purchaseReturns.length).toBe(1)
     expect(state.purchaseReturns[0].refund).toBe('debt')
     expect(state.purchaseReturns[0].journalEntryId).toBeTruthy()
-    /* مخزون اللبن: افتتاحي 90 + شراء 50 − مرتجع مورد 5 = 135 */
+    expect(state.purchaseReturns[0].lines[0].expiryBatchAllocation?.qty).toBe(5)
     const milk = state.items.find((it) => it.nameAr.includes('لبن كامل الدسم'))!
     expect(Math.round(milk.stockQty)).toBe(135)
   })
@@ -87,7 +87,7 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
     expect(state.getCustomerBalance(customer.id)).toBe(900)
   })
 
-  it('رصيد مورد الألبان بالضبط: فاتورة 232,000 − مرتجع دين 16,000 − سند صرف 100,000 = 116,000', () => {
+  it('رصيد مورد الألبان 116,000 بعد مرتجع اللبن المثبت وسند الصرف', () => {
     const state = useDataStore.getState()
     const supplier = state.suppliers.find((s) => s.nameAr.includes('الألبان') || s.nameAr.includes('لبن')) ?? state.suppliers.find((s) => state.getSupplierBalance(s.id) === 116000)
     expect(state.getSupplierBalance(supplier!.id)).toBe(116000)

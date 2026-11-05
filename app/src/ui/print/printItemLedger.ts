@@ -54,10 +54,10 @@ export function renderItemLedgerHtml(a: ItemLedgerPrintArgs): string {
   .party { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; }
   .pname { font-weight: 800; font-size: 14px; }
   .pdet { color: #64748b; font-size: 10.5px; margin-top: 3px; }
-  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-  .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; text-align: center; }
-  .card .lb { color: #64748b; font-size: 9.5px; font-weight: 700; }
-  .card .vl { font-size: 15px; font-weight: 900; margin-top: 2px; }
+  /* ملخص نظامي بجدول بلا بطاقات (قرار المالك 2026-10-27) */
+  .summary { margin-bottom: 12px; }
+  .summary th { background: #f1f5f9; color: #0f172a; border-bottom: 2px solid #0f172a; }
+  .summary td { text-align: center; font-size: 12px; font-weight: 800; }
   table { width: 100%; border-collapse: collapse; }
   th { background: #0f172a; color: #fff; padding: 6px 8px; font-size: 10.5px; text-align: right; }
   td { padding: 5px 8px; border-bottom: 1px solid #eef2f7; font-size: 11px; }
@@ -81,12 +81,15 @@ export function renderItemLedgerHtml(a: ItemLedgerPrintArgs): string {
     <div class="pname">${esc(a.itemName)}</div>
     <div class="pdet">${a.itemDetails.map(esc).join(' • ')}</div>
   </div>
-  <div class="cards">
-    <div class="card"><div class="lb">رصيد أول الفترة</div><div class="vl">${qty(a.ledger.openingQty)}</div></div>
-    <div class="card"><div class="lb">إجمالي الوارد</div><div class="vl" style="color:#059669">${qty(a.ledger.totalIn)}</div></div>
-    <div class="card"><div class="lb">إجمالي المنصرف</div><div class="vl" style="color:#e11d48">${qty(a.ledger.totalOut)}</div></div>
-    <div class="card"><div class="lb">رصيد آخر الفترة</div><div class="vl">${qty(a.ledger.closingQty)}</div></div>
-  </div>
+  <table class="summary">
+    <thead><tr><th>رصيد أول الفترة</th><th>إجمالي الوارد</th><th>إجمالي المنصرف</th><th>رصيد آخر الفترة</th></tr></thead>
+    <tbody><tr>
+      <td>${qty(a.ledger.openingQty)}</td>
+      <td class="in">${qty(a.ledger.totalIn)}</td>
+      <td class="out">${qty(a.ledger.totalOut)}</td>
+      <td class="bal">${qty(a.ledger.closingQty)}</td>
+    </tr></tbody>
+  </table>
   <table>
     <thead><tr><th>التاريخ</th><th>المستند</th><th>وارد</th><th>منصرف</th><th>الرصيد</th><th>القيمة</th><th>ملاحظة</th></tr></thead>
     <tbody>${rowsHtml || '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:18px">لا حركات في الفترة المحددة</td></tr>'}</tbody>

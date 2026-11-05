@@ -41,6 +41,6 @@ ok(repo.includes('linesInputVatMinor') && repo.includes('vatPercent: inv.lines[i
 
 ok(receipt.includes('vatPercent: number | null') && receipt.includes('ض.ق.م من السطور'), 'نموذج الطباعة يدعم ضريبة كل سطر')
 ok(printThermal.includes('ض. ${r.vatPercent') && printA4.includes('<th>الضريبة</th>'), 'الطباعة الحرارية وA4 تعرضان ضريبة البند')
-ok(sales.includes('s.taxPercent ?? countryVatPercent') && sales.includes('vatPercentOverride ?? viewing.taxPercent'), 'عرض/طباعة فواتير البيع يستخدم ضريبة السطر والبلد')
+ok(sales.includes('customerCharges: s.customerCharges') && sales.includes('taxPercent: tx.taxPercent') && sales.includes('vatPercentOverride ?? viewing.taxPercent') && receipt.includes('vatPercentOverride: charge.taxable ? args.taxPercent : 0'), 'عرض وطباعة البيع يستخدمان النسبة المحفوظة ونسبة كل سطر ورسومه')
 
 console.log(`\n✅ فحص ضريبة السطور وخيارات الفاتورة: ${pass} محطات — كلها خضراء\n`)

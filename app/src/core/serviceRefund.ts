@@ -13,7 +13,7 @@
  * تراكمي بسقف إجمالي المستند: refunds متتالية على نفس المستند لا تتجاوز قيمته،
  * وكسور الضريبة لا تضيع (السقف يضمن أن مجموع الحصص = ضريبة المستند بالضبط).
  */
-import type { Minor } from './money.ts'
+import { roundNonNegativeRatio, type Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
 /** سجل استرداد واحد على مستند خدمة — يُخزن على المستند نفسه (تتبع تراكمي) */
@@ -24,6 +24,10 @@ export interface ServiceRefundRecord {
   mode: 'cash' | 'customer_credit'
   reason: string
   journalEntryId: number
+  /** حركة صندوق مريض مؤمّن عند رد نقدي، مثبتة أيضاً على القيد. */
+  insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
+  /** نصيب العميل في رد مؤمن على الحساب؛ الباقي يخص مطالبة الجهة. */
+  customerCreditMinor?: Minor
   /** موافقة المشرف (نمط POS العالمي): من اعتمد ومن نفّذ — undefined = سجل قديم */
   approvedBy?: string
   requestedBy?: string
@@ -41,8 +45,8 @@ export function buildServiceRefundEntry(args: {
   treasury?: string
   /**
    * G9 (مستند بتغطية تأمينية): نصيب جهة التأمين من المردود — يُقيَّد دائناً على
-   * حساب المطالبات (1110) تخفيضاً لها، لا نقداً من الخزينة: هذا الجزء لم يُحصَّل
-   * أصلاً بل هو ذمة على الجهة، وردُّه نقداً يُخرج نقدية لم تدخل قط.
+   * حساب المطالبات (1110) تخفيضاً لها إن لم تُحصّل، أو حساب المستحقات
+   * المتنوعة (2117) كالتزام للجهة بعد تحصيلها. لا يُفترض دفع نقدي للجهة هنا.
    */
   providerShareMinor?: Minor
   providerAccount?: string
@@ -55,22 +59,27 @@ export function buildServiceRefundEntry(args: {
   note: string
 }): { lines: JournalLine[]; taxShareMinor: Minor; baseMinor: Minor } {
   const { refundValueMinor: v, deliveredGrandMinor: grand, deliveredTaxMinor: tax } = args
-  if (!Number.isInteger(v) || v <= 0) throw new Error('قيمة الاسترداد يجب أن تكون موجبة')
-  if (!Number.isInteger(grand) || grand <= 0) throw new Error('إجمالي المستند غير صالح')
+  if (!Number.isSafeInteger(v) || v <= 0) throw new Error('قيمة الاسترداد يجب أن تكون موجبة')
+  if (!Number.isSafeInteger(grand) || grand <= 0) throw new Error('إجمالي المستند غير صالح')
+  if (!Number.isSafeInteger(tax) || tax < 0 || tax > grand || !Number.isSafeInteger(args.priorRefundedMinor) || args.priorRefundedMinor < 0 || args.priorRefundedMinor > grand || !Number.isSafeInteger(args.priorRefundedTaxMinor) || args.priorRefundedTaxMinor < 0 || args.priorRefundedTaxMinor > tax) throw new Error('رصيد مرتجعات المستند أو ضريبته غير صالح — راجع السجلات السابقة')
   const remaining = grand - args.priorRefundedMinor
+  if (args.priorRefundedTaxMinor > args.priorRefundedMinor || tax - args.priorRefundedTaxMinor > remaining) throw new Error('يلزم مراجعة سجلات الضريبة السابقة — الضريبة غير المعكوسة تتجاوز المتبقي القابل للرد')
   if (v > remaining) throw new Error(`قيمة الاسترداد تتجاوز المتبقي القابل للرد (${remaining})`)
   const providerShare = args.providerShareMinor ?? 0
   if (!Number.isInteger(providerShare) || providerShare < 0) throw new Error('نصيب جهة التأمين لا يكون سالباً')
   if (providerShare > v) throw new Error('نصيب جهة التأمين لا يتجاوز قيمة الاسترداد')
-  // حصة الضريبة النسبية بسقف ما لم يُعكس بعد (نفس منطق N2 في مرتجع الشراء)
-  const taxShare = tax > 0 ? Math.min(Math.round((tax * v) / grand), tax - args.priorRefundedTaxMinor) : 0
+  // تحسب الحصة على المردود التراكمي؛ تقريب كل جزء وحده كان يضيع
+  // ضريبة المستند عند تكرار مرتجعات صغيرة، حتى عند رد المبلغ كاملاً.
+  const taxTarget = tax > 0 ? roundNonNegativeRatio(tax, args.priorRefundedMinor + v, grand) : 0
+  if (taxTarget - args.priorRefundedTaxMinor > v) throw new Error('يلزم مراجعة سجلات الضريبة السابقة — لا يمكن تحميل فرقها على هذا المرتجع تلقائياً')
+  const taxShare = Math.max(0, Math.min(taxTarget - args.priorRefundedTaxMinor, tax - args.priorRefundedTaxMinor))
   const base = v - taxShare
   const lines: JournalLine[] = [
     { accountCode: '4102', debit: base, credit: 0, note: args.note },
   ]
   if (taxShare > 0) lines.push({ accountCode: '2102', debit: taxShare, credit: 0, note: 'تخفيض ض.ق.م' })
-  // G9: نصيب الجهة يخفض المطالبة (1110 دائن) — والباقي فقط للمريض نقداً/على حسابه
-  if (providerShare > 0) lines.push({ accountCode: args.providerAccount ?? '1110', debit: 0, credit: providerShare, note: 'تخفيض مطالبة جهة التأمين' })
+  // قبل التحصيل تخفيض مطالبة؛ بعده التزام مستقل لا يعني أن الصرف وقع.
+  if (providerShare > 0) lines.push({ accountCode: args.providerAccount ?? '1110', debit: 0, credit: providerShare, note: args.providerAccount === '2117' ? 'مستحق رد لجهة التأمين بعد التحصيل' : 'تخفيض مطالبة جهة التأمين' })
   const patientPart = v - providerShare
   if (patientPart > 0) {
     if (args.mode === 'cash') lines.push({ accountCode: args.treasury ?? '1101', debit: 0, credit: patientPart, note: 'رد نقدية' })
@@ -111,8 +120,10 @@ export function computeItemizedRefund(args: {
   selectedKeys: string[]
   grandMinor: Minor // إجمالي المستند النهائي (وعاء الاسترداد)
   refundedMinor: Minor // المردود سابقاً
+  /** وعاء البنود الأصلي عند إخفاء البنود التي أُرجعت من قائمة الاختيار. */
+  referenceValueMinor?: Minor
 }): { amountMinor: Minor; restockCostMinor: Minor; labels: string[] } {
-  const sumAll = args.items.reduce((a, i) => a + i.valueMinor, 0)
+  const sumAll = args.referenceValueMinor ?? args.items.reduce((a, i) => a + i.valueMinor, 0)
   if (sumAll <= 0) throw new Error('لا بنود قابلة للاسترداد في المستند')
   const chosen = args.items.filter((i) => args.selectedKeys.includes(i.key))
   if (!chosen.length) throw new Error('اختر بنداً واحداً على الأقل')

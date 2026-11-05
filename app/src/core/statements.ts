@@ -9,6 +9,7 @@
  * كل صف بتاريخه ومستنده، والرصيد تراكمي.
  */
 import type { Minor } from './money.ts'
+import { returnCreditRefundMinor } from './returns.ts'
 
 export interface StatementRow {
   date: string
@@ -49,7 +50,7 @@ export interface CustomerStatementInput {
    * مستندات الوحدات الأخرى المدينة للعميل (إصلاح المالك: «كشف الحساب لا يظهر النقلات»):
    * نقلات آجلة/جزئية، أوامر صيانة على الحساب، عقود إيجار آجلة… تُبنى بـ customerUnitDocs.
    */
-  extraDocs?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
+  extraDocs?: { docLabel: string; date: string; operationMinor?: Minor; debitMinor: Minor; creditMinor: Minor }[]
 }
 
 /** ما يحتاجه الكشف من الشيك (متوافق مع core/cheques.Cheque) */
@@ -72,7 +73,7 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
     rows.push({ date: adj.date, docLabel: adj.docLabel, operationMinor: adj.operationMinor ?? Math.max(adj.debitMinor, adj.creditMinor), debitMinor: adj.debitMinor, creditMinor: adj.creditMinor })
   }
   for (const d of input.extraDocs ?? []) {
-    rows.push({ date: d.date, docLabel: d.docLabel, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
+    rows.push({ date: d.date, docLabel: d.docLabel, operationMinor: d.operationMinor, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
   }
   for (const s of input.sales) {
     if (s.customerId !== input.customerId) continue
@@ -95,7 +96,7 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
     // المرتجع النقدي يظهر كسطر توثيقي حتى لا تختفي العملية، دون تغيير رصيد العميل.
     const total = Math.max(0, r.totals.totalMinor)
     if (total <= 0) continue
-    const creditPart = Math.min(total, Math.max(0, r.creditRefundMinor ?? r.storeCreditRefundMinor ?? (r.refund === 'credit' || r.refund === 'store_credit' ? total : 0)))
+    const creditPart = returnCreditRefundMinor(r)
     const mode = creditPart > 0 ? (creditPart < total ? 'هجين' : 'على الحساب') : 'نقدي'
     rows.push({ date: r.date, docLabel: `مرتجع ${r.returnNumber} (${mode})`, operationMinor: total, debitMinor: 0, creditMinor: creditPart })
   }
@@ -105,6 +106,11 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
   }
   for (const c of input.cheques) {
     if (c.direction !== 'incoming' || c.partyId !== input.customerId) continue
+    /* المراجعة الأدق: الورقة «الملغاة» لم تُستلم أصلاً، وchequeSettlesCustomerDues
+       تستثنيها من الذمم — فلا يجوز أن تُخفض رصيد العميل هنا وحده (ينفصل الكشف
+       عن دفتر التحصيل). الارتداد يُظهر السطرين معاً لأنه سجّل فعلي ثم عكس. */
+    /* ملاحظة: المصدر الموحّد لخصم الذمم هو core/chequeDues.ts. */
+    if (c.status === 'cancelled') continue
     rows.push({ date: c.createdAt, docLabel: `شيك وارد ${c.chequeNumber}`, operationMinor: c.amountMinor, debitMinor: 0, creditMinor: c.amountMinor })
     if (c.status === 'bounced') {
       rows.push({ date: c.settledAt ?? c.createdAt, docLabel: `ارتداد شيك ${c.chequeNumber} ⚠️`, operationMinor: c.amountMinor, debitMinor: c.amountMinor, creditMinor: 0 })
@@ -137,7 +143,7 @@ export interface SupplierStatementInput {
    * مستندات الوحدات الأخرى المدينة للعميل (إصلاح المالك: «كشف الحساب لا يظهر النقلات»):
    * نقلات آجلة/جزئية، أوامر صيانة على الحساب، عقود إيجار آجلة… تُبنى بـ customerUnitDocs.
    */
-  extraDocs?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
+  extraDocs?: { docLabel: string; date: string; operationMinor?: Minor; debitMinor: Minor; creditMinor: Minor }[]
 }
 
 export function supplierStatement(input: SupplierStatementInput): StatementRow[] {
@@ -150,7 +156,7 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
     rows.push({ date: adj.date, docLabel: adj.docLabel, operationMinor: adj.operationMinor ?? Math.max(adj.debitMinor, adj.creditMinor), debitMinor: adj.debitMinor, creditMinor: adj.creditMinor })
   }
   for (const d of input.extraDocs ?? []) {
-    rows.push({ date: d.date, docLabel: d.docLabel, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
+    rows.push({ date: d.date, docLabel: d.docLabel, operationMinor: d.operationMinor, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
   }
   // §91: فواتير البيع الآجلة له — مديونية على حسابه تخفض ديننا له
   for (const sale of input.sales ?? []) {
@@ -286,12 +292,12 @@ export function customerUnitDocs(args: {
   customerEquipmentCosts?: readonly { date: string; description: string; customerId?: number | null; amountMinor: Minor; vatMinor?: Minor }[]
   customerTripExpenses?: readonly { expenseNumber?: string; tripNumber: string; nameAr: string; date: string; customerId?: number | null; amountMinor: Minor }[]
   /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
-  clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor } }[]
+  clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { totalMinor: Minor; paidMinor: Minor; dueMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; customerCreditMinor?: Minor; mode: string }[] }[]
   clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor; viaVoucherId?: number | null }[]
   /** معرفات المرضى المرتبطين بهذا العميل */
   linkedPatientIds?: readonly number[]
   /** طلبات معمل آجلة لمرضى معمل مرتبطين بهذا العميل (إصلاح الترابط الشامل) */
-  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; paidMinor?: number; totals: { totalMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; paidMinor?: number; totals: { totalMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; customerCreditMinor?: Minor; mode: string }[] }[]
   linkedLabPatientIds?: readonly number[]
   /** خدمات محافظ بجزء آجل على العميل */
   walletOps?: readonly { opNumber: string; date: string; customerId: number | null; status: string; chargeMinor: Minor; paidMinor: Minor; totals: { remainingMinor: Minor } }[]
@@ -354,9 +360,11 @@ export function customerUnitDocs(args: {
   const patientSet = new Set(args.linkedPatientIds ?? [])
   for (const v of args.clinicVisits ?? []) {
     if (!patientSet.has(v.patientId) || v.totals.totalMinor <= 0) continue
-    const paid = Math.min(v.totals.totalMinor, Math.max(0, v.totals.paidMinor))
-    const status = paid >= v.totals.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
+    // حصة التأمين ليست ديناً على العميل؛ dueMinor هو دين المريض الفعلي.
+    const paid = Math.min(v.totals.totalMinor, Math.max(0, v.totals.totalMinor - v.totals.dueMinor))
+    const status = v.totals.dueMinor === 0 && v.totals.paidMinor < v.totals.totalMinor ? 'مسدد/تغطية' : paid >= v.totals.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
     rows.push({ docLabel: `زيارة عيادة ${v.visitNumber} (${status})`, date: v.date, operationMinor: v.totals.totalMinor, debitMinor: v.totals.totalMinor, creditMinor: paid })
+    for (const r of v.refunds ?? []) if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع زيارة ${v.visitNumber} (على الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.customerCreditMinor ?? r.amountMinor })
   }
   for (const c of args.clinicCollections ?? []) {
     if (!patientSet.has(c.patientId)) continue
@@ -371,7 +379,7 @@ export function customerUnitDocs(args: {
     const status = paid >= o.totals.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
     rows.push({ docLabel: `طلب معمل ${o.orderNumber} (${status})`, date: o.date, operationMinor: o.totals.totalMinor, debitMinor: o.totals.totalMinor, creditMinor: paid })
     for (const r of o.refunds ?? []) {
-      if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع تحاليل ${o.orderNumber} (على الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.amountMinor })
+      if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع تحاليل ${o.orderNumber} (على الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.customerCreditMinor ?? r.amountMinor })
     }
   }
   for (const w of args.walletOps ?? []) {

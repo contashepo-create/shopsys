@@ -1,0 +1,250 @@
+import { beforeEach, expect, it } from 'vitest'
+import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+const initial = useRawDataStore.getState(), app = useAppStore.getState()
+beforeEach(() => { useAppStore.getState().setActiveBranchContext(null); useAppStore.setState({ setup: { ...app.setup, countryCode: 'EG', allowNegativeTreasury: true }, einvoice: app.einvoice, approvals: app.approvals }); useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, appUsers: [], currentUserId: null, items: [], insuranceProviders: [], insuranceClaims: [], journal: [], shifts: [], batches: [], warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }] }) })
+function fixture() {
+ const s = useDataStore.getState()
+ s.addItem({ nameAr: 'دواء', sku: '', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 100, stockQty: 5, priceMinor: 1000, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
+ const item = useDataStore.getState().items[0], provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 })
+ const args = { lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 1000, unitCostMinor: 100, discountPercent: 0, soldByWeight: false }], providerId: provider.id, taxPercent: 0, taxInclusive: false, treasury: '1101' }
+ return { s, provider, args }
+}
+it('يحسب حصة المريض المؤمّن في وردية البيع ومرتجعه في وردية الرد فقط', () => {
+ const { s, provider, args } = fixture(), first = s.openShift('موظف', 100)
+ s.postInsuredSale(args)
+ expect(s.getShiftSummary(first.id)).toMatchObject({ cashSalesMinor: 600, creditSalesMinor: 1400, expectedCashMinor: 700 })
+ s.closeShift(700)
+ s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0], second = s.openShift('موظف', 1000)
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true })
+ expect(s.getShiftSummary(second.id)).toMatchObject({ cashRefundsMinor: 300, expectedCashMinor: 700 })
+ expect(s.getShiftSummary(first.id)).toMatchObject({ expectedCashMinor: 700, varianceMinor: 0 })
+ s.closeShift(700)
+ expect(() => s.settleShiftVariance({ shiftId: second.id, mode: 'expense' })).toThrow(/لا فرق/)
+})
+it('يحسب عكس البيع في وردية العكس لا يغير وردية البيع المقفلة', () => {
+ const { s, args } = fixture(), first = s.openShift('أ', 0); s.postInsuredSale(args); s.closeShift(600)
+ const claim = useDataStore.getState().insuranceClaims[0], second = s.openShift('ب', 1000)
+ s.reverseEntry(claim.sourceId, 'إلغاء')
+ expect(s.getShiftSummary(first.id).expectedCashMinor).toBe(600)
+ expect(s.getShiftSummary(second.id).expectedCashMinor).toBe(400)
+})
+it('يحجب الإقفال عند فقد دليل قيد الوردية المؤمّن', () => {
+ const { s, args } = fixture(), shift = s.openShift('أ', 0); s.postInsuredSale(args)
+ useRawDataStore.setState(state => ({ journal: state.journal.filter(e => e.sourceType !== 'insured_sale') }))
+ const before = useRawDataStore.getState()
+ expect(() => s.getShiftSummary(shift.id)).toThrow(/مراجعة/)
+ expect(() => s.closeShift(600)).toThrow(/مراجعة/)
+ expect(useRawDataStore.getState().shifts).toBe(before.shifts)
+})
+it('يضيف تحصيل الجهة وصرفها إلى الصندوق لا إلى إيراد الفواتير', () => {
+ const { s, provider, args } = fixture(), shift = s.openShift('أ', 100)
+ s.postInsuredSale(args); s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true })
+ s.payInsuranceRefund({ claimId: claim.id, amountMinor: 400, treasury: '1101', reason: 'صرف للجهة' })
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ invoiceCount: 1, returnCount: 1, cashSalesMinor: 600, cashInsuranceReceiptsMinor: 1400, cashInsurancePaymentsMinor: 400, cashRefundsMinor: 300, expectedCashMinor: 1400 })
+ s.closeShift(1400)
+ expect(() => s.settleShiftVariance({ shiftId: shift.id, mode: 'expense' })).toThrow(/لا فرق/)
+})
+it('يحتسب المقبوض والمصروف البنكي منفصلاً دون زيادة أو نقص الدرج', () => {
+ const { s, provider, args } = fixture(), shift = s.openShift('أ', 100)
+ s.postInsuredSale({ ...args, treasury: '1102' }); s.settleInsuranceClaims(provider.id, '1102')
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1102', reason: 'رد', confirmReturnedStock: true })
+ s.payInsuranceRefund({ claimId: claim.id, amountMinor: 400, treasury: '1102', reason: 'صرف' })
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ bankSalesMinor: 600, bankInsuranceReceiptsMinor: 1400, bankInsurancePaymentsMinor: 400, expectedCashMinor: 100 })
+})
+it('يحسب قيد التحصيل المجمّع مرة واحدة لا مرة لكل مطالبة', () => {
+ const { s, provider, args } = fixture(), shift = s.openShift('أ', 100)
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 1 }] })
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 1 }] })
+ s.settleInsuranceClaims(provider.id)
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ invoiceCount: 2, cashSalesMinor: 600, cashInsuranceReceiptsMinor: 1400, expectedCashMinor: 2100 })
+})
+it('يحجب الملخص والإقفال عند فقد ختم التحصيل أو اختلافه بين المجموعة', () => {
+ const { s, provider, args } = fixture(), shift = s.openShift('أ', 0)
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 1 }] }); s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 1 }] }); s.settleInsuranceClaims(provider.id)
+ const saved = useRawDataStore.getState()
+ useRawDataStore.setState({ insuranceClaims: saved.insuranceClaims.map((claim, i) => i ? { ...claim, settlementShift: undefined } : claim) })
+ expect(() => s.closeShift(2000)).toThrow(/مراجعة/)
+ useRawDataStore.setState({ insuranceClaims: saved.insuranceClaims, journal: saved.journal.map(entry => entry.sourceType === 'claim_settlement' ? { ...entry, insuredShift: undefined } : entry) })
+ expect(() => s.getShiftSummary(shift.id)).toThrow(/مراجعة/)
+})
+it('يحجب التسجيل المنسوب إلى وردية مقفلة قبل حدوثه', () => {
+ const { s, args } = fixture(), shift = s.openShift('أ', 0); s.postInsuredSale(args); s.closeShift(600)
+ useRawDataStore.setState(state => ({ shifts: state.shifts.map(row => row.id === shift.id ? { ...row, closedAt: '2000-01-01T00:00:00Z' } : row) }))
+ expect(() => s.getShiftSummary(shift.id)).toThrow(/مراجعة/)
+})
+it('يتحقق من مستند حركة الصرف المحذوف قبل تسوية فرق الوردية', () => {
+ const { s, provider, args } = fixture(), shift = s.openShift('أ', 100)
+ s.postInsuredSale(args); s.settleInsuranceClaims(provider.id)
+ const claim = useDataStore.getState().insuranceClaims[0]
+ s.refundSettledInsuredSalePartial({ claimId: claim.id, qty: 1, treasury: '1101', reason: 'رد', confirmReturnedStock: true })
+ s.payInsuranceRefund({ claimId: claim.id, amountMinor: 400, treasury: '1101', reason: 'صرف' }); s.closeShift(1300)
+ useRawDataStore.setState(state => ({ journal: state.journal.filter(entry => entry.sourceType !== 'claim_refund_payment') }))
+ const before = useRawDataStore.getState()
+ expect(() => s.settleShiftVariance({ shiftId: shift.id, mode: 'expense' })).toThrow(/مراجعة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('لا يفقد التحصيل المصاحب للبيع بتغطية كاملة والبيانات تنجو من إعادة التحميل', async () => {
+ const { s, provider, args } = fixture()
+ useRawDataStore.setState(state => ({ insuranceProviders: state.insuranceProviders.map(p => p.id === provider.id ? { ...p, coveragePercent: 100 } : p) }))
+ const shift = s.openShift('أ', 50); s.postInsuredSale(args); s.settleInsuranceClaims(provider.id)
+ const saved = useRawDataStore.getState(), snapshot = JSON.parse(JSON.stringify({ insuranceClaims: saved.insuranceClaims, journal: saved.journal, shifts: saved.shifts }))
+ const { assertJournalSnapshotSafe } = await import('../src/core/ledgerSnapshotGuard.ts')
+ expect(() => assertJournalSnapshotSafe(JSON.parse(JSON.stringify(saved)))).not.toThrow()
+ useRawDataStore.setState(snapshot)
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ cashSalesMinor: 0, creditSalesMinor: 2000, cashInsuranceReceiptsMinor: 2000, expectedCashMinor: 2050 })
+})
+it('يحجب حساب الوردية عند حذف المطالبة مع بقاء قيدها', () => {
+ const { s, args } = fixture(), shift = s.openShift('أ', 0); s.postInsuredSale(args)
+ useRawDataStore.setState({ insuranceClaims: [] })
+ expect(() => s.getShiftSummary(shift.id)).toThrow(/مراجعة/)
+ expect(() => s.closeShift(600)).toThrow(/مراجعة/)
+})
+it('يحجب قيداً متزناً أضيف له طرف خزينة أخرى بدلاً من إخفائه من عدّ الدرج', () => {
+ const { s, args } = fixture(), shift = s.openShift('أ', 0); s.postInsuredSale(args)
+ useRawDataStore.setState(state => ({ journal: state.journal.map(entry => entry.sourceType === 'insured_sale' ? { ...entry, lines: [...entry.lines, { accountCode: '1102', debit: 100, credit: 0 }, { accountCode: '1102', debit: 0, credit: 100 }] } : entry) }))
+ expect(() => s.getShiftSummary(shift.id)).toThrow(/مراجعة/)
+})
+it('لا يصرف مخزون الشركة من فرع لا يملك الكمية ولا يخفي توزيع المخزن', () => {
+ const { s, provider, args } = fixture()
+ useRawDataStore.setState(state => ({
+  branches: [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }],
+  warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }, { id: 2, nameAr: 'ثان', isMain: false, branchId: 2 }],
+  transfers: [{ id: 1, fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: args.lines[0].itemId, qty: 1 }] }] as never,
+  insuranceProviders: state.insuranceProviders.map(row => row.id === provider.id ? { ...row, branchId: 2 } : row),
+ }))
+ s.setActiveBranchId(2)
+ const before = useRawDataStore.getState()
+ expect(() => s.postInsuredSale({ ...args, treasury: '1102' })).toThrow(/مخزن|مخزون/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يحتسب قبض المريض المؤمّن للمعمل ورده النقدي مع تحصيل الجهة في نفس الوردية', () => {
+ const s = useDataStore.getState(), patient = s.addLabPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', notes: '', linkedCustomerId: null })
+ const test = s.addLabTest({ code: 'T', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 10000, costMinor: 0, refRanges: [] })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 }), shift = s.openShift('أ', 1000)
+ const order = s.registerInsuredLabOrder({ patientId: patient.id, testIds: [test.id], providerId: provider.id, referrerId: null, vatPercent: 0 })
+ s.settleInsuranceClaims(provider.id)
+ s.refundLabOrder({ orderId: order.id, amountMinor: 4000, mode: 'cash', treasury: '1101', reason: 'رد' })
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ cashSalesMinor: 3000, creditSalesMinor: 7000, cashInsuranceReceiptsMinor: 7000, cashRefundsMinor: 1200, expectedCashMinor: 9800 })
+})
+it('يحتسب قبض الزيارة المؤمّنة ومرتجعها النقدي على ورديتهما', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 }), first = s.openShift('أ', 0)
+ const visit = s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 10000, vatPercent: 0 })
+ expect(s.getShiftSummary(first.id)).toMatchObject({ cashSalesMinor: 3000, expectedCashMinor: 3000 })
+ s.closeShift(3000); s.settleInsuranceClaims(provider.id)
+ const second = s.openShift('ب', 5000)
+ s.refundClinicVisit({ visitId: visit.id, amountMinor: 4000, mode: 'cash', treasury: '1101', reason: 'رد' })
+ expect(s.getShiftSummary(second.id)).toMatchObject({ cashRefundsMinor: 1200, expectedCashMinor: 3800 })
+})
+it('يحجب إقفال الوردية عند فقد قيد رد خدمة مؤمّنة رغم بقاء سجله', () => {
+ const s = useDataStore.getState(), patient = s.addLabPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', notes: '', linkedCustomerId: null })
+ const test = s.addLabTest({ code: 'T', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 10000, costMinor: 0, refRanges: [] })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 }), shift = s.openShift('أ', 0)
+ const order = s.registerInsuredLabOrder({ patientId: patient.id, testIds: [test.id], providerId: provider.id, referrerId: null, vatPercent: 0 })
+ const refund = s.refundLabOrder({ orderId: order.id, amountMinor: 4000, mode: 'cash', reason: 'رد' })
+ const entry = refund.refunds![0].journalEntryId
+ useRawDataStore.setState(state => ({ journal: state.journal.filter(row => row.id !== entry) }))
+ expect(() => s.getShiftSummary(shift.id)).toThrow(/مراجعة/)
+ expect(() => s.closeShift(1800)).toThrow(/مراجعة/)
+})
+it('لا يخصم رد خدمة على حساب العميل من الدرج ولا يحسبه صرفاً نقدياً', () => {
+ const s = useDataStore.getState()
+ s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+ const customer = useDataStore.getState().customers.at(-1)!
+ const patient = s.addLabPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', notes: '', linkedCustomerId: customer.id })
+ const test = s.addLabTest({ code: 'T', nameAr: 'تحليل', category: 'كيمياء', sampleType: 'دم', unit: '', priceMinor: 10000, costMinor: 0, refRanges: [] })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 }), shift = s.openShift('أ', 0)
+ const order = s.registerInsuredLabOrder({ patientId: patient.id, testIds: [test.id], providerId: provider.id, referrerId: null, vatPercent: 0 })
+ s.refundLabOrder({ orderId: order.id, amountMinor: 4000, mode: 'customer_credit', reason: 'رد' })
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ cashSalesMinor: 3000, cashRefundsMinor: 0, expectedCashMinor: 3000 })
+})
+it('يمنع ترحيل الخدمة المؤمّنة إلى حساب ليس خزينة قبل أي قيد', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 70 }), before = useRawDataStore.getState()
+ expect(() => s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 10000, vatPercent: 0, treasury: '5108' })).toThrow(/خزينة|بنك/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يعزل تحصيل الزيارات المؤمّنة بين ورديتي فرعين', () => {
+ const s = useDataStore.getState()
+ useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], warehouses: [{ id: 1, nameAr: 'رئيسي', isMain: true }, { id: 2, nameAr: 'ثان', isMain: false, branchId: 2 }] })
+ s.setActiveBranchId(1)
+ const p1 = s.addClinicPatient({ nameAr: 'مريض 1', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null }), ins1 = s.addInsuranceProvider({ nameAr: 'جهة 1', coveragePercent: 70 }), shift1 = s.openShift('أ', 0)
+ s.registerInsuredVisit({ patientId: p1.id, providerId: ins1.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 10000, vatPercent: 0, treasury: '1101' })
+ s.setActiveBranchId(2)
+ const p2 = s.addClinicPatient({ nameAr: 'مريض 2', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null }), ins2 = s.addInsuranceProvider({ nameAr: 'جهة 2', coveragePercent: 50 }), shift2 = s.openShift('ب', 0)
+ s.registerInsuredVisit({ patientId: p2.id, providerId: ins2.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 8000, vatPercent: 0, treasury: '1102' })
+ expect(s.getShiftSummary(shift2.id)).toMatchObject({ cashSalesMinor: 0, bankSalesMinor: 4000, expectedCashMinor: 0 })
+ expect(() => s.getShiftSummary(shift1.id)).toThrow(/فرع|مراجعة/)
+ s.setActiveBranchId(1)
+ expect(s.getShiftSummary(shift1.id)).toMatchObject({ cashSalesMinor: 3000, expectedCashMinor: 3000 })
+})
+it('يُثبت حصة تأمين عشرية دقيقة للمريض والجهة في الوردية', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'تأمين', coveragePercent: 18.4 }), shift = s.openShift('أ', 0)
+ s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 375, vatPercent: 0 })
+ expect(useDataStore.getState().insuranceClaims[0].claimMinor).toBe(69)
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ cashSalesMinor: 306, creditSalesMinor: 69, expectedCashMinor: 306 })
+ s.settleInsuranceClaims(provider.id)
+ expect(s.getShiftSummary(shift.id).expectedCashMinor).toBe(375)
+})
+it('بيع المخزون المؤمّن يثبت النسبة العشرية نفسها في القيد والمطالبة', () => {
+ const { s, args, provider } = fixture()
+ useRawDataStore.setState(state => ({ insuranceProviders: state.insuranceProviders.map(p => p.id === provider.id ? { ...p, coveragePercent: 18.4 } : p) }))
+ const shift = s.openShift('أ', 0)
+ s.postInsuredSale({ ...args, lines: [{ ...args.lines[0], qty: 1, unitPriceMinor: 375 }] })
+ const claim = useDataStore.getState().insuranceClaims[0], entry = useDataStore.getState().journal.find(e => e.id === claim.sourceId)!
+ expect(claim.claimMinor).toBe(69)
+ expect(entry.lines.find(line => line.accountCode === '1110')?.debit).toBe(69)
+ expect(s.getShiftSummary(shift.id).expectedCashMinor).toBe(306)
+})
+it('زيارة بضريبة عشرية تحفظ الضريبة الصحيحة والمطالبة ثم تردهما من الأصل المحفوظ', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'جهة', coveragePercent: 50 }), shift = s.openShift('أ', 0)
+ const visit = s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 250, vatPercent: 64.6 })
+ expect(visit.totals).toMatchObject({ feeMinor: 250, vatMinor: 162, totalMinor: 412, paidMinor: 206 })
+ s.refundClinicVisit({ visitId: visit.id, amountMinor: 412, mode: 'cash', reason: 'رد كامل' })
+ expect(s.getShiftSummary(shift.id)).toMatchObject({ cashSalesMinor: 206, cashRefundsMinor: 206, expectedCashMinor: 0 })
+ expect(s.getClaimBalance(provider.id)).toBe(0)
+})
+it('يرد حصة جهة التأمين الكبيرة بتقريب صحيح دون ضياع قرش', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'جهة', coveragePercent: 50 }), shift = s.openShift('أ', 0)
+ const visit = s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 200000002, vatPercent: 0 })
+ const result = s.refundClinicVisit({ visitId: visit.id, amountMinor: 100000001, mode: 'cash', reason: 'رد' })
+ const entry = useDataStore.getState().journal.find(e => e.id === result.refunds![0].journalEntryId)!
+ expect(entry.lines.find(line => line.accountCode === '1110')?.credit).toBe(50000001)
+ expect(entry.lines.find(line => line.accountCode === '1101')?.credit).toBe(50000000)
+ expect(s.getShiftSummary(shift.id).expectedCashMinor).toBe(50000001)
+})
+it('يستكمل رد الجهة التاريخي ذي التقريب القديم دون تعديل قيد الرد الأول', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'جهة', coveragePercent: 50 }), shift = s.openShift('أ', 0)
+ const visit = s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 200000002, vatPercent: 0 })
+ const first = s.refundClinicVisit({ visitId: visit.id, amountMinor: 100000001, mode: 'cash', reason: 'رد قديم' }), id = first.refunds![0].journalEntryId
+ useRawDataStore.setState(state => ({
+  insuranceClaims: state.insuranceClaims.map(c => c.sourceId === visit.id ? { ...c, claimMinor: c.claimMinor + 1, reversedMinor: (c.reversedMinor ?? 0) - 1 } : c),
+  journal: state.journal.map(e => e.id === id ? { ...e, lines: e.lines.map(l => l.accountCode === '1110' ? { ...l, credit: l.credit - 1 } : l.accountCode === '1101' ? { ...l, credit: l.credit + 1 } : l) } : e),
+ }))
+ const previous = useRawDataStore.getState().journal.find(e => e.id === id)!
+ const second = s.refundClinicVisit({ visitId: visit.id, amountMinor: 100000001, mode: 'cash', reason: 'باقي الرد' })
+ const entry = useRawDataStore.getState().journal.find(e => e.id === second.refunds![1].journalEntryId)!
+ expect(entry.lines.find(l => l.accountCode === '1110')?.credit).toBe(50000001)
+ expect(useRawDataStore.getState().journal.find(e => e.id === id)).toBe(previous)
+ expect(s.getClaimBalance(provider.id)).toBe(0)
+ expect(s.getShiftSummary(shift.id).expectedCashMinor).toBe(0)
+})
+it('يرفض نسبة جهة تأمين تالفة قبل كتابة الزيارة أو المطالبة أو القيد', () => {
+ const s = useDataStore.getState(), patient = s.addClinicPatient({ nameAr: 'مريض', phone: '', gender: 'male', birthDate: '', medicalHistory: '', notes: '', linkedCustomerId: null })
+ const provider = s.addInsuranceProvider({ nameAr: 'جهة', coveragePercent: 50 })
+ useRawDataStore.setState(state => ({ insuranceProviders: state.insuranceProviders.map(p => p.id === provider.id ? { ...p, coveragePercent: 101 } : p) }))
+ const before = useRawDataStore.getState()
+ expect(() => s.registerInsuredVisit({ patientId: patient.id, providerId: provider.id, kind: 'checkup', complaint: '', diagnosis: '', treatment: '', feeMinor: 375, vatPercent: 0 })).toThrow(/نسبة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().insuranceClaims).toBe(before.insuranceClaims)
+ expect(useRawDataStore.getState().clinicVisits).toBe(before.clinicVisits)
+})

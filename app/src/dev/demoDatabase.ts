@@ -341,7 +341,14 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     const specs = (ret.lines ?? []).flatMap((line) => {
       const id = itemId.get(str(line.item_ref)) ?? -1
       const lineIndex = sale.lines.findIndex((l) => l.itemId === id)
-      return lineIndex >= 0 ? [{ lineIndex, qty: num(line.qty), condition: (str(line.condition, 'resellable') === 'damaged' ? 'damaged' : 'resellable') as 'resellable' | 'damaged' }] : []
+      if (lineIndex < 0) return []
+      // لا يُختار FEFO تلقائياً للمرتجع. بيانات العرض وحدها قد تحدد شراء
+      // الدفعة صراحة؛ إن لم يطابق دفعة واحدة تبقى العملية محجوبة للمراجعة.
+      const purchaseRef = str(line.batch_purchase_ref)
+      const purchaseId = purchaseIdByRef.get(purchaseRef)
+      const batches = purchaseRef && purchaseId != null ? (sale.saleExpiryBatches ?? []).filter(batch => batch.itemId === id && batch.purchaseId === purchaseId) : []
+      const batchAllocations = batches.length === 1 ? [{ batchId: batches[0].id, qty: num(line.qty) * (sale.lines[lineIndex].unitFactor ?? 1) }] : undefined
+      return [{ lineIndex, qty: num(line.qty), condition: (str(line.condition, 'resellable') === 'damaged' ? 'damaged' : 'resellable') as 'resellable' | 'damaged', ...(batchAllocations ? { batchAllocations } : {}) }]
     })
     if (!specs.length) { skipped.push(`مرتجع بيع ${str(ret.ref)}: لا سطور مطابقة للفاتورة`); continue }
     const refundRaw = str(ret.refund, 'cash')
@@ -368,10 +375,25 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       if (id) qtyByItem.set(id, (qtyByItem.get(id) ?? 0) + num(line.qty))
     }
     if (!qtyByItem.size) { skipped.push(`مرتجع شراء ${str(ret.ref)}: لا أصناف مطابقة`); continue }
+    // بذور العرض وحدها تحمل مرجعاً صريحاً للشراء الذي جاءت منه الدفعة؛
+    // لا نستنتج اختياراً لسجل بلا مرجع أو لسطر ملتبس.
+    const hasBatchChoices = (ret.lines ?? []).some(line => str(line.batch_purchase_ref))
+    const lineSpecs = hasBatchChoices ? (ret.lines ?? []).flatMap(line => {
+      const id = itemId.get(str(line.item_ref))
+      const indexes = purchase.lines.flatMap((row, index) => row.itemId === id ? [index] : [])
+      if (indexes.length !== 1) return []
+      const lineIndex = indexes[0], source = purchase.lines[lineIndex]
+      const chosenPurchaseId = purchaseIdByRef.get(str(line.batch_purchase_ref))
+      const snapshots = chosenPurchaseId === purchase.id ? (purchase.purchaseExpiryBatches ?? []).filter(row => row.lineIndex === lineIndex) : []
+      const original = snapshots.length === 1 ? snapshots[0].batch : undefined
+      const matches = original ? data().batches.filter(batch => batch.itemId === original.itemId && batch.purchaseId === original.purchaseId && (batch.warehouseId ?? null) === (original.warehouseId ?? null) && (batch.lotNumber ?? null) === (original.lotNumber ?? null) && batch.expiryDate === original.expiryDate && batch.receivedAt === original.receivedAt) : []
+      return [{ lineIndex, qty: num(line.qty), warehouseId: source.warehouseId ?? purchase.warehouseId ?? null, ...(matches.length === 1 ? { batchAllocations: [{ batchId: matches[0].id, qty: num(line.qty) }] } : {}) }]
+    }) : undefined
+    if (hasBatchChoices && lineSpecs?.length !== (ret.lines ?? []).length) { skipped.push(`مرتجع شراء ${str(ret.ref)}: سطر الدفعة غير مثبت أو ملتبس`); continue }
     try {
       data().postPurchaseReturn({
         purchaseId: purchase.id,
-        qtyByItem: qtyByItem as never,
+        ...(lineSpecs ? { lineSpecs } : { qtyByItem }),
         refund: (str(ret.refund, 'debt') === 'cash' ? 'cash' : 'debt') as never,
         reason: str(ret.reason, 'مرتجع من البيانات التجريبية'),
         ...(str(ret.treasury_ref) ? { treasury: treasuryCode.get(str(ret.treasury_ref)) as never } : {}),

@@ -107,10 +107,14 @@ export function validateTransfer(
   input.lines.forEach((l, i) => {
     if (seen.has(l.itemId)) errors.push(`سطر ${i + 1}: الصنف مكرر — اجمع الكمية في سطر واحد`)
     seen.add(l.itemId)
-    if (!(l.qty > 0)) errors.push(`سطر ${i + 1}: الكمية يجب أن تكون موجبة`)
-    else {
+    const normalizedQty = round3(l.qty)
+    if (!Number.isFinite(l.qty) || !(l.qty > 0) || !Number.isSafeInteger(Math.round(l.qty * 1000)) || normalizedQty <= 0 || Math.abs(l.qty - normalizedQty) > 1e-9) {
+      errors.push(`سطر ${i + 1}: الكمية يجب أن تكون موجبة وصالحة حتى ثلاث خانات عشرية`)
+    } else {
       const avail = availableInSource(l.itemId)
-      if (round3(l.qty) > round3(avail)) errors.push(`سطر ${i + 1}: الكمية تتجاوز المتاح في المخزن المصدر (${round3(avail)})`)
+      // لا تُقرّب بيانات تالفة إلى رصيد أكبر؛ يسمح بهامش الضجيج الثنائي فقط.
+      if (!Number.isFinite(avail) || !Number.isSafeInteger(Math.round(avail * 1000)) || Math.abs(avail - round3(avail)) > 1e-7) errors.push(`سطر ${i + 1}: رصيد المخزن المصدر غير صالح — يلزم المراجعة`)
+      else if (normalizedQty > round3(avail)) errors.push(`سطر ${i + 1}: الكمية تتجاوز المتاح في المخزن المصدر (${round3(avail)})`)
     }
   })
   return errors
@@ -132,7 +136,7 @@ export function transferTotalQty(lines: TransferLine[]): number {
  */
 export function buildWarehouseDocs(
   purchases: { id?: number; projectId?: number | null; warehouseId?: number | null; lines: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[],
-  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[],
+  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null; isServiceAtSale?: boolean }[] }[],
   saleReturns: { saleId: number; lines: { itemId: number; qty: number; unitFactor?: number; condition?: string; saleLineIndex?: number; warehouseId?: number | null }[] }[] = [],
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; unitFactor?: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
   productionOrders: { warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[] = [],
@@ -150,7 +154,7 @@ export function buildWarehouseDocs(
     for (const l of p.lines) pushLineDoc(l.warehouseId ?? p.warehouseId ?? null, l.itemId, qtyBase(l))
   }
   for (const s of sales) {
-    for (const l of s.lines) pushLineDoc(l.warehouseId ?? s.warehouseId ?? null, l.itemId, -qtyBase(l))
+    for (const l of s.lines) if (l.isServiceAtSale !== true) pushLineDoc(l.warehouseId ?? s.warehouseId ?? null, l.itemId, -qtyBase(l))
   }
 
   const saleById = new Map(sales.filter((s) => s.id != null).map((s) => [s.id!, s]))
@@ -160,7 +164,9 @@ export function buildWarehouseDocs(
   for (const r of saleReturns) {
     const sale = saleById.get(r.saleId)
     if (!sale) continue
-    for (const retLine of r.lines.filter((l) => l.condition !== 'damaged')) {
+    // التالف يستهلك كمية من سطر الأصل أيضاً، لكنه لا يعود إلى المخزون.
+    // تجاهله هنا يجعل المرتجع التالي يُنسب لسطر/مخزن استُهلك بالفعل.
+    for (const retLine of r.lines) {
       let left = qtyBase(retLine)
       const referencedIndex = 'saleLineIndex' in retLine && typeof retLine.saleLineIndex === 'number' ? retLine.saleLineIndex : null
       const indexes = referencedIndex == null ? sale.lines.map((_, index) => index) : [referencedIndex]
@@ -174,7 +180,7 @@ export function buildWarehouseDocs(
         const take = Math.min(left, can)
         remainingSaleLineQty.set(key, Math.round((can - take) * 1000) / 1000)
         left = Math.round((left - take) * 1000) / 1000
-        pushLineDoc(retLine.warehouseId ?? sl.warehouseId ?? sale.warehouseId ?? null, retLine.itemId, take)
+        if (retLine.condition !== 'damaged' && sl.isServiceAtSale !== true) pushLineDoc(retLine.warehouseId ?? sl.warehouseId ?? sale.warehouseId ?? null, retLine.itemId, take)
       }
     }
   }

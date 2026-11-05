@@ -9,13 +9,14 @@ import { Headset, Send, RefreshCw, FileText, ShieldCheck } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { getActivity } from '../../core/activities.ts'
-import { APP_SERVICES_CLOUD_BASE_URL } from '../../core/cloud.ts'
-import { buildSupportPayload, fetchConversation, sendSupportMessage, SUPPORT_POLL_MS, type SupportMessage } from '../../core/support.ts'
+/* بلاغ 2026-10-27: استُبدل النطاق القديم الميت بنطاق عامل التحكم الحيّ */
+import { buildSupportPayload, fetchConversation, sendSupportMessage, SUPPORT_POLL_MS, type SupportSendResult, type SupportMessage } from '../../core/support.ts'
 import { getLogText, getLogLines, logEvent } from '../../core/applog.ts'
 import { getOrCreateSupportToken } from '../../data/supportAuth.ts'
 import { APP_VERSION } from '../../core/updates.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
 import { localDateTimeLabel } from '../../core/time.ts'
+import { SUPPORT_CLOUD_BASE_URL } from '../../core/cloud.ts'
 
 export function SupportPage() {
   const { setup, deviceId } = useAppStore()
@@ -26,16 +27,23 @@ export function SupportPage() {
   const [attachLog, setAttachLog] = useState(false)
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
+  /* حالة القناة للعرض: لا نقول «لا يوجد إنترنت» إلا بعد مسبار فعلي */
+  const [channel, setChannel] = useState<{ ok: boolean; text: string } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const activeUser = appUsers.find((u) => u.id === currentUserId)
   const logCount = useMemo(() => getLogLines().length, [])
 
   const refresh = async () => {
-    const token = await getOrCreateSupportToken()
-    const conv = await fetchConversation(APP_SERVICES_CLOUD_BASE_URL, deviceId, token)
-    if (conv) setMessages(conv)
-    setLoading(false)
+    try {
+      const token = await getOrCreateSupportToken()
+      const conv = await fetchConversation(SUPPORT_CLOUD_BASE_URL, deviceId, token)
+      if (conv) setMessages(conv)
+    } catch {
+      /* جلب المحادثة تحسين — فشله لا يعطّل كتابة رسالة جديدة */
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -59,17 +67,21 @@ export function SupportPage() {
       })
       setSending(true)
       const token = await getOrCreateSupportToken()
-      const result = await sendSupportMessage(APP_SERVICES_CLOUD_BASE_URL, deviceId, token, payload)
+      const result: SupportSendResult = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, deviceId, token, payload)
       setSending(false)
-      /* بند 5: السبب الحقيقي من الخادم/النقل — لا «لا يوجد اتصال» كاذبة */
+      /* بند 5 + بلاغ 2026-10-27: السبب الحقيقي من الخادم/النقل — لا «لا يوجد اتصال» كاذبة.
+         يبقى النص مكتوباً كما هو عند الفشل، ويظهر سبب واضح أعلى المحادثة. */
       if (!result.ok) {
-        logEvent('error', `support: فشل الإرسال (${result.status || 'شبكة'}) — ${result.reason}`)
+        setChannel({ ok: false, text: result.reason })
+        logEvent('error', `support: فشل الإرسال (${result.status || 'transport'}، offline=${result.offline}، محاولات=${result.attempts}) — ${result.reason}${result.detail ? ` | ${result.detail}` : ''}`)
         return toast.show(result.reason, 'error')
       }
+      const fullyNotified = result.notified === true && (!payload.log || result.logNotified === true)
+      setChannel(fullyNotified ? null : { ok: false, text: result.reason })
       logEvent('info', `support: أُرسلت رسالة دعم${attachLog ? ' + لوج' : ''}`)
       setMessages((m) => [...m, { id: (m.at(-1)?.id ?? 0) + 1, from: 'client', text: payload.text, at: new Date().toISOString() }])
       setText(''); setAttachLog(false)
-      toast.show('وصلت رسالتك للمطوّر — سيصلك الرد هنا ✓')
+      toast.show(result.reason, fullyNotified ? 'success' : 'error')
     } catch (e) {
       setSending(false)
       toast.show((e as Error).message, 'error')
@@ -87,6 +99,11 @@ export function SupportPage() {
             <RefreshCw size={15} />
           </button>
         </div>
+        {channel && !channel.ok && (
+          <div role="status" className="mx-3 mt-3 rounded-xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-200">
+            <b>حالة الإرسال:</b> {channel.text}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-slate-900/30">
           {loading ? (

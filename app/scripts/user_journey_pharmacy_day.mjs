@@ -118,7 +118,11 @@ console.log('\n═══ 7) مرتجع علبة والميزان الختامي 
 {
   const sale = st().sales[0] // فاتورة الـ3 علب
   const before = st().items.find(i => i.id === para.id).stockQty
-  st().postSaleReturn({ saleId: sale.id, qtyByItem: new Map([[para.id, 1]]), reason: 'عبوة تالفة', treasury: '1101', refund: 'cash' })
+  // نتحقق من العبوة المستلمة فعلياً ونختار دفعتها صراحة، لا نفترض FEFO عند المرتجع.
+  const soldBatch = sale.saleExpiryBatches.find(b => b.itemId === para.id && b.expiryDate === relDays(45))
+  assert.ok(soldBatch, 'دفعة العبوة المرتجعة مثبتة في البيع')
+  st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable', batchAllocations: [{ batchId: soldBatch.id, qty: 20 }] }], reason: 'استرجاع عبوة سليمة من الدفعة القريبة', treasury: '1101', refund: 'cash' })
+  assert.equal(st().batches.find(b => b.id === soldBatch.id).qty, 20, 'استعادة الأقراص إلى الدفعة المحددة المستنفدة')
   assert.equal(st().items.find(i => i.id === para.id).stockQty, before + 20, 'مرتجع علبة = +20 قرصاً بالوحدة الأساسية')
   const tb = trialBalance(st().journal, { from: '2020-01-01', to: '2030-12-31' })
   assert.equal(tb.totalDebitMinor, tb.totalCreditMinor, 'الميزان متزن')

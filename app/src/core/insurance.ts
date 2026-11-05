@@ -12,7 +12,8 @@
  */
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
-import type { Minor } from './money.ts'
+import { exactNonNegativePercent, type Minor } from './money.ts'
+import type { StockBatch } from './batches.ts'
 
 export interface InsuranceProvider {
   id: number
@@ -34,10 +35,44 @@ export function validateProvider(nameAr: string, coveragePercent: number, existi
 
 /** تقسيم الفاتورة: نصيب الجهة يُقرَّب لأسفل والباقي على المريض (المريض لا يظلم بكسور) */
 export function splitCoverage(totalMinor: Minor, coveragePercent: number): { providerShareMinor: Minor; patientShareMinor: Minor } {
-  if (totalMinor <= 0) throw new Error('الإجمالي يجب أن يكون موجباً')
-  const provider = Math.floor((totalMinor * coveragePercent) / 100)
+  if (!Number.isSafeInteger(totalMinor) || totalMinor <= 0) throw new Error('الإجمالي يجب أن يكون عدداً صحيحاً آمناً وموجباً')
+  if (!Number.isFinite(coveragePercent) || coveragePercent <= 0 || coveragePercent > 100) throw new Error('نسبة التحمل بين 1 و100')
+  // 375 × 18.4٪ = 69 بالضبط لا 68 بسبب التقريب الثنائي.
+  const provider = exactNonNegativePercent(totalMinor, coveragePercent, 'down')
   return { providerShareMinor: provider, patientShareMinor: totalMinor - provider }
 }
+
+/** أساس محفوظ عند بيع صنف واحد بوحدات صحيحة، لا يُستنتج للفواتير القديمة. */
+export interface InsuredPartialBasis {
+  itemId: number
+  qty: number
+  warehouseId: number | null
+  revenueMinor: Minor
+  taxMinor: Minor
+  providerMinor: Minor
+  costMinor: Minor
+  /** تسجل عند البيع فقط، ولا يُستنتج تاريخ الدفعات لسجل قديم. */
+  tracking?: 'expiry' | 'serial' | 'serial_expiry'
+}
+
+/** توزيع تراكمي موثق: المبلغ أولاً، ثم الضريبة والتغطية؛ يستهلك الباقي عند آخر وحدة. */
+export function insuredPartialAmounts(basis: InsuredPartialBasis, previousQty: number, qty: number) {
+  const { itemId, revenueMinor, taxMinor, providerMinor, costMinor } = basis
+  const total = revenueMinor + taxMinor
+  if (![itemId, basis.qty, revenueMinor, taxMinor, providerMinor, costMinor, total, previousQty, qty].every(Number.isSafeInteger) || (basis.warehouseId !== null && (!Number.isSafeInteger(basis.warehouseId) || basis.warehouseId <= 0)) || itemId <= 0 || basis.qty <= 0 || revenueMinor < 0 || taxMinor < 0 || providerMinor < 0 || providerMinor > total || costMinor < 0 || total <= 0 || previousQty < 0 || qty <= 0 || previousQty + qty > basis.qty) throw new Error('كمية أو أساس المرتجع الجزئي غير صالح')
+  const cumulative = (count: number) => {
+    const rounded = (value: number) => Number((BigInt(value) * BigInt(count) * 2n + BigInt(basis.qty)) / (BigInt(basis.qty) * 2n))
+    const gross = rounded(total)
+    const share = (value: number) => Number(BigInt(gross) * BigInt(value) / BigInt(total))
+    const tax = share(taxMinor), provider = share(providerMinor)
+    return { total: gross, revenue: gross - tax, tax, provider, patient: gross - provider, cost: rounded(costMinor) }
+  }
+  const a = cumulative(previousQty), b = cumulative(previousQty + qty)
+  return { total: b.total - a.total, revenue: b.revenue - a.revenue, tax: b.tax - a.tax, provider: b.provider - a.provider, patient: b.patient - a.patient, cost: b.cost - a.cost }
+}
+
+/** إثبات حركة صندوق الوردية ووجهتها وقت الترحيل، لا يغيّر سجل الوردية المغلقة. */
+export interface InsuredShiftStamp { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
 
 /** مطالبة على جهة — تتجمع حتى التحصيل */
 export interface InsuranceClaim {
@@ -51,10 +86,26 @@ export interface InsuranceClaim {
   claimMinor: Minor // نصيب الجهة (يتناقص مع مرتجعات G9)
   settled: boolean
   settlementEntryId: number | null
+  settlementShift?: InsuredShiftStamp
   /** G9: ما عُكس من المطالبة بمرتجعات (تخفيض 1110) — undefined = سجل قديم */
   reversedMinor?: Minor
+  /** جزء الجهة الذي نشأ التزاماً بعد تحصيل المطالبة، لا يعد ردّاً نقدياً. */
+  settledRefundMinor?: Minor
+  refundPayments?: { journalEntryId: number; amountMinor: Minor; treasury: string; date: string; reason: string; shift?: InsuredShiftStamp }[]
+  /** رد كامل بيع مخزني محصّل، بحركة المريض والمخزون المؤكدة. */
+  saleRefund?: { journalEntryId: number; treasury: string; reason: string; date: string; shift?: InsuredShiftStamp }
+  /** أصل وحدوي محدد للبيع الجديد وسجل مرتجعاته؛ لا يتوفر للسجلات القديمة. */
+  serviceShift?: InsuredShiftStamp
+  saleShift?: InsuredShiftStamp
+  saleReversal?: { journalEntryId: number; shift: InsuredShiftStamp }
+  salePartialBasis?: InsuredPartialBasis
+  salePartialRefunds?: { qty: number; journalEntryId: number; treasury: string; reason: string; date: string; shift?: InsuredShiftStamp; batchAllocations?: { batchId: number; qty: number }[]; serials?: string[] }[]
   /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
   saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
+  /** الوحدات المختارة فعلياً ولقطة دفعة كل وحدة إن تتبعت الصلاحية. */
+  saleSerials?: { itemId: number; serial: string; batch: StockBatch | null }[]
+  /** لقطة الكمية المصروفة من دفعات الصلاحية — لازمة لإرجاع نفس تواريخها عند إلغاء البيع. */
+  expiryBatches?: StockBatch[]
 }
 
 /**

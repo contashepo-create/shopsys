@@ -105,7 +105,7 @@ for (const activityId of ACTIVITIES) {
 
   // الدورة: شراء بمدخلات 7000 → مرتجع 4/10 → بيع بمخرجات 7000 → مرتجع 2/5 → سداد 1000 → تحويل برسوم
   const pur = st().postPurchase({ supplierId: sup.id, date: '2026-01-05', payMode: 'cash', treasury: '1101', paidMinor: 57000, inputVatMinor: 7000, lines: [{ itemId: item.id, qty: 10, unitPriceMinor: 5000 }], expenses: [], notes: '' })
-  st().postPurchaseReturn({ purchaseId: pur.id, qtyByItem: new Map([[item.id, 4]]), refundMode: 'cash', treasury: '1101' })
+  st().postPurchaseReturn({ purchaseId: pur.id, qtyByItem: new Map([[item.id, 4]]), refund: 'cash', reason: 'مراجعة التقارير', treasury: '1101' })
   const sale = st().postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 5, unitPriceMinor: 10000, unitCostMinor: 5000, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: false, treasury: '1101' })
   st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 2, condition: 'resellable' }], refund: 'cash', reason: 'مراجعة التقارير', reasonCode: 'other' })
   st().postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '2102', amountMinor: 1000, description: 'سداد ض.ق.م جزئي' })
@@ -135,7 +135,7 @@ for (const activityId of ACTIVITIES) {
   for (const code of ['1101', '2101', '2102']) {
     const gl = generalLedger(st().journal, code, ALL)
     const actual = bal(code)
-    const natural = code.startsWith('1') ? actual : -actual
+    const natural = code.startsWith('1') ? actual : (-actual || 0)
     assert.equal(gl.closingMinor, natural, `${activityId}: ت4 ختامي ${code}`)
     const moves = gl.rows.reduce((a, r) => a + (code.startsWith('1') ? r.debitMinor - r.creditMinor : r.creditMinor - r.debitMinor), 0)
     assert.equal(gl.openingMinor + moves, gl.closingMinor, `${activityId}: ت4 افتتاحي+حركات=ختامي ${code}`)

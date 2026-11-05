@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RECEIPT_SETTINGS, INVOICE_TEMPLATE_OPTIONS, type ReceiptModel } from '../src/core/receipt.ts'
+import { buildReceiptModel, DEFAULT_RECEIPT_SETTINGS, INVOICE_TEMPLATE_OPTIONS, type ReceiptModel } from '../src/core/receipt.ts'
 import { renderInvoiceA4Html } from '../src/ui/print/printInvoiceA4.ts'
 import { renderReceiptHtml } from '../src/ui/print/printReceipt.ts'
+import { computeTotals } from '../src/core/pos.ts'
+import { applySaleCustomerCharges } from '../src/core/documentCharges.ts'
 
 const model: ReceiptModel = {
   shopName: 'متجر الاختبار', headerLines: [], docTitle: 'إذن تسليم', operatorName: 'المحاسب أحمد', invoiceNumber: 'S-1', refCode: 'SAL-X',
@@ -63,4 +65,19 @@ describe('قوالب طباعة الفواتير المتقدمة', () => {
     expect(partial).toContain('المتبقي (آجل)')
     expect(renderReceiptHtml(model, cur, DEFAULT_RECEIPT_SETTINGS)).not.toContain('المتبقي (آجل)')
   })
+  it('يطبع الرسوم وصافيها الصحيح ويشرح الضريبة المختلطة الشاملة والمضافة', () => {
+    const lines = [{ itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1150, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }]
+    const charges = [{ kind: 'shipping' as const, nameAr: 'نقل خاضع', amountMinor: 200, taxable: true }, { kind: 'service' as const, nameAr: 'رسم معفى', amountMinor: 100, taxable: false }]
+    const totals = applySaleCustomerCharges(computeTotals(lines, 0, 15, true), charges, 15)
+    const receipt = buildReceiptModel({ invoiceNumber: 'S-10', dateIso: '2026-10-01', lines, customerCharges: charges, totals, payment: 'credit', paidMinor: 0, customerName: 'عميل', taxPercent: 15, taxInclusive: true, settings: DEFAULT_RECEIPT_SETTINGS })
+    expect(receipt).toMatchObject({ grossMinor: 1450, taxBaseMinor: 1300, taxMinor: 180, totalMinor: 1480, taxBaseLabel: 'صافي القيمة قبل الضريبة' })
+    expect(receipt.taxLabel).toContain('ضريبة الأصناف مشمولة والرسوم مضافة')
+    expect(receipt.rows.map(row => row.nameAr)).toEqual(['خدمة', 'نقل خاضع', 'رسم معفى'])
+    for (const html of [renderInvoiceA4Html(receipt, cur, DEFAULT_RECEIPT_SETTINGS), renderReceiptHtml(receipt, cur, DEFAULT_RECEIPT_SETTINGS)]) {
+      expect(html).toContain('رسم معفى')
+      expect(html).toContain('صافي القيمة قبل الضريبة')
+      expect(html).toContain('ضريبة الأصناف مشمولة والرسوم مضافة')
+    }
+  })
+
 })

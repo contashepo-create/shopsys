@@ -36,6 +36,12 @@ export interface TicketPartInput {
   qty: number
   unitPriceMinor: Minor // سعر بيع القطعة للعميل
   unitCostMinor: Minor // متوسط التكلفة المرجح وقت التسليم
+  /** قيمة الصرف الفعلية بعد توزيع كسور المتوسط، إن حُفظت عند التسليم. */
+  costTotalMinor?: Minor
+  /** السيريالات المحددة عند الصرف؛ غائبة عن السجلات القديمة. */
+  serials?: string[]
+  /** ربط الوحدات المصروفة بلقطات دفعاتها، لا بأقدم دفعة افتراضياً. */
+  serialBatches?: { serial: string; batchId: number }[]
 }
 
 /**
@@ -120,7 +126,7 @@ export function validateDelivery(input: TicketDeliveryInput): string[] {
     if (!p.nameAr.trim()) errors.push(`قطعة ${i + 1}: حدد الاسم`)
     if (!Number.isInteger(p.qty) || p.qty < 1) errors.push(`قطعة ${i + 1}: الكمية عدد صحيح موجب`)
     if (!isPosInt(p.unitPriceMinor)) errors.push(`قطعة ${i + 1}: السعر لا يكون سالباً`)
-    if (!isPosInt(p.unitCostMinor)) errors.push(`قطعة ${i + 1}: التكلفة لا تكون سالبة`)
+    if (!isPosInt(p.unitCostMinor) || (p.costTotalMinor != null && (!Number.isSafeInteger(p.costTotalMinor) || p.costTotalMinor < 0))) errors.push(`قطعة ${i + 1}: التكلفة لا تكون سالبة`)
   })
   ;(input.services ?? []).forEach((sv, i) => {
     if (!sv.nameAr.trim()) errors.push(`خدمة ${i + 1}: حدد الاسم`)
@@ -140,7 +146,7 @@ export function validateDelivery(input: TicketDeliveryInput): string[] {
 /** إجماليات التسليم — تشمل الخدمات والتحصيل المجزأ والربح (الأمر 23) */
 export function computeTicketTotals(input: TicketDeliveryInput): TicketTotals {
   const partsPriceMinor = input.parts.reduce((a, p) => a + Math.round(p.unitPriceMinor * p.qty), 0)
-  const partsCostMinor = input.parts.reduce((a, p) => a + Math.round(p.unitCostMinor * p.qty), 0)
+  const partsCostMinor = input.parts.reduce((a, p) => a + (p.costTotalMinor ?? Math.round(p.unitCostMinor * p.qty)), 0)
   const services = input.services ?? []
   const servicesPriceMinor = services.reduce((a, sv) => a + Math.round(sv.unitPriceMinor * sv.qty), 0)
   const servicesCostMinor = services.reduce((a, sv) => a + Math.round(sv.unitCostMinor * sv.qty), 0)

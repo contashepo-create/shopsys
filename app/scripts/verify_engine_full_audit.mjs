@@ -183,7 +183,8 @@ throws('صرف من ملف مقفل يُرفض', () => S().postCustodyExpense({ 
 
 /* ═════ ⑩ مقاولات: مشروع + مستخلص + باطن + يومية ═════ */
 console.log('🏗️ المقاولات')
-S().addProject({ nameAr: 'مشروع المراجعة', clientName: 'هيئة عامة', contractValueMinor: 10_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
+S().addCustomer({ ...party('هيئة عامة'), creditLimitMinor: 0 })
+S().addProject({ nameAr: 'مشروع المراجعة', clientId: S().customers.at(-1).id, clientName: 'هيئة عامة', contractValueMinor: 10_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
 const proj = S().projects.at(-1)
 S().addProjectCost({ projectId: proj.id, kind: 'materials', amountMinor: 500000, payment: 'cash', description: 'أسمنت', treasury: '1101' })
 invariants('تكلفة مواد على المشروع')

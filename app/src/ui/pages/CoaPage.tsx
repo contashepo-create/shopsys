@@ -15,6 +15,8 @@ import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts, customParentGroups } from '../../core/customAccounts.ts'
 import { Btn, Field, Modal, inputCls, useToast } from '../components/ui.tsx'
 import { printHtml } from '../print/printReceipt.ts'
+import { escHtml } from '../../core/reportPrint.ts'
+import { toCsv } from '../../core/security.ts'
 
 const ROOT_LABELS: Record<string, { nameAr: string; tone: string }> = {
   assets: { nameAr: 'الأصول', tone: 'text-sky-600 bg-sky-500/10' },
@@ -101,13 +103,21 @@ export function CoaPage() {
   }, [journal, statementAccount, statementFrom, statementTo, statementQuery])
   const exportStatement = () => {
     if (!statementAccount) return
-    const esc = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
-    const rows = [['التاريخ','رقم القيد','البيان','مدين','دائن','الرصيد'], ...statementRows.map(r=>[r.date,r.number,r.description,fmt(r.debit),fmt(r.credit),fmt(r.balance)])]
-    const blob = new Blob(['\ufeff'+rows.map(r=>r.map(esc).join(',')).join('\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`statement-${statementAccount.code}.csv`;a.click();URL.revokeObjectURL(url)
+    /* الجولة السابعة: `toCsv` يهرّب الفواصل/التنصيص ويمنع حقن الصيغ
+       (=,+,-,@) ويضيف BOM واحداً. التحرير الفوري للرابط كان يُلغي التنزيل
+       في بعض المتصفحات ⇒ تأجيله كما في التقرير الرسمي. */
+    const headers = ['التاريخ','رقم القيد','البيان','مدين','دائن','الرصيد']
+    const rows = statementRows.map(r => Object.fromEntries(headers.map((h, i) => [h, [r.date, r.number, r.description, fmt(r.debit), fmt(r.credit), fmt(r.balance)][i]])))
+    const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `statement-${statementAccount.code}.csv`; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
   const printStatement = () => {
     if (!statementAccount) return
-    printHtml(`<html dir="rtl"><head><meta charset="utf-8"><title>كشف حركة ${statementAccount.nameAr}</title><style>body{font-family:Arial;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:7px;text-align:right}h2{text-align:center}</style></head><body><h2>كشف حركة ${statementAccount.code} — ${statementAccount.nameAr}</h2><table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>${statementRows.map(r=>`<tr><td>${r.date}</td><td>#${r.number}</td><td>${r.description}</td><td>${fmt(r.debit)}</td><td>${fmt(r.credit)}</td><td>${fmt(r.balance)}</td></tr>`).join('')}</tbody></table></body></html>`)
+    /* §الأمان: كل قيمة من بيانات المستخدم تُهرَّب قبل دخول HTML المعاينة —
+       اسم الحساب/وصف القيد قد يحوي وسوماً، والمعاينة iframe داخل التطبيق. */
+    printHtml(`<html dir="rtl"><head><meta charset="utf-8"><title>كشف حركة ${escHtml(statementAccount.nameAr)}</title><style>body{font-family:Arial;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:7px;text-align:right}h2{text-align:center}</style></head><body><h2>كشف حركة ${escHtml(statementAccount.code)} — ${escHtml(statementAccount.nameAr)}</h2><table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>${statementRows.map(r=>`<tr><td>${escHtml(r.date)}</td><td>#${escHtml(String(r.number))}</td><td>${escHtml(r.description)}</td><td>${escHtml(fmt(r.debit))}</td><td>${escHtml(fmt(r.credit))}</td><td>${escHtml(fmt(r.balance))}</td></tr>`).join('')}</tbody></table></body></html>`, { preview: { title: `معاينة كشف حركة ${statementAccount.nameAr} قبل الطباعة` } })
   }
 
   const toggle = (code: string) =>

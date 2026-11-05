@@ -139,7 +139,7 @@ export interface DesktopUpdaterBridge {
  */
 export interface DesktopSupportBridge {
   /** تنفيذ طلب دعم (GET/POST) — العملية الرئيسية تطبّق قائمة المضيفين المسموحين */
-  request(args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<{ ok: boolean; status: number; body: string; error?: string }>
+  request(args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }): Promise<{ ok: boolean; status: number; body: string; error?: string; errorCode?: string }>
   /** اعتماد قناة الدعم المحفوظ خارج القاعدة (userData) — أو null */
   getToken(): Promise<string | null>
   /** حفظ اعتماد قناة الدعم خارج القاعدة */

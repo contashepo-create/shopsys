@@ -68,6 +68,10 @@ for (const f of files) {
 // أنواع MIME لفحوص File.type — ليست حقول حالة تجارية
 legal.add('application/pdf')
 for (const value of ['string', 'checkbox', 'radio', 'option']) legal.add(value)
+/* أنواع `Response.type` القياسية في Fetch API (DOM، لا حالة عمل تجارية).
+   الجولة السابعة يستعملها مسبار اتصال الدعم للتفريق بين رد opaque ناجح
+   (no-cors) وفشل نقل حقيقي — انظر core/support.ts:probeSupportConnectivity. */
+for (const value of ['basic', 'cors', 'default', 'error', 'opaque', 'opaqueredirect']) legal.add(value)
 
 // ── 2) مسح كل المقارنات ──
 const compareRe = /\.(\w+)\s*[!=]==\s*'([^']+)'/g

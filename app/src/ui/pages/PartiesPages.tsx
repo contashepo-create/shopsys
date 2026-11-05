@@ -106,7 +106,7 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, getCustomerBalance, redeemLoyaltyPoints, journal, sales, saleReturns, vouchers, cheques, settlements, partyOffsets, openingBalances, clientSettlements } = useDataStore()
+  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, getCustomerBalance, redeemLoyaltyPoints, getPendingLegacyLoyaltyReviews, resolveLegacyLoyaltyPoints, journal, sales, saleReturns, vouchers, cheques, settlements, partyOffsets, openingBalances, clientSettlements } = useDataStore()
   const { setup, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -124,6 +124,22 @@ export function CustomersPage() {
     return map
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- محفزات بيانات المتجر: getCustomerBalance تقرأ الحالة عند الاستدعاء؛ الاعتماديات تضمن إعادة الحساب بعد كل ترحيل
   }, [customers, getCustomerBalance, journal, sales, saleReturns, vouchers, cheques, settlements, partyOffsets, openingBalances, clientSettlements])
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewId, setReviewId] = useState<number | null>(null)
+  const [reviewAction, setReviewAction] = useState<'restore' | 'already_corrected'>('restore')
+  const [reviewReason, setReviewReason] = useState('')
+  const [reviewConfirmed, setReviewConfirmed] = useState(false)
+  const pendingReviews = getPendingLegacyLoyaltyReviews()
+  const selectedReview = pendingReviews.find((r) => r.redemptionId === reviewId)
+  const openReview = () => { setReviewId(pendingReviews[0]?.redemptionId ?? null); setReviewAction('restore'); setReviewReason(''); setReviewConfirmed(false); setReviewOpen(true) }
+  const saveReview = () => {
+    if (!selectedReview || !reviewConfirmed) return
+    try {
+      resolveLegacyLoyaltyPoints(selectedReview.redemptionId, reviewAction, reviewReason)
+      toast.show('تم حفظ مراجعة نقاط الولاء')
+      setReviewOpen(false)
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Customer | null>(null)
   /* استبدال نقاط الولاء (نمط Lightspeed): نقاط ← رصيد دائن في حساب العميل */
@@ -186,6 +202,7 @@ export function CustomersPage() {
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث بالاسم أو الهاتف أو الكود (CUS-0001 أو 1)…" className={`${inputCls} pr-10`} />
         </div>
         <ViewToggle view={view} setView={setView} />
+        {pendingReviews.length > 0 && <Btn variant="soft" onClick={openReview}>مراجعة نقاط الولاء ({pendingReviews.length})</Btn>}
         <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> عميل جديد</span></Btn>
       </div>
 
@@ -278,6 +295,26 @@ export function CustomersPage() {
           </table>
         </div>
       )}
+
+      <Modal open={reviewOpen} onClose={() => setReviewOpen(false)} title="مراجعة عكس استبدال الولاء القديم">
+        <div className="space-y-4">
+          <p>راجع سجل العميل أولاً: عُكس قيد الاستبدال سابقاً، لكن لا يمكن للنظام معرفة إن كانت النقاط أُعيدت يدوياً. لا تُضفها مرة ثانية إن صُححت بالفعل.</p>
+          <Field label="الاستبدال المطلوب مراجعته">
+            <select aria-label="الاستبدال المطلوب مراجعته" value={reviewId ?? ''} onChange={(e) => { setReviewId(Number(e.target.value)); setReviewConfirmed(false) }} className={inputCls}>
+              {pendingReviews.map((r) => <option key={r.redemptionId} value={r.redemptionId}>{r.customerName} — {r.points} نقطة — استبدال {r.redemptionDate} / عكس {r.reversalDate}</option>)}
+            </select>
+          </Field>
+          <Field label="إجراء المراجعة">
+            <select aria-label="إجراء المراجعة" value={reviewAction} onChange={(e) => { setReviewAction(e.target.value as 'restore' | 'already_corrected'); setReviewConfirmed(false) }} className={inputCls}>
+              <option value="restore">إعادة النقاط إلى رصيد العميل</option>
+              <option value="already_corrected">النقاط صُححت سابقاً — لا تضف شيئاً</option>
+            </select>
+          </Field>
+          <Field label="سبب المراجعة"><input aria-label="سبب المراجعة" value={reviewReason} onChange={(e) => setReviewReason(e.target.value)} maxLength={300} className={inputCls} /></Field>
+          <label><input type="checkbox" checked={reviewConfirmed} onChange={(e) => setReviewConfirmed(e.target.checked)} /> تحققت من رصيد النقاط وسجل العميل والإجراء المختار</label>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setReviewOpen(false)}>إلغاء</Btn><Btn onClick={saveReview} disabled={!selectedReview || !reviewConfirmed || !reviewReason.trim()}>حفظ المراجعة</Btn></div>
+        </div>
+      </Modal>
 
       {/* استبدال نقاط الولاء: قيد 5115 مصروف ولاء ← 1104 رصيد دائن للعميل */}
       <Modal open={!!redeeming} onClose={() => setRedeeming(null)} title={redeeming ? `🎁 استبدال نقاط — ${redeeming.nameAr}` : ''}>

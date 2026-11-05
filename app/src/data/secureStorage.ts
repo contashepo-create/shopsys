@@ -44,6 +44,7 @@ function key(): Promise<CryptoKey> {
    (seal) حتى إعادة التشغيل: أي حفظ تلقائي بالسر الجديد قبل قراءة القاعدة
    القديمة كان سيدمّر بيانات الجهاز — الختم يمنع الكارثة بصمت. */
 let sealedForTransfer = false
+let secretGeneration = 0
 
 export function getDeviceSecret(): string {
   return getOrCreateSecret()
@@ -52,6 +53,7 @@ export function getDeviceSecret(): string {
 export function setDeviceSecret(secret: string): void {
   if (!/^[0-9a-f]{64}$/.test(secret)) throw new Error('سر غير صالح — يجب أن يكون 64 رقماً سداسياً عشرياً (256-بت)')
   localStorage.setItem(SECRET_KEY, secret)
+  secretGeneration += 1
   keyPromise = null // المفتاح القديم لم يعد صالحاً
   sealedForTransfer = true
 }
@@ -82,8 +84,19 @@ export const secureStorage: StateStorage = {
     /* بعد استيراد سر جديد: القاعدة الحالية فُكّت بالسر القديم — أي كتابة
        الآن كانت ستحفظها بالسر الجديد وتُضلّل الجهاز؛ نتوقف حتى إعادة التشغيل */
     if (sealedForTransfer) return Promise.resolve()
-    const write = (async () => { localStorage.setItem(name, await encryptText(value, await key())) })()
     const queue = pendingWrites.get(name) ?? new Set<Promise<void>>()
+    const previous = [...queue].at(-1)
+    const generation = secretGeneration
+    const write = (async () => {
+      // يمكن أن ينتهي تشفير اللقطة الأحدث أولاً؛ الالتزام بترتيب الحفظ
+      // لكل مخزن يمنع لقطة أقدم من الكتابة فوقها، دون تعطيل مخزن آخر.
+      const encrypted = (async () => encryptText(value, await key()))()
+      const [result] = await Promise.allSettled([encrypted, previous ?? Promise.resolve()])
+      if (result.status === 'rejected') throw result.reason
+      // لا تسمح لكتابة بدأت قبل استيراد السر بالعبور بعد الختم أو إعادة فتحه.
+      if (sealedForTransfer || generation !== secretGeneration) return
+      localStorage.setItem(name, result.value)
+    })()
     queue.add(write)
     pendingWrites.set(name, queue)
     void write.finally(() => {

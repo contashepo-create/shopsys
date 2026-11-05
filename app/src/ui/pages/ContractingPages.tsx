@@ -4,7 +4,7 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * ProjectsPage — مشروعات بمستخلصات (PRX) وتكاليف ببنود ومحتجزات وربحية
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, ShoppingCart, Truck, Users2, FileText } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
@@ -38,12 +38,12 @@ import { todayLocalIso } from '../../core/time.ts'
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances,
     addProject, updateProject, addBoqItem, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
-    ensureServiceItemForFreeLine,
+    ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer, previewMissingProjectCustomerBackup, restoreMissingProjectCustomerBackup,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -57,7 +57,7 @@ export function ProjectsPage() {
   const [open, setOpen] = useState(false)
   const [nameAr, setNameAr] = useState('')
   const [clientName, setClientName] = useState('')
-  const [clientId, setClientId] = useState('') // ربط إداري — لا يمس رصيد العميل
+  const [clientId, setClientId] = useState('') // يحدد صاحب ذمم مستخلصات المشروع
   const [contractValue, setContractValue] = useState('')
   const [retention, setRetention] = useState('5')
   const [startDate, setStartDate] = useState(todayLocalIso())
@@ -89,7 +89,7 @@ export function ProjectsPage() {
   /* §92: أخطاء مانعة وتحذيرات قبل إنشاء المشروع — لوحة مثل فاتورة الأعلاف */
   const projectIssues: PrePostIssue[] = [
     ...(nameAr.trim() === '' ? [{ id: 'name', level: 'blocking' as const, text: 'اسم المشروع مطلوب' }] : []),
-    ...(clientName.trim() === '' ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا عميل/جهة — لن يظهر في تقارير ذمم العميل' }] : []),
+    ...(!clientId ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا سجل عميل مرتبط — اسم الجهة وحده لا يربط المستخلصات بكشف العميل' }] : []),
     ...(valueMode === 'boq' && validBoqLines.length === 0
       ? [{ id: 'boq-empty', level: 'blocking' as const, text: 'أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»' }]
       : []),
@@ -391,6 +391,58 @@ export function ProjectsPage() {
   // عمولة موظف عن المشروع (تعميم — أمر المالك): مهندس مبيعات جلب العقد مثلاً
   const [commFor, setCommFor] = useState<Project | null>(null)
   /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بيانات المشروع — قيمة العقد قبل أول مستخلص فقط */
+  const [legacyProject, setLegacyProject] = useState<Project | null>(null)
+  const [legacyCustomerId, setLegacyCustomerId] = useState('')
+  const [legacyReason, setLegacyReason] = useState('')
+  const [legacyConfirmed, setLegacyConfirmed] = useState(false)
+  const [legacyPreview, setLegacyPreview] = useState<ReturnType<typeof previewLegacyProjectCustomer> | null>(null)
+  const [recoveryBackup, setRecoveryBackup] = useState('')
+  const [recoveryPreview, setRecoveryPreview] = useState<ReturnType<typeof previewMissingProjectCustomerBackup> | null>(null)
+  const [recoveryReason, setRecoveryReason] = useState('')
+  const [recoveryConfirmed, setRecoveryConfirmed] = useState(false)
+  const recoveryRead = useRef(0)
+  const openLegacyReview = (project: Project) => {
+    recoveryRead.current++
+    setRecoveryBackup(''); setRecoveryPreview(null); setRecoveryReason(''); setRecoveryConfirmed(false)
+    setLegacyProject(project); setLegacyCustomerId(''); setLegacyReason(''); setLegacyConfirmed(false); setLegacyPreview(null)
+  }
+  const pickRecoveryBackup = (file: File | undefined) => {
+    const read = ++recoveryRead.current
+    setRecoveryBackup(''); setRecoveryPreview(null); setRecoveryConfirmed(false)
+    if (!file) return
+    const reader = new FileReader()
+    reader.onerror = () => { if (read === recoveryRead.current) toast.show('تعذرت قراءة النسخة', 'error') }
+    reader.onload = () => { if (read === recoveryRead.current) setRecoveryBackup(String(reader.result ?? '')) }
+    reader.readAsText(file)
+  }
+  const checkRecovery = () => {
+    if (!legacyProject || !recoveryBackup) return
+    setRecoveryConfirmed(false)
+    try { setRecoveryPreview(previewMissingProjectCustomerBackup(legacyProject.id, recoveryBackup)) }
+    catch (error) { setRecoveryPreview(null); toast.show((error as Error).message, 'error') }
+  }
+  const saveRecovery = () => {
+    if (!legacyProject || !recoveryPreview) return
+    try {
+      restoreMissingProjectCustomerBackup({ projectId: legacyProject.id, backup: recoveryBackup, fingerprint: recoveryPreview.fingerprint, reason: recoveryReason, confirmed: recoveryConfirmed })
+      toast.show('استُعيد سجل العميل الأصلي وحده دون استبدال البيانات أو إنشاء قيود')
+      recoveryRead.current++; setRecoveryBackup(''); setRecoveryPreview(null); setLegacyProject(null)
+    } catch (error) { setRecoveryPreview(null); toast.show((error as Error).message, 'error') }
+  }
+  const checkLegacyReview = () => {
+    if (!legacyProject || !legacyCustomerId) return
+    setLegacyConfirmed(false)
+    try { setLegacyPreview(previewLegacyProjectCustomer(legacyProject.id, Number(legacyCustomerId))) }
+    catch (error) { setLegacyPreview(null); toast.show((error as Error).message, 'error') }
+  }
+  const saveLegacyReview = () => {
+    if (!legacyProject || !legacyPreview || !legacyCustomerId) return
+    try {
+      resolveLegacyProjectCustomer({ projectId: legacyProject.id, customerId: Number(legacyCustomerId), expectedDueMinor: legacyPreview.dueMinor, fingerprint: legacyPreview.fingerprint, reason: legacyReason, confirmed: legacyConfirmed })
+      toast.show('تم توثيق ربط المستخلصات بالعميل دون إنشاء قيد أو تحصيل')
+      setLegacyProject(null); setLegacyPreview(null)
+    } catch (error) { setLegacyPreview(null); toast.show((error as Error).message, 'error') }
+  }
   const [editPrj, setEditPrj] = useState<Project | null>(null)
   const [epName, setEpName] = useState(''); const [epClient, setEpClient] = useState(''); const [epClientId, setEpClientId] = useState('')
   const [epValue, setEpValue] = useState(''); const [epRetention, setEpRetention] = useState('')
@@ -762,7 +814,7 @@ export function ProjectsPage() {
                   <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪ على قيمة الأعمال</span>
                 </label>
               </Field>
-              <Field label="التحصيل">
+              <Field label="التحصيل" hint={extractFor.clientId == null ? 'المستخلص الآجل ذو المتبقي يتطلب عميلاً مرتبطاً بالمشروع قبل الإصدار' : undefined}>
                 <div className="flex gap-2">
                   {(['credit', 'cash'] as const).map((p) => (
                     <button key={p} onClick={() => setExPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${exPayment === p ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
@@ -914,7 +966,7 @@ export function ProjectsPage() {
                 </div>
               ) : (
                 <div className="p-4">
-                  <Field label={`قيمة الأعمال المنفذة في هذا المستخلص (${cur.symbol}) *`} hint={`قيمة العقد: ${fmt(extractFor.contractValueMinor)} · مفوتر سابقاً: ${fmt(getProjectProfit(extractFor.id).extractedMinor)}`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                  <Field label={`قيمة الأعمال المنفذة في هذا المستخلص (${cur.symbol}) *`} hint={`قيمة العقد: ${fmt(extractFor.contractValueMinor)} · مفوتر سابقاً قبل الإشعارات: ${fmt(projectExtracts.filter((e) => e.projectId === extractFor.id).reduce((sum, e) => sum + e.totals.grossMinor, 0))}`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
                 </div>
               )}
             </div>
@@ -992,6 +1044,9 @@ export function ProjectsPage() {
                           title={staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'عليه عمولة موظف — إدارتها من شاشة الموظفين' : 'عمولة موظف عن المشروع'}
                           className={`p-2 rounded-lg transition-all hover:scale-110 ${staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
                         ><HandCoins className="w-4 h-4" /></button>
+                        {((p.clientId != null && !customers.some(c => c.id === p.clientId)) || (p.clientId == null && projectExtracts.some(e => e.projectId === p.id && e.payment === 'credit' && e.totals.dueMinor > (e.advanceRecoveryMinor ?? 0)))) && (
+                          <button onClick={() => openLegacyReview(p)} data-legacy-project-review title="مراجعة ربط ذمة مستخلص تاريخي بلا عميل" className="px-2 py-1 rounded-lg text-xs font-bold text-amber-700 bg-amber-500/10">مراجعة الذمة</button>
+                        )}
                         <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
@@ -1211,15 +1266,79 @@ export function ProjectsPage() {
         )}
       </Modal>
 
+      <Modal open={!!legacyProject} onClose={() => setLegacyProject(null)} title="مراجعة ربط مستخلصات تاريخية">
+        {legacyProject && <div className="space-y-3 text-sm" data-legacy-project-review-modal>
+          <p>المشروع {legacyProject.code} — {legacyProject.nameAr}؛ الجهة المسجلة: {legacyProject.clientName}. {legacyProject.clientId == null ? 'بلا عميل مرتبط.' : `رقم العميل السابق #${legacyProject.clientId} غير ظاهر هنا؛ لا يقبل الاستبدال إذا كان موجوداً في فرع آخر أو له سجلات أخرى.`} لا يفترض النظام هوية الجهة أو عدم وجود تحصيل خارج سجلاته.</p>
+          <p>هذه المراجعة للمالك بعد مطابقة العقد والدفتر والتحصيلات. يفحص النظام القيود والتخصيصات المسجلة، ويمنع الحالات غير المطابقة أو غير المدعومة بدلاً من تخمين تسويتها.</p>
+          {legacyProject.clientId != null && <section className="space-y-2 border-t border-b border-slate-300 py-3">
+            <h3 className="font-bold">استعادة السجل الأصلي من نسخة احتياطية مطابقة</h3>
+            <p>لا يستبدل هذا الإجراء قاعدة البيانات أو ينقل القيود. تُقبل فقط نسخة من إصدار البيانات الحالي تطابق بقية السجلات والعملاء الآخرين؛ بصمة الملف تكشف التلف ولا تثبت مصدر النسخة أو صحة الهوية. راجع النقاط وحد الائتمان وسجل العميل بنفسك قبل التأكيد.</p>
+            <Field label="ملف النسخة الاحتياطية JSON"><input aria-label="ملف نسخة العميل المفقود" type="file" accept=".json,application/json" onChange={e => pickRecoveryBackup(e.target.files?.[0])} /></Field>
+            <Btn variant="soft" disabled={!recoveryBackup} onClick={checkRecovery}>فحص نسخة العميل</Btn>
+            {recoveryPreview && <>
+              <p role="status">النسخة: {recoveryPreview.backupShopName} — {recoveryPreview.backupDate} — بصمة الملف {recoveryPreview.backupChecksum}. العميل #{recoveryPreview.customer.id}: {recoveryPreview.customer.nameAr} — الهاتف {recoveryPreview.customer.phone || 'غير مسجل'} — الفرع {recoveryPreview.customer.branchId ?? 'الرئيسي الافتراضي'}.</p>
+              <p>العنوان: {recoveryPreview.customer.address || 'غير مسجل'}، {recoveryPreview.customer.city || 'غير مسجل'} — رقم المبنى: {recoveryPreview.customer.buildingNo || 'غير مسجل'} — الرمز البريدي: {recoveryPreview.customer.postalCode || 'غير مسجل'} — البريد: {recoveryPreview.customer.email || 'غير مسجل'} — الرقم القومي: {recoveryPreview.customer.nationalId || 'غير مسجل'} — الرقم الضريبي: {recoveryPreview.customer.taxNumber || 'غير مسجل'} — السجل التجاري: {recoveryPreview.customer.commercialReg || 'غير مسجل'}.</p>
+              <p>حد الائتمان: {fmt(recoveryPreview.customer.creditLimitMinor)} {cur.symbol} — نقاط الولاء: {recoveryPreview.customer.loyaltyPoints ?? 0} — الحالة: {recoveryPreview.customer.active === false ? 'موقوف' : 'نشط'} — قائمة الأسعار: {recoveryPreview.customer.priceListId ?? 'الافتراضية'} — ملاحظات: {recoveryPreview.customer.notes || 'لا يوجد'}.</p>
+              <p>الرصيد المحسوب من السجلات الحالية ({recoveryPreview.scopeName}): <strong>{fmt(recoveryPreview.balanceMinor)} {cur.symbol}</strong> (السالب لصالح العميل). يجب مطابقة التحصيلات خارج النظام أيضاً.</p>
+              <div className="overflow-auto max-h-48"><table className="w-full text-xs" aria-label="كشف العميل قبل استعادة السجل"><thead><tr><th>التاريخ</th><th>المستند</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{recoveryPreview.statement.map((row, index) => <tr key={index}><td>{row.date}</td><td>{row.docLabel}</td><td>{fmt(row.debitMinor)}</td><td>{fmt(row.creditMinor)}</td><td>{fmt(row.balanceMinor)}</td></tr>)}</tbody></table></div>
+              <Field label="سبب استعادة السجل"><input aria-label="سبب استعادة العميل" className={inputCls} maxLength={300} value={recoveryReason} onChange={e => setRecoveryReason(e.target.value)} /></Field>
+              <label className="flex gap-2 items-start"><input type="checkbox" checked={recoveryConfirmed} onChange={e => setRecoveryConfirmed(e.target.checked)} /> أقرّ بمطابقة أصل النسخة وهوية العميل وجميع بياناته وحده ونقاطه وكشفه والتحصيلات خارج النظام، وأفهم أن النسخة قديمة وأن مطابقة الملف ليست إثبات ملكية.</label>
+              <Btn disabled={!recoveryConfirmed || !recoveryReason.trim()} onClick={saveRecovery}>استعادة سجل العميل فقط</Btn>
+            </>}
+          </section>}
+
+          <Field label="العميل بعد مطابقة العقد والمستندات">
+            <select aria-label="عميل المستخلص التاريخي" className={inputCls} value={legacyCustomerId} onChange={e => { setLegacyCustomerId(e.target.value); setLegacyPreview(null); setLegacyConfirmed(false) }}>
+              <option value="">— اختر عميلاً —</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.nameAr} (#{c.id})</option>)}
+            </select>
+          </Field>
+          <Btn variant="soft" disabled={!legacyCustomerId} onClick={checkLegacyReview}>فحص قبل الربط</Btn>
+          {legacyPreview && <>
+            <p role="status">التغير الصافي في رصيد العميل {fmt(legacyPreview.dueMinor)} {cur.symbol} من {legacyPreview.extractCount} مستخلص. لا يُنشأ قيد أو تحصيل جديد.</p>
+            <p>رصيد العميل قبل الربط: <strong>{fmt(legacyPreview.balanceBeforeMinor)} {cur.symbol}</strong> — بعده: <strong>{fmt(legacyPreview.balanceAfterMinor)} {cur.symbol}</strong> (الرصيد السالب لصالح العميل).</p>
+            <p>الأدلة التي فحصها النظام للمشروع (لا تعني وحدها إثبات ملكية العميل أو التحصيل خارج النظام):</p>
+            <div className="overflow-auto max-h-40">
+              <table className="w-full text-xs" aria-label="أدلة مراجعة المشروع"><thead><tr><th>المستند أو الحركة</th><th>المبلغ</th></tr></thead>
+                <tbody>{legacyPreview.evidence.map((item, index) => <tr key={index} className="border-t border-slate-200 dark:border-slate-700"><td className="p-2">{item.description}</td><td className="p-2">{fmt(item.amountMinor)} {cur.symbol}</td></tr>)}</tbody>
+              </table>
+            </div>
+            <p>الجدول يعرض المستندات التي تتغير عند الربط؛ توزيع الشيكات والمبالغ تحت الحساب تقديري ولا يُعد تخصيصاً محفوظاً. يجب مطابقة أي تحصيل خارج النظام يدوياً.</p>
+            <div className="overflow-auto max-h-64">
+              <table className="w-full text-xs" aria-label="أثر الربط على المستندات">
+                <thead><tr><th>المستند</th><th>قبل الربط</th><th>بعد الربط</th></tr></thead>
+                <tbody>{legacyPreview.documents.map(doc => (
+                  <tr key={doc.docKey} className="border-t border-slate-200 dark:border-slate-700">
+                    <td className="p-2">{doc.docLabel}</td>
+                    {([['before', doc.beforeRemainingMinor, doc.beforeSettledMinor, doc.beforeSources], ['after', doc.afterRemainingMinor, doc.afterSettledMinor, doc.afterSources]] as const).map(([side, remaining, settled, sources]) => (
+                      <td key={side} className="p-2 align-top">
+                        {remaining == null ? 'لم يكن منسوباً للعميل' : <>
+                          <div>المتبقي {fmt(remaining)} {cur.symbol} — المطفأ {fmt(settled ?? 0)} {cur.symbol}</div>
+                          {sources.map((source, index) => <div key={index}>{source.description}: {fmt(source.amountMinor)} {cur.symbol}</div>)}
+                        </>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <Field label="سبب المراجعة"><input aria-label="سبب مراجعة الربط" className={inputCls} maxLength={300} value={legacyReason} onChange={e => setLegacyReason(e.target.value)} /></Field>
+            <label className="flex gap-2 items-start"><input type="checkbox" checked={legacyConfirmed} onChange={e => setLegacyConfirmed(e.target.checked)} /> أقرّ أنني طابقت هوية العميل والعقد والمستخلصات والدفتر والتحصيلات داخل النظام وخارجه، والأرصدة والتوزيعات المعروضة، وأعلم أن التوزيعات التقديرية ليست تخصيصات محفوظة.</label>
+            <Btn disabled={!legacyConfirmed || !legacyReason.trim()} onClick={saveLegacyReview}>توثيق الربط</Btn>
+          </>}
+        </div>}
+      </Modal>
+
       {/* §94-مراجعة: تعديل بيانات المشروع — القيمة مقفولة بعد أول مستخلص (أوامر التغيير هي الباب) */}
       <Modal open={!!editPrj} onClose={() => setEditPrj(null)} title={editPrj ? `تعديل ${editPrj.code} — ${editPrj.nameAr}` : ''} subtitle="بيانات العقد والمواعيد — الكود والحالة لا يتغيران">
         {editPrj && (() => {
           const locked = projectExtracts.some((e) => e.projectId === editPrj.id)
+          const clientLocked = locked || clientAdvances.some((advance) => advance.projectId === editPrj.id)
           return (
             <div className="grid grid-cols-2 gap-3" data-project-edit-modal>
               <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
               <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
-              <Field label="ربط سجل العميل" hint="إداري بحت — لا قيد ولا ذمة"><input className={inputCls} type="number" value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
+              <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}><input className={inputCls} type="number" disabled={clientLocked} value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
               <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
                 <input className={inputCls} type="number" disabled={locked} value={locked ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
               </Field>
@@ -2292,7 +2411,7 @@ export function ProjectExtractsPage() {
                 ))}
               </select>
             </Field>
-            <Field label="طريقة تحصيل الفاتورة">
+            <Field label="طريقة تحصيل الفاتورة" hint={selectedProject && selectedProject.clientId == null ? 'المستخلص الآجل ذو المتبقي يتطلب عميلاً مرتبطاً بالمشروع قبل الإصدار' : undefined}>
               <div className="flex gap-2">
                 {([
                   ['credit', 'آجل (على حساب العميل)'],

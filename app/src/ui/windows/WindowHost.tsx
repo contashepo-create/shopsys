@@ -4,6 +4,7 @@ import { OverlayPortal, useToast } from '../components/ui.tsx'
 import { useWindowStore, restoreWindowSession, watchWindowSession, type AppWindow, type AppWindowKind } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
+import { FinancialDataReviewBoundary } from '../components/FinancialDataReviewBoundary.tsx'
 import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
 import { ProjectExpenseWindowView } from './ProjectExpenseWindowView.tsx'
 import { ExtractWizardWindowView } from './ExtractWizardWindowView.tsx'
@@ -153,9 +154,11 @@ export function WindowHost() {
       {windows.map((win) => (
         <FloatingWindow key={win.id} win={win} active={win.id === topId}>
           <WindowHostProvider windowId={win.id} props={win.props}>
-            <Suspense fallback={<div className="grid h-full place-items-center p-10 text-sm text-slate-500">جارٍ فتح النافذة…</div>}>
-              <WindowContent win={win} />
-            </Suspense>
+            <FinancialDataReviewBoundary>
+              <Suspense fallback={<div className="grid h-full place-items-center p-10 text-sm text-slate-500">جارٍ فتح النافذة…</div>}>
+                <WindowContent win={win} />
+              </Suspense>
+            </FinancialDataReviewBoundary>
           </WindowHostProvider>
         </FloatingWindow>
       ))}

@@ -6,7 +6,7 @@
  * (وثيقة التصميم — القرارات 6، 8، 9، 14)
  */
 import type { Minor } from './money.ts'
-import { mulQty, percentOf, splitInclusiveTax, addExclusiveTax } from './money.ts'
+import { addMinor, exactNonNegativePercent, mulQty, percentOf, roundNonNegativeRatio, splitExactInclusiveTax, splitInclusiveTax, addExclusiveTax } from './money.ts'
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
 
@@ -18,6 +18,8 @@ export interface CartLine {
   unitCostMinor: Minor // تكلفة الوحدة (متوسط مرجح) لقيد COGS
   discountPercent: number // خصم السطر
   soldByWeight: boolean
+  /** لقطة نوع الصنف لحظة البيع؛ تُثبتها طبقة الترحيل لا المتصل. */
+  isServiceAtSale?: boolean
   /** سيريالات القطع المعيّنة (أصناف الموبايلات/الأجهزة) — طولها = qty عند الاستخدام */
   serials?: string[]
   /** تركيبة المتغير (ملابس): لون/مقاس — إلزامية لو للصنف مصفوفة برصيد */
@@ -55,6 +57,28 @@ export interface CartLine {
    * النفيس نفسه. undefined/0 = كل السعر خاضع كالمعتاد (أي صنف غير ذهبي).
    */
   vatExemptPerUnitMinor?: Minor
+}
+
+/**
+ * حارس إدخال الحركات الجديدة فقط: مخزون النظام محفوظ بأجزاء الألف، فلا
+ * نقرّب طلباً أكثر دقة بصمت ولا نحسب سعراً لكمية تختلف عن المصروفة.
+ * يُسمح بضجيج الكسور الثنائية البسيط ثم تُحفظ الكمية المطبَّعة.
+ */
+export function normalizeMovementQty(qty: number, allowZero = false): number {
+  const scaled = Math.round(qty * 1000)
+  const normalized = scaled / 1000
+  if (!Number.isFinite(qty) || !Number.isSafeInteger(scaled) || qty < 0 || (normalized === 0 && (!allowZero || qty !== 0)) || Math.abs(qty - normalized) > 1e-9) {
+    throw new RangeError('كمية الحركة يجب أن تكون صالحة حتى ثلاث خانات عشرية')
+  }
+  return normalized
+}
+
+export function normalizeSaleMovementLine<T extends { qty: number; unitFactor?: number }>(line: T): T {
+  const qty = normalizeMovementQty(line.qty)
+  const factor = line.unitFactor ?? 1
+  if (!Number.isFinite(factor) || factor <= 0) throw new RangeError('معامل وحدة الكمية غير صالح')
+  normalizeMovementQty(qty * factor)
+  return { ...line, qty }
 }
 
 /** كمية السطر بالوحدة الأساسية (للمخزون/الدفعات) — qty × unitFactor */
@@ -106,9 +130,9 @@ export interface CartTotals {
 }
 
 /** إجمالي سطر بعد خصمه */
-export function lineTotal(line: CartLine): Minor {
+export function lineTotal(line: CartLine, roundingVersion?: 2): Minor {
   const gross = mulQty(line.unitPriceMinor, line.qty)
-  const discount = percentOf(gross, line.discountPercent)
+  const discount = roundingVersion === 2 ? exactNonNegativePercent(gross, line.discountPercent) : percentOf(gross, line.discountPercent)
   return gross - discount
 }
 
@@ -122,16 +146,20 @@ export function computeTotals(
   invoiceDiscountPercent: number,
   taxPercent: number,
   taxInclusive: boolean,
+  roundingVersion?: 2,
 ): CartTotals {
+  if (roundingVersion !== undefined && roundingVersion !== 2) throw new RangeError('نسخة حساب الفاتورة غير صالحة')
+  if (roundingVersion === 2 && (!Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100)) throw new RangeError('نسبة الضريبة غير صالحة')
+  const percentage = roundingVersion === 2 ? exactNonNegativePercent : percentOf
   let gross = 0
   let lineDiscounts = 0
   const cogsByCostBasis = new Map<string, { unitCostMinor: Minor; qty: number }>()
   for (const l of lines) {
     if (l.qty <= 0) throw new RangeError(`كمية غير صالحة للصنف ${l.nameAr}`)
-    if (l.discountPercent < 0 || l.discountPercent > 100) throw new RangeError('خصم سطر خارج النطاق')
+    if (!Number.isFinite(l.discountPercent) || l.discountPercent < 0 || l.discountPercent > 100) throw new RangeError('خصم سطر خارج النطاق')
     const g = mulQty(l.unitPriceMinor, l.qty)
-    gross += g
-    lineDiscounts += percentOf(g, l.discountPercent)
+    gross = roundingVersion === 2 ? addMinor(gross, g) : gross + g
+    lineDiscounts = roundingVersion === 2 ? addMinor(lineDiscounts, percentage(g, l.discountPercent)) : lineDiscounts + percentage(g, l.discountPercent)
     // Consolidate same-item/same-unit cost before rounding so duplicate fractional
     // lines cannot each round a half-minor upward and overstate COGS.
     const costBasisKey = `${l.itemId}:${l.unitFactor ?? 1}:${l.unitCostMinor}`
@@ -139,10 +167,10 @@ export function computeTotals(
     if (costBasis) costBasis.qty += l.qty
     else cogsByCostBasis.set(costBasisKey, { unitCostMinor: l.unitCostMinor, qty: l.qty })
   }
-  const cogs = [...cogsByCostBasis.values()].reduce((sum, basis) => sum + mulQty(basis.unitCostMinor, basis.qty), 0)
-  if (invoiceDiscountPercent < 0 || invoiceDiscountPercent > 100) throw new RangeError('خصم فاتورة خارج النطاق')
+  const cogs = [...cogsByCostBasis.values()].reduce((sum, basis) => roundingVersion === 2 ? addMinor(sum, mulQty(basis.unitCostMinor, basis.qty)) : sum + mulQty(basis.unitCostMinor, basis.qty), 0)
+  if (!Number.isFinite(invoiceDiscountPercent) || invoiceDiscountPercent < 0 || invoiceDiscountPercent > 100) throw new RangeError('خصم فاتورة خارج النطاق')
   const afterLineDiscounts = gross - lineDiscounts
-  const invoiceDiscount = percentOf(afterLineDiscounts, invoiceDiscountPercent)
+  const invoiceDiscount = percentage(afterLineDiscounts, invoiceDiscountPercent)
   const net = afterLineDiscounts - invoiceDiscount
 
   // ═══ ضريبة لكل سطر (طلب المالك: نسبة خاصة لصنف أو إعفاؤه) ═══
@@ -155,28 +183,33 @@ export function computeTotals(
   if (hasOverrides) {
     let taxSum = 0
     let baseSum = 0
-    let netCheck = 0
+    let netCheck = 0, allocatedDiscount = 0, processedBase = 0
     for (const l of lines) {
       const g = mulQty(l.unitPriceMinor, l.qty)
-      const lineNetBeforeInvDisc = g - percentOf(g, l.discountPercent)
+      const lineNetBeforeInvDisc = g - percentage(g, l.discountPercent)
       // نصيب السطر من خصم الفاتورة (نسبي على صافي السطور)
-      const share = afterLineDiscounts > 0 ? Math.round((invoiceDiscount * lineNetBeforeInvDisc) / afterLineDiscounts) : 0
+      const nextProcessedBase = processedBase + lineNetBeforeInvDisc
+      const nextAllocatedDiscount = afterLineDiscounts > 0 && roundingVersion === 2 ? roundNonNegativeRatio(invoiceDiscount, nextProcessedBase, afterLineDiscounts) : 0
+      const share = afterLineDiscounts > 0 ? (roundingVersion === 2 ? nextAllocatedDiscount - allocatedDiscount : Math.round((invoiceDiscount * lineNetBeforeInvDisc) / afterLineDiscounts)) : 0
+      processedBase = nextProcessedBase
+      allocatedDiscount = nextAllocatedDiscount
       const lineNet = lineNetBeforeInvDisc - share
       netCheck += lineNet
       const p = l.vatPercentOverride !== undefined ? l.vatPercentOverride : taxPercent
+      if (roundingVersion === 2 && (!Number.isFinite(p) || p < 0 || p > 100)) throw new RangeError('نسبة ضريبة السطر غير صالحة')
       // جزء السطر المعفى بالكامل (قيمة الذهب) — يُستبعد من الأساس الخاضع
       // بنفس نسبة انكماش السطر بسبب الخصومات (g>0 دائماً هنا لأن qty>0 تحقق أعلاه)
       const exemptPerUnit = Math.max(0, Math.min(l.vatExemptPerUnitMinor ?? 0, l.unitPriceMinor))
       const exemptGross = mulQty(exemptPerUnit, l.qty)
-      const exemptNet = g > 0 ? Math.round((exemptGross * lineNet) / g) : 0
+      const exemptNet = g > 0 ? (roundingVersion === 2 ? roundNonNegativeRatio(exemptGross, lineNet, g) : Math.round((exemptGross * lineNet) / g)) : 0
       const taxableNet = lineNet - exemptNet
       baseSum += exemptNet // معفى: يدخل الأساس (إيراد) بلا أي ضريبة مهما كانت p
       if (p <= 0 || taxableNet <= 0) { baseSum += taxableNet; continue }
       if (taxInclusive) {
-        const [b, t] = splitInclusiveTax(taxableNet, p)
+        const [b, t] = roundingVersion === 2 ? splitExactInclusiveTax(taxableNet, p) : splitInclusiveTax(taxableNet, p)
         baseSum += b; taxSum += t
       } else {
-        const [t] = addExclusiveTax(taxableNet, p)
+        const t = roundingVersion === 2 ? exactNonNegativePercent(taxableNet, p) : addExclusiveTax(taxableNet, p)[0]
         baseSum += taxableNet; taxSum += t
       }
     }
@@ -184,17 +217,19 @@ export function computeTotals(
     baseSum += net - netCheck
     taxBase = baseSum
     tax = taxSum
-    total = taxInclusive ? net : net + taxSum
+    total = taxInclusive ? net : roundingVersion === 2 ? addMinor(net, taxSum) : net + taxSum
   } else if (taxPercent <= 0) {
     taxBase = net; tax = 0; total = net
   } else if (taxInclusive) {
-    ;[taxBase, tax] = splitInclusiveTax(net, taxPercent)
+    ;[taxBase, tax] = roundingVersion === 2 ? splitExactInclusiveTax(net, taxPercent) : splitInclusiveTax(net, taxPercent)
     total = net // الشامل: العميل يدفع الصافي كما هو
   } else {
     taxBase = net
-    ;[tax, total] = addExclusiveTax(net, taxPercent)
+    if (roundingVersion === 2) { tax = exactNonNegativePercent(net, taxPercent); total = addMinor(net, tax) }
+    else [tax, total] = addExclusiveTax(net, taxPercent)
   }
 
+  if (roundingVersion === 2 && ![gross, lineDiscounts + invoiceDiscount, net, taxBase, tax, total, cogs].every(Number.isSafeInteger)) throw new RangeError('تجاوز النطاق الآمن لإجمالي البيع')
   return {
     grossMinor: gross,
     discountMinor: lineDiscounts + invoiceDiscount,

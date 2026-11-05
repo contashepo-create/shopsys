@@ -256,14 +256,21 @@ export interface PurchaseReturnLine {
   unitPriceMinor?: Minor
   /** فهرس سطر فاتورة الشراء الأصلية — undefined لسجل قديم مجمع بالصنف */
   purchaseLineIndex?: number
+  /** سيريالات الوحدات المرتجعة فعلياً. */
+  serials?: string[]
   /** المخزن الذي خرج منه المرتجع؛ يثبت عند الترحيل */
   warehouseId?: number | null
+  /** الدفعة الفعلية المختارة ورابطها إلى دفعة الشراء الأصلية. */
+  expiryBatchAllocation?: { batchId: number; sourceBatchId: number; qty: number }
 }
 
 export interface PurchaseReturnLineSpec {
   lineIndex: number
   qty: number
+  serials?: string[]
   warehouseId?: number | null
+  /** يحدد المستخدم الدفعة التي خرجت فعلياً لا الدفعة التي يتوقعها FEFO. */
+  batchAllocations?: { batchId: number; qty: number }[]
 }
 
 /** سطر من فاتورة الشراء الأصلية كما تحتاجه حسابات المرتجع */
@@ -375,6 +382,7 @@ export function buildPurchaseReturnLinesPerLine(
       landedUnitCostMinor: source.landedUnitCostMinor,
       unitPriceMinor: source.unitPriceMinor,
       purchaseLineIndex: spec.lineIndex,
+      serials: spec.serials?.map(serial => serial.trim().toUpperCase()),
       warehouseId: spec.warehouseId ?? source.warehouseId ?? null,
     })
   }

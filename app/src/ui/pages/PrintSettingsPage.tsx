@@ -31,13 +31,14 @@ const SAMPLE_LINES = [
 const VISIBILITY_KEYS: { key: keyof ReceiptSettings; label: string; scope: 'الكل' | 'A4' | 'حراري' }[] = [
   { key: 'showLogo', label: 'شعار المحل', scope: 'الكل' },
   { key: 'showHeaderLines', label: 'سطور الترويسة (عنوان/هاتف…)', scope: 'الكل' },
+  { key: 'showShopPhone', label: 'هاتف المنشأة في الترويسة', scope: 'الكل' },
   { key: 'showDate', label: 'تاريخ الفاتورة', scope: 'الكل' },
   { key: 'showCustomer', label: 'اسم العميل', scope: 'الكل' },
   { key: 'showPayment', label: 'طريقة الدفع', scope: 'الكل' },
   { key: 'showItemCounts', label: 'عدد الأصناف والقطع', scope: 'الكل' },
   { key: 'showDiscount', label: 'الخصومات', scope: 'الكل' },
   { key: 'showTaxSummary', label: 'ملخص الضريبة', scope: 'الكل' },
-  { key: 'showOperator', label: 'اسم القائم بالطباعة (الكاشير/المالك)', scope: 'حراري' },
+  { key: 'showOperator', label: 'اسم القائم بالطباعة (الكاشير/المالك)', scope: 'الكل' },
   { key: 'showWords', label: 'المبلغ كتابةً (تفقيط)', scope: 'A4' },
   { key: 'showSignatures', label: 'خانتا التوقيع', scope: 'A4' },
   { key: 'showFooter', label: 'نص التذييل', scope: 'الكل' },
@@ -338,7 +339,7 @@ export function PrintSettingsPage() {
             </div>
           </Field>
 
-          <Field label="نمط فاتورة A4" hint="أربعة تصاميم احترافية — جرّبها وشاهد المعاينة تتغير فوراً">
+          <Field label="نمط فاتورة A4" hint="عشرة تصاميم مختلفة — جرّبها وشاهد المعاينة تتغير فوراً">
             <div className="grid grid-cols-2 gap-2">
               {A4_STYLES.map((st) => (
                 <button
@@ -522,7 +523,7 @@ export function PrintSettingsPage() {
                 </span>
                 <input
                   type="checkbox"
-                  checked={Boolean(receipt[key])}
+                  checked={key === 'showShopPhone' ? receipt.showShopPhone !== false : Boolean(receipt[key])}
                   onChange={(e) => updateReceipt({ [key]: e.target.checked } as Partial<ReceiptSettings>)}
                   className="w-4 h-4 accent-brand-600 shrink-0"
                 />
@@ -530,6 +531,7 @@ export function PrintSettingsPage() {
             ))}
           </div>
 
+          <p className="text-[11px] text-slate-500">إخفاء الهاتف يشمل رقم هوية المنشأة وسطـور الهاتف المسمّاة في الترويسة. راجع أي أرقام أخرى مكتوبة يدوياً في الترويسة أو التذييل والشعار قبل الطباعة.</p>
           <label className={toggleCls}>
             <div>
               <div className="text-sm font-bold text-slate-700 dark:text-slate-200">طباعة تلقائية بعد كل بيع</div>

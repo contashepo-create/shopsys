@@ -5,7 +5,7 @@
  * مع تحكم كامل من الإعدادات: شعار، علامة مائية، لون رئيسي، وإظهار/إخفاء كل عنصر.
  * دوال خالصة بالكامل — تُفحص في verify_receipt.
  */
-import type { ReceiptModel, ReceiptSettings, A4Style } from '../../core/receipt.ts'
+import { invoiceHeaderLines, type ReceiptModel, type ReceiptSettings, type A4Style } from '../../core/receipt.ts'
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 
@@ -40,6 +40,8 @@ export function numberToArabicWords(n: number): string {
   if (n === 0) return 'صفر'
   if (n < 0) return `سالب ${numberToArabicWords(-n)}`
   const scales: [number, string, string, string][] = [
+    [1_000_000_000_000_000, 'كوادريليون', 'كوادريليونان', 'كوادريليونات'],
+    [1_000_000_000_000, 'تريليون', 'تريليونان', 'تريليونات'],
     [1_000_000_000, 'مليار', 'ملياران', 'مليارات'],
     [1_000_000, 'مليون', 'مليونان', 'ملايين'],
     [1_000, 'ألف', 'ألفان', 'آلاف'],
@@ -63,8 +65,8 @@ export function numberToArabicWords(n: number): string {
 export function amountInWords(minor: number, cur: CurrencyConfig): string {
   const major = Math.floor(Math.abs(minor) / 10 ** cur.decimals)
   const frac = Math.abs(minor) % 10 ** cur.decimals
-  let s = `${numberToArabicWords(major)} ${cur.name || cur.symbol}`
-  if (frac > 0) s += ` و${numberToArabicWords(frac)} من المائة`
+  let s = `${minor < 0 ? 'سالب ' : ''}${numberToArabicWords(major)} ${cur.name || cur.symbol}`
+  if (frac > 0) s += ` و${numberToArabicWords(frac)} من ${cur.decimals === 3 ? 'الألف' : 'المائة'}`
   return `${s} فقط لا غير`
 }
 
@@ -158,7 +160,7 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
     rows.push(`<div class="tr"><span>إجمالي الخصم</span><b>-${fmt(m.discountMinor)}</b></div>`)
   }
   if (m.taxLabel) {
-    rows.push(`<div class="tr"><span>الوعاء الضريبي</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
+    rows.push(`<div class="tr"><span>${esc(m.taxBaseLabel ?? 'الوعاء الضريبي')}</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
     rows.push(`<div class="tr"><span>${esc(m.taxLabel)}</span><b>${fmt(m.taxMinor)}</b></div>`)
     /* مستندات فيها مبالغ على حساب العميل بلا ضريبة (مصاريف نقلات مستقلة):
        الأساس + الضريبة لا يساوي الإجمالي، فيُظهر الفارق صراحةً بدل رقم لا يُجمع. */
@@ -308,10 +310,46 @@ function renderRoyal(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, a
   </div>`
 }
 
+/** تخطيطات مستقلة: تختلف ترتيب البيانات والبنود والإجماليات لا اللون وحده. */
+function renderLedger(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `<div class="sheet ledger">
+    <div class="ledger-heading">${whoBlock(m, s, accent, 54, 0)}<h1>${esc(m.docTitle ?? 'فاتورة مبيعات')}</h1></div>
+    <div class="ledger-meta">${metaRows(m, s)}</div>
+    <div class="section-title">بيان البنود</div>${itemsTable(m, cur, s, { classic: true })}
+    <div class="ledger-summary">${totalsBlock(m, cur, s)}${wordsBlock(m, cur, s)}</div>
+    ${signatures(s)}${footer(m, s)}
+  </div>`
+}
+function renderSplit(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `<div class="sheet split"><div class="split-heading"><h1>${esc(m.docTitle ?? 'فاتورة مبيعات')}</h1></div>
+    <div class="split-columns"><div class="split-company">${whoBlock(m, s, accent, 56, 0)}</div><div class="split-document">${metaRows(m, s)}</div></div>
+    ${itemsTable(m, cur, s, {})}<div class="split-summary">${wordsBlock(m, cur, s)}${totalsBlock(m, cur, s)}</div>
+    ${signatures(s)}${footer(m, s)}</div>`
+}
+function renderLetter(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `<div class="sheet letter"><div class="letter-head">${whoBlock(m, s, accent, 56, 0)}</div>
+    <div class="letter-title"><h1>${esc(m.docTitle ?? 'فاتورة مبيعات')}</h1><span dir="ltr">${esc(m.invoiceNumber)}</span></div>
+    ${metaRows(m, s)}<div class="letter-body">${itemsTable(m, cur, s, {})}</div>
+    <div class="letter-totals">${totalsBlock(m, cur, s)}</div>${wordsBlock(m, cur, s)}${signatures(s)}${footer(m, s)}</div>`
+}
+function renderRegister(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `<div class="sheet register"><div class="register-heading">${whoBlock(m, s, accent, 50, 0)}<div><h1>${esc(m.docTitle ?? 'فاتورة مبيعات')}</h1><b dir="ltr">${esc(m.invoiceNumber)}</b></div></div>
+    <div class="register-info">${metaRows(m, s)}</div><div class="section-title">تفاصيل المستند</div>
+    ${itemsTable(m, cur, s, { dense: true, classic: true })}<div class="register-totals">${totalsBlock(m, cur, s)}</div>
+    ${wordsBlock(m, cur, s)}${footer(m, s)}${signatures(s)}</div>`
+}
+function renderProject(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `<div class="sheet project"><div class="project-head">${whoBlock(m, s, accent, 56, 0)}<div class="project-ref">${metaRows(m, s)}</div></div>
+    <div class="project-title"><small>بيان الأعمال والخدمات</small><h1>${esc(m.docTitle ?? 'فاتورة مبيعات')}</h1></div>
+    ${itemsTable(m, cur, s, {})}<div class="project-summary">${totalsBlock(m, cur, s)}${wordsBlock(m, cur, s)}</div>
+    ${footer(m, s)}${signatures(s)}</div>`
+}
+
 /* ─── التجميع النهائي ─── */
 
 const STYLE_ACCENTS: Record<A4Style, string> = {
   modern: '#2563eb', classic: '#1e293b', compact: '#0d9488', elegant: '#7c3aed', royal: '#b45309',
+  ledger: '#24364b', split: '#285a68', letter: '#344054', register: '#4a3a2a', project: '#24575a',
 }
 
 /**
@@ -322,12 +360,19 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   const style: A4Style = settings.a4Style ?? 'modern'
   const accent = safeColor(settings.accentColor, STYLE_ACCENTS[style] ?? '#6366f1')
   const a5 = paper === 'a5'
+  // إخفاء المستخدم يسري على كل الأنماط، كما في الإيصال الحراري.
+  const visibleModel = { ...model, headerLines: invoiceHeaderLines(model, settings), ...(settings.showOperator === false ? { operatorName: undefined } : {}) }
   const body =
-    style === 'classic' ? renderClassic(model, cur, settings, accent)
-    : style === 'compact' ? renderCompact(model, cur, settings, accent)
-    : style === 'elegant' ? renderElegant(model, cur, settings, accent)
-    : style === 'royal' ? renderRoyal(model, cur, settings, accent)
-    : renderModern(model, cur, settings, accent)
+    style === 'ledger' ? renderLedger(visibleModel, cur, settings, accent)
+    : style === 'split' ? renderSplit(visibleModel, cur, settings, accent)
+    : style === 'letter' ? renderLetter(visibleModel, cur, settings, accent)
+    : style === 'register' ? renderRegister(visibleModel, cur, settings, accent)
+    : style === 'project' ? renderProject(visibleModel, cur, settings, accent)
+    : style === 'classic' ? renderClassic(visibleModel, cur, settings, accent)
+    : style === 'compact' ? renderCompact(visibleModel, cur, settings, accent)
+    : style === 'elegant' ? renderElegant(visibleModel, cur, settings, accent)
+    : style === 'royal' ? renderRoyal(visibleModel, cur, settings, accent)
+    : renderModern(visibleModel, cur, settings, accent)
 
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">
@@ -414,6 +459,33 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   .sig { display: grid; grid-template-columns: 1fr 1fr; gap: 70px; margin-top: 30px; text-align: center; color: #475569; font-size: 11px; }
   .sig div { border-top: 1px dashed #94a3b8; padding-top: 6px; }
   .foot { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 8px; text-align: center; font-size: 10px; color: #64748b; }
+  /* خمسة تخطيطات إضافية رسمية — اختلاف في ترتيب المكونات والبنية. */
+  .sheet.ledger, .sheet.split, .sheet.letter, .sheet.register, .sheet.project { overflow:visible; }
+  .ledger-heading { text-align:center; border-bottom:3px double ${accent}; padding-bottom:12px; }
+  .ledger-heading .who { justify-content:center; } .ledger-heading h1 { margin-top:10px; font-size:17px; }
+  .ledger-meta { margin:10px 0; border:1px solid #94a3b8; padding:4px 12px; }
+  .section-title { font-weight:800; padding:7px 0; border-bottom:1px solid ${accent}; }
+  .ledger .items td, .register .items td { border:1px solid #94a3b8; }
+  .ledger-summary { display:flex; flex-direction:column; align-items:flex-end; gap:8px; margin-top:12px; }
+  .ledger-summary .words { width:100%; }
+  .split-heading { border-bottom:3px solid ${accent}; padding-bottom:8px; } .split-heading h1 { font-size:18px; }
+  .split-columns { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:12px 0; }
+  .split-document { border-inline-start:1px solid #94a3b8; padding-inline-start:12px; }
+  .split-summary { display:flex; gap:12px; margin-top:12px; }
+  .letter-head { border-bottom:2px solid ${accent}; padding-bottom:14px; }
+  .letter-title { display:flex; justify-content:space-between; align-items:center; margin-top:20px; }
+  .letter-title h1 { font-size:20px; } .letter-body { margin-top:18px; }
+  .letter-totals { display:flex; justify-content:flex-end; margin:10px 0; }
+  .register-heading { display:flex; align-items:center; justify-content:space-between; border-bottom:2px solid ${accent}; padding-bottom:10px; }
+  .register-heading h1 { font-size:16px; } .register-info { border-bottom:1px solid #94a3b8; margin-bottom:8px; }
+  .register-totals { display:flex; justify-content:flex-end; margin:10px 0; }
+  .project-head { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  .project-title { border-block:2px solid ${accent}; text-align:center; margin:14px 0; padding:8px; }
+  .project-title h1 { font-size:20px; } .project-title small { color:#475569; }
+  .project-summary { display:flex; flex-direction:column; gap:8px; align-items:flex-end; margin-top:12px; }
+  .project-summary .words { width:100%; }
+  @media print { .items thead { display:table-header-group; } .items tr { break-inside:avoid; } }
+
 </style></head><body>
 ${watermark(settings)}
 ${body}

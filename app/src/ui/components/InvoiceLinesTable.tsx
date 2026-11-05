@@ -3,7 +3,7 @@ import { gridArrowNavigation } from './gridArrowNavigation.ts'
 import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { formatMinor, toMinor } from '../../core/money.ts'
+import { exactNonNegativePercent, formatMinor, mulQty, percentOf, toMinor } from '../../core/money.ts'
 import { purchaseWeightDiscrepancy, moistureRiskLevel } from '../../core/purchases.ts'
 import { inputCls } from './ui.tsx'
 import { ItemQuickPicker, QuickSelect } from './KeyboardPickers.tsx'
@@ -98,6 +98,7 @@ type Props = {
   currencyDecimals: number
   currencySymbol: string
   canViewCost?: boolean
+  saleRoundingVersion?: 2
   taxEnabled?: boolean
   /** عمود ملاحظات البنود (طلب المالك) — يظهر beside كل سطر عند تفعيله */
   showNotes?: boolean
@@ -189,7 +190,7 @@ const MIN_MARGIN_RATIO = 0.1
 
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
-  canViewCost = false, taxEnabled = false, showNotes = false, warnings, costShares, belowCostKeys,
+  canViewCost = false, saleRoundingVersion, taxEnabled = false, showNotes = false, warnings, costShares, belowCostKeys,
   onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
   entry, entryFilter, showReceivingTracking = false,
 }: Props) {
@@ -495,6 +496,14 @@ export function InvoiceLinesTable({
               const warning = warnings?.get(line.key)
               const belowCost = belowCostKeys?.has(line.key)
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
+              let lineNet = Math.round(line.qty * actualPrice)
+              if (kind === 'sale') {
+                try {
+                  const gross = mulQty(line.unitPriceMinor, line.qty)
+                  const discount = saleRoundingVersion === 2 ? exactNonNegativePercent(gross, line.discountPercent ?? 0) : percentOf(gross, line.discountPercent ?? 0)
+                  lineNet = gross - discount
+                } catch { /* مدخل قيد التحرير؛ يبقى الترحيل محروساً */ }
+              }
               /* تلوين تحذيري داخل الخلية (قرار المالك):
                  الكمية حمراء فاتحة إذا تجاوزت المتاح فيصير الرصيد سالباً،
                  والسعر برتقالي إذا نزل تحت هامش الربح الأدنى وأحمر إذا نزل عن التكلفة. */
@@ -544,7 +553,7 @@ export function InvoiceLinesTable({
                   <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value), true)} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
 
-                  {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
+                  {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(lineNet - Math.round(line.qty * (line.unitCostMinor ?? 0)))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
                   {showTaxColumn && (() => {
                     const on = lineTaxOn(line)
@@ -565,7 +574,7 @@ export function InvoiceLinesTable({
                       </td>
                     )
                   })()}
-                  <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
+                  <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(lineNet + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                   <td className={`p-1 ${COL.tools}`}>
                     <div className="invoice-doc-rowtools">
                       <button type="button" title="إضافة صنف في سطر جديد" aria-label="إضافة صنف في سطر جديد" onClick={(event) => { event.stopPropagation(); window.dispatchEvent(new Event('shopsys:open-item')) }}><Plus size={11} /></button>

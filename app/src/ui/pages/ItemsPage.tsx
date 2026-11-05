@@ -198,7 +198,7 @@ export function ItemsPage() {
       ledger: itemLedger,
       period: ledgerFrom || ledgerTo ? `من ${ledgerFrom || 'البداية'} إلى ${ledgerTo || 'اليوم'}` : undefined,
       cur,
-    }))
+    }), { preview: { title: `معاينة كارت صنف — ${cardFor.nameAr} قبل الطباعة` } })
   }
   const matrixItem = matrixFor ? items.find((x) => x.id === matrixFor.id) ?? null : null
 

@@ -143,7 +143,7 @@ const ruleOf = (selector) => {
     'PaymentTerminalsPage.tsx': ['5112', '5113'], // recordPaymentTerminalSettlement: بنك/حساب تسوية الماكينة + عمولة + فروق
     'RentalContractsPage.tsx': ['1104', '2102', '2103', '2109', '4104'], // rental.ts: إيجار + ضريبة + تأمين + إقفال + فواتير دورية
     'EmployeesPage.tsx': ['1107', '2104', '2107', '2111', '2116', '5102', '5117'], // payroll.ts + staffCommissions.ts + مستحقات سائقي النقلات
-    'ClinicPages.tsx': ['1104', '1110', '2102', '4102', '4108'], // clinic.ts (زيارة) + serviceRefund.ts (مرتجع) + registerInsuredVisit (مطالبة تأمين)
+    'ClinicPages.tsx': ['1104', '1110', '2102', '2117', '4102', '4108'], // clinic.ts (زيارة) + serviceRefund.ts (مرتجع) + registerInsuredVisit (مطالبة تأمين)
     'LabPages.tsx': ['1104', '2105', '4106', '5109'], // lab.ts: 4106 إيراد تحاليل + عمولة المحيلين
     'ContractingPages.tsx': ['1104', '1105', '1108', '2101', '2102', '2109', '2116', '4102', '4107', '5110', '5117'], // 1108 عند الدفع الجزئي من ملف عهدة
     'ContractingDepthPages.tsx': ['1104', '1105', '1109', '1111', '2101', '2108', '2112', '4107', '5108', '5110'],
@@ -159,6 +159,9 @@ const ruleOf = (selector) => {
     'WalletServicesPage.tsx': ['1104', '2102', '4103'], // walletServices.ts: الهامش على 4103
     'ProjectOpsPages.tsx': ['1103', '5110'], // projectOps.ts: إذن صرف مواد بالمتوسط المرجح
   }
+  const { buildServiceRefundEntry } = await import('../src/core/serviceRefund.ts')
+  const settledRefund = buildServiceRefundEntry({ refundValueMinor: 100, deliveredGrandMinor: 100, deliveredTaxMinor: 0, priorRefundedMinor: 0, priorRefundedTaxMinor: 0, mode: 'cash', providerShareMinor: 70, providerAccount: '2117', note: 'تحقق' })
+  assert.ok(settledRefund.lines.some(line => line.accountCode === '2117' && line.credit === 70), 'مرتجع التأمين المحصل لا ينشئ الالتزام المعلن')
   const strays = []
   for (const [label, file] of SCREENS) {
     const allowed = new Set(ENGINE[file] ?? [])

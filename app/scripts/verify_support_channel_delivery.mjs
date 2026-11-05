@@ -64,7 +64,7 @@ ok('اللوج المرفق يبقى في الحمولة (يُقصّ في الو
 const authSrc = read('src/data/supportAuth.ts')
 ok('getOrCreateSupportToken يقرأ من مرساة سطح المكتب أولاً', /desktop\.getToken\(\)/.test(authSrc))
 ok('الاعتماد المحلي يُرفع إلى مرساة العملية الرئيسية', /desktop\.setToken\(/.test(authSrc))
-ok('الاعتماد يبقى في التخزين المحلي مشفّراً (ويب)', /encryptForDevice\(token\)/.test(authSrc))
+ok('الاعتماد يبقى في التخزين المحلي مشفّراً (ويب)', /encryptForDevice\(candidate\)/.test(authSrc))
 
 // ── ⑥ الواجهة: لا رسالة كاذبة ─────────────────────────────────────────────
 const pageSrc = read('src/ui/pages/SupportPage.tsx')

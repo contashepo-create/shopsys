@@ -46,7 +46,7 @@ const sumAccount = (code, side, sourceType) => st().journal.filter((e) => !sourc
 const netAccount = (code) => st().journal.reduce((a, e) => a + e.lines.filter((l) => l.accountCode === code).reduce((x, l) => x + l.credit - l.debit, 0), 0)
 
 /* ═══ التأسيس: مشروعان + بنود BOQ + أصناف ومورد وموظف ═══ */
-st().addProject({ nameAr: 'برج النيل', clientName: 'العميل أ', contractValueMinor: 2_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
+st().addProject({ nameAr: 'برج النيل', clientId: 9901, clientName: 'العميل أ', contractValueMinor: 2_000_000, retentionPercent: 10, startDate: '2026-09-01', notes: '' })
 const proj = st().projects.at(-1)
 st().addBoqItem({ projectId: proj.id, code: '1-1', descriptionAr: 'حفر وأساسات', unit: 'م3', qty: 100, unitPriceMinor: 4000 }) // 400,000
 st().addBoqItem({ projectId: proj.id, code: '2-1', descriptionAr: 'مباني', unit: 'م2', qty: 60, unitPriceMinor: 10000 }) // 600,000
@@ -122,7 +122,7 @@ console.log('② المستخلصات: التعديل بقيد عاكس وإعا
   ok('الدفتر متوازن بعد إعادة التقييم الإجمالية', balanced())
 
   /* مشروع مستقل: دورة استرداد دفعة كاملة في التعديل */
-  st().addProject({ nameAr: 'فيلا المنتزه', clientName: 'العميل ب', contractValueMinor: 500_000, retentionPercent: 5, startDate: '2026-09-01', notes: '' })
+  st().addProject({ nameAr: 'فيلا المنتزه', clientId: 9901, clientName: 'العميل ب', contractValueMinor: 500_000, retentionPercent: 5, startDate: '2026-09-01', notes: '' })
   const projB = st().projects.at(-1)
   st().addBoqItem({ projectId: projB.id, code: 'A', descriptionAr: 'تشطيبات', unit: 'مقطوعية', qty: 1, unitPriceMinor: 500_000 })
   const bb = st().boqItems.find((b) => b.projectId === projB.id)

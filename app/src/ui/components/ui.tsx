@@ -326,33 +326,65 @@ export function Modal({
   )
 }
 
-/** حارس موحد للعمليات التي تحتوي كتابة غير محفوظة: يحذر من إغلاق المتصفح أو إلغاء الفاتورة بالخطأ. */
+/**
+ * حارس موحد للعمليات التي تحتوي كتابة غير محفوظة: يحذر من إغلاق المتصفح أو إلغاء الفاتورة بالخطأ.
+ *
+ * بلاغ المالك (2026-10-27): «حفظ وترحيل يُرحّل الفاتورة لكنها تظل مفتوحة، ولا
+ * تُغلق إلا إذا حفظتُ مسودة أولاً». السبب أن `markClean()` كان يُستدعى عند حفظ
+ * المسودة فقط، فيبقى حارس التنقل العام مسجّلاً بعد نجاح الترحيل؛ وحين يُطلب
+ * إغلاق التبويب/النافذة يمرّ `requestCloseTab` على `guardNavigation` فيفتح
+ * حوار «تعديلات غير محفوظة» ويمنع الإغلاق. `markClean()` وحده لا يكفي أيضاً
+ * لأنه `setState` (غير متزامن) بينما الإغلاق يُطلب في نفس الدالة.
+ * الحل: `release()` تُسقط الحراس **تزامنياً** وتُعلن المستند مكتملاً نهائياً.
+ */
 export function useUnsavedChangesGuard(signature: string, initialBaseline = signature) {
   const [baseline, setBaseline] = useState(initialBaseline)
   const pendingDiscard = useRef<(() => void) | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
   const isDirty = signature !== baseline
   const guardToken = useRef<object>({})
+  /** حالة نهائية: مستند رُحّل/أُغلق — لا يُعاد تسجيل أي حارس حتى التفكيك */
+  const released = useRef(false)
+  const unregisterNavigation = useRef<(() => void) | null>(null)
   useEffect(() => {
     const token = guardToken.current
-    setUnsavedChangeGuard(token, isDirty)
+    setUnsavedChangeGuard(token, isDirty && !released.current)
     return () => { setUnsavedChangeGuard(token, false) }
   }, [isDirty])
   const markClean = useCallback(() => { setBaseline(signature) }, [signature])
+  /**
+   * إنهاء المستند بعد حفظ ناجح: تُزيل كل الحراس في الحال (قبل `host.close()`)،
+   * وتُغلق أي حوار تأكيد عالق، وتمنع أي أثر لاحق من إعادة وسم النافذة «متسخة».
+   * آمنة للاستدعاء أكثر من مرة، ولا تُلغي حماية المحررات الأخرى.
+   */
+  const release = useCallback(() => {
+    released.current = true
+    unregisterNavigation.current?.()
+    unregisterNavigation.current = null
+    setUnsavedChangeGuard(guardToken.current, false)
+    pendingDiscard.current = null
+    setPromptOpen(false)
+    setBaseline(signature)
+  }, [signature])
   const requestClose = useCallback((discard: () => void) => {
-    if (!isDirty) { discard(); return }
+    if (!isDirty || released.current) { discard(); return }
     pendingDiscard.current = discard
     setPromptOpen(true)
   }, [isDirty])
   useEffect(() => {
-    if (!isDirty) return
+    if (!isDirty || released.current) return
     const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [isDirty])
   useEffect(() => {
-    if (!isDirty) return
-    return registerNavigationGuard((continueNavigation: () => void) => requestClose(continueNavigation))
+    if (!isDirty || released.current) return
+    const unregister = registerNavigationGuard((continueNavigation: () => void) => requestClose(continueNavigation))
+    unregisterNavigation.current = unregister
+    return () => {
+      unregister()
+      if (unregisterNavigation.current === unregister) unregisterNavigation.current = null
+    }
   }, [isDirty, requestClose])
   const discard = useCallback(() => {
     const action = pendingDiscard.current
@@ -375,7 +407,7 @@ export function useUnsavedChangesGuard(signature: string, initialBaseline = sign
       </div>
     </Modal>
   ), [promptOpen, stay, discard])
-  return useMemo(() => ({ isDirty, markClean, requestClose, prompt }), [isDirty, markClean, requestClose, prompt])
+  return useMemo(() => ({ isDirty, markClean, release, requestClose, prompt }), [isDirty, markClean, release, requestClose, prompt])
 }
 
 /* ─── توست ─── */

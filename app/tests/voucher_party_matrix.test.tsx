@@ -27,7 +27,7 @@ beforeEach(() => {
     employees: [employee, employee2] as never,
     projects: [project] as never,
     projectExtracts: [
-      { id: 51, extractNumber: 'EXT-0051', date: '2026-09-10', projectId: project.id, payment: 'credit', isFinal: false, totals: { grossMinor: 800, vatMinor: 0, retentionMinor: 80, dueMinor: 720 } },
+      { id: 51, extractNumber: 'EXT-0051', date: '2026-09-10', projectId: project.id, payment: 'credit', isFinal: false, journalEntryId: 51, totals: { grossMinor: 800, vatMinor: 0, retentionMinor: 80, dueMinor: 720 } },
     ] as never,
     sales: [
       { id: 1, invoiceNumber: 'SAL-0001', date: '2026-09-20', customerId: customer.id, payment: 'credit', paidMinor: 0, totals: { totalMinor: 1_000 } },
@@ -45,7 +45,12 @@ beforeEach(() => {
       { id: 81, fileId: 61, type: 'fund' as const, date: '2026-09-01', amountMinor: 500, excessMinor: 0, description: 'تعزيز افتتاحي', treasury: '1101', projectId: null, purchaseId: null, journalEntryId: 900 },
     ] as never,
     saleReturns: [], purchaseReturns: [],
-    vouchers: [], clientSettlements: [], journal: [],
+    vouchers: [], clientSettlements: [], journal: [{
+      id: 51, entryNumber: 51, date: '2026-09-10', description: 'قيد المستخلص',
+      sourceType: 'project_extract', sourceCollection: 'projectExtracts', sourceId: 51,
+      lines: [{ accountCode: '1104', debit: 720, credit: 0 }, { accountCode: '1105', debit: 80, credit: 0 }, { accountCode: '4107', debit: 0, credit: 800 }],
+      createdBy: 'اختبار', createdAt: '2026-09-10T00:00:00', reversedByEntryId: null, reversesEntryId: null,
+    }],
     vehicleCostEntries: [], projectCosts: [],
     treasuries: [{ code: '1101', nameAr: 'الخزينة الرئيسية', kind: 'cash', openingBalanceMinor: 100_000, isDefault: true }] as never,
   })

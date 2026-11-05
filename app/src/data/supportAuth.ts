@@ -20,34 +20,47 @@ function base64Url(bytes: Uint8Array): string {
  * التخزين المحلي لا يولّد اعتماداً جديداً؛ والخادم يربط الاعتماد بالجهاز مرة
  * واحدة (TOFU) ⇒ اعتماد جديد يعني رفضاً دائماً (401) بلا طريق عودة.
  */
-export async function getOrCreateSupportToken(): Promise<string> {
-  const desktop = desktopSupportBridge()
+let tokenInFlight: Promise<string> | null = null
 
-  /* ① نسخة سطح المكتب: المرجع خارج القاعدة — لا يُولَّد اعتماد جديد ما دام موجوداً */
+async function resolveSupportToken(): Promise<string> {
+  const desktop = desktopSupportBridge()
   if (desktop) {
-    try {
-      const stored = await desktop.getToken()
-      if (stored && TOKEN_RE.test(stored)) return stored
-    } catch { /* الجسر غير متاح — نكمل بالمسار المحلي */ }
+    // تعذر قراءة المرساة ليس دليلاً على عدم وجودها؛ لا نولّد اعتماداً بديلاً بصمت.
+    const stored = await desktop.getToken()
+    if (stored && TOKEN_RE.test(stored)) return stored
   }
 
-  /* ② النسخة المحلية (ويب، أو أول تشغيل على سطح Desktop) */
-  try {
-    const stored = localStorage.getItem(SUPPORT_TOKEN_KEY)
-    if (stored) {
-      const plain = await decryptForDevice(stored)
-      if (plain && TOKEN_RE.test(plain)) {
-        /* ③ ارفعه إلى مرساة العملية الرئيسية (خارج القاعدة) ليبقى ثابتاً بعدها */
-        if (desktop) { try { await desktop.setToken(plain) } catch { /* لا يقطع العمل */ } }
-        return plain
-      }
+  let localToken: string | null = null
+  const stored = localStorage.getItem(SUPPORT_TOKEN_KEY)
+  if (stored) {
+    localToken = await decryptForDevice(stored)
+    if (!localToken || !TOKEN_RE.test(localToken)) throw new Error('تعذّر قراءة اعتماد الدعم المحفوظ — تواصل مع المطوّر قبل إعادة ربط القناة')
+  }
+  const candidate = localToken ?? base64Url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTES)))
+  if (desktop) {
+    // العملية الرئيسية تكتب حصرياً (wx). إن سبقت نافذة أخرى، نقرأ الفائز.
+    const saved = await desktop.setToken(candidate)
+    const authoritative = saved ? candidate : await desktop.getToken()
+    if (!authoritative || !TOKEN_RE.test(authoritative)) throw new Error('تعذّر حفظ اعتماد الدعم بأمان — تحقق من صلاحيات ملفات التطبيق')
+    if (authoritative !== localToken) {
+      try { localStorage.setItem(SUPPORT_TOKEN_KEY, await encryptForDevice(authoritative)) } catch { /* مرساة سطح المكتب هي المرجع */ }
     }
-  } catch { /* اعتماد تالف أو تخزين غير متاح — نولّد بديلاً */ }
+    return authoritative
+  }
 
-  const token = base64Url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTES)))
-  try { localStorage.setItem(SUPPORT_TOKEN_KEY, await encryptForDevice(token)) } catch { /* يبقى صالحاً للجلسة الحالية */ }
-  if (desktop) { try { await desktop.setToken(token) } catch { /* لا يقطع العمل */ } }
-  return token
+  // لا نربط الخادم باعتماد عابر إذا تعذّر حفظه محلياً.
+  if (!localToken) localStorage.setItem(SUPPORT_TOKEN_KEY, await encryptForDevice(candidate))
+  return candidate
+}
+
+export function getOrCreateSupportToken(): Promise<string> {
+  if (tokenInFlight) return tokenInFlight
+  // Web Locks ينسّق أول إنشاء بين تبويبات الويب التي تشارك localStorage.
+  const operation = typeof navigator !== 'undefined' && navigator.locks
+    ? navigator.locks.request(SUPPORT_TOKEN_KEY, { mode: 'exclusive' }, resolveSupportToken)
+    : resolveSupportToken()
+  tokenInFlight = operation.finally(() => { tokenInFlight = null })
+  return tokenInFlight
 }
 
 /** للاختبارات/إعادة ربط الجهاز من أداة دعم إدارية مستقبلية فقط. */

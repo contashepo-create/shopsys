@@ -20,16 +20,24 @@ import { todayLocalIso } from '../../core/time.ts'
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   in_stock: { label: 'بالمخزون', cls: 'bg-emerald-500/10 text-emerald-600' },
   sold: { label: 'مباعة', cls: 'bg-sky-500/10 text-sky-600' },
+  damaged: { label: 'مرتجع تالف', cls: 'bg-rose-500/10 text-rose-600' },
+  maintenance: { label: 'مستخدمة في الصيانة', cls: 'bg-amber-500/10 text-amber-600' },
   returned_supplier: { label: 'مرتجعة للمورد', cls: 'bg-rose-500/10 text-rose-600' },
 }
 
 export function SerialsPage() {
-  const { serials, items, sales, customers, tradeIns, registerTradeIn } = useDataStore()
+  const { serials, items, sales, customers, batches, tradeIns, registerTradeIn, linkLegacySerialBatch } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
+  const [linkSerial, setLinkSerial] = useState('')
+  const [linkBatchId, setLinkBatchId] = useState('')
+  const [linkEvidence, setLinkEvidence] = useState('')
+  const [linkConfirmed, setLinkConfirmed] = useState(false)
+  const linkUnit = serials.find(unit => unit.serial === linkSerial)
+  const linkCandidates = batches.filter(batch => linkUnit && batch.itemId === linkUnit.itemId && batch.purchaseId === linkUnit.purchaseId && batch.qty > 0)
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier' | 'maintenance' | 'damaged'>('all')
   const today = todayLocalIso()
 
   /* ─── استبدال/مقايضة جهاز قديم (Trade-In) — سد فجوة مستقبلية من تقرير النشاط #3 ───
@@ -139,7 +147,7 @@ export function SerialsPage() {
             style={{ textAlign: 'right' }}
           />
         </div>
-        {(['all', 'in_stock', 'sold', 'returned_supplier'] as const).map((st) => (
+        {(['all', 'in_stock', 'sold', 'returned_supplier', 'maintenance', 'damaged'] as const).map((st) => (
           <button
             key={st}
             onClick={() => setStatusFilter(st)}
@@ -167,6 +175,7 @@ export function SerialsPage() {
                 <th className="px-4 py-2.5">الدخول</th>
                 <th className="px-4 py-2.5">البيع</th>
                 <th className="px-4 py-2.5">الضمان</th>
+                <th className="px-4 py-2.5">دفعة الصلاحية</th>
               </tr>
             </thead>
             <tbody>
@@ -210,6 +219,7 @@ export function SerialsPage() {
                       <span className="text-[10.5px] text-slate-400">{u.warrantyMonths} شهراً عند البيع</span>
                     ) : '—'}
                   </td>
+                  <td className="px-4 py-2">{u.expiryBatch ? <span>{u.expiryBatch.lotNumber || `#${u.batchId}`} · {u.expiryBatch.expiryDate || 'بلا تاريخ'}</span> : u.status === 'in_stock' && items.some(item => item.id === u.itemId && item.trackSerial && item.trackExpiry) ? <button className="text-brand-600 underline" onClick={() => { setLinkSerial(u.serial); setLinkBatchId(''); setLinkEvidence(''); setLinkConfirmed(false) }}>ربط دفعة مثبتة</button> : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -237,6 +247,16 @@ export function SerialsPage() {
           </table>
         </div>
       )}
+
+      <Modal open={!!linkSerial} onClose={() => setLinkSerial('')} title="ربط سيريال قديم بدفعة شرائه" subtitle="افحص العبوة وفاتورة الشراء أولاً؛ هذا الربط لا يغير المخزون أو اليومية ولا يخمّن التاريخ.">
+        <div className="space-y-3">
+          <p className="font-bold" dir="ltr">{linkSerial}</p>
+          <Field label="الدفعة المثبتة في فاتورة شراء السيريال"><select aria-label="الدفعة المثبتة في فاتورة شراء السيريال" className={inputCls} value={linkBatchId} onChange={event => setLinkBatchId(event.target.value)}><option value="">اختر الدفعة</option>{linkCandidates.map(batch => <option key={batch.id} value={batch.id}>{batch.lotNumber || `#${batch.id}`} — {batch.expiryDate || 'بلا تاريخ'} — المتاح {batch.qty}</option>)}</select></Field>
+          <Field label="مرجع الإثبات والسبب"><input aria-label="مرجع الإثبات والسبب" className={inputCls} value={linkEvidence} onChange={event => setLinkEvidence(event.target.value)} placeholder="رقم الفاتورة وبيانات العبوة" /></Field>
+          <label className="flex gap-2"><input type="checkbox" checked={linkConfirmed} onChange={event => setLinkConfirmed(event.target.checked)} /> أؤكد أن العبوة والسيريال والمستند تثبت هذه الدفعة.</label>
+          <Btn onClick={() => { try { linkLegacySerialBatch({ serial: linkSerial, batchId: Number(linkBatchId), reason: linkEvidence, confirmed: linkConfirmed }); toast.show('حُفظ الربط ومرجع الإثبات'); setLinkSerial('') } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذر الربط', 'error') } }}>حفظ الربط</Btn>
+        </div>
+      </Modal>
 
       <Modal open={tradeInOpen} onClose={() => setTradeInOpen(false)} title="استبدال جهاز قديم (Trade-In)" subtitle="يسجَّل الجهاز القديم بالمخزون برصيد دائن للعميل — يُخصم يدوياً من فاتورة الجهاز الجديد عند البيع">
         <div className="space-y-3">

@@ -13,8 +13,27 @@
 // عامل الترخيص وصفحة «حول» الجديد.
 export const LICENSE_CLOUD_BASE_URL = 'https://shopsys-control.mobileshop2026.workers.dev'
 
-// الخدمات الأقدم لا تزال على العامل الكامل: أعلام الميزات وقناة الدعم.
+// عامل الخدمات الأقدم: أعلام الميزات فحسب. **قناة الدعم لم تعد تستخدمه كوجهة
+// أولى** — انظر SUPPORT_CLOUD_BASE_URL أدناه وبلاغ 2026-10-27.
 export const APP_SERVICES_CLOUD_BASE_URL = 'https://shopsys-control.contashepo.workers.dev'
+
+/**
+ * قناة الدعم (بلاغ المالك 2026-10-27: «الإرسال يقول لا يوجد إنترنت رغم وجوده»).
+ * كان الإرسال موجهاً حصراً إلى `APP_SERVICES_CLOUD_BASE_URL` وهو نطاق عامل قديم
+ * غير منشور/غير قابل للحل، فكل طلب يموت في طبقة النقل (status 0) وتُترجم رسالته
+ * إلى «تحقّق من اتصال الإنترنت». العامل الذي يعمل فعلاً ويستجيب لـ`/about`
+ * و`/revoked` و`/activate` هو عامل التحكم هذا؛ أضفنا إليه مسار `/support/:id`
+ * (في tools/devbot/src/supportChannel.js) فصارت وجهة الدعم وجهة حيّة واحدة.
+ * النطاق القديم يبقى **بديلاً** لا أساسياً للتوافق مع المنشآت التي تنشره.
+ */
+export const SUPPORT_CLOUD_BASE_URL = LICENSE_CLOUD_BASE_URL
+/** عناوين بديلة تُجرَّب عند انقطاع النقل أو 404 — بلا تكرار للأساسي. */
+export const SUPPORT_CLOUD_FALLBACK_URLS: readonly string[] = [APP_SERVICES_CLOUD_BASE_URL]
+/** نقاط فحص الاتصال الحقيقي قبل اتهام شبكة العميل (أي رد 2xx يكفي). */
+export const SUPPORT_PROBE_URLS: readonly string[] = [
+  `${LICENSE_CLOUD_BASE_URL}/about`,
+  'https://www.cloudflare.com/cdn-cgi/trace',
+]
 
 /** الاسم السابق يبقى للتوافق مع أي استيراد قديم داخل التطبيق. */
 export const DEFAULT_CLOUD_BASE_URL = LICENSE_CLOUD_BASE_URL

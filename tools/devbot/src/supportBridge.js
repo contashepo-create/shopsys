@@ -1,3 +1,5 @@
+import { runLocalSupportAction } from './supportChannel.js'
+
 /**
  * عميل جسر قناة الدعم — بند 1 من تدقيق 2026-10-08.
  * ───────────────────────────────────────────────────
@@ -25,6 +27,11 @@ export const BRIDGE_SECRET_MIN = 16
  * برسالة عربية تُعرض للمطوّر، فلا يتوقف البوت ولا اللوحة بسبب عامل آخر.
  */
 export async function supportBridge(cfg, action, payload = {}) {
+  /* بلاغ 2026-10-27: حين يستضيف عامل التحكم قناة الدعم بنفسه (الوضع المضبوط
+     في wrangler.toml) تُقرأ المحادثات محلياً — لا جسر شبكة إلى عامل قديم ميت.
+     بلا المتغير يبقى مسار الجسر الأصلي كما هو تماماً (التوافق مع المنشآت التي
+     ما زالت تنشر cloud/worker.js). */
+  if (cfg?.supportLocal === true) return runLocalSupportAction(cfg, action, payload)
   const url = String(cfg?.supportBridgeUrl ?? '').replace(/\/$/, '')
   const secret = String(cfg?.supportBridgeSecret ?? '')
   if (!url || secret.length < BRIDGE_SECRET_MIN) {

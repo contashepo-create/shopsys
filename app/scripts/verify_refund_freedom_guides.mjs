@@ -345,7 +345,7 @@ const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMin
 
   // عدّ الدرج في repo يتبع خزينة الرد الفعلية (r.treasury أولاً)
   const repoSrc = readFileSync(join(root, 'src/data/repo.ts'), 'utf8')
-  assert.ok(repoSrc.includes('treasuryKind: kindOf(r.treasury ?? state.sales.find((s) => s.id === r.saleId)?.treasury)'))
+  assert.ok(repoSrc.includes('treasuryKind: kindOf(r.treasury ?? scoped.sales.find(s => s.id === r.saleId)?.treasury)'))
   ok('settleShiftVariance: عدّ الدرج يتبع خزينة الرد الفعلية لا خزينة البيع')
 }
 
