@@ -1,6 +1,6 @@
 /**
- * أقسام التنقل المتاحة فعلاً للمستخدم الحالي — مصدر واحد يستعمله شريط القوائم
- * والشريط الجانبي و«لوحة الأوامر» (Ctrl+K) فلا تختلف القوائم بينها.
+ * أقسام الشاشات المتاحة للمستخدم الحالي في «لوحة الأوامر» (Ctrl+K).
+ * روابط التنقل الإضافية للشاشة نفسها تُستبعد حتى لا تتكرر نتائج البحث.
  */
 import { useMemo } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -84,6 +84,7 @@ export function useNavSections(): NavSection[] {
         ...sec,
         nameAr: labelFor(effectiveActivityId, sec.id, sec.nameAr),
         children: sec.children
+          .filter((c) => !c.navigationAlias)
           .filter((c) => !c.module || effectiveModules.includes(c.module))
           .filter((c) => !c.feature || effectiveFeatures.includes(c.feature))
           .filter((c) => !c.activities || c.activities.includes(effectiveActivityId ?? ''))

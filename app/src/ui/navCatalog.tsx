@@ -22,6 +22,8 @@ export interface NavChild {
   nameAr: string
   icon: LucideIcon
   path: string
+  /** رابط إضافي لنفس الشاشة يظهر في قوائم التنقل فقط، وليس في دليل الشاشات أو نتائج الأوامر. */
+  navigationAlias?: boolean
   /** يظهر فقط إن كانت هذه الوحدة مفعلة (لعناصر داخل قسم عام) */
   module?: BusinessModule
   /** يظهر فقط إن كانت خاصية الأصناف هذه مفعلة للنشاط (مثل السيريالات) */
@@ -213,7 +215,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'contracting', nameAr: 'المقاولات', icon: HardHat, color: 'orange', module: 'contracting',
     children: [
       // يحتفظ مستخدم المقاولات بموضع العروض المعتاد، إلى جانب القسم العام لكل الأنشطة.
-      { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
+      { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations', navigationAlias: true },
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
       { id: 'project-extracts', nameAr: 'المستخلصات (فواتير الأعمال)', icon: Receipt, path: '/contracting/extracts' },
       { id: 'project-expenses', nameAr: 'مصروفات المشروعات', icon: Banknote, path: '/contracting/expenses' },
