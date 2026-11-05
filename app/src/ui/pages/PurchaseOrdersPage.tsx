@@ -304,7 +304,7 @@ export function PurchaseOrdersPage() {
     host.setClosePrompt({
       hint: 'أمر الشراء لم يُعتمد بعد — «اعتماد» يحفظه في السجل، أو احفظه مسودة وأكمل لاحقاً.',
       saveLabel: 'حفظ كمسودة ثم الإغلاق', discardLabel: 'إغلاق ومسح ما كتبت',
-      onSave: () => { saveDraft(); host.close() }, onDiscard: () => { try { deleteAdvancedInvoiceDraft(draftId) } catch { /* لا مسودة */ } host.close() },
+      onSave: () => { saveDraft(); unsaved.release(); host.close() }, onDiscard: () => { try { deleteAdvancedInvoiceDraft(draftId) } catch { /* لا مسودة */ } unsaved.release(); host.close() },
     })
     return () => host.setClosePrompt(null)
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- تسجيل حوار الإغلاق مرة لكل نافذة؛ الدوال تقرأ الحالة الحالية عند الاستدعاء

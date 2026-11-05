@@ -8355,3 +8355,14 @@ PostCreateInitialization يجدول BEST_EFFORT DeletePathRecursively(partitionP
 - **محاسبة:** فواتير «توثيق المشاريع» (`projectBilling === 'documentation'`) مستبعدة من تقرير المبيعات (بلا إيراد جديد) حتى لا يُحتسب الإيراد مرتين، تماشياً مع `salesSummary`. في المشتريات: «مستحق المورد» = `supplierDueMinor ?? grandTotalMinor`، و«المتبقي على المورد» = مستحق المورد − المدفوع؛ المصاريف المدفوعة من خزينة المنشأة لا تدخل دين المورد.
 - **الملفات:** `src/core/invoiceReports.ts` (جديد) · `src/ui/pages/InvoiceReportsTabs.tsx` (جديد) · `src/core/reportTabs.ts` (تبويبان) · `src/ui/pages/ReportsPage.tsx` (أيقونات/حالة بيانات/رسم) · `scripts/verify_invoice_reports.mjs` (بوابة جديدة) · `tests/invoice_reports.test.tsx` (8 اختبارات: منطق + واجهة) · تحديث `scripts/verify_reports_module_fit.mjs` إلى 10 تبويبات.
 - **التحقق:** `verify_invoice_reports` 7/7 ✓ · `verify_reports_module_fit` 10/10 تبويبات و29 نشاطاً ✓ · `verify:all` 351/351 (331 بوابة + 20 رحلة) ✓ · Vitest: 329 ملفاً و2512 اختباراً (بعد إصلاح تعارض تسمية «اليوم» مع أزرار الفترة السريعة، أُعيدت تسميتها إلى «يوم واحد/شهر واحد/سنة واحدة» حتى لا تلتبس في اختبارات الحالة والوصول).
+
+---
+
+## 1.60 إصلاح إغلاق فاتورة البيع/الشراء عبر «إغلاق وحذف المسودة» (2026-11-05)
+
+**بلاغ المالك:** «فاتورة بيع المقاولات عند إغلاقها والضغط على حذف المسودة والإغلاق لا تغلق؛ الحل المؤقت حفظها كمسودة ثم الضغط على إغلاق فتغلق.»
+
+- **السبب الجذري:** مسار الحذف في `AdvancedSalesInvoicePage`/`AdvancedPurchaseInvoicePage` كان ينفّذ `deleteAdvancedInvoiceDraft(draftId)` فقط، ولا يستدعي `finishDocument()`؛ فبقي حارس «تعديلات غير محفوظة» مسجّلاً والنافذة متسخة، بينما «حفظ كمسودة ثم الإغلاق» كان يستدعي `finishDocument()` فيُغلق. المضيف (نافذة حرة/تبويب/قمر سطح المكتب) كان يغلق في بعض المسارات دون غيرها، فظهر الإغلاق كأنه لا يعمل.
+- **الإصلاح الاحترافي:** أصبح مسار الحذف: `try { deleteAdvancedInvoiceDraft(draftId) } catch {}` ثم `finishDocument()` — أي `unsaved.release()` + `setDirty(false)` + `setClosePrompt(null)` + `host.close()`، فيُغلق في **كل** مسارات المضيف. طُبّق على فاتورة البيع والشراء.
+- **إصلاح إضافي:** `PurchaseOrdersPage` كان ينفّذ `host.close()` دون `unsaved.release()`؛ أُضيف `release()` قبل الإغلاق في الحفظ والحذف حتى لا يمنع حارس التنقل إغلاق التبويب.
+- **الاختبار:** `tests/invoice_close_discard.test.tsx` (3 اختبارات): زر «إغلاق وحذف المسودة» يُغلق نافذة البيع، و`onDiscard` وحده يُغلق نافذة البيع، و`onDiscard` وحده يُغلق نافذة الشراء. نجحت المجموعة الكاملة: 330 ملفاً و2515 اختباراً، و`verify:all` 351/351، و`tsc` و`oxlint` بلا أخطاء.
