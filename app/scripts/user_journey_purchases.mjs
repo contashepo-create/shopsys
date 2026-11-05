@@ -190,7 +190,8 @@ console.log('\n— م6) مرتجع نقدي: استرداد من المورد �
   const inv = st().purchases.filter((p) => p.supplierId === sup.id)[0]
   const cashBefore = bal('1101')
   const stockBefore = st().items.find((i) => i.id === dawa.id).stockQty
-  const ret = st().postPurchaseReturn({ purchaseId: inv.id, qtyByItem: new Map([[dawa.id, 5]]), refund: 'cash', reason: 'عبوات مكسورة', approvedBy: 'المشرف' })
+  const chosenBatch = inv.purchaseExpiryBatches[0].batch
+  const ret = st().postPurchaseReturn({ purchaseId: inv.id, lineSpecs: [{ lineIndex: 0, qty: 5, warehouseId: chosenBatch.warehouseId, batchAllocations: [{ batchId: chosenBatch.id, qty: 5 }] }], refund: 'cash', reason: 'عبوات مكسورة', approvedBy: 'المشرف' })
   assert.equal(bal('1101') - cashBefore, 2500)
   assert.equal(st().items.find((i) => i.id === dawa.id).stockQty, stockBefore - 5)
   ok('المرتجع النقدي: 25 دخلت الخزينة و5 عبوات خرجت من المخزون')

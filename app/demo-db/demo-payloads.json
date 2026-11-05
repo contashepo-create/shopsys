@@ -975,7 +975,8 @@
       "activity": "grocery",
       "return_ref": "pr1",
       "item_ref": "milk",
-      "qty": 5
+      "qty": 5,
+      "batch_purchase_ref": "p2"
      }
     ]
    }
@@ -1672,7 +1673,8 @@
       "activity": "pharmacy",
       "return_ref": "pr1",
       "item_ref": "panad",
-      "qty": 5
+      "qty": 5,
+      "batch_purchase_ref": "p1"
      }
     ]
    }
@@ -2446,7 +2448,8 @@
       "activity": "restaurant",
       "return_ref": "pr1",
       "item_ref": "cola",
-      "qty": 24
+      "qty": 24,
+      "batch_purchase_ref": "p2"
      }
     ]
    }
@@ -3201,7 +3204,8 @@
       "activity": "clothing",
       "return_ref": "pr1",
       "item_ref": "jeans",
-      "qty": 2
+      "qty": 2,
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -3883,7 +3887,8 @@
       "activity": "feed_trade",
       "return_ref": "pr1",
       "item_ref": "corn",
-      "qty": 100
+      "qty": 100,
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -5035,7 +5040,8 @@
       "activity": "contracting",
       "return_ref": "pr1",
       "item_ref": "steel",
-      "qty": 1
+      "qty": 1,
+      "batch_purchase_ref": ""
      }
     ]
    }
@@ -5922,7 +5928,8 @@
       "activity": "equipment_rental",
       "return_ref": "pr1",
       "item_ref": "dieselfilter",
-      "qty": 1
+      "qty": 1,
+      "batch_purchase_ref": ""
      }
     ]
    }

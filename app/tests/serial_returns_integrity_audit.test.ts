@@ -151,3 +151,36 @@ it('يرفض صرف دفعة عندما يتجاوز عدد السيريالات
  expect(() => s.postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 1000, unitCostMinor: 100, discountPercent: 0, soldByWeight: false, serials: ['SER-3'] }], customerId: null, payment: 'cash', treasury: '1101', paidMinor: 1000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })).toThrow(/رصيد دفعة/)
  expect(useRawDataStore.getState().journal).toBe(before.journal)
 })
+it('لا يقبل تكرار رد السيريال السابق بعد العبث بحالة الوحدة', () => {
+  const { s, purchase } = fixture()
+  const args = { purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-2'] }], refund: 'debt' as const, reason: 'رد' }
+  s.postPurchaseReturn(args)
+  useRawDataStore.setState(state => ({ serials: state.serials.map(unit => unit.serial === 'SER-2' ? { ...unit, status: 'in_stock' } : unit) }))
+  const before = useRawDataStore.getState()
+  expect(() => s.postPurchaseReturn(args)).toThrow(/السيريال|سيريال/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يثبت السيريالات على القيد ويسمح برد وحدة أخرى بعد مطابقة المرتجع السابق', () => {
+  const { s, purchase } = fixture()
+  const first = s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-1'] }], refund: 'debt', reason: 'رد' })
+  expect(useRawDataStore.getState().journal.find(e => e.id === first.journalEntryId)?.purchaseReturnSerials).toEqual([{ purchaseLineIndex: 0, itemId: purchase.lines[0].itemId, warehouseId: 1, serials: ['SER-1'] }])
+  s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-2'] }], refund: 'debt', reason: 'رد آخر' })
+  expect(useRawDataStore.getState().serials.map(unit => unit.status)).toEqual(['returned_supplier', 'returned_supplier'])
+})
+it('يحجب رد سيريال آخر عند فساد إثبات المرتجع السابق بالقيد', () => {
+  const { s, purchase } = fixture()
+  const first = s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-1'] }], refund: 'debt', reason: 'رد' })
+  useRawDataStore.setState(state => ({ journal: state.journal.map(entry => entry.id === first.journalEntryId ? { ...entry, purchaseReturnSerials: [] } : entry) }))
+  const before = useRawDataStore.getState()
+  expect(() => s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-2'] }], refund: 'debt', reason: 'رد' })).toThrow(/سيريال/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يرفض تغيير سيريال مرتجع سابق وقيده إلى سيريال سطر آخر حتى لو تطابقا', () => {
+ const { s, item } = fixture(), supplier = useDataStore.getState().suppliers[0]
+ const purchase = s.postPurchase({ supplierId: supplier.id, date: '2026-01-02', lines: [{ itemId: item.id, qty: 2, unitPriceMinor: 100, warehouseId: 1, serialsRaw: 'SER-3\nSER-4' }, { itemId: item.id, qty: 1, unitPriceMinor: 100, warehouseId: 1, serialsRaw: 'SER-5' }], expenses: [], paidMinor: 0, notes: '' })
+ const first = s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-3'] }], refund: 'debt', reason: 'رد' })
+ useRawDataStore.setState(state => ({ purchaseReturns: state.purchaseReturns.map(row => row.id === first.id ? { ...row, lines: row.lines.map(line => ({ ...line, serials: ['SER-5'] })) } : row), journal: state.journal.map(entry => entry.id === first.journalEntryId ? { ...entry, purchaseReturnSerials: entry.purchaseReturnSerials?.map(proof => ({ ...proof, serials: ['SER-5'] })) } : entry) }))
+ const before = useRawDataStore.getState()
+ expect(() => s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1, serials: ['SER-4'] }], refund: 'debt', reason: 'رد' })).toThrow(/سيريال/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})

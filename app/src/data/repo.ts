@@ -9030,8 +9030,10 @@ export const useRawDataStore = create<DataState>()(
           qtyByItem: rawArgs.qtyByItem && new Map([...rawArgs.qtyByItem].map(([itemId, qty]) => [itemId, normalizeMovementQty(qty, true)])),
         }
         const state = get()
-        const purchase = state.purchases.find((p) => p.id === args.purchaseId)
-        if (!purchase) throw new Error('فاتورة الشراء الأصلية غير موجودة')
+        const matches = state.purchases.filter(p => p.id === args.purchaseId)
+        if (matches.length !== 1) throw new Error('فاتورة الشراء الأصلية غير موجودة أو غير فريدة')
+        const purchase = matches[0]
+        if (args.refund !== 'cash' && args.refund !== 'debt') throw new Error('نوع استرداد مرتجع الشراء غير صالح')
         // بوابة اعتماد المستندات (خطة ③): مرتجع شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!args.__approvalBypass) {
           const returnedMinor = args.lineSpecs?.length
@@ -9080,9 +9082,30 @@ export const useRawDataStore = create<DataState>()(
           if (!Number.isSafeInteger(line.qty)) throw new Error('كمية مرتجع السيريال يجب أن تكون عدداً صحيحاً')
           const selected = line.serials?.map(normalizeSerial) ?? []
           if (selected.length !== line.qty || new Set(selected).size !== selected.length) throw new Error('حدد السيريال الفعلي لكل قطعة عائدة للمورد')
+          const priorSerials = new Set<string>()
+          for (const previous of state.purchaseReturns.filter(row => row.purchaseId === purchase.id && row.lines.some(priorLine => priorLine.itemId === line.itemId))) {
+            const entries = state.journal.filter(entry => entry.id === previous.journalEntryId)
+            if (entries.length !== 1 || entries[0].sourceType !== 'purchase_return' || entries[0].sourceId !== previous.id || entries[0].reversedByEntryId != null || !Array.isArray(entries[0].purchaseReturnSerials)) throw new Error('سيريالات مرتجع المورد السابق غير مثبتة بالقيد — يلزم المراجعة')
+            const proof: NonNullable<JournalEntry['purchaseReturnSerials']> = []
+            for (const priorLine of previous.lines) {
+              if (!priorLine.serials?.length) { if (priorLine.itemId === line.itemId) throw new Error('سيريالات مرتجع المورد السابق غير مثبتة — يلزم المراجعة'); continue }
+              if (priorLine.purchaseLineIndex == null || priorLine.warehouseId == null || priorLine.serials.length !== priorLine.qty || new Set(priorLine.serials).size !== priorLine.serials.length || priorLine.serials.some(serial => serial !== normalizeSerial(serial))) throw new Error('سيريالات مرتجع المورد السابق تالفة — يلزم المراجعة')
+              const priorSourceLine = purchase.lines[priorLine.purchaseLineIndex]
+              if (!priorSourceLine || priorSourceLine.itemId !== priorLine.itemId || (priorSourceLine.warehouseId ?? purchase.warehouseId) !== priorLine.warehouseId || !priorSourceLine.serials?.length || priorLine.serials.some(serial => !priorSourceLine.serials!.map(normalizeSerial).includes(serial))) throw new Error('سيريالات المرتجع السابق لا تطابق سطر الشراء — يلزم المراجعة')
+              proof.push({ purchaseLineIndex: priorLine.purchaseLineIndex, itemId: priorLine.itemId, warehouseId: priorLine.warehouseId, serials: [...priorLine.serials] })
+              for (const serial of priorLine.serials) { if (priorSerials.has(serial)) throw new Error('السيريال مكرر في مرتجعات المورد السابقة'); priorSerials.add(serial) }
+            }
+            if (JSON.stringify(proof) !== JSON.stringify(entries[0].purchaseReturnSerials)) throw new Error('إثبات السيريالات في مرتجع المورد لا يطابق القيد')
+          }
+          if (selected.some(serial => priorSerials.has(serial))) throw new Error('السيريال أُعيد للمورد سابقاً')
+          const purchaseEntries = state.journal.filter(entry => entry.id === purchase.journalEntryId)
+          const expiryEvidence = item?.trackExpiry || state.batches.some(batch => batch.itemId === line.itemId) || purchase.purchaseExpiryBatches?.some(row => row.batch.itemId === line.itemId) || purchaseEntries.some(entry => entry.purchaseExpiryBatches?.some(row => row.batch.itemId === line.itemId)) || selected.some(serial => state.serials.some(unit => unit.serial === serial && unit.expiryBatch))
+          const sourceBatches = purchase.purchaseExpiryBatches?.filter(row => row.lineIndex === line.purchaseLineIndex) ?? []
+          if (expiryEvidence && (!Array.isArray(purchase.purchaseExpiryBatches) || purchaseEntries.length !== 1 || purchaseEntries[0].sourceType !== 'purchase' || purchaseEntries[0].sourceId !== purchase.id || purchaseEntries[0].reversedByEntryId != null || !Array.isArray(purchaseEntries[0].purchaseExpiryBatches) || JSON.stringify(purchase.purchaseExpiryBatches) !== JSON.stringify(purchaseEntries[0].purchaseExpiryBatches) || sourceBatches.length !== 1 || purchase.purchaseExpiryBatches.filter(row => sameSerialBatch(row.batch, sourceBatches[0].batch)).length !== 1 || sourceBatches[0].batch.itemId !== line.itemId || sourceBatches[0].batch.purchaseId !== purchase.id || sourceBatches[0].batch.qty !== source?.qty || (sourceBatches[0].batch.warehouseId ?? null) !== (line.warehouseId ?? null))) throw new Error('دفعة سطر شراء السيريال غير مثبتة أو غير مطابقة — يلزم المراجعة')
           for (const serial of selected) {
             const units = state.serials.filter(unit => normalizeSerial(unit.serial) === serial)
             if (selectedSupplierSerials.has(serial) || (originals?.length && !originals.includes(serial)) || units.length !== 1 || units[0].serial !== serial || !getBranchScopedDataState(state).serials.some(unit => unit.id === units[0].id) || units[0].itemId !== line.itemId || units[0].purchaseId !== purchase.id || units[0].status !== 'in_stock') throw new Error(`السيريال ${serial} غير متاح من فاتورة الشراء الأصلية`)
+            if (expiryEvidence && (!units[0].expiryBatch || !sameSerialBatch(units[0].expiryBatch, sourceBatches[0].batch))) throw new Error(`دفعة السيريال ${serial} لا تطابق سطر الشراء الأصلي`)
             selectedSupplierSerials.add(serial)
           }
           line.serials = selected
@@ -9096,7 +9119,7 @@ export const useRawDataStore = create<DataState>()(
           )
           const needed = new Map<string, number>()
           for (const line of lines) {
-            if (line.warehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === line.warehouseId)) {
+            if (line.warehouseId == null || state.warehouses.filter(warehouse => warehouse.id === line.warehouseId).length !== 1 || !getBranchScopedDataState(state).warehouses.some(warehouse => warehouse.id === line.warehouseId)) {
               throw new Error(`مخزن إخراج مرتجع الشراء غير موجود (${line.warehouseId ?? 'غير محدد'})`)
             }
             const key = `${line.warehouseId}:${line.itemId}`
@@ -9142,6 +9165,7 @@ export const useRawDataStore = create<DataState>()(
         // 2) القيد المتوازن — الاسترداد النقدي من المورد «قبض» في خزينة المستخدم.
         if (args.refund === 'cash') {
           const treasuryCode = args.treasury ?? '1101'
+          if (state.treasuries.filter(treasury => treasury.code === treasuryCode).length !== 1 || !getBranchScopedDataState(state).treasuries.some(treasury => treasury.code === treasuryCode)) throw new Error('خزينة استرداد المورد غير موجودة أو غير فريدة في الفرع')
           const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
           const errors = validateTreasuryAccess(user?.treasuryAccess, treasuryCode, 'receipt', supplierValue + inputVatShare)
           if (errors.length) throw new Error(errors.join(' — '))
@@ -9153,8 +9177,9 @@ export const useRawDataStore = create<DataState>()(
         const withdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
         let inventoryOutMinor = 0
         for (const [itemId, qty] of qtyOut) {
-          const item = state.items.find(row => row.id === itemId)
-          if (!item || !getBranchScopedDataState(state).items.some(row => row.id === itemId)) throw new Error('صنف المرتجع غير موجود في الفرع')
+          const matches = state.items.filter(row => row.id === itemId)
+          const item = matches[0]
+          if (matches.length !== 1 || !getBranchScopedDataState(state).items.some(row => row.id === itemId)) throw new Error('صنف المرتجع غير موجود أو غير فريد في الفرع')
           const currentQty = item.stockQty ?? 0
           const currentValue = item.stockValueMinor ?? Math.round(currentQty * item.costMinor)
           const withdrawal = withdrawStockValue(currentQty, currentValue, qty)
@@ -9215,34 +9240,67 @@ export const useRawDataStore = create<DataState>()(
           const newQty = withdrawal.remainingQty, newValue = withdrawal.remainingValueMinor
           return withExactStockValue({ ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor, stockValueMinor: newValue })
         })
-        // تعطيل العلم لا يلغي الدفعات المثبتة تاريخياً ولا يبرر تركها بلا خصم.
-        if ([...qtyOut.keys()].some(itemId => !state.items.find(row => row.id === itemId)?.trackExpiry && (state.batches.some(batch => batch.itemId === itemId) || purchase.purchaseExpiryBatches?.some(row => row.batch.itemId === itemId)))) throw new Error('دفعات صلاحية موجودة رغم تعطيل تتبع الصنف — يلزم المراجعة')
-        // لا يملك المرتجع غير المسلسل بعد اختياراً مثبتاً للدفعة: في تعدد المخازن
-        // كانت FEFO تسحب من مخزن آخر. هذا حظر مؤقت لا يمثل دعماً للتحويل بين الدفعات.
-        if (state.warehouses.length > 1 && [...qtyOut.keys()].some(itemId => {
-          const item = state.items.find(row => row.id === itemId)
-          const hasExpiryEvidence = item?.trackExpiry || state.batches.some(batch => batch.itemId === itemId) || purchase.purchaseExpiryBatches?.some(row => row.batch.itemId === itemId)
-          const hasSelectedSerial = [...selectedSupplierSerials].some(serial => state.serials.some(unit => unit.serial === serial && unit.itemId === itemId && unit.expiryBatch != null))
-          return hasExpiryEvidence && !hasSelectedSerial
-        })) throw new Error('مرتجع صلاحية غير مسلسل مع تعدد المخازن يحتاج اختياراً مثبتاً للدفعة والمخزن — يلزم المراجعة')
-        // في المخزن الوحيد يبقى التوزيع القديم استشارياً، ولا يثبت الاستلام الفعلي.
+        // مرتجع الصلاحية غير المسلسل لا يستنتج الدفعة من FEFO: كل سطر يحدد
+        // الدفعة التي سُلّمت فعلياً، وتُطابق هوية الدفعة بإثبات فاتورة الشراء والقيد.
         let workingBatches = state.batches
-        for (const [itemId, qty] of qtyOut) {
-          if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
-          const item = state.items.find(row => row.id === itemId)!
-          if (item.trackSerial || [...selectedSupplierSerials].some(serial => state.serials.some(unit => unit.serial === serial && unit.itemId === itemId && unit.expiryBatch != null))) {
-            const selected = [...selectedSupplierSerials].filter(serial => state.serials.find(unit => unit.serial === serial)?.itemId === itemId)
-            if (selected.length !== qty) throw new Error('ربط سيريالات مرتجع المورد بالدفعات غير مكتمل')
-            const plan = planSerialBatches(state.serials, workingBatches, itemId, selected, now)
-            workingBatches = applyFefo(workingBatches, plan)
-            continue
+        const returnExpiryProof: NonNullable<JournalEntry['purchaseReturnExpiryBatches']> = []
+        const sourceProof = purchase.purchaseExpiryBatches
+        const purchaseEntries = state.journal.filter(row => row.id === purchase.journalEntryId)
+        const scopedWarehouses = getBranchScopedDataState(state).warehouses
+        for (const line of lines) {
+          const item = state.items.find(row => row.id === line.itemId)
+          const serials = [...selectedSupplierSerials].filter(serial => state.serials.find(unit => unit.serial === serial)?.itemId === line.itemId)
+          const hasExpiry = item?.trackExpiry || state.batches.some(batch => batch.itemId === line.itemId) || sourceProof?.some(row => row.batch.itemId === line.itemId) || purchaseEntries.some(entry => entry.purchaseExpiryBatches?.some(row => row.batch.itemId === line.itemId))
+          if (!hasExpiry) continue
+          if (serials.length) continue // يعالج مسار السيريال وحداته مجمعة أدناه.
+          const fail = () => { throw new Error('إثبات دفعة مرتجع الشراء غير مكتمل أو غير مطابق — يلزم تحديد الدفعة والمخزن ومراجعة التاريخ') }
+          const index = line.purchaseLineIndex
+          if (index == null || !Array.isArray(sourceProof) || purchaseEntries.length !== 1 || purchaseEntries[0].sourceType !== 'purchase' || purchaseEntries[0].sourceId !== purchase.id || purchaseEntries[0].reversedByEntryId != null || !Array.isArray(purchaseEntries[0].purchaseExpiryBatches) || JSON.stringify(sourceProof) !== JSON.stringify(purchaseEntries[0].purchaseExpiryBatches)) fail()
+          const evidence = sourceProof!.filter(row => row.lineIndex === index)
+          if (evidence.length !== 1) fail()
+          const original = evidence[0].batch
+          const purchaseLine = purchase.lines[index!]
+          const warehouseId = line.warehouseId
+          if (!purchaseLine || !Number.isSafeInteger(original.id) || original.id <= 0 || original.purchaseId !== purchase.id || original.itemId !== line.itemId || original.qty !== purchaseLine.qty || warehouseId == null || original.warehouseId !== warehouseId || (purchaseLine.warehouseId ?? purchase.warehouseId) !== warehouseId || state.warehouses.filter(w => w.id === warehouseId).length !== 1 || !scopedWarehouses.some(w => w.id === warehouseId)) fail()
+          const input = args.lineSpecs?.find(spec => spec.lineIndex === index)?.batchAllocations
+          if (!Array.isArray(input) || input.length !== 1 || !Number.isSafeInteger(input[0].batchId) || normalizeMovementQty(input[0].qty) !== line.qty) fail()
+          const selected = input![0]
+          const matchingId = workingBatches.filter(row => row.id === selected.batchId)
+          const matchingIdentity = workingBatches.filter(row => sameExpiryReturnBatch(row, original))
+          if (matchingId.length !== 1 || matchingIdentity.length !== 1 || matchingId[0] !== matchingIdentity[0] || matchingId[0].qty < line.qty || normalizeMovementQty(matchingId[0].qty) !== matchingId[0].qty) fail()
+          let previouslyReturned = 0
+          for (const previous of state.purchaseReturns.filter(row => row.purchaseId === purchase.id && row.lines.some(priorLine => priorLine.itemId === line.itemId && !priorLine.serials?.length))) {
+            const previousEntries = state.journal.filter(row => row.id === previous.journalEntryId)
+            if (previousEntries.length !== 1 || previousEntries[0].sourceType !== 'purchase_return' || previousEntries[0].sourceId !== previous.id || previousEntries[0].reversedByEntryId != null || !Array.isArray(previousEntries[0].purchaseReturnExpiryBatches)) fail()
+            const priorProof: NonNullable<JournalEntry['purchaseReturnExpiryBatches']> = []
+            for (const priorLine of previous.lines) {
+              const alloc = priorLine.expiryBatchAllocation
+              if (!alloc) { if (priorLine.itemId === line.itemId && !priorLine.serials?.length) fail(); continue }
+              if (priorLine.purchaseLineIndex == null || priorLine.warehouseId == null || normalizeMovementQty(alloc.qty) !== priorLine.qty || !Number.isSafeInteger(alloc.batchId) || alloc.batchId <= 0 || !Number.isSafeInteger(alloc.sourceBatchId) || alloc.sourceBatchId <= 0) fail()
+              const priorSource = sourceProof!.filter(row => row.lineIndex === priorLine.purchaseLineIndex)
+              if (priorSource.length !== 1 || priorSource[0].batch.id !== alloc.sourceBatchId || priorSource[0].batch.itemId !== priorLine.itemId || priorSource[0].batch.warehouseId !== priorLine.warehouseId || priorLine.qty > priorSource[0].batch.qty) fail()
+              priorProof.push({ purchaseLineIndex: priorLine.purchaseLineIndex!, itemId: priorLine.itemId, warehouseId: priorLine.warehouseId!, ...alloc })
+              if (priorLine.purchaseLineIndex === index && alloc.sourceBatchId === original.id) previouslyReturned += alloc.qty
+            }
+            if (JSON.stringify(priorProof) !== JSON.stringify(previousEntries[0].purchaseReturnExpiryBatches)) fail()
           }
-          const own = workingBatches.filter((b) => b.itemId === itemId && b.purchaseId === purchase.id)
-          if (own.some(batch => !Number.isSafeInteger(batch.id) || batch.id <= 0 || workingBatches.filter(row => row.id === batch.id).length !== 1)) throw new Error('هوية دفعة الشراء غير فريدة — يلزم المراجعة')
-          const ownPlan = planFefo(own, itemId, qty, now.slice(0, 10))
-          if (ownPlan.untrackedQty > 0) throw new Error('دفعات فاتورة الشراء المتاحة لا تكفي — لا يمكن تخمين دفعة بديلة للمرتجع')
-          workingBatches = applyFefo(workingBatches, ownPlan)
+          if (Math.round((previouslyReturned + line.qty) * 1000) > Math.round(original.qty * 1000)) fail()
+          const allocation = { batchId: selected.batchId, sourceBatchId: original.id, qty: line.qty }
+          line.expiryBatchAllocation = allocation
+          returnExpiryProof.push({ purchaseLineIndex: index!, itemId: line.itemId, warehouseId: warehouseId!, ...allocation })
+          workingBatches = applyFefo(workingBatches, { allocations: [{ batchId: selected.batchId, qty: line.qty, expiryDate: matchingId[0].expiryDate, expired: false }], untrackedQty: 0, touchesExpired: false })
         }
+        for (const [itemId, qty] of qtyOut) {
+          const selected = [...selectedSupplierSerials].filter(serial => state.serials.find(unit => unit.serial === serial)?.itemId === itemId)
+          if (!selected.length) continue
+          const item = state.items.find(row => row.id === itemId)!
+          const hasExpiry = item.trackExpiry || state.batches.some(batch => batch.itemId === itemId) || sourceProof?.some(row => row.batch.itemId === itemId) || purchaseEntries.some(entry => entry.purchaseExpiryBatches?.some(row => row.batch.itemId === itemId)) || selected.some(serial => state.serials.some(unit => unit.serial === serial && unit.expiryBatch != null))
+          if (!hasExpiry) continue
+          if (selected.length !== qty) throw new Error('ربط سيريالات مرتجع المورد بالدفعات غير مكتمل')
+          workingBatches = applyFefo(workingBatches, planSerialBatches(state.serials, workingBatches, itemId, selected, now))
+        }
+        if (returnExpiryProof.length) entry.purchaseReturnExpiryBatches = returnExpiryProof.map(row => ({ ...row }))
+        if (selectedSupplierSerials.size) entry.purchaseReturnSerials = lines.filter(line => line.serials?.length).map(line => ({ purchaseLineIndex: line.purchaseLineIndex!, itemId: line.itemId, warehouseId: line.warehouseId!, serials: [...line.serials!] }))
         const updatedSerials = selectedSupplierSerials.size ? state.serials.map(unit => selectedSupplierSerials.has(unit.serial) ? { ...unit, status: 'returned_supplier' as const } : unit) : state.serials
         // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
         // يترك كميات «المستلم» في الأمر كما كانت — يُعاد احتسابها الآن صافية

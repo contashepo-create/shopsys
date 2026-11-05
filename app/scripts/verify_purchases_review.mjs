@@ -38,7 +38,8 @@ const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
-/* تجهيز */
+/* تجهيز — مخزن فعلي مثبت لدفعات الشراء. */
+if (!st().warehouses.some(w => w.isMain)) st().addWarehouse('المخزن الرئيسي')
 st().addSupplier({ nameAr: 'مورد الاختبار', phone: '0100', notes: '' })
 const sup = st().suppliers.at(-1)
 st().addItem({ nameAr: 'أرز', barcode: '', categoryId: null, unit: 'كجم', costMinor: 0, priceMinor: 3000, stockQty: 0, minStock: 0, trackExpiry: true, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
@@ -117,7 +118,8 @@ let inv1
 {
   // إرجاع 20كجم أرز من الفاتورة الأولى: قيمة دفترية 20×11=220، مستحق المورد 20×10=200
   // حصة الضريبة N2: 280 × (220/2200) = 28
-  const ret = st().postPurchaseReturn({ purchaseId: inv1.id, qtyByItem: new Map([[rice.id, 20]]), refund: 'debt', reason: 'تالف جزئياً', approvedBy: 'المشرف كمال' })
+  const riceBatch = inv1.purchaseExpiryBatches.find(row => row.lineIndex === 0).batch
+  const ret = st().postPurchaseReturn({ purchaseId: inv1.id, lineSpecs: [{ lineIndex: 0, qty: 20, warehouseId: riceBatch.warehouseId, batchAllocations: [{ batchId: riceBatch.id, qty: 20 }] }], refund: 'debt', reason: 'تالف جزئياً', approvedBy: 'المشرف كمال' })
   assert.equal(ret.totalMinor, 22000)
   assert.equal(ret.supplierValueMinor, 20000)
   assert.equal(ret.inputVatShareMinor, 2800)

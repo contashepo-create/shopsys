@@ -375,10 +375,25 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       if (id) qtyByItem.set(id, (qtyByItem.get(id) ?? 0) + num(line.qty))
     }
     if (!qtyByItem.size) { skipped.push(`مرتجع شراء ${str(ret.ref)}: لا أصناف مطابقة`); continue }
+    // بذور العرض وحدها تحمل مرجعاً صريحاً للشراء الذي جاءت منه الدفعة؛
+    // لا نستنتج اختياراً لسجل بلا مرجع أو لسطر ملتبس.
+    const hasBatchChoices = (ret.lines ?? []).some(line => str(line.batch_purchase_ref))
+    const lineSpecs = hasBatchChoices ? (ret.lines ?? []).flatMap(line => {
+      const id = itemId.get(str(line.item_ref))
+      const indexes = purchase.lines.flatMap((row, index) => row.itemId === id ? [index] : [])
+      if (indexes.length !== 1) return []
+      const lineIndex = indexes[0], source = purchase.lines[lineIndex]
+      const chosenPurchaseId = purchaseIdByRef.get(str(line.batch_purchase_ref))
+      const snapshots = chosenPurchaseId === purchase.id ? (purchase.purchaseExpiryBatches ?? []).filter(row => row.lineIndex === lineIndex) : []
+      const original = snapshots.length === 1 ? snapshots[0].batch : undefined
+      const matches = original ? data().batches.filter(batch => batch.itemId === original.itemId && batch.purchaseId === original.purchaseId && (batch.warehouseId ?? null) === (original.warehouseId ?? null) && (batch.lotNumber ?? null) === (original.lotNumber ?? null) && batch.expiryDate === original.expiryDate && batch.receivedAt === original.receivedAt) : []
+      return [{ lineIndex, qty: num(line.qty), warehouseId: source.warehouseId ?? purchase.warehouseId ?? null, ...(matches.length === 1 ? { batchAllocations: [{ batchId: matches[0].id, qty: num(line.qty) }] } : {}) }]
+    }) : undefined
+    if (hasBatchChoices && lineSpecs?.length !== (ret.lines ?? []).length) { skipped.push(`مرتجع شراء ${str(ret.ref)}: سطر الدفعة غير مثبت أو ملتبس`); continue }
     try {
       data().postPurchaseReturn({
         purchaseId: purchase.id,
-        qtyByItem: qtyByItem as never,
+        ...(lineSpecs ? { lineSpecs } : { qtyByItem }),
         refund: (str(ret.refund, 'debt') === 'cash' ? 'cash' : 'debt') as never,
         reason: str(ret.reason, 'مرتجع من البيانات التجريبية'),
         ...(str(ret.treasury_ref) ? { treasury: treasuryCode.get(str(ret.treasury_ref)) as never } : {}),

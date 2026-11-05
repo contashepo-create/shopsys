@@ -468,7 +468,8 @@ CREATE TABLE IF NOT EXISTS purchase_return_lines (
   activity   TEXT NOT NULL,
   return_ref TEXT NOT NULL,
   item_ref   TEXT NOT NULL,
-  qty        REAL NOT NULL
+  qty        REAL NOT NULL,
+  batch_purchase_ref TEXT NOT NULL DEFAULT '' -- اختيار صريح للدفعة في بيانات العرض فقط
 );
 
 CREATE TABLE IF NOT EXISTS vouchers (

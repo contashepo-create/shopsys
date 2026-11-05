@@ -30,7 +30,7 @@ import { rowOpenProps } from '../components/rowOpen.ts'
 import { localDateTimeLabel } from '../../core/time.ts'
 
 export function PurchaseReturnsPage() {
-  const { purchases, purchaseReturns, suppliers, items, serials, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
+  const { purchases, purchaseReturns, suppliers, items, serials, batches, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -38,6 +38,8 @@ export function PurchaseReturnsPage() {
   const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
   const [serialsByLine, setSerialsByLine] = useState<Record<number, string[]>>({})
+  const [batchByLine, setBatchByLine] = useState<Record<number, number>>({})
+  const [confirmedBatches, setConfirmedBatches] = useState(false)
   const [isPosting, setIsPosting] = useState(false)
   const postingRef = useRef(false)
   const [pickOpen, setPickOpen] = useState(false)
@@ -54,7 +56,7 @@ export function PurchaseReturnsPage() {
   // طباعة إشعار مرتجع الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseReturn | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
-  const returnSignature = JSON.stringify({ qtys, serialsByLine, returnWarehouses, refund, treasury, reason })
+  const returnSignature = JSON.stringify({ qtys, serialsByLine, batchByLine, returnWarehouses, refund, treasury, reason })
   const unsaved = useUnsavedChangesGuard(returnSignature)
   useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
   const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
@@ -145,6 +147,8 @@ export function PurchaseReturnsPage() {
     setPurchase(p)
     setQtys({})
     setSerialsByLine({})
+    setBatchByLine({})
+    setConfirmedBatches(false)
     setReturnWarehouses({})
     setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
     setReason('')
@@ -173,10 +177,17 @@ export function PurchaseReturnsPage() {
     setSearchParams({}, { replace: true })
   }, [prefillPurchaseId, prefillItemId, prefillQty, purchase, purchases, setSearchParams, startReturn])
 
+  const needsBatch = (p: PurchaseInvoice, lineIndex: number) => {
+    const line = p.lines[lineIndex], item = items.find(row => row.id === line?.itemId)
+    if (!line || item?.trackSerial || line.serials?.length || serials.some(unit => unit.purchaseId === p.id && unit.itemId === line.itemId)) return false
+    return Boolean(item?.trackExpiry || p.purchaseExpiryBatches?.some(row => row.lineIndex === lineIndex) || journal.some(entry => entry.id === p.journalEntryId && entry.purchaseExpiryBatches?.some(row => row.lineIndex === lineIndex)) || batches.some(batch => batch.itemId === line.itemId))
+  }
+  const batchLines = purchase ? purchase.lines.flatMap((_, index) => Number(qtys[index]) > 0 && needsBatch(purchase, index) ? [index] : []) : []
+  const batchesReady = batchLines.every(index => batchByLine[index] != null) && (batchLines.length === 0 || confirmedBatches)
   // قاعدة المالك المعممة: كل المرتجعات باعتماد مشرف — مرتجع الشراء يخرج بضاعة ويرد مالاً
   const approval = useSupervisorApproval()
   const submit = () => {
-    if (!purchase || postingRef.current) return
+    if (!purchase || postingRef.current || !batchesReady) return
     approval.request((approvedBy) => {
       if (postingRef.current) return
       postingRef.current = true
@@ -187,7 +198,8 @@ export function PurchaseReturnsPage() {
         if (!(qty > 0)) return []
         const source = purchase.lines[lineIndex]
         const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((w) => w.isMain)?.id ?? null
-        return [{ lineIndex, qty, warehouseId, serials: serialsByLine[lineIndex] }]
+        const batchId = batchByLine[lineIndex]
+        return [{ lineIndex, qty, warehouseId, serials: serialsByLine[lineIndex], ...(batchId != null ? { batchAllocations: [{ batchId, qty }] } : {}) }]
       })
       void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postPurchaseReturn({
         purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy,
@@ -331,7 +343,7 @@ export function PurchaseReturnsPage() {
                       <td className="px-3 py-2 space-y-1">
                         <input
                           value={qtys[lineIndex] ?? ''}
-                          onChange={(e) => setQtys((q) => ({ ...q, [lineIndex]: e.target.value }))}
+                          onChange={(e) => { setConfirmedBatches(false); setQtys((q) => ({ ...q, [lineIndex]: e.target.value })) }}
                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector<HTMLElement>('td[tabindex="0"]'))?.focus() } }}
                           placeholder="0"
                           disabled={rem <= 0}
@@ -340,10 +352,17 @@ export function PurchaseReturnsPage() {
                         {Number(qtys[lineIndex]) > 0 && (items.find(item => item.id === l.itemId)?.trackSerial || l.serials?.length) && <fieldset className="mt-2 space-y-1 text-xs"><legend>حدد السيريال للمورد</legend>
                           {serials.filter(unit => unit.itemId === l.itemId && unit.purchaseId === purchase.id && unit.status === 'in_stock' && (l.serials?.length ? l.serials.map(normalizeSerial).includes(unit.serial) : purchase.lines.filter(line => line.itemId === l.itemId).length === 1)).map(unit => <label key={unit.id} className="flex items-center gap-2"><input type="checkbox" checked={serialsByLine[lineIndex]?.includes(unit.serial) ?? false} onChange={event => setSerialsByLine(prev => ({ ...prev, [lineIndex]: event.target.checked ? [...(prev[lineIndex] ?? []), unit.serial] : (prev[lineIndex] ?? []).filter(serial => serial !== unit.serial) }))} />{unit.serial}{unit.expiryBatch && ` · دفعة ${unit.expiryBatch.lotNumber || unit.batchId} · صلاحية ${unit.expiryBatch.expiryDate ?? 'غير مسجلة'}`}</label>)}
                         </fieldset>}
+                        {Number(qtys[lineIndex]) > 0 && needsBatch(purchase, lineIndex) && (() => {
+                          const original = purchase.purchaseExpiryBatches?.find(row => row.lineIndex === lineIndex)?.batch
+                          const candidates = original ? batches.filter(batch => batch.itemId === original.itemId && batch.purchaseId === original.purchaseId && (batch.warehouseId ?? null) === (original.warehouseId ?? null) && (batch.lotNumber ?? null) === (original.lotNumber ?? null) && batch.expiryDate === original.expiryDate && batch.receivedAt === original.receivedAt && batch.qty > 0) : []
+                          return <fieldset className="mt-2 space-y-1 text-xs"><legend>حدد الدفعة التي ستخرج للمورد فعلياً</legend>
+                            {candidates.length !== 1 ? <p>دفعة الشراء غير مثبتة أو غير متاحة بصورة فريدة — يلزم المراجعة.</p> : candidates.map(batch => <label key={batch.id} className="flex items-center gap-2"><input type="checkbox" aria-label={`اختيار دفعة ${batch.lotNumber || batch.id} للمورد`} checked={batchByLine[lineIndex] === batch.id} onChange={event => { setConfirmedBatches(false); setBatchByLine(prev => { const next = { ...prev }; if (event.target.checked) next[lineIndex] = batch.id; else delete next[lineIndex]; return next }) }} />دفعة {batch.lotNumber || batch.id} · صلاحية {batch.expiryDate ?? 'غير مسجلة'} · متاح {batch.qty} · مخزن {warehouses.find(w => w.id === batch.warehouseId)?.nameAr ?? 'غير مثبت'}</label>)}
+                          </fieldset>
+                        })()}
                         {warehouses.length > 0 && (l.warehouseId ?? purchase.warehouseId) == null && (
                           <QuickSelect
                             value={selectedWarehouseId ?? ''}
-                            onChange={(e) => setReturnWarehouses((current) => ({ ...current, [lineIndex]: Number(e.target.value) }))}
+                            onChange={(e) => { setConfirmedBatches(false); setReturnWarehouses((current) => ({ ...current, [lineIndex]: Number(e.target.value) })) }}
                             disabled={rem <= 0}
                             title="المخزن الذي ستخرج منه البضاعة المرتجعة للمورد"
                             className="w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-transparent px-1 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
@@ -358,6 +377,7 @@ export function PurchaseReturnsPage() {
               </tbody>
             </table>
 
+            {batchLines.length > 0 && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={confirmedBatches} onChange={event => setConfirmedBatches(event.target.checked)} />أؤكد فحص الدفعات والكميات الخارجة فعلياً للمورد</label>}
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setRefund('cash')}
@@ -375,7 +395,7 @@ export function PurchaseReturnsPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={closePurchase}>تراجع عن المرتجع</Btn>
-              <Btn onClick={submit} shortcut="F9" disabled={!anyQty || isPosting}>{isPosting ? 'جارٍ الترحيل…' : '📤 تنفيذ المرتجع'}</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!anyQty || !batchesReady || isPosting}>{isPosting ? 'جارٍ الترحيل…' : '📤 تنفيذ المرتجع'}</Btn>
             </div>
           </div>
         )}
@@ -402,7 +422,7 @@ export function PurchaseReturnsPage() {
               <tbody>
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                    <td className="px-3 py-2 font-bold">{l.nameAr}{l.serials?.length ? <div className="text-xs font-normal" dir="ltr">{l.serials.join('، ')}</div> : null}</td>
+                    <td className="px-3 py-2 font-bold">{l.nameAr}{l.serials?.length ? <div className="text-xs font-normal" dir="ltr">{l.serials.join('، ')}</div> : null}{l.expiryBatchAllocation && (() => { const original = purchases.find(p => p.id === viewing.purchaseId)?.purchaseExpiryBatches?.find(row => row.lineIndex === l.purchaseLineIndex && row.batch.id === l.expiryBatchAllocation?.sourceBatchId)?.batch; return <div className="text-xs font-normal">دفعة {original?.lotNumber || l.expiryBatchAllocation.sourceBatchId} · صلاحية {original?.expiryDate ?? 'غير مسجلة'} · كمية {l.expiryBatchAllocation.qty} · مخزن {warehouses.find(w => w.id === l.warehouseId)?.nameAr ?? 'غير مثبت'}</div> })()}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.landedUnitCostMinor)}</td>
                     <td className="px-3 py-2 font-bold">{fmt(Math.round(l.qty * l.landedUnitCostMinor))}</td>

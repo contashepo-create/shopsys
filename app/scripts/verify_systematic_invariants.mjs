@@ -61,6 +61,8 @@ st().addCustomer({ nameAr: 'عميل عام', phone: '', address: '', notes: '',
 const cust = st().customers.at(-1)
 st().addEmployee({ nameAr: 'موظف عام', phone: '', jobTitle: 'إداري', salaryMinor: 600_000, hiredAt: '2026-01-01', notes: '', active: true })
 const emp = st().employees.at(-1)
+// الدفعة المختارة تحتاج مخزناً فعلياً مثبتاً منذ الشراء.
+if (!st().warehouses.some(w => w.isMain)) st().addWarehouse('المخزن الرئيسي')
 
 // أصناف بكل الخصائص: عادي، صلاحية، سيريال، خدمة
 st().addItem(item('عادي', 'N-1', 10_000))
@@ -76,8 +78,11 @@ st().postSale({ lines: [cline(serialItem, 1, 500_000, { serials: ['SN-B'] })], c
 const creditSale = st().sales.at(-1)
 // مرتجع جزئي
 st().postSaleReturn({ saleId: st().sales[0].id, lineSpecs: [{ lineIndex: 0, qty: 2, condition: 'good' }], refund: 'cash', reason: 'فحص منهجي' })
-// مرتجع شراء
-st().postPurchaseReturn({ purchaseId: st().purchases.at(-1).id, qtyByItem: new Map([[expiry.id, 5]]), refund: 'cash', reason: 'فحص' })
+// مرتجع شراء: الدفعة المختارة صراحة من سطر الاستلام الموثق.
+{
+  const purchase = st().purchases.at(-1), batch = purchase.purchaseExpiryBatches[0].batch
+  st().postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 5, warehouseId: batch.warehouseId, batchAllocations: [{ batchId: batch.id, qty: 5 }] }], refund: 'cash', reason: 'فحص' })
+}
 // هالك + صرف داخلي + جرد
 st().postWastage({ reason: 'تلف مخزن', lines: [{ itemId: normal.id, qty: 3 }], notes: '' })
 st().postConsumption({ purpose: 'نظافة', lines: [{ itemId: normal.id, qty: 2 }], notes: '' })

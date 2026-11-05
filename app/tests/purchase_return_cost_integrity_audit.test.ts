@@ -50,3 +50,27 @@ it('يحافظ على قيمة المخزون عندما يكون الجزء ا�
   expect(lines.find(line => line.accountCode === '5101')?.credit).toBe(100)
   expect(lines.reduce((n, line) => n + line.debit - line.credit, 0)).toBe(0)
 })
+it('لا يرحّل استرداداً نقدياً لخزينة شبح أو متكررة', () => {
+ const { s, item, expensive } = fixture(), before = useRawDataStore.getState()
+ expect(() => s.postPurchaseReturn({ purchaseId: expensive.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', treasury: '5101', reason: 'رد' })).toThrow(/خزينة|الخزينة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().items).toBe(before.items)
+})
+it('لا يتجاوز سقف ذمة المورد بتمرير نوع استرداد غير صالح', () => {
+ const { s, item, expensive } = fixture(), before = useRawDataStore.getState()
+ expect(() => s.postPurchaseReturn({ purchaseId: expensive.id, qtyByItem: new Map([[item.id, 1]]), refund: 'invalid', reason: 'رد' } as never)).toThrow(/استرداد|رد/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+ expect(useRawDataStore.getState().items).toBe(before.items)
+})
+it('يرفض حساب خزينة مكرراً دون أثر مالي أو مخزني', () => {
+ const { s, item, expensive } = fixture()
+ useRawDataStore.setState(state => ({ treasuries: [...state.treasuries, { ...state.treasuries.find(t => t.code === '1101')! }] }))
+ const before = useRawDataStore.getState()
+ expect(() => s.postPurchaseReturn({ purchaseId: expensive.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', treasury: '1101', reason: 'رد' })).toThrow(/خزينة|فريدة/)
+ expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يقبل استرداداً لخزينة مسجلة بعد تحديد الصنف والكمية', () => {
+ const { s, item, expensive } = fixture()
+ const ret = s.postPurchaseReturn({ purchaseId: expensive.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', treasury: '1101', reason: 'رد' })
+ expect(useRawDataStore.getState().journal.find(entry => entry.id === ret.journalEntryId)?.lines.some(line => line.accountCode === '1101' && line.debit === 100)).toBe(true)
+})

@@ -140,7 +140,7 @@ export const DEMO_ACTIVITIES = [
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-24', refund: 'debt', reason: 'عبوات لبن منتفخة من التوريد',
-        lines: [{ item_ref: 'milk', qty: 5 }] },
+        lines: [{ item_ref: 'milk', qty: 5, batch_purchase_ref: 'p2' }] },
     ],
     vouchers: [
       { ref: 'v1', kind: 'receipt', doc_date: '2026-09-25', treasury_ref: 'cash-main', party_kind: 'customer', party_ref: 'c1', amount_minor: 18000, description: 'تحصيل دفعة من فاتورة الأسبوع' },
@@ -234,7 +234,7 @@ export const DEMO_ACTIVITIES = [
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p1', doc_date: '2026-09-22', refund: 'cash', treasury_ref: 'bank-qnb', reason: 'قرب انتهاء الصلاحية',
-        lines: [{ item_ref: 'panad', qty: 5 }] },
+        lines: [{ item_ref: 'panad', qty: 5, batch_purchase_ref: 'p1' }] },
     ],
     vouchers: [
       { ref: 'v1', kind: 'receipt', doc_date: '2026-09-23', treasury_ref: 'bank-qnb', party_kind: 'customer', party_ref: 'c1', amount_minor: 60000, description: 'تحصيل تعاقد المستشفى' },
@@ -338,7 +338,7 @@ export const DEMO_ACTIVITIES = [
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-25', refund: 'debt', reason: 'عبوات تالفة من التوريد',
-        lines: [{ item_ref: 'cola', qty: 24 }] },
+        lines: [{ item_ref: 'cola', qty: 24, batch_purchase_ref: 'p2' }] },
     ],
     vouchers: [
       { ref: 'v1', kind: 'receipt', doc_date: '2026-09-26', treasury_ref: 'cash-main', party_kind: 'customer', party_ref: 'c1', amount_minor: 60000, description: 'تحصيل حساب الطاولات' },

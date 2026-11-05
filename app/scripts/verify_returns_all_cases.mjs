@@ -183,7 +183,8 @@ S().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: yog
 const yogInv = S().purchases.at(-1)
 const batchQty0 = S().batches.filter((b) => b.itemId === yog.id).reduce((a, b) => a + b.qty, 0)
 ok('دفعة صلاحية فُتحت بالشراء (20)', batchQty0 === 20, `فعلي ${batchQty0}`)
-S().postPurchaseReturn({ purchaseId: yogInv.id, qtyByItem: new Map([[yog.id, 8]]), refund: 'debt', reason: 'قرب انتهاء' })
+const yogBatch = yogInv.purchaseExpiryBatches[0].batch
+S().postPurchaseReturn({ purchaseId: yogInv.id, lineSpecs: [{ lineIndex: 0, qty: 8, warehouseId: yogBatch.warehouseId, batchAllocations: [{ batchId: yogBatch.id, qty: 8 }] }], refund: 'debt', reason: 'قرب انتهاء' })
 const batchQty1 = S().batches.filter((b) => b.itemId === yog.id).reduce((a, b) => a + b.qty, 0)
 ok('G5: المرتجع خفض كمية الدفعة (20−8=12)', batchQty1 === 12, `فعلي ${batchQty1}`)
 S().addItem(item({ nameAr: 'موبايل', trackSerial: true, warrantyMonths: 12 }))

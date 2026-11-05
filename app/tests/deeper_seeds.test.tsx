@@ -47,10 +47,10 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
     }
   })
 
-  it('يُبلغ صراحة عن مرتجع صلاحية العرض المحجوب ولا يسقط باقي الوثائق', () => {
-    expect(result.skipped.filter((m) => /مرتجع|سند/.test(m))).toEqual([expect.stringMatching(/مرتجع شراء pr1:.*دفعة|مرتجع شراء pr1:.*صلاحية/)])
+  it('لا وثيقة عمق سقطت أثناء التحميل بعد اختيار دفعة اللبن صراحة', () => {
+    expect(result.skipped.filter((m) => /مرتجع|سند/.test(m))).toEqual([])
     expect(result.saleReturns).toBe(2)
-    expect(result.purchaseReturns).toBe(0)
+    expect(result.purchaseReturns).toBe(1)
     expect(result.vouchers).toBe(2)
   })
 
@@ -71,12 +71,14 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
     expect(Math.round(cheese.stockQty)).toBe(16)
   })
 
-  it('الحظر المؤقت لا ينشئ مرتجعاً ولا يغيّر مخزون اللبن دون تحديد الدفعة', () => {
+  it('مرتجع اللبن يخفض المخزون وذمة المورد بالدفعة المحددة في البذرة', () => {
     const state = useDataStore.getState()
-    expect(state.purchaseReturns.length).toBe(0)
-    /* مخزون اللبن: افتتاحي 90 + شراء 50، والمرتجع غير مرحل */
+    expect(state.purchaseReturns.length).toBe(1)
+    expect(state.purchaseReturns[0].refund).toBe('debt')
+    expect(state.purchaseReturns[0].journalEntryId).toBeTruthy()
+    expect(state.purchaseReturns[0].lines[0].expiryBatchAllocation?.qty).toBe(5)
     const milk = state.items.find((it) => it.nameAr.includes('لبن كامل الدسم'))!
-    expect(Math.round(milk.stockQty)).toBe(140)
+    expect(Math.round(milk.stockQty)).toBe(135)
   })
 
   it('رصيد «مطعم البركة» بالضبط: فاتورة 130,900 − مسدد 100,000 − إشعار 12,000 − سند قبض 18,000 = 900', () => {
@@ -85,10 +87,10 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
     expect(state.getCustomerBalance(customer.id)).toBe(900)
   })
 
-  it('رصيد مورد الألبان يبقى 132,000 مع عدم ترحيل المرتجع المحجوب', () => {
+  it('رصيد مورد الألبان 116,000 بعد مرتجع اللبن المثبت وسند الصرف', () => {
     const state = useDataStore.getState()
-    const supplier = state.suppliers.find((s) => s.nameAr.includes('الألبان') || s.nameAr.includes('لبن')) ?? state.suppliers.find((s) => state.getSupplierBalance(s.id) === 132000)
-    expect(state.getSupplierBalance(supplier!.id)).toBe(132000)
+    const supplier = state.suppliers.find((s) => s.nameAr.includes('الألبان') || s.nameAr.includes('لبن')) ?? state.suppliers.find((s) => state.getSupplierBalance(s.id) === 116000)
+    expect(state.getSupplierBalance(supplier!.id)).toBe(116000)
   })
 
   it('السندان موجودان: قبض على 1104 وصرف على 2101 بقيد متوازن لكلٍّ', () => {

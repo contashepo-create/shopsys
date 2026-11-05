@@ -106,6 +106,10 @@ export interface JournalEntry {
   saleReturnExpiryBatches?: { saleLineIndex: number; itemId: number; warehouseId: number | null; condition: 'resellable' | 'damaged'; allocations: { batchId: number; qty: number }[] }[]
   /** نسخة مقابلة من دفعات شراء الصلاحية وقت إنشائها. */
   purchaseExpiryBatches?: { lineIndex: number; batch: StockBatch }[]
+  /** الدفعات المخرجة فعلياً في مرتجع الشراء، لمطابقتها بالمستند. */
+  purchaseReturnExpiryBatches?: { purchaseLineIndex: number; itemId: number; warehouseId: number; batchId: number; sourceBatchId: number; qty: number }[]
+  /** السيريالات المسلمة للمورد في كل سطر من المرتجع. */
+  purchaseReturnSerials?: { purchaseLineIndex: number; itemId: number; warehouseId: number; serials: string[] }[]
   /** لقطة حركة صندوق الوردية للبيع المؤمّن أو رده؛ تُطابق مع سجل المطالبة. */
   insuredShift?: { shiftId: number | null; treasury: string; treasuryKind: 'cash' | 'bank' }
   lines: JournalLine[]
