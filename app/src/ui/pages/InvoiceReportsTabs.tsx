@@ -88,7 +88,7 @@ function RangeFilterBar({
         <label className="text-[10px] font-bold text-slate-400 block mb-1">بحث</label>
         <div className="relative">
           <Search size={13} className="absolute top-1/2 -translate-y-1/2 end-2 text-slate-400" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="رقم الفاتورة / المرجع / الطرف" className={`${inputCls} !py-1.5 pe-7`} data-invoice-search />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="رقم الفاتورة / المرجع / الطرف" aria-label="بحث في الفواتير" className={`${inputCls} !py-1.5 pe-7`} data-invoice-search />
         </div>
       </div>
       <div>
@@ -112,6 +112,11 @@ function RangeFilterBar({
         <button type="button" onClick={onCsv} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-emerald-600 flex items-center gap-1.5"><FileSpreadsheet size={13} /> CSV</button>
         <button type="button" onClick={onPrint} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 flex items-center gap-1.5"><Printer size={13} /> طباعة</button>
       </div>
+      {from && to && from > to && (
+        <div className="w-full rounded-lg bg-rose-500/10 px-3 py-1.5 text-[11px] font-bold text-rose-600" role="alert">
+          تاريخ «من» بعد تاريخ «إلى» — لا توجد فواتير مطابقة. صحّح الفترة.
+        </div>
+      )}
     </div>
   )
 }

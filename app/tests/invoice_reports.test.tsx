@@ -6,7 +6,7 @@
  * والربط بالواجهة (حقول التاريخ/البحث/الحالة) — منطق خالص + محاكاة واجهة.
  */
 import { describe, expect, it, beforeAll, afterEach } from 'vitest'
-import { render, fireEvent, cleanup } from '@testing-library/react'
+import { render, fireEvent, cleanup, screen } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import {
@@ -185,5 +185,13 @@ describe('واجهة تقريرا الفواتير في مركز التقاري�
     setDates('2026-10-01', '2026-10-15')
     expect(document.body.textContent).toContain('PUR-201')
     expect(document.body.textContent).not.toContain('PUR-202')
+  })
+
+  it('تنبيه واضح عند انعكاس فترة التاريخ (من بعد إلى)', () => {
+    mount()
+    fireEvent.click(document.querySelector('[data-report-tab="salesInvoices"]')!)
+    setDates('2026-10-31', '2026-10-01')
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('تاريخ «من» بعد تاريخ «إلى»')
   })
 })
