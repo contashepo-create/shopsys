@@ -154,7 +154,7 @@ function visiblePaths(activity, accountingMode = 'simple') {
   }
   // عيّنات صريحة على الفصل
   const grocery = visiblePaths(ACTIVITY_TEMPLATES.find((a) => a.id === 'grocery'), 'full')
-  assert.ok(!grocery.some((p) => p.startsWith('/contracting') || p.startsWith('/lab') || p.startsWith('/realestate')), 'بقالة ترى أقسام أنشطة أخرى')
+  assert.ok(!grocery.some((p) => (p.startsWith('/contracting') && p !== '/contracting/quotations') || p.startsWith('/lab') || p.startsWith('/realestate')), 'بقالة ترى أقسام أنشطة أخرى')
   const lab = visiblePaths(ACTIVITY_TEMPLATES.find((a) => a.id === 'lab'), 'full')
   // سياسة النواة الموحّدة (2026-10-11): المخزون والمشتريات لكل نشاط —
   // والمعمل يبقى بلا كاشير (مبيعاته كما هي: طلبات تحاليل لا POS)

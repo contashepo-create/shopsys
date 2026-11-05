@@ -77,6 +77,8 @@ export function permissionSectionsForModules(modules: readonly string[]): { id: 
 
 export const PERMISSIONS: PermissionDef[] = [
   // المبيعات
+  { id: 'sales.quotation.manage', nameAr: 'إدارة ومعاينة عروض الأسعار والمناقصات', section: 'sales' },
+  { id: 'sales.quotation.delete', nameAr: 'حذف عرض سعر غير مرتبط بمشروع', section: 'sales', sensitive: true },
   { id: 'sales.pos.open', nameAr: 'فتح شاشة البيع', section: 'sales' },
   { id: 'sales.invoice.create', nameAr: 'إنشاء فاتورة بيع', section: 'sales' },
   { id: 'sales.price.edit', nameAr: 'تعديل سعر البيع في الفاتورة', section: 'sales', sensitive: true },
@@ -261,6 +263,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/logistics/fleet', perm: 'rep.fleet' },
   { prefix: '/logistics', perm: 'ops.activity.use' },
   { prefix: '/lab', perm: 'ops.activity.use' },
+  { prefix: '/contracting/quotations', perm: 'sales.quotation.manage' },
   { prefix: '/contracting', perm: 'ops.activity.use' },
   { prefix: '/clinic', perm: 'ops.activity.use' },
   { prefix: '/cars', perm: 'ops.activity.use' },
@@ -351,6 +354,8 @@ export function effectivePermissionsFor(
   const set = new Set(role?.permissions ?? [])
   for (const p of user.extraPerms ?? []) set.add(p)
   for (const p of user.deniedPerms ?? []) set.delete(p)
+  // توافق الأدوار السابقة: مستخدم البيع/التشغيل يستطيع إدارة العروض، والحذف مستقل.
+  if ((set.has('sales.invoice.create') || set.has('ops.activity.use')) && !user.deniedPerms?.includes('sales.quotation.manage')) set.add('sales.quotation.manage')
   return set
 }
 

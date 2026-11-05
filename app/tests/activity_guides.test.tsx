@@ -35,7 +35,8 @@ describe('دليل النشاط — العزل بين الأنشطة', () => {
     expect(paths).toContain('/pos')
     expect(paths).toContain('/inventory/items')
     expect(paths).toContain('/purchases/invoices')
-    expect(paths.some((p) => p.startsWith('/contracting'))).toBe(false)
+    expect(paths).toContain('/contracting/quotations') // العروض مستند عام لكل الأنشطة
+    expect(paths.some((p) => p.startsWith('/contracting') && p !== '/contracting/quotations')).toBe(false)
     expect(paths.some((p) => p.startsWith('/lab'))).toBe(false)
     expect(paths.some((p) => p.startsWith('/laundry'))).toBe(false)
     expect(paths.some((p) => p.startsWith('/realestate'))).toBe(false)

@@ -8,7 +8,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * إطار InvoicePOSFrame (نفس الترويسة والبنود واللوحات) بدل النافذة البسيطة.
  */
 import { useMemo, useState } from 'react'
-import { Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, CheckCircle2 } from 'lucide-react'
+import { Eye, Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, CheckCircle2 } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -28,6 +28,8 @@ import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { validateQuotation } from '../../core/contracting.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
+import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
 import { todayLocalIso } from '../../core/time.ts'
 
 interface DraftLine { key: string; nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
@@ -38,12 +40,16 @@ const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يو�
 const QUOTE_TERMS = ['الأسعار سارية حتى تاريخ صلاحية العرض', 'الدفع 40% مقدماً و60% عند التسليم', 'مدة التنفيذ تبدأ من تاريخ التوقيع والمقدم', 'لا تشمل الأسعار أي أعمال تخطيط خارج نطاق البنود']
 
 export function QuotationsPage() {
-  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject, updateQuotation, advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft } = useDataStore()
+  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject, updateQuotation, deleteQuotation, appUsers, roleOverrides, customRoles, advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft } = useDataStore()
   const { setup } = useAppStore()
   // «طبع بواسطة» هو المستخدم الذي ينفذ الطباعة، لا مالك المنشأة أو منشئ العرض.
   const currentUserId = useRawDataStore((state) => state.currentUserId)
   const currentUser = useRawDataStore((state) => state.appUsers.find((user) => user.id === state.currentUserId))
   const operatorName = currentUserId == null ? (setup.ownerName?.trim() || 'المالك') : (currentUser?.nameAr?.trim() || 'مستخدم غير معروف')
+  const { effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
+  const permissions = effectivePermissionsFor(currentUserId == null ? null : (appUsers.find(user => user.id === currentUserId) ?? { roleId: '' }), rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
+  const canDelete = permissions.has('sales.quotation.delete')
+  const canConvert = effectiveModules.includes('contracting') && permissions.has('ops.activity.use')
   const toast = useToast()
   const printSwitches = usePrintSwitches()
   const cur = useMemo(
@@ -72,6 +78,18 @@ export function QuotationsPage() {
   const [draftsOpen, setDraftsOpen] = useState(false)
   const [draftId, setDraftId] = useState(() => crypto.randomUUID())
   const [checksOpen, setChecksOpen] = useState(false)
+  const [deleteFor, setDeleteFor] = useState<Quotation | null>(null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const filteredQuotes = quotations.filter(q => (!statusFilter || q.status === statusFilter) && `${q.quoteNumber} ${q.titleAr} ${q.clientName}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+  const doDelete = () => {
+    if (!deleteFor) return
+    try {
+      deleteQuotation(deleteFor.id)
+      setDeleteFor(null)
+      toast.show('حُذف عرض السعر — لم تتغير الأرصدة أو القيود المحاسبية')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const openNew = () => {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
@@ -176,7 +194,7 @@ export function QuotationsPage() {
       docTitle: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
       invoiceNumber: editingQuote?.quoteNumber ?? 'مسودة',
       refCode: editingQuote ? 'QT' : 'DRAFT',
-      dateIso: todayLocalIso(),
+      dateIso: editingQuote?.date ?? todayLocalIso(),
       partyLabel: clientName.trim() || 'عميل غير محدد',
       paymentLabel: `ساري حتى ${validUntil || '—'}`,
       rows: parsedLines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
@@ -188,11 +206,11 @@ export function QuotationsPage() {
       extraFooter: notes.trim() || undefined,
       tax: { label: 'الضريبة', minor: draftTax.taxMinor, baseMinor: draftTax.netMinor },
     })
-    const printDraft = (template: InvoiceTemplate) => {
+    const printDraft = (template: InvoiceTemplate, previewOnly = false) => {
       if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
       const model = buildPrintModel()
       const live = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt
-      if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
+      if (previewOnly || !printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
       printModelWithTemplate(model, cur, live, template, {
         resolveSettings: () => resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt,
       })
@@ -217,11 +235,15 @@ export function QuotationsPage() {
       tax: { label: 'الضريبة', minor: t.taxMinor, baseMinor: t.netMinor },
     })
   }
+  const previewQuotation = (q: Quotation) => {
+    const live = resolveDocumentPrintSettings(q).receipt
+    openPrintPreview({ html: buildModelHtml(quotationModel(q), cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(quotationModel(q), cur, resolveDocumentPrintSettings(q).receipt, 'a4') })
+  }
   const printQuotation = (q: Quotation) => {
     const model = quotationModel(q)
     const live = resolveDocumentPrintSettings(q).receipt
     if (!printSwitches.silentPrint) {
-      openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(quotationModel(q), cur, resolveDocumentPrintSettings(q).receipt, 'a4') })
+      previewQuotation(q)
       return
     }
     printModelWithTemplate(model, cur, live, 'a4', {
@@ -232,7 +254,7 @@ export function QuotationsPage() {
   const transition = (q: Quotation, status: 'submitted' | 'won' | 'lost') => {
     try {
       setQuotationStatus(q.id, status)
-      toast.show(status === 'won' ? `🏆 فاز ${q.quoteNumber} — حوّله لمشروع الآن` : status === 'lost' ? 'سُجل كخاسر' : 'عُلّم كمُقدَّم ✓')
+      toast.show(status === 'won' ? `🏆 فاز ${q.quoteNumber}${canConvert ? ' — حوّله لمشروع الآن' : ''}` : status === 'lost' ? 'سُجل كخاسر' : 'عُلّم كمُقدَّم ✓')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -257,7 +279,7 @@ export function QuotationsPage() {
           kind="sale"
           modeLabel={kind === 'tender' ? 'مناقصة' : 'عرض سعر'}
           currencyLabel={`${cur.code} · ${cur.symbol}`}
-          dateLabel={todayLocalIso()}
+          dateLabel={editingQuote?.date ?? todayLocalIso()}
           branchLabel={resolveDocumentPrintSettings(currentQuotePrintRecord()).setup.shopName ?? ''}
           userLabel={operatorName}
           activityLabel={setup.activityId ?? 'نشاط عام'}
@@ -268,7 +290,7 @@ export function QuotationsPage() {
           onItemSearch={() => document.getElementById('quotation-first-line')?.focus()}
           onSaveDraft={saveDraft}
           onRestoreDraft={() => setDraftsOpen(true)}
-          onPrint={() => printDraft('a4')}
+          onPrint={() => printDraft('a4', true)}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
           onWhatsappPdf={() => { if (!parsedLines.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const ds = resolveDocumentPrintSettings(currentQuotePrintRecord()); shareDocPdfViaWhatsapp({ model: buildPrintModel(), cur, settings: ds.receipt, docLabel: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: editingQuote?.quoteNumber ?? 'مسودة', partyPhone: '', shopName: ds.setup.shopName, toast }) }}
           onPost={save}
@@ -433,9 +455,18 @@ export function QuotationsPage() {
         <Btn onClick={openNew}><Plus size={15} /> عرض / مناقصة</Btn>
       </div>
 
+      <div className="flex flex-wrap gap-2" data-quotation-filters>
+        <input aria-label="بحث عروض الأسعار" placeholder="بحث برقم العرض أو العنوان أو العميل" className={`${inputCls} max-w-md`} value={search} onChange={e => setSearch(e.target.value)} />
+        <QuickSelect aria-label="حالة عرض السعر" className={`${inputCls} max-w-xs`} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <option value="">كل الحالات</option>
+          {Object.entries(QUOTATION_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label.nameAr}</option>)}
+        </QuickSelect>
+        <span className="text-xs text-slate-500 self-center">{filteredQuotes.length} من {quotations.length} عرض</span>
+      </div>
+      {quotations.length > 0 && filteredQuotes.length === 0 && <p role="status">لا عروض مطابقة للبحث أو الحالة المحددة</p>}
       {quotations.length === 0 ? (
           <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-            <EmptyState icon="📋" title="لا عروض أسعار بعد" sub="سجّل عرض سعر أو مناقصة ببنود الأعمال — الفائز يتحول لمشروع كامل بضغطة واحدة" />
+            <EmptyState icon="📋" title="لا عروض أسعار بعد" sub="سجّل عرض سعر أو مناقصة ببنود الأعمال — مع إمكانية المعاينة والطباعة والتعديل والحذف الآمن" />
           </div>
         ) : (
         <>
@@ -458,7 +489,7 @@ export function QuotationsPage() {
               </div>
             )
           })()}
-          <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
@@ -467,11 +498,11 @@ export function QuotationsPage() {
                   <th className="px-4 py-3 font-bold">القيمة</th>
                   <th className="px-4 py-3 font-bold">ساري حتى</th>
                   <th className="px-4 py-3 font-bold">الحالة</th>
-                  <th className="px-4 py-3 font-bold"></th>
+                  <th className="px-4 py-3 font-bold">الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
-                {[...quotations].reverse().map((q, i) => {
+                {[...filteredQuotes].reverse().map((q, i) => {
                   const st = QUOTATION_STATUS_LABELS[q.status]
                   return (
                     <tr key={q.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
@@ -488,7 +519,8 @@ export function QuotationsPage() {
                         }`}>{st.icon} {st.nameAr}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-1 justify-end">
+                        <div className="flex flex-wrap gap-1 justify-end min-w-64">
+                          <button onClick={() => previewQuotation(q)} title="معاينة عرض السعر" data-quotation-preview className="px-2 py-1.5 rounded-lg text-xs font-bold text-sky-600 bg-sky-500/10 flex items-center gap-1"><Eye size={15} /> معاينة</button>
                           {q.projectId == null ? (
                             <button onClick={() => openEdit(q)} title="فتح العرض وتعديله" data-quotation-open className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Pencil size={15} /></button>
                           ) : (
@@ -505,11 +537,12 @@ export function QuotationsPage() {
                               <button onClick={() => transition(q, 'lost')} title="خسر" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><XCircle size={15} /></button>
                             </>
                           )}
-                          {q.status === 'won' && q.projectId == null && (
+                          {canConvert && q.status === 'won' && q.projectId == null && (
                             <button onClick={() => { setConvertFor(q); setConvRetention('5') }} title="تحويل لمشروع" className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-orange-600 bg-orange-500/10 hover:bg-orange-500/20 transition-all flex items-center gap-1">
                               <ArrowLeftCircle size={13} /> حوّله مشروعاً
                             </button>
                           )}
+                          <button onClick={() => setDeleteFor(q)} disabled={!canDelete || q.projectId != null} title={q.projectId != null ? 'لا يمكن حذف عرض تحوّل إلى مشروع' : !canDelete ? 'تحتاج صلاحية حذف عروض الأسعار' : 'حذف عرض السعر'} data-quotation-delete className="px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 bg-rose-500/10 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Trash2 size={15} /> حذف</button>
                           {q.projectId != null && (
                             <span className="text-[11px] px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 size={12} /> مشروع {projects.find((p) => p.id === q.projectId)?.code}</span>
                           )}
@@ -524,6 +557,16 @@ export function QuotationsPage() {
         </>
       )}
 
+      <Modal open={!!deleteFor} onClose={() => setDeleteFor(null)} title="تأكيد حذف عرض السعر">
+        {deleteFor && <div className="space-y-4">
+          <p>هل تريد حذف العرض «{deleteFor.quoteNumber} — {deleteFor.titleAr}» للعميل «{deleteFor.clientName}»؟</p>
+          <p className="text-sm text-slate-500">سيُزال من قائمة العروض ومصادر تعبئة الفواتير، مع الاحتفاظ بمرجعه في سجل التدقيق. لن تتغير الأرصدة أو المخزون أو القيود.</p>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setDeleteFor(null)}>تراجع</Btn>
+            <Btn onClick={doDelete}><Trash2 size={15} /> تأكيد الحذف</Btn>
+          </div>
+        </div>}
+      </Modal>
       {/* تحويل عرض فائز لمشروع */}
       <Modal open={!!convertFor} onClose={() => setConvertFor(null)} title={convertFor ? `🏗️ تحويل ${convertFor.quoteNumber} لمشروع` : ''}>
         {convertFor && (

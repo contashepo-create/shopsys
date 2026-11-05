@@ -2889,6 +2889,7 @@ interface DataState {
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
+  deleteQuotation: (id: number) => void
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** §94-مراجعة: تعديل عرض/مناقصة محفوظ (فتحه وإصلاحه) — محظور بعد تحوله لمشروع */
   updateQuotation: (id: number, changes: { kind?: 'quotation' | 'tender'; clientName?: string; clientId?: number | null; titleAr?: string; validUntil?: string; lines?: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes?: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -3924,6 +3925,7 @@ const BRANCH_STAMP_ID_KEYS = [
   'appUsers', 'pinResetRequests',
 ] as const
 
+const visibleQuotationStateCache = new WeakMap<DataState, DataState>()
 const scopedStateCache = new WeakMap<DataState, Map<number, DataState>>()
 const deniedBranchScopeCache = new WeakMap<DataState, DataState>()
 const NOTIFICATION_READ_KEY_PREFIX = 'notification-read:v1:'
@@ -5030,7 +5032,14 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const activeBranch = getEffectiveActiveBranch(state)
   if (!activeBranch) {
     const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
-    return activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0 ? deniedBranchScope(state) : state
+    if (activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0) return deniedBranchScope(state)
+    if (!state.quotations.some(q => q.deletedAt)) return state
+    let visible = visibleQuotationStateCache.get(state)
+    if (!visible) {
+      visible = { ...state, quotations: state.quotations.filter(q => !q.deletedAt) }
+      visibleQuotationStateCache.set(state, visible)
+    }
+    return visible
   }
 
   let byBranch = scopedStateCache.get(state)
@@ -5232,7 +5241,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scopedClientSettlements = state.clientSettlements.filter(
     (cs) => inBranchOrRelated(cs, scopedCustomerIds.has(cs.customerId)),
   )
-  const scopedQuotations = inBranch(state.quotations)
+  const scopedQuotations = inBranch(state.quotations).filter(q => !q.deletedAt)
   const scopedEquipment = inBranch(state.equipment)
   const scopedEquipmentIds = new Set(scopedEquipment.map((eq) => eq.id))
   const scopedRentalContracts = state.rentalContracts.filter(
@@ -15516,10 +15525,26 @@ export const useRawDataStore = create<DataState>()(
         return quote
       },
 
+      deleteQuotation: (id) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+        const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+        if (state.currentUserId != null && (!user || !effectivePermissionsFor(user, roles).has('sales.quotation.delete'))) throw new Error('لا تملك صلاحية حذف عروض الأسعار')
+        const q = scoped.quotations.find(row => row.id === id)
+        if (!q) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
+        if (q.projectId != null) throw new Error('لا يمكن حذف عرض تحوّل إلى مشروع — احتفظ به كمرجع للمشروع')
+        const at = localIsoTimestamp()
+        set({
+          quotations: state.quotations.map(row => row.id === id ? { ...row, deletedAt: at } : row),
+          auditLog: appendAudit(state.auditLog, [{ at, user: activeUserName(state), kind: 'ops', title: `حذف عرض السعر ${q.quoteNumber} — ${q.titleAr}` }]),
+        })
+      },
+
       setQuotationStatus: (id, status) => {
         const state = get()
         const q = state.quotations.find((x) => x.id === id)
-        if (!q) throw new Error('العرض غير موجود')
+        if (!q || q.deletedAt) throw new Error('العرض غير موجود أو محذوف')
         if (!QUOTATION_TRANSITIONS[q.status].includes(status)) {
           throw new Error(`لا يمكن الانتقال من «${q.status}» إلى «${status}»`)
         }
@@ -15530,7 +15555,7 @@ export const useRawDataStore = create<DataState>()(
       updateQuotation: (id, changes) => {
         const state = get()
         const q = state.quotations.find((x) => x.id === id)
-        if (!q) throw new Error('العرض غير موجود')
+        if (!q || q.deletedAt) throw new Error('العرض غير موجود أو محذوف')
         if (q.projectId != null) throw new Error('العرض تحوّل لمشروع — لا يُعدَّل؛ بنوده صارت جدول كميات المشروع (أوامر التغيير من المشروع)')
         const merged: Quotation = { ...q, ...changes, lines: q.lines } /* البنود تُستبدل بعد التطبيع أدناه — لا تتسرب بنود النوع الفضفاض */
         const fullLines: QuotationLine[] = (changes.lines ?? q.lines).map((l) => ({
@@ -15559,7 +15584,7 @@ export const useRawDataStore = create<DataState>()(
       convertQuotationToProject: (id, retentionPercent) => {
         const state = get()
         const q = state.quotations.find((x) => x.id === id)
-        if (!q) throw new Error('العرض غير موجود')
+        if (!q || q.deletedAt) throw new Error('العرض غير موجود أو محذوف')
         if (q.status !== 'won') throw new Error('يتحول للمشروع العرضُ الفائز فقط — علّمه «فائز» أولاً')
         if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
         /* §95 (محاذاة pro-acc — طلب المالك): قيمة عقد المشروع = صافي العرض **بلا ضريبة** —
