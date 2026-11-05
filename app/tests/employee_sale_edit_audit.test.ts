@@ -83,3 +83,28 @@ it('لا ينقل السداد الذي أجراه الموظف إلى موظف 
   expect(() => s.editSale({ ...args, paymentAllocations: [{ ...args.paymentAllocations[0], employeeId: other.id }] })).toThrow(/المسترد|تسوية/)
   expect(useRawDataStore.getState().journal).toBe(before.journal)
 })
+it('يرفض تحويل تحصيل الفاتورة إلى موظف غير نشط أو غير فريد', () => {
+  const { s, args } = fixture()
+  s.addEmployee({ nameAr: 'موظف جديد', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
+  const other = useRawDataStore.getState().employees.at(-1)!
+  useRawDataStore.setState(state => ({ employees: state.employees.map(row => row.id === other.id ? { ...row, active: false } : row) }))
+  const edit = { ...args, paymentAllocations: [{ ...args.paymentAllocations[0], employeeId: other.id }] }
+  const before = useRawDataStore.getState()
+  expect(() => s.editSale(edit)).toThrow(/موظف/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يبقي تحصيل الموظف المعطّل كما هو لكنه لا يزيد مبلغه دون موظف نشط', () => {
+  const { s, employee, args } = fixture()
+  useRawDataStore.setState(state => ({ employees: state.employees.map(row => row.id === employee.id ? { ...row, active: false } : row) }))
+  expect(() => s.editSale(args)).not.toThrow()
+  const before = useRawDataStore.getState()
+  expect(() => s.editSale({ ...args, paidMinor: 700, paymentAllocations: [{ ...args.paymentAllocations[0], amountMinor: 700 }] })).toThrow(/موظف/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})
+it('يحجب تعديل الفاتورة إذا أصبحت هوية خزينة التحصيل مكررة', () => {
+  const { s, args } = fixture()
+  useRawDataStore.setState(state => ({ treasuries: [...state.treasuries, { ...state.treasuries.find(row => row.code === '1101')! }] }))
+  const before = useRawDataStore.getState()
+  expect(() => s.editSale(args)).toThrow(/خزينة.*فريد|تحصيل.*فريد/)
+  expect(useRawDataStore.getState().journal).toBe(before.journal)
+})

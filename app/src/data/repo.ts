@@ -8374,13 +8374,19 @@ export const useRawDataStore = create<DataState>()(
         }
         if (paidM > 0) {
           const checks = args.paymentAllocations?.length ? args.paymentAllocations : [{ accountCode: args.treasury ?? '1101', amountMinor: paidM }]
+          const scoped = getBranchScopedDataState(state)
+          const staff = checks.filter(row => row.accountCode === '1107' || row.employeeId != null)
+          if (staff.length && (args.partyKind ?? 'customer') !== 'customer') throw new Error('تحصيل الموظف مع طرف غير العميل يحتاج تسوية مستقلة')
+          if (new Set(staff.map(row => row.employeeId)).size !== staff.length) throw new Error('موظف التحصيل مكرر')
           const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
           for (const allocation of checks) {
+            if (!Number.isSafeInteger(allocation.amountMinor) || allocation.amountMinor <= 0) throw new Error('قيمة التحصيل غير صالحة')
             if (allocation.accountCode === '1107') {
-              if (!allocation.employeeId || !state.employees.some((employee) => employee.id === allocation.employeeId && employee.active)) throw new Error('اختر موظفاً نشطاً للتحصيل على حسابه')
+              if (!Number.isSafeInteger(allocation.employeeId) || state.employees.filter(employee => employee.id === allocation.employeeId).length !== 1 || !scoped.employees.some(employee => employee.id === allocation.employeeId && employee.active)) throw new Error('موظف التحصيل غير موجود أو غير فريد أو غير نشط في الفرع')
               continue
             }
-            if (!state.treasuries.some((treasury) => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود (${allocation.accountCode})`)
+            if (allocation.employeeId != null) throw new Error('موظف التحصيل يتطلب حساب الموظفين 1107')
+            if (state.treasuries.filter(treasury => treasury.code === allocation.accountCode).length !== 1 || !scoped.treasuries.some(treasury => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود أو غير فريد في الفرع (${allocation.accountCode})`)
             const errors = validateTreasuryAccess(user?.treasuryAccess, allocation.accountCode, 'receipt', allocation.amountMinor)
             if (errors.length) throw new Error(errors.join(' — '))
           }
@@ -8540,12 +8546,15 @@ export const useRawDataStore = create<DataState>()(
 
         const employeeCollections: EmployeeAdvance[] = (args.paymentAllocations ?? []).filter((row) => row.accountCode === '1107' && row.employeeId).map((row, index) => ({ id: nextId(state.employeeAdvances) + index, advanceNumber: `ADV-${String(nextId(state.employeeAdvances) + index).padStart(4, '0')}`, employeeId: row.employeeId!, date: now.slice(0, 10), amountMinor: row.amountMinor, recoveredMinor: 0, source: 'sale_collection', custodyFileId: null, treasury: (args.treasury ?? '1101') as TreasuryAccount, notes: `تحصيل فاتورة ${invoiceNumber} على حساب الموظف`, journalEntryId: entryId }))
 
-        const commissionInputs = [...(args.staffCommissions ?? []), ...(args.staffCommission ? [args.staffCommission] : [])].filter((row) => row.amountMinor > 0)
+        const requestedCommissions = [...(args.staffCommissions ?? []), ...(args.staffCommission ? [args.staffCommission] : [])]
+        if (requestedCommissions.some(row => !Number.isSafeInteger(row.amountMinor) || row.amountMinor < 0)) throw new Error('مبلغ عمولة الموظف غير صالح')
+        const commissionInputs = requestedCommissions.filter((row) => row.amountMinor > 0)
         const commissions: StaffCommission[] = []
         const commissionEntries: JournalEntry[] = []
         for (const [index, input] of commissionInputs.entries()) {
-          const employee = state.employees.find((row) => row.id === input.employeeId && row.active)
-          if (!employee) throw new Error('موظف العمولة غير موجود أو غير نشط')
+          const matches = state.employees.filter(row => row.id === input.employeeId)
+          const employee = matches[0]
+          if (matches.length !== 1 || !employee.active || !getBranchScopedDataState(state).employees.some(row => row.id === input.employeeId)) throw new Error('موظف العمولة غير موجود أو غير فريد أو غير نشط في الفرع')
           const description = input.description?.trim() || `عمولة فاتورة ${invoiceNumber}`
           const errors = validateStaffCommission({ employeeId: employee.id, amountMinor: input.amountMinor, description })
           if (errors.length) throw new Error(errors.join(' — '))
@@ -10826,8 +10835,10 @@ export const useRawDataStore = create<DataState>()(
           const scoped = getBranchScopedDataState(state)
           const sourceEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
           const source = sourceEntries[0]
-          const badStaff = (rows: typeof oldStaff) => rows.some(row => row.accountCode !== '1107' || !Number.isSafeInteger(row.employeeId) || !Number.isSafeInteger(row.amountMinor) || row.amountMinor <= 0 || !scoped.employees.some(employee => employee.id === row.employeeId))
-          if (sale.partyKind != null || badStaff(oldStaff) || badStaff(newStaff) || new Set(oldStaff.map(row => row.employeeId)).size !== oldStaff.length || new Set(newStaff.map(row => row.employeeId)).size !== newStaff.length) throw new Error('تحصيل الموظف غير صالح أو مكرر — يلزم المراجعة')
+          const badStaff = (rows: typeof oldStaff) => rows.some(row => row.accountCode !== '1107' || !Number.isSafeInteger(row.employeeId) || !Number.isSafeInteger(row.amountMinor) || row.amountMinor <= 0 || state.employees.filter(employee => employee.id === row.employeeId).length !== 1 || !scoped.employees.some(employee => employee.id === row.employeeId))
+          // يُسمح بإبقاء تحصيل تاريخي كما هو للموظف المعطّل، لا بإسناد تحصيل جديد أو تغيير قيمته له.
+          const newInactiveStaff = newStaff.some(row => !oldStaff.some(old => old.employeeId === row.employeeId && old.amountMinor === row.amountMinor) && !scoped.employees.some(employee => employee.id === row.employeeId && employee.active))
+          if (sale.partyKind != null || badStaff(oldStaff) || badStaff(newStaff) || newInactiveStaff || new Set(oldStaff.map(row => row.employeeId)).size !== oldStaff.length || new Set(newStaff.map(row => row.employeeId)).size !== newStaff.length) throw new Error('تحصيل الموظف غير صالح أو مكرر — يلزم المراجعة')
           for (const advance of oldStaffRecords) {
             const replacement = newStaff.find(row => row.employeeId === advance.employeeId)
             if (advance.recoveredMinor > (replacement?.amountMinor ?? 0)) throw new Error('لا يمكن تخفيض أو تغيير الموظف لأقل من المسترد من السلفة — يلزم تسوية مثبتة مستقلة')
@@ -10969,7 +10980,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const user = state.appUsers.find((row) => row.id === state.currentUserId)
         if (paidM > 0) {
-          if (!state.treasuries.some((row) => row.code === args.treasury)) throw new Error(`خزينة التحصيل غير موجودة (${args.treasury})`)
+          if (state.treasuries.filter(row => row.code === args.treasury).length !== 1 || !getBranchScopedDataState(state).treasuries.some(row => row.code === args.treasury)) throw new Error(`خزينة التحصيل غير موجودة أو غير فريدة في الفرع (${args.treasury})`)
           const receiptErrors = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'receipt', paidM)
           if (receiptErrors.length) throw new Error(receiptErrors.join(' — '))
         }
@@ -10989,7 +11000,7 @@ export const useRawDataStore = create<DataState>()(
         const availableTreasuries = getBranchScopedDataState(state).treasuries
         for (const allocation of freshAllocations) {
           if (allocation.accountCode === '1107' && allocation.employeeId != null && newStaff.includes(allocation)) continue
-          if (!availableTreasuries.some(treasury => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود في الفرع (${allocation.accountCode})`)
+          if (state.treasuries.filter(treasury => treasury.code === allocation.accountCode).length !== 1 || !availableTreasuries.some(treasury => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود أو غير فريد في الفرع (${allocation.accountCode})`)
           const errors = validateTreasuryAccess(user?.treasuryAccess, allocation.accountCode, 'receipt', allocation.amountMinor)
           if (errors.length) throw new Error(errors.join(' — '))
         }

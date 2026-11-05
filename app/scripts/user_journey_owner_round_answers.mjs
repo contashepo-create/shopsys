@@ -100,7 +100,7 @@ console.log('\n═══ ② تحصيل الموظف: مفرد + متعدد ال
   assert.equal(acctBal('1107'), 0, 'حساب 1107 صفر بعد السداد')
   ok('(د) سند قبض 3,000 من الموظف (1107/1101): رصيده صُفّر وحساب السلف أُطفئ')
   // (هـ) حارس المحرك: 1107 بلا موظف نشط مرفوض
-  assert.throws(() => st().postSale({ lines: cart(1), customerId: noLimitCust.id, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, paymentAllocations: [{ accountCode: '1107', amountMinor: 100000 }] }), /موظفاً نشطاً/)
+  assert.throws(() => st().postSale({ lines: cart(1), customerId: noLimitCust.id, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, paymentAllocations: [{ accountCode: '1107', amountMinor: 100000 }] }), /موظف التحصيل.*الفرع/)
   ok('(هـ) التحصيل على 1107 بلا تحديد موظف نشط يُرفض صراحة')
 }
 
