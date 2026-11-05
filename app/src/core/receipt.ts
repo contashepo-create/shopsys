@@ -71,6 +71,10 @@ export interface ReceiptSettings {
   // ─── تحكم كامل في إظهار/إخفاء عناصر الفاتورة ───
   showLogo: boolean
   showHeaderLines: boolean
+  /** رقم هاتف المنشأة المسجل وسطور الهاتف في ترويسة الفاتورة. */
+  showShopPhone: boolean
+  /** قيمة هوية الفرع الفعلية؛ تُحقن عند حل إعدادات الطباعة ولا يحررها مفتاح الإظهار. */
+  identityPhone?: string
   showDate: boolean
   showCustomer: boolean
   showPayment: boolean
@@ -118,6 +122,7 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   watermarkColor: '#64748b',
   showLogo: true,
   showHeaderLines: true,
+  showShopPhone: true,
   showDate: true,
   showCustomer: true,
   showPayment: true,
@@ -151,6 +156,8 @@ export interface ReceiptRow {
 export interface ReceiptModel {
   shopName: string
   headerLines: string[]
+  /** رقم هوية الفرع لحظة بناء النموذج، لا هوية الفرع المعروض عند المعاينة. */
+  identityPhone?: string
   /** عنوان المستند المطبوع — الافتراضي «فاتورة مبيعات»؛ للمرتجع: «مرتجع مبيعات» */
   docTitle?: string
   /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
@@ -177,6 +184,19 @@ export interface ReceiptModel {
   footerText: string
   /** رمز QR زاتكا (Data URL) — يُطبع أسفل الفاتورة عند تفعيل الميزة (القرار 30) */
   qrDataUrl?: string
+}
+
+/** سطور الترويسة المرئية في كل قوالب الفواتير، دون تغيير النموذج أو الإعدادات المحفوظة. */
+export function invoiceHeaderLines(model: ReceiptModel, settings: ReceiptSettings): string[] {
+  if (!settings.showHeaderLines) return []
+  if (settings.showShopPhone !== false) return model.headerLines
+  const digits = (value: string) => value.replace(/[٠-٩۰-۹]/g, char => String('٠١٢٣٤٥٦٧٨٩'.indexOf(char) >= 0 ? '٠١٢٣٤٥٦٧٨٩'.indexOf(char) : '۰۱۲۳۴۵۶۷۸۹'.indexOf(char))).replace(/[^0-9]/g, '')
+  const registeredPhone = digits(model.identityPhone ?? '')
+  return model.headerLines.filter(line => {
+    if (/(?:هاتف|تليفون|تلفون|جوال|موبايل|(?:^|[^a-z])(?:phone|tel|mobile)(?:[^a-z]|$))/i.test(line)) return false
+    // يحجب الرقم المسجل أيضاً عند تكراره في سطر مخصص دون تسمية.
+    return registeredPhone.length < 6 || !digits(line).includes(registeredPhone)
+  })
 }
 
 /** بناء نموذج الإيصال من الفاتورة — كل الأرقام من totals المحفوظة (لا إعادة حساب) */
@@ -238,6 +258,7 @@ export function buildReceiptModel(args: {
   return {
     shopName: settings.shopName || 'تَحَكَّم',
     headerLines: settings.headerLines.filter((l) => l.trim()),
+    identityPhone: settings.identityPhone,
     operatorName: args.operatorName?.trim() || 'المالك',
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode ?? '',
@@ -301,6 +322,7 @@ export function buildSimpleDocModel(args: {
   return {
     shopName: args.settings.shopName || 'تَحَكَّم',
     headerLines: args.settings.headerLines.filter((l) => l.trim()),
+    identityPhone: args.settings.identityPhone,
     operatorName: args.operatorName?.trim() || 'المالك',
     docTitle: args.docTitle,
     invoiceNumber: args.invoiceNumber,

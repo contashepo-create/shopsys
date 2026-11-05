@@ -574,14 +574,14 @@ function withBranchIdentityHeaderLines(
   // يتسرب رقم أو عنوان قديم من بيانات رئيسية منسوخة إلى مستند الفرع.
   if (nameOnlyWhenIncomplete && branchIdentityMissingFields(identitySetup, einvoice).length > 0) {
     // الفرع غير المكتمل يطبع اسمه وحده: لا ترويسة تعريفية ولا شعار ناقص.
-    return { ...receipt, headerLines: [], logoDataUrl: '' }
+    return { ...receipt, identityPhone: cleanIdentityValue(identitySetup.phone), headerLines: [], logoDataUrl: '' }
   }
   const identityLines = branchIdentityHeaderLines(identitySetup, einvoice)
   const headerLines = [...new Set([
     ...identityLines,
     ...receipt.headerLines.filter((line) => line.trim()),
   ])]
-  return headerLines.length ? { ...receipt, headerLines } : receipt
+  return { ...receipt, identityPhone: cleanIdentityValue(identitySetup.phone), headerLines }
 }
 
 function sanitizedBranchReceipt(baseReceipt: ReceiptSettings, shopName: string): ReceiptSettings {

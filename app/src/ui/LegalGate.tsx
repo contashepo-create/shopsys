@@ -6,7 +6,8 @@
  * عند تحديث إصدار الاتفاقية.
  */
 import { useState } from 'react'
-import { Check, FileText, ShieldCheck, Scale, X } from 'lucide-react'
+import { ArrowRight, Check, FileText, ShieldCheck, Scale, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useAppStore } from '../stores/app.store.ts'
 import { EULA, PRIVACY, LEGAL_VERSION, LEGAL_CONSENT_CHECKBOXES } from '../core/legal.ts'
 
@@ -118,6 +119,11 @@ export function LegalPage() {
   const [tab, setTab] = useState<'eula' | 'privacy'>('eula')
   return (
     <div className="grid grid-cols-1 gap-5">
+      <div>
+        <Link to="/settings/about" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 hover:text-brand-600 hover:border-brand-400">
+          <ArrowRight size={16} /> رجوع إلى حول التطبيق
+        </Link>
+      </div>
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
         <div className="flex items-center justify-between p-5 bg-gradient-to-l from-brand-600/10 to-fuchsia-600/10 border-b border-slate-100 dark:border-slate-800">
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2"><Scale size={17} className="text-brand-500" /> الاتفاقية والخصوصية — إصدار {LEGAL_VERSION}</div>

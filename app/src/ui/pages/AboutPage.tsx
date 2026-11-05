@@ -3,10 +3,10 @@
  * Cloudflare Worker (نقطة /about) — تتحدث تلقائياً عند توفر الإنترنت
  * وتعمل بآخر نسخة محفوظة أوفلاين.
  */
-import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale, Mail, MapPin, Clock, DownloadCloud, ShieldCheck } from 'lucide-react'
+import { Info, MessageCircle, Phone, Send, Globe, RefreshCw, Scale, Mail, MapPin, Clock, DownloadCloud, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { fetchAbout, fetchAccountMessage, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink } from '../../core/cloud.ts'
+import { fetchAbout, fetchAccountMessage, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT, hasAboutContact, whatsappLink, sanitizeAboutWhatsapp, sanitizeAboutTelegram } from '../../core/cloud.ts'
 import { DeveloperMessage } from '../components/DeveloperMessage.tsx'
 import { DesktopUpdater } from '../components/DesktopUpdater.tsx'
 import { isElectronRuntime } from '../../data/desktopBridge.ts'
@@ -20,6 +20,9 @@ export function AboutPage() {
   const toast = useToast()
   const [busy, setBusy] = useState(false)
   const about = cloudAbout ?? FALLBACK_ABOUT
+  // حتى النسخة المخزنة أوفلاين تمر بنفس تنقية البيانات قبل استخدامها في رابط خارجي.
+  const whatsapp = sanitizeAboutWhatsapp(about.supportWhatsapp)
+  const telegram = sanitizeAboutTelegram(about.supportTelegram)
 
   // رسالة المطوّر لهذا الجهاز: تُحدَّث عند فتح «حول» (بجانب المزامنة الدورية)
   useEffect(() => {
@@ -61,26 +64,28 @@ export function AboutPage() {
         <h1 className="text-2xl font-black">{about.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{about.body}</p>
         <DeveloperMessage message={cloudAccountMessage} />
-        {/* بند 9 (تدقيق 2026-10-08): كل قنوات التواصل — تُملأ من لوحة المطوّر.
-            الروابط معقّمة في parseAbout (http/https/mailto/tel فقط). */}
+        {/* قناتا المطوّر ظاهرتان دائماً، لكن لا ننشئ رابطاً عند غياب البيانات. */}
+        <div className="flex items-center justify-center gap-3 flex-wrap text-sm font-bold pt-1" aria-label="التواصل مع المطوّر">
+          {whatsapp ? (
+            <a href={whatsappLink(whatsapp)} target="_blank" rel="noopener noreferrer" aria-label="مراسلة المطوّر على واتساب" title="مراسلة المطوّر على واتساب"
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 px-3 py-2 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:hover:bg-emerald-950/30">
+              <span className="relative inline-flex"><MessageCircle size={21} /><Phone size={10} className="absolute left-[5px] top-[5px]" /></span> واتساب
+            </a>
+          ) : <span aria-disabled="true" title="رقم واتساب غير مضبوط في لوحة المطوّر" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-slate-400"><MessageCircle size={21} /> واتساب غير مضبوط</span>}
+          {telegram ? (
+            <a href={`https://t.me/${telegram}`} target="_blank" rel="noopener noreferrer" aria-label="مراسلة المطوّر على تليجرام" title="مراسلة المطوّر على تليجرام"
+              className="inline-flex items-center gap-2 rounded-xl border border-sky-200 px-3 py-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:hover:bg-sky-950/30">
+              <Send size={19} /> تليجرام <span dir="ltr">@{telegram}</span>
+            </a>
+          ) : <span aria-disabled="true" title="تليجرام غير مضبوط في لوحة المطوّر" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-slate-400"><Send size={19} /> تليجرام غير مضبوط</span>}
+        </div>
+        {/* القنوات الإضافية تُملأ من لوحة المطوّر. */}
         {hasAboutContact(about) ? (
           <div className="flex items-center justify-center gap-3 flex-wrap text-sm font-bold pt-1">
-            {about.supportWhatsapp && (
-              <a href={whatsappLink(about.supportWhatsapp)} target="_blank" rel="noreferrer"
-                className="flex items-center gap-1.5 text-emerald-600 hover:underline" title="واتساب الدعم">
-                <MessageCircle className="w-4 h-4" /> واتساب
-              </a>
-            )}
             {about.supportPhone && (
               <a href={`tel:${about.supportPhone.replace(/\s/g, '')}`} dir="ltr"
                 className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:underline">
                 <Phone className="w-4 h-4" /> {about.supportPhone}
-              </a>
-            )}
-            {about.supportTelegram && (
-              <a href={`https://t.me/${about.supportTelegram}`} target="_blank" rel="noreferrer"
-                className="flex items-center gap-1.5 text-sky-600 hover:underline">
-                <MessageCircle className="w-4 h-4" /> @{about.supportTelegram}
               </a>
             )}
             {about.supportEmail && (

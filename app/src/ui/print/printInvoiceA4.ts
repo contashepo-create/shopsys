@@ -5,7 +5,7 @@
  * مع تحكم كامل من الإعدادات: شعار، علامة مائية، لون رئيسي، وإظهار/إخفاء كل عنصر.
  * دوال خالصة بالكامل — تُفحص في verify_receipt.
  */
-import type { ReceiptModel, ReceiptSettings, A4Style } from '../../core/receipt.ts'
+import { invoiceHeaderLines, type ReceiptModel, type ReceiptSettings, type A4Style } from '../../core/receipt.ts'
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 
@@ -361,7 +361,7 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   const accent = safeColor(settings.accentColor, STYLE_ACCENTS[style] ?? '#6366f1')
   const a5 = paper === 'a5'
   // إخفاء المستخدم يسري على كل الأنماط، كما في الإيصال الحراري.
-  const visibleModel = settings.showOperator === false ? { ...model, operatorName: undefined } : model
+  const visibleModel = { ...model, headerLines: invoiceHeaderLines(model, settings), ...(settings.showOperator === false ? { operatorName: undefined } : {}) }
   const body =
     style === 'ledger' ? renderLedger(visibleModel, cur, settings, accent)
     : style === 'split' ? renderSplit(visibleModel, cur, settings, accent)

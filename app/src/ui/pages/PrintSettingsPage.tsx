@@ -31,6 +31,7 @@ const SAMPLE_LINES = [
 const VISIBILITY_KEYS: { key: keyof ReceiptSettings; label: string; scope: 'الكل' | 'A4' | 'حراري' }[] = [
   { key: 'showLogo', label: 'شعار المحل', scope: 'الكل' },
   { key: 'showHeaderLines', label: 'سطور الترويسة (عنوان/هاتف…)', scope: 'الكل' },
+  { key: 'showShopPhone', label: 'هاتف المنشأة في الترويسة', scope: 'الكل' },
   { key: 'showDate', label: 'تاريخ الفاتورة', scope: 'الكل' },
   { key: 'showCustomer', label: 'اسم العميل', scope: 'الكل' },
   { key: 'showPayment', label: 'طريقة الدفع', scope: 'الكل' },
@@ -522,7 +523,7 @@ export function PrintSettingsPage() {
                 </span>
                 <input
                   type="checkbox"
-                  checked={Boolean(receipt[key])}
+                  checked={key === 'showShopPhone' ? receipt.showShopPhone !== false : Boolean(receipt[key])}
                   onChange={(e) => updateReceipt({ [key]: e.target.checked } as Partial<ReceiptSettings>)}
                   className="w-4 h-4 accent-brand-600 shrink-0"
                 />
@@ -530,6 +531,7 @@ export function PrintSettingsPage() {
             ))}
           </div>
 
+          <p className="text-[11px] text-slate-500">إخفاء الهاتف يشمل رقم هوية المنشأة وسطـور الهاتف المسمّاة في الترويسة. راجع أي أرقام أخرى مكتوبة يدوياً في الترويسة أو التذييل والشعار قبل الطباعة.</p>
           <label className={toggleCls}>
             <div>
               <div className="text-sm font-bold text-slate-700 dark:text-slate-200">طباعة تلقائية بعد كل بيع</div>

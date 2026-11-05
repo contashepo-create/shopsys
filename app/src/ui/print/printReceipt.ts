@@ -11,7 +11,7 @@
  * كل عنصر يحترم مفاتيح الإظهار/الإخفاء في إعدادات الطباعة — ومنها المفتاح الجديد
  * `showOperator` الذي يُظهر/يُخفي اسم من قام بالطباعة.
  */
-import type { ReceiptModel, ReceiptSettings } from '../../core/receipt.ts'
+import { invoiceHeaderLines, type ReceiptModel, type ReceiptSettings } from '../../core/receipt.ts'
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 import { barcodeSvg } from '../../core/code128.ts'
@@ -152,7 +152,7 @@ ${large ? `
 </style></head><body>
   ${logo}
   <div class="center shop">${esc(model.shopName)}</div>
-  ${settings.showHeaderLines ? model.headerLines.map((l) => `<div class="center hdr">${esc(l)}</div>`).join('') : ''}
+  ${invoiceHeaderLines(model, settings).map((l) => `<div class="center hdr">${esc(l)}</div>`).join('')}
   <div class="title">${esc(model.docTitle ?? 'فاتورة مبيعات')}</div>
   ${info.join('')}
   ${operatorRow}

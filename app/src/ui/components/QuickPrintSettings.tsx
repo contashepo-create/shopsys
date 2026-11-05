@@ -38,6 +38,7 @@ export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
       <div className="thermal-preview-quick-toggles">
         {([
           ['showLogo', 'الشعار'],
+          ['showShopPhone', 'هاتف المنشأة'],
           ['showDate', 'التاريخ'],
           ['showOperator', 'القائم بالطباعة'],
           ['showTaxSummary', 'ملخص الضريبة'],
@@ -48,7 +49,7 @@ export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
             <input
               type="checkbox"
               data-quick-toggle={key}
-              checked={receipt[key] === true}
+              checked={key === 'showShopPhone' ? receipt.showShopPhone !== false : receipt[key] === true}
               onChange={(event) => updateReceipt({ [key]: event.target.checked })}
             />
             {labelAr}
