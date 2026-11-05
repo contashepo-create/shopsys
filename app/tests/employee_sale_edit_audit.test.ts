@@ -53,7 +53,7 @@ it('يسمح بتعديل ثانٍ مع سلسلة قيود موثقة، وير�
   const entry = state.journal.find(row => row.id === second.journalEntryId)!
   useRawDataStore.setState({ journal: [...state.journal, entry] })
   const before = useRawDataStore.getState()
-  expect(() => s.editSale(args)).toThrow(/قيد.*موظف/)
+  expect(() => s.editSale(args)).toThrow(/قيد.*موظف|مندوب.*القيد/)
   expect(useRawDataStore.getState().journal).toBe(before.journal)
 })
 it('يغير مبلغ تحصيل الموظف مع إبقاء السداد المثبت وتاريخ السلفة', () => {

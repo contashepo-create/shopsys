@@ -45,7 +45,7 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { toMinor } from '../../core/money.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 
-interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
+interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number; salesRepEmployeeId?: number | null }
 
 /**
  * تثبيت الفواتير المعلقة (مراجعة المبيعات — نمط Square/Lightspeed):
@@ -143,6 +143,7 @@ export function PosPage() {
   /** سد فجوة عالمية (صالون/خدمات — إجماع Fresha/Booksy/Vagaro/Zenoti):
    * عمولة الموظف المنفّذ للخدمة تُحسب وتُستحق من نفس شاشة الكاشير
    * السريعة لحظة الدفع — لا حصراً عبر الفاتورة المتقدمة كما كانت. */
+  const [salesRepEmployeeId, setSalesRepEmployeeId] = useState<number | null>(null)
   const [commissionEmployeeId, setCommissionEmployeeId] = useState<number | null>(null)
   const [commissionPercent, setCommissionPercent] = useState('')
   const showCommissionPicker = getActivity(setup.activityId)?.modules.includes('booking') && employees.some((e) => e.active)
@@ -630,6 +631,7 @@ export function PosPage() {
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
       if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
+        salesRepEmployeeId,
         lines: cart,
         prescription: cartRxLines.length > 0 ? { patientName: pharmacyPatientName, prescriberName: pharmacyPrescriberName, rxLines: pharmacyRxLines } : null,
         // v1.0.12: العميل المختار يُسجل دائماً — كسب نقاط الولاء وكشف حسابه،
@@ -670,7 +672,7 @@ export function PosPage() {
       setPharmacyConfirmed(false)
       setPharmacyPatientName(''); setPharmacyPrescriberName(''); setPharmacyIdNumber(''); setPharmacyRxLines([])
       setPendingFinishArgs(null)
-      setCommissionEmployeeId(null); setCommissionPercent('')
+      setSalesRepEmployeeId(null); setCommissionEmployeeId(null); setCommissionPercent('')
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
       if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
@@ -739,6 +741,7 @@ export function PosPage() {
 
   const removeSelectedCartLine = () => {
     if (selectedCartIndex == null || !cart[selectedCartIndex]) return
+    if (cart.length === 1) setSalesRepEmployeeId(null)
     setCart((current) => current.filter((_, index) => index !== selectedCartIndex))
     setQtyDrafts({})
     setSelectedCartIndex(null)
@@ -746,7 +749,8 @@ export function PosPage() {
 
   const holdCart = () => {
     if (!cart.length) return
-    setHeld((h) => [...h, { id: Date.now(), label: `فاتورة معلقة ${h.length + 1}`, lines: cart, discount: invoiceDiscount }])
+    setHeld((h) => [...h, { id: Date.now(), label: `فاتورة معلقة ${h.length + 1}`, lines: cart, discount: invoiceDiscount, salesRepEmployeeId }])
+    setSalesRepEmployeeId(null)
     setCart([]); setQtyDrafts({}); setSelectedCartIndex(null)
     setInvoiceDiscount(0)
     toast.show('عُلّقت الفاتورة — استكملها من الزر الأصفر')
@@ -755,6 +759,7 @@ export function PosPage() {
   const resumeCart = (hc: HeldCart) => {
     if (cart.length) { toast.show('أفرغ السلة الحالية أو علّقها أولاً', 'error'); return }
     setCart(hc.lines)
+    setSalesRepEmployeeId(hc.salesRepEmployeeId ?? null)
     setSelectedCartIndex(null)
     setInvoiceDiscount(hc.discount)
     setHeld((h) => h.filter((x) => x.id !== hc.id))
@@ -930,7 +935,7 @@ export function PosPage() {
             <button onClick={holdCart} disabled={!cart.length} title="تعليق الفاتورة" className="p-2 rounded-lg text-amber-500 hover:bg-amber-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <PauseCircle size={17} />
             </button>
-            <button onClick={() => { setCart([]); setQtyDrafts({}); setSelectedCartIndex(null); setInvoiceDiscount(0) }} disabled={!cart.length} title="إفراغ السلة بالكامل" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
+            <button onClick={() => { setCart([]); setQtyDrafts({}); setSelectedCartIndex(null); setInvoiceDiscount(0); setSalesRepEmployeeId(null) }} disabled={!cart.length} title="إفراغ السلة بالكامل" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <X size={17} />
             </button>
             <button onClick={removeSelectedCartLine} disabled={selectedCartIndex == null || !cart[selectedCartIndex]} title="اختر سطرًا ثم احذفه" className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-30 dark:border-rose-800 dark:text-rose-300">
@@ -1071,7 +1076,8 @@ export function PosPage() {
                           <span key={s} className="anim-pop flex items-center gap-1 text-[9.5px] px-1.5 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 font-mono font-bold">
                             {s}
                             <button
-                              onClick={() =>
+                              onClick={() => {
+                                if (cart.length === 1 && l.serials?.length === 1) setSalesRepEmployeeId(null)
                                 setCart((c) =>
                                   c
                                     .map((x, j) =>
@@ -1081,7 +1087,7 @@ export function PosPage() {
                                     )
                                     .filter((x) => x.qty > 0),
                                 )
-                              }
+                              }}
                               className="text-rose-400 hover:text-rose-600 font-bold"
                             >×</button>
                           </span>
@@ -1182,6 +1188,15 @@ export function PosPage() {
               className="w-16 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
             />
           </div>
+          {employees.some(e => e.active) && (
+            <label className="flex items-center justify-between gap-2 text-[12px] text-slate-500">
+              <span className="shrink-0">مندوب البيع</span>
+              <select aria-label="مندوب البيع" value={salesRepEmployeeId ?? ''} onChange={e => setSalesRepEmployeeId(Number(e.target.value) || null)} className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent outline-none focus:border-brand-400">
+                <option value="">غير محدد</option>
+                {employees.filter(e => e.active).map(e => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+              </select>
+            </label>
+          )}
           {showCommissionPicker && (
             <div className="flex items-center justify-between gap-2 text-[12px] text-slate-500" title="عمولة الموظف المنفّذ للخدمة — تُستحق تلقائياً عند الدفع (مصروف 5117 / مستحق 2116)">
               <span className="shrink-0">💈 الموظف المنفّذ</span>

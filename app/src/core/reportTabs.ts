@@ -11,7 +11,7 @@
  */
 import type { BusinessModule } from './activities.ts'
 
-export type ReportTabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial' | 'currencies'
+export type ReportTabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial' | 'currencies' | 'representatives'
 
 export interface ReportTabDef {
   id: ReportTabId
@@ -30,6 +30,7 @@ export const REPORT_TABS: ReportTabDef[] = [
   { id: 'parties', labelAr: 'الذمم', always: true, dataHintAr: 'أرصدة عملاء أو موردين' },
   { id: 'inventory', labelAr: 'المخزون', module: 'inventory', dataHintAr: 'أصناف وحركة مخزون' },
   { id: 'expenses', labelAr: 'المصروفات', module: 'purchases', dataHintAr: 'مصروفات أو فواتير شراء في الفترة' },
+  { id: 'representatives', labelAr: 'المناديب والتحصيل (جزئي)', always: true, dataHintAr: 'فواتير البيع وسندات القبض' },
   { id: 'financial', labelAr: 'القوائم المالية', always: true, dataHintAr: 'قيود دفتر الأستاذ' },
   { id: 'currencies', labelAr: 'العملات', always: true, dataHintAr: 'حسابات بعملات أجنبية' },
 ]

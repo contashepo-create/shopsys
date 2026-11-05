@@ -66,6 +66,7 @@ export function VouchersPage() {
   const [quickAccountCode, setQuickAccountCode] = useState('')
   const [quickAccountName, setQuickAccountName] = useState('')
   const [employeePartyId, setEmployeePartyId] = useState(0)
+  const [receiptCollectorEmployeeId, setReceiptCollectorEmployeeId] = useState(0)
   /* سداد قسائم رواتب محددة من السند (طلب المالك ㉘): كل قسيمة تُسدَّد باسمها
      فلا يختلط راتب موظف صُرف اليوم بآخر يُصرف غداً */
   const [settleSlipIds, setSettleSlipIds] = useState<number[]>([])
@@ -148,6 +149,7 @@ export function VouchersPage() {
     setVoucherDate(todayLocalIso())
     setDesc('')
     setPartyId(0)
+    setReceiptCollectorEmployeeId(0)
     setPurchaseId(0)
     setExpMethod('qty')
     setExpPaidBy('treasury')
@@ -169,6 +171,7 @@ export function VouchersPage() {
           voucherDate: string
           desc: string
           partyId: number
+          receiptCollectorEmployeeId: number
           purchaseId: number
           expMethod: 'value' | 'qty'
           expPaidBy: 'treasury' | 'payable'
@@ -187,6 +190,7 @@ export function VouchersPage() {
         setVoucherDate(draft.voucherDate ?? todayLocalIso())
         setDesc(draft.desc ?? '')
         setPartyId(draft.partyId ?? 0)
+        setReceiptCollectorEmployeeId(draft.receiptCollectorEmployeeId ?? 0)
         setPurchaseId(draft.purchaseId ?? 0)
         setExpMethod(draft.expMethod ?? 'qty')
         setExpPaidBy(draft.expPaidBy ?? 'treasury')
@@ -251,7 +255,7 @@ export function VouchersPage() {
   const saveDraft = () => {
     try {
       window.localStorage.setItem(`shopsys.voucher-draft.${kind}`, JSON.stringify({
-        treasury, terminalPayment, counter, amount, voucherDate, desc, partyId, purchaseId, expMethod, expPaidBy,
+        treasury, terminalPayment, counter, amount, voucherDate, desc, partyId, receiptCollectorEmployeeId, purchaseId, expMethod, expPaidBy,
         expBeneficiary, expPayableAccount, vehicleId, costCenterId, vehicleCostCategory, allocationDraft, voucherProjectId,
       }))
       toast.show(`حُفظت مسودة سند ${kind === 'receipt' ? 'القبض' : 'الصرف'} محلياً ✓`)
@@ -329,6 +333,7 @@ export function VouchersPage() {
       }
       const v = postVoucher({
         kind,
+        receiptCollectorEmployeeId: kind === 'receipt' ? receiptCollectorEmployeeId || null : null,
         treasury: selectedTerminal?.settlementAccountCode ?? treasury,
         counterAccountCode: counter,
         amountMinor: parsedAmountMinor,
@@ -511,6 +516,13 @@ export function VouchersPage() {
                     <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={(id) => { setPartyId(id); setAllocationDraft({}) }} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
                   </div>
                 )}
+                {kind === 'receipt' && <div className="space-y-1">
+                  <label className="text-[11px] font-bold doc-ink">المحصّل (اختياري، مستقل عن طرف السند)</label>
+                  <QuickSelect aria-label="محصّل سند القبض" className={inputCls} value={receiptCollectorEmployeeId} onChange={event => setReceiptCollectorEmployeeId(Number(event.target.value) || 0)}>
+                    <option value={0}>غير محدد</option>
+                    {employeeOptions.map(employee => <option key={employee.id} value={employee.id}>{employee.nameAr}</option>)}
+                  </QuickSelect>
+                </div>}
                 {/* الموظف طرف كامل (طلب المالك): اختره فتُسجَّل الحركة في حسابه وكشفه */}
                 {needsEmployee && (
                   <div className="space-y-1 rounded-lg doc-tint p-2" data-voucher-employee>

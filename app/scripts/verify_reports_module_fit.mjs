@@ -33,9 +33,9 @@ const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 console.log('\n📊 تطابق تبويبات مركز التقارير\n')
 
 /* ① سجل واحد + رسم من السجل */
-assert.equal(REPORT_TABS.length, 7, 'عدد التبويبات تغيّر — راجع السجل')
-assert.equal(new Set(REPORT_TABS.map((t) => t.id)).size, 7, 'معرّف تبويب مكرر في السجل')
-ok('سجل التبويبات: ٧ تبويبات بمعرّفات فريدة')
+assert.equal(REPORT_TABS.length, 8, 'عدد التبويبات تغيّر — راجع السجل')
+assert.equal(new Set(REPORT_TABS.map((t) => t.id)).size, 8, 'معرّف تبويب مكرر في السجل')
+ok('سجل التبويبات: ٨ تبويبات بمعرّفات فريدة')
 assert.ok(/visibleReportTabs\(enabledModules, tabHasData\)/.test(page), 'الصفحة لا تُصفّي التبويبات من السجل')
 assert.ok(/visibleTabs\.map\(/.test(page), 'الصفحة لا ترسم التبويبات من السجل')
 assert.ok(!/setTab\('sales'\)/.test(page), 'بقي زر تبويب ثابت مكتوب يدوياً في الصفحة')

@@ -95,6 +95,15 @@ export interface JournalEntry {
   sourceId: number | null
   /** اسم مجموعة المستند المالكة عندما يحتمل sourceType أكثر من نوع مستند. */
   sourceCollection?: string
+  /** هوية مندوب البيع المصرّح بها عند الترحيل؛ مستقلة عن المحصّل والعمولة. */
+  saleRepresentativeId?: number | null
+  /** محصّل سند القبض المعيّن صراحةً، لا مستخدم النظام أو طرف السند. */
+  receiptCollectorId?: number | null
+  /** نسخة مستقلة من إسناد عهد الموظفين في فاتورة البيع؛ لا تمثل هوية المحصّل. */
+  saleCollectionAllocations?: { employeeId: number; amountMinor: number }[]
+  /** أصل مرتجع البيع ومندوبه لحظة إنشاء المرتجع؛ لا علاقة لهما بالمحصّل. */
+  saleReturnOriginalSaleId?: number
+  saleReturnRepresentativeId?: number | null
   /** إثبات إصدار قواعد حساب فاتورة البيع، يُطابق مع المستند. */
   saleRoundingVersion?: 2
   /** نوع كل سطر من فاتورة البيع، لمراجعة حركة المخزون مقابل المستند. */

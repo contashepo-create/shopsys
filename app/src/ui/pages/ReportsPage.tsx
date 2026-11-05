@@ -34,6 +34,7 @@ import { expensesSummary, expenseDetails, expenseSourceTypes, invoiceExpensesByC
 import { accountName } from './accountNames.ts'
 import { inputCls, useToast } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
+import { RepresentativeSalesTab } from './RepresentativeSalesTab.tsx'
 import { FxTreasuryTab } from './FxTreasuryTab.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -46,7 +47,7 @@ import { todayLocalIso, localIsoTimestamp } from '../../core/time.ts'
 type TabId = ReportTabId
 const TAB_ICONS: Record<TabId, typeof BarChart3> = {
   sales: BarChart3, items: Boxes, parties: Users, inventory: PackageSearch,
-  expenses: ReceiptText, financial: Landmark, currencies: Coins,
+  expenses: ReceiptText, financial: Landmark, currencies: Coins, representatives: Users,
 }
 
 /** تسميات مصادر العمليات لتقرير المصروفات */
@@ -400,6 +401,7 @@ export function ReportsPage() {
       case 'parties': return customers.length > 0 || suppliers.length > 0
       case 'inventory': return items.length > 0
       case 'expenses': return purchases.length > 0 || vouchers.length > 0
+      case 'representatives': return sales.length > 0 || saleReturns.length > 0 || vouchers.some(voucher => voucher.kind === 'receipt')
       case 'financial': return journal.length > 0
       case 'currencies': return customAccounts.length > 0
     }
@@ -1654,6 +1656,7 @@ export function ReportsPage() {
         </div>
       )}
 
+      {tab === 'representatives' && <RepresentativeSalesTab period={period} cur={cur} />}
       {tab === 'financial' && (
         <FinancialReportsTab period={period} cur={cur} companyName={setup.shopName || 'المنشأة'} />
       )}

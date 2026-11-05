@@ -1372,6 +1372,8 @@ export interface Stocktake {
 export interface Voucher {
   id: number
   voucherNumber: string // RV-0001 / PV-0001 / TV-0001
+  /** محصّل سند القبض المختار صراحةً؛ لا يستنتج من طرف السند أو مستخدم النظام. */
+  receiptCollectorEmployeeId?: number | null
   kind: VoucherKind
   date: string
   treasury: TreasuryAccount // الخزينة المعنية (في التحويل: المصدر)
@@ -1497,6 +1499,8 @@ export interface AdvancedInvoiceDraft {
 export interface SaleInvoice {
   id: number
   invoiceNumber: string
+  /** مندوب البيع المختار صراحةً؛ لا يستنتج من الكاشير أو العمولة أو المحصّل. */
+  salesRepEmployeeId?: number | null
   /** مفتاح مسودة واجهة الفاتورة لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
   sourceDraftId?: string
   /** الرقم المرجعي الفريد للتتبع — SAL-YYMMDD-XXXXXC (يُطبع على الإيصال ويُبحث به) */
@@ -2190,6 +2194,8 @@ interface DataState {
   postSale: (args: {
     /** UUID ثابت لمسودة المحرر؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر. */
     sourceDraftId?: string
+    /** مندوب البيع مستقل عن موظف العمولة وتحصيل العميل. */
+    salesRepEmployeeId?: number | null
     lines: CartLine[]
     customerId: number | null
     /** §91 — نوع الطرف: عميل (افتراضي) أو مورد (2101) أو موظف (1107) */
@@ -2416,6 +2422,7 @@ interface DataState {
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
     kind: VoucherKind
+    receiptCollectorEmployeeId?: number | null
     treasury: TreasuryAccount
     counterAccountCode: string // في التحويل: الخزينة الوجهة
     amountMinor: number
@@ -5640,6 +5647,7 @@ function assertVersionedSaleReturnEntries(state: DataState, sale: SaleInvoice, r
     const fail = (): never => { throw new FinancialDataReviewError(`مرتجع فاتورة ${sale.invoiceNumber}`) }
     const entries = state.journal.filter(row => row.id === ret.journalEntryId), entry = entries[0]
     if (state.saleReturns.filter(row => row.id === ret.id).length !== 1 || !scoped.saleReturns.some(row => row.id === ret.id) || entries.length !== 1 || !scoped.journal.some(row => row.id === entry.id) || entry.sourceType !== 'sale_return' || entry.sourceId !== ret.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines)) return fail()
+    if ((entry.saleReturnOriginalSaleId !== undefined || entry.saleReturnRepresentativeId !== undefined) && (entry.saleReturnOriginalSaleId !== sale.id || entry.saleReturnRepresentativeId !== (sale.salesRepEmployeeId ?? null))) return fail()
     if (sale.projectBilling === 'documentation') {
       if (ret.projectBilling !== 'documentation' || entry.memoOnly !== true || entry.lines.length) return fail()
       continue
@@ -8058,6 +8066,10 @@ export const useRawDataStore = create<DataState>()(
               })),
             }
           : normalizedArgs
+        if (args.salesRepEmployeeId != null) {
+          const id = args.salesRepEmployeeId
+          if (!Number.isSafeInteger(id) || state.employees.filter(employee => employee.id === id).length !== 1 || !getBranchScopedDataState(state).employees.some(employee => employee.id === id && employee.active)) throw new Error('مندوب البيع غير موجود أو غير فريد أو غير نشط في الفرع')
+        }
         // بوابة اعتماد المستندات (خطة ③): بيع خاضع للنظام ⇒ يُخزَّن طلباً كاملاً
         // ولا يُخصم مخزون ولا يُنشأ قيد حتى يعتمده صاحب الصلاحية.
         if (!args.__approvalBypass) {
@@ -8476,6 +8488,8 @@ export const useRawDataStore = create<DataState>()(
           description: isDocumentation ? `فاتورة توثيق ${invoiceNumber} — مستند ضريبي مقابل مستخلصات مشروع (بلا أثر دفتري)` : `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: 'sale',
           sourceId: saleId,
+          saleRepresentativeId: args.salesRepEmployeeId ?? null,
+          saleCollectionAllocations: (args.paymentAllocations ?? []).filter(row => row.accountCode === '1107').map(row => ({ employeeId: row.employeeId!, amountMinor: row.amountMinor })),
           saleRoundingVersion: 2,
           saleLineKinds: costedLines.map(line => ({ itemId: line.itemId, service: line.isServiceAtSale === true })),
           saleExpiryBatches: saleExpiryBatches.map(batch => ({ ...batch })),
@@ -8491,6 +8505,7 @@ export const useRawDataStore = create<DataState>()(
         const sale: SaleInvoice = {
           id: saleId,
           invoiceNumber,
+          salesRepEmployeeId: args.salesRepEmployeeId ?? null,
           ...(sourceDraftId ? { sourceDraftId } : {}),
           refCode,
           date: now,
@@ -8622,6 +8637,11 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        const repEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
+        if (sale.salesRepEmployeeId !== undefined || repEntries.some(entry => entry.saleRepresentativeId !== undefined)) {
+          const entry = repEntries[0]
+          if (state.sales.filter(row => row.id === sale.id).length !== 1 || repEntries.length !== 1 || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.saleRepresentativeId !== sale.salesRepEmployeeId) throw new Error('مندوب البيع لا يطابق إثبات قيد الفاتورة — يلزم المراجعة')
+        }
         assertSaleServiceKinds(state, sale)
         if ((sale.customerCharges?.length ?? 0) > 0 && (sale.taxPercent == null || sale.taxInclusive == null)) throw new Error('المعاملة الضريبية لفاتورة الرسوم غير محفوظة — يلزم مراجعتها قبل المرتجع')
         const roundingVersion = checkedSaleRoundingVersion(state, sale)
@@ -8849,6 +8869,8 @@ export const useRawDataStore = create<DataState>()(
           description: isDocReturn ? `مرتجع توثيق ${returnNumber} عن فاتورة التوثيق ${sale.invoiceNumber} — تصحيح ورقة ضريبية (بلا أثر دفتري)` : `مرتجع مبيعات ${returnNumber} عن الفاتورة ${sale.invoiceNumber}`,
           sourceType: 'sale_return',
           sourceId: returnId,
+          saleReturnOriginalSaleId: sale.id,
+          saleReturnRepresentativeId: sale.salesRepEmployeeId ?? null,
           ...(expiryReturnEvidence.length ? { saleReturnExpiryBatches: expiryReturnEvidence } : {}),
           lines: entryLines,
           ...(isDocReturn ? { memoOnly: true } : {}),
@@ -10106,6 +10128,11 @@ export const useRawDataStore = create<DataState>()(
         const args = activeBranch && !activeBranch.isMain && rawArgs.kind !== 'transfer' && (!rawArgs.treasury || rawArgs.treasury === '1101')
           ? { ...rawArgs, treasury: activeBranch.treasuryCode }
           : rawArgs
+        if (args.receiptCollectorEmployeeId != null) {
+          const id = args.receiptCollectorEmployeeId
+          if (args.kind !== 'receipt') throw new Error('المحصّل يحدد لسند قبض فقط')
+          if (!Number.isSafeInteger(id) || state.employees.filter(employee => employee.id === id).length !== 1 || !getBranchScopedDataState(state).employees.some(employee => employee.id === id && employee.active)) throw new Error('المحصّل غير موجود أو غير فريد أو غير نشط في الفرع')
+        }
         if (args.kind === 'transfer' && args.fx) throw new Error('تحويل خزائن بعملة أجنبية غير مدعوم بأرجل المصدر والوجهة — يلزم مسار موثق قبل التسجيل')
         // بوابة اعتماد المستندات (خطة ③): سندات القبض والصرف الخاضعة للنظام تقف
         // بطلب اعتماد — التحويل بين الخزائن ليس مستند طرف خارجي فلا يخضع للنطاق.
@@ -10292,6 +10319,7 @@ export const useRawDataStore = create<DataState>()(
           sourceType: args.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher',
           sourceId: voucherId,
           sourceCollection: 'vouchers',
+          ...(args.kind === 'receipt' ? { receiptCollectorId: args.receiptCollectorEmployeeId ?? null } : {}),
           lines: entryLines,
           createdBy: activeUserName(get()),
           createdAt: now,
@@ -10303,6 +10331,7 @@ export const useRawDataStore = create<DataState>()(
           id: voucherId,
           voucherNumber,
           kind: args.kind,
+          ...(args.kind === 'receipt' ? { receiptCollectorEmployeeId: args.receiptCollectorEmployeeId ?? null } : {}),
           date: transactionAt,
           treasury: args.treasury,
           counterAccountCode: args.counterAccountCode,
@@ -10547,6 +10576,9 @@ export const useRawDataStore = create<DataState>()(
             throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بسلفة موظف — سوِّها من صفحة الموظفين')
           }
           const voucher = state.vouchers.find((v) => v.journalEntryId === original.id)
+          if (original.sourceType === 'receipt_voucher' && voucher && (voucher.receiptCollectorEmployeeId !== undefined || original.receiptCollectorId !== undefined)) {
+            if (state.journal.filter(entry => entry.id === original.id).length !== 1 || state.vouchers.filter(row => row.journalEntryId === original.id).length !== 1 || state.vouchers.filter(row => row.id === voucher.id).length !== 1 || voucher.kind !== 'receipt' || original.sourceId !== voucher.id || voucher.receiptCollectorEmployeeId !== original.receiptCollectorId) throw new Error('محصّل السند لا يطابق إثبات القيد — يلزم المراجعة')
+          }
           if (voucher?.branchTransfer) throw new Error('هذا تحويل بين فرعين؛ اعكس السند من صفحة السندات ليُعكس القيدان معاً')
           if (voucher?.fx) {
             const flows = get().getFxFlows()
@@ -10666,6 +10698,13 @@ export const useRawDataStore = create<DataState>()(
         const voucher = get().vouchers.find((item) => item.id === voucherId)
         if (!voucher) throw new Error('السند غير موجود')
         if (voucher.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
+        if (voucher.kind === 'receipt') {
+          const entries = get().journal.filter(entry => entry.id === voucher.journalEntryId)
+          if (voucher.receiptCollectorEmployeeId !== undefined || entries.some(entry => entry.receiptCollectorId !== undefined)) {
+            const entry = entries[0]
+            if (entries.length !== 1 || entry.sourceType !== 'receipt_voucher' || entry.sourceId !== voucher.id || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.receiptCollectorId !== voucher.receiptCollectorEmployeeId) throw new Error('محصّل السند لا يطابق إثبات القيد — يلزم المراجعة')
+          }
+        }
         if (voucher.branchTransfer) {
           const state = get()
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
@@ -10812,6 +10851,11 @@ export const useRawDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        const representativeEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
+        if (sale.salesRepEmployeeId !== undefined || representativeEntries.some(entry => entry.saleRepresentativeId !== undefined)) {
+          const entry = representativeEntries[0]
+          if (representativeEntries.length !== 1 || entry.sourceType !== 'sale' || entry.sourceId !== sale.id || entry.reversedByEntryId != null || entry.saleRepresentativeId !== sale.salesRepEmployeeId) throw new Error('مندوب البيع لا يطابق إثبات القيد — يلزم المراجعة')
+        }
         assertSaleFxHistoryShape(sale)
         if (sale.fxCorrectionHistory?.length || sale.fxReconstructionEvidence || sale.fxMemoDateHistory?.length) throw new Error('فاتورة بسجل عملة مصحح — استخدم مستند تصحيح مستقل للحفاظ على سجل الإثبات')
         if (sale.fx != null) {
@@ -10829,9 +10873,10 @@ export const useRawDataStore = create<DataState>()(
         const saleEntryIds = new Set([sale.journalEntryId, ...(sale.editHistory ?? []).map(edit => edit.previousEntryId)])
         const oldStaff = (sale.paymentAllocations ?? []).filter(row => row.accountCode === '1107' || row.employeeId != null)
         const newStaff = (args.paymentAllocations ?? []).filter(row => row.accountCode === '1107' || row.employeeId != null)
-        const staffKey = (rows: typeof oldStaff) => rows.map(row => `${row.employeeId}:${row.amountMinor}`).sort().join('|')
+        const staffKey = (rows: { employeeId?: number; amountMinor: number }[]) => rows.map(row => `${row.employeeId}:${row.amountMinor}`).sort().join('|')
         const oldStaffRecords = state.employeeAdvances.filter(advance => saleEntryIds.has(advance.journalEntryId) && !advance.saleCollectionRetired)
-        if (oldStaff.length || newStaff.length || oldStaffRecords.length) {
+        const sourceHasStaffStamp = state.journal.filter(entry => entry.id === sale.journalEntryId).some(entry => entry.saleCollectionAllocations !== undefined && (!Array.isArray(entry.saleCollectionAllocations) || entry.saleCollectionAllocations.length > 0))
+        if (oldStaff.length || newStaff.length || oldStaffRecords.length || sourceHasStaffStamp) {
           const scoped = getBranchScopedDataState(state)
           const sourceEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
           const source = sourceEntries[0]
@@ -10845,6 +10890,7 @@ export const useRawDataStore = create<DataState>()(
           }
           if (sourceEntries.length !== 1 || !scoped.journal.some(entry => entry.id === source.id) || source.sourceType !== 'sale' || source.sourceId !== sale.id || source.reversedByEntryId != null || source.reversesEntryId != null || !Array.isArray(source.lines)) throw new Error('قيد تحصيل الموظف غير مثبت — يلزم مراجعة السلفة')
           try { assertBalanced(source.lines) } catch { throw new Error('قيد تحصيل الموظف غير متزن — يلزم المراجعة') }
+          if (source.saleCollectionAllocations !== undefined && (!Array.isArray(source.saleCollectionAllocations) || source.saleCollectionAllocations.some(row => !row || !Number.isSafeInteger(row.employeeId) || !Number.isSafeInteger(row.amountMinor) || row.amountMinor <= 0) || staffKey(source.saleCollectionAllocations) !== staffKey(oldStaff))) throw new Error('ختم عهدة الموظف لا يطابق الفاتورة — يلزم المراجعة')
           const staffTotal = oldStaff.reduce((sum, row) => sum + row.amountMinor, 0)
           if (source.lines.filter(line => line.accountCode === '1107').reduce((sum, line) => sum + line.debit - line.credit, 0) !== staffTotal || oldStaffRecords.length !== oldStaff.length || oldStaffRecords.some(row => row.source !== 'sale_collection' || row.journalEntryId !== sale.journalEntryId || state.employeeAdvances.filter(advance => advance.id === row.id).length !== 1 || !scoped.employeeAdvances.some(advance => advance.id === row.id) || row.custodyFileId != null || !Number.isSafeInteger(row.amountMinor) || !Number.isSafeInteger(row.recoveredMinor) || row.recoveredMinor < 0 || row.recoveredMinor > row.amountMinor)) throw new Error('سجل سلفة تحصيل الموظف غير مطابق للقيد — يلزم المراجعة')
           const recorded = oldStaffRecords.map(row => `${row.employeeId}:${row.amountMinor}`).sort().join('|')
@@ -11053,6 +11099,8 @@ export const useRawDataStore = create<DataState>()(
           id: newEntryId, entryNumber: newEntryId, date: now.slice(0, 10),
           description: `فاتورة بيع ${sale.invoiceNumber} (معدلة)${sale.fx ? ` — ${describeFxLeg(sale.fx, paidM, bookCurrencyOf().decimals)}` : ''}`,
           sourceType: 'sale', sourceId: sale.id,
+          ...(sale.salesRepEmployeeId !== undefined ? { saleRepresentativeId: sale.salesRepEmployeeId } : {}),
+          saleCollectionAllocations: freshAllocations.filter(row => row.accountCode === '1107').map(row => ({ employeeId: row.employeeId!, amountMinor: row.amountMinor })),
           ...(roundingVersion ? { saleRoundingVersion: roundingVersion } : {}),
           saleLineKinds: costedLines.map(line => ({ itemId: line.itemId, service: line.isServiceAtSale === true })),
           saleExpiryBatches: [],
