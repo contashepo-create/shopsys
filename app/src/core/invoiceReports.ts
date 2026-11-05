@@ -161,8 +161,10 @@ export function buildSalesInvoiceReport(
     const due = Math.max(0, total - paid)
     const status: InvoiceReportStatus = due <= 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
     const partyKindLabel = sale.partyKind === 'supplier' ? 'مورد' : sale.partyKind === 'employee' ? 'موظف' : 'عميل'
-    const partyName = sale.customerId != null
-      ? names.get(sale.customerId) ?? `عميل #${sale.customerId}`
+    /* 0/undefined = عميل نقدي (بعض السجلات القديمة تكتب 0 بدل null) */
+    const customerId = sale.customerId != null && sale.customerId > 0 ? sale.customerId : null
+    const partyName = customerId != null
+      ? names.get(customerId) || `عميل #${customerId}`
       : sale.partyName?.trim() || (sale.partyKind ? `${partyKindLabel} #${sale.partyId ?? '—'}` : 'عميل نقدي')
 
     if (!matchesSearch([
@@ -268,7 +270,11 @@ export function buildPurchaseInvoiceReport(
   for (const purchase of purchases) {
     if (!invoiceInRange(purchase.date, range)) continue
 
-    const supplierName = purchase.supplierName?.trim() || names.get(purchase.supplierId) || `مورد #${purchase.supplierId}`
+    /* 0 = فاتورة شراء نقدية (المورد النقدي) — بعض السجلات القديمة تستخدم -1 */
+    const isCashSupplier = purchase.supplierId === 0 || purchase.supplierId === -1
+    const supplierName = purchase.supplierName?.trim()
+      || (isCashSupplier ? 'مورد نقدي' : names.get(purchase.supplierId))
+      || `مورد #${purchase.supplierId}`
     const supplierDue = Math.max(0, purchase.supplierDueMinor ?? purchase.grandTotalMinor)
     const paid = Math.max(0, purchase.paidMinor)
     const due = Math.max(0, supplierDue - paid)

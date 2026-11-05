@@ -152,8 +152,12 @@ function downloadCsv(filename: string, csv: string) {
   const link = document.createElement('a')
   link.href = url
   link.download = filename
+  document.body.appendChild(link)
   link.click()
-  URL.revokeObjectURL(url)
+  link.remove()
+  /* إعطاء المتصفح وقتاً لبدء التنزيل قبل تحرير الـURL — بعض المتصفحات تلغي
+     التنزيل إذا أُلغي الـblob فوراً */
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 /* ───────────────────────────── تقرير المبيعات ───────────────────────────── */

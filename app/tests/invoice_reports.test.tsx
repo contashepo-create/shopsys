@@ -82,6 +82,22 @@ describe('منطق تقريرا الفواتير', () => {
     expect(report.summary).toMatchObject({ count: 2, totalMinor: 3200, supplierDueMinor: 2800, paidMinor: 1800, dueMinor: 1000 })
   })
 
+  it('يعرض العميل/المورد النقدي بشكل صحيح (0 أو null)', () => {
+    const sales = [
+      sale(1, 'SAL-201', '2026-10-01', 1000, undefined, null),
+      sale(2, 'SAL-202', '2026-10-02', 1000, undefined, 0),
+    ]
+    const salesReport = buildSalesInvoiceReport(sales, [], {})
+    expect(salesReport.rows.map((row) => row.partyName)).toEqual(['عميل نقدي', 'عميل نقدي'])
+
+    const purchases = [
+      { ...purchase(1, 'PUR-301', '2026-10-01', 1000, 1000, 1000), supplierId: 0 },
+      { ...purchase(2, 'PUR-302', '2026-10-02', 1000, 1000, 1000), supplierId: 0 },
+    ]
+    const purchaseReport = buildPurchaseInvoiceReport(purchases, [], {})
+    expect(purchaseReport.rows.map((row) => row.supplierName)).toEqual(['مورد نقدي', 'مورد نقدي'])
+  })
+
   it('تصدير CSV يحمل ترويسة عربية وصفاً لكل فاتورة', () => {
     const sales = [sale(1, 'SAL-101', '2026-10-01', 1000, undefined, 1)]
     const customers = [{ id: 1, nameAr: 'عميل' }]
