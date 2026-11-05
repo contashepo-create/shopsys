@@ -168,6 +168,7 @@ export const MODULE_ROUTES: ModuleRoute[] = [
   { prefix: '/realestate', module: 'realestate' },
   { prefix: '/logistics', module: 'logistics' },
   { prefix: '/lab', module: 'lab' },
+  { prefix: '/contracting/quotations' }, // مستند عام لكل الأنشطة، لا يفتح بقية المقاولات
   { prefix: '/contracting', module: 'contracting' },
   { prefix: '/clinic', module: 'clinic' },
   { prefix: '/cars', module: 'cars' },

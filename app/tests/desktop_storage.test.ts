@@ -296,3 +296,25 @@ describe('التحديث اللحظي في النوافذ المستقلة', () 
     expect(notified).not.toContain('shopsys-data')
   })
 })
+
+describe('حذف عرض السعر أثناء حفظ نافذة أخرى', () => {
+  const quotation = { id: 7, titleAr: 'عرض', projectId: null, status: 'won' }
+  const snapshot = (quotations: object[]) => JSON.stringify({ state: { quotations } })
+  it.each(['convert', 'edit'])('يرفض دمج الحذف مع %s لنفس العرض في الاتجاهين', operation => {
+    const base = snapshot([quotation])
+    const deleted = snapshot([{ ...quotation, deletedAt: '2026-11-06T12:00:00' }])
+    const changed = snapshot([{ ...quotation, ...(operation === 'convert' ? { projectId: 9 } : { titleAr: 'معدل' }) }])
+    expect(() => mergeConcurrentSnapshots(base, deleted, changed)).toThrow('تعارض')
+    expect(() => mergeConcurrentSnapshots(base, changed, deleted)).toThrow('تعارض')
+  })
+  it('يسمح بالحذف مع تعديل عرض مختلف أو نافذة لم تغير العرض نفسه', () => {
+    const other = { ...quotation, id: 8 }
+    const base = snapshot([quotation, other])
+    const deleted = snapshot([{ ...quotation, deletedAt: '2026-11-06T12:00:00' }, other])
+    const changed = snapshot([quotation, { ...other, titleAr: 'عرض آخر معدل' }])
+    const merged = JSON.parse(mergeConcurrentSnapshots(base, deleted, changed))
+    expect(merged.state.quotations[0].deletedAt).toBeTruthy()
+    expect(merged.state.quotations[1].titleAr).toBe('عرض آخر معدل')
+    expect(JSON.parse(mergeConcurrentSnapshots(base, deleted, base)).state.quotations[0].deletedAt).toBeTruthy()
+  })
+})

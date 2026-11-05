@@ -18,8 +18,9 @@ const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
 /* ①② صور «حول» وتحديث سطح المكتب الصامت بلا تحكم يدوي */
 {
   const about = read('src/ui/pages/AboutPage.tsx')
-  assert.ok(about.includes('src="./app-logo.png"') && about.includes('src="./dev-logo.png"'), 'صور حول ليست نسبية')
-  assert.ok(!about.includes('src="/app-logo.png"') && !about.includes('src="/dev-logo.png"'), 'بقي مسار مطلق لصورة')
+  assert.ok(about.includes('src="./app-logo.png"') && about.includes('src="./about-dev-logo.jpg"'), 'صور حول ليست نسبية')
+  assert.ok(!about.includes('src="/app-logo.png"') && !about.includes('src="/about-dev-logo.jpg"'), 'بقي مسار مطلق لصورة')
+  assert.ok(existsSync(new URL('../public/about-dev-logo.jpg', import.meta.url)), 'شعار المطور المرفق غير موجود في public')
   R.ok('صورتا «حول» بمسارين نسبيين — لا مطلق ينكسر تحت file://')
   assert.ok(/DesktopUpdater/.test(strip(about)) && /فحص التحديثات/.test(strip(about)), 'زر فحص التحديثات وشريط التنزيل مفقودان في صفحة حول')
   const main = read('desktop/main.ts')

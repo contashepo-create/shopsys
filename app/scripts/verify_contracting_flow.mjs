@@ -16,6 +16,11 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 
 
 const { useDataStore } = await import('../src/data/repo.ts')
+// تفعيل وحدة المقاولات صراحة: اختبار التحويل لا يعمل على إعداد منشأة فارغ.
+const { useAppStore: quotationAppStore } = await import('../src/stores/app.store.ts')
+const quotationSetup = { ...quotationAppStore.getState().setup, modules: [...new Set([...quotationAppStore.getState().setup.modules, 'contracting'])] }
+quotationAppStore.setState({ companySetup: quotationSetup, setup: quotationSetup })
+
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => { if (cond) { pass++; console.log(`  ✅ ${name}`) } else { fail++; console.log(`  ❌ ${name}${extra ? ' — ' + extra : ''}`) } }

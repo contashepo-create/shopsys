@@ -69,6 +69,12 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [{ id: 'home', nameAr: 'لوحة اليوم', icon: LayoutDashboard, path: '/' }],
   },
   {
+    id: 'quotations', nameAr: 'عروض الأسعار', icon: FileText, color: 'orange',
+    children: [
+      { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
+    ],
+  },
+  {
     id: 'sales', nameAr: 'المبيعات', icon: ShoppingCart, color: 'emerald', module: 'pos',
     children: [
       // أنشطة «الفاتورة أولاً» (تجارة جملة/مصنع/خدمات): نفس الشاشة تظهر لهم باسم
@@ -210,7 +216,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'project-extracts', nameAr: 'المستخلصات (فواتير الأعمال)', icon: Receipt, path: '/contracting/extracts' },
       { id: 'project-expenses', nameAr: 'مصروفات المشروعات', icon: Banknote, path: '/contracting/expenses' },
       { id: 'contracting-invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/contracting/invoices' },
-      { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
       { id: 'boq', nameAr: 'جداول الكميات BOQ', icon: ListChecks, path: '/contracting/boq' },
       { id: 'subcontractors', nameAr: 'مقاولو الباطن', icon: Users2, path: '/contracting/subcontractors' },
       { id: 'bonds', nameAr: 'خطابات الضمان', icon: ShieldCheck, path: '/contracting/bonds' },

@@ -403,6 +403,8 @@ export function quotationEstCost(lines: readonly QuotationLine[]): Minor {
 
 export interface Quotation {
   id: number
+  /** حذف منطقي يحفظ الرقم والمرجع التاريخي ولا يمس اليومية. */
+  deletedAt?: string
   quoteNumber: string // QT-0001
   kind: 'quotation' | 'tender' // عرض سعر | مناقصة
   clientName: string

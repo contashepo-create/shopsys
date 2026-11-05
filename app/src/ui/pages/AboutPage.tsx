@@ -205,7 +205,7 @@ export function AboutPage() {
 
       {/* شعار المطوّر — علامة حصرية للمالك */}
       <div className={`${card} text-center space-y-2 !bg-black !border-slate-800`}>
-        <img src="./dev-logo.png" alt="شعار المطوّر" className="max-h-40 mx-auto object-contain" />
+        <img src="./about-dev-logo.jpg" alt="شعار المطوّر" className="max-h-64 max-w-full mx-auto object-contain rounded-xl" />
         <div className="text-[13px] text-amber-400/90 font-black">تطوير وملكية حصرية — جميع الحقوق محفوظة</div>
         <div className="text-[13px] text-slate-300 font-black">م / محمد عبدة</div>
       </div>
