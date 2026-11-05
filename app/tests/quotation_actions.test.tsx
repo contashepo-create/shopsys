@@ -156,3 +156,57 @@ describe('الحذف الآمن', () => {
     expect(canAccessPath('/contracting/projects', perms)).toBe(false)
   })
 })
+
+describe('مراجعة حراس العروض', () => {
+  it('إلغاء إدارة العروض من الدور يبقى نافذاً ولو احتفظ بصلاحية البيع أو التشغيل', () => {
+    for (const permissions of [['sales.invoice.create'], ['ops.activity.use']]) {
+      const roles = rolesWithOverrides({ cashier: permissions }, [], 'grocery')
+      expect(effectivePermissionsFor({ roleId: 'cashier' }, roles).has('sales.quotation.manage')).toBe(false)
+    }
+  })
+  it('المستخدم المحجوب عن إدارة العروض لا يكتب من نافذة قديمة أو استدعاء مباشر', () => {
+    useRawDataStore.setState({ currentUserId: 20, appUsers: [{ id: 20, nameAr: 'مستخدم محجوب', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['sales.quotation.manage'] }] })
+    const before = useRawDataStore.getState()
+    expect(() => before.addQuotation({ ...quote, lines: quote.lines })).toThrow('صلاحية')
+    expect(() => before.updateQuotation(7, { titleAr: 'تعديل محجوب' })).toThrow('صلاحية')
+    expect(() => before.setQuotationStatus(7, 'submitted')).toThrow('صلاحية')
+    expect(useRawDataStore.getState()).toBe(before)
+  })
+  it('لا ينشئ تحويل عرض فرع آخر مشروعاً جزئياً قبل رفض الربط', () => {
+    useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], activeBranchId: 1, quotations: [{ ...quote, status: 'won', branchId: 2 } as Quotation] })
+    const before = useRawDataStore.getState()
+    expect(() => before.convertQuotationToProject(7, 5)).toThrow()
+    expect(useRawDataStore.getState()).toBe(before)
+  })
+  it('لا يربط العرض بعميل من فرع آخر حتى عند الاستدعاء المباشر', () => {
+    useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], activeBranchId: 1, customers: [{ ...EMPTY_EXTENDED, id: 9901, nameAr: 'عميل أجنبي', branchId: 2, phone: '', creditLimitMinor: 0, notes: '' }] })
+    const before = useRawDataStore.getState()
+    expect(() => before.addQuotation({ ...quote, lines: quote.lines })).toThrow()
+    expect(() => before.updateQuotation(7, { clientId: 9901 })).toThrow()
+    expect(useRawDataStore.getState()).toBe(before)
+  })
+  it('تحويل مشروع يتطلب صلاحية التشغيل في المستودع وليس إظهار الزر فقط', () => {
+    useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], currentUserId: 20, appUsers: [{ id: 20, nameAr: 'بائع', roleId: 'cashier', active: true, pinHash: '' }] })
+    const before = useRawDataStore.getState()
+    expect(() => before.convertQuotationToProject(7, 5)).toThrow('صلاحية')
+    expect(useRawDataStore.getState()).toBe(before)
+  })
+})
+
+
+it('يتحقق المستودع من تفعيل المقاولات قبل تحويل العرض حتى للمالك', () => {
+  const setup = { ...useAppStore.getState().setup, modules: ['pos', 'inventory', 'purchases'] as typeof app.setup.modules, activityId: 'grocery' }
+  useAppStore.setState({ companySetup: setup, setup })
+  useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }] })
+  const before = useRawDataStore.getState()
+  expect(() => before.convertQuotationToProject(7, 5)).toThrow('وحدة المقاولات')
+  expect(useRawDataStore.getState()).toBe(before)
+})
+
+it('يمنع المستخدم الموقوف من تعديل عرض ولو بقيت نافذته مفتوحة', () => {
+  useRawDataStore.setState({ currentUserId: 20, appUsers: [{ id: 20, nameAr: 'موقوف', roleId: 'owner', active: false, pinHash: '' }] })
+  const before = useRawDataStore.getState()
+  expect(() => before.updateQuotation(7, { titleAr: 'تعديل' })).toThrow('صلاحية')
+  expect(() => before.deleteQuotation(7)).toThrow('صلاحية')
+  expect(useRawDataStore.getState()).toBe(before)
+})

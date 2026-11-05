@@ -90,6 +90,11 @@ function mergeJson(base: JsonValue | undefined, local: JsonValue | undefined, re
   if (jsonEqual(local, remote)) return local
 
   if (isJsonRecord(base) && isJsonRecord(local) && isJsonRecord(remote)) {
+    // حذف العرض قرار على المستند كله: لا يُدمج مع تحويله لمشروع أو تعديل محتواه
+    // من نافذة أخرى، وإلا نتج مشروع بمرجع مخفي أو حذف محتوى لم يؤكد المستخدم حذفه.
+    if (/\.quotations\[id=/.test(path) && (!jsonEqual(base.deletedAt, local.deletedAt) || !jsonEqual(base.deletedAt, remote.deletedAt))) {
+      throw new Error(`تعارض حذف عرض سعر مع تعديل متزامن في ${path} — أعد تحميل البيانات قبل المتابعة`)
+    }
     const merged: { [key: string]: JsonValue } = {}
     const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])
     for (const key of keys) {

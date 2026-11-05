@@ -70,18 +70,21 @@ export async function freshCase({
   caseCounter += 1
 
   // حالة تطبيق نظيفة لهذه الحالة (app.store مشترك بطبيعته — نضبطه قبل تحميل repo)
+  const setup = {
+    ...useAppStore.getState().setup,
+    done: true,
+    countryCode,
+    activityId,
+    vatPercent,
+    taxInclusive,
+    allowNegativeTreasury,
+    requireOpenShiftForSales,
+    extraModules: [...extraModules],
+    modules: effectiveModules(activityId, extraModules),
+  }
   useAppStore.setState({
-    setup: {
-      ...useAppStore.getState().setup,
-      done: true,
-      countryCode,
-      activityId,
-      vatPercent,
-      taxInclusive,
-      allowNegativeTreasury,
-      requireOpenShiftForSales,
-      extraModules: [...extraModules],
-    },
+    companySetup: setup,
+    setup,
     license: { plan, extraModules: [...extraModules] },
     fiscalYears: fiscalYears.map((f) => ({ ...f })),
   })

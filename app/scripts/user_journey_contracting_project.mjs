@@ -27,6 +27,11 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'contracting', vatPercent: 14, taxInclusive: false, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
 const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+// تفعيل وحدة المقاولات صراحة: اختبار التحويل لا يعمل على إعداد منشأة فارغ.
+const { useAppStore: quotationAppStore } = await import('../src/stores/app.store.ts')
+const quotationSetup = { ...quotationAppStore.getState().setup, modules: [...new Set([...quotationAppStore.getState().setup.modules, 'contracting'])] }
+quotationAppStore.setState({ companySetup: quotationSetup, setup: quotationSetup })
+
 const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0

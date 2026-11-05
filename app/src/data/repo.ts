@@ -80,7 +80,7 @@ import { validateBooking, bookingConflicts, type Booking, type BookingStatus } f
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import {
   validateBranch, canRemoveBranch, belongsToBranch, filterByBranch, resolveBranchActivityId,
-  filterWarehousesByBranch, filterTreasuriesByBranch,
+  filterWarehousesByBranch, filterTreasuriesByBranch, resolveBranchModules,
   type Branch, type BranchInput, type BranchScopedRecord,
 } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
@@ -5622,6 +5622,17 @@ function assertEmployeeInActiveBranch(state: DataState, employeeId: number): voi
   }
 }
 
+/** صلاحيات العروض تُراجع عند الكتابة أيضاً، حتى بعد سحب الصلاحية من نافذة مفتوحة. */
+function assertQuotationAccess(state: DataState, permission = 'sales.quotation.manage'): DataState {
+  const scoped = getBranchScopedDataState(state)
+  if (state.currentUserId != null) {
+    const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+    if (!user || !effectivePermissionsFor(user, roles).has(permission)) throw new Error('لا تملك صلاحية تنفيذ هذه العملية على عروض الأسعار')
+  }
+  return scoped
+}
+
 /** التصحيح التاريخي حساس حتى وإن لم يغيّر قيد اليومية. */
 function assertFxRepairPermission(state: DataState): void {
   if (state.currentUserId == null) return // توافق جلسات المالك القديمة
@@ -6040,6 +6051,7 @@ export const useRawDataStore = create<DataState>()(
             }
           }
           const branchParentReferences = [
+            ['quotations', 'clientId', 'customers', true],
             ['projects', 'clientId', 'customers', true],
             ['projects', 'managerEmployeeId', 'employees', true],
             ['custodyFiles', 'employeeId', 'employees', false],
@@ -15488,6 +15500,7 @@ export const useRawDataStore = create<DataState>()(
 
       addQuotation: (q) => {
         const state = get()
+        const scoped = assertQuotationAccess(state)
         // بنود كاملة: اسم + وصف + كمية + وحدة + سعر + تكلفة تقديرية (أمر التعديل)
         const fullLines: QuotationLine[] = q.lines.map((l) => ({
           nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
@@ -15503,7 +15516,7 @@ export const useRawDataStore = create<DataState>()(
         const errors = validateQuotation({ ...q, lines: fullLines })
         if (errors.length) throw new Error(errors.join(' — '))
         // ربط العميل إداري — لا أثر على رصيده المحاسبي إطلاقاً
-        if (q.clientId != null && !state.customers.find((c) => c.id === q.clientId)) throw new Error('العميل المربوط غير موجود')
+        if (q.clientId != null && !scoped.customers.find((c) => c.id === q.clientId)) throw new Error('العميل المربوط غير موجود في الفرع الحالي')
         const id = nextId(state.quotations)
         const quote: Quotation = {
           id,
@@ -15527,10 +15540,7 @@ export const useRawDataStore = create<DataState>()(
 
       deleteQuotation: (id) => {
         const state = get()
-        const scoped = getBranchScopedDataState(state)
-        const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
-        const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
-        if (state.currentUserId != null && (!user || !effectivePermissionsFor(user, roles).has('sales.quotation.delete'))) throw new Error('لا تملك صلاحية حذف عروض الأسعار')
+        const scoped = assertQuotationAccess(state, 'sales.quotation.delete')
         const q = scoped.quotations.find(row => row.id === id)
         if (!q) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (q.projectId != null) throw new Error('لا يمكن حذف عرض تحوّل إلى مشروع — احتفظ به كمرجع للمشروع')
@@ -15543,8 +15553,9 @@ export const useRawDataStore = create<DataState>()(
 
       setQuotationStatus: (id, status) => {
         const state = get()
-        const q = state.quotations.find((x) => x.id === id)
-        if (!q || q.deletedAt) throw new Error('العرض غير موجود أو محذوف')
+        const scoped = assertQuotationAccess(state)
+        const q = scoped.quotations.find((x) => x.id === id)
+        if (!q || q.deletedAt) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (!QUOTATION_TRANSITIONS[q.status].includes(status)) {
           throw new Error(`لا يمكن الانتقال من «${q.status}» إلى «${status}»`)
         }
@@ -15554,8 +15565,9 @@ export const useRawDataStore = create<DataState>()(
       /* ─── §94-مراجعة: فتح العرض المحفوظ وتعديله (طلب المالك: «لماذا لا يمكن فتحها وتعديلها؟») ─── */
       updateQuotation: (id, changes) => {
         const state = get()
-        const q = state.quotations.find((x) => x.id === id)
-        if (!q || q.deletedAt) throw new Error('العرض غير موجود أو محذوف')
+        const scoped = assertQuotationAccess(state)
+        const q = scoped.quotations.find((x) => x.id === id)
+        if (!q || q.deletedAt) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (q.projectId != null) throw new Error('العرض تحوّل لمشروع — لا يُعدَّل؛ بنوده صارت جدول كميات المشروع (أوامر التغيير من المشروع)')
         const merged: Quotation = { ...q, ...changes, lines: q.lines } /* البنود تُستبدل بعد التطبيع أدناه — لا تتسرب بنود النوع الفضفاض */
         const fullLines: QuotationLine[] = (changes.lines ?? q.lines).map((l) => ({
@@ -15571,7 +15583,7 @@ export const useRawDataStore = create<DataState>()(
         merged.lines = fullLines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
         const errors = validateQuotation({ clientName: merged.clientName, clientId: merged.clientId, titleAr: merged.titleAr, lines: merged.lines })
         if (errors.length) throw new Error(errors.join(' — '))
-        if (merged.clientId != null && !state.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود')
+        if (merged.clientId != null && !scoped.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود في الفرع الحالي')
         merged.clientName = merged.clientName.trim()
         merged.titleAr = merged.titleAr.trim()
         merged.winProbability = Math.min(100, Math.max(0, changes.winProbability ?? q.winProbability))
@@ -15583,10 +15595,14 @@ export const useRawDataStore = create<DataState>()(
 
       convertQuotationToProject: (id, retentionPercent) => {
         const state = get()
-        const q = state.quotations.find((x) => x.id === id)
-        if (!q || q.deletedAt) throw new Error('العرض غير موجود أو محذوف')
+        const scoped = assertQuotationAccess(state)
+        const q = scoped.quotations.find((x) => x.id === id)
+        if (!q || q.deletedAt) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (q.status !== 'won') throw new Error('يتحول للمشروع العرضُ الفائز فقط — علّمه «فائز» أولاً')
         if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
+        assertQuotationAccess(state, 'ops.activity.use')
+        const app = useAppStore.getState()
+        if (!resolveBranchModules(getEffectiveActiveBranch(state), (app.companySetup ?? app.setup).modules).includes('contracting')) throw new Error('تحويل العرض لمشروع يتطلب تفعيل وحدة المقاولات')
         /* §95 (محاذاة pro-acc — طلب المالك): قيمة عقد المشروع = صافي العرض **بلا ضريبة** —
            الضريبة تظهر في إجماليات العرض فقط، والضريبة على الإيراد تحصّل وتُورَّد للدولة،
            فلو دخلت قيمة العقد لتضخم سقف المستخلصات ونسب الإنجاز. البنود كذلك بأسعار صافية

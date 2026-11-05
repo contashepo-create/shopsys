@@ -28,6 +28,11 @@ globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) 
 globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpenShiftForSales: false, allowNegativeTreasury: true, vatPercent: 14, taxInclusive: true, activityId: 'general', countryCode: 'EG' }, license: { plan: 'pro' } } }))
 const { useDataStore } = await import('../src/data/repo.ts')
+// تفعيل وحدة المقاولات صراحة: اختبار التحويل لا يعمل على إعداد منشأة فارغ.
+const { useAppStore: quotationAppStore } = await import('../src/stores/app.store.ts')
+const quotationSetup = { ...quotationAppStore.getState().setup, modules: [...new Set([...quotationAppStore.getState().setup.modules, 'contracting'])] }
+quotationAppStore.setState({ companySetup: quotationSetup, setup: quotationSetup })
+
 const { quotationTotals } = await import('../src/core/contracting.ts')
 const st = () => useDataStore.getState()
 /* سياسة المالك (2026-10-17): عرض السعر دائماً لعميل مسجَّل — تُبذَر clientela واحدة */

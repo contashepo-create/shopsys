@@ -354,8 +354,6 @@ export function effectivePermissionsFor(
   const set = new Set(role?.permissions ?? [])
   for (const p of user.extraPerms ?? []) set.add(p)
   for (const p of user.deniedPerms ?? []) set.delete(p)
-  // توافق الأدوار السابقة: مستخدم البيع/التشغيل يستطيع إدارة العروض، والحذف مستقل.
-  if ((set.has('sales.invoice.create') || set.has('ops.activity.use')) && !user.deniedPerms?.includes('sales.quotation.manage')) set.add('sales.quotation.manage')
   return set
 }
 
@@ -389,20 +387,18 @@ export const DEFAULT_ROLES: Role[] = [
   {
     id: 'cashier', nameAr: 'كاشير', isSystem: true, requiredModule: 'pos',
     // يفتح شاشة المرتجع ويجهزه — التنفيذ برقم مشرف سري (sales.return.approve ليست له)
-    permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view'],
+    permissions: ['sales.quotation.manage', 'sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view'],
   },
   {
     id: 'senior_seller', nameAr: 'بائع أول', isSystem: true, requiredModule: 'pos',
-    permissions: [
-      'sales.pos.open', 'sales.invoice.create', 'sales.discount.grant', 'sales.return.create', 'sales.shift.close',
+    permissions: ['sales.quotation.manage', 'sales.pos.open', 'sales.invoice.create', 'sales.discount.grant', 'sales.return.create', 'sales.shift.close',
       'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage', 'party.customer.statement',
       'ops.activity.use',
     ],
   },
   {
     id: 'branch_manager', nameAr: 'مدير فرع', isSystem: true, requiredModule: 'pos',
-    permissions: [
-      'sales.pos.open', 'sales.invoice.create', 'sales.price.edit', 'sales.discount.grant',
+    permissions: ['sales.quotation.manage', 'sales.pos.open', 'sales.invoice.create', 'sales.price.edit', 'sales.discount.grant',
       'sales.return.create', 'sales.return.approve', 'sales.expiry.override', 'sales.void.override', 'sales.shift.close',
       'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.adjust', 'inv.transfer', 'inv.count',
       'pur.invoice.create', 'pur.return.create', 'pur.supplier.manage',
@@ -434,8 +430,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
   contracting: [
     {
       id: 'project_manager', nameAr: 'مدير مشاريع', isSystem: true,
-      permissions: [
-        'ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.transfer', 'inv.count',
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.transfer', 'inv.count',
         'pur.invoice.create', 'pur.supplier.manage',
         'party.customer.manage', 'party.customer.statement',
         'rep.sales', 'rep.profit', 'acc.vouchers',
@@ -443,77 +438,76 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     },
     {
       id: 'site_engineer', nameAr: 'مهندس موقع', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.transfer'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.count', 'inv.transfer'],
     },
   ],
   clinic: [
     {
       id: 'doctor', nameAr: 'طبيب', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'rep.sales'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'rep.sales'],
     },
     {
       id: 'clinic_reception', nameAr: 'استقبال العيادة', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'acc.vouchers'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'acc.vouchers'],
     },
   ],
   lab: [
     {
       // مراجعة العزل: كانت له inv.view لكن المعمل بلا وحدة مخزون أصلاً — صلاحية ميتة أزيلت
       id: 'lab_technician', nameAr: 'فني معمل', isSystem: true,
-      permissions: ['ops.activity.use'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use'],
     },
     {
       id: 'lab_reception', nameAr: 'استقبال المعمل', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'acc.vouchers'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'acc.vouchers'],
     },
   ],
   realestate: [
     {
       id: 'property_manager', nameAr: 'مدير أملاك', isSystem: true,
-      permissions: [
-        'ops.activity.use', 'party.customer.manage', 'party.customer.statement',
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'party.customer.statement',
         'acc.vouchers', 'rep.sales',
       ],
     },
     {
       id: 'realestate_agent', nameAr: 'وسيط عقاري', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage'],
     },
   ],
   logistics: [
     {
       id: 'fleet_coordinator', nameAr: 'منسق أسطول ورحلات', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales', 'rep.fleet'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales', 'rep.fleet'],
     },
   ],
   cars: [
     {
       id: 'showroom_seller', nameAr: 'بائع معرض', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'rep.sales'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'rep.sales'],
     },
   ],
   equipment_rental: [
     {
       id: 'rental_officer', nameAr: 'مسؤول تأجير', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
     },
   ],
   laundry: [
     {
       id: 'laundry_operator', nameAr: 'موظف استلام وتسليم', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'party.customer.manage'],
     },
   ],
   mobile: [
     {
       id: 'technician', nameAr: 'فني صيانة', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'party.customer.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
     },
   ],
   restaurant: [
     {
       id: 'kitchen_manager', nameAr: 'مسؤول مطبخ وإنتاج', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
     },
   ],
   // ─── أدوار الأنشطة المضافة (سد فجوة «لكل نشاط أدواره») ───
@@ -521,59 +515,59 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       // الصيدلي المسؤول — نمط برامج الصيدليات: يدير الأصناف والصلاحيات دون رؤية التكلفة
       id: 'pharmacist', nameAr: 'صيدلي', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage'],
+      permissions: ['sales.quotation.manage', 'sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage'],
     },
   ],
   butcher: [
     {
       id: 'butcher_master', nameAr: 'معلم جزارة (تقطيع وتجهيز)', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
     },
   ],
   dates: [
     {
       id: 'sorting_supervisor', nameAr: 'مشرف فرز وتعبئة', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
     },
   ],
   salon: [
     {
       // الحلاق/الخبيرة — يسجل خدماته فقط، الخصومات بموافقة
       id: 'stylist', nameAr: 'حلاق / خبيرة تجميل', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'party.customer.manage'],
+      permissions: ['sales.quotation.manage', 'sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'party.customer.manage'],
     },
   ],
   bakery: [
     {
       id: 'baker', nameAr: 'خباز (إنتاج يومي)', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
     },
   ],
   trading: [
     {
       // مندوب مبيعات الجملة — نمط SAP B1/دفترة توزيع: فواتير وعملاء وتحصيل، بلا أسعار خاصة
       id: 'sales_rep', nameAr: 'مندوب مبيعات', isSystem: true,
-      permissions: ['sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+      permissions: ['sales.quotation.manage', 'sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
     },
   ],
   manufacturing: [
     {
       // مسؤول الإنتاج — نمط Katana/MRPeasy: أوامر إنتاج وجرد بلا مبيعات
       id: 'production_manager', nameAr: 'مسؤول إنتاج', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.count', 'inv.transfer'],
+      permissions: ['sales.quotation.manage', 'ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.count', 'inv.transfer'],
     },
   ],
   services: [
     {
       // منسق خدمات — فواتير وعملاء ومقبوضات (نمط FreshBooks staff)
       id: 'service_coordinator', nameAr: 'منسق خدمات', isSystem: true,
-      permissions: ['sales.invoice.create', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+      permissions: ['sales.quotation.manage', 'sales.invoice.create', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
     },
   ],
   building_materials: [
     {
       id: 'sales_rep', nameAr: 'مندوب مبيعات وتوصيل', isSystem: true,
-      permissions: ['sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+      permissions: ['sales.quotation.manage', 'sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
     },
   ],
   grocery: [
@@ -582,7 +576,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       // صايغ أول — يسعّر بحسب جرام اليوم لكن التكلفة والخصومات للمالك
       id: 'goldsmith', nameAr: 'صايغ أول', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
+      permissions: ['sales.quotation.manage', 'sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
     },
   ],
 }
