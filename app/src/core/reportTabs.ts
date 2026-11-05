@@ -11,7 +11,17 @@
  */
 import type { BusinessModule } from './activities.ts'
 
-export type ReportTabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial' | 'currencies' | 'representatives'
+export type ReportTabId =
+  | 'sales'
+  | 'salesInvoices'
+  | 'items'
+  | 'parties'
+  | 'inventory'
+  | 'expenses'
+  | 'purchaseInvoices'
+  | 'financial'
+  | 'currencies'
+  | 'representatives'
 
 export interface ReportTabDef {
   id: ReportTabId
@@ -26,10 +36,14 @@ export interface ReportTabDef {
 
 export const REPORT_TABS: ReportTabDef[] = [
   { id: 'sales', labelAr: 'المبيعات اليومية', module: 'pos', dataHintAr: 'فواتير البيع في الفترة' },
+  // تقريرا الفواتير التفصيليان (طلب المالك 2026-11-05): يظهران لكل نشاط —
+  // النشاط التخصصي قد يبيع بمحركه لا بالكاشير، وله فواتيره أيضاً.
+  { id: 'salesInvoices', labelAr: 'تقرير المبيعات', always: true, dataHintAr: 'كل فواتير البيع — فلترة من تاريخ إلى تاريخ' },
   { id: 'items', labelAr: 'أفضل الأصناف', module: 'inventory', dataHintAr: 'أصناف مبيعة في الفترة' },
   { id: 'parties', labelAr: 'الذمم', always: true, dataHintAr: 'أرصدة عملاء أو موردين' },
   { id: 'inventory', labelAr: 'المخزون', module: 'inventory', dataHintAr: 'أصناف وحركة مخزون' },
   { id: 'expenses', labelAr: 'المصروفات', module: 'purchases', dataHintAr: 'مصروفات أو فواتير شراء في الفترة' },
+  { id: 'purchaseInvoices', labelAr: 'تقرير المشتريات', always: true, dataHintAr: 'كل فواتير الشراء — فلترة من تاريخ إلى تاريخ' },
   { id: 'representatives', labelAr: 'المناديب والتحصيل (جزئي)', always: true, dataHintAr: 'فواتير البيع وسندات القبض' },
   { id: 'financial', labelAr: 'القوائم المالية', always: true, dataHintAr: 'قيود دفتر الأستاذ' },
   { id: 'currencies', labelAr: 'العملات', always: true, dataHintAr: 'حسابات بعملات أجنبية' },
