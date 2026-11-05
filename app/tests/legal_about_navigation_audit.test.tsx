@@ -24,3 +24,13 @@ it('أيقونتا تواصل المطوّر تستخدمان بيانات ال�
  expect(screen.getByText('واتساب غير مضبوط').getAttribute('aria-disabled')).toBe('true')
  expect(screen.getByText('تليجرام غير مضبوط').getAttribute('aria-disabled')).toBe('true')
 })
+
+it('صفحة حول تعرض شعار المطور المرفق بمسار نسبي دون تغيير توقيع الملكية', () => {
+ render(<MemoryRouter><AboutPage /></MemoryRouter>)
+ const logo = screen.getByRole('img', { name: 'شعار المطوّر' })
+ expect(logo.getAttribute('src')).toBe('./about-dev-logo.jpg')
+ expect(logo.classList.contains('object-contain')).toBe(true)
+ expect(logo.classList.contains('max-w-full')).toBe(true)
+ expect(screen.getByText('تطوير وملكية حصرية — جميع الحقوق محفوظة')).toBeTruthy()
+ expect(screen.getByText('م / محمد عبدة')).toBeTruthy()
+})
