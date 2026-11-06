@@ -185,6 +185,19 @@ describe('مراجعة حراس العروض', () => {
     expect(() => before.updateQuotation(7, { clientId: 9901 })).toThrow()
     expect(useRawDataStore.getState()).toBe(before)
   })
+  it('يرفض تحويل عرض يصعب تمثيل صافي بنده بسعر وحدة دون أثر جزئي', () => {
+    useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', lines: [{ ...quote.lines[0], qty: 3, unitPriceMinor: 10, vatPercent: 5, taxIncluded: true }] }] })
+    const before = useRawDataStore.getState()
+    expect(() => before.convertQuotationToProject(7, 5)).toThrow(/تقريب/)
+    expect(useRawDataStore.getState()).toBe(before)
+  })
+  it('تحويل عرض قابل للتمثيل يطابق صافي العقد ومجموع جدول كمياته', () => {
+    useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', lines: [{ ...quote.lines[0], qty: 2, unitPriceMinor: 115, vatPercent: 15, taxIncluded: true }] }] })
+    const project = useRawDataStore.getState().convertQuotationToProject(7, 5)
+    const boq = useRawDataStore.getState().boqItems.filter(row => row.projectId === project.id)
+    expect(project.contractValueMinor).toBe(200)
+    expect(boq.reduce((sum, row) => sum + Math.round(row.qty * row.unitPriceMinor), 0)).toBe(project.contractValueMinor)
+  })
   it('تحويل مشروع يتطلب صلاحية التشغيل في المستودع وليس إظهار الزر فقط', () => {
     useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], currentUserId: 20, appUsers: [{ id: 20, nameAr: 'بائع', roleId: 'cashier', active: true, pinHash: '' }] })
     const before = useRawDataStore.getState()

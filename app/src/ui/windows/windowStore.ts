@@ -834,12 +834,13 @@ export function openEntityPickerWindow(input: {
   initialQuery?: string
   saleDetails?: boolean
   onPick: (id: number) => void
+  onCreated?: (id: number) => void
 }) {
   return useWindowStore.getState().openWindow({
     kind: 'entity-picker',
     title: ENTITY_PICKER_TITLES[input.entity],
     subtitle: 'بحث حي — إنشاء وتعديل في نوافذ ابنة بلا مغادرة مكانك',
-    props: { entity: input.entity, initialQuery: input.initialQuery ?? '', saleDetails: input.saleDetails, onPick: input.onPick },
+    props: { entity: input.entity, initialQuery: input.initialQuery ?? '', saleDetails: input.saleDetails, onPick: input.onPick, onCreated: input.onCreated },
     parentId: input.parentId ?? null,
     dedupeKey: input.parentId ? `entity-picker:${input.parentId}:${input.entity}` : `entity-picker:${input.entity}`,
     width: 860,

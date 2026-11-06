@@ -143,6 +143,24 @@ describe('سلامة محرر ومسودات عروض الأسعار', () => {
     expect(useRawDataStore.getState().quotations[0].lines[0].vatPercent).toBe(0)
   })
 
+  it('يرفض إسقاط بند موصوف بكمية صفر عند حفظ عرض متعدد البنود', () => {
+    useRawDataStore.setState({ quotations: [{ ...quote, lines: [...quote.lines, { ...quote.lines[0], nameAr: 'ثان', descriptionAr: 'بند ثان' }] }] })
+    const before = useRawDataStore.getState().quotations[0]
+    mount(); fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))
+    const row = document.querySelectorAll('[data-quotation-lines] tbody tr')[1]
+    fireEvent.change(row.querySelectorAll('input')[2], { target: { value: '0' } })
+    post()
+    expect(useRawDataStore.getState().quotations[0]).toEqual(before)
+  })
+  it('يرفض السعر خارج النطاق الآمن بدلاً من حفظه صفراً', () => {
+    mount()
+    fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))
+    const row = document.querySelector('[data-quotation-lines] tbody tr')!
+    const price = row.querySelectorAll('input')[3]
+    fireEvent.change(price, { target: { value: '1000000000000000' } })
+    post()
+    expect(useRawDataStore.getState().quotations[0]).toEqual(quote)
+  })
   it('يمكن مراجعة ضريبة البند وتغييرها وجعل السعر شاملاً قبل الاعتماد', () => {
     mount()
     fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))

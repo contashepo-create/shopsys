@@ -380,7 +380,9 @@ export function quotationLineNetMinor(line: QuotationLine): Minor {
 export function quotationLineTaxMinor(line: QuotationLine): Minor {
   const percent = line.vatPercent ?? 0
   if (!percent) return 0
-  return Math.round(quotationLineNetMinor(line) * percent / 100)
+  const net = quotationLineNetMinor(line)
+  // السعر الشامل ثابت؛ التقريب يُطبَّق مرة واحدة على الصافي والضريبة هي الباقي.
+  return line.taxIncluded ? Math.round(line.qty * line.unitPriceMinor) - net : Math.round(net * percent / 100)
 }
 /** إجمالي البند شاملاً الضريبة */
 export function quotationLineGrossMinor(line: QuotationLine): Minor {

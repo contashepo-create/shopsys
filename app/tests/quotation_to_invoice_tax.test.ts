@@ -15,6 +15,16 @@ describe('نقل ضريبة عرض السعر إلى الفاتورة دون ت�
     const expected = quotationTotals(lines)
     expect([actual.taxBaseMinor, actual.taxMinor, actual.totalMinor]).toEqual([expected.netMinor, expected.taxMinor, expected.grossMinor])
   })
+  it('لا يغيّر الإجمالي المدخل للسعر الشامل بسبب تقريب الضريبة', () => {
+    for (const vat of [5, 14, 15, 20, 100]) for (let price = 1; price <= 200; price++) {
+      const source = line(price, vat, true)
+      const expected = quotationTotals([source])
+      expect(expected.grossMinor, `سعر ${price} ونسبة ${vat}`).toBe(price)
+      expect(expected.netMinor + expected.taxMinor).toBe(price)
+      const [converted] = quotationInvoicePrices([source], true, true, 2)
+      expect(converted.unitPriceMinor).toBe(price)
+    }
+  })
   it('يدعم الفاتورة التي أسعارها شاملة عند تعديل فاتورة قديمة', () => {
     expect(quotationInvoicePrices([line(10000, 15, false), line(11500, 15, true)], true, true, 2)).toEqual([{ unitPriceMinor: 11500, vatPercentOverride: 15 }, { unitPriceMinor: 11500, vatPercentOverride: 15 }])
   })

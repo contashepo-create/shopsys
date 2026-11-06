@@ -32,6 +32,7 @@ export function EntityPickerWindowView() {
   const props = host?.props ?? {}
   const entity = (props.entity as EntityPickerKind | undefined) ?? 'customer'
   const onPick = props.onPick as ((id: number) => void) | undefined
+  const onCreated = props.onCreated as ((id: number) => void) | undefined
   const initialQuery = String(props.initialQuery ?? '')
   const cur = useCur()
   const fmtMoney = (m: number) => `${formatMinor(m, cur, false)} ${cur.symbol}`
@@ -46,7 +47,7 @@ export function EntityPickerWindowView() {
   const hostId = host?.windowId ?? null
 
   const pick = (id: number) => { onPick?.(id); host?.close() }
-  const createdThenPick = (id: number) => pick(id)
+  const createdThenPick = (id: number) => { if (onCreated) { onCreated(id); host?.close() } else pick(id) }
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-window-view="entity-picker" data-entity-picker={entity}>

@@ -121,6 +121,7 @@ export function QuotationsPage() {
   }
 
   const safeMinor = (v: string) => { try { return toMinor(v || '0', cur.decimals) } catch { return 0 } }
+  const validMinor = (v: string) => { try { return toMinor(v || '0', cur.decimals) >= 0 } catch { return false } }
   const parsedLines: QuotationLine[] = qLines
     .filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0)
     .map((l) => ({
@@ -143,6 +144,12 @@ export function QuotationsPage() {
     ...(validUntil && validUntil < todayLocalIso()
       ? [{ id: 'expired', level: 'blocking' as const, text: 'صلاحية العرض انتهت — حدّث «ساري حتى» قبل الاعتماد', focus: 'input[type="date"]' }]
       : []),
+    ...qLines.filter((l) => l.descriptionAr.trim() && (!Number.isFinite(Number(l.qty)) || Number(l.qty) <= 0)).map((l) => ({
+      id: `qty:${l.key}`, level: 'blocking' as const, text: `كمية البند «${l.nameAr || l.descriptionAr.slice(0, 30)}» يجب أن تكون أكبر من صفر`,
+    })),
+    ...qLines.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && (!validMinor(l.unitPrice) || !validMinor(l.estCost))).map((l) => ({
+      id: `amount:${l.key}`, level: 'blocking' as const, text: `سعر أو تكلفة البند «${l.nameAr || l.descriptionAr.slice(0, 30)}» غير صالح أو خارج النطاق الآمن`,
+    })),
     ...qLines.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && (l.vat.trim() === '' || !Number.isFinite(Number(l.vat)) || Number(l.vat) < 0 || Number(l.vat) > 100)).map((l) => ({
       id: `vat:${l.key}`, level: 'blocking' as const, text: `نسبة ضريبة البند «${l.nameAr || l.descriptionAr.slice(0, 30)}» مطلوبة وبين 0 و100٪`,
     })),

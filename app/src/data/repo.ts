@@ -15608,6 +15608,14 @@ export const useRawDataStore = create<DataState>()(
            فلو دخلت قيمة العقد لتضخم سقف المستخلصات ونسب الإنجاز. البنود كذلك بأسعار صافية
            (إن كان سعر العرض شاملاً الضريبة تُستخرج منه). */
         const netContractMinor = quotationTotals(q.lines).netMinor
+        // جدول الكميات يخزن سعر وحدة صحيحاً؛ لا ننشئ مشروعاً إذا غيّر التقريب صافي أي بند.
+        for (const line of q.lines) {
+          const net = quotationLineNetMinor(line)
+          const unit = Math.round(net / line.qty)
+          if (!Number.isFinite(line.qty) || line.qty <= 0 || !Number.isSafeInteger(net) || !Number.isSafeInteger(unit) || Math.round(line.qty * unit) !== net) {
+            throw new Error('لا يمكن تحويل العرض إلى مشروع بدقة بسبب تقريب صافي سعر الوحدة؛ راجع كمية البند أو سعره قبل التحويل')
+          }
+        }
         // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
         // (الحد المالي الاختياري — إن وُجد — يُقاس بصافي قيمة العقد الناتج)
         get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
