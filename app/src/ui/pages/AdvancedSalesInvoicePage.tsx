@@ -52,7 +52,8 @@ import { buildModelHtml } from '../print/printDoc.ts'
 import { AnimatedMinor } from '../components/AnimatedMinor.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { FillFromPicker, type FillSource } from '../components/FillFromPicker.tsx'
-import { quotationTotal, remainingDocumentableByExtract } from '../../core/contracting.ts'
+import { quotationTotals, remainingDocumentableByExtract } from '../../core/contracting.ts'
+import { quotationInvoicePrices } from '../../core/quotationToInvoice.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { electronicInvoiceLockActive, invoiceEditPolicy } from '../../core/invoiceEdit.ts'
 import { localIsoTimestamp, todayLocalIso } from '../../core/time.ts'
@@ -234,8 +235,8 @@ useEffect(()=>{if(mode!=='advanced'&&fxOn){setFxOn(false);setFxAmount('');setFxR
    return {key:crypto.randomUUID(),itemId:match?.id??ensureServiceItemForFreeLine({nameAr,unitAr:'مقطوعية',priceMinor:unitPriceMinor}),nameAr,qty:qty||1,unitPriceMinor,unitCostMinor:match?.costMinor??0,discountPercent:0,soldByWeight:match?.soldByWeight??false,warehouseId,warehouseSource:'default' as const}
   }
   for(const quote of quotations.filter(q=>q.status!=='lost'&&q.lines.length))
-   list.push({id:`qt-${quote.id}`,group:'عروض الأسعار',title:`${quote.quoteNumber} — ${quote.titleAr}`,hint:`${quote.clientName} · ${formatMinor(quotationTotal(quote.lines),cur,false)} ${cur.symbol}`,lineCount:quote.lines.length,
-    apply:()=>{if(quote.clientId){setCustomerId(quote.clientId);setPaid('')}setLines(quote.lines.map(line=>asLine(line.nameAr||line.descriptionAr,line.qty,line.unitPriceMinor)));toast.show(`عُبِّئت الفاتورة من ${quote.quoteNumber}`)}})
+   list.push({id:`qt-${quote.id}`,group:'عروض الأسعار',title:`${quote.quoteNumber} — ${quote.titleAr}`,hint:`${quote.clientName} · ${formatMinor(quotationTotals(quote.lines).grossMinor,cur,false)} ${cur.symbol} شامل الضريبة`,lineCount:quote.lines.length,
+    apply:()=>{try{const prices=quotationInvoicePrices(quote.lines,effectiveDocTaxPercent>0,editingInvoice?.taxInclusive??false,editingInvoice?editingInvoice.roundingVersion:2);const next=quote.lines.map((line,i)=>({...asLine(line.nameAr||line.descriptionAr,line.qty,prices[i].unitPriceMinor),vatPercentOverride:prices[i].vatPercentOverride}));if(quote.clientId){setCustomerId(quote.clientId);setPaid('')}setLines(next);toast.show(`عُبِّئت الفاتورة من ${quote.quoteNumber} — راجع الإجمالي قبل الترحيل`)}catch(error){toast.show((error as Error).message,'error')}}})
   for(const project of projects.filter(p=>p.status!=='completed')){
    const boq=boqItems.filter(b=>b.projectId===project.id)
    const unbilledBoq=boq.filter(b=>(b.progressPercent??0)<100)
@@ -257,7 +258,7 @@ useEffect(()=>{if(mode!=='advanced'&&fxOn){setFxOn(false);setFxAmount('');setFxR
     }})
   }
   return list
- },[boqItems,cur,items,projects,quotations,toast,warehouseId,ensureServiceItemForFreeLine])
+ },[boqItems,cur,items,projects,quotations,toast,warehouseId,ensureServiceItemForFreeLine,effectiveDocTaxPercent,editingInvoice])
  const saveAsTemplate=()=>{
   if(!lines.length){toast.show('أضف بنوداً قبل حفظ القالب','error');return}
   const suggested=`قالب ${customers.find(c=>c.id===customerId)?.nameAr??'عميل نقدي'} — ${lines.length} بند`

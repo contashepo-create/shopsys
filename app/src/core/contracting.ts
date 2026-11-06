@@ -423,11 +423,11 @@ export interface Quotation {
   bidBondMinor: Minor
 }
 
-/** خط أنابيب المناقصات: القيمة المتوقعة = Σ قيمة العرض × احتمالية فوزه (للمقدَّمة فقط) */
+/** خط أنابيب المناقصات: القيمة الشاملة للضريبة × احتمالية الفوز (للمقدَّمة فقط). */
 export function quotationPipeline(quotes: readonly Quotation[]): { submittedCount: number; submittedMinor: Minor; expectedMinor: Minor } {
   const submitted = quotes.filter((q) => q.status === 'submitted')
-  const submittedMinor = submitted.reduce((a, q) => a + quotationTotal(q.lines), 0)
-  const expectedMinor = submitted.reduce((a, q) => a + Math.round(quotationTotal(q.lines) * q.winProbability / 100), 0)
+  const submittedMinor = submitted.reduce((a, q) => a + quotationTotals(q.lines).grossMinor, 0)
+  const expectedMinor = submitted.reduce((a, q) => a + Math.round(quotationTotals(q.lines).grossMinor * q.winProbability / 100), 0)
   return { submittedCount: submitted.length, submittedMinor, expectedMinor }
 }
 
