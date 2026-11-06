@@ -92,6 +92,14 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload)).toMatchObject({ partyKind: 'supplier', customerId: 7, partyNeedsReview: false })
   })
+  it('تعديل فاتورة مستوردة تنص على نوع عميل يعيده من customerId لا من partyId الفارغ', () => {
+    const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+    const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, partyKind: 'customer', partyId: null, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 0, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
+    render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
+    expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload).customerId).toBe(7)
+  })
   it('تعديل فاتورة مورد لا يوهم بإمكانية تغيير نوع الطرف أو هويته', () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
     const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: null, partyKind: 'supplier', partyId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
