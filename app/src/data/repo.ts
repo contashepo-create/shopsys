@@ -3503,6 +3503,22 @@ function verifiedLinkedPurchaseOrder(state: Pick<DataState, 'purchaseOrders' | '
   return order
 }
 
+/** لا يُعلن وصول آلي إلا لصنف يغطّي مستلمه جميع طلباته غير الملغاة. */
+function partArrivalCovered(order: PurchaseOrder, parts: PendingPartOrder[], itemId: number): boolean {
+  let received = 0, claimed = 0
+  try {
+    for (const line of order.lines) if (line.itemId === itemId) {
+      received += Math.round(normalizeMovementQty(line.receivedQty ?? 0, true) * 1000)
+      if (!Number.isSafeInteger(received)) return false
+    }
+    for (const part of parts) if (part.linkedPurchaseOrderId === order.id && part.itemId === itemId && part.status !== 'cancelled') {
+      claimed += Math.round(normalizeMovementQty(part.qty) * 1000)
+      if (!Number.isSafeInteger(claimed)) return false
+    }
+  } catch { return false }
+  return claimed > 0 && received >= claimed
+}
+
 /** عكس الوصول الآلي فقط، دون تغيير وصول يدوي أو طلب مُسلَّم. */
 function reconcilePartOrders(parts: PendingPartOrder[], before: PurchaseOrder[], after: PurchaseOrder[]): PendingPartOrder[] {
   return parts.map(part => {
@@ -3510,7 +3526,7 @@ function reconcilePartOrders(parts: PendingPartOrder[], before: PurchaseOrder[],
     const old = before.find(order => order.id === part.linkedPurchaseOrderId)
     const next = after.find(order => order.id === part.linkedPurchaseOrderId)
     if (!old || !next || old.status === next.status) return part
-    if (old.status !== 'closed' && next.status === 'closed' && part.status === 'pending') return { ...part, status: 'arrived', arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: next.id }
+    if (old.status !== 'closed' && next.status === 'closed' && part.status === 'pending' && partArrivalCovered(next, parts, part.itemId)) return { ...part, status: 'arrived', arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: next.id }
     if (old.status === 'closed' && next.status !== 'closed' && part.status === 'arrived' && part.autoArrivedFromPurchaseOrderId === next.id) return { ...part, status: 'pending', arrivedAt: null, autoArrivedFromPurchaseOrderId: null }
     return part
   })
@@ -7036,7 +7052,6 @@ export const useRawDataStore = create<DataState>()(
       }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
         if (invoiceId != null && state.purchaseOrders.some(order => order.id === id && order.invoiceIds?.includes(invoiceId))) return state
-        let justClosed = false
         const purchaseOrders = state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
           // إصلاح (مراجعة المالك 2026-10-01): المستلم يُجمَّع لكل صنف أولاً — سطور
@@ -7062,19 +7077,9 @@ export const useRawDataStore = create<DataState>()(
             invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
           }
           const updated = { ...next, status: derivePurchaseOrderStatus(next) }
-          if (updated.status === 'closed' && order.status !== 'closed') justClosed = true
           return updated
         })
-        // سد فجوة فورية #2 (النشاط #7: قطع غيار) — اكتمال استلام الأمر يُحوّل
-        // تلقائياً أي طلب عميل معلّق مرتبط به من «بانتظار الوصول» إلى «وصلت»،
-        // فيظهر كتنبيه جاهز للتسليم في مركز التنبيهات دون متابعة يدوية.
-        const pendingPartOrders = justClosed
-          ? state.pendingPartOrders.map((po) => (
-              po.linkedPurchaseOrderId === id && po.status === 'pending'
-                ? { ...po, status: 'arrived' as const, arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: id }
-                : po
-            ))
-          : state.pendingPartOrders
+        const pendingPartOrders = reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, purchaseOrders)
         return { purchaseOrders, pendingPartOrders }
       }),
       deletePurchaseOrder: (id) => set((state) => {
@@ -8048,9 +8053,7 @@ export const useRawDataStore = create<DataState>()(
           linkedOrder = { ...next, status: derivePurchaseOrderStatus(next) }
         }
         const purchaseOrders = linkedOrder ? state.purchaseOrders.map(order => order.id === linkedOrder!.id ? linkedOrder! : order) : state.purchaseOrders
-        const pendingPartOrders = linkedOrder?.status === 'closed' && sourceOrder?.status !== 'closed'
-          ? state.pendingPartOrders.map(order => order.linkedPurchaseOrderId === linkedOrder!.id && order.status === 'pending' ? { ...order, status: 'arrived' as const, arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: linkedOrder!.id } : order)
-          : state.pendingPartOrders
+        const pendingPartOrders = reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, purchaseOrders)
         set({
           purchases: [...state.purchases, invoice],
           purchaseOrders,

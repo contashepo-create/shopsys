@@ -49,7 +49,7 @@ describe('سلامة تعديل ومرتجع فاتورة الأمر', () => {
   })
   it('مرتجع جزئي يعيد فقط طلب القطعة الذي وصل تلقائياً إلى الانتظار', () => {
     const po = order()
-    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }, { id: 2, linkedPurchaseOrderId: po.id, status: 'arrived', arrivedAt: '2026-01-01' }, { id: 3, linkedPurchaseOrderId: po.id, status: 'delivered', arrivedAt: '2026-01-01' }] as never })
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, itemId: 1, qty: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }, { id: 2, itemId: 1, qty: 1, linkedPurchaseOrderId: po.id, status: 'arrived', arrivedAt: '2026-01-01' }, { id: 3, itemId: 1, qty: 1, linkedPurchaseOrderId: po.id, status: 'delivered', arrivedAt: '2026-01-01' }] as never })
     const invoice = post(po.id, 3, 'h'); ret(invoice.id, 1)
     expect(S().purchaseOrders[0].status).toBe('partial')
     expect(S().pendingPartOrders.map(row => row.status)).toEqual(['pending', 'arrived', 'delivered'])
@@ -58,7 +58,7 @@ describe('سلامة تعديل ومرتجع فاتورة الأمر', () => {
   })
   it('تعديل الكمية يفتح طلب القطعة الآلي ويغلقه عندما تكتمل الكمية ثانية', () => {
     const po = order()
-    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }] as never })
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, itemId: 1, qty: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }] as never })
     const invoice = post(po.id, 3, 'edit-parts')
     edit(invoice.id, 2)
     expect(S().purchaseOrders[0].status).toBe('partial')
@@ -69,7 +69,7 @@ describe('سلامة تعديل ومرتجع فاتورة الأمر', () => {
   })
   it('لا يغيّر وصولاً أكّده المستخدم بعد الوصول الآلي', () => {
     const po = order()
-    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }] as never })
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, itemId: 1, qty: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }] as never })
     const invoice = post(po.id, 3, 'manual-parts')
     S().setPendingPartOrderStatus(1, 'arrived')
     ret(invoice.id, 1)

@@ -81,7 +81,7 @@ describe('ترحيل فاتورة وأمر شراء كوحدة واحدة', () =
   })
   it('السطور المكررة توزع على بنود الأمر مرة واحدة ويصل طلب القطعة عند الإكمال', () => {
     const order = S().addPurchaseOrder({ supplierId: 7, supplierName: 'مورد', date: '2026-01-01', expectedDate: '2026-01-01', warehouseId: null, notes: '', lines: [1, 2].map(qty => ({ itemId: 1, nameAr: 'صنف', qty, receivedQty: 0, unitAr: 'قطعة', unitPriceMinor: 1000, vatPercent: 0, notes: '' })) })
-    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: order.id, status: 'pending' }] as never })
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, itemId: 1, qty: 3, linkedPurchaseOrderId: order.id, status: 'pending' }] as never })
     const args = input(order.id, 1, 'split')
     const invoice = S().postPurchase({ ...args, lines: [...args.lines, { ...args.lines[0], qty: 2 }] })
     expect(S().purchaseOrders[0].lines.map(line => line.receivedQty)).toEqual([1, 2])
