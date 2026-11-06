@@ -141,6 +141,47 @@ describe('دورة أمر الشراء ← فاتورة الاستلام ← ا�
     cleanup(); second.unmount()
   })
 
+  it('مسودة فاتورة الاستلام تحفظ أمرها وتربطه بعد استعادتها وترحيلها', async () => {
+    const order = createOrder([{ itemId, nameAr: 'سكر أبيض', qty: 2, unitPriceMinor: 4000 }])
+    const view = openReceipt(order.id)
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('حفظ مسودة'))!)
+    const draft = S().advancedInvoiceDrafts[0]
+    expect(JSON.parse(draft.payload).sourceOrderId).toBe(order.id)
+    view.unmount()
+    const reopened = render(<MemoryRouter><AdvancedPurchaseInvoicePage /><ToastHost /></MemoryRouter>)
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('المسودات'))!)
+    fireEvent.click([...document.querySelectorAll(`[data-draft-row="${draft.id}"] button`)].find(button => button.textContent?.includes('فتح'))!)
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('حفظ وترحيل'))!)
+    await waitFor(() => expect(S().purchaseOrders.find(row => row.id === order.id)?.status).toBe('closed'))
+    expect(S().purchaseOrders.find(row => row.id === order.id)?.invoiceIds).toHaveLength(1)
+    reopened.unmount()
+  })
+
+  it('لا يرحّل فاتورة أمر بعد تغيير موردها إلى مورد آخر', async () => {
+    S().addSupplier({ nameAr: 'مورد آخر', phone: '', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
+    const order = createOrder([{ itemId, nameAr: 'سكر أبيض', qty: 2, unitPriceMinor: 4000 }])
+    const purchasesBefore = S().purchases.length
+    const view = openReceipt(order.id)
+    fireEvent.change(document.querySelector('[aria-label="بحث المورد — F4"]')!, { target: { value: 'مورد آخر' } })
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('مورد آخر'))!)
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('حفظ وترحيل'))!)
+    const { useToast } = await import('../src/ui/components/ui.tsx')
+    await waitFor(() => expect(useToast.getState().msg).toContain('مورد الفاتورة لا يطابق'))
+    expect(S().purchases).toHaveLength(purchasesBefore)
+    expect(S().purchaseOrders.find(row => row.id === order.id)?.lines[0].receivedQty).toBe(0)
+    view.unmount()
+  })
+  it('فتح مسودة مستقلة فوق فاتورة أمر لا يُبقي رابط الأمر السابق', () => {
+    const order = createOrder([{ itemId, nameAr: 'سكر أبيض', qty: 2, unitPriceMinor: 4000 }])
+    S().upsertAdvancedInvoiceDraft({ id: 'independent', kind: 'purchase', name: 'مستقلة', payload: JSON.stringify({ supplierId, lines: [], sourceOrderId: null, editingPurchaseId: null }) })
+    const view = openReceipt(order.id)
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('المسودات'))!)
+    fireEvent.click([...document.querySelectorAll('[data-draft-row="independent"] button')].find(button => button.textContent?.includes('فتح'))!)
+    fireEvent.click([...document.querySelectorAll('button')].find(button => button.textContent?.includes('حفظ مسودة'))!)
+    expect(JSON.parse(S().advancedInvoiceDrafts.find(draft => draft.id === 'independent')!.payload).sourceOrderId).toBeNull()
+    view.unmount()
+  })
+
   it('الاستلام الجزئي يبقي الأمر «جزئي» والمتبقي يُتاح لفاتورة تالية', () => {
     const order = createOrder([{ itemId: saleItemId, nameAr: 'زيت طعام', qty: 5, unitPriceMinor: 5000 }])
     S().receivePurchaseOrder(order.id, [{ itemId: saleItemId, qty: 2 }], undefined)
