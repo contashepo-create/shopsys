@@ -394,7 +394,9 @@ priceFloorOverrideBy:approvedBy??null,internalExpenses:expenses.map(e=>effective
  const saleParties=partyKind==='customer'?customers:partyKind==='supplier'?suppliers:employees
  const selectedSaleParty=saleParties.find((party:{id:number})=>party.id===customerId)??null
  const selectedCustomerBalance=selectedCustomer ? getCustomerBalance(selectedCustomer.id) : 0
- const projectedCustomerBalance=selectedCustomerBalance+Math.max(0,(totals?.totalMinor??0)-totalPaidMinor)
+ const originalCreditForCustomer=editingInvoice&&selectedCustomer&&editingInvoice.partyKind!=='supplier'&&editingInvoice.partyKind!=='employee'&&editingInvoice.customerId===selectedCustomer.id?Math.max(0,editingInvoice.totals.totalMinor-(editingInvoice.paidMinor??(editingInvoice.payment==='cash'?editingInvoice.totals.totalMinor:0))):0
+ const balanceWithoutEditedInvoice=selectedCustomerBalance-originalCreditForCustomer
+ const projectedCustomerBalance=balanceWithoutEditedInvoice+Math.max(0,(totals?.totalMinor??0)-totalPaidMinor)
  /** الصنف المعروض في بطاقة «الصنف المختار»: آخر سطر أُضيف إلى الفاتورة */
  /* «الصنف المحدد» يتبع السطر الذي يقف عليه المستخدم في الجدول (نقراً أو بالأسهم)
     لا آخر سطر مضاف فقط — شكوى المالك: الشريط كان لا يتغيّر باختيار الصف. */
@@ -408,7 +410,7 @@ priceFloorOverrideBy:approvedBy??null,internalExpenses:expenses.map(e=>effective
  const editDiffMinor=editingInvoice&&totals?totals.totalMinor-editingInvoice.totals.totalMinor:null
  /* حد ائتمان صفر/غير مسجل = بلا حد إطلاقاً (طلب المالك): لا يُطلب التحصيل
    الكامل — الفحص فقط عند حد ائتمان محدد بقيمة موجبة (يطابق exceedsCreditLimit النواة) */
-const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCustomer?grandMinor:selectedCustomer.active===false?grandMinor:!selectedCustomer.creditLimitMinor?0:Math.max(0,selectedCustomerBalance+grandMinor-selectedCustomer.creditLimitMinor)
+const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCustomer?grandMinor:selectedCustomer.active===false?grandMinor:!selectedCustomer.creditLimitMinor?0:Math.max(0,balanceWithoutEditedInvoice+grandMinor-selectedCustomer.creditLimitMinor)
  const shortMinor=Math.max(0,minCollectMinor-totalPaidMinor)
  const collectNote=selectedCustomer&&!canViewCustomerBalance?{ok:shortMinor<=0,text:shortMinor>0?'التحصيل المطلوب لم يكتمل — راجع المخوّل':'التحصيل يسمح بالترحيل'}:partyKind!=='customer'&&selectedSaleParty?{ok:true,text:'طرف مسجل — يمكن ترحيل الباقي على حسابه'}:shortMinor<=0
   ?{ok:true,text:!selectedCustomer?'عميل نقدي — التحصيل كامل ويمكن الترحيل':selectedCustomer.creditLimitMinor?`ضمن حد الائتمان ${formatMinor(selectedCustomer.creditLimitMinor,cur,false)} ${cur.symbol} — يُسمح بالترحيل${grandMinor-totalPaidMinor>0?` آجلاً بـ${formatMinor(grandMinor-totalPaidMinor,cur,false)} ${cur.symbol}`:''}`:'العميل بلا حد ائتمان مسجل — يمكن الترحيل بأي مبلغ وآجلاً بالكامل'}
@@ -420,12 +422,12 @@ const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCusto
   if(selectedCustomer?.active===false)list.push({id:'party-stopped',level:'blocking',text:'حساب العميل موقوف',hint:selectedCustomer.nameAr,focus:'[aria-label^="بحث العميل"]'})
   if(shortMinor>0)list.push({id:'collect-short',level:'blocking',text:canViewCustomerBalance||!selectedCustomer?`التحصيل أقل من المطلوب بـ ${formatMinor(shortMinor,cur,false)} ${cur.symbol}`:'التحصيل أقل من المطلوب',hint:collectNote.text,focus:'[data-invoice-paid]'})
   if(selectedCustomer&&selectedCustomer.creditLimitMinor>0){
-   const exposure=selectedCustomerBalance+grandMinor-totalPaidMinor
+   const exposure=balanceWithoutEditedInvoice+grandMinor-totalPaidMinor
    if(exposure>selectedCustomer.creditLimitMinor)list.push({id:'credit-limit',level:'blocking',text:canViewCustomerBalance?`تجاوز حد الائتمان بـ ${formatMinor(exposure-selectedCustomer.creditLimitMinor,cur,false)} ${cur.symbol}`:'تجاوز حد الائتمان',hint:canViewCustomerBalance?`الحد ${formatMinor(selectedCustomer.creditLimitMinor,cur,false)} · المكشوف ${formatMinor(exposure,cur,false)}`:'راجع المخوّل',focus:'[data-invoice-paid]'})
    else if(exposure>selectedCustomer.creditLimitMinor*((setup.creditWarningThresholdPercent??85)/100))list.push({id:'credit-near',level:'warning',text:'اقتراب من حد الائتمان',hint:canViewCustomerBalance?`المتاح ${formatMinor(selectedCustomer.creditLimitMinor-exposure,cur,false)} ${cur.symbol}`:'راجع المخوّل',focus:'[data-invoice-paid]'})
   }
   return list
- },[collectNote.text,cur,grandMinor,selectedCustomer,selectedCustomerBalance,shortMinor,totalPaidMinor,setup.creditWarningThresholdPercent,partyNeedsReview,canViewCustomerBalance])/* §97: نص الملاحظة (ثابت القيمة) بدل الكائن الذي يتجدد كل تصيير */
+ },[collectNote.text,cur,grandMinor,selectedCustomer,balanceWithoutEditedInvoice,shortMinor,totalPaidMinor,setup.creditWarningThresholdPercent,partyNeedsReview,canViewCustomerBalance])/* §97: نص الملاحظة (ثابت القيمة) بدل الكائن الذي يتجدد كل تصيير */
  /* يُحسب مع كل تصيير (الصفحة مشتركة بالمتجر كاملاً): أرخص من تعقيد التبعيات ودائماً طازج */
  const billingGuard=projectId>0?getProjectBillingGuard(projectId):null
  const billingIssues=useMemo<PrePostIssue[]>(()=>{
@@ -526,6 +528,7 @@ const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCusto
   </div>:undefined}
   partyProfile={<>
    {partyNeedsReview&&<div className="invoice-doc-cardwarn" role="alert">نوع الطرف في المسودة القديمة غير محفوظ — اختر الطرف مجدداً قبل الترحيل.</div>}
+   {partyKind!=='customer'&&selectedSaleParty?<><div className="invoice-doc-cardhead"><b><CircleUser size={11}/> {partyKind==='supplier'?'المورد':'الموظف'}</b><span className="invoice-party-state">على حسابه</span></div><div className="invoice-doc-metric"><span>الطرف</span><b>{selectedSaleParty.nameAr}</b></div></>:<>
    <div className="invoice-doc-cardhead"><b><CircleUser size={11}/> رصيد {selectedCustomer?'العميل':'البيع النقدي'}</b><span className={`invoice-party-state ${!selectedCustomer?'is-cash':selectedCustomer.active===false?'is-off':''}`} title={!selectedCustomer?'بيع نقدي بلا حساب آجل':selectedCustomer.active===false?'الحساب موقوف — لا يُسمح بالبيع الآجل':'الحساب نشط'}><i/>{!selectedCustomer?'نقدي':selectedCustomer.active===false?'موقوف':'نشط'}</span></div>
    {selectedCustomer&&<div className="invoice-doc-metric"><span>هاتف العميل</span><b dir="ltr">{selectedCustomer.phone||'—'}</b></div>}
    {canViewCustomerBalance?<>   <div className="invoice-doc-metric"><span>الحد الائتماني</span><b>{selectedCustomer?.creditLimitMinor?`${formatMinor(selectedCustomer.creditLimitMinor,cur,false)} ${cur.symbol}`:'غير محدد'}</b></div>
@@ -533,6 +536,7 @@ const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCusto
    <div className="invoice-doc-cardfoot"><span>الرصيد بعد الترحيل</span><b dir="ltr" className={`is-${partyBalanceTone(projectedCustomerBalance)}`} title="رصيد العميل بعد ترحيل هذه الفاتورة وخصم المحصَّل منها">{selectedCustomer?`${formatMinor(Math.abs(projectedCustomerBalance),cur,false)} ${cur.symbol}`:'نقدي'}</b></div>
    </>:<div className="invoice-doc-metric">بيانات الرصيد محجوبة حسب الصلاحية</div>}
    {selectedCustomer?.active===false&&<div className="invoice-doc-cardwarn">موقوف — البيع الآجل ممنوع</div>}
+   </>}
   </>}
   itemProfile={showStrips?<>
    <span className="invoice-doc-strip-k">الصنف المحدد</span><span className="invoice-doc-strip-v">{focusedItem?focusedItem.nameAr:'—'}</span>

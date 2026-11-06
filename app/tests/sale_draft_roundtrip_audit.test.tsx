@@ -35,6 +35,47 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     expect((screen.getByLabelText('نوع طرف الفاتورة') as HTMLSelectElement).value).toBe('supplier')
     expect((screen.getByLabelText('بحث المورد') as HTMLInputElement).value).toBe('مورد الاختبار')
   })
+  it('يرحّل مسودة مورد مستعادة على حساب المورد لا العميل رغم تطابق الرقم', async () => {
+    const rehydrate = vi.spyOn(useRawDataStore.persist, 'rehydrate').mockResolvedValue(undefined)
+    const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => callback() } })
+    try {
+      useAppStore.setState({ setup: { ...useAppStore.getState().setup, requireOpenShiftForSales: false, vatPercent: 0, taxRegistrationStatus: 'unregistered' } })
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, active: false }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة الاختبار', isService: true, priceMinor: 5000 }], sales: [], journal: [], warehouses: [] })
+      const view = mount()
+      fireEvent.doubleClick(screen.getByLabelText('اسم الصنف — اكتب أو اضغط مرتين للبحث'))
+      fireEvent.doubleClick(screen.getByRole('option', { name: /خدمة الاختبار/ }))
+      fireEvent.change(screen.getByLabelText('نوع طرف الفاتورة'), { target: { value: 'supplier' } })
+      fireEvent.change(screen.getByLabelText('بحث المورد'), { target: { value: 'مورد الاختبار' } })
+      fireEvent.click(screen.getByRole('button', { name: /مورد الاختبار/ }))
+      fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
+      const draft = useRawDataStore.getState().advancedInvoiceDrafts[0]
+      view.unmount(); mount(); restore(draft.id)
+      fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
+      await waitFor(() => expect(useRawDataStore.getState().sales).toHaveLength(1))
+      const sale = useRawDataStore.getState().sales[0]
+      expect(sale).toMatchObject({ partyKind: 'supplier', partyId: 7, customerId: null, paidMinor: 0 })
+      const entry = useRawDataStore.getState().journal.find(e => e.id === sale.journalEntryId)!
+      expect(entry.lines.find(line => line.accountCode === '2101')?.debit).toBe(5000)
+      expect(entry.lines.some(line => line.accountCode === '1104')).toBe(false)
+    } finally {
+      rehydrate.mockRestore()
+      if (locks) Object.defineProperty(navigator, 'locks', locks)
+      else Reflect.deleteProperty(navigator, 'locks')
+    }
+  })
+  it('بطاقة الموظف تعرضه كطرف مسجل ولا تعرض بيانات العميل ذي الرقم نفسه', () => {
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 100, active: false }], employees: [{ id: 7, nameAr: 'موظف الاختبار', code: 'E7', role: 'driver', phone: '', active: true, hireDate: '2025-01-01', salaryBaseMinor: 0, notes: '' }] as never })
+    mount()
+    fireEvent.change(screen.getByLabelText('نوع طرف الفاتورة'), { target: { value: 'employee' } })
+    fireEvent.change(document.querySelector('[data-live-picker-dblclick="employee"]')!, { target: { value: 'موظف الاختبار' } })
+    fireEvent.click(screen.getByRole('button', { name: /موظف الاختبار/ }))
+    const text = document.querySelector('.invoice-doc-party')?.textContent
+    expect(text).toContain('موظف الاختبار')
+    expect(text).not.toContain('نقدي')
+    expect(text).not.toContain('موقوف')
+    expect(text).not.toContain('الحد الائتماني')
+  })
   it('سحب صلاحية كشف العميل يخفي رصيده وحده وتفاصيل الائتمان في الفاتورة', () => {
     useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل خصوصي', phone: '', creditLimitMinor: 88888, active: true }], getCustomerBalance: () => 123456 })
     mount()
@@ -58,6 +99,8 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload).lines[0].unitPriceMinor).toBe(5000)
     expect(screen.queryByText('موقوف — البيع الآجل ممنوع')).toBeNull()
+    expect(document.querySelector('.invoice-doc-party')?.textContent).not.toContain('نقدي')
+    expect(document.querySelector('.invoice-doc-party')?.textContent).toContain('مورد الاختبار')
   })
   it('يستعيد تاريخ الفاتورة والضريبة والتحصيل المجزأ وقيمه', () => {
     const view = mount()
@@ -91,6 +134,17 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     fireEvent.click(screen.getByRole('button', { name: /مورد الاختبار/ }))
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload)).toMatchObject({ partyKind: 'supplier', customerId: 7, partyNeedsReview: false })
+  })
+  it('تقدير الائتمان عند التعديل يستبعد آجل الفاتورة القديمة قبل حساب الجديدة', () => {
+    const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 6000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+    const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 10000, active: true }], getCustomerBalance: () => 6000, items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
+    render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
+    const card = document.querySelector('.invoice-doc-party')!
+    expect(card.querySelector('.invoice-doc-cardfoot')?.textContent).toContain('60.00')
+    expect(document.querySelector('[data-invoice-paynote]')?.textContent).not.toContain('يلزم تحصيل')
+    fireEvent.click(document.querySelector('[data-prepost-open]')!)
+    expect(screen.queryByText(/تجاوز حد الائتمان/)).toBeNull()
   })
   it('تعديل تجاوز ائتمان يعيد المحاولة باعتماد الائتمان بعد تحرير قفل الواجهة', async () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
