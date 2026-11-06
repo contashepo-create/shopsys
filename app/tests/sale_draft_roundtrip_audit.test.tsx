@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
 import { computeTotals } from '../src/core/pos.ts'
@@ -34,6 +34,18 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     mount(); restore(draft.id)
     expect((screen.getByLabelText('نوع طرف الفاتورة') as HTMLSelectElement).value).toBe('supplier')
     expect((screen.getByLabelText('بحث المورد') as HTMLInputElement).value).toBe('مورد الاختبار')
+  })
+  it('سحب صلاحية كشف العميل يخفي رصيده وحده وتفاصيل الائتمان في الفاتورة', () => {
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل خصوصي', phone: '', creditLimitMinor: 88888, active: true }], getCustomerBalance: () => 123456 })
+    mount()
+    fireEvent.change(screen.getByLabelText('بحث العميل — F4'), { target: { value: 'عميل خصوصي' } })
+    fireEvent.click(screen.getByRole('button', { name: /عميل خصوصي/ }))
+    expect(document.querySelector('.invoice-doc-party')?.textContent).toContain('1,234.56')
+    act(() => { useRawDataStore.setState({ currentUserId: 4, appUsers: [{ id: 4, nameAr: 'موظف', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['party.customer.statement'] }] }) })
+    expect(document.querySelector('.invoice-doc-party')?.textContent).not.toContain('1,234.56')
+    expect(document.querySelector('.invoice-doc-party')?.textContent).not.toContain('888.88')
+    expect(document.querySelector('[data-invoice-paynote]')?.textContent).not.toContain('888.88')
+    expect((screen.getByTitle('تعديل بيانات العميل') as HTMLButtonElement).disabled).toBe(true)
   })
   it('المورد لا يرث سعر أو حالة العميل الذي يحمل الرقم نفسه', () => {
     useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, priceListId: 1, active: false }], priceLists: [{ id: 1, nameAr: 'قائمة عميل', defaultDiscountPercent: 50, isActive: true }], priceListEntries: [], priceListCategoryRules: [], items: [{ ...draftFromCategory(undefined, 'X'), id: 1, nameAr: 'صنف بسعر', priceMinor: 5000, stockQty: 10 }] })
