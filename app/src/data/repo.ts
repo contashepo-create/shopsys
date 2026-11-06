@@ -3591,6 +3591,13 @@ function stampApprovalDocDate(payload: string, kind: ApprovalDocKind): string {
   return serializeApprovalPayload(obj)
 }
 
+function approvalDraftId(payload: string): string | null {
+  try {
+    const value: unknown = deserializeApprovalPayload<Record<string, unknown>>(payload)?.sourceDraftId
+    return typeof value === 'string' ? value.trim() || null : null
+  } catch { return null }
+}
+
 /**
  * بوابة الاعتماد: إن كان نوع المستند خاضعاً للنظام والمُدخِل لا يملك تجاوزاً،
  * يُسجَّل الطلب بلا أي كتابة في الدفتر أو المخزون ثم يُرمى خطأ إخباري.
@@ -3603,6 +3610,11 @@ function enforceApprovalGate(
   meta: { title: string; partyName: string; payload: string },
 ): void {
   const state = get()
+  // لا يُستبدل طلب معلق أو يُتجاوز بتقديم نسخة جديدة من المسودة نفسها، حتى لو عُطّل نظام الاعتماد.
+  const draftId = kind === 'purchase' || kind === 'sale' ? approvalDraftId(meta.payload) : null
+  if (draftId && state.docApprovals.some(row => row.kind === kind && row.status === 'pending' && approvalDraftId(row.payload) === draftId)) {
+    throw new Error('يوجد طلب اعتماد معلق مسبقاً لهذه المسودة — راجع طلب الاعتماد قبل إعادة التقديم أو تغيير المستند')
+  }
   const settings = useAppStore.getState().approvals
   if (!settings.enabled) return
   const scopedState = getBranchScopedDataState(state)
@@ -6932,6 +6944,11 @@ export const useRawDataStore = create<DataState>()(
         let postedId: number | null = null
         let postedRef: string | null = null
         if (decision.status === 'approved') {
+          // طلبات تاريخية مكررة قد تشير إلى مسودة رُحّلت بالفعل بطلب آخر أو قبل تأكيد القرار.
+          // لا ندّعي ترحيلها باسم هذا الطلب دون إثبات، بل نتركها معلقة للمراجعة.
+          const draftId = target.kind === 'purchase' || target.kind === 'sale' ? approvalDraftId(target.payload) : null
+          const alreadyPosted = draftId && (target.kind === 'purchase' ? state.purchases : state.sales).some(row => row.sourceDraftId === draftId)
+          if (alreadyPosted) throw new Error('فاتورة هذه المسودة رُحّلت مسبقاً — راجع طلب الاعتماد قبل اتخاذ القرار')
           const posted = postApprovedDocument(get, target.kind, target.payload)
           postedId = posted.id
           postedRef = posted.ref
