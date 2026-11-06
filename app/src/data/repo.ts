@@ -3532,6 +3532,18 @@ function reconcilePartOrders(parts: PendingPartOrder[], before: PurchaseOrder[],
   })
 }
 
+/** التغييرات اللاحقة في طلبات القطع قد تُبطل إثبات وصول آلي سابق، دون مساس بالحالة اليدوية. */
+function invalidateUncoveredAutoParts(parts: PendingPartOrder[], orders: PurchaseOrder[], orderId: number | null): PendingPartOrder[] {
+  if (orderId == null) return parts
+  const matches = orders.filter(order => order.id === orderId)
+  const order = matches.length === 1 ? matches[0] : null
+  return parts.map(part => {
+    if (part.status !== 'arrived' || part.linkedPurchaseOrderId !== orderId || part.autoArrivedFromPurchaseOrderId !== orderId) return part
+    if (order && order.status === 'closed' && partArrivalCovered(order, parts, part.itemId)) return part
+    return { ...part, status: 'pending', arrivedAt: null, autoArrivedFromPurchaseOrderId: null }
+  })
+}
+
 /**
  * إعادة احتساب «المستلم» في أمر شراء من فواتيره الصافية — مجموع سطور فواتير الأمر
  * المرتبطة بعد خصم مرتجعاتها — وتوزيعه توزيعاً متدرجاً على سطور الأمر (الأول أولاً).
@@ -7092,8 +7104,14 @@ export const useRawDataStore = create<DataState>()(
       addPendingPartOrder: (input) => {
         const state = get()
         if (!input.itemId) throw new Error('اختر الصنف المطلوب')
-        if (!(input.qty > 0)) throw new Error('الكمية يجب أن تكون أكبر من صفر')
+        const qty = normalizeMovementQty(input.qty)
         if (!input.customerName.trim()) throw new Error('اسم العميل مطلوب')
+        if (input.linkedPurchaseOrderId != null) {
+          const matches = state.purchaseOrders.filter(row => row.id === input.linkedPurchaseOrderId)
+          const scoped = getBranchScopedDataState(state).purchaseOrders
+          if (matches.length !== 1 || !scoped.some(row => row.id === input.linkedPurchaseOrderId) || matches[0].status === 'closed' || matches[0].status === 'cancelled') throw new Error('أمر الشراء المرتبط غير متاح أو مكتمل أو ملغى — اختر أمراً مفتوحاً')
+          if (!matches[0].lines.some(line => line.itemId === input.itemId)) throw new Error('صنف القطعة غير موجود في أمر الشراء المرتبط')
+        }
         const id = nextId(state.pendingPartOrders)
         const order: PendingPartOrder = {
           id,
@@ -7103,7 +7121,7 @@ export const useRawDataStore = create<DataState>()(
           customerId: input.customerId ?? null,
           customerName: input.customerName.trim(),
           customerPhone: input.customerPhone.trim(),
-          qty: input.qty,
+          qty,
           orderedAt: input.orderedAt || new Date().toISOString(),
           status: 'pending',
           linkedPurchaseOrderId: input.linkedPurchaseOrderId ?? null,
@@ -7118,11 +7136,10 @@ export const useRawDataStore = create<DataState>()(
         const order = state.pendingPartOrders.find((o) => o.id === id)
         if (!order) throw new Error('الطلب غير موجود')
         const now = localIsoTimestamp()
-        return {
-          pendingPartOrders: state.pendingPartOrders.map((o) => (o.id === id
-            ? { ...o, status, autoArrivedFromPurchaseOrderId: null, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
-            : o)),
-        }
+        const parts = state.pendingPartOrders.map((o) => (o.id === id
+          ? { ...o, status, autoArrivedFromPurchaseOrderId: null, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
+          : o))
+        return { pendingPartOrders: invalidateUncoveredAutoParts(parts, state.purchaseOrders, order.linkedPurchaseOrderId) }
       }),
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
       projectExtracts: [],
