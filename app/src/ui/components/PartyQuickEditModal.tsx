@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useDataStore, type Customer, type Supplier } from '../../data/repo.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
+import { useAppStore } from '../../stores/app.store.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast } from './ui.tsx'
 
@@ -71,6 +73,10 @@ function PartyQuickEditModalForm({ open, target, currencyDecimals, currencySymbo
   const save = () => {
     if (!target || !form.nameAr.trim()) { toast.show('اكتب اسم الطرف أولاً', 'error'); return }
     try {
+      const live = useDataStore.getState()
+      const user = live.appUsers.find(row => row.id === live.currentUserId) ?? null
+      const permissions = effectivePermissionsFor(user, rolesWithOverrides(live.roleOverrides, live.customRoles, useAppStore.getState().setup.activityId))
+      if ((live.currentUserId != null && !user) || !permissions.has(target.kind === 'customer' ? 'party.customer.manage' : 'pur.supplier.manage')) throw new Error('تحتاج صلاحية إدارة الحساب')
       const common = {
         nameAr: form.nameAr.trim(), phone: form.phone.trim(), email: form.email.trim(), taxNumber: form.taxNumber.trim(), commercialReg: form.commercialReg.trim(),
         address: form.address.trim(), city: form.city.trim(), postalCode: form.postalCode.trim(), buildingNo: form.buildingNo.trim(), nationalId: form.nationalId.trim(), notes: form.notes.trim(), active: form.active,

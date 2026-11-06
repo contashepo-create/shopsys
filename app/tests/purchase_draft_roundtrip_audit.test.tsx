@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { useRawDataStore } from '../src/data/repo.ts'
+import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
+import { PartyQuickEditModal } from '../src/ui/components/PartyQuickEditModal.tsx'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { AdvancedPurchaseInvoicePage } from '../src/ui/pages/AdvancedPurchaseInvoicePage.tsx'
 import { ToastHost, useToast } from '../src/ui/components/ui.tsx'
@@ -58,6 +59,33 @@ describe('استعادة مسودة الشراء دون تغيير السداد 
       await waitFor(() => expect(useToast.getState().msg).toContain('لا يمكن إدخال سداد أجنبي عند تعديل الفاتورة'))
       expect(edit).not.toHaveBeenCalled()
     } finally { rehydrate.mockRestore() }
+  })
+  it('رصيد المورد المتوقع يستبعد أثر الفاتورة الأصلية عند تعديلها', () => {
+    const line = { itemId: 1, qty: 1, unitPriceMinor: 10000, vatPercent: 0 }
+    const purchase = { id: 44, invoiceNumber: 'P-44', date: '2026-01-01', supplierId: 7, lines: [line], expenses: [], discountPercent: 0, paidMinor: 0, grandTotalMinor: 10000, supplierDueMinor: 10000 }
+    useRawDataStore.setState({ purchases: [purchase] as never, getSupplierBalance: () => 10000, items: [{ id: 1, nameAr: 'صنف', sku: 'X', stockQty: 10, costMinor: 10000, priceMinor: 12000, minQty: 0, isActive: true }] as never })
+    mount('/?edit=44')
+    expect(document.querySelector('.invoice-doc-party .invoice-doc-cardfoot')?.textContent).toContain('100.00')
+  })
+  it('فاتورة الشراء لا تسمح بتعديل المورد بعد سحب صلاحية إدارته', () => {
+    useRawDataStore.setState({ currentUserId: 4, appUsers: [{ id: 4, nameAr: 'موظف', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['pur.supplier.manage'] }] })
+    mount()
+    fireEvent.change(screen.getByLabelText('بحث المورد — F4'), { target: { value: 'مورد الاختبار' } })
+    fireEvent.click(screen.getByRole('button', { name: /مورد الاختبار/ }))
+    expect((screen.getByTitle('تعديل بيانات المورد') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('نمط تحرير الفاتورة'), { target: { value: 'advanced' } })
+    expect((screen.getByRole('button', { name: /تعديل التصنيف والبيانات/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+  it('المحرر السريع يفحص صلاحية المورد لحظة الحفظ حتى بعد فتحه', () => {
+    const supplier = { ...EMPTY_EXTENDED, id: 7, nameAr: 'مورد الاختبار', phone: '', active: true }
+    const update = vi.fn()
+    useRawDataStore.setState({ suppliers: [supplier] as never, updateSupplier: update as never })
+    render(<><PartyQuickEditModal open target={{ kind: 'supplier', party: supplier } as never} currencyDecimals={2} currencySymbol="ج.م" onClose={() => {}} /><ToastHost /></>)
+    fireEvent.change(screen.getByDisplayValue('مورد الاختبار'), { target: { value: 'تغيير غير مصرح' } })
+    act(() => { useRawDataStore.setState({ currentUserId: 4, appUsers: [{ id: 4, nameAr: 'موظف', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['pur.supplier.manage'] }] }) })
+    fireEvent.click(screen.getByRole('button', { name: /حفظ بيانات الطرف/ }))
+    expect(update).not.toHaveBeenCalled()
+    expect(useToast.getState().msg).toContain('تحتاج صلاحية إدارة الحساب')
   })
   it('يحفظ السداد الأجنبي وملاحظة المورد ويستعيدهما', () => {
     const view = mount()
