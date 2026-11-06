@@ -2956,3 +2956,26 @@ input, textarea, select, option,
 @media (prefers-reduced-motion: reduce){
   .branch-badge-dot{ animation:none; }
 }
+
+/* تفاصيل منتقي فاتورة البيع: القائمة يميناً 80% والبطاقة يساراً 20%. */
+.sale-picker-split { display: grid; grid-template-columns: minmax(0, 4fr) minmax(150px, 1fr); flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.sale-picker-list { background: #edf2f7; }
+.sale-picker-details { min-width: 0; overflow: auto; border-inline-start: 1px solid #cbd9e7; background: #f8fbff; padding: .75rem .6rem; color: #243b53; }
+.dark .sale-picker-list { background: #0b1728; }
+.dark .sale-picker-details { border-color: #29445f; background: #10243a; color: #e1edf8; }
+.sale-picker-detail-title { display: block; overflow-wrap: anywhere; color: #134e80; font-size: .82rem; line-height: 1.45; }
+.dark .sale-picker-detail-title { color: #9cd5ff; }
+.sale-picker-detail-subtitle { display: block; margin-top: .15rem; color: #71869b; font-size: .67rem; }
+.sale-picker-detail-list { display: grid; gap: .45rem; margin: .75rem 0; }
+.sale-picker-detail-row { border-bottom: 1px solid #dce7f1; padding-bottom: .35rem; }
+.dark .sale-picker-detail-row { border-color: #29445f; }
+.sale-picker-detail-row dt { color: #687e93; font-size: .65rem; font-weight: 700; }
+.dark .sale-picker-detail-row dt { color: #9bb4ca; }
+.sale-picker-detail-row dd { margin-top: .12rem; overflow-wrap: anywhere; font-size: .76rem; font-weight: 800; }
+.sale-picker-detail-note, .sale-picker-detail-empty { color: #71869b; font-size: .63rem; line-height: 1.55; }
+.sale-picker-select { width: 100%; margin-top: .75rem; border-radius: .4rem; background: #1769a3; padding: .5rem .3rem; color: white; font-size: .72rem; font-weight: 800; }
+.sale-picker-select:disabled { cursor: not-allowed; opacity: .45; }
+@media (max-width: 480px) {
+  .sale-picker-split { grid-template-columns: minmax(0, 1fr) minmax(105px, 36%); }
+  .sale-picker-details { padding: .5rem .4rem; }
+}

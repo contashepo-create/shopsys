@@ -6,6 +6,7 @@ import { fiscalYearsForBranch } from '../../core/fiscal.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { partyCode } from '../../core/partyCodes.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { buildItemLedger } from '../../core/itemLedger.ts'
 import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
@@ -212,12 +213,15 @@ export function PartyEditorWindowView() {
   const partyId = Number(host?.props.partyId ?? 0)
   const cur = useCur()
   const toast = useToast()
-  const { customers, suppliers, updateCustomer, updateSupplier, addCustomer, addSupplier, getCustomerBalance, getSupplierBalance } = useDataStore()
+  const { customers, suppliers, updateCustomer, updateSupplier, addCustomer, addSupplier, getCustomerBalance, getSupplierBalance, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const current = appUsers.find(row => row.id === currentUserId) ?? null
+  const permissions = effectivePermissionsFor(current, rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId))
+  const canSeeBalance = host?.props.enforcePermission !== true || ((currentUserId == null || !!current) && permissions.has('party.customer.statement'))
   const isNew = partyId === 0
   const onSaved = host?.props.onSaved as ((partyId: number) => void) | undefined
   const party = partyKind === 'customer' ? customers.find((row) => row.id === partyId) : suppliers.find((row) => row.id === partyId)
   const [form, setForm] = useState(() => ({
-    nameAr: party?.nameAr ?? '',
+    nameAr: party?.nameAr ?? String(host?.props.initialName ?? ''),
     phone: party?.phone ?? '',
     email: party?.email ?? '',
     taxNumber: party?.taxNumber ?? '',
@@ -228,10 +232,15 @@ export function PartyEditorWindowView() {
   }))
   const patch = (next: Partial<typeof form>) => { setForm((prev) => ({ ...prev, ...next })); host?.setDirty(true) }
   if (!party && !isNew) return <div className="p-6 text-sm text-slate-500">الحساب غير موجود.</div>
-  const balance = party ? (partyKind === 'customer' ? getCustomerBalance(party.id) : getSupplierBalance(party.id)) : 0
+  const balance = party && canSeeBalance ? (partyKind === 'customer' ? getCustomerBalance(party.id) : getSupplierBalance(party.id)) : 0
 
   const save = () => {
     try {
+      if (host?.props.enforcePermission === true) {
+        const state = useDataStore.getState(), user = state.appUsers.find(row => row.id === state.currentUserId) ?? null
+        const perms = effectivePermissionsFor(user, rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId))
+        if ((state.currentUserId != null && !user) || !perms.has(partyKind === 'customer' ? 'party.customer.manage' : 'pur.supplier.manage')) throw new Error('تحتاج صلاحية إدارة الحساب')
+      }
       if (!form.nameAr.trim()) throw new Error('الاسم مطلوب')
       const base = { nameAr: form.nameAr.trim(), phone: form.phone.trim(), email: form.email.trim(), taxNumber: form.taxNumber.trim(), address: form.address.trim(), city: form.city.trim(), notes: form.notes }
       if (isNew) {
@@ -263,7 +272,7 @@ export function PartyEditorWindowView() {
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-500/15 text-brand-700 dark:text-brand-300"><UserRound size={18} /></span>
         <div className="min-w-0">
           <b className="block truncate">{party?.nameAr ?? (form.nameAr || (partyKind === 'customer' ? 'عميل جديد' : 'مورد جديد'))}</b>
-          <small className="text-slate-500">{party ? `${partyCode(partyKind === 'customer' ? 'CUS' : 'SUP', party.id)} · الرصيد ${formatMinor(Math.abs(balance), cur, false)} ${cur.symbol} ${balance > 0 ? 'عليه' : balance < 0 ? 'له' : 'متزن'}` : 'حساب جديد — يُحفظ ويُختار تلقائياً في نافذتك'}</small>
+          <small className="text-slate-500">{party ? `${partyCode(partyKind === 'customer' ? 'CUS' : 'SUP', party.id)}${canSeeBalance ? ` · الرصيد ${formatMinor(Math.abs(balance), cur, false)} ${cur.symbol} ${balance > 0 ? 'عليه' : balance < 0 ? 'له' : 'متزن'}` : ''}` : 'حساب جديد — يُحفظ ويُختار تلقائياً في نافذتك'}</small>
         </div>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
@@ -273,11 +282,11 @@ export function PartyEditorWindowView() {
         <Field label="الرقم الضريبي"><input className={inputCls} value={form.taxNumber} onChange={(e) => patch({ taxNumber: e.target.value })} dir="ltr" /></Field>
         <Field label="العنوان"><input className={inputCls} value={form.address} onChange={(e) => patch({ address: e.target.value })} /></Field>
         <Field label="المدينة"><input className={inputCls} value={form.city} onChange={(e) => patch({ city: e.target.value })} /></Field>
-        {partyKind === 'customer' && <Field label={`الحد الائتماني (${cur.symbol})`}><input className={inputCls} value={form.creditLimit} onChange={(e) => patch({ creditLimit: e.target.value })} inputMode="decimal" dir="ltr" /></Field>}
+        {partyKind === 'customer' && (isNew || canSeeBalance) && <Field label={`الحد الائتماني (${cur.symbol})`}><input className={inputCls} value={form.creditLimit} onChange={(e) => patch({ creditLimit: e.target.value })} inputMode="decimal" dir="ltr" /></Field>}
       </div>
       <Field label="ملاحظات"><textarea className={inputCls} rows={2} value={form.notes} onChange={(e) => patch({ notes: e.target.value })} /></Field>
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
-        {party ? <Btn variant="ghost" onClick={() => openPartyLedgerWindow(partyKind, party.id, host?.windowId ?? null)}>كشف الحساب</Btn> : <span />}
+        {party && canSeeBalance ? <Btn variant="ghost" onClick={() => openPartyLedgerWindow(partyKind, party.id, host?.windowId ?? null)}>كشف الحساب</Btn> : <span />}
         <div className="flex gap-2">
           <Btn variant="ghost" onClick={() => host?.close()}>إلغاء</Btn>
           <Btn onClick={save} shortcut="F9"><Save size={14} /> {isNew ? 'إنشاء الحساب' : 'حفظ التعديل'}</Btn>
@@ -349,47 +358,58 @@ export function ItemPickerWindowView() {
   const onPick = props.onPick as ((id: number, smart?: SmartEntry) => void) | undefined
   const initialQuery = String(props.initialQuery ?? '')
   /* القائمة تُحدَّث حيّاً بعد التعديل في النافذة الابنة */
-  const liveItems = useDataStore((state) => state.items)
-  const storeCategories = useDataStore((state) => state.categories)
+  const { items: liveItems, categories: storeCategories, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const { setup } = useAppStore()
+  const user = appUsers.find(row => row.id === currentUserId) ?? null
+  const permissions = effectivePermissionsFor(user, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
+  const canViewCost = (currentUserId == null || !!user) && permissions.has('inv.cost.view')
+  const canManageItem = (currentUserId == null || !!user) && permissions.has('inv.item.manage')
+  const canEditItem = canViewCost && canManageItem
+  const saleDetails = props.saleDetails === true
   const cur = useCur()
   /* نافذة قمر حرة (سطح المكتب): القائمة ودوال العرض لا تعبر IPC — تُبنى هنا
      من متجر هذا القمر الحي نفسه (متزامن مع بقية النوافذ عبر لقطات SQLite) */
   const fromStore = props.itemsFromStore === true
+  const liveById = new Map(liveItems.map(item => [item.id, item]))
+  const categoryById = new Map(storeCategories.map(category => [category.id, category.nameAr]))
   const merged: QuickItem[] = fromStore
-    ? liveItems.map((it) => ({
+    ? liveItems.filter(it => !saleDetails || (it.isActive !== false && (!Number(props.saleCategoryId) || it.categoryId === Number(props.saleCategoryId)))).map((it) => ({
       id: it.id, nameAr: it.nameAr, sku: it.sku, barcodes: it.barcodes,
       stockQty: it.stockQty, priceMinor: it.priceMinor, costMinor: it.costMinor,
       baseUnit: it.baseUnit, categoryId: it.categoryId, isService: it.isService,
     }))
-    : items.map((row) => {
-      const live = liveItems.find((entry) => entry.id === row.id)
-      return live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit } : row
+    : items.flatMap((row) => {
+      const live = liveById.get(row.id)
+      if (saleDetails && (!live || live.isActive === false || (Number(props.saleCategoryId) && live.categoryId !== Number(props.saleCategoryId)))) return []
+      return [live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit, categoryId: live.categoryId, isService: live.isService } : row]
     })
   const effectiveCategories = categories ?? (fromStore ? storeCategories.map((c) => ({ id: c.id, nameAr: c.nameAr })) : undefined)
-  const effectiveMeta = itemMeta ?? (fromStore
+  const baseMeta = saleDetails || fromStore
     ? (item: QuickItem): QuickItemMeta => ({
-      category: storeCategories.find((c) => c.id === item.categoryId)?.nameAr ?? '',
+      category: categoryById.get(item.categoryId ?? 0) ?? '',
       unit: item.baseUnit ?? '',
       stock: item.isService ? 'خدمة' : String(item.stockQty ?? 0),
       price: formatMinor(item.priceMinor ?? 0, cur, false),
-      cost: formatMinor(item.costMinor ?? 0, cur, false),
+      cost: item.costMinor == null && saleDetails ? undefined : formatMinor(item.costMinor ?? 0, cur, false),
       low: !item.isService && (item.stockQty ?? 0) <= 0,
     })
-    : undefined)
+    : itemMeta
+  const effectiveMeta = baseMeta ? (item: QuickItem) => { const meta = baseMeta(item); return saleDetails && !canViewCost ? { ...meta, cost: undefined } : meta } : undefined
   return (
     <div className="flex h-full min-h-0 flex-col" data-window-view="item-picker">
       <ItemSearchPanel
         items={merged}
         itemMeta={effectiveMeta}
+        saleDetails={saleDetails}
         categories={effectiveCategories}
         amountLabel={amountLabel}
-        onCreate={onCreate ? (name) => { onCreate(name); host?.close() } : undefined}
+        onCreate={onCreate && (!saleDetails || canManageItem) ? (name) => { onCreate(name); host?.close() } : undefined}
         initialQuery={initialQuery}
         onEscape={() => host?.close()}
         onPick={(id, smart) => { onPick?.(id, smart); host?.close() }}
-        onEdit={(id) => openItemEditorWindow(id, host?.windowId ?? null)}
-        onMovement={(id) => openItemLedgerWindow(id, host?.windowId ?? null)}
-        onPrices={(id) => openItemPricesWindow(id, host?.windowId ?? null)}
+        onEdit={!saleDetails || canEditItem ? (id) => openItemEditorWindow(id, host?.windowId ?? null) : undefined}
+        onMovement={!saleDetails || canViewCost ? (id) => openItemLedgerWindow(id, host?.windowId ?? null) : undefined}
+        onPrices={!saleDetails || canViewCost ? (id) => openItemPricesWindow(id, host?.windowId ?? null) : undefined}
       />
     </div>
   )

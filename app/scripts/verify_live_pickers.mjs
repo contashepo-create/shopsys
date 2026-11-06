@@ -73,7 +73,7 @@ for (const hook of ['data-live-picker-panel', 'data-live-picker-search', 'data-l
   ok(pickers.includes(hook), `ج: علامة ${hook}`)
 }
 ok(pickers.includes('data-live-picker-dblclick') && pickers.includes('openEntityPickerWindow({ entity: entityKind'), 'ج: النقر المزدوج في منتقي الأطراف يفتح البحث الحي عند تحديد النوع')
-ok(views.includes('openPartyEditorWindow(entity, 0, hostId, createdThenPick)'), 'ج: إنشاء العميل/المورد كنافذة ابنة تعود بالاختيار')
+ok(views.includes('openPartyEditorWindow(entity, 0, hostId, createdThenPick, name, saleDetails)'), 'ج: إنشاء العميل/المورد من اسم البحث كنافذة ابنة تعود بالاختيار')
 ok(views.includes('openProjectEditorWindow(0, hostId, createdThenPick)') && views.includes('openEmployeeEditorWindow(0, hostId, createdThenPick)'), 'ج: إنشاء المشروع/الموظف كنافذة ابنة تعود بالاختيار')
 ok(views.includes('openPartyLedgerWindow(entity, id, hostId)'), 'ج: كشف الحساب من داخل المنتقي كنافذة ابنة')
 ok(views.includes('data-project-editor-name') && views.includes('data-employee-editor-name'), 'ج: نموذجا الإنشاء السريع موسومان')

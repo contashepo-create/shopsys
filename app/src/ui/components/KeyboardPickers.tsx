@@ -6,6 +6,7 @@ import { parseSmartEntry, type SmartEntry } from './smartEntry.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { openItemPickerWindow, openEntityPickerWindow, type EntityPickerKind } from '../windows/windowStore.ts'
+import { SaleCustomerDetails, SaleItemDetails } from './SalePickerDetails.tsx'
 
 type QuickChoice = { value: string; content: ReactNode; label: string; searchText: string }
 
@@ -176,6 +177,9 @@ type PickerProps = {
   categories?: { id: number; nameAr: string }[]
   /** إنشاء صنف جديد من داخل نافذة الاختيار */
   onCreate?: (name: string) => void
+  /** تفاصيل البيع الجانبية؛ لا تغيّر منتقيات بقية المستندات. */
+  saleDetails?: boolean
+  saleCategoryId?: number
 }
 
 /** منتقي صنف موحد: يفتح نافذة البحث عند أول حرف، ثم ينقل الكتابة إلى حقل النافذة. */
@@ -187,7 +191,7 @@ type PickerProps = {
  * ② كقائمة مرساة فوق الحقل في الشاشات التي لا تعيش داخل نافذة (الكاشير مثلاً).
  */
 export function ItemSearchPanel({
-  items, onPick, onEdit, onMovement, onPrices, itemMeta, categories, onCreate, amountLabel,
+  items, onPick, onEdit, onMovement, onPrices, itemMeta, categories, onCreate, amountLabel, saleDetails = false,
   initialQuery = '', onEscape, autoFocus = true,
 }: {
   items: QuickItem[]
@@ -199,6 +203,7 @@ export function ItemSearchPanel({
   categories?: { id: number; nameAr: string }[]
   onCreate?: (name: string) => void
   amountLabel?: (item: QuickItem) => string
+  saleDetails?: boolean
   initialQuery?: string
   onEscape?: () => void
   autoFocus?: boolean
@@ -262,14 +267,16 @@ export function ItemSearchPanel({
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onPrices?.(current.id)} disabled={!onPrices} data-item-picker-prices className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-emerald-700 enabled:hover:bg-emerald-50 disabled:opacity-35 dark:border-slate-700 dark:text-emerald-300">٪ أسعار الصنف</button>
       </div>
     </div>}
-    <div className="grid grid-cols-[92px_1fr_88px_64px_72px_86px_86px] gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800/50" data-item-picker-head>
+    <div className={saleDetails ? 'sale-picker-split' : 'flex min-h-0 flex-1 flex-col'}>
+    <div className={`${saleDetails ? 'sale-picker-list ' : ''}flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto`}>
+    <div className="grid min-w-[650px] grid-cols-[92px_1fr_88px_64px_72px_86px_86px] gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800/50" data-item-picker-head>
       <span>الكود</span><span>اسم الصنف</span><span>الفئة</span><span>الوحدة</span><span className="text-center">المتاح</span><span className="text-center">سعر البيع</span><span className="text-center">التكلفة</span>
     </div>
-    <div id="invoice-item-results" role="listbox" aria-label="نتائج بحث الأصناف" className="invoice-search-results min-h-0 flex-1 overflow-auto p-1">{matches.length ? matches.map((item, row) => {
+    <div id="invoice-item-results" role="listbox" aria-label="نتائج بحث الأصناف" className="invoice-search-results min-h-0 min-w-[650px] flex-1 overflow-auto p-1">{matches.length ? matches.map((item, row) => {
       const meta = itemMeta?.(item) ?? {}
       return <button type="button" key={item.id} id={`invoice-item-option-${item.id}`} role="option" aria-selected={row === index} data-quick-option
         onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => pickSmart(item.id)}
-        className={`grid w-full grid-cols-[92px_1fr_88px_64px_72px_86px_86px] items-center gap-2 rounded-lg px-2.5 py-1.5 text-right ${row === index ? 'bg-brand-500/15' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+        className={`grid w-full min-w-[650px] grid-cols-[92px_1fr_88px_64px_72px_86px_86px] items-center gap-2 rounded-lg px-2.5 py-1.5 text-right ${row === index ? 'bg-brand-500/15' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
         <span className="truncate font-mono text-[11px] text-slate-500" dir="ltr">{item.sku || item.barcodes?.[0] || item.id}</span>
         <b className="truncate">{item.nameAr}</b>
         <span className="truncate text-[10px] text-slate-500">{meta.category ?? ''}</span>
@@ -279,11 +286,14 @@ export function ItemSearchPanel({
         <span className="text-center text-[11px] text-slate-500">{meta.cost ?? ''}</span>
       </button>
     }) : <div className="p-4 text-center text-sm text-slate-400">لا توجد أصناف مطابقة</div>}</div>
+    </div>
+    {saleDetails && <aside className="sale-picker-details" data-sale-picker-side><SaleItemDetails itemId={current?.id ?? null} /></aside>}
+    </div>
     <div className="invoice-search-footer border-t border-slate-100 px-3 py-2 text-[10px] text-slate-400 dark:border-slate-800">اختر بالسهم ثم Enter، أو اضغط مرتين على الصنف · نوافذ التعديل والحركة والأسعار تفتح فوق هذه النافذة ولا تغلقها</div>
   </div>
 }
 
-export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود أو اسم الصنف ثم Enter', amountLabel, inputElementRef, listenForShortcut = true, onEdit, onMovement, onPrices, itemMeta, categories, onCreate }: PickerProps) {
+export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود أو اسم الصنف ثم Enter', amountLabel, inputElementRef, listenForShortcut = true, onEdit, onMovement, onPrices, itemMeta, categories, onCreate, saleDetails = false, saleCategoryId }: PickerProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
@@ -321,6 +331,8 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
         categories,
         amountLabel,
         onCreate,
+        saleDetails,
+        saleCategoryId,
         onPick: (id, smart) => { onPick(id, smart); requestAnimationFrame(() => inputRef.current?.focus()) },
       })
       return
@@ -362,7 +374,7 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-item-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
       <div role="dialog" aria-label="نتائج بحث الأصناف" style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark">
         <ItemSearchPanel items={items} onPick={pick} onEdit={onEdit} onMovement={onMovement} onPrices={onPrices}
-          itemMeta={itemMeta} categories={categories} onCreate={onCreate ? (name) => { setOpen(false); onCreate(name) } : undefined} amountLabel={amountLabel}
+          itemMeta={itemMeta} categories={categories} onCreate={onCreate ? (name) => { setOpen(false); onCreate(name) } : undefined} amountLabel={amountLabel} saleDetails={saleDetails}
           initialQuery={query} onEscape={() => { setOpen(false); inputRef.current?.focus() }} />
       </div>
     </div></OverlayPortal>}
@@ -371,7 +383,7 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
 
 type Party = { id: number; nameAr: string; phone?: string; active?: boolean }
 export type PartyPickerInfo = { code?: string; balance?: string }
-export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, onConfirm, autoFocus = false, cashValue, showCash = true, partyInfo, entityKind, commitOnClick = true, onCreate }: { parties: Party[]; value: number; onChange: (id: number) => void; cashLabel: string; label: string; onConfirm?: () => void; autoFocus?: boolean; cashValue?: number; showCash?: boolean; partyInfo?: (party: Party) => PartyPickerInfo; onCreate?: (name: string) => void; /** يثبت اختيار الطرف بنقرة واحدة (الافتراضي) — النقر المزدوج يبقى صالحاً */ commitOnClick?: boolean; /** عند تحديد النوع: النقر المزدوج على الحقل يفتح المنتقي الحي (إنشاء/تعديل/كشف في نوافذ ابنة) */ entityKind?: EntityPickerKind }) {
+export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, onConfirm, autoFocus = false, cashValue, showCash = true, partyInfo, entityKind, commitOnClick = true, onCreate, saleDetails = false }: { parties: Party[]; value: number; onChange: (id: number) => void; cashLabel: string; label: string; onConfirm?: () => void; autoFocus?: boolean; cashValue?: number; showCash?: boolean; partyInfo?: (party: Party) => PartyPickerInfo; onCreate?: (name: string) => void; saleDetails?: boolean; /** يثبت اختيار الطرف بنقرة واحدة (الافتراضي) — النقر المزدوج يبقى صالحاً */ commitOnClick?: boolean; /** عند تحديد النوع: النقر المزدوج على الحقل يفتح المنتقي الحي (إنشاء/تعديل/كشف في نوافذ ابنة) */ entityKind?: EntityPickerKind }) {
   const host = useWindowHost()
   const emptyValue = cashValue ?? (value === -1 ? -1 : 0)
   const [query, setQuery] = useState('')
@@ -470,13 +482,14 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
         onChange(value); onConfirm?.(); return
       }
       if (!open) { openSearch(); return }
+      if (index === -1 && showCash) { onChange(emptyValue); setOpen(false); onConfirm?.(); return }
       commit()
     } else if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
   }
   const renderParty = (party: Party, row: number) => {
     const info = partyInfo?.(party) ?? {}
     const stopped = party.active === false ? 'موقوف' : undefined
-    return <button type="button" key={party.id} data-quick-option="true" data-value={String(party.id)} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (commitOnClick) commit(party); else setIndex(row) }} onDoubleClick={() => commit(party)} className={`invoice-search-result-row w-full rounded-lg p-2 text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`}>
+    return <button type="button" key={party.id} data-quick-option="true" data-value={String(party.id)} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (commitOnClick) commit(party); else { setIndex(row); if (saleDetails) onChange(party.id) } }} onDoubleClick={() => commit(party)} className={`invoice-search-result-row w-full rounded-lg p-2 text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0"><div className="flex items-center gap-2"><span className="font-mono text-[10px] text-slate-400" dir="ltr">{info.code}</span><b className="truncate">{party.nameAr}</b></div>{party.phone && <span className="text-[10px] text-slate-500" dir="ltr">{party.phone}</span>}</div>
         <div className="shrink-0 text-left text-[10px] font-bold">{info.balance && <div className="text-slate-500">{info.balance}</div>}{stopped && <div className="text-rose-600">{stopped}</div>}</div>
@@ -484,12 +497,13 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
     </button>
   }
   return <div ref={pickerRef} className="relative invoice-picker-root" data-enter-native="true" data-party-picker="true">
-    <input ref={inputRef} className={inputCls} value={open ? '' : (selected?.nameAr ?? cashLabel)} aria-label={open ? undefined : label} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} title={entityKind ? 'انقر مرتين لفتح البحث الحي — إنشاء وتعديل بدون مغادرة الفاتورة' : undefined} data-live-picker-dblclick={entityKind || undefined} onDoubleClick={entityKind ? () => { setOpen(false); openEntityPickerWindow({ entity: entityKind, parentId: host?.windowId ?? null, onPick: (id) => { onChange(id); onConfirm?.() } }) } : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) { setQuery(event.target.value); setIndex(0) } else openSearch(event.target.value) }} onKeyDown={handleKeyDown} />
-    {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-party-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
+    <input ref={inputRef} className={inputCls} value={open ? '' : (selected?.nameAr ?? cashLabel)} aria-label={open ? undefined : label} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} title={entityKind ? 'انقر مرتين لفتح البحث الحي — إنشاء وتعديل بدون مغادرة الفاتورة' : undefined} data-live-picker-dblclick={entityKind || undefined} onDoubleClick={entityKind ? () => { setOpen(false); openEntityPickerWindow({ entity: entityKind, parentId: host?.windowId ?? null, saleDetails: saleDetails && entityKind === 'customer', onPick: (id) => { onChange(id); onConfirm?.() } }) } : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) { setQuery(event.target.value); setIndex(0) } else openSearch(event.target.value) }} onKeyDown={handleKeyDown} />
+    {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-party-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false) }}>
       <div role="dialog" aria-label={`${label} — نتائج البحث`} style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="invoice-search-header flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700"><div><b className="text-base">بحث {label.replace('بحث ', '')}</b><p className="text-xs text-slate-500">اكتب الاسم أو الهاتف أو الكود، {commitOnClick ? 'ثم اضغط على الطرف مرة واحدة' : 'ثم اضغط مرتين على الطرف'} أو اختر بالأسهم وEnter</p></div><button type="button" aria-label="إغلاق البحث" className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-500/10" onClick={() => setOpen(false)}>✕</button></div>
+        <div className="invoice-search-header flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700"><div><b className="text-base">بحث {label.replace('بحث ', '')}</b><p className="text-xs text-slate-500">اكتب الاسم أو الهاتف أو الكود، {saleDetails && !commitOnClick ? 'ثم انقر لاختيار العميل وعرض تفاصيله وأكد بالزر' : commitOnClick ? 'ثم اضغط على الطرف مرة واحدة' : 'ثم اضغط مرتين على الطرف'} أو اختر بالأسهم وEnter</p></div><button type="button" aria-label="إغلاق البحث" className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-500/10" onClick={() => setOpen(false)}>✕</button></div>
         <div className="invoice-search-inputbar flex items-center gap-2 border-b border-slate-200 p-3 dark:border-slate-700"><input ref={searchInputRef} className={inputCls} value={query} placeholder={`ابحث في ${label.replace('بحث ', '')}`} aria-label={label} autoComplete="off" onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown} />{onCreate && <button type="button" data-party-picker-create className="shrink-0 rounded-lg border border-emerald-300 px-2 py-1 text-xs font-bold text-emerald-700" onClick={() => { setOpen(false); onCreate(query.trim()) }}>+ عميل جديد</button>}</div>
-        <div role="listbox" aria-label={`${label} — نتائج البحث`} className="invoice-search-results overflow-auto p-2">{showCash && <button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (commitOnClick) { onChange(emptyValue); setOpen(false); onConfirm?.() } else setIndex(-1) }} onDoubleClick={() => { onChange(emptyValue); setOpen(false); onConfirm?.() }} className={`invoice-search-result-row invoice-search-cash w-full rounded-xl border border-dashed border-brand-300 p-3 text-right font-bold text-brand-700 hover:bg-brand-500/10 dark:border-brand-700 dark:text-brand-300 ${index === -1 ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : ''}`}>{cashLabel}</button>}{matches.length ? matches.map(renderParty) : <div className="p-8 text-center text-sm text-slate-400">لا توجد نتائج مطابقة</div>}</div>
+        <div className={saleDetails ? 'sale-picker-split' : 'flex min-h-0 flex-1 flex-col'}><div role="listbox" aria-label={`${label} — نتائج البحث`} className="invoice-search-results min-h-0 min-w-0 flex-1 overflow-auto p-2">{showCash && <button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (commitOnClick) { onChange(emptyValue); setOpen(false); onConfirm?.() } else { setIndex(-1); if (saleDetails) onChange(emptyValue) } }} onDoubleClick={() => { onChange(emptyValue); setOpen(false); onConfirm?.() }} className={`invoice-search-result-row invoice-search-cash w-full rounded-xl border border-dashed border-brand-300 p-3 text-right font-bold text-brand-700 hover:bg-brand-500/10 dark:border-brand-700 dark:text-brand-300 ${index === -1 ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : ''}`}>{cashLabel}</button>}{matches.length ? matches.map(renderParty) : <div className="p-8 text-center text-sm text-slate-400">لا توجد نتائج مطابقة</div>}</div>
+        {saleDetails && <aside className="sale-picker-details" data-sale-picker-side><SaleCustomerDetails customerId={index === -1 ? null : (matches[index]?.id ?? null)} /><button type="button" className="sale-picker-select" disabled={index !== -1 && !matches[index]} onClick={() => { if (index === -1 && showCash) { onChange(emptyValue); setOpen(false); onConfirm?.() } else commit(matches[index]) }}>اختيار العميل</button></aside>}</div>
       </div>
     </div></OverlayPortal>}
   </div>
@@ -522,6 +536,7 @@ function LivePanelShell<T extends { id: number }>(props: {
   onPick: (id: number) => void
   onEscape?: () => void
   initialQuery?: string
+  saleCustomerDetails?: boolean
 }) {
   const [query, setQuery] = useState(props.initialQuery ?? '')
   const [index, setIndex] = useState(0)
@@ -563,16 +578,18 @@ function LivePanelShell<T extends { id: number }>(props: {
       <div className="min-w-0">{props.currentTitle(current)}</div>
       <div className="flex items-center gap-1">{props.currentActions(current)}</div>
     </div>}
-    <div className={`grid ${props.columnsClass} gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800/50`} data-live-picker-head>
+    <div className={props.saleCustomerDetails ? 'sale-picker-split' : 'flex min-h-0 flex-1 flex-col'}><div className={`${props.saleCustomerDetails ? 'sale-picker-list ' : ''}flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto`}>
+    <div className={`grid min-w-[550px] ${props.columnsClass} gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800/50`} data-live-picker-head>
       {props.headerCells}
     </div>
-    <div role="listbox" aria-label={props.searchLabel} className="invoice-search-results min-h-0 flex-1 overflow-auto p-1">{matches.length ? matches.map((item, row) => (
+    <div role="listbox" aria-label={props.searchLabel} className="invoice-search-results min-h-0 min-w-[550px] flex-1 overflow-auto p-1">{matches.length ? matches.map((item, row) => (
       <button type="button" key={item.id} role="option" aria-selected={row === safeIndex} data-quick-option data-live-picker-row={item.id}
         onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => props.onPick(item.id)}
-        className={`grid w-full ${props.columnsClass} items-center gap-2 rounded-lg px-2.5 py-1.5 text-right ${row === safeIndex ? 'bg-brand-500/15' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+        className={`grid w-full min-w-[550px] ${props.columnsClass} items-center gap-2 rounded-lg px-2.5 py-1.5 text-right ${row === safeIndex ? 'bg-brand-500/15' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
         {props.renderRow(item)}
       </button>
-    )) : <div className="p-4 text-center text-sm text-slate-400">{props.emptyText}</div>}</div>
+    )) : <div className="p-4 text-center text-sm text-slate-400">{props.emptyText}</div>}</div></div>
+    {props.saleCustomerDetails && <aside className="sale-picker-details" data-sale-picker-side><SaleCustomerDetails customerId={current?.id ?? null} /><button type="button" className="sale-picker-select" disabled={!current} onClick={() => { if (current) props.onPick(current.id) }}>اختيار العميل</button></aside>}</div>
     <div className="invoice-search-footer border-t border-slate-100 px-3 py-2 text-[10px] text-slate-400 dark:border-slate-800">{props.footerText}</div>
   </div>
 }
@@ -582,7 +599,7 @@ const liveActionBtn = 'rounded-lg border border-slate-200 px-2 py-1 text-[10px] 
 export type LiveParty = { id: number; nameAr: string; phone?: string; active?: boolean }
 
 /** بحث حي للعملاء/الموردين: رصيد كل حساب، وذمم فقط، وتعديل وكشف حساب كنوافذ ابنة */
-export function PartySearchPanel({ kind, parties, balanceOf, fmtMoney, onPick, onCreate, onEdit, onLedger, onEscape, initialQuery }: {
+export function PartySearchPanel({ kind, parties, balanceOf, fmtMoney, onPick, onCreate, onEdit, onLedger, onEscape, initialQuery, saleDetails = false, showBalance = true }: {
   kind: 'customer' | 'supplier'
   parties: LiveParty[]
   balanceOf: (id: number) => number
@@ -593,17 +610,21 @@ export function PartySearchPanel({ kind, parties, balanceOf, fmtMoney, onPick, o
   onLedger?: (id: number) => void
   onEscape?: () => void
   initialQuery?: string
+  saleDetails?: boolean
+  showBalance?: boolean
 }) {
   const [duesOnly, setDuesOnly] = useState(false)
-  const items = useMemo(() => (duesOnly ? parties.filter((p) => balanceOf(p.id) !== 0) : parties), [parties, duesOnly, balanceOf])
+  const items = useMemo(() => (showBalance && duesOnly ? parties.filter((p) => balanceOf(p.id) !== 0) : parties), [parties, duesOnly, balanceOf, showBalance])
   const noun = kind === 'customer' ? 'عميل' : 'مورد'
   const balanceText = (party: LiveParty) => {
+    if (!showBalance) return <span className="text-slate-400">—</span>
     const balance = balanceOf(party.id)
     if (balance === 0) return <span className="text-slate-400">متزن</span>
     return <span className={balance > 0 ? 'text-rose-600' : 'text-emerald-500'}>{fmtMoney(Math.abs(balance))} {balance > 0 ? 'عليه' : 'له'}</span>
   }
   return <LivePanelShell<LiveParty>
     panelId={kind}
+    saleCustomerDetails={saleDetails && kind === 'customer'}
     searchLabel={`بحث ${noun}`}
     placeholder="ابحث بالاسم أو الهاتف أو الرقم"
     items={items}
@@ -621,7 +642,7 @@ export function PartySearchPanel({ kind, parties, balanceOf, fmtMoney, onPick, o
       <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onEdit?.(p.id)} disabled={!onEdit} data-live-picker-edit className={`${liveActionBtn} text-sky-700 dark:text-sky-300`}>✎ تعديل</button>
       <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onLedger?.(p.id)} disabled={!onLedger} data-live-picker-ledger className={`${liveActionBtn} text-violet-700 dark:text-violet-300`}>↗ كشف الحساب</button>
     </>}
-    filtersNode={<label className="flex cursor-pointer items-center gap-1 text-slate-600 dark:text-slate-300"><input type="checkbox" checked={duesOnly} onChange={(event) => setDuesOnly(event.target.checked)} data-live-picker-dues /> أصحاب الذمم فقط</label>}
+    filtersNode={showBalance ? <label className="flex cursor-pointer items-center gap-1 text-slate-600 dark:text-slate-300"><input type="checkbox" checked={duesOnly} onChange={(event) => setDuesOnly(event.target.checked)} data-live-picker-dues /> أصحاب الذمم فقط</label> : undefined}
     countLabel={(n) => `${n} ${noun}`}
     emptyText="لا توجد حسابات مطابقة"
     createLabel={`${noun} جديد`}

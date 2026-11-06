@@ -25,7 +25,7 @@ const css = read('index.css')
   assert.ok(/const \[newPartySheet,setNewPartySheet\]=useState\(false\)/.test(sales), 'الفاتورة بلا درج «عميل جديد»')
   assert.ok(/event\.ctrlKey\|\|!event\.shiftKey\|\|event\.key\.toLowerCase\(\)!=='n'/.test(sales), 'اختصار Ctrl+Shift+N غير مربوط')
   assert.ok(/data-new-party-sheet/.test(sales) && /saveNewParty/.test(sales), 'حفظ العميل من الدرج غير منفَّذ')
-  assert.ok(/setCustomerId\(created\.id\)/.test(sales), 'العميل الجديد لا يُختار في الفاتورة')
+  assert.ok(/selectCustomer\(created\.id\)/.test(sales) && /const selectCustomer=\(id:number\)=>\{setCustomerId\(id\)/.test(sales), 'العميل الجديد لا يُختار في الفاتورة')
   R.ok('Ctrl+Shift+N يفتح درج «عميل جديد» ويُضيفه ويختاره بلا مغادرة الفاتورة')
 }
 {

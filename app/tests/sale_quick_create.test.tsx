@@ -56,6 +56,15 @@ describe('إضافة سريعة داخل فاتورة البيع', () => {
     expect(payload.customerId).toBe(created.id)
     expect(payload.lines).toMatchObject([{ itemId: 1 }])
   })
+  it('اختيار العميل بنقرة يحفظه ويعرض هاتفه في الفاتورة', () => {
+    useRawDataStore.setState({ customers: [{ id: 10, nameAr: 'عميل مختار', phone: '0123456789', active: true, creditLimitMinor: 0 }] as never })
+    mount()
+    fireEvent.change(screen.getByLabelText('بحث العميل — F4'), { target: { value: 'عميل مختار' } })
+    fireEvent.click(screen.getByRole('button', { name: /عميل مختار/ }))
+    expect(screen.getByText('هاتف العميل')).toBeTruthy()
+    expect(screen.getByText('0123456789')).toBeTruthy()
+    expect(saveDraft().customerId).toBe(10)
+  })
   it('يحفظ من منتقي النافذة الابنة ويعيد الصنف إلى الفاتورة الأصلية', () => {
     const base: WindowHostApi = { windowId: 'invoice-test', props: {}, close: vi.fn(), setDirty: vi.fn(), setTitle: vi.fn(), setClosePrompt: vi.fn(), openChild: vi.fn() }
     render(<MemoryRouter><WindowHostContext.Provider value={base}><AdvancedSalesInvoicePage /><ToastHost /></WindowHostContext.Provider></MemoryRouter>)
@@ -71,6 +80,31 @@ describe('إضافة سريعة داخل فاتورة البيع', () => {
     fireEvent.click(screen.getByRole('button', { name: /حفظ واختيار الصنف/ }))
     const created = useRawDataStore.getState().items.find(row => row.nameAr === 'صنف النافذة')!
     expect(saveDraft().lines).toMatchObject([{ itemId: created.id, unitPriceMinor: 2000 }])
+    useWindowStore.getState().requestCloseWindow(picker.id)
+  })
+  it('ينشئ صنفاً من منتقي الاستبدال ويستبدل السطر نفسه دون إضافة سطر', () => {
+    const base: WindowHostApi = { windowId: 'invoice-replace', props: {}, close: vi.fn(), setDirty: vi.fn(), setTitle: vi.fn(), setClosePrompt: vi.fn(), openChild: vi.fn() }
+    render(<MemoryRouter><WindowHostContext.Provider value={base}><AdvancedSalesInvoicePage /><ToastHost /></WindowHostContext.Provider></MemoryRouter>)
+    openItems()
+    let picker = useWindowStore.getState().windows.find(w => w.kind === 'item-picker')!
+    let child = { ...base, windowId: picker.id, props: picker.props, close: vi.fn() }
+    const firstView = render(<WindowHostContext.Provider value={child}><ItemPickerWindowView /></WindowHostContext.Provider>)
+    fireEvent.doubleClick(screen.getByRole('option', { name: /صنف موجود/ }))
+    firstView.unmount(); useWindowStore.getState().requestCloseWindow(picker.id)
+    const cell = [...document.querySelectorAll('tbody td')].find(node => node.textContent?.includes('صنف موجود'))!
+    fireEvent.doubleClick(cell)
+    picker = useWindowStore.getState().windows.find(w => w.kind === 'item-picker')!
+    expect(picker).toBeTruthy()
+    child = { ...base, windowId: picker.id, props: picker.props, close: vi.fn() }
+    render(<WindowHostContext.Provider value={child}><ItemPickerWindowView /></WindowHostContext.Provider>)
+    fireEvent.change(screen.getByLabelText('بحث الصنف'), { target: { value: 'بديل جديد' } })
+    fireEvent.click(screen.getByRole('button', { name: /صنف جديد/ }))
+    fireEvent.change(screen.getByLabelText('سعر الصنف الجديد'), { target: { value: '20' } })
+    fireEvent.click(screen.getByRole('button', { name: /حفظ واختيار الصنف/ }))
+    const created = useRawDataStore.getState().items.find(row => row.nameAr === 'بديل جديد')!
+    const lines = saveDraft().lines
+    expect(lines).toMatchObject([{ itemId: created.id, unitPriceMinor: 2000 }])
+    expect(lines).toHaveLength(1)
     useWindowStore.getState().requestCloseWindow(picker.id)
   })
   it('يعيد فحص الصلاحية عند الحفظ إذا تغير المستخدم أثناء فتح الدرج', () => {

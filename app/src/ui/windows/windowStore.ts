@@ -769,6 +769,8 @@ export function openItemPickerWindow(input: {
   categories?: unknown
   amountLabel?: unknown
   onCreate?: unknown
+  saleDetails?: boolean
+  saleCategoryId?: number
   onPick: (id: number, smart?: SmartEntry) => void
 }) {
   return useWindowStore.getState().openWindow({
@@ -782,6 +784,8 @@ export function openItemPickerWindow(input: {
       categories: input.categories,
       amountLabel: input.amountLabel,
       onCreate: input.onCreate,
+      saleDetails: input.saleDetails,
+      saleCategoryId: input.saleCategoryId,
       onPick: input.onPick,
     },
     parentId: input.parentId ?? null,
@@ -799,13 +803,13 @@ export function openItemPricesWindow(itemId: number, parentId?: string | null) {
   })
 }
 
-export function openPartyEditorWindow(kind: 'customer' | 'supplier', partyId: number, parentId?: string | null, onSaved?: (partyId: number) => void) {
+export function openPartyEditorWindow(kind: 'customer' | 'supplier', partyId: number, parentId?: string | null, onSaved?: (partyId: number) => void, initialName = '', enforcePermission = false) {
   const isNew = partyId === 0
   return useWindowStore.getState().openWindow({
     kind: 'party-editor',
     title: isNew ? (kind === 'customer' ? 'عميل جديد' : 'مورد جديد') : (kind === 'customer' ? 'تعديل عميل' : 'تعديل مورد'),
     subtitle: isNew ? 'إضافة سريعة — تعود بك إلى نافذتك وتُختار تلقائياً' : 'تعديل سريع بلا مغادرة الفاتورة',
-    props: { partyKind: kind, partyId, ...(onSaved ? { onSaved } : {}) }, parentId: parentId ?? null,
+    props: { partyKind: kind, partyId, initialName, enforcePermission, ...(onSaved ? { onSaved } : {}) }, parentId: parentId ?? null,
     dedupeKey: isNew ? null : `party-editor:${kind}:${partyId}`, width: 820, height: 640,
   })
 }
@@ -828,13 +832,14 @@ export function openEntityPickerWindow(input: {
   entity: EntityPickerKind
   parentId?: string | null
   initialQuery?: string
+  saleDetails?: boolean
   onPick: (id: number) => void
 }) {
   return useWindowStore.getState().openWindow({
     kind: 'entity-picker',
     title: ENTITY_PICKER_TITLES[input.entity],
     subtitle: 'بحث حي — إنشاء وتعديل في نوافذ ابنة بلا مغادرة مكانك',
-    props: { entity: input.entity, initialQuery: input.initialQuery ?? '', onPick: input.onPick },
+    props: { entity: input.entity, initialQuery: input.initialQuery ?? '', saleDetails: input.saleDetails, onPick: input.onPick },
     parentId: input.parentId ?? null,
     dedupeKey: input.parentId ? `entity-picker:${input.parentId}:${input.entity}` : `entity-picker:${input.entity}`,
     width: 860,

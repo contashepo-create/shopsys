@@ -11,6 +11,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { PartyQuickPicker, PartySearchPanel, ProjectSearchPanel, EmployeeSearchPanel } from '../components/KeyboardPickers.tsx'
 import { useWindowHost } from './windowHostContext.ts'
@@ -34,7 +35,14 @@ export function EntityPickerWindowView() {
   const initialQuery = String(props.initialQuery ?? '')
   const cur = useCur()
   const fmtMoney = (m: number) => `${formatMinor(m, cur, false)} ${cur.symbol}`
-  const { customers, suppliers, employees, projects, getCustomerBalance, getSupplierBalance } = useDataStore()
+  const { customers, suppliers, employees, projects, getCustomerBalance, getSupplierBalance, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const { setup } = useAppStore()
+  const user = appUsers.find(row => row.id === currentUserId) ?? null
+  const permissions = effectivePermissionsFor(user, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
+  const known = currentUserId == null || !!user
+  const saleDetails = props.saleDetails === true && entity === 'customer'
+  const canManage = !saleDetails || (known && permissions.has('party.customer.manage'))
+  const canSeeBalance = !saleDetails || (known && permissions.has('party.customer.statement'))
   const hostId = host?.windowId ?? null
 
   const pick = (id: number) => { onPick?.(id); host?.close() }
@@ -42,18 +50,21 @@ export function EntityPickerWindowView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-window-view="entity-picker" data-entity-picker={entity}>
+      {saleDetails && <button type="button" className="m-2 rounded-lg border border-brand-300 px-3 py-2 text-right text-xs font-bold text-brand-700 dark:border-brand-700 dark:text-brand-300" onClick={() => pick(0)}>اختيار عميل نقدي</button>}
       {entity === 'customer' || entity === 'supplier' ? (
         <PartySearchPanel
           kind={entity}
+          saleDetails={saleDetails}
+          showBalance={canSeeBalance}
           parties={entity === 'customer' ? customers : suppliers}
           balanceOf={(id) => (entity === 'customer' ? getCustomerBalance(id) : getSupplierBalance(id))}
           fmtMoney={fmtMoney}
           initialQuery={initialQuery}
           onEscape={() => host?.close()}
           onPick={pick}
-          onCreate={() => openPartyEditorWindow(entity, 0, hostId, createdThenPick)}
-          onEdit={(id) => openPartyEditorWindow(entity, id, hostId)}
-          onLedger={(id) => openPartyLedgerWindow(entity, id, hostId)}
+          onCreate={canManage ? (name) => openPartyEditorWindow(entity, 0, hostId, createdThenPick, name, saleDetails) : undefined}
+          onEdit={canManage && canSeeBalance ? (id) => openPartyEditorWindow(entity, id, hostId, undefined, '', saleDetails) : undefined}
+          onLedger={canSeeBalance ? (id) => openPartyLedgerWindow(entity, id, hostId) : undefined}
         />
       ) : entity === 'project' ? (
         <ProjectSearchPanel

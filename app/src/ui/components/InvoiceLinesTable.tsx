@@ -121,6 +121,7 @@ type Props = {
   onPrices?: (id: number) => void
   /** نقرتان على اسم صنف في الجدول ⇒ نافذة اختيار صنف تستبدله (بلاغ المالك) */
   onReplaceLine?: (key: string, itemId: number) => void
+  onCreateItem?: (name: string, replaceLineKey: string) => void
   amountLabel?: (item: InvoiceLineItem) => string
   placeholder: string
   showPicker?: boolean
@@ -191,7 +192,7 @@ const MIN_MARGIN_RATIO = 0.1
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, saleRoundingVersion, taxEnabled = false, showNotes = false, warnings, costShares, belowCostKeys,
-  onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onCreateItem, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
   entry, entryFilter, showReceivingTracking = false,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
@@ -229,7 +230,9 @@ export function InvoiceLinesTable({
     openItemPickerWindow({
       parentId: windowHost.windowId,
       initialQuery: currentName,
-      items,
+      items: kind === 'sale' ? items.filter(item => item.isActive !== false) : items,
+      saleDetails: kind === 'sale',
+      onCreate: onCreateItem ? (name: string) => onCreateItem(name, lineKey) : undefined,
       itemMeta: (row: { id: number }) => {
         const full = items.find((entry) => entry.id === row.id)
         return {
@@ -237,7 +240,7 @@ export function InvoiceLinesTable({
           stock: full?.isService ? 'خدمة' : String(full?.stockQty ?? 0),
           low: !full?.isService && (full?.stockQty ?? 0) <= 0,
           price: fmt(full?.priceMinor ?? 0),
-          cost: fmt(full?.costMinor ?? 0),
+          cost: kind !== 'sale' || canViewCost ? fmt(full?.costMinor ?? 0) : undefined,
         }
       },
       onPick: (itemId: number) => onReplaceLine(lineKey, itemId),
