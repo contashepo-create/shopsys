@@ -365,6 +365,7 @@ priceFloorOverrideBy:approvedBy??null,internalExpenses:expenses.map(e=>effective
  const liveApproverName=(perm:string,by?:string)=>{if(by)return by;if(!hasLivePermission(perm)){toast.show('تغيرت الصلاحية؛ أعد محاولة الاعتماد','error');return null}const state=useDataStore.getState();return state.appUsers.find(user=>user.id===state.currentUserId)?.nameAr||useAppStore.getState().setup.ownerName||'المالك'}
  const editInvoice=(priceApproved?:string|null,creditApproved?:string|null)=>{
   if(!editingInvoice||!totals||postingRef.current)return
+  if(fxOn){toast.show('لا يمكن إدخال تحصيل أجنبي عند تعديل الفاتورة؛ أزل التحصيل الأجنبي أو استخدم مستنداً مستقلاً','error');return}
   if(partyNeedsReview){toast.show('اختر طرف المسودة القديمة مجدداً قبل الترحيل','error');return}
   if(!editReason.trim()){toast.show('سبب التعديل مطلوب لسجل التدقيق','error');return}
   if(!lines.length){toast.show('الفاتورة المعدلة بلا أصناف','error');return}
@@ -796,12 +797,12 @@ const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCusto
      </div>}
      {/* تحرير الفاتورة لا يبدل ساق الصرف؛ لا تعرض أداة تضيف ساقاً يتجاهلها مسار التعديل. */}
      {editingInvoice?.fx&&<p className="invoice-doc-panel-note" data-invoice-fx-preserved>التحصيل الأصلي {editingInvoice.fx.amountMinor / 10 ** editingInvoice.fx.decimals} {editingInvoice.fx.currencyCode} محفوظ بسعره؛ يبقى المبلغ والعميل والخزينة كما هم، ولا يُتاح التعديل بعد حركة لاحقة على الرصيد.</p>}
-     {!editingInvoice&&!terminal.terminalId&&mode==='advanced'&&<div className="invoice-doc-fx" data-invoice-fx="true">
+     {(!editingInvoice||fxOn)&&!terminal.terminalId&&mode==='advanced'&&<div className="invoice-doc-fx" data-invoice-fx="true">
       {/* §93: زر واحد للتحصيل الأجنبي — الحقول كلها في نافذة منبثقة */}
       {fxOn ? (
         <div className="invoice-doc-fx-active" data-fx-summary="true">
           <span className="invoice-doc-fx-active-leg" dir="ltr">{fxAmount || '0'} {fxCode} × {formatRate(fxLeg.ratePpm)} = {formatMinor(fxBookMinor,cur,false)} {cur.code}</span>
-          <button type="button" className="invoice-doc-fx-edit" data-fx-edit onClick={()=>setFxCollectOpen(true)}>تعديل</button>
+          {!editingInvoice&&<button type="button" className="invoice-doc-fx-edit" data-fx-edit onClick={()=>setFxCollectOpen(true)}>تعديل</button>}
           <button type="button" className="invoice-doc-fx-clear" data-fx-clear onClick={()=>{setFxOn(false);setFxAmount('');setFxRate('')}}>إزالة</button>
         </div>
       ) : (

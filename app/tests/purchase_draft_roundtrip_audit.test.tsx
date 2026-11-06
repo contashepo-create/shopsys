@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { useRawDataStore } from '../src/data/repo.ts'
@@ -41,6 +41,23 @@ describe('استعادة مسودة الشراء دون تغيير السداد 
     fireEvent.click(screen.getByRole('button', { name: 'تأكيد الترحيل بلا ربط أمر' }))
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload)).toMatchObject({ sourceOrderId: null, sourceOrderNeedsReview: false })
+  })
+  it('لا يغيّر تعديل الشراء الدفع إلى عملة أجنبية دون توثيق ساق العملة', async () => {
+    const line = { itemId: 1, qty: 1, unitPriceMinor: 10000, vatPercent: 0 }
+    const sale = { id: 44, invoiceNumber: 'P-44', date: '2026-01-01', supplierId: 7, lines: [line], expenses: [], discountPercent: 0, paidMinor: 0, grandTotalMinor: 10000, supplierDueMinor: 10000 }
+    const edit = vi.fn().mockImplementation(() => sale)
+    const rehydrate = vi.spyOn(useRawDataStore.persist, 'rehydrate').mockResolvedValue(undefined)
+    try {
+      useRawDataStore.setState({ purchases: [sale] as never, items: [{ id: 1, nameAr: 'صنف', sku: 'X', stockQty: 10, costMinor: 10000, priceMinor: 12000, minQty: 0, isActive: true }] as never, editPurchase: edit as never, advancedInvoiceDrafts: [{ id: 'fx-edit', kind: 'purchase', name: 'قديمة', createdAt: '2026', updatedAt: '2026', payload: JSON.stringify({ editingPurchaseId: 44, sourceOrderId: null, supplierId: 7, lines: [line], mode: 'advanced', fxOn: true, fxCode: 'USD', fxAmount: '10', fxRate: '5' }) }] })
+      mount('/?edit=44')
+      expect(document.querySelector('[data-fx-open]')).toBeNull()
+      restore('fx-edit')
+      fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
+      expect(document.querySelector('[data-fx-clear]')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
+      await waitFor(() => expect(useToast.getState().msg).toContain('لا يمكن إدخال سداد أجنبي عند تعديل الفاتورة'))
+      expect(edit).not.toHaveBeenCalled()
+    } finally { rehydrate.mockRestore() }
   })
   it('يحفظ السداد الأجنبي وملاحظة المورد ويستعيدهما', () => {
     const view = mount()

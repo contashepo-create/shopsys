@@ -6,7 +6,7 @@ import { computeTotals, CreditLimitError } from '../src/core/pos.ts'
 import { draftFromCategory } from '../src/core/items.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { AdvancedSalesInvoicePage } from '../src/ui/pages/AdvancedSalesInvoicePage.tsx'
-import { ToastHost } from '../src/ui/components/ui.tsx'
+import { ToastHost, useToast } from '../src/ui/components/ui.tsx'
 
 const originalData = useRawDataStore.getState(), originalApp = useAppStore.getState()
 const mount = () => render(<MemoryRouter><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
@@ -145,6 +145,25 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     expect(document.querySelector('[data-invoice-paynote]')?.textContent).not.toContain('يلزم تحصيل')
     fireEvent.click(document.querySelector('[data-prepost-open]')!)
     expect(screen.queryByText(/تجاوز حد الائتمان/)).toBeNull()
+  })
+  it('لا يغيّر تعديل البيع التحصيل إلى عملة أجنبية دون توثيق ساق العملة', async () => {
+    const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 10000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+    const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
+    const edit = vi.fn().mockImplementation(() => sale)
+    const rehydrate = vi.spyOn(useRawDataStore.persist, 'rehydrate').mockResolvedValue(undefined)
+    try {
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل', phone: '', creditLimitMinor: 0, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never })
+      useRawDataStore.setState({ advancedInvoiceDrafts: [{ id: 'fx-edit', kind: 'sale', name: 'قديمة', createdAt: '2026', updatedAt: '2026', payload: JSON.stringify({ editingSaleId: 44, partyKind: 'customer', customerId: 7, lines: [line], mode: 'advanced', fxOn: true, fxCode: 'USD', fxAmount: '10', fxRate: '5' }) }] })
+      render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
+      fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
+      expect(document.querySelector('[data-fx-open]')).toBeNull()
+      restore('fx-edit')
+      fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
+      expect(document.querySelector('[data-fx-clear]')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
+      await waitFor(() => expect(useToast.getState().msg).toContain('لا يمكن إدخال تحصيل أجنبي عند تعديل الفاتورة'))
+      expect(edit).not.toHaveBeenCalled()
+    } finally { rehydrate.mockRestore() }
   })
   it('تعديل تجاوز ائتمان يعيد المحاولة باعتماد الائتمان بعد تحرير قفل الواجهة', async () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
