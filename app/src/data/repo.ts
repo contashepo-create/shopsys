@@ -6987,11 +6987,11 @@ export const useRawDataStore = create<DataState>()(
         /* حرس سلامة دورة الأمر: الحالات المستلمة (partial/closed) تُشتق من الاستلام
            لا تُضبط يدوياً، والأمر المكتمل أو المرتبط بفواتير لا يُلغى */
         if ((status === 'partial' || status === 'closed') && status !== order.status) throw new Error('حالة الاستلام تُحدَّث تلقائياً من فواتير الشراء — لا تُضبط يدوياً')
-        if ((status === 'draft' || status === 'sent' || status === 'cancelled') && order.lines.some(line => (line.receivedQty ?? 0) > 0) && status !== order.status) throw new Error('الأمر فيه مستلم — لا تُغيّر حالة الاستلام يدوياً')
         if (status === 'cancelled') {
           if (order.status === 'closed') throw new Error('أمر الشراء مكتمل الاستلام — لا يُلغى')
           if ((order.invoiceIds ?? []).length > 0) throw new Error('الأمر مرتبط بفواتير شراء مسجلة — لا يُلغى')
         }
+        if ((status === 'draft' || status === 'sent' || status === 'cancelled') && order.lines.some(line => (line.receivedQty ?? 0) > 0) && status !== order.status) throw new Error('الأمر فيه مستلم — لا تُغيّر حالة الاستلام يدوياً')
         return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status, statusBeforeReceipt: status === 'draft' || status === 'sent' ? status : o.statusBeforeReceipt } : o)) }
       }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
