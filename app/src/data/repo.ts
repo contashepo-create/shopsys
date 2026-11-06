@@ -1283,6 +1283,8 @@ export interface PurchaseInvoice {
   invoiceNumber: string
   /** مفتاح مسودة المحرر لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
   sourceDraftId?: string
+  /** مدخل المسودة المطبع للمقارنة عند إعادة المحاولة؛ لا يُستنتج للفواتير القديمة. */
+  sourceDraftEvidence?: string
   /** الرقم المرجعي الفريد للتتبع — PUR-YYMMDD-XXXXXC (يُطبع ويُبحث به) */
   refCode: string
   supplierId: number
@@ -1505,6 +1507,8 @@ export interface SaleInvoice {
   salesRepEmployeeId?: number | null
   /** مفتاح مسودة واجهة الفاتورة لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
   sourceDraftId?: string
+  /** مدخل المسودة المطبع للمقارنة عند إعادة المحاولة؛ لا يُستنتج للفواتير القديمة. */
+  sourceDraftEvidence?: string
   /** الرقم المرجعي الفريد للتتبع — SAL-YYMMDD-XXXXXC (يُطبع على الإيصال ويُبحث به) */
   refCode: string
   date: string // ISO datetime
@@ -2151,6 +2155,8 @@ interface DataState {
   postPurchase: (inv: {
     /** مفتاح مسودة واجهة الفاتورة؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر (نفس عقد postSale). */
     sourceDraftId?: string
+    /** داخلي: دليل مدخل المسودة الأصلي المحفوظ في طلب الاعتماد. */
+    __sourceDraftEvidence?: string
     /** أمر استلام مرتبط: يُحدَّث مع الفاتورة في كتابة واحدة، لا يُستنتج من المرجع النصي. */
     sourcePurchaseOrderId?: number | null
     /** صفر = شراء نقدي بلا مورد؛ لا يُنشأ مورد افتراضي ولا دين مورد */
@@ -2198,6 +2204,8 @@ interface DataState {
   postSale: (args: {
     /** UUID ثابت لمسودة المحرر؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر. */
     sourceDraftId?: string
+    /** داخلي: دليل مدخل المسودة الأصلي المحفوظ في طلب الاعتماد. */
+    __sourceDraftEvidence?: string
     /** مندوب البيع مستقل عن موظف العمولة وتحصيل العميل. */
     salesRepEmployeeId?: number | null
     lines: CartLine[]
@@ -3589,6 +3597,21 @@ function stampApprovalDocDate(payload: string, kind: ApprovalDocKind): string {
   if (typeof obj[field] === 'string' && obj[field]) return payload
   obj[field] = todayLocalIso()
   return serializeApprovalPayload(obj)
+}
+
+/** مقارنة حتمية لمدخل المسودة، دون الأعلام الداخلية التي يضيفها تنفيذ الاعتماد. */
+function draftInputEvidence(input: Record<string, unknown>): string {
+  const { __approvalBypass, __sourceDraftEvidence, ...document } = input
+  void __approvalBypass; void __sourceDraftEvidence
+  return JSON.stringify(document, (_key, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+  })
+}
+
+function verifyDraftRetry(evidence: string | undefined, requested: string, edited: unknown): void {
+  if (!evidence || edited) throw new Error('الفاتورة أُنشئت مسبقاً لكن دليل مدخلها غير متاح أو عُدلت لاحقاً — راجع الفاتورة')
+  if (evidence !== requested) throw new Error('بيانات المسودة تغيّرت بعد ترحيلها — راجع الفاتورة المسجلة قبل إعادة المحاولة')
 }
 
 function approvalDraftId(payload: string): string | null {
@@ -7526,14 +7549,16 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         /* منع التكرار عند إعادة المحاولة بعد ضياع رد الحفظ (عقد sourceDraftId) */
         const sourceDraftId = rawInv.sourceDraftId?.trim()
+        const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
+        const evidence = sourceDraftId ? (rawInv.__approvalBypass ? rawInv.__sourceDraftEvidence : draftInputEvidence(normalizedInv)) : undefined
         if (sourceDraftId) {
           const alreadyPosted = state.purchases.find((purchase) => purchase.sourceDraftId === sourceDraftId)
           if (alreadyPosted) {
             if (rawInv.sourcePurchaseOrderId != null && !state.purchaseOrders.some(order => order.id === rawInv.sourcePurchaseOrderId && order.invoiceIds?.includes(alreadyPosted.id))) throw new Error('الفاتورة أُنشئت سابقاً دون ربط مؤكد بالأمر — راجع الفاتورة والأمر قبل المتابعة')
+            verifyDraftRetry(alreadyPosted.sourceDraftEvidence, evidence ?? '', alreadyPosted.editHistory?.length)
             return alreadyPosted
           }
         }
-        const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const inv = activeBranch && !activeBranch.isMain
@@ -7555,7 +7580,7 @@ export const useRawDataStore = create<DataState>()(
           enforceApprovalGate(get, 'purchase', approvalGoodsMinor, {
             title: `فاتورة مشتريات — ${inv.lines.length} بند`,
             partyName: inv.supplierId !== 0 ? state.suppliers.find((row) => row.id === inv.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
-            payload: serializeApprovalPayload(inv),
+            payload: serializeApprovalPayload({ ...inv, __sourceDraftEvidence: evidence }),
           })
         }
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
@@ -7832,6 +7857,7 @@ export const useRawDataStore = create<DataState>()(
           id: purchaseId,
           invoiceNumber,
           sourceDraftId: sourceDraftId || undefined,
+          sourceDraftEvidence: evidence,
           sourcePurchaseOrderId: sourceOrder?.id ?? null,
           refCode,
           supplierId: inv.supplierId,
@@ -8211,11 +8237,15 @@ export const useRawDataStore = create<DataState>()(
       postSale: (rawArgs) => {
         const state = get()
         const sourceDraftId = rawArgs.sourceDraftId?.trim()
+        const normalizedArgs = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
+        const evidence = sourceDraftId ? (rawArgs.__approvalBypass ? rawArgs.__sourceDraftEvidence : draftInputEvidence(normalizedArgs)) : undefined
         if (sourceDraftId) {
           const alreadyPosted = state.sales.find((sale) => sale.sourceDraftId === sourceDraftId)
-          if (alreadyPosted) return alreadyPosted
+          if (alreadyPosted) {
+            verifyDraftRetry(alreadyPosted.sourceDraftEvidence, evidence ?? '', alreadyPosted.editHistory?.length)
+            return alreadyPosted
+          }
         }
-        const normalizedArgs = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
         assertSaleItemsExist(state, normalizedArgs.lines, true)
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
@@ -8243,7 +8273,7 @@ export const useRawDataStore = create<DataState>()(
             partyName: args.partyKind && args.partyKind !== 'customer'
               ? args.partyName ?? (args.partyKind === 'supplier' ? state.suppliers.find((p) => p.id === args.partyId)?.nameAr : state.employees.find((p) => p.id === args.partyId)?.nameAr) ?? 'طرف خارجي'
               : args.customerId != null ? state.customers.find((c) => c.id === args.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
-            payload: serializeApprovalPayload(args),
+            payload: serializeApprovalPayload({ ...args, __sourceDraftEvidence: evidence }),
           })
         }
         // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
@@ -8670,7 +8700,7 @@ export const useRawDataStore = create<DataState>()(
           id: saleId,
           invoiceNumber,
           salesRepEmployeeId: args.salesRepEmployeeId ?? null,
-          ...(sourceDraftId ? { sourceDraftId } : {}),
+          ...(sourceDraftId ? { sourceDraftId, sourceDraftEvidence: evidence } : {}),
           refCode,
           date: now,
           customerId: salePartyKind === 'customer' ? args.customerId : null,
