@@ -1289,6 +1289,8 @@ export interface PurchaseInvoice {
   /** رقم مستند المورد الخارجي ومراجع دورة التوريد */
   supplierInvoiceNumber?: string
   purchaseOrderNumber?: string
+  /** الربط الفعلي لأمر الاستلام؛ لا يُستنتج من المرجع النصي القديم. */
+  sourcePurchaseOrderId?: number | null
   receiptStatus?: 'pending' | 'partial' | 'received'
   dueDate?: string
   approvedBy?: string | null
@@ -2149,6 +2151,8 @@ interface DataState {
   postPurchase: (inv: {
     /** مفتاح مسودة واجهة الفاتورة؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر (نفس عقد postSale). */
     sourceDraftId?: string
+    /** أمر استلام مرتبط: يُحدَّث مع الفاتورة في كتابة واحدة، لا يُستنتج من المرجع النصي. */
+    sourcePurchaseOrderId?: number | null
     /** صفر = شراء نقدي بلا مورد؛ لا يُنشأ مورد افتراضي ولا دين مورد */
     supplierId: number
     supplierInvoiceNumber?: string
@@ -6927,6 +6931,7 @@ export const useRawDataStore = create<DataState>()(
         return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status } : o)) }
       }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
+        if (invoiceId != null && state.purchaseOrders.some(order => order.id === id && order.invoiceIds?.includes(invoiceId))) return state
         let justClosed = false
         const purchaseOrders = state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
@@ -7436,7 +7441,10 @@ export const useRawDataStore = create<DataState>()(
         const sourceDraftId = rawInv.sourceDraftId?.trim()
         if (sourceDraftId) {
           const alreadyPosted = state.purchases.find((purchase) => purchase.sourceDraftId === sourceDraftId)
-          if (alreadyPosted) return alreadyPosted
+          if (alreadyPosted) {
+            if (rawInv.sourcePurchaseOrderId != null && !state.purchaseOrders.some(order => order.id === rawInv.sourcePurchaseOrderId && order.invoiceIds?.includes(alreadyPosted.id))) throw new Error('الفاتورة أُنشئت سابقاً دون ربط مؤكد بالأمر — راجع الفاتورة والأمر قبل المتابعة')
+            return alreadyPosted
+          }
         }
         const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
         const activeBranch = getEffectiveActiveBranch(state)
@@ -7525,6 +7533,32 @@ export const useRawDataStore = create<DataState>()(
             const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, payment.accountCode, 'payment', payment.amountMinor)
             if (errors.length) throw new Error(errors.join(' — '))
           }
+        }
+        // تأكيد الأمر من الحالة الحالية قبل الكتابة؛ على المستدعي تأمين إعادة التحميل والقفل بين النوافذ.
+        let sourceOrder: PurchaseOrder | null = null
+        if (inv.sourcePurchaseOrderId != null) {
+          if (!Number.isSafeInteger(inv.sourcePurchaseOrderId) || inv.sourcePurchaseOrderId <= 0) throw new Error('معرّف أمر الشراء غير صالح')
+          const matching = state.purchaseOrders.filter(order => order.id === inv.sourcePurchaseOrderId)
+          if (matching.length !== 1 || !getBranchScopedDataState(state).purchaseOrders.some(order => order.id === inv.sourcePurchaseOrderId)) throw new Error('أمر الشراء المرتبط غير موجود أو غير فريد في الفرع')
+          sourceOrder = matching[0]
+          if (sourceOrder.status === 'cancelled') throw new Error('أمر الشراء المرتبط ملغى')
+          if (inv.receiptStatus === 'pending') throw new Error('فاتورة الأمر بانتظار الاستلام — احفظها مسودة حتى استلام الأصناف')
+          if (sourceOrder.supplierId != null && sourceOrder.supplierId !== inv.supplierId) throw new Error('مورد الفاتورة لا يطابق مورد أمر الشراء المرتبط')
+          const available = new Map<number, number>()
+          for (const line of sourceOrder.lines) {
+            const ordered = Math.round(line.qty * 1000), received = Math.round((line.receivedQty ?? 0) * 1000)
+            if (!Number.isSafeInteger(ordered) || !Number.isSafeInteger(received) || ordered < 0 || received < 0 || received > ordered) throw new Error('كميات أمر الشراء غير صالحة — راجع الأمر')
+            const total = (available.get(line.itemId) ?? 0) + ordered - received
+            if (!Number.isSafeInteger(total)) throw new Error('مجموع كميات أمر الشراء غير صالح')
+            available.set(line.itemId, total)
+          }
+          const requested = new Map<number, number>()
+          for (const line of inv.lines) {
+            const total = (requested.get(line.itemId) ?? 0) + Math.round(line.qty * 1000)
+            if (!Number.isSafeInteger(total)) throw new Error('مجموع كميات الفاتورة غير صالح')
+            requested.set(line.itemId, total)
+          }
+          for (const [itemId, qty] of requested) if (!available.has(itemId) || qty > available.get(itemId)!) throw new Error(`كمية الصنف #${itemId} تتجاوز المتبقي في أمر الشراء أو لا تنتمي إليه — راجع الأمر`)
         }
         // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
         for (const l of inv.lines) {
@@ -7711,6 +7745,7 @@ export const useRawDataStore = create<DataState>()(
           id: purchaseId,
           invoiceNumber,
           sourceDraftId: sourceDraftId || undefined,
+          sourcePurchaseOrderId: sourceOrder?.id ?? null,
           refCode,
           supplierId: inv.supplierId,
           supplierInvoiceNumber: supplierDocument || undefined,
@@ -7884,8 +7919,29 @@ export const useRawDataStore = create<DataState>()(
           ...payable,
           vehicleCostEntryId: createdVehicleCostEntries.find((row) => row.payableId === payable.id)?.id ?? null,
         }))
+        // الفاتورة ومخزونها وقيدها واستلام الأمر في تحديث حالة واحد؛ لا توجد لقطة وسيطة بلا رابط.
+        let linkedOrder: PurchaseOrder | null = null
+        if (sourceOrder) {
+          const remaining = new Map<number, number>()
+          for (const line of inv.lines) remaining.set(line.itemId, (remaining.get(line.itemId) ?? 0) + Math.round(line.qty * 1000))
+          const lines = sourceOrder.lines.map(line => {
+            const left = remaining.get(line.itemId) ?? 0
+            const room = Math.round(line.qty * 1000) - Math.round((line.receivedQty ?? 0) * 1000)
+            const take = Math.min(left, room)
+            remaining.set(line.itemId, left - take)
+            return take > 0 ? { ...line, receivedQty: (Math.round((line.receivedQty ?? 0) * 1000) + take) / 1000 } : line
+          })
+          const next = { ...sourceOrder, lines, invoiceIds: [...(sourceOrder.invoiceIds ?? []), invoice.id] }
+          linkedOrder = { ...next, status: derivePurchaseOrderStatus(next) }
+        }
+        const purchaseOrders = linkedOrder ? state.purchaseOrders.map(order => order.id === linkedOrder!.id ? linkedOrder! : order) : state.purchaseOrders
+        const pendingPartOrders = linkedOrder?.status === 'closed' && sourceOrder?.status !== 'closed'
+          ? state.pendingPartOrders.map(order => order.linkedPurchaseOrderId === linkedOrder!.id && order.status === 'pending' ? { ...order, status: 'arrived' as const, arrivedAt: new Date().toISOString() } : order)
+          : state.pendingPartOrders
         set({
           purchases: [...state.purchases, invoice],
+          purchaseOrders,
+          pendingPartOrders,
           purchaseExpensePayables: [...state.purchaseExpensePayables, ...linkedPayables],
           vehicleCostEntries: [...state.vehicleCostEntries, ...createdVehicleCostEntries],
           journal: [...state.journal, entry],

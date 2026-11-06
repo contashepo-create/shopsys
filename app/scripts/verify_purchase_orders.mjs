@@ -42,7 +42,10 @@ const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
   // §91: زر التعبئة للعملاء — مورد/موظف بلا عروض أسعار ولا مشاريع
   assert.ok(sales.includes("extra={partyKind==='customer'?<FillFromPicker sources={fillSources}/>:undefined}"), 'فاتورة البيع بلا زر تعبئة (§91: مشروط بنوع الطرف)')
   assert.ok(/group:'عروض الأسعار'/.test(sales) && /group:'المشاريع'/.test(sales), 'فاتورة البيع لا تُعبَّأ من عرض سعر أو مشروع')
-  assert.ok(/receivePurchaseOrder\(sourceOrderId/.test(purchase), 'ترحيل فاتورة الشراء لا يحدّث أمر الشراء')
+  assert.ok(/postPurchase\(\{sourceDraftId:draftId,sourcePurchaseOrderId:sourceOrderId/.test(purchase), 'ترحيل الفاتورة لا يمرّر أمر الشراء للمحرك')
+  assert.ok(!/receivePurchaseOrder\(sourceOrderId/.test(purchase), 'يجب ألا يُحدّث الأمر في خطوة لاحقة منفصلة')
+  const post = repo.slice(repo.indexOf('postPurchase: (rawInv)'), repo.indexOf('editPurchase:', repo.indexOf('postPurchase: (rawInv)')))
+  assert.ok(/purchaseOrders,\s*pendingPartOrders,/.test(post) && /invoiceIds: \[\.\.\.\(sourceOrder\.invoiceIds \?\? \[\]\), invoice\.id\]/.test(post), 'ربط الأمر يجب أن يُنشر مع الفاتورة في تحديث الحالة')
   const css = read('index.css')
   assert.ok(/\.fillfrom-panel \{[\s\S]{0,300}position: absolute/.test(css) && !/\.fillfrom-panel[\s\S]{0,200}inset: 0/.test(css),
     'لوحة «تعبئة من» يجب أن تكون عائمة بلا تعتيم')

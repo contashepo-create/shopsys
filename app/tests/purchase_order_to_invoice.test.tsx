@@ -115,13 +115,20 @@ describe('دورة أمر الشراء ← فاتورة الاستلام ← ا�
     expect(S().journal.length, 'أمر الشراء يجب ألا يولّد أي قيد').toBe(journalBefore)
 
     const view = openReceipt(order.id)
+    const intermediate: boolean[] = []
+    const unsubscribe = useDataStore.subscribe(state => {
+      const posted = state.purchases.find(purchase => purchase.purchaseOrderNumber === order.orderNumber)
+      if (posted) intermediate.push(state.purchaseOrders.find(row => row.id === order.id)?.invoiceIds.includes(posted.id) === true)
+    })
     const postButton = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('حفظ وترحيل'))
     expect(postButton, 'زر الترحيل غير موجود في شريط الفاتورة').toBeTruthy()
     fireEvent.click(postButton!)
     await waitFor(() => expect(S().items.find((item) => item.id === itemId)!.stockQty).toBe(stockBefore + 3))
-    /* ترحيل الفاتورة ثم تحديث ارتباط الأمر عمليتان متتاليتان؛ انتظر اكتمال
-       الثانية بدلاً من قراءة الأمر في اللحظة بين حفظ المخزون وربط الفاتورة. */
+    /* كل لقطة تُظهر الفاتورة يجب أن تتضمن ارتباطها بالأمر في تحديث الحالة نفسه. */
     await waitFor(() => expect(S().purchaseOrders.find((row) => row.id === order.id)?.status).toBe('closed'))
+    unsubscribe()
+    expect(intermediate.length).toBeGreaterThan(0)
+    expect(intermediate).not.toContain(false)
     cleanup(); view.unmount()
 
     /* ① المخزون زاد بكمية الأمر (والحركة مصدرها الفاتورة وحدها) */
