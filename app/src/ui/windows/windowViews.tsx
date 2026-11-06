@@ -383,7 +383,7 @@ export function ItemPickerWindowView() {
         itemMeta={effectiveMeta}
         categories={effectiveCategories}
         amountLabel={amountLabel}
-        onCreate={onCreate}
+        onCreate={onCreate ? (name) => { onCreate(name); host?.close() } : undefined}
         initialQuery={initialQuery}
         onEscape={() => host?.close()}
         onPick={(id, smart) => { onPick?.(id, smart); host?.close() }}
