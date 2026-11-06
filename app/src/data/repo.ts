@@ -1547,7 +1547,7 @@ export interface SaleInvoice {
   approvedBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
-  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string }[]
+  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string; priceFloorOverrideBy?: string; creditLimitOverrideBy?: string }[]
   /** المخزن الذي بيعت منه — يُطبّع للرئيسي عند غياب الاختيار في المسارات القديمة */
   warehouseId?: number | null
   /**
@@ -11172,7 +11172,7 @@ export const useRawDataStore = create<DataState>()(
           journalEntryId: newEntryId,
           editHistory: [
             ...(sale.editHistory ?? []),
-            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state) },
+            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state), ...(args.priceFloorOverrideBy ? { priceFloorOverrideBy: args.priceFloorOverrideBy } : {}), ...(args.creditLimitOverrideBy ? { creditLimitOverrideBy: args.creditLimitOverrideBy } : {}) },
           ],
         }
         const editCustodyExpenseTxs: CustodyTx[] = internalExpenses.filter((expense) => expense.custodyFileId != null && expense.amountMinor > 0).map((expense, index) => ({

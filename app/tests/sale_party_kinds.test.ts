@@ -64,6 +64,16 @@ describe('§91 النواة — حساب الذمة حسب نوع الطرف', (
 })
 
 describe('§91 المستودع — postSale لأي طرف', () => {
+  it('تجاوز ائتمان التعديل يرفض بلا اعتماد ويحفظ اسم معتمده بسجل التعديل', () => {
+    useDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 11, nameAr: 'عميل', phone: '', creditLimitMinor: 7000, active: true }] })
+    const sale = useDataStore.getState().postSale({ lines: [line], customerId: 11, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
+    const args = { saleId: sale.id, lines: [{ ...line, qty: 4 }], customerId: 11, payment: 'credit' as const, invoiceDiscountPercent: 0, einvoiceActive: false, paidMinor: 0, treasury: '1101' as const, reason: 'تصحيح كمية' }
+    const before = useDataStore.getState().journal.length
+    expect(() => useDataStore.getState().editSale(args)).toThrow(/حد ائتمان/)
+    expect(useDataStore.getState().journal.length).toBe(before)
+    const updated = useDataStore.getState().editSale({ ...args, creditLimitOverrideBy: 'مشرف الائتمان' })
+    expect(updated.editHistory?.at(-1)?.creditLimitOverrideBy).toBe('مشرف الائتمان')
+  })
   it('بيع آجل لمورد: القيد على 2101 والفاتورة تحمل الطرف وتظهر بكشفه', () => {
     const sale = useDataStore.getState().postSale({
       lines: [line], customerId: null,

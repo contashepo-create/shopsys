@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
-import { computeTotals } from '../src/core/pos.ts'
+import { computeTotals, CreditLimitError } from '../src/core/pos.ts'
 import { draftFromCategory } from '../src/core/items.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { AdvancedSalesInvoicePage } from '../src/ui/pages/AdvancedSalesInvoicePage.tsx'
@@ -91,6 +91,52 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     fireEvent.click(screen.getByRole('button', { name: /مورد الاختبار/ }))
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload)).toMatchObject({ partyKind: 'supplier', customerId: 7, partyNeedsReview: false })
+  })
+  it('تعديل تجاوز ائتمان يعيد المحاولة باعتماد الائتمان بعد تحرير قفل الواجهة', async () => {
+    const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+    const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
+    const edit = vi.fn().mockImplementationOnce(() => { throw new CreditLimitError('عميل الأصل', 1000, 1000, 1500) }).mockImplementation(() => sale)
+    const rehydrate = vi.spyOn(useRawDataStore.persist, 'rehydrate').mockResolvedValue(undefined)
+    const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => callback() } })
+    try {
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 1500, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never })
+      render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
+      fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
+      fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
+      await waitFor(() => expect(edit).toHaveBeenCalledTimes(2))
+      expect(edit.mock.calls[1][0].creditLimitOverrideBy).toBeTruthy()
+      expect(edit.mock.calls[1][0].priceFloorOverrideBy).toBeNull()
+    } finally {
+      rehydrate.mockRestore()
+      if (locks) Object.defineProperty(navigator, 'locks', locks)
+      else Reflect.deleteProperty(navigator, 'locks')
+    }
+  })
+  it('تجاوز ائتمان التعديل يطلب صلاحية الائتمان لا صلاحية السعر', async () => {
+    const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+    const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
+    const edit = vi.fn().mockImplementationOnce(() => { throw new CreditLimitError('عميل', 1000, 1000, 1500) }).mockImplementation(() => sale)
+    const approve = vi.fn().mockResolvedValue({ approvedBy: 'مشرف الائتمان' })
+    const rehydrate = vi.spyOn(useRawDataStore.persist, 'rehydrate').mockResolvedValue(undefined)
+    const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => callback() } })
+    try {
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل', phone: '', creditLimitMinor: 1500, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never, approveByPin: approve as never, currentUserId: 4, appUsers: [{ id: 4, nameAr: 'موظف', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['sales.credit.override'] }] })
+      render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
+      fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
+      fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
+      fireEvent.change(await screen.findByPlaceholderText('كلمة سر المشرف…'), { target: { value: '123456' } })
+      fireEvent.click(screen.getByRole('button', { name: /اعتماد/ }))
+      await waitFor(() => expect(edit).toHaveBeenCalledTimes(2))
+      expect(approve).toHaveBeenCalledWith('123456', 'sales.credit.override')
+      expect(edit.mock.calls[1][0].creditLimitOverrideBy).toBe('مشرف الائتمان')
+      expect(edit.mock.calls[1][0].priceFloorOverrideBy).toBeNull()
+    } finally {
+      rehydrate.mockRestore()
+      if (locks) Object.defineProperty(navigator, 'locks', locks)
+      else Reflect.deleteProperty(navigator, 'locks')
+    }
   })
   it('تعديل فاتورة مستوردة تنص على نوع عميل يعيده من customerId لا من partyId الفارغ', () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
