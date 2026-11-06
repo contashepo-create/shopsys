@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { useRawDataStore } from '../src/data/repo.ts'
+import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
 import { computeTotals } from '../src/core/pos.ts'
 import { draftFromCategory } from '../src/core/items.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -35,6 +35,18 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     expect((screen.getByLabelText('نوع طرف الفاتورة') as HTMLSelectElement).value).toBe('supplier')
     expect((screen.getByLabelText('بحث المورد') as HTMLInputElement).value).toBe('مورد الاختبار')
   })
+  it('المورد لا يرث سعر أو حالة العميل الذي يحمل الرقم نفسه', () => {
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, priceListId: 1, active: false }], priceLists: [{ id: 1, nameAr: 'قائمة عميل', defaultDiscountPercent: 50, isActive: true }], priceListEntries: [], priceListCategoryRules: [], items: [{ ...draftFromCategory(undefined, 'X'), id: 1, nameAr: 'صنف بسعر', priceMinor: 5000, stockQty: 10 }] })
+    mount()
+    fireEvent.doubleClick(screen.getByLabelText('اسم الصنف — اكتب أو اضغط مرتين للبحث'))
+    fireEvent.doubleClick(screen.getByRole('option', { name: /صنف بسعر/ }))
+    fireEvent.change(screen.getByLabelText('نوع طرف الفاتورة'), { target: { value: 'supplier' } })
+    fireEvent.change(screen.getByLabelText('بحث المورد'), { target: { value: 'مورد الاختبار' } })
+    fireEvent.click(screen.getByRole('button', { name: /مورد الاختبار/ }))
+    fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
+    expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload).lines[0].unitPriceMinor).toBe(5000)
+    expect(screen.queryByText('موقوف — البيع الآجل ممنوع')).toBeNull()
+  })
   it('يستعيد تاريخ الفاتورة والضريبة والتحصيل المجزأ وقيمه', () => {
     const view = mount()
     fireEvent.change(screen.getByLabelText('نمط تحرير الفاتورة'), { target: { value: 'advanced' } })
@@ -67,6 +79,15 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     fireEvent.click(screen.getByRole('button', { name: /مورد الاختبار/ }))
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload)).toMatchObject({ partyKind: 'supplier', customerId: 7, partyNeedsReview: false })
+  })
+  it('تعديل فاتورة مورد لا يوهم بإمكانية تغيير نوع الطرف أو هويته', () => {
+    const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
+    const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: null, partyKind: 'supplier', partyId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
+    useRawDataStore.setState({ items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
+    render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
+    expect((screen.getByLabelText('نوع طرف الفاتورة') as HTMLSelectElement).disabled).toBe(true)
+    expect((screen.getByLabelText('بحث المورد') as HTMLInputElement).readOnly).toBe(true)
+    expect((screen.getByLabelText('بحث المورد') as HTMLInputElement).value).toBe('مورد الاختبار')
   })
   it('مسودة التعديل لا تُفتح فوق فاتورة أخرى ويمكن استعادتها فوق الأصل', () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
