@@ -1,0 +1,110 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
+import { draftFromCategory } from '../src/core/items.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+
+const original = useRawDataStore.getState(), originalApp = useAppStore.getState()
+const S = () => useRawDataStore.getState()
+const makeItem = (id: number) => ({ ...draftFromCategory(undefined, `${id}`), id, nameAr: `صنف ${id}`, costMinor: 1000, priceMinor: 1500, stockQty: 10, isService: false })
+const order = (qty = 3) => S().addPurchaseOrder({ supplierId: 7, supplierName: 'مورد', date: '2026-01-01', expectedDate: '', warehouseId: null, notes: '', lines: [{ itemId: 1, nameAr: 'صنف', qty, receivedQty: 0, unitAr: 'قطعة', unitPriceMinor: 1000, vatPercent: 0, notes: '' }] })
+const post = (orderId: number, qty: number, id: string) => S().postPurchase({ sourcePurchaseOrderId: orderId, sourceDraftId: id, supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty, unitPriceMinor: 1000 }], expenses: [], paidMinor: 0, notes: '' })
+const edit = (purchaseId: number, qty: number, extra: object = {}) => S().editPurchase({ purchaseId, lines: [{ itemId: 1, qty, unitPriceMinor: 1000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false, ...extra })
+const ret = (purchaseId: number, qty: number) => S().postPurchaseReturn({ purchaseId, qtyByItem: new Map([[1, qty]]), refund: 'debt', reason: 'رد' })
+beforeEach(() => {
+  const setup = { ...originalApp.setup, taxRegistrationStatus: 'not_registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
+  useAppStore.setState({ setup, companySetup: setup })
+  useRawDataStore.setState({ ...original, currentUserId: null, activeBranchId: null, branches: [], suppliers: [7, 8].map(id => ({ ...EMPTY_EXTENDED, id, nameAr: `مورد ${id}`, phone: '', active: true })) as never, items: [makeItem(1), makeItem(2)], purchases: [], purchaseOrders: [], purchaseReturns: [], journal: [], pendingPartOrders: [], warehouses: [], serials: [], batches: [], variantStocks: [] })
+})
+afterEach(() => { useRawDataStore.setState(original); useAppStore.setState(originalApp) })
+describe('سلامة تعديل ومرتجع فاتورة الأمر', () => {
+  it('تعديل يتجاوز الكمية المتبقية بعد فاتورة أخرى يُرفض قبل تعديل القيد أو المخزون', () => {
+    const po = order(); const first = post(po.id, 1, 'a'); post(po.id, 2, 'b'); const before = S()
+    expect(() => edit(first.id, 2)).toThrow(/الأمر|المتبقي/)
+    expect(S().journal).toBe(before.journal); expect(S().items).toBe(before.items); expect(S().purchases).toBe(before.purchases); expect(S().purchaseOrders).toBe(before.purchaseOrders)
+  })
+  it('يرفض تبديل المورد أو إدخال صنف لا ينتمي للأمر', () => {
+    const po = order(), invoice = post(po.id, 1, 'c'); const before = S()
+    expect(() => edit(invoice.id, 1, { supplierId: 8 })).toThrow(/مورد/)
+    expect(() => edit(invoice.id, 1, { lines: [{ itemId: 2, qty: 1, unitPriceMinor: 1000 }] })).toThrow(/الأمر|الصنف/)
+    expect(S().journal).toBe(before.journal)
+  })
+  it('التعديل الصحيح يحدّث الأمر ويسمح بفاتورة لباقي الكمية', () => {
+    const po = order(), invoice = post(po.id, 1, 'd'); edit(invoice.id, 2)
+    expect(S().purchaseOrders[0].lines[0].receivedQty).toBe(2)
+    post(po.id, 1, 'e'); expect(S().purchaseOrders[0].status).toBe('closed')
+  })
+  it('المرتجع الكامل يفتح الأمر من جديد ويفسح المجال لاستلام بديل', () => {
+    const po = order(); S().setPurchaseOrderStatus(po.id, 'sent'); const invoice = post(po.id, 3, 'f')
+    ret(invoice.id, 3)
+    expect(S().purchaseOrders[0].lines[0].receivedQty).toBe(0)
+    expect(S().purchaseOrders[0].status).toBe('sent')
+    post(po.id, 3, 'g'); expect(S().purchaseOrders[0].status).toBe('closed')
+  })
+  it('يعيد حالة الإرسال المحدّثة بعد دورة استلام ورد ثانية', () => {
+    const po = order(), first = post(po.id, 3, 'cycle-a'); ret(first.id, 3)
+    expect(S().purchaseOrders[0].status).toBe('draft')
+    S().setPurchaseOrderStatus(po.id, 'sent')
+    const second = post(po.id, 3, 'cycle-b'); ret(second.id, 3)
+    expect(S().purchaseOrders[0].status).toBe('sent')
+  })
+  it('مرتجع جزئي يعيد فقط طلب القطعة الذي وصل تلقائياً إلى الانتظار', () => {
+    const po = order()
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }, { id: 2, linkedPurchaseOrderId: po.id, status: 'arrived', arrivedAt: '2026-01-01' }, { id: 3, linkedPurchaseOrderId: po.id, status: 'delivered', arrivedAt: '2026-01-01' }] as never })
+    const invoice = post(po.id, 3, 'h'); ret(invoice.id, 1)
+    expect(S().purchaseOrders[0].status).toBe('partial')
+    expect(S().pendingPartOrders.map(row => row.status)).toEqual(['pending', 'arrived', 'delivered'])
+    expect(S().pendingPartOrders[0].arrivedAt).toBeNull()
+    post(po.id, 1, 'i'); expect(S().pendingPartOrders[0].status).toBe('arrived')
+  })
+  it('تعديل الكمية يفتح طلب القطعة الآلي ويغلقه عندما تكتمل الكمية ثانية', () => {
+    const po = order()
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }] as never })
+    const invoice = post(po.id, 3, 'edit-parts')
+    edit(invoice.id, 2)
+    expect(S().purchaseOrders[0].status).toBe('partial')
+    expect(S().pendingPartOrders[0].status).toBe('pending')
+    edit(invoice.id, 3)
+    expect(S().purchaseOrders[0].status).toBe('closed')
+    expect(S().pendingPartOrders[0].status).toBe('arrived')
+  })
+  it('لا يغيّر وصولاً أكّده المستخدم بعد الوصول الآلي', () => {
+    const po = order()
+    useRawDataStore.setState({ pendingPartOrders: [{ id: 1, linkedPurchaseOrderId: po.id, status: 'pending', arrivedAt: null }] as never })
+    const invoice = post(po.id, 3, 'manual-parts')
+    S().setPendingPartOrderStatus(1, 'arrived')
+    ret(invoice.id, 1)
+    expect(S().pendingPartOrders[0].status).toBe('arrived')
+  })
+  it('تفاوت المستلم التاريخي وأدلة الفواتير يمنع التعديل والمرتجع دون كتابة', () => {
+    const po = order(), invoice = post(po.id, 2, 'unproven')
+    useRawDataStore.setState(state => ({ purchaseOrders: state.purchaseOrders.map(row => ({ ...row, lines: row.lines.map(line => ({ ...line, receivedQty: 1 })) })) }))
+    const before = S()
+    expect(() => edit(invoice.id, 1)).toThrow(/أدلة|التاريخ/)
+    expect(() => ret(invoice.id, 1)).toThrow(/أدلة|التاريخ/)
+    expect(S().purchases).toBe(before.purchases); expect(S().purchaseReturns).toBe(before.purchaseReturns)
+    expect(S().journal).toBe(before.journal); expect(S().items).toBe(before.items)
+  })
+  it('فقد ربط الأمر المخزن في الفاتورة يمنع التعديل والمرتجع', () => {
+    const po = order(), invoice = post(po.id, 1, 'missing-link')
+    useRawDataStore.setState({ purchaseOrders: [] })
+    expect(() => edit(invoice.id, 1)).toThrow(/ربط|الأمر/)
+    expect(() => ret(invoice.id, 1)).toThrow(/ربط|الأمر/)
+  })
+  it('أجزاء الألف تُعاد بدقة بعد مرتجع ثم تعديل فاتورة أخرى', () => {
+    const po = order(0.3), first = post(po.id, 0.1, 'frac-a'); const second = post(po.id, 0.2, 'frac-b')
+    ret(first.id, 0.1)
+    edit(second.id, 0.3)
+    expect(S().purchaseOrders[0].lines[0].receivedQty).toBe(0.3)
+    expect(S().purchaseOrders[0].status).toBe('closed')
+  })
+  it('حالة المستلم لا تُغيّر يدوياً ولا يُحذف أمر مستلم يدوياً', () => {
+    const po = order(); S().receivePurchaseOrder(po.id, [{ itemId: 1, qty: 1 }])
+    expect(() => S().setPurchaseOrderStatus(po.id, 'draft')).toThrow(/مستلم/)
+    expect(() => S().deletePurchaseOrder(po.id)).toThrow(/استلام|مسودة/)
+  })
+  it('لا يحذف أمر له فواتير بعد المرتجع الكامل', () => {
+    const po = order(), invoice = post(po.id, 3, 'j'); ret(invoice.id, 3)
+    expect(() => S().deletePurchaseOrder(po.id)).toThrow(/فاتورة|فواتير|مرتبط/)
+    expect(S().purchaseOrders).toHaveLength(1)
+  })
+})

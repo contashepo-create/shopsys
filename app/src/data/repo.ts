@@ -3445,6 +3445,69 @@ function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): s
   return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
 }
 
+/** لا يُستبدل مستلم تاريخي محسوب ما لم تتطابق الأدلة الكاملة مع الرصيد الحالي. */
+function verifiedLinkedPurchaseOrder(state: Pick<DataState, 'purchaseOrders' | 'purchases' | 'purchaseReturns'>, purchase: PurchaseInvoice): PurchaseOrder | null {
+  const linked = state.purchaseOrders.filter(order => order.invoiceIds?.includes(purchase.id))
+  if (linked.length > 1 || (purchase.sourcePurchaseOrderId != null && (linked.length !== 1 || linked[0].id !== purchase.sourcePurchaseOrderId))) throw new Error('ربط فاتورة أمر الشراء غير مكتمل أو غير فريد — يلزم مراجعة التاريخ')
+  const order = linked[0]
+  if (!order) return null
+  const fail = (): never => { throw new Error('مستلم أمر الشراء لا يطابق أدلة الفواتير والمرتجعات — يلزم مراجعة التاريخ') }
+  if (state.purchaseOrders.filter(row => row.id === order.id).length !== 1 || !Array.isArray(order.invoiceIds) || new Set(order.invoiceIds).size !== order.invoiceIds.length) fail()
+  const ordered = new Map<number, number>(), actual = new Map<number, number>(), net = new Map<number, number>()
+  const add = (map: Map<number, number>, item: number, qty: number) => {
+    const sum = (map.get(item) ?? 0) + qty
+    if (!Number.isSafeInteger(sum)) fail()
+    map.set(item, sum)
+  }
+  const units = (qty: number, zero = false) => {
+    try { return Math.round(normalizeMovementQty(qty, zero) * 1000) } catch { return fail() }
+  }
+  for (const line of order.lines) {
+    const amount = units(line.qty), received = units(line.receivedQty ?? 0, true)
+    if (received > amount) fail()
+    add(ordered, line.itemId, amount); add(actual, line.itemId, received)
+  }
+  for (const id of order.invoiceIds) {
+    const matches = state.purchases.filter(row => row.id === id)
+    if (matches.length !== 1 || state.purchaseOrders.filter(row => row.invoiceIds?.includes(id)).length !== 1) fail()
+    const invoice = matches[0]
+    if (invoice.sourcePurchaseOrderId != null && invoice.sourcePurchaseOrderId !== order.id) fail()
+    const invoiceNet = new Map<number, number>()
+    for (const line of invoice.lines) {
+      if (!ordered.has(line.itemId)) fail()
+      add(invoiceNet, line.itemId, units(line.qty))
+    }
+    for (const ret of state.purchaseReturns.filter(row => row.purchaseId === id)) {
+      for (const line of ret.lines) {
+        if (!invoiceNet.has(line.itemId)) fail()
+        add(invoiceNet, line.itemId, -units(line.qty))
+      }
+    }
+    for (const [item, qty] of invoiceNet) {
+      if (qty < 0) fail()
+      add(net, item, qty)
+    }
+  }
+  for (const [id, capacity] of ordered) {
+    const qty = net.get(id) ?? 0
+    if (qty < 0 || qty > capacity || qty !== (actual.get(id) ?? 0)) fail()
+  }
+  return order
+}
+
+/** عكس الوصول الآلي فقط، دون تغيير وصول يدوي أو طلب مُسلَّم. */
+function reconcilePartOrders(parts: PendingPartOrder[], before: PurchaseOrder[], after: PurchaseOrder[]): PendingPartOrder[] {
+  return parts.map(part => {
+    if (part.linkedPurchaseOrderId == null) return part
+    const old = before.find(order => order.id === part.linkedPurchaseOrderId)
+    const next = after.find(order => order.id === part.linkedPurchaseOrderId)
+    if (!old || !next || old.status === next.status) return part
+    if (old.status !== 'closed' && next.status === 'closed' && part.status === 'pending') return { ...part, status: 'arrived', arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: next.id }
+    if (old.status === 'closed' && next.status !== 'closed' && part.status === 'arrived' && part.autoArrivedFromPurchaseOrderId === next.id) return { ...part, status: 'pending', arrivedAt: null, autoArrivedFromPurchaseOrderId: null }
+    return part
+  })
+}
+
 /**
  * إعادة احتساب «المستلم» في أمر شراء من فواتيره الصافية — مجموع سطور فواتير الأمر
  * المرتبطة بعد خصم مرتجعاتها — وتوزيعه توزيعاً متدرجاً على سطور الأمر (الأول أولاً).
@@ -3462,18 +3525,18 @@ function recomputeOrderReceivedFromInvoices(
   for (const invoiceId of order.invoiceIds) {
     const source = invoiceOverrides?.get(invoiceId) ?? state.purchases.find((p) => p.id === invoiceId)
     if (!source) continue
-    for (const l of source.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) + l.qty)
+    for (const l of source.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) + Math.round(l.qty * 1000))
   }
   const orderReturns = state.purchaseReturns.filter((r) => order.invoiceIds.includes(r.purchaseId))
   for (const ret of extraReturn ? [...orderReturns, extraReturn] : orderReturns) {
-    for (const l of ret.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) - l.qty)
+    for (const l of ret.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) - Math.round(l.qty * 1000))
   }
   const remaining = new Map(receivedByItem)
   const lines = order.lines.map((line) => {
     const left = remaining.get(line.itemId) ?? 0
-    const take = Math.max(0, Math.min(line.qty, left))
+    const take = Math.max(0, Math.min(Math.round(line.qty * 1000), left))
     remaining.set(line.itemId, left - take)
-    return take === (line.receivedQty || 0) ? line : { ...line, receivedQty: take }
+    return take === Math.round((line.receivedQty || 0) * 1000) ? line : { ...line, receivedQty: take / 1000 }
   })
   const next: PurchaseOrder = { ...order, lines }
   return { ...next, status: derivePurchaseOrderStatus(next) }
@@ -6924,11 +6987,12 @@ export const useRawDataStore = create<DataState>()(
         /* حرس سلامة دورة الأمر: الحالات المستلمة (partial/closed) تُشتق من الاستلام
            لا تُضبط يدوياً، والأمر المكتمل أو المرتبط بفواتير لا يُلغى */
         if ((status === 'partial' || status === 'closed') && status !== order.status) throw new Error('حالة الاستلام تُحدَّث تلقائياً من فواتير الشراء — لا تُضبط يدوياً')
+        if ((status === 'draft' || status === 'sent' || status === 'cancelled') && order.lines.some(line => (line.receivedQty ?? 0) > 0) && status !== order.status) throw new Error('الأمر فيه مستلم — لا تُغيّر حالة الاستلام يدوياً')
         if (status === 'cancelled') {
           if (order.status === 'closed') throw new Error('أمر الشراء مكتمل الاستلام — لا يُلغى')
           if ((order.invoiceIds ?? []).length > 0) throw new Error('الأمر مرتبط بفواتير شراء مسجلة — لا يُلغى')
         }
-        return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status } : o)) }
+        return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status, statusBeforeReceipt: status === 'draft' || status === 'sent' ? status : o.statusBeforeReceipt } : o)) }
       }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
         if (invoiceId != null && state.purchaseOrders.some(order => order.id === id && order.invoiceIds?.includes(invoiceId))) return state
@@ -6953,6 +7017,7 @@ export const useRawDataStore = create<DataState>()(
           })
           const next: PurchaseOrder = {
             ...order,
+            statusBeforeReceipt: order.statusBeforeReceipt ?? (order.status === 'draft' || order.status === 'sent' ? order.status : undefined),
             lines,
             invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
           }
@@ -6966,13 +7031,18 @@ export const useRawDataStore = create<DataState>()(
         const pendingPartOrders = justClosed
           ? state.pendingPartOrders.map((po) => (
               po.linkedPurchaseOrderId === id && po.status === 'pending'
-                ? { ...po, status: 'arrived' as const, arrivedAt: new Date().toISOString() }
+                ? { ...po, status: 'arrived' as const, arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: id }
                 : po
             ))
           : state.pendingPartOrders
         return { purchaseOrders, pendingPartOrders }
       }),
-      deletePurchaseOrder: (id) => set((state) => ({ purchaseOrders: state.purchaseOrders.filter((order) => order.id !== id) })),
+      deletePurchaseOrder: (id) => set((state) => {
+        const order = state.purchaseOrders.find(row => row.id === id)
+        if (order && ((order.invoiceIds ?? []).length > 0 || state.purchases.some(purchase => purchase.sourcePurchaseOrderId === id))) throw new Error('أمر الشراء مرتبط بفواتير — لا يُحذف')
+        if (order && (order.status !== 'draft' || order.lines.some(line => (line.receivedQty ?? 0) > 0) || state.pendingPartOrders.some(part => part.linkedPurchaseOrderId === id))) throw new Error('أمر الشراء غير قابل للحذف لوجود استلام أو ارتباط أو لأنه ليس مسودة')
+        return { purchaseOrders: state.purchaseOrders.filter(row => row.id !== id) }
+      }),
       pendingPartOrders: [],
       addPendingPartOrder: (input) => {
         const state = get()
@@ -7005,7 +7075,7 @@ export const useRawDataStore = create<DataState>()(
         const now = localIsoTimestamp()
         return {
           pendingPartOrders: state.pendingPartOrders.map((o) => (o.id === id
-            ? { ...o, status, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
+            ? { ...o, status, autoArrivedFromPurchaseOrderId: null, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
             : o)),
         }
       }),
@@ -7931,12 +8001,12 @@ export const useRawDataStore = create<DataState>()(
             remaining.set(line.itemId, left - take)
             return take > 0 ? { ...line, receivedQty: (Math.round((line.receivedQty ?? 0) * 1000) + take) / 1000 } : line
           })
-          const next = { ...sourceOrder, lines, invoiceIds: [...(sourceOrder.invoiceIds ?? []), invoice.id] }
+          const next = { ...sourceOrder, statusBeforeReceipt: sourceOrder.statusBeforeReceipt ?? (sourceOrder.status === 'draft' || sourceOrder.status === 'sent' ? sourceOrder.status : undefined), lines, invoiceIds: [...(sourceOrder.invoiceIds ?? []), invoice.id] }
           linkedOrder = { ...next, status: derivePurchaseOrderStatus(next) }
         }
         const purchaseOrders = linkedOrder ? state.purchaseOrders.map(order => order.id === linkedOrder!.id ? linkedOrder! : order) : state.purchaseOrders
         const pendingPartOrders = linkedOrder?.status === 'closed' && sourceOrder?.status !== 'closed'
-          ? state.pendingPartOrders.map(order => order.linkedPurchaseOrderId === linkedOrder!.id && order.status === 'pending' ? { ...order, status: 'arrived' as const, arrivedAt: new Date().toISOString() } : order)
+          ? state.pendingPartOrders.map(order => order.linkedPurchaseOrderId === linkedOrder!.id && order.status === 'pending' ? { ...order, status: 'arrived' as const, arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: linkedOrder!.id } : order)
           : state.pendingPartOrders
         set({
           purchases: [...state.purchases, invoice],
@@ -9413,6 +9483,7 @@ export const useRawDataStore = create<DataState>()(
         const updatedSerials = selectedSupplierSerials.size ? state.serials.map(unit => selectedSupplierSerials.has(unit.serial) ? { ...unit, status: 'returned_supplier' as const } : unit) : state.serials
         // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
         // يترك كميات «المستلم» في الأمر كما كانت — يُعاد احتسابها الآن صافية
+        verifiedLinkedPurchaseOrder(state, purchase)
         const updatedOrdersAfterReturn = (() => {
           const linked = state.purchaseOrders.filter((o) => (o.invoiceIds ?? []).includes(purchase.id))
           if (!linked.length) return state.purchaseOrders
@@ -9420,7 +9491,7 @@ export const useRawDataStore = create<DataState>()(
             order.invoiceIds.includes(purchase.id) ? recomputeOrderReceivedFromInvoices(state, order, undefined, ret) : order,
           )
         })()
-        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, purchaseOrders: updatedOrdersAfterReturn })
+        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, purchaseOrders: updatedOrdersAfterReturn, pendingPartOrders: reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, updatedOrdersAfterReturn) })
         return ret
       },
 
@@ -11287,6 +11358,18 @@ export const useRawDataStore = create<DataState>()(
         if (state.purchaseReturns.some((r) => r.purchaseId === inv.id)) {
           throw new Error('عليها مرتجعات شراء — صحّح بمرتجع إضافي أو فاتورة جديدة')
         }
+        const linkedOrder = verifiedLinkedPurchaseOrder(state, inv)
+        if (linkedOrder) {
+          if (editedSupplierId !== inv.supplierId || (linkedOrder.supplierId != null && linkedOrder.supplierId !== editedSupplierId)) throw new Error('لا يمكن تغيير مورد فاتورة مرتبطة بأمر شراء')
+          const quantities = new Map<number, number>()
+          for (const line of linkedOrder.lines) quantities.set(line.itemId, (quantities.get(line.itemId) ?? 0) + Math.round(line.qty * 1000) - Math.round((line.receivedQty ?? 0) * 1000))
+          for (const line of inv.lines) quantities.set(line.itemId, (quantities.get(line.itemId) ?? 0) + Math.round(line.qty * 1000))
+          for (const line of args.lines) {
+            const available = quantities.get(line.itemId)
+            if (available == null || available < Math.round(line.qty * 1000)) throw new Error('كمية الصنف تتجاوز المتبقي أو لا تنتمي لأمر الشراء')
+            quantities.set(line.itemId, available - Math.round(line.qty * 1000))
+          }
+        }
         const scopedPurchaseItems = getBranchScopedDataState(state).items
         if (inv.purchaseExpiryBatches?.length || state.journal.some(entry => entry.id === inv.journalEntryId && entry.purchaseExpiryBatches?.length)) throw new Error('تعديل شراء الصلاحية لا يثبت تسوية الدفعات — استخدم مرتجعاً أو راجع المخزون')
         for (const line of [...inv.lines, ...args.lines]) {
@@ -11497,6 +11580,7 @@ export const useRawDataStore = create<DataState>()(
           items: updatedItems,
           batches: [...keptBatches, ...newBatches],
           purchaseOrders: updatedPurchaseOrders,
+          pendingPartOrders: reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, updatedPurchaseOrders),
         })
         return updatedInv
       },

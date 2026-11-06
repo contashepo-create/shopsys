@@ -614,7 +614,7 @@ export function PurchaseOrdersPage() {
                         {order.status !== 'closed' && order.status !== 'cancelled' && (
                           <button onClick={() => nav(`/purchases/invoices/new?po=${order.id}`)} title="فتح فاتورة شراء معبَّأة من بنود هذا الأمر المتبقية مباشرة" className="px-2 py-1 rounded-lg text-[10.5px] font-bold text-cyan-700 bg-cyan-500/10 hover:bg-cyan-500/20 transition-all dark:text-cyan-300">فاتورة استلام</button>
                         )}
-                        {order.status === 'draft' && (
+                        {order.status === 'draft' && !(order.invoiceIds ?? []).length && (
                           <button onClick={() => { try { deletePurchaseOrder(order.id); toast.show('حُذف الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }} title="حذف" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"><Trash2 size={14} /></button>
                         )}
                       </div>
