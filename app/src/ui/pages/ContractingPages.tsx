@@ -52,6 +52,12 @@ function extractQuantityEvidence(line: { prevExecutedQty?: number; newExecutedQt
   return `سابق ${line.previousQtyEstimated ? 'تقديري ≈ ' : ''}${line.prevExecutedQty}، جاري ${current}، تراكمي ${line.newExecutedQty}${remaining} ${line.unit ?? ''}`
 }
 
+function extractPrintQuantities(line: { prevExecutedQty?: number; newExecutedQty?: number; previousQtyEstimated?: boolean; contractQty?: number; unitPriceMinor?: number; unit?: string }, fmt: (minor: number) => string, symbol: string) {
+  if (line.prevExecutedQty == null || line.newExecutedQty == null) return {}
+  const previousQty = line.prevExecutedQty, cumulativeQty = line.newExecutedQty
+  return { previousQty, cumulativeQty, currentQty: (Math.round(cumulativeQty * 1000) - Math.round(previousQty * 1000)) / 1000, remainingQty: line.contractQty == null ? undefined : (Math.round(line.contractQty * 1000) - Math.round(cumulativeQty * 1000)) / 1000, previousQtyEstimated: line.previousQtyEstimated, boqQty: line.contractQty, unitPrice: line.unitPriceMinor == null ? undefined : `${fmt(line.unitPriceMinor)} ${symbol}`, unit: line.unit }
+}
+
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
@@ -558,15 +564,17 @@ export function ProjectsPage() {
       previousGross: `${fmt(previous)} ${cur.symbol}`,
       currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
       cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 100) : null,
+      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
       retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: prj.retentionPercent,
-      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`, prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
+      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
+          ...extractPrintQuantities(l, fmt, cur.symbol), prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
       advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-      due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
+      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
       payment: ex.payment,
       currencySymbol: cur.symbol,
+      isFinal: ex.isFinal,
     }))
   }
 
@@ -599,12 +607,12 @@ export function ProjectsPage() {
       previousGross: `${fmt(previous)} ${cur.symbol}`,
       currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
       cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 100) : null,
+      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
       retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: prj.retentionPercent,
       advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-      due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
+      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
       payment: ex.payment,
       currencySymbol: cur.symbol,
       isFinal: ex.isFinal,
@@ -612,10 +620,11 @@ export function ProjectsPage() {
         const boq = boqItems.find((b) => b.id === l.boqItemId)
         return {
           code: l.code,
-          descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`,
+          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
           unit: boq?.unit,
           boqQty: boq?.qty,
           unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
+          ...extractPrintQuantities(l, fmt, cur.symbol),
           boqTotal: boq ? `${fmt(boqItemTotal(boq))} ${cur.symbol}` : undefined,
           prevPercent: l.prevProgressPercent,
           newPercent: l.newProgressPercent,
@@ -2148,21 +2157,23 @@ export function ProjectExtractsPage() {
         previousGross: `${fmt(previous)} ${cur.symbol}`,
         currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
         cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-        progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 100) : null,
+        progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
         vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
         retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
         retentionPercent: prj.retentionPercent,
         lines: (ex.lines ?? []).map((l) => ({
           code: l.code,
-          descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`,
+          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
+          ...extractPrintQuantities(l, fmt, cur.symbol),
           prevPercent: l.prevProgressPercent,
           newPercent: l.newProgressPercent,
           value: `${fmt(l.lineValueMinor)} ${cur.symbol}`,
         })),
         advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-        due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
+        due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
         payment: ex.payment,
         currencySymbol: cur.symbol,
+        isFinal: ex.isFinal,
       }),
     )
   }
@@ -2196,12 +2207,12 @@ export function ProjectExtractsPage() {
         previousGross: `${fmt(previous)} ${cur.symbol}`,
         currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
         cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-        progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 100) : null,
+        progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
         vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
         retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
         retentionPercent: prj.retentionPercent,
         advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-        due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
+        due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
         payment: ex.payment,
         currencySymbol: cur.symbol,
         isFinal: ex.isFinal,
@@ -2209,10 +2220,11 @@ export function ProjectExtractsPage() {
           const boq = boqItems.find((b) => b.id === l.boqItemId)
           return {
             code: l.code,
-            descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`,
+            descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
             unit: boq?.unit,
             boqQty: boq?.qty,
             unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
+            ...extractPrintQuantities(l, fmt, cur.symbol),
             boqTotal: boq ? `${fmt(boqItemTotal(boq))} ${cur.symbol}` : undefined,
             prevPercent: l.prevProgressPercent,
             newPercent: l.newProgressPercent,

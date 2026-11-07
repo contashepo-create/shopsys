@@ -11,7 +11,27 @@
  */
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-export interface ExtractPrintLine {
+interface QuantityPrintLine {
+  code: string
+  descriptionAr: string
+  unit?: string
+  boqQty?: number
+  unitPrice?: string
+  previousQty?: number
+  currentQty?: number
+  cumulativeQty?: number
+  remainingQty?: number
+  previousQtyEstimated?: boolean
+}
+/** فقط الكميات المثبتة في المستخلص؛ النسب القديمة لا تُحوّل إلى حصر مطبوع. */
+function renderQuantityTable(lines: readonly QuantityPrintLine[]): string {
+  const measured = lines.filter(line => line.previousQty != null && line.currentQty != null && line.cumulativeQty != null)
+  if (!measured.length) return ''
+  const value = (n: number | undefined) => n == null || !Number.isFinite(n) ? '—' : esc(String(n))
+  return `<section class="quantity-detail"><h3>حصر كميات الأعمال</h3><table class="quantity-table"><thead><tr><th>البند / الوحدة</th><th>كمية العقد</th><th>سعر الوحدة</th><th>الكمية السابقة</th><th>كمية المستخلص</th><th>الكمية التراكمية</th><th>الكمية المتبقية</th></tr></thead><tbody>${measured.map(line => `<tr><td>${esc(line.code)} — ${esc(line.descriptionAr)}${line.unit ? ` (${esc(line.unit)})` : ''}</td><td class="pct">${value(line.boqQty)}</td><td class="num">${esc(line.unitPrice ?? '—')}</td><td class="pct">${line.previousQtyEstimated ? 'تقديري ≈ ' : ''}${value(line.previousQty)}</td><td class="pct">${value(line.currentQty)}</td><td class="pct">${value(line.cumulativeQty)}</td><td class="pct">${value(line.remainingQty)}</td></tr>`).join('')}</tbody></table>${measured.some(line => line.previousQtyEstimated) ? '<p>≈ الكمية السابقة تقديرية مستنتجة من نسبة تاريخية وليست قياساً مؤكداً.</p>' : ''}</section>`
+}
+
+export interface ExtractPrintLine extends QuantityPrintLine {
   code: string
   descriptionAr: string
   prevPercent: number
@@ -43,12 +63,20 @@ export function renderExtractHtml(args: {
   due: string // الصافي المستحق
   payment: 'cash' | 'credit'
   currencySymbol?: string
+  isFinal?: boolean
 }): string {
   const sym = args.currencySymbol ?? ''
   const lines = args.lines ?? []
   return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>مستخلص ${esc(args.extractNumber)}</title><style>
     @page { size: A4 portrait; margin: 12mm 12mm 14mm; }
     * { box-sizing: border-box; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    .quantity-detail { margin: 12px 0; }
+    .quantity-detail h3 { font-size: 13px; margin: 0 0 6px; }
+    .quantity-table { table-layout: auto; font-size: 10px; }
+    .quantity-table th, .quantity-table td { padding: 4px; overflow-wrap: anywhere; }
+
     body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #1e293b; margin: 0; font-size: 12.5px; line-height: 1.55; }
     /* ── الترويسة: شعار يمين + هوية المستند يسار — صف واحد ثابت ── */
     .doc-head { display: flex; align-items: stretch; justify-content: space-between; border: 2px solid #9a3412; border-radius: 10px; overflow: hidden; }
@@ -112,7 +140,7 @@ export function renderExtractHtml(args: {
         <div class="kind">مستخلص أعمال مقدم للجهة المالكة — نشاط المقاولات</div>
       </div>
       <div class="docid">
-        <span>مستخلص رقم</span>
+        <span>${args.isFinal ? 'مستخلص ختامي' : 'مستخلص جاري'} رقم</span>
         <b>${esc(args.extractNumber)}</b>
         <span>التاريخ: ${esc(args.dateIso.slice(0, 10))}${args.payment === 'cash' ? ' · محصل نقدي' : ' · آجل (مستحق على العميل)'}</span>
       </div>
@@ -132,7 +160,7 @@ export function renderExtractHtml(args: {
     <table>
       <colgroup><col style="width:11%"><col style="width:42%"><col style="width:11%"><col style="width:11%"><col style="width:12.5%"><col style="width:12.5%"></colgroup>
       <thead><tr>
-        <th>الكود</th><th>بيان البند</th><th>منجز سابقاً</th><th>منجز حالياً</th><th>قيمة الشريحة</th><th>نسبة من العقد</th>
+        <th>الكود</th><th>بيان البند</th><th>منجز سابقاً</th><th>إجمالي منجز تراكمي</th><th>قيمة الشريحة</th><th>نسبة من العقد</th>
       </tr></thead>
       <tbody>
         ${lines.map((l) => `<tr>
@@ -147,6 +175,7 @@ export function renderExtractHtml(args: {
       </tbody>
     </table>` : ''}
 
+    ${renderQuantityTable(lines)}
     <div class="sect"><span class="t">احتساب المستخلص</span><span class="rule"></span></div>
     <div class="totals">
       <div class="row"><span>قيمة الأعمال المنفذة</span><b>${esc(args.currentGross)}</b></div>
@@ -154,12 +183,12 @@ export function renderExtractHtml(args: {
       <div class="row"><span>محتجز ضمان (${args.retentionPercent}٪)</span><b style="color:#b45309">− ${esc(args.retention || `0 ${sym}`.trim())}</b></div>
       <div class="row"><span>استرداد من الدفعة المقدمة</span><b style="color:#b45309">− ${esc(args.advanceRecovery || `0 ${sym}`.trim())}</b></div>
       <div class="due">
-        <span>الصافي المستحق للجهة المالكة دفعه<small>${args.payment === 'cash' ? 'محصل كاملاً وقت إصدار المستخلص' : 'يُسدد وفق شروط التعاقد — على حساب العميل'}</small></span>
+        <span>صافي قيمة المستخلص عند الإصدار<small>${args.payment === 'cash' ? 'محصل كاملاً وقت إصدار المستخلص' : 'يُسدد وفق شروط التعاقد — على حساب العميل'}</small></span>
         <b>${esc(args.due)}</b>
       </div>
     </div>
 
-    <div class="sect" style="margin-top:14px"><span class="t">الموقف التراكمي من العقد</span><span class="rule"></span></div>
+    <div class="sect" style="margin-top:14px"><span class="t">المستخلصات التراكمية من العقد قبل الإشعارات</span><span class="rule"></span></div>
     <div class="cum">
       <div class="box"><span class="l">أعمال المستخلصات السابقة</span><span class="v">${esc(args.previousGross)}</span></div>
       <div class="box cur"><span class="l">أعمال هذا المستخلص</span><span class="v">${esc(args.currentGross)}</span></div>
@@ -167,7 +196,7 @@ export function renderExtractHtml(args: {
     </div>
     ${args.progressPercent !== null ? `
     <div class="progress-wrap">
-      <div class="progress-lbl"><span>نسبة الإنجاز التراكمية من قيمة العقد</span><span>${args.progressPercent}٪</span></div>
+      <div class="progress-lbl"><span>نسبة قيمة المستخلصات قبل الإشعارات إلى العقد</span><span>${args.progressPercent}٪</span></div>
       <div class="progress"><div class="bar" style="width:${Math.min(100, args.progressPercent)}%"></div></div>
     </div>` : ''}
 
@@ -179,11 +208,11 @@ export function renderExtractHtml(args: {
       <div class="sig"><div class="role">الجهة المالكة</div><div class="who">${esc(args.clientName || '')}</div><div class="line">الاعتماد والصرف</div></div>
     </div>
 
-    <div class="foot">مستند نظامي يُصدر آلياً من منظومة المحاسبة — مستخلص ${esc(args.extractNumber)} · ${esc(args.dateIso.slice(0, 10))}${lines.length > 0 ? ' · بندي من جدول الكميات' : ' · مبلغ إجمالي'}</div>
+    <div class="foot">المبالغ عند الإصدار ولا تعكس التحصيلات أو الإشعارات اللاحقة. مستند مُصدر آلياً من منظومة المحاسبة — مستخلص ${esc(args.extractNumber)} · ${esc(args.dateIso.slice(0, 10))}${lines.length > 0 ? ' · بندي من جدول الكميات' : ' · مبلغ إجمالي'}</div>
   </body></html>`
 }
 
-export interface ExtractClientInvoicePrintLine {
+export interface ExtractClientInvoicePrintLine extends QuantityPrintLine {
   code: string
   descriptionAr: string
   unit?: string
@@ -234,6 +263,13 @@ export function renderExtractClientInvoiceHtml(args: {
   return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>فاتورة مستخلص ${esc(args.extractNumber)}</title><style>
     @page { size: A4 portrait; margin: 12mm; }
     * { box-sizing: border-box; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    .quantity-detail { margin: 12px 0; }
+    .quantity-detail h3 { font-size: 13px; margin: 0 0 6px; }
+    .quantity-table { table-layout: auto; font-size: 10px; }
+    .quantity-table th, .quantity-table td { padding: 4px; overflow-wrap: anywhere; }
+
     body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; font-size: 12.5px; line-height: 1.55; }
     .inv-banner { display: flex; justify-content: space-between; align-items: stretch; border: 2px solid #0f766e; border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
     .inv-banner .company { padding: 14px 18px; flex: 1; background: #f0fdfa; }
@@ -280,7 +316,7 @@ export function renderExtractClientInvoiceHtml(args: {
         ${args.shopPhone || args.shopAddress ? `<div class="sub">${esc([args.shopPhone, args.shopAddress].filter(Boolean).join(' · '))}</div>` : ''}
       </div>
       <div class="badge">
-        <div class="title">فاتورة مستخلص أعمال للعميل${args.isFinal ? ' (ختامي)' : ''}</div>
+        <div class="title">${args.isFinal ? 'فاتورة مستخلص ختامي للعميل' : 'فاتورة مستخلص أعمال للعميل'}</div>
         <div class="num">${esc(args.extractNumber)}</div>
         <div class="meta-line">تاريخ الإصدار: ${esc(args.dateIso.slice(0, 10))}</div>
         <div class="meta-line">حالة الفاتورة: ${args.payment === 'cash' ? 'محصلة نقداً / بنكياً' : 'آجلة — مستحقة على العميل'}</div>
@@ -341,13 +377,14 @@ export function renderExtractClientInvoiceHtml(args: {
       </tbody>
     </table>
 
+    ${renderQuantityTable(lines)}
     <div class="summary-grid">
       <div class="cum-card">
         <div class="head">كشف الموقف التراكمي للأعمال حتى هذه الفاتورة</div>
         <div class="cum-row"><span>أعمال الفواتير / المستخلصات السابقة:</span><b class="num">${esc(args.previousGross)}</b></div>
         <div class="cum-row"><span>أعمال هذه الفاتورة (${esc(args.extractNumber)}):</span><b class="num">${esc(args.currentGross)}</b></div>
-        <div class="cum-row"><span>إجمالي الأعمال المنفذة حتى تاريخه:</span><b class="num">${esc(args.cumulativeGross)}</b></div>
-        ${args.progressPercent !== null ? `<div class="cum-row"><span>نسبة الإنجاز الإجمالية من العقد:</span><b class="pct">${args.progressPercent}٪</b></div>` : ''}
+        <div class="cum-row"><span>إجمالي أعمال المستخلصات قبل الإشعارات:</span><b class="num">${esc(args.cumulativeGross)}</b></div>
+        ${args.progressPercent !== null ? `<div class="cum-row"><span>نسبة قيمة المستخلصات قبل الإشعارات إلى العقد:</span><b class="pct">${args.progressPercent}٪</b></div>` : ''}
         ${args.description ? `<div style="margin-top:8px;font-size:11.5px;color:#334155"><b>ملاحظات وبيان الأعمال:</b> ${esc(args.description)}</div>` : ''}
       </div>
 
@@ -357,7 +394,7 @@ export function renderExtractClientInvoiceHtml(args: {
         <div class="t-row"><span>يُخصم: محتجز ضمان الأعمال (${args.retentionPercent}٪) (−)</span><b style="color:#b45309">− ${esc(args.retention || `0 ${sym}`.trim())}</b></div>
         ${args.advanceRecovery ? `<div class="t-row"><span>يُخصم: استرداد دفعة مقدمة (−)</span><b style="color:#b45309">− ${esc(args.advanceRecovery)}</b></div>` : ''}
         <div class="t-due">
-          <span>صافي الفاتورة المستحق على العميل</span>
+          <span>صافي قيمة الفاتورة عند الإصدار</span>
           <b>${esc(args.due)}</b>
         </div>
       </div>
@@ -369,7 +406,7 @@ export function renderExtractClientInvoiceHtml(args: {
       <div class="sig"><div class="role">استلام واعتماد العميل (${esc(args.clientName || 'الجهة المالكة')})</div><div class="line">الاسم والتوقيع والتاريخ</div></div>
     </div>
 
-    <div class="foot">فاتورة مستخلص أعمال للعميل رقم ${esc(args.extractNumber)} · مشروع ${esc(args.projectCode)} (${esc(args.projectName)}) · تاريخ ${esc(args.dateIso.slice(0, 10))}</div>
+    <div class="foot">المبالغ عند الإصدار ولا تعكس التحصيلات أو الإشعارات اللاحقة. فاتورة مستخلص أعمال للعميل رقم ${esc(args.extractNumber)} · مشروع ${esc(args.projectCode)} (${esc(args.projectName)}) · تاريخ ${esc(args.dateIso.slice(0, 10))}</div>
   </body></html>`
 }
 
