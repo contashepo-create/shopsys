@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { render, fireEvent, cleanup, waitFor, screen } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -224,6 +224,8 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
     ui(<ProjectExtractsPage />)
     fireEvent.click(document.querySelector('[data-open-extract-modal]')!)
 
+    fireEvent.click(screen.getByText('إدخال بالنسبة'))
+
     // التحقق من أن جميع بنود المشروع ظهرت في الفاتورة بنسبة 0% افتراضياً
     const prevPcts1 = [...document.querySelectorAll('[data-boq-prev-pct]')].map((el) => el.textContent?.trim())
     const newPctInputs1 = [...document.querySelectorAll('[data-boq-new-pct]')] as HTMLInputElement[]
@@ -242,6 +244,7 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
 
     // إغلاق نافذة المراجعة إن كانت مفتوحة ثم فتح نافذة إصدار مستخلص للمرة الثانية لنفس المشروع
     fireEvent.click(document.querySelector('[data-open-extract-modal]')!)
+    fireEvent.click(screen.getByText('إدخال بالنسبة'))
     const prevPcts2 = [...document.querySelectorAll('[data-boq-prev-pct]')].map((el) => el.textContent?.trim())
     const newPctInputs2 = [...document.querySelectorAll('[data-boq-new-pct]')] as HTMLInputElement[]
     // البند الأول تظهر نسبته السابقة 40% وبجانبها النسبة الجديدة، والبند الثاني 0%

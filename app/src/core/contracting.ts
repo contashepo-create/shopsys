@@ -522,6 +522,10 @@ export interface ExtractLineComputed {
   newProgressPercent: number
   /** قيمة الشريحة المنفذة في هذا المستخلص */
   lineValueMinor: Minor
+  /** دليل الحصر؛ غيابه يعني أن البيانات القديمة لم تحفظ كمية مقاسة. */
+  prevExecutedQty?: number
+  newExecutedQty?: number
+  previousQtyEstimated?: boolean
 }
 
 /** حساب بنود المستخلص من BOQ — يرمي عند نسبة راجعة أو فوق 100 أو بند غير موجود */

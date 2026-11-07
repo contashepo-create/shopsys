@@ -30,6 +30,8 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { openSalesInvoiceWindow, openProjectExpenseWindow, openExtractWizardWindow } from '../windows/windowStore.ts'
 import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
+import { ExtractQuantityEditor } from '../contracting/ExtractQuantityEditor.tsx'
+import { quantityDraftPreview, type QuantityDraft, type QuantityEntryMode } from '../contracting/extractQuantityDraft.ts'
 import { renderExtractHtml, renderExtractClientInvoiceHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
@@ -40,6 +42,14 @@ function sectionedBoqDescription(project: Project | null | undefined, items: rea
   const sectionId = items.find(item => item.id === itemId)?.sectionId
   const name = project?.boqSections?.find(section => section.id === sectionId)?.nameAr
   return name ? `${name} — ${description}` : description
+}
+
+/** أدلة الحصر كما سُجلت؛ التاريخ النسبي وحده لا يُعرض ككمية محققة. */
+function extractQuantityEvidence(line: { prevExecutedQty?: number; newExecutedQty?: number; previousQtyEstimated?: boolean; contractQty?: number; unit?: string }): string {
+  if (line.prevExecutedQty == null || line.newExecutedQty == null) return ''
+  const current = (Math.round(line.newExecutedQty * 1000) - Math.round(line.prevExecutedQty * 1000)) / 1000
+  const remaining = line.contractQty == null ? '' : `، متبقي ${(Math.round(line.contractQty * 1000) - Math.round(line.newExecutedQty * 1000)) / 1000}`
+  return `سابق ${line.previousQtyEstimated ? 'تقديري ≈ ' : ''}${line.prevExecutedQty}، جاري ${current}، تراكمي ${line.newExecutedQty}${remaining} ${line.unit ?? ''}`
 }
 
 export function ProjectsPage() {
@@ -190,6 +200,11 @@ export function ProjectsPage() {
   const [exMode, setExMode] = useState<'lines' | 'gross'>('gross')
   const [exFinal, setExFinal] = useState(false)
   const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
+  const [exEntryKind, setExEntryKind] = useState<'quantity' | 'percent'>('quantity')
+  const [exQtyMode, setExQtyMode] = useState<QuantityEntryMode>('cumulative')
+  const [exQty, setExQty] = useState<QuantityDraft>({})
+  const [exAcceptEstimate, setExAcceptEstimate] = useState(false)
+  const [exConfirmedFinal, setExConfirmedFinal] = useState('')
   /* §94: مراجعة المستخلص الصادر (وثيقة كاملة) وتعديله (قيد عاكس + إعادة بناء) */
   const [viewExtract, setViewExtract] = useState<(typeof projectExtracts)[number] | null>(null)
   const [editingExtract, setEditingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
@@ -226,7 +241,12 @@ export function ProjectsPage() {
     })
     return { rows, grossMinor: rows.reduce((sum, row) => sum + row.sliceMinor, 0) }
   }, [extractBoq, exLines, editingExtract, extractFor, projectExtracts])
+  const exHistory = projectExtracts.filter(ex => ex.projectId === extractFor?.id && (!editingExtract || ex.id < editingExtract.id))
+  const exQtyPreview = quantityDraftPreview(extractBoq, exHistory, exQty, exQtyMode, exAcceptEstimate)
+  const exEffectiveGross = exMode === 'lines' ? (exEntryKind === 'quantity' ? exQtyPreview.grossMinor : exLinesPreview.grossMinor) : toMinor(exGross, cur.decimals)
+  const exFinalSignature = JSON.stringify({ exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exVat, exPayment, exTreasury, exRecovery, exFinal })
   const applyPartialSlicePercent = (slicePct: number) => {
+    setExEntryKind('percent')
     if (!extractFor) return
     if (exMode === 'lines' && extractBoq.length > 0) {
       const next: Record<number, string> = {}
@@ -254,6 +274,8 @@ export function ProjectsPage() {
     if (!prj) return
     setViewExtract(null)
     setEditingExtract(ex)
+    const usesQuantity = !!ex.lines?.some(line => line.newExecutedQty != null)
+    setExEntryKind(usesQuantity ? 'quantity' : 'percent'); setExQtyMode('cumulative'); setExQty(Object.fromEntries((ex.lines ?? []).filter(line => line.newExecutedQty != null).map(line => [line.boqItemId, String(line.newExecutedQty)]))); setExAcceptEstimate(false); setExConfirmedFinal('')
     setExtractFor(prj)
     setExDesc(ex.description)
     setExPayment(ex.payment)
@@ -309,7 +331,7 @@ export function ProjectsPage() {
   /** نموذج طباعة المستخلص قبل تسجيله: شرائح البنود أو المبلغ الإجمالي، والمحتجز والمستحق في التذييل */
   const buildExtractDraftModel = () => {
     if (!extractFor) throw new Error('لا مشروع')
-    const grossMinor = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)
+    const grossMinor = exEffectiveGross
     const vatMinor = Math.round((grossMinor * (exVat ? setup.vatPercent : 0)) / 100)
     const retentionMinor = Math.round((grossMinor * extractFor.retentionPercent) / 100)
     const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
@@ -321,7 +343,9 @@ export function ProjectsPage() {
       dateIso: todayLocalIso(),
       partyLabel: extractFor.clientName || 'الجهة المالكة',
       paymentLabel: `${exPayment === 'cash' ? 'تحصيل فوري' : 'آجل (مستحق على العميل)'} · المستحق ${formatMinor(dueMinor, cur, false)} ${cur.symbol}`,
-      rows: exMode === 'lines' && extractBoq.length > 0
+      rows: exMode === 'lines' && exEntryKind === 'quantity'
+        ? exQtyPreview.computed.map(r => ({ nameAr: `${r.code} — ${r.descriptionAr} (سابق ${r.prevExecutedQty}، جاري ${((r.newExecutedQty ?? 0) - (r.prevExecutedQty ?? 0)).toFixed(3)}، تراكمي ${r.newExecutedQty}${r.previousQtyEstimated ? '، السابق تقديري' : ''})`, qty: 1, unitPriceMinor: r.lineValueMinor, totalMinor: r.lineValueMinor }))
+        : exMode === 'lines' && extractBoq.length > 0
         ? exLinesPreview.rows.filter((r) => r.sliceMinor > 0).map((r) => ({ nameAr: `${r.boq.code} — ${r.boq.descriptionAr} (${r.newPercent ?? r.boq.progressPercent}٪ تراكمي)`, qty: 1, unitPriceMinor: r.sliceMinor, totalMinor: r.sliceMinor }))
         : grossMinor > 0 ? [{ nameAr: exDesc.trim() || 'قيمة الأعمال المنفذة', qty: 1, unitPriceMinor: grossMinor, totalMinor: grossMinor }] : [],
       totalMinor: dueMinor,
@@ -340,7 +364,9 @@ export function ProjectsPage() {
   const saveExtract = (creditLimitOverrideBy?: string) => {
     if (!extractFor) return
     try {
-      const linesInput = exMode === 'lines'
+      if (exFinal && exConfirmedFinal !== exFinalSignature) throw new Error('راجع الحصر الختامي وأكد عدم إصدار مستخلص لاحق')
+      if (exMode === 'lines' && exEntryKind === 'quantity' && exQtyPreview.error) throw new Error(exQtyPreview.error)
+      const linesInput = exMode === 'lines' && exEntryKind === 'percent'
         ? Object.entries(exLines)
             .filter(([, v]) => v !== '')
             .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
@@ -354,6 +380,8 @@ export function ProjectsPage() {
         projectId: extractFor.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
+        extractQtyLines: exMode === 'lines' && exEntryKind === 'quantity' ? exQtyPreview.inputs : undefined,
+        acceptEstimatedPrior: exAcceptEstimate,
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: terminal?.settlementAccountCode ?? exTreasury,
         terminalPayment: terminal ? { terminalId: terminal.id, providerReference: exTerminal.providerReference.trim(), cardLast4: exTerminal.cardLast4 || undefined } : undefined,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
@@ -374,7 +402,9 @@ export function ProjectsPage() {
   const saveExtractEdit = (creditLimitOverrideBy?: string) => {
     if (!extractFor || !editingExtract) return
     try {
-      const linesInput = exMode === 'lines'
+      if (exFinal && exConfirmedFinal !== exFinalSignature) throw new Error('راجع الحصر الختامي وأكد عدم إصدار مستخلص لاحق')
+      if (exMode === 'lines' && exEntryKind === 'quantity' && exQtyPreview.error) throw new Error(exQtyPreview.error)
+      const linesInput = exMode === 'lines' && exEntryKind === 'percent'
         ? Object.entries(exLines)
             .filter(([, v]) => v !== '')
             .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
@@ -387,6 +417,8 @@ export function ProjectsPage() {
         extractId: editingExtract.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
+        extractQtyLines: exMode === 'lines' && exEntryKind === 'quantity' ? exQtyPreview.inputs : undefined,
+        acceptEstimatedPrior: exAcceptEstimate,
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null, isFinal: exFinal, reason: exReason.trim(),
@@ -530,7 +562,7 @@ export function ProjectsPage() {
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
       retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: prj.retentionPercent,
-      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr), prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
+      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`, prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
       advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
       due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
       payment: ex.payment,
@@ -580,7 +612,7 @@ export function ProjectsPage() {
         const boq = boqItems.find((b) => b.id === l.boqItemId)
         return {
           code: l.code,
-          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
+          descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`,
           unit: boq?.unit,
           boqQty: boq?.qty,
           unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
@@ -833,11 +865,11 @@ export function ProjectsPage() {
           onSaveDraft={() => toast.show('المستخلص يُسجل بـ«حفظ وترحيل» — بوابات الاعتماد وحد الائتمان تُفحص عندها')}
           onRestoreDraft={() => toast.show('لا مسودات للمستخلصات — النِّسَب تُحفظ تلقائياً مع كل بند')}
           onPrint={() => {
-            const gross = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)
+            const gross = exEffectiveGross
             if (gross <= 0) return toast.show('أدخل قيمة الأعمال أو نسب التنفيذ قبل المعاينة', 'error')
             previewDraftDoc(buildExtractDraftModel(), `معاينة المستخلص — ${extractFor.nameAr}`)
           }}
-          onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); const gross = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals); if (gross > 0) previewDraftDoc(buildExtractDraftModel(), `مستخلص — ${extractFor.nameAr}`) }}
+          onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); const gross = exEffectiveGross; if (gross > 0) previewDraftDoc(buildExtractDraftModel(), `مستخلص — ${extractFor.nameAr}`) }}
           onPost={() => (editingExtract ? saveExtractEdit() : saveExtract())}
           headerFields={
             <>
@@ -898,7 +930,7 @@ export function ProjectsPage() {
               <span>النمط: <b>{exMode === 'lines' ? 'بندي من BOQ' : 'مبلغ إجمالي'}</b></span>
               {editingExtract && <span className="text-amber-600 font-bold">تعديل مستخلص صادر — يعكس قيده ويعيد بناءه بنفس الرقم</span>}
               <span>محتجز: <b>{extractFor.retentionPercent}٪</b></span>
-              <span>أعمال هذا المستخلص: <b className="text-emerald-600">{fmt(exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals))} {cur.symbol}</b></span>
+              <span>أعمال هذا المستخلص: <b className="text-emerald-600">{fmt(exEffectiveGross)} {cur.symbol}</b></span>
             </div>
           }
         >
@@ -907,9 +939,9 @@ export function ProjectsPage() {
               <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-orange-500/10 to-transparent p-3 dark:border-slate-700">
                 <div className="invoice-lines-toolbar-title"><b>أعمال هذا المستخلص</b><small>نسب تنفيذ تراكمية لكل بند من جدول الكميات — قيمة الشريحة تُحسب تلقائياً</small></div>
                 <div className="invoice-lines-kpis">
-                  <div className="invoice-kpi"><small>الأعمال</small><b className="text-emerald-600">{fmt(exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals))} {cur.symbol}</b></div>
-                  <div className="invoice-kpi"><small>محتجز {extractFor.retentionPercent}٪</small><b className="text-amber-600">{fmt(Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * extractFor.retentionPercent) / 100))}</b></div>
-                  <div className="invoice-kpi"><small>مستحق متوقع</small><b className="text-orange-600">{fmt((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) + Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * (exVat ? setup.vatPercent : 0)) / 100) - Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * extractFor.retentionPercent) / 100) - (exRecovery ? toMinor(exRecovery, cur.decimals) : 0))}</b></div>
+                  <div className="invoice-kpi"><small>الأعمال</small><b className="text-emerald-600">{fmt(exEffectiveGross)} {cur.symbol}</b></div>
+                  <div className="invoice-kpi"><small>محتجز {extractFor.retentionPercent}٪</small><b className="text-amber-600">{fmt(Math.round(((exEffectiveGross) * extractFor.retentionPercent) / 100))}</b></div>
+                  <div className="invoice-kpi"><small>مستحق متوقع</small><b className="text-orange-600">{fmt((exEffectiveGross) + Math.round(((exEffectiveGross) * (exVat ? setup.vatPercent : 0)) / 100) - Math.round(((exEffectiveGross) * extractFor.retentionPercent) / 100) - (exRecovery ? toMinor(exRecovery, cur.decimals) : 0))}</b></div>
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-b border-slate-200 dark:border-slate-700">
@@ -933,6 +965,7 @@ export function ProjectsPage() {
                     <button
                       key={pct}
                       type="button"
+                      disabled={!!editingExtract?.lines?.some(line => line.newExecutedQty != null)}
                       onClick={() => applyPartialSlicePercent(Number(pct))}
                       className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-orange-500/30 bg-orange-500/5 text-orange-700 dark:text-orange-300 hover:bg-orange-500/15 transition-all"
                     >
@@ -941,7 +974,10 @@ export function ProjectsPage() {
                   ))}
                 </div>
               </div>
-              {exMode === 'lines' && extractBoq.length > 0 ? (
+              {exMode === 'lines' && extractBoq.length > 0 && <div className="flex gap-2 p-2"><button type="button" aria-pressed={exEntryKind === 'quantity'} onClick={() => setExEntryKind('quantity')} className="rounded border p-2 text-xs">إدخال بالكميات</button><button type="button" aria-pressed={exEntryKind === 'percent'} disabled={!!editingExtract?.lines?.some(line => line.newExecutedQty != null)} onClick={() => setExEntryKind('percent')} className="rounded border p-2 text-xs">إدخال بالنسبة</button></div>}
+              {exMode === 'lines' && extractBoq.length > 0 && exEntryKind === 'quantity' ? (
+                <div className="p-3"><ExtractQuantityEditor project={extractFor} items={extractBoq} history={exHistory} values={exQty} setValues={setExQty} mode={exQtyMode} setMode={setExQtyMode} acceptEstimatedPrior={exAcceptEstimate} setAcceptEstimatedPrior={setExAcceptEstimate} fmt={fmt} currency={cur.symbol} /></div>
+              ) : exMode === 'lines' && extractBoq.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-[12px]">
                     <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
@@ -964,23 +1000,7 @@ export function ProjectsPage() {
                               <span className="block text-[10px] font-normal text-slate-400">إجمالي البند: {b.qty} {b.unit} × {fmt(b.unitPriceMinor)}</span>
                             </td>
                             <td className="p-2 text-center text-slate-500">{prevPercent}٪</td>
-                            <td className="p-2">
-                              <input
-                                value={sliceQty}
-                                inputMode="decimal"
-                                placeholder={`من ${Math.max(0, Number(((b.qty * (100 - prevPercent)) / 100).toFixed(2)))} ${b.unit}`}
-                                onChange={(e) => {
-                                  const q = Number(e.target.value)
-                                  if (!e.target.value.trim() || !Number.isFinite(q) || q <= 0 || b.qty <= 0) {
-                                    setExLines((s) => ({ ...s, [b.id]: '' }))
-                                    return
-                                  }
-                                  const pct = Math.min(100, Math.round((prevPercent + (q / b.qty) * 100) * 100) / 100)
-                                  setExLines((s) => ({ ...s, [b.id]: String(pct) }))
-                                }}
-                                className="w-24 mx-auto block text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent py-1 text-[11px] font-bold"
-                              />
-                            </td>
+                            <td className="p-2 text-center">{sliceQty || '—'} (تقديري من النسبة)</td>
                             <td className="p-2">
                               <input
                                 id={idx === 0 ? 'extract-first-percent' : undefined}
@@ -1012,6 +1032,7 @@ export function ProjectsPage() {
               )}
             </div>
             <div className="p-3 space-y-2">
+              {exFinal && <label className="block rounded bg-amber-500/10 p-2 text-xs font-bold"><input type="checkbox" checked={exConfirmedFinal === exFinalSignature} onChange={e => setExConfirmedFinal(e.target.checked ? exFinalSignature : '')} /> راجعت حصر جميع البنود والكميات المتبقية وأؤكد أن هذا المستخلص ختامي ولا مستخلصات بعده.</label>}
               <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 p-3 text-[12px] font-bold text-orange-700 dark:text-orange-300">
                 يُخصم محتجز {extractFor.retentionPercent}٪ تلقائياً ويقيد على 1105 حتى التسليم النهائي · «معاينة» تعرض المستخلص بقالب الفواتير قبل تسجيله — هذه هي فاتورة الجهة المالكة.
               </div>
@@ -1521,7 +1542,7 @@ export function ProjectsPage() {
                       {viewExtract.lines.map((l) => (
                         <tr key={l.boqItemId} className="border-t border-slate-100 dark:border-slate-800">
                           <td className="px-3 py-2 font-mono">{l.code}</td>
-                          <td className="px-3 py-2">{l.descriptionAr}</td>
+                          <td className="px-3 py-2">{l.descriptionAr}{extractQuantityEvidence(l) && <span className="block text-xs text-slate-500">{extractQuantityEvidence(l)}</span>}</td>
                           <td className="px-3 py-2 text-center font-bold">{l.prevProgressPercent}٪</td>
                           <td className="px-3 py-2 text-center font-bold text-orange-600">{l.newProgressPercent}٪</td>
                           <td className="px-3 py-2 font-bold">{fmt(l.lineValueMinor)}</td>
@@ -1961,6 +1982,11 @@ export function ProjectExtractsPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [exMode, setExMode] = useState<'lines' | 'gross'>('lines')
   const [exLines, setExLines] = useState<Record<number, string>>({})
+  const [lineEntryKind, setLineEntryKind] = useState<'quantity' | 'percent'>('quantity')
+  const [quantityMode, setQuantityMode] = useState<QuantityEntryMode>('cumulative')
+  const [quantityValues, setQuantityValues] = useState<QuantityDraft>({})
+  const [acceptEstimatedPrior, setAcceptEstimatedPrior] = useState(false)
+  const [confirmedFinalSignature, setConfirmedFinalSignature] = useState('')
   const [exGross, setExGross] = useState('')
   const [exVat, setExVat] = useState(vatEnabled)
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
@@ -2004,6 +2030,7 @@ export function ProjectExtractsPage() {
 
   const selectProjectForNewExtract = (projIdStr: string) => {
     setSelectedProjectId(projIdStr)
+    setLineEntryKind('quantity'); setQuantityMode('cumulative'); setQuantityValues({}); setAcceptEstimatedPrior(false); setConfirmedFinalSignature('')
     const projId = Number(projIdStr)
     const pBoq = boqItems.filter((b) => b.projectId === projId)
     const pExtracts = projectExtracts.filter((e) => e.projectId === projId)
@@ -2043,6 +2070,8 @@ export function ProjectExtractsPage() {
 
   const openEditExtractModal = (ex: (typeof projectExtracts)[number]) => {
     setEditingExtractId(ex.id)
+    const usesQuantity = !!ex.lines?.some(line => line.newExecutedQty != null)
+    setLineEntryKind(usesQuantity ? 'quantity' : 'percent'); setQuantityMode('cumulative'); setQuantityValues(Object.fromEntries((ex.lines ?? []).filter(line => line.newExecutedQty != null).map(line => [line.boqItemId, String(line.newExecutedQty)]))); setAcceptEstimatedPrior(false); setConfirmedFinalSignature('')
     setSelectedProjectId(String(ex.projectId))
     const pBoq = boqItems.filter((b) => b.projectId === ex.projectId)
     const pExtracts = projectExtracts.filter((e) => e.projectId === ex.projectId && e.id < ex.id)
@@ -2082,7 +2111,7 @@ export function ProjectExtractsPage() {
       const validSlice = newPercent > b.prevPercent && newPercent <= 100
       const slicePercent = validSlice ? Math.round((newPercent - b.prevPercent) * 100) / 100 : 0
       const sliceMinor = validSlice
-        ? Math.round((total * newPercent) / 100) - Math.round((total * b.prevPercent) / 100)
+        ? Math.round((total * (newPercent - b.prevPercent)) / 100)
         : 0
       return { boq: b, prevPercent: b.prevPercent, newPercent, slicePercent, sliceMinor, total }
     })
@@ -2090,7 +2119,9 @@ export function ProjectExtractsPage() {
     return { rows, grossMinor }
   }, [projectBoqWithPrev, exLines])
 
-  const effectiveGrossMinor = exMode === 'lines' ? linesPreview.grossMinor : toMinor(exGross || '0', cur.decimals)
+  const qtyPreview = quantityDraftPreview(projectBoqWithPrev, priorExtracts, quantityValues, quantityMode, acceptEstimatedPrior)
+  const effectiveGrossMinor = exMode === 'lines' ? (lineEntryKind === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor) : toMinor(exGross || '0', cur.decimals)
+  const finalSignature = JSON.stringify({ selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exVat, exPayment, exTreasury, exRecovery, exFinal })
   const retentionMinor = selectedProject ? Math.round((effectiveGrossMinor * selectedProject.retentionPercent) / 100) : 0
   const vatMinor = exVat ? Math.round((effectiveGrossMinor * setup.vatPercent) / 100) : 0
   const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
@@ -2123,7 +2154,7 @@ export function ProjectExtractsPage() {
         retentionPercent: prj.retentionPercent,
         lines: (ex.lines ?? []).map((l) => ({
           code: l.code,
-          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
+          descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`,
           prevPercent: l.prevProgressPercent,
           newPercent: l.newProgressPercent,
           value: `${fmt(l.lineValueMinor)} ${cur.symbol}`,
@@ -2178,7 +2209,7 @@ export function ProjectExtractsPage() {
           const boq = boqItems.find((b) => b.id === l.boqItemId)
           return {
             code: l.code,
-            descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
+            descriptionAr: `${sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr)}${extractQuantityEvidence(l) ? ` — ${extractQuantityEvidence(l)}` : ''}`,
             unit: boq?.unit,
             boqQty: boq?.qty,
             unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
@@ -2199,8 +2230,10 @@ export function ProjectExtractsPage() {
       return
     }
     try {
+      if (exFinal && confirmedFinalSignature !== finalSignature) throw new Error('راجع الحصر الختامي وأكد عدم إصدار مستخلص لاحق')
+      if (exMode === 'lines' && lineEntryKind === 'quantity' && qtyPreview.error) throw new Error(qtyPreview.error)
       const linesInput =
-        exMode === 'lines'
+        exMode === 'lines' && lineEntryKind === 'percent'
           ? linesPreview.rows
               .filter((r) => r.newPercent > r.prevPercent)
               .map((r) => ({ boqItemId: r.boq.id, newProgressPercent: r.newPercent }))
@@ -2210,6 +2243,8 @@ export function ProjectExtractsPage() {
           extractId: editingExtract.id,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
           extractLines: linesInput,
+          extractQtyLines: exMode === 'lines' && lineEntryKind === 'quantity' ? qtyPreview.inputs : undefined,
+          acceptEstimatedPrior,
           vatPercent: exVat ? setup.vatPercent : 0,
           payment: exPayment,
           description: exDesc.trim(),
@@ -2229,6 +2264,8 @@ export function ProjectExtractsPage() {
           projectId: selectedProject.id,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
           extractLines: linesInput,
+          extractQtyLines: exMode === 'lines' && lineEntryKind === 'quantity' ? qtyPreview.inputs : undefined,
+          acceptEstimatedPrior,
           vatPercent: exVat ? setup.vatPercent : 0,
           payment: exPayment,
           description: exDesc.trim(),
@@ -2536,7 +2573,10 @@ export function ProjectExtractsPage() {
                 }
               />
 
-              {projectBoqWithPrev.length > 0 && exMode === 'lines' ? (
+              {projectBoqWithPrev.length > 0 && exMode === 'lines' && <div className="flex gap-2"><button type="button" aria-pressed={lineEntryKind === 'quantity'} onClick={() => setLineEntryKind('quantity')} className="rounded border p-2 text-xs">إدخال بالكميات</button><button type="button" aria-pressed={lineEntryKind === 'percent'} disabled={!!editingExtract?.lines?.some(line => line.newExecutedQty != null)} onClick={() => setLineEntryKind('percent')} className="rounded border p-2 text-xs">إدخال بالنسبة</button></div>}
+              {projectBoqWithPrev.length > 0 && exMode === 'lines' && lineEntryKind === 'quantity' ? (
+                <ExtractQuantityEditor project={selectedProject} items={projectBoqWithPrev} history={priorExtracts} values={quantityValues} setValues={setQuantityValues} mode={quantityMode} setMode={setQuantityMode} acceptEstimatedPrior={acceptEstimatedPrior} setAcceptEstimatedPrior={setAcceptEstimatedPrior} fmt={fmt} currency={cur.symbol} />
+              ) : projectBoqWithPrev.length > 0 && exMode === 'lines' ? (
                 <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
                   <table className="w-full text-[12px]" data-extract-boq-table>
                     <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
@@ -2634,6 +2674,7 @@ export function ProjectExtractsPage() {
                 )}
               </div>
 
+              {exFinal && <label className="block rounded bg-amber-500/10 p-2 text-xs font-bold"><input type="checkbox" checked={confirmedFinalSignature === finalSignature} onChange={e => setConfirmedFinalSignature(e.target.checked ? finalSignature : '')} /> راجعت حصر جميع البنود والكميات المتبقية وأؤكد أن هذا المستخلص ختامي ولا مستخلصات بعده.</label>}
               <div className="rounded-2xl border-2 border-teal-600/30 bg-teal-500/5 p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center" data-extract-invoice-summary>
                 <div className="rounded-xl bg-white dark:bg-slate-900 p-2.5">
                   <div className="text-[11px] text-slate-500">قيمة الأعمال الحالية (4107)</div>
@@ -2704,7 +2745,7 @@ export function ProjectExtractsPage() {
                       {viewingExtract.lines.map((l) => (
                         <tr key={l.boqItemId} className="border-t border-slate-100 dark:border-slate-800">
                           <td className="px-3 py-2 font-mono">{l.code}</td>
-                          <td className="px-3 py-2">{l.descriptionAr}</td>
+                          <td className="px-3 py-2">{l.descriptionAr}{extractQuantityEvidence(l) && <span className="block text-xs text-slate-500">{extractQuantityEvidence(l)}</span>}</td>
                           <td className="px-3 py-2 text-center font-bold">{l.prevProgressPercent}٪</td>
                           <td className="px-3 py-2 text-center font-bold text-teal-600">{l.newProgressPercent}٪</td>
                           <td className="px-3 py-2 font-bold">{fmt(l.lineValueMinor)}</td>

@@ -52,6 +52,7 @@ import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyalt
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
+import { computeQuantityExtractLines, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
@@ -544,7 +545,7 @@ export interface ProjectExtract {
   totals: ExtractTotals
   journalEntryId: number
   /** بنود المستخلص البندي من BOQ (نمط AccFlex) — غيابها = مستخلص مبلغ إجمالي قديم */
-  lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number }[]
+  lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number; contractQty?: number; unitPriceMinor?: number; unit?: string; prevExecutedQty?: number; newExecutedQty?: number; previousQtyEstimated?: boolean }[]
   /** مستخلص ختامي (نمط pro-acc is_final): لا مستخلصات بعده — يمهد للتسليم والإفراج عن المحتجز */
   isFinal?: boolean
   /**
@@ -2920,7 +2921,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
   /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
@@ -3378,7 +3379,7 @@ interface DataState {
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
   refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
   /** §94: تعديل مستخلص صادر — عكس قيده وإرجاع تقدم BOQ واسترداد الدفعة ثم إعادة بناء بنفس الرقم */
-  editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
+  editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -16344,6 +16345,8 @@ export const useRawDataStore = create<DataState>()(
         return doc
       },
 
+      /** لا يُستند إلى حصر تاريخي لا تطابق سطوره وقيمه القيود وبنود العقد. */
+      // تستعمل داخل الإصدار والتعديل أدناه قبل احتساب الكميات.
       addProjectExtract: (args) => {
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
@@ -16368,7 +16371,23 @@ export const useRawDataStore = create<DataState>()(
         // المستخلص البندي (نمط AccFlex): بنود من BOQ بنسب تراكمية — أو مبلغ إجمالي (النمط القديم)
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
-        if (args.extractLines && args.extractLines.length > 0) {
+        if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
+        if (args.extractQtyLines?.length) {
+          const prior = state.projectExtracts.filter(e => e.projectId === project.id)
+          const journal = customerReviewJournal(state)
+          for (const ex of prior) {
+            assertProjectExtractOriginalIntegrity(ex, journal)
+            if (ex.lines?.length && ex.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== ex.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+            for (const line of ex.lines ?? []) {
+              const item = state.boqItems.find(b => b.projectId === project.id && b.id === line.boqItemId)
+              if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('قيمة بند العقد لا تطابق مستخلصاً سابقاً — راجع الحصر')
+            }
+          }
+          assertProjectExtractRefundIntegrity(prior, journal)
+          const r = computeQuantityExtractLines(args.extractQtyLines, state.boqItems.filter(b => b.projectId === project.id), prior, args.acceptEstimatedPrior)
+          extractLinesComputed = r.computed
+          gross = r.grossMinor
+        } else if (args.extractLines && args.extractLines.length > 0) {
           const priorExtracts = state.projectExtracts.filter((e) => e.projectId === project.id)
           const projBoq = state.boqItems
             .filter((b) => b.projectId === project.id)
@@ -16417,7 +16436,7 @@ export const useRawDataStore = create<DataState>()(
         const extract: ProjectExtract = {
           id, extractNumber, projectId: project.id, date: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
-          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
           ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
           ...(args.isFinal ? { isFinal: true } : {}),
         }
@@ -16474,9 +16493,11 @@ export const useRawDataStore = create<DataState>()(
         if (!reason) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         /* النسب التراكمية: لا تعديل لملموس من مستخلص أحدث — التسلسل من الأحدث للأقدم
            (فقط عند إعادة احتساب البنود؛ التعديل بمبلغ إجمالي لا يمس تقدم BOQ) */
-        const recomputeLines = !!(args.extractLines && args.extractLines.length > 0)
-        if (recomputeLines && extract.lines?.length) {
-          const mine = new Set(extract.lines.map((l) => l.boqItemId))
+        if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
+        if (extract.lines?.some(line => line.newExecutedQty != null) && !args.extractQtyLines?.length) throw new Error('المستخلص يحفظ دليل الكمية — عدّله بالكميات ولا تُسقط الحصر')
+        const recomputeLines = !!(args.extractLines?.length || args.extractQtyLines?.length)
+        if (recomputeLines) {
+          const mine = new Set([...(extract.lines ?? []).map((l) => l.boqItemId), ...(args.extractQtyLines ?? []).map(line => line.boqItemId), ...(args.extractLines ?? []).map(line => line.boqItemId)])
           const later = state.projectExtracts.find((e) => e.projectId === extract.projectId && e.id > extract.id && e.lines?.some((l) => mine.has(l.boqItemId)))
           if (later) throw new Error(`المستخلص ${later.extractNumber} الأحدث عدّل نسب بنود هذا المستخلص — عدّل الأحدث أولاً أو أصدر مستخلصاً بديلاً`)
         }
@@ -16520,7 +16541,22 @@ export const useRawDataStore = create<DataState>()(
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
         if (recomputeLines) {
-          const r = computeExtractLines(args.extractLines!, boqAfterRevert.filter((b) => b.projectId === project.id))
+          if (args.extractQtyLines?.length) {
+            const prior = state.projectExtracts.filter(e => e.projectId === project.id && e.id < extract.id)
+            const journal = customerReviewJournal(state)
+            for (const ex of prior) {
+              assertProjectExtractOriginalIntegrity(ex, journal)
+              if (ex.lines?.length && ex.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== ex.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+              for (const line of ex.lines ?? []) {
+                const item = state.boqItems.find(b => b.projectId === project.id && b.id === line.boqItemId)
+                if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('قيمة بند العقد لا تطابق مستخلصاً سابقاً — راجع الحصر')
+              }
+            }
+            assertProjectExtractRefundIntegrity(prior, journal)
+          }
+          const r = args.extractQtyLines?.length
+            ? computeQuantityExtractLines(args.extractQtyLines, boqAfterRevert.filter(b => b.projectId === project.id), state.projectExtracts.filter(e => e.projectId === project.id && e.id < extract.id), args.acceptEstimatedPrior)
+            : computeExtractLines(args.extractLines!, boqAfterRevert.filter((b) => b.projectId === project.id))
           extractLinesComputed = r.computed
           gross = r.grossMinor
         }
@@ -16563,7 +16599,7 @@ export const useRawDataStore = create<DataState>()(
         const rebuilt: ProjectExtract = {
           ...extract,
           date: now, description: args.description, payment: args.payment, totals, journalEntryId: entryId,
-          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
           ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : { advanceRecoveryMinor: undefined }),
           ...(args.isFinal ? { isFinal: true } : { isFinal: undefined }),
           lastEditReason: reason, editedAt: now, editReversalEntryId: reversalId,
@@ -17367,7 +17403,8 @@ export const useRawDataStore = create<DataState>()(
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
         const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
-        if (priceQtyChange && boq.progressPercent > 0) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
+        if (priceQtyChange && (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id)))) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
+        if (changes.unit !== undefined && changes.unit !== boq.unit && state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه حصر سابق — لا تغير وحدة القياس؛ أنشئ بنداً جديداً')
         const merged: BoqItem = { ...boq, ...changes }
         const errors = validateBoqItem({ descriptionAr: merged.descriptionAr, unit: merged.unit, qty: merged.qty, unitPriceMinor: merged.unitPriceMinor })
         if (errors.length) throw new Error(errors.join(' — '))
@@ -17384,7 +17421,7 @@ export const useRawDataStore = create<DataState>()(
         if (!boq) throw new Error('بند الكميات غير موجود')
         // حارس الفئة (الحذف الآمن): بند بتقدم مرحَّل عليه مستخلصات — حذفه يشوه
         // المستخلصات التراكمية القادمة والتقارير؛ وبند مربوط بعقد باطن يكسر نطاق العقد
-        if (boq.progressPercent > 0) throw new Error('البند عليه مستخلصات مرحلة — لا يُحذف حفاظاً على تسلسل التقدم')
+        if (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه مستخلصات مرحلة — لا يُحذف حفاظاً على تسلسل التقدم')
         if (state.subContracts.some((sc) => sc.boqItemIds.includes(id))) throw new Error('البند مربوط بعقد مقاول باطن — فك الربط أولاً')
         set({ boqItems: state.boqItems.filter((b) => b.id !== id) })
       },
