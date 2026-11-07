@@ -6,9 +6,11 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  */
 import { useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, ShoppingCart, Truck, Users2, FileText } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, Trash2, ShoppingCart, Truck, Users2, FileText } from 'lucide-react'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import type { Project } from '../../core/contracting.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -65,11 +67,13 @@ export function ProjectsPage() {
     addProject, addProjectWithBoq, updateProject, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
-    staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
+    staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations,
     ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer, previewMissingProjectCustomerBackup, restoreMissingProjectCustomerBackup,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
+  const currentUser = appUsers.find(user => user.id === currentUserId && user.active)
+  const canDeleteProject = currentUserId == null || (!!currentUser && effectivePermissionsFor(currentUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId)).has('contracting.project.delete'))
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -77,6 +81,26 @@ export function ProjectsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   /* مشروع جديد */
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
+  const [deleteProjectReason, setDeleteProjectReason] = useState('')
+  const [deleteProjectFingerprint, setDeleteProjectFingerprint] = useState('')
+  const projectDeletionPending = useRef(false)
+  const confirmProjectDeletion = async () => {
+    if (!projectToDelete || projectDeletionPending.current) return
+    projectDeletionPending.current = true
+    let committed = false
+    try {
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        useRawDataStore.getState().deleteUnpostedProject(projectToDelete.id, deleteProjectReason, deleteProjectFingerprint)
+        committed = true
+      })
+      setProjectToDelete(null)
+      toast.show('حُذف المشروع غير المرحّل وسُجل السبب')
+    } catch (error) {
+      if (committed) setProjectToDelete(null)
+      toast.show(committed ? 'نُفذ الحذف محلياً لكن تعذر تأكيد الحفظ؛ راجع الحالة قبل أي محاولة أخرى' : (error as Error).message, 'error')
+    } finally { projectDeletionPending.current = false }
+  }
   const [open, setOpen] = useState(false)
   const [nameAr, setNameAr] = useState('')
   const [clientName, setClientName] = useState('')
@@ -1119,6 +1143,7 @@ export function ProjectsPage() {
                           <button onClick={() => openLegacyReview(p)} data-legacy-project-review title="مراجعة ربط ذمة مستخلص تاريخي بلا عميل" className="px-2 py-1 rounded-lg text-xs font-bold text-amber-700 bg-amber-500/10">مراجعة الذمة</button>
                         )}
                         <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
+                        <button onClick={() => { setProjectToDelete(p); setDeleteProjectReason(''); setDeleteProjectFingerprint(useRawDataStore.getState().previewProjectDeletionFingerprint(p.id)) }} disabled={!canDeleteProject} title={canDeleteProject ? 'حذف مشروع غير مرحّل' : 'تحتاج صلاحية حذف مشروع غير مرحّل'} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-40"><Trash2 className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
                     </td>
@@ -1131,6 +1156,15 @@ export function ProjectsPage() {
       )}
 
       {/* التفاصيل */}
+      <Modal open={!!projectToDelete} onClose={() => setProjectToDelete(null)} title="تأكيد حذف مشروع غير مرحّل">
+        {projectToDelete && <div className="space-y-4">
+          <p>حذف «{projectToDelete.code} — {projectToDelete.nameAr}» وبنوده والبيانات التخطيطية المرتبطة؟</p>
+          <p className="text-sm">البنود: {boqItems.filter(b => b.projectId === projectToDelete.id).length}، الميزانيات: {projectBudgets.filter(b => b.projectId === projectToDelete.id).length}، المهام: {projectTasks.filter(t => t.projectId === projectToDelete.id).length}، أوامر التغيير: {changeOrders.filter(c => c.projectId === projectToDelete.id).length}، العروض المرئية المرتبطة: {quotations.filter(q => q.projectId === projectToDelete.id && !q.deletedAt).length}.</p>
+          <p className="text-sm text-amber-700">لا يُحذف المشروع إذا كانت له مستندات أو حركات مرحّلة أو روابط أخرى تحتاج مراجعة. عروض الأسعار المرتبطة ستُخفى مع الاحتفاظ بسجل الحذف. أغلق نوافذ المشروع الأخرى قبل الحذف.</p>
+          <Field label="سبب حذف المشروع"><input aria-label="سبب حذف المشروع" value={deleteProjectReason} onChange={e => setDeleteProjectReason(e.target.value)} className={inputCls} /></Field>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setProjectToDelete(null)}>تراجع</Btn><Btn onClick={() => void confirmProjectDeletion()} disabled={!deleteProjectReason.trim()}>تأكيد حذف المشروع</Btn></div>
+        </div>}
+      </Modal>
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">

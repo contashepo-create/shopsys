@@ -318,3 +318,14 @@ describe('حذف عرض السعر أثناء حفظ نافذة أخرى', () =>
     expect(JSON.parse(mergeConcurrentSnapshots(base, deleted, base)).state.quotations[0].deletedAt).toBeTruthy()
   })
 })
+
+describe('حماية حذف المشروع من مستند أُنشئ في نافذة أخرى', () => {
+  it('يرفض دمج حذف المشروع مع مستخلص جديد في الاتجاهين', () => {
+    const snapshot = (state: object) => JSON.stringify({ state })
+    const base = snapshot({ projects: [{ id: 1, nameAr: 'مشروع' }], projectDeletionRecords: [], projectExtracts: [] })
+    const deleted = snapshot({ projects: [], projectDeletionRecords: [{ id: 1 }], projectExtracts: [] })
+    const created = snapshot({ projects: [{ id: 1, nameAr: 'مشروع' }], projectDeletionRecords: [], projectExtracts: [{ id: 1, projectId: 1 }] })
+    expect(() => mergeConcurrentSnapshots(base, deleted, created)).toThrow(/المشروع المحذوف/)
+    expect(() => mergeConcurrentSnapshots(base, created, deleted)).toThrow(/المشروع المحذوف/)
+  })
+})

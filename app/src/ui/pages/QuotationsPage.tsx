@@ -95,7 +95,7 @@ export function QuotationsPage() {
   const doDelete = () => {
     if (!deleteFor) return
     try {
-      deleteQuotation(deleteFor.id)
+      deleteQuotation(deleteFor.id, deleteFor.projectId ?? null)
       setDeleteFor(null)
       toast.show('حُذف عرض السعر — لم تتغير الأرصدة أو القيود المحاسبية')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -576,7 +576,7 @@ export function QuotationsPage() {
                               <ArrowLeftCircle size={13} /> حوّله مشروعاً
                             </button>
                           )}
-                          <button onClick={() => setDeleteFor(q)} disabled={!canDelete || q.projectId != null} title={q.projectId != null ? 'لا يمكن حذف عرض تحوّل إلى مشروع' : !canDelete ? 'تحتاج صلاحية حذف عروض الأسعار' : 'حذف عرض السعر'} data-quotation-delete className="px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 bg-rose-500/10 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Trash2 size={15} /> حذف</button>
+                          <button onClick={() => setDeleteFor(q)} disabled={!canDelete} title={!canDelete ? 'تحتاج صلاحية حذف عروض الأسعار' : 'حذف عرض السعر'} data-quotation-delete className="px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 bg-rose-500/10 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Trash2 size={15} /> حذف</button>
                           {q.projectId != null && (
                             <span className="text-[11px] px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 size={12} /> مشروع {projects.find((p) => p.id === q.projectId)?.code}</span>
                           )}
@@ -595,6 +595,7 @@ export function QuotationsPage() {
         {deleteFor && <div className="space-y-4">
           <p>هل تريد حذف العرض «{deleteFor.quoteNumber} — {deleteFor.titleAr}» للعميل «{deleteFor.clientName}»؟</p>
           <p className="text-sm text-slate-500">سيُزال من قائمة العروض ومصادر تعبئة الفواتير، مع الاحتفاظ بمرجعه في سجل التدقيق. لن تتغير الأرصدة أو المخزون أو القيود.</p>
+          {deleteFor.projectId != null && <p className="text-sm font-bold text-amber-700">لن يُحذف المشروع المرتبط أو بنوده أو مستخلصاته. يبقى العرض المخفي وارتباطه محفوظين في بيانات التدقيق.</p>}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setDeleteFor(null)}>تراجع</Btn>
             <Btn onClick={doDelete}><Trash2 size={15} /> تأكيد الحذف</Btn>

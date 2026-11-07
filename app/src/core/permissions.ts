@@ -59,6 +59,7 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
     'lab', 'contracting', 'clinic', 'cars', 'realestate', 'restaurant',
   ],
   'rep.fleet': ['logistics', 'cars'],
+  'contracting.project.delete': ['contracting'],
 }
 
 /** الصلاحيات الظاهرة لنشاطٍ وحداته modules — العامة + المرتبطة بوحدة مفعلة */
@@ -76,9 +77,10 @@ export function permissionSectionsForModules(modules: readonly string[]): { id: 
 }
 
 export const PERMISSIONS: PermissionDef[] = [
+  { id: 'contracting.project.delete', nameAr: 'حذف مشروع غير مرحّل', section: 'accounting', sensitive: true },
   // المبيعات
   { id: 'sales.quotation.manage', nameAr: 'إدارة ومعاينة عروض الأسعار والمناقصات', section: 'sales' },
-  { id: 'sales.quotation.delete', nameAr: 'حذف عرض سعر غير مرتبط بمشروع', section: 'sales', sensitive: true },
+  { id: 'sales.quotation.delete', nameAr: 'حذف عرض سعر مع الاحتفاظ بسجل التدقيق', section: 'sales', sensitive: true },
   { id: 'sales.pos.open', nameAr: 'فتح شاشة البيع', section: 'sales' },
   { id: 'sales.invoice.create', nameAr: 'إنشاء فاتورة بيع', section: 'sales' },
   { id: 'sales.price.edit', nameAr: 'تعديل سعر البيع في الفاتورة', section: 'sales', sensitive: true },

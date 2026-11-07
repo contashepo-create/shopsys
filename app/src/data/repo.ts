@@ -1808,6 +1808,8 @@ interface DataState {
   }) => PendingPartOrder
   setPendingPartOrderStatus: (id: number, status: PendingPartOrderStatus) => void
   deletePendingPartOrder: (id: number) => void
+  /** أرقام المشاريع المحذوفة غير المرحّلة محجوزة في سجل التدقيق. */
+  projectDeletionRecords: { id: number; code: string; nameAr: string; reason: string; at: string; by: string; branchId?: number | null }[]
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
   /** تصنيفات مصروفات المشروعات الحرة (تنمو من «أخرى…» في نافذة المصروف وتُحفظ دائماً) */
@@ -2894,6 +2896,8 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  deleteUnpostedProject: (id: number, reason: string, expectedFingerprint?: string) => void
+  previewProjectDeletionFingerprint: (id: number) => string
   addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
@@ -2903,7 +2907,7 @@ interface DataState {
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
-  deleteQuotation: (id: number) => void
+  deleteQuotation: (id: number, expectedProjectId?: number | null) => void
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** §94-مراجعة: تعديل عرض/مناقصة محفوظ (فتحه وإصلاحه) — محظور بعد تحوله لمشروع */
   updateQuotation: (id: number, changes: { kind?: 'quotation' | 'tender'; clientName?: string; clientId?: number | null; titleAr?: string; validUntil?: string; lines?: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes?: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -4034,7 +4038,7 @@ function assertCanUpdateBranch(state: DataState, id: number, patch: Partial<Omit
 const BRANCH_STAMP_ID_KEYS = [
   'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
   'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
-  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectExtracts',
+  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectDeletionRecords', 'projectExtracts',
   'projectCosts', 'retentionReleases', 'projectBudgets', 'projectTasks', 'changeOrders',
   'clientAdvances', 'boqItems', 'subContracts', 'subCertificates', 'subPayments',
   'subAdvances', 'bonds', 'dailyWorkers', 'dailyWorkRecords', 'materialRequisitions',
@@ -5637,6 +5641,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
     custodyFiles: scopedCustodyFiles,
     custodyTxs: scopedCustodyTxs,
     projects: scopedProjects,
+    projectDeletionRecords: inBranch(state.projectDeletionRecords ?? []),
     projectExtracts: scopedProjectExtracts,
     projectCosts: scopedProjectCosts,
     retentionReleases: scopedRetentionReleases,
@@ -5964,6 +5969,11 @@ function collectFxFlows(raw: DataState, exclude?: { kind: 'sale' | 'purchase' | 
   return flows
 }
 
+/** يحمي التأكيد من حذف بيانات تخطيطية تغيّرت بعد فتح النافذة. */
+function projectDeletionFingerprint(state: DataState, id: number): string {
+  return JSON.stringify({ project: state.projects.find(p => p.id === id), boq: state.boqItems.filter(b => b.projectId === id), budgets: state.projectBudgets.filter(b => b.projectId === id), tasks: state.projectTasks.filter(t => t.projectId === id), changes: state.changeOrders.filter(c => c.projectId === id), quotations: state.quotations.filter(q => q.projectId === id && !q.deletedAt) })
+}
+
 function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }): Project {
   const errors = validateProject(p)
   if (p.boqSections && (p.boqSections.some(section => !section.id?.trim() || !section.nameAr?.trim()) || new Set(p.boqSections.map(section => section.id)).size !== p.boqSections.length)) errors.push('أسماء ومعرّفات أقسام المشروع مطلوبة وفريدة')
@@ -5976,7 +5986,7 @@ function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 's
   const customer = state.customers.find(c => c.id === p.clientId)
   if (projectBranch && customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر')
   if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
-  const id = nextId(state.projects)
+  const id = nextId([...state.projects, ...(state.projectDeletionRecords ?? [])])
   const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
   return project
 }
@@ -7161,6 +7171,7 @@ export const useRawDataStore = create<DataState>()(
         return { pendingPartOrders: invalidateUncoveredAutoParts(parts, state.purchaseOrders, order.linkedPurchaseOrderId) }
       }),
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
+      projectDeletionRecords: [],
       projectExtracts: [],
       projectCosts: [],
       projectExpenseCategories: [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
@@ -15207,6 +15218,60 @@ export const useRawDataStore = create<DataState>()(
       },
 
       /* ─── المقاولات (القرار 27) ─── */
+      previewProjectDeletionFingerprint: (id) => {
+        const scoped = getBranchScopedDataState(get())
+        if (!scoped.projects.some(project => project.id === id)) throw new Error('المشروع غير موجود في الفرع الحالي')
+        return projectDeletionFingerprint(scoped, id)
+      },
+      /** حذف غير المرحّل فقط؛ يفحص الروابط من الحالة الخام لا من الفرع المرئي وحده. */
+      deleteUnpostedProject: (id, reason, expectedFingerprint) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === id)
+        if (!project || state.projects.filter(row => row.id === id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+          if (!user || !effectivePermissionsFor(user, roles).has('contracting.project.delete')) throw new Error('لا تملك صلاحية حذف المشروع')
+        }
+        if (!reason.trim()) throw new Error('سبب حذف المشروع مطلوب')
+        if (expectedFingerprint != null && expectedFingerprint !== projectDeletionFingerprint(scoped, id)) throw new Error('تغير المشروع أو متعلقاته منذ التأكيد — راجعه قبل الحذف')
+        if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — راجع حالته قبل الحذف')
+        const projectBoqIds = new Set(state.boqItems.filter(item => item.projectId === id).map(item => item.id))
+        if (state.subContracts.some(contract => contract.boqItemIds.some(itemId => projectBoqIds.has(itemId))) || state.projectTasks.some(task => task.projectId !== id && task.boqItemId != null && projectBoqIds.has(task.boqItemId))) throw new Error('بنود المشروع مرتبطة بمستندات أخرى — راجع الروابط قبل الحذف')
+        const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'projectDeletionRecords', 'auditLog'])
+        const hasRef = (value: unknown, depth = 0): boolean => {
+          if (depth > 12 || value == null) return false
+          if (typeof value === 'string') {
+            if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+            try { return hasRef(JSON.parse(value), depth + 1) } catch { return true }
+          }
+          if (Array.isArray(value)) return value.some(row => hasRef(row, depth + 1))
+          if (typeof value !== 'object') return false
+          const record = value as Record<string, unknown>
+          if (record.projectId === id || (record.source === 'project' && record.sourceId === id)) return true
+          return Object.values(record).some(row => hasRef(row, depth + 1))
+        }
+        const linked = Object.entries(state).find(([key, value]) => !ignored.has(key) && Array.isArray(value) && hasRef(value))
+        if (linked) throw new Error('المشروع مرتبط بمستند أو حركة قد تكون مرحّلة — عالج الارتباط قبل الحذف')
+        if (state.journal.some(entry => entry.sourceType === 'client_advance' && entry.sourceId === id)) throw new Error('المشروع مرتبط بقيد دفعة مقدمة — راجع الدفتر قبل الحذف')
+        const quotes = state.quotations.filter(q => q.projectId === id && !q.deletedAt)
+        if (quotes.length) {
+          const qScope = assertQuotationAccess(state, 'sales.quotation.delete')
+          if (quotes.some(q => !qScope.quotations.some(row => row.id === q.id))) throw new Error('عرض مرتبط تابع لفرع آخر — راجع الارتباط قبل الحذف')
+        }
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({
+          projects: state.projects.filter(row => row.id !== id),
+          boqItems: state.boqItems.filter(row => row.projectId !== id),
+          projectBudgets: state.projectBudgets.filter(row => row.projectId !== id),
+          projectTasks: state.projectTasks.filter(row => row.projectId !== id),
+          changeOrders: state.changeOrders.filter(row => row.projectId !== id),
+          quotations: state.quotations.map(q => q.projectId === id && !q.deletedAt ? { ...q, deletedAt: at } : q),
+          projectDeletionRecords: [...(state.projectDeletionRecords ?? []), { id, code: project.code, nameAr: project.nameAr, reason: reason.trim(), at, by }],
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف المشروع غير المرحّل ${project.code} — ${reason.trim()}` }]),
+        })
+      },
       addProject: (p) => {
         const state = get()
         const project = prepareNewProject(state, p)
@@ -15771,12 +15836,12 @@ export const useRawDataStore = create<DataState>()(
         return quote
       },
 
-      deleteQuotation: (id) => {
+      deleteQuotation: (id, expectedProjectId) => {
         const state = get()
         const scoped = assertQuotationAccess(state, 'sales.quotation.delete')
         const q = scoped.quotations.find(row => row.id === id)
         if (!q) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
-        if (q.projectId != null) throw new Error('لا يمكن حذف عرض تحوّل إلى مشروع — احتفظ به كمرجع للمشروع')
+        if (expectedProjectId !== undefined && (q.projectId ?? null) !== expectedProjectId) throw new Error('تغير ارتباط العرض بالمشروع — راجعه قبل تأكيد الحذف')
         const at = localIsoTimestamp()
         set({
           quotations: state.quotations.map(row => row.id === id ? { ...row, deletedAt: at } : row),
@@ -21331,6 +21396,7 @@ export const useRawDataStore = create<DataState>()(
             source: a.source ?? ('cash' as const),
             custodyFileId: a.custodyFileId ?? null,
           })),
+          projectDeletionRecords: s.projectDeletionRecords ?? [],
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
           projectExpenseCategories: s.projectExpenseCategories && s.projectExpenseCategories.length ? s.projectExpenseCategories : [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],

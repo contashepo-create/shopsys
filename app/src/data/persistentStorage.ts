@@ -137,7 +137,32 @@ function parseJsonValue(value: string | null): JsonValue | undefined {
 export function mergeConcurrentSnapshots(base: string | null, local: string, remote: string | null): string {
   const merged = mergeJson(parseJsonValue(base), parseJsonValue(local), parseJsonValue(remote))
   if (merged === undefined) throw new Error('تعذّر دمج لقطة فارغة مع تعديل متزامن')
-  return JSON.stringify(merged)
+  const result = JSON.stringify(merged)
+  const state = persistedState(result)
+  const deleted = new Set(Array.isArray(state?.projectDeletionRecords) ? state.projectDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
+  if (state && deleted.size) {
+    const projects = Array.isArray(state.projects) ? state.projects : []
+    if (projects.some(row => row && typeof row === 'object' && deleted.has((row as { id: number }).id))) throw new Error('تعارض المشروع المحذوف مع تحديث متزامن — أعد تحميل البيانات')
+    const refersToDeleted = (value: unknown, depth = 0): boolean => {
+      if (depth > 12 || value == null) return false
+      if (typeof value === 'string') {
+        if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+        try { return refersToDeleted(JSON.parse(value), depth + 1) } catch { return true }
+      }
+      if (Array.isArray(value)) return value.some(row => refersToDeleted(row, depth + 1))
+      if (typeof value !== 'object') return false
+      const row = value as Record<string, unknown>
+      if (typeof row.projectId === 'number' && deleted.has(row.projectId)) return true
+      if ((row.source === 'project' || row.sourceType === 'client_advance') && typeof row.sourceId === 'number' && deleted.has(row.sourceId)) return true
+      return Object.values(row).some(child => refersToDeleted(child, depth + 1))
+    }
+    for (const [key, value] of Object.entries(state)) {
+      if (['projects', 'projectDeletionRecords', 'auditLog'].includes(key) || !Array.isArray(value)) continue
+      const activeRows = key === 'quotations' ? value.filter(row => !row || typeof row !== 'object' || !(row as { deletedAt?: unknown }).deletedAt) : value
+      if (refersToDeleted(activeRows)) throw new Error('تعارض المشروع المحذوف مع مستند مرتبط أُضيف بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  return result
 }
 
 export async function snapshotIdempotencyKey(storeName: string, expectedRevision: number, payloadJson: string): Promise<string> {

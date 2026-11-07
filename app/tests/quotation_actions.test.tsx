@@ -51,13 +51,19 @@ describe('وصول ومعاينة العروض لكل الأنشطة', () => {
     expect(usePrintPreview.getState().open).toBe(true)
     expect(useRawDataStore.getState().quotations[0]).toEqual(quote)
   })
-  it('العرض المتحول لمشروع يمكن معاينته ولا يمكن حذفه أو تعديله', () => {
+  it('حذف عرض مرتبط بمشروع لا يمس المشروع أو الدفتر ويحفظ المرجع التاريخي', () => {
     useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', projectId: 12 }] })
+    const before = useRawDataStore.getState()
     mount()
     expect(screen.queryByTitle('فتح العرض وتعديله')).toBeNull()
-    expect((screen.getByTitle('لا يمكن حذف عرض تحوّل إلى مشروع') as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(screen.getByTitle('معاينة عرض السعر'))
-    expect(usePrintPreview.getState().open).toBe(true)
+    fireEvent.click(screen.getByTitle('حذف عرض السعر'))
+    expect(screen.getByText(/لن يُحذف المشروع المرتبط/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /تأكيد الحذف/ }))
+    const after = useRawDataStore.getState()
+    expect(useDataStore.getState().quotations).toEqual([])
+    expect(after.quotations[0]).toMatchObject({ id: quote.id, projectId: 12, deletedAt: expect.any(String) })
+    expect(after.projects).toBe(before.projects)
+    expect(after.journal).toBe(before.journal)
   })
   it('البحث بالعميل والرقم وتصفية الحالة', () => {
     useRawDataStore.setState({ quotations: [quote, { ...quote, id: 8, quoteNumber: 'TN-0008', kind: 'tender', status: 'submitted', clientName: 'عميل آخر' }] })
