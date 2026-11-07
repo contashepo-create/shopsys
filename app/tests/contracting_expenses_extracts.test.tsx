@@ -3,6 +3,8 @@ import { render, fireEvent, cleanup, waitFor, screen } from '@testing-library/re
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
+
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
 const { useDataStore } = await import('../src/data/repo.ts')
@@ -220,7 +222,7 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
     expect(detailHeaders).toContain('عجز / سلفة')
   })
 
-  it('يعرض بنود المشروع بنسبة 0% افتراضياً في المستخلص الأول، ثم يظهر النسبة السابقة وبجانبها النسبة الجديدة في المستخلص الثاني مع زر طباعة فاتورة للعميل', () => {
+  it('يعرض بنود المشروع بنسبة 0% افتراضياً في المستخلص الأول، ثم يظهر النسبة السابقة وبجانبها النسبة الجديدة في المستخلص الثاني مع زر طباعة فاتورة للعميل', async () => {
     ui(<ProjectExtractsPage />)
     fireEvent.click(document.querySelector('[data-open-extract-modal]')!)
 
@@ -238,7 +240,8 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
 
     // اعتماد المستخلص الأول
     fireEvent.click(document.querySelector('[data-save-project-extract]')!)
-    expect(S().projectExtracts.length).toBe(1)
+    await waitFor(() => expect(S().projectExtracts.length).toBe(1))
+    await waitFor(() => expect(screen.queryByText('اعتماد المستخلص وإصدار الفاتورة')).toBeNull())
     expect(S().projectExtracts[0].lines?.length).toBe(1)
     expect(S().projectExtracts[0].totals.grossMinor).toBe(8000000)
 
@@ -257,7 +260,8 @@ describe('قسم مصروفات المشروعات المستقل + قسم ال�
     expect(document.querySelector('[data-extract-lines-gross]')?.textContent).toContain('220,000')
 
     fireEvent.click(document.querySelector('[data-save-project-extract]')!)
-    expect(S().projectExtracts.length).toBe(2)
+    await waitFor(() => expect(S().projectExtracts.length).toBe(2))
+    await waitFor(() => expect(screen.queryByText('اعتماد المستخلص وإصدار الفاتورة')).toBeNull())
     expect(S().projectExtracts[1].totals.grossMinor).toBe(22000000)
 
     // التحقق من وجود زر طباعة فاتورة احترافية للعميل بجانب كل مستخلص

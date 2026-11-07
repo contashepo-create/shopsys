@@ -9,6 +9,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, Trash2, ShoppingCart, Truck, Users2, FileText } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import type { Project } from '../../core/contracting.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -63,7 +64,7 @@ function extractPrintQuantities(line: { prevExecutedQty?: number; newExecutedQty
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId,
     addProject, addProjectWithBoq, updateProject, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
@@ -274,7 +275,7 @@ export function ProjectsPage() {
   const exHistory = projectExtracts.filter(ex => ex.projectId === extractFor?.id && (!editingExtract || ex.id < editingExtract.id))
   const exQtyPreview = quantityDraftPreview(extractBoq, exHistory, exQty, exQtyMode, exAcceptEstimate)
   const exEffectiveGross = exMode === 'lines' ? (exEntryKind === 'quantity' ? exQtyPreview.grossMinor : exLinesPreview.grossMinor) : toMinor(exGross, cur.decimals)
-  const exFinalSignature = JSON.stringify({ exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exVat, exPayment, exTreasury, exRecovery, exFinal })
+  const exFinalSignature = JSON.stringify({ basis: extractFor ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, extractFor.id) : null, exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
   const applyPartialSlicePercent = (slicePct: number) => {
     setExEntryKind('percent')
     if (!extractFor) return
@@ -391,8 +392,10 @@ export function ProjectsPage() {
     })
   }
 
-  const saveExtract = (creditLimitOverrideBy?: string) => {
-    if (!extractFor) return
+  const extractCommitPending = useRef(false)
+  const saveExtract = async (creditLimitOverrideBy?: string) => {
+    if (!extractFor || extractCommitPending.current) return
+    extractCommitPending.current = true
     try {
       if (exFinal && exConfirmedFinal !== exFinalSignature) throw new Error('راجع الحصر الختامي وأكد عدم إصدار مستخلص لاحق')
       if (exMode === 'lines' && exEntryKind === 'quantity' && exQtyPreview.error) throw new Error(exQtyPreview.error)
@@ -406,7 +409,7 @@ export function ProjectsPage() {
             })
         : undefined
       const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
-      const ex = addProjectExtract({
+      const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, extractFor.id), () => addProjectExtract({
         projectId: extractFor.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
@@ -417,20 +420,22 @@ export function ProjectsPage() {
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         isFinal: exFinal,
-      })
+      }))
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
       /* §94: بعد الإصدار تفتح وثيقة المستخلص فوراً — البيانات والطباعة والتعديل في مكان واحد */
       setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
       setViewExtract(ex)
     } catch (e) {
-      if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtract(by ?? 'المشرف')); return }
+      if (e instanceof ProjectCommitUnconfirmedError) { setExtractFor(null); setViewExtract(e.result); toast.show(e.message, 'error'); return }
+      if (e instanceof CreditLimitError) { queueMicrotask(() => creditApproval.request((by) => void saveExtract(by ?? 'المشرف'))); return }
       toast.show((e as Error).message, 'error')
-    }
+    } finally { extractCommitPending.current = false }
   }
 
   /* §94: حفظ تعديل مستخلص صادر — قيد عاكس موثق السبب ثم إعادة بناء بنفس الرقم */
-  const saveExtractEdit = (creditLimitOverrideBy?: string) => {
-    if (!extractFor || !editingExtract) return
+  const saveExtractEdit = async (creditLimitOverrideBy?: string) => {
+    if (!extractFor || !editingExtract || extractCommitPending.current) return
+    extractCommitPending.current = true
     try {
       if (exFinal && exConfirmedFinal !== exFinalSignature) throw new Error('راجع الحصر الختامي وأكد عدم إصدار مستخلص لاحق')
       if (exMode === 'lines' && exEntryKind === 'quantity' && exQtyPreview.error) throw new Error(exQtyPreview.error)
@@ -443,7 +448,7 @@ export function ProjectsPage() {
               return b ? l.newProgressPercent > exPrevPct(b) : false
             })
         : undefined
-      const ex = editProjectExtract({
+      const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, extractFor.id), () => editProjectExtract({
         extractId: editingExtract.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
@@ -452,14 +457,15 @@ export function ProjectsPage() {
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null, isFinal: exFinal, reason: exReason.trim(),
-      })
+      }))
       toast.show(`عُدّل المستخلص ${ex.extractNumber}: قيد عاكس ثم إعادة بناء — الصافي الآن ${fmt(ex.totals.dueMinor)} ✅`)
       setExtractFor(null); setEditingExtract(null); setExReason(''); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
       setViewExtract(ex)
     } catch (e) {
-      if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtractEdit(by ?? 'المشرف')); return }
+      if (e instanceof ProjectCommitUnconfirmedError) { setExtractFor(null); setEditingExtract(null); setViewExtract(e.result); toast.show(e.message, 'error'); return }
+      if (e instanceof CreditLimitError) { queueMicrotask(() => creditApproval.request((by) => void saveExtractEdit(by ?? 'المشرف'))); return }
       toast.show((e as Error).message, 'error')
-    }
+    } finally { extractCommitPending.current = false }
   }
 
   /* عرض */
@@ -903,7 +909,7 @@ export function ProjectsPage() {
             previewDraftDoc(buildExtractDraftModel(), `معاينة المستخلص — ${extractFor.nameAr}`)
           }}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); const gross = exEffectiveGross; if (gross > 0) previewDraftDoc(buildExtractDraftModel(), `مستخلص — ${extractFor.nameAr}`) }}
-          onPost={() => (editingExtract ? saveExtractEdit() : saveExtract())}
+          onPost={() => { void (editingExtract ? saveExtractEdit() : saveExtract()) }}
           headerFields={
             <>
               {editingExtract && (
@@ -1642,15 +1648,20 @@ export function ProjectsPage() {
             terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             allowCredit={true}
             hint="رفض المالك/الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة — «على الحساب» يخفض ذمة الجهة المالكة."
-            onSubmit={(a) => {
+            onSubmit={(a) => { void (async () => {
+              if (extractCommitPending.current) return
+              extractCommitPending.current = true
               try {
                 const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
                 const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
-                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury })
+                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury }))
                 setRefundingExtract(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
-              } catch (err) { toast.show((err as Error).message, 'error') }
-            }}
+              } catch (err) {
+                if (err instanceof ProjectCommitUnconfirmedError) setRefundingExtract(null)
+                toast.show((err as Error).message, 'error')
+              } finally { extractCommitPending.current = false }
+            })() }}
           />
         )}
         {refundingExtract && (
@@ -2002,6 +2013,8 @@ export function ProjectExtractsPage() {
     projectExtracts,
     boqItems,
     changeOrders,
+    clientAdvances,
+    activeBranchId,
     customers,
     journal,
     paymentTerminals,
@@ -2164,7 +2177,7 @@ export function ProjectExtractsPage() {
 
   const qtyPreview = quantityDraftPreview(projectBoqWithPrev, priorExtracts, quantityValues, quantityMode, acceptEstimatedPrior)
   const effectiveGrossMinor = exMode === 'lines' ? (lineEntryKind === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor) : toMinor(exGross || '0', cur.decimals)
-  const finalSignature = JSON.stringify({ selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exVat, exPayment, exTreasury, exRecovery, exFinal })
+  const finalSignature = JSON.stringify({ basis: selectedProject ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, selectedProject.id) : null, selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
   const retentionMinor = selectedProject ? Math.round((effectiveGrossMinor * selectedProject.retentionPercent) / 100) : 0
   const vatMinor = exVat ? Math.round((effectiveGrossMinor * setup.vatPercent) / 100) : 0
   const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
@@ -2270,11 +2283,14 @@ export function ProjectExtractsPage() {
     )
   }
 
-  const submitExtract = (creditLimitOverrideBy?: string) => {
+  const extractSubmitPending = useRef(false)
+  const submitExtract = async (creditLimitOverrideBy?: string) => {
+    if (extractSubmitPending.current) return
     if (!selectedProject) {
       toast.show('اختر المشروع أولاً', 'error')
       return
     }
+    extractSubmitPending.current = true
     try {
       if (exFinal && confirmedFinalSignature !== finalSignature) throw new Error('راجع الحصر الختامي وأكد عدم إصدار مستخلص لاحق')
       if (exMode === 'lines' && lineEntryKind === 'quantity' && qtyPreview.error) throw new Error(qtyPreview.error)
@@ -2285,7 +2301,7 @@ export function ProjectExtractsPage() {
               .map((r) => ({ boqItemId: r.boq.id, newProgressPercent: r.newPercent }))
           : undefined
       if (editingExtract) {
-        const updated = editProjectExtract({
+        const updated = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, selectedProject.id), () => editProjectExtract({
           extractId: editingExtract.id,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
           extractLines: linesInput,
@@ -2299,14 +2315,14 @@ export function ProjectExtractsPage() {
           creditLimitOverrideBy: creditLimitOverrideBy ?? null,
           isFinal: exFinal,
           reason: exReason.trim(),
-        })
+        }))
         toast.show(`عُدّل المستخلص ${updated.extractNumber} — الصافي المستحق ${fmt(updated.totals.dueMinor)} ✅`)
         setModalOpen(false)
         setEditingExtractId(null)
         setViewExtractId(updated.id)
       } else {
         const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
-        const created = addProjectExtract({
+        const created = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, selectedProject.id), () => addProjectExtract({
           projectId: selectedProject.id,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
           extractLines: linesInput,
@@ -2322,18 +2338,19 @@ export function ProjectExtractsPage() {
           advanceRecoveryMinor: recoveryMinor,
           creditLimitOverrideBy: creditLimitOverrideBy ?? null,
           isFinal: exFinal,
-        })
+        }))
         toast.show(`صدر المستخلص ${created.extractNumber} كفاتورة على العميل — الصافي المستحق ${fmt(created.totals.dueMinor)} ✅`)
         setModalOpen(false)
         setViewExtractId(created.id)
       }
     } catch (e) {
+      if (e instanceof ProjectCommitUnconfirmedError) { setModalOpen(false); setEditingExtractId(null); setViewExtractId(e.result.id); toast.show(e.message, 'error'); return }
       if (e instanceof CreditLimitError) {
-        creditApproval.request((by) => submitExtract(by ?? 'المشرف'))
+        queueMicrotask(() => creditApproval.request((by) => void submitExtract(by ?? 'المشرف')))
         return
       }
       toast.show((e as Error).message, 'error')
-    }
+    } finally { extractSubmitPending.current = false }
   }
 
   const filteredExtracts = useMemo(() => {
@@ -2747,7 +2764,7 @@ export function ProjectExtractsPage() {
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setModalOpen(false)}>إلغاء</Btn>
             <Btn
-              onClick={() => submitExtract()}
+              onClick={() => void submitExtract()}
               shortcut="F9"
               data-save-project-extract
               disabled={!selectedProject || effectiveGrossMinor <= 0 || (!!editingExtract && !exReason.trim())}
@@ -2860,15 +2877,18 @@ export function ProjectExtractsPage() {
             fmt={fmt}
             allowCredit={true}
             hint="رفض المالك أو الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة."
-            onSubmit={(a) => {
+            onSubmit={(a) => { void (async () => {
+              if (extractSubmitPending.current) return
+              extractSubmitPending.current = true
               try {
-                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury: a.treasury })
+                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury: a.treasury }))
                 setRefundExtractId(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) {
+                if (err instanceof ProjectCommitUnconfirmedError) setRefundExtractId(null)
                 toast.show((err as Error).message, 'error')
-              }
-            }}
+              } finally { extractSubmitPending.current = false }
+            })() }}
           />
         )}
         {refundingExtract && (

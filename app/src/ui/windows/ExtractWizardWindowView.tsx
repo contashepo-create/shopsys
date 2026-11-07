@@ -6,9 +6,10 @@
  * (مبلغ مقطوع أو بنود جدول كميات بنسب إنجاز)، ويستعمل نفس المحرك
  * addProjectExtract بلا أي مسار ترحيل موازٍ — فلا فرق دفترياً إطلاقاً.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, ChevronLeft, ChevronRight, FileCheck2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
+import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -34,7 +35,7 @@ export function ExtractWizardWindowView() {
   const toast = useToast()
   const { setup } = useAppStore()
   const {
-    projects, boqItems, projectExtracts, clientAdvances, treasuries,
+    projects, boqItems, projectExtracts, clientAdvances, treasuries, changeOrders, activeBranchId,
     addProjectExtract, getProjectBillingGuard,
   } = useDataStore()
 
@@ -53,7 +54,7 @@ export function ExtractWizardWindowView() {
   const [treasury, setTreasury] = useState('1101')
   const [recovery, setRecovery] = useState('')
   const [isFinal, setIsFinal] = useState(false)
-  const [posted, setPosted] = useState<{ id: number; extractNumber: string; dueMinor: number; retentionMinor: number } | null>(null)
+  const [posted, setPosted] = useState<{ id: number; extractNumber: string; dueMinor: number; retentionMinor: number; confirmed: boolean } | null>(null)
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const projectBoq = useMemo(() => boqItems.filter((b) => b.projectId === projectId), [boqItems, projectId])
@@ -90,7 +91,7 @@ export function ExtractWizardWindowView() {
 
   const qtyHistory = projectExtracts.filter(ex => ex.projectId === projectId)
   const qtyPreview = quantityDraftPreview(projectBoq, qtyHistory, qtyValues, qtyMode, acceptEstimate)
-  const finalSignature = JSON.stringify({ projectId, mode, gross, linePct, qtyMode, qtyValues, acceptEstimate, vatOn, payment, treasury, recovery, isFinal })
+  const finalSignature = JSON.stringify({ basis: project ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, project.id) : null, projectId, mode, gross, linePct, qtyMode, qtyValues, acceptEstimate, vatOn, vatPercent: setup.vatPercent, payment, treasury, recovery, isFinal })
   const parseMoney = (s: string): number => { try { return s.trim() ? toMinor(s, cur.decimals) : 0 } catch { return -1 } }
   const grossMinor = mode === 'gross' ? Math.max(0, parseMoney(gross)) : mode === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor
   const recoveryMinor = Math.max(0, parseMoney(recovery))
@@ -121,12 +122,14 @@ export function ExtractWizardWindowView() {
     setStep(1); setPosted(null); setGross(''); setLinePct({}); setQtyValues({}); setAcceptEstimate(false); setConfirmedFinal(''); setDesc(''); setRecovery(''); setIsFinal(false)
   }
 
-  const submit = () => {
-    if (!project) return
+  const submitting = useRef(false)
+  const submit = async () => {
+    if (!project || submitting.current) return
     const err = stepError()
     if (err) { toast.show(err, 'error'); return }
+    submitting.current = true
     try {
-      const ex = addProjectExtract({
+      const ex = await withProjectExtractCommit(project.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, project.id), () => addProjectExtract({
         projectId: project.id,
         grossMinor: mode === 'gross' ? grossMinor : undefined,
         extractLines: mode === 'lines' ? linesInput : undefined,
@@ -138,24 +141,29 @@ export function ExtractWizardWindowView() {
         treasury,
         advanceRecoveryMinor: recoveryMinor,
         isFinal,
-      })
-      setPosted({ id: ex.id, extractNumber: ex.extractNumber, dueMinor: ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0), retentionMinor: ex.totals.retentionMinor })
+      }))
+      setPosted({ id: ex.id, extractNumber: ex.extractNumber, dueMinor: ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0), retentionMinor: ex.totals.retentionMinor, confirmed: true })
       toast.show(`سُجل المستخلص ${ex.extractNumber} ✅`)
       onPosted?.(ex.id)
     } catch (e) {
+      if (e instanceof ProjectCommitUnconfirmedError) {
+        const ex = e.result
+        setPosted({ id: ex.id, extractNumber: ex.extractNumber, dueMinor: ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0), retentionMinor: ex.totals.retentionMinor, confirmed: false })
+      }
       toast.show((e as Error).message, 'error')
-    }
+    } finally { submitting.current = false }
   }
 
   if (posted) {
     return (
       <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-8 text-center" data-window-view="extract-wizard" data-wizard-done>
         <CheckCircle2 className="w-12 h-12 text-emerald-500" />
-        <b className="text-lg">سُجل المستخلص {posted.extractNumber} بنجاح</b>
+        <b className="text-lg">{posted.confirmed ? `سُجل المستخلص ${posted.extractNumber} بنجاح` : `المستخلص ${posted.extractNumber} سُجل محلياً ولم يُؤكد حفظه`}</b>
+        {!posted.confirmed && <p role="alert" className="text-amber-700">راجع المستخلص والدفتر قبل أي محاولة جديدة؛ لم يكتمل تأكيد الحفظ.</p>}
         <p className="text-sm text-slate-500">المستحق للعميل الآن: <b>{fmt(posted.dueMinor)} {cur.symbol}</b> · محتجز الضمان: <b>{fmt(posted.retentionMinor)} {cur.symbol}</b></p>
         <p className="text-xs text-slate-400">الذمة والضريبة نشأتا من هذا المستخلص — وفاتورته الضريبية عند الحاجة تكون «توثيقاً» من فاتورة البيع.</p>
         <div className="flex gap-2">
-          <Btn onClick={reset}>مستخلص آخر</Btn>
+          {posted.confirmed && <Btn onClick={reset}>مستخلص آخر</Btn>}
           <Btn variant="primary" onClick={() => host?.close()}>تم — إغلاق</Btn>
         </div>
       </div>
@@ -304,7 +312,7 @@ export function ExtractWizardWindowView() {
         {step < 3 ? (
           <Btn variant="primary" disabled={!!stepError()} onClick={() => setStep(step + 1)}>التالي <ChevronLeft className="w-4 h-4" /></Btn>
         ) : (
-          <Btn variant="primary" disabled={!!stepError() || !totals} onClick={submit} data-wizard-post><FileCheck2 className="w-4 h-4" /> ترحيل المستخلص</Btn>
+          <Btn variant="primary" disabled={!!stepError() || !totals} onClick={() => void submit()} data-wizard-post><FileCheck2 className="w-4 h-4" /> ترحيل المستخلص</Btn>
         )}
       </div>
     </div>

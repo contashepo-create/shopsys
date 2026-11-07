@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import React from 'react'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ProjectExtractsPage } from '../src/ui/pages/ContractingPages.tsx'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
@@ -16,12 +17,13 @@ beforeEach(() => {
  S().addBoqItem({ projectId: p.id, code: '1', descriptionAr: 'دهانات', unit: 'م2', qty: 1000, unitPriceMinor: 100 })
 })
 afterEach(() => { cleanup(); useRawDataStore.setState(data); useAppStore.setState(app) })
-it('من واجهة المستخلص الجاري ثم الختامي: حصر 200 ثم 856 دون تقريب نسبة الإدخال', () => {
+it('من واجهة المستخلص الجاري ثم الختامي: حصر 200 ثم 856 دون تقريب نسبة الإدخال', async () => {
  render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
  fireEvent.click(screen.getByText('إصدار مستخلص جديد (فاتورة للعميل)'))
  fireEvent.change(screen.getByLabelText('كمية البند 1'), { target: { value: '200' } })
  fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
- expect(S().projectExtracts[0].lines?.[0].newExecutedQty).toBe(200)
+ await waitFor(() => expect(S().projectExtracts[0]?.lines?.[0].newExecutedQty).toBe(200))
+ await waitFor(() => expect(screen.getByRole('dialog').textContent).toContain('PRX-'))
  const dialog = screen.getByRole('dialog')
  const close = within(dialog).getByRole('button', { name: /إغلاق/ })
  fireEvent.click(close)
@@ -31,7 +33,7 @@ it('من واجهة المستخلص الجاري ثم الختامي: حصر 20
  expect(screen.getAllByText(/المتبقي/).length).toBeGreaterThan(0)
  fireEvent.click(screen.getByLabelText(/راجعت حصر جميع البنود/))
  fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
- expect(S().projectExtracts[1].lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 856 })
+ await waitFor(() => expect(S().projectExtracts[1]?.lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 856 }))
  expect(S().projectExtracts[1].totals.grossMinor).toBe(65600)
 })
 
@@ -56,7 +58,7 @@ it('يحافظ على الكمية عند التبديل بين الجاري و�
  expect(S().projectExtracts).toHaveLength(1)
 })
 
-it('يطلب موافقة ظاهرة على تقدير الكمية عند الانتقال من تاريخ النسب', () => {
+it('يطلب موافقة ظاهرة على تقدير الكمية عند الانتقال من تاريخ النسب', async () => {
  const project = S().projects[0], boq = S().boqItems[0]
  S().addProjectExtract({ projectId: project.id, description: 'قديم', payment: 'credit', vatPercent: 0, extractLines: [{ boqItemId: boq.id, newProgressPercent: 20 }] })
  render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
@@ -66,7 +68,7 @@ it('يطلب موافقة ظاهرة على تقدير الكمية عند ال�
  expect(S().projectExtracts).toHaveLength(1)
  fireEvent.click(screen.getByLabelText(/راجعت الكميات السابقة التقديرية/))
  fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
- expect(S().projectExtracts[1].lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 856, previousQtyEstimated: true })
+ await waitFor(() => expect(S().projectExtracts[1]?.lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 856, previousQtyEstimated: true }))
 })
 
 it('يدعم المعالج السريع الحصر التراكمي ويطلب تأكيد الختامي', async () => {
@@ -83,6 +85,6 @@ it('يدعم المعالج السريع الحصر التراكمي ويطلب 
  fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/))
  expect(button.disabled).toBe(false)
  fireEvent.click(button)
- expect(S().projectExtracts[0].lines?.[0].newExecutedQty).toBe(856)
+ await waitFor(() => expect(S().projectExtracts[0]?.lines?.[0].newExecutedQty).toBe(856))
  expect(S().projectExtracts[0].isFinal).toBe(true)
 })
