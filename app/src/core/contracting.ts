@@ -50,6 +50,8 @@ export interface Project {
   expectedEndDate?: string // تاريخ التسليم المتوقع
   managerEmployeeId?: number | null // مدير المشروع من سجل الموظفين
   tags?: string[] // وسوم حرة للتصنيف والفلترة
+  /** أقسام جدول الكميات للعرض والتنظيم، لا تمثل بنوداً مالية. */
+  boqSections?: { id: string; nameAr: string }[]
   /**
    * تاريخ التسليم الفعلي للمشروع (سد فجوة تقرير النشاط #11 — لا تتبع لفترة
    * الضمان/الصيانة بعد التسليم). يختلف عن expectedEndDate (المتوقع قبل التنفيذ).
@@ -474,6 +476,8 @@ export const QUOTATION_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> =
 export interface BoqItem {
   id: number
   projectId: number
+  /** ربط اختياري بقسم المشروع، لا يغيّر قيمة البند. */
+  sectionId?: string | null
   code: string // ترقيم البند: 1-1، 2-3…
   descriptionAr: string
   unit: string // م2، م3، طن، مقطوعية…

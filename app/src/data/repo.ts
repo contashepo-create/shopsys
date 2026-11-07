@@ -2893,6 +2893,7 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
   previewMissingProjectCustomerBackup: (projectId: number, backup: string) => { customer: Customer; backupShopName: string; backupDate: string; backupChecksum: string; scopeName: string; balanceMinor: number; statement: StatementRow[]; fingerprint: string }
@@ -5960,6 +5961,23 @@ function collectFxFlows(raw: DataState, exclude?: { kind: 'sale' | 'purchase' | 
     flows.push(...fxConversionFlows(doc, book.code, book.decimals).map(flow => ({ ...flow, date: memoDate })))
   }
   return flows
+}
+
+function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }): Project {
+  const errors = validateProject(p)
+  if (p.boqSections && (p.boqSections.some(section => !section.id?.trim() || !section.nameAr?.trim()) || new Set(p.boqSections.map(section => section.id)).size !== p.boqSections.length)) errors.push('أسماء ومعرّفات أقسام المشروع مطلوبة وفريدة')
+  if (errors.length) throw new Error(errors.join(' — '))
+  // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
+  if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
+  const branch = getEffectiveActiveBranch(state)
+  const projectBranch = branch ?? state.branches.find(item => item.isMain) ?? null
+  if (state.branches.length && !projectBranch) throw new Error('حدد الفرع الرئيسي قبل إنشاء المشروع')
+  const customer = state.customers.find(c => c.id === p.clientId)
+  if (projectBranch && customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر')
+  if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
+  const id = nextId(state.projects)
+  const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
+  return project
 }
 
 export const useRawDataStore = create<DataState>()(
@@ -15190,19 +15208,26 @@ export const useRawDataStore = create<DataState>()(
       /* ─── المقاولات (القرار 27) ─── */
       addProject: (p) => {
         const state = get()
-        const errors = validateProject(p)
-        if (errors.length) throw new Error(errors.join(' — '))
-        // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
-        if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
-        const branch = getEffectiveActiveBranch(state)
-        const projectBranch = branch ?? state.branches.find(item => item.isMain) ?? null
-        if (state.branches.length && !projectBranch) throw new Error('حدد الفرع الرئيسي قبل إنشاء المشروع')
-        const customer = state.customers.find(c => c.id === p.clientId)
-        if (projectBranch && customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر')
-        if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
-        const id = nextId(state.projects)
-        const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
+        const project = prepareNewProject(state, p)
         set({ projects: [...state.projects, project] })
+        return project
+      },
+      addProjectWithBoq: (p, lines) => {
+        const state = get()
+        const project = prepareNewProject(state, p)
+        if (!lines.length) throw new Error('أدخل بند جدول كميات واحداً على الأقل')
+        let next = nextId(state.boqItems)
+        const items = lines.map(line => {
+          const errors = validateBoqItem(line)
+          if (!Number.isFinite(line.qty)) errors.push('الكمية غير صالحة')
+          if (!Number.isSafeInteger(line.unitPriceMinor) || !Number.isSafeInteger(line.estCostMinor) || line.estCostMinor < 0) errors.push('سعر أو تكلفة البند غير صالحين')
+          if (line.sectionId != null && !project.boqSections?.some(section => section.id === line.sectionId)) errors.push('قسم البند غير موجود')
+          if (errors.length) throw new Error(errors.join(' — '))
+          return { ...line, projectId: project.id, id: next++, progressPercent: 0 }
+        })
+        const total = items.reduce((sum, line) => sum + boqItemTotal(line), 0)
+        if (!Number.isSafeInteger(total) || total !== project.contractValueMinor) throw new Error('قيمة العقد لا تطابق مجموع بنود المشروع')
+        set({ projects: [...state.projects, project], boqItems: [...state.boqItems, ...items] })
         return project
       },
       /* ─── §94-مراجعة: تعديل بيانات المشروع (طلب المالك) — قيمة العقد قبل أول مستخلص فقط ─── */
@@ -17325,7 +17350,9 @@ export const useRawDataStore = create<DataState>()(
       /* ─── عمق المقاولات: BOQ وأوامر التغيير والدفعات المقدمة والباطن والضمانات واليوميات ─── */
       addBoqItem: (args) => {
         const state = get()
-        if (!state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        const project = state.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (args.sectionId != null && !project.boqSections?.some(section => section.id === args.sectionId)) throw new Error('قسم بند المشروع غير موجود')
         const errors = validateBoqItem(args)
         const estCost = args.estCostMinor ?? 0
         if (!Number.isInteger(estCost) || estCost < 0) errors.push('التكلفة التقديرية غير صحيحة')

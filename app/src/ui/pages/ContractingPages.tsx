@@ -35,11 +35,18 @@ import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 
+/** عنوان القسم للعرض فقط؛ هوية البند وقيمته لا تتغيران. */
+function sectionedBoqDescription(project: Project | null | undefined, items: readonly { id: number; sectionId?: string | null }[], itemId: number, description: string): string {
+  const sectionId = items.find(item => item.id === itemId)?.sectionId
+  const name = project?.boqSections?.find(section => section.id === sectionId)?.nameAr
+  return name ? `${name} — ${description}` : description
+}
+
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances,
-    addProject, updateProject, addBoqItem, addProjectExtract, releaseRetention, getProjectProfit,
+    addProject, addProjectWithBoq, updateProject, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
@@ -70,17 +77,22 @@ export function ProjectsPage() {
   const [tags, setTags] = useState('')
   /* §92: مسودات المشروع (kind='project') + مراجعة قبل الإنشاء — مثل فاتورة الأعلاف */
   const [projDraftsOpen, setProjDraftsOpen] = useState(false)
-  const [projDraftId, setProjDraftId] = useState(() => crypto.randomUUID())
+  const [projDraftId, setProjDraftId] = useState<string>(() => crypto.randomUUID())
   const [projChecksOpen, setProjChecksOpen] = useState(false)
 
   /* البند العالمي (طلب المالك): المشروع يُنشأ بجدول كميات BOQ —
      قيمة العقد تُحسب من مجموع البنود (كمية × سعر) لا تُكتب يدوياً */
-  interface BoqDraft { code: string; descriptionAr: string; unit: string; qty: string; unitPrice: string; estCost: string }
-  const emptyBoqLine = (): BoqDraft => ({ code: '', descriptionAr: '', unit: 'م2', qty: '', unitPrice: '', estCost: '' })
+  interface BoqDraft { code: string; descriptionAr: string; unit: string; qty: string; unitPrice: string; estCost: string; sectionId?: string | null }
+  const emptyBoqLine = (sectionId: string | null = null): BoqDraft => ({ code: '', descriptionAr: '', unit: 'م2', qty: '', unitPrice: '', estCost: '', sectionId })
   const [boqDraft, setBoqDraft] = useState<BoqDraft[]>([emptyBoqLine()])
+  const [boqSections, setBoqSections] = useState<{ id: string; nameAr: string }[]>([])
+  const [collapsedSections, setCollapsedSections] = useState<string[]>([])
+  const [deletingSection, setDeletingSection] = useState<string | null>(null)
   const patchBoqLine = (i: number, patch: Partial<BoqDraft>) =>
     setBoqDraft((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
-  const validBoqLines = boqDraft.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && Number(l.unitPrice) >= 0)
+  const isValidBoqLine = (l: BoqDraft) => !!l.descriptionAr.trim() && !!l.qty.trim() && !!l.unitPrice.trim() && Number.isFinite(Number(l.qty)) && Number(l.qty) > 0 && Number.isFinite(Number(l.unitPrice)) && Number(l.unitPrice) >= 0
+  const validBoqLines = boqDraft.filter(isValidBoqLine)
+  const incompleteBoqLines = boqDraft.filter(l => (l.code.trim() || l.descriptionAr.trim() || l.qty.trim() || l.unitPrice.trim() || l.estCost.trim()) && !isValidBoqLine(l))
   const boqTotalMinor = validBoqLines.reduce((a, l) => a + Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)), 0)
   // نمط الإدخال: بنود (الافتراضي العالمي) أو قيمة إجمالية (عقود المقطوعية بلا جدول)
   const [valueMode, setValueMode] = useState<'boq' | 'manual'>('boq')
@@ -89,6 +101,9 @@ export function ProjectsPage() {
   /* §92: أخطاء مانعة وتحذيرات قبل إنشاء المشروع — لوحة مثل فاتورة الأعلاف */
   const projectIssues: PrePostIssue[] = [
     ...(nameAr.trim() === '' ? [{ id: 'name', level: 'blocking' as const, text: 'اسم المشروع مطلوب' }] : []),
+    ...(valueMode === 'boq' && boqSections.some(section => !section.nameAr.trim()) ? [{ id: 'section-name', level: 'blocking' as const, text: 'أدخل اسماً لكل قسم في جدول الكميات أو احذفه' }] : []),
+    ...(valueMode === 'boq' && incompleteBoqLines.length ? [{ id: 'boq-incomplete', level: 'blocking' as const, text: 'أكمل أو احذف بنود جدول الكميات غير المكتملة قبل الإنشاء' }] : []),
+    ...(valueMode === 'boq' && boqDraft.some(line => line.sectionId != null && !boqSections.some(section => section.id === line.sectionId)) ? [{ id: 'section-missing', level: 'blocking' as const, text: 'يوجد بند مرتبط بقسم مفقود — راجع المسودة' }] : []),
     ...(!clientId ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا سجل عميل مرتبط — اسم الجهة وحده لا يربط المستخلصات بكشف العميل' }] : []),
     ...(valueMode === 'boq' && validBoqLines.length === 0
       ? [{ id: 'boq-empty', level: 'blocking' as const, text: 'أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»' }]
@@ -112,17 +127,18 @@ export function ProjectsPage() {
     const draft = upsertAdvancedInvoiceDraft({
       id: projDraftId, kind: 'project',
       name: `مسودة مشروع — ${nameAr.trim() || 'بلا اسم'}`,
-      payload: JSON.stringify({ nameAr, clientName, clientId, contractValue, retention, startDate, notes, contractNumber, location, expectedEnd, managerId, tags, valueMode, boqDraft }),
+      payload: JSON.stringify({ nameAr, clientName, clientId, contractValue, retention, startDate, notes, contractNumber, location, expectedEnd, managerId, tags, valueMode, boqDraft, boqSections }),
     })
     toast.show(`حُفظت مسودة المشروع ${new Date(draft.updatedAt).toLocaleTimeString('ar-EG')} ✓`)
   }
-  const applyProjectDraft = (draft: { payload: string }) => {
+  const applyProjectDraft = (draft: { id: string; payload: string }) => {
     try {
       const d = JSON.parse(draft.payload)
+      setProjDraftId(draft.id)
       setNameAr(d.nameAr ?? ''); setClientName(d.clientName ?? ''); setClientId(d.clientId ?? ''); setContractValue(d.contractValue ?? '')
       setRetention(d.retention ?? '5'); setStartDate(d.startDate ?? todayLocalIso()); setNotes(d.notes ?? '')
       setContractNumber(d.contractNumber ?? ''); setLocation(d.location ?? ''); setExpectedEnd(d.expectedEnd ?? ''); setManagerId(d.managerId ?? ''); setTags(d.tags ?? '')
-      setValueMode(d.valueMode ?? 'boq'); setBoqDraft(d.boqDraft?.length ? d.boqDraft : [emptyBoqLine()])
+      setValueMode(d.valueMode ?? 'boq'); setBoqDraft(d.boqDraft?.length ? d.boqDraft : [emptyBoqLine()]); setBoqSections(Array.isArray(d.boqSections) ? d.boqSections : []); setCollapsedSections([]); setDeletingSection(null)
       setOpen(true)
       toast.show('استُعيدت مسودة المشروع — أكمل وأنشئه ✓')
     } catch { toast.show('تعذر قراءة المسودة المحفوظة', 'error') }
@@ -134,7 +150,7 @@ export function ProjectsPage() {
     try {
       if (valueMode === 'boq' && validBoqLines.length === 0) throw new Error('أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»')
 
-      const p = addProject({
+      const projectInput = {
         nameAr: nameAr.trim(), clientName: clientName.trim(),
         clientId: clientId ? Number(clientId) : null,
         contractValueMinor: effectiveContractMinor,
@@ -142,23 +158,22 @@ export function ProjectsPage() {
         contractNumber: contractNumber.trim(), location: location.trim(),
         expectedEndDate: expectedEnd, managerEmployeeId: managerId ? Number(managerId) : null,
         tags: tags.split('،').map((t) => t.trim()).filter(Boolean),
-      })
-      // بنود BOQ تُسجل مع المشروع — المستخلصات البندية تعمل من اليوم الأول
-      if (valueMode === 'boq') {
-        validBoqLines.forEach((l, idx) => {
-          addBoqItem({
-            projectId: p.id, code: l.code.trim() || String(idx + 1),
+        boqSections: valueMode === 'boq' ? boqSections.map(section => ({ ...section, nameAr: section.nameAr.trim() })) : [],
+      }
+      // المشروع وجميع بنوده يُحفظون في تحديث واحد بعد التحقق الكامل.
+      const p = valueMode === 'boq'
+        ? addProjectWithBoq(projectInput, [...validBoqLines].sort((a, b) => (a.sectionId == null ? -1 : boqSections.findIndex(s => s.id === a.sectionId)) - (b.sectionId == null ? -1 : boqSections.findIndex(s => s.id === b.sectionId))).map((l, idx) => ({
+            sectionId: l.sectionId ?? null, code: l.code.trim() || String(idx + 1),
             descriptionAr: l.descriptionAr.trim(), unit: l.unit.trim() || 'مقطوعية',
             qty: Number(l.qty), unitPriceMinor: toMinor(l.unitPrice, cur.decimals),
             estCostMinor: l.estCost ? toMinor(l.estCost, cur.decimals) : 0,
-          })
-        })
-      }
+          })))
+        : addProject(projectInput)
       deleteAdvancedInvoiceDraft(projDraftId)
       setProjDraftId(crypto.randomUUID())
       toast.show(`أُنشئ المشروع ${p.code}${valueMode === 'boq' ? ` بجدول كميات من ${validBoqLines.length} بند — قيمة العقد ${fmt(effectiveContractMinor)}` : ''} ✅`)
       setOpen(false); setNameAr(''); setClientName(''); setClientId(''); setContractValue(''); setRetention('5'); setNotes('')
-      setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags(''); setBoqDraft([emptyBoqLine()]); setValueMode('boq')
+      setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags(''); setBoqDraft([emptyBoqLine()]); setBoqSections([]); setCollapsedSections([]); setDeletingSection(null); setValueMode('boq')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -284,7 +299,7 @@ export function ProjectsPage() {
     dateIso: startDate,
     partyLabel: clientName.trim() || 'عميل غير محدد',
     paymentLabel: `محتجز ضمان ${Number(retention) || 0}٪${expectedEnd ? ` · التسليم المتوقع ${expectedEnd}` : ''}`,
-    rows: validBoqLines.map((l) => ({ nameAr: `${l.code.trim() || '—'} — ${l.descriptionAr.trim()} (${l.unit.trim() || 'مقطوعية'})`, qty: Number(l.qty), unitPriceMinor: toMinor(l.unitPrice, cur.decimals), totalMinor: Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)) })),
+    rows: validBoqLines.map((l) => ({ nameAr: `${boqSections.find(section => section.id === l.sectionId)?.nameAr ? `${boqSections.find(section => section.id === l.sectionId)?.nameAr} — ` : ''}${l.code.trim() || '—'} — ${l.descriptionAr.trim()} (${l.unit.trim() || 'مقطوعية'})`, qty: Number(l.qty), unitPriceMinor: toMinor(l.unitPrice, cur.decimals), totalMinor: Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)) })),
     totalMinor: effectiveContractMinor,
     paidMinor: 0,
     operatorName: setup.ownerName ?? 'المالك',
@@ -515,7 +530,7 @@ export function ProjectsPage() {
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
       retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: prj.retentionPercent,
-      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: l.descriptionAr, prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
+      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr), prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
       advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
       due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
       payment: ex.payment,
@@ -565,7 +580,7 @@ export function ProjectsPage() {
         const boq = boqItems.find((b) => b.id === l.boqItemId)
         return {
           code: l.code,
-          descriptionAr: l.descriptionAr,
+          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
           unit: boq?.unit,
           boqQty: boq?.qty,
           unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
@@ -725,9 +740,29 @@ export function ProjectsPage() {
                   </Field>
                 </div>
               ) : (
-                <div className="space-y-2 p-3">
-                  {boqDraft.map((l, i) => (
-                    <div key={i} className="grid grid-cols-2 sm:grid-cols-7 gap-2 items-end p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                <div className="space-y-2 p-3 min-h-0 flex flex-col">
+                  <div className="flex flex-wrap gap-2">
+                    <Btn variant="ghost" onClick={() => { const id = crypto.randomUUID(); setBoqSections(prev => [...prev, { id, nameAr: '' }]); setBoqDraft(prev => [...prev, emptyBoqLine(id)]) }}>+ عنوان قسم</Btn>
+                    <span className="text-xs text-slate-500">القسم للتنظيم فقط ولا يدخل في قيمة العقد</span>
+                  </div>
+                  <div className="project-boq-scroll space-y-3" data-project-boq-scroll tabIndex={0} aria-label="بنود جدول كميات المشروع">
+                    {[{ id: null as string | null, nameAr: 'بنود غير مصنفة' }, ...boqSections].map(section => {
+                      const sectionRows = boqDraft.map((line, index) => ({ line, index })).filter(({ line }) => (line.sectionId ?? null) === section.id)
+                      if (section.id === null && sectionRows.length === 0) return null
+                      const isCollapsed = section.id !== null && collapsedSections.includes(section.id)
+                      const subtotal = sectionRows.reduce((sum, { line }) => sum + (isValidBoqLine(line) ? Math.round(Number(line.qty) * toMinor(line.unitPrice, cur.decimals)) : 0), 0)
+                      return <div key={section.id ?? 'unassigned'} className="space-y-2 rounded-xl border border-slate-200 p-2 dark:border-slate-700" data-boq-section data-boq-section-id={section.id ?? ""}>
+                        <div className="flex flex-wrap items-center gap-2 bg-emerald-500/10 rounded-lg p-2">
+                          {section.id === null ? <b>بنود غير مصنفة</b> : <>
+                            <button type="button" aria-label={isCollapsed ? 'إظهار بنود القسم' : 'طي بنود القسم'} onClick={() => setCollapsedSections(prev => isCollapsed ? prev.filter(id => id !== section.id) : [...prev, section.id!])}>{isCollapsed ? '▸' : '▾'}</button>
+                            <input aria-label="عنوان القسم" value={section.nameAr} onChange={event => setBoqSections(prev => prev.map(row => row.id === section.id ? { ...row, nameAr: event.target.value } : row))} className={`${inputCls} flex-1 min-w-32`} placeholder="مثلاً الدور الأول" />
+                            {deletingSection === section.id ? <><span className="text-xs">تنقل البنود إلى غير مصنفة.</span><button type="button" onClick={() => { setBoqDraft(prev => prev.map(line => line.sectionId === section.id ? { ...line, sectionId: null } : line)); setBoqSections(prev => prev.filter(row => row.id !== section.id)); setDeletingSection(null) }}>تأكيد حذف القسم</button><button type="button" onClick={() => setDeletingSection(null)}>إلغاء</button></> : <button type="button" title="حذف القسم" onClick={() => setDeletingSection(section.id)}>✕</button>}
+                          </>}
+                          <span className="text-xs font-bold">مجموع القسم: {fmt(subtotal)} {cur.symbol}</span>
+                        </div>
+                        {!isCollapsed && <>
+                          {sectionRows.map(({ line: l, index: i }) => (
+                    <div key={i} data-project-boq-line className="grid grid-cols-2 sm:grid-cols-7 gap-2 items-end p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
                       <Field label="كود البند"><input value={l.code} onChange={(e) => patchBoqLine(i, { code: e.target.value })} className={inputCls} dir="ltr" placeholder={String(i + 1)} /></Field>
                       <div className="col-span-2"><Field label="وصف البند *"><input id={i === 0 ? 'project-first-boq-line' : undefined} value={l.descriptionAr} onChange={(e) => patchBoqLine(i, { descriptionAr: e.target.value })} className={inputCls} placeholder="أعمال حفر وردم…" /></Field></div>
                       <Field label="الوحدة *"><input value={l.unit} onChange={(e) => patchBoqLine(i, { unit: e.target.value })} className={inputCls} placeholder="م2 / م3 / طن" /></Field>
@@ -743,15 +778,21 @@ export function ProjectsPage() {
                           <button onClick={() => setBoqDraft((prev) => prev.filter((_, idx) => idx !== i))} title="حذف البند" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all">✕</button>
                         )}
                       </div>
+                      {boqSections.length > 0 && <div className="col-span-2 sm:col-span-7"><label className="text-xs text-slate-500">قسم البند <select aria-label="قسم البند" value={l.sectionId ?? ''} onChange={event => patchBoqLine(i, { sectionId: event.target.value || null })} className={inputCls}><option value="">بنود غير مصنفة</option>{boqSections.map(row => <option key={row.id} value={row.id}>{row.nameAr || 'قسم بلا اسم'}</option>)}</select></label></div>}
                       {Number(l.qty) > 0 && Number(l.unitPrice) > 0 && (
                         <div className="col-span-2 sm:col-span-7 text-[11px] font-bold text-emerald-600">
                           إجمالي البند: {fmt(Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)))} {cur.symbol}
                         </div>
                       )}
                     </div>
-                  ))}
+                          ))}
+                          <Btn variant="ghost" onClick={() => setBoqDraft(prev => [...prev, emptyBoqLine(section.id)])}>+ بند في هذا القسم</Btn>
+                        </>}
+                      </div>
+                    })}
+                  </div>
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <Btn variant="ghost" onClick={() => setBoqDraft((prev) => [...prev, emptyBoqLine()])}>+ بند جديد</Btn>
+                    <Btn variant="ghost" onClick={() => setBoqDraft((prev) => [...prev, emptyBoqLine(boqSections.at(-1)?.id ?? null)])}>+ بند جديد</Btn>
                     <div className="text-[13px] font-black text-emerald-700 dark:text-emerald-300">
                       💰 قيمة العقد المحسوبة: {fmt(boqTotalMinor)} {cur.symbol} <span className="text-[10.5px] font-bold text-slate-400">({validBoqLines.length} بند)</span>
                     </div>
@@ -919,7 +960,7 @@ export function ProjectsPage() {
                         return (
                           <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
                             <td className="p-2 font-bold text-slate-700 dark:text-slate-200">
-                              {b.code} — {b.descriptionAr}
+                              {b.code} — {sectionedBoqDescription(extractFor, boqItems, b.id, b.descriptionAr)}
                               <span className="block text-[10px] font-normal text-slate-400">إجمالي البند: {b.qty} {b.unit} × {fmt(b.unitPriceMinor)}</span>
                             </td>
                             <td className="p-2 text-center text-slate-500">{prevPercent}٪</td>
@@ -1122,7 +1163,7 @@ export function ProjectsPage() {
                           {boq.map((b) => (
                             <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
                               <td className="px-3 py-1.5 font-mono font-bold">{b.code}</td>
-                              <td className="px-3 py-1.5">{b.descriptionAr}</td>
+                              <td className="px-3 py-1.5">{viewingLive.boqSections?.find(section => section.id === b.sectionId)?.nameAr && <span className="text-slate-500">{viewingLive.boqSections.find(section => section.id === b.sectionId)?.nameAr} — </span>}{b.descriptionAr}</td>
                               <td className="px-3 py-1.5">{b.unit}</td>
                               <td className="px-3 py-1.5">{b.qty}</td>
                               <td className="px-3 py-1.5">{fmt(b.unitPriceMinor)}</td>
@@ -2082,7 +2123,7 @@ export function ProjectExtractsPage() {
         retentionPercent: prj.retentionPercent,
         lines: (ex.lines ?? []).map((l) => ({
           code: l.code,
-          descriptionAr: l.descriptionAr,
+          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
           prevPercent: l.prevProgressPercent,
           newPercent: l.newProgressPercent,
           value: `${fmt(l.lineValueMinor)} ${cur.symbol}`,
@@ -2137,7 +2178,7 @@ export function ProjectExtractsPage() {
           const boq = boqItems.find((b) => b.id === l.boqItemId)
           return {
             code: l.code,
-            descriptionAr: l.descriptionAr,
+            descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
             unit: boq?.unit,
             boqQty: boq?.qty,
             unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
@@ -2518,7 +2559,7 @@ export function ProjectExtractsPage() {
                         >
                           <td className="p-2.5 font-mono font-bold">{b.code}</td>
                           <td className="p-2.5 font-bold">
-                            {b.descriptionAr}
+                            {sectionedBoqDescription(selectedProject, boqItems, b.id, b.descriptionAr)}
                             <span className="block text-[10.5px] font-normal text-slate-400">
                               {b.qty} {b.unit} × {fmt(b.unitPriceMinor)} {cur.symbol}
                             </span>

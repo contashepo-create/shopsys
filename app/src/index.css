@@ -2979,3 +2979,6 @@ input, textarea, select, option,
   .sale-picker-split { grid-template-columns: minmax(0, 1fr) minmax(105px, 36%); }
   .sale-picker-details { padding: .5rem .4rem; }
 }
+
+/* تمرير مستقل لبنود إنشاء المشروع؛ أدوات الإضافة والإجمالي تبقى خارج القائمة. */
+.project-boq-scroll { flex: 1 1 auto; min-height: 5rem; max-height: min(55vh, 720px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
