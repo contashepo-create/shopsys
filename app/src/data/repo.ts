@@ -3878,6 +3878,16 @@ type PersistedAppState = {
   branchBusinessProfiles?: Record<string, Partial<OperationalSetup>>
 }
 
+/** تاريخ مستند الفاتورة ليس تاريخ الاستحقاق أو صلاحية المخزون. */
+function assertInvoicePostingDate(state: DataState, date: string): void {
+  if (!isValidExpiryDate(date)) throw new Error('تاريخ الفاتورة غير صالح')
+  if (date > todayLocalIso()) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
+  const branch = getEffectiveActiveBranch(state)
+  const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
+  const closed = dateInClosedYear(date, years)
+  if (closed) throw new Error(`التاريخ ${date} داخل السنة المالية المقفلة «${closed.nameAr}» — لا ترحيل في فترة مقفلة`)
+}
+
 function appSetupForState(state: DataState): OperationalSetup {
   const appState = useAppStore.getState()
   const companySetup = appState.companySetup ?? appState.setup
@@ -7717,6 +7727,7 @@ export const useRawDataStore = create<DataState>()(
               })),
             }
           : normalizedInv
+        assertInvoicePostingDate(state, inv.date)
         // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!inv.__approvalBypass) {
           const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
@@ -8403,6 +8414,8 @@ export const useRawDataStore = create<DataState>()(
               })),
             }
           : normalizedArgs
+        const postingDate = args.documentDate || todayLocalIso()
+        assertInvoicePostingDate(state, postingDate)
         if (args.salesRepEmployeeId != null) {
           const id = args.salesRepEmployeeId
           if (!Number.isSafeInteger(id) || state.employees.filter(employee => employee.id === id).length !== 1 || !getBranchScopedDataState(state).employees.some(employee => employee.id === id && employee.active)) throw new Error('مندوب البيع غير موجود أو غير فريد أو غير نشط في الفرع')
@@ -8752,14 +8765,6 @@ export const useRawDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
-        const systemDate = todayLocalIso()
-        const chosenDate = (args.documentDate ?? '').slice(0, 10)
-        if (chosenDate && !/^\d{4}-\d{2}-\d{2}$/.test(chosenDate)) throw new Error('تاريخ الفاتورة غير صالح')
-        // يُسمح بتأريخ الفاتورة بيوم سابق (فواتير متأخرة الإدخال) ولا يُسمح بالمستقبل.
-        // المقارنة بيوم إضافي لأن ساعة الجهاز محلية وتاريخ النظام بتوقيت UTC.
-        const tomorrow = todayLocalIso(new Date(Date.now() + 86_400_000))
-        if (chosenDate && chosenDate > tomorrow) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
-        const postingDate = chosenDate || systemDate
         if (args.dueDate && args.dueDate < postingDate) throw new Error('تاريخ استحقاق البيع لا يسبق تاريخ الترحيل')
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('لا حاجة لتاريخ استحقاق لفاتورة محصلة بالكامل')
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
