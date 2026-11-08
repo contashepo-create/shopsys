@@ -622,7 +622,10 @@ export interface ChangeOrder {
   /** موجب = أعمال إضافية، سالب = تخفيض نطاق */
   amountMinor: Minor
   status: ChangeOrderStatus
+  /** تاريخ المستند الذي أدخله المستخدم، وليس وقت الإنشاء أو الاعتماد. */
   date: string
+  /** غير متوفر في الأوامر القديمة؛ لا يُخمَّن من تاريخ المستند. */
+  createdAt?: string
   approvedAt: string | null
 }
 

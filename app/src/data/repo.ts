@@ -3035,7 +3035,7 @@ interface DataState {
   updateBoqItem: (id: number, changes: { code?: string; descriptionAr?: string; unit?: string; qty?: number; unitPriceMinor?: number; estCostMinor?: number }) => BoqItem
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
-  addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
+  addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number; date?: string }) => ChangeOrder
   setChangeOrderStatus: (id: number, status: 'approved' | 'invoiced' | 'rejected') => void
   /** دفعة مقدمة من عميل المشروع: نقدية ← 2109 (التزام حتى تنفيذ الأعمال) */
   receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
@@ -17850,11 +17850,14 @@ export const useRawDataStore = create<DataState>()(
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا أوامر تغيير')
         if (!args.titleAr.trim()) throw new Error('عنوان أمر التغيير مطلوب')
         if (!Number.isInteger(args.amountMinor) || args.amountMinor === 0) throw new Error('قيمة أمر التغيير لا تكون صفراً')
+        const date = args.date ?? todayLocalIso()
+        const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : new Date(Number.NaN)
+        if (!Number.isFinite(parsed.getTime()) || calendarDateIso(parsed) !== date) throw new Error('تاريخ أمر التغيير غير صالح')
         const id = nextId(state.changeOrders)
         const order: ChangeOrder = {
           id, projectId: args.projectId, number: `CO-${String(id).padStart(4, '0')}`,
           titleAr: args.titleAr.trim(), amountMinor: args.amountMinor,
-          status: 'draft', date: todayLocalIso(), approvedAt: null,
+          status: 'draft', date, createdAt: localIsoTimestamp(), approvedAt: null,
         }
         set({ changeOrders: [...state.changeOrders, order] })
         return order

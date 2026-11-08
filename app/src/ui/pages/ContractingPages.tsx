@@ -719,13 +719,14 @@ export function ProjectsPage() {
   /* أمر تغيير */
   const [coFor, setCoFor] = useState<Project | null>(null)
   const [coTitle, setCoTitle] = useState('')
+  const [coDate, setCoDate] = useState(todayLocalIso())
   const [coAmount, setCoAmount] = useState('')
   const [coDeduct, setCoDeduct] = useState(false)
   const saveChangeOrder = () => {
     if (!coFor) return
     try {
       const raw = toMinor(coAmount, cur.decimals)
-      const co = addChangeOrder({ projectId: coFor.id, titleAr: coTitle.trim(), amountMinor: coDeduct ? -raw : raw })
+      const co = addChangeOrder({ projectId: coFor.id, titleAr: coTitle.trim(), amountMinor: coDeduct ? -raw : raw, date: coDate })
       toast.show(`أُنشئ أمر التغيير ${co.number} (مسودة) — اعتمده ليدخل قيمة العقد ✅`)
       setCoFor(null); setCoTitle(''); setCoAmount(''); setCoDeduct(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -1159,7 +1160,7 @@ export function ProjectsPage() {
                         {p.status === 'active' && (
                           <>
                             <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
-                            <button onClick={() => setCoFor(p)} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
+                            <button onClick={() => { setCoDate(todayLocalIso()); setCoFor(p) }} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
                               <button onClick={() => setReleaseFor(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                             )}
@@ -1539,6 +1540,7 @@ export function ProjectsPage() {
             <div className="text-[12px] text-slate-500 bg-violet-500/5 rounded-xl p-3">
               أمر التغيير يعدل قيمة العقد الفعلية بعد اعتماده (زيادة أعمال أو تخفيض نطاق) — بلا قيد محاسبي؛ أثره في تقرير WIP والربحية المتوقعة.
             </div>
+            <Field label="تاريخ أمر التغيير" hint="تاريخ المستند؛ الاعتماد يسجل وقته الفعلي ويؤثر فوراً ولا يتأجل بهذا التاريخ"><input type="date" value={coDate} onChange={event => setCoDate(event.target.value)} className={inputCls} aria-label="تاريخ أمر التغيير" /></Field>
             <Field label="عنوان أمر التغيير"><input value={coTitle} onChange={(e) => setCoTitle(e.target.value)} placeholder="أعمال إضافية للواجهة…" className={inputCls} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label={`القيمة (${cur.symbol})`}><input value={coAmount} onChange={(e) => setCoAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
@@ -1554,7 +1556,7 @@ export function ProjectsPage() {
                 <div className="text-[11px] font-bold text-slate-400">أوامر التغيير السابقة</div>
                 {changeOrders.filter((o) => o.projectId === coFor.id).map((o) => (
                   <div key={o.id} className="flex items-center justify-between text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-lg px-3 py-2">
-                    <span><b>{o.number}</b> — {o.titleAr} ({o.amountMinor >= 0 ? '+' : '−'}{fmt(Math.abs(o.amountMinor))})</span>
+                    <span><b>{o.number}</b> — {o.titleAr} ({o.amountMinor >= 0 ? '+' : '−'}{fmt(Math.abs(o.amountMinor))}) · {o.date}</span>
                     {o.status === 'draft' ? (
                       <span className="flex gap-1">
                         <button onClick={() => { try { setChangeOrderStatus(o.id, 'approved'); toast.show('اعتُمد ✅') } catch (e) { toast.show((e as Error).message, 'error') } }} className="text-emerald-600 font-bold hover:underline">اعتماد</button>
