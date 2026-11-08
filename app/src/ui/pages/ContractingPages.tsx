@@ -65,7 +65,7 @@ export function ProjectsPage() {
   const navigate = useNavigate()
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId, projectSurveys, projectCloseouts, projectExtractDrafts,
-    addProject, addProjectWithBoq, updateProject, addProjectExtract, releaseRetention, getProjectProfit,
+    addProject, addProjectWithBoq, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations,
@@ -531,29 +531,54 @@ export function ProjectsPage() {
   const [epValue, setEpValue] = useState(''); const [epRetention, setEpRetention] = useState('')
   const [epStart, setEpStart] = useState(''); const [epEnd, setEpEnd] = useState(''); const [epLocation, setEpLocation] = useState('')
   const [epContractNo, setEpContractNo] = useState(''); const [epNotes, setEpNotes] = useState('')
+  const [epManager, setEpManager] = useState(''); const [epTags, setEpTags] = useState('')
+  const [epSections, setEpSections] = useState<{ id: string; nameAr: string }[]>([])
+  const [epLines, setEpLines] = useState<(BoqDraft & { id?: number })[]>([])
+  const [epFingerprint, setEpFingerprint] = useState('')
+  const [epSaving, setEpSaving] = useState(false)
+  const epPending = useRef(false)
   /* سد فجوة تقرير النشاط #11: لا مرجعية زمنية لاستحقاق الإفراج عن المحتجز بعد التسليم */
   const [epHandover, setEpHandover] = useState(''); const [epDlpMonths, setEpDlpMonths] = useState('')
   const openProjectEdit = (p: Project) => {
+    if (epPending.current) return
+    try { setEpFingerprint(useRawDataStore.getState().previewProjectEditFingerprint(p.id)) }
+    catch (error) { toast.show((error as Error).message, 'error'); return }
     setEditPrj(p)
+    setEpSections((p.boqSections ?? []).map(section => ({ ...section })))
+    setEpLines(boqItems.filter(item => item.projectId === p.id).map(item => ({ id: item.id, code: item.code, descriptionAr: item.descriptionAr, unit: item.unit, qty: String(item.qty), unitPrice: String(item.unitPriceMinor / 10 ** cur.decimals), estCost: String((item.estCostMinor ?? 0) / 10 ** cur.decimals), sectionId: item.sectionId ?? null })))
     setEpName(p.nameAr); setEpClient(p.clientName); setEpClientId(p.clientId != null ? String(p.clientId) : '')
     setEpValue(String(p.contractValueMinor / 10 ** cur.decimals)); setEpRetention(String(p.retentionPercent))
     setEpStart(p.startDate); setEpEnd(p.expectedEndDate ?? ''); setEpLocation(p.location ?? '')
     setEpContractNo(p.contractNumber ?? ''); setEpNotes(p.notes ?? '')
+    setEpManager(p.managerEmployeeId != null ? String(p.managerEmployeeId) : ''); setEpTags((p.tags ?? []).join('، '))
     setEpHandover(p.actualHandoverDate ?? ''); setEpDlpMonths(p.defectsLiabilityMonths ? String(p.defectsLiabilityMonths) : '')
   }
-  const saveProjectEdit = () => {
-    if (!editPrj) return
+  const saveProjectEdit = async () => {
+    if (!editPrj || epPending.current) return
+    let committed = false
+    epPending.current = true; setEpSaving(true)
     try {
-      const updated = updateProject(editPrj.id, {
+      if (epLines.some(line => !isValidBoqLine(line) || !Number.isFinite(Number(line.estCost)) || Number(line.estCost) < 0)) throw new Error('أكمل بيانات بنود جدول الكميات قبل الحفظ')
+      const lines = epLines.map(line => ({ ...(line.id == null ? {} : { id: line.id }), code: line.code, descriptionAr: line.descriptionAr, unit: line.unit, qty: Number(line.qty), unitPriceMinor: toMinor(line.unitPrice, cur.decimals), estCostMinor: toMinor(line.estCost || '0', cur.decimals), sectionId: line.sectionId ?? null }))
+      const changes = {
         nameAr: epName.trim(), clientName: epClient.trim(), clientId: epClientId ? Number(epClientId) : null,
         ...(epValue ? { contractValueMinor: toMinor(epValue, cur.decimals) } : {}),
         retentionPercent: Number(epRetention) || 0, startDate: epStart, expectedEndDate: epEnd || undefined,
         location: epLocation.trim() || undefined, contractNumber: epContractNo.trim() || undefined, notes: epNotes.trim(),
         actualHandoverDate: epHandover || null, defectsLiabilityMonths: epDlpMonths ? Number(epDlpMonths) : null,
+        managerEmployeeId: epManager ? Number(epManager) : null, tags: epTags.split('،').map(tag => tag.trim()).filter(Boolean),
+      }
+      const updated = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        const result = useRawDataStore.getState().updateProjectWithBoq({ id: editPrj.id, expectedFingerprint: epFingerprint, changes, sections: epSections, lines })
+        committed = true
+        return result
       })
-      toast.show(`عُدّلت بيانات ${updated.code} ✓`)
+      toast.show(`عُدّلت بيانات ${updated.code} وبنوده ✓`)
       setEditPrj(null)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) { setEditPrj(null); toast.show('عُدّل المشروع محلياً لكن تعذر تأكيد الحفظ — راجعه قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { epPending.current = false; setEpSaving(false) }
   }
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
@@ -1441,19 +1466,24 @@ export function ProjectsPage() {
       </Modal>
 
       {/* §94-مراجعة: تعديل بيانات المشروع — القيمة مقفولة بعد أول مستخلص (أوامر التغيير هي الباب) */}
-      <Modal open={!!editPrj} onClose={() => setEditPrj(null)} title={editPrj ? `تعديل ${editPrj.code} — ${editPrj.nameAr}` : ''} subtitle="بيانات العقد والمواعيد — الكود والحالة لا يتغيران">
+      <Modal open={!!editPrj} onClose={() => { if (!epPending.current) setEditPrj(null) }} extraWide title={editPrj ? `تعديل ${editPrj.code} — ${editPrj.nameAr}` : ''} subtitle="بيانات العقد والمواعيد والأقسام والبنود — الكود والحالة لا يتغيران">
         {editPrj && (() => {
           const locked = projectExtracts.some((e) => e.projectId === editPrj.id)
           const clientLocked = locked || clientAdvances.some((advance) => advance.projectId === editPrj.id)
+          const boqLocked = editPrj.status !== 'active' || locked || clientLocked || projectSurveys.some(row => row.projectId === editPrj.id) || projectExtractDrafts.some(row => row.projectId === editPrj.id) || projectCloseouts.some(row => row.projectId === editPrj.id) || changeOrders.some(row => row.projectId === editPrj.id && row.status !== 'draft') || projectCosts.some(row => row.projectId === editPrj.id) || boqItems.some(row => row.projectId === editPrj.id && row.progressPercent !== 0) || projectTasks.some(row => row.projectId === editPrj.id && row.boqItemId != null)
+          const patchEditLine = (index: number, patch: Partial<BoqDraft>) => setEpLines(previous => previous.map((line, i) => i === index ? { ...line, ...patch } : line))
+          const editTotal = epLines.filter(isValidBoqLine).reduce((sum, line) => sum + Math.round(Number(line.qty) * toMinor(line.unitPrice, cur.decimals)), 0)
           return (
             <div className="grid grid-cols-2 gap-3" data-project-edit-modal>
               <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
               <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
-              <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}><input className={inputCls} type="number" disabled={clientLocked} value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
-              <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
-                <input className={inputCls} type="number" disabled={locked} value={locked ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
+              <Field label="ربط سجل العميل" hint={clientLocked ? '🔒 لا يُغيّر الربط بعد مستخلص أو دفعة مقدمة — راجع المحاسب' : 'تُنسب مستخلصات المشروع إلى العميل المرتبط'}>{clientLocked ? <input className={inputCls} disabled value={epClientId} aria-label="ربط العميل" /> : <PartyQuickPicker parties={customers} value={epClientId ? Number(epClientId) : 0} onChange={id => { setEpClientId(id ? String(id) : ''); const customer = customers.find(row => row.id === id); if (customer && !epClient.trim()) setEpClient(customer.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />}</Field>
+              <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : epLines.length ? 'تُحسب من بنود جدول الكميات عند تغييرها' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
+                <input className={inputCls} type="number" disabled={locked || epLines.length > 0} value={locked || epLines.length ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
               </Field>
               <Field label="محتجز ضمان الأعمال ٪" hint="يؤثر على المستخلصات القادمة فقط"><input className={inputCls} type="number" value={epRetention} onChange={(e) => setEpRetention(e.target.value)} aria-label="نسبة المحتجز" /></Field>
+              <Field label="مدير المشروع"><PartyQuickPicker parties={employees.filter(employee => employee.active || employee.id === Number(epManager))} value={epManager ? Number(epManager) : 0} onChange={id => setEpManager(id ? String(id) : '')} cashLabel="لاحقاً" label="بحث مدير المشروع" cashValue={0} /></Field>
+              <Field label="تصنيفات المشروع"><input className={inputCls} value={epTags} onChange={event => setEpTags(event.target.value)} placeholder="حكومي، تشطيبات" aria-label="تصنيفات المشروع" /></Field>
               <Field label="رقم العقد الرسمي"><input className={inputCls} value={epContractNo} onChange={(e) => setEpContractNo(e.target.value)} aria-label="رقم العقد" /></Field>
               <Field label="تاريخ التسليم لل site"><input className={inputCls} type="date" value={epStart} onChange={(e) => setEpStart(e.target.value)} aria-label="تاريخ التسليم" /></Field>
               <Field label="موعد التسليم المتوقع"><input className={inputCls} type="date" value={epEnd} onChange={(e) => setEpEnd(e.target.value)} aria-label="موعد التسليم" /></Field>
@@ -1461,9 +1491,24 @@ export function ProjectsPage() {
               <Field label="تاريخ التسليم الفعلي" hint="بعده تبدأ فترة الضمان — لتذكير استحقاق الإفراج عن المحتجز"><input className={inputCls} type="date" value={epHandover} onChange={(e) => setEpHandover(e.target.value)} aria-label="تاريخ التسليم الفعلي" /></Field>
               <Field label="فترة الضمان/الصيانة (أشهر)" hint="تُحسب من تاريخ التسليم الفعلي"><input className={inputCls} type="number" min={0} value={epDlpMonths} onChange={(e) => setEpDlpMonths(e.target.value)} aria-label="فترة الضمان بالشهور" /></Field>
               <Field label="ملاحظات"><input className={inputCls} value={epNotes} onChange={(e) => setEpNotes(e.target.value)} aria-label="ملاحظات" /></Field>
+              <section className="col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-3" data-project-edit-boq>
+                <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-bold">أقسام وبنود جدول الكميات</h3><p className="text-xs text-slate-500">إجمالي البنود: {fmt(editTotal)} {cur.symbol} — تُحفظ مع بيانات المشروع مع المحافظة على هوية البنود.</p></div><div className="flex gap-2"><Btn variant="ghost" disabled={boqLocked} onClick={() => setEpSections(previous => [...previous, { id: crypto.randomUUID(), nameAr: '' }])}>إضافة قسم</Btn><Btn variant="ghost" disabled={boqLocked} onClick={() => setEpLines(previous => [...previous, emptyBoqLine()])}>إضافة بند</Btn></div></div>
+                {boqLocked && <p className="text-xs text-amber-700">الجدول للعرض فقط لوجود حصر أو تنفيذ أو مستند مرتبط؛ يحمي ذلك السجلات السابقة. قد تفرض عملية الحفظ قيوداً إضافية.</p>}
+                {epSections.map((section, i) => <div key={section.id} className="flex gap-2"><input aria-label={`اسم القسم ${i + 1}`} className={inputCls} disabled={boqLocked} value={section.nameAr} onChange={event => setEpSections(previous => previous.map(row => row.id === section.id ? { ...row, nameAr: event.target.value } : row))} placeholder="اسم القسم" /><Btn variant="ghost" disabled={boqLocked || epLines.some(line => line.sectionId === section.id)} onClick={() => setEpSections(previous => previous.filter(row => row.id !== section.id))}>حذف القسم</Btn></div>)}
+                {epLines.map((line, i) => <div key={line.id ?? `new-${i}`} className="grid grid-cols-2 md:grid-cols-4 gap-2 rounded-lg border p-2" data-project-edit-boq-line>
+                  <Field label="كود البند"><input aria-label={`كود البند ${i + 1}`} className={inputCls} disabled={boqLocked} value={line.code} onChange={event => patchEditLine(i, { code: event.target.value })} /></Field>
+                  <Field label="وصف البند"><input aria-label={`وصف البند ${i + 1}`} className={inputCls} disabled={boqLocked} value={line.descriptionAr} onChange={event => patchEditLine(i, { descriptionAr: event.target.value })} /></Field>
+                  <Field label="القسم"><select aria-label={`قسم البند ${i + 1}`} className={inputCls} disabled={boqLocked} value={line.sectionId ?? ''} onChange={event => patchEditLine(i, { sectionId: event.target.value || null })}><option value="">بدون قسم</option>{epSections.map(section => <option key={section.id} value={section.id}>{section.nameAr || 'قسم بلا اسم'}</option>)}</select></Field>
+                  <Field label="الوحدة"><input aria-label={`وحدة البند ${i + 1}`} className={inputCls} disabled={boqLocked} value={line.unit} onChange={event => patchEditLine(i, { unit: event.target.value })} /></Field>
+                  <Field label="الكمية"><input aria-label={`كمية البند ${i + 1}`} type="number" min="0" step="0.001" className={inputCls} disabled={boqLocked} value={line.qty} onChange={event => patchEditLine(i, { qty: event.target.value })} /></Field>
+                  <Field label="سعر الوحدة"><input aria-label={`سعر البند ${i + 1}`} type="number" min="0" step="any" className={inputCls} disabled={boqLocked} value={line.unitPrice} onChange={event => patchEditLine(i, { unitPrice: event.target.value })} /></Field>
+                  <Field label="التكلفة التقديرية للوحدة"><input aria-label={`تكلفة البند ${i + 1}`} type="number" min="0" step="any" className={inputCls} disabled={boqLocked} value={line.estCost} onChange={event => patchEditLine(i, { estCost: event.target.value })} /></Field>
+                  <div className="flex items-end"><Btn variant="ghost" disabled={boqLocked} onClick={() => setEpLines(previous => previous.filter((_, index) => index !== i))}>حذف البند</Btn></div>
+                </div>)}
+              </section>
               <div className="col-span-2 flex gap-2 justify-end pt-1">
-                <Btn variant="ghost" onClick={() => setEditPrj(null)}>إلغاء</Btn>
-                <Btn onClick={saveProjectEdit} data-project-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
+                <Btn variant="ghost" disabled={epSaving} onClick={() => setEditPrj(null)}>إلغاء</Btn>
+                <Btn disabled={epSaving} onClick={saveProjectEdit} data-project-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
               </div>
             </div>
           )

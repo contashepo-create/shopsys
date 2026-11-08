@@ -2926,6 +2926,8 @@ interface DataState {
   deleteUnpostedProject: (id: number, reason: string, expectedFingerprint?: string) => void
   previewProjectDeletionFingerprint: (id: number) => string
   addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
+  previewProjectEditFingerprint: (id: number) => string
+  updateProjectWithBoq: (args: { id: number; expectedFingerprint: string; changes: Parameters<DataState['updateProject']>[1]; sections: NonNullable<Project['boqSections']>; lines: (Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'> & { id?: number })[] }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
   previewMissingProjectCustomerBackup: (projectId: number, backup: string) => { customer: Customer; backupShopName: string; backupDate: string; backupChecksum: string; scopeName: string; balanceMinor: number; statement: StatementRow[]; fingerprint: string }
@@ -15530,6 +15532,76 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isSafeInteger(total) || total !== project.contractValueMinor) throw new Error('قيمة العقد لا تطابق مجموع بنود المشروع')
         set({ projects: [...state.projects, project], boqItems: [...state.boqItems, ...items] })
         return project
+      },
+      previewProjectEditFingerprint: (id) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        if (!scoped.projects.some(row => row.id === id)) throw new Error('المشروع غير موجود في الفرع الحالي')
+        return JSON.stringify({ branch: state.activeBranchId, user: state.currentUserId, data: projectDeletionFingerprint(scoped, id) })
+      },
+      /** تعديل المشروع وبنوده في لقطة واحدة؛ لا يُعاد بناء عقد له أثر أو حصر سابق. */
+      updateProjectWithBoq: ({ id, expectedFingerprint, changes, sections, lines }) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === id)
+        if (!project || state.projects.filter(row => row.id === id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (expectedFingerprint !== JSON.stringify({ branch: state.activeBranchId, user: state.currentUserId, data: projectDeletionFingerprint(scoped, id) })) throw new Error('تغير المشروع أو بنوده أو الفرع منذ فتح التعديل — أعد مراجعته')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تعديل المشروع')
+        }
+        assertProjectCustomerBranch(state, project)
+        if (!Array.isArray(sections) || !Array.isArray(lines)) throw new Error('بيانات جدول الكميات غير صالحة')
+        if (sections.some(section => !section || Reflect.ownKeys(section).some(key => key !== 'id' && key !== 'nameAr') || !section.id?.trim() || !section.nameAr?.trim()) || new Set(sections.map(section => section.id)).size !== sections.length) throw new Error('أسماء ومعرّفات الأقسام مطلوبة وفريدة')
+        const oldItems = state.boqItems.filter(row => row.projectId === id)
+        const allowed = new Set(['code', 'descriptionAr', 'unit', 'qty', 'unitPriceMinor', 'estCostMinor', 'sectionId', 'id'])
+        if (lines.some(line => !line || Reflect.ownKeys(line).some(key => typeof key !== 'string' || !allowed.has(key)))) throw new Error('حقل بند غير مسموح')
+        const ids = lines.flatMap(line => line.id == null ? [] : [line.id])
+        if (new Set(ids).size !== ids.length || ids.some(itemId => !Number.isSafeInteger(itemId) || oldItems.filter(item => item.id === itemId).length !== 1)) throw new Error('معرّف بند المشروع غير صحيح أو مكرر')
+        const editable = (item: BoqItem) => ({ id: item.id, code: item.code, descriptionAr: item.descriptionAr, unit: item.unit, qty: item.qty, unitPriceMinor: item.unitPriceMinor, estCostMinor: item.estCostMinor, sectionId: item.sectionId ?? null })
+        const proposed = lines.map(line => ({ id: line.id, code: line.code, descriptionAr: line.descriptionAr, unit: line.unit, qty: line.qty, unitPriceMinor: line.unitPriceMinor, estCostMinor: line.estCostMinor, sectionId: line.sectionId ?? null }))
+        const changed = JSON.stringify(oldItems.map(editable)) !== JSON.stringify(proposed) || JSON.stringify(project.boqSections ?? []) !== JSON.stringify(sections)
+        if (changed) {
+          if (project.status !== 'active' || oldItems.some(row => row.progressPercent !== 0)) throw new Error('المشروع مقفل أو يتضمن تقدماً مسجلاً — لا يُعدّل جدول الكميات')
+          if (state.projectSurveys.some(row => row.projectId === id) || state.projectExtractDrafts.some(row => row.projectId === id) || state.projectCloseouts.some(row => row.projectId === id) || state.changeOrders.some(row => row.projectId === id && row.status !== 'draft')) throw new Error('جدول الكميات مرتبط بحصر أو مستند عقد محسوم — راجعه قبل التعديل')
+          const oldIds = new Set(oldItems.map(row => row.id))
+          if (state.subContracts.some(row => row.boqItemIds.some(itemId => oldIds.has(itemId))) || state.projectTasks.some(row => row.boqItemId != null && oldIds.has(row.boqItemId))) throw new Error('بنود المشروع مرتبطة بمهام أو عقود أخرى — راجع الروابط قبل التعديل')
+          assertNoProjectFinancialReferences(state, id)
+          if (oldItems.length && !lines.length) throw new Error('لا يمكن تفريغ جدول الكميات بالكامل')
+        }
+        const projectKeys = new Set(['nameAr', 'clientName', 'clientId', 'contractValueMinor', 'retentionPercent', 'startDate', 'contractNumber', 'location', 'expectedEndDate', 'managerEmployeeId', 'notes', 'tags', 'actualHandoverDate', 'defectsLiabilityMonths'])
+        if (!changes || Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !projectKeys.has(key))) throw new Error('حقل تعديل مشروع غير مسموح')
+        const hasExtracts = state.projectExtracts.some(row => row.projectId === id)
+        if (changes.clientId !== undefined && (changes.clientId ?? null) !== (project.clientId ?? null) && (hasExtracts || state.clientAdvances.some(row => row.projectId === id))) throw new Error('لا يمكن تغيير عميل المشروع بعد مستخلص أو دفعة مقدمة')
+        let next = nextId(state.boqItems)
+        const updatedItems = changed ? lines.map(line => {
+          const errors = validateBoqItem(line)
+          normalizeMovementQty(line.qty)
+          if (!Number.isSafeInteger(line.unitPriceMinor) || !Number.isSafeInteger(line.estCostMinor) || line.estCostMinor < 0) errors.push('سعر أو تكلفة البند غير صالحين')
+          if (line.sectionId != null && !sections.some(section => section.id === line.sectionId)) errors.push('قسم البند غير موجود')
+          if (errors.length) throw new Error(errors.join(' — '))
+          const prior = line.id == null ? undefined : oldItems.find(row => row.id === line.id)
+          return { ...prior, ...line, id: prior?.id ?? next++, projectId: id, progressPercent: prior?.progressPercent ?? 0 }
+        }) : oldItems
+        const total = updatedItems.reduce((sum, item) => sum + boqItemTotal(item), 0)
+        if (changed && updatedItems.length && (!Number.isSafeInteger(total) || total <= 0)) throw new Error('قيمة جدول الكميات غير صالحة')
+        const financialChanged = oldItems.length !== updatedItems.length || updatedItems.some(item => {
+          const prior = oldItems.find(row => row.id === item.id)
+          return !prior || prior.qty !== item.qty || prior.unitPriceMinor !== item.unitPriceMinor
+        })
+        if (financialChanged && state.quotations.some(row => row.projectId === id && row.status === 'won')) throw new Error('المشروع مرتبط بعرض فائز — راجع العقد المعتمد قبل تغيير كميات البنود أو أسعارها')
+        const oldTotal = oldItems.reduce((sum, item) => sum + boqItemTotal(item), 0)
+        if (financialChanged && oldItems.length && oldTotal !== project.contractValueMinor) throw new Error('قيمة العقد لا تطابق مجموع البنود السابق — راجع العقد المعتمد قبل تغيير القيمة')
+        const newValue = updatedItems.length ? (financialChanged ? total : project.contractValueMinor) : (changes.contractValueMinor ?? project.contractValueMinor)
+        if (hasExtracts && newValue !== project.contractValueMinor) throw new Error('صدرت مستخلصات — لا تغير قيمة العقد مباشرة')
+        const updated: Project = { ...project, ...changes, contractValueMinor: newValue, boqSections: sections }
+        const errors = validateProject(updated)
+        if (!Number.isFinite(updated.retentionPercent)) errors.push('نسبة المحتجز غير صالحة')
+        if (updated.defectsLiabilityMonths != null && (!Number.isSafeInteger(updated.defectsLiabilityMonths) || updated.defectsLiabilityMonths < 0)) errors.push('فترة الضمان غير صالحة')
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (updated.clientId != null && !scoped.customers.some(row => row.id === updated.clientId)) throw new Error('عميل المشروع غير موجود في الفرع الحالي')
+        if (updated.managerEmployeeId != null && updated.managerEmployeeId !== project.managerEmployeeId && !scoped.employees.some(row => row.id === updated.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في الفرع الحالي')
+        assertProjectCustomerBranch(state, updated)
+        set({ projects: state.projects.map(row => row.id === id ? updated : row), ...(changed ? { boqItems: [...state.boqItems.filter(row => row.projectId !== id), ...updatedItems] } : {}) })
+        return updated
       },
       /* ─── §94-مراجعة: تعديل بيانات المشروع (طلب المالك) — قيمة العقد قبل أول مستخلص فقط ─── */
       updateProject: (id, changes) => {
