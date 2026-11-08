@@ -1,0 +1,31 @@
+name: Support route diagnostic
+# Read-only probes: no customer identity, message, credentials or KV writes.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  primary-about:
+    name: Primary control service responds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public about endpoint
+        run: |
+          code=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' 'https://shopsys-control.mobileshop2026.workers.dev/about')
+          test "$code" = 200
+  primary-support:
+    name: Primary support route exists and requires authentication
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check unsigned support read
+        run: |
+          code=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' 'https://shopsys-control.mobileshop2026.workers.dev/support/DIAGNOSTIC_TEST_ONLY')
+          test "$code" = 401
+  fallback-support:
+    name: Legacy fallback support route exists and requires authentication
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check unsigned support read
+        run: |
+          code=$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' 'https://shopsys-control.contashepo.workers.dev/support/DIAGNOSTIC_TEST_ONLY')
+          test "$code" = 401
