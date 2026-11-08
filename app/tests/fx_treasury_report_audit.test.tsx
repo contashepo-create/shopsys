@@ -28,7 +28,7 @@ it('يحدث التقرير بعد البيع ويعرض كسور العملة �
 
 it('يعرض التعارض التاريخي بدلاً من تقرير فارغ أو انهيار الشاشة', () => {
   useAppStore.setState({ ...app, setup: { ...app.setup, countryCode: 'EG' }, fxRates: {} })
-  useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, sales: [], purchases: [], journal: [], fxConversions: [], vouchers: [
+  useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, sales: [], purchases: [], fxConversions: [], vouchers: [
     { id: 1, voucherNumber: 'V1', kind: 'receipt', treasury: '1101', date: '2026-01-01', journalEntryId: 1, amountMinor: 10, fx: { currencyCode: 'KWD', amountMinor: 100, decimals: 3, ratePpm: 1000000 } },
     { id: 2, voucherNumber: 'V2', kind: 'receipt', treasury: '1101', date: '2026-01-02', journalEntryId: 2, amountMinor: 100, fx: { currencyCode: 'KWD', amountMinor: 100, decimals: 2, ratePpm: 1000000 } },
   ] as never, journal: [

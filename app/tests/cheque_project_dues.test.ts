@@ -3,7 +3,7 @@
  * يظهر خصمه في تقارير المشاريع». الاختبار يثبت ربط الدفترين ويمنع عودة العطب.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useDataStore, EMPTY_EXTENDED, type DataState } from '../src/data/repo.ts'
+import { useDataStore, EMPTY_EXTENDED } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import {
   activeIncomingChequesTotal, allocateChequeDues, chequeSettlesCustomerDues,
@@ -11,6 +11,8 @@ import {
 } from '../src/core/chequeDues.ts'
 import { projectOpenBalances } from '../src/core/projectReportBalances.ts'
 import type { ChequeStatus } from '../src/core/cheques.ts'
+
+type DataState = ReturnType<typeof useDataStore.getState>
 
 const original = useDataStore.getState()
 const S = () => useDataStore.getState()

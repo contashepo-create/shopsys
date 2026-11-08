@@ -30,7 +30,7 @@ it('يسجل السيريال المرتجع تالفاً ولا يعيده مت
   expect(useDataStore.getState().items[0].stockQty).toBe(0)
 })
 it('يرجع للمورد السيريال المختار لا الأقدم تلقائياً', () => {
-  const { s, item, purchase } = fixture()
+  const { s, purchase } = fixture()
   const before = useRawDataStore.getState()
   expect(() => s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1 }], refund: 'debt', reason: 'رد' })).toThrow(/سيريال/)
   expect(useRawDataStore.getState().journal).toBe(before.journal)
@@ -129,7 +129,7 @@ it('يحجب مسارات لا تحفظ السيريال والدفعة قبل �
  const { s, item } = fixture()
  useRawDataStore.setState({ items: useRawDataStore.getState().items.map(row => row.id === item.id ? { ...row, trackExpiry: true } : row) })
  const before = useRawDataStore.getState()
- expect(() => s.postWastage({ reason: 'تالف', lines: [{ itemId: item.id, qty: 1 }] })).toThrow(/السيريال ودفعة صلاحيته/)
+ expect(() => s.postWastage({ reason: 'تالف', notes: '', lines: [{ itemId: item.id, qty: 1 }] })).toThrow(/السيريال ودفعة صلاحيته/)
  expect(() => s.postStocktake([{ itemId: item.id, nameAr: item.nameAr, expectedQty: 2, countedQty: 1, unitCostMinor: 100 }], '')).toThrow(/السيريال ودفعة صلاحيته/)
  expect(useRawDataStore.getState().journal).toBe(before.journal)
  expect(useRawDataStore.getState().items).toBe(before.items)

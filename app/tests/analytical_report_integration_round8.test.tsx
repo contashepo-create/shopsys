@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { AnalyticalProjectReportView } from '../src/ui/contracting/AnalyticalProjectReportView.tsx'
-import { useDataStore, EMPTY_EXTENDED, type DataState } from '../src/data/repo.ts'
+import { useDataStore, EMPTY_EXTENDED } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { getCountry } from '../src/core/countries.ts'
 import { formatMinor } from '../src/core/money.ts'
+
+type DataState = ReturnType<typeof useDataStore.getState>
 
 const original = useDataStore.getState()
 const appOriginal = useAppStore.getState()
@@ -25,8 +27,8 @@ it('سجل مرتجع افتراضي/مستورد يُعرض في التقرير
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(total()).toContain(formatMinor(1000, currency, false))
   act(() => useDataStore.setState({
-    purchases: [{ id: 999, projectId: project.id }] as DataState['purchases'],
-    purchaseReturns: [{ purchaseId: 999, returnNumber: 'R-1', totalMinor: 300, date: '2026-01-03' }] as DataState['purchaseReturns'],
+    purchases: [{ id: 999, projectId: project.id }] as unknown as DataState['purchases'],
+    purchaseReturns: [{ purchaseId: 999, returnNumber: 'R-1', totalMinor: 300, date: '2026-01-03' }] as unknown as DataState['purchaseReturns'],
   }))
   expect(total()).toContain(formatMinor(700, currency, false))
   expect(screen.getByText('مرتجع مشتريات المشروع')).toBeTruthy()
@@ -38,7 +40,7 @@ it('لا يُضاف سند موزّع خطأً على مستخلص نقدي كت
   const customer = useDataStore.getState().customers.at(-1)!
   const project = useDataStore.getState().addProject({ nameAr: 'مشروع نقدي', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 1000, vatPercent: 0, payment: 'cash' })
-  useDataStore.setState({ vouchers: [{ kind: 'receipt', counterAccountCode: '1104', partyKind: 'customer', partyId: customer.id, date: '2026-01-01', voucherNumber: 'WRONG', amountMinor: 500, allocations: [{ docKey: `extract:${extract.id}`, appliedMinor: 500 }] }] as DataState['vouchers'] })
+  useDataStore.setState({ vouchers: [{ kind: 'receipt', counterAccountCode: '1104', partyKind: 'customer', partyId: customer.id, date: '2026-01-01', voucherNumber: 'WRONG', amountMinor: 500, allocations: [{ docKey: `extract:${extract.id}`, appliedMinor: 500 }] }] as unknown as DataState['vouchers'] })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(screen.queryByText('WRONG')).toBeNull()
   expect(screen.queryByText(/تنبيه مراجعة: مجموع سطور التحصيلات/)).toBeNull()
@@ -46,7 +48,7 @@ it('لا يُضاف سند موزّع خطأً على مستخلص نقدي كت
 
 
 it('ترحيل مرتجع مخزني لفاتورة مربوطة بمشروع مرفوض في المسار الحالي', () => {
-  useDataStore.setState({ purchases: [{ id: 999, projectId: 1 }] as DataState['purchases'] })
+  useDataStore.setState({ purchases: [{ id: 999, projectId: 1 }] as unknown as DataState['purchases'] })
   expect(() => useDataStore.getState().postPurchaseReturn({ purchaseId: 999, qtyByItem: new Map(), refund: 'cash', reason: 'اختبار', __approvalBypass: true } as never))
     .toThrow('فاتورة مشروع مقاولات')
 })

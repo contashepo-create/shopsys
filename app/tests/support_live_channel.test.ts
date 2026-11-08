@@ -109,7 +109,7 @@ describe('قناة الدعم على العامل المحلي وKV تجريبي
     const local = { kv, supportLocal: true }
     const inbox = await runLocalSupportAction(local as never, 'inbox')
     expect(inbox.ok).toBe(true)
-    expect(inbox.conversations[0]).toMatchObject({ deviceId: DEVICE, awaitingReply: true })
+    expect(inbox.conversations?.[0]).toMatchObject({ deviceId: DEVICE, awaitingReply: true })
     const thread = await runLocalSupportAction(local as never, 'thread', { deviceId: DEVICE })
     expect(thread.messages).toHaveLength(1)
     const reply = await runLocalSupportAction(local as never, 'reply', { deviceId: DEVICE, text: 'تمت المراجعة' })

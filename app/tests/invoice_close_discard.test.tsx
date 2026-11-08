@@ -9,7 +9,6 @@
  */
 import { describe, expect, it, beforeAll, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { useWindowStore } from '../src/ui/windows/windowStore.ts'
 import { WindowHost } from '../src/ui/windows/WindowHost.tsx'

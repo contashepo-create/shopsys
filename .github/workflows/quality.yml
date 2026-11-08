@@ -50,6 +50,9 @@ jobs:
       - name: Lint application source with zero-warning policy
         run: npm run lint:strict
 
+      - name: Type-check test sources
+        run: npm run typecheck:tests
+
       - name: Browser-like integration tests
         run: npm run test:e2e
 

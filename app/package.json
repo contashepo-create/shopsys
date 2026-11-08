@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -b --force",
+    "typecheck:tests": "tsc -p tsconfig.tests-check.json --noEmit --pretty false",
     "build": "npm run typecheck && vite build",
     "lint": "oxlint",
     "lint:src": "oxlint src",
