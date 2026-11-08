@@ -22,14 +22,20 @@ function getOrCreateSecret(): string {
 
 let keyPromise: Promise<CryptoKey> | null = null
 const pendingWrites = new Map<string, Set<Promise<void>>>()
+// يُحتفظ بالفشل بعد مغادرة الوعد الطابور، حتى تنجح كتابة أحدث كاملة للمخزن نفسه.
+const failedWrites = new Map<string, unknown>()
 
 /** انتظر كتابة مخزن بعينه (أو كل المخازن عند عدم تمرير اسم) قبل تحرير القفل. */
 export async function flushSecureStorageWrites(storeName?: string): Promise<void> {
   while (true) {
-    const names = storeName ? [storeName] : [...pendingWrites.keys()]
+    const names = storeName ? [storeName] : [...new Set([...pendingWrites.keys(), ...failedWrites.keys()])]
     const current = names.flatMap((name) => [...(pendingWrites.get(name) ?? [])])
-    if (!current.length) return
-    await Promise.all(current)
+    if (!current.length) {
+      for (const name of names) if (failedWrites.has(name)) throw failedWrites.get(name)
+      return
+    }
+    // انتظر أيضاً الكتابة الأحدث التي قد تنجح بعد فشل الأقدم وتستبدل لقطته.
+    await Promise.allSettled(current)
   }
 }
 
@@ -92,12 +98,18 @@ export const secureStorage: StateStorage = {
     const write = (async () => {
       // يمكن أن ينتهي تشفير اللقطة الأحدث أولاً؛ الالتزام بترتيب الحفظ
       // لكل مخزن يمنع لقطة أقدم من الكتابة فوقها، دون تعطيل مخزن آخر.
-      const encrypted = (async () => encryptText(value, await key()))()
-      const [result] = await Promise.allSettled([encrypted, previous ?? Promise.resolve()])
-      if (result.status === 'rejected') throw result.reason
-      // لا تسمح لكتابة بدأت قبل استيراد السر بالعبور بعد الختم أو إعادة فتحه.
-      if (sealedForTransfer || generation !== secretGeneration) return
-      localStorage.setItem(name, result.value)
+      try {
+        const encrypted = (async () => encryptText(value, await key()))()
+        const [result] = await Promise.allSettled([encrypted, previous ?? Promise.resolve()])
+        if (result.status === 'rejected') throw result.reason
+        // لا تسمح لكتابة بدأت قبل استيراد السر بالعبور بعد الختم أو إعادة فتحه.
+        if (sealedForTransfer || generation !== secretGeneration) return
+        localStorage.setItem(name, result.value)
+        failedWrites.delete(name)
+      } catch (error) {
+        failedWrites.set(name, error)
+        throw error
+      }
     })()
     queue.add(write)
     pendingWrites.set(name, queue)
