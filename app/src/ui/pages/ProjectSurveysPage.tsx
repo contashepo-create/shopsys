@@ -11,10 +11,11 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { renderSurveyHtml } from '../print/printSurvey.ts'
+import { renderCloseoutHtml } from '../print/printCloseout.ts'
 
 export function ProjectSurveysPage() {
   const data = useDataStore()
-  const { projects, boqItems, projectSurveys, projectExtractDrafts, projectExtracts, appUsers, currentUserId, roleOverrides, customRoles } = data
+  const { projects, boqItems, projectSurveys, projectExtractDrafts, projectCloseouts, projectExtracts, appUsers, currentUserId, roleOverrides, customRoles } = data
   const { setup } = useAppStore()
   const toast = useToast(), navigate = useNavigate()
   const [projectId, setProjectId] = useState(0)
@@ -26,6 +27,10 @@ export function ProjectSurveysPage() {
   const [confirmSurveyDelete, setConfirmSurveyDelete] = useState(false)
   const [surveyDeleteReason, setSurveyDeleteReason] = useState('')
   const [surveyDeleteBasis, setSurveyDeleteBasis] = useState('')
+  const [closeoutOpen, setCloseoutOpen] = useState(false)
+  const [closeoutConfirmed, setCloseoutConfirmed] = useState(false)
+  const [closeoutNotes, setCloseoutNotes] = useState('')
+  const [closeoutBasis, setCloseoutBasis] = useState('')
   const [revision, setRevision] = useState(0)
   const [basis, setBasis] = useState('')
   const pending = useRef(false)
@@ -41,7 +46,7 @@ export function ProjectSurveysPage() {
   let billed = new Map<number, number>(), historyError = ''
   try { if (survey) assertSurveyIntegrity(survey, items, history); billed = new Map(exactBilledQuantities(items, history).map(line => [line.boqItemId, line.cumulativeQty])) } catch (error) { historyError = (error as Error).message }
   const selectProject = (id: number) => {
-    setProjectId(id); setReason(''); setDraftDeleteReason(''); setConfirmDraftDelete(false); setSurveyDeleteReason(''); setConfirmSurveyDelete(false)
+    setProjectId(id); setReason(''); setDraftDeleteReason(''); setConfirmDraftDelete(false); setSurveyDeleteReason(''); setConfirmSurveyDelete(false); setCloseoutOpen(false); setCloseoutConfirmed(false); setCloseoutNotes('')
     const selected = projectSurveys.find(row => row.projectId === id)
     const selectedItems = boqItems.filter(row => row.projectId === id)
     let previous = new Map<number, number>()
@@ -96,6 +101,26 @@ export function ProjectSurveysPage() {
       toast.show(error instanceof ProjectCommitUnconfirmedError ? 'حُذف الحصر محلياً ولم يؤكد الحفظ — راجع الحالة' : (error as Error).message, 'error')
     } finally { pending.current = false }
   }
+  const issueCloseout = async () => {
+    if (!project || !survey || pending.current || !closeoutConfirmed) return
+    pending.current = true
+    try {
+      const record = await withProjectExtractCommit(project.id, closeoutBasis, () => useDataStore.getState().issueProjectCloseout({ projectId: project.id, expectedRevision: survey.revisions.length, notes: closeoutNotes, confirmed: closeoutConfirmed }))
+      setCloseoutOpen(false); setCloseoutConfirmed(false); setCloseoutNotes('')
+      toast.show(`حُفظ محضر إقفال الكميات ${record.number} دون قيد أو فاتورة`)
+    } catch (error) {
+      if (error instanceof ProjectCommitUnconfirmedError) { setCloseoutOpen(false); setCloseoutConfirmed(false) }
+      toast.show(error instanceof ProjectCommitUnconfirmedError ? 'حُفظ المحضر محلياً ولم يؤكد الحفظ — راجع السجل قبل إعادة المحاولة' : (error as Error).message, 'error')
+    } finally { pending.current = false }
+  }
+  const printCloseout = (id: number) => {
+    const fresh = useDataStore.getState(), record = fresh.projectCloseouts.find(row => row.id === id)
+    if (!record) return toast.show('المحضر غير موجود في الفرع الحالي', 'error')
+    try {
+      const html = renderCloseoutHtml({ shopName: setup.shopName || 'المقاولات', record, current: fresh.isProjectCloseoutCurrent(id), currency: cur.symbol, fmt })
+      openPrintPreview({ html, wide: true, title: `محضر إقفال كميات ${record.number}` })
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
   const print = () => {
     if (!project || !survey) return
     try {
@@ -123,7 +148,8 @@ export function ProjectSurveysPage() {
       <div className="flex flex-wrap gap-2"><Btn onClick={() => void save()} disabled={!canManage || !!historyError || !items.length || project.status !== 'active'}><Save size={15} /> اعتماد وحفظ الحصر</Btn><Btn onClick={print} disabled={!survey || !!historyError}><Printer size={15} /> طباعة الحصر المحفوظ</Btn><Btn onClick={() => void prepare()} disabled={!canManage || !survey || !hasDifference || !!historyError || project.status !== 'active'}><FileText size={15} /> تجهيز مسودة مستخلص من الحصر المحفوظ</Btn><Btn variant="ghost" onClick={() => selectProject(project.id)}>إعادة تحميل الحصر</Btn></div>
       {draft && <div className="rounded-xl border p-3 text-sm"><b>مسودة مستخلص محفوظة</b> — مشتقة من مراجعة {draft.surveyRevision}، ولا تمثل قيداً أو مطالبة مرحّلة. <button className="text-sky-700 underline ml-3" onClick={() => navigate(`/contracting/extracts?projectId=${project.id}&fromSurvey=1`)}>فتح المسودة</button> <button className="text-rose-600 underline" onClick={() => setConfirmDraftDelete(true)}>حذف المسودة</button>{confirmDraftDelete && <div className="flex flex-wrap items-center gap-2 pt-2"><input aria-label="سبب حذف مسودة المستخلص" value={draftDeleteReason} onChange={event => setDraftDeleteReason(event.target.value)} placeholder="سبب الحذف" className={inputCls} /><Btn onClick={() => void deleteDraft()} disabled={!canManage || !draftDeleteReason.trim()}>تأكيد حذف المسودة</Btn><Btn variant="ghost" onClick={() => setConfirmDraftDelete(false)}>تراجع</Btn></div>}</div>}
       {survey && <div className="rounded-xl border border-rose-300 p-3 text-sm"><button className="text-rose-700 underline" onClick={() => { setSurveyDeleteBasis(projectExtractFingerprint(data, project.id)); setConfirmSurveyDelete(true) }}>حذف الحصر غير المرحّل</button>{confirmSurveyDelete && <div className="space-y-2 pt-2"><p>سيُحذف الحصر ومراجعته ومسودة المستخلص إن وجدت. يُمنع الحذف عند وجود مستند مرتبط أو حركة مالية للمشروع.</p><input aria-label="سبب حذف الحصر" value={surveyDeleteReason} onChange={event => setSurveyDeleteReason(event.target.value)} placeholder="سبب الحذف" className={inputCls} /><div className="flex gap-2"><Btn onClick={() => void deleteSurvey()} disabled={!canManage || !surveyDeleteReason.trim()}>تأكيد حذف الحصر</Btn><Btn variant="ghost" onClick={() => setConfirmSurveyDelete(false)}>تراجع</Btn></div></div>}</div>}
-      {survey && !hasDifference && !historyError && <p className="text-sm text-slate-500">لا توجد كمية محصورة غير مستخلصة؛ لا تُنشأ فاتورة صفرية. قد يلزم مستند إقفال مستقل.</p>}
+      {survey && !hasDifference && !historyError && <div className="rounded-xl border border-amber-300 p-3 text-sm space-y-2"><p>لا توجد كمية محصورة غير مستخلصة؛ لا تُنشأ فاتورة صفرية. بعد اعتماد الحصر الختامي يمكن إصدار محضر إقفال كميات غير مالي.</p><button className="text-sky-700 underline" disabled={!canManage || !survey.isFinal || project.status !== 'active'} onClick={() => { setCloseoutBasis(projectExtractFingerprint(data, project.id)); setCloseoutConfirmed(false); setCloseoutOpen(true) }}>إصدار محضر إقفال الكميات</button>{closeoutOpen && <div className="space-y-2"><p>المحضر يثبت مطابقة الكميات وقت الإصدار فقط؛ لا يغلق المشروع ولا يسوي الذمم أو المحتجزات أو يثبت التسليم.</p><Field label="ملاحظات المحضر"><input aria-label="ملاحظات محضر الإقفال" maxLength={1000} value={closeoutNotes} onChange={event => setCloseoutNotes(event.target.value)} className={inputCls} /></Field><label className="flex items-center gap-2"><input type="checkbox" checked={closeoutConfirmed} onChange={event => setCloseoutConfirmed(event.target.checked)} /> راجعت الحصر الختامي والمستخلصات وأفهم أن المحضر غير مالي</label><div className="flex gap-2"><Btn onClick={() => void issueCloseout()} disabled={!closeoutConfirmed || !canManage}>تأكيد إصدار المحضر</Btn><Btn variant="ghost" onClick={() => setCloseoutOpen(false)}>إلغاء</Btn></div></div>}</div>}
+      {projectCloseouts.some(row => row.projectId === project.id) && <details className="rounded-xl border p-3 text-sm"><summary className="font-bold cursor-pointer">محاضر إقفال الكميات</summary><ul className="space-y-2 pt-2">{projectCloseouts.filter(row => row.projectId === project.id).slice().reverse().map(row => <li key={row.id} className="border-t pt-2">{row.number} — مراجعة {row.surveyRevision} — {row.at} — {data.isProjectCloseoutCurrent(row.id) ? 'مطابق للأساس الحالي' : 'تاريخي — يحتاج مراجعة'} <button className="text-sky-700 underline" onClick={() => printCloseout(row.id)}>معاينة وطباعة المحضر</button></li>)}</ul></details>}
       {survey && <details className="rounded-xl border p-3 text-sm"><summary className="font-bold cursor-pointer">سجل المراجعات ({survey.revisions.length})</summary><ul className="space-y-2 pt-2">{[...survey.revisions].reverse().map(row => <li key={row.revision} className="border-t pt-2">مراجعة {row.revision} — {row.at} — {row.by} — {row.source === 'extract' ? `مستخلص #${row.extractId}` : 'إدخال/تصحيح'} {row.reason && `— ${row.reason}`} {row.isFinal && '— ختامي'}<div className="text-xs text-slate-500">{row.lines.map(line => { const item = items.find(item => item.id === line.boqItemId); return `${item?.code ?? `#${line.boqItemId}`} : ${line.cumulativeQty} ${line.unit ?? item?.unit ?? ''}` }).join(' · ')}</div></li>)}</ul></details>}
     </>}
   </div>

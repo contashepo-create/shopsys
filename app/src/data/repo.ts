@@ -53,6 +53,7 @@ import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccou
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
 import { computeQuantityExtractLines, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
+import { closeoutLines, type ProjectCloseout } from '../core/projectCloseout.ts'
 import { reviseProjectSurvey, assertSurveyFinalBilled, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
@@ -1825,6 +1826,7 @@ interface DataState {
   /** أرقام المشاريع المحذوفة غير المرحّلة محجوزة في سجل التدقيق. */
   projectDeletionRecords: { id: number; code: string; nameAr: string; reason: string; at: string; by: string; branchId?: number | null }[]
   projectSurveys: ProjectSurvey[]
+  projectCloseouts: ProjectCloseout[]
   projectExtractDrafts: ProjectExtractDraft[]
   surveyDeletionRecords: { id: number; projectId: number; reason: string; at: string; by: string; branchId?: number | null }[]
   quotationDeletionRecords: { id: number; quoteNumber: string; projectId: number | null; reason: string; at: string; by: string; branchId?: number | null }[]
@@ -2914,6 +2916,8 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  issueProjectCloseout: (args: { projectId: number; expectedRevision: number; notes: string; confirmed: boolean }) => ProjectCloseout
+  isProjectCloseoutCurrent: (id: number) => boolean
   assertProjectExtractDraftCurrent: (projectId: number) => void
   prepareProjectExtractDraft: (projectId: number, expectedRevision: number) => ProjectExtractDraft
   deleteProjectExtractDraft: (projectId: number, reason: string) => void
@@ -4061,7 +4065,7 @@ function assertCanUpdateBranch(state: DataState, id: number, patch: Partial<Omit
 const BRANCH_STAMP_ID_KEYS = [
   'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
   'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
-  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectSurveys', 'projectExtractDrafts', 'projectExtracts',
+  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectSurveys', 'projectCloseouts', 'projectExtractDrafts', 'projectExtracts',
   'projectCosts', 'retentionReleases', 'projectBudgets', 'projectTasks', 'changeOrders',
   'clientAdvances', 'boqItems', 'subContracts', 'subCertificates', 'subPayments',
   'subAdvances', 'bonds', 'dailyWorkers', 'dailyWorkRecords', 'materialRequisitions',
@@ -5669,6 +5673,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
     surveyDeletionRecords: inBranch(state.surveyDeletionRecords ?? []),
     projectSurveys: state.projectSurveys.filter(survey => inBranchOrRelated(survey, scopedProjectIds.has(survey.projectId))),
     projectExtractDrafts: state.projectExtractDrafts.filter(draft => inBranchOrRelated(draft, scopedProjectIds.has(draft.projectId))),
+    projectCloseouts: state.projectCloseouts.filter(row => inBranchOrRelated(row, scopedProjectIds.has(row.projectId))),
     projectExtracts: scopedProjectExtracts,
     projectCosts: scopedProjectCosts,
     retentionReleases: scopedRetentionReleases,
@@ -6025,6 +6030,31 @@ function nextSurveyId(state: DataState, preferred: number): number {
   return rows.some(row => row.id === preferred) ? nextId(rows) : preferred
 }
 
+function validateCloseout(state: DataState, projectId: number, expectedRevision?: number) {
+  const scoped = getBranchScopedDataState(state)
+  const project = scoped.projects.find(row => row.id === projectId)
+  if (!project || state.projects.filter(row => row.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+  assertProjectCustomerBranch(state, project)
+  const surveys = scoped.projectSurveys.filter(row => row.projectId === projectId)
+  if (surveys.length !== 1 || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1) throw new Error('حصر المشروع غير موجود أو غير فريد في الفرع الحالي')
+  const survey = surveys[0]
+  if (expectedRevision != null && survey.revisions.length !== expectedRevision) throw new Error('تغير الحصر — أعد مراجعته')
+  const items = scoped.boqItems.filter(row => row.projectId === projectId)
+  const history = scoped.projectExtracts.filter(row => row.projectId === projectId)
+  if (state.boqItems.filter(row => row.projectId === projectId).length !== items.length || state.projectExtracts.filter(row => row.projectId === projectId).length !== history.length) throw new Error('بنود أو مستخلصات المشروع تابعة لفرع آخر — راجع البيانات')
+  const journal = customerReviewJournal(state)
+  for (const extract of history) {
+    assertProjectExtractOriginalIntegrity(extract, journal)
+    if (extract.lines?.length && extract.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== extract.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده')
+    for (const line of extract.lines ?? []) {
+      const item = items.find(row => row.id === line.boqItemId)
+      if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('بند العقد لا يطابق مستخلصاً سابقاً')
+    }
+  }
+  assertProjectExtractRefundIntegrity(history, journal)
+  return { project, survey, history, lines: closeoutLines(survey, items, history), basis: projectSurveyDraftBasis(state, projectId) }
+}
+
 function projectSurveyDraftBasis(state: DataState, id: number): string {
   return JSON.stringify({ project: state.projects.find(row => row.id === id), boq: state.boqItems.filter(row => row.projectId === id), surveys: state.projectSurveys.filter(row => row.projectId === id), history: state.projectExtracts.filter(row => row.projectId === id), advances: state.clientAdvances.filter(row => row.projectId === id), changes: state.changeOrders.filter(row => row.projectId === id) })
 }
@@ -6274,6 +6304,9 @@ export const useRawDataStore = create<DataState>()(
             ['custodyTxs', 'projectId', 'projects', true],
             ['custodyTxs', 'purchaseId', 'purchases', true],
             ['projectExtracts', 'projectId', 'projects', false],
+            ['projectSurveys', 'projectId', 'projects', false],
+            ['projectExtractDrafts', 'projectId', 'projects', false],
+            ['projectCloseouts', 'projectId', 'projects', false],
             ['projectCosts', 'projectId', 'projects', false],
             ['projectCosts', 'costCenterId', 'costCenters', true],
             ['projectCosts', 'custodyFileId', 'custodyFiles', true],
@@ -7230,6 +7263,7 @@ export const useRawDataStore = create<DataState>()(
       quotationDeletionRecords: [],
       surveyDeletionRecords: [],
       projectSurveys: [],
+      projectCloseouts: [],
       projectExtractDrafts: [],
       projectExtracts: [],
       projectCosts: [],
@@ -15277,6 +15311,33 @@ export const useRawDataStore = create<DataState>()(
       },
 
       /* ─── المقاولات (القرار 27) ─── */
+      issueProjectCloseout: ({ projectId, expectedRevision, notes, confirmed }) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        if (!confirmed) throw new Error('أكد مراجعة كميات الحصر والمستخلصات قبل إصدار المحضر')
+        if (typeof notes !== 'string' || notes.length > 1000) throw new Error('ملاحظات المحضر غير صالحة أو طويلة جداً')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
+        }
+        const { project, survey, history, lines, basis } = validateCloseout(state, projectId, expectedRevision)
+        if (project.status !== 'active') throw new Error('المشروع غير نشط — راجع حالته قبل إصدار المحضر')
+        if (state.projectExtractDrafts.some(row => row.projectId === projectId)) throw new Error('توجد مسودة مستخلص للمشروع — راجعها أو احذفها قبل إصدار المحضر')
+        if (state.projectCloseouts.some(row => row.projectId === projectId && row.basis === basis)) throw new Error('يوجد محضر لهذا الحصر بالفعل — افتحه من السجل')
+        const id = nextId(state.projectCloseouts), at = localIsoTimestamp(), by = activeUserName(state)
+        const branchId = (project as Project & { branchId?: number | null }).branchId ?? survey.branchId
+        const record: ProjectCloseout = { id, number: `PC-${String(id).padStart(4, '0')}`, projectId, ...(branchId != null ? { branchId } : {}), projectCode: project.code, projectName: project.nameAr, clientName: project.clientName, surveyId: survey.id, surveyRevision: survey.revisions.length, at, by, notes: notes.trim(), basis, extractNumbers: history.map(row => row.extractNumber), lines }
+        set({ projectCloseouts: [...state.projectCloseouts, record], auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `إصدار محضر إقفال كميات ${record.number} للمشروع ${project.code}` }]) })
+        return record
+      },
+      isProjectCloseoutCurrent: (id) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const record = scoped.projectCloseouts.find(row => row.id === id)
+        if (!record || state.projectCloseouts.filter(row => row.id === id).length !== 1) return false
+        try {
+          const current = validateCloseout(state, record.projectId, record.surveyRevision)
+          return current.survey.id === record.surveyId && current.basis === record.basis && JSON.stringify(current.lines) === JSON.stringify(record.lines) && JSON.stringify(current.history.map(row => row.extractNumber)) === JSON.stringify(record.extractNumbers)
+        } catch { return false }
+      },
       assertProjectExtractDraftCurrent: (projectId) => {
         const state = get(), scoped = getBranchScopedDataState(state)
         const drafts = scoped.projectExtractDrafts.filter(row => row.projectId === projectId)
@@ -21590,6 +21651,7 @@ export const useRawDataStore = create<DataState>()(
           quotationDeletionRecords: s.quotationDeletionRecords ?? [],
           surveyDeletionRecords: s.surveyDeletionRecords ?? [],
           projectSurveys: s.projectSurveys ?? [],
+          projectCloseouts: s.projectCloseouts ?? [],
           projectExtractDrafts: s.projectExtractDrafts ?? [],
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],

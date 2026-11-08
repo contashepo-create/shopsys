@@ -148,6 +148,17 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
       if (new Set(ids).size !== ids.length) throw new Error('تعارض مستندات مشروع مكررة — أعد تحميل البيانات')
     }
   }
+  if (Array.isArray(state?.projectCloseouts)) {
+    const seen = new Set<string>()
+    for (const raw of state.projectCloseouts) {
+      if (!raw || typeof raw !== 'object') continue
+      const row = raw as { projectId?: unknown; basis?: unknown }
+      if (typeof row.projectId !== 'number' || typeof row.basis !== 'string') continue
+      const key = JSON.stringify([row.projectId, row.basis])
+      if (seen.has(key)) throw new Error('تعارض محضر إقفال مكرر — أعد تحميل البيانات')
+      seen.add(key)
+    }
+  }
   const deletedSurveys = new Set(Array.isArray(state?.surveyDeletionRecords) ? state.surveyDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
   if (state && deletedSurveys.size && Array.isArray(state.projectSurveys) && state.projectSurveys.some(row => row && typeof row === 'object' && deletedSurveys.has((row as { id: number }).id))) throw new Error('تعارض حصر محذوف مع تحديث متزامن — أعد تحميل البيانات')
   // Detect a financial link introduced on the other side of an unposted deletion.
@@ -182,6 +193,28 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
       }
     }
   }
+  const checkCloseout = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const oldIds = new Set(Array.isArray(before.projectCloseouts) ? (before.projectCloseouts as Array<{ id?: unknown }>).map(row => row?.id) : [])
+    const records = Array.isArray(issuing.projectCloseouts) ? issuing.projectCloseouts as Array<{ id?: unknown; projectId?: unknown }> : []
+    for (const record of records) {
+      if (!record || oldIds.has(record.id) || typeof record.projectId !== 'number') continue
+      const id = record.projectId
+      for (const name of ['projects', 'boqItems', 'projectSurveys', 'projectExtractDrafts', 'projectExtracts', 'clientAdvances', 'changeOrders']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض إصدار محضر مع تغيير متزامن في المشروع — أعد تحميل البيانات')
+      }
+      // Original journal and its reversals can change without the extract record changing.
+      const extractIds = new Set([before, other].flatMap(source => Array.isArray(source.projectExtracts) ? (source.projectExtracts as Array<Record<string, unknown>>).filter(row => row?.projectId === id).map(row => row.id) : []))
+      const journal = (source: Record<string, unknown>) => {
+        const rows = Array.isArray(source.journal) ? source.journal as Array<Record<string, unknown>> : []
+        const linked = rows.filter(row => row && row.sourceType === 'project_extract' && extractIds.has(row.sourceId))
+        const entryIds = new Set(linked.flatMap(row => [row.id, row.reversedByEntryId, row.reversesEntryId]))
+        return rows.filter(row => row && (entryIds.has(row.id) || entryIds.has(row.reversesEntryId)))
+      }
+      if (JSON.stringify(journal(before)) !== JSON.stringify(journal(other))) throw new Error('تعارض محضر مع تغيير قيد المستخلص بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  checkCloseout(left, right); checkCloseout(right, left)
   checkDeletion(left, right); checkDeletion(right, left)
   const deleted = new Set(Array.isArray(state?.projectDeletionRecords) ? state.projectDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
   if (state && deleted.size) {

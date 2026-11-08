@@ -64,7 +64,7 @@ function extractPrintQuantities(line: { prevExecutedQty?: number; newExecutedQty
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId, projectSurveys, projectExtractDrafts,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId, projectSurveys, projectCloseouts, projectExtractDrafts,
     addProject, addProjectWithBoq, updateProject, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
@@ -275,7 +275,7 @@ export function ProjectsPage() {
   const exHistory = projectExtracts.filter(ex => ex.projectId === extractFor?.id && (!editingExtract || ex.id < editingExtract.id))
   const exQtyPreview = quantityDraftPreview(extractBoq, exHistory, exQty, exQtyMode, exAcceptEstimate)
   const exEffectiveGross = exMode === 'lines' ? (exEntryKind === 'quantity' ? exQtyPreview.grossMinor : exLinesPreview.grossMinor) : toMinor(exGross, cur.decimals)
-  const exFinalSignature = JSON.stringify({ basis: extractFor ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id) : null, exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
+  const exFinalSignature = JSON.stringify({ basis: extractFor ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id) : null, exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
   const applyPartialSlicePercent = (slicePct: number) => {
     setExEntryKind('percent')
     if (!extractFor) return
@@ -409,7 +409,7 @@ export function ProjectsPage() {
             })
         : undefined
       const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
-      const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id), () => addProjectExtract({
+      const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id), () => addProjectExtract({
         projectId: extractFor.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
@@ -448,7 +448,7 @@ export function ProjectsPage() {
               return b ? l.newProgressPercent > exPrevPct(b) : false
             })
         : undefined
-      const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id), () => editProjectExtract({
+      const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id), () => editProjectExtract({
         extractId: editingExtract.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
@@ -1654,7 +1654,7 @@ export function ProjectsPage() {
               try {
                 const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
                 const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
-                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury }))
+                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury }))
                 setRefundingExtract(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) {
@@ -2013,6 +2013,7 @@ export function ProjectExtractsPage() {
     projectExtracts,
     projectSurveys,
     projectExtractDrafts,
+    projectCloseouts,
     boqItems,
     changeOrders,
     clientAdvances,
@@ -2148,7 +2149,7 @@ export function ProjectExtractsPage() {
     } catch (error) { toast.show((error as Error).message, 'error') }
   // فتح المسودة مرة واحدة من رابط الحصر؛ التغييرات اللاحقة تُفحص تحت القفل.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, projects, projectSurveys, projectExtractDrafts, boqItems, projectExtracts])
+  }, [searchParams, projects, projectSurveys, projectCloseouts, projectExtractDrafts, boqItems, projectExtracts])
 
   const openEditExtractModal = (ex: (typeof projectExtracts)[number]) => {
     setEditingExtractId(ex.id)
@@ -2203,7 +2204,7 @@ export function ProjectExtractsPage() {
 
   const qtyPreview = quantityDraftPreview(projectBoqWithPrev, priorExtracts, quantityValues, quantityMode, acceptEstimatedPrior)
   const effectiveGrossMinor = exMode === 'lines' ? (lineEntryKind === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor) : toMinor(exGross || '0', cur.decimals)
-  const finalSignature = JSON.stringify({ basis: selectedProject ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id) : null, selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
+  const finalSignature = JSON.stringify({ basis: selectedProject ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id) : null, selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
   const retentionMinor = selectedProject ? Math.round((effectiveGrossMinor * selectedProject.retentionPercent) / 100) : 0
   const vatMinor = exVat ? Math.round((effectiveGrossMinor * setup.vatPercent) / 100) : 0
   const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
@@ -2327,7 +2328,7 @@ export function ProjectExtractsPage() {
               .map((r) => ({ boqItemId: r.boq.id, newProgressPercent: r.newPercent }))
           : undefined
       if (editingExtract) {
-        const updated = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id), () => editProjectExtract({
+        const updated = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id), () => editProjectExtract({
           extractId: editingExtract.id,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
           extractLines: linesInput,
@@ -2348,7 +2349,7 @@ export function ProjectExtractsPage() {
         setViewExtractId(updated.id)
       } else {
         const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
-        const created = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id), () => addProjectExtract({
+        const created = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id), () => addProjectExtract({
           projectId: selectedProject.id,
           sourceSurveyDraft: fromSurveyDraft,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
@@ -2908,7 +2909,7 @@ export function ProjectExtractsPage() {
               if (extractSubmitPending.current) return
               extractSubmitPending.current = true
               try {
-                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury: a.treasury }))
+                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury: a.treasury }))
                 setRefundExtractId(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) {

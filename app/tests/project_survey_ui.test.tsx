@@ -90,3 +90,17 @@ it('تأكيد حذف الحصر يتطلب السبب ويرفض تغير ال�
  await waitFor(() => expect(S().projectSurveys).toHaveLength(0))
  expect(S().journal).toHaveLength(0)
 })
+it('محضر إقفال كميات بعد استخراج كل الحصر قابل للطباعة بلا قيد أو إقفال مالي', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().addProjectExtract({ projectId: p.id, description: 'سابق', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 856 }] })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 856 }], expectedRevision: 1, reason: '', isFinal: true })
+ const journal = S().journal; renderPages(); select()
+ fireEvent.click(screen.getByText('إصدار محضر إقفال الكميات'))
+ fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/))
+ fireEvent.click(screen.getByText('تأكيد إصدار المحضر'))
+ await waitFor(() => expect(S().projectCloseouts).toHaveLength(1))
+ expect(S().journal).toBe(journal); expect(S().projectExtracts).toHaveLength(1)
+ fireEvent.click(screen.getByText('محاضر إقفال الكميات'))
+ fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
+ expect(usePrintPreview.getState().handle?.html).toContain('محضر إقفال كميات الأعمال — غير مالي')
+})
