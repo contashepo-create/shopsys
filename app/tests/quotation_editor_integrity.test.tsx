@@ -217,3 +217,26 @@ describe('سلامة محرر ومسودات عروض الأسعار', () => {
     }
   })
 })
+
+describe('حراسة حقول هوية العرض عند التعديل', () => {
+  it.each([
+    { status: 'won' }, { projectId: 77 }, { branchId: 44 }, { id: 88 }, { quoteNumber: 'QT-FAKE' }, { date: '2099-01-01' }, { deletedAt: '2026-01-01' },
+  ])('يرفض تحديث حقل الهوية أو الربط أو الحالة خارج مساره %o', patch => {
+    const before = useRawDataStore.getState()
+    expect(() => before.updateQuotation(7, patch as never)).toThrow(/حقل|تعديل/)
+    expect(useRawDataStore.getState().quotations).toBe(before.quotations)
+    expect(useRawDataStore.getState().projects).toBe(before.projects)
+    expect(useRawDataStore.getState().journal).toBe(before.journal)
+  })
+  it('يسمح بتعديل محتوى العرض المصرح به ويحافظ على هويته وحالته', () => {
+    const result = useRawDataStore.getState().updateQuotation(7, { titleAr: 'عرض مصحح', notes: 'ملاحظة' })
+    expect(result).toMatchObject({ id: 7, quoteNumber: 'QT-0007', status: 'draft', projectId: null, titleAr: 'عرض مصحح', notes: 'ملاحظة' })
+  })
+})
+
+it('يرفض التحديث المختلط بحقول صالحة وحقل محمي دون تطبيق أي جزء', () => {
+  const before = useRawDataStore.getState()
+  expect(() => before.updateQuotation(7, { titleAr: 'لن يحفظ', status: 'won' } as never)).toThrow(/حقل/)
+  expect(useRawDataStore.getState().quotations).toBe(before.quotations)
+  expect(useRawDataStore.getState().quotations[0].titleAr).toBe('عرض أصلي')
+})

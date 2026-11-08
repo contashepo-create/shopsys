@@ -16106,6 +16106,10 @@ export const useRawDataStore = create<DataState>()(
         const q = scoped.quotations.find((x) => x.id === id)
         if (!q || q.deletedAt) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (q.projectId != null) throw new Error('العرض تحوّل لمشروع — لا يُعدَّل؛ بنوده صارت جدول كميات المشروع (أوامر التغيير من المشروع)')
+        // أنواع TypeScript لا تحمي وقت التشغيل: هوية العرض وحالته وفرعه وربطه
+        // لا تُغيَّر عبر محرر المحتوى، حتى لو مرّر مستدعٍ حقولاً إضافية.
+        const editableFields = new Set(['kind', 'clientName', 'clientId', 'titleAr', 'validUntil', 'lines', 'notes', 'winProbability', 'bidBondMinor'])
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes) || Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !editableFields.has(key))) throw new Error('حقل تعديل عرض السعر غير مسموح — راجع بيانات المستند')
         const merged: Quotation = { ...q, ...changes, lines: q.lines } /* البنود تُستبدل بعد التطبيع أدناه — لا تتسرب بنود النوع الفضفاض */
         const fullLines: QuotationLine[] = (changes.lines ?? q.lines).map((l) => ({
           nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
