@@ -33,3 +33,12 @@ it('يعرض بنود المشروع المرتبطة بالحصر دون الس
  expect((screen.getByLabelText('كمية البند 1') as HTMLInputElement).disabled).toBe(true)
  expect(screen.getByText(/الجدول للعرض فقط/)).toBeTruthy()
 })
+it('يعرض أثر العرض الفائز قبل تعديل الكميات والأسعار', () => {
+ useRawDataStore.setState({ quotations: [{ id: 1, projectId: S().projects[0].id, status: 'won' }] as never[] })
+ render(<MemoryRouter><ProjectsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)'))
+ expect((screen.getByLabelText('كمية البند 1') as HTMLInputElement).disabled).toBe(true)
+ expect((screen.getByLabelText('سعر البند 1') as HTMLInputElement).disabled).toBe(true)
+ expect((screen.getByLabelText('وصف البند 1') as HTMLInputElement).disabled).toBe(false)
+ expect(screen.getByText(/المشروع مرتبط بعرض فائز/)).toBeTruthy()
+})
