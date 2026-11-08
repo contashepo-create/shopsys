@@ -2922,7 +2922,7 @@ interface DataState {
   prepareProjectExtractDraft: (projectId: number, expectedRevision: number) => ProjectExtractDraft
   deleteProjectExtractDraft: (projectId: number, reason: string) => void
   deleteUnpostedSurvey: (projectId: number, reason: string) => void
-  saveProjectSurvey: (args: { projectId: number; lines: SurveyLine[]; expectedRevision: number; reason: string; isFinal: boolean }) => ProjectSurvey
+  saveProjectSurvey: (args: { projectId: number; lines: SurveyLine[]; expectedRevision: number; reason: string; isFinal: boolean; measurementDate?: string }) => ProjectSurvey
   deleteUnpostedProject: (id: number, reason: string, expectedFingerprint?: string) => void
   previewProjectDeletionFingerprint: (id: number) => string
   addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
@@ -15452,7 +15452,12 @@ export const useRawDataStore = create<DataState>()(
         assertProjectExtractRefundIntegrity(history, journal)
         const matches = state.projectSurveys.filter(row => row.projectId === project.id)
         if (matches.length > 1 || (matches.length && !scoped.projectSurveys.some(row => row.id === matches[0].id))) throw new Error('حصر المشروع غير فريد أو تابع لفرع آخر — راجع البيانات')
-        const survey = reviseProjectSurvey({ survey: matches[0], projectId: project.id, items, history, lines: args.lines, source: 'manual', reason: args.reason, at: localIsoTimestamp(), by: activeUserName(state), isFinal: args.isFinal, expectedRevision: args.expectedRevision })
+        if (args.measurementDate != null) {
+          const date = args.measurementDate
+          if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ قياس الحصر غير صالح أو في المستقبل')
+          if (matches[0]?.revisions.some(row => row.measurementDate != null && (!isValidExpiryDate(row.measurementDate) || row.measurementDate > date)) || history.some(row => !isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > date)) throw new Error('تاريخ القياس يسبق مراجعة قياس أو مستخلصاً مسجلاً — راجع التسلسل')
+        }
+        const survey = reviseProjectSurvey({ survey: matches[0], projectId: project.id, items, history, lines: args.lines, source: 'manual', measurementDate: args.measurementDate, reason: args.reason, at: localIsoTimestamp(), by: activeUserName(state), isFinal: args.isFinal, expectedRevision: args.expectedRevision })
         if (!matches[0]) survey.id = nextSurveyId(state, project.id)
         set({ projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), survey] })
         return survey

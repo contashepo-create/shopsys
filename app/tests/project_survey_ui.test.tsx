@@ -7,6 +7,7 @@ import { ProjectExtractsPage } from '../src/ui/pages/ContractingPages.tsx'
 import { usePrintPreview } from '../src/ui/components/printPreviewStore.ts'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
+import { todayLocalIso } from '../src/core/time.ts'
 const original = useRawDataStore.getState(), app = useAppStore.getState(), S = () => useRawDataStore.getState()
 beforeEach(() => {
  const setup = { ...app.setup, completed: true, shopName: 'منشأة', countryCode: 'EG', activityId: 'contracting' as const, modules: ['contracting'] as never[], vatPercent: 0 }
@@ -102,4 +103,22 @@ it('محضر إقفال كميات بعد استخراج كل الحصر قاب�
  fireEvent.click(screen.getByText('محاضر إقفال الكميات'))
  fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
  expect(usePrintPreview.getState().handle?.html).toContain('محضر إقفال كميات الأعمال — غير مالي')
+})
+
+it('يعرض تقويم يوم القياس ويحفظ الماضي مع سجل ونسخة طباعة منفصلين عن وقت التسجيل', async () => {
+ renderPages(); select()
+ const date = screen.getByLabelText('تاريخ قياس الحصر') as HTMLInputElement
+ expect(date.type).toBe('date'); expect(date.value).toBe(todayLocalIso())
+ const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+ const chosen = todayLocalIso(yesterday)
+ fireEvent.change(date, { target: { value: chosen } })
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '100' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(1))
+ expect(S().projectSurveys[0].revisions[0].measurementDate).toBe(chosen)
+ expect(S().projectSurveys[0].revisions[0].at.slice(0, 10)).toBe(todayLocalIso())
+ expect(screen.getByText(/سجل المراجعات/).parentElement?.textContent).toContain(`تاريخ القياس ${chosen}`)
+ fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
+ expect(usePrintPreview.getState().handle?.html).toContain(`تاريخ قياس المراجعة الأخيرة:</b> ${chosen}`)
+ expect(S().journal).toHaveLength(0)
 })
