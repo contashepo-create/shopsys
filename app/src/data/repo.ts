@@ -16157,10 +16157,7 @@ export const useRawDataStore = create<DataState>()(
             throw new Error('لا يمكن تحويل العرض إلى مشروع بدقة بسبب تقريب صافي سعر الوحدة؛ راجع كمية البند أو سعره قبل التحويل')
           }
         }
-        // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
-        // (الحد المالي الاختياري — إن وُجد — يُقاس بصافي قيمة العقد الناتج)
-        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
-        const project = get().addProject({
+        const project = prepareNewProject(get(), {
           nameAr: q.titleAr,
           clientName: q.clientName,
           clientId: q.clientId ?? null, // الربط الإداري ينتقل مع التحويل — بلا أي أثر مالي
@@ -16182,7 +16179,11 @@ export const useRawDataStore = create<DataState>()(
           estCostMinor: l.estCostMinor,
           progressPercent: 0,
         }))
+        // لا يستهلك الاعتماد قبل تحقق المشروع والبنود؛ استهلاكه ما زال مساراً منفصلاً.
+        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
+        // تُنشر هوية المشروع وبنوده وربطه بالعرض معاً؛ لا تُظهر اللقطة مشروعاً ناقصاً.
         set((s) => ({
+          projects: [...s.projects, project],
           quotations: s.quotations.map((x) => (x.id === id ? { ...x, projectId: project.id } : x)),
           boqItems: [...s.boqItems, ...boq],
         }))

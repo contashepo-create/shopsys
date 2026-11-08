@@ -37,3 +37,11 @@ describe('نقل ضريبة عرض السعر إلى الفاتورة دون ت�
     expect(() => quotationInvoicePrices([line(100, 0, false, 0.1234)], true, false, 2)).toThrow(/كمية/)
   })
 })
+
+it('يوثق اختلاف إعادة احتساب عرض شامل قديم لم يحتفظ بإجمالي تاريخي', () => {
+  const input = line(4, 15, true)
+  const oldNet = Math.round(input.qty * input.unitPriceMinor * 100 / 115)
+  const oldTax = Math.round(oldNet * 15 / 100)
+  expect({ net: oldNet, tax: oldTax, gross: oldNet + oldTax }).toEqual({ net: 3, tax: 0, gross: 3 })
+  expect(quotationTotals([input])).toEqual({ netMinor: 3, taxMinor: 1, grossMinor: 4 })
+})

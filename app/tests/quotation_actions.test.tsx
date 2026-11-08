@@ -232,3 +232,26 @@ it('يمنع المستخدم الموقوف من تعديل عرض ولو بق�
   expect(() => before.deleteQuotation(7)).toThrow('صلاحية')
   expect(useRawDataStore.getState()).toBe(before)
 })
+
+it('تحويل العرض يضيف المشروع وبنوده ويربط العرض في تحديث واحد دون ظهور مشروع ناقص', () => {
+  useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], projects: [], boqItems: [], approvalFlows: [], approvalRequests: [] })
+  const seen: { projects: number; boq: number; linked: number | null }[] = []
+  const off = useRawDataStore.subscribe(state => {
+    if (state.projects.length) seen.push({ projects: state.projects.length, boq: state.boqItems.length, linked: state.quotations[0].projectId })
+  })
+  try {
+    const project = useRawDataStore.getState().convertQuotationToProject(7, 5)
+    expect(seen).toEqual([{ projects: 1, boq: 1, linked: project.id }])
+    expect(useRawDataStore.getState().journal).toHaveLength(raw.journal.length)
+  } finally { off() }
+})
+
+it('لا يستهلك اعتماد التحويل إذا تعذر إعداد المشروع لعميل محذوف', () => {
+  useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], customers: [], projects: [], boqItems: [], approvalFlows: [{ id: 1, action: 'quotation_to_project', active: true, steps: [] }] as never, approvalRequests: [{ id: 10, action: 'quotation_to_project', refId: 7, status: 'approved', consumedAt: null }] as never })
+  const before = useRawDataStore.getState()
+  expect(() => before.convertQuotationToProject(7, 5)).toThrow(/العميل/)
+  expect(useRawDataStore.getState().approvalRequests).toBe(before.approvalRequests)
+  expect(useRawDataStore.getState().projects).toBe(before.projects)
+  expect(useRawDataStore.getState().boqItems).toBe(before.boqItems)
+  expect(useRawDataStore.getState().quotations).toBe(before.quotations)
+})
