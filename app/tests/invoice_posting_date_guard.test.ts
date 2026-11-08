@@ -27,6 +27,8 @@ describe('تاريخ ترحيل فواتير البيع والشراء', () => {
   const sold = state.postSale(sale(date)), bought = state.postPurchase(purchase(date))
   expect(sold.date.slice(0, 10)).toBe(date); expect(bought.date).toBe(date)
   expect(useRawDataStore.getState().journal.filter(row => row.sourceType === 'sale' || row.sourceType === 'purchase').map(row => row.date)).toEqual([date, date])
+  expect(useRawDataStore.getState().journal.find(row => row.sourceType === 'sale')?.createdAt.slice(0, 10)).toBe('2026-11-05')
+  expect(useRawDataStore.getState().journal.find(row => row.sourceType === 'purchase')?.createdAt.slice(0, 10)).toBe('2026-11-05')
  })
  it('يرفض الماضي داخل السنة المقفلة قبل إنشاء طلب اعتماد أو حركة', () => {
   useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: 'مقفلة', startDate: '2026-01-01', endDate: '2026-11-04', status: 'closed' }], approvals: { ...app.approvals, enabled: true, scope: ['sale', 'purchase'], thresholdMinor: 0 } })

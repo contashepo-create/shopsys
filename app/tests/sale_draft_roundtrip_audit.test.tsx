@@ -105,7 +105,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
   it('يستعيد تاريخ الفاتورة والضريبة والتحصيل المجزأ وقيمه', () => {
     const view = mount()
     fireEvent.change(screen.getByLabelText('نمط تحرير الفاتورة'), { target: { value: 'advanced' } })
-    fireEvent.change(screen.getByLabelText('تاريخ الفاتورة — يمكن إنشاء فاتورة بتاريخ سابق أو لاحق'), { target: { value: '2026-03-05' } })
+    fireEvent.change(screen.getByLabelText('تاريخ الفاتورة — يمكن اختيار تاريخ سابق؛ لا يتغير عند تعديل فاتورة مرحلة'), { target: { value: '2026-03-05' } })
     const tax = document.querySelector<HTMLInputElement>('[data-invoice-tax-toggle] input')!
     expect(tax.checked).toBe(true)
     fireEvent.click(tax)
@@ -117,7 +117,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     const draft = useRawDataStore.getState().advancedInvoiceDrafts[0]
     expect(JSON.parse(draft.payload)).toMatchObject({ invoiceDate: '2026-03-05', applyTax: false, multiPay: true, bankPaid: '20' })
     view.unmount(); mount(); restore(draft.id)
-    expect((screen.getByLabelText('تاريخ الفاتورة — يمكن إنشاء فاتورة بتاريخ سابق أو لاحق') as HTMLInputElement).value).toBe('2026-03-05')
+    expect((screen.getByLabelText('تاريخ الفاتورة — يمكن اختيار تاريخ سابق؛ لا يتغير عند تعديل فاتورة مرحلة') as HTMLInputElement).value).toBe('2026-03-05')
     expect(document.querySelector<HTMLInputElement>('[data-invoice-tax-toggle] input')?.checked).toBe(false)
     expect((screen.getByLabelText(/تحصيل متعدد/) as HTMLInputElement).checked).toBe(true)
     expect(document.querySelector<HTMLInputElement>('[data-pay-line="bank"] input')?.value).toBe('20')
@@ -243,9 +243,9 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
   })
   it('يرفض فتح مسودة مرتبطة بفواتير أخرى في فاتورة جديدة', () => {
     useRawDataStore.setState({ advancedInvoiceDrafts: [{ id: 'edit-other', kind: 'sale', name: 'تعديل', createdAt: '2026', updatedAt: '2026', payload: JSON.stringify({ editingSaleId: 44, partyKind: 'customer', lines: [], invoiceDate: '2024-01-01' }) }] })
-    mount(); const before = (screen.getByLabelText('تاريخ الفاتورة — يمكن إنشاء فاتورة بتاريخ سابق أو لاحق') as HTMLInputElement).value
+    mount(); const before = (screen.getByLabelText('تاريخ الفاتورة — يمكن اختيار تاريخ سابق؛ لا يتغير عند تعديل فاتورة مرحلة') as HTMLInputElement).value
     restore('edit-other')
     expect(screen.getByText(/افتح مسودة التعديل داخل الفاتورة الأصلية/)).toBeTruthy()
-    expect((screen.getByLabelText('تاريخ الفاتورة — يمكن إنشاء فاتورة بتاريخ سابق أو لاحق') as HTMLInputElement).value).toBe(before)
+    expect((screen.getByLabelText('تاريخ الفاتورة — يمكن اختيار تاريخ سابق؛ لا يتغير عند تعديل فاتورة مرحلة') as HTMLInputElement).value).toBe(before)
   })
 })

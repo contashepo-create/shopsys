@@ -8839,7 +8839,7 @@ export const useRawDataStore = create<DataState>()(
           lines: entryLines,
           ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
-          createdAt: now,
+          createdAt: stamp,
           reversedByEntryId: null,
           reversesEntryId: null,
         }
@@ -8918,8 +8918,8 @@ export const useRawDataStore = create<DataState>()(
           const commissionId = nextId(state.staffCommissions) + index
           const commissionEntryId = entryId + 1 + index
           const code = `SCM-${String(commissionId).padStart(4, '0')}`
-          commissionEntries.push({ id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10), description: `استحقاق عمولة ${code} — ${employee.nameAr}`, sourceType: 'staff_commission', sourceId: commissionId, lines: buildStaffCommissionAccrual(input.amountMinor, employee.nameAr, description), createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null })
-          commissions.push({ id: commissionId, code, employeeId: employee.id, source: 'sale', sourceId: saleId, description, amountMinor: input.amountMinor, date: now.slice(0, 10), status: 'accrued', accrualEntryId: commissionEntryId, payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(get()), createdAt: now })
+          commissionEntries.push({ id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10), description: `استحقاق عمولة ${code} — ${employee.nameAr}`, sourceType: 'staff_commission', sourceId: commissionId, lines: buildStaffCommissionAccrual(input.amountMinor, employee.nameAr, description), createdBy: activeUserName(get()), createdAt: stamp, reversedByEntryId: null, reversesEntryId: null })
+          commissions.push({ id: commissionId, code, employeeId: employee.id, source: 'sale', sourceId: saleId, description, amountMinor: input.amountMinor, date: now.slice(0, 10), status: 'accrued', accrualEntryId: commissionEntryId, payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(get()), createdAt: stamp })
         }
 
         // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
