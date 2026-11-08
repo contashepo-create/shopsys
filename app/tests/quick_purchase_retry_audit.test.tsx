@@ -1,3 +1,4 @@
+import { todayLocalIso } from '../src/core/time.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -40,6 +41,22 @@ describe('إعادة محاولة الشراء السريع بعد تعذر تأ
     expect(S().purchases).toHaveLength(1)
     expect(S().journal).toHaveLength(1)
     expect(S().items[0].stockQty).toBe(11)
+  })
+  it('يسجل التاريخ السابق ويحميه عند إعادة المحاولة بعد تعذر تأكيد الحفظ', async () => {
+    openAndFill()
+    const field = screen.getByLabelText('تاريخ فاتورة الشراء السريع') as HTMLInputElement
+    expect(field.value).toBe(todayLocalIso())
+    const day = new Date(); day.setDate(day.getDate() - 1)
+    const previous = todayLocalIso(day)
+    fireEvent.change(field, { target: { value: previous } })
+    fireEvent.click(screen.getByRole('button', { name: /ترحيل الفاتورة/ }))
+    await waitFor(() => expect(useToast.getState().msg).toContain('فشل تأكيد الحفظ'))
+    expect(S().purchases[0].date).toBe(previous)
+    expect(S().journal[0].date).toBe(previous)
+    fireEvent.change(field, { target: { value: todayLocalIso() } })
+    fireEvent.click(screen.getByRole('button', { name: /ترحيل الفاتورة/ }))
+    expect(useToast.getState().msg).toContain('أعد القيم')
+    expect(S().purchases).toHaveLength(1)
   })
   it('لا يعرض نجاح التغييرات الجديدة على فاتورة رُحلت سابقاً عند إعادة المحاولة', async () => {
     openAndFill()

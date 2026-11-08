@@ -114,6 +114,7 @@ export function PurchasesPage() {
   }
 
   const [open, setOpen] = useState(false)
+  const [purchaseDate, setPurchaseDate] = useState(() => todayLocalIso())
   const [isPosting, setIsPosting] = useState(false)
   const postingRef = useRef(false)
   // مفتاح يبقى ثابتاً طوال فتح المحرر، بما في ذلك فشل تأكيد التخزين بعد الترحيل.
@@ -324,6 +325,7 @@ export function PurchasesPage() {
   const openNew = () => {
     quickPurchaseDraftId.current = crypto.randomUUID()
     postedQuickSignature.current = null
+    setPurchaseDate(todayLocalIso())
     setSupplierId(0)
     setLines([makeDraftLine()])
     setExpenses([])
@@ -403,7 +405,7 @@ export function PurchasesPage() {
     }
   })()
 
-  const invoiceSignature = JSON.stringify({ supplierId, lines, expenses, paid, paySource, warehouseId, projectId, notes, taxPolicy: taxPolicy.effectivePercent })
+  const invoiceSignature = JSON.stringify({ purchaseDate, supplierId, lines, expenses, paid, paySource, warehouseId, projectId, notes, taxPolicy: taxPolicy.effectivePercent })
   const unsaved = useUnsavedChangesGuard(invoiceSignature)
   useEffect(() => { if (open) unsaved.markClean() }, [open, unsaved])
 
@@ -436,7 +438,7 @@ export function PurchasesPage() {
     const inv = postPurchase({
       sourceDraftId,
       supplierId,
-      date: todayLocalIso(),
+      date: purchaseDate,
       lines: preview.landed.map((l, i) => {
         const d = enteredLines[i]
         return {
@@ -629,6 +631,9 @@ export function PurchasesPage() {
                 onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
                 autoFocus
               /></div>{supplierId > 0 ? <button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="mt-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}</div>
+            </Field>
+            <Field label="تاريخ الفاتورة" hint="اليوم افتراضياً؛ يمكن إدخال تاريخ سابق في سنة مفتوحة">
+              <input type="date" max={todayLocalIso()} value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} aria-label="تاريخ فاتورة الشراء السريع" className={inputCls} />
             </Field>
           </div>
           {warehouses.length > 1 && (
