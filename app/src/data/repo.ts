@@ -5779,6 +5779,15 @@ export function getBranchScopedDataState(state: DataState): DataState {
   return scoped
 }
 
+/** لا تُستعمل ملكية مشروع لتجاوز فرع صريح في بند أو مستند مرتبط. */
+function assertProjectRelatedBranches(state: DataState, project: Project, projectBranch: Branch): void {
+  // السجل القديم بلا فرع يبقى مرتبطاً بالمشروع؛ المختلف صراحة يحتاج مراجعة.
+  const related = [state.boqItems, state.projectSurveys, state.projectExtractDrafts, state.projectCloseouts, state.changeOrders]
+  if (related.some(rows => rows.some(row => row.projectId === project.id && (row as BranchScopedRecord).branchId != null && (row as BranchScopedRecord).branchId !== projectBranch.id))) {
+    throw new Error('بند أو مستند للمشروع تابع صراحة لفرع آخر — راجع الارتباط قبل المتابعة')
+  }
+}
+
 /** إلى أن يُدعم عميل مستقل لكل فرع في المشروع الواحد، لا تُنشأ ذمة عابرة للفروع. */
 function assertProjectCustomerBranch(state: DataState, project: Project, extract?: ProjectExtract): void {
   if (!state.branches.length) return
@@ -5787,6 +5796,7 @@ function assertProjectCustomerBranch(state: DataState, project: Project, extract
   if (projectBranches.length !== 1 || (active && projectBranches[0].id !== active.id)) throw new Error('المشروع تابع لفرع آخر لا الفرع الحالي أو أن فرعه غير واضح')
   const projectBranch = projectBranches[0]
   if (!active && !projectBranch.isMain) throw new Error('اختر الفرع قبل إصدار أو تعديل مستخلص مشروع فرعي')
+  assertProjectRelatedBranches(state, project, projectBranch)
   if ((extract && !belongsToBranch(extract, projectBranch, state.branches))
     || state.projectExtracts.some(item => item.projectId === project.id && !belongsToBranch(item, projectBranch, state.branches))
     || state.clientAdvances.some(item => item.projectId === project.id && !belongsToBranch(item, projectBranch, state.branches))) {
@@ -15462,6 +15472,12 @@ export const useRawDataStore = create<DataState>()(
           if (!user || !effectivePermissionsFor(user, roles).has('contracting.project.delete')) throw new Error('لا تملك صلاحية حذف المشروع')
         }
         if (!reason.trim()) throw new Error('سبب حذف المشروع مطلوب')
+        if (state.branches.length) {
+          const owners = state.branches.filter(branch => belongsToBranch(project, branch, state.branches))
+          if (owners.length !== 1) throw new Error('فرع المشروع غير واضح — راجع الارتباط قبل الحذف')
+          assertProjectRelatedBranches(state, project, owners[0])
+        }
+        if (state.changeOrders.some(order => order.projectId === id && order.status !== 'draft')) throw new Error('المشروع يتضمن أمر تغيير محسوم — احتفظ بمستند العقد وراجع ارتباطه قبل الحذف')
         if (expectedFingerprint != null && expectedFingerprint !== projectDeletionFingerprint(scoped, id)) throw new Error('تغير المشروع أو متعلقاته منذ التأكيد — راجعه قبل الحذف')
         if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — راجع حالته قبل الحذف')
         const projectBoqIds = new Set(state.boqItems.filter(item => item.projectId === id).map(item => item.id))

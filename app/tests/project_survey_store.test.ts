@@ -162,3 +162,32 @@ it('إعادة الحصر بعد الحذف تستعمل هوية جديدة و�
  expect(second.id).not.toBe(first.id)
  expect(S().surveyDeletionRecords[0].id).toBe(first.id)
 })
+
+it('يرفض الحصر والمستخلص إذا احتوى مشروع على بند مؤرخ صراحة لفرع آخر حتى في عرض كل الفروع', () => {
+ const { p, b } = setup()
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+ useRawDataStore.setState({ branches: branches as never, activeBranchId: null, projects: S().projects.map(row => ({ ...row, branchId: 1 })) as never, customers: S().customers.map(row => ({ ...row, branchId: 1 })) as never, boqItems: S().boqItems.map(row => ({ ...row, branchId: 2 })) as never })
+ const before = S()
+ expect(() => S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })).toThrow(/فرع/)
+ expect(() => extract(p.id, b.id, 100)).toThrow(/فرع/)
+ expect(S().projectSurveys).toBe(before.projectSurveys)
+ expect(S().projectExtracts).toBe(before.projectExtracts)
+ expect(S().journal).toBe(before.journal)
+})
+
+it.each(['boqItems', 'projectSurveys', 'projectExtractDrafts', 'changeOrders'] as const)('يرفض مستند المشروع الموسوم بفرع آخر (%s) دون أي قيد', collection => {
+ const { p, b } = setup()
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+ const foreign = collection === 'boqItems' ? { boqItems: [{ ...b, branchId: 2 }] } : collection === 'projectSurveys' ? { projectSurveys: [{ id: 10, projectId: p.id, branchId: 2, lines: [], revisions: [] }] } : collection === 'projectExtractDrafts' ? { projectExtractDrafts: [{ id: 10, projectId: p.id, branchId: 2 }] } : { changeOrders: [{ id: 10, projectId: p.id, branchId: 2, amountMinor: 100000, status: 'approved' }] }
+ useRawDataStore.setState({ ...foreign, branches: branches as never, activeBranchId: 1, projects: S().projects.map(row => ({ ...row, branchId: 1 })) as never, customers: S().customers.map(row => ({ ...row, branchId: 1 })) as never } as never)
+ const before = S()
+ expect(() => S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })).toThrow(/فرع آخر/)
+ expect(() => extract(p.id, b.id, 100)).toThrow(/فرع آخر/)
+ expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+})
+it('يسمح ببند قديم بلا فرع صريح إذا ارتبط بمشروع الفرع', () => {
+ const { p, b } = setup()
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+ useRawDataStore.setState({ branches: branches as never, activeBranchId: 1, projects: S().projects.map(row => ({ ...row, branchId: 1 })) as never, customers: S().customers.map(row => ({ ...row, branchId: 1 })) as never })
+ expect(S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false }).lines[0].cumulativeQty).toBe(100)
+})

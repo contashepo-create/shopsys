@@ -80,3 +80,30 @@ it('حذف المشروع غير المرحّل يزيل العرض المرتب
  expect(S().quotationDeletionRecords[0]).toMatchObject({ projectId: project.id, quoteNumber: quote.quoteNumber })
  expect(S().journal).toBe(beforeJournal)
 })
+
+it.each(['approved', 'rejected', 'invoiced'] as const)('لا يمحو أمر تغيير محسوم %s عند حذف مشروع غير مرحل', status => {
+ const { project } = setup()
+ const order = S().addChangeOrder({ projectId: project.id, titleAr: 'أعمال إضافية', amountMinor: 100 })
+ S().setChangeOrderStatus(order.id, status === 'invoiced' ? 'approved' : status)
+ if (status === 'invoiced') S().setChangeOrderStatus(order.id, 'invoiced')
+ const before = S()
+ expect(() => S().deleteUnpostedProject(project.id, 'إلغاء')).toThrow(/أمر تغيير محسوم/)
+ expect(S().projects).toBe(before.projects)
+ expect(S().changeOrders).toBe(before.changeOrders)
+ expect(S().journal).toBe(before.journal)
+})
+it('يسمح بحذف أمر تغيير مسودة مع المشروع غير المرحل', () => {
+ const { project } = setup()
+ S().addChangeOrder({ projectId: project.id, titleAr: 'مسودة', amountMinor: 100 })
+ S().deleteUnpostedProject(project.id, 'إلغاء')
+ expect(S().changeOrders).toHaveLength(0)
+ expect(S().projectDeletionRecords).toHaveLength(1)
+})
+it('يرفض حذف بند موسوم بفرع آخر في عرض كل الفروع', () => {
+ const { project } = setup()
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+ useRawDataStore.setState({ branches: branches as never, activeBranchId: null, projects: S().projects.map(p => ({ ...p, branchId: 1 })) as never, boqItems: S().boqItems.map(b => ({ ...b, branchId: 2 })) as never })
+ const before = S()
+ expect(() => S().deleteUnpostedProject(project.id, 'إلغاء')).toThrow(/فرع آخر/)
+ expect(S().projects).toBe(before.projects); expect(S().boqItems).toBe(before.boqItems)
+})
