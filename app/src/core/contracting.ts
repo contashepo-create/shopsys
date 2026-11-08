@@ -43,6 +43,8 @@ export interface Project {
   retentionPercent: number // نسبة محتجز ضمان الأعمال من كل مستخلص
   startDate: string // YYYY-MM-DD
   status: ProjectStatus
+  /** وقت إقفال النظام الفعلي عند تحصيل المحتجز؛ قد لا يوجد في المشاريع القديمة. */
+  completedAt?: string
   notes: string
   /* بيانات تشغيلية موسعة (أمر التعديل: نماذج احترافية) — كلها اختيارية */
   contractNumber?: string // رقم العقد الرسمي مع الجهة

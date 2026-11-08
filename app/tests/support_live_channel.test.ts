@@ -311,3 +311,8 @@ describe('إرسال الدعم عند فقد الرد أو فشل إشعار ا
     expect(JSON.parse((await kv.get(`chat:${DEVICE}`)) ?? '[]')).toHaveLength(1)
   })
 })
+
+it('رد محادثة ليس مصفوفة لا يُعرض محادثة فارغة', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'not a conversation' }), { status: 200 })))
+  expect(await fetchConversation(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN)).toBeNull()
+})

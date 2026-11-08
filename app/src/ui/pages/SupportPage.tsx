@@ -27,6 +27,7 @@ export function SupportPage() {
   const [attachLog, setAttachLog] = useState(false)
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [conversationAvailable, setConversationAvailable] = useState<boolean | null>(null)
   /* حالة القناة للعرض: لا نقول «لا يوجد إنترنت» إلا بعد مسبار فعلي */
   const [channel, setChannel] = useState<{ ok: boolean; text: string } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -38,9 +39,10 @@ export function SupportPage() {
     try {
       const token = await getOrCreateSupportToken()
       const conv = await fetchConversation(SUPPORT_CLOUD_BASE_URL, deviceId, token)
-      if (conv) setMessages(conv)
+      if (conv === null) setConversationAvailable(false)
+      else { setMessages(conv); setConversationAvailable(true) }
     } catch {
-      /* جلب المحادثة تحسين — فشله لا يعطّل كتابة رسالة جديدة */
+      setConversationAvailable(false)
     } finally {
       setLoading(false)
     }
@@ -105,9 +107,16 @@ export function SupportPage() {
           </div>
         )}
 
+        {conversationAvailable === false && (
+          <div role="status" className="mx-3 mt-3 rounded-xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-200">
+            تعذر تحديث المحادثة؛ قد لا تظهر الرسائل المحفوظة. حاول تحديثها قبل إعادة إرسال رسالة غير مؤكدة.
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50 dark:bg-slate-900/30">
           {loading ? (
             <div className="text-center text-slate-400 text-[12px] py-10">جارٍ جلب المحادثة…</div>
+          ) : messages.length === 0 && conversationAvailable === false ? (
+            <div className="text-center text-slate-400 text-[12px] py-10">المحادثة غير متاحة حالياً — لا يمكن الجزم بأنها فارغة.</div>
           ) : messages.length === 0 ? (
             <div className="text-center text-slate-400 py-10 space-y-1">
               <div className="text-3xl">💬</div>

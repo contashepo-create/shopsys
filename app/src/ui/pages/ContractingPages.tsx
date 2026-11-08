@@ -65,7 +65,7 @@ export function ProjectsPage() {
   const navigate = useNavigate()
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId, projectSurveys, projectCloseouts, projectExtractDrafts,
-    addProject, addProjectWithBoq, addProjectExtract, releaseRetention, getProjectProfit,
+    addProject, addProjectWithBoq, addProjectExtract, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations,
@@ -699,6 +699,19 @@ export function ProjectsPage() {
   const viewEntries = journal.filter((e) => viewEntryIds.has(e.id))
 
   const [releaseFor, setReleaseFor] = useState<Project | null>(null)
+  const [releaseDate, setReleaseDate] = useState(todayLocalIso())
+  const [releaseBasis, setReleaseBasis] = useState('')
+  const [releaseSaving, setReleaseSaving] = useState(false)
+  const releasePending = useRef(false)
+  const releaseFingerprint = (projectId: number) => {
+    const state = useDataStore.getState(), raw = useRawDataStore.getState()
+    return JSON.stringify({ project: projectExtractFingerprint(state, projectId), releases: state.retentionReleases.filter(r => r.projectId === projectId), journal: state.journal.filter(j => state.projectExtracts.some(e => e.projectId === projectId && (e.journalEntryId === j.id || e.refunds?.some(r => r.journalEntryId === j.id))) || state.retentionReleases.some(r => r.projectId === projectId && r.journalEntryId === j.id)), user: raw.currentUserId })
+  }
+  const openRelease = (project: Project) => {
+    if (releasePending.current) return
+    setReleaseDate(todayLocalIso()); setReleaseTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
+    setReleaseBasis(releaseFingerprint(project.id)); setReleaseFor(project)
+  }
   const [releaseTreasury, setReleaseTreasury] = useState('1101')
   const [releaseTerminal, setReleaseTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
 
@@ -753,14 +766,25 @@ export function ProjectsPage() {
       setCoFor(null); setCoTitle(''); setCoAmount(''); setCoDeduct(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
-  const doRelease = () => {
-    if (!releaseFor) return
+  const doRelease = async () => {
+    if (!releaseFor || releasePending.current) return
+    releasePending.current = true; setReleaseSaving(true)
+    let committed = false
     try {
-      const terminal = paymentTerminals.find((row) => row.id === releaseTerminal.terminalId)
-      const r = releaseRetention(releaseFor.id, terminal?.settlementAccountCode ?? releaseTreasury, terminal ? { terminalId: terminal.id, providerReference: releaseTerminal.providerReference.trim(), cardLast4: releaseTerminal.cardLast4 || undefined } : undefined)
-      toast.show(`أُفرج عن محتجزات ${fmt(r.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
+      const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (releaseFingerprint(releaseFor.id) !== releaseBasis) throw new Error('تغير المشروع أو مستخلصاته أو محتجزه — أغلق النافذة وراجع البيانات')
+        const terminal = useDataStore.getState().paymentTerminals.find(row => row.id === releaseTerminal.terminalId)
+        if (releaseTerminal.terminalId && !terminal) throw new Error('ماكينة الدفع غير موجودة في الفرع الحالي')
+        const released = useRawDataStore.getState().releaseRetention(releaseFor.id, terminal?.settlementAccountCode ?? releaseTreasury, terminal ? { terminalId: terminal.id, providerReference: releaseTerminal.providerReference.trim(), cardLast4: releaseTerminal.cardLast4 || undefined } : undefined, releaseDate)
+        committed = true
+        return released
+      })
+      toast.show(`أُفرج عن محتجزات ${fmt(result.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
       setReleaseFor(null)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) { setReleaseFor(null); toast.show('سُجل التحصيل محلياً لكن تعذر تأكيد الحفظ — راجع المشروع والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { releasePending.current = false; setReleaseSaving(false) }
   }
 
   /* ═══ محرر مستند المشروع — نفس هيئة فاتورة البيع (طلب المالك: نافذة مثل نافذة الفاتورة تخدم المقاولات) ═══ */
@@ -1185,7 +1209,7 @@ export function ProjectsPage() {
                             <button onClick={() => openAdvance(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => { setCoDate(todayLocalIso()); setCoFor(p) }} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
-                              <button onClick={() => setReleaseFor(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
+                              <button onClick={() => openRelease(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                             )}
                           </>
                         )}
@@ -1606,17 +1630,18 @@ export function ProjectsPage() {
         )}
       </Modal>
 
-      <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''} subtitle="مستند إفراج: تحصيل ضمان انتهى أجله">
+      <Modal open={!!releaseFor} onClose={() => { if (!releasePending.current) setReleaseFor(null) }} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''} subtitle="مستند إفراج: تحصيل ضمان انتهى أجله">
         {releaseFor && (
           <div className="space-y-4">
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
             </div>
-            <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <Field label="تاريخ تحصيل المحتجز" hint="تاريخ القيد والتحصيل؛ لا يسبق المستخلصات، والماكينة بتاريخ اليوم فقط. إقفال المشروع يُسجّل وقتياً عند الحفظ."><input aria-label="تاريخ تحصيل المحتجز" type="date" max={todayLocalIso()} disabled={releaseSaving} value={releaseDate} onChange={event => setReleaseDate(event.target.value)} className={inputCls} /></Field>
+            <Field label="طريقة التحصيل"><fieldset disabled={releaseSaving} className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></fieldset></Field>
             <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بقيمة المحتجز المُفرج عنه · <b>1105 محتجزات ضمان أعمال</b> دائناً بإقفال الأصل — تحصيل حق قائم لا إيراد جديد.</DocOutcome>
             <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRelease} shortcut="F9">تحصيل وإقفال</Btn>
+              <Btn variant="ghost" disabled={releaseSaving} onClick={() => setReleaseFor(null)}>إلغاء</Btn>
+              <Btn onClick={() => void doRelease()} disabled={releaseSaving || !releaseDate} shortcut="F9">تحصيل وإقفال</Btn>
             </div>
           </div>
         )}

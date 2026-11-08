@@ -646,6 +646,8 @@ export interface RetentionRelease {
   id: number
   projectId: number
   date: string
+  /** وقت التسجيل الفعلي؛ غير متوفر بالضرورة في السجلات السابقة. */
+  createdAt?: string
   amountMinor: number
   journalEntryId: number
 }
@@ -3020,7 +3022,7 @@ interface DataState {
   /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
   getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
-  releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { amount: number }
+  releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }, date?: string) => { amount: number }
   /** المحتجز المتبقي (غير المُفرَج عنه) لمشروع — سد فجوة تقرير النشاط #11: تذكير استحقاق الإفراج */
   getRemainingRetention: (projectId: number) => number
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
@@ -17698,35 +17700,64 @@ export const useRawDataStore = create<DataState>()(
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
         return held - released
       },
-      releaseRetention: (projectId, treasury = '1101', terminalPaymentInput) => {
-        const state = get()
-        const project = state.projects.find((p) => p.id === projectId)
-        if (!project) throw new Error('المشروع غير موجود')
-        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
-        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+      releaseRetention: (projectId, treasury = '1101', terminalPaymentInput, selectedDate) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find((p) => p.id === projectId)
+        if (!project || state.projects.filter(p => p.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        assertProjectCustomerBranch(state, project)
+        if (project.status !== 'active') throw new Error('المشروع مقفل')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تحصيل محتجز المشروع')
+        }
+        const now = localIsoTimestamp(), date = selectedDate ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ تحصيل المحتجز غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ التحصيل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (terminalPaymentInput && date !== now.slice(0, 10)) throw new Error('تاريخ عملية الماكينة لا يُعدّل إلى يوم سابق — راجع إثبات التحصيل')
+        const extracts = state.projectExtracts.filter(e => e.projectId === projectId)
+        const releases = state.retentionReleases.filter(r => r.projectId === projectId)
+        if (scoped.retentionReleases.filter(r => r.projectId === projectId).length !== releases.length) throw new Error('تحصيل محتجز مرتبط بفرع آخر — راجع الارتباط')
+        if (extracts.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date) || releases.some(r => !isValidExpiryDate(r.date?.slice(0, 10)) || r.date.slice(0, 10) > date)) throw new Error('تاريخ التحصيل يسبق مستخلصاً أو تحصيلاً مسجلاً — راجع تسلسل المحتجز')
+        const journal = customerReviewJournal(state)
+        for (const extract of extracts) {
+          assertProjectCustomerBranch(state, project, extract)
+          assertProjectExtractOriginalIntegrity(extract, journal)
+        }
+        assertProjectExtractRefundIntegrity(extracts, journal)
+        const releaseEntries = new Set<number>()
+        for (const prior of releases) {
+          const entry = journal.get(prior.journalEntryId)
+          if (!Number.isSafeInteger(prior.amountMinor) || prior.amountMinor <= 0 || releaseEntries.has(prior.journalEntryId) || !entry || entry.sourceType !== 'retention_release' || entry.sourceId !== prior.id || (entry.sourceCollection != null && entry.sourceCollection !== 'retentionReleases') || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.date !== prior.date.slice(0, 10) || !Array.isArray(entry.lines) || entry.lines.length !== 2 || !entry.lines.some(line => line.accountCode === '1105' && line.credit === prior.amountMinor && line.debit === 0) || !entry.lines.some(line => line.accountCode !== '1105' && line.debit === prior.amountMinor && line.credit === 0)) throw new Error('سجل تحصيل المحتجز أو قيده غير متطابق — راجع الدفتر')
+          releaseEntries.add(prior.journalEntryId)
+        }
+        const held = extracts.reduce((a, e) => a + e.totals.retentionMinor, 0)
+        const released = releases.reduce((a, r) => a + r.amountMinor, 0)
         const remaining = held - released
-        const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury) // يرمي لو صفر
-        const now = localIsoTimestamp()
+        if (!Number.isSafeInteger(held) || !Number.isSafeInteger(released) || !Number.isSafeInteger(remaining)) throw new Error('رصيد المحتجز غير صالح — راجع الدفتر')
+        const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury)
+        assertTreasuryForPosting(state, treasury, 'receipt', remaining)
         const id = nextId(state.retentionReleases)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `إفراج عن محتجزات ${project.nameAr} وإقفال المشروع`,
           sourceType: 'retention_release', sourceId: id, sourceCollection: 'retentionReleases', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (terminalPaymentInput) {
-          const terminal = state.paymentTerminals.find((row) => row.id === terminalPaymentInput.terminalId)
-          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          const terminal = scoped.paymentTerminals.find((row) => row.id === terminalPaymentInput.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل في الفرع الحالي')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === terminalPaymentInput.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', remaining)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `retention:${id}`, amountMinor: remaining, providerReference: terminalPaymentInput.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPaymentInput.cardLast4 })
         }
         set({
-          retentionReleases: [...state.retentionReleases, { id, projectId, date: now, amountMinor: remaining, journalEntryId: entryId }],
+          retentionReleases: [...state.retentionReleases, { id, projectId, date, createdAt: now, amountMinor: remaining, journalEntryId: entryId }],
           journal: [...state.journal, entry],
-          projects: state.projects.map((p) => (p.id === projectId ? { ...p, status: 'completed' as const } : p)),
+          projects: state.projects.map((p) => (p.id === projectId ? { ...p, status: 'completed' as const, completedAt: now } : p)),
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return { amount: remaining }
