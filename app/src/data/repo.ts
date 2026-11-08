@@ -554,7 +554,9 @@ export interface ProjectExtract {
   id: number
   extractNumber: string
   projectId: number
-  date: string // ISO
+  date: string // يوم إصدار المستند؛ قد يحمل ختم تاريخي
+  /** وقت تسجيل النظام الفعلي؛ الأقدم قد لا يملكه. */
+  createdAt?: string
   description: string
   payment: 'cash' | 'credit'
   totals: ExtractTotals
@@ -2954,7 +2956,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; sourceSurveyDraft?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; date?: string; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; sourceSurveyDraft?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
   /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
@@ -16739,6 +16741,18 @@ export const useRawDataStore = create<DataState>()(
         if (!project) throw new Error('المشروع غير موجود')
         assertProjectCustomerBranch(state, project)
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل إصدار المستخلص')
+        const documentDate = args.date ?? todayLocalIso()
+        assertInvoicePostingDate(state, documentDate)
+        if (args.terminalPayment && documentDate !== todayLocalIso()) throw new Error('تحصيل الماكينة للمستخلص بتاريخ اليوم فقط — راجع إثبات التحصيل')
+        if (state.projectExtracts.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > documentDate))) throw new Error('تاريخ المستخلص يسبق مستخلصاً مسجلاً — راجع تسلسل الأعمال')
+        if ((args.advanceRecoveryMinor ?? 0) > 0 && state.clientAdvances.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date) || row.date > documentDate))) throw new Error('تاريخ المستخلص يسبق دفعة مقدمة مسجلة — راجع تسلسل الاسترداد')
+        if (documentDate < todayLocalIso()) {
+          const orders = state.changeOrders.filter(row => row.projectId === project.id && (row.status === 'approved' || row.status === 'invoiced'))
+          if (orders.some(row => !row.approvedAt || !Number.isFinite(Date.parse(row.approvedAt)) || todayLocalIso(new Date(row.approvedAt)) > documentDate)) throw new Error('لا يمكن تأريخ المستخلص قبل اعتماد أمر تغيير أو دون إثبات تاريخ اعتماده')
+          const survey = state.projectSurveys.find(row => row.projectId === project.id)
+          if (survey?.revisions.some(row => row.source === 'manual' && (!row.measurementDate || !isValidExpiryDate(row.measurementDate) || row.measurementDate > documentDate))) throw new Error('لا يمكن تأريخ المستخلص قبل قياس الحصر أو دون تاريخ قياس مثبت')
+        }
         /* §95 (محاذاة pro-acc — طلب المالك): سقف صارم — المستخلصات المتراكمة لا تتجاوز
            قيمة العقد الفعلية (الأصلية + أوامر التغيير المعتمدة/المستخلصة). الفارق؟ أمر تغيير. */
         const extractCeiling = (newGross: number, excludeExtractId?: number) => {
@@ -16821,13 +16835,13 @@ export const useRawDataStore = create<DataState>()(
         const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: documentDate,
           description: `مستخلص ${extractNumber} — ${project.nameAr}`,
           sourceType: 'project_extract', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const extract: ProjectExtract = {
-          id, extractNumber, projectId: project.id, date: now,
+          id, extractNumber, projectId: project.id, date: documentDate, createdAt: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
           lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
           ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
@@ -16883,6 +16897,7 @@ export const useRawDataStore = create<DataState>()(
         const scoped = getBranchScopedDataState(state)
         const extract = scoped.projectExtracts.find((e) => e.id === args.extractId)
         if (!extract) throw new Error('المستخلص غير موجود في هذا الفرع')
+        if (extract.createdAt && (!Number.isFinite(Date.parse(extract.createdAt)) || extract.date.slice(0, 10) !== todayLocalIso(new Date(extract.createdAt)))) throw new Error('المستخلص مؤرخ قبل وقت تسجيله — لا يُعدّل عبر مسار يعيد تأريخه؛ راجع المحاسب')
         const project = scoped.projects.find((p) => p.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
         assertProjectCustomerBranch(state, project, extract)

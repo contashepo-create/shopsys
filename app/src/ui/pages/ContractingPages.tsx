@@ -221,6 +221,7 @@ export function ProjectsPage() {
   /* مستخلص */
   const [extractFor, setExtractFor] = useState<Project | null>(null)
   const [exGross, setExGross] = useState('')
+  const [exDate, setExDate] = useState(todayLocalIso())
   const [exDesc, setExDesc] = useState('')
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
   const [exTreasury, setExTreasury] = useState('1101')
@@ -275,7 +276,7 @@ export function ProjectsPage() {
   const exHistory = projectExtracts.filter(ex => ex.projectId === extractFor?.id && (!editingExtract || ex.id < editingExtract.id))
   const exQtyPreview = quantityDraftPreview(extractBoq, exHistory, exQty, exQtyMode, exAcceptEstimate)
   const exEffectiveGross = exMode === 'lines' ? (exEntryKind === 'quantity' ? exQtyPreview.grossMinor : exLinesPreview.grossMinor) : toMinor(exGross, cur.decimals)
-  const exFinalSignature = JSON.stringify({ basis: extractFor ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id) : null, exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
+  const exFinalSignature = JSON.stringify({ basis: extractFor ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id) : null, exMode, exEntryKind, exQtyMode, exQty, exAcceptEstimate, exLines, exGross, exDate, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
   const applyPartialSlicePercent = (slicePct: number) => {
     setExEntryKind('percent')
     if (!extractFor) return
@@ -304,7 +305,7 @@ export function ProjectsPage() {
     const prj = projects.find((p) => p.id === ex.projectId)
     if (!prj) return
     setViewExtract(null)
-    setEditingExtract(ex)
+    setEditingExtract(ex); setExDate(ex.date.slice(0, 10))
     const usesQuantity = !!ex.lines?.some(line => line.newExecutedQty != null)
     setExEntryKind(usesQuantity ? 'quantity' : 'percent'); setExQtyMode('cumulative'); setExQty(Object.fromEntries((ex.lines ?? []).filter(line => line.newExecutedQty != null).map(line => [line.boqItemId, String(line.newExecutedQty)]))); setExAcceptEstimate(false); setExConfirmedFinal('')
     setExtractFor(prj)
@@ -371,7 +372,7 @@ export function ProjectsPage() {
       docTitle: exFinal ? 'مستخلص ختامي — أعمال منفذة' : 'مستخلص أعمال منفذة',
       invoiceNumber: 'مسودة',
       refCode: `PRX-${extractFor.code}`,
-      dateIso: todayLocalIso(),
+      dateIso: exDate,
       partyLabel: extractFor.clientName || 'الجهة المالكة',
       paymentLabel: `${exPayment === 'cash' ? 'تحصيل فوري' : 'آجل (مستحق على العميل)'} · المستحق ${formatMinor(dueMinor, cur, false)} ${cur.symbol}`,
       rows: exMode === 'lines' && exEntryKind === 'quantity'
@@ -410,7 +411,7 @@ export function ProjectsPage() {
         : undefined
       const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
       const ex = await withProjectExtractCommit(extractFor.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, extractFor.id), () => addProjectExtract({
-        projectId: extractFor.id,
+        projectId: extractFor.id, date: exDate,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
         extractQtyLines: exMode === 'lines' && exEntryKind === 'quantity' ? exQtyPreview.inputs : undefined,
@@ -939,7 +940,7 @@ export function ProjectsPage() {
           kind="sale"
           modeLabel={editingExtract ? 'تعديل مستخلص صادر — قيد عاكس وإعادة بناء' : 'مستخلص أعمال'}
           currencyLabel={`${cur.code} · ${cur.symbol}`}
-          dateLabel={editingExtract ? editingExtract.date.slice(0, 10) : todayLocalIso()}
+          dateLabel={exDate}
           branchLabel={setup.shopName ?? ''}
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
@@ -964,6 +965,7 @@ export function ProjectsPage() {
                   <input data-extract-edit-reason value={exReason} onChange={(e) => setExReason(e.target.value)} className={inputCls} placeholder="تصحيح نسبة إنجاز بند / تعديل الاسترداد…" />
                 </Field>
               )}
+              {!editingExtract && <Field label="تاريخ فاتورة المستخلص" hint="اليوم أو تاريخ سابق صالح؛ الماكينة بتاريخ اليوم فقط"><input aria-label="تاريخ فاتورة المستخلص" type="date" max={todayLocalIso()} value={exDate} onChange={event => setExDate(event.target.value)} className={inputCls} /></Field>}
               <Field label="وصف الأعمال المنفذة">
                 <input id="extract-desc-field" value={exDesc} onChange={(e) => setExDesc(e.target.value)} className={inputCls} placeholder="أعمال الأساسات…" />
               </Field>
@@ -2120,6 +2122,7 @@ export function ProjectExtractsPage() {
   const [acceptEstimatedPrior, setAcceptEstimatedPrior] = useState(false)
   const [confirmedFinalSignature, setConfirmedFinalSignature] = useState('')
   const [exGross, setExGross] = useState('')
+  const [exDate, setExDate] = useState(todayLocalIso())
   const [exVat, setExVat] = useState(vatEnabled)
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
   const [exTreasury, setExTreasury] = useState('1101')
@@ -2183,7 +2186,7 @@ export function ProjectExtractsPage() {
 
   const openNewExtractModal = (preselectProjectId?: number) => {
     setEditingExtractId(null)
-    setExReason('')
+    setExDate(todayLocalIso()); setExReason('')
     setExFinal(false)
     setExDesc('')
     setExRecovery('')
@@ -2223,7 +2226,7 @@ export function ProjectExtractsPage() {
   }, [searchParams, projects, projectSurveys, projectCloseouts, projectExtractDrafts, boqItems, projectExtracts])
 
   const openEditExtractModal = (ex: (typeof projectExtracts)[number]) => {
-    setEditingExtractId(ex.id)
+    setEditingExtractId(ex.id); setExDate(ex.date.slice(0, 10))
     const usesQuantity = !!ex.lines?.some(line => line.newExecutedQty != null)
     setLineEntryKind(usesQuantity ? 'quantity' : 'percent'); setQuantityMode('cumulative'); setQuantityValues(Object.fromEntries((ex.lines ?? []).filter(line => line.newExecutedQty != null).map(line => [line.boqItemId, String(line.newExecutedQty)]))); setAcceptEstimatedPrior(false); setConfirmedFinalSignature('')
     setSelectedProjectId(String(ex.projectId))
@@ -2275,7 +2278,7 @@ export function ProjectExtractsPage() {
 
   const qtyPreview = quantityDraftPreview(projectBoqWithPrev, priorExtracts, quantityValues, quantityMode, acceptEstimatedPrior)
   const effectiveGrossMinor = exMode === 'lines' ? (lineEntryKind === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor) : toMinor(exGross || '0', cur.decimals)
-  const finalSignature = JSON.stringify({ basis: selectedProject ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id) : null, selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
+  const finalSignature = JSON.stringify({ basis: selectedProject ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id) : null, selectedProjectId, exMode, lineEntryKind, quantityMode, quantityValues, acceptEstimatedPrior, exLines, exGross, exDate, exVat, vatPercent: setup.vatPercent, exPayment, exTreasury, exTerminal, exRecovery, exFinal })
   const retentionMinor = selectedProject ? Math.round((effectiveGrossMinor * selectedProject.retentionPercent) / 100) : 0
   const vatMinor = exVat ? Math.round((effectiveGrossMinor * setup.vatPercent) / 100) : 0
   const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
@@ -2421,7 +2424,7 @@ export function ProjectExtractsPage() {
       } else {
         const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
         const created = await withProjectExtractCommit(selectedProject.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, selectedProject.id), () => addProjectExtract({
-          projectId: selectedProject.id,
+          projectId: selectedProject.id, date: exDate,
           sourceSurveyDraft: fromSurveyDraft,
           grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
           extractLines: linesInput,
@@ -2651,6 +2654,7 @@ export function ProjectExtractsPage() {
                 ))}
               </select>
             </Field>
+            {!editingExtract && <Field label="تاريخ فاتورة المستخلص" hint="اليوم أو تاريخ سابق صالح؛ الماكينة بتاريخ اليوم فقط"><input aria-label="تاريخ فاتورة المستخلص" type="date" max={todayLocalIso()} value={exDate} onChange={event => setExDate(event.target.value)} className={inputCls} /></Field>}
             <Field label="طريقة تحصيل الفاتورة" hint={selectedProject && selectedProject.clientId == null ? 'المستخلص الآجل ذو المتبقي يتطلب عميلاً مرتبطاً بالمشروع قبل الإصدار' : undefined}>
               <div className="flex gap-2">
                 {([
