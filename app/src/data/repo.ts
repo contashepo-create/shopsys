@@ -3038,7 +3038,7 @@ interface DataState {
   addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number; date?: string }) => ChangeOrder
   setChangeOrderStatus: (id: number, status: 'approved' | 'invoiced' | 'rejected') => void
   /** دفعة مقدمة من عميل المشروع: نقدية ← 2109 (التزام حتى تنفيذ الأعمال) */
-  receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
+  receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; date?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
   /** رصيد الدفعات المقدمة غير المستردة لمشروع */
   getAdvanceBalance: (projectId: number) => number
   addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status' | 'supplierId' | 'taxWithholdPercent' | 'boqItemIds' | 'advanceRecoveryPercent' | 'progressPercent'> & { supplierId?: number | null; taxWithholdPercent?: number; boqItemIds?: number[]; advanceRecoveryPercent?: number }) => SubContract
@@ -17884,14 +17884,30 @@ export const useRawDataStore = create<DataState>()(
 
       receiveClientAdvance: (args) => {
         const state = get()
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find((p) => p.id === args.projectId)
+        if (!project || state.projects.filter(row => row.id === args.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        assertProjectCustomerBranch(state, project)
         if (project.status === 'completed') throw new Error('المشروع مقفل')
-        const lines = buildClientAdvanceEntry(args.amountMinor, args.treasury, project.nameAr)
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تسجيل دفعة المشروع')
+        }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('قيمة الدفعة المقدمة غير صالحة')
+        assertTreasuryForPosting(state, args.treasury, 'receipt', args.amountMinor)
         const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ الدفعة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ الدفعة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (args.terminalPayment && date !== now.slice(0, 10)) throw new Error('تاريخ عملية الماكينة لا يُعدّل إلى يوم سابق — راجع إثبات التحصيل')
+        // لا نعكس ترتيب FIFO ولا نُدرج دفعة قبل مستخلص مسجل دون إعادة بناء تاريخ التخصيص.
+        if (state.clientAdvances.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date) || row.date > date)) || state.projectExtracts.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > date))) throw new Error('تاريخ الدفعة يسبق دفعة أو مستخلصاً مسجلاً للمشروع — راجع تسلسل الاسترداد')
+        const lines = buildClientAdvanceEntry(args.amountMinor, args.treasury, project.nameAr)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `دفعة مقدمة من عميل ${project.nameAr}`,
           sourceType: 'client_advance', sourceId: project.id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -17899,13 +17915,13 @@ export const useRawDataStore = create<DataState>()(
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (args.terminalPayment) {
           const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
-          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== args.treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== args.treasury || (branch && terminal.branchId !== String(branch.id))) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل أو لا يتبع الفرع')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `advance:${project.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
         set({
-          clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date: now.slice(0, 10), amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
+          clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date, amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
           journal: [...state.journal, entry],
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })

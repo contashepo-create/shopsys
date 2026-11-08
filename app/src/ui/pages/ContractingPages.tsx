@@ -67,7 +67,7 @@ export function ProjectsPage() {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId, projectSurveys, projectCloseouts, projectExtractDrafts,
     addProject, addProjectWithBoq, addProjectExtract, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
-    receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
+    getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations,
     ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer, previewMissingProjectCustomerBackup, restoreMissingProjectCustomerBackup,
   } = useDataStore()
@@ -704,16 +704,37 @@ export function ProjectsPage() {
   /* دفعة مقدمة من العميل */
   const [advanceFor, setAdvanceFor] = useState<Project | null>(null)
   const [advAmount, setAdvAmount] = useState('')
+  const [advDate, setAdvDate] = useState(todayLocalIso())
+  const [advBasis, setAdvBasis] = useState('')
+  const [advSaving, setAdvSaving] = useState(false)
+  const advPending = useRef(false)
   const [advTreasury, setAdvTreasury] = useState('1101')
   const [advTerminal, setAdvTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
-  const saveAdvance = () => {
-    if (!advanceFor) return
+  const openAdvance = (project: Project) => {
+    if (advPending.current) return
+    setAdvDate(todayLocalIso()); setAdvAmount(''); setAdvTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
+    setAdvBasis(JSON.stringify({ fingerprint: projectExtractFingerprint(useDataStore.getState(), project.id), user: useRawDataStore.getState().currentUserId }))
+    setAdvanceFor(project)
+  }
+  const saveAdvance = async () => {
+    if (!advanceFor || advPending.current) return
+    let committed = false
+    advPending.current = true; setAdvSaving(true)
     try {
-      const terminal = paymentTerminals.find((row) => row.id === advTerminal.terminalId)
-      receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: terminal?.settlementAccountCode ?? advTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: advTerminal.providerReference.trim(), cardLast4: advTerminal.cardLast4 || undefined } : undefined })
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        const current = useDataStore.getState()
+        if (JSON.stringify({ fingerprint: projectExtractFingerprint(current, advanceFor.id), user: useRawDataStore.getState().currentUserId }) !== advBasis) throw new Error('تغير المشروع أو دفعاته أو مستخلصاته — أغلق النافذة وراجع البيانات قبل المحاولة')
+        const terminal = current.paymentTerminals.find(row => row.id === advTerminal.terminalId)
+        if (advTerminal.terminalId && !terminal) throw new Error('ماكينة الدفع غير موجودة في الفرع الحالي')
+        useRawDataStore.getState().receiveClientAdvance({ projectId: advanceFor.id, date: advDate, amountMinor: toMinor(advAmount, cur.decimals), treasury: terminal?.settlementAccountCode ?? advTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: advTerminal.providerReference.trim(), cardLast4: advTerminal.cardLast4 || undefined } : undefined })
+        committed = true
+      })
       toast.show('سُجلت الدفعة المقدمة كالتزام 2109 — تُسترد من المستخلصات ✅')
       setAdvanceFor(null); setAdvAmount('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) { setAdvanceFor(null); toast.show('سُجلت الدفعة محلياً لكن تعذر تأكيد الحفظ — راجع المشروع والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { advPending.current = false; setAdvSaving(false) }
   }
 
   /* أمر تغيير */
@@ -1159,7 +1180,7 @@ export function ProjectsPage() {
                       <div className="flex gap-1 justify-end">
                         {p.status === 'active' && (
                           <>
-                            <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
+                            <button onClick={() => openAdvance(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => { setCoDate(todayLocalIso()); setCoFor(p) }} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
                               <button onClick={() => setReleaseFor(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
@@ -1520,17 +1541,18 @@ export function ProjectsPage() {
 
       {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
       {/* دفعة مقدمة من العميل */}
-      <Modal open={!!advanceFor} onClose={() => setAdvanceFor(null)} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''} subtitle="مستند دفعة مقدمة: تحصيل قبل تنفيذ الأعمال">
+      <Modal open={!!advanceFor} onClose={() => { if (!advPending.current) setAdvanceFor(null) }} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''} subtitle="مستند دفعة مقدمة: تحصيل قبل تنفيذ الأعمال">
         {advanceFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-sky-500/5 rounded-xl p-3">
               الدفعة المقدمة التزام (2109) لا إيراد — لأن الأعمال لم تُنفَّذ بعد. تُسترد تدريجياً من المستخلصات القادمة.
               {getAdvanceBalance(advanceFor.id) > 0 && <> الرصيد الحالي: <b>{fmt(getAdvanceBalance(advanceFor.id))}</b></>}
             </div>
-            <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:advTreasury,terminalPayment:advTerminal}} onChange={value=>{setAdvTreasury(value.treasury);setAdvTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <Field label="تاريخ الدفعة" hint="يُحفظ في الدفعة والقيد؛ تحصيل الماكينة بتاريخ اليوم فقط. التواريخ السابقة لا تسبق دفعات أو مستخلصات مسجلة."><input type="date" max={todayLocalIso()} disabled={advSaving} aria-label="تاريخ الدفعة" value={advDate} onChange={event => setAdvDate(event.target.value)} className={inputCls} /></Field>
+            <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} disabled={advSaving} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="طريقة التحصيل"><fieldset disabled={advSaving} className="space-y-2"><PaymentMethodPicker value={{treasury:advTreasury,terminalPayment:advTerminal}} onChange={value=>{setAdvTreasury(value.treasury);setAdvTerminal(value.terminalPayment)}} operation="receipt"/></fieldset></Field>
             <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بالمحصَّل · <b>2109 دفعات مقدمة من العملاء</b> دائناً بنفس القيمة — التزام لا إيراد، يُسترد تدريجياً من المستخلصات القادمة.</DocOutcome>
-            <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
+            <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount || !advDate || advSaving}>استلام الدفعة</Btn>
           </div>
         )}
       </Modal>
