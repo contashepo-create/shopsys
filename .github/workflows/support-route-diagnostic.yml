@@ -2,6 +2,9 @@ name: Support route diagnostic
 # Read-only probes: no customer identity, message, credentials or KV writes.
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/support-route-diagnostic.yml'
 permissions:
   contents: read
 jobs:
