@@ -4,7 +4,7 @@ import { draftFromCategory } from '../src/core/items.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 const original = useRawDataStore.getState(), app = useAppStore.getState(), S = () => useRawDataStore.getState()
 beforeEach(() => {
- const setup = { ...app.setup, taxRegistrationStatus: 'not_registered' as const, vatPercent: 0 }
+ const setup = { ...app.setup, taxRegistrationStatus: 'registered' as const, vatPercent: 0 }
  useAppStore.setState({ setup, companySetup: setup })
  useRawDataStore.setState({ ...original, currentUserId: null, activeBranchId: null, branches: [], suppliers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'مورد', active: true }] as never, items: [{ ...draftFromCategory(undefined, 'A'), id: 1, nameAr: 'صنف', stockQty: 10, costMinor: 1000, priceMinor: 1500, isService: false }], purchaseOrders: [], pendingPartOrders: [], purchases: [], journal: [], serials: [], batches: [], variantStocks: [], warehouses: [] })
 })

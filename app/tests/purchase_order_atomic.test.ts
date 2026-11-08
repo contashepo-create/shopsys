@@ -11,7 +11,7 @@ const input = (sourcePurchaseOrderId: number, qty: number, sourceDraftId: string
 const addOrder = (qty = 3) => S().addPurchaseOrder({ supplierId: 7, supplierName: 'مورد', date: '2026-01-01', expectedDate: '2026-01-01', warehouseId: null, notes: '', lines: [{ itemId: 1, nameAr: 'صنف', qty, receivedQty: 0, unitAr: 'قطعة', unitPriceMinor: 1000, vatPercent: 0, notes: '' }] })
 
 beforeEach(() => {
-  const setup = { ...originalApp.setup, taxRegistrationStatus: 'not_registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
+  const setup = { ...originalApp.setup, taxRegistrationStatus: 'registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
   useAppStore.setState({ setup, companySetup: setup })
   useRawDataStore.setState({ ...original, currentUserId: null, activeBranchId: null, branches: [], suppliers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'مورد', phone: '', active: true }] as never, items: [{ ...draftFromCategory(undefined, 'A'), id: 1, nameAr: 'صنف', costMinor: 1000, priceMinor: 1500, stockQty: 10, isService: false }], purchases: [], purchaseOrders: [], purchaseReturns: [], journal: [], pendingPartOrders: [], warehouses: [], serials: [], batches: [], variantStocks: [] })
 })

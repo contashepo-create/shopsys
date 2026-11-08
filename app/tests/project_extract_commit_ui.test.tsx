@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 const lock = vi.hoisted(() => ({ release: undefined as undefined | (() => void), calls: 0, failAfterCommit: false }))
 vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => {

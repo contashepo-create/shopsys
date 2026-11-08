@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import React from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 vi.mock('../src/ui/print/printReceipt.ts', async importOriginal => ({ ...(await importOriginal<typeof import('../src/ui/print/printReceipt.ts')>()), printHtml: vi.fn() }))

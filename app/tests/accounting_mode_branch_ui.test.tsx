@@ -1,5 +1,4 @@
 import { afterEach, expect, it } from 'vitest'
-import React from 'react'
 import { act, fireEvent, render, screen, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { Header } from '../src/ui/layout/Header.tsx'

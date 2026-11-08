@@ -14,7 +14,7 @@ const original = useRawDataStore.getState(), app = useAppStore.getState()
 const S = () => useRawDataStore.getState()
 let rehydrate: ReturnType<typeof vi.spyOn>
 beforeEach(() => {
-  const setup = { ...app.setup, countryCode: 'EG', vatPercent: 0, taxRegistrationStatus: 'not_registered' as const }
+  const setup = { ...app.setup, countryCode: 'EG', vatPercent: 0, taxRegistrationStatus: 'registered' as const }
   useAppStore.setState({ setup, companySetup: setup })
   useRawDataStore.setState({ ...original, currentUserId: null, activeBranchId: null, branches: [], suppliers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'مورد', phone: '', active: true }] as never, items: [{ ...draftFromCategory(undefined, 'A'), id: 1, nameAr: 'سكر', costMinor: 1000, priceMinor: 1500, stockQty: 10, isService: false }], purchases: [], purchaseReturns: [], journal: [], warehouses: [], batches: [], serials: [], variantStocks: [] })
   lock.failAfterCommit = true

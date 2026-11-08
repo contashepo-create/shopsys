@@ -7,7 +7,7 @@ const S = () => useRawDataStore.getState()
 const purchase = (id: string, qty = 1) => S().postPurchase({ sourceDraftId: id, supplierId: 7, date: '2026-01-01', lines: [{ itemId: 1, qty, unitPriceMinor: 1000 }], expenses: [], paidMinor: 0, notes: '' })
 const sale = (id: string) => S().postSale({ sourceDraftId: id, lines: [{ itemId: 1, nameAr: 'صنف', qty: 1, unitPriceMinor: 1500, unitCostMinor: 1000, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
 beforeEach(() => {
-  const setup = { ...app.setup, taxRegistrationStatus: 'not_registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
+  const setup = { ...app.setup, taxRegistrationStatus: 'registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
   useAppStore.setState({ setup, companySetup: setup, approvals: { enabled: true, scope: ['purchase', 'sale'], thresholdMinor: 0, approverUserIds: [], autoApprovedUserIds: [] } })
   useRawDataStore.setState({ ...original, currentUserId: 5, appUsers: [{ id: 5, nameAr: 'موظف', roleId: 'cashier', pinHash: '0'.repeat(64), active: true, branchId: null }] as never, activeBranchId: null, branches: [], suppliers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'مورد', phone: '', active: true }] as never, items: [{ ...draftFromCategory(undefined, 'A'), id: 1, nameAr: 'صنف', costMinor: 1000, priceMinor: 1500, stockQty: 10, isService: false }], purchases: [], sales: [], purchaseReturns: [], saleReturns: [], journal: [], docApprovals: [], warehouses: [], serials: [], batches: [], variantStocks: [] })
 })

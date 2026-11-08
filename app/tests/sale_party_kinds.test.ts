@@ -65,7 +65,7 @@ describe('§91 النواة — حساب الذمة حسب نوع الطرف', (
 
 describe('§91 المستودع — postSale لأي طرف', () => {
   it('تجاوز ائتمان التعديل يرفض بلا اعتماد ويحفظ اسم معتمده بسجل التعديل', () => {
-    useDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 11, nameAr: 'عميل', phone: '', creditLimitMinor: 7000, active: true }] })
+    useDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 11, nameAr: 'عميل', phone: '', creditLimitMinor: 7000, active: true }] })
     const sale = useDataStore.getState().postSale({ lines: [line], customerId: 11, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
     const args = { saleId: sale.id, lines: [{ ...line, qty: 4 }], customerId: 11, payment: 'credit' as const, invoiceDiscountPercent: 0, einvoiceActive: false, paidMinor: 0, treasury: '1101' as const, reason: 'تصحيح كمية' }
     const before = useDataStore.getState().journal.length

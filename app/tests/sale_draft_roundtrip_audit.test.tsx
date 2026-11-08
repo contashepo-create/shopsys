@@ -40,8 +40,8 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => callback() } })
     try {
-      useAppStore.setState({ setup: { ...useAppStore.getState().setup, requireOpenShiftForSales: false, vatPercent: 0, taxRegistrationStatus: 'unregistered' } })
-      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, active: false }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة الاختبار', isService: true, priceMinor: 5000 }], sales: [], journal: [], warehouses: [] })
+      useAppStore.setState({ setup: { ...useAppStore.getState().setup, requireOpenShiftForSales: false, vatPercent: 0, taxRegistrationStatus: 'registered' } })
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, active: false }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة الاختبار', isService: true, priceMinor: 5000 }], sales: [], journal: [], warehouses: [] })
       const view = mount()
       fireEvent.doubleClick(screen.getByLabelText('اسم الصنف — اكتب أو اضغط مرتين للبحث'))
       fireEvent.doubleClick(screen.getByRole('option', { name: /خدمة الاختبار/ }))
@@ -65,7 +65,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     }
   })
   it('بطاقة الموظف تعرضه كطرف مسجل ولا تعرض بيانات العميل ذي الرقم نفسه', () => {
-    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 100, active: false }], employees: [{ id: 7, nameAr: 'موظف الاختبار', code: 'E7', role: 'driver', phone: '', active: true, hireDate: '2025-01-01', salaryBaseMinor: 0, notes: '' }] as never })
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 100, active: false }], employees: [{ id: 7, nameAr: 'موظف الاختبار', code: 'E7', role: 'driver', phone: '', active: true, hireDate: '2025-01-01', salaryBaseMinor: 0, notes: '' }] as never })
     mount()
     fireEvent.change(screen.getByLabelText('نوع طرف الفاتورة'), { target: { value: 'employee' } })
     fireEvent.change(document.querySelector('[data-live-picker-dblclick="employee"]')!, { target: { value: 'موظف الاختبار' } })
@@ -77,7 +77,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     expect(text).not.toContain('الحد الائتماني')
   })
   it('سحب صلاحية كشف العميل يخفي رصيده وحده وتفاصيل الائتمان في الفاتورة', () => {
-    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل خصوصي', phone: '', creditLimitMinor: 88888, active: true }], getCustomerBalance: () => 123456 })
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل خصوصي', phone: '', creditLimitMinor: 88888, active: true }], getCustomerBalance: () => 123456 })
     mount()
     fireEvent.change(screen.getByLabelText('بحث العميل — F4'), { target: { value: 'عميل خصوصي' } })
     fireEvent.click(screen.getByRole('button', { name: /عميل خصوصي/ }))
@@ -89,7 +89,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     expect((screen.getByTitle('تعديل بيانات العميل') as HTMLButtonElement).disabled).toBe(true)
   })
   it('المورد لا يرث سعر أو حالة العميل الذي يحمل الرقم نفسه', () => {
-    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, priceListId: 1, active: false }], priceLists: [{ id: 1, nameAr: 'قائمة عميل', defaultDiscountPercent: 50, isActive: true }], priceListEntries: [], priceListCategoryRules: [], items: [{ ...draftFromCategory(undefined, 'X'), id: 1, nameAr: 'صنف بسعر', priceMinor: 5000, stockQty: 10 }] })
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل موقوف', phone: '', creditLimitMinor: 1, priceListId: 1, active: false }], priceLists: [{ id: 1, nameAr: 'قائمة عميل', defaultDiscountPercent: 50, isActive: true }], priceListEntries: [], priceListCategoryRules: [], items: [{ ...draftFromCategory(undefined, 'X'), id: 1, nameAr: 'صنف بسعر', priceMinor: 5000, stockQty: 10 }] })
     mount()
     fireEvent.doubleClick(screen.getByLabelText('اسم الصنف — اكتب أو اضغط مرتين للبحث'))
     fireEvent.doubleClick(screen.getByRole('option', { name: /صنف بسعر/ }))
@@ -138,7 +138,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
   it('تقدير الائتمان عند التعديل يستبعد آجل الفاتورة القديمة قبل حساب الجديدة', () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 6000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
     const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
-    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 10000, active: true }], getCustomerBalance: () => 6000, items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 10000, active: true }], getCustomerBalance: () => 6000, items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
     render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
     const card = document.querySelector('.invoice-doc-party')!
     expect(card.querySelector('.invoice-doc-cardfoot')?.textContent).toContain('60.00')
@@ -152,7 +152,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     const edit = vi.fn().mockImplementation(() => sale)
     const rehydrate = vi.spyOn(useRawDataStore.persist, 'rehydrate').mockResolvedValue(undefined)
     try {
-      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل', phone: '', creditLimitMinor: 0, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never })
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل', phone: '', creditLimitMinor: 0, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never })
       useRawDataStore.setState({ advancedInvoiceDrafts: [{ id: 'fx-edit', kind: 'sale', name: 'قديمة', createdAt: '2026', updatedAt: '2026', payload: JSON.stringify({ editingSaleId: 44, partyKind: 'customer', customerId: 7, lines: [line], mode: 'advanced', fxOn: true, fxCode: 'USD', fxAmount: '10', fxRate: '5' }) }] })
       render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
       fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
@@ -173,7 +173,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => callback() } })
     try {
-      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 1500, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never })
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 1500, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never })
       render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
       fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
       fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
@@ -195,7 +195,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
     const locks = Object.getOwnPropertyDescriptor(navigator, 'locks')
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => callback() } })
     try {
-      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل', phone: '', creditLimitMinor: 1500, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never, approveByPin: approve as never, currentUserId: 4, appUsers: [{ id: 4, nameAr: 'موظف', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['sales.credit.override'] }] })
+      useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل', phone: '', creditLimitMinor: 1500, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never, editSale: edit as never, approveByPin: approve as never, currentUserId: 4, appUsers: [{ id: 4, nameAr: 'موظف', roleId: 'cashier', active: true, pinHash: '', deniedPerms: ['sales.credit.override'] }] })
       render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
       fireEvent.change(screen.getByLabelText('سبب تعديل المستند'), { target: { value: 'تصحيح' } })
       fireEvent.click(screen.getByRole('button', { name: /حفظ وترحيل/ }))
@@ -214,7 +214,7 @@ describe('استعادة مسودة فاتورة بيع دون تغيير الط
   it('تعديل فاتورة مستوردة تنص على نوع عميل يعيده من customerId لا من partyId الفارغ', () => {
     const line = { itemId: 1, nameAr: 'خدمة', qty: 1, unitPriceMinor: 1000, unitCostMinor: 0, discountPercent: 0, soldByWeight: false }
     const sale = { id: 44, invoiceNumber: 'S-44', date: '2026-01-01', lines: [line], totals: computeTotals([line], 0, 0, false), customerId: 7, partyKind: 'customer', partyId: null, taxPercent: 0, taxInclusive: false, payment: 'credit', paidMinor: 0 }
-    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 0, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
+    useRawDataStore.setState({ customers: [{ ...EMPTY_EXTENDED, notes: '', id: 7, nameAr: 'عميل الأصل', phone: '', creditLimitMinor: 0, active: true }], items: [{ ...draftFromCategory(undefined, 'S1'), id: 1, nameAr: 'خدمة', isService: true }], sales: [sale] as never })
     render(<MemoryRouter initialEntries={['/?edit=44']}><AdvancedSalesInvoicePage /><ToastHost /></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: /حفظ مسودة/ }))
     expect(JSON.parse(useRawDataStore.getState().advancedInvoiceDrafts[0].payload).customerId).toBe(7)

@@ -29,4 +29,3 @@ export function quantityDraftPreview(items: readonly BoqItem[], history: readonl
     return { inputs: [], computed: [], grossMinor: 0, error: error instanceof Error ? error.message : 'تعذر حساب حصر الكميات' }
   }
 }
-

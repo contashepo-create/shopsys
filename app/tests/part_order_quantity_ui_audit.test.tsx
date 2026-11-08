@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import React from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ReportsPage } from '../src/ui/pages/ReportsPage.tsx'

@@ -11,7 +11,7 @@ const post = (orderId: number, qty: number, id: string) => S().postPurchase({ so
 const edit = (purchaseId: number, qty: number, extra: object = {}) => S().editPurchase({ purchaseId, lines: [{ itemId: 1, qty, unitPriceMinor: 1000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'تصحيح', einvoiceActive: false, ...extra })
 const ret = (purchaseId: number, qty: number) => S().postPurchaseReturn({ purchaseId, qtyByItem: new Map([[1, qty]]), refund: 'debt', reason: 'رد' })
 beforeEach(() => {
-  const setup = { ...originalApp.setup, taxRegistrationStatus: 'not_registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
+  const setup = { ...originalApp.setup, taxRegistrationStatus: 'registered' as const, vatPercent: 0, requireOpenShiftForSales: false }
   useAppStore.setState({ setup, companySetup: setup })
   useRawDataStore.setState({ ...original, currentUserId: null, activeBranchId: null, branches: [], suppliers: [7, 8].map(id => ({ ...EMPTY_EXTENDED, id, nameAr: `مورد ${id}`, phone: '', active: true })) as never, items: [makeItem(1), makeItem(2)], purchases: [], purchaseOrders: [], purchaseReturns: [], journal: [], pendingPartOrders: [], warehouses: [], serials: [], batches: [], variantStocks: [] })
 })
