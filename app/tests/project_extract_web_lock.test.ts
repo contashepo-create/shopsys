@@ -10,7 +10,7 @@ vi.mock('../src/data/repo.ts', () => ({
 }))
 vi.mock('../src/data/desktopBridge.ts', () => ({ desktopBridge: () => null }))
 vi.mock('../src/data/persistentStorage.ts', () => ({ flushPendingDesktopSnapshots: vi.fn(), refreshDesktopSnapshot: vi.fn() }))
-vi.mock('../src/data/secureStorage.ts', () => ({ flushSecureStorageWrites: vi.fn(async () => {}) }))
+vi.mock('../src/data/secureStorage.ts', () => ({ flushSecureStorageWrites: vi.fn(async () => {}), isStorageSealed: () => false, storageWriteGeneration: () => 0 }))
 import { projectExtractFingerprint, withProjectExtractCommit } from '../src/data/projectExtractCommit.ts'
 import { flushSecureStorageWrites } from '../src/data/secureStorage.ts'
 

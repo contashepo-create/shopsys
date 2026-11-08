@@ -45,6 +45,8 @@ function key(): Promise<CryptoKey> {
    القديمة كان سيدمّر بيانات الجهاز — الختم يمنع الكارثة بصمت. */
 let sealedForTransfer = false
 let secretGeneration = 0
+/** جيل التشفير لا يكشف السر، ويتيح لقفل الترحيل اكتشاف تبديله أثناء العملية. */
+export function storageWriteGeneration(): number { return secretGeneration }
 
 export function getDeviceSecret(): string {
   return getOrCreateSecret()

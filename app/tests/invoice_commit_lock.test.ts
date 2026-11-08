@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   electron: true,
+  sealed: false,
+  generation: 0,
   acquire: vi.fn<() => Promise<string | null>>(),
   release: vi.fn<(token: string) => void>(),
   refresh: vi.fn<(storeName: string) => Promise<void>>(),
@@ -17,13 +19,14 @@ vi.mock('../src/data/persistentStorage.ts', () => ({
   refreshDesktopSnapshot: mocks.refresh,
   flushPendingDesktopSnapshots: mocks.flush,
 }))
-vi.mock('../src/data/secureStorage.ts', () => ({ flushSecureStorageWrites: mocks.secureFlush }))
+vi.mock('../src/data/secureStorage.ts', () => ({ flushSecureStorageWrites: mocks.secureFlush, isStorageSealed: () => mocks.sealed, storageWriteGeneration: () => mocks.generation }))
 
 import { withInvoiceCommitLock } from '../src/data/invoiceCommitLock.ts'
 
 describe('قفل ترحيل الفواتير عبر النوافذ', () => {
   beforeEach(() => {
     mocks.electron = true
+    mocks.sealed = false; mocks.generation = 0
     mocks.acquire.mockReset().mockResolvedValue('lock-1')
     mocks.release.mockReset()
     mocks.refresh.mockReset().mockResolvedValue(undefined)
@@ -75,6 +78,26 @@ describe('قفل ترحيل الفواتير عبر النوافذ', () => {
     expect(mocks.refresh).not.toHaveBeenCalled()
     expect(mocks.secureFlush).toHaveBeenNthCalledWith(1, 'shopsys-data')
     expect(mocks.secureFlush).toHaveBeenNthCalledWith(2, 'shopsys-data')
+  })
+
+  it('يرفض الترحيل قبل البدء عند ختم تخزين الويب أو تغير مفتاحه أثناء التحديث', async () => {
+    mocks.electron = false
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, cb: () => unknown) => cb() } })
+    const commit = vi.fn()
+    mocks.sealed = true
+    await expect(withInvoiceCommitLock(async () => undefined, commit)).rejects.toThrow(/مختوم/)
+    expect(commit).not.toHaveBeenCalled()
+    mocks.sealed = false
+    await expect(withInvoiceCommitLock(async () => { mocks.generation++ }, commit)).rejects.toThrow(/تغير مفتاحه/)
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('لا يؤكد حفظاً إذا تغير مفتاح التخزين أثناء الترحيل حتى لو أُعيد فتح الختم', async () => {
+    mocks.electron = false
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _opts: unknown, cb: () => unknown) => cb() } })
+    const commit = vi.fn(() => { mocks.generation++; return 12 })
+    await expect(withInvoiceCommitLock(async () => undefined, commit)).rejects.toThrow(/تغير مفتاحه/)
+    expect(commit).toHaveBeenCalledOnce()
   })
 
   it('يمنع بدء ترحيل تبويب ثانٍ حتى يكتمل حفظ الأول', async () => {
