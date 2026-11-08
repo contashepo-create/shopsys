@@ -14,7 +14,7 @@ beforeEach(() => {
 })
 afterEach(() => { useRawDataStore.setState(original); useAppStore.setState(app); vi.useRealTimers() })
 describe('تاريخ ترحيل فواتير البيع والشراء', () => {
- it.each(['2026-11-06', '2099-01-01', '2026-02-30', '2026-11-05T00:00:00Z'])('يرفض مستقبلاً أو تاريخاً غير صالح %s بلا فاتورة أو قيد', date => {
+ it.each(['2026-11-06', '2099-01-01', '2026-02-30', '2026-11-05garbage'])('يرفض مستقبلاً أو تاريخاً غير صالح %s بلا فاتورة أو قيد', date => {
   const state = useRawDataStore.getState()
   expect(() => state.postSale(sale(date))).toThrow(/تاريخ الفاتورة/)
   expect(() => state.postPurchase(purchase(date))).toThrow(/تاريخ الفاتورة/)
@@ -30,11 +30,21 @@ describe('تاريخ ترحيل فواتير البيع والشراء', () => {
   expect(useRawDataStore.getState().journal.find(row => row.sourceType === 'sale')?.createdAt.slice(0, 10)).toBe('2026-11-05')
   expect(useRawDataStore.getState().journal.find(row => row.sourceType === 'purchase')?.createdAt.slice(0, 10)).toBe('2026-11-05')
  })
+ it('يسمح بختم شراء قديم صحيح ويحرس يومه ويطبع يوم القيد', () => {
+  const state = useRawDataStore.getState()
+  expect(() => state.postSale(sale('2026-11-05T00:00:00Z'))).toThrow(/غير صالح/)
+  expect(() => state.postPurchase(purchase('2026-11-06T00:00:00Z'))).toThrow(/المستقبل/)
+  expect(() => state.postPurchase(purchase('2026-02-30T00:00:00Z'))).toThrow(/غير صالح/)
+  const doc = state.postPurchase(purchase('2026-11-04T23:59:00Z'))
+  expect(doc.date).toBe('2026-11-04T23:59:00Z')
+  expect(useRawDataStore.getState().journal[0].date).toBe('2026-11-04')
+ })
  it('يرفض الماضي داخل السنة المقفلة قبل إنشاء طلب اعتماد أو حركة', () => {
   useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: 'مقفلة', startDate: '2026-01-01', endDate: '2026-11-04', status: 'closed' }], approvals: { ...app.approvals, enabled: true, scope: ['sale', 'purchase'], thresholdMinor: 0 } })
   const state = useRawDataStore.getState()
   expect(() => state.postSale(sale('2026-11-04'))).toThrow(/مقفلة/)
   expect(() => state.postPurchase(purchase('2026-11-04'))).toThrow(/مقفلة/)
+  expect(() => state.postPurchase(purchase('2026-11-04T23:59:00Z'))).toThrow(/مقفلة/)
   expect(useRawDataStore.getState().docApprovals).toEqual(original.docApprovals)
   expect(useRawDataStore.getState().journal).toHaveLength(0)
  })

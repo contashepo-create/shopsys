@@ -161,7 +161,7 @@ const ruleOf = (selector) => {
   assert.ok(head.includes('type="date"') && head.includes('setInvoiceDate'), 'تاريخ الفاتورة ليس حقلاً قابلاً للتعديل')
   assert.ok(sales.includes('documentDate:invoiceDate'), 'تاريخ الفاتورة المحرَّر لا يُمرَّر إلى الترحيل')
   assert.ok(repo.includes('documentDate?: string') && repo.includes('تاريخ الفاتورة لا يكون في المستقبل'), 'محرك الترحيل لا يقبل تاريخ الفاتورة ولا يحرس المستقبل')
-  assert.ok(/const postingDate = chosenDate \|\| systemDate/.test(repo), 'تاريخ القيد لا يتبع تاريخ الفاتورة المحرَّر')
+  assert.ok(repo.includes('const postingDate = args.documentDate || todayLocalIso()') && repo.includes('assertInvoicePostingDate(state, postingDate)'), 'تاريخ القيد لا يتبع تاريخ الفاتورة المحرَّر أو لا يُحرس')
   R.ok('لا شارات زائدة في الترويسة، وتاريخ الفاتورة قابل للتعديل ويصبح تاريخ القيد (بلا تأريخ مستقبلي)')
 }
 

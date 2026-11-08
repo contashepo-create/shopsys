@@ -3879,13 +3879,16 @@ type PersistedAppState = {
 }
 
 /** تاريخ مستند الفاتورة ليس تاريخ الاستحقاق أو صلاحية المخزون. */
-function assertInvoicePostingDate(state: DataState, date: string): void {
-  if (!isValidExpiryDate(date)) throw new Error('تاريخ الفاتورة غير صالح')
-  if (date > todayLocalIso()) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
+function assertInvoicePostingDate(state: DataState, date: string, allowLegacyTimestamp = false): void {
+  // عقود شراء أقدم تمرر ختماً كاملاً؛ يُحرس يومه المكتوب نفسه الذي تطبّعه اليومية.
+  const timestamp = allowLegacyTimestamp && typeof date === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(date) && Number.isFinite(Date.parse(date))
+  const day = timestamp ? date.slice(0, 10) : date
+  if (!isValidExpiryDate(day)) throw new Error('تاريخ الفاتورة غير صالح')
+  if (day > todayLocalIso()) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
   const branch = getEffectiveActiveBranch(state)
   const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
-  const closed = dateInClosedYear(date, years)
-  if (closed) throw new Error(`التاريخ ${date} داخل السنة المالية المقفلة «${closed.nameAr}» — لا ترحيل في فترة مقفلة`)
+  const closed = dateInClosedYear(day, years)
+  if (closed) throw new Error(`التاريخ ${day} داخل السنة المالية المقفلة «${closed.nameAr}» — لا ترحيل في فترة مقفلة`)
 }
 
 function appSetupForState(state: DataState): OperationalSetup {
@@ -7727,7 +7730,7 @@ export const useRawDataStore = create<DataState>()(
               })),
             }
           : normalizedInv
-        assertInvoicePostingDate(state, inv.date)
+        assertInvoicePostingDate(state, inv.date, true)
         // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!inv.__approvalBypass) {
           const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
