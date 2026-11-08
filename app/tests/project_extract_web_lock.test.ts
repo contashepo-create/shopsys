@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
 const shared = vi.hoisted(() => ({
- state: { activeBranchId: 1, projects: [{ id: 1 }], boqItems: [{ id: 1, projectId: 1, qty: 1000 }], projectExtracts: [] as { id: number; projectId: number }[], clientAdvances: [] as unknown[], changeOrders: [] as unknown[] },
+ state: { activeBranchId: 1, projects: [{ id: 1 }], boqItems: [{ id: 1, projectId: 1, qty: 1000 }], projectExtracts: [] as { id: number; projectId: number }[], projectSurveys: [] as unknown[], projectExtractDrafts: [] as unknown[], clientAdvances: [] as unknown[], changeOrders: [] as unknown[] },
  refreshes: 0,
 }))
 vi.mock('../src/data/repo.ts', () => ({

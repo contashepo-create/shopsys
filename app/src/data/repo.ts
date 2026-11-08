@@ -53,6 +53,7 @@ import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccou
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
 import { computeQuantityExtractLines, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
+import { reviseProjectSurvey, assertSurveyFinalBilled, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
@@ -533,6 +534,19 @@ export interface LabOrder {
 }
 
 /* ─── المقاولات (القرار 27) ─── */
+
+/** مسودة مشتقة من حصر معتمد؛ ليست فاتورة ولا قيداً. */
+export interface ProjectExtractDraft {
+  id: number
+  projectId: number
+  branchId?: number | null
+  surveyRevision: number
+  basis: string
+  lines: { boqItemId: number; cumulativeQty: number }[]
+  isFinal: boolean
+  createdAt: string
+  createdBy: string
+}
 
 /** مستخلص أعمال PRX-#### مربوط بقيده */
 export interface ProjectExtract {
@@ -1810,6 +1824,10 @@ interface DataState {
   deletePendingPartOrder: (id: number) => void
   /** أرقام المشاريع المحذوفة غير المرحّلة محجوزة في سجل التدقيق. */
   projectDeletionRecords: { id: number; code: string; nameAr: string; reason: string; at: string; by: string; branchId?: number | null }[]
+  projectSurveys: ProjectSurvey[]
+  projectExtractDrafts: ProjectExtractDraft[]
+  surveyDeletionRecords: { id: number; projectId: number; reason: string; at: string; by: string; branchId?: number | null }[]
+  quotationDeletionRecords: { id: number; quoteNumber: string; projectId: number | null; reason: string; at: string; by: string; branchId?: number | null }[]
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
   /** تصنيفات مصروفات المشروعات الحرة (تنمو من «أخرى…» في نافذة المصروف وتُحفظ دائماً) */
@@ -2896,6 +2914,11 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  assertProjectExtractDraftCurrent: (projectId: number) => void
+  prepareProjectExtractDraft: (projectId: number, expectedRevision: number) => ProjectExtractDraft
+  deleteProjectExtractDraft: (projectId: number, reason: string) => void
+  deleteUnpostedSurvey: (projectId: number, reason: string) => void
+  saveProjectSurvey: (args: { projectId: number; lines: SurveyLine[]; expectedRevision: number; reason: string; isFinal: boolean }) => ProjectSurvey
   deleteUnpostedProject: (id: number, reason: string, expectedFingerprint?: string) => void
   previewProjectDeletionFingerprint: (id: number) => string
   addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
@@ -2907,7 +2930,7 @@ interface DataState {
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
-  deleteQuotation: (id: number, expectedProjectId?: number | null) => void
+  deleteQuotation: (id: number, expectedProjectId?: number | null, reason?: string, expectedQuote?: string) => void
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** §94-مراجعة: تعديل عرض/مناقصة محفوظ (فتحه وإصلاحه) — محظور بعد تحوله لمشروع */
   updateQuotation: (id: number, changes: { kind?: 'quotation' | 'tender'; clientName?: string; clientId?: number | null; titleAr?: string; validUntil?: string; lines?: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes?: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -2925,7 +2948,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; sourceSurveyDraft?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
   /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
@@ -4038,7 +4061,7 @@ function assertCanUpdateBranch(state: DataState, id: number, patch: Partial<Omit
 const BRANCH_STAMP_ID_KEYS = [
   'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
   'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
-  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectDeletionRecords', 'projectExtracts',
+  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectSurveys', 'projectExtractDrafts', 'projectExtracts',
   'projectCosts', 'retentionReleases', 'projectBudgets', 'projectTasks', 'changeOrders',
   'clientAdvances', 'boqItems', 'subContracts', 'subCertificates', 'subPayments',
   'subAdvances', 'bonds', 'dailyWorkers', 'dailyWorkRecords', 'materialRequisitions',
@@ -5642,6 +5665,10 @@ export function getBranchScopedDataState(state: DataState): DataState {
     custodyTxs: scopedCustodyTxs,
     projects: scopedProjects,
     projectDeletionRecords: inBranch(state.projectDeletionRecords ?? []),
+    quotationDeletionRecords: inBranch(state.quotationDeletionRecords ?? []),
+    surveyDeletionRecords: inBranch(state.surveyDeletionRecords ?? []),
+    projectSurveys: state.projectSurveys.filter(survey => inBranchOrRelated(survey, scopedProjectIds.has(survey.projectId))),
+    projectExtractDrafts: state.projectExtractDrafts.filter(draft => inBranchOrRelated(draft, scopedProjectIds.has(draft.projectId))),
     projectExtracts: scopedProjectExtracts,
     projectCosts: scopedProjectCosts,
     retentionReleases: scopedRetentionReleases,
@@ -5971,7 +5998,35 @@ function collectFxFlows(raw: DataState, exclude?: { kind: 'sale' | 'purchase' | 
 
 /** يحمي التأكيد من حذف بيانات تخطيطية تغيّرت بعد فتح النافذة. */
 function projectDeletionFingerprint(state: DataState, id: number): string {
-  return JSON.stringify({ project: state.projects.find(p => p.id === id), boq: state.boqItems.filter(b => b.projectId === id), budgets: state.projectBudgets.filter(b => b.projectId === id), tasks: state.projectTasks.filter(t => t.projectId === id), changes: state.changeOrders.filter(c => c.projectId === id), quotations: state.quotations.filter(q => q.projectId === id && !q.deletedAt) })
+  return JSON.stringify({ project: state.projects.find(p => p.id === id), boq: state.boqItems.filter(b => b.projectId === id), budgets: state.projectBudgets.filter(b => b.projectId === id), tasks: state.projectTasks.filter(t => t.projectId === id), changes: state.changeOrders.filter(c => c.projectId === id), quotations: state.quotations.filter(q => q.projectId === id && !q.deletedAt), surveys: state.projectSurveys.filter(row => row.projectId === id), drafts: state.projectExtractDrafts.filter(row => row.projectId === id) })
+}
+
+/** احترازياً تُرفض الروابط المباشرة والمتداخلة التي قد تخفي أثراً مالياً. */
+function assertNoProjectFinancialReferences(state: DataState, id: number): void {
+  const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectSurveys', 'projectExtractDrafts', 'projectDeletionRecords', 'auditLog'])
+  const hasRef = (value: unknown, depth = 0): boolean => {
+    if (depth > 12 || value == null) return false
+    if (typeof value === 'string') {
+      if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+      try { return hasRef(JSON.parse(value), depth + 1) } catch { return true }
+    }
+    if (Array.isArray(value)) return value.some(row => hasRef(row, depth + 1))
+    if (typeof value !== 'object') return false
+    const record = value as Record<string, unknown>
+    if (record.projectId === id || (record.source === 'project' && record.sourceId === id)) return true
+    return Object.values(record).some(row => hasRef(row, depth + 1))
+  }
+  if (Object.entries(state).some(([key, value]) => !ignored.has(key) && Array.isArray(value) && hasRef(value))) throw new Error('المشروع مرتبط بمستند أو حركة قد تكون مرحّلة — عالج الارتباط قبل الحذف')
+  if (state.journal.some(entry => entry.sourceType === 'client_advance' && entry.sourceId === id)) throw new Error('المشروع مرتبط بقيد دفعة مقدمة — راجع الدفتر قبل الحذف')
+}
+
+function nextSurveyId(state: DataState, preferred: number): number {
+  const rows = [...state.projectSurveys, ...state.surveyDeletionRecords]
+  return rows.some(row => row.id === preferred) ? nextId(rows) : preferred
+}
+
+function projectSurveyDraftBasis(state: DataState, id: number): string {
+  return JSON.stringify({ project: state.projects.find(row => row.id === id), boq: state.boqItems.filter(row => row.projectId === id), surveys: state.projectSurveys.filter(row => row.projectId === id), history: state.projectExtracts.filter(row => row.projectId === id), advances: state.clientAdvances.filter(row => row.projectId === id), changes: state.changeOrders.filter(row => row.projectId === id) })
 }
 
 function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }): Project {
@@ -7172,6 +7227,10 @@ export const useRawDataStore = create<DataState>()(
       }),
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
       projectDeletionRecords: [],
+      quotationDeletionRecords: [],
+      surveyDeletionRecords: [],
+      projectSurveys: [],
+      projectExtractDrafts: [],
       projectExtracts: [],
       projectCosts: [],
       projectExpenseCategories: [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
@@ -15218,6 +15277,105 @@ export const useRawDataStore = create<DataState>()(
       },
 
       /* ─── المقاولات (القرار 27) ─── */
+      assertProjectExtractDraftCurrent: (projectId) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const drafts = scoped.projectExtractDrafts.filter(row => row.projectId === projectId)
+        if (drafts.length !== 1 || state.projectExtractDrafts.filter(row => row.projectId === projectId).length !== 1 || drafts[0].basis !== projectSurveyDraftBasis(state, projectId)) throw new Error('مسودة المستخلص متقادمة أو غير موجودة — جهزها مجدداً من الحصر')
+      },
+      prepareProjectExtractDraft: (projectId, expectedRevision) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === projectId)
+        if (!project || project.status !== 'active') throw new Error('المشروع غير موجود أو مقفل في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر والمسودات')
+        }
+        assertProjectCustomerBranch(state, project)
+        const surveys = scoped.projectSurveys.filter(row => row.projectId === projectId)
+        if (surveys.length !== 1 || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1) throw new Error('حصر المشروع غير موجود أو غير فريد')
+        const survey = surveys[0]
+        if (survey.revisions.length !== expectedRevision) throw new Error('تغير الحصر — أعد مراجعته قبل تجهيز المستخلص')
+        const items = scoped.boqItems.filter(row => row.projectId === projectId)
+        const history = scoped.projectExtracts.filter(row => row.projectId === projectId)
+        if (history.some(row => row.isFinal)) throw new Error('صدر مستخلص ختامي — لا مستخلصات بعده')
+        if (state.projectExtracts.filter(row => row.projectId === projectId).length !== history.length) throw new Error('مستخلص سابق تابع لفرع آخر — راجع البيانات')
+        for (const extract of history) {
+          assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
+          if (extract.lines?.length && extract.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== extract.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+          for (const line of extract.lines ?? []) {
+            const item = items.find(row => row.id === line.boqItemId)
+            if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('بند العقد لا يطابق المستخلص السابق — راجع الحصر')
+          }
+        }
+        assertProjectExtractRefundIntegrity(history, customerReviewJournal(state))
+        assertSurveyIntegrity(survey, items, history)
+        const billed = new Map(exactBilledQuantities(items, history).map(line => [line.boqItemId, line.cumulativeQty]))
+        const lines = survey.lines.filter(line => line.cumulativeQty > (billed.get(line.boqItemId) ?? 0)).map(line => ({ boqItemId: line.boqItemId, cumulativeQty: line.cumulativeQty }))
+        if (!lines.length) throw new Error('لا توجد كمية محصورة غير مستخلصة — لا تُنشأ فاتورة صفرية')
+        computeQuantityExtractLines(lines, items, history)
+        const drafts = state.projectExtractDrafts.filter(row => row.projectId === projectId)
+        if (drafts.length > 1 || (drafts.length && !scoped.projectExtractDrafts.some(row => row.id === drafts[0].id))) throw new Error('مسودة المشروع غير فريدة أو تابعة لفرع آخر — راجع البيانات')
+        const previous = drafts[0]
+        const draft: ProjectExtractDraft = { id: previous?.id ?? projectId, projectId, ...(previous?.branchId != null ? { branchId: previous.branchId } : {}), surveyRevision: survey.revisions.length, basis: projectSurveyDraftBasis(state, projectId), lines, isFinal: survey.isFinal, createdAt: localIsoTimestamp(), createdBy: activeUserName(state) }
+        set({ projectExtractDrafts: [...state.projectExtractDrafts.filter(row => row.projectId !== projectId), draft] })
+        return draft
+      },
+      deleteProjectExtractDraft: (projectId, reason) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const draft = scoped.projectExtractDrafts.find(row => row.projectId === projectId)
+        if (!draft) throw new Error('مسودة المستخلص غير موجودة في الفرع الحالي')
+        if (!reason.trim()) throw new Error('سبب حذف المسودة مطلوب')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر والمسودات')
+        }
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ projectExtractDrafts: state.projectExtractDrafts.filter(row => row.id !== draft.id), auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف مسودة مستخلص المشروع #${projectId} — ${reason.trim()}` }]) })
+      },
+      deleteUnpostedSurvey: (projectId, reason) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const survey = scoped.projectSurveys.find(row => row.projectId === projectId)
+        if (!survey || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1 || state.projectExtractDrafts.filter(row => row.projectId === projectId).some(row => !scoped.projectExtractDrafts.some(candidate => candidate.id === row.id))) throw new Error('الحصر غير موجود أو غير فريد أو تابع لفرع آخر')
+        if (!reason.trim()) throw new Error('سبب حذف الحصر مطلوب')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
+        }
+        if (!scoped.projects.some(project => project.id === projectId && project.status === 'active')) throw new Error('المشروع غير موجود أو مقفل في الفرع الحالي')
+        assertNoProjectFinancialReferences(state, projectId)
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ surveyDeletionRecords: [...state.surveyDeletionRecords, { id: survey.id, projectId, reason: reason.trim(), at, by, ...(survey.branchId != null ? { branchId: survey.branchId } : {}) }], projectSurveys: state.projectSurveys.filter(row => row.id !== survey.id), projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== projectId), auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف حصر غير مرحّل للمشروع #${projectId} — ${reason.trim()}` }]) })
+      },
+      saveProjectSurvey: (args) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
+        }
+        assertProjectCustomerBranch(state, project)
+        if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — لا يُعدّل الحصر')
+        const history = state.projectExtracts.filter(extract => extract.projectId === project.id)
+        if (history.some(extract => extract.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل تعديل الحصر')
+        const items = state.boqItems.filter(item => item.projectId === project.id)
+        const journal = customerReviewJournal(state)
+        for (const extract of history) {
+          assertProjectExtractOriginalIntegrity(extract, journal)
+          if (extract.lines?.length && extract.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== extract.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+          for (const line of extract.lines ?? []) {
+            const item = items.find(row => row.id === line.boqItemId)
+            if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('بند العقد لا يطابق المستخلص السابق — راجع الحصر')
+          }
+        }
+        assertProjectExtractRefundIntegrity(history, journal)
+        const matches = state.projectSurveys.filter(row => row.projectId === project.id)
+        if (matches.length > 1 || (matches.length && !scoped.projectSurveys.some(row => row.id === matches[0].id))) throw new Error('حصر المشروع غير فريد أو تابع لفرع آخر — راجع البيانات')
+        const survey = reviseProjectSurvey({ survey: matches[0], projectId: project.id, items, history, lines: args.lines, source: 'manual', reason: args.reason, at: localIsoTimestamp(), by: activeUserName(state), isFinal: args.isFinal, expectedRevision: args.expectedRevision })
+        if (!matches[0]) survey.id = nextSurveyId(state, project.id)
+        set({ projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), survey] })
+        return survey
+      },
       previewProjectDeletionFingerprint: (id) => {
         const scoped = getBranchScopedDataState(get())
         if (!scoped.projects.some(project => project.id === id)) throw new Error('المشروع غير موجود في الفرع الحالي')
@@ -15239,26 +15397,14 @@ export const useRawDataStore = create<DataState>()(
         if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — راجع حالته قبل الحذف')
         const projectBoqIds = new Set(state.boqItems.filter(item => item.projectId === id).map(item => item.id))
         if (state.subContracts.some(contract => contract.boqItemIds.some(itemId => projectBoqIds.has(itemId))) || state.projectTasks.some(task => task.projectId !== id && task.boqItemId != null && projectBoqIds.has(task.boqItemId))) throw new Error('بنود المشروع مرتبطة بمستندات أخرى — راجع الروابط قبل الحذف')
-        const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'projectDeletionRecords', 'auditLog'])
-        const hasRef = (value: unknown, depth = 0): boolean => {
-          if (depth > 12 || value == null) return false
-          if (typeof value === 'string') {
-            if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
-            try { return hasRef(JSON.parse(value), depth + 1) } catch { return true }
-          }
-          if (Array.isArray(value)) return value.some(row => hasRef(row, depth + 1))
-          if (typeof value !== 'object') return false
-          const record = value as Record<string, unknown>
-          if (record.projectId === id || (record.source === 'project' && record.sourceId === id)) return true
-          return Object.values(record).some(row => hasRef(row, depth + 1))
-        }
-        const linked = Object.entries(state).find(([key, value]) => !ignored.has(key) && Array.isArray(value) && hasRef(value))
-        if (linked) throw new Error('المشروع مرتبط بمستند أو حركة قد تكون مرحّلة — عالج الارتباط قبل الحذف')
-        if (state.journal.some(entry => entry.sourceType === 'client_advance' && entry.sourceId === id)) throw new Error('المشروع مرتبط بقيد دفعة مقدمة — راجع الدفتر قبل الحذف')
-        const quotes = state.quotations.filter(q => q.projectId === id && !q.deletedAt)
+        assertNoProjectFinancialReferences(state, id)
+        const surveys = state.projectSurveys.filter(row => row.projectId === id)
+        if (surveys.length > 1 || surveys.some(row => !scoped.projectSurveys.some(candidate => candidate.id === row.id)) || state.projectExtractDrafts.filter(row => row.projectId === id).some(row => !scoped.projectExtractDrafts.some(candidate => candidate.id === row.id))) throw new Error('الحصر أو المسودة غير فريدة أو تتبع فرعاً آخر')
+        const quotes = state.quotations.filter(q => q.projectId === id)
         if (quotes.length) {
           const qScope = assertQuotationAccess(state, 'sales.quotation.delete')
-          if (quotes.some(q => !qScope.quotations.some(row => row.id === q.id))) throw new Error('عرض مرتبط تابع لفرع آخر — راجع الارتباط قبل الحذف')
+          const branch = getEffectiveActiveBranch(state)
+          if (quotes.some(q => q.deletedAt ? (branch != null && !belongsToBranch(q, branch, state.branches)) : !qScope.quotations.some(row => row.id === q.id))) throw new Error('عرض مرتبط تابع لفرع آخر — راجع الارتباط قبل الحذف')
         }
         const at = localIsoTimestamp(), by = activeUserName(state)
         set({
@@ -15266,8 +15412,12 @@ export const useRawDataStore = create<DataState>()(
           boqItems: state.boqItems.filter(row => row.projectId !== id),
           projectBudgets: state.projectBudgets.filter(row => row.projectId !== id),
           projectTasks: state.projectTasks.filter(row => row.projectId !== id),
+          surveyDeletionRecords: [...state.surveyDeletionRecords, ...surveys.map(survey => ({ id: survey.id, projectId: id, reason: `حذف المشروع: ${reason.trim()}`, at, by, ...(survey.branchId != null ? { branchId: survey.branchId } : {}) }))],
+          projectSurveys: state.projectSurveys.filter(row => row.projectId !== id),
+          projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== id),
           changeOrders: state.changeOrders.filter(row => row.projectId !== id),
-          quotations: state.quotations.map(q => q.projectId === id && !q.deletedAt ? { ...q, deletedAt: at } : q),
+          quotations: state.quotations.filter(q => q.projectId !== id),
+          quotationDeletionRecords: [...state.quotationDeletionRecords, ...quotes.map(q => ({ id: q.id, quoteNumber: q.quoteNumber, projectId: id, reason: `حذف المشروع: ${reason.trim()}`, at, by, ...(q.branchId != null ? { branchId: q.branchId } : {}) }))],
           projectDeletionRecords: [...(state.projectDeletionRecords ?? []), { id, code: project.code, nameAr: project.nameAr, reason: reason.trim(), at, by }],
           auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف المشروع غير المرحّل ${project.code} — ${reason.trim()}` }]),
         })
@@ -15815,7 +15965,7 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         // ربط العميل إداري — لا أثر على رصيده المحاسبي إطلاقاً
         if (q.clientId != null && !scoped.customers.find((c) => c.id === q.clientId)) throw new Error('العميل المربوط غير موجود في الفرع الحالي')
-        const id = nextId(state.quotations)
+        const id = nextId([...state.quotations, ...state.quotationDeletionRecords])
         const quote: Quotation = {
           id,
           quoteNumber: `${q.kind === 'tender' ? 'TN' : 'QT'}-${String(id).padStart(4, '0')}`,
@@ -15836,16 +15986,20 @@ export const useRawDataStore = create<DataState>()(
         return quote
       },
 
-      deleteQuotation: (id, expectedProjectId) => {
+      deleteQuotation: (id, expectedProjectId, reason = 'حذف عرض سعر', expectedQuote) => {
         const state = get()
         const scoped = assertQuotationAccess(state, 'sales.quotation.delete')
         const q = scoped.quotations.find(row => row.id === id)
         if (!q) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (expectedProjectId !== undefined && (q.projectId ?? null) !== expectedProjectId) throw new Error('تغير ارتباط العرض بالمشروع — راجعه قبل تأكيد الحذف')
-        const at = localIsoTimestamp()
+        if (expectedQuote != null && JSON.stringify(q) !== expectedQuote) throw new Error('تغير العرض منذ التأكيد — راجعه قبل الحذف')
+        if (!reason.trim()) throw new Error('سبب حذف عرض السعر مطلوب')
+        if (q.projectId != null) assertNoProjectFinancialReferences(state, q.projectId)
+        const at = localIsoTimestamp(), by = activeUserName(state)
         set({
-          quotations: state.quotations.map(row => row.id === id ? { ...row, deletedAt: at } : row),
-          auditLog: appendAudit(state.auditLog, [{ at, user: activeUserName(state), kind: 'ops', title: `حذف عرض السعر ${q.quoteNumber} — ${q.titleAr}` }]),
+          quotations: state.quotations.filter(row => row.id !== id),
+          quotationDeletionRecords: [...state.quotationDeletionRecords, { id, quoteNumber: q.quoteNumber, projectId: q.projectId ?? null, reason: reason.trim(), at, by, ...(q.branchId != null ? { branchId: q.branchId } : {}) }],
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف عرض السعر ${q.quoteNumber} — ${reason.trim()}` }]),
         })
       },
 
@@ -16430,6 +16584,10 @@ export const useRawDataStore = create<DataState>()(
           }
         }
         // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
+        if (args.sourceSurveyDraft) {
+          const drafts = state.projectExtractDrafts.filter(row => row.projectId === project.id)
+          if (drafts.length !== 1 || drafts[0].basis !== projectSurveyDraftBasis(state, project.id)) throw new Error('مسودة المستخلص متقادمة أو غير موجودة — جهزها مجدداً من الحصر')
+        }
         if (state.projectExtracts.some((x) => x.projectId === project.id && x.isFinal)) {
           throw new Error('صدر المستخلص الختامي لهذا المشروع — لا مستخلصات بعده، أفرج عن المحتجز لإقفاله')
         }
@@ -16437,6 +16595,9 @@ export const useRawDataStore = create<DataState>()(
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
         if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
+        const surveys = state.projectSurveys.filter(row => row.projectId === project.id)
+        if (surveys.length > 1) throw new Error('يوجد أكثر من حصر رئيسي للمشروع — راجع البيانات')
+        if (surveys.length && !args.extractQtyLines?.length) throw new Error('للمشروع حصر معتمد — أدخل المستخلص بالكميات للمحافظة على الترابط')
         if (args.extractQtyLines?.length) {
           const prior = state.projectExtracts.filter(e => e.projectId === project.id)
           const journal = customerReviewJournal(state)
@@ -16505,6 +16666,19 @@ export const useRawDataStore = create<DataState>()(
           ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
           ...(args.isFinal ? { isFinal: true } : {}),
         }
+        const priorHistory = state.projectExtracts.filter(row => row.projectId === project.id)
+        let updatedSurvey: ProjectSurvey | undefined
+        if (extractLinesComputed?.length && extractLinesComputed.every(line => line.newExecutedQty != null && !line.previousQtyEstimated)) {
+          const surveyItems = state.boqItems.filter(item => item.projectId === project.id)
+          // التاريخ غير الدقيق لا يُحوّل إلى حصر مؤكّد؛ يبقى المسار القديم كما هو إن لم يوجد حصر.
+          let exactHistory = true
+          try { exactBilledQuantities(surveyItems, priorHistory) } catch (error) { if (surveys.length) throw error; exactHistory = false }
+          if (exactHistory) {
+            updatedSurvey = reviseProjectSurvey({ survey: surveys[0], projectId: project.id, items: surveyItems, history: priorHistory, lines: extractLinesComputed.map(line => ({ boqItemId: line.boqItemId, cumulativeQty: line.newExecutedQty! })), source: 'extract', extractId: id, reason: '', at: now, by: activeUserName(state), isFinal: !!args.isFinal, acceptIncrease: true })
+            if (!surveys[0]) updatedSurvey.id = nextSurveyId(state, project.id)
+            if (args.isFinal) assertSurveyFinalBilled(updatedSurvey, surveyItems, [...priorHistory, extract])
+          }
+        } else if (surveys.length) throw new Error('لا يمكن ربط مستخلص بلا كميات دقيقة بالحصر المعتمد')
         // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
         const updatedBoq = extractLinesComputed
           ? state.boqItems.map((b) => {
@@ -16531,7 +16705,7 @@ export const useRawDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: String(id), amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ projectExtracts: [...state.projectExtracts, extract], ...(args.sourceSurveyDraft ? { projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== project.id) } : {}), ...(updatedSurvey ? { projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), updatedSurvey] } : {}), clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
       },
       /* ─── §94: تعديل مستخلص صادر (طلب المالك: «أصدرت مستخلصاً ولم أجد واجهة لمراجعته أو تعديله») ───
@@ -16560,6 +16734,9 @@ export const useRawDataStore = create<DataState>()(
            (فقط عند إعادة احتساب البنود؛ التعديل بمبلغ إجمالي لا يمس تقدم BOQ) */
         if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
         if (extract.lines?.some(line => line.newExecutedQty != null) && !args.extractQtyLines?.length) throw new Error('المستخلص يحفظ دليل الكمية — عدّله بالكميات ولا تُسقط الحصر')
+        const linkedSurvey = state.projectSurveys.filter(row => row.projectId === project.id)
+        if (linkedSurvey.length > 1) throw new Error('يوجد أكثر من حصر رئيسي للمشروع — راجع البيانات')
+        if (linkedSurvey.length && !args.extractQtyLines?.length) throw new Error('للمشروع حصر معتمد — عدّل المستخلص بالكميات')
         const recomputeLines = !!(args.extractLines?.length || args.extractQtyLines?.length)
         if (recomputeLines) {
           const mine = new Set([...(extract.lines ?? []).map((l) => l.boqItemId), ...(args.extractQtyLines ?? []).map(line => line.boqItemId), ...(args.extractLines ?? []).map(line => line.boqItemId)])
@@ -16684,9 +16861,20 @@ export const useRawDataStore = create<DataState>()(
           toRecover -= take
           return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
         })
+        let revisedSurvey: ProjectSurvey | undefined
+        if (linkedSurvey.length) {
+          const history = state.projectExtracts.filter(row => row.projectId === project.id).map(row => row.id === extract.id ? rebuilt : row)
+          const items = state.boqItems.filter(row => row.projectId === project.id)
+          const billed = exactBilledQuantities(items, history)
+          const originalSurvey = linkedSurvey[0]
+          const revisedLines = billed.map(line => ({ ...line, cumulativeQty: Math.max(line.cumulativeQty, originalSurvey.lines.find(old => old.boqItemId === line.boqItemId)?.cumulativeQty ?? 0) }))
+          revisedSurvey = reviseProjectSurvey({ survey: originalSurvey, projectId: project.id, items, history, lines: revisedLines, source: 'manual', reason: `تعديل ${extract.extractNumber}: ${reason}`, at: now, by: activeUserName(state), isFinal: extract.isFinal ? !!args.isFinal : (originalSurvey.isFinal || !!args.isFinal) })
+          if (args.isFinal) assertSurveyFinalBilled(revisedSurvey, items, history)
+        }
         set({
-          projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
           clientAdvances: updatedAdvances, boqItems: updatedBoq,
+          projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
+          ...(revisedSurvey ? { projectSurveys: state.projectSurveys.map(row => row.projectId === project.id ? revisedSurvey! : row) } : {}),
           journal: [...journalAfterReversal, reversal, entry],
         })
         return rebuilt
@@ -17468,6 +17656,7 @@ export const useRawDataStore = create<DataState>()(
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
         const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
+        if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا تغير الكمية أو السعر أو الوحدة')
         if (priceQtyChange && (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id)))) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
         if (changes.unit !== undefined && changes.unit !== boq.unit && state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه حصر سابق — لا تغير وحدة القياس؛ أنشئ بنداً جديداً')
         const merged: BoqItem = { ...boq, ...changes }
@@ -17484,6 +17673,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا يُحذف')
         // حارس الفئة (الحذف الآمن): بند بتقدم مرحَّل عليه مستخلصات — حذفه يشوه
         // المستخلصات التراكمية القادمة والتقارير؛ وبند مربوط بعقد باطن يكسر نطاق العقد
         if (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه مستخلصات مرحلة — لا يُحذف حفاظاً على تسلسل التقدم')
@@ -21397,6 +21587,10 @@ export const useRawDataStore = create<DataState>()(
             custodyFileId: a.custodyFileId ?? null,
           })),
           projectDeletionRecords: s.projectDeletionRecords ?? [],
+          quotationDeletionRecords: s.quotationDeletionRecords ?? [],
+          surveyDeletionRecords: s.surveyDeletionRecords ?? [],
+          projectSurveys: s.projectSurveys ?? [],
+          projectExtractDrafts: s.projectExtractDrafts ?? [],
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
           projectExpenseCategories: s.projectExpenseCategories && s.projectExpenseCategories.length ? s.projectExpenseCategories : [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],

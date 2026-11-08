@@ -68,7 +68,7 @@ it('يمنع حذف مشروع له قيد دفعة مقدمة يتيم أو ب�
  useRawDataStore.setState({ subContracts: [], journal: [{ id: 1, sourceType: 'client_advance', sourceId: project.id, lines: [] }] as never })
  expect(() => S().deleteUnpostedProject(project.id, 'إلغاء')).toThrow(/قيد دفعة/)
 })
-it('حذف المشروع غير المرحّل يخفي العرض المرتبط ولا يغيّر القيود', () => {
+it('حذف المشروع غير المرحّل يزيل العرض المرتبط ويحفظ رقمه ولا يغيّر القيود', () => {
  const { project } = setup()
  S().addQuotation({ kind: 'quotation', clientName: project.clientName, clientId: project.clientId, titleAr: 'عرض', validUntil: '2027-01-01', lines: [{ nameAr: '', descriptionAr: 'عمل', qty: 1, unitAr: 'م', unitPriceMinor: 100, estCostMinor: 0 }], notes: '', winProbability: 50, bidBondMinor: 0 })
  const quote = S().quotations[0]
@@ -76,6 +76,7 @@ it('حذف المشروع غير المرحّل يخفي العرض المرتب
  const beforeJournal = S().journal
  S().deleteUnpostedProject(project.id, 'إلغاء العميل')
  expect(useDataStore.getState().quotations).toHaveLength(0)
- expect(S().quotations[0]).toMatchObject({ projectId: project.id, deletedAt: expect.any(String) })
+ expect(S().quotations).toHaveLength(0)
+ expect(S().quotationDeletionRecords[0]).toMatchObject({ projectId: project.id, quoteNumber: quote.quoteNumber })
  expect(S().journal).toBe(beforeJournal)
 })

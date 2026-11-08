@@ -329,3 +329,31 @@ describe('حماية حذف المشروع من مستند أُنشئ في نا�
     expect(() => mergeConcurrentSnapshots(base, created, deleted)).toThrow(/المشروع المحذوف/)
   })
 })
+
+it('رفض إحياء عرض حُذف فعلياً بتحديث متزامن أو لقطة قديمة', () => {
+ const snapshot = (state: object) => JSON.stringify({ state })
+ const base = snapshot({ quotations: [{ id: 7, titleAr: 'قديم' }], quotationDeletionRecords: [] })
+ const deleted = snapshot({ quotations: [], quotationDeletionRecords: [{ id: 7, quoteNumber: 'QT-0007', at: 'today' }] })
+ const edited = snapshot({ quotations: [{ id: 7, titleAr: 'معدل' }], quotationDeletionRecords: [] })
+ expect(() => mergeConcurrentSnapshots(base, deleted, edited)).toThrow(/تعارض/)
+ expect(() => mergeConcurrentSnapshots(base, edited, deleted)).toThrow(/تعارض/)
+})
+
+it('يحجب تعارض حذف حصر مع مستخلص أو مسودة تزامناً في الاتجاهين', () => {
+ const snap = (state: object) => JSON.stringify({ state })
+ const survey = { id: 1, projectId: 1 }
+ const base = snap({ projectSurveys: [survey], surveyDeletionRecords: [], projectExtracts: [], projectExtractDrafts: [] })
+ const deleted = snap({ projectSurveys: [], surveyDeletionRecords: [{ id: 1, projectId: 1 }], projectExtracts: [], projectExtractDrafts: [] })
+ for (const key of ['projectExtracts', 'projectExtractDrafts']) {
+  const changed = snap({ projectSurveys: [survey], surveyDeletionRecords: [], projectExtracts: [], projectExtractDrafts: [], [key]: [{ id: 11, projectId: 1 }] })
+  expect(() => mergeConcurrentSnapshots(base, deleted, changed)).toThrow(/تعارض/)
+  expect(() => mergeConcurrentSnapshots(base, changed, deleted)).toThrow(/تعارض/)
+ }
+})
+it('لا يمنع سجل حذف قديم لمشروع قائم تسجيل مستخلص لاحق عند إعادة الحصر', () => {
+ const snap = (state: object) => JSON.stringify({ state })
+ const base = snap({ projectSurveys: [], surveyDeletionRecords: [{ id: 1, projectId: 1 }], projectExtracts: [], unrelated: 0 })
+ const left = snap({ projectSurveys: [{ id: 2, projectId: 1 }], surveyDeletionRecords: [{ id: 1, projectId: 1 }], projectExtracts: [{ id: 3, projectId: 1 }], unrelated: 0 })
+ const right = snap({ projectSurveys: [], surveyDeletionRecords: [{ id: 1, projectId: 1 }], projectExtracts: [], unrelated: 1 })
+ expect(JSON.parse(mergeConcurrentSnapshots(base, left, right)).state.projectExtracts).toHaveLength(1)
+})

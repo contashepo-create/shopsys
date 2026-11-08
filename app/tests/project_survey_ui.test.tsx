@@ -1,0 +1,92 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import React from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
+import { ProjectSurveysPage } from '../src/ui/pages/ProjectSurveysPage.tsx'
+import { ProjectExtractsPage } from '../src/ui/pages/ContractingPages.tsx'
+import { usePrintPreview } from '../src/ui/components/printPreviewStore.ts'
+import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+const original = useRawDataStore.getState(), app = useAppStore.getState(), S = () => useRawDataStore.getState()
+beforeEach(() => {
+ const setup = { ...app.setup, completed: true, shopName: 'منشأة', countryCode: 'EG', activityId: 'contracting' as const, modules: ['contracting'] as never[], vatPercent: 0 }
+ useAppStore.setState({ setup, companySetup: setup })
+ useRawDataStore.setState({ ...original, branches: [], activeBranchId: null, currentUserId: null, customers: [], projects: [], boqItems: [], projectSurveys: [], projectExtracts: [], clientAdvances: [], journal: [], vouchers: [], clientSettlements: [], approvalRequests: [], changeOrders: [], paymentTerminals: [] } as never)
+ S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+ const p = S().addProject({ nameAr: 'مشروع', clientName: 'عميل', clientId: S().customers[0].id, contractValueMinor: 100000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+ S().addBoqItem({ projectId: p.id, code: '1', descriptionAr: 'دهانات', unit: 'م2', qty: 1000, unitPriceMinor: 100 })
+})
+afterEach(() => { cleanup(); useRawDataStore.setState(original); useAppStore.setState(app); usePrintPreview.getState().closePreview() })
+const renderPages = () => render(<MemoryRouter initialEntries={['/contracting/surveys']}><Routes><Route path="/contracting/surveys" element={<ProjectSurveysPage />} /><Route path="/contracting/extracts" element={<ProjectExtractsPage />} /></Routes></MemoryRouter>)
+const select = () => fireEvent.change(screen.getByLabelText('مشروع الحصر'), { target: { value: String(S().projects[0].id) } })
+it('يحفظ حصر 856 ويجهز مسودة ختامية بالفارق بعد مستخلص 200 بلا ترحيل تلقائي', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().addProjectExtract({ projectId: p.id, description: 'سابق', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '856' } })
+ fireEvent.click(screen.getByLabelText(/حصر ختامي/))
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(856))
+ expect(S().projectExtracts).toHaveLength(1)
+ expect(S().journal).toHaveLength(1)
+ fireEvent.click(screen.getByText('تجهيز مسودة مستخلص من الحصر المحفوظ'))
+ await waitFor(() => expect((screen.getByLabelText('كمية البند 1') as HTMLInputElement).value).toBe('856'))
+ expect((screen.getByLabelText('مستخلص ختامي للمشروع') as HTMLInputElement).checked).toBe(true)
+ expect(S().projectExtracts).toHaveLength(1)
+ fireEvent.click(screen.getByLabelText(/راجعت حصر جميع البنود/))
+ fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
+ await waitFor(() => expect(S().projectExtracts).toHaveLength(2))
+ expect(S().projectExtracts[1].totals.grossMinor).toBe(65600)
+ expect(S().projectSurveys).toHaveLength(1)
+ expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(856)
+})
+it('معاينة الطباعة تعرض المنفذ والمستخلص وغير المستخلص وتبقي القيد بلا تغيير', async () => {
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '856' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(1))
+ fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
+ const html = usePrintPreview.getState().handle?.html ?? ''
+ expect(html).toContain('@page{size:A4 landscape')
+ expect(html).toContain('المنفذ المحصور')
+ expect(html).toContain('غير المستخلص')
+ expect(html).toContain('856')
+ expect(S().journal).toHaveLength(0)
+})
+it('لا يحفظ كمية فارغة ولا ينشئ الحصر مرتين بنقرة مزدوجة', async () => {
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ expect(S().projectSurveys).toHaveLength(0)
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '200' } })
+ const button = screen.getByText('اعتماد وحفظ الحصر')
+ fireEvent.click(button); fireEvent.click(button)
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(1))
+ expect(S().projectSurveys[0].revisions).toHaveLength(1)
+})
+it('التغيير المتزامن في جدول الكميات يرفض حفظ الحصر المفتوح', async () => {
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '200' } })
+ act(() => { S().addBoqItem({ projectId: S().projects[0].id, code: '2', descriptionAr: 'بند', unit: 'م', qty: 1, unitPriceMinor: 100 }) })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await act(async () => {})
+ expect(S().projectSurveys).toHaveLength(0)
+})
+it('تأكيد حذف الحصر يتطلب السبب ويرفض تغير البيانات منذ فتح التأكيد', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })
+ renderPages(); select()
+ fireEvent.click(screen.getByText('حذف الحصر غير المرحّل'))
+ expect((screen.getByRole('button', { name: /تأكيد حذف الحصر/ }) as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.change(screen.getByLabelText('سبب حذف الحصر'), { target: { value: 'إلغاء' } })
+ act(() => { S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 1, reason: '', isFinal: false }) })
+ fireEvent.click(screen.getByText('تأكيد حذف الحصر'))
+ await act(async () => {})
+ expect(S().projectSurveys).toHaveLength(1)
+ fireEvent.click(screen.getByText('تراجع'))
+ fireEvent.click(screen.getByText('حذف الحصر غير المرحّل'))
+ fireEvent.click(screen.getByText('تأكيد حذف الحصر'))
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(0))
+ expect(S().journal).toHaveLength(0)
+})

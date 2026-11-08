@@ -7,9 +7,10 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * **مستندي بالكامل (طلب المالك ㉘)**: المحرر صار بنفس هيئة فاتورة البيع —
  * إطار InvoicePOSFrame (نفس الترويسة والبنود واللوحات) بدل النافذة البسيطة.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Eye, Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, CheckCircle2 } from 'lucide-react'
 import { useDataStore, useRawDataStore, type AdvancedInvoiceDraft } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -89,16 +90,26 @@ export function QuotationsPage() {
   const [draftId, setDraftId] = useState(() => newQuotationId())
   const [checksOpen, setChecksOpen] = useState(false)
   const [deleteFor, setDeleteFor] = useState<Quotation | null>(null)
+  const [deleteReason, setDeleteReason] = useState('حذف عرض سعر')
+  const quotationCommitPending = useRef(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const filteredQuotes = quotations.filter(q => (!statusFilter || q.status === statusFilter) && `${q.quoteNumber} ${q.titleAr} ${q.clientName}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
-  const doDelete = () => {
-    if (!deleteFor) return
+  const doDelete = async () => {
+    if (!deleteFor || quotationCommitPending.current) return
+    quotationCommitPending.current = true
+    let committed = false
     try {
-      deleteQuotation(deleteFor.id, deleteFor.projectId ?? null)
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        deleteQuotation(deleteFor.id, deleteFor.projectId ?? null, deleteReason, JSON.stringify(deleteFor))
+        committed = true
+      })
       setDeleteFor(null)
       toast.show('حُذف عرض السعر — لم تتغير الأرصدة أو القيود المحاسبية')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) setDeleteFor(null)
+      toast.show(committed ? 'حُذف العرض محلياً لكن تعذر تأكيد الحفظ — راجع الحالة قبل المحاولة مجدداً' : (e as Error).message, 'error')
+    } finally { quotationCommitPending.current = false }
   }
 
   const openNew = () => {
@@ -290,13 +301,24 @@ export function QuotationsPage() {
 
   const [convertFor, setConvertFor] = useState<Quotation | null>(null)
   const [convRetention, setConvRetention] = useState('5')
-  const doConvert = () => {
-    if (!convertFor) return
+  const doConvert = async () => {
+    if (!convertFor || quotationCommitPending.current) return
+    quotationCommitPending.current = true
+    let committed = false
     try {
-      const p = convertQuotationToProject(convertFor.id, Number(convRetention) || 0)
+      const p = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        const live = useDataStore.getState().quotations.find(q => q.id === convertFor.id)
+        if (!live || JSON.stringify(live) !== JSON.stringify(convertFor)) throw new Error('تغير العرض منذ المعاينة — راجعه قبل التحويل')
+        const result = convertQuotationToProject(convertFor.id, Number(convRetention) || 0)
+        committed = true
+        return result
+      })
       toast.show(`🏗️ أُنشئ المشروع ${p.code} من ${convertFor.quoteNumber} — تابعه في «المشروعات والمستخلصات»`)
       setConvertFor(null)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) setConvertFor(null)
+      toast.show(committed ? 'أُنشئ المشروع محلياً لكن تعذر تأكيد الحفظ — راجع الحالة قبل إعادة التحويل' : (e as Error).message, 'error')
+    } finally { quotationCommitPending.current = false }
   }
 
   /* ════ محرر المستند (نفس هيئة الفاتورة — طلب المالك ㉘) ════ */
@@ -576,7 +598,7 @@ export function QuotationsPage() {
                               <ArrowLeftCircle size={13} /> حوّله مشروعاً
                             </button>
                           )}
-                          <button onClick={() => setDeleteFor(q)} disabled={!canDelete} title={!canDelete ? 'تحتاج صلاحية حذف عروض الأسعار' : 'حذف عرض السعر'} data-quotation-delete className="px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 bg-rose-500/10 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Trash2 size={15} /> حذف</button>
+                          <button onClick={() => { setDeleteFor(q); setDeleteReason('حذف عرض سعر') }} disabled={!canDelete} title={!canDelete ? 'تحتاج صلاحية حذف عروض الأسعار' : 'حذف عرض السعر'} data-quotation-delete className="px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 bg-rose-500/10 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Trash2 size={15} /> حذف</button>
                           {q.projectId != null && (
                             <span className="text-[11px] px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 size={12} /> مشروع {projects.find((p) => p.id === q.projectId)?.code}</span>
                           )}
@@ -594,11 +616,12 @@ export function QuotationsPage() {
       <Modal open={!!deleteFor} onClose={() => setDeleteFor(null)} title="تأكيد حذف عرض السعر">
         {deleteFor && <div className="space-y-4">
           <p>هل تريد حذف العرض «{deleteFor.quoteNumber} — {deleteFor.titleAr}» للعميل «{deleteFor.clientName}»؟</p>
-          <p className="text-sm text-slate-500">سيُزال من قائمة العروض ومصادر تعبئة الفواتير، مع الاحتفاظ بمرجعه في سجل التدقيق. لن تتغير الأرصدة أو المخزون أو القيود.</p>
-          {deleteFor.projectId != null && <p className="text-sm font-bold text-amber-700">لن يُحذف المشروع المرتبط أو بنوده أو مستخلصاته. يبقى العرض المخفي وارتباطه محفوظين في بيانات التدقيق.</p>}
+          <p className="text-sm text-slate-500">ستُحذف بيانات العرض غير المرحّل ويُحتفظ برقمه وسبب الحذف في سجل التدقيق. لن تُحذف أي قيود أو أرصدة.</p>
+          {deleteFor.projectId != null && <p className="text-sm font-bold text-amber-700">لن يُحذف المشروع المرتبط. يُمنع حذف عرضه عند وجود حركة مالية أو ارتباط يحتاج مراجعة.</p>}
+          <Field label="سبب الحذف"><input aria-label="سبب حذف عرض السعر" value={deleteReason} onChange={event => setDeleteReason(event.target.value)} className={inputCls} /></Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setDeleteFor(null)}>تراجع</Btn>
-            <Btn onClick={doDelete}><Trash2 size={15} /> تأكيد الحذف</Btn>
+            <Btn onClick={() => void doDelete()} disabled={!deleteReason.trim()}><Trash2 size={15} /> تأكيد الحذف</Btn>
           </div>
         </div>}
       </Modal>
@@ -618,7 +641,7 @@ export function QuotationsPage() {
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setConvertFor(null)}>إلغاء</Btn>
-              <Btn onClick={doConvert}>🏗️ إنشاء المشروع</Btn>
+              <Btn onClick={() => void doConvert()}>🏗️ إنشاء المشروع</Btn>
             </div>
           </div>
         )}

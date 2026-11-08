@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const control = vi.hoisted(() => ({
-  state: { activeBranchId: 1, projects: [{ id: 1, nameAr: 'مشروع' }], boqItems: [{ id: 1, projectId: 1, qty: 1000 }], projectExtracts: [] as { id: number; projectId: number }[], clientAdvances: [] as unknown[], changeOrders: [] as unknown[] },
+  state: { activeBranchId: 1, projects: [{ id: 1, nameAr: 'مشروع' }], boqItems: [{ id: 1, projectId: 1, qty: 1000 }], projectExtracts: [] as { id: number; projectId: number }[], projectSurveys: [] as unknown[], projectExtractDrafts: [] as unknown[], clientAdvances: [] as unknown[], changeOrders: [] as unknown[] },
   onRefresh: () => {}, failFlush: false, queue: Promise.resolve(),
 }))
 vi.mock('../src/data/repo.ts', () => ({
@@ -18,7 +18,7 @@ vi.mock('../src/data/invoiceCommitLock.ts', () => ({
 import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../src/data/projectExtractCommit.ts'
 
 beforeEach(() => {
- control.state = { activeBranchId: 1, projects: [{ id: 1, nameAr: 'مشروع' }], boqItems: [{ id: 1, projectId: 1, qty: 1000 }], projectExtracts: [], clientAdvances: [], changeOrders: [] }
+ control.state = { activeBranchId: 1, projects: [{ id: 1, nameAr: 'مشروع' }], boqItems: [{ id: 1, projectId: 1, qty: 1000 }], projectExtracts: [], projectSurveys: [], projectExtractDrafts: [], clientAdvances: [], changeOrders: [] }
  control.onRefresh = () => {}; control.failFlush = false; control.queue = Promise.resolve()
 })
 afterEach(() => vi.restoreAllMocks())

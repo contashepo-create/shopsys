@@ -60,6 +60,7 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
   ],
   'rep.fleet': ['logistics', 'cars'],
   'contracting.project.delete': ['contracting'],
+  'contracting.survey.manage': ['contracting'],
 }
 
 /** الصلاحيات الظاهرة لنشاطٍ وحداته modules — العامة + المرتبطة بوحدة مفعلة */
@@ -77,6 +78,7 @@ export function permissionSectionsForModules(modules: readonly string[]): { id: 
 }
 
 export const PERMISSIONS: PermissionDef[] = [
+  { id: 'contracting.survey.manage', nameAr: 'إدارة حصر الأعمال واعتماده', section: 'accounting', sensitive: true },
   { id: 'contracting.project.delete', nameAr: 'حذف مشروع غير مرحّل', section: 'accounting', sensitive: true },
   // المبيعات
   { id: 'sales.quotation.manage', nameAr: 'إدارة ومعاينة عروض الأسعار والمناقصات', section: 'sales' },

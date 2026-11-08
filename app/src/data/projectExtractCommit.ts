@@ -1,7 +1,7 @@
 import { useDataStore, useRawDataStore } from './repo.ts'
 import { withInvoiceCommitLock } from './invoiceCommitLock.ts'
 
-type Snapshot = Pick<ReturnType<typeof useDataStore.getState>, 'activeBranchId' | 'projects' | 'boqItems' | 'projectExtracts' | 'clientAdvances' | 'changeOrders'>
+type Snapshot = Pick<ReturnType<typeof useDataStore.getState>, 'activeBranchId' | 'projects' | 'boqItems' | 'projectExtracts' | 'projectSurveys' | 'projectExtractDrafts' | 'clientAdvances' | 'changeOrders'>
 
 /** أساس المعاينة كما عُرض، لا أساس يُؤخذ بعد انتظار القفل. */
 export function projectExtractFingerprint(state: Snapshot, projectId: number): string {
@@ -10,6 +10,8 @@ export function projectExtractFingerprint(state: Snapshot, projectId: number): s
     project: state.projects.find(row => row.id === projectId),
     boq: state.boqItems.filter(row => row.projectId === projectId),
     extracts: state.projectExtracts.filter(row => row.projectId === projectId),
+    surveys: state.projectSurveys.filter(row => row.projectId === projectId),
+    drafts: state.projectExtractDrafts.filter(row => row.projectId === projectId),
     advances: state.clientAdvances.filter(row => row.projectId === projectId),
     changes: state.changeOrders.filter(row => row.projectId === projectId),
   })

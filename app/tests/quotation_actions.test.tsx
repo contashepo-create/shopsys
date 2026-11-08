@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
 import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { ACTIVITY_TEMPLATES } from '../src/core/activities.ts'
@@ -51,7 +52,7 @@ describe('وصول ومعاينة العروض لكل الأنشطة', () => {
     expect(usePrintPreview.getState().open).toBe(true)
     expect(useRawDataStore.getState().quotations[0]).toEqual(quote)
   })
-  it('حذف عرض مرتبط بمشروع لا يمس المشروع أو الدفتر ويحفظ المرجع التاريخي', () => {
+  it('حذف عرض مرتبط بمشروع لا يمس المشروع أو الدفتر ويحفظ المرجع التاريخي', async () => {
     useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', projectId: 12 }] })
     const before = useRawDataStore.getState()
     mount()
@@ -59,9 +60,10 @@ describe('وصول ومعاينة العروض لكل الأنشطة', () => {
     fireEvent.click(screen.getByTitle('حذف عرض السعر'))
     expect(screen.getByText(/لن يُحذف المشروع المرتبط/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /تأكيد الحذف/ }))
+    await waitFor(() => expect(useDataStore.getState().quotations).toEqual([]))
     const after = useRawDataStore.getState()
-    expect(useDataStore.getState().quotations).toEqual([])
-    expect(after.quotations[0]).toMatchObject({ id: quote.id, projectId: 12, deletedAt: expect.any(String) })
+    expect(after.quotations).toEqual([])
+    expect(after.quotationDeletionRecords[0]).toMatchObject({ id: quote.id, projectId: 12, quoteNumber: quote.quoteNumber })
     expect(after.projects).toBe(before.projects)
     expect(after.journal).toBe(before.journal)
   })
@@ -88,7 +90,7 @@ describe('وصول ومعاينة العروض لكل الأنشطة', () => {
 })
 
 describe('الحذف الآمن', () => {
-  it('التأكيد والتراجع قبل حذف العرض من القائمة ومصادر التعبئة', () => {
+  it('التأكيد والتراجع قبل حذف العرض من القائمة ومصادر التعبئة', async () => {
     mount()
     fireEvent.click(screen.getByTitle('حذف عرض السعر'))
     expect(useDataStore.getState().quotations).toHaveLength(1)
@@ -96,7 +98,7 @@ describe('الحذف الآمن', () => {
     expect(useDataStore.getState().quotations).toHaveLength(1)
     fireEvent.click(screen.getByTitle('حذف عرض السعر'))
     fireEvent.click(screen.getByRole('button', { name: /تأكيد الحذف/ }))
-    expect(useDataStore.getState().quotations).toHaveLength(0)
+    await waitFor(() => expect(useDataStore.getState().quotations).toHaveLength(0))
     expect(document.querySelector('[data-quotation-preview]')).toBeNull()
     expect(screen.getByText('لا عروض أسعار بعد')).toBeTruthy()
   })
@@ -109,7 +111,8 @@ describe('الحذف الآمن', () => {
     expect(after.items).toBe(before.items)
     expect(after.customers).toBe(before.customers)
     expect(after.projects).toBe(before.projects)
-    expect(after.quotations[0].deletedAt).toBeTruthy()
+    expect(after.quotations).toEqual([])
+    expect(after.quotationDeletionRecords[0]).toMatchObject({ id: quote.id, quoteNumber: quote.quoteNumber })
     expect(after.auditLog.at(-1)?.title).toContain('QT-0007')
     expect(useDataStore.getState().quotations).toEqual([])
     expect(useDataStore.getState()).toBe(useDataStore.getState())
@@ -119,7 +122,7 @@ describe('الحذف الآمن', () => {
     expect(() => useDataStore.getState().updateQuotation(7, { titleAr: 'محاولة' })).toThrow('محذوف')
     expect(() => useDataStore.getState().setQuotationStatus(7, 'submitted')).toThrow('محذوف')
     expect(() => useDataStore.getState().convertQuotationToProject(7, 5)).toThrow('محذوف')
-    // Reloaded snapshots preserve the tombstone, preventing resurrection and number reuse.
+    // Reloaded snapshots retain a reserved-number audit record.
     useRawDataStore.setState({ quotations: JSON.parse(JSON.stringify(useRawDataStore.getState().quotations)) })
     expect(useDataStore.getState().quotations.map(q => q.id)).toEqual([8])
   })

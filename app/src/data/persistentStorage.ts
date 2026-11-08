@@ -139,6 +139,50 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   if (merged === undefined) throw new Error('تعذّر دمج لقطة فارغة مع تعديل متزامن')
   const result = JSON.stringify(merged)
   const state = persistedState(result)
+  const deletedQuotes = new Set(Array.isArray(state?.quotationDeletionRecords) ? state.quotationDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
+  if (state && deletedQuotes.size && Array.isArray(state.quotations) && state.quotations.some(row => row && typeof row === 'object' && deletedQuotes.has((row as { id: number }).id))) throw new Error('تعارض عرض محذوف مع تحديث متزامن — أعد تحميل البيانات')
+  for (const name of ['projectSurveys', 'projectExtractDrafts']) {
+    const rows = state?.[name]
+    if (Array.isArray(rows)) {
+      const ids = rows.map(row => row && typeof row === 'object' ? (row as { projectId?: unknown }).projectId : null).filter((id): id is number => typeof id === 'number')
+      if (new Set(ids).size !== ids.length) throw new Error('تعارض مستندات مشروع مكررة — أعد تحميل البيانات')
+    }
+  }
+  const deletedSurveys = new Set(Array.isArray(state?.surveyDeletionRecords) ? state.surveyDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
+  if (state && deletedSurveys.size && Array.isArray(state.projectSurveys) && state.projectSurveys.some(row => row && typeof row === 'object' && deletedSurveys.has((row as { id: number }).id))) throw new Error('تعارض حصر محذوف مع تحديث متزامن — أعد تحميل البيانات')
+  // Detect a financial link introduced on the other side of an unposted deletion.
+  // Existing deletion audit records alone must not prevent later legitimate activity.
+  const before = persistedState(base) ?? {}, left = persistedState(local) ?? {}, right = persistedState(remote) ?? {}
+  const auditKeys = ['surveyDeletionRecords', 'quotationDeletionRecords']
+  const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectDeletionRecords', 'auditLog'])
+  const refers = (value: unknown, projectId: number, depth = 0): boolean => {
+    if (depth > 12 || value == null) return false
+    if (typeof value === 'string') {
+      if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+      try { return refers(JSON.parse(value), projectId, depth + 1) } catch { return true }
+    }
+    if (Array.isArray(value)) return value.some(row => refers(row, projectId, depth + 1))
+    if (typeof value !== 'object') return false
+    const row = value as Record<string, unknown>
+    return row.projectId === projectId || ((row.source === 'project' || row.sourceType === 'client_advance') && row.sourceId === projectId) || Object.values(row).some(child => refers(child, projectId, depth + 1))
+  }
+  const checkDeletion = (deleting: Record<string, unknown>, other: Record<string, unknown>) => {
+    for (const key of auditKeys) {
+      const oldIds = new Set(Array.isArray(before[key]) ? (before[key] as Array<{ id?: unknown }>).map(row => row?.id) : [])
+      const records = Array.isArray(deleting[key]) ? deleting[key] as Array<{ id?: unknown; projectId?: unknown }> : []
+      for (const record of records) {
+        if (!record || oldIds.has(record.id) || typeof record.projectId !== 'number') continue
+        const projectId = record.projectId
+        for (const [name, rows] of Object.entries(other)) {
+          if (ignored.has(name) || !Array.isArray(rows)) continue
+          const changed = rows.filter(row => refers(row, projectId))
+          const old = Array.isArray(before[name]) ? (before[name] as unknown[]).filter(row => refers(row, projectId)) : []
+          if (JSON.stringify(changed) !== JSON.stringify(old)) throw new Error('تعارض حذف غير مرحّل مع حركة أضيفت بالتزامن — أعد تحميل البيانات')
+        }
+      }
+    }
+  }
+  checkDeletion(left, right); checkDeletion(right, left)
   const deleted = new Set(Array.isArray(state?.projectDeletionRecords) ? state.projectDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
   if (state && deleted.size) {
     const projects = Array.isArray(state.projects) ? state.projects : []
@@ -157,7 +201,7 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
       return Object.values(row).some(child => refersToDeleted(child, depth + 1))
     }
     for (const [key, value] of Object.entries(state)) {
-      if (['projects', 'projectDeletionRecords', 'auditLog'].includes(key) || !Array.isArray(value)) continue
+      if (['projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'auditLog'].includes(key) || !Array.isArray(value)) continue
       const activeRows = key === 'quotations' ? value.filter(row => !row || typeof row !== 'object' || !(row as { deletedAt?: unknown }).deletedAt) : value
       if (refersToDeleted(activeRows)) throw new Error('تعارض المشروع المحذوف مع مستند مرتبط أُضيف بالتزامن — أعد تحميل البيانات')
     }

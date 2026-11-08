@@ -1,9 +1,9 @@
-/** نواة تجريبية غير موصولة بالحفظ أو الواجهة بعد. الحصر مستقل عن الذمة. */
+/** حصر الأعمال التراكمي مستقل عن الذمة المحاسبية. */
 import type { BoqItem } from './contracting.ts'
 import { normalizeMovementQty } from './pos.ts'
 import { quantityExtractBasis, type QuantityHistoryExtract } from './projectExtractQuantity.ts'
 
-export interface SurveyLine { boqItemId: number; cumulativeQty: number }
+export interface SurveyLine { boqItemId: number; cumulativeQty: number; contractQty?: number; unitPriceMinor?: number; unit?: string }
 export interface SurveyRevision {
   revision: number
   at: string
@@ -17,6 +17,7 @@ export interface SurveyRevision {
 export interface ProjectSurvey {
   id: number
   projectId: number
+  branchId?: number | null
   createdAt: string
   /** الحصر المعتمد فقط؛ لا ينشئ قيداً محاسبياً. */
   lines: SurveyLine[]
@@ -39,6 +40,7 @@ function quantitiesByItem(items: readonly BoqItem[], lines: readonly SurveyLine[
     if (result.has(line.boqItemId)) throw new Error('بند مكرر في الحصر')
     const item = items.find(row => row.id === line.boqItemId)
     if (!item) throw new Error('بند الحصر لا ينتمي للمشروع')
+    if ((line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('تغيرت بيانات عقد بند الحصر — راجع التاريخ')
     const qty = normalizeMovementQty(line.cumulativeQty, true)
     normalizeMovementQty(item.qty)
     if (qty > item.qty) throw new Error(`كمية البند ${item.code} تتجاوز كمية العقد`)
@@ -87,11 +89,19 @@ export function reviseProjectSurvey(args: {
     }
   }
   for (const [id, qty] of billed) if ((next.get(id) ?? 0) < qty) throw new Error('الحصر أقل من الكميات المستخلصة')
-  const lines = items.map(item => ({ boqItemId: item.id, cumulativeQty: next.get(item.id) ?? 0 }))
+  const lines = items.map(item => ({ boqItemId: item.id, cumulativeQty: next.get(item.id) ?? 0, contractQty: item.qty, unitPriceMinor: item.unitPriceMinor, unit: item.unit }))
   const isFinal = args.source === 'extract' ? (survey?.isFinal || args.isFinal) : args.isFinal
   if (survey?.isFinal && !isFinal && !args.reason.trim()) throw new Error('سبب إعادة فتح الحصر الختامي مطلوب')
   const revision: SurveyRevision = { revision: (survey?.revisions.length ?? 0) + 1, at: args.at, by: args.by, source: args.source, ...(args.extractId ? { extractId: args.extractId } : {}), reason: args.reason.trim(), isFinal, lines: lines.map(line => ({ ...line })) }
-  return { id: survey?.id ?? projectId, projectId, createdAt: survey?.createdAt ?? args.at, lines, isFinal, revisions: [...(survey?.revisions ?? []), revision] }
+  return { id: survey?.id ?? projectId, projectId, ...(survey?.branchId != null ? { branchId: survey.branchId } : {}), createdAt: survey?.createdAt ?? args.at, lines, isFinal, revisions: [...(survey?.revisions ?? []), revision] }
+}
+
+/** فحص المحفوظ قبل عرض الكميات أو طباعتها؛ لا يُصلح التاريخ بصمت. */
+export function assertSurveyIntegrity(survey: ProjectSurvey, items: readonly BoqItem[], history: readonly QuantityHistoryExtract[]): void {
+  if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('بنود المشروع غير فريدة — راجع الحصر')
+  const measured = quantitiesByItem(items, survey.lines)
+  const billed = quantitiesByItem(items, exactBilledQuantities(items, history))
+  for (const item of items) if ((measured.get(item.id) ?? 0) < (billed.get(item.id) ?? 0)) throw new Error(`الحصر للبند ${item.code} أقل من المستخلص — راجع المستندات`)
 }
 
 /** لا يُغلق مستخلص نهائي تاركاً أعمالاً محصورة لم تُستخلص. */

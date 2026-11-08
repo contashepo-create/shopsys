@@ -217,6 +217,7 @@ export const NAV_SECTIONS: NavSection[] = [
       // يحتفظ مستخدم المقاولات بموضع العروض المعتاد، إلى جانب القسم العام لكل الأنشطة.
       { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations', navigationAlias: true },
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
+      { id: 'project-surveys', nameAr: 'حصر الأعمال', icon: ListChecks, path: '/contracting/surveys' },
       { id: 'project-extracts', nameAr: 'المستخلصات (فواتير الأعمال)', icon: Receipt, path: '/contracting/extracts' },
       { id: 'project-expenses', nameAr: 'مصروفات المشروعات', icon: Banknote, path: '/contracting/expenses' },
       { id: 'contracting-invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/contracting/invoices' },

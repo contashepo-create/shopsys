@@ -35,7 +35,7 @@ export function ExtractWizardWindowView() {
   const toast = useToast()
   const { setup } = useAppStore()
   const {
-    projects, boqItems, projectExtracts, clientAdvances, treasuries, changeOrders, activeBranchId,
+    projects, boqItems, projectExtracts, clientAdvances, treasuries, changeOrders, activeBranchId, projectSurveys, projectExtractDrafts,
     addProjectExtract, getProjectBillingGuard,
   } = useDataStore()
 
@@ -91,7 +91,7 @@ export function ExtractWizardWindowView() {
 
   const qtyHistory = projectExtracts.filter(ex => ex.projectId === projectId)
   const qtyPreview = quantityDraftPreview(projectBoq, qtyHistory, qtyValues, qtyMode, acceptEstimate)
-  const finalSignature = JSON.stringify({ basis: project ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, project.id) : null, projectId, mode, gross, linePct, qtyMode, qtyValues, acceptEstimate, vatOn, vatPercent: setup.vatPercent, payment, treasury, recovery, isFinal })
+  const finalSignature = JSON.stringify({ basis: project ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, project.id) : null, projectId, mode, gross, linePct, qtyMode, qtyValues, acceptEstimate, vatOn, vatPercent: setup.vatPercent, payment, treasury, recovery, isFinal })
   const parseMoney = (s: string): number => { try { return s.trim() ? toMinor(s, cur.decimals) : 0 } catch { return -1 } }
   const grossMinor = mode === 'gross' ? Math.max(0, parseMoney(gross)) : mode === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor
   const recoveryMinor = Math.max(0, parseMoney(recovery))
@@ -129,7 +129,7 @@ export function ExtractWizardWindowView() {
     if (err) { toast.show(err, 'error'); return }
     submitting.current = true
     try {
-      const ex = await withProjectExtractCommit(project.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, clientAdvances, changeOrders }, project.id), () => addProjectExtract({
+      const ex = await withProjectExtractCommit(project.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectExtractDrafts, clientAdvances, changeOrders }, project.id), () => addProjectExtract({
         projectId: project.id,
         grossMinor: mode === 'gross' ? grossMinor : undefined,
         extractLines: mode === 'lines' ? linesInput : undefined,
