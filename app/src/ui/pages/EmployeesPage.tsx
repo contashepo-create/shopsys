@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -309,8 +309,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comSaving, setComSaving] = useState(false)
   const comPending = useRef(false)
   const comBasis = useRef('')
-  const comFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.staffCommissions, s.sales, s.cars, s.projects, s.leases, s.properties, s.journal]) }
+  const comFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.staffCommissions, s.treasuries, s.sales, s.cars, s.projects, s.leases, s.properties, s.journal]) }
   const [comPayId, setComPayId] = useState<number | null>(null)
+  const [comPayDate, setComPayDate] = useState(() => todayLocalIso())
+  const [comPaySaving, setComPaySaving] = useState(false)
+  const comPayPending = useRef(false), comPayBasis = useRef('')
   /* §98: تعديل/إلغاء العمولة بنوافذ النظام بدل prompt() الأصلية (مراجعة شاملة:
      النوافذ الأصلية تكسر نمط البرنامج وتحجب الخلفية بلا Arabic UX ولا تحقق) */
   const [comEdit, setComEdit] = useState<{ id: number; code: string; amountMinor: number } | null>(null)
@@ -335,6 +338,23 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       if (committed) { setComOpen(false); toast.show('سُجلت العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولات والدفتر قبل إعادة المحاولة', 'error') }
       else toast.show((err as Error).message, 'error')
     } finally { comPending.current = false; setComSaving(false) }
+  }
+
+  const saveCommissionPayout = async () => {
+    if (comPayPending.current || comPayId == null) return
+    comPayPending.current = true; setComPaySaving(true)
+    let committed = false
+    try {
+      const c = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comPayBasis.current) throw new Error('تغيرت العمولة أو الخزائن أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().payStaffCommission({ commissionId: comPayId, treasury: comPayTreasury, date: comPayDate })
+        committed = true; return result
+      })
+      toast.show(`صُرفت ${c.code} من الخزينة ✓`); setComPayId(null)
+    } catch (e) {
+      if (committed) { setComPayId(null); toast.show('سُجل صرف العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { comPayPending.current = false; setComPaySaving(false) }
   }
 
   /* ─── تبويب السلف (طلب المالك) ─── */
@@ -926,7 +946,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       <td className="px-4 py-3 text-left whitespace-nowrap">
                         {c.status === 'accrued' && (
                           <>
-                            <button title="صرف منفرد الآن من الخزينة" onClick={() => setComPayId(c.id)}
+                            <button title="صرف منفرد الآن من الخزينة" onClick={() => { setComPayDate(todayLocalIso()); comPayBasis.current = comFingerprint(); setComPayId(c.id) }}
                               className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors">💵 صرف</button>
                             <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" data-commission-edit onClick={() => {
                               setComEdit({ id: c.id, code: c.code, amountMinor: c.amountMinor })
@@ -993,26 +1013,21 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </div></fieldset>
           </Modal>
-          <Modal open={comPayId != null} onClose={() => setComPayId(null)} title="صرف عمولة منفردة" subtitle="مستند صرف: تصفية عمولة مستحقة سبق قيدها">
-            <div className="space-y-4"><DocSectionHead step="١" title="العمولة المستحقة ومصدر الصرف" hint="الصرف تصفية التزام لا مصروف جديد" />
+          <Modal open={comPayId != null} onClose={() => { if (!comPayPending.current) setComPayId(null) }} title="صرف عمولة منفردة" subtitle="مستند صرف: تصفية عمولة مستحقة سبق قيدها">
+            <fieldset disabled={comPaySaving}><div className="space-y-4"><DocSectionHead step="١" title="العمولة المستحقة ومصدر الصرف" hint="الصرف تصفية التزام لا مصروف جديد" />
               {(() => {
                 const c = staffCommissions.find((x) => x.id === comPayId)
                 if (!c) return null
                 return <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{c.code} — {employees.find((e) => e.id === c.employeeId)?.nameAr}: <span className="text-violet-600 font-black">{fmt(c.amountMinor)}</span></div>
               })()}
               <Field label="الصرف من *"><TreasuryPicker value={comPayTreasury} onChange={setComPayTreasury} /></Field>
+              <Field label="تاريخ صرف العمولة" hint="التاريخ السابق لا يسبق الاستحقاق أو حركة عمولات أو خزينة مسجلة"><input aria-label="تاريخ صرف العمولة" type="date" max={todayLocalIso()} value={comPayDate} onChange={e => setComPayDate(e.target.value)} className={inputCls} /></Field>
               <DocOutcome>الأثر: <b>2116 عمولات مستحقة</b> مديناً بقيمة العمولة · <b>الخزينة/البنك</b> دائناً — ولا يتكرر تحميل <b>5117</b> مرة ثانية.</DocOutcome>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComPayId(null)}>إلغاء</Btn>
-                <Btn onClick={() => {
-                  try {
-                    const c = payStaffCommission({ commissionId: comPayId!, treasury: comPayTreasury })
-                    toast.show(`صُرفت ${c.code} من الخزينة ✓`)
-                    setComPayId(null)
-                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                }}>💵 صرف الآن</Btn>
+                <Btn variant="ghost" disabled={comPaySaving} onClick={() => setComPayId(null)}>إلغاء</Btn>
+                <Btn onClick={saveCommissionPayout} disabled={comPaySaving || !comPayDate}>💵 صرف الآن</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
 
           {/* §98: تعديل مبلغ عمولة — نافذة نظام بتحقق، كانت prompt() أصلية */}

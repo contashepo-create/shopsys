@@ -3368,7 +3368,7 @@ interface DataState {
   /** استحقاق عمولة موظف عن عملية: 5117/2116 — تدخل ربحية الفترة فوراً */
   addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number; date?: string }) => StaffCommission
   /** صرف عمولة منفردة بسند: 2116/خزينة */
-  payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount }) => StaffCommission
+  payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount; date?: string }) => StaffCommission
   /** إلغاء عمولة مستحقة (غير مصروفة): قيد عاكس 2116/5117 */
   cancelStaffCommission: (args: { commissionId: number; reason: string }) => StaffCommission
   /** تعديل مبلغ عمولة مستحقة: إلغاء + استحقاق جديد بأثر تدقيقي كامل */
@@ -20694,14 +20694,51 @@ export const useRawDataStore = create<DataState>()(
         const emp = state.employees.find((e) => e.id === com.employeeId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (args.date !== undefined) {
+          if (com.status !== 'accrued') throw new Error('حالة العمولة غير صالحة للصرف')
+          if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ صرف العمولة غير صالح أو في المستقبل')
+          const branch = getEffectiveActiveBranch(state), scoped = getBranchScopedDataState(state)
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+          if (closed) throw new Error(`تاريخ صرف العمولة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if ((state.branches.length && !branch) || state.staffCommissions.filter(c => c.id === com.id).length !== 1 || !scoped.staffCommissions.some(c => c.id === com.id) || state.employees.filter(e => e.id === com.employeeId).length !== 1 || !scoped.employees.some(e => e.id === com.employeeId)) throw new Error('العمولة أو الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.treasuries.filter(t => t.code === args.treasury).length !== 1 || !scoped.treasuries.some(t => t.code === args.treasury)) throw new Error('خزينة الصرف غير فريدة أو ليست في الفرع الحالي')
+          const user = state.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (state.currentUserId != null && (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage'))) throw new Error('لا تملك صلاحية إدارة الموظفين')
+          const access = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'payment', com.amountMinor)
+          if (access.length) throw new Error(access.join(' — '))
+          if (!Number.isSafeInteger(com.amountMinor) || com.amountMinor <= 0 || !isValidExpiryDate(com.date) || com.date > date) throw new Error('تاريخ الاستحقاق أو مبلغه غير صالح أو لاحق للصرف')
+          const entries = state.journal.filter(e => e.sourceType === 'staff_commission' && e.sourceId === com.id)
+          const origin = entries.filter(e => e.id === com.accrualEntryId)
+          if (origin.length !== 1 || state.journal.filter(e => e.id === com.accrualEntryId).length !== 1 || origin[0].date !== com.date || entries.some(e => e.reversedByEntryId != null || !scoped.journal.some(j => j.id === e.id) || !isValidExpiryDate(e.date) || e.date > date)) throw new Error('قيد الاستحقاق أو تعديلاته غير مثبتة قبل تاريخ الصرف في الفرع')
+          let payable = 0
+          for (const entry of entries) for (const line of entry.lines) if (line.accountCode === '2116') {
+            if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('قيد الاستحقاق غير صالح')
+            payable += line.credit - line.debit
+            if (!Number.isSafeInteger(payable)) throw new Error('رصيد العمولة غير صالح')
+          }
+          if (payable !== com.amountMinor) throw new Error('رصيد العمولة لا يطابق قيودها — راجع الاستحقاق والتعديلات')
+          const affected = new Set(['2116', args.treasury])
+          const moves = state.journal.filter(e => e.lines.some(line => affected.has(line.accountCode)))
+          if (moves.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة عمولات أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+          if (date < now.slice(0, 10)) {
+            let cash = 0
+            for (const e of moves) for (const line of e.lines) if (line.accountCode === args.treasury) {
+              if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة')
+              cash += line.debit - line.credit
+              if (!Number.isSafeInteger(cash)) throw new Error('رصيد الخزينة غير صالح')
+            }
+            if (cash < com.amountMinor) throw new Error('رصيد الخزينة لا يكفي في التاريخ المختار')
+          }
+        }
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `صرف عمولة ${com.code} — ${emp?.nameAr ?? ''} (منفردة)`,
           sourceType: 'staff_commission_payout', sourceId: com.id,
           lines: buildStaffCommissionPayout(com.amountMinor, args.treasury, emp?.nameAr ?? ''),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const updated: StaffCommission = { ...com, status: 'paid', payoutEntryId: entryId, payoutMode: 'voucher' }
+        const updated: StaffCommission = { ...com, status: 'paid', payoutEntryId: entryId, payoutMode: 'voucher', ...(args.date !== undefined ? { payoutDate: date, payoutCreatedAt: now } : {}) }
         set({ staffCommissions: state.staffCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
       },
