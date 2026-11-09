@@ -113,7 +113,6 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
-  const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
@@ -154,6 +153,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       : 'لم يُضف أي موظف — راجع الصفوف المرفوضة', outcome.added ? undefined : 'error')
   }
   const [slipMonth, setSlipMonth] = useState(() => todayLocalIso().slice(0, 7))
+  const [slipDate, setSlipDate] = useState(() => todayLocalIso())
+  const [slipSaving, setSlipSaving] = useState(false)
+  const slipPending = useRef(false), slipBasis = useRef(''), slipWarningBasis = useRef('')
+  const slipFingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.payrollSlips, s.payrollRuns, s.employeeAdvances, s.advanceRepayments, s.employeeDeductions, s.attendanceRecords, s.leaveRequests, s.hrRules, s.branchHrSettings, s.journal, app.fiscalYears, app.setup]) }
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
   const getEmployeeStatementRows = useDataStore((state) => state.getEmployeeStatementRows)
@@ -247,27 +250,37 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       ? `حُمّلت المتأخرات من سجلاتها: سلف لـ${advCount} موظف (${fmt(advSum)}) وجزاءات لـ${dedCount} (${fmt(dedSum)}) — راجعها قبل الترحيل`
       : 'لا سلف ولا جزاءات قائمة لأي من المحددين — القسائم صافية')
   }
-  const accrueSlips = () => {
-    /* جسر الحضور ⑤ (جولة «اكمل ونفذ»): لا ترحيل أعمى لمسير شهرٍ بلا أي سجلات
-       حضور لمحددينه — تحذير صريح بالأسماء، والقرار النهائي للمالك بموافقة ثانية */
+  const accrueSlips = async () => {
+    if (slipPending.current) return
     const chosen = slipRowsEffective.filter((row) => row.on)
+    const rows = chosen.map((row) => ({ employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances, deductionsMinor: row.deductions, advanceMinor: row.advance }))
+    const formBasis = JSON.stringify([slipMonth, slipDate, rows])
     const withRecords = new Set(attendanceRecords.filter((r) => r.date.startsWith(slipMonth)).map((r) => r.employeeId))
     const missing = chosen.filter((row) => !withRecords.has(row.employeeId)).map((row) => row.name)
     if (missing.length > 0 && slipNoAttendance == null) {
+      slipWarningBasis.current = formBasis
       setSlipNoAttendance(missing)
       toast.show(`تحذير: ${missing.length} من المحددَدين بلا أي سجل حضور في ${slipMonth} — أكّد الترحيل رغم ذلك`)
       return
     }
+    if (slipNoAttendance != null && slipWarningBasis.current !== formBasis) {
+      setSlipNoAttendance(null); toast.show('تغير المسير بعد تحذير الحضور — راجعه وأعد التأكيد', 'error'); return
+    }
     setSlipNoAttendance(null)
+    slipPending.current = true; setSlipSaving(true)
+    let committed = false
     try {
-      const rows = slipRowsEffective.filter((row) => row.on).map((row) => ({
-        employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances,
-        deductionsMinor: row.deductions, advanceMinor: row.advance,
-      }))
-      const slips = accruePayrollSlips({ month: slipMonth, rows })
+      const slips = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (slipFingerprint() !== slipBasis.current) throw new Error('تغير أساس المسير أو الحضور أو اليومية — أغلق النافذة وراجعها قبل الترحيل')
+        const result = useRawDataStore.getState().accruePayrollSlips({ month: slipMonth, date: slipDate, rows })
+        committed = true; return result
+      })
       toast.show(`استُحقت ${slips.length} قسيمة لشهر ${slipMonth} — كل موظف بذمة مستقلة`)
       setSlipDraftOpen(false)
-    } catch (error) { toast.show((error as Error).message, 'error') }
+    } catch (error) {
+      if (committed) { setSlipDraftOpen(false); toast.show('سُجل استحقاق القسائم محلياً لكن تعذر تأكيد الحفظ — راجع القسائم واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((error as Error).message, 'error')
+    } finally { slipPending.current = false; setSlipSaving(false) }
   }
   /* §93 (إصلاح سلسلة الرواتب): صرف القسيمة بمستند «سند صرف» رسمي على 2104
      باسم الموظف — فيُسدَّد القسيمة بسندها القابل للطباعة بدل قيد مجهّل
@@ -1195,14 +1208,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" className={inputCls + ' w-36'} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر الاستحقاق" />
-                <Btn onClick={() => setSlipDraftOpen(true)} disabled={!employees.length}>
+                <Btn onClick={() => { slipBasis.current = slipFingerprint(); setSlipDate(todayLocalIso()); setSlipNoAttendance(null); setSlipDraftOpen(true) }} disabled={!employees.length}>
                   <span className="flex items-center gap-1.5"><Plus size={15} /> استحقاق قسائم</span>
                 </Btn>
               </div>
             </div>
 
-      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" extraWide subtitle="مستند استحقاق شهري — قسيمة مستقلة باسم كل موظف تُصرف كلٌّ بيومه">
-              <div dir="rtl" data-slip-draft>
+      <Modal open={slipDraftOpen} onClose={() => { if (!slipPending.current) setSlipDraftOpen(false) }} title="مسير رواتب — قسائم الموظفين" extraWide subtitle="مستند استحقاق شهري — قسيمة مستقلة باسم كل موظف تُصرف كلٌّ بيومه">
+              <fieldset disabled={slipSaving}><div dir="rtl" data-slip-draft>
                 {/* ═══ §92: ترويسة مستند رسمي صلبة ═══ */}
                 <div className="payroll-doc-head rounded-2xl bg-slate-900 dark:bg-slate-950 text-white overflow-hidden shadow-lg shadow-slate-900/20" data-slip-head>
                   <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
@@ -1229,7 +1242,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 </div>
 
                 {/* ═══ شريط الأدوات: الشهر والبحث والنطاق ═══ */}
-                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                <div className="mt-3 grid gap-2 md:grid-cols-4">
+                  <Field label="تاريخ الاستحقاق" hint="تاريخ القيد، مستقل عن شهر الراتب">
+                    <input type="date" className={inputCls} value={slipDate} max={todayLocalIso()} onChange={(event) => setSlipDate(event.target.value)} aria-label="تاريخ استحقاق القسائم" />
+                  </Field>
                   <Field label="شهر الاستحقاق">
                     <input type="month" className={inputCls} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر المسير" />
                   </Field>
@@ -1328,12 +1344,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       </Btn>
                       <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
                     </div>
-                    <Btn onClick={accrueSlips} disabled={slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
+                    <Btn onClick={accrueSlips} disabled={slipSaving || !slipDate || slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
                       💾 ترحيل المسير — {slipTotals.count} قسيمة بقيد متوازن
                     </Btn>
                   </div>
                 </div>
-              </div>
+              </div></fieldset>
             </Modal>
 
             {/* §93: سند صرف القسيمة — تسديد رسمي بمستند مطبوع على 2104 باسم الموظف */}

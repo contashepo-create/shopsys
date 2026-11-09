@@ -160,7 +160,7 @@ import {
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
 import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
-import { calendarDateIso, localIsoTimestamp, localTimestampOn, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
+import { calendarDateIso, localIsoTimestamp, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
 
 function checkedOpeningEffectiveDate(value: string | undefined, fallback: string): string {
   const date = (value ?? fallback).trim()
@@ -6772,7 +6772,7 @@ export const useRawDataStore = create<DataState>()(
       fxConversions: [],
       accruePayrollSlips: (args) => {
         const state = get()
-        if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
         if (!args.rows.length) throw new Error('اختر موظفاً واحداً على الأقل')
         const scoped = getBranchScopedDataState(state)
         if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع الحالي قبل ترحيل القسائم')
@@ -6795,18 +6795,18 @@ export const useRawDataStore = create<DataState>()(
           if (row.deductionsMinor > 0) assertLocal(state.employeeDeductions.filter(d => d.employeeId === row.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0)), scoped.employeeDeductions, state.employeeDeductions, 'سجل الجزاء')
         }
         const slipDate = args.date ?? todayLocalIso()
+        if (!isValidExpiryDate(slipDate) || slipDate > todayLocalIso()) throw new Error('تاريخ استحقاق القسيمة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(slipDate, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ استحقاق القسيمة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (state.journal.some(entry => entry.lines.some(line => line.accountCode === '2104') && (!isValidExpiryDate(entry.date?.slice(0, 10)) || entry.date.slice(0, 10) > slipDate))) throw new Error('تاريخ استحقاق القسيمة يسبق حركة رواتب مسجلة أو تاريخها غير واضح — راجع التسلسل')
         for (const row of args.rows.filter(r => r.advanceMinor > 0)) {
-          const selectedDates = [...state.employeeAdvances.filter(a => a.employeeId === row.employeeId && a.dateSelected).map(a => a.date), ...state.advanceRepayments.filter(a => a.employeeId === row.employeeId && a.dateSelected).map(a => a.date)]
-          if (selectedDates.length) {
-            try { employeeAdvanceDocumentDate(state, row.employeeId, slipDate) }
-            catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق حركة سلفة مسجلة — راجع تسلسل الاستقطاع') }
-          }
+          try { employeeAdvanceDocumentDate(state, row.employeeId, slipDate) }
+          catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق حركة سلفة مسجلة — راجع تسلسل الاستقطاع') }
         }
         for (const row of args.rows.filter(r => r.deductionsMinor > 0)) {
-          if (state.employeeDeductions.some(d => d.employeeId === row.employeeId && d.dateSelected)) {
-            try { employeeDeductionDocumentDate(state, row.employeeId, slipDate) }
-            catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق جزاءً أو استقطاعاً مسجلاً — راجع التسلسل') }
-          }
+          try { employeeDeductionDocumentDate(state, row.employeeId, slipDate) }
+          catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق جزاءً أو استقطاعاً مسجلاً — راجع التسلسل') }
         }
         const drafts = args.rows.map((row) => {
           const employee = state.employees.find((e) => e.id === row.employeeId)
@@ -6817,9 +6817,15 @@ export const useRawDataStore = create<DataState>()(
              والجزاء يُستردان كاملين دون أن يغطيهما الراتب. يُرفض المسير كله، مهما كان
              الاعتماد (الاعتماد يسمح بتجاوز نصف الراتب، لا بصافٍ سالب). */
           const rawNet = row.grossMinor + row.allowancesMinor - row.deductionsMinor - row.advanceMinor
+          if (!Number.isSafeInteger(row.grossMinor + row.allowancesMinor) || !Number.isSafeInteger(rawNet)) throw new Error('إجمالي القسيمة يتجاوز الحدود الآمنة')
           if (rawNet < 0) throw new Error(`${employee.nameAr}: الخصومات والسلف تتجاوز الراتب والبدلات — صافي القسيمة سالب`)
           return { ...row, employeeName: employee.nameAr, netMinor: slipNetMinor(row) }
         })
+        let payrollTotal = 0
+        for (const draft of drafts) {
+          payrollTotal += draft.netMinor + draft.advanceMinor
+          if (!Number.isSafeInteger(payrollTotal)) throw new Error('إجمالي المسير يتجاوز الحدود الآمنة')
+        }
         /* منع تكرار استحقاق نفس الموظف لنفس الشهر */
         for (const draft of drafts) {
           const twice = state.payrollSlips.some((slip) => slip.month === args.month && slip.employeeId === draft.employeeId && slip.status !== 'cancelled')
@@ -6878,7 +6884,8 @@ export const useRawDataStore = create<DataState>()(
         }
         const runId = nextPayrollSourceId(state)
         const baseId = nextId(state.payrollSlips)
-        const now = args.date ? localTimestampOn(args.date, 9) : localIsoTimestamp()
+        const createdAt = localIsoTimestamp()
+        const now = args.date ? localTimestampOnDay(slipDate, new Date()) : createdAt
         const numbered = drafts.map((draft, index) => ({ ...draft, slipNumber: `PS-${String(baseId + index).padStart(4, '0')}` }))
         const monthLabel = monthLabelAr(args.month)
         const lines = buildSlipAccrualLines(numbered, monthLabel)
@@ -6887,7 +6894,7 @@ export const useRawDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `استحقاق رواتب ${monthLabel} — ${numbered.length} موظف`,
           sourceType: 'payroll', sourceId: runId, lines,
-          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(state), createdAt, reversedByEntryId: null, reversesEntryId: null,
         }
         const slips: PayrollSlip[] = numbered.map((draft, index) => ({
           id: baseId + index,
@@ -6903,6 +6910,7 @@ export const useRawDataStore = create<DataState>()(
           netMinor: draft.netMinor,
           status: 'accrued',
           accruedAt: now,
+          createdAt,
           accrualEntryId: entryId,
           notes: draft.notes ?? '',
           recoveredDeductions: recoveredDeductionsByEmployee.get(draft.employeeId),

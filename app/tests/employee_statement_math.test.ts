@@ -43,7 +43,7 @@ describe('كشف حساب الموظف — المعيار الدفتري (بلا
 
     // ③ مسير رواتب: أساسي 5000 · خصومات 200 · سلف مستقطعة 300 ⇒ صافي 4500
     S().accruePayrollSlips({
-      month: '2026-09', date: '2026-09-30',
+      month: '2026-09',
       rows: [{ employeeId: emp.id, grossMinor: 500000, allowancesMinor: 0, deductionsMinor: 20000, advanceMinor: 30000 }],
     } as never)
     const slip = S().payrollSlips.find((row) => row.employeeId === emp.id && row.month === '2026-09')!

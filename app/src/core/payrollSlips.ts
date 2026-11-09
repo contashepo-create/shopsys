@@ -36,6 +36,8 @@ export interface PayrollSlip {
   netMinor: Minor
   status: PayrollSlipStatus
   accruedAt: string
+  /** وقت تسجيل الاستحقاق الفعلي، منفصل عن يوم المستند. */
+  createdAt?: string
   accrualEntryId: number
   paidAt?: string | null
   paidEntryId?: number | null

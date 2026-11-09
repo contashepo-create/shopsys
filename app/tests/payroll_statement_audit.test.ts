@@ -81,7 +81,7 @@ describe('② السلفة تُستقطع من الراتب عند الاستح�
   it('الصافي = الراتب − السلفة، ولا يمكن السداد النقدي بعدها لأن المتبقي صفر', () => {
     const id = newEmployee('تدقيق-ب', 300000)
     S().grantEmployeeAdvance({ employeeId: id, amountMinor: 100000, treasury: '1101', notes: 'سلفة' } as never)
-    const [slip] = S().accruePayrollSlips({ month: '2026-09', date: '2026-09-30', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 100000 }] } as never)
+    const [slip] = S().accruePayrollSlips({ month: '2026-09', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 100000 }] } as never)
     expect(slip.netMinor).toBe(200000)
     expect(ledgerBalance('2104')).toBe(200000)
     expect(ledgerBalance('1107')).toBe(0)
@@ -120,7 +120,7 @@ describe('④ الإلغاء يعكس السلفة كاملةً', () => {
   it('قسيمة مستقطعة منها سلفة ثم ملغاة ⇒ السلفة قائمة كما كانت والدفتر صفر', () => {
     const id = newEmployee('تدقيق-هـ', 300000)
     S().grantEmployeeAdvance({ employeeId: id, amountMinor: 100000, treasury: '1101', notes: 'سلفة' } as never)
-    const [slip] = S().accruePayrollSlips({ month: '2026-09', date: '2026-09-30', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 100000 }] } as never)
+    const [slip] = S().accruePayrollSlips({ month: '2026-09', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 100000 }] } as never)
     S().cancelPayrollSlip(slip.id, 'خطأ في الإدخال')
     expect(S().getEmployeeAdvanceBalance(id).remainingMinor).toBe(100000)
     expect(ledgerBalance('2104')).toBe(0)
@@ -135,10 +135,10 @@ describe('⑤ توزيع السلفة على أكثر من مسير (الأقد�
     const id = newEmployee('تدقيق-و', 300000)
     S().grantEmployeeAdvance({ employeeId: id, amountMinor: 60000, treasury: '1101', notes: 'أ' } as never)
     S().grantEmployeeAdvance({ employeeId: id, amountMinor: 50000, treasury: '1101', notes: 'ب' } as never)
-    S().accruePayrollSlips({ month: '2026-08', date: '2026-08-31', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 80000 }] } as never)
+    S().accruePayrollSlips({ month: '2026-08', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 80000 }] } as never)
     expect(S().getEmployeeAdvanceBalance(id).remainingMinor).toBe(30000)
-    expect(() => S().accruePayrollSlips({ month: '2026-09', date: '2026-09-30', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 40000 }] } as never)).toThrow()
-    S().accruePayrollSlips({ month: '2026-09', date: '2026-09-30', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 30000 }] } as never)
+    expect(() => S().accruePayrollSlips({ month: '2026-09', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 40000 }] } as never)).toThrow()
+    S().accruePayrollSlips({ month: '2026-09', rows: [{ employeeId: id, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 30000 }] } as never)
     expect(S().getEmployeeAdvanceBalance(id).remainingMinor).toBe(0)
     expect(ledgerBalance('1107')).toBe(0)
     expect(statementBalance(id)).toBe(220000 + 270000) // أغسطس 3000−800 + سبتمبر 3000−300
@@ -154,7 +154,7 @@ describe('⑥ حدود الصافي السالب (فحص سلامة)', () => {
     S().addEmployeeDeduction({ employeeId: bad, amountMinor: 80000, reason: 'جزاء', date: '2026-09-10' } as never)
     S().grantEmployeeAdvance({ employeeId: bad, amountMinor: 50000, treasury: '1101', notes: 'سلفة' } as never)
     const attempt = () => S().accruePayrollSlips({
-      month: '2026-09', date: '2026-09-30', overrideBy: 'مشرف',
+      month: '2026-09', overrideBy: 'مشرف',
       rows: [
         { employeeId: good, grossMinor: 300000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 0 },
         { employeeId: bad, grossMinor: 100000, allowancesMinor: 0, deductionsMinor: 80000, advanceMinor: 50000 },
