@@ -1135,6 +1135,7 @@ export interface ConsumptionDoc {
  * فلا ينفصل الدفتر عن الكشوف (الثابت السابع) ولا يُلجأ لقيد يدوي على حساب مراقبة.
  */
 export interface PartyOffsetDoc {
+  createdAt?: string
   id: number
   offsetNumber: string // OFS-0001
   date: string // YYYY-MM-DD
@@ -10174,12 +10175,21 @@ export const useRawDataStore = create<DataState>()(
 
       postPartyOffset: (args) => {
         const state = get()
-        const customer = state.customers.find((x) => x.id === args.customerId)
-        if (!customer) throw new Error('العميل غير موجود')
-        const supplier = state.suppliers.find((x) => x.id === args.supplierId)
-        if (!supplier) throw new Error('المورد غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل إجراء المقاصة')
+        const customer = scoped.customers.find((x) => x.id === args.customerId)
+        if (!customer || state.customers.filter(x => x.id === args.customerId).length !== 1) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        const supplier = scoped.suppliers.find((x) => x.id === args.supplierId)
+        if (!supplier || state.suppliers.filter(x => x.id === args.supplierId).length !== 1) throw new Error('المورد غير موجود أو غير فريد في الفرع الحالي')
         const amountMinor = args.amountMinor
-        if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة المقاصة مطلوبة بالقرش الصحيح وأكبر من صفر')
+        if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة المقاصة مطلوبة بالقرش الصحيح وأكبر من صفر')
+        const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ المقاصة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ المقاصة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (date < now.slice(0, 10) && state.journal.some(e => e.lines.some(l => l.accountCode === '1104' || l.accountCode === '2101') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ المقاصة يسبق حركة ذمة مسجلة — راجع الأصل والرصيد التاريخي')
         const customerBalance = get().getCustomerBalance(args.customerId)
         const supplierBalance = get().getSupplierBalance(args.supplierId)
         if (customerBalance <= 0) throw new Error(`لا مديونية على «${customer.nameAr}» لإجراء مقاصة`)
@@ -10188,8 +10198,6 @@ export const useRawDataStore = create<DataState>()(
         if (amountMinor > ceiling) {
           throw new Error(`أقصى مقاصة ممكنة ${(ceiling / 100).toFixed(2)} — دين العميل ${(customerBalance / 100).toFixed(2)} ومستحق المورد ${(supplierBalance / 100).toFixed(2)}`)
         }
-        const now = localIsoTimestamp()
-        const date = (args.date ?? now).slice(0, 10)
         const id = nextId(state.partyOffsets)
         const entryId = nextId(state.journal)
         const offsetNumber = `OFS-${String(id).padStart(4, '0')}`
@@ -10201,7 +10209,7 @@ export const useRawDataStore = create<DataState>()(
         const doc: PartyOffsetDoc = {
           id,
           offsetNumber,
-          date,
+          date, createdAt: now,
           customerId: args.customerId,
           supplierId: args.supplierId,
           customerNameAr: customer.nameAr,

@@ -4,9 +4,11 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * مطابقة الدفاتر بالواقع: عدّ نقدية الخزائن، ومطابقة أرصدة العملاء والموردين —
  * كل فرق يضرب قائمة الدخل عبر 5112 إجبارياً (لا عجز «يتبخر» بتعديل صامت).
  */
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2, ArrowLeftRight, X } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -36,6 +38,13 @@ export function SettlementsPage() {
   const [offsetSupplier, setOffsetSupplier] = useState(0)
   const [offsetAmount, setOffsetAmount] = useState('')
   const [offsetNotes, setOffsetNotes] = useState('')
+  const [offsetDate, setOffsetDate] = useState(() => todayLocalIso())
+  const [offsetSaving, setOffsetSaving] = useState(false)
+  const offsetPending = useRef(false), offsetSession = useRef(0), offsetBasis = useRef(''), offsetDraft = useRef('')
+  const draftValue = JSON.stringify([offsetCustomer, offsetSupplier, offsetAmount, offsetNotes, offsetDate])
+  useLayoutEffect(() => { offsetDraft.current = draftValue }, [draftValue])
+  const closeOffset = () => { offsetSession.current++; setOffsetOpen(false) }
+  const fingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.customers, s.suppliers, s.sales, s.purchases, s.vouchers, s.cheques, s.openingBalances, s.clientSettlements, s.partyOffsets, s.loyaltyRedemptions, s.journal]) }
   const [refId, setRefId] = useState<string>('')
   const [actual, setActual] = useState('')
   const [reason, setReason] = useState('')
@@ -90,13 +99,27 @@ export function SettlementsPage() {
   const offsetAmountMinor = offsetAmount.trim() === '' ? null : (() => { try { return toMinor(offsetAmount, cur.decimals) } catch { return null } })()
   const offsetApproval = useSupervisorApproval('inv.adjust')
   const submitOffset = () => {
-    if (!offsetCustomer || !offsetSupplier || !offsetAmountMinor) return
+    if (!offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetPending.current) return
+    const requestSession = offsetSession.current, expectedDraft = offsetDraft.current
     offsetApproval.request(() => {
-      try {
-        const doc = store.postPartyOffset({ customerId: offsetCustomer, supplierId: offsetSupplier, amountMinor: offsetAmountMinor, notes: offsetNotes })
-        toast.show(`رُحّلت المقاصة ${doc.offsetNumber}: خُفض دين العميل ومستحق المورد بـ${fmt(doc.amountMinor)} ${cur.symbol} بقيد واحد`)
-        setOffsetAmount(''); setOffsetNotes(''); setOffsetOpen(false)
-      } catch (e) { toast.show((e as Error).message, 'error') }
+      if (requestSession !== offsetSession.current || expectedDraft !== offsetDraft.current) return toast.show('تغيرت المقاصة قبل الاعتماد — راجعها وأعد المحاولة', 'error')
+      if (offsetPending.current) return
+      offsetPending.current = true; setOffsetSaving(true)
+      let committed = false
+      void (async () => {
+        try {
+          const doc = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+            if (requestSession !== offsetSession.current || expectedDraft !== offsetDraft.current || fingerprint() !== offsetBasis.current) throw new Error('تغيرت الأرصدة أو بيانات المقاصة — أغلق النافذة وراجعها')
+            const result = useRawDataStore.getState().postPartyOffset({ customerId: offsetCustomer, supplierId: offsetSupplier, amountMinor: offsetAmountMinor, notes: offsetNotes, date: offsetDate })
+            committed = true; return result
+          })
+          toast.show(`رُحّلت المقاصة ${doc.offsetNumber}: خُفض دين العميل ومستحق المورد بـ${fmt(doc.amountMinor)} ${cur.symbol} بقيد واحد`)
+          setOffsetAmount(''); setOffsetNotes(''); closeOffset()
+        } catch (e) {
+          if (committed) { closeOffset(); toast.show('سُجلت المقاصة محلياً لكن تعذر تأكيد الحفظ — راجع كشفي الطرفين والدفتر قبل إعادة المحاولة', 'error') }
+          else toast.show((e as Error).message, 'error')
+        } finally { offsetPending.current = false; setOffsetSaving(false) }
+      })()
     })
   }
 
@@ -123,7 +146,7 @@ export function SettlementsPage() {
       </div>
       <div className="anim-up flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11.5px] text-slate-400">{meta.hint}</p>
-        <Btn variant="ghost" onClick={() => setOffsetOpen(true)}><ArrowLeftRight size={14} /> مقاصة عميل/مورد</Btn>
+        <Btn variant="ghost" onClick={() => { offsetSession.current++; setOffsetDate(todayLocalIso()); offsetBasis.current = fingerprint(); setOffsetOpen(true) }}><ArrowLeftRight size={14} /> مقاصة عميل/مورد</Btn>
       </div>
 
       <div className="anim-up grid lg:grid-cols-2 gap-4">
@@ -194,7 +217,7 @@ export function SettlementsPage() {
         </div>
       </div>
       {/* مقاصة عميل/مورد — بلغة المستند نفسها (AUDIT-012 + المرحلة 6) */}
-      <Modal open={offsetOpen} onClose={() => setOffsetOpen(false)} title="" wide bare>
+      <Modal open={offsetOpen} onClose={closeOffset} title="" wide bare>
         <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">
           <div className="flex items-center justify-between gap-4 doc-head px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
@@ -208,7 +231,7 @@ export function SettlementsPage() {
                 <p className="mt-0.5 truncate text-[11px] doc-head-sub">الطرف الذي يشتري منك ويبيع لك: بدل أن يدفع لك وتدفع له، تُخصم الأقل من الأكبر بقيد واحد</p>
               </div>
             </div>
-            <button type="button" onClick={() => setOffsetOpen(false)} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={18} /></button>
+            <button type="button" onClick={closeOffset} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={18} /></button>
           </div>
 
           <div className="space-y-4 px-5 py-4">
@@ -236,13 +259,14 @@ export function SettlementsPage() {
                 <Field label={`قيمة المقاصة (${cur.symbol})`} hint={`أقصى مقاصة ممكنة: ${fmt(offsetCapMinor)} ${cur.symbol} — أقل الرصيدين`}>
                   <input value={offsetAmount} onChange={(e) => setOffsetAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
                 </Field>
-                <Btn variant="ghost" onClick={() => setOffsetAmount(String(offsetCapMinor / 100))} disabled={offsetCapMinor <= 0}>استخدم الحد الأقصى</Btn>
+                <Btn variant="ghost" onClick={() => setOffsetAmount(String(offsetCapMinor / 10 ** cur.decimals))} disabled={offsetCapMinor <= 0}>استخدم الحد الأقصى</Btn>
               </div>
               {offsetAmountMinor != null && offsetAmountMinor > offsetCapMinor && (
                 <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700">
                   <AlertTriangle size={14} /> المبلغ يتجاوز أقل الرصيدين — المقاصة لا تخلق رصيداً سالباً لأي طرف
                 </div>
               )}
+              <Field label="تاريخ المقاصة"><input aria-label="تاريخ المقاصة" type="date" max={todayLocalIso()} value={offsetDate} onChange={e => setOffsetDate(e.target.value)} className={inputCls} /></Field>
               <Field label="ملاحظات (اختياري)">
                 <input value={offsetNotes} onChange={(e) => setOffsetNotes(e.target.value)} className={inputCls} placeholder="مثال: تسوية ربع سنوية باتفاق موقّع" />
               </Field>
@@ -258,8 +282,8 @@ export function SettlementsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 doc-footer px-5 py-3">
             <span className="text-[10px] doc-faint">المقاصة مستند OFS مستقل قابل للمراجعة — لا تعديل صامت على أي رصيد</span>
             <div className="flex items-center gap-2">
-              <Btn variant="ghost" onClick={() => setOffsetOpen(false)}>إلغاء</Btn>
-              <Btn onClick={submitOffset} disabled={!offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetAmountMinor > offsetCapMinor}>ترحيل المقاصة</Btn>
+              <Btn variant="ghost" onClick={closeOffset}>إلغاء</Btn>
+              <Btn onClick={submitOffset} disabled={offsetSaving || !offsetDate || !offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetAmountMinor > offsetCapMinor}>ترحيل المقاصة</Btn>
             </div>
           </div>
         </div>
