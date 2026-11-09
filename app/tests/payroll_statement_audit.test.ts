@@ -70,7 +70,7 @@ describe('① دورة المستخدم: سلفة مدفوعة ← استحقا�
     expect(statementBalance(id)).toBe(ledgerBalance('2104') + ledgerBalance('2116') + ledgerBalance('1107'))
 
     // صرف الراتب → الكشف صفر
-    S().payPayrollSlip(slip.id, { treasury: '1101', date: '2026-10-01' })
+    S().payPayrollSlip(slip.id, { treasury: '1101' })
     expect(ledgerBalance('2104')).toBe(0)
     expect(statementBalance(id)).toBe(0)
     expectEveryEntryBalanced()

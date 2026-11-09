@@ -43,3 +43,8 @@ it('يرفض بيانات دفعة سابقة متناقضة ويمنع عكس �
  const v = post('2026-11-04'); const before = S(); expect(() => S().reverseVoucher(v.id, 'تصحيح')).toThrow(/تسوية القسيمة/); expect(() => S().reverseEntry(v.journalEntryId, 'تصحيح')).toThrow(/تسوية القسيمة/); expect(S().journal).toBe(before.journal)
  useRawDataStore.setState({ payrollSlips: S().payrollSlips.map(s => ({ ...s, payments: s.payments?.map(p => ({ ...p, date: '2026-11-03' })) })) }); expect(() => post('2026-11-05')).toThrow(/غير مثبت/)
 })
+it('لا يحتسب سند القسيمة تمويلاً مثبتاً في فرع آخر رصيداً تاريخياً', () => {
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, active: true, warehouseId: 1, treasuryCode: '1101' }, { id: 2, nameAr: 'آخر', isMain: false, active: true, warehouseId: 2, treasuryCode: '1121' }]
+ useRawDataStore.setState({ branches: branches as never, activeBranchId: 1, employees: S().employees.map(e => ({ ...e, branchId: 1 })), treasuries: S().treasuries.map(t => ({ ...t, branchId: 1 })), payrollSlips: S().payrollSlips.map(s => ({ ...s, branchId: 1 })), journal: S().journal.map(e => ({ ...e, branchId: e.sourceType === 'manual' ? 2 : 1 })) })
+ const before = S(); expect(() => post('2026-11-04')).toThrow(/خارج الفرع/); expect(S().vouchers).toBe(before.vouchers); expect(S().journal).toBe(before.journal)
+})

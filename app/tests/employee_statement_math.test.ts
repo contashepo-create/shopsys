@@ -50,7 +50,7 @@ describe('كشف حساب الموظف — المعيار الدفتري (بلا
     expect(slip).toBeTruthy()
     expect(slip.netMinor).toBe(450000) // 5000 − 200 خصم − 300 سلفة
     // ④ صرف القسيمة نقداً
-    S().payPayrollSlip(slip.id, { treasury: '1101', date: '2026-10-05' })
+    S().payPayrollSlip(slip.id, { treasury: '1101' })
 
     // ⑤ عمولة مستحقة 300.00
     S().addStaffCommission({ employeeId: emp.id, source: 'manual' as never, sourceId: null, description: 'عمولة اختبار', amountMinor: 30000 })

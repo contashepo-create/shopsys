@@ -6934,21 +6934,57 @@ export const useRawDataStore = create<DataState>()(
         const accessErrors = validateTreasuryAccess(state.appUsers.find(user => user.id === state.currentUserId && user.active)?.treasuryAccess, args.treasury, 'payment', amount)
         if (accessErrors.length) throw new Error(accessErrors.join(' — '))
         if (amount > remaining) throw new Error(`مبلغ الصرف (${amount}) أكبر من المتبقي من القسيمة (${remaining})`)
-        const now = args.date ? localTimestampOn(args.date, 12) : localIsoTimestamp()
+        const now = localIsoTimestamp(), date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ صرف القسيمة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ صرف القسيمة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        const day = slip.accruedAt?.slice(0, 10), origins = state.journal.filter(e => e.id === slip.accrualEntryId), origin = origins[0]
+        if (!isValidExpiryDate(day) || day > date) throw new Error('تاريخ صرف القسيمة يسبق استحقاقها أو تاريخه غير صالح')
+        if (!Number.isSafeInteger(slip.netMinor) || slip.netMinor <= 0 || origins.length !== 1 || !scoped.journal.includes(origin) || origin.sourceType !== 'payroll' || origin.sourceId !== slip.runId || origin.date !== day || origin.reversedByEntryId != null || !Array.isArray(origin.lines) || origin.lines.filter(l => l.accountCode === '2104' && l.credit === slip.netMinor && l.debit === 0 && l.note?.startsWith(`${slip.slipNumber} — `)).length !== 1) throw new Error('قيد استحقاق القسيمة غير مثبت أو لا يطابقها — راجع القسيمة')
+        let paid = 0
+        for (const payment of slip.payments ?? []) {
+          if (!Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0 || !isValidExpiryDate(payment.date) || payment.date < day || payment.date > date) throw new Error('تاريخ أو مبلغ دفعة القسيمة غير صالح أو لاحق — راجع التسلسل')
+          const entries = state.journal.filter(e => e.id === payment.entryId), previous = entries[0]
+          if (entries.length !== 1 || !scoped.journal.includes(previous) || previous.date !== payment.date || previous.reversedByEntryId != null || !Array.isArray(previous.lines)) throw new Error('قيد دفعة القسيمة غير مثبت أو لا يطابق تاريخها — راجع القسيمة')
+          const linked = state.payrollSlips.flatMap(row => (row.payments ?? []).filter(p => p.entryId === payment.entryId).map(p => ({ row, p })))
+          const total = linked.reduce((sum, item) => sum + item.p.amountMinor, 0)
+          if (linked.filter(item => item.row.id === slip.id).length !== 1 || linked.some(item => item.row.employeeId !== slip.employeeId || !Number.isSafeInteger(item.p.amountMinor) || item.p.amountMinor <= 0 || item.p.date !== payment.date) || !Number.isSafeInteger(total) || !previous.lines.some(l => l.accountCode === '2104' && l.debit >= total && l.credit === 0)) throw new Error('تخصيص دفعة القسيمة غير مثبت — راجع القسيمة')
+          if (previous.sourceType === 'payment_voucher') {
+            const vouchers = state.vouchers.filter(v => v.journalEntryId === previous.id && v.id === previous.sourceId && v.kind === 'payment' && v.partyKind === 'employee' && v.partyId === slip.employeeId && !v.reversalEntryId)
+            if (vouchers.length !== 1 || !scoped.vouchers.includes(vouchers[0]) || payment.from !== `سند صرف ${vouchers[0].voucherNumber}` || vouchers[0].amountMinor < total) throw new Error('سند دفعة القسيمة غير مثبت — راجع القسيمة')
+          } else if (previous.sourceType !== 'payroll' || previous.sourceId !== slip.runId || linked.length !== 1 || !previous.lines.some(l => l.accountCode === payment.from && l.credit === payment.amountMinor && l.debit === 0)) throw new Error('مصدر دفعة القسيمة غير مثبت — راجع القسيمة')
+          paid += payment.amountMinor
+          if (!Number.isSafeInteger(paid) || paid > slip.netMinor) throw new Error('مجموع دفعات القسيمة غير صالح')
+        }
+        const affected = new Set(['2104', args.treasury])
+        const moves = state.journal.filter(e => e.lines.some(l => affected.has(l.accountCode)))
+        if (moves.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة رواتب أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        if (date < now.slice(0, 10)) {
+          if (moves.some(entry => entry.lines.some(line => line.accountCode === args.treasury) && !scoped.journal.includes(entry))) throw new Error('حركة الخزينة خارج الفرع أو غير واضحة — راجع الرصيد التاريخي')
+          let cash = 0
+          for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
+            if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة — راجع الرصيد')
+            cash += line.debit - line.credit
+            if (!Number.isSafeInteger(cash)) throw new Error('رصيد الخزينة غير صالح')
+          }
+          if (cash < amount) throw new Error('رصيد الخزينة لا يكفي في تاريخ صرف القسيمة')
+        }
+        const transactionAt = args.date ? `${date}T${now.slice(11)}` : now
         const lines = buildSlipPaymentLines({ slipNumber: slip.slipNumber, employeeName: slip.employeeName, netMinor: amount }, args.treasury)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `صرف راتب ${slip.employeeName} — ${slip.slipNumber}`,
           sourceType: 'payroll', sourceId: slip.runId, lines,
           createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const payment: SlipPayment = { entryId, amountMinor: amount, date: now.slice(0, 10), from: args.treasury }
+        const payment: SlipPayment = { entryId, amountMinor: amount, date, createdAt: now, from: args.treasury }
         const payments = [...(slip.payments ?? []), payment]
         const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
         const fullyPaid = paidNow >= slip.netMinor
         const updated: PayrollSlip = fullyPaid
-          ? { ...slip, status: 'paid', paidAt: now, paidEntryId: entry.id, paidFrom: args.treasury, payments }
+          ? { ...slip, status: 'paid', paidAt: transactionAt, paidEntryId: entry.id, paidFrom: args.treasury, payments }
           : { ...slip, payments }
         set({
           payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? updated : row)),
@@ -10731,6 +10767,7 @@ export const useRawDataStore = create<DataState>()(
           const moves = state.journal.filter(entry => entry.lines.some(line => affected.has(line.accountCode)))
           if (moves.some(entry => !isValidExpiryDate(entry.date?.slice(0, 10)) || entry.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة رواتب أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
           if (date < todayLocalIso()) {
+            if (moves.some(entry => entry.lines.some(line => line.accountCode === args.treasury) && !scoped.journal.includes(entry))) throw new Error('حركة الخزينة خارج الفرع أو غير واضحة — راجع الرصيد التاريخي')
             let cash = 0
             for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
               if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة — راجع الرصيد')

@@ -53,6 +53,8 @@ export interface SlipPayment {
   entryId: number
   amountMinor: Minor
   date: string
+  /** وقت التسجيل الفعلي عند الصرف المباشر المؤرخ. */
+  createdAt?: string
   /** مصدر الصرف: الخزينة أو رقم سند الصرف */
   from: string
 }
