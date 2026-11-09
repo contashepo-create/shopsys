@@ -6920,13 +6920,19 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
+        const scoped = getBranchScopedDataState(state)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || state.payrollSlips.filter(row => row.id === slip.id).length !== 1 || !scoped.payrollSlips.some(row => row.id === slip.id) || state.employees.filter(row => row.id === slip.employeeId).length !== 1 || !scoped.employees.some(row => row.id === slip.employeeId)) throw new Error('القسيمة أو الموظف غير فريد أو تابع لفرع آخر')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (state.treasuries.filter(row => row.code === args.treasury).length !== 1 || !scoped.treasuries.some(row => row.code === args.treasury)) throw new Error('خزينة الصرف غير موجودة أو غير فريدة أو تابعة لفرع آخر')
         if (slip.status === 'paid') throw new Error('هذه القسيمة مصروفة بالفعل')
         if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة')
         const remaining = slipRemainingMinor(slip)
         if (remaining <= 0) throw new Error('لا متبقي للصرف في هذه القسيمة')
         /* بلاغ المالك: الصرف قد يكون جزئياً — الافتراضي المتبقي، ولا يُصرف أكثر منه */
         const amount = args.amountMinor ?? remaining
-        if (!Number.isInteger(amount) || amount <= 0) throw new Error('مبلغ الصرف يجب أن يكون موجباً')
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('مبلغ الصرف يجب أن يكون موجباً وآمناً')
+        const accessErrors = validateTreasuryAccess(state.appUsers.find(user => user.id === state.currentUserId && user.active)?.treasuryAccess, args.treasury, 'payment', amount)
+        if (accessErrors.length) throw new Error(accessErrors.join(' — '))
         if (amount > remaining) throw new Error(`مبلغ الصرف (${amount}) أكبر من المتبقي من القسيمة (${remaining})`)
         const now = args.date ? localTimestampOn(args.date, 12) : localIsoTimestamp()
         const lines = buildSlipPaymentLines({ slipNumber: slip.slipNumber, employeeName: slip.employeeName, netMinor: amount }, args.treasury)
@@ -6954,6 +6960,9 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
+        const scoped = getBranchScopedDataState(state)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || state.payrollSlips.filter(row => row.id === slip.id).length !== 1 || !scoped.payrollSlips.some(row => row.id === slip.id) || state.employees.filter(row => row.id === slip.employeeId).length !== 1 || !scoped.employees.some(row => row.id === slip.employeeId)) throw new Error('القسيمة أو الموظف غير فريد أو تابع لفرع آخر')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
         if (slip.status === 'paid') throw new Error('لا تُلغى قسيمة مصروفة — سجّل تسوية بدلاً منها')
         if (slipPaidMinor(slip) > 0) throw new Error('لا تُلغى قسيمة بها صرف جزئي — ألغِ الدفعات أولاً أو سجّل تسوية')
         // إصلاح §83 (بوابة العمق): الملغاة كانت تُلغى مرة ثانية فيولَّد قيد عكسي
@@ -6979,6 +6988,12 @@ export const useRawDataStore = create<DataState>()(
         ]
         // §93: عكس استرداد الجزاءات المسجلة — يعود الجزاء «قائماً» كما قبل المسير
         let employeeDeductions = state.employeeDeductions
+        const recoveredDeductions = slip.recoveredDeductions ?? []
+        if (!Array.isArray(recoveredDeductions) || new Set(recoveredDeductions.map(a => a.deductionId)).size !== recoveredDeductions.length || recoveredDeductions.some(a => !Number.isSafeInteger(a.minor) || a.minor <= 0) || !Number.isSafeInteger(slip.deductionsMinor) || recoveredDeductions.reduce((sum, a) => sum + a.minor, 0) > slip.deductionsMinor) throw new Error('تخصيص الجزاء في القسيمة غير صالح — راجع التسوية')
+        for (const rd of recoveredDeductions) {
+          const matches = state.employeeDeductions.filter(d => d.id === rd.deductionId)
+          if (matches.length !== 1 || matches[0].employeeId !== slip.employeeId || !scoped.employeeDeductions.includes(matches[0]) || !Number.isSafeInteger(matches[0].recoveredMinor) || matches[0].recoveredMinor < rd.minor) throw new Error('سجل الجزاء المخصص غير مثبت أو غير كاف للعكس — راجع التسوية')
+        }
         for (const rd of slip.recoveredDeductions ?? []) {
           employeeDeductions = employeeDeductions.map((d) => (d.id === rd.deductionId ? { ...d, recoveredMinor: Math.max(0, d.recoveredMinor - rd.minor) } : d))
         }
@@ -6988,7 +7003,6 @@ export const useRawDataStore = create<DataState>()(
           if (slip.recoveredAdvances != null) {
             const allocations = slip.recoveredAdvances
             if (!Array.isArray(allocations) || new Set(allocations.map(a => a.advanceId)).size !== allocations.length || allocations.some(a => !Number.isSafeInteger(a.minor) || a.minor <= 0) || allocations.reduce((sum, a) => sum + a.minor, 0) !== slip.advanceMinor) throw new Error('تخصيص السلفة في القسيمة غير صالح — راجع التسوية')
-            const scoped = getBranchScopedDataState(state)
             for (const a of allocations) {
               const matches = state.employeeAdvances.filter(row => row.id === a.advanceId)
               if (matches.length !== 1 || matches[0].employeeId !== slip.employeeId || !scoped.employeeAdvances.includes(matches[0]) || !Number.isSafeInteger(matches[0].recoveredMinor) || matches[0].recoveredMinor < a.minor) throw new Error('سجل السلفة المخصص غير مثبت أو غير كاف للعكس — راجع التسوية')
