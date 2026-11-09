@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -315,6 +315,36 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       if (committed) { setPaySlipFor(null); toast.show('سُجل سند الراتب محلياً لكن تعذر تأكيد الحفظ — راجع القسيمة والسند واليومية قبل إعادة المحاولة', 'error') }
       else toast.show((error as Error).message, 'error')
     } finally { paySlipPending.current = false; setPaySlipSaving(false) }
+  }
+  const [waiverId, setWaiverId] = useState<number | null>(null)
+  const [waiverDate, setWaiverDate] = useState(() => todayLocalIso())
+  const [waiverReason, setWaiverReason] = useState('')
+  const [waiverSaving, setWaiverSaving] = useState(false)
+  const waiverPending = useRef(false), waiverBasis = useRef('')
+  const waiverForm = useRef('')
+  waiverForm.current = JSON.stringify([tab, waiverId, waiverDate, waiverReason])
+  const waiverFingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.employeeDeductions, s.payrollRuns, s.payrollSlips, s.journal, app.fiscalYears, app.setup]) }
+  const requestWaiver = () => {
+    if (waiverPending.current || waiverId == null || !waiverDate || !waiverReason.trim()) return
+    const basis = waiverForm.current, id = waiverId, date = waiverDate, reason = waiverReason
+    waiveApproval.request((approvedBy) => { void (async () => {
+      if (waiverPending.current) return
+      waiverPending.current = true; setWaiverSaving(true)
+      let committed = false
+      try {
+        const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+          if (waiverForm.current !== basis || waiverFingerprint() !== waiverBasis.current) throw new Error('تغيرت بيانات العفو أو الجزاء أو المسير — أغلق النافذة وراجعها قبل المحاولة')
+          const s = useRawDataStore.getState()
+          const approver = approvedBy ?? s.appUsers.find(u => u.id === s.currentUserId && u.active)?.nameAr ?? 'المالك'
+          const updated = s.waiveEmployeeDeduction({ deductionId: id, approvedBy: approver, reason, date })
+          committed = true; return updated
+        })
+        setWaiverId(null); toast.show(`عُفي عن متبقي ${result.dedNumber} — لن يُخصم من المسيرات ✓`)
+      } catch (error) {
+        if (committed) { setWaiverId(null); toast.show('سُجل عفو الجزاء محلياً لكن تعذر تأكيد الحفظ — راجع الجزاء قبل إعادة المحاولة', 'error') }
+        else toast.show((error as Error).message, 'error')
+      } finally { waiverPending.current = false; setWaiverSaving(false) }
+    })() })
   }
   const roleOptions = useMemo(
     () => visibleRolesForModules(rolesWithOverrides(roleOverrides, customRoles, setup.activityId), setup.modules).filter((role) => !role.isOwner),
@@ -918,12 +948,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                         {d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0) > 0 && (
                           <button
                             title="عفو/إلغاء المتبقي (تسجيل خاطئ أو صفح) — يتطلب اعتماد المشرف"
-                            onClick={() => waiveApproval.request((approvedBy) => {
-                              try {
-                                waiveEmployeeDeduction({ deductionId: d.id, approvedBy: approvedBy ?? 'المالك', reason: 'عفو معتمد من الشاشة' })
-                                toast.show(`عُفي عن متبقي ${d.dedNumber} — لن يُخصم من المسيرات ✓`)
-                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                            })}
+                            onClick={() => { waiverBasis.current = waiverFingerprint(); setWaiverDate(todayLocalIso()); setWaiverReason(''); setWaiverId(d.id) }}
                             className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-colors"
                           >🕊️ عفو</button>
                         )}
@@ -934,6 +959,15 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </table>
             </div>
           )}
+          <Modal open={waiverId != null} onClose={() => { if (!waiverPending.current) { waiverForm.current = ''; setWaiverId(null) } }} title="عفو عن متبقي الجزاء" subtitle="العفو يوقف استقطاع المتبقي ولا يعكس ما خُصم سابقاً">
+            <fieldset disabled={waiverSaving}><div className="space-y-4">
+              {employeeDeductions.filter(d => d.id === waiverId).map(d => <div key={d.id} className="rounded-xl bg-amber-500/10 p-3 text-sm font-bold">{d.dedNumber} · {employees.find(e => e.id === d.employeeId)?.nameAr ?? '—'} · المتبقي {fmt(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0))} {cur.symbol}</div>)}
+              <Field label="تاريخ العفو"><input aria-label="تاريخ عفو الجزاء" type="date" max={todayLocalIso()} value={waiverDate} onChange={e => setWaiverDate(e.target.value)} className={inputCls} /></Field>
+              <Field label="سبب العفو"><input aria-label="سبب عفو الجزاء" value={waiverReason} onChange={e => setWaiverReason(e.target.value)} className={inputCls} /></Field>
+              <DocOutcome>لا قيد عند العفو؛ يُمنع استقطاع المبلغ المعفو عنه لاحقاً. راجع الجزاء وتاريخ المسير قبل التأكيد.</DocOutcome>
+              <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => { waiverForm.current = ''; setWaiverId(null) }}>إلغاء</Btn><Btn onClick={requestWaiver} disabled={waiverSaving || !waiverDate || !waiverReason.trim()}>اعتماد العفو</Btn></div>
+            </div></fieldset>
+          </Modal>
           <Modal open={dedOpen} onClose={() => setDedOpen(false)} title="تسجيل خصم / جزاء على موظف" subtitle="مستند خصم: جزاء يُخصم من مستحقات الراتب">
             <div className="space-y-4"><DocSectionHead step="١" title="الموظف وقيمة الخصم وسببه" hint="الخصم يقلّل مصروف الرواتب ولا يُعد إيراداً" />
               <Field label="الموظف *">

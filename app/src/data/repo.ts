@@ -1466,6 +1466,8 @@ export interface EmployeeDeduction {
   waivedBy?: string | null
   waivedReason?: string
   waivedAt?: string | null
+  /** تاريخ العفو التجاري؛ waivedAt وقت تسجيله. */
+  waivedDate?: string
 }
 
 /** سداد نقدي لسلفة موظف خارج المسير: خزينة مدين / 1107 دائن */
@@ -2645,7 +2647,7 @@ interface DataState {
   /** متبقي الجزاءات غير المخصومة لموظف — يغذي زر «خصم الكل» في المسير */
   getEmployeeDeductionBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; deductions: EmployeeDeduction[] }
   /** عفو/إلغاء متبقي جزاء (تسجيل خاطئ أو صفح) — بلا قيد (لم يتولد قيد أصلاً) مع توثيق المعتمد */
-  waiveEmployeeDeduction: (args: { deductionId: number; approvedBy: string; reason: string }) => EmployeeDeduction
+  waiveEmployeeDeduction: (args: { deductionId: number; approvedBy: string; reason: string; date?: string }) => EmployeeDeduction
   /** سداد نقدي لسلفة خارج المسير: قيد خزينة ← 1107 ويخفض متبقي السلفة */
   repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; date?: string }) => AdvanceRepayment
   /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
@@ -3952,7 +3954,7 @@ function employeeDeductionDocumentDate(state: DataState, employeeId: number, sel
   const runs = state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.deductionsMinor > 0))
   const slips = state.payrollSlips.filter(r => r.employeeId === employeeId && r.deductionsMinor > 0)
   const ids = new Set([...runs.map(r => r.id), ...slips.map(r => r.runId)])
-  const dates = [...deductions.map(d => d.date?.slice(0, 10)), ...deductions.filter(d => d.waivedAt).map(d => Number.isFinite(Date.parse(d.waivedAt!)) ? todayLocalIso(new Date(d.waivedAt!)) : ''), ...runs.map(r => r.date?.slice(0, 10)), ...slips.map(r => r.accruedAt?.slice(0, 10)), ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null && ids.has(e.sourceId)).map(e => e.date?.slice(0, 10))]
+  const dates = [...deductions.map(d => d.date?.slice(0, 10)), ...deductions.filter(d => d.waivedDate != null || d.waivedAt).map(d => d.waivedDate ?? (Number.isFinite(Date.parse(d.waivedAt!)) ? todayLocalIso(new Date(d.waivedAt!)) : '')), ...runs.map(r => r.date?.slice(0, 10)), ...slips.map(r => r.accruedAt?.slice(0, 10)), ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null && ids.has(e.sourceId)).map(e => e.date?.slice(0, 10))]
   if (dates.some(d => !isValidExpiryDate(d) || d > date)) throw new Error('تاريخ الجزاء يسبق خصماً أو مسيراً أو عفواً مسجلاً أو تاريخه غير مثبت — راجع التسلسل')
   return date
 }
@@ -13283,8 +13285,14 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const ded = state.employeeDeductions.find((d) => d.id === args.deductionId)
         if (!ded) throw new Error('الجزاء غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || state.employeeDeductions.filter(d => d.id === ded.id).length !== 1 || !scoped.employeeDeductions.includes(ded) || state.employees.filter(e => e.id === ded.employeeId).length !== 1 || !scoped.employees.some(e => e.id === ded.employeeId)) throw new Error('الجزاء أو الموظف غير فريد أو تابع لفرع آخر')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
         if (!args.approvedBy.trim()) throw new Error('اسم معتمد العفو مطلوب')
         if (!args.reason.trim()) throw new Error('سبب العفو مطلوب — تسجيل خاطئ، صفح، حكم…')
+        const date = employeeDeductionDocumentDate(state, ded.employeeId, args.date)
+        if (date < todayLocalIso() && ded.recoveredMinor > 0) throw new Error('لا يمكن إثبات ترتيب الاستقطاعات السابقة لعفو مؤرخ — راجع الجزاء يدوياً')
+        if (state.employeeDeductions.filter(d => d.employeeId === ded.employeeId).length !== scoped.employeeDeductions.filter(d => d.employeeId === ded.employeeId).length) throw new Error('الجزاءات موزعة على فروع مختلفة — راجع التخصيص')
         const remaining = ded.amountMinor - ded.recoveredMinor - (ded.waivedMinor ?? 0)
         if (remaining <= 0) throw new Error('لا متبقي على هذا الجزاء — خُصم أو عُفي عنه بالكامل')
         // لا قيد: الجزاء لم يولّد قيداً عند تسجيله (يتحقق محاسبياً بالمسير فقط)
@@ -13293,7 +13301,8 @@ export const useRawDataStore = create<DataState>()(
           waivedMinor: (ded.waivedMinor ?? 0) + remaining,
           waivedBy: args.approvedBy.trim(),
           waivedReason: args.reason.trim(),
-          waivedAt: new Date().toISOString(),
+          waivedAt: localIsoTimestamp(),
+          waivedDate: date,
         }
         set({ employeeDeductions: state.employeeDeductions.map((d) => (d.id === ded.id ? updated : d)) })
         return updated
