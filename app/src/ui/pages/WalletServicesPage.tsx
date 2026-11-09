@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * (مشتق آلياً لا يُدخل)، أصل الاستلام مستقل عن أصل التمويل، آجل على
  * عميل مسجل، ضريبة بلد المنشأة على الهامش، ومرتجع بقيد عاكس.
  */
-import { useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Smartphone, Plus, RotateCcw, BookOpenText, Wallet2 } from 'lucide-react'
 import { useDataStore, useRawDataStore, type WalletServiceOp } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
@@ -54,7 +54,8 @@ export function WalletServicesPage() {
   const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [taxable, setTaxable] = useState(false) // أغلب خدمات المحافظ معفاة — اختياري حسب بلد/نشاط
   const [notes, setNotes] = useState('')
-  draft.current = JSON.stringify([date, type, provider, targetPhone, paidToProvider, charge, paid, customerId, funding, receive, terminalPayment, taxable, setup.vatPercent, notes])
+  const currentDraft = JSON.stringify([date, type, provider, targetPhone, paidToProvider, charge, paid, customerId, funding, receive, terminalPayment, taxable, setup.vatPercent, notes])
+  useLayoutEffect(() => { draft.current = currentDraft }, [currentDraft])
   const close = () => { session.current++; setOpen(false) }
 
   const summary = useMemo(() => walletSummary(walletOps), [walletOps])

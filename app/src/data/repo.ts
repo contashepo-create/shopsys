@@ -1447,6 +1447,8 @@ export interface Voucher {
  * (طريقة صافي التكلفة). recoveredMinor يتتبع المخصوم منه عبر المسيرات (كامل/جزء/تأجيل).
  */
 export interface EmployeeDeduction {
+  createdAt?: string
+  dateSelected?: boolean
   id: number
   dedNumber: string // DED-0001
   employeeId: number
@@ -2635,7 +2637,7 @@ interface DataState {
   /** المتبقي غير المسترد من سلف موظف (سلفة نقدية أو عجز عهدة) — للخصم الحر بالمسير */
   getEmployeeAdvanceBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; advances: EmployeeAdvance[] }
   /** تسجيل جزاء/خصم على موظف — يُخصم من المسيرات لاحقاً (كامل/جزء/تأجيل بحرية المالك) */
-  addEmployeeDeduction: (args: { employeeId: number; amountMinor: number; reason: string; notes?: string }) => EmployeeDeduction
+  addEmployeeDeduction: (args: { employeeId: number; amountMinor: number; reason: string; notes?: string; date?: string }) => EmployeeDeduction
   /** متبقي الجزاءات غير المخصومة لموظف — يغذي زر «خصم الكل» في المسير */
   getEmployeeDeductionBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; deductions: EmployeeDeduction[] }
   /** عفو/إلغاء متبقي جزاء (تسجيل خاطئ أو صفح) — بلا قيد (لم يتولد قيد أصلاً) مع توثيق المعتمد */
@@ -3924,6 +3926,23 @@ function employeeAdvanceDocumentDate(state: DataState, employeeId: number, selec
   ]
   if (days.some(d => !isValidExpiryDate(d) || d > day)) throw new Error('تاريخ حركة السلفة يسبق حركة أو استقطاعاً مسجلاً أو تاريخه غير مثبت — راجع تسلسل السلف')
   return day
+}
+
+/** تاريخ الجزاء والتسلسل لا يعيدان استقطاع مسير سابق من سجل جديد. */
+function employeeDeductionDocumentDate(state: DataState, employeeId: number, selected: string | undefined): string {
+  const date = selected ?? todayLocalIso()
+  if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ الجزاء غير صالح أو في المستقبل')
+  const branch = getEffectiveActiveBranch(state)
+  const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+  if (closed) throw new Error(`تاريخ الجزاء داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const deductions = state.employeeDeductions.filter(d => d.employeeId === employeeId)
+  if (deductions.some(d => !Number.isSafeInteger(d.amountMinor) || !Number.isSafeInteger(d.recoveredMinor) || !Number.isSafeInteger(d.waivedMinor ?? 0) || d.amountMinor < 0 || d.recoveredMinor < 0 || (d.waivedMinor ?? 0) < 0 || d.recoveredMinor + (d.waivedMinor ?? 0) > d.amountMinor)) throw new Error('رصيد جزاء سابق غير صالح — راجع السجل')
+  const runs = state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.deductionsMinor > 0))
+  const slips = state.payrollSlips.filter(r => r.employeeId === employeeId && r.deductionsMinor > 0)
+  const ids = new Set([...runs.map(r => r.id), ...slips.map(r => r.runId)])
+  const dates = [...deductions.map(d => d.date?.slice(0, 10)), ...deductions.filter(d => d.waivedAt).map(d => Number.isFinite(Date.parse(d.waivedAt!)) ? todayLocalIso(new Date(d.waivedAt!)) : ''), ...runs.map(r => r.date?.slice(0, 10)), ...slips.map(r => r.accruedAt?.slice(0, 10)), ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null && ids.has(e.sourceId)).map(e => e.date?.slice(0, 10))]
+  if (dates.some(d => !isValidExpiryDate(d) || d > date)) throw new Error('تاريخ الجزاء يسبق خصماً أو مسيراً أو عفواً مسجلاً أو تاريخه غير مثبت — راجع التسلسل')
+  return date
 }
 
 function appSetupForState(state: DataState): OperationalSetup {
@@ -6749,6 +6768,12 @@ export const useRawDataStore = create<DataState>()(
           if (selectedDates.length) {
             try { employeeAdvanceDocumentDate(state, row.employeeId, slipDate) }
             catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق حركة سلفة مسجلة — راجع تسلسل الاستقطاع') }
+          }
+        }
+        for (const row of args.rows.filter(r => r.deductionsMinor > 0)) {
+          if (state.employeeDeductions.some(d => d.employeeId === row.employeeId && d.dateSelected)) {
+            try { employeeDeductionDocumentDate(state, row.employeeId, slipDate) }
+            catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق جزاءً أو استقطاعاً مسجلاً — راجع التسلسل') }
           }
         }
         const drafts = args.rows.map((row) => {
@@ -13020,14 +13045,18 @@ export const useRawDataStore = create<DataState>()(
 
       addEmployeeDeduction: (args) => {
         const state = get()
-        const emp = state.employees.find((e) => e.id === args.employeeId)
-        if (!emp) throw new Error('الموظف غير موجود')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الخصم يجب أن يكون موجباً')
+        const scoped = getBranchScopedDataState(state)
+        const emp = scoped.employees.find((e) => e.id === args.employeeId)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || !emp || state.employees.filter(e => e.id === args.employeeId).length !== 1) throw new Error('الموظف غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الخصم يجب أن يكون موجباً')
         if (!args.reason.trim()) throw new Error('سبب الخصم مطلوب — غياب، تأخير، جزاء…')
+        const date = employeeDeductionDocumentDate(state, args.employeeId, args.date)
+        if (state.employeeDeductions.filter(d => d.employeeId === args.employeeId).length !== scoped.employeeDeductions.filter(d => d.employeeId === args.employeeId).length) throw new Error('الجزاءات موزعة على فروع مختلفة — راجع التخصيص قبل التسجيل')
         const id = nextId(state.employeeDeductions)
         const ded: EmployeeDeduction = {
           id, dedNumber: `DED-${String(id).padStart(4, '0')}`, employeeId: args.employeeId,
-          date: localIsoTimestamp(), amountMinor: args.amountMinor, recoveredMinor: 0,
+          date, createdAt: localIsoTimestamp(), ...(args.date !== undefined ? { dateSelected: true } : {}), amountMinor: args.amountMinor, recoveredMinor: 0,
           reason: args.reason.trim(), notes: args.notes?.trim() ?? '',
         }
         // لا قيد الآن — الخصم يتحقق محاسبياً عند المسير (يخفض 5102 بطريقة صافي التكلفة)

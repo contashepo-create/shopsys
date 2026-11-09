@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -339,7 +339,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [advanceSaving, setAdvanceSaving] = useState(false)
   const advancePending = useRef(false)
   const advanceBasis = useRef('')
-  const advanceFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.employees, s.employeeAdvances, s.advanceRepayments, s.payrollRuns, s.payrollSlips, s.treasuries, s.journal]) }
+  const advanceFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.employees, s.employeeAdvances, s.advanceRepayments, s.employeeDeductions, s.payrollRuns, s.payrollSlips, s.treasuries, s.journal]) }
 
   /* ─── تبويب الخصومات والجزاءات (إصلاح فجوة الرواتب) ─── */
   const [dedOpen, setDedOpen] = useState(false)
@@ -347,17 +347,22 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [dedAmount, setDedAmount] = useState('')
   const [dedReason, setDedReason] = useState('')
   const [dedNotes, setDedNotes] = useState('')
-  const saveDeduction = () => {
+  const [dedDate, setDedDate] = useState(() => todayLocalIso())
+  const saveDeduction = async () => {
+    if (advancePending.current) return
+    advancePending.current = true; setAdvanceSaving(true)
+    let committed = false
     try {
-      const ded = addEmployeeDeduction({
-        employeeId: dedEmployeeId,
-        amountMinor: toMinor(dedAmount, cur.decimals),
-        reason: dedReason.trim(),
-        notes: dedNotes.trim(),
+      const ded = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (advanceFingerprint() !== advanceBasis.current) throw new Error('تغيرت بيانات الموظفين أو الجزاءات أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().addEmployeeDeduction({ employeeId: dedEmployeeId, amountMinor: toMinor(dedAmount, cur.decimals), reason: dedReason.trim(), notes: dedNotes.trim(), date: dedDate })
+        committed = true; return result
       })
-      toast.show(`سُجل الخصم ${ded.dedNumber} — يُخصم من مسير الرواتب (كامل أو جزء بحريتك) ✓`)
-      setDedOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+      toast.show(`سُجل الخصم ${ded.dedNumber} — يُخصم من مسير الرواتب ✓`); setDedOpen(false)
+    } catch (err) {
+      if (committed) { setDedOpen(false); toast.show('سُجل الجزاء محلياً لكن تعذر تأكيد الحفظ — راجع الجزاءات قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { advancePending.current = false; setAdvanceSaving(false) }
   }
 
   /* ─── سداد نقدي لسلفة خارج المسير ─── */
@@ -774,7 +779,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               يتحقق محاسبياً عند مسير الرواتب حيث تخصمه <b>كاملاً أو جزءاً أو تؤجله</b> بحرية،
               والمتبقي يظل متتبَّعاً للشهور التالية.
             </p>
-            <Btn onClick={() => { setDedEmployeeId(employees[0]?.id ?? 0); setDedAmount(''); setDedReason(''); setDedNotes(''); setDedOpen(true) }} disabled={employees.length === 0}>
+            <Btn onClick={() => { setDedEmployeeId(employees[0]?.id ?? 0); setDedAmount(''); setDedReason(''); setDedNotes(''); setDedDate(todayLocalIso()); advanceBasis.current = advanceFingerprint(); setDedOpen(true) }} disabled={employees.length === 0}>
               <Plus size={15} /> تسجيل خصم / جزاء
             </Btn>
           </div>
@@ -842,6 +847,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label={`مبلغ الخصم (${cur.symbol}) *`}>
                 <input value={dedAmount} onChange={(e) => setDedAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
+              <Field label="تاريخ الجزاء"><input aria-label="تاريخ الجزاء" type="date" max={todayLocalIso()} value={dedDate} onChange={e => setDedDate(e.target.value)} className={inputCls} /></Field>
               <Field label="السبب *" hint="غياب، تأخير متكرر، تلفيات، جزاء إداري…">
                 <input value={dedReason} onChange={(e) => setDedReason(e.target.value)} className={inputCls} placeholder="غياب 3 أيام بدون إذن" />
               </Field>
@@ -854,7 +860,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <DocOutcome>الأثر: يُخصم من صافي مستحق الموظف في المسير القادم، ويظهر في كشف حسابه بسببه الموثّق.</DocOutcome><div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setDedOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveDeduction} shortcut="F9" disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
+                <Btn onClick={saveDeduction} shortcut="F9" disabled={advanceSaving || !dedDate || !dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
               </div>
             </div>
           </Modal>
