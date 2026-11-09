@@ -36,8 +36,8 @@ beforeEach(() => {
       { id: 11, invoiceNumber: 'PUR-0011', date: '2026-09-20', supplierId: supplier.id, grandTotalMinor: 1_200, supplierDueMinor: 1_200, paidMinor: 0 },
     ] as never,
     payrollSlips: [
-      { id: 91, slipNumber: 'PS-0091', runId: 1, month: '2026-09', employeeId: employee.id, employeeName: employee.nameAr, grossMinor: 5_000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 0, netMinor: 5_000, status: 'accrued', accruedAt: '2026-09-28T10:00:00', paidAt: null, paidEntryId: null, paidFrom: null } as never,
-      { id: 92, slipNumber: 'PS-0092', runId: 1, month: '2026-09', employeeId: employee2.id, employeeName: employee2.nameAr, grossMinor: 4_000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 0, netMinor: 4_000, status: 'accrued', accruedAt: '2026-09-28T10:00:00', paidAt: null, paidEntryId: null, paidFrom: null } as never,
+      { id: 91, slipNumber: 'PS-0091', runId: 1, month: '2026-09', employeeId: employee.id, employeeName: employee.nameAr, grossMinor: 5_000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 0, netMinor: 5_000, status: 'accrued', accruedAt: '2026-09-28T10:00:00', accrualEntryId: 52, paidAt: null, paidEntryId: null, paidFrom: null } as never,
+      { id: 92, slipNumber: 'PS-0092', runId: 1, month: '2026-09', employeeId: employee2.id, employeeName: employee2.nameAr, grossMinor: 4_000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 0, netMinor: 4_000, status: 'accrued', accruedAt: '2026-09-28T10:00:00', accrualEntryId: 52, paidAt: null, paidEntryId: null, paidFrom: null } as never,
     ],
     vehicles: [{ id: 44, plateNumber: 'مصفوفة 44', model: '', kind: 'truck', status: 'active' }] as never,
     custodyFiles: [{ id: 61, fileNumber: 'عهدة-2026-0061', employeeId: employee.id, projectId: project.id, reason: 'عهدة موقع', notes: '', openedAt: '2026-09-01', status: 'open', settledAt: null, returnedMinor: 0, shortageMinor: 0, settleTreasury: null }] as never,
@@ -50,6 +50,11 @@ beforeEach(() => {
       sourceType: 'project_extract', sourceCollection: 'projectExtracts', sourceId: 51,
       lines: [{ accountCode: '1104', debit: 720, credit: 0 }, { accountCode: '1105', debit: 80, credit: 0 }, { accountCode: '4107', debit: 0, credit: 800 }],
       createdBy: 'اختبار', createdAt: '2026-09-10T00:00:00', reversedByEntryId: null, reversesEntryId: null,
+    }, {
+      id: 52, entryNumber: 52, date: '2026-09-28', description: 'استحقاق قسائم المصفوفة',
+      sourceType: 'payroll', sourceId: 1,
+      lines: [{ accountCode: '5102', debit: 9000, credit: 0 }, { accountCode: '2104', debit: 0, credit: 5000, note: `PS-0091 — ${employee.nameAr}` }, { accountCode: '2104', debit: 0, credit: 4000, note: `PS-0092 — ${employee2.nameAr}` }],
+      createdBy: 'اختبار', createdAt: '2026-09-28T10:00:00', reversedByEntryId: null, reversesEntryId: null,
     }],
     vehicleCostEntries: [], projectCosts: [],
     treasuries: [{ code: '1101', nameAr: 'الخزينة الرئيسية', kind: 'cash', openingBalanceMinor: 100_000, isDefault: true }] as never,

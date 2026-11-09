@@ -114,7 +114,6 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
   const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
-  const postVoucher = useDataStore((state) => state.postVoucher)
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
@@ -278,20 +277,31 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [paySlipDate, setPaySlipDate] = useState(() => todayLocalIso())
   /* مبلغ سند الصرف: افتراضياً المتبقي من القسيمة فقط (بلاغ المالك) — وقابل للتعديل للصرف الجزئي */
   const [paySlipAmount, setPaySlipAmount] = useState(0)
-  const postSlipVoucher = () => {
-    if (!paySlipFor) return
-    if (!Number.isInteger(paySlipAmount) || paySlipAmount <= 0) { toast.show('مبلغ السند يجب أن يكون أكبر من صفر', 'error'); return }
+  const [paySlipSaving, setPaySlipSaving] = useState(false)
+  const paySlipPending = useRef(false), paySlipBasis = useRef('')
+  const paySlipFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.payrollSlips, s.vouchers, s.treasuries, s.journal, s.docApprovals, useAppStore.getState().fiscalYears, useAppStore.getState().setup]) }
+  const postSlipVoucher = async () => {
+    if (!paySlipFor || paySlipPending.current) return
+    if (!Number.isSafeInteger(paySlipAmount) || paySlipAmount <= 0) { toast.show('مبلغ السند يجب أن يكون أكبر من صفر', 'error'); return }
+    paySlipPending.current = true; setPaySlipSaving(true)
+    let committed = false
     try {
-      const voucher = postVoucher({
-        kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
-        amountMinor: paySlipAmount,
-        description: `صرف راتب ${monthLabelAr(paySlipFor.month)} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
-        partyKind: 'employee', partyId: paySlipFor.employeeId,
-        settleSlipIds: [paySlipFor.id], date: paySlipDate || undefined,
+      const voucher = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (paySlipFingerprint() !== paySlipBasis.current) throw new Error('تغيرت القسيمة أو الخزينة أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().postVoucher({
+          kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
+          amountMinor: paySlipAmount,
+          description: `صرف راتب ${monthLabelAr(paySlipFor.month)} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
+          partyKind: 'employee', partyId: paySlipFor.employeeId,
+          settleSlipIds: [paySlipFor.id], date: paySlipDate,
+        })
+        committed = true; return result
       })
-      toast.show(`سند صرف ${voucher.voucherNumber} سدّد القسيمة ${paySlipFor.slipNumber} بقيد متوازن ✓`)
-      setPaySlipFor(null)
-    } catch (error) { toast.show((error as Error).message, 'error') }
+      toast.show(`سند صرف ${voucher.voucherNumber} سدّد القسيمة ${paySlipFor.slipNumber} بقيد متوازن ✓`); setPaySlipFor(null)
+    } catch (error) {
+      if (committed) { setPaySlipFor(null); toast.show('سُجل سند الراتب محلياً لكن تعذر تأكيد الحفظ — راجع القسيمة والسند واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((error as Error).message, 'error')
+    } finally { paySlipPending.current = false; setPaySlipSaving(false) }
   }
   const roleOptions = useMemo(
     () => visibleRolesForModules(rolesWithOverrides(roleOverrides, customRoles, setup.activityId), setup.modules).filter((role) => !role.isOwner),
@@ -1327,15 +1337,15 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             </Modal>
 
             {/* §93: سند صرف القسيمة — تسديد رسمي بمستند مطبوع على 2104 باسم الموظف */}
-            <Modal open={paySlipFor != null} onClose={() => setPaySlipFor(null)} title={`سند صرف راتب — ${paySlipFor?.employeeName ?? ''}`} subtitle={`تسديد القسيمة ${paySlipFor?.slipNumber ?? ''} · ${paySlipFor ? monthLabelAr(paySlipFor.month) : ''} بمستند رسمي يسددها باسمها`}>
+            <Modal open={paySlipFor != null} onClose={() => { if (!paySlipPending.current) setPaySlipFor(null) }} title={`سند صرف راتب — ${paySlipFor?.employeeName ?? ''}`} subtitle={`تسديد القسيمة ${paySlipFor?.slipNumber ?? ''} · ${paySlipFor ? monthLabelAr(paySlipFor.month) : ''} بمستند رسمي يسددها باسمها`}>
               {paySlipFor && (
-                <div className="space-y-3" data-slip-voucher>
+                <fieldset disabled={paySlipSaving}><div className="space-y-3" data-slip-voucher>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <Field label="الخزينة / البنك المصروف منه">
                       <TreasuryPicker value={paySlipTreasury} onChange={setPaySlipTreasury} operation="payment" />
                     </Field>
                     <Field label="تاريخ السند">
-                      <input type="date" className={inputCls} value={paySlipDate} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
+                      <input type="date" className={inputCls} value={paySlipDate} max={todayLocalIso()} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
                     </Field>
                     <Field label={`المبلغ المصروف الآن (${cur.symbol}) — المتبقي ${fmt(slipRemainingMinor(paySlipFor))}`}>
                       <input className={inputCls + ' text-center font-mono font-black'} inputMode="decimal" value={String(paySlipAmount / 10 ** cur.decimals)} aria-label="مبلغ سند صرف الراتب"
@@ -1344,12 +1354,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </div>
                   <DocOutcome>الأثر: سند صرف PV يُقفل «رواتب مستحقة 2104» مديناً باسم الموظف والخزينة دائنةً بالنقد المصروف — القسيمة تُوسم «مصروفة» باسم هذا السند، وتظهر في كشف حساب الموظف مرة واحدة بلا ازدواج.</DocOutcome>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Btn variant="ghost" onClick={() => setPaySlipFor(null)}>رجوع</Btn>
-                    <Btn onClick={postSlipVoucher} className="!bg-teal-600 hover:!bg-teal-500 !text-white font-black px-5" data-slip-voucher-post>
+                    <Btn variant="ghost" disabled={paySlipSaving} onClick={() => setPaySlipFor(null)}>رجوع</Btn>
+                    <Btn onClick={postSlipVoucher} disabled={paySlipSaving || !paySlipDate} className="!bg-teal-600 hover:!bg-teal-500 !text-white font-black px-5" data-slip-voucher-post>
                       💸 ترحيل سند الصرف وتسديد {paySlipFor.slipNumber}
                     </Btn>
                   </div>
-                </div>
+                </div></fieldset>
               )}
             </Modal>
 
@@ -1394,7 +1404,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)); paySlipBasis.current = paySlipFingerprint() }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>

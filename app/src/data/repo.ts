@@ -10685,15 +10685,59 @@ export const useRawDataStore = create<DataState>()(
         if (args.settleSlipIds?.length) {
           if (args.kind !== 'payment' || args.counterAccountCode !== '2104' || args.partyKind !== 'employee' || args.partyId == null)
             throw new Error('سداد القسائم متاح في سند صرف على «رواتب مستحقة 2104» لموظف محدد')
+          const scoped = getBranchScopedDataState(state), date = args.date ?? todayLocalIso()
+          if (args.fx) throw new Error('صرف قسيمة بعملة أجنبية يحتاج تخصيصاً وسعراً موثقين — استخدم عملة الدفتر')
+          if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ صرف القسيمة غير صالح أو في المستقبل')
+          if (state.branches.length && !activeBranch) throw new Error('حدد الفرع الحالي قبل صرف القسيمة')
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, activeBranch?.id ?? null, Boolean(activeBranch?.isMain)))
+          if (closed) throw new Error(`تاريخ صرف القسيمة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ صرف القسيمة غير صالح')
+          if (new Set(args.settleSlipIds).size !== args.settleSlipIds.length) throw new Error('القسيمة مكررة في السند')
+          if (state.employees.filter(e => e.id === args.partyId).length !== 1 || !scoped.employees.some(e => e.id === args.partyId)) throw new Error('موظف القسيمة غير فريد أو ليس في الفرع الحالي')
+          if (state.treasuries.filter(t => t.code === args.treasury).length !== 1 || !scoped.treasuries.some(t => t.code === args.treasury)) throw new Error('الخزينة غير فريدة أو ليست في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
           settleSlips = args.settleSlipIds
             .map((id) => state.payrollSlips.find((slip) => slip.id === id))
             .filter((slip): slip is PayrollSlip => !!slip)
           if (settleSlips.length !== args.settleSlipIds.length) throw new Error('قسيمة غير موجودة في سداد القسائم')
           for (const slip of settleSlips) {
+            if (state.payrollSlips.filter(row => row.id === slip.id).length !== 1 || !scoped.payrollSlips.some(row => row.id === slip.id)) throw new Error('القسيمة غير فريدة أو ليست في الفرع الحالي')
+            const accruals = state.journal.filter(entry => entry.id === slip.accrualEntryId)
+            const origin = accruals[0]
+            const day = slip.accruedAt?.slice(0, 10)
+            if (!isValidExpiryDate(day) || day > date) throw new Error('تاريخ صرف القسيمة يسبق استحقاقها أو تاريخ الاستحقاق غير صالح')
+            if (!Number.isSafeInteger(slip.netMinor) || slip.netMinor <= 0 || accruals.length !== 1 || !scoped.journal.includes(origin) || origin.sourceType !== 'payroll' || origin.sourceId !== slip.runId || origin.date !== day || origin.reversedByEntryId != null || !Array.isArray(origin.lines) || origin.lines.filter(line => line.accountCode === '2104' && line.credit === slip.netMinor && line.debit === 0 && line.note?.startsWith(`${slip.slipNumber} — `)).length !== 1) throw new Error('قيد استحقاق القسيمة غير مثبت أو لا يطابقها — راجع القسيمة')
+            let paid = 0
+            for (const payment of slip.payments ?? []) {
+              if (!Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0 || !isValidExpiryDate(payment.date) || payment.date < day || payment.date > date) throw new Error('تاريخ أو مبلغ دفعة القسيمة غير صالح أو لاحق — راجع التسلسل')
+              const entries = state.journal.filter(e => e.id === payment.entryId), previous = entries[0]
+              if (entries.length !== 1 || !scoped.journal.includes(previous) || previous.date !== payment.date || previous.reversedByEntryId != null || !Array.isArray(previous.lines)) throw new Error('قيد دفعة القسيمة غير مثبت أو لا يطابق تاريخها — راجع القسيمة')
+              const linked = state.payrollSlips.flatMap(row => (row.payments ?? []).filter(p => p.entryId === payment.entryId).map(p => ({ row, p })))
+              const total = linked.reduce((sum, item) => sum + item.p.amountMinor, 0)
+              if (linked.filter(item => item.row.id === slip.id).length !== 1 || linked.some(item => item.row.employeeId !== slip.employeeId || !Number.isSafeInteger(item.p.amountMinor) || item.p.amountMinor <= 0 || item.p.date !== payment.date) || !Number.isSafeInteger(total) || !previous.lines.some(l => l.accountCode === '2104' && l.debit >= total && l.credit === 0)) throw new Error('تخصيص دفعة القسيمة غير مثبت — راجع القسيمة')
+              if (previous.sourceType === 'payment_voucher') {
+                const vouchers = state.vouchers.filter(v => v.journalEntryId === previous.id && v.id === previous.sourceId && v.kind === 'payment' && v.partyKind === 'employee' && v.partyId === slip.employeeId && !v.reversalEntryId)
+                if (vouchers.length !== 1 || !scoped.vouchers.includes(vouchers[0]) || payment.from !== `سند صرف ${vouchers[0].voucherNumber}` || vouchers[0].amountMinor < total) throw new Error('سند دفعة القسيمة غير مثبت — راجع القسيمة')
+              } else if (previous.sourceType !== 'payroll' || previous.sourceId !== slip.runId || linked.length !== 1 || !previous.lines.some(l => l.accountCode === payment.from && l.credit === payment.amountMinor && l.debit === 0)) throw new Error('مصدر دفعة القسيمة غير مثبت — راجع القسيمة')
+              paid += payment.amountMinor
+              if (!Number.isSafeInteger(paid) || paid > slip.netMinor) throw new Error('مجموع دفعات القسيمة غير صالح')
+            }
             if (slip.employeeId !== args.partyId) throw new Error(`القسيمة ${slip.slipNumber} ليست لهذا الموظف — ${slip.employeeName}`)
             if (slip.status === 'paid') throw new Error(`القسيمة ${slip.slipNumber} مصروفة بالفعل — لا يُسدَّد مرتين`)
             if (slip.status === 'cancelled') throw new Error(`القسيمة ${slip.slipNumber} ملغاة`)
             if (slipRemainingMinor(slip) <= 0) throw new Error(`القسيمة ${slip.slipNumber} لا متبقي فيها للصرف`)
+          }
+          const affected = new Set(['2104', args.treasury])
+          const moves = state.journal.filter(entry => entry.lines.some(line => affected.has(line.accountCode)))
+          if (moves.some(entry => !isValidExpiryDate(entry.date?.slice(0, 10)) || entry.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة رواتب أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+          if (date < todayLocalIso()) {
+            let cash = 0
+            for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
+              if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة — راجع الرصيد')
+              cash += line.debit - line.credit
+              if (!Number.isSafeInteger(cash)) throw new Error('رصيد الخزينة غير صالح')
+            }
+            if (cash < args.amountMinor) throw new Error('رصيد الخزينة لا يكفي في تاريخ صرف القسيمة')
           }
           /* بلاغ المالك: السند الجزئي يسدد جزءاً من القسيمة (لا كلها) — يُوزَّع المبلغ على المحددة
              من الأقدم، ويُسدَّد المتبقي فقط. ما زاد عن مجموع المتبقي يبقى مبلغاً عاماً. */
@@ -10856,7 +10900,7 @@ export const useRawDataStore = create<DataState>()(
         const voucher: Voucher = {
           id: voucherId,
           voucherNumber,
-          ...(args.kind === 'transfer' && args.date !== undefined ? { createdAt: now } : {}),
+          ...((args.kind === 'transfer' || settleAllocations.length > 0) && args.date !== undefined ? { createdAt: now } : {}),
           kind: args.kind,
           ...(args.kind === 'receipt' ? { receiptCollectorEmployeeId: args.receiptCollectorEmployeeId ?? null } : {}),
           date: transactionAt,
@@ -10929,25 +10973,19 @@ export const useRawDataStore = create<DataState>()(
           sourceType: 'payment_voucher', sourceId: voucherId, sourceCollection: 'vouchers', lines: interBranchLines.destinationLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         } : null
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry, ...(destinationEntry ? [destinationEntry] : [])], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
-        /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
-           القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
-        if (settleAllocations.length) {
-          const applied = new Map(settleAllocations.map((row) => [row.slipId, row.amountMinor]))
-          const settledNow = localIsoTimestamp()
-          const from = `سند صرف ${voucherNumber}`
-          set({
-            payrollSlips: get().payrollSlips.map((slip) => {
-              const amount = applied.get(slip.id)
-              if (!amount) return slip
-              const payments: SlipPayment[] = [...(slip.payments ?? []), { entryId, amountMinor: amount, date: settledNow.slice(0, 10), from }]
-              const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
-              return paidNow >= slip.netMinor
-                ? { ...slip, status: 'paid' as const, paidAt: settledNow, paidEntryId: entryId, paidFrom: from, payments }
-                : { ...slip, payments }
-            }),
-          })
-        }
+        // السند والقيد وتخصيص القسائم كتابة واحدة حتى لا يُحفظ الصرف دون تسوية القسيمة.
+        const applied = new Map(settleAllocations.map((row) => [row.slipId, row.amountMinor]))
+        const from = `سند صرف ${voucherNumber}`
+        const payrollSlips = state.payrollSlips.map((slip) => {
+          const amount = applied.get(slip.id)
+          if (!amount) return slip
+          const payments: SlipPayment[] = [...(slip.payments ?? []), { entryId, amountMinor: amount, date: entry.date, from }]
+          const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
+          return paidNow >= slip.netMinor
+            ? { ...slip, status: 'paid' as const, paidAt: transactionAt, paidEntryId: entryId, paidFrom: from, payments }
+            : { ...slip, payments }
+        })
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry, ...(destinationEntry ? [destinationEntry] : [])], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}), ...(applied.size ? { payrollSlips } : {}) })
         return voucher
       },
 
@@ -11042,6 +11080,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       reverseEntry: (entryId, reason) => {
+        if (get().payrollSlips.some(slip => slip.paidEntryId === entryId || slip.payments?.some(payment => payment.entryId === entryId))) throw new Error('عكس قيد يسدد قسيمة يتطلب تسوية القسيمة ومراجعة تخصيص الدفعات — لا يعكس آلياً')
         const state = get()
         const original = state.journal.find((e) => e.id === entryId)
         if (!reason.trim()) throw new Error('سبب العكس إلزامي — اكتب سبباً واضحاً للمراجعة')
