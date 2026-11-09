@@ -1004,6 +1004,8 @@ export interface StockTransfer {
  * الربح = المحصَّل من العميل − المدفوع للمزوّد، مشتق آلياً.
  */
 export interface WalletServiceOp {
+  /** وقت التسجيل الفعلي منفصل عن تاريخ المستند. */
+  createdAt?: string
   id: number
   opNumber: string // WS-0001
   refCode: string // WLT-YYMMDD-XXXXXC
@@ -1022,6 +1024,8 @@ export interface WalletServiceOp {
   journalEntryId: number
   returnEntryId: number | null
   notes: string
+  /** الاسم الذي قُدِّم لاعتماد تجاوز حد الائتمان؛ لا يثبت وحده هوية المعتمد. */
+  creditLimitOverrideBy?: string | null
   /** موافقة المشرف على المرتجع (نمط POS العالمي) — undefined = سجل قديم */
   approvedBy?: string
   requestedBy?: string
@@ -20119,17 +20123,38 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const errors = validateWalletService(input)
         if (errors.length) throw new Error(errors.join(' — '))
-        if (input.customerId != null && !state.customers.some((c) => c.id === input.customerId)) throw new Error('العميل غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل تسجيل العملية')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تسجيل عملية المحافظ')
+        }
+        if (input.customerId != null && (!scoped.customers.some(c => c.id === input.customerId) || state.customers.filter(c => c.id === input.customerId).length !== 1)) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        if (![input.paidToProviderMinor, input.chargeMinor, input.paidMinor].every(Number.isSafeInteger) || !Number.isFinite(input.vatPercent)) throw new Error('مبالغ أو ضريبة عملية المحافظ غير صالحة')
         if (!state.treasuries.some((t) => t.code === input.fundingTreasury)) throw new Error('خزينة التمويل غير موجودة')
         if (input.paidMinor > 0 && !state.treasuries.some((t) => t.code === input.receiveTreasury)) throw new Error('خزينة الاستلام غير موجودة')
+        assertTreasuryForPosting(state, input.fundingTreasury, 'payment', input.paidToProviderMinor)
+        if (input.paidMinor > 0) assertTreasuryForPosting(state, input.receiveTreasury, 'receipt', input.paidMinor)
         const totals = computeWalletTotals(input)
+        const now = localIsoTimestamp()
+        const date = input.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ عملية المحافظ غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ العملية داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (input.terminalPayment && date !== now.slice(0, 10)) throw new Error('لا يُسجّل تحصيل الماكينة بتاريخ سابق — راجع إثبات الدفع')
+        // لا يعيد الحقل ترتيب الرصيد/الائتمان بأثر رجعي. منع محافظ للحركة
+        // اللاحقة على أي حساب متأثر حتى لا يحسب الرصيد الحالي كتاريخي.
+        if (date < now.slice(0, 10)) {
+          const codes = new Set([input.fundingTreasury, ...(input.paidMinor > 0 ? [input.receiveTreasury] : []), ...(totals.remainingMinor > 0 ? ['1104'] : [])])
+          if (state.journal.some(e => e.lines.some(l => codes.has(l.accountCode)) && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('التاريخ يسبق حركة خزينة أو ذمة مسجلة — راجع التسلسل والرصيد التاريخي')
+        }
         // حد الائتمان: المتبقي غير المحصَّل دين 1104 على العميل
-        guardCreditLimit(get(), input.customerId, totals.remainingMinor, input.creditLimitOverrideBy)
+        const overrideBy = typeof input.creditLimitOverrideBy === 'string' ? input.creditLimitOverrideBy.trim() : ''
+        guardCreditLimit(get(), input.customerId, totals.remainingMinor, overrideBy || null)
         const opId = nextId(state.walletOps)
         const opNumber = `WS-${String(opId).padStart(4, '0')}`
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
-        const date = input.date ?? now.slice(0, 10)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date,
           description: `خدمة محافظ ${opNumber} — ${input.provider}`,
@@ -20140,7 +20165,7 @@ export const useRawDataStore = create<DataState>()(
         const op: WalletServiceOp = {
           id: opId, opNumber,
           refCode: makeUniqueRefCode('WLT', date, usedRefCodes(state)),
-          date, type: input.type, provider: input.provider,
+          date, createdAt: now, type: input.type, provider: input.provider,
           targetPhone: sanitizeText(input.targetPhone, 30),
           customerId: input.customerId,
           paidToProviderMinor: input.paidToProviderMinor,
@@ -20150,11 +20175,12 @@ export const useRawDataStore = create<DataState>()(
           receiveTreasury: input.receiveTreasury,
           totals, status: 'done', journalEntryId: entryId, returnEntryId: null,
           notes: sanitizeText(input.notes, 300),
+          ...(overrideBy ? { creditLimitOverrideBy: sanitizeText(overrideBy, 80) } : {}),
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (input.terminalPayment) {
           if (input.paidMinor <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
-          const terminal = state.paymentTerminals.find((row) => row.id === input.terminalPayment!.terminalId)
+          const terminal = scoped.paymentTerminals.find((row) => row.id === input.terminalPayment!.terminalId)
           if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== input.receiveTreasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === input.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)

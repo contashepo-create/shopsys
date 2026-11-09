@@ -5,9 +5,11 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * (مشتق آلياً لا يُدخل)، أصل الاستلام مستقل عن أصل التمويل، آجل على
  * عميل مسجل، ضريبة بلد المنشأة على الهامش، ومرتجع بقيد عاكس.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Smartphone, Plus, RotateCcw, BookOpenText, Wallet2 } from 'lucide-react'
-import { useDataStore, type WalletServiceOp } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type WalletServiceOp } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -22,7 +24,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function WalletServicesPage() {
-  const { walletOps, customers, journal, paymentTerminals, paymentTerminalTransactions, postWalletService, returnWalletService } = useDataStore()
+  const { walletOps, customers, journal, paymentTerminalTransactions, returnWalletService } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const approval = useSupervisorApproval() // موافقة المشرف على مرتجع خدمة المحافظ
@@ -32,6 +34,13 @@ export function WalletServicesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [open, setOpen] = useState(false)
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false)
+  const basis = useRef('')
+  const session = useRef(0)
+  const draft = useRef('')
+  const fingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.treasuries, s.customers, s.walletOps, s.journal, s.paymentTerminals, s.paymentTerminalTransactions]) }
   const [viewing, setViewing] = useState<WalletServiceOp | null>(null)
   const [type, setType] = useState<WalletServiceType>('balance_transfer')
   const [provider, setProvider] = useState<WalletProvider>('vodafone')
@@ -45,6 +54,8 @@ export function WalletServicesPage() {
   const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [taxable, setTaxable] = useState(false) // أغلب خدمات المحافظ معفاة — اختياري حسب بلد/نشاط
   const [notes, setNotes] = useState('')
+  draft.current = JSON.stringify([date, type, provider, targetPhone, paidToProvider, charge, paid, customerId, funding, receive, terminalPayment, taxable, setup.vatPercent, notes])
+  const close = () => { session.current++; setOpen(false) }
 
   const summary = useMemo(() => walletSummary(walletOps), [walletOps])
   const profitPreview = useMemo(() => {
@@ -53,29 +64,35 @@ export function WalletServicesPage() {
     return c > 0 && p > 0 ? c - p : null
   }, [charge, paidToProvider, cur.decimals])
 
-  const save = (creditLimitOverrideBy?: string) => {
+  const save = async (creditLimitOverrideBy?: string) => {
+    if (pending.current) return
+    pending.current = true; setSaving(true)
+    const expectedDraft = draft.current, requestSession = session.current
+    let committed = false
     try {
-      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
-      const chargeMinor = toMinor(charge || '0', cur.decimals)
-      const op = postWalletService({
-        type, provider, targetPhone,
-        paidToProviderMinor: toMinor(paidToProvider || '0', cur.decimals),
-        chargeMinor,
-        paidMinor: paid === '' ? chargeMinor : toMinor(paid || '0', cur.decimals),
-        customerId: customerId || null,
-        fundingTreasury: funding,
-        receiveTreasury: terminal?.settlementAccountCode ?? receive,
-        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
-        vatPercent: taxable ? setup.vatPercent : 0,
-        notes,
-        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+      const op = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (requestSession !== session.current || draft.current !== expectedDraft || fingerprint() !== basis.current) throw new Error('تغيرت بيانات العملية أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const state = useRawDataStore.getState()
+        const terminal = state.paymentTerminals.find(row => row.id === terminalPayment.terminalId)
+        if (terminalPayment.terminalId && !terminal) throw new Error('ماكينة الدفع غير موجودة')
+        const chargeMinor = toMinor(charge || '0', cur.decimals)
+        const result = state.postWalletService({
+          date, type, provider, targetPhone,
+          paidToProviderMinor: toMinor(paidToProvider || '0', cur.decimals), chargeMinor,
+          paidMinor: paid === '' ? chargeMinor : toMinor(paid || '0', cur.decimals), customerId: customerId || null,
+          fundingTreasury: funding, receiveTreasury: terminal?.settlementAccountCode ?? receive,
+          terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
+          vatPercent: taxable ? setup.vatPercent : 0, notes, creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+        })
+        committed = true; return result
       })
       toast.show(`سُجلت ${op.opNumber} — الربح ${fmt(op.totals.profitGrossMinor)} محسوب آلياً ✓`)
-      setOpen(false); setTargetPhone(''); setPaidToProvider(''); setCharge(''); setPaid(''); setCustomerId(0); setNotes('')
+      close(); setTargetPhone(''); setPaidToProvider(''); setCharge(''); setPaid(''); setCustomerId(0); setNotes('')
     } catch (e) {
-      if (e instanceof CreditLimitError) { creditApproval.request((by) => save(by ?? 'المشرف')); return }
-      toast.show((e as Error).message, 'error')
-    }
+      if (committed) { close(); toast.show('سُجلت العملية محلياً لكن تعذر تأكيد الحفظ — راجع اليومية قبل إعادة المحاولة', 'error') }
+      else if (e instanceof CreditLimitError) creditApproval.request((by) => { queueMicrotask(() => { if (requestSession !== session.current || draft.current !== expectedDraft) return toast.show('تغيرت العملية قبل الاعتماد — راجعها وأعد المحاولة', 'error'); void save(by ?? 'المشرف') }) })
+      else toast.show((e as Error).message, 'error')
+    } finally { pending.current = false; setSaving(false) }
   }
 
   const doReturn = (op: WalletServiceOp) => {
@@ -115,7 +132,7 @@ export function WalletServicesPage() {
         <p className="text-[11.5px] text-slate-400">
           💡 الربح يُحسب آلياً: المحصَّل من العميل − المدفوع للمزوّد. استلام الكاش في درجك وتمويل التحويل من محفظتك — لكلٍ خزينته المستقلة.
         </p>
-        <Btn onClick={() => setOpen(true)}><Plus size={15} /> عملية جديدة</Btn>
+        <Btn onClick={() => { session.current++; setDate(todayLocalIso()); basis.current = fingerprint(); setOpen(true) }}><Plus size={15} /> عملية جديدة</Btn>
       </div>
 
       {walletOps.length === 0 ? (
@@ -170,7 +187,7 @@ export function WalletServicesPage() {
       )}
 
       {/* عملية جديدة */}
-      <Modal open={open} onClose={() => setOpen(false)} title="عملية محافظ جديدة" wide subtitle="مستند خدمة: إيداع أو سحب أو تحويل برسوم وعمولة">
+      <Modal open={open} onClose={close} title="عملية محافظ جديدة" wide subtitle="مستند خدمة: إيداع أو سحب أو تحويل برسوم وعمولة">
         <div className="space-y-4"><DocSectionHead step="١" title="نوع الخدمة ومبلغها" hint="رصيد المحفظة والخزينة يتحركان معاً — لا عملية بلا مصدر نقدي" />
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {WALLET_SERVICE_TYPES.map((t) => (
@@ -180,6 +197,7 @@ export function WalletServicesPage() {
             ))}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="تاريخ العملية"><input aria-label="تاريخ عملية المحافظ" type="date" max={todayLocalIso()} value={date} onChange={e => setDate(e.target.value)} className={inputCls} /></Field>
             <Field label="المزوّد">
               <QuickSelect value={provider} onChange={(e) => setProvider(e.target.value as WalletProvider)} className={inputCls}>
                 {WALLET_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
@@ -223,8 +241,8 @@ export function WalletServicesPage() {
             </div>
           )}
           <DocOutcome>الأثر: <b>الخزينة/المحفظة</b> مديناً أو دائناً حسب اتجاه العملية · <b>4103 إيرادات صيانة وخدمات</b> دائناً بهامش الخدمة (ومديناً إن كانت مجاملة بخسارة) · <b>2102</b> بضريبة الهامش · و<b>خزينة التمويل</b> دائنة بما دُفع للمزود · و<b>1104</b> مديناً بالآجل.</DocOutcome><div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!paidToProvider || !charge || !targetPhone.trim()}><Smartphone size={15} /> تسجيل العملية</Btn>
+            <Btn variant="ghost" onClick={close}>إلغاء</Btn>
+            <Btn onClick={() => { void save() }} shortcut="F9" disabled={saving || !date || !paidToProvider || !charge || !targetPhone.trim()}><Smartphone size={15} /> تسجيل العملية</Btn>
           </div>
         </div>
       </Modal>
