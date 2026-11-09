@@ -20770,15 +20770,52 @@ export const useRawDataStore = create<DataState>()(
         const com = state.staffCommissions.find((c) => c.id === args.commissionId)
         if (!com) throw new Error('العمولة غير موجودة')
         if (com.status !== 'accrued') throw new Error('يُعدل مبلغ العمولات المستحقة فقط — المصروفة والملغاة لا تُعدل')
-        if (!Number.isInteger(args.newAmountMinor) || args.newAmountMinor <= 0) throw new Error('المبلغ الجديد يجب أن يكون رقماً صحيحاً موجباً')
+        if (!Number.isSafeInteger(args.newAmountMinor) || args.newAmountMinor <= 0) throw new Error('المبلغ الجديد يجب أن يكون رقماً صحيحاً موجباً')
         if (args.newAmountMinor === com.amountMinor) throw new Error('المبلغ الجديد مساوٍ للحالي — لا تعديل')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب — يبقى في سجل التدقيق')
-        // إلغاء ثم استحقاق جديد (أثر تدقيقي كامل — لا تعديل صامت على قيد مرحّل)
-        get().cancelStaffCommission({ commissionId: com.id, reason: `تعديل المبلغ: ${args.reason.trim()}` })
-        return get().addStaffCommission({
-          employeeId: com.employeeId, source: com.source, sourceId: com.sourceId,
-          description: `${com.description} (معدلة من ${com.code})`, amountMinor: args.newAmountMinor,
-        })
+        const emp = state.employees.find(e => e.id === com.employeeId)
+        if (!emp || !emp.active) throw new Error('الموظف غير موجود أو غير نشط — راجع العمولة')
+        if (!isValidExpiryDate(com.date) || com.date > todayLocalIso()) throw new Error('تاريخ استحقاق العمولة غير صالح أو في المستقبل — راجع الأصل')
+        if (com.returnAdjustedMinor != null && (!Number.isSafeInteger(com.returnAdjustedMinor) || com.returnAdjustedMinor !== 0)) throw new Error('العمولة تحمل تسوية مرتجع — يلزم تدقيق التخصيص قبل تعديلها')
+        if (com.source === 'sale' && com.sourceId != null && state.saleReturns.some(row => row.saleId === com.sourceId)) throw new Error('للفاتورة مرتجع — يلزم تدقيق تخصيص العمولة قبل تعديلها')
+        if (com.sourceId != null) {
+          const exists = com.source === 'lease' ? state.leases.some(l => l.id === com.sourceId)
+            : com.source === 'property_sale' ? state.properties.some(p => p.id === com.sourceId)
+            : com.source === 'sale' ? state.sales.some(sale => sale.id === com.sourceId)
+            : com.source === 'car_sale' ? state.cars.some(car => car.id === com.sourceId)
+            : com.source === 'project' ? state.projects.some(project => project.id === com.sourceId)
+            : true
+          if (!exists) throw new Error('المستند المصدر غير موجود — راجع العمولة قبل تعديلها')
+        }
+        const description = `${com.description} (معدلة من ${com.code})`
+        const errors = validateStaffCommission({ employeeId: emp.id, amountMinor: args.newAmountMinor, description })
+        if (errors.length) throw new Error(errors.join(' — '))
+        // الكتابة الذرية: إن رفض الدفتر أحد القيدين لا تلغى العمولة الأصلية وحدها.
+        const now = localIsoTimestamp(), date = now.slice(0, 10), cancelId = nextId(state.journal), accrueId = cancelId + 1
+        const newId = nextId(state.staffCommissions), code = `SCM-${String(newId).padStart(4, '0')}`
+        const reason = `تعديل المبلغ: ${args.reason.trim()}`
+        const cancelEntry: JournalEntry = {
+          id: cancelId, entryNumber: cancelId, date,
+          description: `إلغاء عمولة ${com.code} — ${emp.nameAr}: ${reason}`,
+          sourceType: 'staff_commission_cancel', sourceId: com.id,
+          lines: buildStaffCommissionCancel(com.amountMinor, emp.nameAr, reason),
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const accrueEntry: JournalEntry = {
+          id: accrueId, entryNumber: accrueId, date,
+          description: `استحقاق عمولة ${code} — ${emp.nameAr}: ${description.trim()}`,
+          sourceType: 'staff_commission', sourceId: newId,
+          lines: buildStaffCommissionAccrual(args.newAmountMinor, emp.nameAr, description.trim()),
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: cancelId, cancelReason: reason }
+        const replacement: StaffCommission = {
+          id: newId, code, employeeId: emp.id, source: com.source, sourceId: com.sourceId,
+          description: description.trim(), amountMinor: args.newAmountMinor, date, status: 'accrued', accrualEntryId: accrueId,
+          payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(state), createdAt: now,
+        }
+        set({ staffCommissions: [...state.staffCommissions.map(c => c.id === com.id ? updated : c), replacement], journal: [...state.journal, cancelEntry, accrueEntry] })
+        return replacement
       },
 
       getStaffCommissionsDue: (employeeId) => {
