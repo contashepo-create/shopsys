@@ -58,6 +58,7 @@ import { reviseProjectSurvey, assertSurveyFinalBilled, assertSurveyIntegrity, ex
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
+import { commissionStatementRows } from '../core/staffCommissionStatement.ts'
 import { proportionalCommissionReturnMinor } from '../core/invoiceCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../core/treasuryAccess.ts'
@@ -13376,12 +13377,15 @@ export const useRawDataStore = create<DataState>()(
             creditMinor: voucher.kind === 'receipt' ? voucher.amountMinor : 0,
           })
         }
-        /* ── العمولات: مستحقة = دائن، مصروفة = محايدة (صرفها النقدي يظهر بسند باسمه أو بالمسير) ── */
+        /* العمولات ذات الأدلة الكاملة تُعرض بأيام الاستحقاق والتسوية والصرف، لا كسطر محايد بتاريخ الاستحقاق. */
         for (const commission of state.staffCommissions.filter((row) => row.employeeId === employeeId)) {
+          const evidence = commissionStatementRows(commission, state.journal)
+          if (evidence) { rows.push(...evidence); continue }
+          // السجلات القديمة غير المثبتة تبقى على الرصيد التوافقي ولا نختلق لها تاريخاً.
           const amount = Math.max(0, commission.amountMinor)
           if (amount <= 0 || commission.status === 'cancelled') continue
           if (commission.status === 'accrued') rows.push({ date: commission.date, ref: commission.code, description: `عمولة مستحقة — ${commission.description}`, debitMinor: 0, creditMinor: amount })
-          else rows.push({ date: commission.date, ref: commission.code, description: `عمولة مصروفة — ${commission.description}`, debitMinor: amount, creditMinor: amount })
+          else rows.push({ date: commission.date, ref: commission.code, description: `عمولة مصروفة (تاريخ الحركة غير مثبت في الكشف) — ${commission.description}`, debitMinor: amount, creditMinor: amount })
         }
         /* ── حركات العهدة: تعزيز/عجز مدين، تسوية/مردود دائن ── */
         for (const tx of state.custodyTxs) {
