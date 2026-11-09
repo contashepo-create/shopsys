@@ -120,7 +120,7 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
     'نافذة التحويل بلا أقسام مرقّمة')
   assert.ok(treasury.includes('transferFeeMinor') && treasury.includes('5108'), 'نافذة التحويل لا تفصل رسوم التحويل عن المبلغ')
   assert.ok(treasury.includes('balances.get(from)?.balance') && treasury.includes('balances.get(to)?.balance'), 'نافذة التحويل لا تعرض رصيد الطرفين')
-  assert.ok(treasury.includes('transferShort') && /disabled=\{transferAmountMinor <= 0 \|\| from === to \|\| transferShort > 0\}/.test(treasury),
+  assert.ok(/disabled=\{[^}]*transferAmountMinor <= 0[^}]*from === to[^}]*transferShort > 0[^}]*\}/.test(treasury),
     'نافذة التحويل تسمح بتحويل يُعجز الخزينة أو من الخزينة لنفسها')
   assert.ok(treasury.includes('<DocOutcome>') && treasury.includes('القيد الذي سيُرحَّل'), 'نافذة التحويل لا تعرض القيد قبل الترحيل')
   R.ok('نافذة التحويل بين الخزائن: ثلاثة أقسام + رصيد الطرفين + رسوم منفصلة (5108) + منع العجز + القيد قبل الترحيل')

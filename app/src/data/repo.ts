@@ -1401,6 +1401,8 @@ export interface Stocktake {
 export interface Voucher {
   id: number
   voucherNumber: string // RV-0001 / PV-0001 / TV-0001
+  /** وقت التسجيل الفعلي للتحويل المؤرخ صراحة؛ التاريخ التشغيلي مستقل. */
+  createdAt?: string
   /** محصّل سند القبض المختار صراحةً؛ لا يستنتج من طرف السند أو مستخدم النظام. */
   receiptCollectorEmployeeId?: number | null
   kind: VoucherKind
@@ -10708,6 +10710,40 @@ export const useRawDataStore = create<DataState>()(
         if (interBranch && activeUser && activeUser.roleId !== 'owner') {
           throw new Error('التحويل بين الفروع يتطلب صلاحية المالك؛ يُرحَّل القيدان المتناظران معاً')
         }
+        // هذا العقد يخص تاريخ تحويل الخزائن المختار صراحة، لا يوسّع سندات القبض والصرف الأخرى.
+        if (args.kind === 'transfer' && args.date !== undefined) {
+          const date = args.date
+          if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ التحويل غير صالح أو في المستقبل')
+          if (state.branches.length && !activeBranch) throw new Error('اختر فرعاً نشطاً قبل تسجيل التحويل')
+          if (state.currentUserId != null && !state.appUsers.some(user => user.id === state.currentUserId && user.active)) throw new Error('المستخدم غير موجود أو غير نشط')
+          if ([args.treasury, args.counterAccountCode].some(code => state.treasuries.filter(t => t.code === code).length !== 1)) throw new Error('الخزينة غير موجودة أو غير فريدة')
+          for (const code of [args.treasury, args.counterAccountCode]) {
+            const treasury = state.treasuries.find(t => t.code === code)!
+            const linked = state.branches.filter(branch => branch.treasuryCode === code)
+            const assigned = treasury.branchId == null ? null : state.branches.find(branch => branch.id === treasury.branchId)
+            if (linked.length > 1 || (treasury.branchId != null && (!assigned || !assigned.active)) || (linked[0] && (!linked[0].active || (assigned && assigned.id !== linked[0].id)))) throw new Error('فرع الخزينة غير نشط أو ربطه غير واضح — راجع تعريف الخزائن والفروع')
+          }
+          if (!interBranch && [args.treasury, args.counterAccountCode].some(code => !getBranchScopedDataState(state).treasuries.some(t => t.code === code))) throw new Error('الخزينة ليست في الفرع الحالي')
+          const branches = interBranch ? [sourceBranch!, destinationBranch!] : [activeBranch]
+          for (const branch of branches) {
+            const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+            if (closed) throw new Error(`تاريخ التحويل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          }
+          if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0 || !Number.isSafeInteger(args.feeMinor ?? 0) || (args.feeMinor ?? 0) < 0 || !Number.isSafeInteger(args.amountMinor + (args.feeMinor ?? 0))) throw new Error('مبلغ التحويل أو رسومه غير صالح')
+          if (date < todayLocalIso()) {
+            if (interBranch) throw new Error('التحويل السابق بين فرعين يحتاج تدقيق تسلسل الحسابات المتبادلة — استخدم تاريخ اليوم')
+            const codes = new Set([args.treasury, args.counterAccountCode])
+            const moves = state.journal.filter(e => e.lines.some(line => codes.has(line.accountCode)))
+            if (moves.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date)) throw new Error('تاريخ التحويل يسبق حركة خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+            let balance = 0
+            for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
+              if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة خزينة غير صالحة — راجع الرصيد')
+              balance += line.debit - line.credit
+              if (!Number.isSafeInteger(balance)) throw new Error('رصيد الخزينة غير صالح')
+            }
+            if (balance < args.amountMinor + (args.feeMinor ?? 0)) throw new Error('رصيد خزينة المصدر لا يكفي للتحويل في التاريخ المختار')
+          }
+        }
         let interBranchLines: ReturnType<typeof buildInterBranchTransferLines> | null = null
         if (interBranch) {
           const sourcePositionMinor = state.journal
@@ -10765,6 +10801,7 @@ export const useRawDataStore = create<DataState>()(
         const voucher: Voucher = {
           id: voucherId,
           voucherNumber,
+          ...(args.kind === 'transfer' && args.date !== undefined ? { createdAt: now } : {}),
           kind: args.kind,
           ...(args.kind === 'receipt' ? { receiptCollectorEmployeeId: args.receiptCollectorEmployeeId ?? null } : {}),
           date: transactionAt,
