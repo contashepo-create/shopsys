@@ -987,6 +987,8 @@ export interface ExternalCommission {
 
 /** تحويل مخزني مرحّل — حركة داخلية بلا قيد (لا تغيّر قيمة 1103) */
 export interface StockTransfer {
+  /** وقت تسجيل التحويل الفعلي. */
+  createdAt?: string
   id: number
   transferNumber: string // TRF-0001
   date: string // ISO
@@ -3337,7 +3339,7 @@ interface DataState {
   /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
   returnWalletService: (opId: number, reason: string, approvedBy?: string, terminalRefund?: { originalTransactionId: string; providerReference: string }) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
-  postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
+  postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string; date?: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
   addAsset: (args: AssetInput & {
     notes: string; treasury?: string
@@ -20480,6 +20482,21 @@ export const useRawDataStore = create<DataState>()(
         if (!scoped.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود في هذا الفرع')
         if (!scoped.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود في هذا الفرع')
         if (state.warehouses.filter(w => w.id === args.fromWarehouseId).length !== 1 || state.warehouses.filter(w => w.id === args.toWarehouseId).length !== 1) throw new Error('هوية مخزن التحويل غير فريدة — يلزم المراجعة')
+        const branch = getEffectiveActiveBranch(state)
+        if (state.branches.length && !branch && state.activeBranchId != null) throw new Error('الفرع الحالي غير موجود أو غير نشط')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('inv.transfer')) throw new Error('لا تملك صلاحية تحويل المخزون') }
+        const createdAt = localIsoTimestamp()
+        const date = args.date ?? createdAt.slice(0, 10)
+        if (!isValidExpiryDate(date)) throw new Error('تاريخ التحويل المخزني غير صالح')
+        if (date !== createdAt.slice(0, 10)) throw new Error('التحويل المخزني متاح بتاريخ اليوم فقط — لا يمكن إثبات رصيد المخزن في تاريخ آخر')
+        const affectedBranches = branch ? [branch] : state.branches.length ? [args.fromWarehouseId, args.toWarehouseId].map(id => {
+          const owners = state.branches.filter(b => filterWarehousesByBranch(state.warehouses, b, state.branches).some(w => w.id === id))
+          if (owners.length !== 1 || !owners[0].active) throw new Error('فرع المخزن غير فريد أو غير نشط — يلزم المراجعة')
+          return owners[0]
+        }) : []
+        const years = useAppStore.getState().fiscalYears
+        const closed = affectedBranches.length ? affectedBranches.map(b => dateInClosedYear(date, fiscalYearsForBranch(years, b.id, Boolean(b.isMain)))).find(Boolean) : dateInClosedYear(date, fiscalYearsForBranch(years, null))
+        if (closed) throw new Error(`تاريخ التحويل داخل السنة المالية المقفلة «${closed.nameAr}»`)
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
         const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
@@ -20505,7 +20522,8 @@ export const useRawDataStore = create<DataState>()(
         const transfer: StockTransfer = {
           id,
           transferNumber: `TRF-${String(id).padStart(4, '0')}`,
-          date: localIsoTimestamp(),
+          date: createdAt,
+          createdAt,
           fromWarehouseId: args.fromWarehouseId,
           toWarehouseId: args.toWarehouseId,
           lines: args.lines.map((l) => ({

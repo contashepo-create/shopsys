@@ -5,9 +5,12 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * (قيمة المخزون 1103 لا تتغير). التحقق ضد رصيد المخزن المصدر،
  * مع جدول أرصدة لكل مخزن مشتق من الرصيد الكلي وسجل التحويلات.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Plus, ArrowLeftRight, Eye, Warehouse, Trash2 } from 'lucide-react'
-import { useDataStore, type StockTransfer } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type StockTransfer } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { useAppStore } from '../../stores/app.store.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
@@ -15,7 +18,7 @@ import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
+  const { transfers, warehouses, items, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 
@@ -29,6 +32,10 @@ export function TransfersPage() {
   const [toId, setToId] = useState('')
   const [lines, setLines] = useState<DraftLine[]>([{ itemId: '', qty: '1' }])
   const [notes, setNotes] = useState('')
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false), basis = useRef('')
+  const fingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.warehouses, s.items, s.transfers, s.purchases, s.sales, s.saleReturns, s.purchaseReturns, s.productionOrders, s.processingOrders, s.serials, s.batches, app.fiscalYears, app.setup]) }
 
   const openNew = () => {
     const main = warehouses.find((w) => w.isMain)
@@ -36,6 +43,7 @@ export function TransfersPage() {
     setToId('')
     setLines([{ itemId: '', qty: '1' }])
     setNotes('')
+    setDate(todayLocalIso()); basis.current = fingerprint()
     setOpen(true)
   }
   const patchLine = (i: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
@@ -45,17 +53,25 @@ export function TransfersPage() {
   const availableIn = (warehouseId: string, itemId: string) =>
     warehouseId && itemId ? stock.get(Number(warehouseId))?.get(Number(itemId)) ?? 0 : 0
 
-  const save = () => {
+  const save = async () => {
+    if (pending.current) return
+    pending.current = true; setSaving(true)
+    let committed = false
     try {
-      const t = postTransfer({
-        fromWarehouseId: Number(fromId),
-        toWarehouseId: Number(toId),
-        lines: lines.filter((l) => l.itemId).map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty) || 0 })),
-        notes,
+      const t = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (fingerprint() !== basis.current) throw new Error('تغيرت أرصدة المخزون أو بيانات التحويل — أغلق النافذة وراجعها قبل الترحيل')
+        const result = useRawDataStore.getState().postTransfer({
+          fromWarehouseId: Number(fromId), toWarehouseId: Number(toId),
+          lines: lines.filter((l) => l.itemId).map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty) || 0 })), notes, date,
+        })
+        committed = true; return result
       })
       toast.show(`رُحّل التحويل ${t.transferNumber} — ${t.totalQty} قطعة ✅`)
       setOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (committed) { setOpen(false); toast.show('سُجل التحويل محلياً لكن تعذر تأكيد الحفظ — راجع التحويلات والأرصدة قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { pending.current = false; setSaving(false) }
   }
 
   /* ─── عرض ─── */
@@ -157,8 +173,9 @@ export function TransfersPage() {
       )}
 
       {/* تحويل جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="تحويل مخزني جديد" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => { if (!pending.current) setOpen(false) }} title="تحويل مخزني جديد" wide>
+        <fieldset disabled={saving}><div className="space-y-4">
+          <Field label="تاريخ التحويل" hint="اليوم فقط: الرصيد التاريخي للمخازن غير مثبت"><input aria-label="تاريخ التحويل المخزني" type="date" value={date} min={todayLocalIso()} max={todayLocalIso()} onChange={e => setDate(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="من مخزن *">
               <QuickSelect value={fromId} onChange={(e) => setFromId(e.target.value)} className={inputCls}>
@@ -200,9 +217,9 @@ export function TransfersPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!fromId || !toId || !lines.some((l) => l.itemId)}>💾 ترحيل التحويل</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={saving || !date || !fromId || !toId || !lines.some((l) => l.itemId)}>💾 ترحيل التحويل</Btn>
           </div>
-        </div>
+        </div></fieldset>
       </Modal>
 
       {/* عرض تحويل */}
