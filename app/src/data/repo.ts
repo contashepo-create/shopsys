@@ -3371,7 +3371,7 @@ interface DataState {
   /** صرف عمولة منفردة بسند: 2116/خزينة */
   payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount; date?: string }) => StaffCommission
   /** إلغاء عمولة مستحقة (غير مصروفة): قيد عاكس 2116/5117 */
-  cancelStaffCommission: (args: { commissionId: number; reason: string }) => StaffCommission
+  cancelStaffCommission: (args: { commissionId: number; reason: string; date?: string }) => StaffCommission
   /** تعديل مبلغ عمولة مستحقة: إلغاء + استحقاق جديد بأثر تدقيقي كامل */
   updateStaffCommissionAmount: (args: { commissionId: number; newAmountMinor: number; reason: string }) => StaffCommission
   /** عمولات موظف المستحقة غير المصروفة — لعرضها في مسير الرواتب */
@@ -20757,14 +20757,28 @@ export const useRawDataStore = create<DataState>()(
         const emp = state.employees.find((e) => e.id === com.employeeId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (args.date !== undefined) {
+          if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ إلغاء العمولة غير صالح أو في المستقبل')
+          const branch = getEffectiveActiveBranch(state), scoped = getBranchScopedDataState(state)
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+          if (closed) throw new Error(`تاريخ الإلغاء داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if ((state.branches.length && !branch) || state.staffCommissions.filter(c => c.id === com.id).length !== 1 || !scoped.staffCommissions.some(c => c.id === com.id) || state.employees.filter(e => e.id === com.employeeId).length !== 1 || !scoped.employees.some(e => e.id === com.employeeId)) throw new Error('العمولة أو الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+          if (com.status !== 'accrued' || !Number.isSafeInteger(com.amountMinor) || com.amountMinor <= 0 || !isValidExpiryDate(com.date) || com.date > date) throw new Error('تاريخ الاستحقاق أو حالة العمولة غير صالحة للإلغاء')
+          const entries = state.journal.filter(e => e.sourceType === 'staff_commission' && e.sourceId === com.id)
+          const evidence = commissionStatementRows(com, state.journal)
+          if (!evidence || entries.some(e => !scoped.journal.includes(e)) || evidence.some(row => row.date > date)) throw new Error('قيد الاستحقاق أو تسوياته غير مثبت قبل تاريخ الإلغاء — راجع العمولة')
+          if (state.journal.some(e => e.lines.some(line => line.accountCode === '2116') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ الإلغاء يسبق حركة عمولات مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        }
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `إلغاء عمولة ${com.code} — ${emp?.nameAr ?? ''}: ${args.reason.trim()}`,
           sourceType: 'staff_commission_cancel', sourceId: com.id,
           lines: buildStaffCommissionCancel(com.amountMinor, emp?.nameAr ?? '', args.reason.trim()),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: entryId, cancelReason: args.reason.trim() }
+        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: entryId, cancelReason: args.reason.trim(), ...(args.date !== undefined ? { cancelDate: date, cancelCreatedAt: now } : {}) }
         set({ staffCommissions: state.staffCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
       },

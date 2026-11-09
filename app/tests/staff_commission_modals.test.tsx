@@ -8,7 +8,7 @@
  * سبب إلزامي ← قيد عاكس.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { cleanup, render, screen, fireEvent, within } from '@testing-library/react'
+import { cleanup, render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
 const { EmployeesPage } = await import('../src/ui/pages/EmployeesPage.tsx')
@@ -25,7 +26,7 @@ const employee = { id: 901, nameAr: 'عمرو مندوب المبيعات', phon
 
 const accrue = (id: number, amountMinor: number) => ({
   id, code: `COM-${String(id).padStart(4, '0')}`, employeeId: employee.id, source: 'manual', sourceId: null,
-  description: 'عمولة بيع مباشر', amountMinor, status: 'accrued', date: '2026-10-01', journalEntryId: id,
+  description: 'عمولة بيع مباشر', amountMinor, status: 'accrued', date: '2026-10-01', accrualEntryId: id, journalEntryId: id,
   payoutMode: null, paidVoucherId: null, cancelReason: null,
 })
 
@@ -35,7 +36,7 @@ beforeEach(() => {
     ...original,
     employees: [employee] as never,
     staffCommissions: [accrue(1, 150000), accrue(2, 80000)] as never,
-    journal: [],
+    journal: [accrue(1, 150000), accrue(2, 80000)].map(c => ({ id: c.id, entryNumber: c.id, date: c.date, description: 'استحقاق', sourceType: 'staff_commission', sourceId: c.id, lines: [{ accountCode: '5117', debit: c.amountMinor, credit: 0 }, { accountCode: '2116', debit: 0, credit: c.amountMinor }], createdAt: '2026-10-01T10:00:00Z', createdBy: 'مالك', reversedByEntryId: null, reversesEntryId: null })) as never,
     treasuries: [{ code: '1101', nameAr: 'الخزينة الرئيسية', kind: 'cash', openingBalanceMinor: 1_000_000, isDefault: true }] as never,
   })
 })
@@ -78,7 +79,7 @@ describe('نوافذ تعديل وإلغاء عمولة الموظف (لا promp
     }
   })
 
-  it('إلغاء العمولة: السبب إلزامي ثم قيد عاكس يطفئها', () => {
+  it('إلغاء العمولة: السبب إلزامي ثم قيد عاكس يطفئها', async () => {
     const promptSpy = vi.spyOn(window, 'prompt').mockImplementation(() => { throw new Error('prompt الأصلية ممنوعة — استخدم النافذة') })
     try {
       render(<MemoryRouter><EmployeesPage initialTab="commissions" /></MemoryRouter>)
@@ -92,6 +93,7 @@ describe('نوافذ تعديل وإلغاء عمولة الموظف (لا promp
       fireEvent.change(screen.getByLabelText('سبب الإلغاء'), { target: { value: 'أُلغيت العملية المرتبطة' } })
       fireEvent.click(screen.getByRole('button', { name: /إلغاء العمولة/ }))
 
+      await waitFor(() => expect(useDataStore.getState().staffCommissions.find(c => c.id === 2)?.status).toBe('cancelled'))
       const cancelled = useDataStore.getState().staffCommissions.find((c) => c.id === 2)
       expect(cancelled?.status).toBe('cancelled')
       expect(cancelled?.cancelReason).toBe('أُلغيت العملية المرتبطة')

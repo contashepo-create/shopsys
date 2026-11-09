@@ -73,6 +73,9 @@ export interface StaffCommission {
   payoutMode: 'voucher' | 'payroll' | null
   /** قيد الإلغاء العاكس إن أُلغيت */
   cancelEntryId: number | null
+  /** تاريخ الإلغاء المختار ووقت تسجيله، لا يتغير تاريخ الاستحقاق. */
+  cancelDate?: string
+  cancelCreatedAt?: string
   cancelReason: string
   createdBy: string
   createdAt: string

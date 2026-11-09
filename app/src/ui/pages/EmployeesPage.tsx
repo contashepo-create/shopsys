@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -321,6 +321,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comEditReason, setComEditReason] = useState('')
   const [comCancel, setComCancel] = useState<{ id: number; code: string } | null>(null)
   const [comCancelReason, setComCancelReason] = useState('')
+  const [comCancelDate, setComCancelDate] = useState(() => todayLocalIso())
+  const [comCancelSaving, setComCancelSaving] = useState(false)
+  const comCancelPending = useRef(false), comCancelBasis = useRef('')
   const [comPayTreasury, setComPayTreasury] = useState('1101')
   const saveCommission = async () => {
     if (comPending.current) return
@@ -355,6 +358,24 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       if (committed) { setComPayId(null); toast.show('سُجل صرف العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
       else toast.show((e as Error).message, 'error')
     } finally { comPayPending.current = false; setComPaySaving(false) }
+  }
+
+  const saveCommissionCancel = async () => {
+    if (comCancelPending.current || !comCancel) return
+    if (!comCancelReason.trim()) return toast.show('سبب الإلغاء مطلوب', 'error')
+    comCancelPending.current = true; setComCancelSaving(true)
+    let committed = false
+    try {
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comCancelBasis.current) throw new Error('تغيرت العمولة أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        useRawDataStore.getState().cancelStaffCommission({ commissionId: comCancel.id, reason: comCancelReason.trim(), date: comCancelDate })
+        committed = true
+      })
+      toast.show(`أُلغيت ${comCancel.code} بقيد عاكس ✓`); setComCancel(null)
+    } catch (e) {
+      if (committed) { setComCancel(null); toast.show('سُجل إلغاء العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { comCancelPending.current = false; setComCancelSaving(false) }
   }
 
   /* ─── تبويب السلف (طلب المالك) ─── */
@@ -955,7 +976,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-colors">✏️ تعديل</button>
                             <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" data-commission-cancel onClick={() => {
                               setComCancel({ id: c.id, code: c.code })
-                              setComCancelReason('')
+                              setComCancelReason(''); setComCancelDate(todayLocalIso()); comCancelBasis.current = comFingerprint()
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">🚫 إلغاء</button>
                           </>
                         )}
@@ -1057,25 +1078,18 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           </Modal>
 
           {/* §98: إلغاء عمولة — قيد عاكس بسبب موثق من نافذة لا prompt() */}
-          <Modal open={comCancel != null} onClose={() => setComCancel(null)} title="إلغاء عمولة" subtitle="قيد عاكس يطفئ العمولة — السبب إلزامي للتدقيق">
-            <div className="space-y-4">
+          <Modal open={comCancel != null} onClose={() => { if (!comCancelPending.current) setComCancel(null) }} title="إلغاء عمولة" subtitle="قيد عاكس يطفئ العمولة — السبب إلزامي للتدقيق">
+            <fieldset disabled={comCancelSaving}><div className="space-y-4">
               <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comCancel?.code}</div>
               <Field label="سبب الإلغاء *">
                 <input className={inputCls} value={comCancelReason} data-commission-cancel-reason onChange={(e) => setComCancelReason(e.target.value)} aria-label="سبب الإلغاء" placeholder="مثال: أُلغيت العملية المرتبطة بالعمولة" />
               </Field>
+              <Field label="تاريخ إلغاء العمولة" hint="لا يسبق تاريخ الاستحقاق أو تسوية مسجلة"><input aria-label="تاريخ إلغاء العمولة" type="date" max={todayLocalIso()} value={comCancelDate} onChange={e => setComCancelDate(e.target.value)} className={inputCls} /></Field>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComCancel(null)}>تراجع</Btn>
-                <Btn variant="danger" onClick={() => {
-                  if (!comCancel) return
-                  if (!comCancelReason.trim()) return toast.show('سبب الإلغاء مطلوب', 'error')
-                  try {
-                    cancelStaffCommission({ commissionId: comCancel.id, reason: comCancelReason.trim() })
-                    toast.show(`أُلغيت ${comCancel.code} بقيد عاكس ✓`)
-                    setComCancel(null)
-                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                }}>🚫 إلغاء العمولة</Btn>
+                <Btn variant="ghost" disabled={comCancelSaving} onClick={() => setComCancel(null)}>تراجع</Btn>
+                <Btn variant="danger" onClick={saveCommissionCancel} disabled={comCancelSaving || !comCancelDate}>🚫 إلغاء العمولة</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
         </>
       )}
