@@ -1460,6 +1460,8 @@ export interface EmployeeDeduction {
 
 /** سداد نقدي لسلفة موظف خارج المسير: خزينة مدين / 1107 دائن */
 export interface AdvanceRepayment {
+  createdAt?: string
+  dateSelected?: boolean
   id: number
   repayNumber: string // ADR-0001
   employeeId: number
@@ -1471,6 +1473,8 @@ export interface AdvanceRepayment {
 
 /** سلفة موظف — أصل على الموظف (1107) تُخصم من الرواتب على دفعات بحرية المالك */
 export interface EmployeeAdvance {
+  createdAt?: string
+  dateSelected?: boolean
   id: number
   advanceNumber: string // ADV-0001
   employeeId: number
@@ -2505,7 +2509,7 @@ interface DataState {
     __approvalBypass?: boolean
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
-  grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
+  grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string; date?: string }) => EmployeeAdvance
   /** قيد يدوي — يُرفض بنيوياً إن لم يتوازن (validateManualEntry ثم assertBalanced) */
   postManualEntry: (args: { date: string; description: string; lines: JournalLine[] }) => JournalEntry
   /** عكس قيد موثق — التصحيح الوحيد المسموح (Append-Only) */
@@ -2633,7 +2637,7 @@ interface DataState {
   /** عفو/إلغاء متبقي جزاء (تسجيل خاطئ أو صفح) — بلا قيد (لم يتولد قيد أصلاً) مع توثيق المعتمد */
   waiveEmployeeDeduction: (args: { deductionId: number; approvedBy: string; reason: string }) => EmployeeDeduction
   /** سداد نقدي لسلفة خارج المسير: قيد خزينة ← 1107 ويخفض متبقي السلفة */
-  repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount }) => AdvanceRepayment
+  repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; date?: string }) => AdvanceRepayment
   /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
   /** إعادة فتح سنة مقفلة (نمط عالمي — Reopen books): تعكس قيد الإقفال وتفتح الفترة للتصحيح */
@@ -3895,6 +3899,27 @@ function assertInvoicePostingDate(state: DataState, date: string, allowLegacyTim
   const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
   const closed = dateInClosedYear(day, years)
   if (closed) throw new Error(`التاريخ ${day} داخل السنة المالية المقفلة «${closed.nameAr}» — لا ترحيل في فترة مقفلة`)
+}
+
+/** تحفظ السلف تاريخ المستند دون إعادة ترتيب التخصيص المسجل سابقاً. */
+function employeeAdvanceDocumentDate(state: DataState, employeeId: number, selected: string | undefined): string {
+  const day = selected ?? todayLocalIso()
+  if (!isValidExpiryDate(day) || day > todayLocalIso()) throw new Error('تاريخ حركة السلفة غير صالح أو في المستقبل')
+  const branch = getEffectiveActiveBranch(state)
+  const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+  if (closed) throw new Error(`تاريخ حركة السلفة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const advances = state.employeeAdvances.filter(a => a.employeeId === employeeId)
+  if (advances.some(a => !Number.isSafeInteger(a.amountMinor) || !Number.isSafeInteger(a.recoveredMinor) || a.amountMinor < 0 || a.recoveredMinor < 0 || a.recoveredMinor > a.amountMinor)) throw new Error('رصيد سلفة سابق غير صالح — راجع التخصيص قبل الترحيل')
+  const payrollIds = new Set([...state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.advancesMinor > 0)).map(r => r.id), ...state.payrollSlips.filter(r => r.employeeId === employeeId && r.advanceMinor > 0).map(r => r.runId)])
+  const days = [
+    ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null && payrollIds.has(e.sourceId) && e.lines.some(l => l.accountCode === '1107')).map(e => e.date?.slice(0, 10)),
+    ...advances.map(a => a.date?.slice(0, 10)),
+    ...state.advanceRepayments.filter(a => a.employeeId === employeeId).map(a => a.date?.slice(0, 10)),
+    ...state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.advancesMinor > 0)).map(r => r.date?.slice(0, 10)),
+    ...state.payrollSlips.filter(r => r.employeeId === employeeId && r.advanceMinor > 0).map(r => r.accruedAt?.slice(0, 10)),
+  ]
+  if (days.some(d => !isValidExpiryDate(d) || d > day)) throw new Error('تاريخ حركة السلفة يسبق حركة أو استقطاعاً مسجلاً أو تاريخه غير مثبت — راجع تسلسل السلف')
+  return day
 }
 
 function appSetupForState(state: DataState): OperationalSetup {
@@ -6714,6 +6739,14 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
         if (!args.rows.length) throw new Error('اختر موظفاً واحداً على الأقل')
+        const slipDate = args.date ?? todayLocalIso()
+        for (const row of args.rows.filter(r => r.advanceMinor > 0)) {
+          const selectedDates = [...state.employeeAdvances.filter(a => a.employeeId === row.employeeId && a.dateSelected).map(a => a.date), ...state.advanceRepayments.filter(a => a.employeeId === row.employeeId && a.dateSelected).map(a => a.date)]
+          if (selectedDates.length) {
+            try { employeeAdvanceDocumentDate(state, row.employeeId, slipDate) }
+            catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق حركة سلفة مسجلة — راجع تسلسل الاستقطاع') }
+          }
+        }
         const drafts = args.rows.map((row) => {
           const employee = state.employees.find((e) => e.id === row.employeeId)
           if (!employee) throw new Error('موظف غير موجود في المسير')
@@ -6859,6 +6892,9 @@ export const useRawDataStore = create<DataState>()(
         // مزدوج بلا مقابل — يفسد مصروف الرواتب والذمة معاً. القاتل في المستودع.
         if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة بالفعل — لا يُلغى مستند ملغى')
         if (!reason.trim()) throw new Error('سبب الإلغاء مطلوب')
+        // لا يملك النظام أدلة تخصيص السلفة لكل قسيمة؛ العكس القديم يسترجع من
+        // السلف حسب ترتيبها الحالي وقد يعكس سداداً آخر. افشل مغلقاً للمسار المؤرخ.
+        if (slip.advanceMinor > 0 && (state.employeeAdvances.some(a => a.employeeId === slip.employeeId && a.dateSelected) || state.advanceRepayments.some(a => a.employeeId === slip.employeeId && a.dateSelected))) throw new Error('إلغاء استقطاع سلفة مؤرخة يتطلب مراجعة وتسوية يدوية — لا توجد أدلة تخصيص كافية للعكس الآلي')
         // إصلاح §83 (ث9): كان القيد يحمل reversesEntryId لقيد الاستحقاق المجمَّع
         // بلا تحديث الطرف الآخر — كسر التبادلية. والأدق محاسبياً: الإلغاء يعكس
         // **سطر قسيمة واحد** من قيد مجمَّع (سطر 2104 باسم الموظف) لا القيد كله،
@@ -10788,11 +10824,16 @@ export const useRawDataStore = create<DataState>()(
 
       grantEmployeeAdvance: (args) => {
         const state = get()
-        const emp = state.employees.find((e) => e.id === args.employeeId)
-        if (!emp) throw new Error('الموظف غير موجود')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السلفة يجب أن يكون موجباً')
+        const scoped = getBranchScopedDataState(state)
+        const emp = scoped.employees.find((e) => e.id === args.employeeId)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || !emp || state.employees.filter(e => e.id === args.employeeId).length !== 1) throw new Error('الموظف غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السلفة يجب أن يكون موجباً')
         // إعادة مراجعة الموظفين (R7): خزينة شبح كانت تمر وتولد قيداً على حساب غير موجود
         if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
+        assertTreasuryForPosting(state, args.treasury, 'payment', args.amountMinor)
+        const documentDate = employeeAdvanceDocumentDate(state, args.employeeId, args.date)
+        if (args.date && state.journal.some(e => e.lines.some(l => l.accountCode === args.treasury) && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > documentDate))) throw new Error('تاريخ الصرف يسبق حركة خزينة مسجلة أو تاريخها غير مثبت — راجع الرصيد التاريخي')
         // قيد السلفة: مدين 1107 (أصل على الموظف) / دائن الخزينة المختارة
         const entryLines: JournalLine[] = [
           { accountCode: '1107', debit: args.amountMinor, credit: 0, note: `سلفة ${emp.nameAr}` },
@@ -10805,7 +10846,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
-          date: now.slice(0, 10),
+          date: documentDate,
           description: `سلفة موظف ${advanceNumber} — ${emp.nameAr}${args.notes ? ` — ${args.notes}` : ''}`,
           sourceType: 'payment_voucher',
           sourceId: advId, sourceCollection: 'employeeAdvances',
@@ -10819,7 +10860,7 @@ export const useRawDataStore = create<DataState>()(
           id: advId,
           advanceNumber,
           employeeId: args.employeeId,
-          date: now,
+          date: documentDate, createdAt: now, ...(args.date !== undefined ? { dateSelected: true } : {}),
           amountMinor: args.amountMinor,
           recoveredMinor: 0,
           source: 'cash',
@@ -13020,11 +13061,16 @@ export const useRawDataStore = create<DataState>()(
 
       repayEmployeeAdvance: (args) => {
         const state = get()
-        const emp = state.employees.find((e) => e.id === args.employeeId)
-        if (!emp) throw new Error('الموظف غير موجود')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
+        const scoped = getBranchScopedDataState(state)
+        const emp = scoped.employees.find((e) => e.id === args.employeeId)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || !emp || state.employees.filter(e => e.id === args.employeeId).length !== 1) throw new Error('الموظف غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
         // إعادة مراجعة الموظفين (R8): خزينة شبح كانت تمر
         if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
+        assertTreasuryForPosting(state, args.treasury, 'receipt', args.amountMinor)
+        const documentDate = employeeAdvanceDocumentDate(state, args.employeeId, args.date)
+        if (state.employeeAdvances.filter(a => a.employeeId === args.employeeId).length !== scoped.employeeAdvances.filter(a => a.employeeId === args.employeeId).length) throw new Error('السلف موزعة على فروع مختلفة — راجع التخصيص قبل السداد')
         const remaining = state.employeeAdvances
           .filter((a) => a.employeeId === args.employeeId)
           .reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
@@ -13034,7 +13080,7 @@ export const useRawDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: documentDate,
           description: `سداد نقدي لسلفة — ${emp.nameAr} (${repayNumber})`,
           sourceType: 'receipt_voucher', sourceId: id, sourceCollection: 'advanceRepayments',
           lines: [
@@ -13053,7 +13099,7 @@ export const useRawDataStore = create<DataState>()(
           toRecover -= take
           return { ...a, recoveredMinor: a.recoveredMinor + take }
         })
-        const repayment: AdvanceRepayment = { id, repayNumber, employeeId: args.employeeId, date: now, amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }
+        const repayment: AdvanceRepayment = { id, repayNumber, employeeId: args.employeeId, date: documentDate, createdAt: now, ...(args.date !== undefined ? { dateSelected: true } : {}), amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }
         set({ advanceRepayments: [...state.advanceRepayments, repayment], employeeAdvances, journal: [...state.journal, entry] })
         return repayment
       },

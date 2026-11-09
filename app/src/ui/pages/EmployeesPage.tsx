@@ -8,7 +8,8 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch, CalendarCheck2, UserCog, Banknote, HandCoins, Percent } from 'lucide-react'
-import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
 import { suggestRoleForJobTitle } from '../../core/audit.ts'
 import type { PartyExtended } from '../../data/repo.ts'
@@ -95,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -333,6 +334,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [advAmount, setAdvAmount] = useState('')
   const [advTreasury, setAdvTreasury] = useState('1101')
   const [advNotes, setAdvNotes] = useState('')
+  const [advDate, setAdvDate] = useState(() => todayLocalIso())
+  const [repayDate, setRepayDate] = useState(() => todayLocalIso())
+  const [advanceSaving, setAdvanceSaving] = useState(false)
+  const advancePending = useRef(false)
+  const advanceBasis = useRef('')
+  const advanceFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.employees, s.employeeAdvances, s.advanceRepayments, s.payrollRuns, s.payrollSlips, s.treasuries, s.journal]) }
 
   /* ─── تبويب الخصومات والجزاءات (إصلاح فجوة الرواتب) ─── */
   const [dedOpen, setDedOpen] = useState(false)
@@ -358,29 +365,38 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [repayEmployeeId, setRepayEmployeeId] = useState(0)
   const [repayAmount, setRepayAmount] = useState('')
   const [repayTreasury, setRepayTreasury] = useState('1101')
-  const saveRepayment = () => {
+  const saveRepayment = async () => {
+    if (advancePending.current) return
+    advancePending.current = true; setAdvanceSaving(true)
+    let committed = false
     try {
-      const rp = repayEmployeeAdvance({
-        employeeId: repayEmployeeId,
-        amountMinor: toMinor(repayAmount, cur.decimals),
-        treasury: repayTreasury,
+      const rp = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (advanceFingerprint() !== advanceBasis.current) throw new Error('تغيرت بيانات السلف أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().repayEmployeeAdvance({ employeeId: repayEmployeeId, amountMinor: toMinor(repayAmount, cur.decimals), treasury: repayTreasury, date: repayDate })
+        committed = true; return result
       })
-      toast.show(`سُدد ${rp.repayNumber} نقداً — انخفض متبقي سلف الموظف ✓`)
-      setRepayOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+      toast.show(`سُدد ${rp.repayNumber} نقداً — انخفض متبقي سلف الموظف ✓`); setRepayOpen(false)
+    } catch (err) {
+      if (committed) { setRepayOpen(false); toast.show('سُجل السداد محلياً لكن تعذر تأكيد الحفظ — راجع السلف والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { advancePending.current = false; setAdvanceSaving(false) }
   }
 
-  const saveAdvance = () => {
+  const saveAdvance = async () => {
+    if (advancePending.current) return
+    advancePending.current = true; setAdvanceSaving(true)
+    let committed = false
     try {
-      const adv = grantEmployeeAdvance({
-        employeeId: advEmployeeId,
-        amountMinor: toMinor(advAmount || '0', cur.decimals),
-        treasury: advTreasury,
-        notes: advNotes.trim(),
+      const adv = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (advanceFingerprint() !== advanceBasis.current) throw new Error('تغيرت بيانات السلف أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().grantEmployeeAdvance({ employeeId: advEmployeeId, amountMinor: toMinor(advAmount || '0', cur.decimals), treasury: advTreasury, notes: advNotes.trim(), date: advDate })
+        committed = true; return result
       })
-      toast.show(`صُرفت السلفة ${adv.advanceNumber} — تُسترد من مسير الرواتب (خانة «سلف») ✓`)
-      setAdvOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      toast.show(`صُرفت السلفة ${adv.advanceNumber} — تُسترد من مسير الرواتب أو نقداً ✓`); setAdvOpen(false)
+    } catch (err) {
+      if (committed) { setAdvOpen(false); toast.show('سُجلت السلفة محلياً لكن تعذر تأكيد الحفظ — راجع السلف والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { advancePending.current = false; setAdvanceSaving(false) }
   }
 
   /* ─── تبويب الموظفين ─── */
@@ -651,10 +667,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <b> التقارير ← كشوف الحساب</b>.
             </p>
             <div className="flex gap-2">
-              <Btn variant="ghost" onClick={() => { setRepayEmployeeId(employees[0]?.id ?? 0); setRepayAmount(''); setRepayTreasury('1101'); setRepayOpen(true) }} disabled={employeeAdvances.length === 0}>
+              <Btn variant="ghost" onClick={() => { setRepayEmployeeId(employees[0]?.id ?? 0); setRepayAmount(''); setRepayTreasury('1101'); setRepayDate(todayLocalIso()); advanceBasis.current = advanceFingerprint(); setRepayOpen(true) }} disabled={employeeAdvances.length === 0}>
                 💵 سداد نقدي لسلفة
               </Btn>
-              <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvOpen(true) }} disabled={employees.length === 0}>
+              <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvDate(todayLocalIso()); advanceBasis.current = advanceFingerprint(); setAdvOpen(true) }} disabled={employees.length === 0}>
                 <Plus size={15} /> صرف سلفة
               </Btn>
             </div>
@@ -717,11 +733,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label={`المبلغ المسدد (${cur.symbol}) *`} hint="قيد فوري: الخزينة ← سلف وعهد الموظفين 1107">
                 <input value={repayAmount} onChange={(e) => setRepayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
+              <Field label="تاريخ سداد السلفة"><input aria-label="تاريخ سداد السلفة" type="date" max={todayLocalIso()} value={repayDate} onChange={e => setRepayDate(e.target.value)} className={inputCls} /></Field>
               <Field label="إلى أي خزينة؟"><TreasuryPicker value={repayTreasury} onChange={setRepayTreasury} /></Field>
               <DocOutcome>الأثر: <b>الخزينة/البنك</b> مديناً بالمبلغ · <b>1107 سلف وعهد الموظفين</b> دائناً — فيقل متبقي السلفة فوراً ولا يمسّ مصروف الرواتب.</DocOutcome>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setRepayOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveRepayment} shortcut="F9" disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
+                <Btn onClick={saveRepayment} shortcut="F9" disabled={advanceSaving || !repayEmployeeId || !repayAmount.trim() || !repayDate}>💾 تسجيل السداد</Btn>
               </div>
             </div>
           </Modal>
@@ -733,6 +750,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label={`المبلغ (${cur.symbol}) *`}>
                 <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
               </Field>
+              <Field label="تاريخ صرف السلفة"><input aria-label="تاريخ صرف السلفة" type="date" max={todayLocalIso()} value={advDate} onChange={e => setAdvDate(e.target.value)} className={inputCls} /></Field>
               <Field label="من أي خزينة/بنك؟">
                 <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />
               </Field>
@@ -741,7 +759,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </Field>
               <DocOutcome>الأثر: <b>1107 سلف الموظفين</b> مديناً بالمبلغ · <b>الخزينة</b> دائناً · ويُخصم من المسير أو يُسدَّد نقداً لاحقاً.</DocOutcome><div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setAdvOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveAdvance} shortcut="F9" disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
+                <Btn onClick={saveAdvance} shortcut="F9" disabled={advanceSaving || !advEmployeeId || !advAmount.trim() || !advDate}>💾 صرف السلفة</Btn>
               </div>
             </div>
           </Modal>
