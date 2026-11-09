@@ -3448,6 +3448,14 @@ interface DataState {
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
+/** القسائم والمسير المجمّع يشتركان في مصدر payroll؛ لا يجوز إعادة رقم مسير موجود أو قيد قديم يتيم. */
+function nextPayrollSourceId(state: DataState): number {
+  const ids = [...state.payrollRuns.map(r => r.id), ...state.payrollSlips.map(s => s.runId), ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null).map(e => e.sourceId!)]
+  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('معرف مسير قديم غير صالح — راجع سجلات الرواتب')
+  const id = ids.reduce((max, value) => Math.max(max, value), 0) + 1
+  if (!Number.isSafeInteger(id)) throw new Error('تعذر إنشاء رقم مسير آمن')
+  return id
+}
 
 // لا يُعاد استعمال رقم عميل ما زال يظهر في أي سجل تاريخي، حتى إن
 // كان سجل العميل نفسه مفقوداً. يشمل الفروع غير النشطة والقيود والمراكز.
@@ -6766,6 +6774,26 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
         if (!args.rows.length) throw new Error('اختر موظفاً واحداً على الأقل')
+        const scoped = getBranchScopedDataState(state)
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع الحالي قبل ترحيل القسائم')
+        if (new Set(args.rows.map(row => row.employeeId)).size !== args.rows.length) throw new Error('الموظف مكرر في المسير — سطر واحد لكل موظف')
+        for (const row of args.rows) {
+          if (!state.employees.some(e => e.id === row.employeeId)) throw new Error('موظف غير موجود في المسير')
+          if (state.employees.filter(e => e.id === row.employeeId).length !== 1 || !scoped.employees.some(e => e.id === row.employeeId)) throw new Error('موظف المسير تابع لفرع آخر أو غير فريد في الفرع الحالي')
+          if (![row.grossMinor, row.allowancesMinor, row.deductionsMinor, row.advanceMinor].every(Number.isSafeInteger)) throw new Error('مبالغ القسيمة يجب أن تكون أرقاماً صحيحة وآمنة')
+        }
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين')
+        }
+        for (const row of args.rows) {
+          const assertLocal = <T extends { id: number; date: string }>(all: T[], visible: T[], universe: T[], label: string) => {
+            if (all.some(record => universe.filter(other => other.id === record.id).length !== 1 || !visible.includes(record))) throw new Error(`${label} غير فريد أو تابع لفرع آخر — راجع تخصيص القسيمة`)
+            if (all.some(record => !isValidExpiryDate(record.date?.slice(0, 10)))) throw new Error(`${label} تاريخه غير صالح — راجع السجل`)
+          }
+          if (row.advanceMinor > 0) assertLocal(state.employeeAdvances.filter(a => a.employeeId === row.employeeId && a.amountMinor > a.recoveredMinor), scoped.employeeAdvances, state.employeeAdvances, 'سجل السلفة')
+          if (row.deductionsMinor > 0) assertLocal(state.employeeDeductions.filter(d => d.employeeId === row.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0)), scoped.employeeDeductions, state.employeeDeductions, 'سجل الجزاء')
+        }
         const slipDate = args.date ?? todayLocalIso()
         for (const row of args.rows.filter(r => r.advanceMinor > 0)) {
           const selectedDates = [...state.employeeAdvances.filter(a => a.employeeId === row.employeeId && a.dateSelected).map(a => a.date), ...state.advanceRepayments.filter(a => a.employeeId === row.employeeId && a.dateSelected).map(a => a.date)]
@@ -6802,6 +6830,7 @@ export const useRawDataStore = create<DataState>()(
         // باستقطاع فوق الحقيقة لاحقاً). الآن: حارس المتبقي + توزيع الأقدم أولاً
         // (نفس منهج المسير والسداد النقدي).
         let employeeAdvances = state.employeeAdvances
+        const recoveredAdvancesByEmployee = new Map<number, { advanceId: number; minor: number }[]>()
         for (const draft of drafts) {
           if ((draft.advanceMinor ?? 0) <= 0) continue
           const remaining = employeeAdvances
@@ -6811,14 +6840,18 @@ export const useRawDataStore = create<DataState>()(
             throw new Error(`${draft.employeeName}: السلفة المستقطعة (${draft.advanceMinor}) أكبر من متبقي سلفه (${remaining})`)
           }
           let toRecover = draft.advanceMinor
-          employeeAdvances = employeeAdvances.map((a) => {
-            if (a.employeeId !== draft.employeeId || toRecover <= 0) return a
-            const open = a.amountMinor - a.recoveredMinor
-            if (open <= 0) return a
-            const take = Math.min(open, toRecover)
+          employeeAdvances = [...employeeAdvances]
+          const taken: { advanceId: number; minor: number }[] = []
+          const indices = employeeAdvances.map((a, i) => ({ a, i })).filter(({ a }) => a.employeeId === draft.employeeId && a.amountMinor > a.recoveredMinor)
+            .sort((x, y) => x.a.date.slice(0, 10).localeCompare(y.a.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const a = employeeAdvances[i], take = Math.min(a.amountMinor - a.recoveredMinor, toRecover)
             toRecover -= take
-            return { ...a, recoveredMinor: a.recoveredMinor + take }
-          })
+            taken.push({ advanceId: a.id, minor: take })
+            employeeAdvances[i] = { ...a, recoveredMinor: a.recoveredMinor + take }
+          }
+          if (taken.length) recoveredAdvancesByEmployee.set(draft.employeeId, taken)
         }
         /* §93 (إصلاح سلسلة الرواتب): الخصومات المسجلة (الجزاءات) تُخصم من
            سجلاتها الأقدم أولاً — كما يفعل المسير المجمّع تماماً. قبل هذا
@@ -6831,18 +6864,19 @@ export const useRawDataStore = create<DataState>()(
           if ((draft.deductionsMinor ?? 0) <= 0) continue
           let toRecover = draft.deductionsMinor
           const taken: { deductionId: number; minor: number }[] = []
-          employeeDeductions = employeeDeductions.map((d) => {
-            if (d.employeeId !== draft.employeeId || toRecover <= 0) return d
-            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
-            if (open <= 0) return d
-            const take = Math.min(open, toRecover)
+          employeeDeductions = [...employeeDeductions]
+          const indices = employeeDeductions.map((d, i) => ({ d, i })).filter(({ d }) => d.employeeId === draft.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0))
+            .sort((x, y) => x.d.date.slice(0, 10).localeCompare(y.d.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const d = employeeDeductions[i], take = Math.min(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0), toRecover)
             toRecover -= take
             taken.push({ deductionId: d.id, minor: take })
-            return { ...d, recoveredMinor: d.recoveredMinor + take }
-          })
+            employeeDeductions[i] = { ...d, recoveredMinor: d.recoveredMinor + take }
+          }
           if (taken.length) recoveredDeductionsByEmployee.set(draft.employeeId, taken)
         }
-        const runId = nextId(state.payrollRuns)
+        const runId = nextPayrollSourceId(state)
         const baseId = nextId(state.payrollSlips)
         const now = args.date ? localTimestampOn(args.date, 9) : localIsoTimestamp()
         const numbered = drafts.map((draft, index) => ({ ...draft, slipNumber: `PS-${String(baseId + index).padStart(4, '0')}` }))
@@ -6872,6 +6906,7 @@ export const useRawDataStore = create<DataState>()(
           accrualEntryId: entryId,
           notes: draft.notes ?? '',
           recoveredDeductions: recoveredDeductionsByEmployee.get(draft.employeeId),
+          recoveredAdvances: recoveredAdvancesByEmployee.get(draft.employeeId),
         }))
         set({
           payrollSlips: [...state.payrollSlips, ...slips],
@@ -6950,14 +6985,19 @@ export const useRawDataStore = create<DataState>()(
         // عكس توزيع السلفة على السجلات (بما استُرد بمقدارها، الأقدم أولاً)
         let employeeAdvances = state.employeeAdvances
         if (slip.advanceMinor > 0) {
-          let toGive = slip.advanceMinor
-          employeeAdvances = employeeAdvances.map((a) => {
-            if (a.employeeId !== slip.employeeId || toGive <= 0) return a
-            const give = Math.min(a.recoveredMinor, toGive)
-            if (give <= 0) return a
-            toGive -= give
-            return { ...a, recoveredMinor: a.recoveredMinor - give }
-          })
+          if (slip.recoveredAdvances != null) {
+            const allocations = slip.recoveredAdvances
+            if (!Array.isArray(allocations) || new Set(allocations.map(a => a.advanceId)).size !== allocations.length || allocations.some(a => !Number.isSafeInteger(a.minor) || a.minor <= 0) || allocations.reduce((sum, a) => sum + a.minor, 0) !== slip.advanceMinor) throw new Error('تخصيص السلفة في القسيمة غير صالح — راجع التسوية')
+            const scoped = getBranchScopedDataState(state)
+            for (const a of allocations) {
+              const matches = state.employeeAdvances.filter(row => row.id === a.advanceId)
+              if (matches.length !== 1 || matches[0].employeeId !== slip.employeeId || !scoped.employeeAdvances.includes(matches[0]) || !Number.isSafeInteger(matches[0].recoveredMinor) || matches[0].recoveredMinor < a.minor) throw new Error('سجل السلفة المخصص غير مثبت أو غير كاف للعكس — راجع التسوية')
+            }
+            const amounts = new Map(allocations.map(a => [a.advanceId, a.minor]))
+            employeeAdvances = employeeAdvances.map(a => amounts.has(a.id) ? { ...a, recoveredMinor: a.recoveredMinor - amounts.get(a.id)! } : a)
+          } else {
+            throw new Error('إلغاء استقطاع سلفة قديمة يتطلب مراجعة وتسوية يدوية — لا توجد أدلة تخصيص كافية للعكس الآلي')
+          }
         }
         const nowIso = localIsoTimestamp()
         const entryId = nextId(state.journal)
@@ -12983,7 +13023,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid, commissionsPaid, driverDuesPaid)
 
-        const runId = nextId(state.payrollRuns)
+        const runId = nextPayrollSourceId(state)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const runNumber = `SAL-${String(runId).padStart(4, '0')}`
