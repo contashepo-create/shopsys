@@ -51,7 +51,7 @@ describe('نوافذ تعديل وإلغاء عمولة الموظف (لا promp
     expect(source).not.toMatch(/(?<![\w.])prompt\s*\(/)
   })
 
-  it('تعديل العمولة: نافذة بحقلين واعتمادها يولّد عمولة جديدة بمبلغ معدل', () => {
+  it('تعديل العمولة: نافذة بحقلين واعتمادها يولّد عمولة جديدة بمبلغ معدل', async () => {
     const promptSpy = vi.spyOn(window, 'prompt').mockImplementation(() => { throw new Error('prompt الأصلية ممنوعة — استخدم النافذة') })
     try {
       render(<MemoryRouter><EmployeesPage initialTab="commissions" /></MemoryRouter>)
@@ -65,6 +65,7 @@ describe('نوافذ تعديل وإلغاء عمولة الموظف (لا promp
       fireEvent.change(reasonInput, { target: { value: 'تصحيح النسبة مع العميل' } })
       fireEvent.click(screen.getByRole('button', { name: /اعتماد التعديل/ }))
 
+      await waitFor(() => expect(useDataStore.getState().staffCommissions.find(c => c.id === 1)?.status).toBe('cancelled'))
       const state = useDataStore.getState()
       /* القديمة أُلغيت والجديدة بالمبلغ المعدل ووسم التعديل */
       expect(state.staffCommissions.find((c) => c.id === 1)?.status).toBe('cancelled')

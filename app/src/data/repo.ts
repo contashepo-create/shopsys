@@ -3373,7 +3373,7 @@ interface DataState {
   /** إلغاء عمولة مستحقة (غير مصروفة): قيد عاكس 2116/5117 */
   cancelStaffCommission: (args: { commissionId: number; reason: string; date?: string }) => StaffCommission
   /** تعديل مبلغ عمولة مستحقة: إلغاء + استحقاق جديد بأثر تدقيقي كامل */
-  updateStaffCommissionAmount: (args: { commissionId: number; newAmountMinor: number; reason: string }) => StaffCommission
+  updateStaffCommissionAmount: (args: { commissionId: number; newAmountMinor: number; reason: string; date?: string }) => StaffCommission
   /** عمولات موظف المستحقة غير المصروفة — لعرضها في مسير الرواتب */
   getStaffCommissionsDue: (employeeId: number) => { totalMinor: number; commissions: StaffCommission[] }
   /** إضافة حساب مخصص لشجرة الحسابات — يُستخدم فوراً في القيود والتقارير (الشجرة ليست مفروضة) */
@@ -20809,7 +20809,28 @@ export const useRawDataStore = create<DataState>()(
         const errors = validateStaffCommission({ employeeId: emp.id, amountMinor: args.newAmountMinor, description })
         if (errors.length) throw new Error(errors.join(' — '))
         // الكتابة الذرية: إن رفض الدفتر أحد القيدين لا تلغى العمولة الأصلية وحدها.
-        const now = localIsoTimestamp(), date = now.slice(0, 10), cancelId = nextId(state.journal), accrueId = cancelId + 1
+        const now = localIsoTimestamp(), date = args.date ?? now.slice(0, 10)
+        if (args.date !== undefined) {
+          if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ تعديل العمولة غير صالح أو في المستقبل')
+          const branch = getEffectiveActiveBranch(state), scoped = getBranchScopedDataState(state)
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+          if (closed) throw new Error(`تاريخ التعديل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if ((state.branches.length && !branch) || state.staffCommissions.filter(c => c.id === com.id).length !== 1 || !scoped.staffCommissions.some(c => c.id === com.id) || state.employees.filter(e => e.id === com.employeeId).length !== 1 || !scoped.employees.some(e => e.id === com.employeeId)) throw new Error('العمولة أو الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+          if (!Number.isSafeInteger(com.amountMinor) || com.amountMinor <= 0 || com.date > date) throw new Error('تاريخ الاستحقاق أو مبلغ العمولة غير صالح للتعديل')
+          if (com.source === 'manual' && com.sourceId != null) throw new Error('العمولة اليدوية تحمل مستنداً غير صالح')
+          if (com.source !== 'manual') {
+            if (date < now.slice(0, 10)) throw new Error('التاريخ السابق متاح لتعديل العمولة اليدوية فقط — راجع تسلسل المستند المصدر')
+            const all = com.source === 'sale' ? state.sales : com.source === 'car_sale' ? state.cars : com.source === 'project' ? state.projects : com.source === 'lease' ? state.leases : com.source === 'property_sale' ? state.properties : []
+            const visible = com.source === 'sale' ? scoped.sales : com.source === 'car_sale' ? scoped.cars : com.source === 'project' ? scoped.projects : com.source === 'lease' ? scoped.leases : com.source === 'property_sale' ? scoped.properties : []
+            if (com.sourceId == null || all.filter(row => row.id === com.sourceId).length !== 1 || !visible.some(row => row.id === com.sourceId)) throw new Error('المستند المصدر غير فريد أو ليس في الفرع الحالي')
+          }
+          const entries = state.journal.filter(e => e.sourceType === 'staff_commission' && e.sourceId === com.id)
+          const evidence = commissionStatementRows(com, state.journal)
+          if (!evidence || entries.some(e => !scoped.journal.includes(e)) || evidence.some(row => row.date > date)) throw new Error('قيد الاستحقاق أو تسوياته غير مثبت قبل تاريخ التعديل — راجع العمولة')
+          if (state.journal.some(e => e.lines.some(line => line.accountCode === '2116') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ التعديل يسبق حركة عمولات مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        }
+        const cancelId = nextId(state.journal), accrueId = cancelId + 1
         const newId = nextId(state.staffCommissions), code = `SCM-${String(newId).padStart(4, '0')}`
         const reason = `تعديل المبلغ: ${args.reason.trim()}`
         const cancelEntry: JournalEntry = {
@@ -20826,7 +20847,7 @@ export const useRawDataStore = create<DataState>()(
           lines: buildStaffCommissionAccrual(args.newAmountMinor, emp.nameAr, description.trim()),
           createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: cancelId, cancelReason: reason }
+        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: cancelId, cancelReason: reason, ...(args.date !== undefined ? { cancelDate: date, cancelCreatedAt: now } : {}) }
         const replacement: StaffCommission = {
           id: newId, code, employeeId: emp.id, source: com.source, sourceId: com.sourceId,
           description: description.trim(), amountMinor: args.newAmountMinor, date, status: 'accrued', accrualEntryId: accrueId,

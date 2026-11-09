@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -309,7 +309,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comSaving, setComSaving] = useState(false)
   const comPending = useRef(false)
   const comBasis = useRef('')
-  const comFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.staffCommissions, s.treasuries, s.sales, s.cars, s.projects, s.leases, s.properties, s.journal]) }
+  const comFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.staffCommissions, s.treasuries, s.sales, s.saleReturns, s.cars, s.projects, s.leases, s.properties, s.journal, useAppStore.getState().fiscalYears, useAppStore.getState().setup]) }
   const [comPayId, setComPayId] = useState<number | null>(null)
   const [comPayDate, setComPayDate] = useState(() => todayLocalIso())
   const [comPaySaving, setComPaySaving] = useState(false)
@@ -319,6 +319,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comEdit, setComEdit] = useState<{ id: number; code: string; amountMinor: number } | null>(null)
   const [comEditAmount, setComEditAmount] = useState('')
   const [comEditReason, setComEditReason] = useState('')
+  const [comEditDate, setComEditDate] = useState(() => todayLocalIso())
+  const [comEditSaving, setComEditSaving] = useState(false)
+  const comEditPending = useRef(false), comEditBasis = useRef('')
   const [comCancel, setComCancel] = useState<{ id: number; code: string } | null>(null)
   const [comCancelReason, setComCancelReason] = useState('')
   const [comCancelDate, setComCancelDate] = useState(() => todayLocalIso())
@@ -358,6 +361,25 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       if (committed) { setComPayId(null); toast.show('سُجل صرف العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
       else toast.show((e as Error).message, 'error')
     } finally { comPayPending.current = false; setComPaySaving(false) }
+  }
+
+  const saveCommissionEdit = async () => {
+    if (comEditPending.current || !comEdit) return
+    if (!comEditAmount.trim()) return toast.show('المبلغ الجديد مطلوب', 'error')
+    if (!comEditReason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
+    comEditPending.current = true; setComEditSaving(true)
+    let committed = false
+    try {
+      const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comEditBasis.current) throw new Error('تغيرت العمولة أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const revised = useRawDataStore.getState().updateStaffCommissionAmount({ commissionId: comEdit.id, newAmountMinor: toMinor(comEditAmount, cur.decimals), reason: comEditReason.trim(), date: comEditDate })
+        committed = true; return revised
+      })
+      toast.show(`عُدلت — العمولة الجديدة ${result.code} ✓`); setComEdit(null)
+    } catch (e) {
+      if (committed) { setComEdit(null); toast.show('سُجل تعديل العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { comEditPending.current = false; setComEditSaving(false) }
   }
 
   const saveCommissionCancel = async () => {
@@ -972,7 +994,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" data-commission-edit onClick={() => {
                               setComEdit({ id: c.id, code: c.code, amountMinor: c.amountMinor })
                               setComEditAmount(String(c.amountMinor / 10 ** cur.decimals))
-                              setComEditReason('')
+                              setComEditReason(''); setComEditDate(todayLocalIso()); comEditBasis.current = comFingerprint()
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-colors">✏️ تعديل</button>
                             <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" data-commission-cancel onClick={() => {
                               setComCancel({ id: c.id, code: c.code })
@@ -1052,8 +1074,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           </Modal>
 
           {/* §98: تعديل مبلغ عمولة — نافذة نظام بتحقق، كانت prompt() أصلية */}
-          <Modal open={comEdit != null} onClose={() => setComEdit(null)} title="تعديل مبلغ عمولة" subtitle="إلغاء واستحقاق جديد بأثر تدقيقي — السبب إلزامي">
-            <div className="space-y-4">
+          <Modal open={comEdit != null} onClose={() => { if (!comEditPending.current) setComEdit(null) }} title="تعديل مبلغ عمولة" subtitle="إلغاء واستحقاق جديد بأثر تدقيقي — السبب إلزامي">
+            <fieldset disabled={comEditSaving}><div className="space-y-4">
               <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comEdit?.code}: <span className="text-violet-600 font-black">{comEdit ? fmt(comEdit.amountMinor) : ''}</span> ← <span className="text-amber-600 font-black">{comEditAmount.trim() ? `${fmt(toMinor(comEditAmount, cur.decimals))}` : '—'}</span></div>
               <Field label={`المبلغ الجديد (${cur.symbol}) *`}>
                 <input className={inputCls} inputMode="decimal" value={comEditAmount} data-commission-amount onChange={(e) => setComEditAmount(e.target.value)} aria-label="المبلغ الجديد" />
@@ -1061,20 +1083,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label="سبب التعديل *" hint="يُوثَّق على القيد العاكس والعمولة الجديدة">
                 <input className={inputCls} value={comEditReason} data-commission-reason onChange={(e) => setComEditReason(e.target.value)} aria-label="سبب التعديل" placeholder="مثال: تصحيح نسبة العمولة مع العميل" />
               </Field>
+              <Field label="تاريخ تعديل العمولة" hint="التاريخ السابق للعمولة اليدوية فقط ولا يسبق الاستحقاق أو حركة عمولات مسجلة"><input aria-label="تاريخ تعديل العمولة" type="date" max={todayLocalIso()} value={comEditDate} onChange={e => setComEditDate(e.target.value)} className={inputCls} /></Field>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComEdit(null)}>إلغاء</Btn>
-                <Btn onClick={() => {
-                  if (!comEdit) return
-                  if (!comEditAmount.trim()) return toast.show('المبلغ الجديد مطلوب', 'error')
-                  if (!comEditReason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
-                  try {
-                    const nc = updateStaffCommissionAmount({ commissionId: comEdit.id, newAmountMinor: toMinor(comEditAmount, cur.decimals), reason: comEditReason.trim() })
-                    toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
-                    setComEdit(null)
-                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                }}>✏️ اعتماد التعديل</Btn>
+                <Btn variant="ghost" disabled={comEditSaving} onClick={() => setComEdit(null)}>إلغاء</Btn>
+                <Btn onClick={saveCommissionEdit} disabled={comEditSaving || !comEditDate}>✏️ اعتماد التعديل</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
 
           {/* §98: إلغاء عمولة — قيد عاكس بسبب موثق من نافذة لا prompt() */}
