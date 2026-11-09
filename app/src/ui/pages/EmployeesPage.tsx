@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, waiveEmployeeDeduction, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -305,6 +305,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comSourceId, setComSourceId] = useState('')
   const [comAmount, setComAmount] = useState('')
   const [comDesc, setComDesc] = useState('')
+  const [comDate, setComDate] = useState(() => todayLocalIso())
+  const [comSaving, setComSaving] = useState(false)
+  const comPending = useRef(false)
+  const comBasis = useRef('')
+  const comFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.staffCommissions, s.sales, s.cars, s.projects, s.leases, s.properties, s.journal]) }
   const [comPayId, setComPayId] = useState<number | null>(null)
   /* §98: تعديل/إلغاء العمولة بنوافذ النظام بدل prompt() الأصلية (مراجعة شاملة:
      النوافذ الأصلية تكسر نمط البرنامج وتحجب الخلفية بلا Arabic UX ولا تحقق) */
@@ -314,18 +319,22 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comCancel, setComCancel] = useState<{ id: number; code: string } | null>(null)
   const [comCancelReason, setComCancelReason] = useState('')
   const [comPayTreasury, setComPayTreasury] = useState('1101')
-  const saveCommission = () => {
+  const saveCommission = async () => {
+    if (comPending.current) return
+    comPending.current = true; setComSaving(true)
+    let committed = false
     try {
-      const c = addStaffCommission({
-        employeeId: comEmployeeId,
-        source: comSource,
-        sourceId: comSourceId.trim() ? Number(comSourceId) : null,
-        description: comDesc.trim(),
-        amountMinor: toMinor(comAmount, cur.decimals),
+      const c = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comBasis.current) throw new Error('تغيرت بيانات العمولة أو الموظف أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().addStaffCommission({ employeeId: comEmployeeId, source: comSource, sourceId: comSourceId.trim() ? Number(comSourceId) : null, description: comDesc.trim(), amountMinor: toMinor(comAmount, cur.decimals), date: comDate })
+        committed = true; return result
       })
       toast.show(`سُجلت العمولة ${c.code} — حُمّلت مصروفاً وتُصرف منفردة أو مع الراتب ✓`)
       setComOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (committed) { setComOpen(false); toast.show('سُجلت العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولات والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { comPending.current = false; setComSaving(false) }
   }
 
   /* ─── تبويب السلف (طلب المالك) ─── */
@@ -877,7 +886,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             <Btn onClick={() => {
               if (employees.filter((e) => e.active).length === 0) return toast.show('لا يوجد موظفون نشطون', 'error')
               setComEmployeeId(employees.find((e) => e.active)?.id ?? 0)
-              setComSource('manual'); setComSourceId(''); setComAmount(''); setComDesc(''); setComOpen(true)
+              setComSource('manual'); setComSourceId(''); setComAmount(''); setComDesc(''); setComDate(todayLocalIso()); comBasis.current = comFingerprint(); setComOpen(true)
             }}><span className="flex items-center gap-1.5"><Plus size={15} /> عمولة جديدة</span></Btn>
           </div>
           {staffCommissions.length === 0 ? (
@@ -937,8 +946,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </table>
             </div>
           )}
-          <Modal open={comOpen} onClose={() => setComOpen(false)} title="استحقاق عمولة موظف عن عملية" subtitle="مستند استحقاق: عمولة مرتبطة بعمليتها تدخل الأرباح لحظة الاستحقاق">
-            <div className="space-y-4"><DocSectionHead step="١" title="الموظف والعملية المرتبطة" hint="لا عمولة معلّقة في الهواء — لكل عمولة مستندها" />
+          <Modal open={comOpen} onClose={() => { if (!comPending.current) setComOpen(false) }} title="استحقاق عمولة موظف عن عملية" subtitle="مستند استحقاق: عمولة مرتبطة بعمليتها تدخل الأرباح لحظة الاستحقاق">
+            <fieldset disabled={comSaving}><div className="space-y-4"><DocSectionHead step="١" title="الموظف والعملية المرتبطة" hint="لا عمولة معلّقة في الهواء — لكل عمولة مستندها" />
               <Field label="الموظف *">
                 <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={comEmployeeId} onChange={setComEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
@@ -963,6 +972,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   )}
                 </Field>
               </div>
+              <Field label="تاريخ استحقاق العمولة" hint="التاريخ السابق متاح للعمولة اليدوية فقط؛ بقية المصادر بتاريخ اليوم لحين تدقيق تسلسلها">
+                <input aria-label="تاريخ استحقاق العمولة" type="date" max={todayLocalIso()} value={comDate} onChange={e => setComDate(e.target.value)} className={inputCls} />
+              </Field>
               <DocSectionHead step="٢" title="قيمة العمولة وبيانها" hint="البيان يظهر في القيد وكشف متابعة العمولات" />
               <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
                 <input value={comAmount} onChange={(e) => setComAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -976,10 +988,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <DocOutcome>الأثر: <b>5117 عمولات موظفين</b> مديناً · <b>2116 عمولات مستحقة</b> دائناً — ولا نقدية تتحرك الآن؛ الصرف لاحقاً يقفل الالتزام.</DocOutcome>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveCommission} shortcut="F9" disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
+                <Btn variant="ghost" disabled={comSaving} onClick={() => setComOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveCommission} shortcut="F9" disabled={comSaving || !comEmployeeId || !comAmount.trim() || !comDesc.trim() || !comDate}>💾 استحقاق العمولة</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
           <Modal open={comPayId != null} onClose={() => setComPayId(null)} title="صرف عمولة منفردة" subtitle="مستند صرف: تصفية عمولة مستحقة سبق قيدها">
             <div className="space-y-4"><DocSectionHead step="١" title="العمولة المستحقة ومصدر الصرف" hint="الصرف تصفية التزام لا مصروف جديد" />

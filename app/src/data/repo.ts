@@ -3364,7 +3364,7 @@ interface DataState {
   collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ExternalCommission
   /* ─── عمولات الموظفين (طلب المالك): مربوطة بالعمليات، مصروف لحظة الاستحقاق، تُصرف منفردة أو مع الراتب ─── */
   /** استحقاق عمولة موظف عن عملية: 5117/2116 — تدخل ربحية الفترة فوراً */
-  addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number }) => StaffCommission
+  addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number; date?: string }) => StaffCommission
   /** صرف عمولة منفردة بسند: 2116/خزينة */
   payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount }) => StaffCommission
   /** إلغاء عمولة مستحقة (غير مصروفة): قيد عاكس 2116/5117 */
@@ -20603,12 +20603,34 @@ export const useRawDataStore = create<DataState>()(
             : true // manual لا مستند لها
           if (!exists) throw new Error('المستند المصدر غير موجود — لا تُسجل عمولة على عملية غير مسجلة')
         }
+        if (!Number.isSafeInteger(args.amountMinor)) throw new Error('مبلغ العمولة غير صالح')
+        const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ العمولة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ العمولة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        // التاريخ المختار من محرر الموظفين فقط؛ لا نفترض تاريخ عملية غير مثبت.
+        if (args.date !== undefined) {
+          const scoped = getBranchScopedDataState(state)
+          if ((state.branches.length && !branch) || !scoped.employees.some(e => e.id === emp.id) || state.employees.filter(e => e.id === emp.id).length !== 1) throw new Error('الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+          if (args.source === 'manual' && args.sourceId != null) throw new Error('العمولة اليدوية لا تقبل معرف مستند')
+          if (args.source !== 'manual' && args.sourceId == null) throw new Error('اختر المستند المصدر للعمولة')
+          if (date < now.slice(0, 10) && args.source !== 'manual') throw new Error('التاريخ السابق متاح للعمولة اليدوية فقط — يلزم تدقيق تسلسل المستند المرتبط')
+          if (args.source !== 'manual') {
+            const all = args.source === 'sale' ? state.sales : args.source === 'car_sale' ? state.cars : args.source === 'project' ? state.projects : args.source === 'lease' ? state.leases : args.source === 'property_sale' ? state.properties : []
+            const visible = args.source === 'sale' ? scoped.sales : args.source === 'car_sale' ? scoped.cars : args.source === 'project' ? scoped.projects : args.source === 'lease' ? scoped.leases : args.source === 'property_sale' ? scoped.properties : []
+            if (all.filter(row => row.id === args.sourceId).length !== 1 || !visible.some(row => row.id === args.sourceId)) throw new Error('المستند المصدر غير فريد أو ليس في الفرع الحالي')
+          }
+          if (date < now.slice(0, 10) && state.staffCommissions.some(c => !isValidExpiryDate(c.date) || c.date > date)) throw new Error('تاريخ العمولة يسبق عمولة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+          if (date < now.slice(0, 10) && state.journal.some(e => e.lines.some(l => l.accountCode === '2116') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ العمولة يسبق حركة عمولات مسجلة — راجع التسلسل')
+        }
         const id = nextId(state.staffCommissions)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const code = `SCM-${String(id).padStart(4, '0')}`
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `استحقاق عمولة ${code} — ${emp.nameAr}: ${args.description.trim()}`,
           sourceType: 'staff_commission', sourceId: id,
           lines: buildStaffCommissionAccrual(args.amountMinor, emp.nameAr, args.description.trim()),
@@ -20617,7 +20639,7 @@ export const useRawDataStore = create<DataState>()(
         const commission: StaffCommission = {
           id, code, employeeId: emp.id, source: args.source, sourceId: args.sourceId,
           description: args.description.trim(), amountMinor: args.amountMinor,
-          date: now.slice(0, 10), status: 'accrued', accrualEntryId: entryId,
+          date, status: 'accrued', accrualEntryId: entryId,
           payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '',
           createdBy: activeUserName(get()), createdAt: now,
         }
