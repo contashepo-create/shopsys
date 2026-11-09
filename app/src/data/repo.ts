@@ -12852,16 +12852,34 @@ export const useRawDataStore = create<DataState>()(
 
       postPayroll: (args) => {
         const state = get()
-        // إصلاح §83 (قياس أثر): مسير بموظف شبح كان يمر — نقد حقيقي يخرج من
-        // الخزينة ومصروف 5102 يُحمَّل لمستفيد غير موجود في السجلات. القاتل في المستودع.
+        const scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
+        if (state.branches.length && !branch) throw new Error('حدد الفرع الحالي قبل ترحيل المسير')
         const ghost = [...new Set(args.lines.map((l) => l.employeeId))].filter((id) => !state.employees.some((e) => e.id === id))
         if (ghost.length) throw new Error(`موظف غير موجود بالسجلات (رقم ${ghost.join('، ')}) — لا يُصرف راتب لمن ليس له ملف`)
+        for (const line of args.lines) if (state.employees.filter(e => e.id === line.employeeId).length !== 1 || !scoped.employees.some(e => e.id === line.employeeId)) throw new Error('موظف المسير تابع لفرع آخر أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين')
+        }
+        for (const line of args.lines) {
+          // لا يُخصم سجل تابع لفرع آخر بمجرد تطابق رقم الموظف، حتى لو ظهر رصيده هنا مصادفة.
+          const assertLocal = <T extends { id: number; date: string }>(all: T[], visible: T[], universe: T[], label: string) => {
+            if (all.some(row => universe.filter(other => other.id === row.id).length !== 1 || !visible.includes(row))) throw new Error(`${label} غير فريد أو تابع لفرع آخر — راجع تخصيص المسير`)
+            if (all.some(row => !isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > todayLocalIso())) throw new Error(`${label} تاريخه غير صالح أو لاحق للمسير — راجع التسلسل`)
+          }
+          if (line.advancesMinor > 0) assertLocal(state.employeeAdvances.filter(row => row.employeeId === line.employeeId && row.amountMinor > row.recoveredMinor), scoped.employeeAdvances, state.employeeAdvances, 'سجل السلفة')
+          if (line.deductionsMinor > 0) assertLocal(state.employeeDeductions.filter(row => row.employeeId === line.employeeId && row.amountMinor > row.recoveredMinor + (row.waivedMinor ?? 0)), scoped.employeeDeductions, state.employeeDeductions, 'سجل الجزاء')
+          if ((line.commissionsPaidMinor ?? 0) > 0) assertLocal(state.staffCommissions.filter(row => row.employeeId === line.employeeId && row.status === 'accrued'), scoped.staffCommissions, state.staffCommissions, 'سجل العمولة')
+          if ((line.driverDuesPaidMinor ?? 0) > 0) assertLocal(state.driverDues.filter(row => row.driverId === line.employeeId && !row.settled), scoped.driverDues, state.driverDues, 'مستحق السائق')
+        }
+        if (args.payMode === 'cash' && args.custodyFileId != null && (state.custodyFiles.filter(f => f.id === args.custodyFileId).length !== 1 || !scoped.custodyFiles.some(f => f.id === args.custodyFileId))) throw new Error('ملف العهدة غير فريد أو ليس في الفرع الحالي')
+        if (args.payMode === 'cash' && args.custodyFileId == null && (state.treasuries.filter(t => t.code === args.treasury).length !== 1 || !scoped.treasuries.some(t => t.code === args.treasury))) throw new Error('خزينة الصرف غير موجودة أو غير فريدة أو ليست في الفرع الحالي')
         // 1) حساب كل سطر بالنواة الخالصة (يرمي لو صافي سطر سالب)
         const computed: PayrollLineComputed[] = args.lines.map(computePayrollLine)
         // 2) تحقق شامل قبل أي كتابة
         // مسير راتب موظف واحد (طلب المالك): الشهر يقبل أكثر من مسير، والممنوع
         // هو تكرار صرف راتب الموظف نفسه في الشهر نفسه — برسالة باسمه لا برقمه.
-        const scopedPayrollRuns = getBranchScopedDataState(state).payrollRuns
+        const scopedPayrollRuns = scoped.payrollRuns
         const monthRuns = scopedPayrollRuns.filter((r) => r.month === args.month)
         const alreadyPaid = computed
           .map((line) => line.employeeId)
@@ -12953,6 +12971,12 @@ export const useRawDataStore = create<DataState>()(
         const commissionsPaid = computed.reduce((a, l) => a + (l.commissionsPaidMinor ?? 0), 0)
         const driverDuesPaid = computed.reduce((a, l) => a + (l.driverDuesPaidMinor ?? 0), 0)
         const totalOut = totals.netMinor + excessPaid + commissionsPaid + driverDuesPaid
+        if (args.payMode === 'cash' && !payCustodyFile) {
+          const user = state.appUsers.find(u => u.id === state.currentUserId && u.active)
+          const access = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'payment', totalOut)
+          if (access.length) throw new Error(access.join(' — '))
+        }
+        if (payCustodyFile && state.custodyTxs.some(tx => tx.fileId === payCustodyFile!.id && !scoped.custodyTxs.includes(tx))) throw new Error('حركات العهدة موزعة على فروع مختلفة — راجع التخصيص')
         if (payCustodyFile) {
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === payCustodyFile!.id)).remainingMinor
           if (totalOut > remaining) throw new Error(`المسير (${totalOut}) أكبر من المتبقي في ملف العهدة (${remaining})`)
