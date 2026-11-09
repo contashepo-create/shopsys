@@ -13025,48 +13025,47 @@ export const useRawDataStore = create<DataState>()(
           list.push(item)
           carryItemsByEmployee.set(employeeId, list)
         }
-        // توزيع المخصوم على سلف كل موظف — الأقدم أولاً (تتبع السلفة عبر عدة أشهر)
+        // ترتيب السجلات بتاريخ المستند ثم ترتيب التسجيل في اليوم نفسه، مع إبقاء ترتيب التخزين الأصلي.
         let employeeAdvances = state.employeeAdvances
         for (const l of computed) {
           let toRecover = l.advancesMinor
           if (toRecover <= 0) continue
-          employeeAdvances = employeeAdvances.map((a) => {
-            if (a.employeeId !== l.employeeId || toRecover <= 0) return a
-            const open = a.amountMinor - a.recoveredMinor
-            if (open <= 0) return a
+          employeeAdvances = [...employeeAdvances]
+          const indices = employeeAdvances.map((a, i) => ({ a, i })).filter(({ a }) => a.employeeId === l.employeeId && a.amountMinor > a.recoveredMinor)
+            .sort((x, y) => x.a.date.slice(0, 10).localeCompare(y.a.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const a = employeeAdvances[i], open = a.amountMinor - a.recoveredMinor
             const take = Math.min(open, toRecover)
             toRecover -= take
             const originMonth = a.date.slice(0, 7)
-            if (take > 0 && originMonth !== args.month) {
-              pushCarry(l.employeeId, {
-                kind: 'advance', number: a.advanceNumber, reason: a.notes || undefined,
-                originMonth, carriedOverMinor: open, takenMinor: take,
-              })
-            }
-            return { ...a, recoveredMinor: a.recoveredMinor + take }
-          })
+            if (originMonth !== args.month) pushCarry(l.employeeId, {
+              kind: 'advance', number: a.advanceNumber, reason: a.notes || undefined,
+              originMonth, carriedOverMinor: open, takenMinor: take,
+            })
+            employeeAdvances[i] = { ...a, recoveredMinor: a.recoveredMinor + take }
+          }
         }
-        // توزيع الخصومات على الجزاءات المسجلة — الأقدم أولاً (تتبع الجزاء كامل/جزء/تأجيل)
-        // الفائض عن المسجل = خصم مباشر لهذا الشهر (غياب/تأخير لحظي) — مسموح بلا سجل
+        // الفائض عن الجزاءات المسجلة خصم مباشر لهذا الشهر، مسموح بلا سجل.
         let employeeDeductions = state.employeeDeductions
         for (const l of computed) {
           let toRecover = l.deductionsMinor
           if (toRecover <= 0) continue
-          employeeDeductions = employeeDeductions.map((d) => {
-            if (d.employeeId !== l.employeeId || toRecover <= 0) return d
-            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
-            if (open <= 0) return d
+          employeeDeductions = [...employeeDeductions]
+          const indices = employeeDeductions.map((d, i) => ({ d, i })).filter(({ d }) => d.employeeId === l.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0))
+            .sort((x, y) => x.d.date.slice(0, 10).localeCompare(y.d.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const d = employeeDeductions[i], open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
             const take = Math.min(open, toRecover)
             toRecover -= take
             const originMonth = d.date.slice(0, 7)
-            if (take > 0 && originMonth !== args.month) {
-              pushCarry(l.employeeId, {
-                kind: 'deduction', number: d.dedNumber, reason: d.reason || undefined,
-                originMonth, carriedOverMinor: open, takenMinor: take,
-              })
-            }
-            return { ...d, recoveredMinor: d.recoveredMinor + take }
-          })
+            if (originMonth !== args.month) pushCarry(l.employeeId, {
+              kind: 'deduction', number: d.dedNumber, reason: d.reason || undefined,
+              originMonth, carriedOverMinor: open, takenMinor: take,
+            })
+            employeeDeductions[i] = { ...d, recoveredMinor: d.recoveredMinor + take }
+          }
         }
         if (carryItemsByEmployee.size) {
           run.lines = run.lines.map((l) => {
