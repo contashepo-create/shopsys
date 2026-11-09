@@ -104,6 +104,27 @@ describe('قناة الدعم على العامل المحلي وKV تجريبي
     expect(conversation?.at(-1)).toMatchObject({ from: 'developer', text: 'أصلحناها — حدّث التطبيق' })
   })
 
+  it('مقتطف معاينة main والواجهة يصل مستند Telegram مع تأكيد مستقل', async () => {
+    const { combineSupportLogs } = await import('../src/core/supportDiagnostic.ts')
+    const { buildSupportPayload } = await import('../src/core/support.ts')
+    const preview = combineSupportLogs('[2026-11-05T10:00:00Z] [updater] HTTP 504 Set-Cookie: secret-value\n[2026-11-05T10:00:01Z] [load] ERR_CONNECTION_RESET', '[2026-11-05 10:00:02] ERROR: ERR_RENDERER')
+    let documentText = ''
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init: RequestInit = {}) => {
+      const target = String(url)
+      if (target.includes('/support/')) return devbotWorker.fetch(new Request(target, init), env()) as Promise<Response>
+      if (target.includes('sendDocument')) {
+        const file = (init.body as FormData).get('document') as Blob
+        documentText = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsText(file) })
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 501 } }), { status: 200 })
+    }))
+    const payload = buildSupportPayload({ ...PAYLOAD, attachLog: true, logText: preview })
+    const result = await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, payload)
+    expect(result.logNotified).toBe(true); expect(documentText).toBe(preview)
+    expect(documentText).toContain('HTTP 504'); expect(documentText).toContain('ERR_CONNECTION_RESET'); expect(documentText).toContain('ERR_RENDERER'); expect(documentText).not.toContain('secret-value')
+  })
+
   it('أفعال اللوحة (inbox/thread/reply) تعمل على نفس KV بلا جسر شبكة', async () => {
     await sendSupportMessage(SUPPORT_CLOUD_BASE_URL, DEVICE, TOKEN, PAYLOAD)
     const local = { kv, supportLocal: true }
