@@ -4508,6 +4508,23 @@ function assertSerialBatchMovementSupported(state: DataState, itemId: number): v
   if ((item?.trackSerial && item.trackExpiry) || state.serials.some(unit => unit.itemId === itemId && unit.expiryBatch != null)) throw new Error('هذه العملية لا توثق السيريال ودفعة صلاحيته — استخدم مساراً يدعم الوحدات المحددة أو راجع المخزون')
 }
 
+/** يخطط استهلاك الموافقة دون تعديل الحالة؛ يُنشر مع المستند في set واحد. */
+function planApprovalConsumption(state: DataState, action: ApprovalAction, refId: number, subject: string, amountMinor?: number): ApprovalRequest[] {
+  if (state.branches.length && !getEffectiveActiveBranch(state) && state.approvalFlows.some(f => f.action === action && f.active)) throw new Error('حدد الفرع قبل استخدام مسار الموافقات')
+  const scoped = getBranchScopedDataState(state)
+  const flows = scoped.approvalFlows.filter(f => f.action === action && f.active)
+  if (flows.length > 1) throw new Error('مسار الموافقات غير فريد في الفرع — راجع الإعدادات')
+  const flow = flows[0]
+  if (!flow) return state.approvalRequests
+  if (flow.thresholdMinor != null && (!Number.isSafeInteger(flow.thresholdMinor) || flow.thresholdMinor < 0)) throw new Error('حد مسار الموافقات غير صالح')
+  if (flow.thresholdMinor != null && amountMinor != null && amountMinor < flow.thresholdMinor) return state.approvalRequests
+  const approved = scoped.approvalRequests.find(r => r.action === action && r.refId === refId && r.status === 'approved' && r.consumedAt == null)
+  if (!approved) throw new Error(`«${APPROVAL_ACTION_LABELS[action]}» يتطلب اعتماداً مكتملاً عبر مسار الموافقات — ${subject}`)
+  if (state.approvalRequests.filter(r => r.id === approved.id).length !== 1) throw new Error('طلب الموافقة غير فريد — راجع البيانات')
+  const consumedAt = new Date().toISOString()
+  return state.approvalRequests.map(r => r.id === approved.id ? { ...r, consumedAt } : r)
+}
+
 /** تخطيط محافظ للصرف الداخلي والإتلاف: من مخزن الصنف الأساسي وبقيمة المخزون الدقيقة. */
 function planInventoryOutflow(state: DataState, requested: { itemId: number; qty: number }[], date: string | undefined) {
   const scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
@@ -16565,10 +16582,11 @@ export const useRawDataStore = create<DataState>()(
           estCostMinor: l.estCostMinor,
           progressPercent: 0,
         }))
-        // لا يستهلك الاعتماد قبل تحقق المشروع والبنود؛ استهلاكه ما زال مساراً منفصلاً.
-        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
+        // استهلاك الاعتماد ينشر مع المشروع وبنوده في تحديث واحد.
+        const approvalRequests = planApprovalConsumption(state, 'quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
         // تُنشر هوية المشروع وبنوده وربطه بالعرض معاً؛ لا تُظهر اللقطة مشروعاً ناقصاً.
         set((s) => ({
+          approvalRequests,
           projects: [...s.projects, project],
           quotations: s.quotations.map((x) => (x.id === id ? { ...x, projectId: project.id } : x)),
           boqItems: [...s.boqItems, ...boq],
@@ -17119,7 +17137,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
         // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل) — تُقاس بقيمة
         // المستخلص الإجمالية (الحد المالي الاختياري إن وُجد)
-        get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`, gross)
+        const approvalRequests = planApprovalConsumption(state, 'project_extract', project.id, `مستخلص جديد — ${project.nameAr}`, gross)
         extractCeiling(gross)
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
@@ -17193,7 +17211,7 @@ export const useRawDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: String(id), amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ projectExtracts: [...state.projectExtracts, extract], ...(args.sourceSurveyDraft ? { projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== project.id) } : {}), ...(updatedSurvey ? { projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), updatedSurvey] } : {}), clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ approvalRequests, projectExtracts: [...state.projectExtracts, extract], ...(args.sourceSurveyDraft ? { projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== project.id) } : {}), ...(updatedSurvey ? { projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), updatedSurvey] } : {}), clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
       },
       /* ─── §94: تعديل مستخلص صادر (طلب المالك: «أصدرت مستخلصاً ولم أجد واجهة لمراجعته أو تعديله») ───
@@ -17293,7 +17311,7 @@ export const useRawDataStore = create<DataState>()(
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
         // بوابة الموافقات: تعديل مستخلص إجراء حرج كالإصدار — تُقاس بقيمة المستخلص الجديدة
-        get().assertApproved('project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`, gross)
+        const approvalRequests = planApprovalConsumption(state, 'project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`, gross)
         /* سقف العقد مع إقصاء قيمة هذا المستخلص القديمة — التعديل يعيد حساب المتراكم كأنه استُبدل */
         {
           const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
@@ -17361,6 +17379,7 @@ export const useRawDataStore = create<DataState>()(
           if (args.isFinal) assertSurveyFinalBilled(revisedSurvey, items, history)
         }
         set({
+          approvalRequests,
           clientAdvances: updatedAdvances, boqItems: updatedBoq,
           projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
           ...(revisedSurvey ? { projectSurveys: state.projectSurveys.map(row => row.projectId === project.id ? revisedSurvey! : row) } : {}),
@@ -18356,7 +18375,7 @@ export const useRawDataStore = create<DataState>()(
         }
         if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الشهادة يجب أن تكون موجبة — أدخل مبلغاً أو نسبة إنجاز جديدة')
         // بوابة الموافقات: اعتماد مستخلص الباطن إجراء حرج — تُقاس بقيمة الشهادة
-        get().assertApproved('sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`, amountMinor)
+        const approvalRequests = planApprovalConsumption(state, 'sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`, amountMinor)
         // حماية تجاوز قيمة العقد
         const certified = state.subCertificates.filter((c) => c.contractId === contract.id).reduce((s, c) => s + c.amountMinor, 0)
         if (certified + amountMinor > contract.contractValueMinor) {
@@ -18409,7 +18428,7 @@ export const useRawDataStore = create<DataState>()(
         const updatedContracts = newProgress !== null
           ? state.subContracts.map((c) => (c.id === contract.id ? { ...c, progressPercent: newProgress } : c))
           : state.subContracts
-        set({ subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, subContracts: updatedContracts, journal: [...state.journal, entry] })
+        set({ approvalRequests, subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, subContracts: updatedContracts, journal: [...state.journal, entry] })
         return cert
       },
       paySubContractor: (args) => {
@@ -18612,7 +18631,7 @@ export const useRawDataStore = create<DataState>()(
         })
         const totalCost = lines.reduce((sum, l) => sum + l.costMinor, 0)
         // بوابة الموافقات: إذن الصرف إجراء حرج — تُقاس بإجمالي تكلفة الإذن
-        get().assertApproved('material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`, totalCost)
+        const approvalRequests = planApprovalConsumption(state, 'material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`, totalCost)
         const id = nextId(state.materialRequisitions)
         const reqNumber = `MRQ-${String(id).padStart(4, '0')}`
         const entryLines = buildMaterialIssueEntry(totalCost, `${reqNumber} — ${project.nameAr}`)
@@ -18656,6 +18675,7 @@ export const useRawDataStore = create<DataState>()(
           amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId, source: 'material_issue' as const,
         }
         set({
+          approvalRequests,
           materialRequisitions: [...state.materialRequisitions, req],
           stockMoves: [...state.stockMoves, ...moves],
           projectCosts: [...state.projectCosts, cost],
@@ -18821,15 +18841,19 @@ export const useRawDataStore = create<DataState>()(
 
       setApprovalFlow: (action, steps, active, thresholdMinor) => {
         const state = get()
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الموافقات')
         const scoped = getBranchScopedDataState(state)
         const errors = validateApprovalFlow(steps)
         if (errors.length) throw new Error(errors.join(' — '))
         for (const st of steps) {
           if (st.employeeId != null && !scoped.employees.find((e) => e.id === st.employeeId)) throw new Error(`موظف المستوى «${st.roleAr}» غير موجود في هذا الفرع`)
         }
-        if (thresholdMinor != null && (!Number.isInteger(thresholdMinor) || thresholdMinor < 0)) throw new Error('الحد المالي يجب أن يكون صفراً أو رقماً صحيحاً موجباً')
-        const existing = scoped.approvalFlows.find((f) => f.action === action)
+        if (thresholdMinor != null && (!Number.isSafeInteger(thresholdMinor) || thresholdMinor < 0)) throw new Error('الحد المالي يجب أن يكون صفراً أو رقماً صحيحاً موجباً')
+        const existingFlows = scoped.approvalFlows.filter(f => f.action === action)
+        if (existingFlows.length > 1 || (existingFlows[0] && state.approvalFlows.filter(f => f.id === existingFlows[0].id).length !== 1)) throw new Error('مسار الموافقات غير فريد في الفرع')
+        const existing = existingFlows[0]
         const flow: ApprovalFlow = {
+          ...existing,
           id: existing?.id ?? nextId(state.approvalFlows),
           action,
           steps: steps.map((st, i) => ({ order: i + 1, roleAr: st.roleAr.trim(), employeeId: st.employeeId })),
@@ -18842,9 +18866,11 @@ export const useRawDataStore = create<DataState>()(
 
       requestApproval: (action, subject, refId) => {
         const state = get()
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الموافقات')
         const scoped = getBranchScopedDataState(state)
-        const flow = scoped.approvalFlows.find((f) => f.action === action && f.active)
-        if (!flow) throw new Error(`لا مسار موافقات نشطاً للإجراء «${APPROVAL_ACTION_LABELS[action]}»`)
+        const flows = scoped.approvalFlows.filter(f => f.action === action && f.active)
+        if (flows.length > 1) throw new Error('مسار الموافقات غير فريد في الفرع')
+        if (!flows.length) throw new Error(`لا مسار موافقات نشطاً للإجراء «${APPROVAL_ACTION_LABELS[action]}»`)
         const duplicate = scoped.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'pending')
         if (duplicate) throw new Error('يوجد طلب اعتماد معلق لنفس المستند')
         const req: ApprovalRequest = {
@@ -18857,10 +18883,13 @@ export const useRawDataStore = create<DataState>()(
 
       decideApproval: (requestId, decision, decidedBy, note) => {
         const state = get()
-        const req = state.approvalRequests.find((r) => r.id === requestId)
-        if (!req) throw new Error('طلب الاعتماد غير موجود')
-        const flow = state.approvalFlows.find((f) => f.action === req.action)
-        if (!flow) throw new Error('مسار الموافقات غير معرف')
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الموافقات')
+        const scoped = getBranchScopedDataState(state)
+        const req = scoped.approvalRequests.find((r) => r.id === requestId)
+        if (!req || state.approvalRequests.filter(r => r.id === requestId).length !== 1) throw new Error('طلب الاعتماد غير موجود أو غير فريد في الفرع الحالي')
+        const flows = scoped.approvalFlows.filter(f => f.action === req.action)
+        if (flows.length !== 1) throw new Error('مسار الموافقات غير معرف أو غير فريد في الفرع الحالي')
+        const flow = flows[0]
         const updated = applyApprovalDecision(req, flow, decision, decidedBy, note ?? '')
         set({ approvalRequests: state.approvalRequests.map((r) => (r.id === requestId ? updated : r)) })
         return updated
@@ -18868,14 +18897,8 @@ export const useRawDataStore = create<DataState>()(
 
       assertApproved: (action, refId, subject, amountMinor) => {
         const state = get()
-        const flow = state.approvalFlows.find((f) => f.action === action && f.active)
-        if (!flow) return // لا مسار نشطاً = الإجراء حر (المحرك اختياري قابل للتخصيص)
-        // حد مالي اختياري (سد فجوة تقرير النشاط #11): دون الحد يمر المستند حراً بلا اعتماد
-        if (flow.thresholdMinor != null && amountMinor != null && amountMinor < flow.thresholdMinor) return
-        const approved = state.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'approved' && r.consumedAt == null)
-        if (!approved) throw new Error(`«${APPROVAL_ACTION_LABELS[action]}» يتطلب اعتماداً مكتملاً عبر مسار الموافقات — ${subject}`)
-        // استهلاك الاعتماد: كل تنفيذ يحتاج اعتماداً جديداً
-        set({ approvalRequests: state.approvalRequests.map((r) => (r.id === approved.id ? { ...r, consumedAt: new Date().toISOString() } : r)) })
+        const approvalRequests = planApprovalConsumption(state, action, refId, subject, amountMinor)
+        if (approvalRequests !== state.approvalRequests) set({ approvalRequests })
       },
 
       /* ─── الوصفات والتصنيع (مطاعم — سد فجوة Foodics) ─── */

@@ -4,11 +4,13 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * البضاعة المنتهية/التالفة تُعدم بمستند موثق بسبب ← قيد 5111 هالك / 1103 مخزون
  * ويُخصم الرصيد وتُستهلك دفعات الصلاحية الأقدم أولاً.
  */
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Trash2, PlusCircle, Eye, BookOpenText, AlertTriangle, RotateCcw, Receipt } from 'lucide-react'
-import { useDataStore, type WastageDoc } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type WastageDoc } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { inventoryOutflowFingerprint } from './inventoryOutflowFingerprint.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { WASTAGE_REASONS } from '../../core/wastage.ts'
@@ -23,7 +25,7 @@ interface DraftLine { itemId: string; qty: string }
 
 export function WastagePage() {
   const nav = useNavigate()
-  const { items, batches, wastages, journal, postWastage, purchases } = useDataStore()
+  const { items, batches, wastages, journal, purchases } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -41,7 +43,14 @@ export function WastagePage() {
   const [reason, setReason] = useState<string>(WASTAGE_REASONS[0])
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<DraftLine[]>([{ itemId: '', qty: '1' }])
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false), basis = useRef('')
   const patch = (i: number, p: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l)))
+
+  const formSignature = JSON.stringify([open, date, reason, notes, lines])
+  const latestFormSignature = useRef(formSignature)
+  useLayoutEffect(() => { latestFormSignature.current = formSignature }, [formSignature])
 
   const totalPreview = useMemo(() => {
     let t = 0
@@ -56,22 +65,37 @@ export function WastagePage() {
     setReason(prefill ? 'انتهاء صلاحية' : WASTAGE_REASONS[0])
     setNotes('')
     setLines(prefill?.length ? prefill.map((p) => ({ itemId: String(p.itemId), qty: String(p.qty) })) : [{ itemId: '', qty: '1' }])
+    setDate(todayLocalIso()); basis.current = inventoryOutflowFingerprint()
     setOpen(true)
   }
 
   // الإتلاف عملية حساسة (inv.adjust) — بضاعة تخرج بلا مقابل؛ خلف موافقة المشرف
   const approval = useSupervisorApproval('inv.adjust')
   const save = () => {
+    if (pending.current) return
+    // المحرك يتطلب صلاحية المستخدم نفسه؛ اسم معتمد PIN ليس دليلاً يمكن التحقق منه في المستودع.
+    if (approval.willAskPin) { toast.show('يلزم تسجيل الدخول بمستخدم يملك صلاحية تسوية المخزون؛ اعتماد المشرف وحده غير مدعوم في هذا المسار', 'error'); return }
+    const signature = formSignature
     approval.request(() => {
-    try {
-      const doc = postWastage({
-        reason,
-        lines: lines.filter((l) => l.itemId && Number(l.qty) > 0).map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty) })),
-        notes: notes.trim(),
-      })
-      toast.show(`رُحّل الإتلاف ${doc.wastageNumber} بقيمة ${fmt(doc.totalCostMinor)} ${cur.symbol} — تولد قيد 5111/1103 ✓`)
-      setOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      if (pending.current) return
+      pending.current = true; setSaving(true)
+      let committed = false
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (latestFormSignature.current !== signature || inventoryOutflowFingerprint() !== basis.current) throw new Error('تغير النموذج أو أرصدة المخزون — أغلق النافذة وراجع البيانات قبل الترحيل')
+        const doc = useRawDataStore.getState().postWastage({
+          reason,
+          lines: lines.filter(l => l.itemId).map(l => ({ itemId: Number(l.itemId), qty: Number(l.qty) })),
+          notes: notes.trim(), date,
+        })
+        committed = true
+        return doc
+      }).then(doc => {
+        toast.show(`رُحّل الإتلاف ${doc.wastageNumber} بقيمة ${fmt(doc.totalCostMinor)} ${cur.symbol} — تولد قيد 5111/1103 ✓`)
+        setOpen(false)
+      }).catch((e: unknown) => {
+        if (committed) { setOpen(false); toast.show('سُجل الإتلاف محلياً لكن تعذر تأكيد الحفظ — راجع المستند واليومية والمخزون قبل إعادة المحاولة', 'error') }
+        else toast.show(e instanceof Error ? e.message : 'تعذر تأمين الترحيل', 'error')
+      }).finally(() => { pending.current = false; setSaving(false) })
     })
   }
 
@@ -209,6 +233,7 @@ export function WastagePage() {
       {/* مستند جديد */}
       <Modal open={open} onClose={() => setOpen(false)} title="مستند إتلاف مخزون" wide>
         <div className="space-y-4">
+          <Field label="تاريخ الإتلاف"><input aria-label="تاريخ الإتلاف" type="date" value={date} min={todayLocalIso()} max={todayLocalIso()} onChange={e => setDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="سبب الإتلاف *" hint="التوثيق إلزامي — يظهر في القيد والسجل">
               <QuickSelect value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls}>
@@ -250,7 +275,7 @@ export function WastagePage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9">🗑️ ترحيل الإتلاف وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={saving}>🗑️ ترحيل الإتلاف وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>
