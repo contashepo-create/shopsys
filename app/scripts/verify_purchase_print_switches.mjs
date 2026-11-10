@@ -12,6 +12,8 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
   /* v1.0.15: تعريف حالة المفاتيح انتقل لملف hook مستقل (سياسة Fast Refresh) */
   const printSwitchesHookFile = readFileSync(new URL('../src/ui/hooks/usePrintSwitches.ts', import.meta.url), 'utf8')
   const printSwitchesSources = printSwitchesFile + printSwitchesHookFile
+  const livePreviewHook = readFileSync(new URL('../src/ui/hooks/useLivePrintPreview.ts', import.meta.url), 'utf8')
+  assert.ok(livePreviewHook.includes('openPrintPreview') && livePreviewHook.includes('latest.current(args)'), 'خطاف المعاينة لا يفتح المستند من أحدث بياناته')
 
 /* ① المفاتيح الثلاثة نفسها المعرّفة في المكوّن المشترك */
 {
@@ -24,7 +26,7 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
 /* ② فاتورة الشراء تستهلك المفاتيح بمسار البيع نفسه */
 {
   assert.ok(purchasePage.includes('usePrintSwitches'), 'فاتورة الشراء لا تستهلك مفاتيح الطباعة')
-  assert.ok(purchasePage.includes('openPrintPreview'), 'لا معاينة حرة (openPrintPreview) في فاتورة الشراء')
+  assert.ok(purchasePage.includes('useLivePrintPreview'), 'لا معاينة حرة (openPrintPreview) في فاتورة الشراء')
   assert.ok(purchasePage.includes('printModelWithTemplate'), 'لا طباعة صامتة عبر محرك القوالب')
   assert.ok(purchasePage.includes('buildModelHtml'), 'لا بناء HTML للمعاينة')
   /* الطباعة من المعاينة العامة الآن (ThermalPreview) — المفتاح يُقرأ لحظة
@@ -46,7 +48,7 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
 
 /* ④ التكافؤ مع فاتورة البيع: نفس الأنماط الأربعة */
 {
-  for (const pattern of ['usePrintSwitches', 'openPrintPreview', 'printModelWithTemplate', 'buildModelHtml', 'onQuickPrint']) {
+  for (const pattern of ['usePrintSwitches', 'useLivePrintPreview', 'printModelWithTemplate', 'buildModelHtml', 'onQuickPrint']) {
     assert.ok(salesPage.includes(pattern), `فاتورة البيع نفسها فقدت ${pattern} — التكافؤ انكسر`)
     assert.ok(purchasePage.includes(pattern), `فاتورة الشراء تفتقد ${pattern} الموجود في البيع`)
   }

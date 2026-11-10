@@ -199,7 +199,7 @@ for (const [label, path, token] of [
 const advSalesSrc = readSource('../src/ui/pages/AdvancedSalesInvoicePage.tsx')
 ok(advSalesSrc.includes('stampDocumentTaxBarcode') && advSalesSrc.includes('resolveDocumentPrintSettings'), 'محرر فاتورة المبيعات: ختم الرمز وإعداداته من فرع المستند')
 ok(/buildModelHtml\(buildPrintModel\(totals,qrDataUrl/.test(advSalesSrc), 'محرر الفاتورة: المعاينة الحية تعيد بناء النموذج مع رمز QR نفسه')
-ok(advSalesSrc.includes('editingInvoice?{invoiceNumber:editingInvoice.invoiceNumber'), 'محرر الفاتورة: معاينة فاتورة قائمة تستخدم رقمها وتاريخها لا «مسودة» (طابع زاتكا صحيح)')
+ok(advSalesSrc.includes('مسودة تعديل ${editingInvoice.invoiceNumber}') && advSalesSrc.includes('else if(postedMeta)stampDocumentTaxBarcode'), 'تعديل غير مرحل موسوم مسودة ولا يطبع رمزاً ضريبياً لمستند تغيّر')
 /* إعادة طباعة فاتورة شاملة الضريبة كانت تعرض «(مضافة)» رغم أن الإجماليات مشمولة */
 ok(/taxInclusive:editingInvoice\?\.taxInclusive\?\?false/.test(advSalesSrc), 'محرر الفاتورة: نمط الضريبة (مضافة/مشمولة) يتبع الفاتورة المعدّلة')
 /* إشعار الدائن: نسبة الضريبة من الفاتورة الأصلية لا من إعدادات اليوم — وإلا

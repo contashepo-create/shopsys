@@ -59,6 +59,7 @@ jobs:
       - name: Chromium print preview and scale smoke
         shell: bash
         run: |
+          command -v pdftotext >/dev/null && command -v pdfinfo >/dev/null || (sudo apt-get update && sudo apt-get install -y poppler-utils)
           npm run dev -- --host 127.0.0.1 --port 5173 > "$RUNNER_TEMP/preview-vite.log" 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT

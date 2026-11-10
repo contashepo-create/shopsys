@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -81,4 +81,21 @@ it('معاينة عرض الفرع المحفوظ تعيد بناء النمط �
  expect(rebuilt).toContain('sheet project')
  expect(rebuilt).toContain('موظف الفرع')
  expect(rebuilt).toContain('QT-7')
+})
+
+it('معاينة العرض المحفوظ تتحدث عند تعديل سجله وتتوقف عند زواله من الفرع', () => {
+ render(<MemoryRouter><QuotationsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('طباعة العرض (A4)'))
+ act(() => { useRawDataStore.setState({ quotations: [{ ...quote, clientName: 'جهة محدثة', lines: [{ ...quote.lines[0], qty: 19 }] }] }) })
+ expect(usePrintPreview.getState().handle?.html).toContain('جهة محدثة')
+ expect(usePrintPreview.getState().handle?.html).toContain('19')
+ act(() => { useRawDataStore.setState({ quotations: [] }) })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
+})
+it('معاينة المحرر تتبع اسم العميل المعدل', () => {
+ render(<MemoryRouter><QuotationsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('فتح العرض وتعديله'))
+ fireEvent.click(screen.getByRole('button', { name: /معاينة/ }))
+ fireEvent.change(screen.getByLabelText('اسم العميل'), { target: { value: 'عميل تغير' } })
+ expect(usePrintPreview.getState().handle?.html).toContain('عميل تغير')
 })

@@ -26,3 +26,19 @@ it('الشريط يغير المعاينة ونفس النسبة تذهب للط
  act(() => { usePrintPreview.getState().openPreview({ html: '<html><head></head><body>آخر</body></html>', wide: true }) })
  expect((screen.getByLabelText('مقياس الطباعة') as HTMLInputElement).value).toBe('100')
 })
+it('يتوقف عن الطباعة إذا فشل تحديث المستند ويستأنف بعد تصحيحه', () => {
+ let valid = true
+ const rebuild = () => { if (!valid) throw new Error('invalid'); return '<html><body>الصورة الحديثة</body></html>' }
+ render(<MemoryRouter><ThermalPreview /></MemoryRouter>)
+ act(() => usePrintPreview.getState().openPreview({ html: rebuild(), wide: true, rebuild }))
+ valid = false
+ fireEvent.click(document.querySelector('[data-thermal-print]')!)
+ expect(print).not.toHaveBeenCalled()
+ expect(screen.getByRole('alert').textContent).toContain('الصورة المعروضة قديمة')
+ expect((document.querySelector('[data-thermal-print]') as HTMLButtonElement).disabled).toBe(true)
+ valid = true
+ act(() => usePrintPreview.getState().refresh())
+ fireEvent.click(document.querySelector('[data-thermal-print]')!)
+ expect(print).toHaveBeenCalledOnce()
+ expect(print.mock.calls[0][0]).toContain('الصورة الحديثة')
+})

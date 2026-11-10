@@ -41,7 +41,7 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
-import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { useLivePrintPreview } from '../hooks/useLivePrintPreview.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
@@ -218,15 +218,19 @@ export function PurchaseOrdersPage() {
     settings: resolveDocumentPrintSettings(currentPrintRecord()).receipt,
     extraFooter: [reference.trim() && `المرجع: ${reference.trim()}`, notes.trim()].filter(Boolean).join('\n') || undefined,
   })
+  const openLiveDraft = useLivePrintPreview((template: InvoiceTemplate) => {
+    if (!lines.some((line) => line.itemId > 0)) throw new Error('أضف أصنافاً قبل المعاينة')
+    const r = resolveDocumentPrintSettings(currentPrintRecord()).receipt
+    return buildModelHtml(buildPrintModel(), cur, r, template)
+  })
   const printDraft = (template: InvoiceTemplate) => {
     if (!lines.length) return toast.show('أضف أصنافاً قبل المعاينة', 'error')
     const model = buildPrintModel()
     const live = resolveDocumentPrintSettings(currentPrintRecord()).receipt
     if (!printSwitches.silentPrint) {
-      openPrintPreview({
-        html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal',
+      openLiveDraft(template, {
+        wide: template !== 'thermal',
         title: template !== 'thermal' ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال',
-        rebuild: () => { const r = resolveDocumentPrintSettings(currentPrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) },
       })
       return
     }
@@ -250,6 +254,7 @@ export function PurchaseOrdersPage() {
    */
   const buildWarehouseReceipt = () => {
     const clean = lines.filter((line) => line.itemId > 0 && line.qty > 0)
+    if (!clean.length) throw new Error('أضف أصنافاً قبل المعاينة')
     return {
       title: 'إذن استلام بنود أمر شراء (كميات فقط)',
       docNumber: pendingDraftNumber(purchaseOrders),
@@ -450,6 +455,7 @@ export function PurchaseOrdersPage() {
                   </QuickSelect>}
                   kind="purchase"
                   mode="advanced"
+                  orderOnly
                   lines={lines.map((line) => ({ ...line, warehouseId: line.warehouseId ?? warehouseId }))}
                   items={items}
                   warehouses={warehouses}

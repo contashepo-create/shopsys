@@ -32,7 +32,7 @@ const css = read('index.css')
   /* قالب المستخدم المفضل أولاً (تفضيلات لكل مستخدم) وإلا مفتاح الكاشير العام */
   assert.ok(/onQuickPrint=\{\(\)=>printDraft\(\(useDataStore\.getState\(\)\.userPrefs\[String\(currentUserId\?\?'owner'\)\]\?\.preferredPrintTemplate\)\?\?\(printSwitches\.cashierPrint\?'thermal':'a4'\)\)\}/.test(sales),
     'زر الطباعة لا يتبع تفضيل المستخدم ثم مفتاح الكاشير')
-  assert.ok(/if\(!printSwitches\.silentPrint\)\{openPrintPreview\(\{/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
+  assert.ok(/if\(!printSwitches\.silentPrint\)\{[\s\S]{0,650}openLiveDraft\(/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
   R.ok('زر «طباعة» بجوار المسودات يتبع مفاتيح الكاشير/الصامت ويعرض المعاينة أولاً')
 }
 {
@@ -80,7 +80,8 @@ const css = read('index.css')
   /* تغيير عرض الورق لا يعيد تمركز النافذة المسحوبة */
   assert.ok(/centeredRef/.test(preview), 'تغيير عرض الورق يعيد تمركز النافذة فيضيع مكانها المسحوب')
   for (const page of ['ui/pages/AdvancedPurchaseInvoicePage.tsx', 'ui/pages/PurchaseOrdersPage.tsx', 'ui/pages/QuotationsPage.tsx']) {
-    assert.ok(/openPrintPreview\(\{\s*html:\s*buildModelHtml/.test(read(page)), `${page} لا يفتح المعاينة العامة بحمولة قابلة لإعادة البناء`)
+    const src = read(page)
+    assert.ok(/useLivePrintPreview/.test(src) && /openLiveDraft\(/.test(src), `${page} لا يفتح المعاينة العامة بحمولة قابلة لإعادة البناء`)
     assert.ok(/buildModelHtml\(buildPrintModel\(/.test(read(page)), `${page} لا يعيد بناء الموديل عند تحديث الإعدادات`)
   }
   R.ok('معاينة حية عالمية: متجر + نافذة فوق المسارات + إعدادات سريعة فورية + مصغّرة حية أثناء قسم الطباعة')

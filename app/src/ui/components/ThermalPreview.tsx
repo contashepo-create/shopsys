@@ -26,7 +26,7 @@ const A4_PX = 560 // عرض معاينة مريح للفاتورة الكبير�
 
 export function ThermalPreview() {
   const nav = useNavigate()
-  const { open, handle, mini, closePreview, setMini, refresh, scale, setScale } = usePrintPreview()
+  const { open, handle, mini, closePreview, setMini, refresh, scale, setScale, rebuildError } = usePrintPreview()
   const receipt = useAppStore((s) => s.receipt)
   const reportPrint = useAppStore((s) => s.reportPrint)
   const warehouseReceipt = useAppStore((s) => s.warehouseReceipt)
@@ -92,8 +92,9 @@ export function ThermalPreview() {
   }, [open, mini, paper])
 
   const doPrint = useCallback(() => {
-    const current = usePrintPreview.getState().handle
-    if (!current) return
+    usePrintPreview.getState().refresh()
+    const { handle: current, rebuildError: failed } = usePrintPreview.getState()
+    if (!current || failed) return
     /* مفتاح الطباعة الصامتة يُقرأ لحظة الطباعة لا لحظة فتح المعاينة —
        لو بدّله المستخدم والمعاينة مفتوحة (أو من قسم الطباعة والمصغّرة معلقة)
        ننفّذ القيمة الجديدة */
@@ -175,8 +176,9 @@ export function ThermalPreview() {
               />
             </div>
           </div>
+          {rebuildError && <p role="alert" className="text-red-600">تعذر تحديث المستند؛ الطباعة موقوفة.</p>}
           <footer>
-            <button type="button" className="is-primary" onClick={doPrint} data-thermal-print><Printer size={12} /> طباعة</button>
+            <button type="button" className="is-primary" onClick={doPrint} disabled={rebuildError} data-thermal-print><Printer size={12} /> طباعة</button>
           </footer>
         </div>
       </OverlayPortal>
@@ -220,6 +222,7 @@ export function ThermalPreview() {
         )}
 
         <div className="px-3 py-2 text-xs" data-print-scale-controls>
+          {rebuildError && <p role="alert" className="text-red-600 font-bold">تعذر تحديث المستند؛ الصورة المعروضة قديمة والطباعة موقوفة حتى تصحيح البيانات.</p>}
           <label className="flex items-center gap-2">مقياس المحتوى <input aria-label="مقياس الطباعة" type="range" min="40" max="120" step="5" value={scale} onChange={event => setScale(Number(event.target.value))} className="flex-1" /><b>{scale}%</b></label>
           {wide && !/@page\s*\{[^}]*\bsize\s*:\s*A5\b/i.test(handle?.html ?? '') && <button type="button" className="text-sky-600 underline" onClick={() => {
             const doc = frameRef.current?.contentDocument
@@ -236,7 +239,7 @@ export function ThermalPreview() {
           <button type="button" className="is-ghost" onClick={() => setQuickOpen((value) => !value)} data-thermal-settings><Settings2 size={12} /> إعدادات سريعة</button>
           <span className="spacer" />
           <button type="button" className="is-ghost" onClick={closePreview} data-thermal-cancel>إلغاء</button>
-          <button type="button" className="is-primary" onClick={doPrint} data-thermal-print><Printer size={12} /> طباعة</button>
+          <button type="button" className="is-primary" onClick={doPrint} disabled={rebuildError} data-thermal-print><Printer size={12} /> طباعة</button>
         </footer>
       </div>
     </OverlayPortal>

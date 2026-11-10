@@ -24,7 +24,7 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
-import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { useLivePrintPreview } from '../hooks/useLivePrintPreview.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
@@ -247,11 +247,16 @@ export function QuotationsPage() {
       extraFooter: notes.trim() || undefined,
       tax: { label: 'الضريبة', minor: draftTax.taxMinor, baseMinor: draftTax.netMinor },
     })
+    const openLiveDraft = useLivePrintPreview((template: InvoiceTemplate) => {
+      if (!parsedLines.length) throw new Error('أضف بنوداً قبل المعاينة')
+      const r = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt
+      return buildModelHtml(buildPrintModel(), cur, r, template)
+    })
     const printDraft = (template: InvoiceTemplate, previewOnly = false) => {
       if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
       const model = buildPrintModel()
       const live = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt
-      if (previewOnly || !printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
+      if (previewOnly || !printSwitches.silentPrint) { openLiveDraft(template, { wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال' }); return }
       printModelWithTemplate(model, cur, live, template, {
         resolveSettings: () => resolveDocumentPrintSettings(currentQuotePrintRecord()).receipt,
       })
@@ -276,9 +281,13 @@ export function QuotationsPage() {
       tax: { label: 'الضريبة', minor: t.taxMinor, baseMinor: t.netMinor },
     })
   }
+  const openLiveSaved = useLivePrintPreview((id: number) => {
+    const q = useDataStore.getState().quotations.find((row) => row.id === id)
+    if (!q) throw new Error('العرض لم يعد متاحاً في الفرع')
+    return buildModelHtml(quotationModel(q), cur, resolveDocumentPrintSettings(q).receipt, 'a4')
+  })
   const previewQuotation = (q: Quotation) => {
-    const live = resolveDocumentPrintSettings(q).receipt
-    openPrintPreview({ html: buildModelHtml(quotationModel(q), cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(quotationModel(q), cur, resolveDocumentPrintSettings(q).receipt, 'a4') })
+    openLiveSaved(q.id, { wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة` })
   }
   const printQuotation = (q: Quotation) => {
     const model = quotationModel(q)

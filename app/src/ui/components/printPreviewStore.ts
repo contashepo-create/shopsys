@@ -25,11 +25,12 @@ interface PrintPreviewState {
   /** وضع مصغّر أسفل الشاشة — أثناء فتح قسم إعدادات الطباعة الكامل */
   mini: boolean
   scale: number
+  rebuildError: boolean
   setScale: (scale: number) => void
   openPreview: (handle: PrintPreviewHandle) => void
   closePreview: () => void
   setMini: (mini: boolean) => void
-  /** إعادة بناء HTML بالإعدادات الجديدة — تفشل بصمت فتبقى آخر نسخة صالحة */
+  /** إعادة البناء مع تعطيل الطباعة إذا لم تعد بيانات المستند قابلة للبناء. */
   refresh: () => void
 }
 
@@ -38,17 +39,19 @@ export const usePrintPreview = create<PrintPreviewState>((set, get) => ({
   handle: null,
   mini: false,
   scale: 100,
+  rebuildError: false,
   setScale: (scale) => set({ scale: Math.min(120, Math.max(40, Number.isFinite(scale) ? Math.round(scale) : 100)) }),
-  openPreview: (handle) => set({ open: true, handle, mini: false, scale: 100 }),
-  closePreview: () => set({ open: false, handle: null, mini: false }),
+  openPreview: (handle) => set({ open: true, handle, mini: false, scale: 100, rebuildError: false }),
+  closePreview: () => set({ open: false, handle: null, mini: false, rebuildError: false }),
   setMini: (mini) => set({ mini }),
   refresh: () => {
     const { handle } = get()
     if (!handle?.rebuild) return
     try {
-      set({ handle: { ...handle, html: handle.rebuild() } })
+      set({ handle: { ...handle, html: handle.rebuild() }, rebuildError: false })
     } catch {
-      /* نموذج المستند لم يعد قابلاً للبناء (صفحة أُغلقت مثلاً) — تبقى آخر نسخة */
+      // آخر صورة قديمة للعرض فقط؛ لا يجوز طباعتها بعد فشل تحديث المستند.
+      set({ rebuildError: true })
     }
   },
 }))

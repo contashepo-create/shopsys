@@ -26,7 +26,7 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assert.ok(quotationsPage.includes('addQuotation('), 'الحفظ لا يمر بمخزن العروض')
   /* الطباعة بنفس محرك الفواتير: بناء النموذج + معاينة/صامت بمفاتيح الطباعة */
   assert.ok(quotationsPage.includes('buildSimpleDocModel'), 'طباعة العرض ليست عبر محرك قوالب الفواتير')
-  assert.ok(quotationsPage.includes('printModelWithTemplate') && quotationsPage.includes('openPrintPreview'), 'معاينة/الطباعة الصامتة ناقصة في عرض السعر')
+  assert.ok(quotationsPage.includes('printModelWithTemplate') && quotationsPage.includes('useLivePrintPreview'), 'معاينة/الطباعة الصامتة ناقصة في عرض السعر')
   assert.ok(quotationsPage.includes('usePrintSwitches'), 'مفاتيح الطباعة غير مستهلكة في عرض السعر')
   /* الإجماليات الثلاثة نفسها: صافي/ضريبة/إجمالي + تكلفة تقديرية وهامش */
   for (const label of ['الإجمالي', 'الضريبة', 'الإجمالي بالضريبة', 'التكلفة التقديرية', 'هامش متوقع']) {
@@ -47,7 +47,7 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assert.ok(purchaseOrdersPage.includes('kind="purchase"') && purchaseOrdersPage.includes('mode="advanced"'), 'جدول البنود ليس في وضع الشراء المتقدم (مطابقة الفاتورة)')
   assert.ok(purchaseOrdersPage.includes('PURCHASE_TERMS'), 'لا شروط توريد جاهزة لأمر الشراء')
   assert.ok(purchaseOrdersPage.includes('buildSimpleDocModel'), 'طباعة الأمر ليست عبر محرك قوالب الفواتير')
-  assert.ok(purchaseOrdersPage.includes('usePrintSwitches') && purchaseOrdersPage.includes('openPrintPreview'), 'مفاتيح الطباعة/المعاينة ناقصة في أمر الشراء')
+  assert.ok(purchaseOrdersPage.includes('usePrintSwitches') && purchaseOrdersPage.includes('useLivePrintPreview'), 'مفاتيح الطباعة/المعاينة ناقصة في أمر الشراء')
   assert.ok(purchaseOrdersPage.includes('addPurchaseOrder('), 'الحفظ لا يمر بمخزن أوامر الشراء')
   assert.ok(!/"receivePurchaseOrder"/.test(purchaseOrdersPage) || true, 'الاستلام يبقى في فاتورة الشراء')
   assert.ok(purchaseInvoicePage.includes('fillSources') && purchaseInvoicePage.includes('poRemainingQty'), 'فاتورة الشراء فقدت التعبئة من أوامر الشراء')
