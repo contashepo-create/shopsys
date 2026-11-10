@@ -5943,6 +5943,49 @@ function assertProjectCustomerBranch(state: DataState, project: Project, extract
   if (customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر — يلزم مراجعة الفروع قبل المستخلص')
 }
 
+/** منع تصفية مستحق عهدة لا يثبت رصيده وتسلسله داخل الفرع الحالي. */
+function assertPayrollCustodyExcessHistory(state: DataState, scoped: DataState, employeeId: number): void {
+  const today = todayLocalIso()
+  const files = state.custodyFiles.filter(file => file.employeeId === employeeId)
+  const fileIds = new Set(files.map(file => file.id))
+  const rows = state.custodyTxs.filter(tx => fileIds.has(tx.fileId))
+  const events: { date: string; amount: number; paid: boolean }[] = []
+  for (const tx of rows) {
+    const excess = tx.excessMinor
+    if (!Number.isSafeInteger(excess) || excess < 0 || !Number.isSafeInteger(tx.amountMinor) || tx.amountMinor < 0 || excess > tx.amountMinor) throw new Error('مبلغ زيادة العهدة غير صالح — راجع الحركة')
+    if (!excess) continue
+    const matches = state.custodyFiles.filter(file => file.id === tx.fileId)
+    if (matches.length !== 1 || state.custodyTxs.filter(row => row.id === tx.id).length !== 1) throw new Error('ملف العهدة أو الحركة غير فريد — راجع السجلات')
+    const file = matches[0]
+    if (!scoped.custodyFiles.includes(file) || !scoped.custodyTxs.includes(tx)) throw new Error('ملف العهدة أو حركته تابع لفرع آخر — راجع السجلات')
+    const date = typeof tx.date === 'string' ? tx.date.slice(0, 10) : ''
+    const opened = typeof file.openedAt === 'string' ? file.openedAt.slice(0, 10) : ''
+    if (!isValidExpiryDate(date) || !isValidExpiryDate(opened) || date > today || opened > date) throw new Error('تاريخ زيادة العهدة أو فتح الملف غير صالح أو لاحق للمسير — راجع التسلسل')
+    if (tx.type !== 'expense' && tx.type !== 'invoice') throw new Error('مبلغ زيادة العهدة غير مرتبط بمصروف — راجع الحركة')
+    events.push({ date, amount: excess, paid: false })
+  }
+  for (const run of state.payrollRuns) {
+    const lines = run.lines.filter(line => line.employeeId === employeeId && line.excessPaidMinor != null && line.excessPaidMinor !== 0)
+    if (!lines.length) continue
+    if (state.payrollRuns.filter(row => row.id === run.id).length !== 1) throw new Error('مسير مستحق العهدة غير فريد — راجع السجلات')
+    if (!scoped.payrollRuns.includes(run)) throw new Error('مسير مستحق العهدة تابع لفرع آخر — راجع السجلات')
+    const date = typeof run.date === 'string' ? run.date.slice(0, 10) : ''
+    if (!isValidExpiryDate(date) || date > today) throw new Error('تاريخ مسير مستحق العهدة غير صالح أو مستقبلي — راجع التسلسل')
+    for (const line of lines) {
+      const amount = line.excessPaidMinor!
+      if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('مبلغ صرف مستحق العهدة غير صالح — راجع المسير')
+      events.push({ date, amount, paid: true })
+    }
+  }
+  // الأصول القديمة لا تثبت ترتيب الساعة في اليوم الواحد، لذا تُجمع زياداته قبل صرفه.
+  events.sort((a, b) => a.date.localeCompare(b.date) || Number(a.paid) - Number(b.paid))
+  let due = 0
+  for (const event of events) {
+    due += event.paid ? -event.amount : event.amount
+    if (!Number.isSafeInteger(due) || due < 0) throw new Error('تسلسل صرف مستحق العهدة غير مثبت — راجع المسيرات والمصروفات السابقة')
+  }
+}
+
 function assertEmployeeInActiveBranch(state: DataState, employeeId: number): void {
   // ميّز الموظف الشبح عن الموظف الحقيقي التابع لفرع آخر، مع بقاء الفحص fail-closed.
   if (!state.employees.some((employee) => employee.id === employeeId)) throw new Error('الموظف غير موجود')
@@ -13087,6 +13130,8 @@ export const useRawDataStore = create<DataState>()(
         for (const l of computed) {
           const excess = l.excessPaidMinor ?? 0
           if (excess <= 0) continue
+          if (!Number.isSafeInteger(excess)) throw new Error('مبلغ صرف مستحق العهدة غير صالح')
+          assertPayrollCustodyExcessHistory(state, scoped, l.employeeId)
           const due = get().getEmployeeExcessDue(l.employeeId)
           if (excess > due) {
             const emp = state.employees.find((e) => e.id === l.employeeId)
