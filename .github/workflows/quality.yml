@@ -56,6 +56,15 @@ jobs:
       - name: Browser-like integration tests
         run: npm run test:e2e
 
+      - name: Chromium print preview and scale smoke
+        shell: bash
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 5173 > "$RUNNER_TEMP/preview-vite.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in {1..30}; do curl -fsS http://127.0.0.1:5173/tests/browser/preview-harness.html >/dev/null && break; sleep 1; done
+          CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)" node tests/browser/preview-smoke.mjs
+
       - name: Business invariants, security and accounting journeys
         run: npm run verify:all
 
