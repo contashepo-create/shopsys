@@ -10,7 +10,7 @@ import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, 
  * صرف: نقدية خارجة (سداد مورد، مصروف، مسحوبات…)
  * كل سند يولّد قيده المتوازن فوراً ويظهر في اليومية.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDownCircle, ArrowUpCircle, BookOpenText, CheckCircle2, Eye, FileSpreadsheet, FileText, Landmark, Paperclip, Pencil, Printer, ReceiptText, Save, Search, Stamp, Undo2, WalletCards, X } from 'lucide-react'
 import { useDataStore, type Voucher } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -25,6 +25,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { usePrintPreview } from '../components/printPreviewStore.ts'
 import { toCsv } from '../../core/security.ts'
 import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
 import { todayLocalIso } from '../../core/time.ts'
@@ -49,7 +50,6 @@ export function VouchersPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [open, setOpen] = useState(false)
-  const [previewOpen, setPreviewOpen] = useState(false)
   const [kind, setKind] = useState<'receipt' | 'payment'>('receipt')
   const [treasury, setTreasury] = useState<TreasuryAccount>('1101')
   const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
@@ -159,7 +159,6 @@ export function VouchersPage() {
     setCostCenterId(null)
     setVehicleCostCategory('maintenance')
     setAllocationDraft({})
-    setPreviewOpen(false)
     try {
       const raw = window.localStorage.getItem(`shopsys.voucher-draft.${k}`)
       if (raw) {
@@ -263,11 +262,39 @@ export function VouchersPage() {
       toast.show('تعذر حفظ المسودة على هذا الجهاز', 'error')
     }
   }
-  const printDraft = () => {
-    const title = kind === 'receipt' ? 'سند قبض نقدية' : 'سند صرف نقدية'
-    const amountText = parsedAmountMinor > 0 ? `${fmt(parsedAmountMinor)} ${cur.symbol}` : '—'
-    printHtml(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>body{font-family:Arial,sans-serif;color:#0f172a;padding:28px;max-width:760px;margin:auto}h1{border-bottom:3px solid #0f172a;padding-bottom:12px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#f8fafc;padding:14px;margin:16px 0}.amount{font-size:30px;font-weight:800;color:#0f172a;margin:22px 0}.label{color:#64748b;font-size:12px}.value{font-weight:700}p{line-height:1.8}</style></head><body><h1>${escapePrintText(title)}</h1><div class="meta"><div><div class="label">المنشأة</div><div class="value">${escapePrintText(setup.shopName || 'نظام الحسابات')}</div></div><div><div class="label">التاريخ</div><div class="value">${escapePrintText(voucherDate)}</div></div><div><div class="label">الطرف</div><div class="value">${escapePrintText(selectedPartyName || 'غير مرتبط بطرف')}</div></div><div><div class="label">الحساب المقابل</div><div class="value">${escapePrintText(counters.find((item) => item.code === counter)?.label ?? '—')}</div></div></div><div class="amount">${escapePrintText(amountText)}</div><p><b>البيان:</b> ${escapePrintText(desc || '—')}</p><p><b>الحالة:</b> مسودة قبل الترحيل</p></body></html>`)
+  const buildDraftPreview = () => {
+    const title = kind === 'receipt' ? 'سند قبض — مسودة' : 'سند صرف — مسودة'
+    const party = needsEmployee ? employees.find(e => e.id === employeePartyId)?.nameAr : selectedPartyName
+    const details: [string, string][] = [
+      ['المنشأة', setup.shopName || 'نظام الحسابات'], ['التاريخ', voucherDate],
+      ['الطرف', party || 'غير محدد'], ['الحساب المقابل', `${counter} — ${counters.find(item => item.code === counter)?.label ?? '—'}`],
+      ['الخزينة أو حساب التسوية', nameOf(selectedTerminal?.settlementAccountCode ?? treasury)],
+      ['المبلغ', parsedAmountMinor > 0 ? `${fmt(parsedAmountMinor)} ${cur.symbol}` : 'غير محدد'],
+      ['المبلغ كتابة', parsedAmountMinor > 0 ? amountInWords(parsedAmountMinor, cur) : '—'],
+      ['البيان', desc || '—'],
+    ]
+    if (fxOn) details.push(['العملة الأجنبية وسعرها', `${fxAmount} ${fxCode} — سعر ${fxRate}`])
+    if (selectedTerminal) details.push(['ماكينة الدفع ومرجع العملية', `${terminalPayment.terminalId} — ${terminalPayment.providerReference || '—'} — ${terminalPayment.cardLast4 || '—'}`])
+    if (receiptCollectorEmployeeId) details.push(['المحصّل', employees.find(e => e.id === receiptCollectorEmployeeId)?.nameAr ?? `#${receiptCollectorEmployeeId}`])
+    if (voucherProjectId != null) details.push(['المشروع', projects.find(p => p.id === voucherProjectId)?.nameAr ?? `#${voucherProjectId}`])
+    if (costCenterId != null && canLinkCostCenter) details.push(['مركز التكلفة', String(costCenterId)])
+    if (vehicleId != null && canLinkVehicle) details.push(['المركبة وتصنيف المصروف', `#${vehicleId} — ${vehicleCostCategory}`])
+    if (isPayrollSettlement && settleSlipIds.length) details.push(['قسائم الرواتب', settleSlipIds.map(id => `#${id}`).join('، ')])
+    if (isPurchaseExpense) details.push(['فاتورة الشراء والمصروف', `#${purchaseId || '—'} — ${expMethod} — ${expPaidBy} — ${expBeneficiary || '—'} — ${expPayableAccount}`])
+    if (manualAllocations?.length) details.push(['التوزيع اليدوي', manualAllocations.map(row => `${row.docLabel}: ${fmt(row.appliedMinor)}`).join('؛ ')])
+    const rows = details.map(([label, value]) => `<tr><th>${escapePrintText(label)}</th><td>${escapePrintText(value)}</td></tr>`).join('')
+    return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#0f172a}h1{border-bottom:3px solid #0f172a;padding-bottom:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #cbd5e1;padding:10px;text-align:right;overflow-wrap:anywhere}th{background:#f8fafc;width:30%}</style></head><body><h1>${escapePrintText(title)}</h1><p>مسودة للمعاينة — لم تُرحّل ولا تمثل سنداً معتمداً</p><table>${rows}</table></body></html>`
   }
+  const draftPreviewHtml = buildDraftPreview()
+  const liveDraftHtml = useRef(draftPreviewHtml)
+  const liveDraftRebuild = useRef(() => liveDraftHtml.current)
+  useLayoutEffect(() => {
+    liveDraftHtml.current = draftPreviewHtml
+    const preview = usePrintPreview.getState()
+    if (preview.open && preview.handle?.rebuild === liveDraftRebuild.current && preview.handle.html !== draftPreviewHtml) preview.refresh()
+  }, [draftPreviewHtml])
+  const printDraft = () => printHtml(draftPreviewHtml, { preview: { title: 'معاينة مسودة السند قبل الطباعة', rebuild: liveDraftRebuild.current } })
+
   const focusVoucherForEdit = () => {
     document.querySelector<HTMLInputElement>('[data-voucher-amount]')?.focus()
     toast.show('النموذج مفتوح في وضع التعديل؛ راجع الحقول ثم رحّل السند')
@@ -471,7 +498,7 @@ export function VouchersPage() {
             </div>
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
               <button type="button" onClick={printDraft} title="طباعة السند" aria-label="طباعة السند" className="flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] text-white/75 transition hover:bg-white/10 hover:text-white"><Printer size={15} /><span className="hidden sm:inline">طباعة</span></button>
-              <button type="button" onClick={() => setPreviewOpen(true)} title="معاينة السند" aria-label="معاينة السند" className="flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] text-white/75 transition hover:bg-white/10 hover:text-white"><Eye size={15} /><span className="hidden sm:inline">معاينة</span></button>
+              <button type="button" onClick={printDraft} title="معاينة السند" aria-label="معاينة السند" className="flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] text-white/75 transition hover:bg-white/10 hover:text-white"><Eye size={15} /><span className="hidden sm:inline">معاينة</span></button>
               <button type="button" onClick={saveDraft} title="حفظ كمسودة" aria-label="حفظ كمسودة" className="flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] text-white/75 transition hover:bg-white/10 hover:text-white"><Save size={15} /><span className="hidden sm:inline">حفظ مسودة</span></button>
               <button type="button" onClick={focusVoucherForEdit} title="تعديل السند" aria-label="تعديل السند" className="flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] text-white/75 transition hover:bg-white/10 hover:text-white"><Pencil size={15} /><span className="hidden sm:inline">تعديل السند</span></button>
               <button type="button" onClick={save} disabled={!counter || !amount.trim() || (needsParty && !partyId) || (isPurchaseExpense && (!purchaseId || !desc.trim() || (expPaidBy === 'payable' && !expBeneficiary.trim())))} className="flex items-center gap-1.5 rounded-lg bg-[#6ffbbe] px-2.5 py-2 text-xs font-bold text-[#002113] shadow-sm transition hover:bg-[#4edea3] disabled:cursor-not-allowed disabled:opacity-50 sm:gap-2 sm:px-4">
@@ -758,22 +785,6 @@ export function VouchersPage() {
             <span className="text-[10px] doc-faint">اضغط Esc للإلغاء · الترحيل ينشئ سنداً وقيداً متوازناً</span>
             <div className="flex items-center gap-2"><Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn></div>
           </div>
-        </div>
-      </Modal>
-
-      <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="معاينة السند" wide>
-        <div dir="rtl" className="space-y-4 rounded-2xl doc-sheet p-5 doc-ink doc-ring">
-          <div className="flex items-start justify-between gap-3 border-b doc-line pb-3">
-            <div><p className="text-[11px] doc-faint">{setup.shopName || 'نظام الحسابات'}</p><h3 className="mt-1 text-xl font-black">{kind === 'receipt' ? 'سند قبض نقدية' : 'سند دفع وصرف نقدية / بنكي'}</h3></div>
-            <span className="rounded-lg doc-head px-3 py-1.5 text-xs font-bold">{kind === 'receipt' ? 'RV' : 'PV'} — مسودة</span>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg doc-card doc-ring p-3"><span className="block text-[11px] doc-faint">التاريخ</span><b className="mt-1 block font-mono">{voucherDate}</b></div>
-            <div className="rounded-lg doc-card doc-ring p-3"><span className="block text-[11px] doc-faint">الطرف</span><b className="mt-1 block">{selectedPartyName || 'غير مرتبط بطرف'}</b></div>
-          </div>
-          <div className="rounded-xl doc-tint p-4 text-center"><span className="block text-xs doc-muted">المبلغ</span><strong className="mt-1 block font-mono text-3xl doc-ink">{parsedAmountMinor > 0 ? fmt(parsedAmountMinor) : '0.00'} <small className="text-base">{cur.symbol}</small></strong>{parsedAmountMinor > 0 && <span className="mt-2 block text-[11px] doc-accent-deep">{amountInWords(parsedAmountMinor, cur)}</span>}</div>
-          <div className="grid gap-3 sm:grid-cols-2 text-xs"><div><span className="doc-faint">الحساب المقابل</span><b className="mt-1 block">{counters.find((item) => item.code === counter)?.label ?? '—'}</b></div><div><span className="doc-faint">البيان</span><b className="mt-1 block">{desc || '—'}</b></div></div>
-          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setPreviewOpen(false)}>إغلاق المعاينة</Btn></div>
         </div>
       </Modal>
 

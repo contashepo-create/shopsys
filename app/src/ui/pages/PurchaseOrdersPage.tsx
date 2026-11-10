@@ -1,3 +1,4 @@
+import { previewWarehouseReceipt } from '../print/previewWarehouseReceipt.ts'
 /**
  * أوامر الشراء — طلب المالك.
  * أمر الشراء التزام تجاري لا قيد محاسبي: يوثّق المطلوب من المورد بكمياته
@@ -37,8 +38,6 @@ import {
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
-import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
-import { printHtml } from '../print/printReceipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
@@ -73,7 +72,6 @@ export function PurchaseOrdersPage() {
     partyNotes, addPartyNote, appUsers, currentUserId, userPrefs, roleOverrides, customRoles, getSupplierBalance, tickets,
   } = useDataStore()
   const setup = useAppStore((s) => s.setup)
-  const warehouseReceipt = useAppStore((s) => s.warehouseReceipt)
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur, false)
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
@@ -253,7 +251,7 @@ export function PurchaseOrdersPage() {
   const printWarehouseReceipt = () => {
     const clean = lines.filter((line) => line.itemId > 0 && line.qty > 0)
     if (!clean.length) return toast.show('أضف أصنافاً قبل طباعة إذن الاستلام', 'error')
-    printHtml(buildWarehouseReceiptHtml({
+    previewWarehouseReceipt({
       title: 'إذن استلام بنود أمر شراء (كميات فقط)',
       docNumber: pendingDraftNumber(purchaseOrders),
       dateLabel: `التسليم المتوقع ${expectedDate}`,
@@ -265,8 +263,7 @@ export function PurchaseOrdersPage() {
         const item = items.find((row) => row.id === line.itemId)
         return { nameAr: item?.nameAr ?? line.nameAr, qty: line.qty, unit: item?.baseUnit, code: item?.sku, barcode: item?.barcodes?.[0], warehouseAr: warehouses.find((w) => w.id === (line.warehouseId ?? warehouseId))?.nameAr }
       }),
-      settings: warehouseReceipt,
-    }))
+    })
     toast.show('إذن الاستلام جاهز — كميات فقط بلا أسعار 📦 (لا يُحرّك المخزون)')
   }
   const quickPrint = () => printDraft((userPrefs[String(currentUserId ?? 'owner')]?.preferredPrintTemplate) ?? (printSwitches.cashierPrint ? 'thermal' : 'a4'))

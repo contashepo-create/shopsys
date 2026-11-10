@@ -68,10 +68,20 @@ function printHtmlRegions(src) {
   for (;;) {
     const call = src.indexOf('printHtml(', from)
     if (call < 0) break
+    // لا نعتبر استدعاء printHtml بمتغير بداية قالب يمتد حتى HTML لاحق.
+    const arg = src.slice(call + 'printHtml('.length).trimStart()
+    if (!arg.startsWith('`')) { from = call + 'printHtml('.length; continue }
     const close = src.indexOf('</html>', call)
     const end = close >= 0 ? close + '</html>'.length : Math.min(src.length, call + 8000)
     regions.push([call, end])
     from = end
+  }
+  // معاينة المسودة تُبنى بدالة مستقلة لإعادة بنائها حياً قبل printHtml.
+  const draft = src.indexOf('const buildDraftPreview = () => {')
+  if (draft >= 0) {
+    const end = src.indexOf('const draftPreviewHtml = buildDraftPreview()', draft)
+    if (end < 0) throw new Error('تعذر تحديد نهاية قالب مسودة السند')
+    regions.push([draft, end])
   }
   return regions
 }

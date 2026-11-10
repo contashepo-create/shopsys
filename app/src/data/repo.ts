@@ -16482,6 +16482,8 @@ export const useRawDataStore = create<DataState>()(
       addQuotation: (q) => {
         const state = get()
         const scoped = assertQuotationAccess(state)
+        const branch = getEffectiveActiveBranch(state)
+        if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل إنشاء عرض السعر لضمان استقلال بياناته')
         // بنود كاملة: اسم + وصف + كمية + وحدة + سعر + تكلفة تقديرية (أمر التعديل)
         const fullLines: QuotationLine[] = q.lines.map((l) => ({
           nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
@@ -16501,6 +16503,7 @@ export const useRawDataStore = create<DataState>()(
         const id = nextId([...state.quotations, ...state.quotationDeletionRecords])
         const quote: Quotation = {
           id,
+          ...(branch ? { branchId: branch.id } : {}),
           quoteNumber: `${q.kind === 'tender' ? 'TN' : 'QT'}-${String(id).padStart(4, '0')}`,
           kind: q.kind,
           clientName: q.clientName.trim(),

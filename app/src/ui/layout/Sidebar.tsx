@@ -4,7 +4,7 @@
  */
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop } from 'lucide-react'
+import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop, Star } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -12,6 +12,7 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
+import { useNavigationFavorites } from '../hooks/useNavigationFavorites.ts'
 import { openSectionWindow } from '../windows/windowStore.ts'
 
 function titleForPath(path: string): string {
@@ -50,8 +51,9 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
   // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط أو الفرع المخصص (طلب المالك):
   // القسم كله يختفي لو وحدته مطفأة، والفرع المرتبط بوحدة يختفي وحده داخل قسم عام
-  const visibleSections = NAV_SECTIONS
+  const permittedSections = NAV_SECTIONS
     .filter((sec) => {
+      if (sec.id === 'quotations' && effectiveModules.includes('contracting')) return false
       if (sec.module && !effectiveModules.includes(sec.module)) return false
       if (sec.accountingOnly && setup.accountingMode !== 'full') return false
       return true
@@ -73,6 +75,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       nameAr: labelFor(effectiveActivityId, sec.id, sec.nameAr),
     }))
     .filter((sec) => sec.children.length > 0)
+  const { sections: visibleSections, paths: favoritePaths, toggle: toggleFavorite } = useNavigationFavorites(permittedSections)
 
   const toggle = (id: string) =>
     setOpenSections((prev) => {
@@ -118,8 +121,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           if (single) {
             const child = sec.children[0]
             return (
+              <div key={sec.id} className="flex items-center">
               <NavLink
-                key={sec.id}
                 to={child.path}
                 onClick={(event) => guardLink(event, child.path)}
                 style={{ animationDelay: `${i * 35}ms` }}
@@ -136,6 +139,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 </span>
                 <span className="text-sm">{sec.nameAr}</span>
               </NavLink>
+              {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="ms-auto p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
+              </div>
             )
           }
 
@@ -169,8 +174,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 <div className="overflow-hidden">
                   <div className={`mr-5 my-1 pr-3 border-r-2 ${colors.border} space-y-0.5`}>
                     {sec.children.map((child) => (
+                      <div key={child.id} className="flex items-center">
                       <NavLink
-                        key={child.id}
                         to={child.path}
                         onClick={(event) => guardLink(event, child.path)}
                         className={({ isActive }) =>
@@ -185,6 +190,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                         <child.icon size={15} className="opacity-70" />
                         <span>{child.nameAr}</span>
                       </NavLink>
+                      {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="ms-auto p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
+                      </div>
                     ))}
                   </div>
                 </div>

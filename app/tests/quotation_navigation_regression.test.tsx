@@ -22,9 +22,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); usePrintPreview.getState().closePreview(); useRawDataStore.setState(originalData); useAppStore.setState(originalApp) })
 
 describe('استعادة الوصول لعروض الأسعار', () => {
-  it('يظهر الرابط العام والرابط المعتاد داخل المقاولات في الشريط العلوي', () => {
+  it('يظهر رابط العروض داخل المقاولات دون قسم مستقل مكرر', () => {
     render(<MemoryRouter><MenuBar onSwitchToSidebar={() => {}} /></MemoryRouter>)
-    expect(document.querySelector('[data-menubar-title="quotations"]')).toBeTruthy()
+    expect(document.querySelector('[data-menubar-title="quotations"]')).toBeNull()
     fireEvent.click(document.querySelector('[data-menubar-title="contracting"]')!)
     const menu = document.querySelector('[data-menubar-menu="contracting"]') as HTMLElement
     expect(within(menu).getByRole('menuitem', { name: 'عروض الأسعار والمناقصات' }).getAttribute('href')).toBe('/contracting/quotations')
@@ -45,7 +45,7 @@ describe('استعادة الوصول لعروض الأسعار', () => {
   it('يظهر داخل المقاولات أيضاً في الشريط الجانبي ويحترم منع الصلاحية', () => {
     useRawDataStore.setState({ currentUserId: 2, appUsers: [{ id: 2, nameAr: 'مهندس', roleId: 'project_manager', active: true, pinHash: '', extraPerms: ['sales.quotation.manage'] }] })
     const { rerender } = render(<MemoryRouter><Sidebar collapsed={false} onToggle={() => {}} /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('button', { name: /المقاولات/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'المقاولات' }))
     expect(screen.getByRole('link', { name: 'عروض الأسعار والمناقصات' }).getAttribute('href')).toBe('/contracting/quotations')
     useRawDataStore.setState({ appUsers: [{ id: 2, nameAr: 'مهندس', roleId: 'project_manager', active: true, pinHash: '', deniedPerms: ['sales.quotation.manage'] }] })
     rerender(<MemoryRouter><Sidebar collapsed={false} onToggle={() => {}} /></MemoryRouter>)
@@ -72,7 +72,9 @@ describe('استعادة الوصول لعروض الأسعار', () => {
     view.unmount()
     useRawDataStore.setState({ currentUserId: 2, appUsers: [{ id: 2, nameAr: 'مدير', roleId: 'project_manager', active: true, pinHash: '' }] })
     render(<MemoryRouter><MenuBar onSwitchToSidebar={() => {}} /></MemoryRouter>)
-    expect(document.querySelector('[data-menubar-title="quotations"]')).toBeTruthy()
+    expect(document.querySelector('[data-menubar-title="contracting"]')).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-menubar-title="contracting"]')!)
+    expect(within(document.querySelector('[data-menubar-menu="contracting"]') as HTMLElement).getByRole('menuitem', { name: 'عروض الأسعار والمناقصات' })).toBeTruthy()
   })
 
   it('منح صلاحية دور في فرع لا يغير إعداد الفرع الآخر أو الصلاحية العامة', () => {

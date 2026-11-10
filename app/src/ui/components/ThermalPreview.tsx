@@ -17,6 +17,7 @@ import { OverlayPortal } from './ui.tsx'
 import { usePrintPreview } from './printPreviewStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { applyPreviewScale } from '../print/previewScale.ts'
 import { QuickPrintSettings } from './QuickPrintSettings.tsx'
 
 const PAPER_PX = 302 // رول 80mm عند 96dpi
@@ -25,12 +26,13 @@ const A4_PX = 560 // عرض معاينة مريح للفاتورة الكبير�
 
 export function ThermalPreview() {
   const nav = useNavigate()
-  const { open, handle, mini, closePreview, setMini, refresh } = usePrintPreview()
+  const { open, handle, mini, closePreview, setMini, refresh, scale, setScale } = usePrintPreview()
   const receipt = useAppStore((s) => s.receipt)
   const reportPrint = useAppStore((s) => s.reportPrint)
+  const warehouseReceipt = useAppStore((s) => s.warehouseReceipt)
   const [quickOpen, setQuickOpen] = useState(false)
 
-  const html = handle?.html ?? ''
+  const html = applyPreviewScale(handle?.html ?? '', scale)
   const wide = handle?.wide ?? false
   const title = handle?.title ?? (wide ? 'معاينة المستند قبل الطباعة' : 'معاينة الإيصال الحراري')
   const paper = wide ? A4_PX : receipt.paperWidth === '58' ? PAPER_58_PX : PAPER_PX
@@ -68,6 +70,14 @@ export function ThermalPreview() {
     if (usePrintPreview.getState().open) refresh()
   }, [reportPrint, refresh])
 
+  /* إذن المستودع له إعدادات مستقلة عن الإيصال والتقارير. */
+  const warehouseReceiptRef = useRef(warehouseReceipt)
+  useEffect(() => {
+    if (warehouseReceiptRef.current === warehouseReceipt) return
+    warehouseReceiptRef.current = warehouseReceipt
+    if (usePrintPreview.getState().open) refresh()
+  }, [warehouseReceipt, refresh])
+
   /* الظهور في منتصف الشاشة عند **الفتح أو التكبير من الوضع المصغّر** فقط —
      تغيير عرض الورق (58↔80mm) من الإعدادات السريعة لا يعيد التمركز،
      فتبقى النافذة حيث سحبها المستخدم */
@@ -88,9 +98,9 @@ export function ThermalPreview() {
        لو بدّله المستخدم والمعاينة مفتوحة (أو من قسم الطباعة والمصغّرة معلقة)
        ننفّذ القيمة الجديدة */
     /* fromPreview: هذا هو زر الطباعة داخل نافذة المعاينة نفسها — لا تفتح معاينة ثانية */
-    printHtml(current.html, { silent: useAppStore.getState().receipt.silentPrint ?? false, fromPreview: true })
+    printHtml(applyPreviewScale(current.html, scale), { silent: useAppStore.getState().receipt.silentPrint ?? false, fromPreview: true })
     closePreview()
-  }, [closePreview])
+  }, [closePreview, scale])
 
   /* اختصارات النافذة (Escape=إغلاق · Enter=طباعة) **في النافذة الكاملة فقط**:
      في الوضع المصغّر لا نلمس لوحة المفاتيح إطلاقاً — المستخدم يعمل في قسم
@@ -209,6 +219,15 @@ export function ThermalPreview() {
           </div>
         )}
 
+        <div className="px-3 py-2 text-xs" data-print-scale-controls>
+          <label className="flex items-center gap-2">مقياس المحتوى <input aria-label="مقياس الطباعة" type="range" min="40" max="120" step="5" value={scale} onChange={event => setScale(Number(event.target.value))} className="flex-1" /><b>{scale}%</b></label>
+          {wide && !/@page\s*\{[^}]*\bsize\s*:\s*A5\b/i.test(handle?.html ?? '') && <button type="button" className="text-sky-600 underline" onClick={() => {
+            const doc = frameRef.current?.contentDocument
+            const height = Math.max(doc?.body?.scrollHeight ?? 0, doc?.documentElement?.scrollHeight ?? 0)
+            if (height > 0) setScale(Math.max(40, Math.min(100, Math.floor((scale * paper * 1.25 / height) / 5) * 5)))
+          }}>تقدير الاحتواء في صفحة A4</button>}
+          <p className="text-slate-500">التقدير لا يضمن صفحة واحدة: راجع معاينة الطابعة وحجم الخط؛ قد يتطلب المستند الطويل ورقاً أكبر أو صفحات إضافية.</p>
+        </div>
         <div className="thermal-preview-paper">
           {/* العرض نسبي حتى لا يظهر أي تمرير أفقي مهما اختلفت هوامش المتصفح */}
           <iframe ref={frameRef} title="معاينة المستند" sandbox="allow-same-origin" style={{ width: '100%', maxWidth: paper }} />

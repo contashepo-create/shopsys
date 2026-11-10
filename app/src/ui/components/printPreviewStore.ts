@@ -24,6 +24,8 @@ interface PrintPreviewState {
   handle: PrintPreviewHandle | null
   /** وضع مصغّر أسفل الشاشة — أثناء فتح قسم إعدادات الطباعة الكامل */
   mini: boolean
+  scale: number
+  setScale: (scale: number) => void
   openPreview: (handle: PrintPreviewHandle) => void
   closePreview: () => void
   setMini: (mini: boolean) => void
@@ -35,7 +37,9 @@ export const usePrintPreview = create<PrintPreviewState>((set, get) => ({
   open: false,
   handle: null,
   mini: false,
-  openPreview: (handle) => set({ open: true, handle, mini: false }),
+  scale: 100,
+  setScale: (scale) => set({ scale: Math.min(120, Math.max(40, Number.isFinite(scale) ? Math.round(scale) : 100)) }),
+  openPreview: (handle) => set({ open: true, handle, mini: false, scale: 100 }),
   closePreview: () => set({ open: false, handle: null, mini: false }),
   setMini: (mini) => set({ mini }),
   refresh: () => {

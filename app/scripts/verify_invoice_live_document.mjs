@@ -87,8 +87,10 @@ const ruleOf = (selector) => {
 {
   assert.ok(frame.includes('onWarehouseReceipt') && frame.includes('إذن استلام مستودع'), 'زر إذن الاستلام غير موجود في المستند')
   for (const [label, src] of PAGES) {
-    assert.ok(src.includes('buildWarehouseReceiptHtml') && src.includes('onWarehouseReceipt'), `${label}: زر إذن الاستلام بلا معالج حقيقي`)
+    assert.ok(src.includes('previewWarehouseReceipt') && src.includes('onWarehouseReceipt'), `${label}: زر إذن الاستلام بلا معالج حقيقي`)
   }
+  const preview = read('src/ui/print/previewWarehouseReceipt.ts')
+  assert.ok(preview.includes('buildWarehouseReceiptHtml') && preview.includes('printHtml(rebuild()') && preview.includes('warehouseReceipt'), 'معاينة الإذن لا تستخدم البناء المشترك وإعدادات الإذن')
   assert.ok(!/Minor|formatMinor|currency/i.test(receipt.replace(/\/\*[\s\S]*?\*\//g, '')), 'وحدة إذن الاستلام تلمس المبالغ أصلاً')
   const printed = buildWarehouseReceiptHtml({
     title: 'إذن استلام من المستودع', docNumber: 'INV-0001', dateLabel: '2026-09-28',

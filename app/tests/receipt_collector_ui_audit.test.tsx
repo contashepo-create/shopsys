@@ -30,6 +30,19 @@ it('تختار الواجهة محصل سند القبض وتستعيده من �
  fireEvent.click(view.getAllByText(/سند قبض/)[0].closest('button')!)
  expect((screen.getByLabelText('محصّل سند القبض') as HTMLSelectElement).value).toBe(String(employee.id))
 })
+it('زر معاينة مسودة السند يفتح ورقة قابلة للطباعة ويهرب البيان', () => {
+ const view = render(<MemoryRouter><VouchersPage /></MemoryRouter>)
+ fireEvent.click(view.getAllByText(/سند قبض/)[0].closest('button')!)
+ fireEvent.change(screen.getByPlaceholderText('مثال: تحصيل دفعة من العميل…'), { target: { value: '<b>بيان السند</b>' } })
+ fireEvent.click(screen.getByLabelText('معاينة السند'))
+ const handle = usePrintPreview.getState().handle
+ expect(handle?.title).toBe('معاينة مسودة السند قبل الطباعة')
+ expect(handle?.html).toContain('&lt;b&gt;بيان السند&lt;/b&gt;')
+ expect(handle?.html).toContain('لم تُرحّل')
+ fireEvent.change(screen.getByPlaceholderText('مثال: تحصيل دفعة من العميل…'), { target: { value: 'بيان محدث' } })
+ expect(usePrintPreview.getState().handle?.html).toContain('بيان محدث')
+ expect(useRawDataStore.getState().vouchers).toHaveLength(0)
+})
 it('يظهر القبض والعكس في دفتر منفصل ويحتفظان بحدود النطاق في المعاينة', () => {
  const s = useDataStore.getState()
  s.addEmployee({ nameAr: 'المحصّل', phone: '', roleId: 'cashier', salaryMinor: 0, active: true } as never)
