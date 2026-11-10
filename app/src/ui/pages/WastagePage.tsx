@@ -242,9 +242,11 @@ export function WastagePage() {
           </div>
 
           <div className="rounded-2xl bg-rose-500/5 border border-rose-500/15 p-3.5 flex items-center justify-between text-[12.5px]">
-            <span className="font-bold text-slate-600 dark:text-slate-300">إجمالي الخسارة التي ستظهر في قائمة الدخل</span>
+            <span className="font-bold text-slate-600 dark:text-slate-300">إجمالي الخسارة التقديري — تحدد القيمة الدقيقة عند الترحيل</span>
             <b className="text-rose-500 text-base">{fmt(totalPreview)} {cur.symbol}</b>
           </div>
+
+          <p className="text-[11px] text-slate-500">تُسجل الحركة بتاريخ اليوم فقط ومن مخزن الصنف الأساسي؛ القيم أعلاه تقديرية وقد تختلف بفروق التقريب. التاريخ السابق غير متاح لعدم إثبات رصيد المخزون وتكلفته تاريخياً.</p>
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
@@ -269,7 +271,7 @@ export function WastagePage() {
                     <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-4 py-1.5 font-bold">{l.nameAr}</td>
                       <td className="px-4 py-1.5 text-slate-400">{l.qty} × {fmt(l.unitCostMinor)}</td>
-                      <td className="px-4 py-1.5 font-bold text-left text-rose-500">{fmt(Math.round(l.qty * l.unitCostMinor))}</td>
+                      <td className="px-4 py-1.5 font-bold text-left text-rose-500">{fmt(l.costTotalMinor ?? Math.round(l.qty * l.unitCostMinor))}</td>
                     </tr>
                   ))}
                 </tbody>

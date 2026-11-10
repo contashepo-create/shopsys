@@ -1112,7 +1112,7 @@ export interface WastageDoc {
   wastageNumber: string // WST-0001
   date: string // ISO
   reason: string
-  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number }[]
+  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number; costTotalMinor?: number; batchAllocations?: { batchId: number; qty: number }[] }[]
   totalCostMinor: number
   journalEntryId: number
   notes: string
@@ -1125,7 +1125,7 @@ export interface ConsumptionDoc {
   date: string // ISO
   purpose: string
   expenseAccount: string // 5114 افتراضياً أو حساب مصروف آخر
-  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number }[]
+  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number; costTotalMinor?: number; batchAllocations?: { batchId: number; qty: number }[] }[]
   totalCostMinor: number
   journalEntryId: number
   notes: string
@@ -2387,9 +2387,9 @@ interface DataState {
    */
   postStocktake: (counts: CountInput[], notes: string) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
-  postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string }) => WastageDoc
+  postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string; date?: string }) => WastageDoc
   /** صرف داخلي (استهلاك مخزون للتشغيل): يخصم الرصيد + FEFO + قيد مصروف/1103 بالمتوسط المرجح */
-  postConsumption: (args: { purpose: string; expenseAccount?: string; lines: { itemId: number; qty: number }[]; notes: string }) => ConsumptionDoc
+  postConsumption: (args: { purpose: string; expenseAccount?: string; lines: { itemId: number; qty: number }[]; notes: string; date?: string }) => ConsumptionDoc
   /**
    * ضبط رصيد افتتاحي (نمط mobileshop): عميل/مورد/خزينة/سلفة موظف —
    * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
@@ -4506,6 +4506,56 @@ function assertSingleFxTreasury(treasury: string, paidMinor: number, allocations
 function assertSerialBatchMovementSupported(state: DataState, itemId: number): void {
   const item = state.items.find(row => row.id === itemId)
   if ((item?.trackSerial && item.trackExpiry) || state.serials.some(unit => unit.itemId === itemId && unit.expiryBatch != null)) throw new Error('هذه العملية لا توثق السيريال ودفعة صلاحيته — استخدم مساراً يدعم الوحدات المحددة أو راجع المخزون')
+}
+
+/** تخطيط محافظ للصرف الداخلي والإتلاف: من مخزن الصنف الأساسي وبقيمة المخزون الدقيقة. */
+function planInventoryOutflow(state: DataState, requested: { itemId: number; qty: number }[], date: string | undefined) {
+  const scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
+  if (state.branches.length && !branch) throw new Error('حدد الفرع الحالي قبل إخراج المخزون')
+  if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('inv.adjust')) throw new Error('لا تملك صلاحية تسوية المخزون') }
+  const now = localIsoTimestamp(), day = date ?? now.slice(0, 10)
+  if (!isValidExpiryDate(day)) throw new Error('تاريخ حركة المخزون غير صالح')
+  if (day !== now.slice(0, 10)) throw new Error('حركة المخزون متاحة بتاريخ اليوم فقط — الرصيد والتكلفة التاريخيان غير مثبتين')
+  const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+  if (closed) throw new Error(`تاريخ حركة المخزون داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+  const main = state.warehouses.find(w => w.isMain)
+  const seen = new Set<number>()
+  const withdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
+  const takeByBatch = new Map<number, number>()
+  const lines = requested.map(row => {
+    if (seen.has(row.itemId)) throw new Error('الصنف مكرر — اجمع الكمية في سطر واحد')
+    seen.add(row.itemId)
+    const matches = state.items.filter(item => item.id === row.itemId), item = matches[0]
+    if (matches.length !== 1 || !scoped.items.some(candidate => candidate.id === row.itemId)) throw new Error('صنف المخزون غير موجود أو غير فريد في الفرع الحالي')
+    assertSerialBatchMovementSupported(state, row.itemId)
+    if (item.isService) throw new Error('الخدمة ليست صنفاً مخزنياً')
+    if (item.trackSerial || state.serials.some(unit => unit.itemId === row.itemId && unit.status === 'in_stock')) throw new Error('حركة السيريال لا تحدد وحداتها — راجع المخزون')
+    const qty = Math.round(row.qty * 1000) / 1000
+    if (!Number.isFinite(row.qty) || row.qty <= 0 || !Number.isSafeInteger(Math.round(row.qty * 1000)) || qty <= 0 || Math.abs(row.qty - qty) > 1e-9) throw new Error('الكمية يجب أن تكون موجبة وصالحة حتى ثلاث خانات')
+    const totalQty = item.stockQty ?? 0
+    if (!Number.isFinite(totalQty) || !Number.isSafeInteger(Math.round(totalQty * 1000)) || Math.abs(totalQty - Math.round(totalQty * 1000) / 1000) > 1e-7 || totalQty < qty) throw new Error('الكمية تتجاوز رصيد الصنف أو الرصيد غير صالح')
+    const homeId = item.warehouseId ?? main?.id
+    if (state.warehouses.length && (!homeId || state.warehouses.filter(w => w.id === homeId).length !== 1 || !scoped.warehouses.some(w => w.id === homeId))) throw new Error('مخزن الصنف الأساسي غير موجود أو خارج الفرع')
+    if (state.warehouses.length && (!main || !Number.isFinite(stock.get(homeId!)?.get(item.id)) || (stock.get(homeId!)?.get(item.id) ?? 0) + 1e-9 < qty)) throw new Error('الكمية تتجاوز رصيد المخزن الأساسي أو الرصيد غير مثبت')
+    if (!Number.isSafeInteger(item.costMinor) || item.costMinor < 0) throw new Error('تكلفة الصنف غير صالحة')
+    const value = item.stockValueMinor ?? Math.round(totalQty * item.costMinor)
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error('قيمة المخزون غير صالحة')
+    const withdrawal = withdrawStockValue(totalQty, value, qty)
+    withdrawals.set(row.itemId, withdrawal)
+    const itemBatches = state.batches.filter(b => b.itemId === item.id)
+    if (itemBatches.some(b => state.batches.filter(other => other.id === b.id).length !== 1 || !Number.isFinite(b.qty) || b.qty < 0 || !Number.isSafeInteger(Math.round(b.qty * 1000)) || Math.abs(b.qty - Math.round(b.qty * 1000) / 1000) > 1e-7 || (b.expiryDate != null && !isValidExpiryDate(b.expiryDate)) || (b.qty > 0 && b.warehouseId == null && state.warehouses.length > 1))) throw new Error('دفعات الصنف غير صالحة أو غير فريدة أو مخزنها غير مثبت')
+    const activeBatches = itemBatches.filter(b => b.qty > 0)
+    const candidates = activeBatches.filter(b => b.warehouseId == null || b.warehouseId === homeId)
+    const tracked = item.trackExpiry || activeBatches.length > 0
+    const plan = planFefo(candidates, item.id, qty, day)
+    if (tracked && plan.untrackedQty > 0) throw new Error('دفعات الصنف لا تكفي في مخزنه الأساسي أو غير مثبتة')
+    for (const allocation of plan.allocations) takeByBatch.set(allocation.batchId, allocation.qty)
+    return { itemId: item.id, nameAr: item.nameAr, qty, unitCostMinor: item.costMinor, costTotalMinor: withdrawal.withdrawnValueMinor, batchAllocations: plan.allocations.map(a => ({ batchId: a.batchId, qty: a.qty })) }
+  })
+  const total = lines.reduce((sum, line) => sum + line.costTotalMinor, 0)
+  if (!Number.isSafeInteger(total)) throw new Error('إجمالي تكلفة المخزون خارج الحدود الآمنة')
+  return { now, lines, withdrawals, batches: state.batches.map(batch => takeByBatch.has(batch.id) ? { ...batch, qty: Math.round((batch.qty - takeByBatch.get(batch.id)!) * 1000) / 1000 } : batch) }
 }
 
 /** الحركة النقدية لا تستعمل حساب إيراد أو مصروف كأنه خزينة. */
@@ -9961,22 +10011,13 @@ export const useRawDataStore = create<DataState>()(
 
       postWastage: (args) => {
         const state = get()
-        // 1) إثراء السطور بالتكلفة المرجحة ثم تحقق النواة الخالصة قبل أي كتابة
-        const lines = args.lines.map((l) => {
-          const item = state.items.find((it) => it.id === l.itemId)
-          if (!item) throw new Error('صنف غير موجود بالمخزون')
-          assertSerialBatchMovementSupported(state, item.id)
-          return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
-        })
-        const errors = validateWastage(
-          { reason: args.reason, lines },
-          (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0,
-        )
+        const plan = planInventoryOutflow(state, args.lines, args.date)
+        const { lines, now, withdrawals, batches } = plan
+        const errors = validateWastage({ reason: args.reason, lines }, itemId => state.items.find(it => it.id === itemId)?.stockQty ?? 0)
         if (errors.length) throw new Error(errors.join(' — '))
 
         const wastageId = nextId(state.wastages)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const wastageNumber = `WST-${String(wastageId).padStart(4, '0')}`
         const entryLines = buildWastageEntry(lines, wastageNumber)
         const entry: JournalEntry = {
@@ -9993,24 +10034,11 @@ export const useRawDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
-        // 2) خصم الكميات + استهلاك دفعات الصلاحية الأقدم أولاً (يشمل المنتهية — هذا هو الإعدام)
-        const qtyBy = new Map(lines.map((l) => [l.itemId, l.qty]))
-        const updatedItems = state.items.map((it) =>
-          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
-        )
-        let batches = state.batches
-        for (const l of lines) {
-          let rest = l.qty
-          batches = batches
-            .slice()
-            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
-            .map((b) => {
-              if (b.itemId !== l.itemId || rest <= 0 || b.qty <= 0) return b
-              const take = Math.min(b.qty, rest)
-              rest -= take
-              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
-            })
-        }
+        const updatedItems = state.items.map(it => {
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor, costMinor: withdrawal.remainingQty > 0 ? Math.round(withdrawal.remainingValueMinor / withdrawal.remainingQty) : it.costMinor })
+        })
 
         const doc: WastageDoc = {
           id: wastageId,
@@ -10029,29 +10057,19 @@ export const useRawDataStore = create<DataState>()(
       postConsumption: (args) => {
         const state = get()
         const expenseAccount = (args.expenseAccount ?? INTERNAL_USE_ACCOUNT).trim()
-        // 1) إثراء السطور بالتكلفة المرجحة ثم تحقق النواة الخالصة قبل أي كتابة
-        const lines = args.lines.map((l) => {
-          const item = state.items.find((it) => it.id === l.itemId)
-          if (!item) throw new Error('صنف غير موجود بالمخزون')
-          assertSerialBatchMovementSupported(state, item.id)
-          return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
-        })
+        const plan = planInventoryOutflow(state, args.lines, args.date)
+        const { lines, now, withdrawals, batches } = plan
         const isExpense = (code: string) => {
           const std = STANDARD_COA.find((a) => a.code === code)
           if (std) return std.rootType === 'expenses' && std.isPostable
           const custom = state.customAccounts.find((a) => a.code === code)
           return !!custom && custom.rootType === 'expenses'
         }
-        const errors = validateConsumption(
-          { purpose: args.purpose, expenseAccount, lines },
-          (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0,
-          isExpense,
-        )
+        const errors = validateConsumption({ purpose: args.purpose, expenseAccount, lines }, itemId => state.items.find(it => it.id === itemId)?.stockQty ?? 0, isExpense)
         if (errors.length) throw new Error(errors.join(' — '))
 
         const consumptionId = nextId(state.consumptions)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const consumptionNumber = `CNS-${String(consumptionId).padStart(4, '0')}`
         const entryLines = buildConsumptionEntry(lines, expenseAccount, consumptionNumber)
         const entry: JournalEntry = {
@@ -10068,24 +10086,11 @@ export const useRawDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
-        // 2) خصم الكميات + استهلاك دفعات الصلاحية الأقدم أولاً (FEFO — نفس نمط الإتلاف)
-        const qtyBy = new Map(lines.map((l) => [l.itemId, l.qty]))
-        const updatedItems = state.items.map((it) =>
-          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
-        )
-        let batches = state.batches
-        for (const l of lines) {
-          let rest = l.qty
-          batches = batches
-            .slice()
-            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
-            .map((b) => {
-              if (b.itemId !== l.itemId || rest <= 0 || b.qty <= 0) return b
-              const take = Math.min(b.qty, rest)
-              rest -= take
-              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
-            })
-        }
+        const updatedItems = state.items.map(it => {
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor, costMinor: withdrawal.remainingQty > 0 ? Math.round(withdrawal.remainingValueMinor / withdrawal.remainingQty) : it.costMinor })
+        })
 
         const doc: ConsumptionDoc = {
           id: consumptionId,
