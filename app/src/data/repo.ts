@@ -3923,6 +3923,23 @@ function assertInvoicePostingDate(state: DataState, date: string, allowLegacyTim
   if (closed) throw new Error(`التاريخ ${day} داخل السنة المالية المقفلة «${closed.nameAr}» — لا ترحيل في فترة مقفلة`)
 }
 
+/** المرتجع يستخدم وقت التسجيل الحالي فقط؛ لا نفترض رصيداً أو تكلفة تاريخيين. */
+function assertReturnPostingContext(state: DataState, originDate: unknown, previousDates: unknown[]): string {
+  const branch = getEffectiveActiveBranch(state)
+  if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل ترحيل المرتجع')
+  const fiscalBranch = branch ?? (state.branches.length === 1 ? state.branches[0] : null)
+  const now = localIsoTimestamp(), day = now.slice(0, 10)
+  const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, fiscalBranch?.id ?? null, Boolean(fiscalBranch?.isMain)))
+  if (closed) throw new Error(`تاريخ المرتجع داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const dates = [originDate, ...previousDates]
+  if (dates.some(value => typeof value !== 'string' || !isValidExpiryDate(value.slice(0, 10)) || value.slice(0, 10) > day)) {
+    throw new Error('تاريخ الفاتورة الأصلية أو مرتجع سابق غير صالح أو لاحق لليوم — راجع تسلسل المرتجعات')
+  }
+  const originDay = (originDate as string).slice(0, 10)
+  if (previousDates.some(value => (value as string).slice(0, 10) < originDay)) throw new Error('تاريخ مرتجع سابق يسبق الفاتورة الأصلية — راجع تسلسل المرتجعات')
+  return now
+}
+
 /** تحفظ السلف تاريخ المستند دون إعادة ترتيب التخصيص المسجل سابقاً. */
 function employeeAdvanceDocumentDate(state: DataState, employeeId: number, selected: string | undefined): string {
   const day = selected ?? todayLocalIso()
@@ -9277,8 +9294,10 @@ export const useRawDataStore = create<DataState>()(
 
       postSaleReturn: (args) => {
         const state = get()
-        const sale = state.sales.find((s) => s.id === args.saleId)
-        if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        const sourceSales = state.sales.filter((s) => s.id === args.saleId)
+        const sale = sourceSales[0]
+        if (sourceSales.length !== 1 || !getBranchScopedDataState(state).sales.some(row => row.id === args.saleId)) throw new Error('الفاتورة الأصلية غير موجودة أو غير فريدة في الفرع')
+        const now = assertReturnPostingContext(state, sale.date, state.saleReturns.filter(row => row.saleId === sale.id).map(row => row.date))
         const repEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
         if (sale.salesRepEmployeeId !== undefined || repEntries.some(entry => entry.saleRepresentativeId !== undefined)) {
           const entry = repEntries[0]
@@ -9500,7 +9519,6 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = isDocReturn ? [] : buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const returnNumber = `R-${String(returnId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('SRT', now, usedRefCodes(state))
 
@@ -9704,8 +9722,11 @@ export const useRawDataStore = create<DataState>()(
         }
         const state = get()
         const matches = state.purchases.filter(p => p.id === args.purchaseId)
-        if (matches.length !== 1) throw new Error('فاتورة الشراء الأصلية غير موجودة أو غير فريدة')
+        if (matches.length !== 1 || !getBranchScopedDataState(state).purchases.some(row => row.id === args.purchaseId)) throw new Error('فاتورة الشراء الأصلية غير موجودة أو غير فريدة في الفرع')
         const purchase = matches[0]
+        // بضاعة المشروع محمّلة على التكلفة لا على المخزون، فلا يُنشأ لها هذا النوع من المرتجع.
+        if (purchase.projectId != null) throw new Error('فاتورة مشروع مقاولات — لا مرتجع مخزنياً لها: سجّل التسوية بسند قبض من المورد')
+        const now = assertReturnPostingContext(state, purchase.date, state.purchaseReturns.filter(row => row.purchaseId === purchase.id).map(row => row.date))
         if (args.refund !== 'cash' && args.refund !== 'debt') throw new Error('نوع استرداد مرتجع الشراء غير صالح')
         // بوابة اعتماد المستندات (خطة ③): مرتجع شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!args.__approvalBypass) {
@@ -9721,11 +9742,6 @@ export const useRawDataStore = create<DataState>()(
             partyName: purchase.supplierId !== 0 ? state.suppliers.find((row) => row.id === purchase.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
             payload: serializeApprovalPayload(args),
           })
-        }
-        // فاتورة مشروع: بضاعتها حُمّلت تكلفة موقع 5110 لا مخزوناً — مرتجعها يُسوَّى
-        // بسند قبض من المورد أو تسوية تكلفة على المشروع، لا بمرتجع مخزني يفسد 1103
-        if (purchase.projectId != null) {
-          throw new Error('فاتورة مشروع مقاولات — لا مرتجع مخزنياً لها: سجّل التسوية بسند قبض من المورد')
         }
         // 1) سطور المرتجع بتكلفة الوحدة النهائية — بلا تجاوز للمتبقي ولا للمخزون
         const prior = state.purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
@@ -9871,7 +9887,6 @@ export const useRawDataStore = create<DataState>()(
         assertBalanced(entryLines)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const returnNumber = `PR-${String(returnId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('PRT', now, usedRefCodes(state))
         const entry: JournalEntry = {
@@ -10409,24 +10424,32 @@ export const useRawDataStore = create<DataState>()(
       },
 
       applySettlement: (args) => {
-        const state = get()
-        // 1) الرصيد الدفتري الحالي للقسم من نفس مصادر الشاشات (لا حساب موازٍ)
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const branch = getEffectiveActiveBranch(state)
+        if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل ترحيل التسوية')
+        if (args.section !== 'treasury' && args.section !== 'customer' && args.section !== 'supplier') throw new Error('نوع التسوية غير صالح')
+        const now = localIsoTimestamp()
+        const fiscalBranch = branch ?? (state.branches.length === 1 ? state.branches[0] : null)
+        const closed = dateInClosedYear(now.slice(0, 10), fiscalYearsForBranch(useAppStore.getState().fiscalYears, fiscalBranch?.id ?? null, Boolean(fiscalBranch?.isMain)))
+        if (closed) throw new Error(`تاريخ التسوية داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        // 1) الرصيد الدفتري الحالي داخل الفرع من نفس مصادر الشاشات (لا حساب موازٍ)
         let bookMinor = 0
         let refNameAr = ''
         if (args.section === 'treasury') {
-          const t = state.treasuries.find((x) => x.code === String(args.refId))
-          if (!t) throw new Error('الخزينة/البنك غير موجود')
+          const matches = state.treasuries.filter((x) => x.code === String(args.refId))
+          const t = matches[0]
+          if (matches.length !== 1 || !scoped.treasuries.some(x => x.code === t.code)) throw new Error('الخزينة/البنك غير موجود أو غير فريد في الفرع')
           refNameAr = t.nameAr
-          for (const e of state.journal) for (const l of e.lines) if (l.accountCode === t.code) bookMinor += l.debit - l.credit
+          for (const e of scoped.journal) for (const l of e.lines) if (l.accountCode === t.code) bookMinor += l.debit - l.credit
         } else if (args.section === 'customer') {
-          const c = state.customers.find((x) => x.id === Number(args.refId))
-          if (!c) throw new Error('العميل غير موجود')
+          const matches = state.customers.filter((x) => x.id === Number(args.refId)), c = matches[0]
+          if (matches.length !== 1 || !scoped.customers.some(x => x.id === c.id)) throw new Error('العميل غير موجود أو غير فريد في الفرع')
           refNameAr = c.nameAr
           // الرصيد الموحّد من كل الأنشطة (إصلاح الترابط) — نفس مصدر كل الشاشات
           bookMinor = get().getCustomerBalance(c.id)
         } else {
-          const sup = state.suppliers.find((x) => x.id === Number(args.refId))
-          if (!sup) throw new Error('المورد غير موجود')
+          const matches = state.suppliers.filter((x) => x.id === Number(args.refId)), sup = matches[0]
+          if (matches.length !== 1 || !scoped.suppliers.some(x => x.id === sup.id)) throw new Error('المورد غير موجود أو غير فريد في الفرع')
           refNameAr = sup.nameAr
           // الرصيد الموحّد — نفس مصدر كل الشاشات (كشف المورد: الدائن = له علينا)
           bookMinor = get().getSupplierBalance(sup.id)
@@ -10442,11 +10465,11 @@ export const useRawDataStore = create<DataState>()(
         }
         const errors = validateSettlement(input)
         if (errors.length) throw new Error(errors.join(' — '))
+        if (!Number.isSafeInteger(bookMinor) || !Number.isSafeInteger(args.actualMinor) || !Number.isSafeInteger(args.actualMinor - bookMinor)) throw new Error('رصيد التسوية أو فرقها غير صالح أو يتجاوز الدقة الآمنة — يلزم المراجعة')
 
         // 3) قيد الفرق (يضرب 5112 إجبارياً — درس عجز الـ5,000 المتبخر في mobileshop)
         const variance = settlementVariance(input)
         const entryLines = buildSettlementEntry(input)
-        const now = localIsoTimestamp()
         const id = nextId(state.settlements)
         const doc: SettlementDoc = {
           id,

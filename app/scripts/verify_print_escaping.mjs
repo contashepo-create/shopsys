@@ -83,6 +83,12 @@ function printHtmlRegions(src) {
     if (end < 0) throw new Error('تعذر تحديد نهاية قالب مسودة السند')
     regions.push([draft, end])
   }
+  const postedVoucher = src.indexOf('const previewPostedVoucher = (id: number) => {')
+  if (postedVoucher >= 0) {
+    const end = src.indexOf('const focusVoucherForEdit', postedVoucher)
+    if (end < 0) throw new Error('تعذر تحديد نهاية قالب السند المرحّل')
+    regions.push([postedVoucher, end])
+  }
   return regions
 }
 

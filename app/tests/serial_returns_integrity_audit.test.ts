@@ -43,7 +43,7 @@ it('يرفض تاريخ المرتجع التالف القديم الملتبس 
   const sale = s.postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 1000, unitCostMinor: 100, discountPercent: 0, soldByWeight: false, serials: ['SER-1', 'SER-2'] }], customerId: null, payment: 'cash', treasury: '1101', paidMinor: 2000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
   useRawDataStore.setState({ saleReturns: [{ id: 1, saleId: sale.id, lines: [{ ...sale.lines[0], qty: 1, saleLineIndex: 0, condition: 'damaged' }] }] as never })
   const before = useRawDataStore.getState()
-  expect(() => s.postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable', serials: ['SER-2'] }], refund: 'cash', reason: 'رد' })).toThrow(/السابق غير مثبتة/)
+  expect(() => s.postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable', serials: ['SER-2'] }], refund: 'cash', reason: 'رد' })).toThrow(/السابق غير مثبتة|تاريخ.*غير صالح/)
   expect(useRawDataStore.getState().serials).toBe(before.serials)
 })
 it('يرفض اختيار سيريال من سطر آخر في فاتورة شراء متعددة السطور', () => {

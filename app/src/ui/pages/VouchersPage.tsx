@@ -25,6 +25,7 @@ import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.t
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { usePrintPreview } from '../components/printPreviewStore.ts'
 import { toCsv } from '../../core/security.ts'
 import { PURCHASE_EXPENSE_CODE, voucherCountersFor } from '../../core/voucherCounters.ts'
@@ -107,6 +108,11 @@ export function VouchersPage() {
   const [reverseReason, setReverseReason] = useState('')
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
+  const postedPreviewRebuild = useRef<(() => string) | null>(null)
+  useLayoutEffect(() => {
+    const preview = usePrintPreview.getState()
+    if (preview.open && postedPreviewRebuild.current && preview.handle?.rebuild === postedPreviewRebuild.current) preview.refresh()
+  }, [vouchers, journal])
   const reverseApproval = useSupervisorApproval('acc.journal.reverse')
   // ربط الشجرة المفتوحة بالسندات (طلب المالك): حساب إيراد مخصص يظهر في القبض،
   // وحساب مصروف مخصص يظهر في الصرف — ويُعالج بقيد سليم فور اختياره
@@ -294,6 +300,40 @@ export function VouchersPage() {
     if (preview.open && preview.handle?.rebuild === liveDraftRebuild.current && preview.handle.html !== draftPreviewHtml) preview.refresh()
   }, [draftPreviewHtml])
   const printDraft = () => printHtml(draftPreviewHtml, { preview: { title: 'معاينة مسودة السند قبل الطباعة', rebuild: liveDraftRebuild.current } })
+
+  const previewPostedVoucher = (id: number) => {
+    const rebuild = () => {
+      const current = useDataStore.getState()
+      const voucher = current.vouchers.find(row => row.id === id)
+      const journalEntry = voucher && current.journal.find(row => row.id === voucher.journalEntryId)
+      if (!voucher || !journalEntry) throw new Error('السند أو قيده لم يعد متاحاً في الفرع')
+      const settings = resolveDocumentPrintSettings(voucher)
+      const party = voucher.partyKind === 'customer' ? current.customers.find(row => row.id === voucher.partyId)?.nameAr
+        : voucher.partyKind === 'supplier' ? current.suppliers.find(row => row.id === voucher.partyId)?.nameAr
+        : voucher.partyKind === 'employee' ? current.employees.find(row => row.id === voucher.partyId)?.nameAr : undefined
+      const title = voucher.kind === 'receipt' ? 'سند قبض' : voucher.kind === 'payment' ? 'سند صرف' : 'سند تحويل'
+      const details: [string, string][] = [
+        ['المنشأة', settings.setup.shopName || 'المنشأة'], ['الفرع', settings.branchName || '—'],
+        ['رقم السند', voucher.voucherNumber], ['الحالة', voucher.reversalEntryId ? `معكوس بقيد #${voucher.reversalEntryId}` : 'مرحّل'],
+        ['التاريخ', voucher.date.slice(0, 10)], ['الطرف', party || '—'], ['الخزينة', `${voucher.treasury} — ${nameOf(voucher.treasury)}`],
+        ['الحساب المقابل', `${voucher.counterAccountCode} — ${nameOf(voucher.counterAccountCode)}`],
+        ['المبلغ', `${fmt(voucher.amountMinor)} ${cur.symbol}`], ['المبلغ كتابة', amountInWords(voucher.amountMinor, cur)],
+        ['البيان', voucher.description || '—'], ['القيد', `#${journalEntry.entryNumber} — ${journalEntry.date} — ${journalEntry.createdBy || '—'}`],
+      ]
+      if (voucher.fx) details.push(['العملة الأجنبية وسعرها', `${(voucher.fx.amountMinor / 10 ** voucher.fx.decimals).toFixed(voucher.fx.decimals)} ${voucher.fx.currencyCode} — ${formatRate(voucher.fx.ratePpm)}`])
+      if (voucher.receiptCollectorEmployeeId) details.push(['المحصّل', current.employees.find(row => row.id === voucher.receiptCollectorEmployeeId)?.nameAr ?? `#${voucher.receiptCollectorEmployeeId}`])
+      if (voucher.projectId != null) details.push(['المشروع', current.projects.find(row => row.id === voucher.projectId)?.nameAr ?? `#${voucher.projectId}`])
+      if (voucher.costCenterId != null) details.push(['مركز التكلفة', current.costCenters.find(row => row.id === voucher.costCenterId)?.nameAr ?? `#${voucher.costCenterId}`])
+      if (voucher.vehicleId != null) details.push(['المركبة', `#${voucher.vehicleId}`])
+      if (voucher.allocations?.length) details.push(['التوزيع', voucher.allocations.map(row => `${row.docLabel || row.docKey}: ${fmt(row.appliedMinor)}`).join('؛ ')])
+      if (voucher.unallocatedMinor) details.push(['تحت الحساب', fmt(voucher.unallocatedMinor)])
+      const rows = details.map(([label, value]) => `<tr><th>${escapePrintText(label)}</th><td>${escapePrintText(value)}</td></tr>`).join('')
+      const ledger = journalEntry.lines.map(line => `<tr><td>${escapePrintText(`${line.accountCode} — ${nameOf(line.accountCode)}`)}</td><td>${escapePrintText(fmt(line.debit))}</td><td>${escapePrintText(fmt(line.credit))}</td></tr>`).join('')
+      return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#0f172a}h1{border-bottom:3px solid #0f172a;padding-bottom:12px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #cbd5e1;padding:8px;text-align:right;overflow-wrap:anywhere}th{background:#f8fafc}</style></head><body><h1>${escapePrintText(title)}</h1><table>${rows}</table><h2>القيد المحاسبي</h2><table><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>${ledger}</tbody></table><p>توقيع المستفيد: .................... &nbsp; أمين الخزينة: .................... &nbsp; الاعتماد: ....................</p></body></html>`
+    }
+    try { const html = rebuild(); postedPreviewRebuild.current = rebuild; printHtml(html, { preview: { title: 'معاينة السند المرحّل قبل الطباعة', rebuild } }) }
+    catch (error) { toast.show(error instanceof Error ? error.message : 'تعذر بناء معاينة السند', 'error') }
+  }
 
   const focusVoucherForEdit = () => {
     document.querySelector<HTMLInputElement>('[data-voucher-amount]')?.focus()
@@ -905,6 +945,7 @@ export function VouchersPage() {
                   {reversed ? `معكوس بقيد #${viewing.reversalEntryId} — لا يدخل في أرصدة الطرف` : 'السند مرحّل — التصحيح يكون بقيد عاكس لا بالحذف'}
                 </span>
                 <div className="flex items-center gap-2">
+                  <Btn variant="ghost" onClick={() => previewPostedVoucher(viewing.id)}><Printer size={14} /> معاينة وطباعة السند</Btn>
                   {!reversed && <Btn variant="danger" onClick={() => { setReverseTarget(viewing); setReverseReason('') }}><Undo2 size={14} /> عكس السند</Btn>}
                   <Btn variant="ghost" onClick={() => setViewing(null)}>إغلاق</Btn>
                 </div>

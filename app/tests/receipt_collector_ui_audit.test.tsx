@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { VouchersPage } from '../src/ui/pages/VouchersPage.tsx'
 import { RepresentativeSalesTab } from '../src/ui/pages/RepresentativeSalesTab.tsx'
@@ -42,6 +42,20 @@ it('زر معاينة مسودة السند يفتح ورقة قابلة للط�
  fireEvent.change(screen.getByPlaceholderText('مثال: تحصيل دفعة من العميل…'), { target: { value: 'بيان محدث' } })
  expect(usePrintPreview.getState().handle?.html).toContain('بيان محدث')
  expect(useRawDataStore.getState().vouchers).toHaveLength(0)
+})
+it('معاينة السند المرحّل تطبع بياناته وقيده وتهرّب البيان وتظهر العكس عند تحديثها', () => {
+ const s = useDataStore.getState()
+ const voucher = s.postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '4110', amountMinor: 1000, description: '<b>تحصيل</b>' })
+ render(<MemoryRouter><VouchersPage /></MemoryRouter>)
+ fireEvent.click(screen.getByText(voucher.voucherNumber))
+ fireEvent.click(screen.getByRole('button', { name: 'معاينة وطباعة السند' }))
+ const preview = usePrintPreview.getState()
+ expect(preview.handle?.html).toContain(voucher.voucherNumber)
+ expect(preview.handle?.html).toContain('&lt;b&gt;تحصيل&lt;/b&gt;')
+ expect(preview.handle?.html).toContain('القيد المحاسبي')
+ expect(preview.handle?.html).toContain('مرحّل')
+ act(() => { s.reverseVoucher(voucher.id, 'تصحيح') })
+ expect(usePrintPreview.getState().handle?.html).toContain('معكوس بقيد')
 })
 it('يظهر القبض والعكس في دفتر منفصل ويحتفظان بحدود النطاق في المعاينة', () => {
  const s = useDataStore.getState()
