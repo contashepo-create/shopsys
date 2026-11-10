@@ -3087,7 +3087,7 @@ interface DataState {
   settleDailyWorker: (workerId: number, treasury: string) => { total: number; recordCount: number }
   /* ─── أوامر التعديل: أذون صرف مواد + تحصيلات FIFO + دفعات باطن + EVM + موافقات ─── */
   /** إذن صرف مواد لمشروع: خصم مخزون بالمتوسط المرجح → 5110/1103 بصارف ومستلم إلزاميين */
-  issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string }) => MaterialRequisition
+  issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string; date?: string }) => MaterialRequisition
   /** الفواتير المفتوحة لعميل (بيع آجل + مستخلصات مشاريعه الآجلة) بعد التحصيلات والمرتجعات */
   /**
    * @param includeSettled إرجاع المستندات المسدّدة بالكامل أيضاً (للتقارير التحليلية
@@ -4526,10 +4526,10 @@ function planApprovalConsumption(state: DataState, action: ApprovalAction, refId
 }
 
 /** تخطيط محافظ للصرف الداخلي والإتلاف: من مخزن الصنف الأساسي وبقيمة المخزون الدقيقة. */
-function planInventoryOutflow(state: DataState, requested: { itemId: number; qty: number }[], date: string | undefined) {
+function planInventoryOutflow(state: DataState, requested: { itemId: number; qty: number }[], date: string | undefined, permission: 'inv.adjust' | 'ops.activity.use' = 'inv.adjust') {
   const scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
   if (state.branches.length && !branch) throw new Error('حدد الفرع الحالي قبل إخراج المخزون')
-  if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('inv.adjust')) throw new Error('لا تملك صلاحية تسوية المخزون') }
+  if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has(permission)) throw new Error('لا تملك صلاحية حركة المخزون المطلوبة') }
   const now = localIsoTimestamp(), day = date ?? now.slice(0, 10)
   if (!isValidExpiryDate(day)) throw new Error('تاريخ حركة المخزون غير صالح')
   if (day !== now.slice(0, 10)) throw new Error('حركة المخزون متاحة بتاريخ اليوم فقط — الرصيد والتكلفة التاريخيان غير مثبتين')
@@ -18608,79 +18608,79 @@ export const useRawDataStore = create<DataState>()(
 
       /* ─── أوامر التعديل: أذون صرف مواد + تحصيلات FIFO + دفعات باطن + EVM + موافقات ─── */
       issueMaterials: (args) => {
-        const state = get()
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
-        if (project.status === 'completed') throw new Error('المشروع مقفل — لا صرف مواد عليه')
-        // الصارف والمستلم إلزاميان من قاعدة الموظفين (أمر التعديل)
-        const issuer = state.employees.find((e) => e.id === args.issuedByEmployeeId)
-        if (!issuer) throw new Error('حدد أمين المخزن (الصارف) من سجل الموظفين')
-        const receiver = state.employees.find((e) => e.id === args.receivedByEmployeeId)
-        if (!receiver) throw new Error('حدد مهندس الموقع/المشرف (المستلم) من سجل الموظفين')
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(p => p.id === args.projectId)
+        if (!project || state.projects.filter(p => p.id === args.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (project.status !== 'active') throw new Error('المشروع مقفل — لا صرف مواد عليه')
+        const issuer = scoped.employees.find(e => e.id === args.issuedByEmployeeId && e.active)
+        if (!issuer || state.employees.filter(e => e.id === args.issuedByEmployeeId).length !== 1) throw new Error('حدد أمين المخزن (الصارف) النشط من سجل موظفي الفرع')
+        const receiver = scoped.employees.find(e => e.id === args.receivedByEmployeeId && e.active)
+        if (!receiver || state.employees.filter(e => e.id === args.receivedByEmployeeId).length !== 1) throw new Error('حدد مهندس الموقع/المشرف (المستلم) النشط من سجل موظفي الفرع')
         if (issuer.id === receiver.id) throw new Error('الصارف والمستلم لا يكونان نفس الموظف')
         if (args.lines.length === 0) throw new Error('أضف صنفاً واحداً على الأقل')
-        // بناء السطور بالتحويل للوحدة الأساسية وفحص التوافر الصارم (لا سالب إطلاقاً)
         const planned = new Map<number, number>()
-        const lines: MaterialIssueLine[] = args.lines.map((input) => {
-          const item = state.items.find((it) => it.id === input.itemId)
-          if (!item) throw new Error('صنف غير موجود في إذن الصرف')
-          assertSerialBatchMovementSupported(state, item.id)
+        const provisional: MaterialIssueLine[] = args.lines.map(input => {
+          const item = scoped.items.find(it => it.id === input.itemId)
+          if (!item || state.items.filter(it => it.id === input.itemId).length !== 1) throw new Error('صنف غير موجود أو غير فريد في الفرع الحالي')
           const line = buildIssueLine(input, item, planned.get(item.id) ?? 0)
-          planned.set(item.id, (planned.get(item.id) ?? 0) + line.baseQty)
+          const total = Math.round(((planned.get(item.id) ?? 0) + line.baseQty) * 1000) / 1000
+          if (!Number.isSafeInteger(Math.round(total * 1000))) throw new Error('الكمية المجمعة خارج الحدود الآمنة')
+          planned.set(item.id, total)
           return line
         })
-        const totalCost = lines.reduce((sum, l) => sum + l.costMinor, 0)
-        // بوابة الموافقات: إذن الصرف إجراء حرج — تُقاس بإجمالي تكلفة الإذن
+        const plan = planInventoryOutflow(state, [...planned].map(([itemId, qty]) => ({ itemId, qty })), args.date, 'ops.activity.use')
+        const { now, withdrawals } = plan
+        if (project.startDate && (!isValidExpiryDate(project.startDate) || project.startDate > now.slice(0, 10))) throw new Error('تاريخ المشروع غير صالح أو بعد تاريخ صرف المواد')
+        // توزيع القيمة المحمولة بدقة على سطور الصنف المتكرر من إجمالي السحب نفسه.
+        const cumulative = new Map<number, number>(), allocated = new Map<number, number>()
+        const lines = provisional.map(line => {
+          const totalQty = planned.get(line.itemId)!, totalValue = withdrawals.get(line.itemId)!.withdrawnValueMinor
+          const nextQty = Math.round(((cumulative.get(line.itemId) ?? 0) + line.baseQty) * 1000) / 1000
+          const nextCost = nextQty === totalQty ? totalValue : Math.round(totalValue * (nextQty / totalQty))
+          const costMinor = nextCost - (allocated.get(line.itemId) ?? 0)
+          cumulative.set(line.itemId, nextQty); allocated.set(line.itemId, nextCost)
+          return { ...line, costMinor }
+        })
+        const totalCost = lines.reduce((sum, line) => sum + line.costMinor, 0)
+        if (!Number.isSafeInteger(totalCost)) throw new Error('تكلفة إذن الصرف خارج الحدود الآمنة')
         const approvalRequests = planApprovalConsumption(state, 'material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`, totalCost)
-        const id = nextId(state.materialRequisitions)
-        const reqNumber = `MRQ-${String(id).padStart(4, '0')}`
+        const id = nextId(state.materialRequisitions), reqNumber = `MRQ-${String(id).padStart(4, '0')}`
         const entryLines = buildMaterialIssueEntry(totalCost, `${reqNumber} — ${project.nameAr}`)
-        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إذن صرف مواد ${reqNumber} — ${project.nameAr}`,
           sourceType: 'material_issue', sourceId: id, lines: entryLines,
-          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const req: MaterialRequisition = {
           id, reqNumber, projectId: project.id, date: now,
           issuedByEmployeeId: issuer.id, issuedByName: issuer.nameAr,
           receivedByEmployeeId: receiver.id, receivedByName: receiver.nameAr,
-          lines, totalCostMinor: totalCost, notes: args.notes, status: 'issued', journalEntryId: entryId,
+          lines, totalCostMinor: totalCost, notes: sanitizeText(args.notes, 500), status: 'issued', journalEntryId: entryId,
+          batchAllocations: plan.lines.flatMap(line => line.batchAllocations.map(batch => ({ itemId: line.itemId, ...batch }))),
         }
-        // خصم المخزون بالوحدة الأساسية + سجل تدقيق كامل للحركة (Audit Trail)
-        const updatedItems = state.items.map((it) => {
-          const issued = planned.get(it.id)
-          return issued ? { ...it, stockQty: Math.round((it.stockQty - issued) * 1000) / 1000 } : it
+        const updatedItems = state.items.map(it => {
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor, costMinor: withdrawal.remainingQty > 0 ? Math.round(withdrawal.remainingValueMinor / withdrawal.remainingQty) : it.costMinor })
         })
-        // دفعات الصلاحية (مواد كيماوية/إضافات لها تاريخ): الصرف يستهلك الدفعات FEFO
-        // كي لا تبقى أرصدة وهمية تولد تنبيهات صلاحية كاذبة — الصرف للتشغيل يقبل حتى المنتهي
-        // (قرار المهندس في الموقع) لذا لا حظر هنا، فقط الخصم المنظم
-        let issueBatches = state.batches
-        for (const [itemId, qty] of planned) {
-          if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
-          issueBatches = applyFefo(issueBatches, planFefo(issueBatches, itemId, qty, now))
-        }
         let moveId = nextId(state.stockMoves)
-        const moves: StockMove[] = lines.map((l) => ({
-          id: moveId++, date: now, itemId: l.itemId, qtyDelta: -l.baseQty,
-          balanceAfter: updatedItems.find((it) => it.id === l.itemId)?.stockQty ?? 0,
-          reason: `إذن صرف ${reqNumber} — ${project.nameAr}`, docType: 'material_issue', docId: id, byUser: issuer.nameAr,
-        }))
-        // التكلفة تدخل تكاليف المشروع المباشرة فوراً (بند مواد) — لدقة الربحية وEVM
+        const balances = new Map(state.items.map(item => [item.id, item.stockQty]))
+        const moves: StockMove[] = lines.map(line => {
+          const balanceAfter = Math.round(((balances.get(line.itemId) ?? 0) - line.baseQty) * 1000) / 1000
+          balances.set(line.itemId, balanceAfter)
+          return { id: moveId++, date: now, itemId: line.itemId, qtyDelta: -line.baseQty, balanceAfter,
+            reason: `إذن صرف ${reqNumber} — ${project.nameAr}`, docType: 'material_issue', docId: id, byUser: issuer.nameAr }
+        })
         const cost = {
           id: nextId(state.projectCosts), projectId: project.id, date: now.slice(0, 10),
           kind: 'materials' as CostKind, description: `مواد منصرفة ${reqNumber}`,
           amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId, source: 'material_issue' as const,
         }
-        set({
-          approvalRequests,
-          materialRequisitions: [...state.materialRequisitions, req],
-          stockMoves: [...state.stockMoves, ...moves],
-          projectCosts: [...state.projectCosts, cost],
-          items: updatedItems, batches: issueBatches, journal: [...state.journal, entry],
-        })
+        set({ approvalRequests, materialRequisitions: [...state.materialRequisitions, req],
+          stockMoves: [...state.stockMoves, ...moves], projectCosts: [...state.projectCosts, cost],
+          items: updatedItems, batches: plan.batches, journal: [...state.journal, entry] })
         return req
       },
 

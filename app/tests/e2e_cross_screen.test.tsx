@@ -8,9 +8,12 @@
  *  - عقد باطن: منسدلة الموردين المسجلين
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
+
+// محاكاة قفل الواجهة فقط؛ لا يثبت هذا الاختبار تزامن Web Locks أو Electron.
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
 
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
@@ -151,6 +154,7 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
     chooseQuick(unitSelect, 'طن')
     fireEvent.click(r.getByText('📦 صرف المواد'))
 
+    await waitFor(() => expect(S().materialRequisitions.length).toBeGreaterThan(0))
     const req = S().materialRequisitions.at(-1)!
     expect(req.issuedByName).toBe('حمدي أمين المخزن') // الاسم سُحب ديناميكياً من سجل الموظفين
     expect(req.receivedByName).toBe('م. وليد مهندس التنفيذ')

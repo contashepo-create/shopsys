@@ -6,9 +6,12 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * EvmDashboardPage — لوحة القيمة المكتسبة (موازنة/فعلي/إنجاز + تنبيهات تجاوز)
  * ApprovalsPage — مسارات الموافقات التسلسلية وطلبات الاعتماد
  */
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PackageMinus, Plus, Trash2, HandCoins, Gauge, ShieldCheck, CheckCircle2, XCircle, AlertTriangle, ListChecks } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { inventoryOutflowFingerprint } from './inventoryOutflowFingerprint.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -33,7 +36,7 @@ function useCur() {
 interface DraftIssueLine { itemId: string; qty: string; unitAr: string }
 
 export function MaterialIssuesPage() {
-  const { materialRequisitions, projects, employees, items, issueMaterials } = useDataStore()
+  const { materialRequisitions, projects, employees, items } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -44,6 +47,16 @@ export function MaterialIssuesPage() {
   const [receivedBy, setReceivedBy] = useState('')
   const [lines, setLines] = useState<DraftIssueLine[]>([])
   const [notes, setNotes] = useState('')
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false), basis = useRef('')
+  const signature = JSON.stringify([open, projectId, issuedBy, receivedBy, lines, notes, date])
+  const currentSignature = useRef(signature)
+  useLayoutEffect(() => { currentSignature.current = signature }, [signature])
+  const fingerprint = () => {
+    const s = useRawDataStore.getState()
+    return JSON.stringify([inventoryOutflowFingerprint(), s.projects, s.employees, s.materialRequisitions, s.stockMoves, s.projectCosts, s.approvalFlows, s.approvalRequests])
+  }
 
   const activeEmployees = employees.filter((e) => e.active)
   const stockItems = items.filter((it) => it.isActive)
@@ -51,6 +64,7 @@ export function MaterialIssuesPage() {
   const openNew = () => {
     setProjectId(''); setIssuedBy(''); setReceivedBy(''); setNotes('')
     setLines([{ itemId: '', qty: '1', unitAr: '' }])
+    setDate(todayLocalIso()); basis.current = fingerprint()
     setOpen(true)
   }
 
@@ -60,20 +74,28 @@ export function MaterialIssuesPage() {
     return [it.baseUnit, ...it.extraUnits.map((u) => u.nameAr)]
   }
 
-  const save = () => {
+  const save = async () => {
+    if (pending.current) return
+    pending.current = true; setSaving(true)
+    const expectedSignature = signature
+    let committed = false
     try {
-      const parsed: IssueLineInput[] = lines
-        .filter((l) => l.itemId && Number(l.qty) > 0)
-        .map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty), unitAr: l.unitAr }))
-      const req = issueMaterials({
-        projectId: Number(projectId),
-        issuedByEmployeeId: Number(issuedBy),
-        receivedByEmployeeId: Number(receivedBy),
-        lines: parsed, notes: notes.trim(),
+      const req = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (currentSignature.current !== expectedSignature || fingerprint() !== basis.current) throw new Error('تغير نموذج الإذن أو بيانات المشروع والمخزون — أغلق النافذة وراجع البيانات')
+        const parsed: IssueLineInput[] = lines.filter(l => l.itemId).map(l => ({ itemId: Number(l.itemId), qty: Number(l.qty), unitAr: l.unitAr }))
+        const result = useRawDataStore.getState().issueMaterials({
+          projectId: Number(projectId), issuedByEmployeeId: Number(issuedBy), receivedByEmployeeId: Number(receivedBy),
+          lines: parsed, notes: notes.trim(), date,
+        })
+        committed = true
+        return result
       })
       toast.show(`صدر إذن الصرف ${req.reqNumber} بتكلفة ${fmt(req.totalCostMinor)} — حُمِّلت على المشروع ✅`)
       setOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) { setOpen(false); toast.show('سُجل الإذن محلياً لكن تعذر تأكيد الحفظ — راجع الإذن والقيد والمخزون قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر تأمين إذن الصرف', 'error')
+    } finally { pending.current = false; setSaving(false) }
   }
 
   return (
@@ -123,6 +145,8 @@ export function MaterialIssuesPage() {
 
       <Modal open={open} onClose={() => setOpen(false)} title="إذن صرف مواد لمشروع" wide subtitle="مستند إذن صرف: خروج مواد من المخزن إلى مشروع">
         <div className="space-y-4"><DocSectionHead step="١" title="المشروع والمواد المنصرفة" hint="صرف المواد تكلفة مشروع لا مصروف عام" />
+          <Field label="تاريخ صرف المواد"><input aria-label="تاريخ صرف المواد" type="date" value={date} min={todayLocalIso()} max={todayLocalIso()} onChange={e => setDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          <p className="text-[11px] text-slate-500">الترحيل بتاريخ اليوم فقط ومن مخزن الصنف الأساسي؛ الماضي غير متاح لعدم إثبات رصيده وتكلفته. صرف الدفعة المنتهية يخضع لقرار الموقع، فراجع الصلاحية قبل التسجيل.</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="المشروع *">
               <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
@@ -172,7 +196,7 @@ export function MaterialIssuesPage() {
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="صبّة القواعد — بلوك أ…" /></Field>
           <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بتكلفة المنصرف على مركز تكلفة المشروع · <b>1103 المخزون</b> دائناً بها بالمتوسط المرجح لحظة الصرف.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
+            <Btn onClick={() => void save()} shortcut="F9" disabled={saving || !projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
           </div>
         </div>
       </Modal>
