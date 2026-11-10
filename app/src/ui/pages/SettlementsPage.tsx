@@ -25,7 +25,7 @@ const SECTIONS: { id: Section; nameAr: string; icon: typeof Scale; hint: string 
 
 export function SettlementsPage() {
   const store = useDataStore()
-  const { treasuries, customers, suppliers, journal, settlements, applySettlement } = store
+  const { treasuries, customers, suppliers, journal, settlements } = store
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -48,6 +48,15 @@ export function SettlementsPage() {
   const [refId, setRefId] = useState<string>('')
   const [actual, setActual] = useState('')
   const [reason, setReason] = useState('')
+  const [settlementSaving, setSettlementSaving] = useState(false)
+  const settlementPending = useRef(false)
+  const settlementDraft = useRef('')
+  const settlementDraftValue = JSON.stringify([section, refId, actual, reason])
+  useLayoutEffect(() => { settlementDraft.current = settlementDraftValue }, [settlementDraftValue])
+  const settlementScope = () => {
+    const s = useRawDataStore.getState()
+    return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.employees, s.roleOverrides, s.branchRoleOverrides, s.customRoles, s.treasuries, s.customers, s.suppliers, useAppStore.getState().setup, useAppStore.getState().fiscalYears, todayLocalIso()])
+  }
   const meta = SECTIONS.find((s) => s.id === section)!
 
   const options = useMemo(() => {
@@ -78,17 +87,36 @@ export function SettlementsPage() {
   // التسويات تضرب حساب 5112 مباشرة — عملية حساسة تتطلب اعتماد مشرف (inv.adjust)
   const approval = useSupervisorApproval('inv.adjust')
   const submit = () => {
-    if (!refId || actualMinor == null) return
+    if (!refId || actualMinor == null || bookMinor == null || settlementPending.current) return
+    const expectedDraft = settlementDraft.current, expectedScope = settlementScope(), expectedBook = bookMinor
     approval.request((approvedBy) => {
-    try {
-      const doc = applySettlement({ section, refId: section === 'treasury' ? refId : Number(refId), actualMinor, reason, approvedBy })
-      toast.show(
-        doc.varianceMinor === 0
-          ? `مطابقة تامة ✓ وُثقت ${doc.settlementNumber} بلا قيد (لا فرق)`
-          : `رُحّلت ${doc.settlementNumber}: فرق ${fmt(Math.abs(doc.varianceMinor))} ${cur.symbol} ضرب حساب فروق التسويات 5112`,
-      )
-      setActual(''); setReason('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      if (settlementPending.current) return
+      if (settlementDraft.current !== expectedDraft || settlementScope() !== expectedScope) return toast.show('تغيرت بيانات التسوية قبل الاعتماد — راجعها وأعد المحاولة', 'error')
+      settlementPending.current = true; setSettlementSaving(true)
+      let committed = false
+      void (async () => {
+        try {
+          const doc = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+            const live = useDataStore.getState()
+            const liveBook = section === 'treasury'
+              ? live.journal.reduce((sum, entry) => sum + entry.lines.reduce((n, line) => n + (line.accountCode === refId ? line.debit - line.credit : 0), 0), 0)
+              : section === 'customer' ? live.getCustomerBalance(Number(refId)) : live.getSupplierBalance(Number(refId))
+            if (settlementDraft.current !== expectedDraft || settlementScope() !== expectedScope || liveBook !== expectedBook) throw new Error('تغير الرصيد أو بيانات التسوية — راجعها قبل الترحيل')
+            const result = useRawDataStore.getState().applySettlement({ section, refId: section === 'treasury' ? refId : Number(refId), actualMinor, reason, approvedBy })
+            committed = true
+            return result
+          })
+          toast.show(doc.varianceMinor === 0
+            ? `مطابقة تامة ✓ وُثقت ${doc.settlementNumber} بلا قيد (لا فرق)`
+            : `رُحّلت ${doc.settlementNumber}: فرق ${fmt(Math.abs(doc.varianceMinor))} ${cur.symbol} ضرب حساب فروق التسويات 5112`)
+          if (settlementDraft.current === expectedDraft) { setActual(''); setReason('') }
+        } catch (e) {
+          if (committed) {
+            if (settlementDraft.current === expectedDraft) { setActual(''); setReason('') }
+            toast.show('سُجلت التسوية محلياً لكن تعذر تأكيد الحفظ — راجع سجل التسويات والدفتر قبل إعادة المحاولة', 'error')
+          } else toast.show(e instanceof Error ? e.message : 'تعذر تأمين ترحيل التسوية', 'error')
+        } finally { settlementPending.current = false; setSettlementSaving(false) }
+      })()
     })
   }
 
@@ -178,7 +206,7 @@ export function SettlementsPage() {
           <Field label="سبب التسوية" hint="إلزامي — يظهر في القيد وسجل المراجعة">
             <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} placeholder="مثال: جرد نهاية الشهر / اتفاق مع العميل على خصم…" />
           </Field>
-          <Btn onClick={submit} shortcut="F9" disabled={!refId || actualMinor == null || !reason.trim()} className="w-full">ترحيل التسوية</Btn>
+          <Btn onClick={submit} shortcut="F9" disabled={settlementSaving || !refId || actualMinor == null || !reason.trim()} className="w-full">{settlementSaving ? 'جارٍ تأمين التسوية…' : 'ترحيل التسوية'}</Btn>
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">

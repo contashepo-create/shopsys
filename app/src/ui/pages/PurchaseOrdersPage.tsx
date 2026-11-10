@@ -1,4 +1,4 @@
-import { previewWarehouseReceipt } from '../print/previewWarehouseReceipt.ts'
+import { useLiveWarehouseReceipt } from '../print/previewWarehouseReceipt.ts'
 /**
  * أوامر الشراء — طلب المالك.
  * أمر الشراء التزام تجاري لا قيد محاسبي: يوثّق المطلوب من المورد بكمياته
@@ -248,22 +248,26 @@ export function PurchaseOrdersPage() {
    * إذن استلام بنود الأمر (GRN) — كميات فقط بلا أي سعر، للمطابقة عند التسليم.
    * لا يُحرّك مخزوناً: الحركة الفعلية تُرحَّل مع فاتورة الشراء وحدها.
    */
-  const printWarehouseReceipt = () => {
+  const buildWarehouseReceipt = () => {
     const clean = lines.filter((line) => line.itemId > 0 && line.qty > 0)
-    if (!clean.length) return toast.show('أضف أصنافاً قبل طباعة إذن الاستلام', 'error')
-    previewWarehouseReceipt({
+    return {
       title: 'إذن استلام بنود أمر شراء (كميات فقط)',
       docNumber: pendingDraftNumber(purchaseOrders),
       dateLabel: `التسليم المتوقع ${expectedDate}`,
       partyLabel: selectedSupplier?.nameAr ?? (supplierName.trim() || 'مورد نقدي'),
-      branchLabel: resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName || (branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'المنشأة'),
+      branchLabel: resolveDocumentPrintSettings(currentPrintRecord()).branchName,
       companyName: resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName ?? 'المنشأة',
       userLabel: currentUser?.nameAr ?? setup.ownerName ?? 'المالك',
       lines: clean.map((line) => {
         const item = items.find((row) => row.id === line.itemId)
         return { nameAr: item?.nameAr ?? line.nameAr, qty: line.qty, unit: item?.baseUnit, code: item?.sku, barcode: item?.barcodes?.[0], warehouseAr: warehouses.find((w) => w.id === (line.warehouseId ?? warehouseId))?.nameAr }
       }),
-    })
+    }
+  }
+  const openWarehouseReceipt = useLiveWarehouseReceipt(buildWarehouseReceipt)
+  const printWarehouseReceipt = () => {
+    if (!lines.some((line) => line.itemId > 0 && line.qty > 0)) return toast.show('أضف أصنافاً قبل طباعة إذن الاستلام', 'error')
+    openWarehouseReceipt()
     toast.show('إذن الاستلام جاهز — كميات فقط بلا أسعار 📦 (لا يُحرّك المخزون)')
   }
   const quickPrint = () => printDraft((userPrefs[String(currentUserId ?? 'owner')]?.preferredPrintTemplate) ?? (printSwitches.cashierPrint ? 'thermal' : 'a4'))

@@ -87,7 +87,7 @@ const ruleOf = (selector) => {
 {
   assert.ok(frame.includes('onWarehouseReceipt') && frame.includes('إذن استلام مستودع'), 'زر إذن الاستلام غير موجود في المستند')
   for (const [label, src] of PAGES) {
-    assert.ok(src.includes('previewWarehouseReceipt') && src.includes('onWarehouseReceipt'), `${label}: زر إذن الاستلام بلا معالج حقيقي`)
+    assert.ok(src.includes('useLiveWarehouseReceipt') && src.includes('onWarehouseReceipt'), `${label}: زر إذن الاستلام بلا معالج حقيقي`)
   }
   const preview = read('src/ui/print/previewWarehouseReceipt.ts')
   assert.ok(preview.includes('buildWarehouseReceiptHtml') && preview.includes('printHtml(rebuild()') && preview.includes('warehouseReceipt'), 'معاينة الإذن لا تستخدم البناء المشترك وإعدادات الإذن')
