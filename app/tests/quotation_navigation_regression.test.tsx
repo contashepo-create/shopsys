@@ -117,3 +117,9 @@ it('يظهر العرض في فرع مقاولات بنشاط مستقل وتع�
  fireEvent.click(document.querySelector('[data-menubar-title="contracting"]')!)
  expect(within(document.querySelector('[data-menubar-menu="contracting"]') as HTMLElement).getByRole('menuitem', { name: 'عروض الأسعار والمناقصات' })).toBeTruthy()
 })
+it('في فرع بصلاحية العروض وحدها يبقى اسم الشاشة ظاهراً داخل قسم المقاولات في الشريط الجانبي', () => {
+ useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'الفرع', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }], activeBranchId: 2, currentUserId: 2, appUsers: [{ id: 2, nameAr: 'موظف', roleId: 'custom_quote', active: true, pinHash: '', branchId: 2 }], customRoles: [{ id: 'custom_quote', nameAr: 'العروض' }], branchRoleOverrides: { 2: { custom_quote: ['sales.quotation.manage'] } } })
+ render(<MemoryRouter><Sidebar collapsed={false} onToggle={() => {}} /></MemoryRouter>)
+ fireEvent.click(screen.getByRole('button', { name: 'المقاولات' }))
+ expect(screen.getByRole('link', { name: 'عروض الأسعار والمناقصات' }).getAttribute('href')).toBe('/contracting/quotations')
+})

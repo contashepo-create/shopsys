@@ -7,6 +7,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop, Star } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
+import { APP_VERSION } from '../../core/updates.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
@@ -116,7 +117,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           const colors = SECTION_COLORS[sec.color]
           const isOpen = openSections.has(sec.id)
           const hasActive = sec.children.some((c) => c.path === location.pathname)
-          const single = sec.children.length === 1
+          // لا نُخفي اسم الشاشة عندما لا يملك موظف الفرع إلا صلاحية واحدة في المقاولات.
+          const single = sec.children.length === 1 && sec.id !== 'contracting'
 
           if (single) {
             const child = sec.children[0]
@@ -203,7 +205,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
       {/* الإصدار */}
       <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 dark:text-slate-600 flex items-center justify-between">
-        <span dir="ltr">TAHAKAM ERP v0.1.0</span>
+        <span dir="ltr">TAHAKAM ERP v{APP_VERSION}</span>
         <span className="px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 font-bold">م / محمد عبدة</span>
       </div>
     </aside>
