@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { draftFromCategory } from '../src/core/items.ts'
@@ -73,4 +73,23 @@ it('تعديل بيع مرحّل يعرض مسودة بلا رمز ضريبي ق
  fireEvent.change(qtyInput(), { target: { value: '17' } })
  expect(text()).toMatch(/\b17\b/)
  expect(usePrintPreview.getState().handle?.html).not.toContain('data:image/png;base64')
+})
+
+it('إرسال تعديل بيع عبر واتساب يوسمه مسودة ولا يستخدم الرمز الضريبي المجمد', () => {
+ useAppStore.setState({ setup: { ...useAppStore.getState().setup, requireOpenShiftForSales: false } })
+ const sale = useRawDataStore.getState().postSale({ lines: [{ itemId: 1, nameAr: 'صنف مباشر', qty: 1, unitPriceMinor: 5000, unitCostMinor: 3000, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, documentDate: '2026-01-01' })
+ useRawDataStore.setState({ sales: [{ ...sale, taxQrPayload: 'cHJpbnQtZmFrZS1wYXlsb2Fk' }] })
+ const bridge = vi.fn().mockResolvedValue({ ok: true, copied: false })
+ const context = globalThis as typeof globalThis & { shopsysPdfShare?: typeof bridge }
+ const originalBridge = context.shopsysPdfShare; context.shopsysPdfShare = bridge
+ try {
+  render(<MemoryRouter initialEntries={[`/sales/invoices/new?edit=${sale.id}`]}><AdvancedSalesInvoicePage /></MemoryRouter>)
+  fireEvent.change(qtyInput(), { target: { value: '17' } })
+  fireEvent.click(screen.getByTitle('يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة'))
+  expect(bridge).toHaveBeenCalledOnce()
+  const html = bridge.mock.calls[0][0] as string
+  expect(html).toContain(`مسودة تعديل ${sale.invoiceNumber}`)
+  expect(html).not.toContain('data:image/png;base64')
+  expect(new DOMParser().parseFromString(html, 'text/html').body.textContent).toMatch(/\b17\b/)
+ } finally { context.shopsysPdfShare = originalBridge }
 })

@@ -40,9 +40,9 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
 
 /* ③ الطباعة بعد الحفظ: تتبع المفتاح ولا تعطّل الترحيل عند الفشل */
 {
-  const idx = purchasePage.indexOf('printAfterSave){try{printDraft(printSwitches.cashierPrint')
-  assert.ok(idx > 0, 'الطباعة بعد الحفظ لا تتبع مفتاح الكاشير')
-  assert.ok(purchasePage.slice(idx, idx + 400).includes('الطباعة لا تعطّل الترحيل'), 'فشل الطباعة بعد الحفظ قد يوقف الترحيل')
+  const idx = purchasePage.indexOf('printAfterSave&&committedPurchase){if(currentPreviewScope()!==expectedScope)')
+  assert.ok(idx > purchasePage.indexOf('});if(completed)'), 'الطباعة يجب أن تأتي بعد تأكيد الحفظ وتتبع مفتاح الكاشير')
+  assert.ok(purchasePage.slice(idx, idx + 400).includes('printPostedPurchase(committedPurchase,printSwitches.cashierPrint') && purchasePage.slice(idx, idx + 400).includes('الطباعة لا تعطّل الترحيل'), 'فشل الطباعة بعد الحفظ قد يوقف الترحيل')
   R.ok('الطباعة بعد الحفظ داخل try/catch — الطباعة لا تعطّل الترحيل')
 }
 

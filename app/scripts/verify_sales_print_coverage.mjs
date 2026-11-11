@@ -82,7 +82,12 @@ for (const file of FILES) {
       const simple = callee.split('.').pop()
       if (PRINT_CALLS.has(simple)) {
         const text = node.getText(sf)
-        if (!NON_TAX_MARKERS.some((m) => text.includes(m)) && !DRAFT_MARKERS.some((m) => text.includes(m))) {
+        // استثناء محدد للمحرر فقط: نموذج مشاركة المسودة معلّم DRAFT ولا يستخدم حمولة المستند القديم.
+        const draftSaleShare = file === 'src/ui/pages/AdvancedSalesInvoicePage.tsx'
+          && simple === 'shareDocPdfViaWhatsapp' && text.includes('model:draftSaleShareModel')
+          && src.includes("const draftSaleShareModel=buildPrintModel(totals,undefined,{invoiceNumber:docNumber,dateIso:invoiceDate,refCode:'DRAFT'})")
+          && src.includes("docLabel:'مسودة فاتورة مبيعات'")
+        if (!NON_TAX_MARKERS.some((m) => text.includes(m)) && !DRAFT_MARKERS.some((m) => text.includes(m)) && !draftSaleShare) {
           const fnAncestors = [...ancestors].reverse().filter((n) => ts.isFunctionLike(n))
           const nearestText = fnAncestors.length ? fnAncestors[0].getText(sf) : ''
           const scopes = fnAncestors.map((n) => n.getStart(sf))

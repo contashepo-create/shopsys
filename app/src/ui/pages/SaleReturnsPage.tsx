@@ -6,7 +6,8 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * ← ④ مراجعة وتأكيد: ملخص المبالغ وتوزيع الرد قبل الترحيل.
  * المحاسبة: قيد عاكس متوازن — التالف يذهب لبند الهالك 5111 ولا يدخل المخزون.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { returnPostingFingerprint } from './returnPostingFingerprint.ts'
 import { useNavigate } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat, Pencil } from 'lucide-react'
 import { useDataStore, useRawDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo.ts'
@@ -81,6 +82,9 @@ export function SaleReturnsPage() {
   const [customWaived, setCustomWaived] = useState('')
   const [reasonCode, setReasonCode] = useState('changed_mind')
   const [reason, setReason] = useState('')
+  const liveReturnDraft = useRef('')
+  const returnDraftValue = JSON.stringify([wizardOpen, sale?.id, wiz, refund, refundTreasury, terminalRefundReference, customCash, customCredit, customStore, customWaived, reasonCode, reason])
+  useLayoutEffect(() => { liveReturnDraft.current = returnDraftValue }, [returnDraftValue])
   const [viewing, setViewing] = useState<SaleReturn | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
 
@@ -208,26 +212,37 @@ export function SaleReturnsPage() {
   const approval = useSupervisorApproval()
   const submit = () => {
     if (!sale || !specs.length || !preview || preview.allocErrors.length > 0 || postingRef.current) return
+    const expectedDraft = liveReturnDraft.current, expectedBasis = returnPostingFingerprint('sale', sale.id)
     approval.request((approvedBy) => {
       if (postingRef.current) return
+      if (liveReturnDraft.current !== expectedDraft || returnPostingFingerprint('sale', sale.id) !== expectedBasis) return toast.show('تغيرت بيانات المرتجع أو أساسه قبل الاعتماد — راجعه', 'error')
       postingRef.current = true
       setIsPosting(true)
-      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postSaleReturn({
-        saleId: sale.id,
-        lineSpecs: specs,
-        refund,
-        ...(refund === 'custom' && preview ? { allocation: preview.alloc } : {}),
-        reason: reason.trim() || returnReasonName(reasonCode),
-        reasonCode,
-        treasury: originalTerminalCharge ? (sale.treasury ?? undefined) : (refundTreasury || undefined),
-        approvedBy,
-        ...(originalTerminalCharge && preview.alloc.cashMinor > 0 ? { terminalRefund: { originalTransactionId: originalTerminalCharge.id, providerReference: terminalRefundReference.trim() } } : {}),
-      })).then((ret) => {
+      let committed: SaleReturn | null = null
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (liveReturnDraft.current !== expectedDraft || returnPostingFingerprint('sale', sale.id) !== expectedBasis) throw new Error('تغيرت بيانات المرتجع أو أساسه — راجعه قبل الترحيل')
+        const result = postSaleReturn({
+          saleId: sale.id,
+          lineSpecs: specs,
+          refund,
+          ...(refund === 'custom' && preview ? { allocation: preview.alloc } : {}),
+          reason: reason.trim() || returnReasonName(reasonCode),
+          reasonCode,
+          treasury: originalTerminalCharge ? (sale.treasury ?? undefined) : (refundTreasury || undefined),
+          approvedBy,
+          ...(originalTerminalCharge && preview.alloc.cashMinor > 0 ? { terminalRefund: { originalTransactionId: originalTerminalCharge.id, providerReference: terminalRefundReference.trim() } } : {}),
+        })
+        committed = result
+        return result
+      }).then((ret) => {
         toast.show(`تم المرتجع ${ret.returnNumber} — تولد القيد العاكس ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}${ret.crossShiftNote ? ` — ${ret.crossShiftNote}` : ''}`)
         discardWizard()
         setViewing(ret)
       }).catch((e: unknown) => {
-        toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل المرتجع', 'error')
+        if (committed) {
+          discardWizard(); setViewing(committed)
+          toast.show('سُجل المرتجع محلياً لكن تعذر تأكيد الحفظ — راجع سجل المرتجعات والدفتر قبل إعادة المحاولة', 'error')
+        } else toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل المرتجع', 'error')
       }).finally(() => { postingRef.current = false; setIsPosting(false) })
     })
   }
