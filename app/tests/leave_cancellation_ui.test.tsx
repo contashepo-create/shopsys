@@ -6,8 +6,8 @@ import { useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { monthlySummary } from '../src/core/attendance.ts'
 import { useToast } from '../src/ui/components/ui.tsx'
-const control = vi.hoisted(() => ({ before: null as null | (() => void), failAfter: false }))
-vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => { control.before?.(); const result = commit(); if (control.failAfter) throw new Error('flush failed'); return result } }))
+const control = vi.hoisted(() => ({ before: null as null | (() => void), failAfter: false, hold: false, release: null as null | (() => void) }))
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => { if (control.hold) await new Promise<void>(resolve => { control.release = resolve }); control.before?.(); const result = commit(); if (control.failAfter) throw new Error('flush failed'); return result } }))
 const initial = useRawDataStore.getState(), app = useAppStore.getState(), state = () => useRawDataStore.getState()
 beforeEach(() => {
  const setup = { ...app.setup, completed: true, countryCode: 'EG' as const }
@@ -15,7 +15,7 @@ beforeEach(() => {
  useRawDataStore.setState({ ...initial, currentUserId: null, activeBranchId: null, branches: [], employees: [], attendanceRecords: [], leaveRequests: [], payrollRuns: [], payrollSlips: [] })
  state().addEmployee({ nameAr: 'أحمد', phone: '', roleId: 'cashier', salaryMinor: 30000, active: true } as never)
  state().addEmployee({ nameAr: 'مريم', phone: '', roleId: 'cashier', salaryMinor: 30000, active: true } as never)
- control.before = null; control.failAfter = false; useToast.setState({ msg: null, kind: 'success' })
+ control.before = null; control.failAfter = false; control.hold = false; control.release = null; useToast.setState({ msg: null, kind: 'success' })
 })
 afterEach(() => { cleanup(); useRawDataStore.setState(initial); useAppStore.setState(app) })
 const add = (employeeId: number, from = '2026-11-02', to = '2026-11-03') => {
@@ -113,4 +113,74 @@ it('إعادة فحص الرصيد عند الاعتماد تمنع طلبين �
  state().decideLeaveRequest(one.id, true, 'مدير')
  expect(() => state().decideLeaveRequest(two.id, true, 'مدير')).toThrow(/لا يكفي/)
  expect(state().leaveRequests.find(l => l.id === two.id)?.status).toBe('pending')
+})
+it('لا يعتمد إجازة في فترة دخلت مسيراً أو قسيمة أو أقفلت، ولا يغير الحضور عند الرفض', () => {
+ const employee = state().employees[0]
+ const request = state().addLeaveRequest({ employeeId: employee.id, typeId: 'annual', from: '2026-11-02', to: '2026-11-03', reason: '' })
+ const approve = () => state().decideLeaveRequest(request.id, true, 'مدير')
+ useRawDataStore.setState({ payrollSlips: [{ employeeId: employee.id, month: '2026-11', status: 'accrued' }] as never })
+ expect(approve).toThrow(/قسيمة/); expect(state().attendanceRecords).toHaveLength(0)
+ useRawDataStore.setState({ payrollSlips: [], payrollRuns: [{ month: '2026-11', lines: [{ employeeId: employee.id }] }] as never })
+ expect(approve).toThrow(/مسير/)
+ useRawDataStore.setState({ payrollRuns: [] })
+ useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: 'مقفلة', startDate: '2026-01-01', endDate: '2026-12-31', status: 'closed' }] })
+ expect(approve).toThrow(/مقفلة/)
+ state().decideLeaveRequest(request.id, false, 'مدير')
+ expect(state().attendanceRecords).toHaveLength(0)
+ expect(() => state().deleteLeaveRequest(request.id)).toThrow(/محسوم/)
+})
+it('يحافظ على سجل الإلغاء ويرفض تكرار الهوية أو سجلات حضور متعارضة قبل الاعتماد والإلغاء', () => {
+ const employee = state().employees[0]
+ const req = state().addLeaveRequest({ employeeId: employee.id, typeId: 'annual', from: '2026-11-02', to: '2026-11-02', reason: '' })
+ const row = { employeeId: employee.id, date: '2026-11-02', status: 'present' as const, source: 'manual' as const }
+ useRawDataStore.setState({ attendanceRecords: [{ ...row, id: 1 }, { ...row, id: 2 }] })
+ expect(() => state().decideLeaveRequest(req.id, true, 'مدير')).toThrow(/غير فريد/)
+ useRawDataStore.setState({ attendanceRecords: [] }); state().decideLeaveRequest(req.id, true, 'مدير')
+ const applied = state().attendanceRecords[0]
+ useRawDataStore.setState({ attendanceRecords: [applied, { ...applied, id: 9 }] })
+ expect(() => state().cancelLeaveRequest(req.id, 'مدير', 'سبب')).toThrow(/غير فريد/)
+ expect(state().leaveRequests[0].status).toBe('approved')
+ useRawDataStore.setState({ attendanceRecords: [applied] }); state().cancelLeaveRequest(req.id, 'مدير', 'سبب')
+ expect(() => state().deleteLeaveRequest(req.id)).toThrow(/محسوم/)
+ expect(state().leaveRequests[0].status).toBe('cancelled')
+})
+it('صلاحية الإجازات تُفحص مجدداً عند إنشاء الطلب والقرار والحذف', () => {
+ const employee = state().employees[0]
+ const args = { employeeId: employee.id, typeId: 'annual', from: '2026-11-02', to: '2026-11-02', reason: '' }
+ const req = state().addLeaveRequest(args)
+ useRawDataStore.setState({ currentUserId: 999 })
+ expect(() => state().addLeaveRequest(args)).toThrow(/صلاحية/)
+ expect(() => state().decideLeaveRequest(req.id, true, 'مدير')).toThrow(/صلاحية/)
+ expect(() => state().deleteLeaveRequest(req.id)).toThrow(/صلاحية/)
+ expect(state().leaveRequests[0].status).toBe('pending')
+})
+it('اعتماد الطلب من الواجهة يقفل التنفيذ ويمنع تكراره', async () => {
+ const employee = state().employees[0]
+ state().addLeaveRequest({ employeeId: employee.id, typeId: 'annual', from: '2026-11-02', to: '2026-11-02', reason: '' })
+ renderPage(); control.hold = true
+ const approve = screen.getByRole('button', { name: 'اعتماد' })
+ fireEvent.click(approve); fireEvent.click(approve)
+ expect(approve.hasAttribute('disabled')).toBe(true)
+ await act(async () => { control.release?.(); await Promise.resolve() })
+ await waitFor(() => expect(state().leaveRequests[0].status).toBe('approved'))
+ expect(state().attendanceRecords).toHaveLength(1)
+})
+it('يرفض الاعتماد إذا تغير الحضور أو الفرع أثناء انتظار القفل', async () => {
+ const employee = state().employees[0]
+ state().addLeaveRequest({ employeeId: employee.id, typeId: 'annual', from: '2026-11-02', to: '2026-11-02', reason: '' })
+ renderPage(); control.before = () => { useRawDataStore.setState({ activeBranchId: 2 }) }
+ await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'اعتماد' })) })
+ expect(state().leaveRequests[0].status).toBe('pending')
+ expect(state().attendanceRecords).toHaveLength(0)
+ expect(useToast.getState().msg).toContain('تغيرت بيانات الإجازة')
+})
+it('فشل تأكيد حفظ الاعتماد يحذر من مراجعة السجل بدلاً من تكراره', async () => {
+ const employee = state().employees[0]
+ state().addLeaveRequest({ employeeId: employee.id, typeId: 'annual', from: '2026-11-02', to: '2026-11-02', reason: '' })
+ renderPage(); control.failAfter = true
+ await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'اعتماد' })) })
+ expect(state().leaveRequests[0].status).toBe('approved')
+ expect(state().attendanceRecords).toHaveLength(1)
+ expect(useToast.getState().msg).toContain('تعذر تأكيد الحفظ')
+ expect(screen.queryByRole('button', { name: 'اعتماد' })).toBeNull()
 })

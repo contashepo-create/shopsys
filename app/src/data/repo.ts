@@ -6013,6 +6013,31 @@ function assertEmployeeInActiveBranch(state: DataState, employeeId: number): voi
   }
 }
 
+/** إدارة الإجازات تُراجع سياق الفرع وصلاحية المستخدم عند كل كتابة. */
+function assertLeaveAccess(state: DataState): DataState {
+  const scoped = getBranchScopedDataState(state)
+  if (state.branches.length > 1 && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الإجازات')
+  if (state.currentUserId != null) {
+    const user = scoped.appUsers.find((row) => row.id === state.currentUserId && row.active)
+    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+    if (!user || !effectivePermissionsFor(user, roles).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين والإجازات')
+  }
+  return scoped
+}
+
+/** لا يُغيّر الإجازة أثر حضور دخل مسيراً أو فترة مالية مقفلة دون تصحيح مستقل. */
+function assertLeavePeriodMutable(state: DataState, request: LeaveRequest, operation: string): string[] {
+  if (!isValidExpiryDate(request.from) || !isValidExpiryDate(request.to)) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
+  const dates = leaveDates(request)
+  if (!dates.length) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
+  const months = new Set(dates.map((date) => date.slice(0, 7)))
+  if (state.payrollSlips.some((slip) => slip.employeeId === request.employeeId && months.has(slip.month) && slip.status !== 'cancelled') || state.payrollRuns.some((run) => months.has(run.month) && run.lines.some((line) => line.employeeId === request.employeeId))) throw new Error(`يوجد مسير أو قسيمة مرحلة لفترة الإجازة — راجع الرواتب قبل ${operation}`)
+  const branch = getEffectiveActiveBranch(state) ?? (state.branches.length === 1 ? state.branches[0] : null)
+  const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
+  if (dates.some((date) => dateInClosedYear(date, years))) throw new Error(`تقع الإجازة في فترة مالية مقفلة — راجع المحاسب قبل ${operation}`)
+  return dates
+}
+
 /** صلاحيات العروض تُراجع عند الكتابة أيضاً، حتى بعد سحب الصلاحية من نافذة مفتوحة. */
 function assertQuotationAccess(state: DataState, permission = 'sales.quotation.manage'): DataState {
   const scoped = getBranchScopedDataState(state)
@@ -7267,7 +7292,7 @@ export const useRawDataStore = create<DataState>()(
       },
       addLeaveRequest: (args) => {
         const state = get()
-        const scoped = getBranchScopedDataState(state)
+        const scoped = assertLeaveAccess(state)
         // لا نسجل إجازة لموظف شبح أو تابع لفرع آخر في هذا النطاق.
         assertEmployeeInActiveBranch(state, args.employeeId)
         const days = leaveDaysBetween(args.from, args.to)
@@ -7284,11 +7309,13 @@ export const useRawDataStore = create<DataState>()(
       },
       decideLeaveRequest: (id, approve, by) => {
         const state = get()
-        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
-        if (!request) throw new Error('طلب الإجازة غير موجود')
+        const scoped = assertLeaveAccess(state)
+        const request = scoped.leaveRequests.find((l) => l.id === id)
+        if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        assertEmployeeInActiveBranch(state, request.employeeId)
         if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
         if (approve) {
-          const scoped = getBranchScopedDataState(state)
+          assertLeavePeriodMutable(state, request, 'الاعتماد')
           const errors = validateLeaveRequest({ employeeId: request.employeeId, typeId: request.typeId, from: request.from, to: request.to, leaves: scoped.leaveRequests.filter((leave) => leave.id !== id), types: scoped.leaveTypes })
           if (errors.length) throw new Error(errors.join(' — '))
         }
@@ -7297,6 +7324,10 @@ export const useRawDataStore = create<DataState>()(
         /* عند الاعتماد: تُعلَّم أيام الإجازة في شبكة الحضور تلقائياً (فوق أي «حاضر» سابق) */
         if (approve) {
           const dates = leaveDates(request)
+          for (const date of dates) {
+            const rows = state.attendanceRecords.filter((row) => row.employeeId === request.employeeId && row.date === date)
+            if (rows.length > 1 || rows.some((row) => state.attendanceRecords.filter((other) => other.id === row.id).length !== 1)) throw new Error('سجل الحضور غير فريد — راجعه قبل اعتماد الإجازة')
+          }
           const byDay = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
           const nextRecords = [...state.attendanceRecords]
           const attendanceAtApproval: NonNullable<LeaveRequest['attendanceAtApproval']> = []
@@ -7327,26 +7358,15 @@ export const useRawDataStore = create<DataState>()(
         if (matches.length !== 1 || !request) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
         if (request.status !== 'approved') throw new Error('لا يمكن إلغاء طلب غير معتمد')
         if (!reason.trim()) throw new Error('اكتب سبب إلغاء الإجازة')
-        const scoped = getBranchScopedDataState(state)
-        if (state.currentUserId != null) {
-          const user = scoped.appUsers.find((row) => row.id === state.currentUserId && row.active)
-          const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
-          if (!user || !effectivePermissionsFor(user, roles).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين والإجازات')
-        }
-        if (state.branches.length > 1 && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إلغاء الإجازة')
+        assertLeaveAccess(state)
         assertEmployeeInActiveBranch(state, request.employeeId)
-        if (!isValidExpiryDate(request.from) || !isValidExpiryDate(request.to)) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
-        const dates = leaveDates(request)
-        if (!dates.length) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
-        const months = new Set(dates.map((date) => date.slice(0, 7)))
-        if (state.payrollSlips.some((slip) => slip.employeeId === request.employeeId && months.has(slip.month) && slip.status !== 'cancelled') || state.payrollRuns.some((run) => months.has(run.month) && run.lines.some((line) => line.employeeId === request.employeeId))) throw new Error('يوجد مسير أو قسيمة مرحلة لفترة الإجازة — راجع الرواتب قبل الإلغاء')
-        const branch = getEffectiveActiveBranch(state)
-        const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
-        if (dates.some((date) => dateInClosedYear(date, years))) throw new Error('تقع الإجازة في فترة مالية مقفلة — راجع المحاسب قبل الإلغاء')
+        const dates = assertLeavePeriodMutable(state, request, 'الإلغاء')
         let records = [...state.attendanceRecords]
         const legacy: AttendanceRecord[] = []
         if (request.attendanceAtApproval) {
           for (const snapshot of request.attendanceAtApproval) {
+            const matching = records.filter((row) => row.employeeId === request.employeeId && row.date === snapshot.date)
+            if (matching.length > 1 || records.filter((row) => row.id === snapshot.applied.id).length > 1) throw new Error('سجل الحضور غير فريد — راجعه قبل الإلغاء')
             const index = records.findIndex((row) => row.id === snapshot.applied.id && row.employeeId === request.employeeId && row.date === snapshot.date)
             // لا نطمس أي تعديل أو استيراد لاحق على سجل الحضور.
             if (index < 0 || JSON.stringify(records[index]) !== JSON.stringify(snapshot.applied)) continue
@@ -7368,9 +7388,10 @@ export const useRawDataStore = create<DataState>()(
       },
       deleteLeaveRequest: (id) => {
         const state = get()
-        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
-        if (!request) throw new Error('طلب الإجازة غير موجود')
-        if (request.status === 'approved') throw new Error('لا يُحذف طلب معتمد — راسل طلباً معاكساً أو عدّل شبكة الحضور')
+        const request = assertLeaveAccess(state).leaveRequests.find((l) => l.id === id)
+        if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        assertEmployeeInActiveBranch(state, request.employeeId)
+        if (request.status !== 'pending') throw new Error('لا يُحذف طلب محسوم — احتفظ بسجل القرار واستخدم الإلغاء للطلب المعتمد')
         set({ leaveRequests: state.leaveRequests.filter((l) => l.id !== id) })
       },
       updateHrRules: (patch) => {
