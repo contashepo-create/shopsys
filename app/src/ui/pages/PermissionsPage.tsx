@@ -18,6 +18,7 @@ import { getCountry } from '../../core/countries.ts'
 import { toMinor } from '../../core/money.ts'
 import { Btn, DecimalInput, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 import { localDateTimeLabel } from '../../core/time.ts'
+import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
@@ -26,13 +27,14 @@ export function PermissionsPage() {
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const setup = useAppStore((s) => s.setup)
   const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
-  const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
+  const { effectiveActivityId, effectiveModules } = useEffectiveBranchScope()
+  const allRoles = rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId)
   // فلترة حسب النشاط (أمر المالك): «كاشير» لا يظهر لنشاط بلا كاشير،
   // والصلاحيات المعروضة = العامة + ما تخص وحدات النشاط المفعلة فقط
-  const roles = visibleRolesForModules(allRoles, setup.modules)
-  const PERMISSIONS = permissionsForModules(setup.modules)
-  const PERMISSION_SECTIONS = permissionSectionsForModules(setup.modules)
-  const CRUD_ROWS = crudMatrixForModules(setup.modules)
+  const roles = visibleRolesForModules(allRoles, effectiveModules)
+  const PERMISSIONS = permissionsForModules(effectiveModules)
+  const PERMISSION_SECTIONS = permissionSectionsForModules(effectiveModules)
+  const CRUD_ROWS = crudMatrixForModules(effectiveModules)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور

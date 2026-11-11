@@ -82,7 +82,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
     }))
     .filter((sec) => sec.children.length > 0)
   const { sections, paths: favoritePaths, toggle: toggleFavorite } = useNavigationFavorites(permittedSections)
-  const star = (path: string, name: string) => path === '/' ? null : <button type="button" aria-label={`${favoritePaths.includes(path) ? 'إزالة' : 'إضافة'} ${name} ${favoritePaths.includes(path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(path)} onClick={() => toggleFavorite(path)} className="p-2 text-amber-500"><Star size={14} fill={favoritePaths.includes(path) ? 'currentColor' : 'none'} /></button>
+  const star = (path: string, name: string) => path === '/' ? null : <button type="button" aria-label={`${favoritePaths.includes(path) ? 'إزالة' : 'إضافة'} ${name} ${favoritePaths.includes(path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(path)} onClick={() => toggleFavorite(path)} className="shrink-0 p-2 text-amber-500"><Star size={14} fill={favoritePaths.includes(path) ? 'currentColor' : 'none'} /></button>
 
   /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) + إشعار فوري عند
      وصول مستند جديد بانتظاره: يدخل نظام الاعتماد ويعتمد ما أدخله موظف آخر. */
@@ -313,7 +313,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
                     role="menuitem"
                     data-menubar-item={child.id}
                     onClick={(event) => onItemClick(event, child.path)}
-                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                    className={`flex min-w-0 flex-1 items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
                       child.path === location.pathname ? 'font-bold' : ''
                     }`}
                   >
@@ -354,7 +354,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
                   data-menubar-item={child.id}
                   onClick={(event) => onItemClick(event, child.path)}
                   onMouseEnter={() => setActiveIndex(index)}
-                  className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors ${
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors ${
                     index === activeIndex ? 'bg-brand-500/15 text-brand-700 dark:text-brand-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
                   } ${isCurrent ? 'font-bold' : ''}`}
                 >

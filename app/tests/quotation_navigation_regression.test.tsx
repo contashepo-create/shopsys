@@ -103,3 +103,17 @@ describe('استعادة الوصول لعروض الأسعار', () => {
     expect(useRawDataStore.getState().roleOverrides.warehouse_keeper).not.toContain('sales.quotation.manage')
   })
 })
+it('يظهر العرض في فرع مقاولات بنشاط مستقل وتعرض الصلاحيات أدوار الفرع لا إعداداً متأخراً', () => {
+ const setup = { ...originalApp.setup, completed: true, activityId: 'clinic' as const, modules: ['contracting'] as typeof originalApp.setup.modules }
+ useAppStore.setState({ setup, companySetup: setup })
+ useRawDataStore.setState({ branches: [{ id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'مقاولات', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true, activityId: 'contracting' }], activeBranchId: 2, currentUserId: null, roleOverrides: {}, branchRoleOverrides: { 2: { project_manager: ['ops.activity.use'] } }, customRoles: [] })
+ const view = render(<MemoryRouter><PermissionsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByRole('button', { name: /مدير مشاريع/ }))
+ fireEvent.click(screen.getByLabelText('إدارة ومعاينة عروض الأسعار والمناقصات'))
+ expect(useRawDataStore.getState().branchRoleOverrides[2].project_manager).toContain('sales.quotation.manage')
+ view.unmount()
+ useRawDataStore.setState({ currentUserId: 2, appUsers: [{ id: 2, nameAr: 'مدير', roleId: 'project_manager', active: true, pinHash: '', branchId: 2 }] })
+ render(<MemoryRouter><MenuBar onSwitchToSidebar={() => {}} /></MemoryRouter>)
+ fireEvent.click(document.querySelector('[data-menubar-title="contracting"]')!)
+ expect(within(document.querySelector('[data-menubar-menu="contracting"]') as HTMLElement).getByRole('menuitem', { name: 'عروض الأسعار والمناقصات' })).toBeTruthy()
+})

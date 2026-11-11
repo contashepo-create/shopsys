@@ -37,3 +37,15 @@ it('لا تعرض المفضلة مساراً سحبت صلاحيته', () => {
  fireEvent.click(document.querySelector('[data-menubar-title="dashboard"]')!)
  expect(within(document.querySelector('[data-menubar-menu="dashboard"]') as HTMLElement).queryByRole('menuitem', { name: 'عروض الأسعار والمناقصات' })).toBeNull()
 })
+it('رابط كل بند يتمدد وتبقى النجمة في نهاية صف القائمة العلوية والجانبية', () => {
+ const view = render(<MemoryRouter><MenuBar onSwitchToSidebar={() => {}} /></MemoryRouter>)
+ fireEvent.click(document.querySelector('[data-menubar-title="contracting"]')!)
+ const menu = document.querySelector('[data-menubar-menu="contracting"]') as HTMLElement
+ const links = within(menu).getAllByRole('menuitem')
+ for (const link of links) { expect(link.className).toContain('flex-1'); expect(link.nextElementSibling?.className).toContain('shrink-0') }
+ view.unmount()
+ render(<MemoryRouter><Sidebar collapsed={false} onToggle={() => {}} /></MemoryRouter>)
+ fireEvent.click(screen.getByRole('button', { name: 'المقاولات' }))
+ const link = screen.getByRole('link', { name: 'عروض الأسعار والمناقصات' })
+ expect(link.className).toContain('flex-1'); expect(link.nextElementSibling?.className).toContain('shrink-0')
+})

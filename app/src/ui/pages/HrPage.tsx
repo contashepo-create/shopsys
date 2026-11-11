@@ -524,6 +524,9 @@ function LeavesTab() {
   const [calendarEmployee, setCalendarEmployee] = useState('all')
   const [cancelId, setCancelId] = useState<number | null>(null)
   const [cancelReason, setCancelReason] = useState('')
+  const [returnId, setReturnId] = useState<number | null>(null)
+  const [returnDate, setReturnDate] = useState('')
+  const [returnReason, setReturnReason] = useState('')
   const [cancelling, setCancelling] = useState(false)
   const cancelLock = useRef(false)
   const active = useMemo(() => employees.filter((e) => e.active), [employees])
@@ -577,6 +580,31 @@ function LeavesTab() {
       onLeave: approved.filter((l) => leaveDates(l).includes(date)).map((l) => ({ employee: empName(l.employeeId), type: typeName(l.typeId) })),
     }))
   }, [dates, leaveRequests, empName, typeName, calendarEmployee, employees])
+
+  const returnFromLeave = async () => {
+    if (returnId == null || cancelLock.current || operationLock.current) return
+    const request = leaveRequests.find((row) => row.id === returnId)
+    if (!request || !returnReason.trim()) return toast.show('اكتب سبب قطع الإجازة', 'error')
+    const basis = leaveBasis(), date = returnDate, reason = returnReason.trim()
+    cancelLock.current = true; setCancelling(true)
+    let committed = false
+    try {
+      const updated = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (leaveBasis() !== basis) throw new Error('تغيرت بيانات الإجازة أو الفرع — راجعها قبل قطع الإجازة')
+        const state = useRawDataStore.getState()
+        const user = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const result = state.returnFromLeave(returnId, date, user, reason)
+        committed = true
+        return result
+      })
+      setReturnId(null)
+      const legacy = updated.returnHistory?.at(-1)?.legacyAttendance?.length || updated.legacyAttendanceAtCancellation?.length
+      toast.show(legacy ? 'سُجلت العودة — راجع سجلات الحضور القديمة المؤرشفة يدوياً' : 'سُجل قطع الإجازة — راجع حضور الموظف من يوم العودة')
+    } catch (e) {
+      if (committed) { setReturnId(null); toast.show('نُفذت العملية محلياً لكن تعذر تأكيد الحفظ — راجع الإجازات والحضور قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر قطع الإجازة', 'error')
+    } finally { cancelLock.current = false; setCancelling(false) }
+  }
 
   const cancelLeave = async () => {
     if (cancelId == null || cancelLock.current || operationLock.current) return
@@ -662,7 +690,7 @@ function LeavesTab() {
                       </span>
                     </td>
                     <td className="p-1.5 text-center text-[10.5px] text-slate-400">{leave.decidedBy ?? '—'}{leave.decidedAt ? ` · ${leave.decidedAt.slice(0, 10)}` : ''}</td>
-                    <td className="p-1.5 text-center">{leave.status === 'approved' && <button type="button" disabled={saving || cancelling} onClick={() => { setCancelId(leave.id); setCancelReason('') }} className="rounded-lg bg-rose-500/15 px-2 py-1 font-bold text-rose-700">إلغاء الإجازة</button>}{leave.status === 'cancelled' && <details><summary>تفاصيل الإلغاء</summary><div>{leave.cancelledBy} · {leave.cancelledAt} · {leave.cancellationReason}</div>{leave.legacyAttendanceAtCancellation?.length ? <div>سجلات الحضور القديمة المؤرشفة للمراجعة: {leave.legacyAttendanceAtCancellation.map((row) => `${row.date} (${row.checkIn ?? '—'}–${row.checkOut ?? '—'}، ${row.source})`).join('، ')}</div> : null}</details>}</td>
+                    <td className="p-1.5 text-center">{leave.status === 'approved' && <button type="button" disabled={saving || cancelling} onClick={() => { setCancelId(leave.id); setCancelReason('') }} className="rounded-lg bg-rose-500/15 px-2 py-1 font-bold text-rose-700">إلغاء الإجازة</button>}{leave.status === 'approved' && <button type="button" disabled={saving || cancelling} onClick={() => { setReturnId(leave.id); setReturnDate(todayLocalIso() >= leave.from && todayLocalIso() <= leave.to ? todayLocalIso() : ''); setReturnReason('') }} className="m-1 rounded-lg bg-sky-500/15 px-2 py-1 font-bold text-sky-700">قطع الإجازة وعودة للعمل</button>}{!!leave.returnHistory?.length && <details><summary>تفاصيل العودة</summary>{leave.returnHistory.map((entry, i) => <div key={i}>العودة {entry.returnDate} · النهاية السابقة {entry.previousTo} · {entry.by} · {entry.at} · {entry.reason}{entry.legacyAttendance?.length ? <div>سجلات الحضور القديمة المؤرشفة للمراجعة: {entry.legacyAttendance.map((row) => `${row.date} (${row.checkIn ?? '—'}–${row.checkOut ?? '—'}، ${row.source})`).join('، ')}</div> : null}</div>)}</details>}{leave.status === 'cancelled' && <details><summary>تفاصيل الإلغاء</summary><div>{leave.cancelledBy} · {leave.cancelledAt} · {leave.cancellationReason}</div>{leave.legacyAttendanceAtCancellation?.length ? <div>سجلات الحضور القديمة المؤرشفة للمراجعة: {leave.legacyAttendanceAtCancellation.map((row) => `${row.date} (${row.checkIn ?? '—'}–${row.checkOut ?? '—'}، ${row.source})`).join('، ')}</div> : null}</details>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -725,6 +753,15 @@ function LeavesTab() {
           ))}
         </div>
       </section>
+
+      <Modal open={returnId != null} onClose={() => { if (!cancelling) setReturnId(null) }} title="قطع الإجازة والعودة للعمل">
+        <div className="space-y-3" dir="rtl">
+          <p>حدد أول يوم عاد فيه الموظف للعمل. تبقى الأيام السابقة إجازة معتمدة ويُلغى المتبقي من يوم العودة؛ لا يُسجَّل الحضور تلقائياً. يُمنع تعديل أيام دخلت راتباً مرحّلاً أو فترة مقفلة.</p>
+          <Field label="تاريخ العودة للعمل"><input type="date" aria-label="تاريخ العودة للعمل" className={inputCls} disabled={cancelling} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} min={leaveRequests.find((row) => row.id === returnId)?.from} max={leaveRequests.find((row) => row.id === returnId)?.to} /></Field>
+          <Field label="سبب قطع الإجازة"><input aria-label="سبب قطع الإجازة" className={inputCls} disabled={cancelling} value={returnReason} onChange={(e) => setReturnReason(e.target.value)} /></Field>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" disabled={cancelling} onClick={() => setReturnId(null)}>تراجع</Btn><Btn disabled={cancelling || !returnReason.trim() || !returnDate} onClick={() => { void returnFromLeave() }}>{cancelling ? 'جارٍ التسجيل…' : 'تأكيد قطع الإجازة'}</Btn></div>
+        </div>
+      </Modal>
 
       <Modal open={cancelId != null} onClose={() => { if (!cancelling) setCancelId(null) }} title="إلغاء إجازة معتمدة">
         <div className="space-y-3" dir="rtl">

@@ -239,6 +239,8 @@ export interface LeaveRequest {
   attendanceAtApproval?: { date: string; previous: AttendanceRecord | null; applied: AttendanceRecord }[]
   /** إجازات قديمة لا تحتوي نسخة الأصل: احتفظ بالسجل قبل إزالة علامة الإجازة للمراجعة. */
   legacyAttendanceAtCancellation?: AttendanceRecord[]
+  /** سجل قطع الإجازة: تاريخ أول يوم عمل، ونهاية المدة السابقة، والمسوّغ. */
+  returnHistory?: { returnDate: string; previousTo: string; by: string; at: string; reason: string; legacyAttendance?: AttendanceRecord[] }[]
   notes?: string
 }
 

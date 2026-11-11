@@ -127,7 +127,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 onClick={(event) => guardLink(event, child.path)}
                 style={{ animationDelay: `${i * 35}ms` }}
                 className={({ isActive }) =>
-                  `anim-up group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
+                  `anim-up group flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
                     isActive
                       ? `${colors.activeBg} ${colors.activeText} font-bold shadow-sm`
                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:translate-x-[-3px]'
@@ -139,7 +139,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 </span>
                 <span className="text-sm">{sec.nameAr}</span>
               </NavLink>
-              {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="ms-auto p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
+              {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="shrink-0 p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
               </div>
             )
           }
@@ -179,7 +179,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                         to={child.path}
                         onClick={(event) => guardLink(event, child.path)}
                         className={({ isActive }) =>
-                          `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
+                          `group flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
                             isActive
                               ? `${colors.activeBg} ${colors.activeText} font-bold`
                               : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:translate-x-[-3px]'
@@ -190,7 +190,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                         <child.icon size={15} className="opacity-70" />
                         <span>{child.nameAr}</span>
                       </NavLink>
-                      {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="ms-auto p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
+                      {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="shrink-0 p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
                       </div>
                     ))}
                   </div>

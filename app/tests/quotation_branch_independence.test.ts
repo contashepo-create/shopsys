@@ -15,3 +15,11 @@ it('يحفظ ويعيد فرع العرض ويعزل العرض عن الفرع 
  useRawDataStore.setState({ activeBranchId: 1 }); expect(useDataStore.getState().quotations.map(q => q.id)).toEqual([first.id])
 })
 it('يطلب اختيار فرع عندما يعرض المالك كل الفروع', () => { useRawDataStore.setState({ activeBranchId: null }); expect(() => useRawDataStore.getState().addQuotation(args)).toThrow(/حدد الفرع/); expect(useRawDataStore.getState().quotations).toHaveLength(0) })
+it('يستخدم نشاط الفرع الفعلي عند التحقق من صلاحية دور المقاولات حتى إذا كانت إعدادات الواجهة لم تتزامن', () => {
+ const company = { ...app.setup, completed: true, activityId: 'clinic' as const, modules: ['contracting'] as typeof app.setup.modules }
+ useAppStore.setState({ setup: company, companySetup: company })
+ useRawDataStore.setState({ branches: [branches[0], { ...branches[1], activityId: 'contracting' }], activeBranchId: 2, currentUserId: 2, appUsers: [{ id: 2, nameAr: 'مدير', roleId: 'project_manager', active: true, pinHash: '', branchId: 2 }], roleOverrides: {}, branchRoleOverrides: {}, customRoles: [] })
+ expect(useRawDataStore.getState().addQuotation({ ...args, clientId: 2 }).branchId).toBe(2)
+ useRawDataStore.setState({ appUsers: [{ id: 2, nameAr: 'مدير', roleId: 'project_manager', active: true, pinHash: '', branchId: 2, deniedPerms: ['sales.quotation.manage'] }] })
+ expect(() => useRawDataStore.getState().addQuotation({ ...args, clientId: 2 })).toThrow(/صلاحية/)
+})

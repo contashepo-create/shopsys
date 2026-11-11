@@ -1954,6 +1954,7 @@ interface DataState {
   decideLeaveRequest: (id: number, approve: boolean, by: string) => LeaveRequest
   /** إلغاء إجازة معتمدة مع الاحتفاظ بتاريخ القرار ومراجعة أثر الحضور والرواتب. */
   cancelLeaveRequest: (id: number, by: string, reason: string) => LeaveRequest
+  returnFromLeave: (id: number, returnDate: string, by: string, reason: string) => LeaveRequest
   /** حذف طلب إجازة معلّق */
   deleteLeaveRequest: (id: number) => void
   /** تحديث قواعد الاحتساب (وردية المنشأة وخصوماتها) */
@@ -6043,7 +6044,9 @@ function assertQuotationAccess(state: DataState, permission = 'sales.quotation.m
   const scoped = getBranchScopedDataState(state)
   if (state.currentUserId != null) {
     const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
-    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+    const company = useAppStore.getState().companySetup ?? useAppStore.getState().setup
+    const activityId = resolveBranchActivityId(getEffectiveActiveBranch(state), company.activityId)
+    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, activityId)
     if (!user || !effectivePermissionsFor(user, roles).has(permission)) throw new Error('لا تملك صلاحية تنفيذ هذه العملية على عروض الأسعار')
   }
   return scoped
@@ -7385,6 +7388,43 @@ export const useRawDataStore = create<DataState>()(
         const cancelled: LeaveRequest = { ...request, status: 'cancelled', cancelledBy: by.trim() || 'المالك', cancelledAt: localIsoTimestamp(), cancellationReason: reason.trim(), ...(legacy.length ? { legacyAttendanceAtCancellation: legacy } : {}) }
         set({ leaveRequests: state.leaveRequests.map((row) => row.id === id ? cancelled : row), attendanceRecords: records })
         return cancelled
+      },
+      returnFromLeave: (id, returnDate, by, reason) => {
+        const state = get()
+        const scoped = assertLeaveAccess(state)
+        const request = scoped.leaveRequests.find((row) => row.id === id)
+        if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        assertEmployeeInActiveBranch(state, request.employeeId)
+        if (request.status !== 'approved') throw new Error('لا يمكن قطع إجازة غير معتمدة')
+        if (!reason.trim()) throw new Error('اكتب سبب قطع الإجازة')
+        if (!isValidExpiryDate(returnDate) || returnDate < request.from || returnDate > request.to) throw new Error('تاريخ العودة يجب أن يقع داخل مدة الإجازة المعتمدة')
+        if (returnDate === request.from) return state.cancelLeaveRequest(id, by, reason)
+        // الماضي الذي قُضي فعلاً لا يمس؛ الحارس ينطبق فقط على الأيام المُلغاة.
+        const dates = assertLeavePeriodMutable(state, { ...request, from: returnDate }, 'قطع الإجازة')
+        let records = [...state.attendanceRecords]
+        const legacy: AttendanceRecord[] = []
+        for (const date of dates) {
+          const rows = records.filter((row) => row.employeeId === request.employeeId && row.date === date)
+          if (rows.length > 1 || rows.some((row) => records.filter((other) => other.id === row.id).length !== 1)) throw new Error('سجل الحضور غير فريد — راجعه قبل قطع الإجازة')
+          const snapshot = request.attendanceAtApproval?.find((row) => row.date === date)
+          if (snapshot) {
+            const index = records.findIndex((row) => row.id === snapshot.applied.id && row.employeeId === request.employeeId && row.date === date)
+            if (index < 0 || JSON.stringify(records[index]) !== JSON.stringify(snapshot.applied)) continue
+            if (snapshot.previous) records[index] = snapshot.previous
+            else records.splice(index, 1)
+          } else if (!request.attendanceAtApproval && rows[0]?.status === 'leave' && rows[0].notes === `إجازة معتمدة #${id}`) {
+            legacy.push({ ...rows[0] })
+            records = records.filter((row) => row.id !== rows[0].id)
+          }
+        }
+        const newTo = leaveDates({ from: request.from, to: returnDate }).at(-2)!
+        const updated: LeaveRequest = {
+          ...request, to: newTo, days: leaveDaysBetween(request.from, newTo),
+          ...(request.attendanceAtApproval ? { attendanceAtApproval: request.attendanceAtApproval.filter((row) => row.date < returnDate) } : {}),
+          returnHistory: [...(request.returnHistory ?? []), { returnDate, previousTo: request.to, by: by.trim() || 'المالك', at: localIsoTimestamp(), reason: reason.trim(), ...(legacy.length ? { legacyAttendance: legacy } : {}) }],
+        }
+        set({ leaveRequests: state.leaveRequests.map((row) => row.id === id ? updated : row), attendanceRecords: records })
+        return updated
       },
       deleteLeaveRequest: (id) => {
         const state = get()
@@ -12336,7 +12376,9 @@ export const useRawDataStore = create<DataState>()(
         assertCanManageUsers(state)
         const scoped = getBranchScopedDataState(state)
         const activeBranch = getEffectiveActiveBranch(state)
-        if (!rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId).some((role) => role.id === roleId)) {
+        const company = useAppStore.getState().companySetup ?? useAppStore.getState().setup
+        const activityId = resolveBranchActivityId(activeBranch, company.activityId)
+        if (!rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, activityId).some((role) => role.id === roleId)) {
           throw new Error('الدور غير موجود في نطاق هذا الفرع')
         }
         const cleanPermissions = [...new Set(permissions)]
