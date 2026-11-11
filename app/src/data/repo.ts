@@ -7396,6 +7396,7 @@ export const useRawDataStore = create<DataState>()(
         if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
         assertEmployeeInActiveBranch(state, request.employeeId)
         if (request.status !== 'approved') throw new Error('لا يمكن قطع إجازة غير معتمدة')
+        if (request.returnHistory?.length) throw new Error('سُجّل قطع هذه الإجازة مسبقاً — لا يمكن تسجيله مرة أخرى')
         if (!reason.trim()) throw new Error('اكتب سبب قطع الإجازة')
         if (!isValidExpiryDate(returnDate) || returnDate < request.from || returnDate > request.to) throw new Error('تاريخ العودة يجب أن يقع داخل مدة الإجازة المعتمدة')
         if (returnDate === request.from) return state.cancelLeaveRequest(id, by, reason)

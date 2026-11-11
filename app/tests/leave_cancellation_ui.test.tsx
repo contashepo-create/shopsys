@@ -212,7 +212,8 @@ it('يعالج الإجازة القديمة ويؤرشف الأيام المل�
  const result = state().returnFromLeave(leave.id, '2026-11-03', 'مدير', 'سبب')
  expect(result.returnHistory?.[0].legacyAttendance?.map(r => r.date)).toEqual(['2026-11-03', '2026-11-04'])
  expect(state().attendanceRecords.map(r => r.date)).toEqual(['2026-11-01', '2026-11-02'])
- expect(state().returnFromLeave(leave.id, '2026-11-01', 'مدير', 'إلغاء').status).toBe('cancelled')
+ expect(() => state().returnFromLeave(leave.id, '2026-11-01', 'مدير', 'مرة ثانية')).toThrow(/مسبقاً/)
+ expect(state().cancelLeaveRequest(leave.id, 'مدير', 'إلغاء مستقل').status).toBe('cancelled')
 })
 it('تسجيل العودة من الواجهة يحدّث السجل والتقويم مع بقاء الأيام الماضية', async () => {
  const a = state().employees[0]; add(a.id, '2026-11-01', '2026-11-04'); renderPage()
@@ -225,6 +226,9 @@ it('تسجيل العودة من الواجهة يحدّث السجل والتق
  expect((document.querySelector('[data-leave-date="2026-11-02"]') as HTMLElement).title).toContain('أحمد')
  expect((document.querySelector('[data-leave-date="2026-11-03"]') as HTMLElement).title).toBe('لا إجازات')
  expect(screen.getByText('تفاصيل العودة')).toBeTruthy()
+ expect(screen.queryByRole('button', { name: 'قطع الإجازة وعودة للعمل' })).toBeNull()
+ expect(() => state().returnFromLeave(state().leaveRequests[0].id, '2026-11-02', 'مدير', 'مرة أخرى')).toThrow(/مسبقاً/)
+ expect(state().leaveRequests[0].to).toBe('2026-11-02')
 })
 it('يمنع تغير السياق قبل العودة ويحذر عند تعذر تأكيد الحفظ', async () => {
  const leave = add(state().employees[0].id, '2026-11-01', '2026-11-04'); renderPage()
@@ -239,4 +243,14 @@ it('يمنع تغير السياق قبل العودة ويحذر عند تعذ�
  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /تأكيد قطع الإجازة/ })) })
  expect(state().leaveRequests.find(l => l.id === leave.id)?.to).toBe('2026-11-02')
  expect(useToast.getState().msg).toContain('تعذر تأكيد الحفظ')
+})
+
+it('يرفض القطع الثاني حتى لو اختار تاريخاً مختلفاً ويحفظ التدقيق والحضور دون تغيير', () => {
+ const [a, b] = state().employees
+ const first = add(a.id, '2026-11-01', '2026-11-05'); const second = add(b.id, '2026-11-01', '2026-11-05')
+ state().returnFromLeave(first.id, '2026-11-04', 'مدير', 'عودة')
+ const prior = state()
+ expect(() => state().returnFromLeave(first.id, '2026-11-02', 'مدير', 'قطع ثان')).toThrow(/مسبقاً/)
+ expect(state().leaveRequests).toBe(prior.leaveRequests); expect(state().attendanceRecords).toBe(prior.attendanceRecords)
+ expect(state().returnFromLeave(second.id, '2026-11-03', 'مدير', 'عودة')).toMatchObject({ to: '2026-11-02' })
 })
