@@ -16,6 +16,7 @@
  */
 import type { Minor } from './money.ts'
 import { calendarDateIso } from './time.ts'
+import { isValidExpiryDate } from './batches.ts'
 
 /* ───────────────────────── 1) الحضور اليومي ───────────────────────── */
 
@@ -217,7 +218,7 @@ export const DEFAULT_LEAVE_TYPES: LeaveTypeDef[] = [
   { id: 'unpaid', nameAr: 'بدون أجر', paid: false, annualQuotaDays: 60 },
 ]
 
-export type LeaveStatus = 'pending' | 'approved' | 'rejected'
+export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
 
 export interface LeaveRequest {
   id: number
@@ -231,15 +232,23 @@ export interface LeaveRequest {
   requestedAt: string
   decidedBy?: string | null
   decidedAt?: string | null
+  cancelledBy?: string | null
+  cancelledAt?: string | null
+  cancellationReason?: string
+  /** سجلات الحضور قبل ووقت الاعتماد لاستعادتها دون إلغاء تعديلات لاحقة. */
+  attendanceAtApproval?: { date: string; previous: AttendanceRecord | null; applied: AttendanceRecord }[]
+  /** إجازات قديمة لا تحتوي نسخة الأصل: احتفظ بالسجل قبل إزالة علامة الإجازة للمراجعة. */
+  legacyAttendanceAtCancellation?: AttendanceRecord[]
   notes?: string
 }
 
-export const LEAVE_STATUS_AR: Record<LeaveStatus, string> = { pending: 'بانتظار الاعتماد', approved: 'معتمدة', rejected: 'مرفوضة' }
+export const LEAVE_STATUS_AR: Record<LeaveStatus, string> = { pending: 'بانتظار الاعتماد', approved: 'معتمدة', rejected: 'مرفوضة', cancelled: 'ملغاة' }
 
 /** عدد الأيام بين تاريخين شاملَين */
 export function leaveDaysBetween(from: string, to: string): number {
-  const a = new Date(`${from}T00:00:00`).getTime()
-  const b = new Date(`${to}T00:00:00`).getTime()
+  if (!isValidExpiryDate(from) || !isValidExpiryDate(to)) return 0
+  const a = new Date(`${from}T00:00:00Z`).getTime()
+  const b = new Date(`${to}T00:00:00Z`).getTime()
   if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0
   return Math.round((b - a) / 86_400_000) + 1
 }
@@ -247,6 +256,7 @@ export function leaveDaysBetween(from: string, to: string): number {
 /** كل التواريخ التي تغطيها إجازة */
 export function leaveDates(leave: Pick<LeaveRequest, 'from' | 'to'>): string[] {
   const out: string[] = []
+  if (!isValidExpiryDate(leave.from) || !isValidExpiryDate(leave.to)) return out
   // تقويم مجرّد: أيام الإجازة لا تتغير بتوقيت الجهاز، والخطو بـ24 ساعة كان
   // يكرر يوماً أو يقفزه عند تقديم/تأخير الساعة الصيفية.
   const cursor = new Date(`${leave.from}T00:00:00Z`)
@@ -262,9 +272,10 @@ export function leaveDates(leave: Pick<LeaveRequest, 'from' | 'to'>): string[] {
 
 /** أيام النوع المعتمدة لموظف في سنة معينة */
 export function usedLeaveDays(leaves: LeaveRequest[], employeeId: number, year: number, typeId: string): number {
+  const first = `${year}-01-01`, last = `${year}-12-31`
   return leaves
-    .filter((l) => l.employeeId === employeeId && l.typeId === typeId && l.status === 'approved' && l.from.startsWith(String(year)))
-    .reduce((sum, l) => sum + l.days, 0)
+    .filter((l) => l.employeeId === employeeId && l.typeId === typeId && l.status === 'approved' && l.from <= last && l.to >= first)
+    .reduce((sum, l) => sum + leaveDaysBetween(l.from < first ? first : l.from, l.to > last ? last : l.to), 0)
 }
 
 export interface LeaveBalanceRow {
@@ -299,13 +310,18 @@ export function validateLeaveRequest(args: {
   const days = leaveDaysBetween(args.from, args.to)
   if (days <= 0) errors.push('نطاق التاريخ غير سليم — «إلى» قبل «من»')
   if (type && days > 0) {
-    const balance = type.annualQuotaDays - usedLeaveDays(args.leaves, args.employeeId, new Date(args.from).getFullYear() || new Date().getFullYear(), type.id)
-    if (days > balance) errors.push(`رصيد ${type.nameAr} لا يكفي — المتبقي ${balance} يوم فقط`)
+    const firstYear = Number(args.from.slice(0, 4)), lastYear = Number(args.to.slice(0, 4))
+    for (let year = firstYear; year <= lastYear; year += 1) {
+      const first = `${year}-01-01`, last = `${year}-12-31`
+      const requested = leaveDaysBetween(args.from < first ? first : args.from, args.to > last ? last : args.to)
+      const balance = type.annualQuotaDays - usedLeaveDays(args.leaves, args.employeeId, year, type.id)
+      if (requested > balance) errors.push(`رصيد ${type.nameAr} لسنة ${year} لا يكفي — المتبقي ${balance} يوم فقط`)
+    }
   }
   /* تعارض مع إجازة أخرى معتمدة/معلقة لنفس الموظف */
   const overlap = args.leaves.find((l) =>
-    l.employeeId === args.employeeId && l.status !== 'rejected' &&
-    leaveDates(l).some((d) => d >= args.from && d <= args.to),
+    l.employeeId === args.employeeId && (l.status === 'pending' || l.status === 'approved') &&
+    l.from <= args.to && l.to >= args.from,
   )
   if (overlap) errors.push(`تعارض مع إجازة ${LEAVE_STATUS_AR[overlap.status]} ${overlap.from} ⇐ ${overlap.to}`)
   return errors

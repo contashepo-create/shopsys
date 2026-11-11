@@ -1952,6 +1952,8 @@ interface DataState {
   addLeaveRequest: (args: { employeeId: number; typeId: string; from: string; to: string; reason: string }) => LeaveRequest
   /** اعتماد أو رفض إجازة معلقة (باسم صاحب القرار) */
   decideLeaveRequest: (id: number, approve: boolean, by: string) => LeaveRequest
+  /** إلغاء إجازة معتمدة مع الاحتفاظ بتاريخ القرار ومراجعة أثر الحضور والرواتب. */
+  cancelLeaveRequest: (id: number, by: string, reason: string) => LeaveRequest
   /** حذف طلب إجازة معلّق */
   deleteLeaveRequest: (id: number) => void
   /** تحديث قواعد الاحتساب (وردية المنشأة وخصوماتها) */
@@ -7285,6 +7287,11 @@ export const useRawDataStore = create<DataState>()(
         const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
         if (!request) throw new Error('طلب الإجازة غير موجود')
         if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
+        if (approve) {
+          const scoped = getBranchScopedDataState(state)
+          const errors = validateLeaveRequest({ employeeId: request.employeeId, typeId: request.typeId, from: request.from, to: request.to, leaves: scoped.leaveRequests.filter((leave) => leave.id !== id), types: scoped.leaveTypes })
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         const now = localIsoTimestamp()
         const decided: LeaveRequest = { ...request, status: approve ? 'approved' : 'rejected', decidedBy: by || 'المالك', decidedAt: now }
         /* عند الاعتماد: تُعلَّم أيام الإجازة في شبكة الحضور تلقائياً (فوق أي «حاضر» سابق) */
@@ -7292,20 +7299,72 @@ export const useRawDataStore = create<DataState>()(
           const dates = leaveDates(request)
           const byDay = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
           const nextRecords = [...state.attendanceRecords]
+          const attendanceAtApproval: NonNullable<LeaveRequest['attendanceAtApproval']> = []
           for (const date of dates) {
             const existing = byDay.get(`${request.employeeId}|${date}`)
             if (existing) {
               const idx = nextRecords.findIndex((r) => r.id === existing.id)
-              nextRecords[idx] = { ...existing, status: 'leave' as const, notes: `إجازة معتمدة #${request.id}` }
+              const applied = { ...existing, status: 'leave' as const, notes: `إجازة معتمدة #${request.id}` }
+              nextRecords[idx] = applied
+              attendanceAtApproval.push({ date, previous: { ...existing }, applied: { ...applied } })
             } else {
-              nextRecords.push({ id: nextId(nextRecords), employeeId: request.employeeId, date, status: 'leave' as const, checkIn: null, checkOut: null, source: 'manual' as const, importBatch: null, notes: `إجازة معتمدة #${request.id}` })
+              const applied: AttendanceRecord = { id: nextId(nextRecords), employeeId: request.employeeId, date, status: 'leave', checkIn: null, checkOut: null, source: 'manual', importBatch: null, notes: `إجازة معتمدة #${request.id}` }
+              nextRecords.push(applied)
+              attendanceAtApproval.push({ date, previous: null, applied: { ...applied } })
             }
           }
-          set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)), attendanceRecords: nextRecords })
-          return decided
+          const approved = { ...decided, attendanceAtApproval }
+          set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? approved : l)), attendanceRecords: nextRecords })
+          return approved
         }
         set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)) })
         return decided
+      },
+      cancelLeaveRequest: (id, by, reason) => {
+        const state = get()
+        const matches = state.leaveRequests.filter((l) => l.id === id)
+        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
+        if (matches.length !== 1 || !request) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        if (request.status !== 'approved') throw new Error('لا يمكن إلغاء طلب غير معتمد')
+        if (!reason.trim()) throw new Error('اكتب سبب إلغاء الإجازة')
+        const scoped = getBranchScopedDataState(state)
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find((row) => row.id === state.currentUserId && row.active)
+          const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+          if (!user || !effectivePermissionsFor(user, roles).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين والإجازات')
+        }
+        if (state.branches.length > 1 && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إلغاء الإجازة')
+        assertEmployeeInActiveBranch(state, request.employeeId)
+        if (!isValidExpiryDate(request.from) || !isValidExpiryDate(request.to)) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
+        const dates = leaveDates(request)
+        if (!dates.length) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
+        const months = new Set(dates.map((date) => date.slice(0, 7)))
+        if (state.payrollSlips.some((slip) => slip.employeeId === request.employeeId && months.has(slip.month) && slip.status !== 'cancelled') || state.payrollRuns.some((run) => months.has(run.month) && run.lines.some((line) => line.employeeId === request.employeeId))) throw new Error('يوجد مسير أو قسيمة مرحلة لفترة الإجازة — راجع الرواتب قبل الإلغاء')
+        const branch = getEffectiveActiveBranch(state)
+        const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
+        if (dates.some((date) => dateInClosedYear(date, years))) throw new Error('تقع الإجازة في فترة مالية مقفلة — راجع المحاسب قبل الإلغاء')
+        let records = [...state.attendanceRecords]
+        const legacy: AttendanceRecord[] = []
+        if (request.attendanceAtApproval) {
+          for (const snapshot of request.attendanceAtApproval) {
+            const index = records.findIndex((row) => row.id === snapshot.applied.id && row.employeeId === request.employeeId && row.date === snapshot.date)
+            // لا نطمس أي تعديل أو استيراد لاحق على سجل الحضور.
+            if (index < 0 || JSON.stringify(records[index]) !== JSON.stringify(snapshot.applied)) continue
+            if (snapshot.previous) records[index] = snapshot.previous
+            else records.splice(index, 1)
+          }
+        } else {
+          // في البيانات القديمة لم تحفظ حالة الحضور الأصلية؛ نؤرشف السجل كما هو
+          // ونزيل العلامة الآلية فقط. يلزم المستخدم مراجعة تلك الأيام يدوياً.
+          records = records.filter((row) => {
+            const automatic = row.employeeId === request.employeeId && dates.includes(row.date) && row.status === 'leave' && row.notes === `إجازة معتمدة #${id}`
+            if (automatic) legacy.push({ ...row })
+            return !automatic
+          })
+        }
+        const cancelled: LeaveRequest = { ...request, status: 'cancelled', cancelledBy: by.trim() || 'المالك', cancelledAt: localIsoTimestamp(), cancellationReason: reason.trim(), ...(legacy.length ? { legacyAttendanceAtCancellation: legacy } : {}) }
+        set({ leaveRequests: state.leaveRequests.map((row) => row.id === id ? cancelled : row), attendanceRecords: records })
+        return cancelled
       },
       deleteLeaveRequest: (id) => {
         const state = get()
