@@ -54,10 +54,11 @@ it('يرفض التعديل المتقادم والتخفيض غير الموث�
  expect(() => save(100, 2, 'تصحيح')).toThrow(/أقل/)
  expect(save(300, 2, 'تصحيح قياس').lines[0].cumulativeQty).toBe(300)
 })
-it('يحذف الحصر فقط مع مشروع لم يرحّل أي مستند مالي', () => {
+it('يحذف الحصر فقط مع مشروع لم يرحّل أي مستند مالي', async () => {
  const { p, b } = setup()
  S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })
- S().deleteUnpostedProject(p.id, 'إلغاء العميل')
+ useRawDataStore.setState({ ownerPinHash: 'dd963634ae8f2839313302f03077c41b6de321c73056d69b1f34334c193c425e' })
+ await S().deleteUnpostedProject(p.id, 'إلغاء العميل', undefined, '123456')
  expect(S().projectSurveys).toHaveLength(0)
  expect(S().journal).toHaveLength(0)
 })

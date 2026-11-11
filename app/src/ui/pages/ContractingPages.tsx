@@ -84,23 +84,25 @@ export function ProjectsPage() {
   /* مشروع جديد */
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
   const [deleteProjectReason, setDeleteProjectReason] = useState('')
+  const [deleteProjectPin, setDeleteProjectPin] = useState('')
+  const [deletingProject, setDeletingProject] = useState(false)
   const [deleteProjectFingerprint, setDeleteProjectFingerprint] = useState('')
   const projectDeletionPending = useRef(false)
   const confirmProjectDeletion = async () => {
     if (!projectToDelete || projectDeletionPending.current) return
-    projectDeletionPending.current = true
+    projectDeletionPending.current = true; setDeletingProject(true)
     let committed = false
     try {
-      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
-        useRawDataStore.getState().deleteUnpostedProject(projectToDelete.id, deleteProjectReason, deleteProjectFingerprint)
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, async () => {
+        await useRawDataStore.getState().deleteUnpostedProject(projectToDelete.id, deleteProjectReason, deleteProjectFingerprint, deleteProjectPin)
         committed = true
       })
-      setProjectToDelete(null)
+      setProjectToDelete(null); setDeleteProjectPin('')
       toast.show('حُذف المشروع غير المرحّل وسُجل السبب')
     } catch (error) {
-      if (committed) setProjectToDelete(null)
+      if (committed) { setProjectToDelete(null); setDeleteProjectPin('') }
       toast.show(committed ? 'نُفذ الحذف محلياً لكن تعذر تأكيد الحفظ؛ راجع الحالة قبل أي محاولة أخرى' : (error as Error).message, 'error')
-    } finally { projectDeletionPending.current = false }
+    } finally { projectDeletionPending.current = false; setDeletingProject(false) }
   }
   const [open, setOpen] = useState(false)
   const [nameAr, setNameAr] = useState('')
@@ -1222,7 +1224,7 @@ export function ProjectsPage() {
                           <button onClick={() => openLegacyReview(p)} data-legacy-project-review title="مراجعة ربط ذمة مستخلص تاريخي بلا عميل" className="px-2 py-1 rounded-lg text-xs font-bold text-amber-700 bg-amber-500/10">مراجعة الذمة</button>
                         )}
                         <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
-                        <button onClick={() => { setProjectToDelete(p); setDeleteProjectReason(''); setDeleteProjectFingerprint(useRawDataStore.getState().previewProjectDeletionFingerprint(p.id)) }} disabled={!canDeleteProject} title={canDeleteProject ? 'حذف مشروع غير مرحّل' : 'تحتاج صلاحية حذف مشروع غير مرحّل'} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-40"><Trash2 className="w-4 h-4" /></button>
+                        <button onClick={() => { setProjectToDelete(p); setDeleteProjectReason(''); setDeleteProjectPin(''); setDeleteProjectFingerprint(useRawDataStore.getState().previewProjectDeletionFingerprint(p.id)) }} disabled={!canDeleteProject} title={canDeleteProject ? 'حذف مشروع غير مرحّل' : 'تحتاج صلاحية حذف مشروع غير مرحّل'} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-40"><Trash2 className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
                     </td>
@@ -1235,13 +1237,14 @@ export function ProjectsPage() {
       )}
 
       {/* التفاصيل */}
-      <Modal open={!!projectToDelete} onClose={() => setProjectToDelete(null)} title="تأكيد حذف مشروع غير مرحّل">
+      <Modal open={!!projectToDelete} onClose={() => { if (!deletingProject) { setProjectToDelete(null); setDeleteProjectPin('') } }} title="تأكيد حذف مشروع غير مرحّل">
         {projectToDelete && <div className="space-y-4">
           <p>حذف «{projectToDelete.code} — {projectToDelete.nameAr}» وبنوده والبيانات التخطيطية المرتبطة؟</p>
           <p className="text-sm">البنود: {boqItems.filter(b => b.projectId === projectToDelete.id).length}، الميزانيات: {projectBudgets.filter(b => b.projectId === projectToDelete.id).length}، المهام: {projectTasks.filter(t => t.projectId === projectToDelete.id).length}، أوامر التغيير: {changeOrders.filter(c => c.projectId === projectToDelete.id).length}، العروض المرئية المرتبطة: {quotations.filter(q => q.projectId === projectToDelete.id && !q.deletedAt).length}.</p>
           <p className="text-sm text-amber-700">لا يُحذف المشروع إذا كانت له مستندات أو حركات مرحّلة أو روابط أخرى تحتاج مراجعة. تُحذف العروض المرتبطة ويُحفظ رقمها وسبب الحذف في سجل التدقيق. أغلق نوافذ المشروع الأخرى قبل الحذف.</p>
           <Field label="سبب حذف المشروع"><input aria-label="سبب حذف المشروع" value={deleteProjectReason} onChange={e => setDeleteProjectReason(e.target.value)} className={inputCls} /></Field>
-          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setProjectToDelete(null)}>تراجع</Btn><Btn onClick={() => void confirmProjectDeletion()} disabled={!deleteProjectReason.trim()}>تأكيد حذف المشروع</Btn></div>
+          <Field label="الرقم السري للمالك"><input type="password" autoComplete="off" aria-label="الرقم السري للمالك لحذف المشروع" value={deleteProjectPin} disabled={deletingProject} onChange={e => setDeleteProjectPin(e.target.value)} className={inputCls} /></Field>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" disabled={deletingProject} onClick={() => { setProjectToDelete(null); setDeleteProjectPin('') }}>تراجع</Btn><Btn onClick={() => void confirmProjectDeletion()} disabled={deletingProject || !deleteProjectReason.trim() || !deleteProjectPin}>{deletingProject ? 'جارٍ الحذف…' : 'تأكيد حذف المشروع'}</Btn></div>
         </div>}
       </Modal>
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>

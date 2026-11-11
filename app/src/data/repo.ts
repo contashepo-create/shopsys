@@ -2948,7 +2948,7 @@ interface DataState {
   deleteProjectExtractDraft: (projectId: number, reason: string) => void
   deleteUnpostedSurvey: (projectId: number, reason: string) => void
   saveProjectSurvey: (args: { projectId: number; lines: SurveyLine[]; expectedRevision: number; reason: string; isFinal: boolean; measurementDate?: string }) => ProjectSurvey
-  deleteUnpostedProject: (id: number, reason: string, expectedFingerprint?: string) => void
+  deleteUnpostedProject: (id: number, reason: string, expectedFingerprint: string | undefined, ownerPin: string) => Promise<void>
   previewProjectDeletionFingerprint: (id: number) => string
   addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
   previewProjectEditFingerprint: (id: number) => string
@@ -15985,8 +15985,23 @@ export const useRawDataStore = create<DataState>()(
         return projectDeletionFingerprint(scoped, id)
       },
       /** حذف غير المرحّل فقط؛ يفحص الروابط من الحالة الخام لا من الفرع المرئي وحده. */
-      deleteUnpostedProject: (id, reason, expectedFingerprint) => {
+      deleteUnpostedProject: async (id, reason, expectedFingerprint, ownerPin) => {
+        const initial = get()
+        const ownerHash = initial.ownerPinHash
+        if (!ownerHash) throw new Error('يجب تعيين الرقم السري للمالك في الصلاحيات قبل الحذف')
+        if (typeof ownerPin !== 'string' || !ownerPin) throw new Error('أدخل الرقم السري للمالك قبل الحذف')
+        const nowIso = localIsoTimestamp()
+        const locked = lockoutMinutesLeft(initial.loginGuard, nowIso)
+        if (locked > 0) throw new Error(`محاولات كثيرة خاطئة — الاعتماد مقفول ${locked} دقيقة`)
+        const ok = await verifyPin(ownerPin, ownerHash)
         const state = get()
+        if (state.ownerPinHash !== ownerHash || state.currentUserId !== initial.currentUserId || state.activeBranchId !== initial.activeBranchId || state.loggedOut !== initial.loggedOut || getEffectiveActiveBranch(state)?.id !== getEffectiveActiveBranch(initial)?.id) throw new Error('تغير المستخدم أو الفرع أو رقم المالك — أعد المحاولة')
+        if (lockoutMinutesLeft(state.loginGuard, localIsoTimestamp()) > 0) throw new Error('الاعتماد مقفول مؤقتاً بعد محاولات خاطئة')
+        if (!ok) {
+          const guard = registerFailure(state.loginGuard, localIsoTimestamp())
+          set({ loginGuard: guard, auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: activeUserName(state), kind: 'auth', title: 'محاولة حذف مشروع برقم مالك غير صحيح' }]) })
+          throw new Error('الرقم السري للمالك غير صحيح')
+        }
         const scoped = getBranchScopedDataState(state)
         const project = scoped.projects.find(row => row.id === id)
         if (!project || state.projects.filter(row => row.id === id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
@@ -16028,7 +16043,8 @@ export const useRawDataStore = create<DataState>()(
           quotations: state.quotations.filter(q => q.projectId !== id),
           quotationDeletionRecords: [...state.quotationDeletionRecords, ...quotes.map(q => ({ id: q.id, quoteNumber: q.quoteNumber, projectId: id, reason: `حذف المشروع: ${reason.trim()}`, at, by, ...(q.branchId != null ? { branchId: q.branchId } : {}) }))],
           projectDeletionRecords: [...(state.projectDeletionRecords ?? []), { id, code: project.code, nameAr: project.nameAr, reason: reason.trim(), at, by }],
-          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف المشروع غير المرحّل ${project.code} — ${reason.trim()}` }]),
+          loginGuard: EMPTY_GUARD,
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف المشروع غير المرحّل ${project.code} بموافقة المالك — ${reason.trim()}` }]),
         })
       },
       addProject: (p) => {
