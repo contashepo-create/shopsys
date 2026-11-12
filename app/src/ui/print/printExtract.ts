@@ -135,7 +135,7 @@ export function renderExtractHtml(args: {
     .foot { margin-top: 16px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 6px; }
     @media print { .noprint { display: none; } }
   </style></head><body>
-    ${args.projectHasRefunds ? '<div role="note" style="border:1px solid #b45309;background:#fffbeb;color:#78350f;padding:9px;margin:0 0 10px;font-weight:bold">تنبيه: توجد إشعارات دائن على مستخلصات المشروع. الأرقام في هذا المستند أصلية عند الإصدار ولا تمثل الرصيد الحالي؛ راجع الإشعارات وكشف حساب العميل قبل الاعتماد.</div>' : ''}
+    ${args.projectHasRefunds ? '<div role="status" style="border:1px solid #b45309;background:#fffbeb;color:#78350f;padding:9px;margin:0 0 10px;font-weight:bold">تنبيه: توجد إشعارات دائن على مستخلصات المشروع. الأرقام في هذا المستند أصلية عند الإصدار ولا تمثل الرصيد الحالي؛ راجع الإشعارات وكشف حساب العميل قبل الاعتماد.</div>' : ''}
     <div class="doc-head">
       <div class="brand">
         <div class="shop">${esc(args.shopName)}</div>
@@ -311,7 +311,7 @@ export function renderExtractClientInvoiceHtml(args: {
     .sig .line { border-top: 1.5px solid #334155; padding-top: 4px; font-size: 10.5px; color: #64748b; }
     .foot { margin-top: 18px; text-align: center; font-size: 10.5px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px; }
   </style></head><body>
-    ${args.projectHasRefunds ? '<div role="note" style="border:1px solid #b45309;background:#fffbeb;color:#78350f;padding:9px;margin:0 0 10px;font-weight:bold">تنبيه: توجد إشعارات دائن على مستخلصات المشروع. الأرقام في هذا المستند أصلية عند الإصدار ولا تمثل الرصيد الحالي؛ راجع الإشعارات وكشف حساب العميل قبل الاعتماد.</div>' : ''}
+    ${args.projectHasRefunds ? '<div role="status" style="border:1px solid #b45309;background:#fffbeb;color:#78350f;padding:9px;margin:0 0 10px;font-weight:bold">تنبيه: توجد إشعارات دائن على مستخلصات المشروع. الأرقام في هذا المستند أصلية عند الإصدار ولا تمثل الرصيد الحالي؛ راجع الإشعارات وكشف حساب العميل قبل الاعتماد.</div>' : ''}
     <div class="inv-banner">
       <div class="company">
         <div class="name">${esc(args.shopName)}</div>

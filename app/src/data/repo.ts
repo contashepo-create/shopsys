@@ -18997,10 +18997,12 @@ export const useRawDataStore = create<DataState>()(
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (args.terminalPayment) {
-          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
-          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          const terminals = state.paymentTerminals.filter((row) => row.id === args.terminalPayment!.terminalId), terminal = terminals[0]
+          if (terminals.length !== 1 || !terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير فريدة أو غير نشطة')
+          if (fiscalBranch && terminal.branchId !== String(fiscalBranch.id) && (state.branches.length > 1 || terminal.branchId.trim() !== '')) throw new Error('ماكينة الدفع لا تتبع الفرع الحالي')
           if (terminal.settlementAccountCode !== args.treasury) throw new Error('حساب التحصيل لا يطابق حساب الماكينة')
-          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
+          const providerReference = args.terminalPayment.providerReference.trim()
+          if (providerReference && state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && typeof row.providerReference === 'string' && row.providerReference.trim() === providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
           terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `client-collection:${id}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: 'client_collection', documentId: String(id), amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference.trim() || `AUTO-${crypto.randomUUID()}`, occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }

@@ -101,3 +101,19 @@ it('تحصيل العميل لا يرحّل في سنة مقفلة أو على �
  const doc = S().clientSettlements.find(row => row.settlementNumber === receipt.settlementNumber)!
  expect(doc.date.slice(0, 10)).toBe('2026-11-05'); expect(S().journal.find(row => row.id === doc.journalEntryId)?.date).toBe('2026-11-05')
 })
+
+it('تحصيل العميل يرفض ماكينة فرع آخر والمرجع المكرر بعد إزالة المسافات دون أثر جزئي', () => {
+ const ex = extract(), customerId = S().projects[0].clientId!
+ const terminal = { id: 'terminal', code: 'TERM-1', nameAr: 'ماكينة', providerName: 'مزود', branchId: '2', settlementAccountCode: '1101', terminalId: 'T1', status: 'active' as const }
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+ useRawDataStore.setState({ branches, activeBranchId: 1, paymentTerminals: [terminal], clientSettlements: [] })
+ const args = { customerId, amountMinor: 100, treasury: '1101', specificDocKey: `extract:${ex.id}`, terminalPayment: { terminalId: terminal.id, providerReference: 'ref-1' } }
+ const before = S()
+ expect(() => S().receiveClientPayment(args)).toThrow(/الفرع/)
+ expect(S().journal).toBe(before.journal); expect(S().clientSettlements).toBe(before.clientSettlements); expect(S().paymentTerminalTransactions).toBe(before.paymentTerminalTransactions)
+ useRawDataStore.setState({ paymentTerminals: [{ ...terminal, branchId: '1' }] })
+ S().receiveClientPayment(args)
+ const saved = S()
+ expect(() => S().receiveClientPayment({ ...args, terminalPayment: { ...args.terminalPayment, providerReference: '  ref-1  ' } })).toThrow(/مستخدم مسبقاً/)
+ expect(S().journal).toBe(saved.journal); expect(S().clientSettlements).toBe(saved.clientSettlements); expect(S().paymentTerminalTransactions).toBe(saved.paymentTerminalTransactions)
+})
