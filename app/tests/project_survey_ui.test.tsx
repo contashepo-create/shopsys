@@ -144,3 +144,27 @@ it('معاينة محضر الإقفال تحدث حالة الأساس وتمن
  act(() => { useRawDataStore.setState({ projectCloseouts: [] }); usePrintPreview.getState().refresh() })
  expect(usePrintPreview.getState().rebuildError).toBe(true)
 })
+it('يعرض صافي الكميات بعد الإشعار مقارنة بالحصر المحفوظ دون إتاحة مسودة أو تغيير الختامي', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const first = S().addProjectExtract({ projectId: p.id, description: 'أول', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 1000 }], isFinal: true })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 1000 }], expectedRevision: 0, reason: '', isFinal: true })
+ S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: b.id, qty: 20 }], amountMinor: 2000, mode: 'customer_credit', reason: 'رفض' })
+ renderPages(); select()
+ const panel = screen.getByLabelText('مراجعة صافي كميات الإشعارات')
+ expect(panel.textContent).toContain('980'); expect(panel.textContent).toContain('20')
+ expect(panel.textContent).toContain('لا يغيّر الحصر الفعلي أو يعيد فتح الختامي')
+ expect((screen.getByText('تجهيز مسودة مستخلص من الحصر المحفوظ').closest('button') as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '500' } })
+ expect(panel.textContent).toContain('1000') // المقارنة بالحصر المحفوظ لا المسودة
+ expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(1000)
+ expect(S().projectExtracts[1].isFinal).toBe(true)
+})
+it('يعرض مراجعة بدل صافي تقديري عند فقد قيد الإشعار', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const first = S().addProjectExtract({ projectId: p.id, description: 'أول', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ const result = S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: b.id, qty: 20 }], amountMinor: 2000, mode: 'customer_credit', reason: 'رفض' })
+ useRawDataStore.setState({ journal: S().journal.filter(e => e.id !== result.refunds![0].journalEntryId) })
+ renderPages(); select()
+ expect(screen.getByLabelText('مراجعة صافي كميات الإشعارات').textContent).toContain('لا يمكن عرض صافي موثوق')
+})
