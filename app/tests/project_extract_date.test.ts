@@ -117,3 +117,29 @@ it('تحصيل العميل يرفض ماكينة فرع آخر والمرجع �
  expect(() => S().receiveClientPayment({ ...args, terminalPayment: { ...args.terminalPayment, providerReference: '  ref-1  ' } })).toThrow(/مستخدم مسبقاً/)
  expect(S().journal).toBe(saved.journal); expect(S().clientSettlements).toBe(saved.clientSettlements); expect(S().paymentTerminalTransactions).toBe(saved.paymentTerminalTransactions)
 })
+
+it('مرتجع المستخلص النقدي يرفض خزينة وهمية وطريقة رد غير صالحة بلا تغيير المستخلص أو الدفتر', () => {
+ const ex = extract(), before = S()
+ const args = { extractId: ex.id, amountMinor: 100, mode: 'cash' as const, treasury: '4107', reason: 'تسوية' }
+ expect(() => S().refundProjectExtract(args)).toThrow(/الخزينة|البنك/)
+ expect(() => S().refundProjectExtract({ ...args, mode: 'invalid' as never })).toThrow(/طريقة رد/)
+ expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+})
+it('مرتجع الماكينة لا يستعمل عملية فرع آخر أو أصلاً مكرراً أو مرجعاً مكرراً بعد إزالة المسافات', () => {
+ const ex = extract()
+ const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+ const terminal = { id: 't', code: 'TERM-1', nameAr: 'ماكينة', providerName: 'مزود', branchId: '2', settlementAccountCode: '1101', terminalId: 'T1', status: 'active' as const }
+ const charge = { id: 'charge', idempotencyKey: 'charge', kind: 'charge' as const, terminalId: 't', branchId: '2', userId: 0, documentType: 'project_extract' as const, documentId: String(ex.id), amountMinor: 1000, providerReference: 'original', occurredAt: '2026-11-05T10:00:00Z' }
+ useRawDataStore.setState({ branches, activeBranchId: 1, paymentTerminals: [terminal], paymentTerminalTransactions: [charge] })
+ const args = { extractId: ex.id, amountMinor: 100, mode: 'cash' as const, treasury: '1101', reason: 'رد', terminalRefund: { originalTransactionId: 'charge', providerReference: ' REF ' } }
+ const before = S()
+ expect(() => S().refundProjectExtract(args)).toThrow(/الفرع/)
+ expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts); expect(S().paymentTerminalTransactions).toBe(before.paymentTerminalTransactions)
+ useRawDataStore.setState({ paymentTerminals: [{ ...terminal, branchId: '1' }], paymentTerminalTransactions: [{ ...charge, branchId: '1' }, { ...charge, branchId: '1' }] })
+ expect(() => S().refundProjectExtract(args)).toThrow(/غير فريد/)
+ const existingRefund = { ...charge, id: 'refund', idempotencyKey: 'refund', kind: 'refund' as const, branchId: '1', originalTransactionId: 'charge', providerReference: 'REF' }
+ useRawDataStore.setState({ paymentTerminalTransactions: [{ ...charge, branchId: '1' }, existingRefund] })
+ const after = S()
+ expect(() => S().refundProjectExtract(args)).toThrow(/مستخدم مسبقاً/)
+ expect(S().journal).toBe(after.journal); expect(S().projectExtracts).toBe(after.projectExtracts); expect(S().paymentTerminalTransactions).toBe(after.paymentTerminalTransactions)
+})

@@ -22123,9 +22123,11 @@ export const useRawDataStore = create<DataState>()(
         assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
         const originalEntry = state.journal.find(row => row.id === extract.journalEntryId)
         const now = assertReturnPostingContext(state, extract.date, [...(extract.refunds ?? []).map(row => row.date), ...(originalEntry ? [originalEntry.date] : [])])
+        if (args.mode !== 'cash' && args.mode !== 'customer_credit') throw new Error('طريقة رد المستخلص غير صالحة')
         if (args.mode === 'customer_credit' && (project.clientId == null || !scoped.customers.some(customer => customer.id === project.clientId))) {
           throw new Error('المستخلص لمشروع بلا عميل مرتبط — لا يُنشأ رصيد عميل بلا صاحب')
         }
+        if (args.mode === 'cash') assertTreasuryForPosting(state, args.treasury ?? '1101', 'refund', args.amountMinor)
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
           deliveredGrandMinor: extract.totals.dueMinor,
@@ -22150,12 +22152,16 @@ export const useRawDataStore = create<DataState>()(
         }
         let terminalRefund: PaymentTerminalTransaction | null = null
         if (args.terminalRefund) {
-          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(extract.id))
-          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          const originals = state.paymentTerminalTransactions.filter((row) => row.id === args.terminalRefund!.originalTransactionId)
+          const original = originals[0]
+          if (originals.length !== 1 || !original || original.kind !== 'charge' || original.documentType !== 'project_extract' || original.documentId !== String(extract.id)) throw new Error('تحصيل الماكينة الأصلي غير موجود أو غير فريد')
           if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
-          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
-          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
-          if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const terminals = state.paymentTerminals.filter((row) => row.id === original.terminalId), originalTerminal = terminals[0]
+          if (terminals.length !== 1 || !originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
+          const branch = getEffectiveActiveBranch(state)
+          if (original.branchId !== originalTerminal.branchId || (branch && originalTerminal.branchId !== String(branch.id) && (state.branches.length > 1 || originalTerminal.branchId.trim() !== ''))) throw new Error('تحصيل الماكينة أو الماكينة لا يتبع الفرع الحالي')
+          const reference = args.terminalRefund.providerReference.trim()
+          if (reference && state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && typeof row.providerReference === 'string' && row.providerReference.trim() === reference)) throw new Error('مرجع رد المزود مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
           terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${extract.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
