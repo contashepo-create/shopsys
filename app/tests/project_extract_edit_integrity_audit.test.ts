@@ -52,7 +52,7 @@ it('يرفض تعديل أو رد مستخلص عندما يشير قيده ال
   useDataStore.setState({ journal: useDataStore.getState().journal.map(e => e.id === extract.journalEntryId ? { ...e, sourceId: extract.id + 99 } : e) })
   const before = useDataStore.getState()
   expect(() => edit(s, extract.id, 7000)).toThrow(/مراجعة/)
-  expect(() => s.refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'رد' })).toThrow(/مراجعة/)
+  expect(() => s.refundProjectExtract({ extractId: extract.id, quantities: [], amountMinor: 1000, mode: 'customer_credit', reason: 'رد' })).toThrow(/مراجعة/)
   expect(useDataStore.getState().journal).toBe(before.journal)
 })
 
@@ -94,7 +94,7 @@ it('يرفض تعديل المستخلص وردّه عند فقد القيد أ�
     useDataStore.setState({ journal: next })
     const before = useDataStore.getState()
     expect(() => edit(s, extract.id, 7000)).toThrow(/مراجعة/)
-    expect(() => s.refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'رد' })).toThrow(/مراجعة/)
+    expect(() => s.refundProjectExtract({ extractId: extract.id, quantities: [], amountMinor: 1000, mode: 'customer_credit', reason: 'رد' })).toThrow(/مراجعة/)
     expect(useDataStore.getState().journal).toBe(before.journal)
   }
 })
@@ -169,7 +169,7 @@ it('لا يزيد ذمة مشروع قديم بلا عميل ولا ينشئ ر�
   useDataStore.setState({ projects: useDataStore.getState().projects.map(p => p.id === project.id ? { ...p, clientId: null } : p) })
   const before = useDataStore.getState()
   expect(() => edit(s, extract.id, 9000)).toThrow(/عميل/)
-  expect(() => s.refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'رد' })).toThrow(/عميل/)
+  expect(() => s.refundProjectExtract({ extractId: extract.id, quantities: [], amountMinor: 1000, mode: 'customer_credit', reason: 'رد' })).toThrow(/عميل/)
   expect(useDataStore.getState().journal).toBe(before.journal)
   expect(useDataStore.getState().projectExtracts).toBe(before.projectExtracts)
 })

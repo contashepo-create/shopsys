@@ -1,3 +1,4 @@
+import { seedLegacyProjectCredit } from './helpers/legacyProjectCredit.ts'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { AnalyticalProjectReportView } from '../src/ui/contracting/AnalyticalProjectReportView.tsx'
@@ -135,7 +136,7 @@ it('إشعار مستخلص دائن يخفض الإيراد والمستحق د
   const customer = useDataStore.getState().customers.at(-1)!
   const project = useDataStore.getState().addProject({ nameAr: 'مشروع إشعار', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 10000, vatPercent: 0, payment: 'credit' })
-  useDataStore.getState().refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'تصحيح قيمة' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'تصحيح قيمة' })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(useDataStore.getState().getCustomerBalance(customer.id)).toBe(6000)
   expect(screen.queryByText('إشعار دائن مستخلص (إطفاء غير نقدي)')).toBeNull()
@@ -153,7 +154,7 @@ const indicator = (label: string) => screen.getAllByText(label)[0].parentElement
 it('مستخلص نقدي بضريبة ورد نقدي يعكس الإيراد والضريبة والنقد المحصل مرة واحدة', () => {
   const project = useDataStore.getState().addProject({ nameAr: 'نقد وضريبة', clientId: null, clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = useDataStore.getState().addProjectExtract({ projectId: project.id, description: 'نقد', grossMinor: 10000, vatPercent: 15, payment: 'cash' })
-  useDataStore.getState().refundProjectExtract({ extractId: extract.id, amountMinor: 4600, mode: 'cash', reason: 'رد', treasury: '1101' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4600, mode: 'cash', reason: 'رد', treasury: '1101' })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(indicator('قيمة الأعمال المستخلصة')).toBe(amount(6000))
   expect(indicator('ض.ق.م محمّلة على العميل')).toBe(amount(900))
@@ -174,7 +175,7 @@ it('فائض إشعار مستخلص مسدد يطفئ مشروعاً آخر د�
   const extract = s.addProjectExtract({ projectId: p1.id, description: 'أول', grossMinor: 10000, vatPercent: 0, payment: 'credit' })
   s.addProjectExtract({ projectId: p2.id, description: 'ثان', grossMinor: 5000, vatPercent: 0, payment: 'credit' })
   s.postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 8000, description: 'قبض' })
-  s.refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
   const view = render(<AnalyticalProjectReportView projectId={String(p1.id)} onProjectChange={() => {}} />)
   expect(indicator('قيمة الأعمال المستخلصة')).toBe(amount(6000))
   expect(indicator('إجمالي ما تم تحصيله')).toBe(amount(8000))
@@ -210,7 +211,7 @@ it('مقاصة مقدمة وإشعار دائن وضريبة تخفض الإير
   const project = s.addProject({ nameAr: 'مقاصة ورد', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = s.addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 10000, vatPercent: 15, payment: 'credit' })
   s.postPartyOffset({ customerId: customer.id, supplierId: supplier.id, amountMinor: 3000 })
-  s.refundProjectExtract({ extractId: extract.id, amountMinor: 4600, mode: 'customer_credit', reason: 'تصحيح' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4600, mode: 'customer_credit', reason: 'تصحيح' })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(indicator('قيمة الأعمال المستخلصة')).toBe(amount(6000))
   expect(indicator('صافي المستحق على المستخلصات')).toBe(amount(6900))
@@ -228,7 +229,7 @@ it('بطاقة عميل المقاولات تفصل الإشعار الدائن 
   const customer = useDataStore.getState().customers.at(-1)!
   const project = s.addProject({ nameAr: 'مشروع كشف الإشعار', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = s.addProjectExtract({ projectId: project.id, description: 'مستخلص', grossMinor: 10000, vatPercent: 0, payment: 'credit' })
-  s.refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
   render(<ContractingReportsPage />)
   fireEvent.click(screen.getAllByText('عميل بعينه')[0])
   fireEvent.change(screen.getByTestId('client-select'), { target: { value: String(customer.id) } })
@@ -243,7 +244,7 @@ it('تقرير مستخلص نقدي يحجب أرقام الإشعار إذا �
   const s = useDataStore.getState()
   const project = s.addProject({ nameAr: 'مشروع نقدي', clientId: null, clientName: '', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = s.addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 10000, vatPercent: 0, payment: 'cash' })
-  const updated = s.refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'cash', reason: 'رد', treasury: '1101' })
+  const updated = seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4000, mode: 'cash', reason: 'رد', treasury: '1101' })
   const id = updated.refunds!.at(-1)!.journalEntryId
   useDataStore.setState({ journal: useDataStore.getState().journal.filter(entry => entry.id !== id) })
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)

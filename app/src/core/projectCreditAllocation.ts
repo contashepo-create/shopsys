@@ -17,6 +17,14 @@ export interface ProjectCreditEvidence {
 }
 export interface ProjectCreditAmounts { grossMinor: number; taxShareMinor: number; retentionMinor: number; amountMinor: number }
 
+/** لا يُستنتج أساس كمي لإشعارات تاريخية لا تملك هذا الدليل. */
+export function projectCreditEvidence(records: readonly { amountMinor: number; taxShareMinor: number; grossMinor?: number; retentionMinor?: number; quantities?: readonly ProjectRefundQuantity[] }[]): ProjectCreditEvidence[] {
+  return records.map(record => {
+    if (!Array.isArray(record.quantities) || !Number.isSafeInteger(record.grossMinor) || !Number.isSafeInteger(record.retentionMinor)) throw new Error('إشعار سابق بلا دليل كميات وقيمة كامل — راجع التاريخ')
+    return { amountMinor: record.amountMinor, taxShareMinor: record.taxShareMinor, grossMinor: record.grossMinor!, retentionMinor: record.retentionMinor!, quantities: record.quantities }
+  })
+}
+
 /**
  * تُقسم قيمة شريحة كل بند على كميته المثبتة، ثم توزع الضريبة والمحتجز
  * على قيمة الأعمال التراكمية. الفرق بين هدفين تراكميين يمنع ضياع الكسور

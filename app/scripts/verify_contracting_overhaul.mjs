@@ -117,9 +117,9 @@ console.log('② المستخلصات: التعديل بقيد عاكس وإعا
   ok('صافي إيراد 4107 على الدفتر = 240,000 + 200,000 بالضبط (الأصلي بقي والعكس أطفاه)', netAccount('4107') === 440_000, netAccount('4107'))
   ok('الدفتر متوازن بعد التعديل', balanced())
 
-  /* إشعار دائن يقفل باب التعديل */
-  st().refundProjectExtract({ extractId: ex2.id, amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' })
-  throws('رفض تعديل مستخلص عليه إشعار دائن قائم', () => st().editProjectExtract({ extractId: ex2.id, extractLines: [{ boqItemId: b1.id, newProgressPercent: 90 }], vatPercent: 0, payment: 'credit', description: 'x', reason: 'محاولة' }), 'إشعار دائن')
+  /* لا يُسجّل إشعار غير مدعوم على مستخلص فيه محتجز واسترداد دفعة. */
+  throws('رفض الإشعار الحر ولو احتوى المستخلص على محتجز ودفعة', () => st().refundProjectExtract({ extractId: ex2.id, amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'البنود والكميات')
+  throws('رفض الإشعار الكمي مع المحتجز أو الدفعة حتى اكتمال تسويته', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'المحتجز')
 
   /* تعديل بمبلغ إجمالي لمستخلص بندي: الأعمال قائمة — تقدم BOQ لا يُرجَع */
   const ex2g = st().editProjectExtract({ extractId: ex1.id, grossMinor: 260_000, vatPercent: 0, payment: 'credit', description: 'إعادة تقييم بالمبلغ الإجمالي', reason: 'تسوية شاملة' })
@@ -135,11 +135,9 @@ console.log('② المستخلصات: التعديل بقيد عاكس وإعا
   const exB = st().addProjectExtract({ projectId: projB.id, extractLines: [{ boqItemId: bb.id, newProgressPercent: 40 }], vatPercent: 0, payment: 'credit', description: 'دفعة أولى', advanceRecoveryMinor: 30_000 })
   const exBe = st().editProjectExtract({ extractId: exB.id, extractLines: [{ boqItemId: bb.id, newProgressPercent: 50 }], vatPercent: 0, payment: 'credit', description: 'دفعة أولى (معدلة)', advanceRecoveryMinor: 20_000, reason: 'خفض الاسترداد بطلب العميل' })
   ok('استرداد الدفعة عُدّل 30,000→20,000 (أُرجع القديم ثم طُبق الجديد)', st().clientAdvances.filter((a) => a.projectId === projB.id).reduce((s, a) => s + a.recoveredMinor, 0) === 20_000)
-  /* صافي 4107 الختامي: إعادة تقييم الأول 260,000 + المعدل 200,000 − إشعار الدائن 10,000 + الفيلا 250,000 */
-  /* صافي 4107 الختامي: إعادة تقييم الأول 260,000 + المعدل 200,000 + الفيلا 250,000 —
-     وإشعار الدائن (رفض أعمال 10,000) يقيد على 4102 مرتجعات لا على 4107 */
+  /* لم يُرحّل الإشعار المرفوض: الإيراد والمرتجعات لا يتغيران بسببه. */
   ok('صافي 4107 الختامي = 260,000 + 200,000 + 250,000 = 710,000', exBe.totals.grossMinor === 250_000 && netAccount('4107') === 710_000, netAccount('4107'))
-  ok('إشعار الدائن على 4102 مرتجعات المبيعات (لا يمس إيراد المستخلصات)', netAccount('4102') === -10_000, netAccount('4102'))
+  ok('الإشعار المرفوض لم يغيّر حساب المرتجعات 4102', netAccount('4102') === 0, netAccount('4102'))
   ok('الدفتر متوازن ختاماً', balanced())
 }
 

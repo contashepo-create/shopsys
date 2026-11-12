@@ -1,3 +1,4 @@
+import { seedLegacyProjectCredit } from './helpers/legacyProjectCredit.ts'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -45,7 +46,7 @@ it('تحذّر معاينتا المستخلص من إشعارات المشرو�
   fireEvent.click(button)
   if (!(S().projectExtracts[0].refundedMinor ?? 0)) {
    expect(usePrintPreview.getState().handle?.html).not.toContain('تنبيه: توجد إشعارات دائن')
-   act(() => { S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'إشعار' }); usePrintPreview.getState().refresh() })
+   act(() => { seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'إشعار' }); usePrintPreview.getState().refresh() })
   }
   expect(usePrintPreview.getState().handle?.html).toContain('تنبيه: توجد إشعارات دائن على مستخلصات المشروع')
   expect(usePrintPreview.getState().handle?.html).toContain('ولا تمثل الرصيد الحالي')

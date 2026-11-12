@@ -1,6 +1,8 @@
 import { FinancialDataReviewError } from './financialDataReview.ts'
 import { assertBalanced, type JournalEntry } from './ledger.ts'
 import type { ServiceRefundRecord } from './serviceRefund.ts'
+import { planProjectCreditAmounts, projectCreditEvidence, type ProjectCreditLine } from './projectCreditAllocation.ts'
+import type { ProjectRefundQuantity } from './projectRefundQuantities.ts'
 
 /** لا تعكس ولا ترد مستخلصاً إذا لم يطابق القيد الأصلي مستنده. */
 export function assertProjectExtractOriginalIntegrity(
@@ -21,12 +23,32 @@ export function assertProjectExtractOriginalIntegrity(
 
 /** لا نعدّ الإشعار دليلاً على تخفيض الذمة أو الإيراد حتى يطابق قيده. */
 export function assertProjectExtractRefundIntegrity(
-  extracts: readonly { id: number; extractNumber: string; totals: { dueMinor: number; vatMinor: number }; refundedMinor?: number; refundedTaxMinor?: number; refunds?: readonly ServiceRefundRecord[] }[],
+  extracts: readonly { id: number; extractNumber: string; totals: { dueMinor: number; vatMinor: number; grossMinor?: number; retentionMinor?: number }; lines?: readonly ProjectCreditLine[]; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly (ServiceRefundRecord & { quantities?: readonly ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number })[] }[],
   journal: ReadonlyMap<number, JournalEntry>,
 ): void {
   const used = new Set<number>()
   for (const extract of extracts) {
     const fail = (): never => { throw new FinancialDataReviewError(`إشعارات المستخلص ${extract.extractNumber}`) }
+    const refunds = extract.refunds ?? []
+    const hasEvidence = refunds.some(row => row.quantities != null || row.grossMinor != null || row.retentionMinor != null)
+    if (extract.quantityCreditVersion != null && extract.quantityCreditVersion !== 1) return fail()
+    if (extract.quantityCreditVersion === 1 && !refunds.length) return fail()
+    if (hasEvidence && extract.quantityCreditVersion !== 1) return fail()
+    if (extract.quantityCreditVersion === 1) {
+      try {
+        const evidence = projectCreditEvidence(refunds)
+        const { grossMinor, retentionMinor, dueMinor, vatMinor } = extract.totals
+        if (!extract.lines?.length || grossMinor == null || retentionMinor !== 0) return fail()
+        let refundedMinor = 0, refundedTaxMinor = 0
+        for (let index = 0; index < evidence.length; index++) {
+          const row = evidence[index]
+          const expected = planProjectCreditAmounts({ lines: extract.lines, totals: { grossMinor, retentionMinor, dueMinor, vatMinor }, refunds: evidence.slice(0, index), refundedMinor, refundedTaxMinor, selected: row.quantities })
+          if (expected.amountMinor !== row.amountMinor || expected.taxShareMinor !== row.taxShareMinor || expected.grossMinor !== row.grossMinor || expected.retentionMinor !== row.retentionMinor) return fail()
+          refundedMinor += row.amountMinor
+          refundedTaxMinor += row.taxShareMinor
+        }
+      } catch { return fail() }
+    }
     let amount = 0, tax = 0
     for (const refund of extract.refunds ?? []) {
       if (!Number.isSafeInteger(refund.journalEntryId) || used.has(refund.journalEntryId) || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || !Number.isSafeInteger(refund.taxShareMinor) || refund.taxShareMinor < 0 || refund.taxShareMinor > refund.amountMinor || (refund.mode !== 'cash' && refund.mode !== 'customer_credit')) return fail()

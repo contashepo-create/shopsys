@@ -1,3 +1,4 @@
+import { seedLegacyProjectCredit } from './helpers/legacyProjectCredit.ts'
 /**
  * بلاغ المالك 2026-10-27: «حصّلتُ شيكاً من عميل فظهر في كشف حسابه لكن لم
  * يظهر خصمه في تقارير المشاريع». الاختبار يثبت ربط الدفترين ويمنع عودة العطب.
@@ -354,7 +355,7 @@ describe('ربط الشيكات الواردة بذمم المشاريع (مصد
 
   it('إشعار دائن للمستخلص يخفض ذمته ولا يظهر كشيك أو قبض نقدي', () => {
     const { cust, extract, key } = setupCustomerWithExtract(10000)
-    S().refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'تخفيض المستخلص' })
+    seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'تخفيض المستخلص' })
     expect(S().getCustomerBalance(cust.id)).toBe(6000)
     const doc = S().getOpenClientInvoices(cust.id, true).find(d => d.docKey === key)
     expect(doc?.settledMinor).toBe(4000)

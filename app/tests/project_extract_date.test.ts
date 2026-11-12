@@ -1,3 +1,4 @@
+import { seedLegacyProjectCredit } from './helpers/legacyProjectCredit.ts'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -72,8 +73,9 @@ it('المسودة المستمدة من حصر قديم بلا تاريخ قي�
  expect(S().journal).toHaveLength(0)
 })
 it('مرتجع المستخلص لا يرحّل في فترة مقفلة ويتحقق من تسلسل تاريخ الإشعار', () => {
- const ex = extract('2026-11-03')
- const args = { extractId: ex.id, amountMinor: 100, mode: 'customer_credit' as const, reason: 'تسوية' }
+ const item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: S().projects[0].id, date: '2026-11-03', payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 10 }] })
+ const args = { extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 1 }], amountMinor: 100, mode: 'customer_credit' as const, reason: 'تسوية' }
  useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: 'مقفلة', startDate: '2026-11-05', endDate: '2026-12-31', status: 'closed' }] })
  const before = S()
  expect(() => S().refundProjectExtract(args)).toThrow(/مقفلة/)
@@ -120,18 +122,19 @@ it('تحصيل العميل يرفض ماكينة فرع آخر والمرجع �
 
 it('مرتجع المستخلص النقدي يرفض خزينة وهمية وطريقة رد غير صالحة بلا تغيير المستخلص أو الدفتر', () => {
  const ex = extract(), before = S()
- const args = { extractId: ex.id, amountMinor: 100, mode: 'cash' as const, treasury: '4107', reason: 'تسوية' }
+ const args = { extractId: ex.id, quantities: [], amountMinor: 100, mode: 'cash' as const, treasury: '4107', reason: 'تسوية' }
  expect(() => S().refundProjectExtract(args)).toThrow(/الخزينة|البنك/)
  expect(() => S().refundProjectExtract({ ...args, mode: 'invalid' as never })).toThrow(/طريقة رد/)
  expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
 })
 it('مرتجع الماكينة لا يستعمل عملية فرع آخر أو أصلاً مكرراً أو مرجعاً مكرراً بعد إزالة المسافات', () => {
- const ex = extract()
+ const item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: S().projects[0].id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 10 }] })
  const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
  const terminal = { id: 't', code: 'TERM-1', nameAr: 'ماكينة', providerName: 'مزود', branchId: '2', settlementAccountCode: '1101', terminalId: 'T1', status: 'active' as const }
  const charge = { id: 'charge', idempotencyKey: 'charge', kind: 'charge' as const, terminalId: 't', branchId: '2', userId: 0, documentType: 'project_extract' as const, documentId: String(ex.id), amountMinor: 1000, providerReference: 'original', occurredAt: '2026-11-05T10:00:00Z' }
  useRawDataStore.setState({ branches, activeBranchId: 1, paymentTerminals: [terminal], paymentTerminalTransactions: [charge] })
- const args = { extractId: ex.id, amountMinor: 100, mode: 'cash' as const, treasury: '1101', reason: 'رد', terminalRefund: { originalTransactionId: 'charge', providerReference: ' REF ' } }
+ const args = { extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 1 }], amountMinor: 100, mode: 'cash' as const, treasury: '1101', reason: 'رد', terminalRefund: { originalTransactionId: 'charge', providerReference: ' REF ' } }
  const before = S()
  expect(() => S().refundProjectExtract(args)).toThrow(/الفرع/)
  expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts); expect(S().paymentTerminalTransactions).toBe(before.paymentTerminalTransactions)
@@ -142,4 +145,85 @@ it('مرتجع الماكينة لا يستعمل عملية فرع آخر أو 
  const after = S()
  expect(() => S().refundProjectExtract(args)).toThrow(/مستخدم مسبقاً/)
  expect(S().journal).toBe(after.journal); expect(S().projectExtracts).toBe(after.projectExtracts); expect(S().paymentTerminalTransactions).toBe(after.paymentTerminalTransactions)
+})
+
+it('إشعار كمي لمستخلص بلا محتجز أو دفعة يحفظ دليل البنود ويطابق قيده وضريبته', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 15, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ const before = S()
+ expect(() => S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 1, mode: 'customer_credit', reason: 'رفض بند' })).toThrow(/تغيرت قيمة/)
+ expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+ const updated = S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 575, mode: 'customer_credit', reason: 'رفض بند' })
+ expect(updated.refunds?.[0]).toMatchObject({ grossMinor: 500, taxShareMinor: 75, retentionMinor: 0, amountMinor: 575, quantities: [{ boqItemId: item.id, qty: 5 }] })
+ expect(S().journal.find(row => row.id === updated.refunds![0].journalEntryId)?.lines).toEqual(expect.arrayContaining([expect.objectContaining({ accountCode: '4102', debit: 500 }), expect.objectContaining({ accountCode: '2102', debit: 75 }), expect.objectContaining({ accountCode: '1104', credit: 575 })]))
+ expect(S().getCustomerBalance(p.clientId!)).toBe(1725)
+ expect(() => S().refundProjectExtract({ extractId: ex.id, amountMinor: 100, mode: 'customer_credit', reason: 'بلا كمية' } as never)).toThrow(/اختر البنود/)
+ const second = S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 15 }], amountMinor: 1725, mode: 'customer_credit', reason: 'باقي البند' })
+ expect(second.refundedMinor).toBe(2300); expect(S().getCustomerBalance(p.clientId!)).toBe(0)
+})
+
+it('الإشعار الكمي يرفض المحتجز والدفعة أو دليلاً قديماً ويكشف تعديل بيانات الكمية لاحقاً', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ const args = { extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 500, mode: 'customer_credit' as const, reason: 'رفض' }
+ const originalExtracts = S().projectExtracts
+ useRawDataStore.setState({ projectExtracts: originalExtracts.map(row => ({ ...row, advanceRecoveryMinor: 100 })) })
+ expect(() => S().refundProjectExtract(args)).toThrow()
+ useRawDataStore.setState({ projectExtracts: originalExtracts })
+ const result = S().refundProjectExtract(args)
+ expect(result.quantityCreditVersion).toBe(1)
+ const saved = S().projectExtracts
+ for (const bad of [
+  { ...result, refunds: result.refunds!.map(refund => ({ ...refund, quantities: [{ boqItemId: item.id, qty: 6 }] })) },
+  { ...result, refunds: result.refunds!.map(refund => ({ ...refund, quantities: undefined, grossMinor: undefined, retentionMinor: undefined })) },
+ ]) {
+  useRawDataStore.setState({ projectExtracts: [bad] })
+  expect(() => S().assertProjectExtractRefunds(p.id)).toThrow(/مراجعة/)
+ }
+ useRawDataStore.setState({ projectExtracts: saved })
+ expect(() => S().assertProjectExtractRefunds(p.id)).not.toThrow()
+})
+it('الرد الكمي لا يُخمن كميات إشعار مالي تاريخي', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ seedLegacyProjectCredit({ extractId: ex.id, amountMinor: 100, mode: 'customer_credit', reason: 'إشعار قديم' })
+ const before = S()
+ expect(() => S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 1 }], amountMinor: 100, mode: 'customer_credit', reason: 'إشعار كمي' })).toThrow(/دليل كميات/)
+ expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+})
+
+it('حارس الإشعار الكمي يرفض مستخلص محتجز حقيقي قبل تغيير القيد', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ useRawDataStore.setState({ projects: S().projects.map(row => ({ ...row, retentionPercent: 10 })) })
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ const before = S()
+ expect(() => S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 450, mode: 'customer_credit', reason: 'رفض' })).toThrow(/المحتجز/)
+ expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+})
+
+it('الإشعار يحتسب سعر وكمية إصدار المستخلص لا بطاقة البند المعدلة لاحقاً', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ useRawDataStore.setState({ boqItems: S().boqItems.map(row => ({ ...row, qty: row.qty + 10, unitPriceMinor: row.unitPriceMinor + 100 })) })
+ const result = S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 500, mode: 'customer_credit', reason: 'رفض' })
+ expect(result.refunds?.[0].grossMinor).toBe(500)
+ expect(() => S().assertProjectExtractRefunds(p.id)).not.toThrow()
+})
+
+it('المستودع يرفض أول إشعار دون كميات بما فيها القائمة الفارغة دون أثر', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ const before = S(), args = { extractId: ex.id, amountMinor: 100, mode: 'customer_credit' as const, reason: 'رد' }
+ expect(() => S().refundProjectExtract(args as never)).toThrow(/البنود والكميات/)
+ expect(() => S().refundProjectExtract({ ...args, quantities: [] })).toThrow(/البنود والكميات/)
+ expect(S().projectExtracts).toBe(before.projectExtracts); expect(S().journal).toBe(before.journal)
+})
+
+it('الإشعار الكمي المثبت يمنع إعادة بناء المستخلص دون تغيير التاريخ', () => {
+ const p = S().projects[0], item = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
+ S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 1 }], amountMinor: 100, mode: 'customer_credit', reason: 'رد' })
+ const before = S()
+ expect(() => S().editProjectExtract({ extractId: ex.id, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 25 }], vatPercent: 0, payment: 'credit', description: 'تعديل', reason: 'تصحيح' })).toThrow(/إشعار دائن/)
+ expect(S().projectExtracts).toBe(before.projectExtracts); expect(S().journal).toBe(before.journal)
 })

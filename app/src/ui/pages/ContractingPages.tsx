@@ -25,7 +25,7 @@ import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
-import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
+import { ProjectExtractCreditBox } from '../contracting/ProjectExtractCreditBox.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -1732,14 +1732,12 @@ export function ProjectsPage() {
       {/* إشعار دائن على مستخلص (مراجعة المرتجعات) */}
       <Modal open={!!refundingExtract} onClose={() => setRefundingExtract(null)} title={refundingExtract ? `إشعار دائن — ${refundingExtract.extractNumber}` : ''} subtitle="مستند إشعار دائن: عكس جزء معتمد من المستخلص">
         {refundingExtract && (
-          <ServiceRefundBox
-            grandMinor={refundingExtract.totals.dueMinor}
-            refundedMinor={refundingExtract.refundedMinor ?? 0}
+          <ProjectExtractCreditBox
+            key={refundingExtract.id}
+            extract={refundingExtract}
             currencySymbol={cur.symbol}
             fmt={fmt}
             terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
-            allowCredit={true}
-            hint="رفض المالك/الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة — «على الحساب» يخفض ذمة الجهة المالكة."
             onSubmit={(a) => { void (async () => {
               if (extractCommitPending.current) return
               extractCommitPending.current = true
@@ -2142,6 +2140,7 @@ export function ProjectExtractsPage() {
     activeBranchId,
     journal,
     paymentTerminals,
+    paymentTerminalTransactions,
     addProjectExtract,
     assertProjectExtractDraftCurrent,
     editProjectExtract,
@@ -2924,18 +2923,19 @@ export function ProjectExtractsPage() {
         subtitle="مستند إشعار دائن: عكس جزء معتمد من المستخلص"
       >
         {refundingExtract && (
-          <ServiceRefundBox
-            grandMinor={refundingExtract.totals.dueMinor}
-            refundedMinor={refundingExtract.refundedMinor ?? 0}
+          <ProjectExtractCreditBox
+            key={refundingExtract.id}
+            extract={refundingExtract}
             currencySymbol={cur.symbol}
             fmt={fmt}
-            allowCredit={true}
-            hint="رفض المالك أو الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة."
+            terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             onSubmit={(a) => { void (async () => {
               if (extractSubmitPending.current) return
               extractSubmitPending.current = true
               try {
-                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury: a.treasury }))
+                const original = a.terminalRefund ? paymentTerminalTransactions.find(row => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                const treasury = original ? paymentTerminals.find(row => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                const u = await withProjectExtractCommit(refundingExtract.projectId, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, refundingExtract.projectId), () => refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury }))
                 setRefundExtractId(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) {

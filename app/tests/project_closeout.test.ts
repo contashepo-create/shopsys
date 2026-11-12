@@ -128,7 +128,7 @@ it('مرتجع بعد المستخلص الختامي يجعل محضر الكم
  const record = issue(p.id, 1)
  expect(S().isProjectCloseoutCurrent(record.id)).toBe(true)
  const before = S().projectCloseouts[0]
- S().refundProjectExtract({ extractId: first.id, amountMinor: 100, mode: 'customer_credit', reason: 'إشعار بعد الختامي' })
+ S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: b.id, qty: 1 }], amountMinor: 100, mode: 'customer_credit', reason: 'إشعار بعد الختامي' })
  expect(S().projectCloseouts[0]).toEqual(before)
  expect(S().isProjectCloseoutCurrent(record.id)).toBe(false)
  expect(() => issue(p.id, 1)).toThrow(/مرتجع/)

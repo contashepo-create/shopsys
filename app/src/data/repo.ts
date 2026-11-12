@@ -52,6 +52,8 @@ import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyalt
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
+import { planProjectCreditAmounts, projectCreditEvidence } from '../core/projectCreditAllocation.ts'
+import type { ProjectRefundQuantity } from '../core/projectRefundQuantities.ts'
 import { assertQuantityChangeLinks, computeQuantityExtractLines, quantityChangeValue, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
 import { closeoutLines, type ProjectCloseout } from '../core/projectCloseout.ts'
 import { reviseProjectSurvey, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
@@ -575,7 +577,9 @@ export interface ProjectExtract {
   /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
   refundedMinor?: number
   refundedTaxMinor?: number
-  refunds?: ServiceRefundRecord[]
+  /** دليل إصدار إشعارات كمية؛ لا يُحوّل سجل قديم مالياً إلى سجل كمي تلقائياً. */
+  quantityCreditVersion?: 1
+  refunds?: (ServiceRefundRecord & { quantities?: ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number })[]
   /** §94: أثر التعديل بعد الإصدار — قيد عاكس ثم إعادة بناء بنفس الرقم (سجل تدقيق) */
   lastEditReason?: string
   editedAt?: string
@@ -3435,7 +3439,7 @@ interface DataState {
   /** مرتجع عقد إيجار (خصم تعويضي): يعكس 4102+2102 نسبياً — التأمين له مساره في إقفال العقد */
   refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
-  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
+  refundProjectExtract: (args: { extractId: number; amountMinor: number; quantities: ProjectRefundQuantity[]; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
   /** §94: تعديل مستخلص صادر — عكس قيده وإرجاع تقدم BOQ واسترداد الدفعة ثم إعادة بناء بنفس الرقم */
   editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
@@ -22128,15 +22132,30 @@ export const useRawDataStore = create<DataState>()(
           throw new Error('المستخلص لمشروع بلا عميل مرتبط — لا يُنشأ رصيد عميل بلا صاحب')
         }
         if (args.mode === 'cash') assertTreasuryForPosting(state, args.treasury ?? '1101', 'refund', args.amountMinor)
-        const built = buildServiceRefundEntry({
-          refundValueMinor: args.amountMinor,
-          deliveredGrandMinor: extract.totals.dueMinor,
-          deliveredTaxMinor: extract.totals.vatMinor,
-          priorRefundedMinor: extract.refundedMinor ?? 0,
-          priorRefundedTaxMinor: extract.refundedTaxMinor ?? 0,
-          mode: args.mode, treasury: args.treasury,
-          note: `إشعار دائن على مستخلص ${extract.extractNumber}`,
-        })
+        if (!Array.isArray(args.quantities) || args.quantities.length === 0) throw new Error('اختر البنود والكميات للرد على المستخلص')
+        if (extract.totals.retentionMinor !== 0 || (extract.advanceRecoveryMinor ?? 0) !== 0) throw new Error('تسوية إشعار الكميات مع المحتجز أو استرداد الدفعة المقدمة غير متاحة بعد — راجع المحاسب')
+        if (!args.reason.trim()) throw new Error('سبب الإشعار مطلوب')
+        if (!extract.lines?.length) throw new Error('المستخلص بلا بنود كمية مثبتة — راجع التاريخ')
+        const items = scoped.boqItems.filter(row => row.projectId === project.id)
+        if (state.boqItems.filter(row => row.projectId === project.id).length !== items.length) throw new Error('بنود المستخلص تابعة لفرع آخر — راجع البيانات')
+        assertQuantityChangeLinks(items, state.changeOrders.filter(row => row.projectId === project.id))
+        for (const line of extract.lines) {
+          const matches = items.filter(item => item.id === line.boqItemId), item = matches[0]
+          // سعر الإصدار وكميته من لقطة المستخلص، لا من بطاقة البند التي قد تتغير لاحقاً.
+          if (matches.length !== 1 || !item || line.previousQtyEstimated || line.prevExecutedQty == null || line.newExecutedQty == null || typeof line.unitPriceMinor !== 'number' || !Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) throw new Error('أساس بند المستخلص أو كمية البند غير مثبت — راجع البيانات')
+          const previous = Math.round(normalizeMovementQty(line.prevExecutedQty, true) * 1000), next = Math.round(normalizeMovementQty(line.newExecutedQty, true) * 1000)
+          if (next <= previous || roundNonNegativeRatio(line.unitPriceMinor, next, 1000) - roundNonNegativeRatio(line.unitPriceMinor, previous, 1000) !== line.lineValueMinor) throw new Error('قيمة البند لا تطابق الكمية وسعرها المسجلين — راجع البيانات')
+        }
+        const quantityCredit = planProjectCreditAmounts({ lines: extract.lines, totals: extract.totals, refunds: projectCreditEvidence(extract.refunds ?? []), refundedMinor: extract.refundedMinor ?? 0, refundedTaxMinor: extract.refundedTaxMinor ?? 0, selected: args.quantities })
+        if (quantityCredit.amountMinor !== args.amountMinor) throw new Error('تغيرت قيمة الإشعار منذ اختيار الكميات — أعد المعاينة')
+        const built = {
+          taxShareMinor: quantityCredit.taxShareMinor,
+          lines: [
+            { accountCode: '4102', debit: quantityCredit.grossMinor, credit: 0, note: `رد أعمال مستخلص ${extract.extractNumber}` },
+            ...(quantityCredit.taxShareMinor ? [{ accountCode: '2102', debit: quantityCredit.taxShareMinor, credit: 0, note: 'تخفيض ض.ق.م' }] : []),
+            { accountCode: args.mode === 'cash' ? args.treasury ?? '1101' : '1104', debit: 0, credit: quantityCredit.amountMinor, note: 'رد مستخلص بالكميات' },
+          ],
+        }
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -22148,7 +22167,8 @@ export const useRawDataStore = create<DataState>()(
           ...extract,
           refundedMinor: (extract.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
+          quantityCreditVersion: 1,
+          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, quantities: args.quantities.map(row => ({ ...row })), grossMinor: quantityCredit.grossMinor, retentionMinor: quantityCredit.retentionMinor, ...approvalStamp(get(), args.approvedBy) }],
         }
         let terminalRefund: PaymentTerminalTransaction | null = null
         if (args.terminalRefund) {
