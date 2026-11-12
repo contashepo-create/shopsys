@@ -192,13 +192,16 @@ it('الرد الكمي لا يُخمن كميات إشعار مالي تاري�
  expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
 })
 
-it('حارس الإشعار الكمي يرفض مستخلص محتجز حقيقي قبل تغيير القيد', () => {
+it('الإشعار الكمي يعكس محتجز شريحة الأعمال بقيد متوازن', () => {
  const p = S().projects[0], item = S().boqItems[0]
  useRawDataStore.setState({ projects: S().projects.map(row => ({ ...row, retentionPercent: 10 })) })
  const ex = S().addProjectExtract({ projectId: p.id, payment: 'credit', description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 20 }] })
- const before = S()
- expect(() => S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 450, mode: 'customer_credit', reason: 'رفض' })).toThrow(/المحتجز/)
- expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+ const result = S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 5 }], amountMinor: 450, mode: 'customer_credit', reason: 'رفض' })
+ expect(result.quantityCreditVersion).toBe(2)
+ expect(result.refunds?.[0]).toMatchObject({ grossMinor: 500, retentionMinor: 50, amountMinor: 450 })
+ expect(S().journal.at(-1)?.lines).toEqual(expect.arrayContaining([expect.objectContaining({ accountCode: '4102', debit: 500 }), expect.objectContaining({ accountCode: '1105', credit: 50 }), expect.objectContaining({ accountCode: '1104', credit: 450 })]))
+ expect(S().getRemainingRetention(p.id)).toBe(150)
+ expect(() => S().assertProjectExtractRefunds(p.id)).not.toThrow()
 })
 
 it('الإشعار يحتسب سعر وكمية إصدار المستخلص لا بطاقة البند المعدلة لاحقاً', () => {

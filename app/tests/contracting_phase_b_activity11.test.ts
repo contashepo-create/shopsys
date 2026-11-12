@@ -10,11 +10,13 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import {
   retentionReleaseDueDate,
   retentionDueWarnings,
+  retentionWarningsWithReview,
   bondComplianceWarnings,
   type Project,
 } from '../src/core/contracting.ts'
 import { pendingApprovalAging, type ApprovalRequest } from '../src/core/projectOps.ts'
 import { collectNotifications } from '../src/core/notifications.ts'
+import { FinancialDataReviewError } from '../src/core/financialDataReview.ts'
 
 describe('سد فجوة النشاط #11 — retentionReleaseDueDate', () => {
   it('null بلا تاريخ تسليم أو بلا فترة ضمان', () => {
@@ -36,6 +38,17 @@ describe('سد فجوة النشاط #11 — retentionDueWarnings', () => {
   ]
   const remaining = (id: number) => ({ 1: 50000, 2: 0, 3: 10000, 4: 30000 } as Record<number, number>)[id] ?? 0
 
+  it('يعزل مشروعاً يحتاج مراجعة وينبه دون تخمين أو تعطيل السليم', () => {
+    const result = retentionWarningsWithReview(projects, id => {
+      if (id === 1) throw new FinancialDataReviewError('مستخلص')
+      return id === 2 ? 100 : 0
+    }, '2026-10-15', 30)
+    expect(result.review.map(row => row.projectId)).toEqual([1])
+    expect(result.due.map(row => row.projectId)).toEqual([2])
+    const notifications = collectNotifications({ batches: [], itemName: () => '', installmentPlans: [], customerName: () => '', cheques: [], retentionReviewProjects: result.review, fmt: String, todayIso: '2026-10-15' })
+    expect(notifications.find(row => row.id === 'retreview:1')).toMatchObject({ severity: 'danger', route: '/contracting/projects', perm: 'ops.activity.use' })
+    expect(() => retentionWarningsWithReview(projects, () => { throw new Error('bug') }, '2026-10-15')).toThrow('bug')
+  })
   it('يضم المشروع المستحق قريباً فقط — يستبعد بلا محتجز وبلا تسليم وبعيد الاستحقاق', () => {
     const warnings = retentionDueWarnings(projects, remaining, '2026-10-15T00:00:00Z', 30)
     const ids = warnings.map((w) => w.projectId)

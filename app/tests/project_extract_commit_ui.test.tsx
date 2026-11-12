@@ -113,3 +113,14 @@ it('واجهة الإشعار تمنع المبلغ الحر وتتطلب كمي
  expect(button.disabled).toBe(false)
  expect(document.querySelector('[data-project-refund-amount]')?.textContent).toMatch(/10/)
 })
+
+it('واجهة الإشعار تعرض قيمة المحتجز المعكوس قبل الاعتماد', () => {
+ const project = S().projects[0], boq = S().boqItems[0]
+ useRawDataStore.setState({ projects: S().projects.map(row => ({ ...row, retentionPercent: 10 })) })
+ S().addProjectExtract({ projectId: project.id, description: 'أعمال', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: boq.id, cumulativeQty: 200 }] })
+ render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('مراجعة المستخلص وتفاصيل القيد'))
+ fireEvent.click(screen.getByText('إشعار دائن'))
+ fireEvent.change(screen.getByLabelText('كمية الرد 1'), { target: { value: '10' } })
+ expect(document.querySelector('[data-project-refund-amount]')?.textContent).toContain('عكس المحتجز 1.00')
+})

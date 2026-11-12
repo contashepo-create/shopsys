@@ -262,7 +262,7 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
     const prior = Array.isArray(before.projectExtracts) ? before.projectExtracts as Array<Record<string, unknown>> : []
     const next = Array.isArray(issuing.projectExtracts) ? issuing.projectExtracts as Array<Record<string, unknown>> : []
     for (const extract of next) {
-      if (extract?.quantityCreditVersion !== 1 || typeof extract.projectId !== 'number') continue
+      if ((extract?.quantityCreditVersion !== 1 && extract?.quantityCreditVersion !== 2) || typeof extract.projectId !== 'number') continue
       const old = prior.find(row => row?.id === extract.id)
       if (JSON.stringify(old?.refunds ?? []) === JSON.stringify(extract.refunds ?? [])) continue
       const id = extract.projectId

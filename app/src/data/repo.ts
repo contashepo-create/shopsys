@@ -58,6 +58,7 @@ import { assertQuantityChangeLinks, computeQuantityExtractLines, quantityChangeV
 import { closeoutLines, type ProjectCloseout } from '../core/projectCloseout.ts'
 import { reviseProjectSurvey, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
+import { creditedProjectRetention } from '../core/projectExtractNet.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
 import { commissionStatementRows } from '../core/staffCommissionStatement.ts'
@@ -578,7 +579,7 @@ export interface ProjectExtract {
   refundedMinor?: number
   refundedTaxMinor?: number
   /** دليل إصدار إشعارات كمية؛ لا يُحوّل سجل قديم مالياً إلى سجل كمي تلقائياً. */
-  quantityCreditVersion?: 1
+  quantityCreditVersion?: 1 | 2
   refunds?: (ServiceRefundRecord & { quantities?: ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number })[]
   /** §94: أثر التعديل بعد الإصدار — قيد عاكس ثم إعادة بناء بنفس الرقم (سجل تدقيق) */
   lastEditReason?: string
@@ -4312,6 +4313,14 @@ function customerReviewJournal(raw: DataState): Map<number, JournalEntry> {
   // المستند المتأثر يفشل مطابقة القيد كدليل ملتبس، دون حجب القيود السليمة الأخرى.
   for (const id of duplicateIds) journal.delete(id)
   return journal
+}
+
+function assertQuantityCreditBillingBasis(state: DataState, projectId: number): void {
+  const extracts = state.projectExtracts.filter(row => row.projectId === projectId)
+  if (!extracts.some(row => row.quantityCreditVersion != null || (row.refunds ?? []).some(refund => refund.quantities != null || refund.retentionMinor != null))) return
+  const journal = customerReviewJournal(state)
+  for (const extract of extracts) assertProjectExtractOriginalIntegrity(extract, journal)
+  assertProjectExtractRefundIntegrity(extracts, journal)
 }
 
 function assertInsuredOriginal(entry: JournalEntry | undefined, sourceType: 'lab_order' | 'clinic_visit', sourceId: number, total: number, label: string): JournalEntry {
@@ -9125,6 +9134,7 @@ export const useRawDataStore = create<DataState>()(
           if (!billingProject) throw new Error('المشروع المرتبط بالفاتورة غير موجود في هذا الفرع')
           const projectInvoices = branchState.sales.filter((inv) => inv.projectId === billingProject.id)
           const projectInvoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+          assertQuantityCreditBillingBasis(state, billingProject.id)
           const billingGuard = computeProjectBillingGuard({
             contractValueMinor: billingProject.contractValueMinor,
             changeOrders: branchState.changeOrders.filter((o) => o.projectId === billingProject.id),
@@ -11833,6 +11843,7 @@ export const useRawDataStore = create<DataState>()(
           if (editProject) {
             const otherInvoices = branchState.sales.filter((inv) => inv.projectId === editProject.id && inv.id !== sale.id)
             const otherIds = new Set(otherInvoices.map((inv) => inv.id))
+            assertQuantityCreditBillingBasis(state, editProject.id)
             const editGuard = computeProjectBillingGuard({
               contractValueMinor: editProject.contractValueMinor,
               changeOrders: branchState.changeOrders.filter((o) => o.projectId === editProject.id),
@@ -17297,6 +17308,7 @@ export const useRawDataStore = create<DataState>()(
           }
           const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
           const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          assertQuantityCreditBillingBasis(state, project.id)
           const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
           if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + newGross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
           if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + newGross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
@@ -17523,6 +17535,7 @@ export const useRawDataStore = create<DataState>()(
           }
           const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
           const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          assertQuantityCreditBillingBasis(state, project.id)
           const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
           if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + gross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
           if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + gross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
@@ -18217,7 +18230,8 @@ export const useRawDataStore = create<DataState>()(
       },
       getRemainingRetention: (projectId) => {
         const state = get()
-        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
+        assertQuantityCreditBillingBasis(state, projectId)
+        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor - creditedProjectRetention(e), 0)
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
         return held - released
       },
@@ -18240,7 +18254,7 @@ export const useRawDataStore = create<DataState>()(
         const extracts = state.projectExtracts.filter(e => e.projectId === projectId)
         const releases = state.retentionReleases.filter(r => r.projectId === projectId)
         if (scoped.retentionReleases.filter(r => r.projectId === projectId).length !== releases.length) throw new Error('تحصيل محتجز مرتبط بفرع آخر — راجع الارتباط')
-        if (extracts.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date) || releases.some(r => !isValidExpiryDate(r.date?.slice(0, 10)) || r.date.slice(0, 10) > date)) throw new Error('تاريخ التحصيل يسبق مستخلصاً أو تحصيلاً مسجلاً — راجع تسلسل المحتجز')
+        if (extracts.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date || (e.quantityCreditVersion === 2 && (e.refunds ?? []).some(r => !isValidExpiryDate(r.date) || r.date > date))) || releases.some(r => !isValidExpiryDate(r.date?.slice(0, 10)) || r.date.slice(0, 10) > date)) throw new Error('تاريخ التحصيل يسبق مستخلصاً أو إشعاراً أو تحصيلاً مسجلاً — راجع تسلسل المحتجز')
         const journal = customerReviewJournal(state)
         for (const extract of extracts) {
           assertProjectCustomerBranch(state, project, extract)
@@ -18253,7 +18267,7 @@ export const useRawDataStore = create<DataState>()(
           if (!Number.isSafeInteger(prior.amountMinor) || prior.amountMinor <= 0 || releaseEntries.has(prior.journalEntryId) || !entry || entry.sourceType !== 'retention_release' || entry.sourceId !== prior.id || (entry.sourceCollection != null && entry.sourceCollection !== 'retentionReleases') || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.date !== prior.date.slice(0, 10) || !Array.isArray(entry.lines) || entry.lines.length !== 2 || !entry.lines.some(line => line.accountCode === '1105' && line.credit === prior.amountMinor && line.debit === 0) || !entry.lines.some(line => line.accountCode !== '1105' && line.debit === prior.amountMinor && line.credit === 0)) throw new Error('سجل تحصيل المحتجز أو قيده غير متطابق — راجع الدفتر')
           releaseEntries.add(prior.journalEntryId)
         }
-        const held = extracts.reduce((a, e) => a + e.totals.retentionMinor, 0)
+        const held = extracts.reduce((a, e) => a + e.totals.retentionMinor - creditedProjectRetention(e), 0)
         const released = releases.reduce((a, r) => a + r.amountMinor, 0)
         const remaining = held - released
         if (!Number.isSafeInteger(held) || !Number.isSafeInteger(released) || !Number.isSafeInteger(remaining)) throw new Error('رصيد المحتجز غير صالح — راجع الدفتر')
@@ -18329,6 +18343,7 @@ export const useRawDataStore = create<DataState>()(
         if (!project) throw new Error('المشروع غير موجود')
         const projectInvoices = state.sales.filter((inv) => inv.projectId === projectId)
         const invoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+        assertQuantityCreditBillingBasis(get(), projectId)
         return computeProjectBillingGuard({
           contractValueMinor: project.contractValueMinor,
           changeOrders: state.changeOrders.filter((o) => o.projectId === projectId),
@@ -18364,7 +18379,7 @@ export const useRawDataStore = create<DataState>()(
         ]
         return projectProfit(
           project,
-          state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: netProjectExtractTotals(e).grossMinor, retentionMinor: e.totals.retentionMinor })),
+          state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: netProjectExtractTotals(e).grossMinor, retentionMinor: e.totals.retentionMinor - creditedProjectRetention(e) })),
           costs,
           released,
         )
@@ -18464,6 +18479,7 @@ export const useRawDataStore = create<DataState>()(
           if (!project) throw new Error('المشروع غير موجود')
           const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
           const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          assertQuantityCreditBillingBasis(state, project.id)
           const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(row => row.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
           const next = billing.effectiveContractNetMinor + order.amountMinor
           if (!Number.isSafeInteger(next) || next < 0) throw new Error('التخفيض أكبر من قيمة العقد الفعلية')
@@ -22133,7 +22149,10 @@ export const useRawDataStore = create<DataState>()(
         }
         if (args.mode === 'cash') assertTreasuryForPosting(state, args.treasury ?? '1101', 'refund', args.amountMinor)
         if (!Array.isArray(args.quantities) || args.quantities.length === 0) throw new Error('اختر البنود والكميات للرد على المستخلص')
-        if (extract.totals.retentionMinor !== 0 || (extract.advanceRecoveryMinor ?? 0) !== 0) throw new Error('تسوية إشعار الكميات مع المحتجز أو استرداد الدفعة المقدمة غير متاحة بعد — راجع المحاسب')
+        if ((extract.advanceRecoveryMinor ?? 0) !== 0) throw new Error('تسوية إشعار الكميات مع استرداد الدفعة المقدمة غير متاحة بعد — راجع المحاسب')
+        // لا يمكن إسناد تحصيل محتجز أو فاتورة توثيق مشتركة سابقة إلى كل شريحة بدقة.
+        if (extract.totals.retentionMinor > 0 && state.retentionReleases.some(row => row.projectId === project.id)) throw new Error('سبق تحصيل محتجز المشروع بلا توزيع مثبت على المستخلصات — راجع تسوية المحتجز')
+        if (extract.totals.retentionMinor > 0 && state.sales.some(row => row.projectId === project.id && row.projectBilling === 'documentation')) throw new Error('توجد فاتورة توثيق للمشروع — راجع تسوية المستندات قبل إشعار المحتجز')
         if (!args.reason.trim()) throw new Error('سبب الإشعار مطلوب')
         if (!extract.lines?.length) throw new Error('المستخلص بلا بنود كمية مثبتة — راجع التاريخ')
         const items = scoped.boqItems.filter(row => row.projectId === project.id)
@@ -22153,9 +22172,11 @@ export const useRawDataStore = create<DataState>()(
           lines: [
             { accountCode: '4102', debit: quantityCredit.grossMinor, credit: 0, note: `رد أعمال مستخلص ${extract.extractNumber}` },
             ...(quantityCredit.taxShareMinor ? [{ accountCode: '2102', debit: quantityCredit.taxShareMinor, credit: 0, note: 'تخفيض ض.ق.م' }] : []),
+            ...(quantityCredit.retentionMinor ? [{ accountCode: '1105', debit: 0, credit: quantityCredit.retentionMinor, note: 'عكس محتجز الأعمال المردودة' }] : []),
             { accountCode: args.mode === 'cash' ? args.treasury ?? '1101' : '1104', debit: 0, credit: quantityCredit.amountMinor, note: 'رد مستخلص بالكميات' },
           ],
         }
+        assertBalanced(built.lines)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -22167,7 +22188,7 @@ export const useRawDataStore = create<DataState>()(
           ...extract,
           refundedMinor: (extract.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          quantityCreditVersion: 1,
+          quantityCreditVersion: extract.totals.retentionMinor > 0 ? 2 : 1,
           refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, quantities: args.quantities.map(row => ({ ...row })), grossMinor: quantityCredit.grossMinor, retentionMinor: quantityCredit.retentionMinor, ...approvalStamp(get(), args.approvedBy) }],
         }
         let terminalRefund: PaymentTerminalTransaction | null = null

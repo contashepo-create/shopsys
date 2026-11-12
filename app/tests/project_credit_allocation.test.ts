@@ -58,13 +58,16 @@ it('دمج التخزين يرفض إشعار كميات تزامن مع تغي�
  const { mergeConcurrentSnapshots } = await import('../src/data/persistentStorage.ts')
  const snap = (state: object) => JSON.stringify({ state })
  const base = { projects: [{ id: 1 }], boqItems: [{ id: 1, projectId: 1 }], projectExtracts: [{ id: 1, projectId: 1, refunds: [] }], journal: [{ id: 1 }], vouchers: [] }
- const issue = { ...base, projectExtracts: [{ id: 1, projectId: 1, quantityCreditVersion: 1, refunds: [{ amountMinor: 10 }] }], journal: [{ id: 1 }, { id: 2 }] }
- for (const other of [
-  { ...base, boqItems: [{ id: 1, projectId: 1, qty: 5 }] },
-  { ...base, vouchers: [{ id: 1, amount: 10 }] },
-  { ...base, journal: [{ id: 1 }, { id: 3 }] },
- ]) {
-  expect(() => mergeConcurrentSnapshots(snap(base), snap(issue), snap(other))).toThrow(/تعارض/)
-  expect(() => mergeConcurrentSnapshots(snap(base), snap(other), snap(issue))).toThrow(/تعارض/)
+ for (const version of [1, 2]) {
+  const issue = { ...base, projectExtracts: [{ id: 1, projectId: 1, quantityCreditVersion: version, refunds: [{ amountMinor: 10 }] }], journal: [{ id: 1 }, { id: 2 }] }
+  for (const other of [
+   { ...base, boqItems: [{ id: 1, projectId: 1, qty: 5 }] },
+   { ...base, retentionReleases: [{ id: 1, projectId: 1, amountMinor: 5 }] },
+   { ...base, vouchers: [{ id: 1, amount: 10 }] },
+   { ...base, journal: [{ id: 1 }, { id: 3 }] },
+  ]) {
+   expect(() => mergeConcurrentSnapshots(snap(base), snap(issue), snap(other))).toThrow(/تعارض/)
+   expect(() => mergeConcurrentSnapshots(snap(base), snap(other), snap(issue))).toThrow(/تعارض/)
+  }
  }
 })

@@ -21,7 +21,7 @@ import { vehicleComplianceWarnings, unsettledDriverDues } from '../../core/logis
 import { clearSessionAuthenticated } from '../../data/sessionAuth.ts'
 import { criticalUnacknowledgedResults } from '../../core/lab.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
-import { bondComplianceWarnings, retentionDueWarnings, COST_KIND_LABELS } from '../../core/contracting.ts'
+import { bondComplianceWarnings, retentionWarningsWithReview, COST_KIND_LABELS } from '../../core/contracting.ts'
 import { pendingApprovalAging, APPROVAL_ACTION_LABELS } from '../../core/projectOps.ts'
 import { todaysUnfinishedAppointments, overduePatientBalances } from '../../core/clinic.ts'
 import { agingInventoryCars } from '../../core/cars.ts'
@@ -98,6 +98,8 @@ export function Header({ title }: { title: string }) {
   const openShift = currentOpenShift(shifts)
   const authOn = authRequired(ownerPinHash, appUsers.filter((u) => u.active).length)
 
+  const retentionWarnings = retentionWarningsWithReview(projects, getRemainingRetention, localIsoTimestamp(), 30)
+
   const notifications = useMemo(
     () => [
       /* بند 10: درجة التنبيه تنعكس على خطورته في الجرس (عاجل ⇒ أحمر) */
@@ -170,7 +172,8 @@ export function Header({ title }: { title: string }) {
         requestId: a.requestId, subject: a.subject, actionLabel: APPROVAL_ACTION_LABELS[a.action], daysPending: a.daysPending,
       })),
       // مشروعات تستحق/تقترب من استحقاق الإفراج عن المحتجز بعد فترة الضمان (سد فجوة تقرير النشاط #11 — Future #1)
-      retentionDueProjects: retentionDueWarnings(projects, (projectId) => getRemainingRetention(projectId), localIsoTimestamp(), 30).map((r) => ({
+      retentionReviewProjects: retentionWarnings.review,
+      retentionDueProjects: retentionWarnings.due.map((r) => ({
         projectId: r.projectId, projectNameAr: r.projectNameAr, dueDate: r.dueDate, daysLeft: r.daysLeft, remainingMinor: r.remainingRetentionMinor,
       })),
       // مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)
@@ -214,7 +217,7 @@ export function Header({ title }: { title: string }) {
       todayIso: localIsoTimestamp(),
     }),
     ],
-    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, getRemainingRetention, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices],
+    [retentionWarnings, cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, equipment, tickets, laundryOrders, leases, activatedPayload, vehicles, driverDues, employees, labOrders, bonds, projects, approvalRequests, getProjectBudgetVariance, clinicAppointments, clinicPatients, clinicVisits, getPatientBalance, cars, journal, restaurantOrders, jewelryProfiles, gramPrices],
   )
   const announcedCloudNoticeIds = useRef(new Set<string>())
   const sawCloudNoticeSnapshot = useRef(false)

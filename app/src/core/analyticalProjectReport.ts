@@ -38,6 +38,8 @@ export interface AnalyticalProjectSource {
     /** إجمالي الإشعارات وحصتها الضريبية كما قُيدت، وسجل كل رد. */
     refundedMinor?: Minor
     refundedTaxMinor?: Minor
+    /** محتجز عُكس بقيد إشعار كمي؛ لا يُستنتج من مبلغ قديم. */
+    refundedRetentionMinor?: Minor
     refunds?: readonly { date: string; amountMinor: Minor; taxShareMinor: Minor; mode: 'cash' | 'customer_credit'; journalEntryId: number }[]
   }[]
   /** مصروفات المشروع (سطر لكل مستند) */
@@ -89,7 +91,7 @@ export interface AnalyticalProjectSource {
 /** لا نستنتج نوع الرد أو ضريبته من إجمالي قديم بلا مستندات مطابقة. */
 function extractRefundStatus(src: AnalyticalProjectSource) {
   const keys = new Set<string>()
-  let amount = 0, tax = 0, cash = 0
+  let amount = 0, tax = 0, cash = 0, retention = 0
   let incomplete = src.refundLedgerIncomplete === true || src.originalLedgerIncomplete === true
   for (const e of src.extracts) {
     const records = e.refunds ?? []
@@ -102,10 +104,11 @@ function extractRefundStatus(src: AnalyticalProjectSource) {
       sum += r.amountMinor; sumTax += r.taxShareMinor
       if (r.mode === 'cash') cash += r.amountMinor
     }
-    if (sum !== (e.refundedMinor ?? 0) || sumTax !== (e.refundedTaxMinor ?? 0) || sum > e.dueMinor || sumTax > (e.vatMinor ?? 0)) incomplete = true
-    amount += sum; tax += sumTax
+    const reversedRetention = e.refundedRetentionMinor ?? 0
+    if (!Number.isSafeInteger(reversedRetention) || reversedRetention < 0 || reversedRetention > e.retentionMinor || sum !== (e.refundedMinor ?? 0) || sumTax !== (e.refundedTaxMinor ?? 0) || sum > e.dueMinor || sumTax > (e.vatMinor ?? 0)) incomplete = true
+    amount += sum; tax += sumTax; retention += reversedRetention
   }
-  return { keys, amount, tax, cash, incomplete }
+  return { keys, amount, tax, cash, retention, incomplete }
 }
 
 export interface ChequeCollectionRow {
@@ -350,9 +353,9 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
   const safe = (value: Minor) => refunds.incomplete ? unresolved : fmt(value)
   const settlementUnresolved = refunds.incomplete ? unresolved : 'تتطلب مراجعة ربط العميل والتحصيلات'
   const settlementSafe = (value: Minor) => refunds.incomplete || src.unlinkedReceivable ? settlementUnresolved : fmt(value)
-  const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0) - (refunds.incomplete ? 0 : refunds.amount - refunds.tax)
+  const extracted = src.extracts.reduce((s, e) => s + e.grossMinor, 0) - (refunds.incomplete ? 0 : refunds.amount - refunds.tax + refunds.retention)
   const vat = src.extracts.reduce((s, e) => s + (e.vatMinor ?? 0), 0) - (refunds.incomplete ? 0 : refunds.tax)
-  const retention = src.extracts.reduce((s, e) => s + e.retentionMinor, 0)
+  const retention = src.extracts.reduce((s, e) => s + e.retentionMinor, 0) - (refunds.incomplete ? 0 : refunds.retention)
   const dueTotal = src.extracts.reduce((s, e) => s + e.dueMinor, 0) - (refunds.incomplete ? 0 : refunds.amount)
 
   const collections = buildCollectionRows(src)
@@ -472,7 +475,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
       { label: 'قيمة العقد الفعلية', value: fmt(contractEffective), emphasis: true },
       { label: 'قيمة الأعمال المستخلصة', value: safe(extracted) },
       { label: 'ض.ق.م محمّلة على العميل', value: safe(vat) },
-      { label: 'محتجز ضمان أعمال', value: src.originalLedgerIncomplete ? unresolved : fmt(retention) },
+      { label: 'محتجز ضمان أعمال', value: safe(retention) },
       { label: 'صافي المستحق على المستخلصات', value: safe(dueTotal) },
       { label: 'إجمالي ما تم تحصيله', value: settlementSafe(collected) },
       { label: 'المتبقي من التحصيل', value: settlementSafe(remainingCollection), emphasis: true },
@@ -484,7 +487,7 @@ export function buildAnalyticalProjectReport(src: AnalyticalProjectSource): Form
     equation: [
       { label: 'قيمة الأعمال المستخلصة', value: safe(extracted) },
       { label: 'يُضاف: ض.ق.م محمّلة', value: safe(vat) },
-      { label: 'يُطرح: محتجز ضمان أعمال', value: src.originalLedgerIncomplete ? unresolved : `(${fmt(retention)})` },
+      { label: 'يُطرح: محتجز ضمان أعمال', value: refunds.incomplete ? unresolved : `(${fmt(retention)})` },
       { label: 'صافي المستحق على المستخلصات', value: safe(dueTotal), emphasis: true },
       { label: 'يُطرح: إجمالي التحصيلات (سندات + شيكات + مقاصات)', value: refunds.incomplete || src.unlinkedReceivable ? settlementUnresolved : `(${fmt(collected)})` },
       { label: 'المتبقي من التحصيل — مستخلصات المشروع', value: settlementSafe(remainingCollection), emphasis: true },

@@ -10,6 +10,7 @@ import { EMPTY_EXTENDED,useDataStore,useRawDataStore, type AdvancedInvoiceDraft 
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { draftFromCategory, nextSku } from '../../core/items.ts'
 import { getActivity } from '../../core/activities.ts'
 import { formatMinor, toMinor, partyBalanceText } from '../../core/money.ts'
@@ -428,8 +429,11 @@ const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCusto
   return list
  },[collectNote.text,cur,grandMinor,selectedCustomer,balanceWithoutEditedInvoice,shortMinor,totalPaidMinor,setup.creditWarningThresholdPercent,partyNeedsReview,canViewCustomerBalance])/* §97: نص الملاحظة (ثابت القيمة) بدل الكائن الذي يتجدد كل تصيير */
  /* يُحسب مع كل تصيير (الصفحة مشتركة بالمتجر كاملاً): أرخص من تعقيد التبعيات ودائماً طازج */
- const billingGuard=projectId>0?getProjectBillingGuard(projectId):null
+ let billingGuard:ReturnType<typeof getProjectBillingGuard>|null=null
+ let billingReview=''
+ try{if(projectId>0)billingGuard=getProjectBillingGuard(projectId)}catch(error){if(!(error instanceof FinancialDataReviewError))throw error;billingReview=error.message}
  const billingIssues=useMemo<PrePostIssue[]>(()=>{
+  if(billingReview)return[{id:'billing-review',level:'blocking',text:billingReview}]
   if(!projectId||!billingGuard)return[]
   const issues:PrePostIssue[]=[];const total=totals?.totalMinor??0
   if(projectBilling==='documentation'){
@@ -442,7 +446,7 @@ const minCollectMinor=partyKind!=='customer'&&selectedSaleParty?0:!selectedCusto
    if(net>billingGuard.extraRoomNetMinor)issues.push({id:'billing-extra-over',level:'blocking',text:`صافي الفاتورة الإضافية (${formatMinor(net,cur,false)}) يتجاوز المتبقي من العقد الفعلي (${formatMinor(billingGuard.extraRoomNetMinor,cur,false)})`})
   }
   return issues
- },[projectId,billingGuard,projectBilling,docExtractIds,totals,lines,items,totalPaidMinor,cur])
+ },[projectId,billingGuard,billingReview,projectBilling,docExtractIds,totals,lines,items,totalPaidMinor,cur])
  const allPrePostIssues=useMemo(()=>[...prePostIssues,...prePostFinancial,...billingIssues],[prePostFinancial,prePostIssues,billingIssues])
  const bookOrder=[...sales].sort((a,b)=>a.id-b.id);const bookIndex=editingInvoice?bookOrder.findIndex(invoice=>invoice.id===editingInvoice.id):-1
  const prevInvoice=bookIndex>0?bookOrder[bookIndex-1]:null;const nextInvoice=bookIndex>=0&&bookIndex<bookOrder.length-1?bookOrder[bookIndex+1]:null

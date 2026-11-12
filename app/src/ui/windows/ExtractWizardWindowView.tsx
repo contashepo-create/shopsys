@@ -12,6 +12,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { boqItemTotal, computeExtractLines, computeExtractTotals } from '../../core/contracting.ts'
@@ -60,7 +61,12 @@ export function ExtractWizardWindowView() {
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const projectBoq = useMemo(() => boqItems.filter((b) => b.projectId === projectId), [boqItems, projectId])
-  const guard = projectId > 0 ? getProjectBillingGuard(projectId) : null
+  let guard: ReturnType<typeof getProjectBillingGuard> | null = null
+  let billingReview = ''
+  try { if (projectId > 0) guard = getProjectBillingGuard(projectId) } catch (error) {
+    if (!(error instanceof FinancialDataReviewError)) throw error
+    billingReview = error.message
+  }
   const advanceRemaining = clientAdvances
     .filter((a) => a.projectId === projectId)
     .reduce((sum, a) => sum + Math.max(0, a.amountMinor - a.recoveredMinor), 0)
@@ -107,6 +113,7 @@ export function ExtractWizardWindowView() {
   useEffect(() => { host?.setDirty(dirty) }, [host, dirty])
 
   const stepError = (): string => {
+    if (billingReview) return billingReview
     if (step === 1) return project ? '' : 'اختر المشروع أولاً'
     if (step === 2) {
       if (mode === 'gross') return parseMoney(gross) > 0 ? '' : 'أدخل قيمة الأعمال المنفذة'

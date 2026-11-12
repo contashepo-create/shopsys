@@ -119,7 +119,7 @@ console.log('② المستخلصات: التعديل بقيد عاكس وإعا
 
   /* لا يُسجّل إشعار غير مدعوم على مستخلص فيه محتجز واسترداد دفعة. */
   throws('رفض الإشعار الحر ولو احتوى المستخلص على محتجز ودفعة', () => st().refundProjectExtract({ extractId: ex2.id, amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'البنود والكميات')
-  throws('رفض الإشعار الكمي مع المحتجز أو الدفعة حتى اكتمال تسويته', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'المحتجز')
+  throws('رفض الإشعار الكمي مع استرداد الدفعة حتى اكتمال تسويتها', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'الدفعة')
 
   /* تعديل بمبلغ إجمالي لمستخلص بندي: الأعمال قائمة — تقدم BOQ لا يُرجَع */
   const ex2g = st().editProjectExtract({ extractId: ex1.id, grossMinor: 260_000, vatPercent: 0, payment: 'credit', description: 'إعادة تقييم بالمبلغ الإجمالي', reason: 'تسوية شاملة' })

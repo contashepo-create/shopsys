@@ -285,3 +285,20 @@ it('المستخلص الآجل الذي يشير إلى عميل محذوف ل�
   render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
   expect(screen.getAllByText('تتطلب مراجعة ربط العميل والتحصيلات').length).toBeGreaterThan(0)
 })
+
+it('التقرير يعكس محتجز إشعار كمي مع الإيراد والضريبة دون احتسابه تحصيلاً', () => {
+ const s = useDataStore.getState()
+ s.addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل محتجز', phone: '', creditLimitMinor: 0, notes: '' })
+ const customer = useDataStore.getState().customers.at(-1)!
+ const project = s.addProject({ nameAr: 'مشروع محتجز', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 10, startDate: '2026-01-01', notes: '' })
+ const item = s.addBoqItem({ projectId: project.id, code: 'R', descriptionAr: 'أعمال', unit: 'م', qty: 100, unitPriceMinor: 100 })
+ const extract = s.addProjectExtract({ projectId: project.id, description: 'آجل', payment: 'credit', vatPercent: 15, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 100 }] })
+ s.refundProjectExtract({ extractId: extract.id, quantities: [{ boqItemId: item.id, qty: 40 }], amountMinor: 4200, mode: 'customer_credit', reason: 'إشعار' })
+ render(<AnalyticalProjectReportView projectId={String(project.id)} onProjectChange={() => {}} />)
+ expect(indicator('قيمة الأعمال المستخلصة')).toBe(amount(6000))
+ expect(indicator('ض.ق.م محمّلة على العميل')).toBe(amount(900))
+ expect(indicator('محتجز ضمان أعمال')).toBe(amount(600))
+ expect(indicator('صافي المستحق على المستخلصات')).toBe(amount(6300))
+ expect(indicator('صافي نتيجة المشروع حتى تاريخه')).toBe(amount(6000))
+ expect(screen.queryByText(/تنبيه مراجعة: مجموع سطور التحصيلات/)).toBeNull()
+})

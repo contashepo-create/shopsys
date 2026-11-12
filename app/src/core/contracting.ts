@@ -14,6 +14,8 @@
 import { addCalendarMonths } from './time.ts'
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { creditedProjectRetention } from './projectExtractNet.ts'
+import { FinancialDataReviewError } from './financialDataReview.ts'
 
 export type ProjectStatus = 'active' | 'completed'
 
@@ -115,6 +117,26 @@ export function retentionDueWarnings(
     if (daysLeft <= warnDays) out.push({ projectId: p.id, projectNameAr: p.nameAr, dueDate, daysLeft, remainingRetentionMinor: remaining })
   }
   return out.sort((a, b) => a.daysLeft - b.daysLeft)
+}
+
+/** تنبيه المراجعة لا يخمّن قيمة المحتجز ولا يعطّل تنبيهات المشاريع السليمة. */
+export function retentionWarningsWithReview(
+  projects: readonly (Pick<Project, 'id' | 'nameAr' | 'actualHandoverDate' | 'defectsLiabilityMonths'>)[],
+  remaining: (projectId: number) => Minor,
+  todayIso: string,
+  warnDays = 30,
+): { due: RetentionDueWarning[]; review: { projectId: number; projectNameAr: string }[] } {
+  const review: { projectId: number; projectNameAr: string }[] = []
+  const byId = new Map(projects.map(project => [project.id, project]))
+  const due = retentionDueWarnings(projects, id => {
+    try { return remaining(id) } catch (error) {
+      if (!(error instanceof FinancialDataReviewError)) throw error
+      const project = byId.get(id)!
+      review.push({ projectId: id, projectNameAr: project.nameAr })
+      return 0 // استبعاد التنبيه المالي فقط، وليس اعتماد رصيد صفري
+    }
+  }, todayIso, warnDays)
+  return { due, review }
 }
 
 /**
@@ -691,14 +713,14 @@ export interface ProjectDocumentationReturn {
 
 /** Remaining documentation capacity per extract, after prior document invoices and returns. */
 export function remainingDocumentableByExtract(
-  extracts: readonly { id: number; totals: { grossMinor: Minor; vatMinor: Minor }; refundedMinor?: Minor }[],
+  extracts: readonly { id: number; totals: { grossMinor: Minor; vatMinor: Minor }; refundedMinor?: Minor; quantityCreditVersion?: number; refunds?: readonly { retentionMinor?: number }[] }[],
   invoices: readonly ProjectDocumentationInvoice[],
   returns: readonly ProjectDocumentationReturn[] = [],
 ): Map<number, Minor> {
   const ordered = [...extracts].sort((a, b) => a.id - b.id)
   const remaining = new Map(ordered.map((extract) => [
     extract.id,
-    Math.max(0, extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0)),
+    Math.max(0, extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0) - creditedProjectRetention(extract)),
   ]))
   const returnedByInvoice = new Map<number, number>()
   for (const ret of returns) returnedByInvoice.set(ret.saleId, (returnedByInvoice.get(ret.saleId) ?? 0) + ret.totals.totalMinor)
@@ -729,7 +751,7 @@ export function remainingDocumentableByExtract(
 export function computeProjectBillingGuard(input: {
   contractValueMinor: Minor
   changeOrders: readonly ChangeOrder[]
-  extracts: readonly { totals: ExtractTotals; refundedMinor?: number; refundedTaxMinor?: number }[]
+  extracts: readonly { totals: ExtractTotals; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly { retentionMinor?: number }[] }[]
   saleInvoices: readonly { id: number; projectBilling?: ProjectBillingNature; totals: { totalMinor: Minor; taxMinor: Minor } }[]
   saleReturns?: readonly { saleId: number; totals: { totalMinor: Minor; taxMinor: Minor } }[]
 }): ProjectBillingGuard {
@@ -738,10 +760,11 @@ export function computeProjectBillingGuard(input: {
   let extractedVatMinor = 0
   let documentableGrossMinor = 0
   for (const e of input.extracts) {
-    const refundedNet = Math.max(0, (e.refundedMinor ?? 0) - (e.refundedTaxMinor ?? 0))
+    const retained = creditedProjectRetention(e)
+    const refundedNet = Math.max(0, (e.refundedMinor ?? 0) - (e.refundedTaxMinor ?? 0) + retained)
     extractedNetMinor += Math.max(0, e.totals.grossMinor - refundedNet)
     extractedVatMinor += Math.max(0, e.totals.vatMinor - (e.refundedTaxMinor ?? 0))
-    documentableGrossMinor += Math.max(0, e.totals.grossMinor + e.totals.vatMinor - (e.refundedMinor ?? 0))
+    documentableGrossMinor += Math.max(0, e.totals.grossMinor + e.totals.vatMinor - (e.refundedMinor ?? 0) - retained)
   }
   const returnedByInvoice = new Map<number, { total: number; tax: number }>()
   for (const r of input.saleReturns ?? []) {

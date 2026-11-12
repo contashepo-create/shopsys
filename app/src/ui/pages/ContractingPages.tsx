@@ -1318,6 +1318,7 @@ export function ProjectsPage() {
 
             {viewExtracts.length > 0 && (
               <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                <p className="px-3 py-2 text-xs text-slate-500">قيم المستخلصات في هذا الجدول عند الإصدار، قبل الإشعارات أو الإفراج عن المحتجز؛ راجع تقارير المشروع للأرصدة الحالية.</p>
                 <table className="w-full text-[12px]">
                   <thead className="bg-orange-500/10 text-orange-700 dark:text-orange-300">
                     <tr>{['المستخلص', 'التاريخ', 'الأعمال', 'المحتجز', 'المستحق', ''].map((h, i) => <th key={i} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr>
@@ -1735,6 +1736,8 @@ export function ProjectsPage() {
           <ProjectExtractCreditBox
             key={refundingExtract.id}
             extract={refundingExtract}
+            hasRetentionRelease={retentionReleases.some(row => row.projectId === refundingExtract.projectId)}
+            hasDocumentationInvoice={sales.some(row => row.projectId === refundingExtract.projectId && row.projectBilling === 'documentation')}
             currencySymbol={cur.symbol}
             fmt={fmt}
             terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
@@ -2131,6 +2134,8 @@ export function ProjectExtractsPage() {
   const {
     projects,
     projectExtracts,
+    retentionReleases,
+    sales,
     projectSurveys,
     projectExtractDrafts,
     projectCloseouts,
@@ -2453,6 +2458,7 @@ export function ProjectExtractsPage() {
         </Btn>
       </div>
 
+      <p className="text-xs text-slate-500">الأرقام والجدول أدناه بقيم المستخلصات عند الإصدار، قبل الإشعارات والتحصيل والإفراج عن المحتجز؛ راجع تقارير المشروع للأرصدة الحالية.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
           <div className="text-xs font-bold text-slate-500">إجمالي الأعمال المفوترة (4107)</div>
@@ -2926,6 +2932,8 @@ export function ProjectExtractsPage() {
           <ProjectExtractCreditBox
             key={refundingExtract.id}
             extract={refundingExtract}
+            hasRetentionRelease={retentionReleases.some(row => row.projectId === refundingExtract.projectId)}
+            hasDocumentationInvoice={sales.some(row => row.projectId === refundingExtract.projectId && row.projectBilling === 'documentation')}
             currencySymbol={cur.symbol}
             fmt={fmt}
             terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
