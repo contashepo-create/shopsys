@@ -121,6 +121,11 @@ console.log('② المستخلصات: التعديل بقيد عاكس وإعا
   throws('رفض الإشعار الحر ولو احتوى المستخلص على محتجز ودفعة', () => st().refundProjectExtract({ extractId: ex2.id, amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'البنود والكميات')
   throws('رفض الإشعار الكمي مع استرداد الدفعة حتى اكتمال تسويتها', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'الدفعة')
 
+  /* لا يُعكس تخصيص الأقدم مع بقاء استرداد لاحق؛ أزل اللاحق ثم عدّل الأقدم. */
+  const beforeAdvanceEdit = st()
+  throws('رفض تعديل استرداد أقدم مع استرداد لاحق', () => st().editProjectExtract({ extractId: ex1.id, grossMinor: 260_000, vatPercent: 0, payment: 'credit', description: 'إعادة تقييم', reason: 'تسوية شاملة' }), 'استرداد مقدمة أحدث')
+  ok('رفض التعديل لا يغير قيود الدفعات أو المستخلصات', st().journal === beforeAdvanceEdit.journal && st().clientAdvances === beforeAdvanceEdit.clientAdvances && st().projectExtracts === beforeAdvanceEdit.projectExtracts)
+  st().editProjectExtract({ extractId: ex2.id, extractLines: [{ boqItemId: b1.id, newProgressPercent: 80 }], vatPercent: 0, payment: 'credit', description: 'مستخلص ثانٍ (معدل)', advanceRecoveryMinor: 0, reason: 'إعادة توزيع المقدم' })
   /* تعديل بمبلغ إجمالي لمستخلص بندي: الأعمال قائمة — تقدم BOQ لا يُرجَع */
   const ex2g = st().editProjectExtract({ extractId: ex1.id, grossMinor: 260_000, vatPercent: 0, payment: 'credit', description: 'إعادة تقييم بالمبلغ الإجمالي', reason: 'تسوية شاملة' })
   ok('تعديل بالمبلغ الإجمالي يعيد التقييم بلا مساس بتقدم BOQ (ب1=80 وب2=20)', ex2g.totals.grossMinor === 260_000 && st().boqItems.find((b) => b.id === b1.id).progressPercent === 80 && st().boqItems.find((b) => b.id === b2.id).progressPercent === 20)

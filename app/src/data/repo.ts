@@ -60,6 +60,7 @@ import { reviseProjectSurvey, assertSurveyIntegrity, exactBilledQuantities, type
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { creditedProjectRetention } from '../core/projectExtractNet.ts'
 import { projectNetQuantityHistory, type ProjectNetQuantityReport } from '../core/projectNetQuantityHistory.ts'
+import { assertAdvanceRecoveryBasis, allocateProjectAdvance, undoProjectAdvanceRecovery, type ProjectAdvanceAllocation } from '../core/projectAdvanceRecovery.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
 import { commissionStatementRows } from '../core/staffCommissionStatement.ts'
@@ -576,6 +577,8 @@ export interface ProjectExtract {
    * كشف الحساب أيضاً وإلا تضارب الدفتر مع الكشف
    */
   advanceRecoveryMinor?: number
+  /** دليل توزيع استرداد المقدمة عند الإصدار؛ لا يُختلق للسجلات القديمة. */
+  advanceAllocations?: ProjectAdvanceAllocation[]
   /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
   refundedMinor?: number
   refundedTaxMinor?: number
@@ -4324,6 +4327,24 @@ function assertQuantityCreditBillingBasis(state: DataState, projectId: number): 
   const journal = customerReviewJournal(state)
   for (const extract of extracts) assertProjectExtractOriginalIntegrity(extract, journal)
   assertProjectExtractRefundIntegrity(extracts, journal)
+}
+
+function checkedProjectAdvanceBasis(state: DataState, project: Project): { advances: DataState['clientAdvances']; extracts: ProjectExtract[] } {
+  const scoped = getBranchScopedDataState(state)
+  if (state.projects.filter(row => row.id === project.id).length !== 1 || scoped.projects.filter(row => row.id === project.id).length !== 1) throw new Error('المشروع غير فريد في الفرع الحالي — راجع البيانات')
+  assertProjectCustomerBranch(state, project)
+  const advances = state.clientAdvances.filter(row => row.projectId === project.id)
+  const extracts = state.projectExtracts.filter(row => row.projectId === project.id)
+  if (advances.length !== scoped.clientAdvances.filter(row => row.projectId === project.id).length || extracts.length !== scoped.projectExtracts.filter(row => row.projectId === project.id).length) throw new Error('مقدمات أو مستخلصات المشروع تتبع فرعاً آخر — راجع البيانات')
+  const advanceIds = new Set(advances.map(row => row.id)), extractIds = new Set(extracts.map(row => row.id))
+  if (state.clientAdvances.filter(row => advanceIds.has(row.id)).length !== advances.length || state.projectExtracts.filter(row => extractIds.has(row.id)).length !== extracts.length || advanceIds.size !== advances.length || extractIds.size !== extracts.length) throw new Error('معرف دفعة أو مستخلص مكرر — راجع البيانات')
+  const journal = customerReviewJournal(state)
+  for (const extract of extracts) if ((extract.advanceRecoveryMinor ?? 0) > 0) {
+    assertProjectExtractOriginalIntegrity(extract, journal)
+    if (!isValidExpiryDate(extract.date?.slice(0, 10)) || journal.get(extract.journalEntryId)?.date !== extract.date.slice(0, 10)) throw new FinancialDataReviewError(`تاريخ المستخلص ${extract.extractNumber}`)
+  }
+  assertAdvanceRecoveryBasis(project.id, advances, extracts, journal, new Set(scoped.treasuries.map(row => row.code)))
+  return { advances, extracts }
 }
 
 function assertInsuredOriginal(entry: JournalEntry | undefined, sourceType: 'lab_order' | 'clinic_visit', sourceId: number, total: number, label: string): JournalEntry {
@@ -17375,10 +17396,8 @@ export const useRawDataStore = create<DataState>()(
         // استرداد الدفعة المقدمة (اختياري): يخصم من مستحق المستخلص ويطفئ 2109
         const recovery = args.advanceRecoveryMinor ?? 0
         if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > totals.dueMinor) throw new Error('استرداد الدفعة يجب أن يكون مبلغاً صحيحاً بين صفر ومستحق المستخلص')
-        if (recovery > 0) {
-          const advBalance = state.clientAdvances.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
-          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
-        }
+        if (recovery > 0) checkedProjectAdvanceBasis(state, project)
+        const advancePlan = allocateProjectAdvance(project.id, state.clientAdvances, recovery)
         // حد الائتمان: المستخلص الآجل دين على عميل المشروع (المستحق بعد استرداد الدفعة)
         if (args.payment === 'credit') {
           if (totals.dueMinor > recovery && (project.clientId == null || !state.customers.some(customer => customer.id === project.clientId))) throw new Error('المستخلص الآجل يتطلب ربط المشروع بعميل مسجل قبل إصدار ذمة')
@@ -17399,7 +17418,7 @@ export const useRawDataStore = create<DataState>()(
           id, extractNumber, projectId: project.id, date: documentDate, createdAt: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
           lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
-          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery, advanceAllocations: advancePlan.allocations } : {}),
           ...(args.isFinal ? { isFinal: true } : {}),
         }
         // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
@@ -17409,15 +17428,8 @@ export const useRawDataStore = create<DataState>()(
               return c ? { ...b, progressPercent: c.newProgressPercent } : b
             })
           : state.boqItems
-        // استهلاك الدفعات المقدمة FIFO (الأقدم أولاً)
-        let toRecover = recovery
-        const updatedAdvances = state.clientAdvances.map((a) => {
-          if (toRecover <= 0 || a.projectId !== project.id) return a
-          const room = a.amountMinor - a.recoveredMinor
-          const take = Math.min(room, toRecover)
-          toRecover -= take
-          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
-        })
+        // الاسترداد وتفصيله حُسبا من الحالة نفسها قبل أي تعديل.
+        const updatedAdvances = advancePlan.advances
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (args.terminalPayment) {
           if (args.payment !== 'cash') throw new Error('الماكينة متاحة للمستخلص المحصل فقط')
@@ -17490,19 +17502,14 @@ export const useRawDataStore = create<DataState>()(
               return l ? { ...b, progressPercent: l.prevProgressPercent } : b
             })
           : state.boqItems
-        /* ③ استرداد الدفعة المقدمة يُرجَع (إجمالي 2109 يظل مطابقاً — القيد العاكس عكس نصيبه) */
-        let toGiveBack = extract.advanceRecoveryMinor ?? 0
+        /* ③ لا نعكس تخصيص مقدمة تخميناً من آخر دفعة؛ نراجع دليله وترتيب المستخلصات. */
+        const previousRecovery = extract.advanceRecoveryMinor ?? 0
+        const nextRecovery = args.advanceRecoveryMinor ?? 0
         let advancesAfterRevert = state.clientAdvances
-        if (toGiveBack > 0) {
-          advancesAfterRevert = state.clientAdvances.map((a) => ({ ...a }))
-          for (let i = advancesAfterRevert.length - 1; i >= 0 && toGiveBack > 0; i--) {
-            const a = advancesAfterRevert[i]
-            if (a.projectId !== extract.projectId || a.recoveredMinor <= 0) continue
-            const give = Math.min(a.recoveredMinor, toGiveBack)
-            a.recoveredMinor -= give
-            toGiveBack -= give
-          }
-          if (toGiveBack > 0) throw new Error('خلل في إرجاع استرداد الدفعة المقدمة — راجع الدعم الفني')
+        if (previousRecovery > 0 || nextRecovery > 0) {
+          const basis = checkedProjectAdvanceBasis(state, project)
+          if (basis.extracts.some(row => row.id !== extract.id && (row.advanceRecoveryMinor ?? 0) > 0 && row.journalEntryId > extract.journalEntryId)) throw new Error('يوجد استرداد مقدمة أحدث — راجعه أولاً قبل تعديل المستخلص')
+          advancesAfterRevert = undoProjectAdvanceRecovery(project.id, state.clientAdvances, basis.extracts, extract)
         }
         /* ④ إعادة البناء من الحالة المرجَعة — نفس حراس الإصدار (نفس الرقم والمعرف) */
         let extractLinesComputed: ExtractLineComputed[] | undefined
@@ -17552,10 +17559,7 @@ export const useRawDataStore = create<DataState>()(
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const recovery = args.advanceRecoveryMinor ?? 0
         if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > totals.dueMinor) throw new Error('استرداد الدفعة يجب أن يكون مبلغاً صحيحاً بين صفر ومستحق المستخلص')
-        if (recovery > 0) {
-          const advBalance = advancesAfterRevert.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
-          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
-        }
+        const advancePlan = allocateProjectAdvance(project.id, advancesAfterRevert, recovery)
         if (args.payment === 'credit') {
           if (totals.dueMinor > recovery && (project.clientId == null || !state.customers.some(customer => customer.id === project.clientId))) throw new Error('المستخلص الآجل يتطلب ربط المشروع بعميل مسجل قبل إصدار ذمة')
           const previousCredit = extract.payment === 'credit' ? Math.max(0, extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0)) : 0
@@ -17576,7 +17580,7 @@ export const useRawDataStore = create<DataState>()(
           ...extract,
           date: now, description: args.description, payment: args.payment, totals, journalEntryId: entryId,
           lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
-          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : { advanceRecoveryMinor: undefined }),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery, advanceAllocations: advancePlan.allocations } : { advanceRecoveryMinor: undefined, advanceAllocations: undefined }),
           ...(args.isFinal ? { isFinal: true } : { isFinal: undefined }),
           lastEditReason: reason, editedAt: now, editReversalEntryId: reversalId,
         }
@@ -17587,14 +17591,7 @@ export const useRawDataStore = create<DataState>()(
               return c ? { ...b, progressPercent: c.newProgressPercent } : b
             })
           : boqAfterRevert
-        let toRecover = recovery
-        const updatedAdvances = advancesAfterRevert.map((a) => {
-          if (toRecover <= 0 || a.projectId !== project.id) return a
-          const room = a.amountMinor - a.recoveredMinor
-          const take = Math.min(room, toRecover)
-          toRecover -= take
-          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
-        })
+        const updatedAdvances = advancePlan.advances
         set({
           approvalRequests,
           clientAdvances: updatedAdvances, boqItems: updatedBoq,

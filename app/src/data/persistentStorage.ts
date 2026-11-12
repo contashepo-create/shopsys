@@ -276,6 +276,23 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
     }
   }
   checkQuantityCredit(left, right); checkQuantityCredit(right, left)
+  // استرداد المقدمة موثق حسب الدفعة: أي تحديث متزامن للأساس أو الدفتر
+  // يرفض الدمج حتى لا يضيع تخصيص أو يُنسب استرداد إلى دفعة خاطئة.
+  const checkAdvanceRecovery = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const rows = (source: Record<string, unknown>, name: string) => Array.isArray(source[name]) ? source[name] as Array<Record<string, unknown>> : []
+    const all = [...rows(before, 'clientAdvances'), ...rows(issuing, 'clientAdvances'), ...rows(before, 'projectExtracts'), ...rows(issuing, 'projectExtracts')]
+    const ids = new Set(all.map(row => row?.projectId).filter((id): id is number => typeof id === 'number'))
+    for (const id of ids) {
+      const select = (source: Record<string, unknown>, name: string) => rows(source, name).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id))
+      const changedAdvances = JSON.stringify(select(before, 'clientAdvances')) !== JSON.stringify(select(issuing, 'clientAdvances'))
+      const recoveryRows = (source: Record<string, unknown>) => select(source, 'projectExtracts').filter(row => row.advanceRecoveryMinor != null && row.advanceRecoveryMinor !== 0 || row.advanceAllocations != null)
+      const changedRecoveries = JSON.stringify(recoveryRows(before)) !== JSON.stringify(recoveryRows(issuing))
+      if (!changedAdvances && !changedRecoveries) continue
+      for (const name of ['projects', 'clientAdvances', 'projectExtracts']) if (JSON.stringify(select(before, name)) !== JSON.stringify(select(other, name))) throw new Error('تعارض استرداد مقدمات المشروع مع تغيير متزامن — أعد تحميل البيانات')
+      if (JSON.stringify(before.journal) !== JSON.stringify(other.journal)) throw new Error('تعارض استرداد مقدمات المشروع مع الدفتر — أعد تحميل البيانات')
+    }
+  }
+  checkAdvanceRecovery(left, right); checkAdvanceRecovery(right, left)
   checkDeletion(left, right); checkDeletion(right, left)
   const deleted = new Set(Array.isArray(state?.projectDeletionRecords) ? state.projectDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
   if (state && deleted.size) {
