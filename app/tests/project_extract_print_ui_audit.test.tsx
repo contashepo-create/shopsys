@@ -37,3 +37,17 @@ it('معاينة المستخلص تعيد البناء من السجل وتمن
  act(() => { useRawDataStore.setState({ projectExtracts: [] }); usePrintPreview.getState().refresh() })
  expect(usePrintPreview.getState().rebuildError).toBe(true)
 })
+
+it('تحذّر معاينتا المستخلص من إشعارات المشروع وتظهران التحذير عند تحديث المعاينة', () => {
+ render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
+ const extract = S().projectExtracts[0]
+ for (const button of [screen.getByTitle('طباعة فاتورة احترافية للعميل كأنها فاتورة بيع ولكنها مستخلص'), screen.getByTitle('طباعة وثيقة المستخلص الهندسي')]) {
+  fireEvent.click(button)
+  if (!(S().projectExtracts[0].refundedMinor ?? 0)) {
+   expect(usePrintPreview.getState().handle?.html).not.toContain('تنبيه: توجد إشعارات دائن')
+   act(() => { S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'إشعار' }); usePrintPreview.getState().refresh() })
+  }
+  expect(usePrintPreview.getState().handle?.html).toContain('تنبيه: توجد إشعارات دائن على مستخلصات المشروع')
+  expect(usePrintPreview.getState().handle?.html).toContain('ولا تمثل الرصيد الحالي')
+ }
+})

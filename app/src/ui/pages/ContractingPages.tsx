@@ -100,7 +100,8 @@ function previewProjectExtract(id: number, variant: 'engineering' | 'invoice', n
       progressPercent: project.contractValueMinor > 0 ? Math.round(cumulative / project.contractValueMinor * 10000) / 100 : null,
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '', retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: project.retentionPercent, advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`, payment: ex.payment, currencySymbol: cur.symbol, isFinal: ex.isFinal, lines,
+      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`, payment: ex.payment, currencySymbol: cur.symbol, isFinal: ex.isFinal,
+      projectHasRefunds: data.projectExtracts.some(row => row.projectId === project.id && (row.refundedMinor ?? 0) > 0), lines,
     }
     return variant === 'engineering' ? renderExtractHtml(common) : renderExtractClientInvoiceHtml({ ...common, shopPhone: settings.setup.phone, shopAddress: [settings.setup.city, settings.setup.street].filter(Boolean).join(' — '), shopTaxId: settings.einvoice.taxNumber, contractNumber: project.contractNumber, clientPhone: client?.phone, clientTaxId: client?.taxNumber })
   }

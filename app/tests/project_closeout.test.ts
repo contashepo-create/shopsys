@@ -119,3 +119,19 @@ it('لا يصدر محضر كميات بعد فقد أمر الزيادة الم
  expect(() => issue(p.id, 1)).toThrow(/شريحة كميات بلا أمر/)
  expect(S().projectCloseouts).toHaveLength(0)
 })
+
+it('مرتجع بعد المستخلص الختامي يجعل محضر الكميات تاريخياً ولا يسمح بمحضر جديد دون معالجة المرتجع', () => {
+ const { p, b } = setup()
+ const first = extract(p.id, b.id, 200)
+ S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 1000 }], isFinal: true })
+ finalSurvey(p.id, b.id, 1000, 0)
+ const record = issue(p.id, 1)
+ expect(S().isProjectCloseoutCurrent(record.id)).toBe(true)
+ const before = S().projectCloseouts[0]
+ S().refundProjectExtract({ extractId: first.id, amountMinor: 100, mode: 'customer_credit', reason: 'إشعار بعد الختامي' })
+ expect(S().projectCloseouts[0]).toEqual(before)
+ expect(S().isProjectCloseoutCurrent(record.id)).toBe(false)
+ expect(() => issue(p.id, 1)).toThrow(/مرتجع/)
+ expect(() => extract(p.id, b.id, 1000)).toThrow(/ختامي/)
+ expect(S().projectCloseouts).toHaveLength(1)
+})
