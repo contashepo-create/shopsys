@@ -35,8 +35,10 @@ import { openSalesInvoiceWindow, openProjectExpenseWindow, openExtractWizardWind
 import { ProjectExpenseLedgerCard } from '../contracting/ProjectExpenseLedgerCard.tsx'
 import { ExtractQuantityEditor } from '../contracting/ExtractQuantityEditor.tsx'
 import { quantityDraftPreview, type QuantityDraft, type QuantityEntryMode } from '../contracting/extractQuantityDraft.ts'
+import { quantityChangeValue } from '../../core/projectExtractQuantity.ts'
 import { renderExtractHtml, renderExtractClientInvoiceHtml } from '../print/printExtract.ts'
-import { printHtml } from '../print/printReceipt.ts'
+import { renderProjectHtml } from '../print/printProject.ts'
+import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 
@@ -61,13 +63,58 @@ function extractPrintQuantities(line: { prevExecutedQty?: number; newExecutedQty
   return { previousQty, cumulativeQty, currentQty: (Math.round(cumulativeQty * 1000) - Math.round(previousQty * 1000)) / 1000, remainingQty: line.contractQty == null ? undefined : (Math.round(line.contractQty * 1000) - Math.round(cumulativeQty * 1000)) / 1000, previousQtyEstimated: line.previousQtyEstimated, boqQty: line.contractQty, unitPrice: line.unitPriceMinor == null ? undefined : `${fmt(line.unitPriceMinor)} ${symbol}`, unit: line.unit }
 }
 
+/** تعيد معاينتا المستخلص بناء المستند من بيانات الفرع الحية قبل الطباعة. */
+function previewProjectExtract(id: number, variant: 'engineering' | 'invoice', notify: (message: string, type?: 'success' | 'error') => void) {
+  const build = () => {
+    const data = useDataStore.getState(), extracts = data.projectExtracts.filter(row => row.id === id)
+    if (extracts.length !== 1) throw new Error('المستخلص غير موجود أو غير فريد في الفرع الحالي')
+    const ex = extracts[0], projects = data.projects.filter(row => row.id === ex.projectId)
+    if (projects.length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+    const project = projects[0]
+    data.assertProjectExtractOriginals(project.id)
+    data.assertProjectExtractRefunds(project.id)
+    const app = useAppStore.getState(), cur = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+    const fmt = (amount: number) => formatMinor(amount, cur, false)
+    const settings = resolveDocumentPrintSettings(project)
+    const client = project.clientId != null ? data.customers.find(row => row.id === project.clientId) : undefined
+    const previous = data.projectExtracts.filter(row => row.projectId === project.id && row.id < ex.id).reduce((sum, row) => sum + row.totals.grossMinor, 0)
+    const cumulative = previous + ex.totals.grossMinor
+    const lines = (ex.lines ?? []).map(line => {
+      const item = data.boqItems.find(row => row.projectId === project.id && row.id === line.boqItemId)
+      return {
+        code: line.code, descriptionAr: sectionedBoqDescription(project, data.boqItems, line.boqItemId, line.descriptionAr),
+        unit: line.unit ?? item?.unit, boqQty: line.contractQty ?? item?.qty,
+        unitPrice: line.unitPriceMinor != null ? `${fmt(line.unitPriceMinor)} ${cur.symbol}` : item ? `${fmt(item.unitPriceMinor)} ${cur.symbol}` : undefined,
+        ...extractPrintQuantities(line, fmt, cur.symbol),
+        boqTotal: item ? `${fmt(boqItemTotal(item))} ${cur.symbol}` : undefined,
+        prevPercent: line.prevProgressPercent, newPercent: line.newProgressPercent,
+        currentSlicePercent: Math.max(0, Math.round((line.newProgressPercent - line.prevProgressPercent) * 100) / 100),
+        value: `${fmt(line.lineValueMinor)} ${cur.symbol}`,
+      }
+    })
+    const common = {
+      shopName: settings.setup.shopName || 'مقاولات', extractNumber: ex.extractNumber, dateIso: ex.date,
+      projectName: project.nameAr, projectCode: project.code, clientName: client?.nameAr || project.clientName || 'الجهة المالكة',
+      contractValue: project.contractValueMinor > 0 ? `${fmt(project.contractValueMinor)} ${cur.symbol}` : '', description: ex.description,
+      previousGross: `${fmt(previous)} ${cur.symbol}`, currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`, cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
+      progressPercent: project.contractValueMinor > 0 ? Math.round(cumulative / project.contractValueMinor * 10000) / 100 : null,
+      vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '', retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
+      retentionPercent: project.retentionPercent, advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
+      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`, payment: ex.payment, currencySymbol: cur.symbol, isFinal: ex.isFinal, lines,
+    }
+    return variant === 'engineering' ? renderExtractHtml(common) : renderExtractClientInvoiceHtml({ ...common, shopPhone: settings.setup.phone, shopAddress: [settings.setup.city, settings.setup.street].filter(Boolean).join(' — '), shopTaxId: settings.einvoice.taxNumber, contractNumber: project.contractNumber, clientPhone: client?.phone, clientTaxId: client?.taxNumber })
+  }
+  try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: variant === 'engineering' ? 'معاينة المستخلص الهندسي' : 'معاينة فاتورة المستخلص للعميل' }) }
+  catch (error) { notify(error instanceof Error ? error.message : 'تعذرت معاينة المستخلص', 'error') }
+}
+
 export function ProjectsPage() {
   const navigate = useNavigate()
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, paymentTerminals, paymentTerminalTransactions, clientAdvances, activeBranchId, projectSurveys, projectCloseouts, projectExtractDrafts,
     addProject, addProjectWithBoq, addProjectExtract, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
-    getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
+    getAdvanceBalance, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases, appUsers, currentUserId, roleOverrides, customRoles, projectBudgets, projectTasks, quotations,
     ensureServiceItemForFreeLine, previewLegacyProjectCustomer, resolveLegacyProjectCustomer, previewMissingProjectCustomerBackup, restoreMissingProjectCustomerBackup,
   } = useDataStore()
@@ -598,100 +645,24 @@ export function ProjectsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const viewingLive = viewing ? projects.find((p) => p.id === viewing.id) ?? null : null
+  const previewProject = (projectId: number) => {
+    const rebuild = () => {
+      const data = useDataStore.getState()
+      const project = data.projects.find(row => row.id === projectId)
+      if (!project || data.projects.filter(row => row.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+      const surveys = data.projectSurveys.filter(row => row.projectId === projectId)
+      if (surveys.length > 1) throw new Error('يوجد أكثر من حصر للمشروع — راجع السجلات')
+      const app = useAppStore.getState()
+      const currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+      return renderProjectHtml({ shopName: app.setup.shopName || 'المقاولات', project, items: data.boqItems.filter(row => row.projectId === projectId), orders: data.changeOrders.filter(row => row.projectId === projectId), survey: surveys[0], history: data.projectExtracts.filter(row => row.projectId === projectId), fmt: amount => formatMinor(amount, currency, false), currency: currency.symbol })
+    }
+    try { openPrintPreview({ html: rebuild(), rebuild, wide: true, title: 'معاينة بيان المشروع للعميل' }) } catch (error) { toast.show((error as Error).message, 'error') }
+  }
   const profit = viewingLive ? getProjectProfit(viewingLive.id) : null
   const viewExtracts = viewingLive ? projectExtracts.filter((e) => e.projectId === viewingLive.id) : []
 
-  /** المستخلص المطبوع (جولة المقاولات): تراكمي سابق + حالي + نسبة إنجاز + محتجز خصماً */
-  const printExtract = (ex: (typeof projectExtracts)[number]) => {
-    const prj = projects.find((p) => p.id === ex.projectId)
-    if (!prj) return
-    const documentSettings = resolveDocumentPrintSettings(prj)
-    const previous = projectExtracts
-      .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
-      .reduce((a, e) => a + e.totals.grossMinor, 0)
-    const cumulative = previous + ex.totals.grossMinor
-    printHtml(renderExtractHtml({
-      shopName: documentSettings.setup.shopName || 'مقاولات',
-      extractNumber: ex.extractNumber,
-      dateIso: ex.date,
-      projectName: prj.nameAr,
-      projectCode: prj.code,
-      clientName: prj.clientName,
-      contractValue: prj.contractValueMinor > 0 ? `${fmt(prj.contractValueMinor)} ${cur.symbol}` : '',
-      description: ex.description,
-      previousGross: `${fmt(previous)} ${cur.symbol}`,
-      currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
-      cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
-      vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
-      retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
-      retentionPercent: prj.retentionPercent,
-      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
-          ...extractPrintQuantities(l, fmt, cur.symbol), prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
-      advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
-      payment: ex.payment,
-      currencySymbol: cur.symbol,
-      isFinal: ex.isFinal,
-    }))
-  }
-
-  /** §96: طباعة فاتورة مستخلص احترافية للعميل (كأنها فاتورة بيع ولكنها مستخلص) */
-  const printExtractClientInvoice = (ex: (typeof projectExtracts)[number]) => {
-    const prj = projects.find((p) => p.id === ex.projectId)
-    if (!prj) return
-    const documentSettings = resolveDocumentPrintSettings(prj)
-    const client = prj.clientId != null ? customers.find((c) => c.id === prj.clientId) : undefined
-    const previous = projectExtracts
-      .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
-      .reduce((a, e) => a + e.totals.grossMinor, 0)
-    const cumulative = previous + ex.totals.grossMinor
-    const einv = documentSettings.einvoice
-    printHtml(renderExtractClientInvoiceHtml({
-      shopName: documentSettings.setup.shopName || 'مقاولات',
-      shopPhone: documentSettings.setup.phone,
-      shopAddress: [documentSettings.setup.city, documentSettings.setup.street].filter(Boolean).join(' — '),
-      shopTaxId: einv.taxNumber,
-      extractNumber: ex.extractNumber,
-      dateIso: ex.date,
-      projectName: prj.nameAr,
-      projectCode: prj.code,
-      contractNumber: prj.contractNumber,
-      clientName: client?.nameAr || prj.clientName || 'الجهة المالكة',
-      clientPhone: client?.phone,
-      clientTaxId: client?.taxNumber,
-      contractValue: prj.contractValueMinor > 0 ? `${fmt(prj.contractValueMinor)} ${cur.symbol}` : '',
-      description: ex.description,
-      previousGross: `${fmt(previous)} ${cur.symbol}`,
-      currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
-      cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
-      vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
-      retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
-      retentionPercent: prj.retentionPercent,
-      advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-      due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
-      payment: ex.payment,
-      currencySymbol: cur.symbol,
-      isFinal: ex.isFinal,
-      lines: (ex.lines ?? []).map((l) => {
-        const boq = boqItems.find((b) => b.id === l.boqItemId)
-        return {
-          code: l.code,
-          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
-          unit: boq?.unit,
-          boqQty: boq?.qty,
-          unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
-          ...extractPrintQuantities(l, fmt, cur.symbol),
-          boqTotal: boq ? `${fmt(boqItemTotal(boq))} ${cur.symbol}` : undefined,
-          prevPercent: l.prevProgressPercent,
-          newPercent: l.newProgressPercent,
-          currentSlicePercent: Math.max(0, Math.round((l.newProgressPercent - l.prevProgressPercent) * 100) / 100),
-          value: `${fmt(l.lineValueMinor)} ${cur.symbol}`,
-        }
-      }),
-    }))
-  }
+  const printExtract = (ex: (typeof projectExtracts)[number]) => previewProjectExtract(ex.id, 'engineering', toast.show)
+  const printExtractClientInvoice = (ex: (typeof projectExtracts)[number]) => previewProjectExtract(ex.id, 'invoice', toast.show)
   const viewCosts = viewingLive ? projectCosts.filter((c) => c.projectId === viewingLive.id) : []
   const viewEntryIds = new Set([
     ...viewExtracts.map((e) => e.journalEntryId),
@@ -759,14 +730,31 @@ export function ProjectsPage() {
   const [coDate, setCoDate] = useState(todayLocalIso())
   const [coAmount, setCoAmount] = useState('')
   const [coDeduct, setCoDeduct] = useState(false)
-  const saveChangeOrder = () => {
-    if (!coFor) return
+  const [coKind, setCoKind] = useState<'amount' | 'quantity'>('amount')
+  const [coItem, setCoItem] = useState('')
+  const [coQty, setCoQty] = useState('')
+  const coPending = useRef(false)
+  const saveChangeOrder = async () => {
+    if (!coFor || coPending.current) return
+    coPending.current = true
     try {
-      const raw = toMinor(coAmount, cur.decimals)
-      const co = addChangeOrder({ projectId: coFor.id, titleAr: coTitle.trim(), amountMinor: coDeduct ? -raw : raw, date: coDate })
+      const item = boqItems.find(row => row.projectId === coFor.id && row.id === Number(coItem) && !row.quantityChange)
+      if (coKind === 'quantity' && (!item || !coQty.trim())) throw new Error('اختر بند العقد وأدخل كمية الزيادة')
+      const amount = coKind === 'quantity' ? quantityChangeValue(Number(coQty), item!.unitPriceMinor) : (coDeduct ? -toMinor(coAmount, cur.decimals) : toMinor(coAmount, cur.decimals))
+      const co = await withProjectExtractCommit(coFor.id, projectExtractFingerprint(useDataStore.getState(), coFor.id), () => useRawDataStore.getState().addChangeOrder({ projectId: coFor.id, titleAr: coTitle.trim(), amountMinor: amount, date: coDate, ...(item && coKind === 'quantity' ? { quantityChange: { originalBoqItemId: item.id, qty: Number(coQty) } } : {}) }))
       toast.show(`أُنشئ أمر التغيير ${co.number} (مسودة) — اعتمده ليدخل قيمة العقد ✅`)
-      setCoFor(null); setCoTitle(''); setCoAmount(''); setCoDeduct(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      setCoFor(null); setCoTitle(''); setCoAmount(''); setCoDeduct(false); setCoKind('amount'); setCoItem(''); setCoQty('')
+    } catch (e) { toast.show(e instanceof ProjectCommitUnconfirmedError ? 'سُجّل الأمر محلياً وتعذر تأكيد الحفظ — راجع السجل قبل إعادة المحاولة' : (e as Error).message, 'error') }
+    finally { coPending.current = false }
+  }
+  const decideChangeOrder = async (orderId: number, status: 'approved' | 'rejected' | 'invoiced') => {
+    if (!coFor || coPending.current) return
+    coPending.current = true
+    try {
+      await withProjectExtractCommit(coFor.id, projectExtractFingerprint(useDataStore.getState(), coFor.id), () => useRawDataStore.getState().setChangeOrderStatus(orderId, status))
+      toast.show(status === 'approved' ? 'اعتُمد أمر التغيير' : status === 'rejected' ? 'رُفض أمر التغيير' : 'عُلّم أمر التغيير كمستخلص')
+    } catch (e) { toast.show(e instanceof ProjectCommitUnconfirmedError ? 'سُجل القرار محلياً وتعذر تأكيد الحفظ — راجع السجل قبل إعادة المحاولة' : (e as Error).message, 'error') }
+    finally { coPending.current = false }
   }
   const doRelease = async () => {
     if (!releaseFor || releasePending.current) return
@@ -1250,7 +1238,8 @@ export function ProjectsPage() {
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" data-project-customer-preview onClick={() => previewProject(viewingLive.id)}><Printer size={14} /> معاينة وطباعة بيان المشروع</Btn>
               <Btn variant="ghost" data-project-new-invoice onClick={() => {
                 /* بلاغ المالك (2026-10-17): «لماذا لم تظهر بنود المشروع في الفاتورة تلقائياً؟»
                    ⇒ الفاتورة تُفتح وبنود جدول الكميات معبأة فيها (أصناف خدمة مضمونة)،
@@ -1595,7 +1584,8 @@ export function ProjectsPage() {
             </div>
             <Field label="تاريخ أمر التغيير" hint="تاريخ المستند؛ الاعتماد يسجل وقته الفعلي ويؤثر فوراً ولا يتأجل بهذا التاريخ"><input type="date" value={coDate} onChange={event => setCoDate(event.target.value)} className={inputCls} aria-label="تاريخ أمر التغيير" /></Field>
             <Field label="عنوان أمر التغيير"><input value={coTitle} onChange={(e) => setCoTitle(e.target.value)} placeholder="أعمال إضافية للواجهة…" className={inputCls} /></Field>
-            <div className="grid grid-cols-2 gap-3">
+            <Field label="نوع أمر التغيير"><select aria-label="نوع أمر التغيير" value={coKind} onChange={event => setCoKind(event.target.value as 'amount' | 'quantity')} className={inputCls}><option value="amount">قيمة إجمالية</option><option value="quantity">زيادة كمية بند من العقد</option></select></Field>
+            {coKind === 'quantity' ? <div className="space-y-2"><Field label="بند العقد الأصلي"><select aria-label="بند أمر تغيير الكمية" value={coItem} onChange={event => setCoItem(event.target.value)} className={inputCls}><option value="">اختر البند</option>{boqItems.filter(item => item.projectId === coFor.id && !item.quantityChange).map(item => <option key={item.id} value={item.id}>{item.code} — {item.descriptionAr} ({item.unit})</option>)}</select></Field><Field label="كمية الزيادة"><input aria-label="كمية أمر التغيير" value={coQty} onChange={event => setCoQty(event.target.value)} inputMode="decimal" className={inputCls} /></Field>{(() => { const item = boqItems.find(row => row.projectId === coFor.id && row.id === Number(coItem) && !row.quantityChange); if (!item || !coQty.trim()) return null; try { return <p className="rounded bg-slate-100 dark:bg-slate-800 p-2 text-sm" role="status">قيمة الزيادة قبل الضريبة: <b>{fmt(quantityChangeValue(Number(coQty), item.unitPriceMinor))} {cur.symbol}</b> ({coQty} {item.unit} × {fmt(item.unitPriceMinor)} {cur.symbol})</p> } catch (error) { return <p role="alert" className="text-rose-600 text-xs">{(error as Error).message}</p> } })()}<p className="text-xs text-slate-500">زيادة فقط بسعر وحدة العقد. عند الاعتماد تُنشأ شريحة مستقلة للمستخلص دون تغيير كميات أو نسب المستخلصات السابقة؛ التخفيض الكمي يحتاج مراجعة يدوية.</p></div> : <div className="grid grid-cols-2 gap-3">
               <Field label={`القيمة (${cur.symbol})`}><input value={coAmount} onChange={(e) => setCoAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
               <Field label="الاتجاه">
                 <div className="flex gap-2">
@@ -1603,22 +1593,22 @@ export function ProjectsPage() {
                   <button onClick={() => setCoDeduct(true)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${coDeduct ? 'bg-rose-600 text-white border-rose-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>تخفيض</button>
                 </div>
               </Field>
-            </div>
+            </div>}
             {changeOrders.filter((o) => o.projectId === coFor.id).length > 0 && (
               <div className="space-y-1.5">
                 <div className="text-[11px] font-bold text-slate-400">أوامر التغيير السابقة</div>
                 {changeOrders.filter((o) => o.projectId === coFor.id).map((o) => (
                   <div key={o.id} className="flex items-center justify-between text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-lg px-3 py-2">
-                    <span><b>{o.number}</b> — {o.titleAr} ({o.amountMinor >= 0 ? '+' : '−'}{fmt(Math.abs(o.amountMinor))}) · {o.date}</span>
+                    <span><b>{o.number}</b> — {o.titleAr} ({o.amountMinor >= 0 ? '+' : '−'}{fmt(Math.abs(o.amountMinor))}) · {o.date}{o.quantityChange && ` · زيادة ${o.quantityChange.qty} ${o.quantityChange.unit}`}</span>
                     {o.status === 'draft' ? (
                       <span className="flex gap-1">
-                        <button onClick={() => { try { setChangeOrderStatus(o.id, 'approved'); toast.show('اعتُمد ✅') } catch (e) { toast.show((e as Error).message, 'error') } }} className="text-emerald-600 font-bold hover:underline">اعتماد</button>
-                        <button onClick={() => { setChangeOrderStatus(o.id, 'rejected'); toast.show('رُفض') }} className="text-rose-500 font-bold hover:underline mr-2">رفض</button>
+                        <button onClick={() => void decideChangeOrder(o.id, 'approved')} className="text-emerald-600 font-bold hover:underline">اعتماد</button>
+                        <button onClick={() => void decideChangeOrder(o.id, 'rejected')} className="text-rose-500 font-bold hover:underline mr-2">رفض</button>
                       </span>
                     ) : o.status === 'approved' ? (
                       <span className="flex gap-2 items-center">
                         <span className="font-bold text-emerald-600">✅ معتمد</span>
-                        <button onClick={() => { try { setChangeOrderStatus(o.id, 'invoiced'); toast.show('عُلّم مُستخلَصاً 🧾') } catch (e) { toast.show((e as Error).message, 'error') } }} title="عُدّ ضمن مستخلص صادر" className="text-sky-600 font-bold hover:underline">تعليم كمُستخلَص</button>
+                        <button onClick={() => void decideChangeOrder(o.id, 'invoiced')} title="عُدّ ضمن مستخلص صادر" className="text-sky-600 font-bold hover:underline">تعليم كمُستخلَص</button>
                       </span>
                     ) : (
                       <span className={`font-bold ${o.status === 'invoiced' ? 'text-sky-600' : 'text-rose-500'}`}>{CHANGE_ORDER_STATUS_LABELS[o.status].icon} {CHANGE_ORDER_STATUS_LABELS[o.status].nameAr}</span>
@@ -1628,7 +1618,7 @@ export function ProjectsPage() {
               </div>
             )}
             <DocOutcome>الأثر: <b>لا قيد</b> عند إنشاء أمر التغيير أو اعتماده — يعدّل قيمة العقد ونسب الإنجاز فقط؛ القيد يتولد في المستخلص التالي (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
-            <Btn onClick={saveChangeOrder} className="w-full" disabled={!coTitle.trim() || !coAmount}>إنشاء أمر التغيير (مسودة)</Btn>
+            <Btn onClick={() => void saveChangeOrder()} className="w-full" disabled={!coTitle.trim() || (coKind === 'amount' ? !coAmount : !coItem || !coQty)}>إنشاء أمر التغيير (مسودة)</Btn>
           </div>
         )}
       </Modal>
@@ -1809,6 +1799,7 @@ export function ProjectsPage() {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 export function ProjectExpensesPage() {
+  const toast = useToast()
   const {
     projects,
     projectCosts,
@@ -1858,6 +1849,34 @@ export function ProjectExpensesPage() {
   }, [filteredCosts])
 
   const viewingCost = viewCostId != null ? projectCosts.find((c) => c.id === viewCostId) ?? null : null
+  const previewExpense = (id: number) => {
+    const build = () => {
+      const fresh = useDataStore.getState(), matches = fresh.projectCosts.filter(row => row.id === id)
+      if (matches.length !== 1) throw new Error('مستند المصروف غير موجود أو غير فريد في الفرع الحالي')
+      const cost = matches[0], project = fresh.projects.find(row => row.id === cost.projectId)
+      if (!project || fresh.projects.filter(row => row.id === cost.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+      const app = useAppStore.getState(), currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+      const money = (value: number) => `${formatMinor(value, currency, false)} ${currency.symbol}`
+      const supplier = cost.supplierId ? fresh.suppliers.find(row => row.id === cost.supplierId) : undefined
+      const entry = fresh.journal.find(row => row.id === cost.journalEntryId)
+      const custody = cost.custodyFileId != null ? fresh.custodyFiles.find(row => row.id === cost.custodyFileId) : undefined
+      const gross = cost.grossMinor ?? cost.amountMinor + (cost.vatMinor ?? 0)
+      const paid = cost.paidMinor ?? (cost.payment === 'cash' ? gross : 0)
+      const due = cost.dueMinor ?? Math.max(0, gross - paid)
+      const source = custody ? `عهدة ${custody.fileNumber}` : cost.treasury ? fresh.treasuries.find(row => row.code === cost.treasury)?.nameAr ?? cost.treasury : paid > 0 ? 'مصدر نقدي' : 'لا يوجد — كامل المبلغ آجل'
+      const info = htmlTableHtml({ headers: ['البيان', 'التفاصيل'], rows: [
+        ['المشروع', `${project.code} — ${project.nameAr}`], ['التاريخ', cost.date.slice(0, 10)], ['البيان', cost.description],
+        ['الجهة الآجلة', supplier?.nameAr ?? (due > 0 ? 'غير محددة — سجل قديم' : 'لا يوجد')], ['مصدر السداد', source],
+        ['رقم فاتورة المورد', cost.invoiceRef || '—'], ['الصافي على المشروع', money(cost.amountMinor)], ['ضريبة المدخلات', money(cost.vatMinor ?? 0)],
+        ['الإجمالي الشامل', money(gross)], ['المدفوع', money(paid)], ['الآجل', money(due)],
+      ] })
+      const lines = htmlTableHtml({ headers: ['#', 'البند', 'التصنيف', 'الكمية × السعر', 'الضريبة', 'الصافي', 'الضريبة', 'الإجمالي'], rows: (cost.lines ?? []).map((line, index) => [index + 1, line.description, line.categoryNameAr ?? COST_KIND_LABELS[line.kind]?.nameAr ?? line.kind, `${line.qty} × ${money(line.unitPriceMinor)}`, line.taxMode === 'inclusive' ? `شامل (${line.vatPercent}٪)` : line.taxMode === 'exclusive' ? `غير شامل (+${line.vatPercent}٪)` : 'بدون ضريبة', money(line.netMinor), money(line.vatMinor), money(line.grossMinor)]) })
+      const ledger = entry ? htmlTableHtml({ headers: ['الحساب', 'مدين', 'دائن'], rows: entry.lines.map(line => [`${line.accountCode} — ${ACCOUNT_NAMES[line.accountCode] ?? ''}`, line.debit ? money(line.debit) : '—', line.credit ? money(line.credit) : '—']) }) : '<p>القيد المرتبط غير متاح؛ راجع السجل.</p>'
+      const bodyHtml = `${info}<h2>بنود المصروف</h2>${cost.lines?.length ? lines : '<p>لا توجد تفاصيل بنود محفوظة لهذا السجل.</p>'}<h2>${entry ? `القيد ${escHtml(String(entry.entryNumber))} — ${escHtml(entry.description)}` : 'القيد المحاسبي'}</h2>${ledger}`
+      return renderReportShell({ title: `مستند مصروف مشروع ${cost.expenseNumber ?? `#${cost.id}`}`, subtitle: 'تفاصيل المستند والأثر المحاسبي', companyName: app.setup.shopName || 'المنشأة', logoDataUrl: app.receipt.logoDataUrl, bodyHtml, settings: app.reportPrint })
+    }
+    try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: 'معاينة مصروف المشروع قبل الطباعة' }) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذرت معاينة المستند', 'error') }
+  }
 
   return (
     <div className="space-y-4" data-project-expenses-page>
@@ -2037,6 +2056,7 @@ export function ProjectExpensesPage() {
             : paid > 0 ? 'مصدر نقدي' : 'لا يوجد — كامل المبلغ آجل'
           return (
             <div className="space-y-4 text-sm">
+              <div className="flex justify-end"><Btn onClick={() => previewExpense(viewingCost.id)}><Printer size={15} /> معاينة وطباعة مستند المصروف</Btn></div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-xl bg-rose-500/10 p-3"><div className="text-[11px] text-slate-500">الصافي على المشروع (5110)</div><div className="font-black text-rose-600">{fmt(viewingCost.amountMinor)} {cur.symbol}</div></div>
                 <div className="rounded-xl bg-sky-500/10 p-3"><div className="text-[11px] text-slate-500">ضريبة المدخلات (2102)</div><div className="font-black text-sky-600">{fmt(viewingCost.vatMinor ?? 0)} {cur.symbol}</div></div>
@@ -2119,7 +2139,6 @@ export function ProjectExtractsPage() {
     changeOrders,
     clientAdvances,
     activeBranchId,
-    customers,
     journal,
     paymentTerminals,
     addProjectExtract,
@@ -2312,105 +2331,8 @@ export function ProjectExtractsPage() {
   const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
   const dueMinor = Math.max(0, effectiveGrossMinor - retentionMinor + vatMinor - recoveryMinor)
 
-  const printExtractDoc = (ex: (typeof projectExtracts)[number]) => {
-    const prj = projects.find((p) => p.id === ex.projectId)
-    if (!prj) return
-    const documentSettings = resolveDocumentPrintSettings(prj)
-    const previous = projectExtracts
-      .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
-      .reduce((a, e) => a + e.totals.grossMinor, 0)
-    const cumulative = previous + ex.totals.grossMinor
-    printHtml(
-      renderExtractHtml({
-        shopName: documentSettings.setup.shopName || 'مقاولات',
-        extractNumber: ex.extractNumber,
-        dateIso: ex.date,
-        projectName: prj.nameAr,
-        projectCode: prj.code,
-        clientName: prj.clientName,
-        contractValue: prj.contractValueMinor > 0 ? `${fmt(prj.contractValueMinor)} ${cur.symbol}` : '',
-        description: ex.description,
-        previousGross: `${fmt(previous)} ${cur.symbol}`,
-        currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
-        cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-        progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
-        vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
-        retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
-        retentionPercent: prj.retentionPercent,
-        lines: (ex.lines ?? []).map((l) => ({
-          code: l.code,
-          descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
-          ...extractPrintQuantities(l, fmt, cur.symbol),
-          prevPercent: l.prevProgressPercent,
-          newPercent: l.newProgressPercent,
-          value: `${fmt(l.lineValueMinor)} ${cur.symbol}`,
-        })),
-        advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-        due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
-        payment: ex.payment,
-        currencySymbol: cur.symbol,
-        isFinal: ex.isFinal,
-      }),
-    )
-  }
-
-  const printClientInvoice = (ex: (typeof projectExtracts)[number]) => {
-    const prj = projects.find((p) => p.id === ex.projectId)
-    if (!prj) return
-    const documentSettings = resolveDocumentPrintSettings(prj)
-    const client = prj.clientId != null ? customers.find((c) => c.id === prj.clientId) : undefined
-    const previous = projectExtracts
-      .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
-      .reduce((a, e) => a + e.totals.grossMinor, 0)
-    const cumulative = previous + ex.totals.grossMinor
-    const einv = documentSettings.einvoice
-    printHtml(
-      renderExtractClientInvoiceHtml({
-        shopName: documentSettings.setup.shopName || 'مقاولات',
-        shopPhone: documentSettings.setup.phone,
-        shopAddress: [documentSettings.setup.city, documentSettings.setup.street].filter(Boolean).join(' — '),
-        shopTaxId: einv.taxNumber,
-        extractNumber: ex.extractNumber,
-        dateIso: ex.date,
-        projectName: prj.nameAr,
-        projectCode: prj.code,
-        contractNumber: prj.contractNumber,
-        clientName: client?.nameAr || prj.clientName || 'الجهة المالكة',
-        clientPhone: client?.phone,
-        clientTaxId: client?.taxNumber,
-        contractValue: prj.contractValueMinor > 0 ? `${fmt(prj.contractValueMinor)} ${cur.symbol}` : '',
-        description: ex.description,
-        previousGross: `${fmt(previous)} ${cur.symbol}`,
-        currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
-        cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
-        progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 10000) / 100 : null,
-        vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
-        retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
-        retentionPercent: prj.retentionPercent,
-        advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
-        due: `${fmt(ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0))} ${cur.symbol}`,
-        payment: ex.payment,
-        currencySymbol: cur.symbol,
-        isFinal: ex.isFinal,
-        lines: (ex.lines ?? []).map((l) => {
-          const boq = boqItems.find((b) => b.id === l.boqItemId)
-          return {
-            code: l.code,
-            descriptionAr: sectionedBoqDescription(prj, boqItems, l.boqItemId, l.descriptionAr),
-            unit: boq?.unit,
-            boqQty: boq?.qty,
-            unitPrice: boq ? `${fmt(boq.unitPriceMinor)} ${cur.symbol}` : undefined,
-            ...extractPrintQuantities(l, fmt, cur.symbol),
-            boqTotal: boq ? `${fmt(boqItemTotal(boq))} ${cur.symbol}` : undefined,
-            prevPercent: l.prevProgressPercent,
-            newPercent: l.newProgressPercent,
-            currentSlicePercent: Math.max(0, Math.round((l.newProgressPercent - l.prevProgressPercent) * 100) / 100),
-            value: `${fmt(l.lineValueMinor)} ${cur.symbol}`,
-          }
-        }),
-      }),
-    )
-  }
+  const printExtractDoc = (ex: (typeof projectExtracts)[number]) => previewProjectExtract(ex.id, 'engineering', toast.show)
+  const printClientInvoice = (ex: (typeof projectExtracts)[number]) => previewProjectExtract(ex.id, 'invoice', toast.show)
 
   const extractSubmitPending = useRef(false)
   const submitExtract = async (creditLimitOverrideBy?: string) => {

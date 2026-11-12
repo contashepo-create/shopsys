@@ -1,6 +1,8 @@
 import type { StateStorage } from 'zustand/middleware'
 import { desktopBridge, type DesktopAuditEvent, type DesktopDatabaseBridge, type DesktopJournalEntry } from './desktopBridge.ts'
 import { secureStorage } from './secureStorage.ts'
+import { assertQuantityChangeLinks } from '../core/projectExtractQuantity.ts'
+import type { BoqItem, ChangeOrder } from '../core/contracting.ts'
 
 type CachedSnapshot = {
   revision: number
@@ -139,6 +141,11 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   if (merged === undefined) throw new Error('تعذّر دمج لقطة فارغة مع تعديل متزامن')
   const result = JSON.stringify(merged)
   const state = persistedState(result)
+  if (state) {
+    const items = Array.isArray(state.boqItems) ? state.boqItems as BoqItem[] : []
+    const orders = Array.isArray(state.changeOrders) ? state.changeOrders as ChangeOrder[] : []
+    if (items.some(item => item?.quantityChange) || orders.some(order => order?.quantityChange)) assertQuantityChangeLinks(items, orders)
+  }
   const deletedQuotes = new Set(Array.isArray(state?.quotationDeletionRecords) ? state.quotationDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
   if (state && deletedQuotes.size && Array.isArray(state.quotations) && state.quotations.some(row => row && typeof row === 'object' && deletedQuotes.has((row as { id: number }).id))) throw new Error('تعارض عرض محذوف مع تحديث متزامن — أعد تحميل البيانات')
   for (const name of ['projectSurveys', 'projectExtractDrafts']) {
@@ -215,6 +222,40 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
     }
   }
   checkCloseout(left, right); checkCloseout(right, left)
+  // اعتماد شريحة تغيير مع مستخلص أو تعديل أساس متزامن لا يُدمج تلقائياً.
+  const checkQuantityApproval = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const old = Array.isArray(before.changeOrders) ? before.changeOrders as Array<Record<string, unknown>> : []
+    const orders = Array.isArray(issuing.changeOrders) ? issuing.changeOrders as Array<Record<string, unknown>> : []
+    for (const order of orders) {
+      if (!order?.quantityChange || (order.status !== 'approved' && order.status !== 'invoiced') || typeof order.projectId !== 'number') continue
+      const prior = old.find(row => row?.id === order.id)
+      if (prior && (prior.status === 'approved' || prior.status === 'invoiced')) continue
+      const id = order.projectId
+      for (const name of ['projects', 'boqItems', 'projectExtracts', 'projectSurveys', 'projectExtractDrafts', 'changeOrders', 'clientAdvances']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض اعتماد تغيير الكميات مع تعديل المشروع بالتزامن — أعد تحميل البيانات')
+      }
+      if (JSON.stringify(before.journal) !== JSON.stringify(other.journal)) throw new Error('تعارض اعتماد تغيير الكميات مع تغيير الدفتر بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  checkQuantityApproval(left, right); checkQuantityApproval(right, left)
+  const checkFinalExtract = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const old = Array.isArray(before.projectExtracts) ? before.projectExtracts as Array<Record<string, unknown>> : []
+    const extracts = Array.isArray(issuing.projectExtracts) ? issuing.projectExtracts as Array<Record<string, unknown>> : []
+    for (const extract of extracts) {
+      if (!extract?.isFinal || typeof extract.projectId !== 'number') continue
+      const previous = old.find(row => row?.id === extract.id)
+      if (previous?.isFinal && JSON.stringify(previous) === JSON.stringify(extract)) continue
+      const id = extract.projectId
+      for (const name of ['projects', 'boqItems', 'projectExtracts', 'changeOrders']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض المستخلص الختامي مع تعديل العقد أو مستخلص متزامن — أعد تحميل البيانات')
+      }
+      // فواتير البيع ومرتجعاتها قد تؤثر في سقف العقد دون حقل projectId على المرتجع.
+      for (const name of ['sales', 'saleReturns']) if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض المستخلص الختامي مع فاتورة أو مرتجع متزامن — أعد تحميل البيانات')
+    }
+  }
+  checkFinalExtract(left, right); checkFinalExtract(right, left)
   checkDeletion(left, right); checkDeletion(right, left)
   const deleted = new Set(Array.isArray(state?.projectDeletionRecords) ? state.projectDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
   if (state && deleted.size) {

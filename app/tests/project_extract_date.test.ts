@@ -51,23 +51,53 @@ it('لا ينسب سقف أمر تغيير لاحق أو مجهول الاعتم
  expect(() => extract('2026-11-04')).toThrow(/اعتماد أمر تغيير/)
  expect(S().projectExtracts).toHaveLength(0)
 })
-it('يرفض نسبة المستخلص لقياس أحدث أو غير موثق ويقبل بعد يوم القياس', () => {
+it('المستخلص المستقل لا يتقيد بتاريخ قياس الحصر، بينما مسودته المستمدة منه تتقيد به', () => {
  const p = S().projects[0], b = S().boqItems[0]
  S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 10 }], expectedRevision: 0, reason: '', isFinal: false, measurementDate: '2026-11-04' })
- const args = { projectId: p.id, payment: 'cash' as const, description: 'أعمال', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 10 }] }
- expect(() => S().addProjectExtract({ ...args, date: '2026-11-03' })).toThrow(/قياس الحصر/)
- const ex = S().addProjectExtract({ ...args, date: '2026-11-04' })
- expect(ex.date).toBe('2026-11-04'); expect(S().journal[0].date).toBe('2026-11-04')
- expect(S().projectSurveys[0].revisions[1].measurementDate).toBeUndefined()
+ const draft = S().prepareProjectExtractDraft(p.id, 1)
+ const args = { projectId: p.id, payment: 'cash' as const, description: 'أعمال', vatPercent: 0, extractQtyLines: draft.lines }
+ expect(() => S().addProjectExtract({ ...args, sourceSurveyDraft: true, date: '2026-11-03' })).toThrow(/قياس/)
+ const ex = S().addProjectExtract({ ...args, date: '2026-11-03' })
+ expect(ex.date).toBe('2026-11-03'); expect(S().projectSurveys[0].revisions).toHaveLength(1)
 })
 it('لا يغيّر تاريخ تحصيل ماكينة من وقت تسجيلها', () => {
  expect(() => extract('2026-11-04', { terminalPayment: { terminalId: 't', providerReference: 'ref' } })).toThrow(/الماكينة/)
  expect(S().projectExtracts).toHaveLength(0); expect(S().paymentTerminalTransactions).toHaveLength(0)
 })
-it('السجل اليدوي القديم بلا تاريخ قياس لا يثبت جواز تاريخ إصدار سابق', () => {
+it('المسودة المستمدة من حصر قديم بلا تاريخ قياس لا تثبت تاريخ إصدار سابق', () => {
  const p = S().projects[0], b = S().boqItems[0]
- S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 10 }], expectedRevision: 0, reason: '', isFinal: false, measurementDate: '2026-11-04' })
- useRawDataStore.setState({ projectSurveys: S().projectSurveys.map(s => ({ ...s, revisions: s.revisions.map(r => ({ ...r, measurementDate: undefined })) })) })
- expect(() => extract('2026-11-04')).toThrow(/تاريخ قياس مثبت/)
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 10 }], expectedRevision: 0, reason: '', isFinal: false })
+ const draft = S().prepareProjectExtractDraft(p.id, 1)
+ expect(() => S().addProjectExtract({ projectId: p.id, payment: 'cash', description: '', vatPercent: 0, extractQtyLines: draft.lines, sourceSurveyDraft: true, date: '2026-11-04' })).toThrow(/تاريخ قياس مثبت/)
  expect(S().journal).toHaveLength(0)
+})
+it('مرتجع المستخلص لا يرحّل في فترة مقفلة ويتحقق من تسلسل تاريخ الإشعار', () => {
+ const ex = extract('2026-11-03')
+ const args = { extractId: ex.id, amountMinor: 100, mode: 'customer_credit' as const, reason: 'تسوية' }
+ useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: 'مقفلة', startDate: '2026-11-05', endDate: '2026-12-31', status: 'closed' }] })
+ const before = S()
+ expect(() => S().refundProjectExtract(args)).toThrow(/مقفلة/)
+ expect(S().projectExtracts).toBe(before.projectExtracts); expect(S().journal).toBe(before.journal)
+ useAppStore.setState({ fiscalYears: [] })
+ const updated = S().refundProjectExtract(args)
+ const refund = updated.refunds!.at(-1)!
+ expect(refund.date).toBe('2026-11-05')
+ expect(S().journal.find(row => row.id === refund.journalEntryId)?.date).toBe(refund.date)
+ vi.setSystemTime(new Date(2026, 10, 4, 12))
+ const after = S()
+ expect(() => S().refundProjectExtract(args)).toThrow(/تسلسل المرتجعات/)
+ expect(S().journal).toBe(after.journal); expect(S().projectExtracts).toBe(after.projectExtracts)
+})
+it('تحصيل العميل لا يرحّل في سنة مقفلة أو على خزينة غير متاحة', () => {
+ const ex = extract('2026-11-03'), customerId = S().projects[0].clientId!
+ const args = { customerId, amountMinor: 100, treasury: '1101', specificDocKey: `extract:${ex.id}` }
+ useAppStore.setState({ fiscalYears: [{ id: 1, nameAr: 'المقفلة', startDate: '2026-11-05', endDate: '2026-12-31', status: 'closed' }] })
+ const before = S()
+ expect(() => S().receiveClientPayment(args)).toThrow(/مقفلة/)
+ expect(S().journal).toBe(before.journal); expect(S().clientSettlements).toBe(before.clientSettlements)
+ useAppStore.setState({ fiscalYears: [] })
+ expect(() => S().receiveClientPayment({ ...args, treasury: 'غير موجودة' })).toThrow(/خزينة|الخزينة|حساب/)
+ const receipt = S().receiveClientPayment(args)
+ const doc = S().clientSettlements.find(row => row.settlementNumber === receipt.settlementNumber)!
+ expect(doc.date.slice(0, 10)).toBe('2026-11-05'); expect(S().journal.find(row => row.id === doc.journalEntryId)?.date).toBe('2026-11-05')
 })

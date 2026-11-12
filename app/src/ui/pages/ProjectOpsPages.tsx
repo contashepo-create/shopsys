@@ -207,7 +207,7 @@ export function MaterialIssuesPage() {
 /* ═══════════════ تحصيلات العملاء FIFO ═══════════════ */
 
 export function ClientCollectionsPage() {
-  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, receiveClientPayment, vouchers, projects } = useDataStore()
+  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, vouchers, projects } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -222,25 +222,45 @@ export function ClientCollectionsPage() {
   const [specific, setSpecific] = useState(false)
   const [specificKey, setSpecificKey] = useState('')
   const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false)
+  const draft = JSON.stringify([customerId, amount, treasury, terminalId, terminalReference, cardLast4, specific, specificKey, notes, cur])
+  const currentDraft = useRef(draft)
+  useLayoutEffect(() => { currentDraft.current = draft }, [draft])
 
   const openInvoices = customerId ? getOpenClientInvoices(Number(customerId)) : []
   const totalOpen = openInvoices.reduce((s, inv) => s + inv.dueMinor - inv.settledMinor, 0)
-
-  const collect = () => {
+  const fingerprint = (id: number) => {
+    const raw = useRawDataStore.getState(), live = useDataStore.getState(), app = useAppStore.getState()
+    return JSON.stringify([raw.currentUserId, raw.activeBranchId, raw.branches, raw.appUsers, raw.employees, raw.roleOverrides, raw.customRoles, raw.treasuries, raw.paymentTerminals, raw.paymentTerminalTransactions, raw.journal, live.customers.filter(row => row.id === id), live.getOpenClientInvoices(id), app.setup, app.fiscalYears, todayLocalIso()])
+  }
+  const clearDraft = () => { setAmount(''); setNotes(''); setSpecificKey(''); setSpecific(false); setTerminalReference(''); setCardLast4('') }
+  const collect = async () => {
+    if (pending.current || !customerId || !amount) return
+    pending.current = true; setSaving(true)
+    let committed = false
+    const expectedDraft = currentDraft.current, id = Number(customerId)
     try {
+      const expected = fingerprint(id)
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      const r = receiveClientPayment({
-        customerId: Number(customerId),
-        amountMinor: toMinor(amount, cur.decimals),
-        treasury: terminal?.settlementAccountCode ?? treasury,
-        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
-        specificDocKey: specific && specificKey ? specificKey : null,
-        notes: notes.trim(),
+      if (terminalId && !terminal) throw new Error('ماكينة التحصيل غير متاحة — أعد اختيارها')
+      const r = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (currentDraft.current !== expectedDraft || fingerprint(id) !== expected) throw new Error('تغيرت بيانات التحصيل أو الذمم — أعد المراجعة قبل الترحيل')
+        const result = useRawDataStore.getState().receiveClientPayment({
+          customerId: id, amountMinor: toMinor(amount, cur.decimals), treasury: terminal?.settlementAccountCode ?? treasury,
+          terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
+          specificDocKey: specific && specificKey ? specificKey : null, notes: notes.trim(),
+        })
+        committed = true
+        return result
       })
       const applied = r.allocations.map((a) => `${a.docLabel}: ${fmt(a.appliedMinor)}`).join('، ')
       toast.show(`${r.settlementNumber} ✅ ${applied}${r.unallocatedMinor > 0 ? ` + ${fmt(r.unallocatedMinor)} تحت الحساب` : ''}`)
-      setAmount(''); setNotes(''); setSpecificKey(''); setSpecific(false); setTerminalReference(''); setCardLast4('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      if (currentDraft.current === expectedDraft) clearDraft()
+    } catch (e) {
+      if (committed) { if (currentDraft.current === expectedDraft) clearDraft(); toast.show('سُجل التحصيل محلياً لكن تعذر تأكيد الحفظ — راجع التحصيلات والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر تأمين التحصيل', 'error')
+    } finally { pending.current = false; setSaving(false) }
   }
 
   return (
@@ -307,7 +327,7 @@ export function ClientCollectionsPage() {
         )}
 
         <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-        <Btn onClick={collect} shortcut="F9" disabled={!customerId || !amount} className="w-full">💰 تحصيل وتوزيع تلقائي</Btn>
+        <Btn onClick={() => void collect()} shortcut="F9" disabled={saving || !customerId || !amount} className="w-full">{saving ? 'جارٍ تأمين التحصيل…' : '💰 تحصيل وتوزيع تلقائي'}</Btn>
       </div>
 
       {/* §95 (محاذاة pro-acc): سندات القبض المرتبطة بمشروع — أثر تحليلي على المشروع، ورصيد العميل نُزل من طرف السند */}

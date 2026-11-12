@@ -16,7 +16,7 @@ beforeEach(() => {
  S().addBoqItem({ projectId: p.id, code: '1', descriptionAr: 'دهانات', unit: 'م2', qty: 1000, unitPriceMinor: 100 })
 })
 afterEach(() => { cleanup(); useRawDataStore.setState(data); useAppStore.setState(app) })
-it('من واجهة المستخلص الجاري ثم الختامي: حصر 200 ثم 856 دون تقريب نسبة الإدخال', async () => {
+it('من واجهة المستخلص الجاري ثم الختامي: يطابق الختامي قيمة العقد', async () => {
  render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
  fireEvent.click(screen.getByText('إصدار مستخلص جديد (فاتورة للعميل)'))
  fireEvent.change(screen.getByLabelText('كمية البند 1'), { target: { value: '200' } })
@@ -27,13 +27,13 @@ it('من واجهة المستخلص الجاري ثم الختامي: حصر 20
  const close = within(dialog).getByRole('button', { name: /إغلاق/ })
  fireEvent.click(close)
  fireEvent.click(screen.getByText('إصدار مستخلص جديد (فاتورة للعميل)'))
- fireEvent.change(screen.getByLabelText('كمية البند 1'), { target: { value: '856' } })
+ fireEvent.change(screen.getByLabelText('كمية البند 1'), { target: { value: '1000' } })
  fireEvent.click(screen.getByLabelText('مستخلص ختامي للمشروع'))
  expect(screen.getAllByText(/المتبقي/).length).toBeGreaterThan(0)
  fireEvent.click(screen.getByLabelText(/راجعت حصر جميع البنود/))
  fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
- await waitFor(() => expect(S().projectExtracts[1]?.lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 856 }))
- expect(S().projectExtracts[1].totals.grossMinor).toBe(65600)
+ await waitFor(() => expect(S().projectExtracts[1]?.lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 1000 }))
+ expect(S().projectExtracts[1].totals.grossMinor).toBe(80000)
 })
 
 it('يحافظ على الكمية عند التبديل بين الجاري والتراكمي ويرفض الزيادة ويتطلب تأكيد الختامي بعد تعديل المدخل', () => {
@@ -76,7 +76,7 @@ it('يدعم المعالج السريع الحصر التراكمي ويطلب 
  fireEvent.change(screen.getByLabelText('مشروع المستخلص'), { target: { value: String(S().projects[0].id) } })
  fireEvent.click(screen.getByText('التالي'))
  fireEvent.click(screen.getByText('حصر كميات البنود'))
- fireEvent.change(screen.getByLabelText('كمية البند 1'), { target: { value: '856' } })
+ fireEvent.change(screen.getByLabelText('كمية البند 1'), { target: { value: '1000' } })
  fireEvent.click(screen.getByText('التالي'))
  fireEvent.click(screen.getByLabelText('نعم — لا مستخلصات بعده'))
  const button = document.querySelector('[data-wizard-post]') as HTMLButtonElement
@@ -84,6 +84,6 @@ it('يدعم المعالج السريع الحصر التراكمي ويطلب 
  fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/))
  expect(button.disabled).toBe(false)
  fireEvent.click(button)
- await waitFor(() => expect(S().projectExtracts[0]?.lines?.[0].newExecutedQty).toBe(856))
+ await waitFor(() => expect(S().projectExtracts[0]?.lines?.[0].newExecutedQty).toBe(1000))
  expect(S().projectExtracts[0].isFinal).toBe(true)
 })

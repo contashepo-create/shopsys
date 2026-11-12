@@ -52,9 +52,9 @@ import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyalt
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
-import { computeQuantityExtractLines, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
+import { assertQuantityChangeLinks, computeQuantityExtractLines, quantityChangeValue, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
 import { closeoutLines, type ProjectCloseout } from '../core/projectCloseout.ts'
-import { reviseProjectSurvey, assertSurveyFinalBilled, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
+import { reviseProjectSurvey, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
@@ -3060,7 +3060,7 @@ interface DataState {
   updateBoqItem: (id: number, changes: { code?: string; descriptionAr?: string; unit?: string; qty?: number; unitPriceMinor?: number; estCostMinor?: number }) => BoqItem
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
-  addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number; date?: string }) => ChangeOrder
+  addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number; date?: string; quantityChange?: { originalBoqItemId: number; qty: number } }) => ChangeOrder
   setChangeOrderStatus: (id: number, status: 'approved' | 'invoiced' | 'rejected') => void
   /** دفعة مقدمة من عميل المشروع: نقدية ← 2109 (التزام حتى تنفيذ الأعمال) */
   receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; date?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
@@ -6292,6 +6292,7 @@ function validateCloseout(state: DataState, projectId: number, expectedRevision?
   const items = scoped.boqItems.filter(row => row.projectId === projectId)
   const history = scoped.projectExtracts.filter(row => row.projectId === projectId)
   if (state.boqItems.filter(row => row.projectId === projectId).length !== items.length || state.projectExtracts.filter(row => row.projectId === projectId).length !== history.length) throw new Error('بنود أو مستخلصات المشروع تابعة لفرع آخر — راجع البيانات')
+  assertQuantityChangeLinks(items, state.changeOrders.filter(row => row.projectId === projectId))
   const journal = customerReviewJournal(state)
   for (const extract of history) {
     assertProjectExtractOriginalIntegrity(extract, journal)
@@ -15889,6 +15890,7 @@ export const useRawDataStore = create<DataState>()(
           if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر والمسودات')
         }
         assertProjectCustomerBranch(state, project)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         const surveys = scoped.projectSurveys.filter(row => row.projectId === projectId)
         if (surveys.length !== 1 || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1) throw new Error('حصر المشروع غير موجود أو غير فريد')
         const survey = surveys[0]
@@ -15953,26 +15955,16 @@ export const useRawDataStore = create<DataState>()(
           if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
         }
         assertProjectCustomerBranch(state, project)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — لا يُعدّل الحصر')
         const history = state.projectExtracts.filter(extract => extract.projectId === project.id)
-        if (history.some(extract => extract.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل تعديل الحصر')
         const items = state.boqItems.filter(item => item.projectId === project.id)
-        const journal = customerReviewJournal(state)
-        for (const extract of history) {
-          assertProjectExtractOriginalIntegrity(extract, journal)
-          if (extract.lines?.length && extract.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== extract.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
-          for (const line of extract.lines ?? []) {
-            const item = items.find(row => row.id === line.boqItemId)
-            if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('بند العقد لا يطابق المستخلص السابق — راجع الحصر')
-          }
-        }
-        assertProjectExtractRefundIntegrity(history, journal)
         const matches = state.projectSurveys.filter(row => row.projectId === project.id)
         if (matches.length > 1 || (matches.length && !scoped.projectSurveys.some(row => row.id === matches[0].id))) throw new Error('حصر المشروع غير فريد أو تابع لفرع آخر — راجع البيانات')
         if (args.measurementDate != null) {
           const date = args.measurementDate
           if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ قياس الحصر غير صالح أو في المستقبل')
-          if (matches[0]?.revisions.some(row => row.measurementDate != null && (!isValidExpiryDate(row.measurementDate) || row.measurementDate > date)) || history.some(row => !isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > date)) throw new Error('تاريخ القياس يسبق مراجعة قياس أو مستخلصاً مسجلاً — راجع التسلسل')
+          if (matches[0]?.revisions.some(row => row.measurementDate != null && (!isValidExpiryDate(row.measurementDate) || row.measurementDate > date))) throw new Error('تاريخ القياس يسبق مراجعة قياس مسجلة — راجع التسلسل')
         }
         const survey = reviseProjectSurvey({ survey: matches[0], projectId: project.id, items, history, lines: args.lines, source: 'manual', measurementDate: args.measurementDate, reason: args.reason, at: localIsoTimestamp(), by: activeUserName(state), isFinal: args.isFinal, expectedRevision: args.expectedRevision })
         if (!matches[0]) survey.id = nextSurveyId(state, project.id)
@@ -17275,6 +17267,7 @@ export const useRawDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         assertProjectCustomerBranch(state, project)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
         if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل إصدار المستخلص')
         const documentDate = args.date ?? todayLocalIso()
@@ -17285,8 +17278,8 @@ export const useRawDataStore = create<DataState>()(
         if (documentDate < todayLocalIso()) {
           const orders = state.changeOrders.filter(row => row.projectId === project.id && (row.status === 'approved' || row.status === 'invoiced'))
           if (orders.some(row => !row.approvedAt || !Number.isFinite(Date.parse(row.approvedAt)) || todayLocalIso(new Date(row.approvedAt)) > documentDate)) throw new Error('لا يمكن تأريخ المستخلص قبل اعتماد أمر تغيير أو دون إثبات تاريخ اعتماده')
-          const survey = state.projectSurveys.find(row => row.projectId === project.id)
-          if (survey?.revisions.some(row => row.source === 'manual' && (!row.measurementDate || !isValidExpiryDate(row.measurementDate) || row.measurementDate > documentDate))) throw new Error('لا يمكن تأريخ المستخلص قبل قياس الحصر أو دون تاريخ قياس مثبت')
+          const survey = args.sourceSurveyDraft ? state.projectSurveys.find(row => row.projectId === project.id) : undefined
+          if (survey?.revisions.some(row => row.source === 'manual' && (!row.measurementDate || !isValidExpiryDate(row.measurementDate) || row.measurementDate > documentDate))) throw new Error('لا يمكن تأريخ مسودة المستخلص المستمدة من الحصر قبل قياسه أو دون تاريخ قياس مثبت')
         }
         /* §95 (محاذاة pro-acc — طلب المالك): سقف صارم — المستخلصات المتراكمة لا تتجاوز
            قيمة العقد الفعلية (الأصلية + أوامر التغيير المعتمدة/المستخلصة). الفارق؟ أمر تغيير. */
@@ -17298,6 +17291,13 @@ export const useRawDataStore = create<DataState>()(
           if (claimed + newGross > effective) {
             throw new Error(`المستخلصات (${fmtMinorPlain(claimed + newGross)}) ستتجاوز قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير بالفارق أولاً أو خفّض قيمة المستخلص`)
           }
+          const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
+          const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
+          if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + newGross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
+          if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + newGross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
+          if (args.isFinal && state.projectExtracts.some(e => e.projectId === project.id && (e.refundedMinor ?? 0) > 0)) throw new Error('يوجد مرتجع مستخلص سابق — راجع تسوية العقد قبل المستخلص الختامي')
+          if (args.isFinal && claimed + newGross !== effective) throw new Error(`المستخلص الختامي يتطلب مساواة إجمالي المستخلصات لقيمة العقد الفعلية؛ الفرق ${fmtMinorPlain(effective - claimed - newGross)} — راجع كميات العقد وأوامر التغيير`)
         }
         // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
         if (args.sourceSurveyDraft) {
@@ -17313,7 +17313,6 @@ export const useRawDataStore = create<DataState>()(
         if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
         const surveys = state.projectSurveys.filter(row => row.projectId === project.id)
         if (surveys.length > 1) throw new Error('يوجد أكثر من حصر رئيسي للمشروع — راجع البيانات')
-        if (surveys.length && !args.extractQtyLines?.length) throw new Error('للمشروع حصر معتمد — أدخل المستخلص بالكميات للمحافظة على الترابط')
         if (args.extractQtyLines?.length) {
           const prior = state.projectExtracts.filter(e => e.projectId === project.id)
           const journal = customerReviewJournal(state)
@@ -17382,19 +17381,6 @@ export const useRawDataStore = create<DataState>()(
           ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
           ...(args.isFinal ? { isFinal: true } : {}),
         }
-        const priorHistory = state.projectExtracts.filter(row => row.projectId === project.id)
-        let updatedSurvey: ProjectSurvey | undefined
-        if (extractLinesComputed?.length && extractLinesComputed.every(line => line.newExecutedQty != null && !line.previousQtyEstimated)) {
-          const surveyItems = state.boqItems.filter(item => item.projectId === project.id)
-          // التاريخ غير الدقيق لا يُحوّل إلى حصر مؤكّد؛ يبقى المسار القديم كما هو إن لم يوجد حصر.
-          let exactHistory = true
-          try { exactBilledQuantities(surveyItems, priorHistory) } catch (error) { if (surveys.length) throw error; exactHistory = false }
-          if (exactHistory) {
-            updatedSurvey = reviseProjectSurvey({ survey: surveys[0], projectId: project.id, items: surveyItems, history: priorHistory, lines: extractLinesComputed.map(line => ({ boqItemId: line.boqItemId, cumulativeQty: line.newExecutedQty! })), source: 'extract', extractId: id, reason: '', at: now, by: activeUserName(state), isFinal: !!args.isFinal, acceptIncrease: true })
-            if (!surveys[0]) updatedSurvey.id = nextSurveyId(state, project.id)
-            if (args.isFinal) assertSurveyFinalBilled(updatedSurvey, surveyItems, [...priorHistory, extract])
-          }
-        } else if (surveys.length) throw new Error('لا يمكن ربط مستخلص بلا كميات دقيقة بالحصر المعتمد')
         // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
         const updatedBoq = extractLinesComputed
           ? state.boqItems.map((b) => {
@@ -17421,7 +17407,7 @@ export const useRawDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: String(id), amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ approvalRequests, projectExtracts: [...state.projectExtracts, extract], ...(args.sourceSurveyDraft ? { projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== project.id) } : {}), ...(updatedSurvey ? { projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), updatedSurvey] } : {}), clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ approvalRequests, projectExtracts: [...state.projectExtracts, extract], ...(args.sourceSurveyDraft ? { projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== project.id) } : {}), clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
       },
       /* ─── §94: تعديل مستخلص صادر (طلب المالك: «أصدرت مستخلصاً ولم أجد واجهة لمراجعته أو تعديله») ───
@@ -17436,6 +17422,7 @@ export const useRawDataStore = create<DataState>()(
         const project = scoped.projects.find((p) => p.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
         assertProjectCustomerBranch(state, project, extract)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تُعدَّل مستخلصاته')
         if (extract.refunds?.length) throw new Error('على المستخلص إشعار دائن قائم — عالجه أولاً (إلغاؤه أو مستخلص بديل)')
@@ -17453,7 +17440,6 @@ export const useRawDataStore = create<DataState>()(
         if (extract.lines?.some(line => line.newExecutedQty != null) && !args.extractQtyLines?.length) throw new Error('المستخلص يحفظ دليل الكمية — عدّله بالكميات ولا تُسقط الحصر')
         const linkedSurvey = state.projectSurveys.filter(row => row.projectId === project.id)
         if (linkedSurvey.length > 1) throw new Error('يوجد أكثر من حصر رئيسي للمشروع — راجع البيانات')
-        if (linkedSurvey.length && !args.extractQtyLines?.length) throw new Error('للمشروع حصر معتمد — عدّل المستخلص بالكميات')
         const recomputeLines = !!(args.extractLines?.length || args.extractQtyLines?.length)
         if (recomputeLines) {
           const mine = new Set([...(extract.lines ?? []).map((l) => l.boqItemId), ...(args.extractQtyLines ?? []).map(line => line.boqItemId), ...(args.extractLines ?? []).map(line => line.boqItemId)])
@@ -17531,6 +17517,14 @@ export const useRawDataStore = create<DataState>()(
           if (claimed + gross > effective) {
             throw new Error(`بعد التعديل سيتجاوز المتراكم (${fmtMinorPlain(claimed + gross)}) قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير أو خفّض القيمة`)
           }
+          const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
+          const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
+          if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + gross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
+          if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + gross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
+          const hasFinal = !!args.isFinal || state.projectExtracts.some(e => e.projectId === project.id && e.id !== extract.id && e.isFinal)
+          if (hasFinal && state.projectExtracts.some(e => e.projectId === project.id && (e.refundedMinor ?? 0) > 0)) throw new Error('يوجد مرتجع مستخلص سابق — راجع تسوية العقد قبل المستخلص الختامي')
+          if (hasFinal && claimed + gross !== effective) throw new Error(`المستخلص الختامي يتطلب مساواة إجمالي المستخلصات لقيمة العقد الفعلية؛ الفرق ${fmtMinorPlain(effective - claimed - gross)} — راجع كميات العقد وأوامر التغيير`)
         }
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const recovery = args.advanceRecoveryMinor ?? 0
@@ -17578,21 +17572,10 @@ export const useRawDataStore = create<DataState>()(
           toRecover -= take
           return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
         })
-        let revisedSurvey: ProjectSurvey | undefined
-        if (linkedSurvey.length) {
-          const history = state.projectExtracts.filter(row => row.projectId === project.id).map(row => row.id === extract.id ? rebuilt : row)
-          const items = state.boqItems.filter(row => row.projectId === project.id)
-          const billed = exactBilledQuantities(items, history)
-          const originalSurvey = linkedSurvey[0]
-          const revisedLines = billed.map(line => ({ ...line, cumulativeQty: Math.max(line.cumulativeQty, originalSurvey.lines.find(old => old.boqItemId === line.boqItemId)?.cumulativeQty ?? 0) }))
-          revisedSurvey = reviseProjectSurvey({ survey: originalSurvey, projectId: project.id, items, history, lines: revisedLines, source: 'manual', reason: `تعديل ${extract.extractNumber}: ${reason}`, at: now, by: activeUserName(state), isFinal: extract.isFinal ? !!args.isFinal : (originalSurvey.isFinal || !!args.isFinal) })
-          if (args.isFinal) assertSurveyFinalBilled(revisedSurvey, items, history)
-        }
         set({
           approvalRequests,
           clientAdvances: updatedAdvances, boqItems: updatedBoq,
           projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
-          ...(revisedSurvey ? { projectSurveys: state.projectSurveys.map(row => row.projectId === project.id ? revisedSurvey! : row) } : {}),
           journal: [...journalAfterReversal, reversal, entry],
         })
         return rebuilt
@@ -18402,6 +18385,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يعدّل مباشرة')
         const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
         if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا تغير الكمية أو السعر أو الوحدة')
         if (priceQtyChange && (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id)))) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
@@ -18420,6 +18404,7 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يحذف مباشرة')
         if (state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا يُحذف')
         // حارس الفئة (الحذف الآمن): بند بتقدم مرحَّل عليه مستخلصات — حذفه يشوه
         // المستخلصات التراكمية القادمة والتقارير؛ وبند مربوط بعقد باطن يكسر نطاق العقد
@@ -18433,15 +18418,28 @@ export const useRawDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا أوامر تغيير')
+        if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل إضافة أمر تغيير')
         if (!args.titleAr.trim()) throw new Error('عنوان أمر التغيير مطلوب')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor === 0) throw new Error('قيمة أمر التغيير لا تكون صفراً')
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor === 0) throw new Error('قيمة أمر التغيير لا تكون صفراً')
+        let quantityChange: ChangeOrder['quantityChange']
+        if (args.quantityChange) {
+          const scoped = getBranchScopedDataState(state)
+          if (!scoped.projects.some(p => p.id === project.id) || state.projects.filter(p => p.id === project.id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+          assertProjectCustomerBranch(state, project)
+          if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تُضاف كميات دون مراجعة الإقفال')
+          const candidates = state.boqItems.filter(row => row.id === args.quantityChange!.originalBoqItemId && row.projectId === project.id)
+          if (candidates.length !== 1 || !scoped.boqItems.some(row => row.id === candidates[0].id) || candidates[0].quantityChange) throw new Error('بند العقد الأصلي غير موجود أو غير فريد في الفرع')
+          const item = candidates[0], qty = normalizeMovementQty(args.quantityChange.qty)
+          if (quantityChangeValue(qty, item.unitPriceMinor) !== args.amountMinor) throw new Error('قيمة أمر التغيير لا تطابق الكمية بسعر بند العقد')
+          quantityChange = { originalBoqItemId: item.id, qty, originalQty: item.qty, unitPriceMinor: item.unitPriceMinor, unit: item.unit }
+        }
         const date = args.date ?? todayLocalIso()
         const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : new Date(Number.NaN)
         if (!Number.isFinite(parsed.getTime()) || calendarDateIso(parsed) !== date) throw new Error('تاريخ أمر التغيير غير صالح')
         const id = nextId(state.changeOrders)
         const order: ChangeOrder = {
           id, projectId: args.projectId, number: `CO-${String(id).padStart(4, '0')}`,
-          titleAr: args.titleAr.trim(), amountMinor: args.amountMinor,
+          titleAr: args.titleAr.trim(), amountMinor: args.amountMinor, ...(quantityChange ? { quantityChange } : {}),
           status: 'draft', date, createdAt: localIsoTimestamp(), approvedAt: null,
         }
         set({ changeOrders: [...state.changeOrders, order] })
@@ -18455,16 +18453,40 @@ export const useRawDataStore = create<DataState>()(
         if (status === 'invoiced') {
           if (order.status !== 'approved') throw new Error('لا يُستخلَص إلا أمر تغيير معتمد')
         } else if (order.status !== 'draft') throw new Error('أمر التغيير محسوم بالفعل')
-        // التخفيض لا يهبط بالعقد الفعلي تحت الصفر
+        if (status === 'approved' && state.projectExtracts.some(row => row.projectId === order.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل اعتماد أمر تغيير')
+        // لا يُعتمد تخفيض يهبط بقيمة العقد تحت الأعمال التي فُوترت بالفعل.
         if (status === 'approved' && order.amountMinor < 0) {
-          const project = state.projects.find((p) => p.id === order.projectId)!
-          const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === order.projectId))
-          if (effective + order.amountMinor < 0) throw new Error('التخفيض أكبر من قيمة العقد الفعلية')
+          const project = state.projects.find((p) => p.id === order.projectId)
+          if (!project) throw new Error('المشروع غير موجود')
+          const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
+          const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(row => row.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
+          const next = billing.effectiveContractNetMinor + order.amountMinor
+          if (!Number.isSafeInteger(next) || next < 0) throw new Error('التخفيض أكبر من قيمة العقد الفعلية')
+          if (!Number.isSafeInteger(billing.billedNetMinor) || next < billing.billedNetMinor) throw new Error('التخفيض يهبط بالعقد تحت المستخلصات والفواتير الإضافية المرحلة — راجع التسوية أولاً')
         }
-        set({
-          changeOrders: state.changeOrders.map((o) =>
-            o.id === id ? { ...o, status, approvedAt: status === 'approved' ? new Date().toISOString() : o.approvedAt } : o),
-        })
+        let addedItem: BoqItem | undefined
+        let quantityChange = order.quantityChange
+        if (status === 'approved' && quantityChange) {
+          const scoped = getBranchScopedDataState(state)
+          const projects = state.projects.filter(p => p.id === order.projectId)
+          if (projects.length !== 1 || projects[0].status !== 'active' || !scoped.projects.some(p => p.id === order.projectId)) throw new Error('المشروع غير متاح في الفرع الحالي')
+          assertProjectCustomerBranch(state, projects[0])
+          if (state.projectExtracts.some(row => row.projectId === order.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع الإقفال قبل اعتماد أمر التغيير')
+          const matches = state.boqItems.filter(row => row.id === quantityChange!.originalBoqItemId && row.projectId === order.projectId)
+          const item = matches[0]
+          if (matches.length !== 1 || !scoped.boqItems.some(row => row.id === item.id) || item.quantityChange || item.qty !== quantityChange.originalQty || item.unitPriceMinor !== quantityChange.unitPriceMinor || item.unit !== quantityChange.unit) throw new Error('تغير بند العقد منذ إنشاء الأمر — راجعه وأعد إنشاء الأمر')
+          if (quantityChange.generatedBoqItemId != null || state.boqItems.some(row => row.quantityChange?.orderId === order.id)) throw new Error('شريحة أمر التغيير موجودة بالفعل — راجع البيانات')
+          if (quantityChangeValue(quantityChange.qty, item.unitPriceMinor) !== order.amountMinor) throw new Error('قيمة أمر التغيير لا تطابق الكمية والسعر')
+          const newId = nextId(state.boqItems)
+          addedItem = { ...item, id: newId, code: `${item.code} / ${order.number}`, qty: quantityChange.qty, progressPercent: 0, quantityChange: { orderId: order.id, originalBoqItemId: item.id } }
+          quantityChange = { ...quantityChange, generatedBoqItemId: newId }
+        }
+        const nextOrders = state.changeOrders.map((o) =>
+          o.id === id ? { ...o, status, ...(quantityChange ? { quantityChange } : {}), approvedAt: status === 'approved' ? new Date().toISOString() : o.approvedAt } : o)
+        const nextBoq = addedItem ? [...state.boqItems, addedItem] : state.boqItems
+        assertQuantityChangeLinks(nextBoq.filter(item => item.projectId === order.projectId), nextOrders.filter(row => row.projectId === order.projectId))
+        set({ changeOrders: nextOrders, ...(addedItem ? { boqItems: nextBoq } : {}) })
       },
 
       receiveClientAdvance: (args) => {
@@ -18944,16 +18966,23 @@ export const useRawDataStore = create<DataState>()(
       },
 
       receiveClientPayment: (args) => {
-        const state = get()
-        const customer = state.customers.find((c) => c.id === args.customerId)
-        if (!customer) throw new Error('العميل غير موجود')
+        const state = get(), scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
+        if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل تحصيل العميل')
+        const customers = state.customers.filter(c => c.id === args.customerId), customer = customers[0]
+        if (customers.length !== 1 || !scoped.customers.some(c => c.id === customer.id)) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        const now = localIsoTimestamp(), day = now.slice(0, 10)
+        const fiscalBranch = branch ?? (state.branches.length === 1 ? state.branches[0] : null)
+        const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, fiscalBranch?.id ?? null, Boolean(fiscalBranch?.isMain)))
+        if (closed) throw new Error(`تاريخ التحصيل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        assertTreasuryForPosting(state, args.treasury, 'receipt', args.amountMinor)
         // التحصيل على مستوى الحساب الإجمالي: FIFO افتراضياً، ومطابقة محددة عند الطلب (أمر الإصلاح)
         const openInvoices = get().getOpenClientInvoices(customer.id)
         const { allocations, unallocatedMinor } = allocateClientPayment(args.amountMinor, openInvoices, args.specificDocKey ?? null)
+        const allocated = new Set(allocations.map(row => row.docKey))
+        if (openInvoices.some(row => allocated.has(row.docKey) && row.date !== '0000-00-00' && (!isValidExpiryDate(row.date.slice(0, 10)) || row.date.slice(0, 10) > day))) throw new Error('تاريخ المستند المخصص غير صالح أو لاحق للتحصيل — راجع التسلسل')
         const id = nextId(state.clientSettlements)
         const settlementNumber = `CLR-${String(id).padStart(4, '0')}`
         const entryLines = buildClientReceiptEntry(args.amountMinor, args.treasury, `${settlementNumber} — ${customer.nameAr}`)
-        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -22090,6 +22119,8 @@ export const useRawDataStore = create<DataState>()(
         assertProjectCustomerBranch(state, project, extract)
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
+        const originalEntry = state.journal.find(row => row.id === extract.journalEntryId)
+        const now = assertReturnPostingContext(state, extract.date, [...(extract.refunds ?? []).map(row => row.date), ...(originalEntry ? [originalEntry.date] : [])])
         if (args.mode === 'customer_credit' && (project.clientId == null || !scoped.customers.some(customer => customer.id === project.clientId))) {
           throw new Error('المستخلص لمشروع بلا عميل مرتبط — لا يُنشأ رصيد عميل بلا صاحب')
         }
@@ -22102,7 +22133,6 @@ export const useRawDataStore = create<DataState>()(
           mode: args.mode, treasury: args.treasury,
           note: `إشعار دائن على مستخلص ${extract.extractNumber}`,
         })
-        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),

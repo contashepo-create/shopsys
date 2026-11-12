@@ -4,6 +4,7 @@ import { FileText, Printer, Save } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import { assertSurveyIntegrity, exactBilledQuantities } from '../../core/projectSurvey.ts'
+import { assertQuantityChangeLinks } from '../../core/projectExtractQuantity.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
@@ -51,9 +52,7 @@ export function ProjectSurveysPage() {
     setProjectId(id); setMeasurementDate(todayLocalIso()); setReason(''); setDraftDeleteReason(''); setConfirmDraftDelete(false); setSurveyDeleteReason(''); setConfirmSurveyDelete(false); setCloseoutOpen(false); setCloseoutConfirmed(false); setCloseoutNotes('')
     const selected = projectSurveys.find(row => row.projectId === id)
     const selectedItems = boqItems.filter(row => row.projectId === id)
-    let previous = new Map<number, number>()
-    try { previous = new Map(exactBilledQuantities(selectedItems, projectExtracts.filter(row => row.projectId === id)).map(line => [line.boqItemId, line.cumulativeQty])) } catch { /* يظهر الخطأ في الجدول ويمنع الاعتماد */ }
-    setValues(Object.fromEntries(selectedItems.map(item => [item.id, String(selected?.lines.find(line => line.boqItemId === item.id)?.cumulativeQty ?? previous.get(item.id) ?? 0)])))
+    setValues(Object.fromEntries(selectedItems.map(item => [item.id, String(selected?.lines.find(line => line.boqItemId === item.id)?.cumulativeQty ?? 0)])))
     setIsFinal(!!selected?.isFinal); setRevision(selected?.revisions.length ?? 0)
     setBasis(id ? projectExtractFingerprint(data, id) : '')
   }
@@ -116,21 +115,28 @@ export function ProjectSurveysPage() {
     } finally { pending.current = false }
   }
   const printCloseout = (id: number) => {
-    const fresh = useDataStore.getState(), record = fresh.projectCloseouts.find(row => row.id === id)
-    if (!record) return toast.show('المحضر غير موجود في الفرع الحالي', 'error')
-    try {
-      const html = renderCloseoutHtml({ shopName: setup.shopName || 'المقاولات', record, current: fresh.isProjectCloseoutCurrent(id), currency: cur.symbol, fmt })
-      openPrintPreview({ html, wide: true, title: `محضر إقفال كميات ${record.number}` })
-    } catch (error) { toast.show((error as Error).message, 'error') }
+    const build = () => {
+      const fresh = useDataStore.getState(), matches = fresh.projectCloseouts.filter(row => row.id === id)
+      if (matches.length !== 1 || !fresh.projects.some(row => row.id === matches[0].projectId)) throw new Error('المحضر أو مشروعه غير موجود في الفرع الحالي')
+      const app = useAppStore.getState(), currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+      return renderCloseoutHtml({ shopName: app.setup.shopName || 'المقاولات', record: matches[0], current: fresh.isProjectCloseoutCurrent(id), currency: currency.symbol, fmt: amount => formatMinor(amount, currency, false) })
+    }
+    try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: 'محضر إقفال كميات' }) } catch (error) { toast.show((error as Error).message, 'error') }
   }
   const print = () => {
     if (!project || !survey) return
-    try {
-      data.assertProjectExtractOriginals(project.id)
-      data.assertProjectExtractRefunds(project.id)
-      const html = renderSurveyHtml({ shopName: setup.shopName || 'المقاولات', project, survey, items, history, fmt, currency: cur.symbol })
-      openPrintPreview({ html, wide: true, title: `كشف الحصر — ${project.code}` })
-    } catch (error) { toast.show((error as Error).message, 'error') }
+    const id = project.id
+    const build = () => {
+      const fresh = useDataStore.getState(), projects = fresh.projects.filter(row => row.id === id), surveys = fresh.projectSurveys.filter(row => row.projectId === id)
+      if (projects.length !== 1 || surveys.length !== 1) throw new Error('المشروع أو حصره غير موجود أو غير فريد في الفرع الحالي')
+      const app = useAppStore.getState(), currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+      const currentItems = fresh.boqItems.filter(row => row.projectId === id)
+      assertQuantityChangeLinks(currentItems, fresh.changeOrders.filter(row => row.projectId === id))
+      let showBilled = true
+      try { fresh.assertProjectExtractOriginals(id); fresh.assertProjectExtractRefunds(id) } catch { showBilled = false }
+      return renderSurveyHtml({ shopName: app.setup.shopName || 'المقاولات', project: projects[0], survey: surveys[0], items: currentItems, history: fresh.projectExtracts.filter(row => row.projectId === id), fmt: amount => formatMinor(amount, currency, false), currency: currency.symbol, showBilled })
+    }
+    try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: `كشف الحصر — ${project.code}` }) } catch (error) { toast.show((error as Error).message, 'error') }
   }
   const hasDifference = !!survey && !historyError && items.some(item => (survey.lines.find(line => line.boqItemId === item.id)?.cumulativeQty ?? 0) > (billed.get(item.id) ?? 0))
   return <div className="space-y-4" data-project-surveys>
@@ -145,10 +151,10 @@ export function ProjectSurveysPage() {
         const extracted = billed.get(item.id) ?? 0
         return <tr key={item.id} className="border-t"><td className="p-2">{item.code} — {item.descriptionAr} ({item.unit})</td><td className="p-2">{item.qty}</td><td className="p-2">{fmt(item.unitPriceMinor)}</td><td className="p-2"><input aria-label={`المنفذ للبند ${item.code}`} className="w-24 border rounded bg-transparent p-1" dir="ltr" inputMode="decimal" value={values[item.id] ?? ''} onChange={event => setValues({ ...values, [item.id]: event.target.value })} /></td><td className="p-2">{historyError ? '—' : extracted}</td><td className="p-2">{valid && !historyError ? Number((entered - extracted).toFixed(3)) : '—'}</td><td className="p-2">{valid ? Number((item.qty - entered).toFixed(3)) : '—'}</td></tr>
       })}</tbody></table></div>
-      <p className="text-xs text-slate-500">الكميات حتى ثلاثة منازل عشرية؛ لا تُجمع كميات بوحدات مختلفة. يمكن تخفيض الحصر فوق المستخلص بسبب موثق فقط.</p>
+      <p className="text-xs text-slate-500">الكميات حتى ثلاثة منازل عشرية؛ لا تُجمع كميات بوحدات مختلفة. الحصر مستقل عن المستخلص؛ يتطلب تخفيض كمية محصورة سبباً موثقاً.</p>
       <Field label="تاريخ قياس هذه المراجعة" hint="تاريخ القياس الذي تدخله لهذه المراجعة، لا تاريخ تسجيلها ولا تاريخ كل الكميات السابقة."><input type="date" aria-label="تاريخ قياس الحصر" max={todayLocalIso()} value={measurementDate} onChange={event => setMeasurementDate(event.target.value)} className={inputCls} /></Field>
       <div className="grid gap-3 md:grid-cols-2"><Field label="سبب التصحيح أو إعادة فتح الختامي"><input aria-label="سبب تعديل الحصر" value={reason} onChange={event => setReason(event.target.value)} className={inputCls} /></Field><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isFinal} onChange={event => setIsFinal(event.target.checked)} /> حصر ختامي (لا يفترض تنفيذ كامل العقد)</label></div>
-      <div className="flex flex-wrap gap-2"><Btn onClick={() => void save()} disabled={!canManage || !!historyError || !items.length || project.status !== 'active'}><Save size={15} /> اعتماد وحفظ الحصر</Btn><Btn onClick={print} disabled={!survey || !!historyError}><Printer size={15} /> طباعة الحصر المحفوظ</Btn><Btn onClick={() => void prepare()} disabled={!canManage || !survey || !hasDifference || !!historyError || project.status !== 'active'}><FileText size={15} /> تجهيز مسودة مستخلص من الحصر المحفوظ</Btn><Btn variant="ghost" onClick={() => selectProject(project.id)}>إعادة تحميل الحصر</Btn></div>
+      <div className="flex flex-wrap gap-2"><Btn onClick={() => void save()} disabled={!canManage || !items.length || project.status !== 'active'}><Save size={15} /> اعتماد وحفظ الحصر</Btn><Btn onClick={print} disabled={!survey}><Printer size={15} /> طباعة الحصر المحفوظ</Btn><Btn onClick={() => void prepare()} disabled={!canManage || !survey || !hasDifference || !!historyError || project.status !== 'active'}><FileText size={15} /> تجهيز مسودة مستخلص من الحصر المحفوظ</Btn><Btn variant="ghost" onClick={() => selectProject(project.id)}>إعادة تحميل الحصر</Btn></div>
       {draft && <div className="rounded-xl border p-3 text-sm"><b>مسودة مستخلص محفوظة</b> — مشتقة من مراجعة {draft.surveyRevision}، ولا تمثل قيداً أو مطالبة مرحّلة. <button className="text-sky-700 underline ml-3" onClick={() => navigate(`/contracting/extracts?projectId=${project.id}&fromSurvey=1`)}>فتح المسودة</button> <button className="text-rose-600 underline" onClick={() => setConfirmDraftDelete(true)}>حذف المسودة</button>{confirmDraftDelete && <div className="flex flex-wrap items-center gap-2 pt-2"><input aria-label="سبب حذف مسودة المستخلص" value={draftDeleteReason} onChange={event => setDraftDeleteReason(event.target.value)} placeholder="سبب الحذف" className={inputCls} /><Btn onClick={() => void deleteDraft()} disabled={!canManage || !draftDeleteReason.trim()}>تأكيد حذف المسودة</Btn><Btn variant="ghost" onClick={() => setConfirmDraftDelete(false)}>تراجع</Btn></div>}</div>}
       {survey && <div className="rounded-xl border border-rose-300 p-3 text-sm"><button className="text-rose-700 underline" onClick={() => { setSurveyDeleteBasis(projectExtractFingerprint(data, project.id)); setConfirmSurveyDelete(true) }}>حذف الحصر غير المرحّل</button>{confirmSurveyDelete && <div className="space-y-2 pt-2"><p>سيُحذف الحصر ومراجعته ومسودة المستخلص إن وجدت. يُمنع الحذف عند وجود مستند مرتبط أو حركة مالية للمشروع.</p><input aria-label="سبب حذف الحصر" value={surveyDeleteReason} onChange={event => setSurveyDeleteReason(event.target.value)} placeholder="سبب الحذف" className={inputCls} /><div className="flex gap-2"><Btn onClick={() => void deleteSurvey()} disabled={!canManage || !surveyDeleteReason.trim()}>تأكيد حذف الحصر</Btn><Btn variant="ghost" onClick={() => setConfirmSurveyDelete(false)}>تراجع</Btn></div></div>}</div>}
       {survey && !hasDifference && !historyError && <div className="rounded-xl border border-amber-300 p-3 text-sm space-y-2"><p>لا توجد كمية محصورة غير مستخلصة؛ لا تُنشأ فاتورة صفرية. بعد اعتماد الحصر الختامي يمكن إصدار محضر إقفال كميات غير مالي.</p><button className="text-sky-700 underline" disabled={!canManage || !survey.isFinal || project.status !== 'active'} onClick={() => { setCloseoutBasis(projectExtractFingerprint(data, project.id)); setCloseoutConfirmed(false); setCloseoutOpen(true) }}>إصدار محضر إقفال الكميات</button>{closeoutOpen && <div className="space-y-2"><p>المحضر يثبت مطابقة الكميات وقت الإصدار فقط؛ لا يغلق المشروع ولا يسوي الذمم أو المحتجزات أو يثبت التسليم.</p><Field label="ملاحظات المحضر"><input aria-label="ملاحظات محضر الإقفال" maxLength={1000} value={closeoutNotes} onChange={event => setCloseoutNotes(event.target.value)} className={inputCls} /></Field><label className="flex items-center gap-2"><input type="checkbox" checked={closeoutConfirmed} onChange={event => setCloseoutConfirmed(event.target.checked)} /> راجعت الحصر الختامي والمستخلصات وأفهم أن المحضر غير مالي</label><div className="flex gap-2"><Btn onClick={() => void issueCloseout()} disabled={!closeoutConfirmed || !canManage}>تأكيد إصدار المحضر</Btn><Btn variant="ghost" onClick={() => setCloseoutOpen(false)}>إلغاء</Btn></div></div>}</div>}

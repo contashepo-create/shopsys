@@ -490,6 +490,8 @@ export interface BoqItem {
   estCostMinor: Minor
   /** نسبة الإنجاز 0–100 — تُحدَّث مع المستخلصات لمتابعة التقدم البندي */
   progressPercent: number
+  /** شريحة زيادة معتمدة لا تغير أساس البند الأصلي أو نسب مستخلصاته القديمة. */
+  quantityChange?: { orderId: number; originalBoqItemId: number }
 }
 
 export function boqItemTotal(item: Pick<BoqItem, 'qty' | 'unitPriceMinor'>): Minor {
@@ -623,6 +625,8 @@ export interface ChangeOrder {
   titleAr: string
   /** موجب = أعمال إضافية، سالب = تخفيض نطاق */
   amountMinor: Minor
+  /** زيادة كمية بسعر البند الأصلي؛ الأساس لقفل المسودة، والبند الجديد يُنشأ عند الاعتماد فقط. */
+  quantityChange?: { originalBoqItemId: number; qty: number; originalQty: number; unitPriceMinor: number; unit: string; generatedBoqItemId?: number }
   status: ChangeOrderStatus
   /** تاريخ المستند الذي أدخله المستخدم، وليس وقت الإنشاء أو الاعتماد. */
   date: string

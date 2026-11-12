@@ -14,45 +14,39 @@ function setup() {
  return { p, b }
 }
 const extract = (projectId: number, boqItemId: number, cumulativeQty: number, isFinal = false) => S().addProjectExtract({ projectId, vatPercent: 0, payment: 'credit', description: 'أعمال', isFinal, extractQtyLines: [{ boqItemId, cumulativeQty }] })
-it('حصر معتمد قبل المستخلص يُربط دون إنشاء حصر ثانٍ أو جمع الكمية مرتين', () => {
+it('الحصر المعتمد يبقى مستقلاً دون مراجعة جديدة عند المستخلص', () => {
  const { p, b } = setup()
  S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 856 }], expectedRevision: 0, reason: '', isFinal: false })
- const first = extract(p.id, b.id, 200)
+ extract(p.id, b.id, 200)
  expect(S().projectSurveys).toHaveLength(1)
  expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(856)
- expect(S().projectSurveys[0].revisions.at(-1)).toMatchObject({ source: 'extract', extractId: first.id })
+ expect(S().projectSurveys[0].revisions).toHaveLength(1)
+ expect(S().projectSurveys[0].revisions[0].source).toBe('manual')
  expect(S().projectSurveys[0].id).toBe(p.id)
 })
-it('المستخلص الكمي الأول ينشئ الحصر والتالي يحدّثه في عملية واحدة', () => {
+it('المستخلص الكمي لا ينشئ أو يحدّث الحصر', () => {
  const { p, b } = setup()
- let observed = 0
- const unsub = useRawDataStore.subscribe(s => { if (s.projectExtracts.length) { observed++; expect(s.projectSurveys).toHaveLength(1) } })
  extract(p.id, b.id, 200)
- const final = extract(p.id, b.id, 856, true)
- unsub()
- expect(observed).toBe(2)
- expect(final.totals.grossMinor).toBe(65600)
- expect(S().projectSurveys).toHaveLength(1)
- expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(856)
- expect(S().projectSurveys[0].revisions).toHaveLength(2)
+ const final = extract(p.id, b.id, 1000, true)
+ expect(final.totals.grossMinor).toBe(80000)
+ expect(S().projectSurveys).toHaveLength(0)
 })
 it('يمنع الختامي مع بقاء كميات محصورة غير مستخلصة دون قيد', () => {
  const { p, b } = setup()
  S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 856 }], expectedRevision: 0, reason: '', isFinal: true })
  const before = S()
- expect(() => extract(p.id, b.id, 200, true)).toThrow(/غير المستخلصة/)
+ expect(() => extract(p.id, b.id, 200, true)).toThrow(/مساواة/)
  expect(S().journal).toBe(before.journal)
  expect(S().projectSurveys).toBe(before.projectSurveys)
 })
-it('يرفض التعديل المتقادم والتخفيض غير الموثق والتخفيض تحت المستخلص', () => {
+it('يرفض تعديل الحصر المتقادم والتخفيض غير الموثق مع بقائه مستقلاً عن المستخلص', () => {
  const { p, b } = setup()
  extract(p.id, b.id, 200)
  const save = (qty: number, expectedRevision: number, reason = '') => S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: qty }], expectedRevision, reason, isFinal: false })
+ save(500, 0)
  expect(() => save(300, 0)).toThrow(/تغير الحصر/)
- save(500, 1)
- expect(() => save(300, 2)).toThrow(/سبب/)
- expect(() => save(100, 2, 'تصحيح')).toThrow(/أقل/)
- expect(save(300, 2, 'تصحيح قياس').lines[0].cumulativeQty).toBe(300)
+ expect(() => save(300, 1)).toThrow(/سبب/)
+ expect(save(100, 1, 'تصحيح قياس').lines[0].cumulativeQty).toBe(100)
 })
 it('يحذف الحصر فقط مع مشروع لم يرحّل أي مستند مالي', async () => {
  const { p, b } = setup()
@@ -62,11 +56,11 @@ it('يحذف الحصر فقط مع مشروع لم يرحّل أي مستند �
  expect(S().projectSurveys).toHaveLength(0)
  expect(S().journal).toHaveLength(0)
 })
-it('لا يُختلق حصر عندما كان التاريخ القديم إجمالياً أو تقديرياً', () => {
+it('يمكن تسجيل حصر يدوي مستقل حتى مع مستخلص إجمالي قديم', () => {
  const { p, b } = setup()
  S().addProjectExtract({ projectId: p.id, description: 'قديم', payment: 'credit', vatPercent: 0, grossMinor: 1000 })
- expect(() => S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 0, reason: '', isFinal: false })).toThrow(/إجمالي/)
  expect(S().projectSurveys).toHaveLength(0)
+ expect(S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 0, reason: '', isFinal: false }).lines[0].cumulativeQty).toBe(200)
 })
 it('عزل الفرع: لا يظهر حصر مشروع فرع آخر', () => {
  const { p, b } = setup()
@@ -83,22 +77,22 @@ it('يحفظ لقطات العقد ويرفض تغييرها أو حذف بند 
  expect(() => S().updateBoqItem(b.id, { qty: 900 })).toThrow(/حصر/)
  expect(() => S().removeBoqItem(b.id)).toThrow(/حصر/)
 })
-it('تعديل مستخلص كمي يحفظ مراجعة تصحيح ولا يمحو قياساً أعلى مستقلاً', () => {
+it('تعديل مستخلص كمي لا يغير الحصر المستقل', () => {
  const { p, b } = setup()
  const ex = extract(p.id, b.id, 200)
- S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 500 }], expectedRevision: 1, reason: '', isFinal: false })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 500 }], expectedRevision: 0, reason: '', isFinal: false })
  const revised = S().editProjectExtract({ extractId: ex.id, description: 'تصحيح', payment: 'credit', vatPercent: 0, reason: 'تصحيح القياس', extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 250 }] })
  expect(revised.lines?.[0].newExecutedQty).toBe(250)
  expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(500)
- expect(S().projectSurveys[0].revisions.at(-1)?.reason).toContain('تصحيح القياس')
+ expect(S().projectSurveys[0].revisions).toHaveLength(1)
 })
-it('لا يغير المراجعة عند محاولة اعتماد مستخلص إجمالي لمشروع له حصر', () => {
+it('لا يغير المراجعة عند اعتماد مستخلص إجمالي سابق النمط', () => {
  const { p, b } = setup()
  S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })
  const before = S()
- expect(() => S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, grossMinor: 100 })).toThrow(/بالكميات/)
+ S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, grossMinor: 100 })
  expect(S().projectSurveys).toBe(before.projectSurveys)
- expect(S().journal).toBe(before.journal)
+ expect(S().journal).toHaveLength(1)
 })
 it('المسودة المحفوظة بلا قيد، وترحيلها يمحوها ذرّياً، والمتقادمة تُرفض', () => {
  const { p, b } = setup()
@@ -110,7 +104,8 @@ it('المسودة المحفوظة بلا قيد، وترحيلها يمحوه�
  expect(() => S().assertProjectExtractDraftCurrent(p.id)).toThrow(/متقادمة/)
  expect(() => S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, extractQtyLines: draft.lines, sourceSurveyDraft: true })).toThrow(/متقادمة/)
  const next = S().prepareProjectExtractDraft(p.id, 2)
- S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, extractQtyLines: next.lines, sourceSurveyDraft: true, isFinal: true })
+ expect(() => S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, extractQtyLines: next.lines, sourceSurveyDraft: true, isFinal: true })).toThrow(/مساواة/)
+ S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, extractQtyLines: next.lines, sourceSurveyDraft: true })
  expect(S().projectExtractDrafts).toHaveLength(0)
  expect(S().projectExtracts).toHaveLength(1)
  expect(S().journal).toHaveLength(1)
@@ -138,6 +133,7 @@ it('حذف الحصر ومسودته غير المرحّلة بسبب لا يم�
 })
 it('يمنع حذف حصر مرتبط بمستخلص مرحّل دون أي تغيير في القيد', () => {
  const { p, b } = setup()
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })
  extract(p.id, b.id, 200)
  const before = S()
  expect(() => S().deleteUnpostedSurvey(p.id, 'إلغاء')).toThrow(/مرتبط/)

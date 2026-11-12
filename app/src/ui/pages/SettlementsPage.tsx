@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * كل فرق يضرب قائمة الدخل عبر 5112 إجبارياً (لا عجز «يتبخر» بتعديل صامت).
  */
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2, ArrowLeftRight, X } from 'lucide-react'
+import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2, ArrowLeftRight, Eye, Printer, X } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { todayLocalIso } from '../../core/time.ts'
@@ -14,6 +14,10 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, useToast, EmptyState, Modal } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { htmlTableHtml, renderReportShell } from '../../core/reportPrint.ts'
+import { ACCOUNT_NAMES } from './accountNames.ts'
+import { buildSettlementEntry } from '../../core/settlement.ts'
 
 type Section = 'treasury' | 'customer' | 'supplier'
 
@@ -32,6 +36,29 @@ export function SettlementsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [section, setSection] = useState<Section>('treasury')
+  const [viewSettlementId, setViewSettlementId] = useState<number | null>(null)
+  const viewing = settlements.find(row => row.id === viewSettlementId)
+  const previewSettlement = (id: number) => {
+    const build = () => {
+      const fresh = useDataStore.getState(), rows = fresh.settlements.filter(row => row.id === id)
+      if (rows.length !== 1) throw new Error('التسوية غير موجودة أو غير فريدة في الفرع الحالي')
+      const row = rows[0], entries = row.journalEntryId == null ? [] : fresh.journal.filter(entry => entry.id === row.journalEntryId)
+      if (![row.bookMinor, row.actualMinor, row.varianceMinor].every(Number.isSafeInteger) || row.actualMinor - row.bookMinor !== row.varianceMinor) throw new Error('قيمة التسوية أو فرقها غير مطابق — راجع السجل')
+      if ((row.varianceMinor !== 0 && entries.length !== 1) || (row.varianceMinor === 0 && row.journalEntryId != null) || (entries[0] && (entries[0].sourceType !== 'adjustment' || entries[0].sourceId !== row.id || (entries[0].sourceCollection != null && entries[0].sourceCollection !== 'settlements')))) throw new Error('قيد التسوية غير متاح أو لا يطابق المستند — راجع السجل')
+      if (entries[0]) {
+        const expected = buildSettlementEntry({ section: row.section, bookMinor: row.bookMinor, actualMinor: row.actualMinor, treasuryCode: row.section === 'treasury' ? String(row.refId) : undefined, reason: row.reason })
+        const amounts = (lines: typeof expected) => lines.map(line => [line.accountCode, line.debit, line.credit]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+        if (!Array.isArray(entries[0].lines) || JSON.stringify(amounts(entries[0].lines)) !== JSON.stringify(amounts(expected))) throw new Error('قيد التسوية لا يطابق قيمها — راجع السجل')
+      }
+      const app = useAppStore.getState(), currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+      const money = (amount: number) => `${formatMinor(amount, currency, false)} ${currency.symbol}`
+      const details = htmlTableHtml({ headers: ['البيان', 'القيمة'], rows: [['رقم المستند', row.settlementNumber], ['التاريخ', row.date.slice(0, 10)], ['نوع التسوية', SECTIONS.find(item => item.id === row.section)?.nameAr ?? row.section], ['الجهة', row.refNameAr], ['الرصيد الدفتري', money(row.bookMinor)], ['الرصيد الفعلي', money(row.actualMinor)], ['الفرق (الفعلي − الدفتري)', money(row.varianceMinor)], ['السبب', row.reason], ['المعتمد', row.approvedBy ?? 'غير مسجل']] })
+      const entry = entries[0]
+      const ledger = entry ? htmlTableHtml({ headers: ['الحساب', 'مدين', 'دائن'], rows: entry.lines.map(line => [`${line.accountCode} — ${ACCOUNT_NAMES[line.accountCode] ?? ''}`, line.debit ? money(line.debit) : '—', line.credit ? money(line.credit) : '—']) }) : '<p>مطابقة تامة — لا يوجد قيد فرق.</p>'
+      return renderReportShell({ title: `مستند تسوية ${row.settlementNumber}`, subtitle: 'تفاصيل التسوية المسجلة والقيد المرتبط', companyName: app.setup.shopName || 'المنشأة', logoDataUrl: app.receipt.logoDataUrl, settings: app.reportPrint, bodyHtml: `${details}<h2>القيد المحاسبي</h2>${ledger}` })
+    }
+    try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: 'معاينة مستند التسوية قبل الطباعة' }) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذرت معاينة التسوية', 'error') }
+  }
   // مقاصة عميل/مورد (AUDIT-012): الطرف الواحد الذي هو عميل ومورد معاً
   const [offsetOpen, setOffsetOpen] = useState(false)
   const [offsetCustomer, setOffsetCustomer] = useState(0)
@@ -222,6 +249,7 @@ export function SettlementsPage() {
                   <th className="px-3 py-2">الدفتري</th>
                   <th className="px-3 py-2">الفعلي</th>
                   <th className="px-3 py-2">الفرق</th>
+                  <th className="px-3 py-2">معاينة</th>
                 </tr>
               </thead>
               <tbody>
@@ -237,6 +265,7 @@ export function SettlementsPage() {
                     <td className={`px-3 py-2 font-mono font-bold ${st.varianceMinor === 0 ? 'text-emerald-600' : st.varianceMinor > 0 ? 'text-sky-600' : 'text-rose-500'}`} dir="ltr">
                       {st.varianceMinor > 0 ? '+' : ''}{fmt(st.varianceMinor)}
                     </td>
+                    <td className="px-3 py-2"><button type="button" aria-label={`معاينة ${st.settlementNumber}`} onClick={() => setViewSettlementId(st.id)} className="rounded p-1 hover:bg-sky-500/10"><Eye size={15} /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -244,6 +273,18 @@ export function SettlementsPage() {
           )}
         </div>
       </div>
+      <Modal open={!!viewing} onClose={() => setViewSettlementId(null)} title={viewing ? `معاينة ${viewing.settlementNumber}` : ''} subtitle="بيانات التسوية المسجلة للقراءة فقط" wide>
+        {viewing && <div className="space-y-4 text-sm">
+          <div className="grid gap-2 sm:grid-cols-2">{[
+            ['التاريخ', viewing.date.slice(0, 10)], ['نوع التسوية', SECTIONS.find(row => row.id === viewing.section)?.nameAr ?? viewing.section],
+            ['الجهة', viewing.refNameAr], ['الرصيد الدفتري', `${fmt(viewing.bookMinor)} ${cur.symbol}`],
+            ['الرصيد الفعلي', `${fmt(viewing.actualMinor)} ${cur.symbol}`], ['الفرق', `${fmt(viewing.varianceMinor)} ${cur.symbol}`],
+            ['السبب', viewing.reason], ['المعتمد', viewing.approvedBy ?? 'غير مسجل'],
+            ['القيد', viewing.journalEntryId == null ? 'مطابقة تامة — لا قيد' : journal.some(row => row.id === viewing.journalEntryId) ? `#${viewing.journalEntryId}` : 'غير متاح — راجع السجل'],
+          ].map(([label, value]) => <div key={label} className="rounded-lg border p-3"><span className="text-slate-500">{label}</span><div className="font-bold break-words">{value}</div></div>)}</div>
+          <div className="flex justify-end"><Btn onClick={() => previewSettlement(viewing.id)}><Printer size={15} /> معاينة وطباعة مستند التسوية</Btn></div>
+        </div>}
+      </Modal>
       {/* مقاصة عميل/مورد — بلغة المستند نفسها (AUDIT-012 + المرحلة 6) */}
       <Modal open={offsetOpen} onClose={closeOffset} title="" wide bare>
         <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">

@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-vi.mock('../src/ui/print/printReceipt.ts', async importOriginal => ({ ...(await importOriginal<typeof import('../src/ui/print/printReceipt.ts')>()), printHtml: vi.fn() }))
-import { printHtml } from '../src/ui/print/printReceipt.ts'
+import { usePrintPreview } from '../src/ui/components/printPreviewStore.ts'
 import { ProjectExtractsPage } from '../src/ui/pages/ContractingPages.tsx'
 import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -17,15 +16,24 @@ beforeEach(() => {
  const item = S().addBoqItem({ projectId: project.id, code: '1', descriptionAr: 'دهانات', unit: 'م2', qty: 1000, unitPriceMinor: 100 })
  S().receiveClientAdvance({ projectId: project.id, amountMinor: 10000, treasury: '1101' })
  S().addProjectExtract({ projectId: project.id, description: 'حصر', payment: 'credit', vatPercent: 0, advanceRecoveryMinor: 10000, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 200 }] })
- vi.mocked(printHtml).mockClear()
 })
-afterEach(() => { cleanup(); useRawDataStore.setState(initial); useAppStore.setState(app) })
+afterEach(() => { cleanup(); usePrintPreview.getState().closePreview(); useRawDataStore.setState(initial); useAppStore.setState(app) })
 it('طباعة الفاتورة والمستخلص تعرض صافي الإصدار بعد استرداد الدفعة لا الإجمالي قبلها', () => {
  render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
  for (const button of [screen.getByTitle('طباعة فاتورة احترافية للعميل كأنها فاتورة بيع ولكنها مستخلص'), screen.getByTitle('طباعة وثيقة المستخلص الهندسي')]) {
   fireEvent.click(button)
-  const html = String(vi.mocked(printHtml).mock.lastCall?.[0])
+  const html = usePrintPreview.getState().handle?.html ?? ''
   expect(html).toContain('حصر كميات الأعمال')
   expect(html).toMatch(/صافي قيمة (?:الفاتورة|المستخلص) عند الإصدار[\s\S]{0,250}>100(?:\.00)? ج\.م</)
  }
+})
+
+it('معاينة المستخلص تعيد البناء من السجل وتمنع الطباعة عند اختفاء المستند', () => {
+ render(<MemoryRouter><ProjectExtractsPage /></MemoryRouter>)
+ fireEvent.click(screen.getByTitle('طباعة وثيقة المستخلص الهندسي'))
+ expect(usePrintPreview.getState().handle?.html).toContain('حصر')
+ act(() => { useRawDataStore.setState({ projectExtracts: S().projectExtracts.map(row => ({ ...row, description: 'بيان محدث' })) }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().handle?.html).toContain('بيان محدث')
+ act(() => { useRawDataStore.setState({ projectExtracts: [] }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
 })

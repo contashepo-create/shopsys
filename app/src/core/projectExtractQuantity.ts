@@ -1,5 +1,5 @@
 /** حصر كميات مستخلصات المشاريع. الكميات حتى أجزاء الألف والقيم بوحدة العملة الصغرى. */
-import type { BoqItem, ExtractLineComputed } from './contracting.ts'
+import type { BoqItem, ChangeOrder, ExtractLineComputed } from './contracting.ts'
 import { normalizeMovementQty } from './pos.ts'
 
 export interface QuantityExtractInput { boqItemId: number; cumulativeQty: number; expectedPreviousQty?: number; expectedPreviouslyBilledMinor?: number; expectedContractQty?: number; expectedUnitPriceMinor?: number; expectedUnit?: string }
@@ -16,6 +16,34 @@ export interface QuantityHistoryExtract { id: number; lines?: QuantityHistoryLin
 export interface QuantityBasis { previousQty: number; previousPercent: number; previouslyBilledMinor: number; estimated: boolean }
 
 type QuantityBoq = Pick<BoqItem, 'id' | 'code' | 'descriptionAr' | 'qty' | 'unitPriceMinor' | 'unit'>
+
+/** زيادة كمية بسعر وحدة ثابت وبنفس تقريب المستخلص؛ لا تُقبل كميات سالبة أو قيمة صفرية. */
+export function quantityChangeValue(qty: number, unitPriceMinor: number): number {
+  const normalized = normalizeMovementQty(qty)
+  if (!Number.isSafeInteger(unitPriceMinor) || unitPriceMinor <= 0) throw new Error('سعر البند غير صالح لأمر تغيير الكمية')
+  const value = (BigInt(Math.round(normalized * 1000)) * BigInt(unitPriceMinor) + 500n) / 1000n
+  if (value <= 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('قيمة أمر تغيير الكمية غير صالحة')
+  return Number(value)
+}
+
+/** يمنع حصر أو ترحيل شريحة ناقصة/معدلة أو أمر تغيير فقد بنده. */
+export function assertQuantityChangeLinks(items: readonly BoqItem[], orders: readonly ChangeOrder[]): void {
+  if (new Set(items.map(item => item.id)).size !== items.length || new Set(orders.map(order => order.id)).size !== orders.length) throw new Error('معرف بند أو أمر تغيير مكرر — راجع المشروع')
+  for (const order of orders) {
+    const q = order.quantityChange
+    if (!q) continue
+    const parent = items.find(item => item.id === q.originalBoqItemId && item.projectId === order.projectId)
+    const children = items.filter(item => item.quantityChange?.orderId === order.id)
+    if (order.status === 'approved' || order.status === 'invoiced') {
+      if (!parent || parent.quantityChange || parent.qty !== q.originalQty || parent.unitPriceMinor !== q.unitPriceMinor || parent.unit !== q.unit || quantityChangeValue(q.qty, q.unitPriceMinor) !== order.amountMinor) throw new Error('أساس أمر تغيير الكمية غير مطابق لبند العقد — راجع المشروع')
+      const child = children[0]
+      if (children.length !== 1 || q.generatedBoqItemId !== child.id || child.projectId !== order.projectId || child.quantityChange?.originalBoqItemId !== parent.id || child.qty !== q.qty || child.unitPriceMinor !== q.unitPriceMinor || child.unit !== q.unit) throw new Error('شريحة أمر تغيير الكمية غير مطابقة — راجع المشروع')
+    } else if (children.length || q.generatedBoqItemId != null) throw new Error('أمر تغيير غير معتمد له شريحة كميات — راجع المشروع')
+  }
+  for (const child of items.filter(item => item.quantityChange)) {
+    if (!orders.some(order => order.id === child.quantityChange!.orderId && order.projectId === child.projectId && order.quantityChange?.generatedBoqItemId === child.id && (order.status === 'approved' || order.status === 'invoiced'))) throw new Error('شريحة كميات بلا أمر تغيير معتمد — راجع المشروع')
+  }
+}
 
 /** لا تُقدَّم كمية النسبة التاريخية كحصر مؤكد. */
 export function quantityExtractBasis(item: QuantityBoq, extracts: readonly QuantityHistoryExtract[]): QuantityBasis {
@@ -61,7 +89,7 @@ export function computeQuantityExtractLines(lines: readonly QuantityExtractInput
     const cumulativeQty = normalizeMovementQty(line.cumulativeQty, true)
     const currentMilli = Math.round(cumulativeQty * 1000), previousMilli = Math.round(basis.previousQty * 1000), contractMilli = Math.round(item.qty * 1000)
     if (currentMilli < previousMilli) throw new Error(`الكمية التراكمية للبند ${item.code} أقل من السابق — استخدم مسار تصحيح`)
-    if (currentMilli > contractMilli) throw new Error(`الكمية التراكمية للبند ${item.code} تتجاوز كمية العقد — راجع أمر التغيير`)
+    if (currentMilli > contractMilli) throw new Error(`الكمية التراكمية للبند ${item.code} تتجاوز كمية العقد — أصدر واعتمد أمر تغيير للكمية، ثم أدخل الزيادة في شريحته المستقلة`)
     if (!Number.isSafeInteger(item.unitPriceMinor) || item.unitPriceMinor < 0) throw new Error('سعر وحدة البند غير صالح')
     const cumulativeMinorBig = (BigInt(currentMilli) * BigInt(item.unitPriceMinor) + 500n) / 1000n
     if (cumulativeMinorBig > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('قيمة البند غير آمنة')

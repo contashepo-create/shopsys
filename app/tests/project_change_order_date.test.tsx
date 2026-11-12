@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ProjectsPage } from '../src/ui/pages/ContractingPages.tsx'
 import { useRawDataStore } from '../src/data/repo.ts'
@@ -36,7 +37,7 @@ it('الافتراضي اليوم ويرفض التاريخ غير التقوي�
  expect(() => S().addChangeOrder({ projectId, titleAr: 'تغيير', amountMinor: 1, date: '' })).toThrow(/تاريخ/)
  expect(S().changeOrders).toHaveLength(1)
 })
-it('تعرض الواجهة تقويماً افتراضه اليوم ويحفظ اليوم المختار', () => {
+it('تعرض الواجهة تقويماً افتراضه اليوم ويحفظ اليوم المختار', async () => {
  render(<MemoryRouter><ProjectsPage /></MemoryRouter>)
  fireEvent.click(screen.getByTitle('أمر تغيير على العقد'))
  const date = screen.getByLabelText('تاريخ أمر التغيير') as HTMLInputElement
@@ -46,5 +47,5 @@ it('تعرض الواجهة تقويماً افتراضه اليوم ويحفظ 
  const field = screen.getByText(/القيمة \(/).parentElement!
  fireEvent.change(field.querySelector('input')!, { target: { value: '20' } })
  fireEvent.click(screen.getByRole('button', { name: /إنشاء أمر التغيير/ }))
- expect(S().changeOrders[0].date).toBe('2025-02-27')
+ await waitFor(() => expect(S().changeOrders[0]?.date).toBe('2025-02-27'))
 })

@@ -17,14 +17,15 @@ function setup(qty = 1000, price = 100) {
 function measured(projectId: number, boqId: number, cumulativeQty: number, isFinal = false, acceptEstimatedPrior = false) {
  return S().addProjectExtract({ projectId, description: 'حصر', payment: 'credit', vatPercent: 0, isFinal, extractQtyLines: [{ boqItemId: boqId, cumulativeQty }], acceptEstimatedPrior } as never)
 }
-it('يحفظ 200 ثم 856 تراكمي بدقة، ويقيد فرق 656 فقط ويمنع مستخلصاً بعد الختامي', () => {
+it('يحفظ الكميات تراكميًا ويطابق قيمة العقد قبل الختامي', () => {
  const { project, boq } = setup()
  const first = measured(project.id, boq.id, 200)
  expect(first.totals.grossMinor).toBe(20000)
  expect(first.lines?.[0]).toMatchObject({ prevExecutedQty: 0, newExecutedQty: 200, newProgressPercent: 20 })
- const final = measured(project.id, boq.id, 856, true)
- expect(final.totals.grossMinor).toBe(65600)
- expect(final.lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 856, newProgressPercent: 85.6 })
+ expect(() => measured(project.id, boq.id, 856, true)).toThrow(/مساواة/)
+ const final = measured(project.id, boq.id, 1000, true)
+ expect(final.totals.grossMinor).toBe(80000)
+ expect(final.lines?.[0]).toMatchObject({ prevExecutedQty: 200, newExecutedQty: 1000, newProgressPercent: 100 })
  expect(S().journal).toHaveLength(2)
  expect(() => measured(project.id, boq.id, 900)).toThrow(/الختامي/)
 })

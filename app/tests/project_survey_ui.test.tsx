@@ -20,26 +20,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); useRawDataStore.setState(original); useAppStore.setState(app); usePrintPreview.getState().closePreview() })
 const renderPages = () => render(<MemoryRouter initialEntries={['/contracting/surveys']}><Routes><Route path="/contracting/surveys" element={<ProjectSurveysPage />} /><Route path="/contracting/extracts" element={<ProjectExtractsPage />} /></Routes></MemoryRouter>)
 const select = () => fireEvent.change(screen.getByLabelText('مشروع الحصر'), { target: { value: String(S().projects[0].id) } })
-it('يحفظ حصر 856 ويجهز مسودة ختامية بالفارق بعد مستخلص 200 بلا ترحيل تلقائي', async () => {
+it('يحفظ حصر 1000 ويجهز مسودة ختامية بالفارق بعد مستخلص 200 بلا ترحيل تلقائي', async () => {
  const p = S().projects[0], b = S().boqItems[0]
  S().addProjectExtract({ projectId: p.id, description: 'سابق', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
  renderPages(); select()
- fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '856' } })
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '1000' } })
  fireEvent.click(screen.getByLabelText(/حصر ختامي/))
  fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
- await waitFor(() => expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(856))
+ await waitFor(() => expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(1000))
  expect(S().projectExtracts).toHaveLength(1)
  expect(S().journal).toHaveLength(1)
  fireEvent.click(screen.getByText('تجهيز مسودة مستخلص من الحصر المحفوظ'))
- await waitFor(() => expect((screen.getByLabelText('كمية البند 1') as HTMLInputElement).value).toBe('856'))
+ await waitFor(() => expect((screen.getByLabelText('كمية البند 1') as HTMLInputElement).value).toBe('1000'))
  expect((screen.getByLabelText('مستخلص ختامي للمشروع') as HTMLInputElement).checked).toBe(true)
  expect(S().projectExtracts).toHaveLength(1)
  fireEvent.click(screen.getByLabelText(/راجعت حصر جميع البنود/))
  fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
  await waitFor(() => expect(S().projectExtracts).toHaveLength(2))
- expect(S().projectExtracts[1].totals.grossMinor).toBe(65600)
+ expect(S().projectExtracts[1].totals.grossMinor).toBe(80000)
  expect(S().projectSurveys).toHaveLength(1)
- expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(856)
+ expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(1000)
 })
 it('معاينة الطباعة تعرض المنفذ والمستخلص وغير المستخلص وتبقي القيد بلا تغيير', async () => {
  renderPages(); select()
@@ -93,7 +93,7 @@ it('تأكيد حذف الحصر يتطلب السبب ويرفض تغير ال�
 it('محضر إقفال كميات بعد استخراج كل الحصر قابل للطباعة بلا قيد أو إقفال مالي', async () => {
  const p = S().projects[0], b = S().boqItems[0]
  S().addProjectExtract({ projectId: p.id, description: 'سابق', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 856 }] })
- S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 856 }], expectedRevision: 1, reason: '', isFinal: true })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 856 }], expectedRevision: 0, reason: '', isFinal: true })
  const journal = S().journal; renderPages(); select()
  fireEvent.click(screen.getByText('إصدار محضر إقفال الكميات'))
  fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/))
@@ -121,4 +121,26 @@ it('يعرض تقويم يوم القياس ويحفظ الماضي مع سجل 
  fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
  expect(usePrintPreview.getState().handle?.html).toContain(`تاريخ قياس المراجعة الأخيرة:</b> ${chosen}`)
  expect(S().journal).toHaveLength(0)
+})
+it('معاينة الحصر تعيد بناء أحدث مراجعة وتمنع طباعة صورة قديمة عند حذف الحصر', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 0, reason: '', isFinal: false })
+ renderPages(); select(); fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
+ expect(usePrintPreview.getState().handle?.html).toContain('200')
+ act(() => { S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 250 }], expectedRevision: 1, reason: '', isFinal: false }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().handle?.html).toContain('250')
+ act(() => { useRawDataStore.setState({ projectSurveys: [] }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
+})
+it('معاينة محضر الإقفال تحدث حالة الأساس وتمنع الطباعة عند فقد المحضر', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 0, reason: '', isFinal: true })
+ S().issueProjectCloseout({ projectId: p.id, expectedRevision: 1, notes: '', confirmed: true })
+ renderPages(); select(); fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
+ expect(usePrintPreview.getState().handle?.html).not.toContain('نسخة تاريخية')
+ act(() => { S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 1, reason: '', isFinal: true }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().handle?.html).toContain('نسخة تاريخية')
+ act(() => { useRawDataStore.setState({ projectCloseouts: [] }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
 })

@@ -150,7 +150,7 @@ export function renderExtractHtml(args: {
       <div class="cell"><span class="lbl">المشروع</span><span class="val">${esc(args.projectName)}</span></div>
       <div class="cell"><span class="lbl">كود المشروع</span><span class="val">${esc(args.projectCode)}</span></div>
       <div class="cell"><span class="lbl">الجهة المالكة / العميل</span><span class="val">${esc(args.clientName || '—')}</span></div>
-      ${args.contractValue ? `<div class="cell"><span class="lbl">قيمة العقد</span><span class="val">${esc(args.contractValue)}</span></div>` : ''}
+      ${args.contractValue ? `<div class="cell"><span class="lbl">قيمة العقد الأصلي</span><span class="val">${esc(args.contractValue)}</span></div>` : ''}
       <div class="cell"><span class="lbl">نسبة المحتجز (ضمان)</span><span class="val">${args.retentionPercent}٪</span></div>
       <div class="cell"><span class="lbl">عدد بنود المستخلص</span><span class="val">${lines.length > 0 ? String(lines.length) : 'مبلغ إجمالي'}</span></div>
     </div>
@@ -196,7 +196,7 @@ export function renderExtractHtml(args: {
     </div>
     ${args.progressPercent !== null ? `
     <div class="progress-wrap">
-      <div class="progress-lbl"><span>نسبة قيمة المستخلصات قبل الإشعارات إلى العقد</span><span>${args.progressPercent}٪</span></div>
+      <div class="progress-lbl"><span>نسبة قيمة المستخلصات قبل الإشعارات إلى العقد الأصلي</span><span>${args.progressPercent}٪</span></div>
       <div class="progress"><div class="bar" style="width:${Math.min(100, args.progressPercent)}%"></div></div>
     </div>` : ''}
 
@@ -335,7 +335,7 @@ export function renderExtractClientInvoiceHtml(args: {
         <div class="head">بيانات المشروع والعقد</div>
         <div class="row"><span>المشروع:</span><b>${esc(args.projectCode)} — ${esc(args.projectName)}</b></div>
         ${args.contractNumber ? `<div class="row"><span>رقم العقد:</span><b>${esc(args.contractNumber)}</b></div>` : ''}
-        ${args.contractValue ? `<div class="row"><span>قيمة العقد:</span><b>${esc(args.contractValue)}</b></div>` : ''}
+        ${args.contractValue ? `<div class="row"><span>قيمة العقد الأصلي:</span><b>${esc(args.contractValue)}</b></div>` : ''}
         <div class="row"><span>محتجز ضمان الأعمال:</span><b>${args.retentionPercent}٪</b></div>
       </div>
     </div>
@@ -384,7 +384,7 @@ export function renderExtractClientInvoiceHtml(args: {
         <div class="cum-row"><span>أعمال الفواتير / المستخلصات السابقة:</span><b class="num">${esc(args.previousGross)}</b></div>
         <div class="cum-row"><span>أعمال هذه الفاتورة (${esc(args.extractNumber)}):</span><b class="num">${esc(args.currentGross)}</b></div>
         <div class="cum-row"><span>إجمالي أعمال المستخلصات قبل الإشعارات:</span><b class="num">${esc(args.cumulativeGross)}</b></div>
-        ${args.progressPercent !== null ? `<div class="cum-row"><span>نسبة قيمة المستخلصات قبل الإشعارات إلى العقد:</span><b class="pct">${args.progressPercent}٪</b></div>` : ''}
+        ${args.progressPercent !== null ? `<div class="cum-row"><span>نسبة قيمة المستخلصات قبل الإشعارات إلى العقد الأصلي:</span><b class="pct">${args.progressPercent}٪</b></div>` : ''}
         ${args.description ? `<div style="margin-top:8px;font-size:11.5px;color:#334155"><b>ملاحظات وبيان الأعمال:</b> ${esc(args.description)}</div>` : ''}
       </div>
 

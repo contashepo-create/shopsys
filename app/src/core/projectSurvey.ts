@@ -37,7 +37,7 @@ export function exactBilledQuantities(items: readonly BoqItem[], history: readon
   })
 }
 
-function quantitiesByItem(items: readonly BoqItem[], lines: readonly SurveyLine[]): Map<number, number> {
+function quantitiesByItem(items: readonly BoqItem[], lines: readonly SurveyLine[], allowExcess = false): Map<number, number> {
   const result = new Map<number, number>()
   for (const line of lines) {
     if (result.has(line.boqItemId)) throw new Error('بند مكرر في الحصر')
@@ -46,7 +46,7 @@ function quantitiesByItem(items: readonly BoqItem[], lines: readonly SurveyLine[
     if ((line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('تغيرت بيانات عقد بند الحصر — راجع التاريخ')
     const qty = normalizeMovementQty(line.cumulativeQty, true)
     normalizeMovementQty(item.qty)
-    if (qty > item.qty) throw new Error(`كمية البند ${item.code} تتجاوز كمية العقد`)
+    if (!allowExcess && qty > item.qty) throw new Error(`كمية البند ${item.code} تتجاوز كمية العقد`)
     result.set(item.id, qty)
   }
   return result
@@ -76,9 +76,9 @@ export function reviseProjectSurvey(args: {
   if (args.measurementDate != null && (args.source !== 'manual' || !isValidExpiryDate(args.measurementDate) || !isValidExpiryDate(args.at.slice(0, 10)) || args.measurementDate > args.at.slice(0, 10))) throw new Error('تاريخ قياس الحصر غير صالح للمراجعة')
   if (args.source === 'extract' && !args.extractId) throw new Error('المستخلص المرتبط غير محدد')
   if (survey && args.source === 'extract' && survey.revisions.some(rev => rev.source === 'extract' && rev.extractId === args.extractId)) throw new Error('المستخلص مربوط بالحصر بالفعل')
-  const billed = quantitiesByItem(items, exactBilledQuantities(items, history))
-  const previous = quantitiesByItem(items, survey?.lines ?? [...billed].map(([boqItemId, cumulativeQty]) => ({ boqItemId, cumulativeQty })))
-  const entered = quantitiesByItem(items, args.lines)
+  const billed = args.source === 'extract' ? quantitiesByItem(items, exactBilledQuantities(items, history)) : new Map<number, number>()
+  const previous = quantitiesByItem(items, survey?.lines ?? [], true)
+  const entered = quantitiesByItem(items, args.lines, args.source === 'manual')
   if (!entered.size) throw new Error('أدخل كمية بند واحد على الأقل')
   const next = new Map(previous)
   for (const [id, qty] of entered) {
@@ -88,7 +88,6 @@ export function reviseProjectSurvey(args: {
       if (survey && qty > old && !args.acceptIncrease) throw new Error('كمية المستخلص تتجاوز الحصر المعتمد — أكد إضافة الفرق إلى الحصر')
       next.set(id, Math.max(old, qty))
     } else {
-      if (qty < (billed.get(id) ?? 0)) throw new Error('كمية الحصر أقل من الكمية المستخلصة — راجع المستخلصات أولاً')
       if (survey && qty < old && !args.reason.trim()) throw new Error('سبب تخفيض كمية الحصر مطلوب')
       next.set(id, qty)
     }
@@ -105,14 +104,13 @@ export function reviseProjectSurvey(args: {
 export function assertSurveyIntegrity(survey: ProjectSurvey, items: readonly BoqItem[], history: readonly QuantityHistoryExtract[]): void {
   if (new Set(items.map(item => item.id)).size !== items.length) throw new Error('بنود المشروع غير فريدة — راجع الحصر')
   if (survey.revisions.some(row => row.measurementDate != null && (row.source !== 'manual' || !isValidExpiryDate(row.measurementDate) || !isValidExpiryDate(row.at?.slice(0, 10)) || row.measurementDate > row.at.slice(0, 10)))) throw new Error('تاريخ قياس مراجعة الحصر غير صالح — راجع السجل')
-  const measured = quantitiesByItem(items, survey.lines)
-  const billed = quantitiesByItem(items, exactBilledQuantities(items, history))
-  for (const item of items) if ((measured.get(item.id) ?? 0) < (billed.get(item.id) ?? 0)) throw new Error(`الحصر للبند ${item.code} أقل من المستخلص — راجع المستندات`)
+  quantitiesByItem(items, survey.lines, true)
+  void history
 }
 
 /** لا يُغلق مستخلص نهائي تاركاً أعمالاً محصورة لم تُستخلص. */
 export function assertSurveyFinalBilled(survey: ProjectSurvey, items: readonly BoqItem[], history: readonly QuantityHistoryExtract[]): void {
-  const actual = quantitiesByItem(items, survey.lines)
+  const actual = quantitiesByItem(items, survey.lines, true)
   const billed = quantitiesByItem(items, exactBilledQuantities(items, history))
   for (const item of items) if ((actual.get(item.id) ?? 0) !== (billed.get(item.id) ?? 0)) throw new Error(`الحصر للبند ${item.code} لا يطابق كميات المستخلص الختامي — راجع الأعمال غير المستخلصة`)
 }

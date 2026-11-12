@@ -25,16 +25,16 @@ it('يحفظ يوم القياس السابق منفصلاً عن وقت الت�
 it.each(['', '2026-11-06', '2026-02-30', '2026-11-04T12:00:00Z'])('يرفض يوم قياس غير صحيح أو مستقبلي %s بلا أثر', date => {
  expect(() => save(date)).toThrow(/تاريخ/); expect(S().projectSurveys).toHaveLength(0); expect(S().journal).toHaveLength(0)
 })
-it('لا يخمن تاريخ قياس لمراجعة قديمة أو ربط مستخلص', () => {
+it('لا يخمن تاريخ قياس أو ينشئ مراجعة عند المستخلص', () => {
  const legacy = save()
  expect(legacy.revisions[0].measurementDate).toBeUndefined()
  expect(print()).toContain('تاريخ قياس المراجعة الأخيرة:</b> غير مسجل')
  S().addProjectExtract({ projectId: S().projects[0].id, description: 'مستخلص', payment: 'cash', vatPercent: 0, extractQtyLines: [{ boqItemId: S().boqItems[0].id, cumulativeQty: 10 }] })
- expect(S().projectSurveys[0].revisions[1].source).toBe('extract')
- expect(S().projectSurveys[0].revisions[1].measurementDate).toBeUndefined()
+ expect(S().projectSurveys[0].revisions).toHaveLength(1)
+ expect(S().projectSurveys[0].revisions[0].measurementDate).toBeUndefined()
  expect(print()).toContain('تاريخ قياس المراجعة الأخيرة:</b> غير مسجل')
 })
-it('يحافظ على تواريخ المراجعات ويرفض التأريخ الأسبق من قياس معروف أو مستخلص', () => {
+it('يحافظ على تسلسل تواريخ القياس مستقلاً عن تاريخ المستخلص', () => {
  save('2026-11-04')
  const before = S().projectSurveys
  expect(() => save('2026-11-03', 1, 20)).toThrow(/التسلسل/)
@@ -42,9 +42,7 @@ it('يحافظ على تواريخ المراجعات ويرفض التأريخ 
  save('2026-11-04', 1, 20)
  expect(S().projectSurveys[0].revisions.map(row => row.measurementDate)).toEqual(['2026-11-04', '2026-11-04'])
  S().addProjectExtract({ projectId: S().projects[0].id, description: 'مستخلص', payment: 'cash', vatPercent: 0, extractQtyLines: [{ boqItemId: S().boqItems[0].id, cumulativeQty: 10 }] })
- const after = S().projectSurveys
- expect(() => save('2026-11-04', 3, 20)).toThrow(/التسلسل/)
- expect(S().projectSurveys).toBe(after)
+ expect(save('2026-11-04', 2, 20).revisions).toHaveLength(3)
 })
 it('يرفض طباعة سجل يتضمن تاريخ قياس تالفاً دون تصحيحه', () => {
  save('2026-11-04')

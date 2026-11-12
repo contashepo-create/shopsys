@@ -21,9 +21,9 @@ describe('حصر وحيد للمشروع وحساب الكميات بلا تكر
   const next = reviseProjectSurvey({ ...ctx, survey, history: history(200), lines: line(856), source: 'extract', extractId: 2, acceptIncrease: true })
   expect(next.lines).toMatchObject(line(856))
  })
- it('يمنع إنقاص الحصر تحت المفوتر ويمنع تخفيض غير المفوتر بلا سبب', () => {
+ it('الحصر مستقل عن المفوتر ويمنع تخفيض القياس بلا سبب', () => {
   const survey = reviseProjectSurvey({ ...ctx, history: history(200), lines: line(500), source: 'manual' })
-  expect(() => reviseProjectSurvey({ ...ctx, survey, history: history(200), lines: line(100), source: 'manual', reason: 'تصحيح' })).toThrow(/أقل/)
+  expect(reviseProjectSurvey({ ...ctx, survey, history: history(200), lines: line(100), source: 'manual', reason: 'تصحيح' }).lines).toMatchObject(line(100))
   expect(() => reviseProjectSurvey({ ...ctx, survey, history: history(200), lines: line(300), source: 'manual' })).toThrow(/سبب/)
   expect(reviseProjectSurvey({ ...ctx, survey, history: history(200), lines: line(300), source: 'manual', reason: 'تصحيح قياس' }).lines).toMatchObject(line(300))
  })
@@ -32,16 +32,17 @@ describe('حصر وحيد للمشروع وحساب الكميات بلا تكر
   expect(() => assertSurveyFinalBilled(survey, [item], history(200))).toThrow(/غير المستخلصة/)
   expect(() => assertSurveyFinalBilled(survey, [item], history(856))).not.toThrow()
  })
- it('لا يختلق حصر تاريخ قديم بنسب أو مبلغ إجمالي', () => {
+ it('يسجل الحصر اليدوي مستقلاً عن تاريخ النسب أو المبلغ الإجمالي', () => {
   const old = [{ id: 1, lines: [{ boqItemId: 1, prevProgressPercent: 0, newProgressPercent: 20, lineValueMinor: 20000 }] }]
-  expect(() => reviseProjectSurvey({ ...ctx, history: old, lines: line(856), source: 'manual' })).toThrow(/تقديرية/)
-  expect(() => reviseProjectSurvey({ ...ctx, history: [{ id: 1 }], lines: line(856), source: 'manual' })).toThrow(/إجمالي/)
+  expect(reviseProjectSurvey({ ...ctx, history: old, lines: line(856), source: 'manual' }).lines).toMatchObject(line(856))
+  expect(reviseProjectSurvey({ ...ctx, history: [{ id: 1 }], lines: line(856), source: 'manual' }).lines).toMatchObject(line(856))
  })
  it('يرفض نسخة قديمة وتكرار البند والكمية غير الصحيحة', () => {
   const survey = reviseProjectSurvey({ ...ctx, lines: line(200), source: 'manual' })
   expect(() => reviseProjectSurvey({ ...ctx, survey, expectedRevision: 0, lines: line(250), source: 'manual' })).toThrow(/تغير الحصر/)
   expect(() => reviseProjectSurvey({ ...ctx, survey, lines: [...line(250), ...line(300)], source: 'manual' })).toThrow(/مكرر/)
-  expect(() => reviseProjectSurvey({ ...ctx, survey, lines: line(1001), source: 'manual' })).toThrow(/تتجاوز/)
+  expect(reviseProjectSurvey({ ...ctx, survey, lines: line(1001), source: 'manual' }).lines).toMatchObject(line(1001))
+  expect(() => reviseProjectSurvey({ ...ctx, survey, lines: line(-1), source: 'manual' })).toThrow()
  })
 })
 it('لا يعيد المستخلص فتح حصر ختامي تلقائياً', () => {
