@@ -168,3 +168,25 @@ it('يعرض مراجعة بدل صافي تقديري عند فقد قيد ال
  renderPages(); select()
  expect(screen.getByLabelText('مراجعة صافي كميات الإشعارات').textContent).toContain('لا يمكن عرض صافي موثوق')
 })
+
+it('يتيح محضر صافي غير مالي بعد إشعار مثبت وتصحيح الحصر دون فتح الختامي', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 1000 }], isFinal: true })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 1000 }], expectedRevision: 0, reason: '', isFinal: true })
+ S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: b.id, qty: 10 }], amountMinor: 1000, mode: 'customer_credit', reason: 'رفض' })
+ renderPages(); select()
+ expect(screen.queryByText('إصدار محضر إقفال الكميات')).toBeNull()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '990' } })
+ fireEvent.change(screen.getByLabelText('سبب تعديل الحصر'), { target: { value: 'تصحيح بعد رفض' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(990))
+ expect(screen.getByText(/الحصر المحفوظ يطابق صافي المستخلصات/)).toBeTruthy()
+ const journal = S().journal
+ fireEvent.click(screen.getByText('إصدار محضر إقفال الكميات'))
+ fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/)); fireEvent.click(screen.getByText('تأكيد إصدار المحضر'))
+ await waitFor(() => expect(S().projectCloseouts).toHaveLength(1))
+ expect(S().projectCloseouts[0].quantityBasis).toBe('net-after-credit')
+ expect(S().journal).toBe(journal); expect(S().projectExtracts[0].isFinal).toBe(true)
+ fireEvent.click(screen.getByText('محاضر إقفال الكميات')); fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
+ expect(usePrintPreview.getState().handle?.html).toContain('كمية الإشعارات')
+})
