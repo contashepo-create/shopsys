@@ -135,3 +135,29 @@ it('مرتجع بعد المستخلص الختامي يجعل محضر الكم
  expect(() => extract(p.id, b.id, 1000)).toThrow(/ختامي/)
  expect(S().projectCloseouts).toHaveLength(1)
 })
+
+it('تغيير تعريف المشروع داخل نسخة المحضر لا يُعرض كمطابق رغم سلامة أساس الكميات', () => {
+ const { p, b } = setup(); extract(p.id, b.id, 200); finalSurvey(p.id, b.id, 200, 0); const original = issue(p.id, 1)
+ for (const changed of [{ projectCode: 'PRJ-OTHER' }, { projectName: 'مشروع آخر' }, { clientName: 'عميل آخر' }]) {
+  useRawDataStore.setState({ projectCloseouts: [{ ...original, ...changed }] })
+  expect(S().isProjectCloseoutCurrent(original.id)).toBe(false)
+ }
+ useRawDataStore.setState({ projectCloseouts: [original] })
+ expect(S().isProjectCloseoutCurrent(original.id)).toBe(true)
+})
+
+it('دمج سطح المكتب يحمي المحضر القديم من الحذف أو تعديل بياناته، ويسمح بإضافة محضر جديد', () => {
+ const snap = (state: object) => JSON.stringify({ state })
+ const record = { id: 1, projectId: 1, basis: 'a', projectName: 'مشروع', notes: 'أصلي' }
+ const initial = { projectCloseouts: [record], projects: [{ id: 1, name: 'مشروع' }] }
+ const base = snap(initial)
+ const unrelated = snap({ ...initial, projects: [{ id: 1, name: 'تغيير مستقل' }] })
+ for (const tampered of [snap({ ...initial, projectCloseouts: [] }), snap({ ...initial, projectCloseouts: [{ ...record, notes: 'معدل' }] })]) {
+  expect(() => mergeConcurrentSnapshots(base, tampered, unrelated)).toThrow(/محضر/)
+  expect(() => mergeConcurrentSnapshots(base, unrelated, tampered)).toThrow(/محضر/)
+ }
+ const added = snap({ ...initial, projectCloseouts: [record, { id: 2, projectId: 2, basis: 'b' }] })
+ const merged = JSON.parse(mergeConcurrentSnapshots(base, added, unrelated))
+ expect(merged.state.projectCloseouts).toEqual([record, { id: 2, projectId: 2, basis: 'b' }])
+ expect(merged.state.projects[0].name).toBe('تغيير مستقل')
+})

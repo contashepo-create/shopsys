@@ -171,6 +171,21 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   // Detect a financial link introduced on the other side of an unposted deletion.
   // Existing deletion audit records alone must not prevent later legitimate activity.
   const before = persistedState(base) ?? {}, left = persistedState(local) ?? {}, right = persistedState(remote) ?? {}
+  // محاضر الكميات لقطات تاريخية: دمج ثلاثة أطراف لا يسمح بتحرير محضر
+  // سابق أو إسقاطه، حتى لو كان الطرف الآخر قد غيّر حقلاً مستقلاً فقط.
+  // هذا الحارس يخص حالات تعارض اللقطات ولا يحل محل حماية كل الكتّاب.
+  if (Array.isArray(before.projectCloseouts)) {
+    const originals = before.projectCloseouts as JsonValue[]
+    for (const side of [left, right]) {
+      if (!Array.isArray(side.projectCloseouts)) throw new Error('تعارض حذف سجل محاضر الإقفال التاريخية — أعد تحميل البيانات')
+      const records = side.projectCloseouts as JsonValue[]
+      for (const original of originals) {
+        if (!isJsonRecord(original) || (typeof original.id !== 'number' && typeof original.id !== 'string')) throw new Error('سجل محضر الإقفال التاريخي غير صالح — راجع البيانات')
+        const matches = records.filter(row => isJsonRecord(row) && row.id === original.id)
+        if (matches.length !== 1 || !jsonEqual(original, matches[0])) throw new Error('تعارض تعديل أو حذف محضر إقفال تاريخي — أعد تحميل البيانات')
+      }
+    }
+  }
   const auditKeys = ['surveyDeletionRecords', 'quotationDeletionRecords']
   const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectDeletionRecords', 'auditLog'])
   const refers = (value: unknown, projectId: number, depth = 0): boolean => {

@@ -15912,7 +15912,9 @@ export const useRawDataStore = create<DataState>()(
         if (!record || state.projectCloseouts.filter(row => row.id === id).length !== 1) return false
         try {
           const current = validateCloseout(state, record.projectId, record.surveyRevision)
-          return current.survey.id === record.surveyId && current.basis === record.basis && JSON.stringify(current.lines) === JSON.stringify(record.lines) && JSON.stringify(current.history.map(row => row.extractNumber)) === JSON.stringify(record.extractNumbers)
+          return current.survey.id === record.surveyId && current.basis === record.basis
+            && record.projectCode === current.project.code && record.projectName === current.project.nameAr && record.clientName === current.project.clientName
+            && JSON.stringify(current.lines) === JSON.stringify(record.lines) && JSON.stringify(current.history.map(row => row.extractNumber)) === JSON.stringify(record.extractNumbers)
         } catch { return false }
       },
       assertProjectExtractDraftCurrent: (projectId) => {
