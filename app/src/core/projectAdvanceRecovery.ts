@@ -2,13 +2,20 @@ import type { JournalEntry } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
 import { isValidExpiryDate } from './batches.ts'
 import { FinancialDataReviewError } from './financialDataReview.ts'
+import { planAdvanceCredit, type AdvanceCreditEvidence } from './projectAdvanceCreditPlan.ts'
 
 export interface ProjectAdvanceAllocation { advanceId: number; journalEntryId: number; amountMinor: number }
 export interface ProjectAdvanceRecord { id: number; projectId: number; date: string; amountMinor: number; recoveredMinor: number; journalEntryId: number }
-interface RecoveryExtract { id: number; projectId: number; journalEntryId: number; date: string; advanceRecoveryMinor?: number; advanceAllocations?: readonly ProjectAdvanceAllocation[] }
+interface RecoveryExtract {
+  id: number; projectId: number; journalEntryId: number; date: string
+  advanceRecoveryMinor?: number; advanceAllocations?: readonly ProjectAdvanceAllocation[]
+  totals?: { dueMinor: number }
+  quantityCreditVersion?: number
+  refunds?: readonly { journalEntryId: number; date: string; amountMinor: number; restoredAdvanceMinor?: number; restoredAdvanceAllocations?: readonly ProjectAdvanceAllocation[] }[]
+}
 
 /** تحقق من أرصدة المقدمات قبل الاعتماد عليها؛ السجل القديم بلا توزيع لا يُخترع له توزيع. */
-export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly ProjectAdvanceRecord[], extracts: readonly RecoveryExtract[], journal: ReadonlyMap<number, JournalEntry>, treasuryCodes: ReadonlySet<string>): void {
+export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly ProjectAdvanceRecord[], extracts: readonly RecoveryExtract[], journal: ReadonlyMap<number, JournalEntry>, treasuryCodes: ReadonlySet<string>, options?: { experimentalCreditReplay?: boolean }): void {
   const fail = (): never => { throw new FinancialDataReviewError('استرداد مقدمات المشروع', 'الدفعات أو تخصيصاتها لا تطابق قيودها') }
   const byId = new Map<number, ProjectAdvanceRecord>(), attributed = new Map<number, number>()
   let recovered = 0, lastId = 0, lastDate = '', lastEntryId = 0
@@ -45,10 +52,50 @@ export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly
     }
     if (amount !== value) return fail()
   }
+  // دعم عكس مثبت للمقدمة لا يغير تاريخ الاسترداد الأصلي. نعيد تشغيل
+  // التخصيص أولاً ثم نطرح فقط ما وثّقه قيد الإشعار لكل دفعة. لا ندّعي
+  // ترتيباً تاريخياً إذا حدث استرداد آخر بعد أول إشعار أو كان التاريخ ناقصاً.
+  const creditExtracts = extracts.filter(row => row.quantityCreditVersion === 3)
+  const restoredByAdvance = new Map<number, number>()
+  if (creditExtracts.length) {
+    // تجريب تدقيق التسلسل لا يفعّل ترحيل الإشعار ولا يجعل التقارير الأخرى
+    // متوافقة معه. المسارات الفعلية ترفض النسخة الجديدة حتى اكتمالها.
+    if (!options?.experimentalCreditReplay || !allAttributed) return fail()
+    let firstCredit = Number.MAX_SAFE_INTEGER
+    const usedCreditEntries = new Set<number>()
+    for (const extract of creditExtracts) {
+      if (!extract.totals || !Array.isArray(extract.advanceAllocations) || !Array.isArray(extract.refunds) || !extract.refunds.length || (extract.advanceRecoveryMinor ?? 0) <= 0) return fail()
+      const previous: AdvanceCreditEvidence[] = []
+      let previousId = extract.journalEntryId, previousDate = extract.date.slice(0, 10)
+      for (const refund of extract.refunds) {
+        if (!refund || !Number.isSafeInteger(refund.journalEntryId) || refund.journalEntryId <= previousId || usedCreditEntries.has(refund.journalEntryId) || !isValidExpiryDate(refund.date) || refund.date < previousDate || !Number.isSafeInteger(refund.restoredAdvanceMinor) || !Array.isArray(refund.restoredAdvanceAllocations)) return fail()
+        usedCreditEntries.add(refund.journalEntryId)
+        const entry = journal.get(refund.journalEntryId)
+        if (!entry || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.date !== refund.date || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines)) return fail()
+        try { assertBalanced(entry.lines) } catch { return fail() }
+        const advanceLines = entry.lines.filter(line => line.accountCode === '2109')
+        const credit2109 = advanceLines.reduce((sum, line) => sum + line.credit, 0)
+        if (!Number.isSafeInteger(credit2109) || advanceLines.some(line => line.debit !== 0) || credit2109 !== refund.restoredAdvanceMinor) return fail()
+        let plan: ReturnType<typeof planAdvanceCredit>
+        try { plan = planAdvanceCredit({ dueMinor: extract.totals.dueMinor, recoveryMinor: extract.advanceRecoveryMinor!, allocations: extract.advanceAllocations, previous, amountMinor: refund.amountMinor, restoredAdvanceMinor: refund.restoredAdvanceMinor! }) } catch { return fail() }
+        if (plan.allocations.length !== refund.restoredAdvanceAllocations.length || plan.allocations.some((row, index) => row.advanceId !== refund.restoredAdvanceAllocations![index]?.advanceId || row.journalEntryId !== refund.restoredAdvanceAllocations![index]?.journalEntryId || row.amountMinor !== refund.restoredAdvanceAllocations![index]?.amountMinor)) return fail()
+        for (const row of plan.allocations) {
+          restoredByAdvance.set(row.advanceId, (restoredByAdvance.get(row.advanceId) ?? 0) + row.amountMinor)
+          if (!Number.isSafeInteger(restoredByAdvance.get(row.advanceId))) return fail()
+          claimed -= row.amountMinor
+          attributed.set(row.advanceId, (attributed.get(row.advanceId) ?? 0) - row.amountMinor)
+        }
+        firstCredit = Math.min(firstCredit, refund.journalEntryId)
+        previous.push({ amountMinor: refund.amountMinor, restoredAdvanceMinor: refund.restoredAdvanceMinor!, allocations: refund.restoredAdvanceAllocations })
+        previousId = refund.journalEntryId; previousDate = refund.date
+      }
+    }
+    if (extracts.some(row => (row.advanceRecoveryMinor ?? 0) > 0 && row.journalEntryId > firstCredit)) return fail()
+  }
   if (claimed !== recovered) return fail()
   for (const a of advances) {
     const known = attributed.get(a.id) ?? 0
-    if (known > a.recoveredMinor || (allAttributed && known !== a.recoveredMinor)) return fail()
+    if (known < 0 || known > a.recoveredMinor || (allAttributed && known !== a.recoveredMinor)) return fail()
   }
   // إذا كان التاريخ كله موثقاً، أعد تشغيل FIFO حسب القيد الحالي؛ مجرد
   // تطابق المجاميع لا يكشف استبدال تخصيصَي مستخلصين بالقيمة نفسها.
@@ -67,7 +114,7 @@ export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly
       const actual = extract.advanceAllocations
       if (left || !actual || expected.length !== actual.length || expected.some((row, index) => row.advanceId !== actual[index]?.advanceId || row.journalEntryId !== actual[index]?.journalEntryId || row.amountMinor !== actual[index]?.amountMinor)) return fail()
     }
-    if (running.some((row, index) => row.recoveredMinor !== advances[index].recoveredMinor)) return fail()
+    if (running.some((row, index) => row.recoveredMinor - (restoredByAdvance.get(row.id) ?? 0) !== advances[index].recoveredMinor)) return fail()
   }
 }
 
