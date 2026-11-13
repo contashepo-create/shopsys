@@ -584,7 +584,7 @@ export interface ProjectExtract {
   refundedTaxMinor?: number
   /** دليل إصدار إشعارات كمية؛ لا يُحوّل سجل قديم مالياً إلى سجل كمي تلقائياً. */
   quantityCreditVersion?: 1 | 2
-  refunds?: (ServiceRefundRecord & { quantities?: ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number })[]
+  refunds?: (ServiceRefundRecord & { quantities?: ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number; restoredAdvanceMinor?: number })[]
   /** §94: أثر التعديل بعد الإصدار — قيد عاكس ثم إعادة بناء بنفس الرقم (سجل تدقيق) */
   lastEditReason?: string
   editedAt?: string
@@ -3446,7 +3446,7 @@ interface DataState {
   /** مرتجع عقد إيجار (خصم تعويضي): يعكس 4102+2102 نسبياً — التأمين له مساره في إقفال العقد */
   refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
-  refundProjectExtract: (args: { extractId: number; amountMinor: number; quantities: ProjectRefundQuantity[]; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
+  refundProjectExtract: (args: { extractId: number; amountMinor: number; quantities: ProjectRefundQuantity[]; restoredAdvanceMinor?: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
   /** §94: تعديل مستخلص صادر — عكس قيده وإرجاع تقدم BOQ واسترداد الدفعة ثم إعادة بناء بنفس الرقم */
   editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
@@ -22167,10 +22167,17 @@ export const useRawDataStore = create<DataState>()(
         }
         if (args.mode === 'cash') assertTreasuryForPosting(state, args.treasury ?? '1101', 'refund', args.amountMinor)
         if (!Array.isArray(args.quantities) || args.quantities.length === 0) throw new Error('اختر البنود والكميات للرد على المستخلص')
-        if ((extract.advanceRecoveryMinor ?? 0) !== 0) throw new Error('تسوية إشعار الكميات مع استرداد الدفعة المقدمة غير متاحة بعد — راجع المحاسب')
+        const recovery = extract.advanceRecoveryMinor ?? 0
+        if (recovery > 0) {
+          // المسار المحدود لا يعيد أي جزء من المقدمة؛ يلزم اختيار الصفر
+          // صراحة وتدقيق التوزيع الأصلي قبل الاعتماد على صافي المستحق.
+          if (args.restoredAdvanceMinor !== 0) throw new Error('حالياً لا يدعم الإشعار إلا اختيار صفر للمقدمة المعادة؛ تسوية رد المقدمة نفسها غير متاحة — راجع المحاسب')
+          if (!extract.advanceAllocations?.length) throw new Error('توزيع استرداد المقدمة غير مثبت — راجع التاريخ')
+          checkedProjectAdvanceBasis(state, project)
+        } else if (args.restoredAdvanceMinor != null && args.restoredAdvanceMinor !== 0) throw new Error('لا توجد مقدمة مستردة يمكن إعادتها')
         // لا يمكن إسناد تحصيل محتجز أو فاتورة توثيق مشتركة سابقة إلى كل شريحة بدقة.
         if (extract.totals.retentionMinor > 0 && state.retentionReleases.some(row => row.projectId === project.id)) throw new Error('سبق تحصيل محتجز المشروع بلا توزيع مثبت على المستخلصات — راجع تسوية المحتجز')
-        if (extract.totals.retentionMinor > 0 && state.sales.some(row => row.projectId === project.id && row.projectBilling === 'documentation')) throw new Error('توجد فاتورة توثيق للمشروع — راجع تسوية المستندات قبل إشعار المحتجز')
+        if ((extract.totals.retentionMinor > 0 || recovery > 0) && state.sales.some(row => row.projectId === project.id && row.projectBilling === 'documentation')) throw new Error('توجد فاتورة توثيق للمشروع — راجع تسوية المستندات قبل الإشعار')
         if (!args.reason.trim()) throw new Error('سبب الإشعار مطلوب')
         if (!extract.lines?.length) throw new Error('المستخلص بلا بنود كمية مثبتة — راجع التاريخ')
         const items = scoped.boqItems.filter(row => row.projectId === project.id)
@@ -22185,6 +22192,7 @@ export const useRawDataStore = create<DataState>()(
         }
         const quantityCredit = planProjectCreditAmounts({ lines: extract.lines, totals: extract.totals, refunds: projectCreditEvidence(extract.refunds ?? []), refundedMinor: extract.refundedMinor ?? 0, refundedTaxMinor: extract.refundedTaxMinor ?? 0, selected: args.quantities })
         if (quantityCredit.amountMinor !== args.amountMinor) throw new Error('تغيرت قيمة الإشعار منذ اختيار الكميات — أعد المعاينة')
+        if (recovery > 0 && (extract.refundedMinor ?? 0) + args.amountMinor > extract.totals.dueMinor - recovery) throw new Error('المتبقي من المستخلص لا يغطي المقدمة المستردة — يلزم تسوية المقدمة قبل الإشعار')
         const built = {
           taxShareMinor: quantityCredit.taxShareMinor,
           lines: [
@@ -22207,7 +22215,7 @@ export const useRawDataStore = create<DataState>()(
           refundedMinor: (extract.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
           quantityCreditVersion: extract.totals.retentionMinor > 0 ? 2 : 1,
-          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, quantities: args.quantities.map(row => ({ ...row })), grossMinor: quantityCredit.grossMinor, retentionMinor: quantityCredit.retentionMinor, ...approvalStamp(get(), args.approvedBy) }],
+          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, quantities: args.quantities.map(row => ({ ...row })), grossMinor: quantityCredit.grossMinor, retentionMinor: quantityCredit.retentionMinor, ...(recovery > 0 ? { restoredAdvanceMinor: 0 } : {}), ...approvalStamp(get(), args.approvedBy) }],
         }
         let terminalRefund: PaymentTerminalTransaction | null = null
         if (args.terminalRefund) {

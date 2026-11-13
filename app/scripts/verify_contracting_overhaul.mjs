@@ -117,9 +117,10 @@ console.log('② المستخلصات: التعديل بقيد عاكس وإعا
   ok('صافي إيراد 4107 على الدفتر = 240,000 + 200,000 بالضبط (الأصلي بقي والعكس أطفاه)', netAccount('4107') === 440_000, netAccount('4107'))
   ok('الدفتر متوازن بعد التعديل', balanced())
 
-  /* لا يُسجّل إشعار غير مدعوم على مستخلص فيه محتجز واسترداد دفعة. */
+  /* لا يُقبل رد حر أو إعادة موجبة للمقدمة قبل اكتمال تسويتها. */
   throws('رفض الإشعار الحر ولو احتوى المستخلص على محتجز ودفعة', () => st().refundProjectExtract({ extractId: ex2.id, amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'البنود والكميات')
-  throws('رفض الإشعار الكمي مع استرداد الدفعة حتى اكتمال تسويتها', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'الدفعة')
+  throws('رفض الإشعار بلا اختيار صريح للصفر في المقدمة', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'اختيار صفر')
+  throws('رفض إعادة مبلغ موجب للمقدمة حتى اكتمال التسوية', () => st().refundProjectExtract({ extractId: ex2.id, quantities: [{ boqItemId: b1.id, qty: 1 }], amountMinor: 10_000, restoredAdvanceMinor: 100, mode: 'cash', treasury: '1101', reason: 'رفض جزء من الحفر' }), 'اختيار صفر')
 
   /* لا يُعكس تخصيص الأقدم مع بقاء استرداد لاحق؛ أزل اللاحق ثم عدّل الأقدم. */
   const beforeAdvanceEdit = st()
