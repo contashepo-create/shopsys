@@ -25,7 +25,7 @@ export function assertProjectExtractOriginalIntegrity(
 
 /** لا نعدّ الإشعار دليلاً على تخفيض الذمة أو الإيراد حتى يطابق قيده. */
 export function assertProjectExtractRefundIntegrity(
-  extracts: readonly { id: number; extractNumber: string; date?: string; totals: { dueMinor: number; vatMinor: number; grossMinor?: number; retentionMinor?: number }; lines?: readonly ProjectCreditLine[]; advanceRecoveryMinor?: number; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly (ServiceRefundRecord & { quantities?: readonly ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number })[] }[],
+  extracts: readonly { id: number; extractNumber: string; journalEntryId?: number; date?: string; totals: { dueMinor: number; vatMinor: number; grossMinor?: number; retentionMinor?: number }; lines?: readonly ProjectCreditLine[]; advanceRecoveryMinor?: number; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly (ServiceRefundRecord & { quantities?: readonly ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number })[] }[],
   journal: ReadonlyMap<number, JournalEntry>,
 ): void {
   const used = new Set<number>()
@@ -37,7 +37,9 @@ export function assertProjectExtractRefundIntegrity(
     if (extract.quantityCreditVersion != null && !refunds.length) return fail()
     if (hasEvidence && extract.quantityCreditVersion == null) return fail()
     if (extract.quantityCreditVersion != null) {
-      if ((extract.advanceRecoveryMinor ?? 0) !== 0 || (extract.quantityCreditVersion === 2 && (!extract.date || !isValidExpiryDate(extract.date.slice(0, 10))))) return fail()
+      if ((extract.advanceRecoveryMinor ?? 0) !== 0 || !extract.date || !isValidExpiryDate(extract.date.slice(0, 10)) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId! <= 0) return fail()
+      const original = journal.get(extract.journalEntryId!)
+      if (!original || original.date !== extract.date.slice(0, 10) || original.sourceType !== 'project_extract' || original.sourceId !== extract.id) return fail()
       try {
         const evidence = projectCreditEvidence(refunds)
         const { grossMinor, retentionMinor, dueMinor, vatMinor } = extract.totals
@@ -52,14 +54,15 @@ export function assertProjectExtractRefundIntegrity(
         }
       } catch { return fail() }
     }
-    let amount = 0, tax = 0, previousDate = ''
+    let amount = 0, tax = 0, previousDate = '', previousEntryId = extract.journalEntryId ?? 0
     for (const refund of extract.refunds ?? []) {
       if (!Number.isSafeInteger(refund.journalEntryId) || used.has(refund.journalEntryId) || !Number.isSafeInteger(refund.amountMinor) || refund.amountMinor <= 0 || !Number.isSafeInteger(refund.taxShareMinor) || refund.taxShareMinor < 0 || refund.taxShareMinor > refund.amountMinor || (refund.mode !== 'cash' && refund.mode !== 'customer_credit')) return fail()
       used.add(refund.journalEntryId)
       const entry = journal.get(refund.journalEntryId)
       if (!entry || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines) || entry.lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit))) return fail()
-      if (extract.quantityCreditVersion === 2 && (!isValidExpiryDate(refund.date) || entry.date !== refund.date || refund.date < previousDate || refund.date < extract.date!.slice(0, 10))) return fail()
+      if (extract.quantityCreditVersion != null && (!isValidExpiryDate(refund.date) || entry.date !== refund.date || refund.date < previousDate || refund.date < extract.date!.slice(0, 10) || refund.journalEntryId <= previousEntryId)) return fail()
       previousDate = refund.date
+      previousEntryId = refund.journalEntryId
       try { assertBalanced(entry.lines) } catch { return fail() }
       const sum = (account: string, side: 'debit' | 'credit') => entry.lines.filter(line => line.accountCode === account).reduce((n, line) => n + line[side], 0)
       const totalDebit = entry.lines.reduce((n, line) => n + line.debit, 0)

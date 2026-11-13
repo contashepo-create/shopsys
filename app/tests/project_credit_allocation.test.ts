@@ -65,6 +65,13 @@ it('دمج التخزين يرفض إشعار كميات تزامن مع تغي�
    { ...base, retentionReleases: [{ id: 1, projectId: 1, amountMinor: 5 }] },
    { ...base, vouchers: [{ id: 1, amount: 10 }] },
    { ...base, journal: [{ id: 1 }, { id: 3 }] },
+   { ...base, treasuries: [{ code: '1101', branchId: 2 }] },
+   { ...base, paymentTerminals: [{ id: 'terminal', settlementAccountCode: '1102' }] },
+   { ...base, customers: [{ id: 1, branchId: 2 }] },
+   { ...base, branches: [{ id: 2 }] },
+   { ...base, activeBranchId: 2 },
+   { ...base, appUsers: [{ id: 1, treasuryAccess: [] }] },
+   { ...base, currentUserId: 3 },
   ]) {
    expect(() => mergeConcurrentSnapshots(snap(base), snap(issue), snap(other))).toThrow(/تعارض/)
    expect(() => mergeConcurrentSnapshots(snap(base), snap(other), snap(issue))).toThrow(/تعارض/)

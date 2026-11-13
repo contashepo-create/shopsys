@@ -85,3 +85,29 @@ it('يعزل الفرع ويرفض تكرار معرف مستخلص أو بند 
   useRawDataStore.setState({ boqItems: base.boqItems, branches: branches as never, activeBranchId: 2, projects: base.projects.map(row => ({ ...row, branchId: 1 })) as never })
   expect(() => S().getProjectNetQuantityReport(project.id)).toThrow(/الفرع/)
 })
+
+it('تدقيق إشعار الكميات بلا محتجز يرفض تاريخاً لا يطابق القيد أو ترتيب قيود مقلوباً قبل التقارير وإشعار لاحق', () => {
+  const project = S().addProject({ nameAr: 'مشروع', clientId: S().customers[0].id, clientName: 'عميل', contractValueMinor: 10000, retentionPercent: 0, startDate: '2025-01-01', notes: '' })
+  const item = S().addBoqItem({ projectId: project.id, code: '1', descriptionAr: 'أعمال', unit: 'م', qty: 100, unitPriceMinor: 100 })
+  const ex = S().addProjectExtract({ projectId: project.id, date: '2026-11-01', description: 'أعمال', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: item.id, cumulativeQty: 100 }] })
+  const refund = () => S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: item.id, qty: 10 }], amountMinor: 1000, mode: 'customer_credit', reason: 'رفض' })
+  refund(); refund()
+  const extracts = S().projectExtracts, journal = S().journal, rows = extracts[0].refunds!
+  expect(extracts[0].quantityCreditVersion).toBe(1)
+  const assertBlocked = () => {
+    expect(() => S().assertProjectExtractRefunds(project.id)).toThrow(/مراجعة/)
+    expect(() => S().getCustomerBalance(S().customers[0].id)).toThrow(/مراجعة/)
+    expect(() => S().getProjectBillingGuard(project.id)).toThrow(/مراجعة/)
+    const before = S()
+    expect(refund).toThrow(/مراجعة/)
+    expect(S().journal).toBe(before.journal); expect(S().projectExtracts).toBe(before.projectExtracts)
+  }
+  useRawDataStore.setState({ journal: journal.map(entry => entry.id === rows[0].journalEntryId ? { ...entry, date: '2026-11-04' } : entry) })
+  assertBlocked()
+  useRawDataStore.setState({ journal: journal.map(entry => entry.id === ex.journalEntryId ? { ...entry, date: '2026-10-31' } : entry) })
+  assertBlocked()
+  useRawDataStore.setState({ journal, projectExtracts: extracts.map(row => ({ ...row, refunds: [{ ...rows[0], journalEntryId: rows[1].journalEntryId }, { ...rows[1], journalEntryId: rows[0].journalEntryId }] })) })
+  assertBlocked()
+  useRawDataStore.setState({ projectExtracts: extracts.map(row => ({ ...row, refunds: rows.map((r, i) => i === 0 ? { ...r, date: '2026-10-31' } : r) })), journal: journal.map(entry => entry.id === rows[0].journalEntryId ? { ...entry, date: '2026-10-31' } : entry) })
+  assertBlocked()
+})

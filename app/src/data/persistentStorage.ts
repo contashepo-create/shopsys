@@ -270,8 +270,10 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
         const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
         if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض إشعار الكميات مع تعديل المشروع بالتزامن — أعد تحميل البيانات')
       }
-      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'paymentTerminalTransactions']) {
-        if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض إشعار الكميات مع حركة مالية متزامنة — أعد تحميل البيانات')
+      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'paymentTerminalTransactions', 'treasuries', 'paymentTerminals', 'customers', 'branches', 'activeBranchId', 'appUsers', 'currentUserId']) {
+        // التحقق من الفرع والعميل والخزينة والماكينة وصلاحية المستخدم جزء من
+        // قرار الترحيل، فلا ندمج إصداراً مع تغيير متزامن في أي من أسسه.
+        if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض إشعار الكميات مع حركة مالية أو أساس ترحيل متزامن — أعد تحميل البيانات')
       }
     }
   }
