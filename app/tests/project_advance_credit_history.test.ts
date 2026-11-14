@@ -56,3 +56,33 @@ it('يعيد تشغيل إشعارين بالترتيب ويطابق رصيد ك
   expect(() => x.check(advances, extracts.map(row => ({ ...row, refunds: [...row.refunds].reverse() })), journal)).toThrow(/مراجعة/)
   expect(() => x.check(advances, extracts.map(row => ({ ...row, refunds: row.refunds.map((r, i) => i ? { ...r, restoredAdvanceMinor: 201 } : r) })), journal)).toThrow(/مراجعة/)
 })
+
+it('يعيد تشغيل مقدمة معادة ثم مستخلص لاحق وفق FIFO ثم إشعار لاحق دون تغيير القديم', () => {
+  const x = example(), first = x.extracts[0].refunds[0], laterId = first.journalEntryId + 1, nextCreditId = laterId + 1
+  const later = { ...x.extracts[0], id: 99, journalEntryId: laterId, quantityCreditVersion: undefined, refunds: undefined, advanceRecoveryMinor: 250, advanceAllocations: [{ advanceId: 1, journalEntryId: 1, amountMinor: 50 }, { advanceId: 2, journalEntryId: 2, amountMinor: 200 }] }
+  const laterEntry = { ...x.journal.at(-1)!, id: laterId, entryNumber: laterId, sourceId: later.id, lines: [{ accountCode: '2109', debit: 250, credit: 0 }, { accountCode: '4107', debit: 0, credit: 250 }] }
+  const second = { date: first.date, journalEntryId: nextCreditId, amountMinor: 300, restoredAdvanceMinor: 200, restoredAdvanceAllocations: [{ advanceId: 1, journalEntryId: 1, amountMinor: 200 }] }
+  const secondEntry = { ...x.journal.at(-1)!, id: nextCreditId, entryNumber: nextCreditId, lines: [{ accountCode: '4102', debit: 300, credit: 0 }, { accountCode: '2109', debit: 0, credit: 200 }, { accountCode: '1101', debit: 0, credit: 100 }] }
+  const extracts = [{ ...x.extracts[0], refunds: [first, second] }, later] as typeof x.extracts
+  const journal = [...x.journal, laterEntry, secondEntry]
+  const advances = x.advances.map((row, index) => ({ ...row, recoveredMinor: index === 0 ? 800 : 200 }))
+  expect(() => x.check(advances, extracts, journal)).not.toThrow()
+  // Same final per-advance totals can hide an allocation assigned to the wrong point in time.
+  const wrong = extracts.map(row => row.id === later.id ? { ...row, advanceAllocations: [{ advanceId: 2, journalEntryId: 2, amountMinor: 250 }] } : row)
+  const forgedBalances = advances.map((row, index) => ({ ...row, recoveredMinor: index === 0 ? 750 : 250 }))
+  expect(() => x.check(forgedBalances, wrong, journal)).toThrow(/مراجعة/)
+  expect(() => x.check(advances, extracts, journal.map(row => row.id === laterId ? { ...row, lines: [{ accountCode: '2109', debit: 249, credit: 0 }, { accountCode: '4107', debit: 0, credit: 249 }] } : row))).toThrow(/مراجعة/)
+  expect(() => x.check(advances, extracts, journal.map(row => row.id === laterId ? { ...row, date: '2026-11-04' } : row))).toThrow(/مراجعة/)
+  expect(() => assertAdvanceRecoveryBasis(x.p.id, advances, extracts, new Map(journal.map(row => [row.id, row])), new Set(['1101']))).toThrow(/مراجعة/)
+})
+
+it('يرفض تواريخ الأحداث المتراجعة أو تكرار هوية قيد بين استرداد وإشعار حتى لو تساوت الأرصدة', () => {
+  const x = example(), first = x.extracts[0].refunds[0]
+  const laterId = first.journalEntryId + 1
+  const later = { ...x.extracts[0], id: 99, date: '2026-11-04', journalEntryId: laterId, quantityCreditVersion: undefined, refunds: undefined, advanceRecoveryMinor: 50, advanceAllocations: [{ advanceId: 1, journalEntryId: 1, amountMinor: 50 }] }
+  const entry = { ...x.journal.at(-1)!, id: laterId, entryNumber: laterId, date: '2026-11-04', sourceId: later.id, lines: [{ accountCode: '2109', debit: 50, credit: 0 }, { accountCode: '4107', debit: 0, credit: 50 }] }
+  const balances = x.advances.map((row, i) => i === 0 ? { ...row, recoveredMinor: 1000 } : row)
+  expect(() => x.check(balances, [...x.extracts, later] as typeof x.extracts, [...x.journal, entry])).toThrow(/مراجعة/)
+  const duplicate = { ...later, date: first.date, journalEntryId: first.journalEntryId }
+  expect(() => x.check(balances, [...x.extracts, duplicate] as typeof x.extracts)).toThrow(/مراجعة/)
+})

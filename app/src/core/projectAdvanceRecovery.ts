@@ -52,16 +52,15 @@ export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly
     }
     if (amount !== value) return fail()
   }
-  // دعم عكس مثبت للمقدمة لا يغير تاريخ الاسترداد الأصلي. نعيد تشغيل
-  // التخصيص أولاً ثم نطرح فقط ما وثّقه قيد الإشعار لكل دفعة. لا ندّعي
-  // ترتيباً تاريخياً إذا حدث استرداد آخر بعد أول إشعار أو كان التاريخ ناقصاً.
+  // لا تغير الإشعارات تخصيص المستخلص الأصلي. يحتفظ التدقيق التجريبي
+  // بحركات العكس لإعادة تشغيلها مع الاستردادات بترتيب القيد أدناه.
   const creditExtracts = extracts.filter(row => row.quantityCreditVersion === 3)
   const restoredByAdvance = new Map<number, number>()
+  const creditEvents: { journalEntryId: number; date: string; allocations: readonly ProjectAdvanceAllocation[] }[] = []
   if (creditExtracts.length) {
     // تجريب تدقيق التسلسل لا يفعّل ترحيل الإشعار ولا يجعل التقارير الأخرى
     // متوافقة معه. المسارات الفعلية ترفض النسخة الجديدة حتى اكتمالها.
     if (!options?.experimentalCreditReplay || !allAttributed) return fail()
-    let firstCredit = Number.MAX_SAFE_INTEGER
     const usedCreditEntries = new Set<number>()
     for (const extract of creditExtracts) {
       if (!extract.totals || !Array.isArray(extract.advanceAllocations) || !Array.isArray(extract.refunds) || !extract.refunds.length || (extract.advanceRecoveryMinor ?? 0) <= 0) return fail()
@@ -85,12 +84,11 @@ export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly
           claimed -= row.amountMinor
           attributed.set(row.advanceId, (attributed.get(row.advanceId) ?? 0) - row.amountMinor)
         }
-        firstCredit = Math.min(firstCredit, refund.journalEntryId)
+        creditEvents.push({ journalEntryId: refund.journalEntryId, date: refund.date, allocations: plan.allocations })
         previous.push({ amountMinor: refund.amountMinor, restoredAdvanceMinor: refund.restoredAdvanceMinor!, allocations: refund.restoredAdvanceAllocations })
         previousId = refund.journalEntryId; previousDate = refund.date
       }
     }
-    if (extracts.some(row => (row.advanceRecoveryMinor ?? 0) > 0 && row.journalEntryId > firstCredit)) return fail()
   }
   if (claimed !== recovered) return fail()
   for (const a of advances) {
@@ -101,20 +99,66 @@ export function assertAdvanceRecoveryBasis(projectId: number, advances: readonly
   // تطابق المجاميع لا يكشف استبدال تخصيصَي مستخلصين بالقيمة نفسها.
   if (allAttributed) {
     const running = advances.map(advance => ({ ...advance, recoveredMinor: 0 }))
-    for (const extract of [...extracts].filter(row => (row.advanceRecoveryMinor ?? 0) > 0).sort((a, b) => a.journalEntryId - b.journalEntryId)) {
-      let left = extract.advanceRecoveryMinor!
-      const expected: ProjectAdvanceAllocation[] = []
-      for (const advance of running) {
-        if (advance.journalEntryId >= extract.journalEntryId || advance.date > extract.date.slice(0, 10) || left === 0) continue
-        const take = Math.min(left, advance.amountMinor - advance.recoveredMinor)
-        if (take <= 0) continue
-        advance.recoveredMinor += take; left -= take
-        expected.push({ advanceId: advance.id, journalEntryId: advance.journalEntryId, amountMinor: take })
+    const recoveryExtracts = extracts.filter(row => (row.advanceRecoveryMinor ?? 0) > 0)
+    if (creditExtracts.length) {
+      // Replay only unambiguous journal events. The option remains experimental:
+      // this does not validate the customer, retention, tax or cash side.
+      const eventIds = new Set<number>(), extractIds = new Set<number>()
+      const events: ({ kind: 'advance'; id: number; date: string } | { kind: 'recovery'; id: number; date: string; extract: RecoveryExtract } | { kind: 'credit'; id: number; date: string; allocations: readonly ProjectAdvanceAllocation[] })[] = []
+      for (const advance of advances) events.push({ kind: 'advance', id: advance.journalEntryId, date: advance.date })
+      for (const extract of recoveryExtracts) {
+        const entry = journal.get(extract.journalEntryId), date = extract.date?.slice(0, 10)
+        if (!Number.isSafeInteger(extract.id) || extract.id <= 0 || extractIds.has(extract.id) || !Number.isSafeInteger(extract.journalEntryId) || extract.journalEntryId <= 0 || !isValidExpiryDate(date) || !entry || entry.date !== date || entry.sourceType !== 'project_extract' || entry.sourceId !== extract.id || (entry.sourceCollection != null && entry.sourceCollection !== 'projectExtracts') || entry.reversedByEntryId != null || entry.reversesEntryId != null || !Array.isArray(entry.lines)) return fail()
+        extractIds.add(extract.id)
+        try { assertBalanced(entry.lines) } catch { return fail() }
+        const lines = entry.lines.filter(line => line.accountCode === '2109')
+        if (lines.some(line => !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.credit !== 0 || line.debit < 0) || lines.reduce((sum, line) => sum + line.debit, 0) !== extract.advanceRecoveryMinor) return fail()
+        events.push({ kind: 'recovery', id: extract.journalEntryId, date, extract })
       }
-      const actual = extract.advanceAllocations
-      if (left || !actual || expected.length !== actual.length || expected.some((row, index) => row.advanceId !== actual[index]?.advanceId || row.journalEntryId !== actual[index]?.journalEntryId || row.amountMinor !== actual[index]?.amountMinor)) return fail()
+      for (const credit of creditEvents) events.push({ kind: 'credit', id: credit.journalEntryId, date: credit.date, allocations: credit.allocations })
+      events.sort((a, b) => a.id - b.id)
+      let lastEventDate = ''
+      for (const event of events) {
+        if (eventIds.has(event.id) || event.date < lastEventDate) return fail()
+        eventIds.add(event.id); lastEventDate = event.date
+        if (event.kind === 'advance') continue
+        if (event.kind === 'credit') {
+          for (const part of event.allocations) {
+            const advance = running.find(row => row.id === part.advanceId)
+            if (!advance || advance.journalEntryId !== part.journalEntryId || advance.recoveredMinor < part.amountMinor) return fail()
+            advance.recoveredMinor -= part.amountMinor
+          }
+          continue
+        }
+        let left = event.extract.advanceRecoveryMinor!
+        const expected: ProjectAdvanceAllocation[] = []
+        for (const advance of running) {
+          if (advance.journalEntryId >= event.id || advance.date > event.date || left === 0) continue
+          const take = Math.min(left, advance.amountMinor - advance.recoveredMinor)
+          if (take <= 0) continue
+          advance.recoveredMinor += take; left -= take
+          expected.push({ advanceId: advance.id, journalEntryId: advance.journalEntryId, amountMinor: take })
+        }
+        const actual = event.extract.advanceAllocations
+        if (left || !actual || expected.length !== actual.length || expected.some((row, index) => row.advanceId !== actual[index]?.advanceId || row.journalEntryId !== actual[index]?.journalEntryId || row.amountMinor !== actual[index]?.amountMinor)) return fail()
+      }
+      if (running.some((row, index) => row.recoveredMinor !== advances[index].recoveredMinor)) return fail()
+    } else {
+      for (const extract of [...recoveryExtracts].sort((a, b) => a.journalEntryId - b.journalEntryId)) {
+        let left = extract.advanceRecoveryMinor!
+        const expected: ProjectAdvanceAllocation[] = []
+        for (const advance of running) {
+          if (advance.journalEntryId >= extract.journalEntryId || advance.date > extract.date.slice(0, 10) || left === 0) continue
+          const take = Math.min(left, advance.amountMinor - advance.recoveredMinor)
+          if (take <= 0) continue
+          advance.recoveredMinor += take; left -= take
+          expected.push({ advanceId: advance.id, journalEntryId: advance.journalEntryId, amountMinor: take })
+        }
+        const actual = extract.advanceAllocations
+        if (left || !actual || expected.length !== actual.length || expected.some((row, index) => row.advanceId !== actual[index]?.advanceId || row.journalEntryId !== actual[index]?.journalEntryId || row.amountMinor !== actual[index]?.amountMinor)) return fail()
+      }
+      if (running.some((row, index) => row.recoveredMinor !== advances[index].recoveredMinor)) return fail()
     }
-    if (running.some((row, index) => row.recoveredMinor - (restoredByAdvance.get(row.id) ?? 0) !== advances[index].recoveredMinor)) return fail()
   }
 }
 
