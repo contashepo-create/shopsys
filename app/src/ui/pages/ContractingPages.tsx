@@ -1,3 +1,4 @@
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات المقاولات (القرار 27):
@@ -659,7 +660,10 @@ export function ProjectsPage() {
     }
     try { openPrintPreview({ html: rebuild(), rebuild, wide: true, title: 'معاينة بيان المشروع للعميل' }) } catch (error) { toast.show((error as Error).message, 'error') }
   }
-  const profit = viewingLive ? getProjectProfit(viewingLive.id) : null
+  const reviewedProfit = (id: number) => {
+    try { return getProjectProfit(id) } catch (error) { if (error instanceof FinancialDataReviewError) return null; throw error }
+  }
+  const profit = viewingLive ? reviewedProfit(viewingLive.id) : null
   const viewExtracts = viewingLive ? projectExtracts.filter((e) => e.projectId === viewingLive.id) : []
 
   const printExtract = (ex: (typeof projectExtracts)[number]) => previewProjectExtract(ex.id, 'engineering', toast.show)
@@ -1172,7 +1176,7 @@ export function ProjectsPage() {
             </thead>
             <tbody>
               {projects.map((p) => {
-                const pr = getProjectProfit(p.id)
+                const pr = reviewedProfit(p.id)
                 return (
                   <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-orange-500/5 transition-colors">
                     <td className="px-3 py-2.5 font-black">{p.code}</td>
@@ -1180,14 +1184,14 @@ export function ProjectsPage() {
                     <td className="px-3 py-2.5">{p.clientName || '—'}</td>
                     <td className="px-3 py-2.5">{fmt(p.contractValueMinor)} {cur.symbol}</td>
                     <td className="px-3 py-2.5">
-                      <div className="flex items-center gap-2">
+                      {pr ? <div className="flex items-center gap-2">
                         <div className="w-20 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
                           <div className="h-full bg-orange-500 transition-all" style={{ width: `${pr.progressPercent}%` }} />
                         </div>
                         <span className="text-[11px] font-bold">{pr.progressPercent}٪</span>
-                      </div>
+                      </div> : <span role="status" className="text-amber-700">يلزم مراجعة قيود المشروع</span>}
                     </td>
-                    <td className={`px-3 py-2.5 font-black ${pr.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(pr.profitMinor)}</td>
+                    <td className={`px-3 py-2.5 font-black ${pr && pr.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{pr ? fmt(pr.profitMinor) : '—'}</td>
                     <td className="px-3 py-2.5">
                       <span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${p.status === 'active' ? 'bg-sky-500/10 text-sky-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
                         {p.status === 'active' ? 'جارٍ' : 'مُسلَّم'}
@@ -1199,7 +1203,7 @@ export function ProjectsPage() {
                           <>
                             <button onClick={() => openAdvance(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => { setCoDate(todayLocalIso()); setCoFor(p) }} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
-                            {pr.retentionHeldMinor > 0 && (
+                            {pr && pr.retentionHeldMinor > 0 && (
                               <button onClick={() => openRelease(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                             )}
                           </>
@@ -1237,6 +1241,7 @@ export function ProjectsPage() {
         </div>}
       </Modal>
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
+        {viewingLive && !profit && <p role="alert" className="text-amber-700">يلزم مراجعة المستخلصات وتحصيلات المحتجز وقيودها قبل عرض الربحية.</p>}
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
             <div className="flex justify-end gap-2">

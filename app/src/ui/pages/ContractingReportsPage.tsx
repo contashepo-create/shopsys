@@ -1,3 +1,4 @@
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { projectExtractSettlement, projectOpenBalances } from '../../core/projectReportBalances.ts'
 import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
@@ -39,6 +40,19 @@ function downloadCsv(rows: readonly Record<string, unknown>[], filename: string)
 }
 
 export function ContractingReportsPage() {
+  const { projects, getRemainingRetention } = useDataStore()
+  const failed: string[] = []
+  for (const project of projects) {
+    try { getRemainingRetention(project.id) } catch (error) {
+      if (!(error instanceof FinancialDataReviewError)) throw error
+      failed.push(project.nameAr)
+    }
+  }
+  if (failed.length) return <section role="alert" className="rounded-xl border border-amber-400 p-4 text-amber-700">يلزم مراجعة المستخلصات وتحصيلات المحتجز وقيودها قبل عرض أو تصدير تقارير المقاولات: {failed.join('، ')}.</section>
+  return <ReviewedContractingReportsPage />
+}
+
+function ReviewedContractingReportsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
     suppliers, treasuries, custodyFiles, boqItems, journal,
@@ -54,6 +68,8 @@ export function ContractingReportsPage() {
   const printDoc = (title: string, subtitle: string, bodyHtml: string) => {
     /* طلب المالك: معاينة قبل الطباعة بزر طباعة — بدل الطباعة الفورية */
     const build = () => {
+      const fresh = useDataStore.getState()
+      for (const project of fresh.projects) fresh.getRemainingRetention(project.id)
       const { reportPrint, receipt } = useAppStore.getState()
       return renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint })
     }

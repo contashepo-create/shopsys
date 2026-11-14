@@ -6381,6 +6381,69 @@ function nextSurveyId(state: DataState, preferred: number): number {
   return rows.some(row => row.id === preferred) ? nextId(rows) : preferred
 }
 
+/** لا يُعرض أو يُصرف رصيد محتجز اعتماداً على سجل تحصيل غير مطابق للدفتر. */
+function checkedProjectRetention(raw: DataState, projectId: number): { held: number; released: number; remaining: number } {
+  const fail = (): never => { throw new FinancialDataReviewError('محتجز المشروع', 'المستخلصات أو تحصيلات المحتجز أو قيودها غير متطابقة أو تابعة لفرع آخر') }
+  const scoped = getBranchScopedDataState(raw)
+  const projects = raw.projects.filter(row => row.id === projectId)
+  if (projects.length !== 1 || !scoped.projects.some(row => row.id === projectId)) return fail()
+  const extracts = raw.projectExtracts.filter(row => row.projectId === projectId)
+  const releases = raw.retentionReleases.filter(row => row.projectId === projectId)
+  if (scoped.projectExtracts.filter(row => row.projectId === projectId).length !== extracts.length || scoped.retentionReleases.filter(row => row.projectId === projectId).length !== releases.length) return fail()
+  const extractIds = new Set(extracts.map(row => row.id)), releaseIds = new Set(releases.map(row => row.id))
+  if (extractIds.size !== extracts.length || releaseIds.size !== releases.length || raw.projectExtracts.filter(row => extractIds.has(row.id)).length !== extracts.length || raw.retentionReleases.filter(row => releaseIds.has(row.id)).length !== releases.length) return fail()
+  const branchMatches = raw.branches.filter(branch => belongsToBranch(projects[0], branch, raw.branches))
+  if (raw.branches.length && (branchMatches.length !== 1 || extracts.some(extract => !belongsToBranch(extract, branchMatches[0], raw.branches)))) return fail()
+  const journal = customerReviewJournal(raw), branch = branchMatches[0]
+  const allEntryIds = [...extracts.flatMap(row => [row.journalEntryId, ...(row.refunds ?? []).map(refund => refund.journalEntryId)]), ...releases.map(row => row.journalEntryId)]
+  if (new Set(allEntryIds).size !== allEntryIds.length || allEntryIds.some(id => { const entry = journal.get(id); return !entry || (branch != null && entry.branchId != null && entry.branchId !== branch.id) })) return fail()
+  try {
+    for (const extract of extracts) assertProjectExtractOriginalIntegrity(extract, journal)
+    assertProjectExtractRefundIntegrity(extracts, journal)
+    let held = 0, released = 0
+    for (const extract of extracts) {
+      const value = extract.totals.retentionMinor - creditedProjectRetention(extract)
+      if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(held + value)) return fail()
+      held += value
+    }
+    for (const prior of releases) {
+      const entry = journal.get(prior.journalEntryId), date = typeof prior.date === 'string' ? prior.date.slice(0, 10) : ''
+      if (!Number.isSafeInteger(prior.id) || prior.id <= 0 || !Number.isSafeInteger(prior.journalEntryId) || prior.journalEntryId <= 0 || !Number.isSafeInteger(prior.amountMinor) || prior.amountMinor <= 0 || !isValidExpiryDate(date) || !entry || entry.sourceType !== 'retention_release' || entry.sourceId !== prior.id || (entry.sourceCollection != null && entry.sourceCollection !== 'retentionReleases') || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.date !== date || !Array.isArray(entry.lines) || entry.lines.length !== 2 || !entry.lines.some(line => line.accountCode === '1105' && line.credit === prior.amountMinor && line.debit === 0) || !entry.lines.some(line => line.accountCode !== '1105' && line.debit === prior.amountMinor && line.credit === 0) || !Number.isSafeInteger(released + prior.amountMinor)) return fail()
+      released += prior.amountMinor
+    }
+    const remaining = held - released
+    if (!Number.isSafeInteger(remaining) || remaining < 0) return fail()
+    if (releases.length) {
+      // A valid final total alone can hide a release before its corresponding
+      // retention existed. Replay known retention movements in journal order;
+      // backdated or edited histories without an unambiguous sequence need review.
+      const events: { id: number; date: string; delta: number }[] = []
+      for (const extract of extracts) {
+        if (!extract.totals.retentionMinor) continue
+        const date = typeof extract.date === 'string' ? extract.date.slice(0, 10) : ''
+        if (!isValidExpiryDate(date) || journal.get(extract.journalEntryId)?.date !== date) return fail()
+        events.push({ id: extract.journalEntryId, date, delta: extract.totals.retentionMinor })
+        if (extract.quantityCreditVersion === 2) for (const refund of extract.refunds ?? []) {
+          if (!Number.isSafeInteger(refund.retentionMinor) || refund.retentionMinor! < 0) return fail()
+          events.push({ id: refund.journalEntryId, date: refund.date, delta: -refund.retentionMinor! })
+        }
+      }
+      for (const release of releases) events.push({ id: release.journalEntryId, date: release.date.slice(0, 10), delta: -release.amountMinor })
+      events.sort((a, b) => a.id - b.id)
+      let running = 0, lastDate = ''
+      for (const event of events) {
+        if (!isValidExpiryDate(event.date) || event.date < lastDate || !Number.isSafeInteger(running + event.delta) || running + event.delta < 0) return fail()
+        running += event.delta; lastDate = event.date
+      }
+      if (running !== remaining) return fail()
+    }
+    return { held, released, remaining }
+  } catch (error) {
+    if (error instanceof FinancialDataReviewError) throw error
+    return fail()
+  }
+}
+
 function checkedProjectNetQuantityReport(raw: DataState, projectId: number, asOf?: string): ProjectNetQuantityReport {
   const scoped = getBranchScopedDataState(raw)
   const projects = scoped.projects.filter(project => project.id === projectId)
@@ -18369,13 +18432,7 @@ export const useRawDataStore = create<DataState>()(
         set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry], custodyTxs })
         return cost
       },
-      getRemainingRetention: (projectId) => {
-        const state = get()
-        assertQuantityCreditBillingBasis(state, projectId)
-        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor - creditedProjectRetention(e), 0)
-        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
-        return held - released
-      },
+      getRemainingRetention: (projectId) => checkedProjectRetention(get(), projectId).remaining,
       releaseRetention: (projectId, treasury = '1101', terminalPaymentInput, selectedDate) => {
         const state = get(), scoped = getBranchScopedDataState(state)
         const project = scoped.projects.find((p) => p.id === projectId)
@@ -18402,16 +18459,7 @@ export const useRawDataStore = create<DataState>()(
           assertProjectExtractOriginalIntegrity(extract, journal)
         }
         assertProjectExtractRefundIntegrity(extracts, journal)
-        const releaseEntries = new Set<number>()
-        for (const prior of releases) {
-          const entry = journal.get(prior.journalEntryId)
-          if (!Number.isSafeInteger(prior.amountMinor) || prior.amountMinor <= 0 || releaseEntries.has(prior.journalEntryId) || !entry || entry.sourceType !== 'retention_release' || entry.sourceId !== prior.id || (entry.sourceCollection != null && entry.sourceCollection !== 'retentionReleases') || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.date !== prior.date.slice(0, 10) || !Array.isArray(entry.lines) || entry.lines.length !== 2 || !entry.lines.some(line => line.accountCode === '1105' && line.credit === prior.amountMinor && line.debit === 0) || !entry.lines.some(line => line.accountCode !== '1105' && line.debit === prior.amountMinor && line.credit === 0)) throw new Error('سجل تحصيل المحتجز أو قيده غير متطابق — راجع الدفتر')
-          releaseEntries.add(prior.journalEntryId)
-        }
-        const held = extracts.reduce((a, e) => a + e.totals.retentionMinor - creditedProjectRetention(e), 0)
-        const released = releases.reduce((a, r) => a + r.amountMinor, 0)
-        const remaining = held - released
-        if (!Number.isSafeInteger(held) || !Number.isSafeInteger(released) || !Number.isSafeInteger(remaining)) throw new Error('رصيد المحتجز غير صالح — راجع الدفتر')
+        const { remaining } = checkedProjectRetention(state, projectId)
         const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury)
         assertTreasuryForPosting(state, treasury, 'receipt', remaining)
         const id = nextId(state.retentionReleases)
@@ -18503,7 +18551,7 @@ export const useRawDataStore = create<DataState>()(
         const journal = customerReviewJournal(get())
         for (const extract of projectExtracts) assertProjectExtractOriginalIntegrity(extract, journal)
         assertProjectExtractRefundIntegrity(projectExtracts, journal)
-        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        const { released } = checkedProjectRetention(get(), projectId)
         /* §95 (محاذاة pro-acc): التكاليف من كل مصادرها — اليدوية + شهادات الباطن
            (باطن) + أجور اليومية المسوّاة (عمالة) + المشتريات المرتبطة (مواد، بلا ض.مدخلات)
            − مرتجعاتها. قبل هذا كان الربح يبدو أعلى من الحقيقة بقدر التكاليف المرحّلة تلقائياً. */
