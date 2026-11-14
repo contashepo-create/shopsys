@@ -2,6 +2,7 @@ import type { StateStorage } from 'zustand/middleware'
 import { desktopBridge, type DesktopAuditEvent, type DesktopDatabaseBridge, type DesktopJournalEntry } from './desktopBridge.ts'
 import { secureStorage } from './secureStorage.ts'
 import { assertQuantityChangeLinks } from '../core/projectExtractQuantity.ts'
+import { assertFinancialEntityProfiles, type FinancialEntityProfile } from '../core/financialEntities.ts'
 import type { BoqItem, ChangeOrder } from '../core/contracting.ts'
 
 type CachedSnapshot = {
@@ -171,6 +172,18 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   // Detect a financial link introduced on the other side of an unposted deletion.
   // Existing deletion audit records alone must not prevent later legitimate activity.
   const before = persistedState(base) ?? {}, left = persistedState(local) ?? {}, right = persistedState(remote) ?? {}
+  // الإعداد الوصفي وارتباطاته قرار واحد؛ لا ندمج قرارين متوازيين أو تغيير فروع
+  // مع قرار كيان حتى لو كانت حقول JSON قابلة للدمج. لا يحمي ذلك الكتّاب خارج آلية اللقطات.
+  const changed = (side: Record<string, unknown>, key: string) => JSON.stringify(before[key] ?? []) !== JSON.stringify(side[key] ?? [])
+  const conflictsWithEntityEdit = (side: Record<string, unknown>) => ['financialEntityProfiles', 'branches', 'appUsers', 'currentUserId', 'loggedOut'].some(key => changed(side, key))
+  if ((changed(left, 'financialEntityProfiles') && conflictsWithEntityEdit(right)) ||
+      (changed(right, 'financialEntityProfiles') && conflictsWithEntityEdit(left))) {
+    throw new Error('تعارض إعداد الكيانات مع تعديل متزامن للكيانات أو الفروع أو صلاحية المستخدم — أعد تحميل البيانات')
+  }
+  if (state && state.financialEntityProfiles != null) {
+    if (!Array.isArray(state.financialEntityProfiles) || !Array.isArray(state.branches)) throw new Error('إعداد الكيانات أو الفروع غير صالح')
+    assertFinancialEntityProfiles(state.financialEntityProfiles as FinancialEntityProfile[], state.branches as { id: number }[])
+  }
   // محاضر الكميات لقطات تاريخية: دمج ثلاثة أطراف لا يسمح بتحرير محضر
   // سابق أو إسقاطه، حتى لو كان الطرف الآخر قد غيّر حقلاً مستقلاً فقط.
   // هذا الحارس يخص حالات تعارض اللقطات ولا يحل محل حماية كل الكتّاب.

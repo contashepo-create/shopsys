@@ -44,6 +44,7 @@ import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry,
 import { buildInterBranchTransferLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE } from '../core/branchAccounting.ts'
 import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { FinancialDataReviewError } from '../core/financialDataReview.ts'
+import { assertFinancialEntityProfiles, financialEntityBasis, type FinancialEntityInput, type FinancialEntityProfile } from '../core/financialEntities.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { SOURCE_REFERENCE_COLLECTIONS } from '../core/sourceTypes.ts'
 import type { SourceType } from '../core/ledger.ts'
@@ -1802,6 +1803,8 @@ interface DataState {
   warehouses: Warehouse[]
   /** الفروع الحقيقية (سد فجوة التدقيق): فرع = مخزن + خزينة + هوية — فارغة = وضع الفرع الواحد */
   branches: Branch[]
+  /** إعداد وصفي خاص بالمالك؛ لا يُنسب به قيد أو يُثبت إعفاء نظامي. */
+  financialEntityProfiles: FinancialEntityProfile[]
   /** الفرع المختار حالياً في الواجهة (للمالك/المدير العام: null = كل الفروع شامل؛ أو معرّف فرع محدد لتصفية أقسامه ونشاطه) */
   activeBranchId: number | null
   paymentTerminals: PaymentTerminal[]
@@ -2610,6 +2613,8 @@ interface DataState {
    * من الرخصة الموقعة) — أول فرع يُنشأ يصبح «الرئيسي» تلقائياً على المخزن
    * والخزينة الرئيسيين، والفرع الجديد بمخزنه وخزينته الخاصين (يُنشآن إن طُلب).
    */
+  saveFinancialEntityProfile: (input: FinancialEntityInput, expectedBasis: string, reason: string) => FinancialEntityProfile
+  removeFinancialEntityProfile: (id: string, expectedBasis: string, reason: string) => void
   addBranch: (input: BranchInput & { createWarehouse?: boolean; createTreasury?: 'cash' | 'bank' | null }, maxBranchesAllowed: number) => Branch
   updateBranch: (id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>) => void
   /** حذف فرع (فك الربط التنظيمي فقط — المخزن والخزينة وتاريخهما باقيان) */
@@ -4134,6 +4139,13 @@ function assertCanManageBranches(state: DataState): void {
   if (activeUser && activeUser.roleId !== 'owner') throw new Error('إدارة الفروع العامة متاحة للمالك فقط')
 }
 
+function canManageFinancialEntities(state: DataState): boolean {
+  return !state.loggedOut && (state.currentUserId == null || state.appUsers.some(user => user.id === state.currentUserId && user.roleId === 'owner' && user.active))
+}
+function assertCanManageFinancialEntities(state: DataState): void {
+  if (!canManageFinancialEntities(state)) throw new Error('إعداد الكيانات متاح للمالك المسجل دخوله فقط')
+}
+
 function assertCustomRoleManagementScope(state: DataState, role: { id: string; nameAr: string; branchId?: number | null }): void {
   const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
   const activeBranch = getEffectiveActiveBranch(state)
@@ -5403,10 +5415,11 @@ export function getBranchScopedDataState(state: DataState): DataState {
   if (!activeBranch) {
     const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
     if (activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0) return deniedBranchScope(state)
-    if (!state.quotations.some(q => q.deletedAt)) return state
+    const hideEntities = !canManageFinancialEntities(state) && (state.financialEntityProfiles?.length ?? 0) > 0
+    if (!hideEntities && !state.quotations.some(q => q.deletedAt)) return state
     let visible = visibleQuotationStateCache.get(state)
     if (!visible) {
-      visible = { ...state, quotations: state.quotations.filter(q => !q.deletedAt) }
+      visible = { ...state, quotations: state.quotations.filter(q => !q.deletedAt), ...(hideEntities ? { financialEntityProfiles: [] } : {}) }
       visibleQuotationStateCache.set(state, visible)
     }
     return visible
@@ -5816,6 +5829,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scoped: DataState = {
     ...state,
     branches: scopedBranches,
+    financialEntityProfiles: canManageFinancialEntities(state) ? (state.financialEntityProfiles ?? []) : [],
     warehouses: scopedWarehouses,
     treasuries: scopedTreasuries,
     customers: scopedCustomers,
@@ -6974,6 +6988,7 @@ export const useRawDataStore = create<DataState>()(
       warehouses: [],
       branches: [],
       activeBranchId: null,
+      financialEntityProfiles: [],
       paymentTerminals: [],
       paymentTerminalTransactions: [],
       paymentTerminalSettlements: [],
@@ -12851,6 +12866,34 @@ export const useRawDataStore = create<DataState>()(
         // خارج أي مخزن فتتعطل أوامر الإنتاج وأذون الصرف والفروع على البيانات القديمة.
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: !s.warehouses.some((w) => w.isMain) }] })),
 
+      saveFinancialEntityProfile: (input, expectedBasis, reason) => {
+        const state = get(), profiles = state.financialEntityProfiles ?? []
+        assertCanManageFinancialEntities(state)
+        if (typeof expectedBasis !== 'string' || expectedBasis !== financialEntityBasis(profiles, state.branches)) throw new Error('تغيرت إعدادات الكيانات أو الفروع — أعد المراجعة قبل الحفظ')
+        if (typeof reason !== 'string' || !reason.trim() || reason.length > 500) throw new Error('سبب إعداد أو تعديل الكيان مطلوب ولا يتجاوز 500 حرف')
+        if (!input || typeof input.nameAr !== 'string' || !Array.isArray(input.branchIds)) throw new Error('بيانات الكيان غير صالحة')
+        if (input.id != null && !profiles.some(row => row.id === input.id)) throw new Error('الكيان المطلوب تعديله غير موجود')
+        const id = input.id ?? crypto.randomUUID()
+        const profile: FinancialEntityProfile = { id, nameAr: input.nameAr.trim(), branchIds: [...input.branchIds], framework: input.framework, externalAudit: input.externalAudit }
+        const updated = input.id ? profiles.map(row => row.id === id ? profile : row) : [...profiles, profile]
+        assertFinancialEntityProfiles(updated, state.branches)
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ financialEntityProfiles: updated, auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `إعداد وصفي لكيان القوائم ${profile.nameAr} — ${reason.trim()}` }]) })
+        return profile
+      },
+      removeFinancialEntityProfile: (id, expectedBasis, reason) => {
+        const state = get(), profiles = state.financialEntityProfiles ?? []
+        assertCanManageFinancialEntities(state)
+        if (typeof expectedBasis !== 'string' || expectedBasis !== financialEntityBasis(profiles, state.branches)) throw new Error('تغيرت إعدادات الكيانات أو الفروع — أعد المراجعة قبل الحذف')
+        if (typeof reason !== 'string' || !reason.trim() || reason.length > 500) throw new Error('سبب حذف إعداد الكيان مطلوب ولا يتجاوز 500 حرف')
+        const existing = profiles.filter(row => row.id === id)
+        if (existing.length !== 1) throw new Error('إعداد الكيان غير موجود أو غير فريد')
+        const updated = profiles.filter(row => row.id !== id)
+        assertFinancialEntityProfiles(updated, state.branches)
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ financialEntityProfiles: updated, auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف الإعداد الوصفي لكيان القوائم ${existing[0].nameAr} — ${reason.trim()}` }]) })
+      },
+
       addBranch: (input, maxBranchesAllowed) => {
         const state = get()
         assertCanManageBranches(state)
@@ -12929,6 +12972,9 @@ export const useRawDataStore = create<DataState>()(
         if (!b) throw new Error('الفرع غير موجود')
         const blocked = canRemoveBranch(b, state.branches)
         if (blocked) throw new Error(blocked)
+        const profiles = state.financialEntityProfiles ?? []
+        assertFinancialEntityProfiles(profiles, state.branches)
+        if (profiles.some(profile => profile.branchIds.includes(id)) || (state.branches.length === 2 && profiles.some(profile => profile.branchIds.length > 0))) throw new Error('أزل ارتباط الفروع بإعدادات الكيانات قبل حذف الفرع؛ فقد يؤدي الحذف للعودة إلى وضع الفرع الواحد')
         const hasLinkedData = BRANCH_STAMP_ID_KEYS.some((key) => {
           if (key === 'warehouses') return false // المخزن الافتراضي بنية للفرع، لا سجل تشغيل يمنع حذف فرع فارغ
           const rows = (state as unknown as Record<string, unknown>)[key]
@@ -22626,6 +22672,7 @@ export const useRawDataStore = create<DataState>()(
           priceLists: s.priceLists ?? [],
           promotions: s.promotions ?? [], // الإصدار 19: العروض الترويجية/الباقات
           branches: s.branches ?? [], // الإصدار 20: الفروع الحقيقية (فرع = مخزن + خزينة)
+          financialEntityProfiles: s.financialEntityProfiles ?? [],
           paymentTerminals: s.paymentTerminals ?? [],
           paymentTerminalTransactions: s.paymentTerminalTransactions ?? [],
           paymentTerminalSettlements: s.paymentTerminalSettlements ?? [],
