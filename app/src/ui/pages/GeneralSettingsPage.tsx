@@ -3,14 +3,15 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * الإعدادات العامة — البلد والعملة والضريبة وطريقة الاحتساب
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins, Building2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, effectiveModules } from '../../core/activities.ts'
-import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, fiscalYearsForBranch, type FiscalYear } from '../../core/fiscal.ts'
+import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, buildYearClosingLines, closingMechanismIds, fiscalYearsForBranch, type FiscalYear } from '../../core/fiscal.ts'
+import { reviewFiscalCloseJournal } from '../../core/fiscalCloseReview.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
@@ -47,6 +48,12 @@ export function GeneralSettingsPage() {
   const [closeTarget, setCloseTarget] = useState<(typeof fiscalYears)[number] | null>(null)
   /* ─── إعادة فتح سنة مقفلة (نمط عالمي Reopen books): عكس قيد الإقفال + فتح الفترة للتصحيح ─── */
   const [reopenTarget, setReopenTarget] = useState<(typeof fiscalYears)[number] | null>(null)
+  const closeReview = useMemo(() => closeTarget ? reviewFiscalCloseJournal(journal, closeTarget) : null, [journal, closeTarget])
+  const closePreview = useMemo(() => {
+    if (!closeTarget || !closeReview?.valid) return null
+    const mechanism = closingMechanismIds(journal)
+    return buildYearClosingLines(journal.filter(entry => !mechanism.has(entry.id)), closeTarget)
+  }, [journal, closeTarget, closeReview])
   const [newYearOpen, setNewYearOpen] = useState(false)
   const nextSuggested = suggestFiscalYear(new Date().getFullYear() + (fiscalYears.some((y) => y.nameAr === String(new Date().getFullYear())) ? 1 : 0))
   const [fyName, setFyName] = useState(nextSuggested.nameAr)
@@ -573,9 +580,16 @@ export function GeneralSettingsPage() {
               <li>قوائم الدخل التاريخية تظل صحيحة (قيد الإقفال مستثنى منها)</li>
             </ul>
           </div>
+          {closeReview && <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 text-xs space-y-1" aria-label="مراجعة الدفتر قبل الإقفال">
+            <div className="font-bold">فحص بنية الدفتر الظاهر حتى نهاية السنة</div>
+            <div>القيود المفحوصة: {closeReview.checkedEntries}؛ منها في السنة: {closeReview.periodEntries}؛ دون فرع صريح ضمن الظاهر في السنة: {closeReview.visibleUnassignedEntries}.</div>
+            <div>{closeReview.valid ? 'لم تظهر قيود غير متوازنة أو غير سليمة في الفحص البنيوي.' : `تعذر الإقفال: راجع القيود غير السليمة ${closeReview.invalidEntryIds.slice(0, 10).map(id => `#${id}`).join('، ')}.`}</div>
+            {closePreview && <div>صافي قيد الإقفال المتوقع: {fmt(closePreview.netProfitMinor)} {cur.symbol} ({closePreview.lines.length} سطر).</div>}
+            <div className="text-amber-700">الفحص لا يثبت صحة إسناد الفروع أو اكتمال الجرد ومطابقة البنوك والذمم والضرائب والتسويات، ولا يغني عن مراجعة المختص.</div>
+          </div>}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseTarget(null)}>تراجع</Btn>
-            <Btn onClick={doCloseYear}>🔒 تأكيد الإقفال</Btn>
+            <Btn onClick={doCloseYear} disabled={!closeReview?.valid}>🔒 تأكيد الإقفال</Btn>
           </div>
         </div>
       </Modal>

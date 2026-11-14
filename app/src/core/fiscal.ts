@@ -4,6 +4,8 @@
  * السنة الحالية أو سنة سابقة (لمن يحتاج تسجيل عمليات قديمة)، بتحديد البداية والنهاية.
  */
 
+import type { JournalEntry } from './ledger.ts'
+
 export interface FiscalYear {
   id: number
   /** معرف الفرع المالك للفترة. undefined = سنة تاريخية قديمة لم تُربط بعد بفرع. */
@@ -93,20 +95,47 @@ export function dateInClosedYear(date: string, years: readonly FiscalYear[]): Fi
  * Reconcile the fiscal-year flag against persisted closing/reversal journal entries
  * after hydration. It returns state repairs only; it never creates accounting entries.
  */
+/** القيد والعكس دليل استعادة، لا مجرد علامة قابلة للنسخ أو التلف. */
+export function isFiscalCloseArtifactValid(entry: JournalEntry, year: FiscalYear, branchId: number | undefined, mainBranchId?: number): boolean {
+  const actualBranch = entry.branchId ?? mainBranchId
+  if (entry.sourceType !== 'year_closing' || entry.sourceId !== year.id || entry.date !== year.endDate || actualBranch !== branchId || !Number.isSafeInteger(entry.id) || entry.id <= 0 || !Array.isArray(entry.lines) || entry.lines.length < 2) return false
+  let debit = 0, credit = 0
+  for (const line of entry.lines) {
+    if (!line || typeof line.accountCode !== 'string' || !line.accountCode || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0 || (line.debit > 0) === (line.credit > 0)) return false
+    debit += line.debit; credit += line.credit
+  }
+  return Number.isSafeInteger(debit) && Number.isSafeInteger(credit) && debit > 0 && debit === credit
+}
+
+export function isFiscalCloseReversalValid(journal: readonly JournalEntry[], closing: JournalEntry, mainBranchId?: number): boolean {
+  if (closing.reversedByEntryId == null) return false
+  const rows = journal.filter(row => row.id === closing.reversedByEntryId)
+  if (rows.length !== 1) return false
+  const reversed = rows[0]
+  return reversed.sourceType === 'reversal' && reversed.sourceId === closing.id && reversed.reversesEntryId === closing.id && reversed.reversedByEntryId == null && reversed.date === closing.date && (reversed.branchId ?? mainBranchId) === (closing.branchId ?? mainBranchId) && Array.isArray(reversed.lines) && reversed.lines.length === closing.lines.length && reversed.lines.every((line, index) => {
+    const original = closing.lines[index]
+    return line.accountCode === original.accountCode && line.debit === original.credit && line.credit === original.debit
+  })
+}
+
 export function fiscalCloseStateRepairs(
   years: readonly FiscalYear[],
-  journal: readonly { sourceType?: string; sourceId?: number | null; branchId?: number | null; reversedByEntryId?: number | null }[],
+  journal: readonly JournalEntry[],
+  mainBranchId?: number,
 ): { closeIds: number[]; reopenIds: number[] } {
   const closeIds: number[] = []
   const reopenIds: number[] = []
   for (const year of years) {
-    const entries = journal.filter((entry) => entry.sourceType === 'year_closing'
-      && entry.sourceId === year.id
-      && (year.branchId == null || entry.branchId === year.branchId))
-    const activeClose = entries.some((entry) => !entry.reversedByEntryId)
-    const reversedClose = entries.some((entry) => !!entry.reversedByEntryId)
-    if (activeClose && year.status !== 'closed') closeIds.push(year.id)
-    else if (!activeClose && reversedClose && year.status !== 'open') reopenIds.push(year.id)
+    if (years.filter(row => row.id === year.id).length !== 1 || typeof year.nameAr !== 'string' || validateFiscalYear(year, []).length > 0 || (year.status !== 'closed' && year.status !== 'open')) continue
+    const entries = journal.filter(entry => entry.sourceType === 'year_closing' && entry.sourceId === year.id)
+    const branchId = year.branchId ?? mainBranchId
+    if (!entries.length || entries.some(entry => !isFiscalCloseArtifactValid(entry, year, branchId, mainBranchId) || journal.filter(row => row.id === entry.id).length !== 1 || (entry.reversedByEntryId != null && !isFiscalCloseReversalValid(journal, entry, mainBranchId)))) continue
+    const active = entries.filter(entry => entry.reversedByEntryId == null)
+    if (active.length > 1) continue
+    const peers = years.filter(row => row.id !== year.id && (row.branchId ?? mainBranchId) === branchId)
+    if (peers.some(row => typeof row.startDate !== 'string' || typeof row.endDate !== 'string' || validateFiscalYear(row, []).length > 0 || (row.status !== 'open' && row.status !== 'closed') || (year.startDate <= row.endDate && year.endDate >= row.startDate))) continue
+    if (active.length === 1 && year.status === 'open' && !peers.some(row => row.status === 'open' && row.endDate < year.startDate)) closeIds.push(year.id)
+    else if (active.length === 0 && year.status === 'closed' && !peers.some(row => row.status === 'closed' && row.startDate > year.endDate)) reopenIds.push(year.id)
   }
   return { closeIds, reopenIds }
 }

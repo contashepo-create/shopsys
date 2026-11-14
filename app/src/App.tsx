@@ -653,8 +653,10 @@ export default function App() {
   useEffect(() => {
     if (!storesHydrated) return
     const fiscal = useAppStore.getState()
-    const journal = useRawDataStore.getState().journal
-    const repairs = fiscalCloseStateRepairs(fiscal.fiscalYears, journal)
+    const data = useRawDataStore.getState()
+    const mainBranches = data.branches.filter(branch => branch.isMain)
+    if (data.branches.length && mainBranches.length !== 1) return
+    const repairs = fiscalCloseStateRepairs(fiscal.fiscalYears, data.journal, mainBranches[0]?.id)
     repairs.closeIds.forEach((id) => fiscal.markFiscalYearClosed(id))
     repairs.reopenIds.forEach((id) => fiscal.reopenFiscalYear(id))
   }, [storesHydrated])

@@ -108,7 +108,8 @@ import { customerStatement, supplierStatement, statementBalance, customerUnitDoc
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
 import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxConversionHistoryIssues, fxHoldingsFromFlows, proportionalFxCost, validateFxConversion, FX_GAIN_ACCOUNT, FX_LOSS_ACCOUNT, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
-import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, type FiscalYear } from '../core/fiscal.ts'
+import { buildYearClosingLines, validateYearClose, validateFiscalYear, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, isFiscalCloseArtifactValid, isFiscalCloseReversalValid, type FiscalYear } from '../core/fiscal.ts'
+import { reviewFiscalCloseJournal } from '../core/fiscalCloseReview.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, mergeOrderLines, linesReduceExistingQty, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
@@ -6116,6 +6117,42 @@ function assertFiscalCloseAccess(state: DataState): void {
   if (!scopedUser || !effectivePermissionsFor(scopedUser, roles).has('acc.fiscal.close')) throw new Error('لا تملك صلاحية إقفال السنة أو إعادة فتحها')
 }
 
+/** لا نثق بنسخة السنة أو قائمة السنوات القادمة من النافذة: القرار على السجل المحفوظ. */
+function verifiedFiscalYear(state: DataState, requested: FiscalYear): { year: FiscalYear; years: FiscalYear[]; branchId: number | undefined; mainBranchId: number | undefined } {
+  const years = useAppStore.getState().fiscalYears
+  if (!requested || !Number.isSafeInteger(requested.id) || requested.id <= 0 || !Array.isArray(years)) throw new Error('بيانات السنة المالية غير صالحة — راجع الإعداد')
+  const matches = years.filter(row => row?.id === requested.id)
+  if (matches.length !== 1) throw new Error('السنة المالية غير موجودة أو مكررة — راجع البيانات قبل المتابعة')
+  const year = matches[0]
+  const mainBranches = state.branches.filter(row => row.isMain)
+  if (state.branches.length && mainBranches.length !== 1) throw new Error('الفرع الرئيسي غير محدد أو مكرر — راجع البيانات')
+  const mainBranchId = mainBranches[0]?.id
+  const branchOf = (row: FiscalYear) => row.branchId ?? (state.branches.length ? mainBranchId : undefined)
+  const branchId = branchOf(year)
+  if (branchId != null && !state.branches.some(branch => branch.id === branchId && branch.active)) throw new Error('فرع السنة المالية غير موجود أو غير نشط')
+  if (requested.nameAr !== year.nameAr || requested.startDate !== year.startDate || requested.endDate !== year.endDate || branchOf(requested) !== branchId) throw new Error('تغيرت بيانات السنة المالية — أعد فتح النافذة وراجعها')
+  if (typeof year.nameAr !== 'string' || typeof year.startDate !== 'string' || typeof year.endDate !== 'string' || (year.status !== 'open' && year.status !== 'closed') || validateFiscalYear(year, []).length) throw new Error('بيانات السنة المالية غير صالحة — راجع الإعداد')
+  const related = years.filter(row => row && branchOf(row) === branchId)
+  const seen = new Set<number>()
+  for (const row of related) {
+    if (!Number.isSafeInteger(row.id) || row.id <= 0 || seen.has(row.id) || typeof row.nameAr !== 'string' || typeof row.startDate !== 'string' || typeof row.endDate !== 'string' || (row.status !== 'open' && row.status !== 'closed') || validateFiscalYear(row, []).length) throw new Error('سجل السنوات المالية غير صالح أو مكرر — راجع البيانات')
+    seen.add(row.id)
+    if (row.id !== year.id && row.startDate <= year.endDate && row.endDate >= year.startDate) throw new Error('تتداخل السنة المالية مع فترة أخرى — راجع البيانات قبل المتابعة')
+  }
+  return { year, years, branchId, mainBranchId }
+}
+
+/** قيد الإقفال ومرجعه وتاريخه وفرعه يجب أن تتفق قبل استعادة أو عكس الحالة. */
+function fiscalClosingEntries(state: DataState, fy: FiscalYear, branchId: number | undefined, mainBranchId: number | undefined): JournalEntry[] {
+  const entries = state.journal.filter(entry => entry.sourceType === 'year_closing' && entry.sourceId === fy.id)
+  if (entries.filter(entry => entry.reversedByEntryId == null).length > 1) throw new Error('قيود إقفال مكررة للسنة — راجع الدفتر قبل المتابعة')
+  for (const entry of entries) {
+    if (!isFiscalCloseArtifactValid(entry, fy, branchId, mainBranchId) || state.journal.filter(row => row.id === entry.id).length !== 1) throw new Error('قيد إقفال السنة لا يطابق تاريخها أو فرعها أو توازنه — راجع الدفتر')
+    if (entry.reversedByEntryId != null && !isFiscalCloseReversalValid(state.journal, entry, mainBranchId)) throw new Error('عكس قيد الإقفال غير مثبت — راجع الدفتر')
+  }
+  return entries
+}
+
 /** التصحيح التاريخي حساس حتى وإن لم يغيّر قيد اليومية. */
 function assertFxRepairPermission(state: DataState): void {
   if (state.currentUserId == null) return // توافق جلسات المالك القديمة
@@ -6888,6 +6925,17 @@ export const useRawDataStore = create<DataState>()(
               : entry)
           }
           if (nextJournal !== rawJournal) (patch as Partial<DataState>).journal = nextJournal
+          // إذا توقف الإقفال بعد حفظ القيد وقبل تحديث مخزن السنوات،
+          // لا نسمح بحركة جديدة في الفترة قبل إصلاح الحالة أو مراجعة التعارض.
+          // ينطبق على القيود الجديدة في هذا الكاتب فقط، لا على التخزين الخارجي.
+          const fiscalYears = useAppStore.getState().fiscalYears
+          const mainBranchId = state.branches.find(branch => branch.isMain)?.id
+          for (const entry of nextJournal) {
+            if (previousEntryIds.has(entry.id)) continue
+            const branchId = entry.branchId ?? (state.branches.length ? mainBranchId : undefined)
+            const interrupted = fiscalYears.find(year => year.status === 'open' && (year.branchId ?? (state.branches.length ? mainBranchId : undefined)) === branchId && entry.date >= year.startDate && entry.date <= year.endDate && state.journal.some(old => old.sourceType === 'year_closing' && old.sourceId === year.id && old.reversedByEntryId == null))
+            if (interrupted) throw new Error(`السنة «${interrupted.nameAr}» تحتوي على قيد إقفال وحالتها مفتوحة — راجع واستعد حالة الإقفال أولاً`)
+          }
           if (activeBranch) {
             const foreignTreasuryCodes = new Set(state.treasuries.filter((treasury) => {
               const owner = state.branches.find((branch) => branch.treasuryCode === treasury.code)
@@ -13685,46 +13733,46 @@ export const useRawDataStore = create<DataState>()(
         return repayment
       },
 
-      closeFiscalYear: (fy, allYears) => {
+      closeFiscalYear: (requested, _allYears) => {
         const state = get()
         assertFiscalCloseAccess(state)
+        const { year: fy, years: storedYears, branchId: fiscalBranchId, mainBranchId } = verifiedFiscalYear(state, requested)
         const effectiveBranch = getEffectiveActiveBranch(state)
-        const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
-        const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
         if (state.branches.length > 0 && fiscalBranchId == null) throw new Error('لا يوجد فرع رئيسي صالح لإسناد السنة المالية القديمة')
         if (fiscalBranchId != null && effectiveBranch && effectiveBranch.id !== fiscalBranchId) {
           throw new Error('لا يمكن إقفال سنة مالية تخص فرعاً آخر من النطاق الحالي')
-        }
-        if (fy.branchId == null && fiscalBranchId != null) {
-          useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         }
         // ① قيد إقفال محفوظ مع سنة ما زالت مفتوحة يعني أن التطبيق توقف بين
         // تخزين الدفتر وحالة الفترة؛ أصلح الحالة تكرارياً بدلاً من تعطيل المستخدم.
         const branchJournal = fiscalBranchId == null
           ? state.journal
           : getBranchScopedDataState({ ...state, activeBranchId: fiscalBranchId }).journal
-        const existingClosing = branchJournal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        const existingClosing = fiscalClosingEntries(state, fy, fiscalBranchId, mainBranchId).find(entry => !entry.reversedByEntryId)
         if (existingClosing) {
           // استعادة الحالة بعد انقطاع سابق، لكن لا تُعامل محاولة الإقفال المكررة كنجاح.
           // علّم الفترة مغلقة ثم ارفض الطلب كي يظل عقد API مانعاً للتكرار.
+          if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
           useAppStore.getState().markFiscalYearClosed(fy.id)
           throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل — تمت استعادة حالة الإقفال`)
         }
         // ② تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني داخل الفرع نفسه).
         // استخدم سجل السنوات المركزي لتفادي أن يمنع تقويم فرع آخر هذا الإقفال؛
         // واربط الفترات التاريخية غير المنسوبة بالرئيسي قبل تطبيق ترتيب الفترات.
-        const storedYears = useAppStore.getState().fiscalYears
+        if (requested.status !== fy.status) throw new Error('تغيرت حالة السنة المالية — أعد فتح النافذة وراجعها')
         const orderedYears = state.branches.length > 0 && mainBranchId != null
           ? storedYears.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
-          : allYears
+          : storedYears
         const orderedYear = fiscalBranchId == null ? fy : { ...fy, branchId: fiscalBranchId }
         const errors = validateYearClose(orderedYear, orderedYears, todayLocalIso())
         if (errors.length) throw new Error(errors.join(' — '))
+        const review = reviewFiscalCloseJournal(branchJournal, fy)
+        if (!review.valid) throw new Error(`تعذر الإقفال: توجد قيود غير سليمة أو غير متوازنة — راجع الدفتر (${review.invalidEntryIds.slice(0, 10).map(id => `#${id}`).join('، ')})`)
         // ③ يبني الإقفال من دفتر الفرع صاحب الفترة وحده؛ العرض/الإقفال العام القديم
         // يبقى على اليومية الكاملة للتوافق مع السجلات غير المنسوبة.
         const mechanism = closingMechanismIds(branchJournal)
         const result = buildYearClosingLines(branchJournal.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
+        if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const entry: JournalEntry = {
@@ -13737,32 +13785,28 @@ export const useRawDataStore = create<DataState>()(
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({ journal: [...state.journal, entry] })
-        // حدّث حالة الفترة ضمن العملية نفسها بعد قبول قيد الدفتر؛ الإقفال الذري
-        // محلياً ويُستعاد عند إعادة المحاولة إن انقطع الحفظ بين المخزنين.
+        // تحديث حالة الفترة بعد قبول القيد؛ المخزنان منفصلان وليسا معاملة ذرية.
+        // يعالج مسار الاستعادة بعض الانقطاعات المثبتة ولا يضمن سلامة جميع الكتّاب.
         useAppStore.getState().markFiscalYearClosed(fy.id)
         return { entryId, netProfitMinor: result.netProfitMinor }
       },
 
-      reopenFiscalYear: (fy, allYears) => {
+      reopenFiscalYear: (requested, _allYears) => {
         const state = get()
         assertFiscalCloseAccess(state)
+        const { year: fy, years: storedYears, branchId: fiscalBranchId, mainBranchId } = verifiedFiscalYear(state, requested)
         const effectiveBranch = getEffectiveActiveBranch(state)
-        const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
-        const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
         if (state.branches.length > 0 && fiscalBranchId == null) throw new Error('لا يوجد فرع رئيسي صالح لإسناد السنة المالية القديمة')
         if (fiscalBranchId != null && effectiveBranch && effectiveBranch.id !== fiscalBranchId) {
           throw new Error('لا يمكن إعادة فتح سنة مالية تخص فرعاً آخر من النطاق الحالي')
         }
-        if (fy.branchId == null && fiscalBranchId != null) {
-          useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
-        }
+        if (requested.status !== fy.status) throw new Error('تغيرت حالة السنة المالية — أعد فتح النافذة وراجعها')
         if (fy.status !== 'closed') throw new Error('السنة مفتوحة أصلاً — لا شيء يُعاد فتحه')
         // الترتيب العكسي (نمط Odoo): لا إعادة فتح لسنة توجد بعدها سنة مقفلة —
         // قيد إقفال السنة الأحدث بُني على أرصدة أُغلق عليها الأقدم، ففكّ الأحدث أولاً
-        const storedYears = useAppStore.getState().fiscalYears
         const orderedYears = state.branches.length > 0 && mainBranchId != null
           ? storedYears.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
-          : allYears
+          : storedYears
         const orderedBranchId = fiscalBranchId
         const orderedFiscalYear = orderedBranchId == null ? fy : { ...fy, branchId: orderedBranchId }
         const newerClosed = orderedYears.find((y) => y.id !== fy.id
@@ -13770,11 +13814,17 @@ export const useRawDataStore = create<DataState>()(
           && y.status === 'closed'
           && y.startDate > fy.endDate)
         if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
-        const closingEntry = state.journal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        const closingEntries = fiscalClosingEntries(state, fy, fiscalBranchId, mainBranchId)
+        const closingEntry = closingEntries.find(entry => !entry.reversedByEntryId)
         if (!closingEntry) {
+          // قد يكون العكس حُفظ قبل حالة الفتح؛ لا نفتح سنة بلا دليل عكس صحيح.
+          const latest = closingEntries.at(-1)
+          if (!latest || !isFiscalCloseReversalValid(state.journal, latest, mainBranchId)) throw new Error('لا يوجد قيد إقفال أو عكس مثبت للسنة — راجع الدفتر قبل إعادة الفتح')
+          if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
           useAppStore.getState().reopenFiscalYear(fy.id)
-          return { reversedEntryId: null } // مقفلة بلا قيد إقفال أو عُكس سابقاً — يكفي فتح الحالة
+          return { reversedEntryId: null }
         }
+        if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         // قيد عاكس لقيد الإقفال: يعيد أرصدة الإيرادات والمصروفات وأثر الأرباح المرحلة،
         // بتاريخ آخر يوم بالسنة المعاد فتحها (يلغي أثر التصفير داخل فترته نفسها)
         const entryId = nextId(state.journal)

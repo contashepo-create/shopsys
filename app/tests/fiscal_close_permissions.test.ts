@@ -43,5 +43,6 @@ it('يرفض الحساب المعطل أو الفرع غير النشط أو ج
 it('لا تسمح صلاحية فرع المحاسب بإقفال سنة فرع مختلف', () => {
  useRawDataStore.setState({ appUsers: [user('accountant', 1)] })
  const other = { ...year, id: 13, branchId: 2 }
+ useAppStore.setState({ fiscalYears: [year, other] })
  expect(() => S().closeFiscalYear(other, [year, other])).toThrow(/فرعاً آخر/)
 })

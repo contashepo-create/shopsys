@@ -172,6 +172,17 @@ export function mergeConcurrentSnapshots(base: string | null, local: string, rem
   // Detect a financial link introduced on the other side of an unposted deletion.
   // Existing deletion audit records alone must not prevent later legitimate activity.
   const before = persistedState(base) ?? {}, left = persistedState(local) ?? {}, right = persistedState(remote) ?? {}
+  // قيد الإقفال قرار مبني على مجمل الدفتر والصلاحيات والفروع. لا يُدمج مع
+  // حركة موازية في لقطة البيانات ولو اختلفت معرفات القيود. مخزن السنوات
+  // منفصل، لذا هذا الحارس لا يضمن ذرية الإقفال عبر المخزنين أو كل الكتّاب.
+  const closingHistory = (source: Record<string, unknown>) => {
+    const rows = Array.isArray(source.journal) ? source.journal as Array<Record<string, unknown>> : []
+    const ids = new Set(rows.filter(row => row?.sourceType === 'year_closing').map(row => row.id))
+    return rows.filter(row => row && (row.sourceType === 'year_closing' || ids.has(row.reversesEntryId)))
+  }
+  const changedClose = (side: Record<string, unknown>) => JSON.stringify(closingHistory(before)) !== JSON.stringify(closingHistory(side))
+  const closeConflict = (other: Record<string, unknown>) => ['journal', 'branches', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles'].some(key => JSON.stringify(before[key]) !== JSON.stringify(other[key]))
+  if ((changedClose(left) && closeConflict(right)) || (changedClose(right) && closeConflict(left))) throw new Error('تعارض إقفال السنة مع حركة دفتر أو صلاحية متزامنة — أعد تحميل البيانات وراجع الإقفال')
   // الإعداد الوصفي وارتباطاته قرار واحد؛ لا ندمج قرارين متوازيين أو تغيير فروع
   // مع قرار كيان حتى لو كانت حقول JSON قابلة للدمج. لا يحمي ذلك الكتّاب خارج آلية اللقطات.
   const changed = (side: Record<string, unknown>, key: string) => JSON.stringify(before[key] ?? []) !== JSON.stringify(side[key] ?? [])
