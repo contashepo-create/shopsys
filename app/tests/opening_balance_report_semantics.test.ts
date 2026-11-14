@@ -51,6 +51,11 @@ describe('opening balances are balances, not period activity', () => {
     })
   })
 
+  it('treats an opening entry on the first day as a period adjustment, consistent with the trial-balance boundary', () => {
+    const onFirstDay = { ...journal[0], date: period.from }
+    expect(cashFlowReport([onFirstDay], ['1101'], period)).toMatchObject({ openingCashMinor: 0, openingBalanceAdjustmentsMinor: 1000, netChangeMinor: 0, closingCashMinor: 1000 })
+  })
+
   it('places an opening cash balance dated before the period in beginning cash, not period adjustments', () => {
     const priorOpening = { ...journal[0], date: '2026-09-30' }
     expect(cashFlowReport([priorOpening], ['1101'], period)).toMatchObject({

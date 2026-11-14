@@ -49,6 +49,20 @@ it('يوضح الفرع والفترة والتنبيه داخل ملف CSV ول
  expect(boms).toHaveLength(1)
 })
 
+it('يوضح تقرير حركة الضريبة في العرض والطباعة والتصدير أنه ليس إقراراً أو مبلغاً معتمداً', async () => {
+ let blob: Blob | null = null
+ vi.stubGlobal('URL', { ...URL, createObjectURL: (value: Blob) => { blob = value; return 'blob:test' }, revokeObjectURL: () => {} })
+ vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+ renderReport()
+ fireEvent.change(screen.getByRole('combobox'), { target: { value: 'vat' } })
+ expect(screen.getByText(/وليس إقرار ضريبة قيمة مضافة/)).toBeTruthy()
+ expect(screen.queryByText('إقرار الفترة (مستحق للمصلحة)')).toBeNull()
+ fireEvent.click(screen.getByText('طباعة / PDF'))
+ expect(print.mock.calls[0][0]).toContain('وليس إقرار ضريبة قيمة مضافة')
+ fireEvent.click(screen.getByText('تصدير Excel'))
+ expect(await (blob! as Blob).text()).toContain('وليس إقرار ضريبة قيمة مضافة')
+})
+
 it('يتغير وصف النطاق عند تبديل الفرع أو اختيار العرض الشامل', () => {
  renderReport()
  act(() => { useRawDataStore.setState({ activeBranchId: 2 }) })

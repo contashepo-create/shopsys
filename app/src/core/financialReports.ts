@@ -364,7 +364,7 @@ export function cashFlowReport(
     // قيد التأسيس ليس تدفقاً تشغيلياً. إن سبق بداية الفترة يدخل رصيد أولها؛
     // وإن وقع داخلها يظهر كتسوية رصيد افتتاحي مستقلة حتى لا يُضخّم نقدية أول الفترة.
     if (sourceOf(e) === 'opening') {
-      if (e.date <= p.from) opening += cashDelta
+      if (e.date < p.from) opening += cashDelta
       else if (e.date <= p.to) openingBalanceAdjustments += cashDelta
       continue
     }

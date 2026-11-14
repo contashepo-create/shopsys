@@ -17,8 +17,9 @@ import { Btn, inputCls } from '../components/ui.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { escHtml, renderReportShell } from '../../core/reportPrint.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { FinancialComparisonReview } from './FinancialComparisonReview.tsx'
 
-type FinReportId = 'trial_balance' | 'income' | 'balance_sheet' | 'gl' | 'cash_flow' | 'vat'
+type FinReportId = 'trial_balance' | 'income' | 'balance_sheet' | 'gl' | 'cash_flow' | 'vat' | 'comparison'
 
 /** تسميات أنشطة التدفق النقدي (IAS 7) */
 const CF_ACTIVITY_LABELS = { operating: 'تشغيلي', investing: 'استثماري', financing: 'تمويلي' } as const
@@ -28,6 +29,7 @@ const TB_COLUMNS: { key: keyof TrialBalanceDetailAmounts; label: string }[] = [
   { key: 'closingDebitMinor', label: 'آخر الفترة مدين' }, { key: 'closingCreditMinor', label: 'آخر الفترة دائن' },
 ]
 const CF_NOTICE = 'تصنيف التدفقات تقديري حسب الحساب المقابل في القيد؛ قد لا يوزع القيد المركب على أنشطة متعددة بدقة. راجع التسويات والتصنيف مع المختص قبل إعداد قائمة معتمدة.'
+const VAT_NOTICE = 'تلخيص لحركة حساب الضريبة وتصنيف المصادر في الدفتر، وليس إقرار ضريبة قيمة مضافة أو مبلغاً مستحقاً معتمداً. القيود اليدوية والاستثناءات والتسويات تحتاج مطابقة المستندات ومتطلبات الهيئة مع المختص.'
 const TB_NOTICE = 'ميزان الدفتر كما هو: الأرصدة الافتتاحية قبل بداية الفترة، والحركة شاملة لتاريخي البداية والنهاية، دون استبعاد معاملات بين الفروع. التوازن لا يثبت صحة القيود أو اكتمالها.'
 
 const REPORTS: { id: FinReportId; nameAr: string; icon: string }[] = [
@@ -37,6 +39,7 @@ const REPORTS: { id: FinReportId; nameAr: string; icon: string }[] = [
   { id: 'gl', nameAr: 'دفتر الأستاذ العام (حركة حساب)', icon: '📒' },
   { id: 'cash_flow', nameAr: 'التدفق النقدي (النقدية والسيولة)', icon: '💧' },
   { id: 'vat', nameAr: 'تقرير الضريبة (ض.ق.م)', icon: '🧾' },
+  { id: 'comparison', nameAr: 'مقارنة القوائم التشغيلية وحقوق الملكية', icon: '📊' },
 ]
 
 function downloadCsv(filename: string, csv: string) {
@@ -52,7 +55,7 @@ function downloadCsv(filename: string, csv: string) {
 
 
 export function FinancialReportsTab({ period, cur, companyName }: { period: { from: string; to: string }; cur: CurrencyConfig; companyName: string }) {
-  const { customAccounts, journal, treasuries, branches, activeBranchId } = useDataStore()
+  const { customAccounts, journal, treasuries, branches, activeBranchId, financialEntityProfiles } = useDataStore()
   const branch = activeBranchId == null ? null : branches.find(row => row.id === activeBranchId)
   const scopeLabel = branch ? `فرع ${branch.nameAr} (#${branch.id})` : activeBranchId != null ? 'نطاق الفرع غير واضح — راجع الإعدادات' : branches.length ? 'كل الفروع — عرض شامل' : 'المنشأة — دون فرع محدد'
   const unassignedCount = branch ? journal.filter(entry => entry.branchId == null).length : 0
@@ -138,16 +141,16 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     if (vat) csv = toCsv(['البند', 'المبلغ'], [
       ['ضريبة المخرجات (مبيعات ومرتجعاتها)', fmt(vat.outputVatMinor)],
       ['ضريبة المدخلات (مشتريات ومرتجعاتها)', fmt(vat.inputVatMinor)],
-      [vat.netDueMinor >= 0 ? 'صافي إقرار الفترة (مستحق للمصلحة)' : 'رصيد ضريبي دائن لك', fmt(Math.abs(vat.netDueMinor))],
-      ['المسدد للمصلحة خلال الفترة', fmt(vat.settledMinor)],
-      [vat.remainingMinor >= 0 ? 'المتبقي بعد السداد' : 'رصيد دائن بعد السداد', fmt(Math.abs(vat.remainingMinor))],
+      [vat.netDueMinor >= 0 ? 'صافي الحركة الدفترية الموجب' : 'صافي الحركة الدفترية السالب', fmt(Math.abs(vat.netDueMinor))],
+      ['تسويات مصنفة كسداد / استرداد', fmt(vat.settledMinor)],
+      [vat.remainingMinor >= 0 ? 'صافي الحركة بعد التسويات موجب' : 'صافي الحركة بعد التسويات سالب', fmt(Math.abs(vat.remainingMinor))],
     ])
     // بيانات النطاق جزء من الملف نفسه لا من اسم الملف فقط. CSV للمراجعة
     // وليس تنسيق قوائم أو إقرار الهيئة؛ يحافظ كل جزء على حماية خلايا الصيغ.
     const meta = toCsv(['بيانات التقرير', 'القيمة'], [
       ['المنشأة', companyName], ['التقرير', reportName], ['النطاق', scopeLabel],
       ['الفترة', reportId === 'balance_sheet' ? `حتى ${p.to}` : periodLabel],
-      ['تنبيه', reviewNotice], ...(tb ? [['منهج الميزان', TB_NOTICE]] : []), ...(cf ? [['مراجعة التدفقات', CF_NOTICE]] : []), ...(scopeWarning ? [['مراجعة إسناد الفروع', scopeWarning]] : []),
+      ['تنبيه', reviewNotice], ...(tb ? [['منهج الميزان', TB_NOTICE]] : []), ...(cf ? [['مراجعة التدفقات', CF_NOTICE]] : []), ...(vat ? [['مراجعة الضريبة', VAT_NOTICE]] : []), ...(scopeWarning ? [['مراجعة إسناد الفروع', scopeWarning]] : []),
     ])
     downloadCsv(`${reportName}-${p.from}-${p.to}.csv`, `${meta}\n\n${csv.replace(/^\uFEFF/, '')}`)
   }
@@ -161,7 +164,7 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     if (bs) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الأصول المتداولة</td></tr>${bs.currentAssets.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول المتداولة</td>${num(bs.totalCurrentAssetsMinor)}</tr>${bs.nonCurrentAssets.length ? `<tr class="sec"><td colspan="2">الأصول غير المتداولة</td></tr>${bs.nonCurrentAssets.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول غير المتداولة</td>${num(bs.totalNonCurrentAssetsMinor)}</tr>` : ''}<tr class="total"><td>إجمالي الأصول</td>${num(bs.totalAssetsMinor)}</tr><tr class="sec"><td colspan="2">الالتزامات وحقوق الملكية</td></tr>${[...bs.liabilities, ...bs.equity].map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr><td>أرباح مرحلة (نتيجة النشاط)</td>${num(bs.retainedEarningsMinor)}</tr><tr class="total"><td>إجمالي الالتزامات وحقوق الملكية ${bs.balanced ? '✓' : '⚠'}</td>${num(bs.totalLiabilitiesEquityMinor)}</tr></table>`
     if (gl) body = `<table><tr><th>التاريخ</th><th>قيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr><tr class="sec"><td colspan="5">رصيد أول الفترة — ${escHtml(gl.accountName)}</td>${num(gl.openingMinor)}</tr>${gl.rows.map((r) => `<tr><td dir="ltr">${r.date.slice(0, 10)}</td><td dir="ltr">#${r.entryNumber}</td><td>${escHtml(r.description)}</td>${num(r.debitMinor)}${num(r.creditMinor)}${num(r.balanceMinor)}</tr>`).join('')}<tr class="total"><td colspan="5">رصيد آخر الفترة</td>${num(gl.closingMinor)}</tr></table>`
     if (cf) body = `<p>${escHtml(CF_NOTICE)}</p><table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>رصيد النقدية أول الفترة</td>${num(cf.openingCashMinor)}</tr><tr><td>تسويات أرصدة افتتاحية داخل الفترة</td>${num(cf.openingBalanceAdjustmentsMinor)}</tr><tr class="sec"><td colspan="2">المقبوضات</td></tr>${cf.inflows.map((r) => `<tr><td>${escHtml(r.label)} <small>(${CF_ACTIVITY_LABELS[r.activity]})</small></td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المقبوضات</td>${num(cf.totalInMinor)}</tr><tr class="sec"><td colspan="2">المدفوعات</td></tr>${cf.outflows.map((r) => `<tr><td>${escHtml(r.label)} <small>(${CF_ACTIVITY_LABELS[r.activity]})</small></td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المدفوعات</td>${num(cf.totalOutMinor)}</tr><tr class="sec"><td colspan="2">صافي التدفقات حسب التصنيف التقديري</td></tr><tr><td>التشغيلي</td>${num(cf.operatingNetMinor)}</tr><tr><td>الاستثماري</td>${num(cf.investingNetMinor)}</tr><tr><td>التمويلي</td>${num(cf.financingNetMinor)}</tr><tr class="total"><td>رصيد النقدية آخر الفترة</td>${num(cf.closingCashMinor)}</tr></table>`
-    if (vat) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>ضريبة المخرجات (مبيعات ومرتجعاتها)</td>${num(vat.outputVatMinor)}</tr><tr><td>ضريبة المدخلات (مشتريات ومرتجعاتها)</td>${num(vat.inputVatMinor)}</tr><tr class="total"><td>${vat.netDueMinor >= 0 ? 'صافي إقرار الفترة (مستحق للمصلحة)' : 'رصيد ضريبي دائن لك'}</td>${num(Math.abs(vat.netDueMinor))}</tr><tr><td>المسدد للمصلحة خلال الفترة</td>${num(vat.settledMinor)}</tr><tr class="total"><td>${vat.remainingMinor >= 0 ? 'المتبقي بعد السداد' : 'رصيد دائن بعد السداد'}</td>${num(Math.abs(vat.remainingMinor))}</tr></table>`
+    if (vat) body = `<p>${escHtml(VAT_NOTICE)}</p><table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>ضريبة المخرجات (مبيعات ومرتجعاتها)</td>${num(vat.outputVatMinor)}</tr><tr><td>ضريبة المدخلات (مشتريات ومرتجعاتها)</td>${num(vat.inputVatMinor)}</tr><tr class="total"><td>${vat.netDueMinor >= 0 ? 'صافي الحركة الدفترية الموجب' : 'صافي الحركة الدفترية السالب'}</td>${num(Math.abs(vat.netDueMinor))}</tr><tr><td>تسويات مصنفة كسداد / استرداد</td>${num(vat.settledMinor)}</tr><tr class="total"><td>${vat.remainingMinor >= 0 ? 'صافي الحركة بعد التسويات موجب' : 'صافي الحركة بعد التسويات سالب'}</td>${num(Math.abs(vat.remainingMinor))}</tr></table>`
     // الغلاف الموحّد بإعدادات طباعة التقارير (طلب المالك: إعدادات لكل مطبوعة لا الفواتير فقط)
     const { reportPrint, receipt } = useAppStore.getState()
     printHtml(renderReportShell({
@@ -205,11 +208,13 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
             </QuickSelect>
           </div>
         )}
-        <div className="flex gap-2 ms-auto">
+        {reportId !== 'comparison' && <div className="flex gap-2 ms-auto">
           <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={printReport}><Printer size={14} /> طباعة / PDF</Btn>
           <Btn variant="ghost" className="border border-emerald-300/50 text-emerald-600" onClick={exportExcel}><FileSpreadsheet size={14} /> تصدير Excel</Btn>
-        </div>
+        </div>}
       </div>
+
+      {reportId === 'comparison' && <FinancialComparisonReview key={activeBranchId ?? 'all'} journal={journal} period={p} cashCodes={cashCodes} names={extraNames} cur={cur} companyName={companyName} scopeLabel={scopeLabel} scopeWarning={scopeWarning} profiles={financialEntityProfiles} branches={branches} activeBranchId={activeBranchId} />}
 
       {/* ─── ميزان المراجعة بالمجاميع والأرصدة ─── */}
       {tb && (
@@ -354,18 +359,21 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
 
       {/* ─── تقرير الضريبة ─── */}
       {vat && (
+        <div className="space-y-3">
+        <p className="text-xs text-amber-700">{VAT_NOTICE}</p>
         <div className="grid sm:grid-cols-3 lg:grid-cols-5 gap-3 text-center">
           <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/15"><div className="text-[11px] text-slate-400 font-bold">ضريبة المخرجات (مبيعات ومرتجعاتها)</div><div className="font-black text-xl mt-1 text-emerald-600 tabular-nums">{fmt(vat.outputVatMinor)}</div></div>
           <div className="p-4 rounded-xl bg-sky-500/5 border border-sky-500/15"><div className="text-[11px] text-slate-400 font-bold">ضريبة المدخلات (مشتريات ومرتجعاتها)</div><div className="font-black text-xl mt-1 text-sky-600 tabular-nums">{fmt(vat.inputVatMinor)}</div></div>
           <div className={`p-4 rounded-xl border ${vat.netDueMinor >= 0 ? 'bg-rose-500/5 border-rose-500/15' : 'bg-emerald-500/5 border-emerald-500/15'}`}>
-            <div className="text-[11px] text-slate-400 font-bold">{vat.netDueMinor >= 0 ? 'إقرار الفترة (مستحق للمصلحة)' : 'رصيد دائن لك'}</div>
+            <div className="text-[11px] text-slate-400 font-bold">{vat.netDueMinor >= 0 ? 'صافي الحركة الدفترية الموجب' : 'صافي الحركة الدفترية السالب'}</div>
             <div className={`font-black text-xl mt-1 tabular-nums ${vat.netDueMinor >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(Math.abs(vat.netDueMinor))}</div>
           </div>
-          <div className="p-4 rounded-xl bg-violet-500/5 border border-violet-500/15"><div className="text-[11px] text-slate-400 font-bold">المسدد للمصلحة بالفترة</div><div className="font-black text-xl mt-1 text-violet-600 tabular-nums">{fmt(vat.settledMinor)}</div></div>
+          <div className="p-4 rounded-xl bg-violet-500/5 border border-violet-500/15"><div className="text-[11px] text-slate-400 font-bold">تسويات مصنفة كسداد / استرداد</div><div className="font-black text-xl mt-1 text-violet-600 tabular-nums">{fmt(vat.settledMinor)}</div></div>
           <div className={`p-4 rounded-xl border ${vat.remainingMinor > 0 ? 'bg-amber-500/5 border-amber-500/15' : 'bg-emerald-500/5 border-emerald-500/15'}`}>
-            <div className="text-[11px] text-slate-400 font-bold">{vat.remainingMinor >= 0 ? 'المتبقي بعد السداد' : 'رصيد دائن بعد السداد'}</div>
+            <div className="text-[11px] text-slate-400 font-bold">{vat.remainingMinor >= 0 ? 'صافي الحركة بعد التسويات موجب' : 'صافي الحركة بعد التسويات سالب'}</div>
             <div className={`font-black text-xl mt-1 tabular-nums ${vat.remainingMinor > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(Math.abs(vat.remainingMinor))}</div>
           </div>
+        </div>
         </div>
       )}
     </div>
