@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
 import { ProjectSurveysPage } from '../src/ui/pages/ProjectSurveysPage.tsx'
@@ -189,4 +189,30 @@ it('يتيح محضر صافي غير مالي بعد إشعار مثبت وتص
  expect(S().journal).toBe(journal); expect(S().projectExtracts[0].isFinal).toBe(true)
  fireEvent.click(screen.getByText('محاضر إقفال الكميات')); fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
  expect(usePrintPreview.getState().handle?.html).toContain('كمية الإشعارات')
+})
+
+it('يعرض تاريخاً اختيارياً للكمية ويطبع ويصدر ويمنع طباعة نسخة قديمة بعد فساد الدليل', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const extract = S().addProjectExtract({ projectId: p.id, date: '2026-01-03', description: 'أول', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ const result = S().refundProjectExtract({ extractId: extract.id, quantities: [{ boqItemId: b.id, qty: 20 }], amountMinor: 2000, mode: 'customer_credit', reason: 'رفض' })
+ useRawDataStore.setState({ projects: S().projects.map(row => ({ ...row, nameAr: '<مشروع>' })), boqItems: S().boqItems.map(row => ({ ...row, descriptionAr: '<بند>' })) })
+ let blob: Blob | undefined
+ vi.stubGlobal('URL', { ...URL, createObjectURL: (value: Blob) => { blob = value; return 'blob:test' }, revokeObjectURL: () => {} })
+ vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('تاريخ صافي الكميات'), { target: { value: '2026-01-03' } })
+ const panel = screen.getByLabelText('صافي كميات المستخلصات بتاريخ محدد')
+ const cells = within(within(panel).getByRole('table')).getAllByRole('cell').map(cell => cell.textContent)
+ expect(cells).toEqual(['1 — م2', '200', '0', '200', '200.00'])
+ expect(panel.textContent).toContain('أسماء البنود والعقد الحالية')
+ fireEvent.click(within(panel).getByText('طباعة صافي الكميات / PDF'))
+ const html = usePrintPreview.getState().handle?.html ?? ''
+ expect(html).toContain('2026-01-03'); expect(html).toContain('&lt;مشروع&gt;'); expect(html).toContain('&lt;بند&gt;'); expect(html).not.toContain('<بند>')
+ fireEvent.click(within(panel).getByText('تصدير صافي الكميات CSV'))
+ const csv = await blob!.text()
+ expect(csv).toContain('2026-01-03'); expect(csv).toContain('200,0,200,200.00'); expect(csv).toContain('القيد,تاريخ المستند,المستخلص,النوع,الأعمال قبل الضريبة'); expect(csv).toContain(extract.extractNumber)
+ act(() => { useRawDataStore.setState({ journal: S().journal.filter(entry => entry.id !== result.refunds![0].journalEntryId) }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
+ expect(within(panel).queryByText('طباعة صافي الكميات / PDF')).toBeNull()
+ vi.unstubAllGlobals(); vi.restoreAllMocks()
 })

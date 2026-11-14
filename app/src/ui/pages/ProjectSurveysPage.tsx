@@ -14,6 +14,7 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { renderSurveyHtml } from '../print/printSurvey.ts'
 import { renderCloseoutHtml } from '../print/printCloseout.ts'
+import { projectNetQuantityCsv, renderProjectNetQuantityHtml } from '../print/printProjectNetQuantity.ts'
 
 export function ProjectSurveysPage() {
   const data = useDataStore()
@@ -25,6 +26,7 @@ export function ProjectSurveysPage() {
   const [isFinal, setIsFinal] = useState(false)
   const [reason, setReason] = useState('')
   const [measurementDate, setMeasurementDate] = useState(todayLocalIso())
+  const [netAsOf, setNetAsOf] = useState('')
   const [draftDeleteReason, setDraftDeleteReason] = useState('')
   const [confirmDraftDelete, setConfirmDraftDelete] = useState(false)
   const [confirmSurveyDelete, setConfirmSurveyDelete] = useState(false)
@@ -53,8 +55,12 @@ export function ProjectSurveysPage() {
   if (project && history.some(row => (row.refundedMinor ?? 0) > 0 || (row.refunds?.length ?? 0) > 0)) {
     try { netHistory = data.getProjectNetQuantityReport(project.id) } catch (error) { netHistoryError = (error as Error).message }
   }
+  let historic: ReturnType<typeof data.getProjectNetQuantityReport> | null = null, historicError = ''
+  if (project && netAsOf) {
+    try { historic = data.getProjectNetQuantityReport(project.id, netAsOf) } catch (error) { historicError = (error as Error).message }
+  }
   const selectProject = (id: number) => {
-    setProjectId(id); setMeasurementDate(todayLocalIso()); setReason(''); setDraftDeleteReason(''); setConfirmDraftDelete(false); setSurveyDeleteReason(''); setConfirmSurveyDelete(false); setCloseoutOpen(false); setCloseoutConfirmed(false); setCloseoutNotes('')
+    setNetAsOf(''); setProjectId(id); setMeasurementDate(todayLocalIso()); setReason(''); setDraftDeleteReason(''); setConfirmDraftDelete(false); setSurveyDeleteReason(''); setConfirmSurveyDelete(false); setCloseoutOpen(false); setCloseoutConfirmed(false); setCloseoutNotes('')
     const selected = projectSurveys.find(row => row.projectId === id)
     const selectedItems = boqItems.filter(row => row.projectId === id)
     setValues(Object.fromEntries(selectedItems.map(item => [item.id, String(selected?.lines.find(line => line.boqItemId === item.id)?.cumulativeQty ?? 0)])))
@@ -119,6 +125,26 @@ export function ProjectSurveysPage() {
       toast.show(error instanceof ProjectCommitUnconfirmedError ? 'حُفظ المحضر محلياً ولم يؤكد الحفظ — راجع السجل قبل إعادة المحاولة' : (error as Error).message, 'error')
     } finally { pending.current = false }
   }
+  const historicArgs = (id: number, asOf: string) => {
+    const fresh = useDataStore.getState(), matches = fresh.projects.filter(row => row.id === id)
+    if (matches.length !== 1) throw new Error('المشروع غير موجود في الفرع الحالي — أعد الفحص')
+    const app = useAppStore.getState(), currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+    return { companyName: app.setup.shopName || 'المقاولات', projectName: matches[0].nameAr, projectCode: matches[0].code, asOf, items: fresh.boqItems.filter(row => row.projectId === id), report: fresh.getProjectNetQuantityReport(id, asOf), currency }
+  }
+  const printHistoric = () => {
+    if (!project || !netAsOf || !historic) return
+    const id = project.id, date = netAsOf
+    const build = () => { const app = useAppStore.getState(); return renderProjectNetQuantityHtml({ ...historicArgs(id, date), settings: app.reportPrint, logoDataUrl: app.receipt.logoDataUrl }) }
+    try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: 'صافي كميات المستخلصات بتاريخ محدد' }) } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+  const exportHistoric = () => {
+    if (!project || !netAsOf || !historic) return
+    try {
+      const csv = projectNetQuantityCsv(historicArgs(project.id, netAsOf))
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = `project-quantities-${project.id}-${netAsOf}.csv`; anchor.click(); URL.revokeObjectURL(url)
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
   const printCloseout = (id: number) => {
     const build = () => {
       const fresh = useDataStore.getState(), matches = fresh.projectCloseouts.filter(row => row.id === id)
@@ -166,6 +192,13 @@ export function ProjectSurveysPage() {
           const item = items.find(value => value.id === row.boqItemId)!, measured = survey?.lines.find(value => value.boqItemId === row.boqItemId)?.cumulativeQty ?? 0
           return <tr key={row.boqItemId} className="border-t"><td className="p-2">{item.code} — {item.unit}</td><td className="p-2">{row.issuedQty}</td><td className="p-2">{row.returnedQty}</td><td className="p-2">{row.netQty}</td><td className="p-2">{survey ? measured : '—'}</td><td className="p-2">{survey ? Number((measured - row.netQty).toFixed(3)) : '—'}</td><td className="p-2">{fmt(row.netMinor)}</td></tr>
         })}</tbody></table></div><details><summary className="cursor-pointer font-bold">تسلسل المستخلصات والإشعارات</summary><p className="text-xs text-slate-500">الترتيب حسب رقم القيد المسجل، وليس حسب تاريخ المستند الذي قد يُدخل بأثر رجعي.</p><ol className="space-y-1 pt-2">{netHistory.events.map(event => <li key={event.journalEntryId} className="text-sm">قيد {event.journalEntryId} — {event.date} — {event.extractNumber} — {event.kind === 'credit' ? 'إشعار دائن' : 'مستخلص'} — {fmt(event.grossMinor)} قبل الضريبة</li>)}</ol></details></>}
+      </section>}
+      {history.length > 0 && <section className="rounded-xl border border-indigo-300 p-3 space-y-2" aria-label="صافي كميات المستخلصات بتاريخ محدد">
+        <h2 className="font-bold">صافي كميات المستخلصات بتاريخ محدد</h2>
+        <p className="text-xs text-slate-500">حسب تاريخ المستند لا وقت العلم به؛ أسماء البنود والعقد الحالية لا تثبت العقد التاريخي. ليس حصراً فعلياً أو تسوية مالية ولا يعيد فتح الختامي. تُرفض المستخلصات المعدّلة أو التواريخ غير المتسلسلة عندما لا يمكن إثبات التاريخ.</p>
+        <label className="block text-xs font-bold">حتى تاريخ<input type="date" aria-label="تاريخ صافي الكميات" className={`${inputCls} block mt-1`} value={netAsOf} onChange={event => setNetAsOf(event.target.value)} /></label>
+        {historicError && <p role="alert" className="text-sm text-rose-700">{historicError}</p>}
+        {historic && <><div className="flex gap-2"><Btn variant="ghost" onClick={printHistoric}>طباعة صافي الكميات / PDF</Btn><Btn variant="ghost" onClick={exportHistoric}>تصدير صافي الكميات CSV</Btn></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{['البند', 'المستخلص حتى التاريخ', 'الإشعارات حتى التاريخ', 'صافي الكمية', 'قيمة الأعمال الصافية قبل الضريبة'].map(text => <th className="p-2 text-right" key={text}>{text}</th>)}</tr></thead><tbody>{historic.rows.map(row => { const item = items.find(value => value.id === row.boqItemId)!; return <tr className="border-t" key={row.boqItemId}><td className="p-2">{item.code} — {item.unit}</td><td className="p-2">{row.issuedQty}</td><td className="p-2">{row.returnedQty}</td><td className="p-2">{row.netQty}</td><td className="p-2">{fmt(row.netMinor)}</td></tr> })}</tbody></table></div><details><summary className="cursor-pointer font-bold">أحداث المستخلصات حتى التاريخ</summary><ol className="pt-2">{historic.events.map(event => <li key={event.journalEntryId}>قيد {event.journalEntryId} — {event.date} — {event.extractNumber} — {event.kind === 'credit' ? 'إشعار دائن' : 'مستخلص'} — {fmt(event.grossMinor)}</li>)}</ol></details></>}
       </section>}
       <Field label="تاريخ قياس هذه المراجعة" hint="تاريخ القياس الذي تدخله لهذه المراجعة، لا تاريخ تسجيلها ولا تاريخ كل الكميات السابقة."><input type="date" aria-label="تاريخ قياس الحصر" max={todayLocalIso()} value={measurementDate} onChange={event => setMeasurementDate(event.target.value)} className={inputCls} /></Field>
       <div className="grid gap-3 md:grid-cols-2"><Field label="سبب التصحيح أو إعادة فتح الختامي"><input aria-label="سبب تعديل الحصر" value={reason} onChange={event => setReason(event.target.value)} className={inputCls} /></Field><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isFinal} onChange={event => setIsFinal(event.target.checked)} /> حصر ختامي (لا يفترض تنفيذ كامل العقد)</label></div>

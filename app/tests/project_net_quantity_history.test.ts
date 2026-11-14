@@ -111,3 +111,62 @@ it('تدقيق إشعار الكميات بلا محتجز يرفض تاريخا
   useRawDataStore.setState({ projectExtracts: extracts.map(row => ({ ...row, refunds: rows.map((r, i) => i === 0 ? { ...r, date: '2026-10-31' } : r) })), journal: journal.map(entry => entry.id === rows[0].journalEntryId ? { ...entry, date: '2026-10-31' } : entry) })
   assertBlocked()
 })
+
+it('يعرض صافي الكميات والقيم حتى اليوم المحدد شاملاً حدوده دون اعتبار الإشعار اللاحق سابقاً', () => {
+  const { project, item, first } = setup()
+  S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: item.id, qty: 10 }], amountMinor: 1050, mode: 'customer_credit', reason: 'رفض' })
+  const before = S().getProjectNetQuantityReport(project.id, '2026-10-31')
+  expect(before.rows[0]).toMatchObject({ issuedQty: 0, returnedQty: 0, netQty: 0, netMinor: 0 })
+  const firstDate = S().getProjectNetQuantityReport(project.id, '2026-11-01')
+  expect(firstDate.rows[0]).toMatchObject({ issuedQty: 40, returnedQty: 0, netQty: 40, netMinor: 4000 })
+  expect(firstDate.events.map(event => event.kind)).toEqual(['extract'])
+  const priorCredit = S().getProjectNetQuantityReport(project.id, '2026-11-04')
+  expect(priorCredit.rows[0]).toMatchObject({ issuedQty: 100, returnedQty: 0, netQty: 100, netMinor: 10000 })
+  const today = S().getProjectNetQuantityReport(project.id, '2026-11-05')
+  expect(today.rows[0]).toMatchObject({ issuedQty: 100, returnedQty: 10, netQty: 90, netMinor: 9000 })
+  expect(today.events.map(event => event.kind)).toEqual(['extract', 'extract', 'credit'])
+  expect(() => S().getProjectNetQuantityReport(project.id, '2026-02-30')).toThrow(/تاريخ/)
+})
+
+it('يحجب التقرير التاريخي عند تعديل مستخلص أو تعارض تواريخ التسجيل ولا يختلق كميات سابقة', () => {
+  const { project, first, second } = setup()
+  const before = S().projectExtracts
+  useRawDataStore.setState({ projectExtracts: before.map(ex => ex.id === second.id ? { ...ex, editedAt: '2026-11-05' } : ex) })
+  expect(() => S().getProjectNetQuantityReport(project.id, '2026-11-01')).toThrow(/معدلاً/)
+  const changed = before.map(ex => ex.id === second.id ? { ...ex, date: '2026-10-31' } : ex)
+  useRawDataStore.setState({ projectExtracts: changed, journal: S().journal.map(entry => entry.id === second.journalEntryId ? { ...entry, date: '2026-10-31' } : entry) })
+  expect(() => S().getProjectNetQuantityReport(project.id, '2026-11-01')).toThrow(/تسلسل/)
+  expect(first.id).toBeLessThan(second.id)
+})
+
+it('يحجب قيد فرع آخر في العرض الشامل حتى لو حمل معرّف المستخلص', () => {
+  const { project, first } = setup()
+  const branches = [{ id: 1, nameAr: 'رئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }, { id: 2, nameAr: 'ثان', isMain: false, warehouseId: 2, treasuryCode: '1102', active: true }]
+  useRawDataStore.setState({ branches: branches as never, activeBranchId: null, journal: S().journal.map(entry => entry.id === first.journalEntryId ? { ...entry, branchId: 2 } : entry) })
+  expect(() => S().getProjectNetQuantityReport(project.id, '2026-11-01')).toThrow(/فرع/)
+})
+
+it('يرفض التقرير التاريخي إذا اكتشف قيد عكس لمستخلص لم تحفظ نسخته الكمية السابقة', () => {
+  const { project, first } = setup()
+  const originalEntry = S().journal.find(entry => entry.id === first.journalEntryId)!
+  const reversal = { ...originalEntry, id: 99, entryNumber: 99, sourceType: 'reversal' as const, sourceId: first.id, reversesEntryId: originalEntry.id, date: '2026-11-05', lines: originalEntry.lines.map(line => ({ ...line, debit: line.credit, credit: line.debit })) }
+  useRawDataStore.setState({ journal: [...S().journal, reversal] })
+  expect(() => S().getProjectNetQuantityReport(project.id, '2026-11-01')).toThrow(/معدلاً/)
+})
+
+it('يبقى التقرير التاريخي مطابقاً بعد نسخة احتياطية واستعادتها', async () => {
+  const { project, item, first } = setup()
+  S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: item.id, qty: 10 }], amountMinor: 1050, mode: 'customer_credit', reason: 'رفض' })
+  const expected = S().getProjectNetQuantityReport(project.id, '2026-11-02')
+  const { secureStorage, flushSecureStorageWrites } = await import('../src/data/secureStorage.ts')
+  const { buildBackup, parseBackup } = await import('../src/core/backup.ts')
+  await flushSecureStorageWrites('shopsys-data')
+  const stored = await secureStorage.getItem('shopsys-data')
+  const backup = buildBackup({ appState: {}, storeState: JSON.parse(stored!), appDataVersion: 25, shopName: 'اختبار' })
+  const restored = parseBackup(JSON.stringify(backup))
+  useRawDataStore.setState({ projects: [], boqItems: [], projectExtracts: [], journal: [] })
+  await flushSecureStorageWrites('shopsys-data')
+  await secureStorage.setItem('shopsys-data', JSON.stringify(restored.data.store))
+  await useRawDataStore.persist.rehydrate()
+  expect(S().getProjectNetQuantityReport(project.id, '2026-11-02')).toEqual(expected)
+})

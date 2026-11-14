@@ -31,8 +31,15 @@ export interface ProjectNetQuantityReport { rows: ProjectNetQuantityRow[]; event
  * التي قد يكون المستخدم أدخلها بأثر رجعي؛ لا يعيد فتح الختامي أو يعدل الحصر.
  * لا يستنتج كميات من مستخلص إجمالي أو نسب أو إشعارات قديمة بلا دليل.
  */
-export function projectNetQuantityHistory(items: readonly BoqItem[], extracts: readonly ProjectExtract[], journal: ReadonlyMap<number, JournalEntry>): ProjectNetQuantityReport {
+export function projectNetQuantityHistory(items: readonly BoqItem[], extracts: readonly ProjectExtract[], journal: ReadonlyMap<number, JournalEntry>, asOf?: string): ProjectNetQuantityReport {
   const fail = (): never => { throw new FinancialDataReviewError('تاريخ كميات المستخلصات', 'الكميات أو تواريخ المستندات أو قيودها غير مثبتة بالكامل') }
+  if (asOf != null && !isValidExpiryDate(asOf)) throw new Error('تاريخ تقرير صافي الكميات غير صالح')
+  if (asOf != null) {
+    const extractIds = new Set(extracts.map(extract => extract.id))
+    // An edited extract replaces the saved quantity snapshot; prior versions
+    // cannot be reconstructed reliably from monetary reversal entries alone.
+    if (extracts.some(extract => extract.editedAt != null || extract.lastEditReason != null || extract.editReversalEntryId != null) || [...journal.values()].some(entry => entry.reversesEntryId != null && (() => { const original = journal.get(entry.reversesEntryId!); return original?.sourceType === 'project_extract' && original.sourceId != null && extractIds.has(original.sourceId) })())) throw new Error('تاريخ الكميات يتضمن مستخلصاً معدلاً بلا نسخ كمية تاريخية مثبتة — راجع التاريخ')
+  }
   if (new Set(items.map(item => item.id)).size !== items.length || new Set(extracts.map(extract => extract.id)).size !== extracts.length) return fail()
   const itemById = new Map(items.map(item => [item.id, item]))
   const history = [...extracts].sort((a, b) => a.id - b.id)
@@ -66,8 +73,7 @@ export function projectNetQuantityHistory(items: readonly BoqItem[], extracts: r
         const cumulativeValue = (BigInt(next) * BigInt(item.unitPriceMinor) + 500n) / 1000n
         if (cumulativeValue > BigInt(Number.MAX_SAFE_INTEGER) || Number(cumulativeValue) - basis.previouslyBilledMinor !== line.lineValueMinor) return fail()
         const value = line.lineValueMinor, row = totals.get(item.id)!
-        row.issuedMilli += next - previous
-        row.issuedMinor += value
+        if (asOf == null || date <= asOf) { row.issuedMilli += next - previous; row.issuedMinor += value }
         if (![row.issuedMilli, row.issuedMinor].every(Number.isSafeInteger)) return fail()
         sum += value
         if (!Number.isSafeInteger(sum)) return fail()
@@ -90,8 +96,7 @@ export function projectNetQuantityHistory(items: readonly BoqItem[], extracts: r
           const cumulative = roundNonNegativeRatio(line.value, line.returnedMilli, line.issuedMilli)
           const delta = cumulative - line.refundedValue
           line.refundedValue = cumulative
-          row.returnedMilli += amount
-          row.returnedMinor += delta
+          if (asOf == null || refund.date <= asOf) { row.returnedMilli += amount; row.returnedMinor += delta }
           gross += delta
           if (![row.returnedMilli, row.returnedMinor, gross].every(Number.isSafeInteger)) return fail()
         }
@@ -102,9 +107,15 @@ export function projectNetQuantityHistory(items: readonly BoqItem[], extracts: r
     }
     for (const item of items) if (quantityExtractBasis(item, issuedHistory).estimated) return fail()
   } catch { return fail() }
+  const ordered = events.sort((a, b) => a.journalEntryId - b.journalEntryId)
+  if (asOf != null) {
+    // Backdating across recorded events or reordered extract replacements
+    // makes a point-in-time reconstruction ambiguous; do not invent it.
+    if (ordered.some((event, index) => index > 0 && event.date < ordered[index - 1].date) || history.some((extract, index) => index > 0 && extract.journalEntryId <= history[index - 1].journalEntryId)) throw new Error('تسلسل تواريخ أو قيود المستخلصات غير متطابق — راجع التاريخ قبل التقرير بتاريخ محدد')
+  }
   const rows = [...totals.values()].map(row => {
     if (row.returnedMilli > row.issuedMilli || row.returnedMinor > row.issuedMinor) return fail()
     return { boqItemId: row.boqItemId, issuedQty: row.issuedMilli / 1000, returnedQty: row.returnedMilli / 1000, netQty: (row.issuedMilli - row.returnedMilli) / 1000, issuedMinor: row.issuedMinor, returnedMinor: row.returnedMinor, netMinor: row.issuedMinor - row.returnedMinor }
   })
-  return { rows, events: events.sort((a, b) => a.journalEntryId - b.journalEntryId) }
+  return { rows, events: asOf == null ? ordered : ordered.filter(event => event.date <= asOf) }
 }

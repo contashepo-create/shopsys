@@ -3069,7 +3069,7 @@ interface DataState {
   getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   assertProjectExtractRefunds: (projectId: number) => void
   /** قراءة فقط: صافي الكميات بعد الإشعارات المثبتة، دون إعادة فتح الختامي. */
-  getProjectNetQuantityReport: (projectId: number) => ProjectNetQuantityReport
+  getProjectNetQuantityReport: (projectId: number, asOf?: string) => ProjectNetQuantityReport
   assertProjectExtractOriginals: (projectId: number) => void
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
   addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
@@ -6381,7 +6381,7 @@ function nextSurveyId(state: DataState, preferred: number): number {
   return rows.some(row => row.id === preferred) ? nextId(rows) : preferred
 }
 
-function checkedProjectNetQuantityReport(raw: DataState, projectId: number): ProjectNetQuantityReport {
+function checkedProjectNetQuantityReport(raw: DataState, projectId: number, asOf?: string): ProjectNetQuantityReport {
   const scoped = getBranchScopedDataState(raw)
   const projects = scoped.projects.filter(project => project.id === projectId)
   if (projects.length !== 1 || raw.projects.filter(project => project.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
@@ -6393,7 +6393,12 @@ function checkedProjectNetQuantityReport(raw: DataState, projectId: number): Pro
   const itemIds = new Set(items.map(row => row.id)), extractIds = new Set(extracts.map(row => row.id)), changeIds = new Set(changes.map(row => row.id))
   if (raw.boqItems.filter(row => itemIds.has(row.id)).length !== items.length || raw.projectExtracts.filter(row => extractIds.has(row.id)).length !== extracts.length || raw.changeOrders.filter(row => changeIds.has(row.id)).length !== changes.length) throw new Error('معرف بند أو مستند مشروع مكرر — راجع البيانات')
   assertQuantityChangeLinks(items, changes)
-  return projectNetQuantityHistory(items, extracts, customerReviewJournal(raw))
+  const journal = customerReviewJournal(raw)
+  const branch = raw.branches.find(row => belongsToBranch(projects[0], row, raw.branches))
+  // The all-branches view must not borrow a same-ID entry explicitly posted
+  // to another branch. Legacy unassigned entries remain subject to review.
+  if (branch && extracts.some(extract => [extract.journalEntryId, ...(extract.refunds ?? []).map(refund => refund.journalEntryId)].some(id => { const entry = journal.get(id); return entry?.branchId != null && entry.branchId !== branch.id }))) throw new FinancialDataReviewError('تاريخ كميات المشروع', 'قيد المستخلص أو الإشعار يتبع فرعاً آخر')
+  return projectNetQuantityHistory(items, extracts, journal, asOf)
 }
 
 function validateCloseout(state: DataState, projectId: number, expectedRevision?: number) {
@@ -18448,7 +18453,7 @@ export const useRawDataStore = create<DataState>()(
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(extract => extract.projectId === projectId), customerReviewJournal(raw))
       },
 
-      getProjectNetQuantityReport: (projectId) => checkedProjectNetQuantityReport(get(), projectId),
+      getProjectNetQuantityReport: (projectId, asOf) => checkedProjectNetQuantityReport(get(), projectId, asOf),
 
       getProjectCostBreakdown: (projectId) => {
         const state = getBranchScopedDataState(get())
