@@ -10,7 +10,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Btn, inputCls } from '../components/ui.tsx'
 
-const LIMITS = 'مقارنة تشغيلية للدفتر المرئي وليست قوائم قانونية أو إيضاحات معتمدة. تحقق من تماثل مدة الفترتين والسياسات وإسناد الفروع والأرصدة الافتتاحية والتسويات. تصنيف التدفقات تقديري وقد لا يوزع القيد المركب بدقة؛ راجع المختص.'
+const LIMITS = 'مقارنة تشغيلية للدفتر المرئي وليست قوائم قانونية أو إيضاحات معتمدة. تحقق من تماثل مدة الفترتين والسياسات وإسناد الفروع والأرصدة الافتتاحية والتسويات. تصنيف التدفقات تقديري وقد لا يوزع القيد المركب بدقة؛ قد تظهر التحويلات العابرة للفترة أو غير المكتملة ضمن التدفقات. راجع المختص.'
 
 export function FinancialComparisonReview({ journal, period, cashCodes, names, cur, companyName, scopeLabel, scopeWarning, profiles, branches, activeBranchId }: { journal: readonly JournalEntry[]; period: FinPeriod; cashCodes: readonly string[]; names: Record<string, string>; cur: CurrencyConfig; companyName: string; scopeLabel: string; scopeWarning: string; profiles: readonly FinancialEntityProfile[]; branches: readonly { id: number; nameAr: string }[]; activeBranchId: number | null }) {
   const [from, setFrom] = useState('')

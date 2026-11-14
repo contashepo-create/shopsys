@@ -100,3 +100,43 @@ it('يوضح حدود التصنيف الآلي للتدفقات في الشاش
  fireEvent.click(screen.getByText('تصدير Excel'))
  expect(await blob!.text()).toContain('تصنيف التدفقات تقديري')
 })
+
+it('يصدر قيم التقارير الأخرى كأرقام عشرية دقيقة ويحمي النصوص من صيغ الجداول', async () => {
+ let blob: Blob | undefined
+ vi.stubGlobal('URL', { ...URL, createObjectURL: (value: Blob) => { blob = value; return 'blob:test' }, revokeObjectURL: () => {} })
+ vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+ useRawDataStore.setState({ journal: [entry(1, '2026-02-01', [line('5102', 123456, 0), line('1101', 0, 123456)])], treasuries: [{ code: '1101', nameAr: '=formula()', kind: 'cash', isDefault: true }] } as never)
+ render(<FinancialReportsTab period={period} cur={cur} companyName="=company" />)
+ fireEvent.click(screen.getByText('تصدير Excel'))
+ let text = await blob!.text()
+ expect(text).toContain("المنشأة,'=company"); expect(text).toContain("1101,'=formula(),0.00,0.00,0.00,1234.56,0.00,1234.56")
+ fireEvent.change(screen.getByRole('combobox'), { target: { value: 'cash_flow' } })
+ fireEvent.click(screen.getByText('تصدير Excel'))
+ text = await blob!.text()
+ expect(text).toContain('صافي التدفق التشغيلي,-1234.56')
+ expect(text).not.toContain("صافي التدفق التشغيلي,'-1234.56")
+ expect(text).toContain('العملة,ر.س')
+})
+
+it('يحجب عرض وطباعة وتصدير التقارير المعتادة عند فساد قيد ظاهر ولا يخفي رقم القيد', () => {
+ useRawDataStore.setState({ journal: [entry(31, '2026-02-01', [line('1101', 100, 0)])] })
+ render(<FinancialReportsTab period={period} cur={cur} companyName="منشأة" />)
+ expect(screen.getByRole('alert').textContent).toContain('#31')
+ expect((screen.getByText('تصدير Excel').closest('button') as HTMLButtonElement).disabled).toBe(true)
+ expect((screen.getByText('طباعة / PDF').closest('button') as HTMLButtonElement).disabled).toBe(true)
+ expect(screen.queryByRole('table')).toBeNull()
+ fireEvent.change(screen.getByRole('combobox'), { target: { value: 'cash_flow' } })
+ expect(screen.getByRole('alert').textContent).toContain('#31')
+ expect(screen.queryByRole('table')).toBeNull()
+})
+
+it('يهرب رقم القيد المستعاد غير الموثوق في طباعة الأستاذ', () => {
+ const tampered = { ...entry(1, '2026-02-01', [line('1101', 100, 0), line('3101', 0, 100)]), entryNumber: '<img src=x onerror=alert(1)>' as unknown as number }
+ useRawDataStore.setState({ journal: [tampered] })
+ render(<FinancialReportsTab period={period} cur={cur} companyName="منشأة" />)
+ fireEvent.change(screen.getByRole('combobox'), { target: { value: 'gl' } })
+ fireEvent.click(screen.getByText('طباعة / PDF'))
+ const html = print.mock.calls[0][0] as string
+ expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+ expect(html).not.toContain('<img src=x onerror=alert(1)>')
+})

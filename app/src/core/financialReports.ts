@@ -9,7 +9,7 @@
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
 import { closingMechanismIds, isValidFiscalDate } from './fiscal.ts'
-import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferEntryIds } from './branchAccounting.ts'
+import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferGroups } from './branchAccounting.ts'
 import { economicSourceResolver } from './journalSource.ts'
 
 export interface FinPeriod {
@@ -346,18 +346,37 @@ export function cashFlowReport(
   const cashSet = new Set(cashCodes)
   let opening = 0
   let openingBalanceAdjustments = 0
-  const inMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
-  const outMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
+  const inMap = new Map<string, CashFlowRow>()
+  const outMap = new Map<string, CashFlowRow>()
   let operatingNetMinor = 0, investingNetMinor = 0, financingNetMinor = 0
   const sourceOf = economicSourceResolver(journal)
-  const pairedTransfers = pairedInterBranchTransferEntryIds(journal)
+  // A transfer can be removed from gross movement only if both cash legs are
+  // inside this period and included in the selected cash accounts. Across a
+  // boundary retain each leg: otherwise opening/closing cash becomes fictional.
+  const pairedTransfers = new Set<number>()
+  for (const group of pairedInterBranchTransferGroups(journal.filter(entry => inP(entry.date, p)))) {
+    const safe = group.every(entry => {
+      if (sourceOf(entry) === 'opening') return false
+      const dueLines = entry.lines.filter(line => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
+      const cashLines = entry.lines.filter(line => cashSet.has(line.accountCode))
+      const otherLines = entry.lines.filter(line => !dueLines.includes(line) && !cashLines.includes(line))
+      // The generated transfer uses one cash account and optional 5108 fee.
+      // Compound or partly selected cash entries are too ambiguous to eliminate.
+      if (cashLines.length !== 1 || dueLines.includes(cashLines[0]) || otherLines.some(line => line.accountCode !== '5108')) return false
+      const cash = cashLines[0].debit - cashLines[0].credit
+      const due = dueLines.reduce((sum, line) => sum + line.debit - line.credit, 0)
+      const fees = otherLines.reduce((sum, line) => sum + line.debit - line.credit, 0)
+      return Number.isSafeInteger(cash) && Number.isSafeInteger(due) && Number.isSafeInteger(fees) && due !== 0 && cash + due + fees === 0 && dueLines.every(line => due > 0 ? line.credit === 0 : line.debit === 0) && ((due > 0 && cash <= -due) || (due < 0 && cash >= -due))
+    })
+    if (safe) group.forEach(entry => pairedTransfers.add(entry.id))
+  }
   for (const e of journal) {
     const rawCashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
     // In the company-wide view, matched due-to/due-from lines identify the
     // internal principal. Remove that amount from gross cash movement while
     // preserving real bank fees posted on the source entry. Branch-scoped
     // reports contain only one side and intentionally retain the transfer.
-    const internalPrincipalDelta = pairedTransfers.has(e.id)
+    const internalPrincipalDelta = inP(e.date, p) && pairedTransfers.has(e.id)
       ? e.lines.filter((line) => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
         .reduce((sum, line) => sum + line.debit - line.credit, 0)
       : 0
@@ -393,12 +412,15 @@ export function cashFlowReport(
     else if (activity === 'investing') investingNetMinor += cashDelta
     else financingNetMinor += cashDelta
     const map = cashDelta > 0 ? inMap : outMap
-    const cur = map.get(label) ?? { amountMinor: 0, activity }
+    // Distinct account codes can share a display name (and even an activity).
+    // Never merge their movements under an arbitrary first activity.
+    const key = JSON.stringify([counter?.accountCode ?? null, activity, label])
+    const cur = map.get(key) ?? { label, amountMinor: 0, activity }
     cur.amountMinor += Math.abs(cashDelta)
-    map.set(label, cur)
+    map.set(key, cur)
   }
-  const inflows = [...inMap.entries()].map(([label, v]) => ({ label, amountMinor: v.amountMinor, activity: v.activity })).sort((a, b) => b.amountMinor - a.amountMinor)
-  const outflows = [...outMap.entries()].map(([label, v]) => ({ label, amountMinor: v.amountMinor, activity: v.activity })).sort((a, b) => b.amountMinor - a.amountMinor)
+  const inflows = [...inMap.values()].sort((a, b) => b.amountMinor - a.amountMinor)
+  const outflows = [...outMap.values()].sort((a, b) => b.amountMinor - a.amountMinor)
   const totalInMinor = inflows.reduce((a, r) => a + r.amountMinor, 0)
   const totalOutMinor = outflows.reduce((a, r) => a + r.amountMinor, 0)
   const netChangeMinor = totalInMinor - totalOutMinor
