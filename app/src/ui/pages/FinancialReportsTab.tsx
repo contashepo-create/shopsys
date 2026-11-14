@@ -10,7 +10,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { formatMinor, type CurrencyConfig } from '../../core/money.ts'
 import { useActivityBaseCoa } from '../activityCoa.ts'
 import {
-  trialBalanceDetail, validFinancialPeriod, incomeStatement, balanceSheet, generalLedger, cashFlowReport, vatReport, toCsv,
+  trialBalanceDetail, validFinancialPeriod, incomeStatement, generalLedger, cashFlowReport, vatReport, toCsv,
   type FinPeriod, type TrialBalanceDetailAmounts,
 } from '../../core/financialReports.ts'
 import { Btn, inputCls } from '../components/ui.tsx'
@@ -18,6 +18,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { escHtml, renderReportShell } from '../../core/reportPrint.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { FinancialComparisonReview } from './FinancialComparisonReview.tsx'
+import { FinancialPositionReview } from './FinancialPositionReview.tsx'
 
 type FinReportId = 'trial_balance' | 'income' | 'balance_sheet' | 'gl' | 'cash_flow' | 'vat' | 'comparison'
 
@@ -84,7 +85,6 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
   const periodValid = validFinancialPeriod(p)
   const tb = useMemo(() => (reportId === 'trial_balance' && periodValid ? trialBalanceDetail(journal, p, extraNames) : null), [reportId, journal, p, extraNames, periodValid])
   const inc = useMemo(() => (reportId === 'income' ? incomeStatement(journal, p, extraNames) : null), [reportId, journal, p, extraNames])
-  const bs = useMemo(() => (reportId === 'balance_sheet' ? balanceSheet(journal, p.to, extraNames) : null), [reportId, journal, p.to, extraNames])
   const gl = useMemo(() => (reportId === 'gl' ? generalLedger(journal, glAccount, p, extraNames) : null), [reportId, journal, glAccount, p, extraNames])
   const cf = useMemo(() => (reportId === 'cash_flow' ? cashFlowReport(journal, cashCodes, p, extraNames) : null), [reportId, journal, cashCodes, p, extraNames])
   const vat = useMemo(() => (reportId === 'vat' ? vatReport(journal, p) : null), [reportId, journal, p])
@@ -108,17 +108,6 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
       ...inc.operatingExpenses.map((r) => [`مصروف تشغيلي — ${r.nameAr}`, fmt(r.amountMinor)]),
       ['إجمالي المصروفات التشغيلية', fmt(inc.totalOperatingExpenseMinor)],
       [inc.netProfitMinor >= 0 ? 'صافي الربح' : 'صافي الخسارة', fmt(Math.abs(inc.netProfitMinor))],
-    ])
-    if (bs) csv = toCsv(['البند', 'المبلغ'], [
-      ...bs.currentAssets.map((r) => [`أصول متداولة — ${r.nameAr}`, fmt(r.amountMinor)]),
-      ['إجمالي الأصول المتداولة', fmt(bs.totalCurrentAssetsMinor)],
-      ...bs.nonCurrentAssets.map((r) => [`أصول غير متداولة — ${r.nameAr}`, fmt(r.amountMinor)]),
-      ['إجمالي الأصول غير المتداولة', fmt(bs.totalNonCurrentAssetsMinor)],
-      ['إجمالي الأصول', fmt(bs.totalAssetsMinor)],
-      ...bs.liabilities.map((r) => [`التزامات — ${r.nameAr}`, fmt(r.amountMinor)]),
-      ...bs.equity.map((r) => [`حقوق ملكية — ${r.nameAr}`, fmt(r.amountMinor)]),
-      ['أرباح مرحلة (نتيجة النشاط)', fmt(bs.retainedEarningsMinor)],
-      ['إجمالي الالتزامات وحقوق الملكية', fmt(bs.totalLiabilitiesEquityMinor)],
     ])
     if (gl) csv = toCsv(['التاريخ', 'قيد', 'البيان', 'مدين', 'دائن', 'الرصيد'], [
       ['', '', 'رصيد أول الفترة', '', '', fmt(gl.openingMinor)],
@@ -161,7 +150,6 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     let body = ''
     if (tb) body = `<p>${escHtml(TB_NOTICE)}</p><table><tr><th>الكود</th><th>الحساب</th>${TB_COLUMNS.map(c => `<th>${escHtml(c.label)}</th>`).join('')}</tr>${tb.rows.map(r => `<tr><td dir="ltr">${escHtml(r.code)}</td><td>${escHtml(r.nameAr)}</td>${TB_COLUMNS.map(c => num(r[c.key])).join('')}</tr>`).join('')}<tr class="total"><td></td><td>الإجمالي</td>${TB_COLUMNS.map(c => num(tb.totals[c.key])).join('')}</tr></table><p>توازن أول الفترة: ${tb.openingBalanced ? 'متوازن' : 'غير متوازن'} — حركة الفترة: ${tb.movementBalanced ? 'متوازنة' : 'غير متوازنة'} — آخر الفترة: ${tb.closingBalanced ? 'متوازن' : 'غير متوازن'}</p>`
     if (inc) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الإيرادات</td></tr>${inc.revenues.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الإيرادات</td>${num(inc.totalRevenueMinor)}</tr><tr class="sec"><td colspan="2">التكاليف المباشرة (تكلفة الإيراد)</td></tr>${inc.costOfSales.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>مجمل الربح</td>${num(inc.grossProfitMinor)}</tr><tr class="sec"><td colspan="2">المصروفات التشغيلية</td></tr>${inc.operatingExpenses.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المصروفات التشغيلية</td>${num(inc.totalOperatingExpenseMinor)}</tr><tr class="total"><td>${inc.netProfitMinor >= 0 ? 'صافي الربح' : 'صافي الخسارة'}</td>${num(Math.abs(inc.netProfitMinor))}</tr></table>`
-    if (bs) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الأصول المتداولة</td></tr>${bs.currentAssets.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول المتداولة</td>${num(bs.totalCurrentAssetsMinor)}</tr>${bs.nonCurrentAssets.length ? `<tr class="sec"><td colspan="2">الأصول غير المتداولة</td></tr>${bs.nonCurrentAssets.map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول غير المتداولة</td>${num(bs.totalNonCurrentAssetsMinor)}</tr>` : ''}<tr class="total"><td>إجمالي الأصول</td>${num(bs.totalAssetsMinor)}</tr><tr class="sec"><td colspan="2">الالتزامات وحقوق الملكية</td></tr>${[...bs.liabilities, ...bs.equity].map((r) => `<tr><td>${escHtml(r.nameAr)}</td>${num(r.amountMinor)}</tr>`).join('')}<tr><td>أرباح مرحلة (نتيجة النشاط)</td>${num(bs.retainedEarningsMinor)}</tr><tr class="total"><td>إجمالي الالتزامات وحقوق الملكية ${bs.balanced ? '✓' : '⚠'}</td>${num(bs.totalLiabilitiesEquityMinor)}</tr></table>`
     if (gl) body = `<table><tr><th>التاريخ</th><th>قيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr><tr class="sec"><td colspan="5">رصيد أول الفترة — ${escHtml(gl.accountName)}</td>${num(gl.openingMinor)}</tr>${gl.rows.map((r) => `<tr><td dir="ltr">${r.date.slice(0, 10)}</td><td dir="ltr">#${r.entryNumber}</td><td>${escHtml(r.description)}</td>${num(r.debitMinor)}${num(r.creditMinor)}${num(r.balanceMinor)}</tr>`).join('')}<tr class="total"><td colspan="5">رصيد آخر الفترة</td>${num(gl.closingMinor)}</tr></table>`
     if (cf) body = `<p>${escHtml(CF_NOTICE)}</p><table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>رصيد النقدية أول الفترة</td>${num(cf.openingCashMinor)}</tr><tr><td>تسويات أرصدة افتتاحية داخل الفترة</td>${num(cf.openingBalanceAdjustmentsMinor)}</tr><tr class="sec"><td colspan="2">المقبوضات</td></tr>${cf.inflows.map((r) => `<tr><td>${escHtml(r.label)} <small>(${CF_ACTIVITY_LABELS[r.activity]})</small></td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المقبوضات</td>${num(cf.totalInMinor)}</tr><tr class="sec"><td colspan="2">المدفوعات</td></tr>${cf.outflows.map((r) => `<tr><td>${escHtml(r.label)} <small>(${CF_ACTIVITY_LABELS[r.activity]})</small></td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المدفوعات</td>${num(cf.totalOutMinor)}</tr><tr class="sec"><td colspan="2">صافي التدفقات حسب التصنيف التقديري</td></tr><tr><td>التشغيلي</td>${num(cf.operatingNetMinor)}</tr><tr><td>الاستثماري</td>${num(cf.investingNetMinor)}</tr><tr><td>التمويلي</td>${num(cf.financingNetMinor)}</tr><tr class="total"><td>رصيد النقدية آخر الفترة</td>${num(cf.closingCashMinor)}</tr></table>`
     if (vat) body = `<p>${escHtml(VAT_NOTICE)}</p><table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>ضريبة المخرجات (مبيعات ومرتجعاتها)</td>${num(vat.outputVatMinor)}</tr><tr><td>ضريبة المدخلات (مشتريات ومرتجعاتها)</td>${num(vat.inputVatMinor)}</tr><tr class="total"><td>${vat.netDueMinor >= 0 ? 'صافي الحركة الدفترية الموجب' : 'صافي الحركة الدفترية السالب'}</td>${num(Math.abs(vat.netDueMinor))}</tr><tr><td>تسويات مصنفة كسداد / استرداد</td>${num(vat.settledMinor)}</tr><tr class="total"><td>${vat.remainingMinor >= 0 ? 'صافي الحركة بعد التسويات موجب' : 'صافي الحركة بعد التسويات سالب'}</td>${num(Math.abs(vat.remainingMinor))}</tr></table>`
@@ -208,7 +196,7 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
             </QuickSelect>
           </div>
         )}
-        {reportId !== 'comparison' && <div className="flex gap-2 ms-auto">
+        {reportId !== 'comparison' && reportId !== 'balance_sheet' && <div className="flex gap-2 ms-auto">
           <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={printReport}><Printer size={14} /> طباعة / PDF</Btn>
           <Btn variant="ghost" className="border border-emerald-300/50 text-emerald-600" onClick={exportExcel}><FileSpreadsheet size={14} /> تصدير Excel</Btn>
         </div>}
@@ -272,31 +260,8 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
         </div>
       )}
 
-      {/* ─── المركز المالي ─── */}
-      {bs && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-sky-500/20 overflow-hidden">
-            <div className="px-4 py-2 bg-sky-500/5 font-black text-[12px] text-sky-600">الأصول (حتى {p.to})</div>
-            <div className="px-4 py-1.5 text-[10px] font-black text-slate-400 bg-slate-50 dark:bg-slate-800/40">الأصول المتداولة</div>
-            {bs.currentAssets.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
-            <div className={`flex justify-between px-4 py-1.5 ${rowB} text-[11.5px] font-bold text-slate-500`}><span>إجمالي المتداولة</span><span className="tabular-nums">{fmt(bs.totalCurrentAssetsMinor)}</span></div>
-            {bs.nonCurrentAssets.length > 0 && (
-              <>
-                <div className="px-4 py-1.5 text-[10px] font-black text-slate-400 bg-slate-50 dark:bg-slate-800/40">الأصول غير المتداولة</div>
-                {bs.nonCurrentAssets.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
-                <div className={`flex justify-between px-4 py-1.5 ${rowB} text-[11.5px] font-bold text-slate-500`}><span>إجمالي غير المتداولة</span><span className="tabular-nums">{fmt(bs.totalNonCurrentAssetsMinor)}</span></div>
-              </>
-            )}
-            <div className={`flex justify-between px-4 py-2 ${rowB} bg-sky-500/5 font-black text-[13px]`}><span>إجمالي الأصول</span><span className="tabular-nums">{fmt(bs.totalAssetsMinor)}</span></div>
-          </div>
-          <div className="rounded-xl border border-violet-500/20 overflow-hidden">
-            <div className="px-4 py-2 bg-violet-500/5 font-black text-[12px] text-violet-600">الالتزامات وحقوق الملكية</div>
-            {[...bs.liabilities, ...bs.equity].map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
-            <div className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>أرباح مرحلة (نتيجة النشاط)</span><b className="tabular-nums">{fmt(bs.retainedEarningsMinor)}</b></div>
-            <div className={`flex justify-between px-4 py-2 ${rowB} bg-violet-500/5 font-black text-[13px]`}><span>الإجمالي {bs.balanced ? <span className="text-emerald-600">✓</span> : <span className="text-rose-600">⚠</span>}</span><span className="tabular-nums">{fmt(bs.totalLiabilitiesEquityMinor)}</span></div>
-          </div>
-        </div>
-      )}
+      {/* المركز المالي المقارن: التصنيف اليدوي لا يغير الدفتر. */}
+      {reportId === 'balance_sheet' && <FinancialPositionReview key={activeBranchId ?? 'all'} journal={journal} asOf={p.to} names={extraNames} cur={cur} companyName={companyName} scopeLabel={scopeLabel} scopeWarning={scopeWarning} />}
 
       {/* ─── دفتر الأستاذ ─── */}
       {gl && (

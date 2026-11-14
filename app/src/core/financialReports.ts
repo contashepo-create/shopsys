@@ -51,7 +51,9 @@ export interface TrialBalance {
 
 export function trialBalance(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): TrialBalance {
   const t = new Map<string, { d: Minor; c: Minor }>()
-  for (const e of eliminatePairedInterBranchLines(journal)) {
+  // Pair only entries visible by the report cutoff; a future counterpart must not
+  // erase a historical clearing balance. Entries before p.from can still pair.
+  for (const e of eliminatePairedInterBranchLines(journal.filter(entry => entry.date <= p.to))) {
     if (!inP(e.date, p)) continue
     for (const l of e.lines) {
       const cur = t.get(l.accountCode) ?? { d: 0, c: 0 }
