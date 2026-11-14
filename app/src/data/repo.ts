@@ -6381,6 +6381,44 @@ function nextSurveyId(state: DataState, preferred: number): number {
   return rows.some(row => row.id === preferred) ? nextId(rows) : preferred
 }
 
+/**
+ * يُسمح فقط بإشعار مستخلص لا تمسه فواتير التوثيق أحادية المستخلص المثبتة.
+ * لا نوزع مستنداً مشتركاً أو قديماً آلياً ولا نحتسب مرتجع توثيق تقديرياً.
+ */
+function assertUnrelatedProjectDocumentation(raw: DataState, project: Project, target: ProjectExtract): void {
+  const extracts = raw.projectExtracts.filter(row => row.projectId === project.id)
+  const ids = new Set(extracts.map(row => row.id))
+  // A corrupt or legacy invoice can refer to an extract while claiming a
+  // different project or billing nature; never make that reference invisible.
+  const docs = raw.sales.filter(sale => (sale.projectId === project.id && sale.projectBilling === 'documentation') || (Array.isArray(sale.extractIds) && sale.extractIds.some(id => ids.has(id))))
+  if (!docs.length) return
+  const fail = (): never => { throw new Error('فاتورة توثيق المشروع أو ارتباطها غير مثبت أو يمس المستخلص — راجع تسوية المستندات قبل الإشعار') }
+  const scoped = getBranchScopedDataState(raw)
+  if (extracts.length !== scoped.projectExtracts.filter(row => row.projectId === project.id).length || new Set(extracts.map(row => row.id)).size !== extracts.length) return fail()
+  const journal = customerReviewJournal(raw), branches = raw.branches.filter(branch => belongsToBranch(project, branch, raw.branches))
+  if (raw.branches.length && (branches.length !== 1 || extracts.some(row => !belongsToBranch(row, branches[0], raw.branches)))) return fail()
+  const branch = branches[0], totals = new Map<number, number>()
+  for (const doc of docs) {
+    if (doc.projectId !== project.id || doc.projectBilling !== 'documentation' || !Number.isSafeInteger(doc.id) || doc.id <= 0 || raw.sales.filter(row => row.id === doc.id).length !== 1 || !scoped.sales.some(row => row.id === doc.id) || (branch && !belongsToBranch(doc, branch, raw.branches)) || !Array.isArray(doc.extractIds) || doc.extractIds.length !== 1 || doc.extractIds[0] === target.id || !Number.isSafeInteger(doc.extractIds[0]) || doc.customerId == null || doc.customerId !== project.clientId || doc.partyKind != null || doc.partyId != null || doc.payment !== 'credit' || (doc.paidMinor ?? 0) !== 0 || doc.fx != null || (doc.paymentAllocations?.length ?? 0) > 0 || (doc.internalExpenses?.length ?? 0) > 0 || (doc.customerCharges?.length ?? 0) > 0 || !Number.isSafeInteger(doc.totals?.totalMinor) || doc.totals.totalMinor <= 0 || !Array.isArray(doc.lines) || !doc.lines.length || doc.taxPercent == null || doc.taxInclusive == null || !Number.isFinite(doc.invoiceDiscountPercent) || raw.saleReturns.some(row => row.saleId === doc.id) || raw.vouchers.some(row => row.allocations?.some(part => part.docKey === `sale:${doc.id}`)) || raw.clientSettlements.some(row => row.allocations?.some(part => part.docKey === `sale:${doc.id}`)) || raw.paymentTerminalTransactions.some(row => row.documentType === 'sale' && row.documentId === String(doc.id)) || raw.stockMoves.some(row => row.docType === 'sale' && row.docId === doc.id) || raw.staffCommissions.some(row => row.source === 'sale' && row.sourceId === doc.id)) return fail()
+    const linked = extracts.filter(row => row.id === doc.extractIds![0]), extract = linked[0]
+    if (linked.length !== 1 || raw.projectExtracts.filter(row => row.id === doc.extractIds![0]).length !== 1 || extract.editedAt != null || extract.lastEditReason != null || extract.editReversalEntryId != null) return fail()
+    try {
+      assertProjectExtractOriginalIntegrity(extract, journal)
+      assertProjectExtractRefundIntegrity([extract], journal)
+      if (doc.lines.some(line => !Number.isSafeInteger(line.itemId) || line.itemId <= 0 || !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0 || !Number.isSafeInteger(line.unitCostMinor) || line.unitCostMinor < 0 || !Number.isFinite(line.discountPercent) || line.discountPercent < 0 || line.discountPercent > 100 || raw.items.filter(item => item.id === line.itemId).length !== 1 || !raw.items.some(item => item.id === line.itemId && item.isService))) return fail()
+      const computed = computeTotals(doc.lines, doc.invoiceDiscountPercent, doc.taxPercent, doc.taxInclusive, checkedSaleRoundingVersion(raw, doc))
+      const fields: (keyof CartTotals)[] = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor', 'cogsMinor']
+      if (fields.some(field => !Number.isSafeInteger(doc.totals[field]) || doc.totals[field] !== computed[field]) || doc.totals.cogsMinor !== 0) return fail()
+    } catch { return fail() }
+    const entry = journal.get(doc.journalEntryId), date = typeof doc.date === 'string' ? doc.date.slice(0, 10) : ''
+    if (!isValidExpiryDate(date) || !entry || entry.date !== date || entry.sourceType !== 'sale' || entry.sourceId !== doc.id || (entry.sourceCollection != null && entry.sourceCollection !== 'sales') || entry.memoOnly !== true || !Array.isArray(entry.lines) || entry.lines.length || entry.reversedByEntryId != null || entry.reversesEntryId != null || (branch && entry.branchId != null && entry.branchId !== branch.id) || doc.journalEntryId <= extract.journalEntryId || typeof extract.date !== 'string' || !isValidExpiryDate(extract.date.slice(0, 10)) || date < extract.date.slice(0, 10)) return fail()
+    const accumulated = (totals.get(extract.id) ?? 0) + doc.totals.totalMinor
+    const capacity = extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0) - creditedProjectRetention(extract)
+    if (!Number.isSafeInteger(accumulated) || !Number.isSafeInteger(capacity) || capacity < 0 || accumulated > capacity) return fail()
+    totals.set(extract.id, accumulated)
+  }
+}
+
 /** لا يُعرض أو يُصرف رصيد محتجز اعتماداً على سجل تحصيل غير مطابق للدفتر. */
 function checkedProjectRetention(raw: DataState, projectId: number): { held: number; released: number; remaining: number } {
   const fail = (): never => { throw new FinancialDataReviewError('محتجز المشروع', 'المستخلصات أو تحصيلات المحتجز أو قيودها غير متطابقة أو تابعة لفرع آخر') }
@@ -22350,7 +22388,7 @@ export const useRawDataStore = create<DataState>()(
         } else if (args.restoredAdvanceMinor != null && args.restoredAdvanceMinor !== 0) throw new Error('لا توجد مقدمة مستردة يمكن إعادتها')
         // لا يمكن إسناد تحصيل محتجز أو فاتورة توثيق مشتركة سابقة إلى كل شريحة بدقة.
         if (extract.totals.retentionMinor > 0 && state.retentionReleases.some(row => row.projectId === project.id)) throw new Error('سبق تحصيل محتجز المشروع بلا توزيع مثبت على المستخلصات — راجع تسوية المحتجز')
-        if ((extract.totals.retentionMinor > 0 || recovery > 0) && state.sales.some(row => row.projectId === project.id && row.projectBilling === 'documentation')) throw new Error('توجد فاتورة توثيق للمشروع — راجع تسوية المستندات قبل الإشعار')
+        assertUnrelatedProjectDocumentation(state, project, extract)
         if (!args.reason.trim()) throw new Error('سبب الإشعار مطلوب')
         if (!extract.lines?.length) throw new Error('المستخلص بلا بنود كمية مثبتة — راجع التاريخ')
         const items = scoped.boqItems.filter(row => row.projectId === project.id)

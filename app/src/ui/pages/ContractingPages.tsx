@@ -1742,7 +1742,7 @@ export function ProjectsPage() {
             key={refundingExtract.id}
             extract={refundingExtract}
             hasRetentionRelease={retentionReleases.some(row => row.projectId === refundingExtract.projectId)}
-            hasDocumentationInvoice={sales.some(row => row.projectId === refundingExtract.projectId && row.projectBilling === 'documentation')}
+            hasDocumentationInvoice={sales.some(row => row.projectId === refundingExtract.projectId && row.projectBilling === 'documentation' && (!Array.isArray(row.extractIds) || row.extractIds.length !== 1 || row.extractIds[0] === refundingExtract.id))}
             currencySymbol={cur.symbol}
             fmt={fmt}
             terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
@@ -2938,7 +2938,7 @@ export function ProjectExtractsPage() {
             key={refundingExtract.id}
             extract={refundingExtract}
             hasRetentionRelease={retentionReleases.some(row => row.projectId === refundingExtract.projectId)}
-            hasDocumentationInvoice={sales.some(row => row.projectId === refundingExtract.projectId && row.projectBilling === 'documentation')}
+            hasDocumentationInvoice={sales.some(row => row.projectId === refundingExtract.projectId && row.projectBilling === 'documentation' && (!Array.isArray(row.extractIds) || row.extractIds.length !== 1 || row.extractIds[0] === refundingExtract.id))}
             currencySymbol={cur.symbol}
             fmt={fmt}
             terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}

@@ -29,7 +29,7 @@ export function ProjectExtractCreditBox({ extract, currencySymbol, fmt, terminal
   try {
     if ((extract.advanceRecoveryMinor ?? 0) > 0 && !extract.advanceAllocations?.length) throw new Error('توزيع استرداد المقدمة غير مثبت — راجع التاريخ')
     if (extract.totals.retentionMinor > 0 && hasRetentionRelease) throw new Error('سبق تحصيل محتجز المشروع بلا توزيع مثبت على المستخلصات — راجع تسوية المحتجز')
-    if ((extract.totals.retentionMinor > 0 || (extract.advanceRecoveryMinor ?? 0) > 0) && hasDocumentationInvoice) throw new Error('توجد فاتورة توثيق للمشروع — راجع تسوية المستندات قبل الإشعار')
+    if (hasDocumentationInvoice) throw new Error('توجد فاتورة توثيق للمشروع — راجع تسوية المستندات قبل الإشعار')
     if (!lines.length) throw new Error('المستخلص بلا بنود كمية مثبتة — راجع التاريخ')
     const previous = projectCreditEvidence(extract.refunds ?? [])
     if (selected.length) {
