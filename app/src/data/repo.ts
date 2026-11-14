@@ -6103,6 +6103,19 @@ function assertQuotationAccess(state: DataState, permission = 'sales.quotation.m
   return scoped
 }
 
+/** الإقفال وإعادة الفتح يتطلبان صلاحية الفرع الفعلية عند التنفيذ. */
+function assertFiscalCloseAccess(state: DataState): void {
+  if (state.loggedOut) throw new Error('سجل الدخول قبل إقفال السنة أو إعادة فتحها')
+  if (state.currentUserId == null) return // جلسة المالك الافتراضية في البيانات القديمة
+  const user = state.appUsers.find(row => row.id === state.currentUserId && row.active)
+  if (!user) throw new Error('لا تملك صلاحية إقفال السنة أو إعادة فتحها')
+  if (user.roleId !== 'owner' && state.branches.length > 0 && !getEffectiveActiveBranch(state)) throw new Error('لا يوجد فرع نشط مخوّل لإقفال السنة')
+  const scoped = getBranchScopedDataState(state)
+  const scopedUser = scoped.appUsers.find(row => row.id === user.id && row.active)
+  const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+  if (!scopedUser || !effectivePermissionsFor(scopedUser, roles).has('acc.fiscal.close')) throw new Error('لا تملك صلاحية إقفال السنة أو إعادة فتحها')
+}
+
 /** التصحيح التاريخي حساس حتى وإن لم يغيّر قيد اليومية. */
 function assertFxRepairPermission(state: DataState): void {
   if (state.currentUserId == null) return // توافق جلسات المالك القديمة
@@ -13674,6 +13687,7 @@ export const useRawDataStore = create<DataState>()(
 
       closeFiscalYear: (fy, allYears) => {
         const state = get()
+        assertFiscalCloseAccess(state)
         const effectiveBranch = getEffectiveActiveBranch(state)
         const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
         const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
@@ -13731,6 +13745,7 @@ export const useRawDataStore = create<DataState>()(
 
       reopenFiscalYear: (fy, allYears) => {
         const state = get()
+        assertFiscalCloseAccess(state)
         const effectiveBranch = getEffectiveActiveBranch(state)
         const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
         const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)

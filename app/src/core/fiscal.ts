@@ -30,7 +30,7 @@ export function suggestFiscalYear(year: number): Omit<FiscalYear, 'id' | 'status
   return { nameAr: String(year), startDate: `${year}-01-01`, endDate: `${year}-12-31` }
 }
 
-function isValidFiscalDate(value: string): boolean {
+export function isValidFiscalDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const year = Number(value.slice(0, 4))
   const month = Number(value.slice(5, 7))

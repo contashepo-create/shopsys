@@ -1,6 +1,6 @@
 /**
  * التقارير المالية العالمية (أمر المالك: «أين قائمة الدخل والموازنة ودفتر الأستاذ…»):
- * كلها مشتقة من دفتر اليومية الموحد — مصدر حقيقة واحد فلا تتناقض أبداً:
+ * مشتقة من اليومية المرئية؛ تختلف طريقة عرض النطاق والاستبعادات بين التقارير، ولا يثبت ذلك صحة البيانات:
  * ① ميزان المراجعة  ② قائمة الدخل (ربح/خسارة)  ③ المركز المالي (الميزانية)
  * ④ دفتر الأستاذ العام (حركة حساب برصيد جارٍ)  ⑤ التدفق النقدي (نقدية/سيولة)
  * ⑥ تقرير الضريبة (ض.ق.م مخرجات/مدخلات/صافي)
@@ -8,7 +8,7 @@
  */
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
-import { closingMechanismIds } from './fiscal.ts'
+import { closingMechanismIds, isValidFiscalDate } from './fiscal.ts'
 import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferEntryIds } from './branchAccounting.ts'
 import { economicSourceResolver } from './journalSource.ts'
 
@@ -66,6 +66,56 @@ export function trialBalance(journal: readonly JournalEntry[], p: FinPeriod, ext
   const totalDebitMinor = rows.reduce((a, r) => a + r.debitMinor, 0)
   const totalCreditMinor = rows.reduce((a, r) => a + r.creditMinor, 0)
   return { rows, totalDebitMinor, totalCreditMinor, balanced: totalDebitMinor === totalCreditMinor }
+}
+
+/* ميزان دفتر الخام بالمجاميع والأرصدة: لا يحذف معاملات بين الفروع. لا يغير
+   trialBalance المستخدم داخلياً في التقارير الأخرى، ولا يمثل قائمة توحيد. */
+export interface TrialBalanceDetailRow {
+  code: string
+  nameAr: string
+  openingDebitMinor: Minor
+  openingCreditMinor: Minor
+  movementDebitMinor: Minor
+  movementCreditMinor: Minor
+  closingDebitMinor: Minor
+  closingCreditMinor: Minor
+}
+export type TrialBalanceDetailAmounts = Omit<TrialBalanceDetailRow, 'code' | 'nameAr'>
+export interface TrialBalanceDetail {
+  rows: TrialBalanceDetailRow[]
+  totals: TrialBalanceDetailAmounts
+  openingBalanced: boolean
+  movementBalanced: boolean
+  closingBalanced: boolean
+}
+
+/** Valid calendar dates are essential: an inverted interval must not look like a balanced empty report. */
+export function validFinancialPeriod(p: FinPeriod): boolean {
+  return isValidFiscalDate(p.from) && isValidFiscalDate(p.to) && p.from <= p.to
+}
+
+export function trialBalanceDetail(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): TrialBalanceDetail {
+  if (!validFinancialPeriod(p)) throw new Error('فترة التقرير غير صالحة — راجع تاريخ البداية والنهاية')
+  const accounts = new Map<string, { opening: Minor; debit: Minor; credit: Minor }>()
+  for (const entry of journal) {
+    if (entry.date > p.to) continue
+    for (const line of entry.lines) {
+      const row = accounts.get(line.accountCode) ?? { opening: 0, debit: 0, credit: 0 }
+      if (entry.date < p.from) row.opening += line.debit - line.credit
+      else { row.debit += line.debit; row.credit += line.credit }
+      accounts.set(line.accountCode, row)
+    }
+  }
+  const amounts = (opening: Minor, debit: Minor, credit: Minor): TrialBalanceDetailAmounts => {
+    const closing = opening + debit - credit
+    return { openingDebitMinor: Math.max(opening, 0), openingCreditMinor: Math.max(-opening, 0), movementDebitMinor: debit, movementCreditMinor: credit, closingDebitMinor: Math.max(closing, 0), closingCreditMinor: Math.max(-closing, 0) }
+  }
+  const rows = [...accounts.entries()].map(([code, value]) => ({ code, nameAr: nameOf(code, extraNames), ...amounts(value.opening, value.debit, value.credit) }))
+    .filter(row => Object.values(row).some(value => typeof value === 'number' && value !== 0))
+    .sort((a, b) => a.code.localeCompare(b.code))
+  const totals: TrialBalanceDetailAmounts = { openingDebitMinor: 0, openingCreditMinor: 0, movementDebitMinor: 0, movementCreditMinor: 0, closingDebitMinor: 0, closingCreditMinor: 0 }
+  for (const row of rows) for (const key of Object.keys(totals) as (keyof TrialBalanceDetailAmounts)[]) totals[key] += row[key]
+  return { rows, totals, openingBalanced: totals.openingDebitMinor === totals.openingCreditMinor, movementBalanced: totals.movementDebitMinor === totals.movementCreditMinor, closingBalanced: totals.closingDebitMinor === totals.closingCreditMinor }
 }
 
 /* ─── ② قائمة الدخل ─── */
