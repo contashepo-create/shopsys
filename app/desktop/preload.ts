@@ -169,6 +169,7 @@ contextBridge.exposeInMainWorld('shopsysDeviceIdentity', (candidate?: { deviceId
    ليبقى ثابتاً (الخادم يربط الاعتماد بالجهاز مرة واحدة ⇒ اعتماد جديد = رفض دائم). */
 contextBridge.exposeInMainWorld('shopsysSupport', {
   request: (args: { url: string; method: 'GET' | 'POST'; headers: Record<string, string>; body?: string }) => ipcRenderer.invoke('support:request', args),
+  readMainLog: () => ipcRenderer.invoke('support:readMainLog'),
   getToken: () => ipcRenderer.invoke('support:tokenGet'),
   setToken: (token: string) => ipcRenderer.invoke('support:tokenSet', token),
 })

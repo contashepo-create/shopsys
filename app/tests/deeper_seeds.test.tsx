@@ -32,7 +32,9 @@ vi.stubGlobal('fetch', vi.fn(async (path: unknown) => {
 }))
 
 const { loadDemoActivity } = await import('../src/dev/demoDatabase.ts')
-const { useDataStore } = await import('../src/data/repo.ts')
+const { useDataStore, useRawDataStore } = await import('../src/data/repo.ts')
+const { useAppStore } = await import('../src/stores/app.store.ts')
+const emptyData = useRawDataStore.getState(), emptyApp = useAppStore.getState()
 
 describe('§100 بذور أعمق — البقالة بالأرقام المحسوبة باليد', () => {
   let result: Awaited<ReturnType<typeof loadDemoActivity>>
@@ -116,9 +118,13 @@ describe('§100 بذور أعمق — البقالة بالأرقام المحس
 
 describe('§100 بذور أعمق — المقاولات (أثقل نشاط) لا تسقط فيه وثيقة عمق', () => {
   it('المرتجعات والسندات تُرحَّل فوق 37 مستند مقاولة بلا سقوط', async () => {
+    // تبديل النشاط الحقيقي يمسح التخزين ويعيد تشغيل التطبيق؛ لا نخلط فروع البقالة بالمقاولات.
+    localStorage.clear()
+    useRawDataStore.setState(emptyData, true)
+    useAppStore.setState(emptyApp, true)
     const result = await loadDemoActivity('contracting')
-    expect(result.saleReturns).toBe(1)
-    expect(result.purchaseReturns).toBe(1)
+    expect(result.saleReturns, result.skipped.join(' | ')).toBe(1)
+    expect(result.purchaseReturns, result.skipped.join(' | ')).toBe(1)
     expect(result.vouchers).toBe(2)
     expect(result.skipped.filter((m) => /مرتجع|سند/.test(m))).toEqual([])
     const state = useDataStore.getState()

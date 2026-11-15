@@ -1,3 +1,4 @@
+import { seedLegacyProjectCredit } from './helpers/legacyProjectCredit.ts'
 import { beforeEach, expect, it } from 'vitest'
 import { EMPTY_EXTENDED, useDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -15,7 +16,7 @@ it('لا يعتمد رصيد عميل أو توزع ذممه أو يرحّل ر�
   const customer = s.customers.at(-1) ?? useDataStore.getState().customers.at(-1)!
   const project = s.addProject({ nameAr: 'مشروع', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = s.addProjectExtract({ projectId: project.id, description: 'مستخلص', grossMinor: 10000, vatPercent: 0, payment: 'credit' })
-  const updated = s.refundProjectExtract({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
+  const updated = seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4000, mode: 'customer_credit', reason: 'إشعار' })
   const entryId = updated.refunds!.at(-1)!.journalEntryId
   expect(s.getCustomerBalance(customer.id)).toBe(6000)
   useDataStore.setState({ journal: useDataStore.getState().journal.filter(entry => entry.id !== entryId) })
@@ -25,7 +26,7 @@ it('لا يعتمد رصيد عميل أو توزع ذممه أو يرحّل ر�
   expect(() => s.receiveClientPayment({ customerId: customer.id, amountMinor: 1000, treasury: '1101' })).toThrow(/مراجعة/)
   expect(() => s.postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 1000, description: 'قبض' })).toThrow(/مراجعة/)
   expect(() => s.getProjectProfit(project.id)).toThrow(/مراجعة/)
-  expect(() => s.refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'آخر' })).toThrow(/مراجعة/)
+  expect(() => s.refundProjectExtract({ extractId: extract.id, quantities: [], amountMinor: 1000, mode: 'customer_credit', reason: 'آخر' })).toThrow(/مراجعة/)
   expect(useDataStore.getState().journal).toBe(before.journal)
   expect(useDataStore.getState().projectExtracts).toBe(before.projectExtracts)
 })
@@ -36,7 +37,7 @@ it('ربح المشروع يحسب صافي إشعار مستخلص موثق و�
   const customer = useDataStore.getState().customers.at(-1)!
   const project = s.addProject({ nameAr: 'مشروع', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const extract = s.addProjectExtract({ projectId: project.id, description: 'مستخلص', grossMinor: 10000, vatPercent: 15, payment: 'credit' })
-  s.refundProjectExtract({ extractId: extract.id, amountMinor: 4600, mode: 'customer_credit', reason: 'إشعار' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 4600, mode: 'customer_credit', reason: 'إشعار' })
   expect(s.getProjectProfit(project.id).extractedMinor).toBe(6000)
   expect(s.getProjectProfit(project.id).profitMinor).toBe(6000)
 })
@@ -49,7 +50,7 @@ it('يرفض القيد غير المتزن أو الخاطئ المصدر، و�
   const other = useDataStore.getState().customers.at(-1)!
   const project = s.addProject({ nameAr: 'مشروع متأثر', clientId: customer.id, clientName: customer.nameAr, contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const ex = s.addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 10000, vatPercent: 0, payment: 'credit' })
-  const updated = s.refundProjectExtract({ extractId: ex.id, amountMinor: 4000, mode: 'customer_credit', reason: 'رد' })
+  const updated = seedLegacyProjectCredit({ extractId: ex.id, amountMinor: 4000, mode: 'customer_credit', reason: 'رد' })
   const id = updated.refunds!.at(-1)!.journalEntryId
   const journal = useDataStore.getState().journal
   for (const bad of [

@@ -148,7 +148,7 @@ console.log('     خاص بالفاتورة (بلا نقص في الأمر): ' +
 ok(`${Object.keys(INVOICE_ONLY).length} خاصية مالية/بيعية لا تُنقل إلى الأمر — مسجَّلة بلا لبس`)
 
 /* ④ نداءات الفاتورة المشتركة: نفس المكوّنات ونفس جسر الأصناف/الأطراف */
-for (const rx of [/InvoiceDraftsModal/, /PrintTemplateModal/, /PrintSettingsPopup/, /usePrintSwitches/, /useUnsavedChangesGuard/, /guardNavigation/, /buildSimpleDocModel/, /printModelWithTemplate/, /openPrintPreview/, /shareDocPdfViaWhatsapp/, /PartyNotesLog/])
+for (const rx of [/InvoiceDraftsModal/, /PrintTemplateModal/, /PrintSettingsPopup/, /usePrintSwitches/, /useUnsavedChangesGuard/, /guardNavigation/, /buildSimpleDocModel/, /printModelWithTemplate/, /useLivePrintPreview/, /shareDocPdfViaWhatsapp/, /PartyNotesLog/])
   assert.ok(rx.test(po), `أمر الشراء فقد مكوّناً مشتركاً: ${rx}`)
 ok('المكوّنات المشتركة: مسودات · قوالب طباعة · معاينة · واتساب · ملاحظات المورد · حراسة التغييرات')
 

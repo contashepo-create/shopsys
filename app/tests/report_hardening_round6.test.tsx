@@ -9,7 +9,6 @@
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import React from 'react'
 import { FormalReport } from '../src/ui/components/FormalReport.tsx'
 import {
   DEFAULT_REPORT_PRINT, escAttr, escHtml, htmlTableHtml, renderReportShell,

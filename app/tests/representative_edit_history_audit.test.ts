@@ -35,7 +35,7 @@ it('يحجب السلسلة عند تلف قيد العكس ولا يختلق ص
 })
 it('ينسب المرتجع بعد التعديل لصاحب البيع المثبت في كامل سلسلة القيود', () => {
  const { s, edited, employee } = fixture()
- const ret = s.postSaleReturn({ saleId: edited.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }], refund: 'debt', reason: 'رد' })
+ const ret = s.postSaleReturn({ saleId: edited.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }], refund: 'credit', reason: 'رد' })
  const state = useRawDataStore.getState()
  const result = representativeSalesReport(state.sales, state.saleReturns, state.journal, state.employees, { from: '2000-01-01', to: '2100-01-01' })
  expect(result.rows.find(row => row.document === ret.returnNumber)).toMatchObject({ kind: 'return', representativeId: employee.id, amountMinor: 3000 })

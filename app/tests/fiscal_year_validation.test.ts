@@ -65,11 +65,21 @@ describe('التحقق من تعريف السنة المالية', () => {
 
   it('يصلح حالة السنة بعد hydration اعتماداً على قيود الإقفال والعكس فقط دون إنشاء قيود', () => {
     const year = { ...closed2025, status: 'open' as const, branchId: 7 }
-    const activeClose = { sourceType: 'year_closing', sourceId: 1, branchId: 7, reversedByEntryId: null }
+    const activeClose = { id: 12, entryNumber: 12, date: '2025-12-31', description: 'إقفال', sourceType: 'year_closing' as const, sourceId: 1, branchId: 7, createdAt: '2025-12-31', createdBy: 'م', reversedByEntryId: null, reversesEntryId: null, lines: [{ accountCode: '4101', debit: 100, credit: 0 }, { accountCode: '3102', debit: 0, credit: 100 }] }
     expect(fiscalCloseStateRepairs([year], [activeClose])).toEqual({ closeIds: [1], reopenIds: [] })
-    expect(fiscalCloseStateRepairs([closed2025], [
-      { ...activeClose, branchId: undefined, reversedByEntryId: 99 },
-    ])).toEqual({ closeIds: [], reopenIds: [1] })
+    const old = { ...activeClose, branchId: undefined, reversedByEntryId: 99 }
+    const reverse = { ...activeClose, id: 99, entryNumber: 99, branchId: undefined, sourceType: 'reversal' as const, sourceId: old.id, reversesEntryId: old.id, lines: old.lines.map(line => ({ ...line, debit: line.credit, credit: line.debit })) }
+    expect(fiscalCloseStateRepairs([closed2025], [old, reverse])).toEqual({ closeIds: [], reopenIds: [1] })
+    expect(fiscalCloseStateRepairs([closed2025], [old])).toEqual({ closeIds: [], reopenIds: [] })
+    expect(fiscalCloseStateRepairs([closed2025], [old, { ...reverse, lines: activeClose.lines }])).toEqual({ closeIds: [], reopenIds: [] })
+    expect(fiscalCloseStateRepairs([year], [{ ...activeClose, date: '2025-11-30' }])).toEqual({ closeIds: [], reopenIds: [] })
+    expect(fiscalCloseStateRepairs([year], [activeClose, { ...activeClose, id: 13 }])).toEqual({ closeIds: [], reopenIds: [] })
     expect(fiscalCloseStateRepairs([closed2025], [])).toEqual({ closeIds: [], reopenIds: [] })
+    const earlierOpen = { id: 2, ...suggestFiscalYear(2024), status: 'open' as const, branchId: 7 }
+    expect(fiscalCloseStateRepairs([earlierOpen, year], [activeClose])).toEqual({ closeIds: [], reopenIds: [] })
+    const overlap = { ...earlierOpen, endDate: '2025-01-01' }
+    expect(fiscalCloseStateRepairs([overlap, year], [activeClose])).toEqual({ closeIds: [], reopenIds: [] })
+    const newerClosed = { id: 2, ...suggestFiscalYear(2026), status: 'closed' as const }
+    expect(fiscalCloseStateRepairs([closed2025, newerClosed], [old, reverse])).toEqual({ closeIds: [], reopenIds: [] })
   })
 })

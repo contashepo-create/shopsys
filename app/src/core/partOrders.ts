@@ -29,6 +29,8 @@ export interface PendingPartOrder {
   status: PendingPartOrderStatus
   /** أمر شراء اختياري يُغذّي هذا الطلب — عند اكتمال استلامه يتحول الطلب تلقائياً إلى «وصلت» */
   linkedPurchaseOrderId: number | null
+  /** إثبات أن وصول الطلب أُعلن آلياً من إغلاق الأمر، لا يغيّر الوصول اليدوي القديم. */
+  autoArrivedFromPurchaseOrderId?: number | null
   arrivedAt: string | null
   deliveredAt: string | null
   notes: string

@@ -31,13 +31,13 @@ beforeEach(() => {
   useAppStore.setState((s) => ({
     setup: { ...s.setup, completed: true, activityId: 'supermarket', countryCode: 'EG', taxRegistrationStatus: 'exempt', vatPercent: 0 },
   }))
-  S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 1_000_000_00, label: 'خزينة الصرف الجزئي' })
+  S().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 1_000_000_00, label: 'خزينة الصرف الجزئي', effectiveDate: '2026-01-01' })
 })
 
 describe('سند صرف جزئي على استحقاق — المتبقي فقط يظهر', () => {
   it('استحقاق 4000 − سلفة 1000 = 3000؛ سند 1000 ⇒ المتبقي 2000؛ سند الباقي 2000 ⇒ مصروفة', () => {
     const id = newEmployee('صرف-جزئي', 400000)
-    S().grantEmployeeAdvance({ employeeId: id, amountMinor: 100000, treasury: '1101', notes: 'سلفة' } as never)
+    S().grantEmployeeAdvance({ employeeId: id, amountMinor: 100000, treasury: '1101', notes: 'سلفة', date: '2026-09-01' } as never)
     const [slip] = S().accruePayrollSlips({ month: '2026-09', date: '2026-09-30', rows: [{ employeeId: id, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: 100000 }] } as never)
     expect(slip.netMinor).toBe(300000)
 
@@ -110,10 +110,10 @@ describe('السلفة الاستقطاعية التلقائية في القسي
     const id = newEmployee('سلفة-موزعة', 400000)
     S().grantEmployeeAdvance({ employeeId: id, amountMinor: 300000, treasury: '1101', notes: 'كبيرة' } as never)
     const first = defaultAdvanceRecovery({ remainingAdvanceMinor: S().getEmployeeAdvanceBalance(id).remainingMinor, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0 })
-    S().accruePayrollSlips({ month: '2026-08', date: '2026-08-31', rows: [{ employeeId: id, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: first }] } as never)
+    S().accruePayrollSlips({ month: '2026-08', rows: [{ employeeId: id, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: first }] } as never)
     const second = defaultAdvanceRecovery({ remainingAdvanceMinor: S().getEmployeeAdvanceBalance(id).remainingMinor, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0 })
     expect([first, second]).toEqual([200000, 100000])
-    S().accruePayrollSlips({ month: '2026-09', date: '2026-09-30', rows: [{ employeeId: id, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: second }] } as never)
+    S().accruePayrollSlips({ month: '2026-09', rows: [{ employeeId: id, grossMinor: 400000, allowancesMinor: 0, deductionsMinor: 0, advanceMinor: second }] } as never)
     expect(S().getEmployeeAdvanceBalance(id).remainingMinor).toBe(0)
     expect(ledgerBalance('1107')).toBe(0)
     expect(statementBalance(id)).toBe(200000 + 300000) // أغسطس 2000 + سبتمبر 3000 مستحقان

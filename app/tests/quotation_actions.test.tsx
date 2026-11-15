@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
 import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 import { ACTIVITY_TEMPLATES } from '../src/core/activities.ts'
@@ -51,13 +52,20 @@ describe('وصول ومعاينة العروض لكل الأنشطة', () => {
     expect(usePrintPreview.getState().open).toBe(true)
     expect(useRawDataStore.getState().quotations[0]).toEqual(quote)
   })
-  it('العرض المتحول لمشروع يمكن معاينته ولا يمكن حذفه أو تعديله', () => {
+  it('حذف عرض مرتبط بمشروع لا يمس المشروع أو الدفتر ويحفظ المرجع التاريخي', async () => {
     useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', projectId: 12 }] })
+    const before = useRawDataStore.getState()
     mount()
     expect(screen.queryByTitle('فتح العرض وتعديله')).toBeNull()
-    expect((screen.getByTitle('لا يمكن حذف عرض تحوّل إلى مشروع') as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(screen.getByTitle('معاينة عرض السعر'))
-    expect(usePrintPreview.getState().open).toBe(true)
+    fireEvent.click(screen.getByTitle('حذف عرض السعر'))
+    expect(screen.getByText(/لن يُحذف المشروع المرتبط/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /تأكيد الحذف/ }))
+    await waitFor(() => expect(useDataStore.getState().quotations).toEqual([]))
+    const after = useRawDataStore.getState()
+    expect(after.quotations).toEqual([])
+    expect(after.quotationDeletionRecords[0]).toMatchObject({ id: quote.id, projectId: 12, quoteNumber: quote.quoteNumber })
+    expect(after.projects).toBe(before.projects)
+    expect(after.journal).toBe(before.journal)
   })
   it('البحث بالعميل والرقم وتصفية الحالة', () => {
     useRawDataStore.setState({ quotations: [quote, { ...quote, id: 8, quoteNumber: 'TN-0008', kind: 'tender', status: 'submitted', clientName: 'عميل آخر' }] })
@@ -82,7 +90,7 @@ describe('وصول ومعاينة العروض لكل الأنشطة', () => {
 })
 
 describe('الحذف الآمن', () => {
-  it('التأكيد والتراجع قبل حذف العرض من القائمة ومصادر التعبئة', () => {
+  it('التأكيد والتراجع قبل حذف العرض من القائمة ومصادر التعبئة', async () => {
     mount()
     fireEvent.click(screen.getByTitle('حذف عرض السعر'))
     expect(useDataStore.getState().quotations).toHaveLength(1)
@@ -90,7 +98,7 @@ describe('الحذف الآمن', () => {
     expect(useDataStore.getState().quotations).toHaveLength(1)
     fireEvent.click(screen.getByTitle('حذف عرض السعر'))
     fireEvent.click(screen.getByRole('button', { name: /تأكيد الحذف/ }))
-    expect(useDataStore.getState().quotations).toHaveLength(0)
+    await waitFor(() => expect(useDataStore.getState().quotations).toHaveLength(0))
     expect(document.querySelector('[data-quotation-preview]')).toBeNull()
     expect(screen.getByText('لا عروض أسعار بعد')).toBeTruthy()
   })
@@ -103,7 +111,8 @@ describe('الحذف الآمن', () => {
     expect(after.items).toBe(before.items)
     expect(after.customers).toBe(before.customers)
     expect(after.projects).toBe(before.projects)
-    expect(after.quotations[0].deletedAt).toBeTruthy()
+    expect(after.quotations).toEqual([])
+    expect(after.quotationDeletionRecords[0]).toMatchObject({ id: quote.id, quoteNumber: quote.quoteNumber })
     expect(after.auditLog.at(-1)?.title).toContain('QT-0007')
     expect(useDataStore.getState().quotations).toEqual([])
     expect(useDataStore.getState()).toBe(useDataStore.getState())
@@ -113,7 +122,7 @@ describe('الحذف الآمن', () => {
     expect(() => useDataStore.getState().updateQuotation(7, { titleAr: 'محاولة' })).toThrow('محذوف')
     expect(() => useDataStore.getState().setQuotationStatus(7, 'submitted')).toThrow('محذوف')
     expect(() => useDataStore.getState().convertQuotationToProject(7, 5)).toThrow('محذوف')
-    // Reloaded snapshots preserve the tombstone, preventing resurrection and number reuse.
+    // Reloaded snapshots retain a reserved-number audit record.
     useRawDataStore.setState({ quotations: JSON.parse(JSON.stringify(useRawDataStore.getState().quotations)) })
     expect(useDataStore.getState().quotations.map(q => q.id)).toEqual([8])
   })
@@ -185,6 +194,19 @@ describe('مراجعة حراس العروض', () => {
     expect(() => before.updateQuotation(7, { clientId: 9901 })).toThrow()
     expect(useRawDataStore.getState()).toBe(before)
   })
+  it('يرفض تحويل عرض يصعب تمثيل صافي بنده بسعر وحدة دون أثر جزئي', () => {
+    useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', lines: [{ ...quote.lines[0], qty: 3, unitPriceMinor: 10, vatPercent: 5, taxIncluded: true }] }] })
+    const before = useRawDataStore.getState()
+    expect(() => before.convertQuotationToProject(7, 5)).toThrow(/تقريب/)
+    expect(useRawDataStore.getState()).toBe(before)
+  })
+  it('تحويل عرض قابل للتمثيل يطابق صافي العقد ومجموع جدول كمياته', () => {
+    useRawDataStore.setState({ quotations: [{ ...quote, status: 'won', lines: [{ ...quote.lines[0], qty: 2, unitPriceMinor: 115, vatPercent: 15, taxIncluded: true }] }] })
+    const project = useRawDataStore.getState().convertQuotationToProject(7, 5)
+    const boq = useRawDataStore.getState().boqItems.filter(row => row.projectId === project.id)
+    expect(project.contractValueMinor).toBe(200)
+    expect(boq.reduce((sum, row) => sum + Math.round(row.qty * row.unitPriceMinor), 0)).toBe(project.contractValueMinor)
+  })
   it('تحويل مشروع يتطلب صلاحية التشغيل في المستودع وليس إظهار الزر فقط', () => {
     useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], currentUserId: 20, appUsers: [{ id: 20, nameAr: 'بائع', roleId: 'cashier', active: true, pinHash: '' }] })
     const before = useRawDataStore.getState()
@@ -209,4 +231,27 @@ it('يمنع المستخدم الموقوف من تعديل عرض ولو بق�
   expect(() => before.updateQuotation(7, { titleAr: 'تعديل' })).toThrow('صلاحية')
   expect(() => before.deleteQuotation(7)).toThrow('صلاحية')
   expect(useRawDataStore.getState()).toBe(before)
+})
+
+it('تحويل العرض يضيف المشروع وبنوده ويربط العرض في تحديث واحد دون ظهور مشروع ناقص', () => {
+  useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], projects: [], boqItems: [], approvalFlows: [], approvalRequests: [] })
+  const seen: { projects: number; boq: number; linked: number | null }[] = []
+  const off = useRawDataStore.subscribe(state => {
+    if (state.projects.length) seen.push({ projects: state.projects.length, boq: state.boqItems.length, linked: state.quotations[0].projectId })
+  })
+  try {
+    const project = useRawDataStore.getState().convertQuotationToProject(7, 5)
+    expect(seen).toEqual([{ projects: 1, boq: 1, linked: project.id }])
+    expect(useRawDataStore.getState().journal).toHaveLength(raw.journal.length)
+  } finally { off() }
+})
+
+it('لا يستهلك اعتماد التحويل إذا تعذر إعداد المشروع لعميل محذوف', () => {
+  useRawDataStore.setState({ quotations: [{ ...quote, status: 'won' }], customers: [], projects: [], boqItems: [], approvalFlows: [{ id: 1, action: 'quotation_to_project', active: true, steps: [] }] as never, approvalRequests: [{ id: 10, action: 'quotation_to_project', refId: 7, status: 'approved', consumedAt: null }] as never })
+  const before = useRawDataStore.getState()
+  expect(() => before.convertQuotationToProject(7, 5)).toThrow(/العميل/)
+  expect(useRawDataStore.getState().approvalRequests).toBe(before.approvalRequests)
+  expect(useRawDataStore.getState().projects).toBe(before.projects)
+  expect(useRawDataStore.getState().boqItems).toBe(before.boqItems)
+  expect(useRawDataStore.getState().quotations).toBe(before.quotations)
 })

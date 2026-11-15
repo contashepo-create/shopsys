@@ -78,7 +78,7 @@ const ruleOf = (selector) => {
      الفحص (والحد الأدنى للتحصيل) فقط عند حد محدد بقيمة موجبة. */
   assert.ok(/!selectedCustomer\.creditLimitMinor\?0:/.test(sales), 'حد ائتمان صفر ما زال يفرض التحصيل الكامل')
   const logic = sales.slice(sales.indexOf('const minCollectMinor'), sales.indexOf('const minCollectMinor') + 420).replace(/\s+/g, '')
-  assert.ok(/Math\.max\(0,selectedCustomerBalance\+grandMinor-/.test(logic), 'الحد الأدنى للتحصيل لا يُحسب من الرصيد + الفاتورة − حد الائتمان')
+  assert.ok(/Math\.max\(0,balanceWithoutEditedInvoice\+grandMinor-/.test(logic) && sales.includes('selectedCustomerBalance-originalCreditForCustomer'), 'الحد الأدنى للتحصيل لا يستبعد آجل الفاتورة الأصلية قبل حساب الائتمان')
   assert.ok(/shortMinor/.test(sales), 'لا حساب لعجز التحصيل')
   R.ok('بوابة التحصيل: عميل نقدي/موقوف ⇒ التحصيل كامل · غيره ⇒ ما يتجاوز حد الائتمان، بنصوص النموذج')
 }
@@ -161,7 +161,7 @@ const ruleOf = (selector) => {
   assert.ok(head.includes('type="date"') && head.includes('setInvoiceDate'), 'تاريخ الفاتورة ليس حقلاً قابلاً للتعديل')
   assert.ok(sales.includes('documentDate:invoiceDate'), 'تاريخ الفاتورة المحرَّر لا يُمرَّر إلى الترحيل')
   assert.ok(repo.includes('documentDate?: string') && repo.includes('تاريخ الفاتورة لا يكون في المستقبل'), 'محرك الترحيل لا يقبل تاريخ الفاتورة ولا يحرس المستقبل')
-  assert.ok(/const postingDate = chosenDate \|\| systemDate/.test(repo), 'تاريخ القيد لا يتبع تاريخ الفاتورة المحرَّر')
+  assert.ok(repo.includes('const postingDate = args.documentDate || todayLocalIso()') && repo.includes('assertInvoicePostingDate(state, postingDate)'), 'تاريخ القيد لا يتبع تاريخ الفاتورة المحرَّر أو لا يُحرس')
   R.ok('لا شارات زائدة في الترويسة، وتاريخ الفاتورة قابل للتعديل ويصبح تاريخ القيد (بلا تأريخ مستقبلي)')
 }
 

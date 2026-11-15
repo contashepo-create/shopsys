@@ -36,6 +36,8 @@ export interface PayrollSlip {
   netMinor: Minor
   status: PayrollSlipStatus
   accruedAt: string
+  /** وقت تسجيل الاستحقاق الفعلي، منفصل عن يوم المستند. */
+  createdAt?: string
   accrualEntryId: number
   paidAt?: string | null
   paidEntryId?: number | null
@@ -43,6 +45,8 @@ export interface PayrollSlip {
   notes?: string
   /** §93: الجزاءات المسجلة التي خُصمت بهذه القسيمة (الأقدم أولاً) — تُعكس عند الإلغاء */
   recoveredDeductions?: { deductionId: number; minor: number }[]
+  /** تخصيص استقطاع السلف عند الاستحقاق، يتيح عكس نفس السجلات دون التخمين. */
+  recoveredAdvances?: { advanceId: number; minor: number }[]
   /** دفعات الصرف الجزئية (بلاغ المالك): كل سند صرف يسدد جزءاً من الصافي. الحالة تبقى «مستحقة» ما دام المتبقي > 0 */
   payments?: SlipPayment[]
 }
@@ -51,6 +55,8 @@ export interface SlipPayment {
   entryId: number
   amountMinor: Minor
   date: string
+  /** وقت التسجيل الفعلي عند الصرف المباشر المؤرخ. */
+  createdAt?: string
   /** مصدر الصرف: الخزينة أو رقم سند الصرف */
   from: string
 }

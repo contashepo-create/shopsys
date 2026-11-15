@@ -1,3 +1,4 @@
+import { seedLegacyProjectCredit } from './helpers/legacyProjectCredit.ts'
 import { beforeEach, expect, it } from 'vitest'
 import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -118,7 +119,7 @@ it('يحفظ لقطة المراجعة ويستعيدها بعد إغلاق وف
     const { customer, project, extract } = legacy()
     useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
     S().postVoucher({ kind: 'receipt', partyKind: 'customer', partyId: customer.id, projectId: project.id, treasury: '1101', counterAccountCode: '1104', amountMinor: 3000, description: 'قبض محفوظ' })
-    S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'إشعار' })
+    seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'إشعار' })
     useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
     const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
     expect(preview.balanceAfterMinor).toBe(4000)
@@ -185,7 +186,7 @@ it('معاينة العميل ذي الحركات تُظهر أثر إعادة �
 it('يُعاين إشعاراً دائناً مطابقاً ويفصله عن التحصيل دون تعديل قيد', () => {
   const { customer, project, extract } = legacy()
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
-  S().refundProjectExtract({ extractId: extract.id, amountMinor: 2000, mode: 'customer_credit', reason: 'أعمال مردودة' })
+  seedLegacyProjectCredit({ extractId: extract.id, amountMinor: 2000, mode: 'customer_credit', reason: 'أعمال مردودة' })
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
   const journal = S().journal
   const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
@@ -229,7 +230,7 @@ it('يفصل المستخلص النقدي عن الذمة ويضيف إشعار
   const { customer, project } = legacy()
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: customer.id })) })
   const cash = S().addProjectExtract({ projectId: project.id, grossMinor: 2000, vatPercent: 0, payment: 'cash', description: 'نقدي' })
-  S().refundProjectExtract({ extractId: cash.id, amountMinor: 500, mode: 'customer_credit', reason: 'رد نقدي على الحساب' })
+  seedLegacyProjectCredit({ extractId: cash.id, amountMinor: 500, mode: 'customer_credit', reason: 'رد نقدي على الحساب' })
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
   const p = S().previewLegacyProjectCustomer(project.id, customer.id)
   expect(p).toMatchObject({ dueMinor: 7500, balanceAfterMinor: 7500 })
@@ -334,7 +335,7 @@ it('يعاين مستخلصاً ودفعة مقدمة وماكينة ورداً 
   S().receiveClientAdvance({ projectId: project.id, amountMinor: 1000, treasury: '1101', terminalPayment: { terminalId: 'term-1', providerReference: 'ADV-1' } })
   const cash = S().addProjectExtract({ projectId: project.id, grossMinor: 2000, vatPercent: 0, payment: 'cash', description: 'نقدي بالماكينة', treasury: '1101', terminalPayment: { terminalId: 'term-1', providerReference: 'EX-1' } })
   const charge = S().paymentTerminalTransactions.find(tx => tx.documentId === String(cash.id))!
-  S().refundProjectExtract({ extractId: cash.id, amountMinor: 500, mode: 'cash', treasury: '1101', reason: 'رد ماكينة', terminalRefund: { originalTransactionId: charge.id, providerReference: 'R-1' } })
+  seedLegacyProjectCredit({ extractId: cash.id, amountMinor: 500, mode: 'cash', treasury: '1101', reason: 'رد ماكينة', terminalRefund: { originalTransactionId: charge.id, providerReference: 'R-1' } })
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
   const terminalTransactions = S().paymentTerminalTransactions
   const journal = S().journal
@@ -351,7 +352,7 @@ it('يرفض مبلغ ماكينة أو ردّها إذا خالف القيد أ
   S().addPaymentTerminal({ id: 'term-1', code: 'TERM-01', nameAr: 'ماكينة', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'pos-1', status: 'active' })
   const cash = S().addProjectExtract({ projectId: project.id, grossMinor: 2000, vatPercent: 0, payment: 'cash', description: 'نقدي', treasury: '1101', terminalPayment: { terminalId: 'term-1', providerReference: 'EX-2' } })
   const charge = S().paymentTerminalTransactions.find(tx => tx.documentId === String(cash.id))!
-  S().refundProjectExtract({ extractId: cash.id, amountMinor: 500, mode: 'cash', treasury: '1101', reason: 'رد', terminalRefund: { originalTransactionId: charge.id, providerReference: 'R-2' } })
+  seedLegacyProjectCredit({ extractId: cash.id, amountMinor: 500, mode: 'cash', treasury: '1101', reason: 'رد', terminalRefund: { originalTransactionId: charge.id, providerReference: 'R-2' } })
   useRawDataStore.setState({ projects: S().projects.map(p => ({ ...p, clientId: null })) })
   const good = S().paymentTerminalTransactions
   const preview = S().previewLegacyProjectCustomer(project.id, customer.id)
@@ -771,7 +772,7 @@ it('يمنع إصدار أو تعديل مستخلص فرع على عميل تا
   const before = useRawDataStore.getState()
   expect(() => S().addProjectExtract({ projectId: project.id, description: 'آجل', grossMinor: 1000, vatPercent: 0, payment: 'credit' })).toThrow(/فرع|الفرع/)
   expect(() => S().editProjectExtract({ extractId: extract.id, grossMinor: 7000, vatPercent: 0, payment: 'credit', description: 'تعديل', reason: 'تصحيح' })).toThrow(/فرع|الفرع/)
-  expect(() => S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'customer_credit', reason: 'تصحيح' })).toThrow(/فرع|الفرع/)
+  expect(() => S().refundProjectExtract({ extractId: extract.id, quantities: [], amountMinor: 1000, mode: 'customer_credit', reason: 'تصحيح' })).toThrow(/فرع|الفرع/)
   expect(useRawDataStore.getState().journal).toBe(before.journal)
   useRawDataStore.setState({ activeBranchId: 2 })
   expect(() => S().getCustomerBalance(customer.id)).toThrow(/مراجعة/)
@@ -828,7 +829,7 @@ it('يحجب الحركة والحساب عند وجود مستخلص لفرع �
   expect(() => S().addProjectExtract({ projectId: project.id, description: 'نقدي', grossMinor: 1000, vatPercent: 0, payment: 'cash' })).toThrow(/الفروع/)
   expect(() => S().getCustomerBalance(customer.id)).toThrow(/الفروع/)
   useRawDataStore.setState({ activeBranchId: null })
-  expect(() => S().refundProjectExtract({ extractId: extract.id, amountMinor: 1000, mode: 'cash', reason: 'تصحيح' })).toThrow(/الفروع/)
+  expect(() => S().refundProjectExtract({ extractId: extract.id, quantities: [], amountMinor: 1000, mode: 'cash', reason: 'تصحيح' })).toThrow(/الفروع/)
   expect(useRawDataStore.getState().journal).toBe(before)
 })
 

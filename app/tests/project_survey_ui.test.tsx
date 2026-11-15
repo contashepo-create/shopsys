@@ -1,0 +1,218 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+vi.mock('../src/data/invoiceCommitLock.ts', () => ({ withInvoiceCommitLock: async (_refresh: unknown, commit: () => unknown) => commit() }))
+import { ProjectSurveysPage } from '../src/ui/pages/ProjectSurveysPage.tsx'
+import { ProjectExtractsPage } from '../src/ui/pages/ContractingPages.tsx'
+import { usePrintPreview } from '../src/ui/components/printPreviewStore.ts'
+import { EMPTY_EXTENDED, useRawDataStore } from '../src/data/repo.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
+import { todayLocalIso } from '../src/core/time.ts'
+const original = useRawDataStore.getState(), app = useAppStore.getState(), S = () => useRawDataStore.getState()
+beforeEach(() => {
+ const setup = { ...app.setup, completed: true, shopName: 'منشأة', countryCode: 'EG', activityId: 'contracting' as const, modules: ['contracting'] as never[], vatPercent: 0 }
+ useAppStore.setState({ setup, companySetup: setup })
+ useRawDataStore.setState({ ...original, branches: [], activeBranchId: null, currentUserId: null, customers: [], projects: [], boqItems: [], projectSurveys: [], projectExtracts: [], clientAdvances: [], journal: [], vouchers: [], clientSettlements: [], approvalRequests: [], changeOrders: [], paymentTerminals: [] } as never)
+ S().addCustomer({ ...EMPTY_EXTENDED, nameAr: 'عميل', phone: '', creditLimitMinor: 0, notes: '' })
+ const p = S().addProject({ nameAr: 'مشروع', clientName: 'عميل', clientId: S().customers[0].id, contractValueMinor: 100000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+ S().addBoqItem({ projectId: p.id, code: '1', descriptionAr: 'دهانات', unit: 'م2', qty: 1000, unitPriceMinor: 100 })
+})
+afterEach(() => { cleanup(); useRawDataStore.setState(original); useAppStore.setState(app); usePrintPreview.getState().closePreview() })
+const renderPages = () => render(<MemoryRouter initialEntries={['/contracting/surveys']}><Routes><Route path="/contracting/surveys" element={<ProjectSurveysPage />} /><Route path="/contracting/extracts" element={<ProjectExtractsPage />} /></Routes></MemoryRouter>)
+const select = () => fireEvent.change(screen.getByLabelText('مشروع الحصر'), { target: { value: String(S().projects[0].id) } })
+it('يحفظ حصر 1000 ويجهز مسودة ختامية بالفارق بعد مستخلص 200 بلا ترحيل تلقائي', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().addProjectExtract({ projectId: p.id, description: 'سابق', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '1000' } })
+ fireEvent.click(screen.getByLabelText(/حصر ختامي/))
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(1000))
+ expect(S().projectExtracts).toHaveLength(1)
+ expect(S().journal).toHaveLength(1)
+ fireEvent.click(screen.getByText('تجهيز مسودة مستخلص من الحصر المحفوظ'))
+ await waitFor(() => expect((screen.getByLabelText('كمية البند 1') as HTMLInputElement).value).toBe('1000'))
+ expect((screen.getByLabelText('مستخلص ختامي للمشروع') as HTMLInputElement).checked).toBe(true)
+ expect(S().projectExtracts).toHaveLength(1)
+ fireEvent.click(screen.getByLabelText(/راجعت حصر جميع البنود/))
+ fireEvent.click(screen.getByText('اعتماد المستخلص وإصدار الفاتورة'))
+ await waitFor(() => expect(S().projectExtracts).toHaveLength(2))
+ expect(S().projectExtracts[1].totals.grossMinor).toBe(80000)
+ expect(S().projectSurveys).toHaveLength(1)
+ expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(1000)
+})
+it('معاينة الطباعة تعرض المنفذ والمستخلص وغير المستخلص وتبقي القيد بلا تغيير', async () => {
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '856' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(1))
+ fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
+ const html = usePrintPreview.getState().handle?.html ?? ''
+ expect(html).toContain('@page{size:A4 landscape')
+ expect(html).toContain('المنفذ المحصور')
+ expect(html).toContain('غير المستخلص')
+ expect(html).toContain('856')
+ expect(S().journal).toHaveLength(0)
+})
+it('لا يحفظ كمية فارغة ولا ينشئ الحصر مرتين بنقرة مزدوجة', async () => {
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ expect(S().projectSurveys).toHaveLength(0)
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '200' } })
+ const button = screen.getByText('اعتماد وحفظ الحصر')
+ fireEvent.click(button); fireEvent.click(button)
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(1))
+ expect(S().projectSurveys[0].revisions).toHaveLength(1)
+})
+it('التغيير المتزامن في جدول الكميات يرفض حفظ الحصر المفتوح', async () => {
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '200' } })
+ act(() => { S().addBoqItem({ projectId: S().projects[0].id, code: '2', descriptionAr: 'بند', unit: 'م', qty: 1, unitPriceMinor: 100 }) })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await act(async () => {})
+ expect(S().projectSurveys).toHaveLength(0)
+})
+it('تأكيد حذف الحصر يتطلب السبب ويرفض تغير البيانات منذ فتح التأكيد', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 100 }], expectedRevision: 0, reason: '', isFinal: false })
+ renderPages(); select()
+ fireEvent.click(screen.getByText('حذف الحصر غير المرحّل'))
+ expect((screen.getByRole('button', { name: /تأكيد حذف الحصر/ }) as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.change(screen.getByLabelText('سبب حذف الحصر'), { target: { value: 'إلغاء' } })
+ act(() => { S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 1, reason: '', isFinal: false }) })
+ fireEvent.click(screen.getByText('تأكيد حذف الحصر'))
+ await act(async () => {})
+ expect(S().projectSurveys).toHaveLength(1)
+ fireEvent.click(screen.getByText('تراجع'))
+ fireEvent.click(screen.getByText('حذف الحصر غير المرحّل'))
+ fireEvent.click(screen.getByText('تأكيد حذف الحصر'))
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(0))
+ expect(S().journal).toHaveLength(0)
+})
+it('محضر إقفال كميات بعد استخراج كل الحصر قابل للطباعة بلا قيد أو إقفال مالي', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().addProjectExtract({ projectId: p.id, description: 'سابق', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 856 }] })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 856 }], expectedRevision: 0, reason: '', isFinal: true })
+ const journal = S().journal; renderPages(); select()
+ fireEvent.click(screen.getByText('إصدار محضر إقفال الكميات'))
+ fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/))
+ fireEvent.click(screen.getByText('تأكيد إصدار المحضر'))
+ await waitFor(() => expect(S().projectCloseouts).toHaveLength(1))
+ expect(S().journal).toBe(journal); expect(S().projectExtracts).toHaveLength(1)
+ fireEvent.click(screen.getByText('محاضر إقفال الكميات'))
+ fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
+ expect(usePrintPreview.getState().handle?.html).toContain('محضر إقفال كميات الأعمال — غير مالي')
+})
+
+it('يعرض تقويم يوم القياس ويحفظ الماضي مع سجل ونسخة طباعة منفصلين عن وقت التسجيل', async () => {
+ renderPages(); select()
+ const date = screen.getByLabelText('تاريخ قياس الحصر') as HTMLInputElement
+ expect(date.type).toBe('date'); expect(date.value).toBe(todayLocalIso())
+ const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+ const chosen = todayLocalIso(yesterday)
+ fireEvent.change(date, { target: { value: chosen } })
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '100' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys).toHaveLength(1))
+ expect(S().projectSurveys[0].revisions[0].measurementDate).toBe(chosen)
+ expect(S().projectSurveys[0].revisions[0].at.slice(0, 10)).toBe(todayLocalIso())
+ expect(screen.getByText(/سجل المراجعات/).parentElement?.textContent).toContain(`تاريخ القياس ${chosen}`)
+ fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
+ expect(usePrintPreview.getState().handle?.html).toContain(`تاريخ قياس المراجعة الأخيرة:</b> ${chosen}`)
+ expect(S().journal).toHaveLength(0)
+})
+it('معاينة الحصر تعيد بناء أحدث مراجعة وتمنع طباعة صورة قديمة عند حذف الحصر', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 0, reason: '', isFinal: false })
+ renderPages(); select(); fireEvent.click(screen.getByText('طباعة الحصر المحفوظ'))
+ expect(usePrintPreview.getState().handle?.html).toContain('200')
+ act(() => { S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 250 }], expectedRevision: 1, reason: '', isFinal: false }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().handle?.html).toContain('250')
+ act(() => { useRawDataStore.setState({ projectSurveys: [] }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
+})
+it('معاينة محضر الإقفال تحدث حالة الأساس وتمنع الطباعة عند فقد المحضر', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ S().addProjectExtract({ projectId: p.id, description: '', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 0, reason: '', isFinal: true })
+ S().issueProjectCloseout({ projectId: p.id, expectedRevision: 1, notes: '', confirmed: true })
+ renderPages(); select(); fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
+ expect(usePrintPreview.getState().handle?.html).not.toContain('نسخة تاريخية')
+ act(() => { S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 200 }], expectedRevision: 1, reason: '', isFinal: true }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().handle?.html).toContain('نسخة تاريخية')
+ act(() => { useRawDataStore.setState({ projectCloseouts: [] }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
+})
+it('يعرض صافي الكميات بعد الإشعار مقارنة بالحصر المحفوظ دون إتاحة مسودة أو تغيير الختامي', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const first = S().addProjectExtract({ projectId: p.id, description: 'أول', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 1000 }], isFinal: true })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 1000 }], expectedRevision: 0, reason: '', isFinal: true })
+ S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: b.id, qty: 20 }], amountMinor: 2000, mode: 'customer_credit', reason: 'رفض' })
+ renderPages(); select()
+ const panel = screen.getByLabelText('مراجعة صافي كميات الإشعارات')
+ expect(panel.textContent).toContain('980'); expect(panel.textContent).toContain('20')
+ expect(panel.textContent).toContain('لا يغيّر الحصر الفعلي أو يعيد فتح الختامي')
+ expect((screen.getByText('تجهيز مسودة مستخلص من الحصر المحفوظ').closest('button') as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '500' } })
+ expect(panel.textContent).toContain('1000') // المقارنة بالحصر المحفوظ لا المسودة
+ expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(1000)
+ expect(S().projectExtracts[1].isFinal).toBe(true)
+})
+it('يعرض مراجعة بدل صافي تقديري عند فقد قيد الإشعار', () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const first = S().addProjectExtract({ projectId: p.id, description: 'أول', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ const result = S().refundProjectExtract({ extractId: first.id, quantities: [{ boqItemId: b.id, qty: 20 }], amountMinor: 2000, mode: 'customer_credit', reason: 'رفض' })
+ useRawDataStore.setState({ journal: S().journal.filter(e => e.id !== result.refunds![0].journalEntryId) })
+ renderPages(); select()
+ expect(screen.getByLabelText('مراجعة صافي كميات الإشعارات').textContent).toContain('لا يمكن عرض صافي موثوق')
+})
+
+it('يتيح محضر صافي غير مالي بعد إشعار مثبت وتصحيح الحصر دون فتح الختامي', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const ex = S().addProjectExtract({ projectId: p.id, description: 'ختامي', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 1000 }], isFinal: true })
+ S().saveProjectSurvey({ projectId: p.id, lines: [{ boqItemId: b.id, cumulativeQty: 1000 }], expectedRevision: 0, reason: '', isFinal: true })
+ S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: b.id, qty: 10 }], amountMinor: 1000, mode: 'customer_credit', reason: 'رفض' })
+ renderPages(); select()
+ expect(screen.queryByText('إصدار محضر إقفال الكميات')).toBeNull()
+ fireEvent.change(screen.getByLabelText('المنفذ للبند 1'), { target: { value: '990' } })
+ fireEvent.change(screen.getByLabelText('سبب تعديل الحصر'), { target: { value: 'تصحيح بعد رفض' } })
+ fireEvent.click(screen.getByText('اعتماد وحفظ الحصر'))
+ await waitFor(() => expect(S().projectSurveys[0].lines[0].cumulativeQty).toBe(990))
+ expect(screen.getByText(/الحصر المحفوظ يطابق صافي المستخلصات/)).toBeTruthy()
+ const journal = S().journal
+ fireEvent.click(screen.getByText('إصدار محضر إقفال الكميات'))
+ fireEvent.click(screen.getByLabelText(/راجعت الحصر الختامي/)); fireEvent.click(screen.getByText('تأكيد إصدار المحضر'))
+ await waitFor(() => expect(S().projectCloseouts).toHaveLength(1))
+ expect(S().projectCloseouts[0].quantityBasis).toBe('net-after-credit')
+ expect(S().journal).toBe(journal); expect(S().projectExtracts[0].isFinal).toBe(true)
+ fireEvent.click(screen.getByText('محاضر إقفال الكميات')); fireEvent.click(screen.getByText('معاينة وطباعة المحضر'))
+ expect(usePrintPreview.getState().handle?.html).toContain('كمية الإشعارات')
+})
+
+it('يعرض تاريخاً اختيارياً للكمية ويطبع ويصدر ويمنع طباعة نسخة قديمة بعد فساد الدليل', async () => {
+ const p = S().projects[0], b = S().boqItems[0]
+ const extract = S().addProjectExtract({ projectId: p.id, date: '2026-01-03', description: 'أول', payment: 'credit', vatPercent: 0, extractQtyLines: [{ boqItemId: b.id, cumulativeQty: 200 }] })
+ const result = S().refundProjectExtract({ extractId: extract.id, quantities: [{ boqItemId: b.id, qty: 20 }], amountMinor: 2000, mode: 'customer_credit', reason: 'رفض' })
+ useRawDataStore.setState({ projects: S().projects.map(row => ({ ...row, nameAr: '<مشروع>' })), boqItems: S().boqItems.map(row => ({ ...row, descriptionAr: '<بند>' })) })
+ let blob: Blob | undefined
+ vi.stubGlobal('URL', { ...URL, createObjectURL: (value: Blob) => { blob = value; return 'blob:test' }, revokeObjectURL: () => {} })
+ vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+ renderPages(); select()
+ fireEvent.change(screen.getByLabelText('تاريخ صافي الكميات'), { target: { value: '2026-01-03' } })
+ const panel = screen.getByLabelText('صافي كميات المستخلصات بتاريخ محدد')
+ const cells = within(within(panel).getByRole('table')).getAllByRole('cell').map(cell => cell.textContent)
+ expect(cells).toEqual(['1 — م2', '200', '0', '200', '200.00'])
+ expect(panel.textContent).toContain('أسماء البنود والعقد الحالية')
+ fireEvent.click(within(panel).getByText('طباعة صافي الكميات / PDF'))
+ const html = usePrintPreview.getState().handle?.html ?? ''
+ expect(html).toContain('2026-01-03'); expect(html).toContain('&lt;مشروع&gt;'); expect(html).toContain('&lt;بند&gt;'); expect(html).not.toContain('<بند>')
+ fireEvent.click(within(panel).getByText('تصدير صافي الكميات CSV'))
+ const csv = await blob!.text()
+ expect(csv).toContain('2026-01-03'); expect(csv).toContain('200,0,200,200.00'); expect(csv).toContain('القيد,تاريخ المستند,المستخلص,النوع,الأعمال قبل الضريبة'); expect(csv).toContain(extract.extractNumber)
+ act(() => { useRawDataStore.setState({ journal: S().journal.filter(entry => entry.id !== result.refunds![0].journalEntryId) }); usePrintPreview.getState().refresh() })
+ expect(usePrintPreview.getState().rebuildError).toBe(true)
+ expect(within(panel).queryByText('طباعة صافي الكميات / PDF')).toBeNull()
+ vi.unstubAllGlobals(); vi.restoreAllMocks()
+})

@@ -43,14 +43,14 @@ describe('كشف حساب الموظف — المعيار الدفتري (بلا
 
     // ③ مسير رواتب: أساسي 5000 · خصومات 200 · سلف مستقطعة 300 ⇒ صافي 4500
     S().accruePayrollSlips({
-      month: '2026-09', date: '2026-09-30',
+      month: '2026-09',
       rows: [{ employeeId: emp.id, grossMinor: 500000, allowancesMinor: 0, deductionsMinor: 20000, advanceMinor: 30000 }],
     } as never)
     const slip = S().payrollSlips.find((row) => row.employeeId === emp.id && row.month === '2026-09')!
     expect(slip).toBeTruthy()
     expect(slip.netMinor).toBe(450000) // 5000 − 200 خصم − 300 سلفة
     // ④ صرف القسيمة نقداً
-    S().payPayrollSlip(slip.id, { treasury: '1101', date: '2026-10-05' })
+    S().payPayrollSlip(slip.id, { treasury: '1101' })
 
     // ⑤ عمولة مستحقة 300.00
     S().addStaffCommission({ employeeId: emp.id, source: 'manual' as never, sourceId: null, description: 'عمولة اختبار', amountMinor: 30000 })

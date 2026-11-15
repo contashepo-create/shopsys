@@ -163,38 +163,6 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     catch { /* بيانات تجريبية */ }
   }
 
-  for (const row of payload.branches) {
-    const branchWarehouse = payload.warehouses.find((warehouse) => str(warehouse.branch_ref) === str(row.ref))
-    const branchTreasury = payload.treasuries.find((treasury) => str(treasury.branch_ref) === str(row.ref))
-    try {
-      data().addBranch({
-        nameAr: str(row.name_ar),
-        warehouseId: warehouseId.get(str(branchWarehouse?.ref)) ?? data().warehouses[0]?.id ?? 0,
-        treasuryCode: treasuryCode.get(str(branchTreasury?.ref)) ?? data().treasuries[0]?.code ?? '',
-        address: str(row.city),
-        phone: str(row.phone),
-      }, 99)
-    } catch { /* الفرع الرئيسي موجود بالفعل من البذرة */ }
-  }
-
-  /* 4) ماكينات الدفع (سؤال المالك ⑱: الفاتورة تحصّل من ماكينة فعلاً) */
-  for (const row of payload.terminals) {
-    try {
-      data().addPaymentTerminal({
-        id: str(row.code).toLowerCase(),
-        code: str(row.code),
-        nameAr: str(row.name_ar),
-        providerName: str(row.provider_name),
-        branchId: str(data().branches.find((branch) => branch.nameAr.includes(str(row.branch_ref)))?.id ?? data().branches[0]?.id ?? '1'),
-        settlementAccountCode: treasuryCode.get(str(row.settlement_ref)) ?? data().treasuries[0]?.code ?? '',
-        terminalId: str(row.terminal_id),
-        merchantId: str(row.merchant_id) || undefined,
-        serialNumber: str(row.serial_number) || undefined,
-        status: 'active',
-      })
-    } catch { /* كود مكرر */ }
-  }
-
   /* 4.5) مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
   let costCentersAdded = 0
   for (const row of payload.costCenters) {
@@ -836,6 +804,41 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       ordersAdded += 1
     } catch (error) { skipped.push(`أمر شراء ${str(order.ref)}: ${(error as Error).message}`) }
   }
+
+  // تسجل بيانات النشاط التجريبية في وضع الفرع الواحد، ثم تُنشأ فروع العرض
+  // والماكينات: السجلات غير الموسومة تعود للفرع الرئيسي وفق قواعد البيانات القديمة.
+  for (const row of payload.branches) {
+    const branchWarehouse = payload.warehouses.find((warehouse) => str(warehouse.branch_ref) === str(row.ref))
+    const branchTreasury = payload.treasuries.find((treasury) => str(treasury.branch_ref) === str(row.ref))
+    try {
+      data().addBranch({
+        nameAr: str(row.name_ar),
+        warehouseId: warehouseId.get(str(branchWarehouse?.ref)) ?? data().warehouses[0]?.id ?? 0,
+        treasuryCode: treasuryCode.get(str(branchTreasury?.ref)) ?? data().treasuries[0]?.code ?? '',
+        address: str(row.city),
+        phone: str(row.phone),
+      }, 99)
+    } catch { /* الفرع الرئيسي موجود بالفعل من البذرة */ }
+  }
+
+  /* 4) ماكينات الدفع (سؤال المالك ⑱: الفاتورة تحصّل من ماكينة فعلاً) */
+  for (const row of payload.terminals) {
+    try {
+      data().addPaymentTerminal({
+        id: str(row.code).toLowerCase(),
+        code: str(row.code),
+        nameAr: str(row.name_ar),
+        providerName: str(row.provider_name),
+        branchId: str(data().branches.find((branch) => branch.nameAr.includes(str(row.branch_ref)))?.id ?? data().branches[0]?.id ?? '1'),
+        settlementAccountCode: treasuryCode.get(str(row.settlement_ref)) ?? data().treasuries[0]?.code ?? '',
+        terminalId: str(row.terminal_id),
+        merchantId: str(row.merchant_id) || undefined,
+        serialNumber: str(row.serial_number) || undefined,
+        status: 'active',
+      })
+    } catch { /* كود مكرر */ }
+  }
+
 
   return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts, costCenters: costCentersAdded, contracting, saleReturns: saleReturnsPosted, purchaseReturns: purchaseReturnsPosted, vouchers: vouchersPosted }
 }

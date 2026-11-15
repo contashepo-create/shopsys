@@ -7,7 +7,6 @@
  */
 import { describe, expect, it, beforeAll, afterEach } from 'vitest'
 import { render, fireEvent, cleanup, screen } from '@testing-library/react'
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import {
   buildPurchaseInvoiceReport, buildSalesInvoiceReport, invoiceInRange,
@@ -22,7 +21,7 @@ const totals = (totalMinor: number, taxMinor = 0) => ({
 const sale = (id: number, invoiceNumber: string, date: string, total: number, paid: number | undefined, customerId: number | null) => ({
   id, invoiceNumber, refCode: `SAL-${invoiceNumber}`, date, customerId,
   payment: paid === undefined ? 'cash' as const : paid < total ? 'credit' as const : 'cash' as const,
-  paidMinor: paid, totals: totals(total), lines: [{}, {}], journalEntryId: 100 + id,
+  paidMinor: paid, totals: totals(total), lines: [1, 2].map(itemId => ({ itemId, nameAr: 'صنف', qty: 1, unitPriceMinor: 0, unitCostMinor: 0, discountPercent: 0, soldByWeight: false })), journalEntryId: 100 + id,
 })
 
 const purchase = (id: number, invoiceNumber: string, date: string, total: number, supplierDue: number, paid: number) => ({

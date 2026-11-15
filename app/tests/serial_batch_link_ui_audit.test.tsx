@@ -1,14 +1,14 @@
 import { afterEach, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { SerialsPage } from '../src/ui/pages/SerialsPage.tsx'
-import { useDataStore, useRawDataStore } from '../src/data/repo.ts'
+import { EMPTY_EXTENDED, useDataStore, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 const initial = useRawDataStore.getState(), app = useAppStore.getState()
 afterEach(() => { cleanup(); useRawDataStore.setState(initial); useAppStore.setState(app) })
 it('يربط دفعة شراء تاريخية من صفحة السيريالات بعد التأكيد ومرجع الإثبات', () => {
  useRawDataStore.setState({ ...initial, branches: [], activeBranchId: null, appUsers: [], currentUserId: null, items: [], sales: [], purchases: [], serials: [], batches: [], journal: [], tradeIns: [], warehouses: [{ id: 1, nameAr: 'الرئيسي', isMain: true }] as never })
  const s = useDataStore.getState()
- s.addSupplier({ nameAr: 'مورد', phone: '', notes: '' })
+ s.addSupplier({ ...EMPTY_EXTENDED, nameAr: 'مورد', phone: '', notes: '' })
  const supplier = useDataStore.getState().suppliers.find(row => row.nameAr === 'مورد')!
  s.addItem({ nameAr: 'صنف', priceMinor: 500, costMinor: 0, stockQty: 0, trackSerial: true, trackExpiry: true } as never)
  const id = useDataStore.getState().items[0].id

@@ -1,4 +1,5 @@
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { FinancialEntitiesSettings } from './FinancialEntitiesSettings.tsx'
 /**
  * شاشة الفروع (سد فجوة التدقيق — إدارة فروع حقيقية بمستوى البرامج العالمية):
  * - كل فرع = مخزنه الخاص + خزينته الخاصة + بياناته (عنوان/هاتف/مدير)
@@ -23,7 +24,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
-    activeBranchId, setActiveBranchId, currentUserId, appUsers,
+    activeBranchId, setActiveBranchId, currentUserId, appUsers, loggedOut,
     sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
   } = useDataStore()
   const canManageAllBranches = currentUserId == null || appUsers.find((user) => user.id === currentUserId)?.roleId === 'owner'
@@ -193,14 +194,16 @@ export function BranchesPage() {
         </div>
       </div>
 
+      {!loggedOut && (currentUserId == null || appUsers.some(user => user.id === currentUserId && user.roleId === 'owner' && user.active)) && <FinancialEntitiesSettings />}
+
       {branches.length > 0 && (
         <div className="anim-up rounded-2xl border border-teal-500/25 bg-teal-500/5 p-3.5 flex items-center justify-between flex-wrap gap-3 text-[12px]">
           <div className="space-y-0.5">
             <div className="font-bold text-teal-800 dark:text-teal-200 flex items-center gap-1.5">
-              🏢 نظام الشركات والفروع المستقلة بالكامل
+              🏢 عرض الفروع
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              عند تفعيل أي فرع يعمل كشركة مستقلة تماماً (عملاؤه، موردوه، موظفوه، أصنافه، مخازنه، خزائنه وبنوكه، فواتيره، أقسامه، وميزانه مستقل عن بقية الفروع). وعند اختيار «كل الفروع (شامل)» ترى المنشأة مجمَّعة.
+              تتيح الفروع تصفية بعض البيانات والمقارنة التشغيلية. لا يثبت عرض الفرع استقلاله القانوني أو المحاسبي، والعرض الشامل ليس قوائم كيان أو توحيداً قانونياً؛ راجع إسناد القيود والبيانات مع المختص.
             </div>
           </div>
           <div className="flex items-center gap-2">

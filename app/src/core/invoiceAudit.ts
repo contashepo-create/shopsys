@@ -12,6 +12,8 @@ export interface InvoiceEditEvent {
   at: string
   reason: string
   by?: string
+  priceFloorOverrideBy?: string
+  creditLimitOverrideBy?: string
 }
 
 /** تنسيق «YYYY-MM-DD HH:MM» من ISO — بلا اعتماد على منطقة زمنية للمتصفح في الاختبارات */
@@ -37,6 +39,8 @@ export function formatInvoiceAuditLine(
     `بواسطة ${last.by?.trim() || fallbackUser}`,
     `السبب: ${last.reason?.trim() || 'بلا سبب مسجَّل'}`,
   ]
+  if (last.priceFloorOverrideBy) parts.push(`اعتماد السعر: ${last.priceFloorOverrideBy}`)
+  if (last.creditLimitOverrideBy) parts.push(`اعتماد الائتمان: ${last.creditLimitOverrideBy}`)
   if (history.length > 1) parts.push(`(${history.length} تعديلات)`)
   return parts.join(' · ')
 }

@@ -26,7 +26,7 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assert.ok(quotationsPage.includes('addQuotation('), 'الحفظ لا يمر بمخزن العروض')
   /* الطباعة بنفس محرك الفواتير: بناء النموذج + معاينة/صامت بمفاتيح الطباعة */
   assert.ok(quotationsPage.includes('buildSimpleDocModel'), 'طباعة العرض ليست عبر محرك قوالب الفواتير')
-  assert.ok(quotationsPage.includes('printModelWithTemplate') && quotationsPage.includes('openPrintPreview'), 'معاينة/الطباعة الصامتة ناقصة في عرض السعر')
+  assert.ok(quotationsPage.includes('printModelWithTemplate') && quotationsPage.includes('useLivePrintPreview'), 'معاينة/الطباعة الصامتة ناقصة في عرض السعر')
   assert.ok(quotationsPage.includes('usePrintSwitches'), 'مفاتيح الطباعة غير مستهلكة في عرض السعر')
   /* الإجماليات الثلاثة نفسها: صافي/ضريبة/إجمالي + تكلفة تقديرية وهامش */
   for (const label of ['الإجمالي', 'الضريبة', 'الإجمالي بالضريبة', 'التكلفة التقديرية', 'هامش متوقع']) {
@@ -47,7 +47,7 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assert.ok(purchaseOrdersPage.includes('kind="purchase"') && purchaseOrdersPage.includes('mode="advanced"'), 'جدول البنود ليس في وضع الشراء المتقدم (مطابقة الفاتورة)')
   assert.ok(purchaseOrdersPage.includes('PURCHASE_TERMS'), 'لا شروط توريد جاهزة لأمر الشراء')
   assert.ok(purchaseOrdersPage.includes('buildSimpleDocModel'), 'طباعة الأمر ليست عبر محرك قوالب الفواتير')
-  assert.ok(purchaseOrdersPage.includes('usePrintSwitches') && purchaseOrdersPage.includes('openPrintPreview'), 'مفاتيح الطباعة/المعاينة ناقصة في أمر الشراء')
+  assert.ok(purchaseOrdersPage.includes('usePrintSwitches') && purchaseOrdersPage.includes('useLivePrintPreview'), 'مفاتيح الطباعة/المعاينة ناقصة في أمر الشراء')
   assert.ok(purchaseOrdersPage.includes('addPurchaseOrder('), 'الحفظ لا يمر بمخزن أوامر الشراء')
   assert.ok(!/"receivePurchaseOrder"/.test(purchaseOrdersPage) || true, 'الاستلام يبقى في فاتورة الشراء')
   assert.ok(purchaseInvoicePage.includes('fillSources') && purchaseInvoicePage.includes('poRemainingQty'), 'فاتورة الشراء فقدت التعبئة من أوامر الشراء')
@@ -113,15 +113,15 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assertInvariants('بعد تسجيل أمر شراء', c)
   /* فاتورة الشراء من الأمر: الترحيل وحده يقيد ويحدّث الاستلام */
   const purchase = g().postPurchase({
-    supplierId: supplier.id, date: '2026-09-12', supplierInvoiceNumber: 'INV-77', receiptStatus: 'received',
+    sourcePurchaseOrderId: order.id, supplierId: supplier.id, date: '2026-09-12', supplierInvoiceNumber: 'INV-77', receiptStatus: 'received',
     warehouseId: null, notes: '', purchaseOrderNumber: order.orderNumber,
     lines: [{ itemId: item.id, qty: 10, unitPriceMinor: 150000, vatPercent: 14, warehouseId: null }],
     expenses: [], paidMinor: 0, treasury: '1101',
   })
   assert.ok(purchase.invoiceNumber, 'فاتورة الشراء بلا رقم')
-  /* الصفحة الرسمية تحدّث الاستلام عبر receivePurchaseOrder بعد الترحيل — نفس المسار هنا */
-  g().receivePurchaseOrder(order.id, purchase.lines.map((line) => ({ itemId: line.itemId, qty: line.qty })), purchase.id)
+  /* الربط والاستلام يتمان في تحديث الترحيل نفسه لا بخطوة منفصلة. */
   const after = g().purchaseOrders.find((o) => o.id === order.id)
+  assert.deepEqual(after.invoiceIds, [purchase.id], 'فاتورة الشراء لم تُربط بالأمر أثناء الترحيل')
   assert.equal(after.lines[0].receivedQty, 10, 'الاستلام لم يُحدَّث من فاتورة الشراء')
   assert.equal(after.status, 'closed', 'الأمر لم يُغلق بعد الاستلام الكامل')
   assert.ok(g().journal.length > 0, 'فاتورة الشراء لم تُقيَّد')

@@ -39,6 +39,8 @@ export interface PurchaseOrder {
   expectedDate: string
   warehouseId: number | null
   status: PurchaseOrderStatus
+  /** الحالة قبل أول استلام، لتجنب اختلاق حالة إرسال عند رد الكمية كلها. */
+  statusBeforeReceipt?: 'draft' | 'sent'
   lines: PurchaseOrderLine[]
   /** تذكرة صيانة مرتبطة (سد فجوة النشاط #3: موبايلات وصيانة) — طلب قطعة غيار خاصة لجهاز عميل بعينه بدل طلب منفصل تماماً */
   linkedTicketId?: number | null
@@ -123,6 +125,6 @@ export function validatePurchaseOrder(input: { supplierName: string; date: strin
 export function derivePurchaseOrderStatus(order: PurchaseOrder): PurchaseOrderStatus {
   if (order.status === 'cancelled') return 'cancelled'
   const received = order.lines.reduce((sum, line) => sum + (line.receivedQty || 0), 0)
-  if (received <= 0) return order.status === 'sent' ? 'sent' : order.status
+  if (received <= 0) return order.status === 'draft' || order.status === 'sent' ? order.status : (order.statusBeforeReceipt ?? 'draft')
   return poIsFulfilled(order) ? 'closed' : 'partial'
 }

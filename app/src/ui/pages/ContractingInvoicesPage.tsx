@@ -12,7 +12,7 @@
  *   ③ جدول كل الفواتير المرتبطة بمشاريع المقاولات: مراجعة (نافذة التعديل)
  *      وطباعة بنفس قوالب الفواتير.
  */
-import { useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { FilePlus2, Printer, Pencil, Coins, Plus, Trash2, Send, Download } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
@@ -21,11 +21,13 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel, buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
+import { computeTotals, normalizeMovementQty } from '../../core/pos.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { qrDataUrlFromPayload } from '../print/taxBarcode.ts'
 import { resolveDocumentPrintSettings, stampDocumentTaxBarcode } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
-import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { currentPreviewScope } from '../components/printPreviewStore.ts'
+import { useLivePrintPreview } from '../hooks/useLivePrintPreview.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
@@ -92,6 +94,7 @@ export function ContractingInvoicesPage() {
      والإيراد والقيد والتحصيل والطباعة والواتساب كلها مثل فاتورة البيع حرفياً. */
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
   const [edOpen, setEdOpen] = useState(false)
+  const [edDraftId, setEdDraftId] = useState(() => crypto.randomUUID())
   const [isPosting, setIsPosting] = useState(false)
   const postingRef = useRef(false)
   const [edProjectId, setEdProjectId] = useState(0)
@@ -105,6 +108,7 @@ export function ContractingInvoicesPage() {
   const [edLines, setEdLines] = useState<FreeLine[]>([])
   const freeUnits = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يوم عمل']
   const openFreeEditor = (projectId = 0) => {
+    setEdDraftId(crypto.randomUUID())
     setEdProjectId(projectId)
     const prj = projects.find((x) => x.id === projectId)
     const cid = prj?.clientId ?? 0
@@ -120,9 +124,23 @@ export function ContractingInvoicesPage() {
   const edParsed = edLines
     .filter((l) => l.nameAr.trim() && Number(l.qty) > 0)
     .map((l) => ({ nameAr: l.nameAr.trim(), qty: Number(l.qty), unitAr: l.unitAr, unitPriceMinor: (() => { try { return toMinor(l.price || '0', cur.decimals) } catch { return 0 } })() }))
-  const edNet = edParsed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
-  const edTax = Math.round(edNet * edEffectiveTaxPct / 100)
-  const edGross = edNet + edTax
+  // نفس نواة تقريب البيع، كي لا تعرض المسودة إجمالياً يختلف عن المستند المُرحّل.
+  const freeTotals = () => computeTotals(edParsed.map((l, index) => ({ itemId: index + 1, nameAr: l.nameAr, qty: normalizeMovementQty(l.qty), unitPriceMinor: l.unitPriceMinor, unitCostMinor: 0, discountPercent: 0, soldByWeight: false })), 0, edEffectiveTaxPct, false, 2)
+  const previewTotals = (() => { try { return freeTotals() } catch { return null } })()
+  const edNet = previewTotals?.netMinor ?? 0
+  const edTax = previewTotals?.taxMinor ?? 0
+  const edGross = previewTotals?.totalMinor ?? 0
+  const validateFreeLines = () => {
+    for (const line of edLines) {
+      if (!line.nameAr.trim() && !line.price.trim()) continue // سطر فارغ لم يبدأ بعد
+      if (!line.nameAr.trim()) throw new Error('أكمل اسم البند قبل المعاينة أو الترحيل')
+      normalizeMovementQty(Number(line.qty))
+      const price = toMinor(line.price || '0', cur.decimals)
+      if (price < 0) throw new Error('سعر البند لا يكون سالباً')
+    }
+    if (!edParsed.length) throw new Error('أضف بنداً واحداً على الأقل بكمية موجبة')
+    freeTotals() // يرفض تجاوز الدقة أو نسبة ضريبة غير صالحة
+  }
   const fillFromBoq = (pctOverride?: number) => {
     const boq = boqItems.filter((b) => b.projectId === edProjectId)
     if (!boq.length) { toast.show('لا بنود كميات لهذا المشروع — اكتب البنود حرة', 'error'); return }
@@ -142,7 +160,21 @@ export function ContractingInvoicesPage() {
     const draftBranchId = runtimeBranchId(draftProject) ?? runtimeBranchId(draftCustomer)
     return resolveDocumentPrintSettings(draftBranchId != null ? { branchId: draftBranchId } : draftProject ?? draftCustomer ?? null)
   }
+  const freeDraftValue = JSON.stringify([edOpen, edDraftId, edProjectId, edCustomerId, edPayment, edWithTax, edPartialPct, edPaid, edNotes, edLines])
+  const liveFreeDraft = useRef('')
+  useLayoutEffect(() => { liveFreeDraft.current = freeDraftValue }, [freeDraftValue])
+  const freeBasis = () => {
+    const s = useRawDataStore.getState(), app = useAppStore.getState()
+    return JSON.stringify([currentPreviewScope(), s.branches, s.appUsers, s.roleOverrides, s.branchRoleOverrides, s.customRoles, s.customers, s.projects, s.boqItems, s.items, app.setup, app.fiscalYears, todayLocalIso()])
+  }
+  const paidForDraft = () => {
+    const paidMinor = edPaid.trim() ? toMinor(edPaid, cur.decimals) : edPayment === 'cash' ? edGross : 0
+    if (!Number.isSafeInteger(paidMinor) || paidMinor < 0 || paidMinor > edGross) throw new Error('المحصل يجب أن يكون بين الصفر وإجمالي الفاتورة')
+    return paidMinor
+  }
   const edPrintModel = () => {
+    if (!edOpen) throw new Error('أبقِ المحرر مفتوحاً للمعاينة')
+    validateFreeLines()
     const dateIso = todayLocalIso()
     const documentSettings = draftPrintSettings()
     const model = buildSimpleDocModel({
@@ -154,7 +186,7 @@ export function ContractingInvoicesPage() {
       paymentLabel: edPayment === 'cash' ? 'نقدي' : 'آجل',
       rows: edParsed.map((l) => ({ nameAr: l.nameAr, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
       totalMinor: edGross,
-      paidMinor: edPayment === 'cash' ? edGross : 0,
+      paidMinor: paidForDraft(),
       operatorName: setup.ownerName ?? 'المالك',
       settings: documentSettings.receipt,
       extraFooter: edNotes.trim() || undefined,
@@ -164,15 +196,23 @@ export function ContractingInvoicesPage() {
        (الترحيل يولّد رقم فاتورة حقيقياً، والطباعة بعده تختم). */
     return model
   }
+  const openLiveFreeDraft = useLivePrintPreview(() => {
+    const settings = draftPrintSettings()
+    return buildModelHtml(edPrintModel(), cur, settings.receipt, 'a4')
+  })
   const postFreeInvoice = () => {
-    if (!edParsed.length) { toast.show('أضف بنداً واحداً على الأقل بكمية موجبة', 'error'); return }
+    try { validateFreeLines(); paidForDraft() } catch (e) { toast.show(e instanceof Error ? e.message : 'بيانات الفاتورة غير صالحة', 'error'); return }
     if (edProjectId && !edCustomerId) { toast.show('حدّد عميل الفاتورة (عميل المشروع أو غيره)', 'error'); return }
     if (postingRef.current) return
+    const expectedDraft = liveFreeDraft.current, expectedBasis = freeBasis()
     postingRef.current = true
     setIsPosting(true)
+    let committedNumber: string | null = null
     void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
-      const paidMinor = edPayment === 'cash' ? (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return edGross } })() : edGross) : (edPaid.trim() ? (() => { try { return toMinor(edPaid, cur.decimals) } catch { return 0 } })() : 0)
-      return postSale({
+      if (liveFreeDraft.current !== expectedDraft || freeBasis() !== expectedBasis) throw new Error('تغيرت بيانات الفاتورة أو الفرع — راجعها قبل الترحيل')
+      const paidMinor = paidForDraft()
+      const sale = postSale({
+        sourceDraftId: edDraftId,
         projectId: edProjectId || null,
         /* النموذج أ: محرر هذه الصفحة لا يوثّق مستخلصات — أي فاتورة مشروع منه
            «إضافية» بسقف العقد الموحد، حتى لا تعود فوترة مزدوجة من هذا الباب */
@@ -195,15 +235,22 @@ export function ContractingInvoicesPage() {
           warehouseId: null,
         })),
       })
+      committedNumber = sale.invoiceNumber
+      return sale
     }).then((sale) => {
       setEdOpen(false)
       toast.show(`رُحِّلت فاتورة المقاولات ${sale.invoiceNumber} — الإجمالي ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✅`)
-    }).catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة', 'error'))
+    }).catch((e: unknown) => {
+      if (committedNumber) {
+        setEdOpen(false)
+        toast.show(`سُجلت الفاتورة ${committedNumber} محلياً لكن تعذر تأكيد الحفظ — راجع سجل الفواتير قبل إعادة المحاولة`, 'error')
+      } else toast.show(e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة', 'error')
+    })
       .finally(() => { postingRef.current = false; setIsPosting(false) })
   }
 
-  /* طباعة فاتورة مرحّلة بنفس قوالب الفواتير (نمط شاشة فواتير المبيعات) */
-  const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
+  /* إعادة بناء الفاتورة المرحّلة من سجل الفرع الحي، لا من لقطة زر الفتح. */
+  const postedModel = (s: (typeof sales)[number]) => {
     const documentRecord = salePrintRecord(s)
     const documentSettings = resolveDocumentPrintSettings(documentRecord)
     const customerName = s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null
@@ -231,10 +278,22 @@ export function ContractingInvoicesPage() {
     /* فاتورة قديمة: الرمز المجمّد وقت الإصدار أولاً — لا يُعاد توليده ببيانات اليوم */
     if (s.taxQrPayload && documentSettings.identityComplete) model.qrDataUrl = qrDataUrlFromPayload(s.taxQrPayload)
     else if (documentSettings.identityComplete) stampDocumentTaxBarcode(model, documentRecord, { dateIso: s.date, invoiceNumber: s.invoiceNumber, totalMinor: s.totals.totalMinor, taxMinor: s.totals.taxMinor })
-    printModelWithTemplate(model, cur, documentSettings.receipt, template, {
-      resolveSettings: () => resolveDocumentPrintSettings(documentRecord).receipt,
-    })
-    toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${s.invoiceNumber} للطباعة 📄`)
+    return { model, documentSettings }
+  }
+  const openLivePosted = useLivePrintPreview(({ saleId, template }: { saleId: number; template: InvoiceTemplate }) => {
+    const current = sales.find((sale) => sale.id === saleId)
+    if (!current) throw new Error('لم تعد الفاتورة متاحة في الفرع — لا يمكن طباعتها')
+    const { model, documentSettings } = postedModel(current)
+    return buildModelHtml(model, cur, documentSettings.receipt, template)
+  })
+  const printInvoice = (s: (typeof sales)[number], template: 'a4' | 'a5' | 'thermal' = 'a5') => {
+    const posted = postedModel(s)
+    if (posted.documentSettings.receipt.silentPrint) {
+      printModelWithTemplate(posted.model, cur, posted.documentSettings.receipt, template)
+      toast.show(`أُرسلت ${s.invoiceNumber} للطباعة`)
+    } else {
+      openLivePosted({ saleId: s.id, template }, { wide: template !== 'thermal', title: `معاينة ${s.invoiceNumber} قبل الطباعة` })
+    }
   }
 
   return (
@@ -354,9 +413,9 @@ export function ContractingInvoicesPage() {
               onItemSearch={() => undefined}
               onSaveDraft={() => toast.show('هذه الفاتورة تُرحَّل مباشرة — بلا مسودات (بنودها حرة تُكتب مرة واحدة)')}
               onRestoreDraft={() => toast.show('لا مسودات لفاتورة البنود الحرة — اكتب البنود أو عبئها من بنود المشروع')}
-              onPrint={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل المعاينة', 'error'); const draftSettings = draftPrintSettings(); openPrintPreview({ html: buildModelHtml(edPrintModel(), cur, draftSettings.receipt, 'a4'), wide: true, title: 'معاينة فاتورة المقاولات قبل الترحيل', rebuild: () => buildModelHtml(edPrintModel(), cur, draftPrintSettings().receipt, 'a4' as InvoiceTemplate) }) }}
+              onPrint={() => { try { openLiveFreeDraft(undefined, { wide: true, title: 'معاينة مسودة فاتورة المقاولات قبل الترحيل' }) } catch (e) { toast.show(e instanceof Error ? e.message : 'تعذرت المعاينة', 'error') } }}
               onExportPdf={() => toast.show('بعد الترحيل: طباعة ← حفظ كـ PDF 🖨️')}
-              onWhatsappPdf={() => { if (!edParsed.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); const draftSettings = draftPrintSettings(); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: draftSettings.receipt, docLabel: 'فاتورة', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: draftSettings.setup.shopName, toast }) }}
+              onWhatsappPdf={() => { try { const draftSettings = draftPrintSettings(); shareDocPdfViaWhatsapp({ model: edPrintModel(), cur, settings: draftSettings.receipt, docLabel: 'مسودة فاتورة مقاولات', docNumber: 'مسودة', partyPhone: customers.find((c) => c.id === edCustomerId)?.phone ?? '', shopName: draftSettings.setup.shopName, toast }) } catch (e) { toast.show(e instanceof Error ? e.message : 'تعذر إرسال المسودة', 'error') } }}
               onPost={postFreeInvoice}
               headerFields={
                 <>

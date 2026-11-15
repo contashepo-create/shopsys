@@ -23,6 +23,8 @@ export interface UserPreferences {
    * وظيفة (F1..F12) فوق الافتراضي — تُدار من دليل F12 وتُحل بresolveShortcuts.
    */
   keyboardShortcuts?: ShortcutOverrides
+  /** اختصارات التنقل بحسب الفرع الفعّال؛ النطاق الشامل منفصل عن كل فرع. */
+  favoritePathsByBranch?: Record<string, string[]>
 }
 
 /** مفتاح خريطة التفضيلات لمستخدم — 'owner' للمالك (بلا حساب دخول) */

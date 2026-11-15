@@ -44,7 +44,7 @@ check('الوجه الموحد: المتصفح بلا محرك PDF — رسال�
 
 /* ─── الأزرار: المستندات الخمسة ─── */
 const sales = read('src/ui/pages/AdvancedSalesInvoicePage.tsx')
-check('⑤ فاتورة المبيعات: زر واتساب PDF بهاتف العميل واسم متجره', sales.includes('onWhatsappPdf={whatsappPdf}') && sales.includes("customers.find(c=>c.id===customerId)?.phone??''"))
+check('⑤ فاتورة المبيعات: زر واتساب PDF بهاتف الطرف المختار واسم متجره', sales.includes('onWhatsappPdf={whatsappPdf}') && sales.includes("partyPhone:('phone' in (selectedSaleParty??{})"))
 const purchase = read('src/ui/pages/AdvancedPurchaseInvoicePage.tsx')
 check('⑤ فاتورة المشتريات: زر واتساب PDF بهاتف المورد', purchase.includes('onWhatsappPdf={whatsappPdf}') && purchase.includes("suppliers.find(supplier=>supplier.id===supplierId)?.phone??''"))
 const sreturns = read('src/ui/pages/SaleReturnsPage.tsx')

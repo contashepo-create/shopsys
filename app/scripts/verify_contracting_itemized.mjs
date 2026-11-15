@@ -131,8 +131,9 @@ throws('رفض شهادة بلا مبلغ ولا نسبة', () => S().addSubCert
 ok('دفتر الأستاذ متوازن بعد شهادات الباطن', balanced())
 
 console.log('🏁 المستخلص الختامي')
-const exF = S().addProjectExtract({ projectId: proj.id, grossMinor: 10_000, vatPercent: 0, payment: 'credit', description: 'الختامي', isFinal: true })
-ok('المستخلص الختامي مُعلَّم isFinal', exF.isFinal === true)
+throws('الختامي يرفض عدم مساواة العقد الفعلي', () => S().addProjectExtract({ projectId: proj.id, grossMinor: 10_000, vatPercent: 0, payment: 'credit', description: 'غير مكتمل', isFinal: true }), 'مساواة')
+const exF = S().addProjectExtract({ projectId: proj.id, grossMinor: 650_000, vatPercent: 0, payment: 'credit', description: 'الختامي', isFinal: true })
+ok('المستخلص الختامي مُعلَّم isFinal ويطابق العقد الفعلي', exF.isFinal === true && S().projectExtracts.filter(e => e.projectId === proj.id).reduce((sum, e) => sum + e.totals.grossMinor, 0) === 1_100_000)
 throws('لا مستخلصات بعد الختامي', () => S().addProjectExtract({ projectId: proj.id, grossMinor: 5_000, vatPercent: 0, payment: 'credit', description: 'بعد الختامي' }), 'الختامي')
 
 console.log('📋 خط أنابيب المناقصات (القيمة المتوقعة)')

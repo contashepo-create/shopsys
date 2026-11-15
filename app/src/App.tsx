@@ -104,6 +104,7 @@ const LabReferrersPage = lazy(() => import('./ui/pages/LabPages.tsx').then((modu
 const ProjectsPage = lazy(() => import('./ui/pages/ContractingPages.tsx').then((module) => ({ default: module.ProjectsPage })))
 const ProjectExpensesPage = lazy(() => import('./ui/pages/ContractingPages.tsx').then((module) => ({ default: module.ProjectExpensesPage })))
 const ProjectExtractsPage = lazy(() => import('./ui/pages/ContractingPages.tsx').then((module) => ({ default: module.ProjectExtractsPage })))
+const ProjectSurveysPage = lazy(() => import('./ui/pages/ProjectSurveysPage.tsx').then((module) => ({ default: module.ProjectSurveysPage })))
 const ContractingReportsPage = lazy(() => import('./ui/pages/ContractingReportsPage.tsx').then((module) => ({ default: module.ContractingReportsPage })))
 const EquipmentReportsPage = lazy(() => import('./ui/pages/EquipmentReportsPage.tsx').then((module) => ({ default: module.EquipmentReportsPage })))
 const RestaurantReportsPage = lazy(() => import('./ui/pages/RestaurantReportsPage.tsx').then((module) => ({ default: module.RestaurantReportsPage })))
@@ -228,6 +229,7 @@ const APP_ROUTES = (<>
 <Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
       <Route path="/contracting/projects" element={<ProjectsPage />} />
       <Route path="/contracting/extracts" element={<ProjectExtractsPage />} />
+      <Route path="/contracting/surveys" element={<ProjectSurveysPage />} />
       <Route path="/contracting/expenses" element={<ProjectExpensesPage />} />
 <Route path="/contracting/quotations" element={<QuotationsPage />} />
 <Route path="/contracting/boq" element={<BoqPage />} />
@@ -651,8 +653,10 @@ export default function App() {
   useEffect(() => {
     if (!storesHydrated) return
     const fiscal = useAppStore.getState()
-    const journal = useRawDataStore.getState().journal
-    const repairs = fiscalCloseStateRepairs(fiscal.fiscalYears, journal)
+    const data = useRawDataStore.getState()
+    const mainBranches = data.branches.filter(branch => branch.isMain)
+    if (data.branches.length && mainBranches.length !== 1) return
+    const repairs = fiscalCloseStateRepairs(fiscal.fiscalYears, data.journal, mainBranches[0]?.id)
     repairs.closeIds.forEach((id) => fiscal.markFiscalYearClosed(id))
     repairs.reopenIds.forEach((id) => fiscal.reopenFiscalYear(id))
   }, [storesHydrated])

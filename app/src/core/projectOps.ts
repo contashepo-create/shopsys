@@ -28,7 +28,7 @@ export interface MaterialIssueLine {
   baseQty: number
   /** تكلفة الوحدة الأساسية وقت الصرف (متوسط مرجح) */
   unitCostMinor: Minor
-  /** تكلفة السطر = baseQty × unitCostMinor (مقرَّبة) */
+  /** تكلفة السطر الفعلية عند الترحيل؛ قد تختلف عن حاصل ضرب متوسط الوحدة بسبب التقريب. */
   costMinor: Minor
 }
 
@@ -51,6 +51,8 @@ export interface MaterialRequisition {
   notes: string
   status: RequisitionStatus
   journalEntryId: number
+  /** توزيع الدفعات الفعلي للأذون الجديدة؛ لا يُستنتج من السجلات القديمة. */
+  batchAllocations?: { itemId: number; batchId: number; qty: number }[]
 }
 
 /** سجل تدقيق حركة مخزون (أمر الإصلاح: Audit Trail كامل للحركات) */
@@ -80,7 +82,7 @@ export function buildIssueLine(
   item: { id: number; nameAr: string; baseUnit: string; stockQty: number; costMinor: Minor; extraUnits: { nameAr: string; factor: number }[] },
   alreadyPlannedBaseQty: number,
 ): MaterialIssueLine {
-  if (!(input.qty > 0)) throw new Error(`كمية «${item.nameAr}» يجب أن تكون موجبة`)
+  if (!Number.isFinite(input.qty) || !(input.qty > 0)) throw new Error(`كمية «${item.nameAr}» يجب أن تكون موجبة وصالحة`)
   let factor = 1
   let unitAr = item.baseUnit
   if (input.unitAr && input.unitAr !== item.baseUnit) {
@@ -89,7 +91,10 @@ export function buildIssueLine(
     factor = extra.factor
     unitAr = extra.nameAr
   }
-  const baseQty = Math.round(input.qty * factor * 1000) / 1000
+  if (!Number.isFinite(factor) || factor <= 0) throw new Error(`معامل وحدة «${item.nameAr}» غير صالح`)
+  const rawBaseQty = input.qty * factor
+  const baseQty = Math.round(rawBaseQty * 1000) / 1000
+  if (!Number.isFinite(rawBaseQty) || !Number.isSafeInteger(Math.round(rawBaseQty * 1000)) || baseQty <= 0 || Math.abs(rawBaseQty - baseQty) > 1e-9) throw new Error(`الكمية الأساسية للصنف «${item.nameAr}» يجب أن تكون موجبة ودقيقة حتى ثلاث خانات`)
   const available = Math.round((item.stockQty - alreadyPlannedBaseQty) * 1000) / 1000
   if (baseQty > available) {
     throw new Error(`رصيد «${item.nameAr}» لا يكفي — المتاح ${available} ${item.baseUnit} والمطلوب ${baseQty}`)
@@ -101,7 +106,7 @@ export function buildIssueLine(
 
 /** قيد إذن الصرف: من ح/ 5110 تكاليف مشروعات ← إلى ح/ 1103 المخزون (بالمتوسط المرجح) */
 export function buildMaterialIssueEntry(totalCostMinor: Minor, label: string): JournalLine[] {
-  if (!Number.isInteger(totalCostMinor) || totalCostMinor <= 0) throw new Error('تكلفة إذن الصرف يجب أن تكون موجبة')
+  if (!Number.isSafeInteger(totalCostMinor) || totalCostMinor <= 0) throw new Error('تكلفة إذن الصرف يجب أن تكون موجبة')
   const lines: JournalLine[] = [
     { accountCode: '5110', debit: totalCostMinor, credit: 0, note: `مواد منصرفة ${label}` },
     { accountCode: '1103', debit: 0, credit: totalCostMinor, note: 'إخراج مخزون بالمتوسط المرجح' },

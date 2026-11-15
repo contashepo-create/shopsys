@@ -124,7 +124,7 @@ export function BoqPage() {
               {items.map((b) => (
                 <tr key={b.id} className="border-b border-slate-50 dark:border-slate-800/50">
                   <td className="px-4 py-3 font-mono text-[12px]">{b.code || '—'}</td>
-                  <td className="px-4 py-3 font-bold">{b.descriptionAr}</td>
+                  <td className="px-4 py-3 font-bold">{projects.find(project => project.id === b.projectId)?.boqSections?.find(section => section.id === b.sectionId)?.nameAr && <span className="text-slate-500">{projects.find(project => project.id === b.projectId)?.boqSections?.find(section => section.id === b.sectionId)?.nameAr} — </span>}{b.descriptionAr}</td>
                   <td className="px-4 py-3">{b.unit}</td>
                   <td className="px-4 py-3">{b.qty}</td>
                   <td className="px-4 py-3">{fmt(b.unitPriceMinor)}</td>

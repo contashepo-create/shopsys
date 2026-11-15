@@ -85,7 +85,7 @@ describe('كشوف حساب الأطراف', () => {
 describe('اتساق الشيكات مع دفتر الذمم', () => {
   const base = {
     customerId: 7,
-    sales: [{ invoiceNumber: 'S-0001', date: '2026-09-01', customerId: 7, payment: 'credit', paidMinor: 0, totals: { totalMinor: 1000 } }],
+    sales: [{ invoiceNumber: 'S-0001', date: '2026-09-01', customerId: 7, payment: 'credit' as const, paidMinor: 0, totals: { totalMinor: 1000 } }],
     saleReturns: [], allSales: [], vouchers: [],
   }
   const chq = (status: string) => [{ chequeNumber: 'C-1', direction: 'incoming', partyId: 7, amountMinor: 400, status, createdAt: '2026-09-05' }]

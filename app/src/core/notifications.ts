@@ -52,6 +52,7 @@ export interface NotificationsInput {
   pendingApprovalsAging?: { requestId: number; subject: string; actionLabel: string; daysPending: number }[]
   /** مشروعات مقاولات تستحق/تقترب من استحقاق الإفراج عن محتجزها بعد فترة الضمان — سد فجوة تقرير النشاط #11 Future #1 */
   retentionDueProjects?: { projectId: number; projectNameAr: string; dueDate: string; daysLeft: number; remainingMinor: number }[]
+  retentionReviewProjects?: { projectId: number; projectNameAr: string }[]
   /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
   leaseAlerts?: { leaseId: number; contractNumber: string; tenantName: string; kind: 'expiring' | 'overdue'; days: number; amountMinor: number }[]
   /** مواعيد عيادة اليوم ما زالت «محجوز» دون حسم — سد فجوة تقرير النشاط #12 (Immediate #3) */
@@ -289,6 +290,10 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       route: '/contracting/projects',
       perm: 'ops.activity.use',
     })
+  }
+
+  for (const r of input.retentionReviewProjects ?? []) {
+    out.push({ id: `retreview:${r.projectId}`, icon: '⚠️', title: `مراجعة محتجز المشروع: ${r.projectNameAr}`, body: 'بيانات المستخلص أو إشعاره لا تطابق الدفتر؛ راجعها قبل احتساب المحتجز أو تحصيله.', severity: 'danger', route: '/contracting/projects', perm: 'ops.activity.use' })
   }
 
   // 1.75) مواعيد عيادة اليوم ما زالت «محجوز» دون حسم (سد فجوة تقرير النشاط #12 — Immediate #3)

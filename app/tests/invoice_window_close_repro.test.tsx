@@ -1,3 +1,4 @@
+import { todayLocalIso } from '../src/core/time.ts'
 /**
  * بلاغ المالك: (١) حوار تأكيد الإغلاق لا يغلق النافذة المستهدفة،
  * (٢) لا إغلاق تلقائي بعد حفظ وترحيل الفاتورة.
@@ -262,7 +263,7 @@ describe('منع تكرار فاتورة الشراء عند إعادة المح
     const args = {
       sourceDraftId: 'purchase-draft-idem',
       supplierId: 0,
-      date: new Date().toISOString(),
+      date: todayLocalIso(),
       lines: [{ itemId: item.id, qty: 1, unitPriceMinor: 2500 }],
       expenses: [],
       paidMinor: 2500,

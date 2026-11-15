@@ -109,7 +109,7 @@ for (const tz of tzSupported ? ['Africa/Cairo', 'America/New_York'] : [null]) {
   ok(p.datedDate.startsWith('2026-03-01T'), `${T}: تاريخ المستند المحرَّر في الرأس هو تاريخ الفاتورة`, p.datedDate)
   ok(p.datedRef.split('-')[1] === '260301', `${T}: كود المرجع SAL-YYMMDD من يوم المستند لا من UTC`, p.datedRef)
   ok(p.entryDate === '2026-03-01', `${T}: تاريخ القيد = تاريخ المستند`, p.entryDate)
-  ok(p.entryCreatedAt.startsWith('2026-03-01T'), `${T}: ختم إنشاء القيد لم ينزلق ليوم آخر`, p.entryCreatedAt)
+  ok(p.entryCreatedAt.slice(0, 10) === p.todayLocal, `${T}: وقت إنشاء القيد يوم التسجيل الفعلي لا يوم المستند السابق`, p.entryCreatedAt)
   ok(!p.datedDate.endsWith('Z') && /[+-]\d{2}:\d{2}$/.test(p.datedDate), `${T}: الختم يحمل إزاحة صريحة لا Z`, p.datedDate)
   ok(p.todayDate.slice(0, 10) === p.todayLocal, `${T}: بيع بلا تاريخ محرَّر يأخذ «اليوم المحلي» للجهاز`, `${p.todayDate} ≠ ${p.todayLocal}`)
   ok(p.todayRef.split('-')[1] === p.todayLocal.slice(2).replaceAll('-', ''), `${T}: كود المرجع اليومي مطابق لليوم المحلي`, p.todayRef)

@@ -1,6 +1,9 @@
 import type { StateStorage } from 'zustand/middleware'
 import { desktopBridge, type DesktopAuditEvent, type DesktopDatabaseBridge, type DesktopJournalEntry } from './desktopBridge.ts'
 import { secureStorage } from './secureStorage.ts'
+import { assertQuantityChangeLinks } from '../core/projectExtractQuantity.ts'
+import { assertFinancialEntityProfiles, type FinancialEntityProfile } from '../core/financialEntities.ts'
+import type { BoqItem, ChangeOrder } from '../core/contracting.ts'
 
 type CachedSnapshot = {
   revision: number
@@ -137,7 +140,225 @@ function parseJsonValue(value: string | null): JsonValue | undefined {
 export function mergeConcurrentSnapshots(base: string | null, local: string, remote: string | null): string {
   const merged = mergeJson(parseJsonValue(base), parseJsonValue(local), parseJsonValue(remote))
   if (merged === undefined) throw new Error('تعذّر دمج لقطة فارغة مع تعديل متزامن')
-  return JSON.stringify(merged)
+  const result = JSON.stringify(merged)
+  const state = persistedState(result)
+  if (state) {
+    const items = Array.isArray(state.boqItems) ? state.boqItems as BoqItem[] : []
+    const orders = Array.isArray(state.changeOrders) ? state.changeOrders as ChangeOrder[] : []
+    if (items.some(item => item?.quantityChange) || orders.some(order => order?.quantityChange)) assertQuantityChangeLinks(items, orders)
+  }
+  const deletedQuotes = new Set(Array.isArray(state?.quotationDeletionRecords) ? state.quotationDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
+  if (state && deletedQuotes.size && Array.isArray(state.quotations) && state.quotations.some(row => row && typeof row === 'object' && deletedQuotes.has((row as { id: number }).id))) throw new Error('تعارض عرض محذوف مع تحديث متزامن — أعد تحميل البيانات')
+  for (const name of ['projectSurveys', 'projectExtractDrafts']) {
+    const rows = state?.[name]
+    if (Array.isArray(rows)) {
+      const ids = rows.map(row => row && typeof row === 'object' ? (row as { projectId?: unknown }).projectId : null).filter((id): id is number => typeof id === 'number')
+      if (new Set(ids).size !== ids.length) throw new Error('تعارض مستندات مشروع مكررة — أعد تحميل البيانات')
+    }
+  }
+  if (Array.isArray(state?.projectCloseouts)) {
+    const seen = new Set<string>()
+    for (const raw of state.projectCloseouts) {
+      if (!raw || typeof raw !== 'object') continue
+      const row = raw as { projectId?: unknown; basis?: unknown }
+      if (typeof row.projectId !== 'number' || typeof row.basis !== 'string') continue
+      const key = JSON.stringify([row.projectId, row.basis])
+      if (seen.has(key)) throw new Error('تعارض محضر إقفال مكرر — أعد تحميل البيانات')
+      seen.add(key)
+    }
+  }
+  const deletedSurveys = new Set(Array.isArray(state?.surveyDeletionRecords) ? state.surveyDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
+  if (state && deletedSurveys.size && Array.isArray(state.projectSurveys) && state.projectSurveys.some(row => row && typeof row === 'object' && deletedSurveys.has((row as { id: number }).id))) throw new Error('تعارض حصر محذوف مع تحديث متزامن — أعد تحميل البيانات')
+  // Detect a financial link introduced on the other side of an unposted deletion.
+  // Existing deletion audit records alone must not prevent later legitimate activity.
+  const before = persistedState(base) ?? {}, left = persistedState(local) ?? {}, right = persistedState(remote) ?? {}
+  // قيد الإقفال قرار مبني على مجمل الدفتر والصلاحيات والفروع. لا يُدمج مع
+  // حركة موازية في لقطة البيانات ولو اختلفت معرفات القيود. مخزن السنوات
+  // منفصل، لذا هذا الحارس لا يضمن ذرية الإقفال عبر المخزنين أو كل الكتّاب.
+  const closingHistory = (source: Record<string, unknown>) => {
+    const rows = Array.isArray(source.journal) ? source.journal as Array<Record<string, unknown>> : []
+    const ids = new Set(rows.filter(row => row?.sourceType === 'year_closing').map(row => row.id))
+    return rows.filter(row => row && (row.sourceType === 'year_closing' || ids.has(row.reversesEntryId)))
+  }
+  const changedClose = (side: Record<string, unknown>) => JSON.stringify(closingHistory(before)) !== JSON.stringify(closingHistory(side))
+  const closeConflict = (other: Record<string, unknown>) => ['journal', 'branches', 'appUsers', 'currentUserId', 'loggedOut', 'roleOverrides', 'branchRoleOverrides', 'customRoles'].some(key => JSON.stringify(before[key]) !== JSON.stringify(other[key]))
+  if ((changedClose(left) && closeConflict(right)) || (changedClose(right) && closeConflict(left))) throw new Error('تعارض إقفال السنة مع حركة دفتر أو صلاحية متزامنة — أعد تحميل البيانات وراجع الإقفال')
+  // الإعداد الوصفي وارتباطاته قرار واحد؛ لا ندمج قرارين متوازيين أو تغيير فروع
+  // مع قرار كيان حتى لو كانت حقول JSON قابلة للدمج. لا يحمي ذلك الكتّاب خارج آلية اللقطات.
+  const changed = (side: Record<string, unknown>, key: string) => JSON.stringify(before[key] ?? []) !== JSON.stringify(side[key] ?? [])
+  const conflictsWithEntityEdit = (side: Record<string, unknown>) => ['financialEntityProfiles', 'branches', 'appUsers', 'currentUserId', 'loggedOut'].some(key => changed(side, key))
+  if ((changed(left, 'financialEntityProfiles') && conflictsWithEntityEdit(right)) ||
+      (changed(right, 'financialEntityProfiles') && conflictsWithEntityEdit(left))) {
+    throw new Error('تعارض إعداد الكيانات مع تعديل متزامن للكيانات أو الفروع أو صلاحية المستخدم — أعد تحميل البيانات')
+  }
+  if (state && state.financialEntityProfiles != null) {
+    if (!Array.isArray(state.financialEntityProfiles) || !Array.isArray(state.branches)) throw new Error('إعداد الكيانات أو الفروع غير صالح')
+    assertFinancialEntityProfiles(state.financialEntityProfiles as FinancialEntityProfile[], state.branches as { id: number }[])
+  }
+  // محاضر الكميات لقطات تاريخية: دمج ثلاثة أطراف لا يسمح بتحرير محضر
+  // سابق أو إسقاطه، حتى لو كان الطرف الآخر قد غيّر حقلاً مستقلاً فقط.
+  // هذا الحارس يخص حالات تعارض اللقطات ولا يحل محل حماية كل الكتّاب.
+  if (Array.isArray(before.projectCloseouts)) {
+    const originals = before.projectCloseouts as JsonValue[]
+    for (const side of [left, right]) {
+      if (!Array.isArray(side.projectCloseouts)) throw new Error('تعارض حذف سجل محاضر الإقفال التاريخية — أعد تحميل البيانات')
+      const records = side.projectCloseouts as JsonValue[]
+      for (const original of originals) {
+        if (!isJsonRecord(original) || (typeof original.id !== 'number' && typeof original.id !== 'string')) throw new Error('سجل محضر الإقفال التاريخي غير صالح — راجع البيانات')
+        const matches = records.filter(row => isJsonRecord(row) && row.id === original.id)
+        if (matches.length !== 1 || !jsonEqual(original, matches[0])) throw new Error('تعارض تعديل أو حذف محضر إقفال تاريخي — أعد تحميل البيانات')
+      }
+    }
+  }
+  const auditKeys = ['surveyDeletionRecords', 'quotationDeletionRecords']
+  const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectDeletionRecords', 'auditLog'])
+  const refers = (value: unknown, projectId: number, depth = 0): boolean => {
+    if (depth > 12 || value == null) return false
+    if (typeof value === 'string') {
+      if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+      try { return refers(JSON.parse(value), projectId, depth + 1) } catch { return true }
+    }
+    if (Array.isArray(value)) return value.some(row => refers(row, projectId, depth + 1))
+    if (typeof value !== 'object') return false
+    const row = value as Record<string, unknown>
+    return row.projectId === projectId || ((row.source === 'project' || row.sourceType === 'client_advance') && row.sourceId === projectId) || Object.values(row).some(child => refers(child, projectId, depth + 1))
+  }
+  const checkDeletion = (deleting: Record<string, unknown>, other: Record<string, unknown>) => {
+    for (const key of auditKeys) {
+      const oldIds = new Set(Array.isArray(before[key]) ? (before[key] as Array<{ id?: unknown }>).map(row => row?.id) : [])
+      const records = Array.isArray(deleting[key]) ? deleting[key] as Array<{ id?: unknown; projectId?: unknown }> : []
+      for (const record of records) {
+        if (!record || oldIds.has(record.id) || typeof record.projectId !== 'number') continue
+        const projectId = record.projectId
+        for (const [name, rows] of Object.entries(other)) {
+          if (ignored.has(name) || !Array.isArray(rows)) continue
+          const changed = rows.filter(row => refers(row, projectId))
+          const old = Array.isArray(before[name]) ? (before[name] as unknown[]).filter(row => refers(row, projectId)) : []
+          if (JSON.stringify(changed) !== JSON.stringify(old)) throw new Error('تعارض حذف غير مرحّل مع حركة أضيفت بالتزامن — أعد تحميل البيانات')
+        }
+      }
+    }
+  }
+  const checkCloseout = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const oldIds = new Set(Array.isArray(before.projectCloseouts) ? (before.projectCloseouts as Array<{ id?: unknown }>).map(row => row?.id) : [])
+    const records = Array.isArray(issuing.projectCloseouts) ? issuing.projectCloseouts as Array<{ id?: unknown; projectId?: unknown }> : []
+    for (const record of records) {
+      if (!record || oldIds.has(record.id) || typeof record.projectId !== 'number') continue
+      const id = record.projectId
+      for (const name of ['projects', 'boqItems', 'projectSurveys', 'projectExtractDrafts', 'projectExtracts', 'clientAdvances', 'changeOrders']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض إصدار محضر مع تغيير متزامن في المشروع — أعد تحميل البيانات')
+      }
+      // Original journal and its reversals can change without the extract record changing.
+      const extractIds = new Set([before, other].flatMap(source => Array.isArray(source.projectExtracts) ? (source.projectExtracts as Array<Record<string, unknown>>).filter(row => row?.projectId === id).map(row => row.id) : []))
+      const journal = (source: Record<string, unknown>) => {
+        const rows = Array.isArray(source.journal) ? source.journal as Array<Record<string, unknown>> : []
+        const linked = rows.filter(row => row && row.sourceType === 'project_extract' && extractIds.has(row.sourceId))
+        const entryIds = new Set(linked.flatMap(row => [row.id, row.reversedByEntryId, row.reversesEntryId]))
+        return rows.filter(row => row && (entryIds.has(row.id) || entryIds.has(row.reversesEntryId)))
+      }
+      if (JSON.stringify(journal(before)) !== JSON.stringify(journal(other))) throw new Error('تعارض محضر مع تغيير قيد المستخلص بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  checkCloseout(left, right); checkCloseout(right, left)
+  // اعتماد شريحة تغيير مع مستخلص أو تعديل أساس متزامن لا يُدمج تلقائياً.
+  const checkQuantityApproval = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const old = Array.isArray(before.changeOrders) ? before.changeOrders as Array<Record<string, unknown>> : []
+    const orders = Array.isArray(issuing.changeOrders) ? issuing.changeOrders as Array<Record<string, unknown>> : []
+    for (const order of orders) {
+      if (!order?.quantityChange || (order.status !== 'approved' && order.status !== 'invoiced') || typeof order.projectId !== 'number') continue
+      const prior = old.find(row => row?.id === order.id)
+      if (prior && (prior.status === 'approved' || prior.status === 'invoiced')) continue
+      const id = order.projectId
+      for (const name of ['projects', 'boqItems', 'projectExtracts', 'projectSurveys', 'projectExtractDrafts', 'changeOrders', 'clientAdvances']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض اعتماد تغيير الكميات مع تعديل المشروع بالتزامن — أعد تحميل البيانات')
+      }
+      if (JSON.stringify(before.journal) !== JSON.stringify(other.journal)) throw new Error('تعارض اعتماد تغيير الكميات مع تغيير الدفتر بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  checkQuantityApproval(left, right); checkQuantityApproval(right, left)
+  const checkFinalExtract = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const old = Array.isArray(before.projectExtracts) ? before.projectExtracts as Array<Record<string, unknown>> : []
+    const extracts = Array.isArray(issuing.projectExtracts) ? issuing.projectExtracts as Array<Record<string, unknown>> : []
+    for (const extract of extracts) {
+      if (!extract?.isFinal || typeof extract.projectId !== 'number') continue
+      const previous = old.find(row => row?.id === extract.id)
+      if (previous?.isFinal && JSON.stringify(previous) === JSON.stringify(extract)) continue
+      const id = extract.projectId
+      for (const name of ['projects', 'boqItems', 'projectExtracts', 'changeOrders']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض المستخلص الختامي مع تعديل العقد أو مستخلص متزامن — أعد تحميل البيانات')
+      }
+      // فواتير البيع ومرتجعاتها قد تؤثر في سقف العقد دون حقل projectId على المرتجع.
+      for (const name of ['sales', 'saleReturns']) if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض المستخلص الختامي مع فاتورة أو مرتجع متزامن — أعد تحميل البيانات')
+    }
+  }
+  checkFinalExtract(left, right); checkFinalExtract(right, left)
+  // إشعار كمي وقيده يعتمدان على المستخلص والذمة وأساس المشروع؛ لا ندمجهما
+  // مع تعديل موازٍ ولو أمكن دمج حقول السجلات آلياً.
+  const checkQuantityCredit = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const prior = Array.isArray(before.projectExtracts) ? before.projectExtracts as Array<Record<string, unknown>> : []
+    const next = Array.isArray(issuing.projectExtracts) ? issuing.projectExtracts as Array<Record<string, unknown>> : []
+    for (const extract of next) {
+      if ((extract?.quantityCreditVersion !== 1 && extract?.quantityCreditVersion !== 2) || typeof extract.projectId !== 'number') continue
+      const old = prior.find(row => row?.id === extract.id)
+      if (JSON.stringify(old?.refunds ?? []) === JSON.stringify(extract.refunds ?? [])) continue
+      const id = extract.projectId
+      for (const name of ['projects', 'boqItems', 'projectExtracts', 'projectSurveys', 'projectExtractDrafts', 'projectCloseouts', 'clientAdvances', 'changeOrders', 'retentionReleases']) {
+        const select = (source: Record<string, unknown>) => Array.isArray(source[name]) ? (source[name] as Array<Record<string, unknown>>).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id)) : []
+        if (JSON.stringify(select(before)) !== JSON.stringify(select(other))) throw new Error('تعارض إشعار الكميات مع تعديل المشروع بالتزامن — أعد تحميل البيانات')
+      }
+      for (const name of ['journal', 'vouchers', 'clientSettlements', 'sales', 'saleReturns', 'cheques', 'openingBalances', 'branchOpeningBalances', 'partyOffsets', 'paymentTerminalTransactions', 'treasuries', 'paymentTerminals', 'customers', 'branches', 'activeBranchId', 'appUsers', 'currentUserId']) {
+        // التحقق من الفرع والعميل والخزينة والماكينة وصلاحية المستخدم جزء من
+        // قرار الترحيل، فلا ندمج إصداراً مع تغيير متزامن في أي من أسسه.
+        if (JSON.stringify(before[name]) !== JSON.stringify(other[name])) throw new Error('تعارض إشعار الكميات مع حركة مالية أو أساس ترحيل متزامن — أعد تحميل البيانات')
+      }
+    }
+  }
+  checkQuantityCredit(left, right); checkQuantityCredit(right, left)
+  // استرداد المقدمة موثق حسب الدفعة: أي تحديث متزامن للأساس أو الدفتر
+  // يرفض الدمج حتى لا يضيع تخصيص أو يُنسب استرداد إلى دفعة خاطئة.
+  const checkAdvanceRecovery = (issuing: Record<string, unknown>, other: Record<string, unknown>) => {
+    const rows = (source: Record<string, unknown>, name: string) => Array.isArray(source[name]) ? source[name] as Array<Record<string, unknown>> : []
+    const all = [...rows(before, 'clientAdvances'), ...rows(issuing, 'clientAdvances'), ...rows(before, 'projectExtracts'), ...rows(issuing, 'projectExtracts')]
+    const ids = new Set(all.map(row => row?.projectId).filter((id): id is number => typeof id === 'number'))
+    for (const id of ids) {
+      const select = (source: Record<string, unknown>, name: string) => rows(source, name).filter(row => row && (name === 'projects' ? row.id === id : row.projectId === id))
+      const changedAdvances = JSON.stringify(select(before, 'clientAdvances')) !== JSON.stringify(select(issuing, 'clientAdvances'))
+      const recoveryRows = (source: Record<string, unknown>) => select(source, 'projectExtracts').filter(row => row.advanceRecoveryMinor != null && row.advanceRecoveryMinor !== 0 || row.advanceAllocations != null)
+      const changedRecoveries = JSON.stringify(recoveryRows(before)) !== JSON.stringify(recoveryRows(issuing))
+      if (!changedAdvances && !changedRecoveries) continue
+      for (const name of ['projects', 'clientAdvances', 'projectExtracts']) if (JSON.stringify(select(before, name)) !== JSON.stringify(select(other, name))) throw new Error('تعارض استرداد مقدمات المشروع مع تغيير متزامن — أعد تحميل البيانات')
+      if (JSON.stringify(before.journal) !== JSON.stringify(other.journal)) throw new Error('تعارض استرداد مقدمات المشروع مع الدفتر — أعد تحميل البيانات')
+    }
+  }
+  checkAdvanceRecovery(left, right); checkAdvanceRecovery(right, left)
+  checkDeletion(left, right); checkDeletion(right, left)
+  const deleted = new Set(Array.isArray(state?.projectDeletionRecords) ? state.projectDeletionRecords.map(row => row && typeof row === 'object' ? (row as { id?: unknown }).id : null).filter((id): id is number => typeof id === 'number') : [])
+  if (state && deleted.size) {
+    const projects = Array.isArray(state.projects) ? state.projects : []
+    if (projects.some(row => row && typeof row === 'object' && deleted.has((row as { id: number }).id))) throw new Error('تعارض المشروع المحذوف مع تحديث متزامن — أعد تحميل البيانات')
+    const refersToDeleted = (value: unknown, depth = 0): boolean => {
+      if (depth > 12 || value == null) return false
+      if (typeof value === 'string') {
+        if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+        try { return refersToDeleted(JSON.parse(value), depth + 1) } catch { return true }
+      }
+      if (Array.isArray(value)) return value.some(row => refersToDeleted(row, depth + 1))
+      if (typeof value !== 'object') return false
+      const row = value as Record<string, unknown>
+      if (typeof row.projectId === 'number' && deleted.has(row.projectId)) return true
+      if ((row.source === 'project' || row.sourceType === 'client_advance') && typeof row.sourceId === 'number' && deleted.has(row.sourceId)) return true
+      return Object.values(row).some(child => refersToDeleted(child, depth + 1))
+    }
+    for (const [key, value] of Object.entries(state)) {
+      if (['projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'auditLog'].includes(key) || !Array.isArray(value)) continue
+      const activeRows = key === 'quotations' ? value.filter(row => !row || typeof row !== 'object' || !(row as { deletedAt?: unknown }).deletedAt) : value
+      if (refersToDeleted(activeRows)) throw new Error('تعارض المشروع المحذوف مع مستند مرتبط أُضيف بالتزامن — أعد تحميل البيانات')
+    }
+  }
+  return result
 }
 
 export async function snapshotIdempotencyKey(storeName: string, expectedRevision: number, payloadJson: string): Promise<string> {

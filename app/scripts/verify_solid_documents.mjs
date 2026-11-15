@@ -31,7 +31,7 @@ const modal = read('ui/components/InvoiceDraftsModal.tsx')
     assert.ok(employees.includes(cell), `خلية الشريط مفقودة: ${cell}`)
   }
   assert.ok(employees.includes('data-slip-total-net'), 'الصافي الكلي غير مميز في الشريط')
-  assert.ok(/disabled=\{slipTotals\.count === 0 \|\| slipTotals\.net <= 0\}/.test(employees), 'زر الترحيل لا يُعطَّل عند لا قسائم أو صافي غير موجب')
+  assert.ok(/disabled=\{slipSaving \|\| !slipDate \|\| slipTotals\.count === 0 \|\| slipTotals\.net <= 0\}/.test(employees), 'زر الترحيل لا يُعطَّل عند لا قسائم أو صافي غير موجب')
   assert.ok(/const slipTotals = useMemo/.test(employees), 'إجماليات المسير ليست مشتقة من الحالة')
   ok('مسير الرواتب: ترويسة مستند PR-<شهر> + شريط إجماليات صلب + ترحيل محصّن')
 }

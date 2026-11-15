@@ -64,17 +64,21 @@ describe('صفحة بيانات المنشأة', () => {
     await waitFor(() => expect(localStorage.getItem(draftKey)).not.toBeNull())
     fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'draft@example.com' } })
     expect(document.querySelector('[data-settings-unsaved]')).not.toBeNull()
-    await waitFor(() => {
+    await waitFor(async () => {
       const stored = localStorage.getItem(draftKey)
       expect(stored).not.toContain('draft@example.com')
       expect(stored).toMatch(/^SSENC1\./)
+      // وجود لقطة مشفرة وحده قد يكون لقطة التهيئة الأقدم، لا المسودة المعدلة.
+      const saved = JSON.parse((await secureStorage.getItem(draftKey)) ?? 'null')
+      expect(saved?.fields?.email).toBe('draft@example.com')
     })
     first.unmount()
 
     render(<MemoryRouter><CompanyProfilePage /></MemoryRouter>)
     await waitFor(() => expect((screen.getByPlaceholderText('name@example.com') as HTMLInputElement).value).toBe('draft@example.com'))
     expect(document.querySelector('[data-settings-unsaved]')?.textContent).toContain('استُعيدت مسودة')
-    expect(hasUnsavedChangesInCurrentWindow()).toBe(true)
+    // تسجيل الحارس يتم في useEffect بعد استعادة المسودة غير المتزامنة.
+    await waitFor(() => expect(hasUnsavedChangesInCurrentWindow()).toBe(true))
     fireEvent.click(screen.getByText('💾 حفظ بيانات المنشأة'))
     expect(hasUnsavedChangesInCurrentWindow()).toBe(false)
     expect(useAppStore.getState().setup.email).toBe('draft@example.com')

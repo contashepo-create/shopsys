@@ -56,10 +56,12 @@ vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => payload 
 
 let result: Awaited<ReturnType<typeof loadDemoActivity>>
 let data: ReturnType<typeof useDataStore.getState>
+let dataStoreForDemo: typeof useDataStore.getState
 
 beforeAll(async () => {
   const { loadDemoActivity } = await import('../src/dev/demoDatabase.ts')
   const { useDataStore } = await import('../src/data/repo.ts')
+  dataStoreForDemo = useDataStore.getState
   result = await loadDemoActivity('contracting')
   data = useDataStore.getState()
 })
@@ -102,6 +104,17 @@ describe('تحميل نشاط المقاولات: كل قسم فيه بيانا�
     const claimed = mainExtracts.reduce((sum, e) => sum + e.totals.grossMinor, 0)
     expect(claimed).toBeLessThanOrEqual(main.contractValueMinor + 18_000_000 /* أمر التغيير المعتمد */)
     expect(data.projectExtracts.some((e) => e.payment === 'cash')).toBe(true)
+  })
+
+  it('المستخلص والدفعة من بيانات الفرع الواحد يظهران في الفرع الرئيسي بعد إنشاء فروع العرض', () => {
+    const main = data.branches.find(branch => branch.isMain)!
+    expect(main).toBeTruthy()
+    data.setActiveBranchId(main.id)
+    try {
+      const scoped = dataStoreForDemo()
+      expect(scoped.projectExtracts).toHaveLength(3)
+      expect(scoped.clientAdvances).toHaveLength(1)
+    } finally { data.setActiveBranchId(null) }
   })
 
   it('أوامر التغيير: معتمد يوسّع قيمة العقد + مسودة', () => {

@@ -30,7 +30,7 @@ it('يسجل السيريال المرتجع تالفاً ولا يعيده مت
   expect(useDataStore.getState().items[0].stockQty).toBe(0)
 })
 it('يرجع للمورد السيريال المختار لا الأقدم تلقائياً', () => {
-  const { s, item, purchase } = fixture()
+  const { s, purchase } = fixture()
   const before = useRawDataStore.getState()
   expect(() => s.postPurchaseReturn({ purchaseId: purchase.id, lineSpecs: [{ lineIndex: 0, qty: 1, warehouseId: 1 }], refund: 'debt', reason: 'رد' })).toThrow(/سيريال/)
   expect(useRawDataStore.getState().journal).toBe(before.journal)
@@ -43,7 +43,7 @@ it('يرفض تاريخ المرتجع التالف القديم الملتبس 
   const sale = s.postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 1000, unitCostMinor: 100, discountPercent: 0, soldByWeight: false, serials: ['SER-1', 'SER-2'] }], customerId: null, payment: 'cash', treasury: '1101', paidMinor: 2000, invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false })
   useRawDataStore.setState({ saleReturns: [{ id: 1, saleId: sale.id, lines: [{ ...sale.lines[0], qty: 1, saleLineIndex: 0, condition: 'damaged' }] }] as never })
   const before = useRawDataStore.getState()
-  expect(() => s.postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable', serials: ['SER-2'] }], refund: 'cash', reason: 'رد' })).toThrow(/السابق غير مثبتة/)
+  expect(() => s.postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable', serials: ['SER-2'] }], refund: 'cash', reason: 'رد' })).toThrow(/السابق غير مثبتة|تاريخ.*غير صالح/)
   expect(useRawDataStore.getState().serials).toBe(before.serials)
 })
 it('يرفض اختيار سيريال من سطر آخر في فاتورة شراء متعددة السطور', () => {
@@ -129,7 +129,7 @@ it('يحجب مسارات لا تحفظ السيريال والدفعة قبل �
  const { s, item } = fixture()
  useRawDataStore.setState({ items: useRawDataStore.getState().items.map(row => row.id === item.id ? { ...row, trackExpiry: true } : row) })
  const before = useRawDataStore.getState()
- expect(() => s.postWastage({ reason: 'تالف', lines: [{ itemId: item.id, qty: 1 }] })).toThrow(/السيريال ودفعة صلاحيته/)
+ expect(() => s.postWastage({ reason: 'تالف', notes: '', lines: [{ itemId: item.id, qty: 1 }] })).toThrow(/السيريال ودفعة صلاحيته/)
  expect(() => s.postStocktake([{ itemId: item.id, nameAr: item.nameAr, expectedQty: 2, countedQty: 1, unitCostMinor: 100 }], '')).toThrow(/السيريال ودفعة صلاحيته/)
  expect(useRawDataStore.getState().journal).toBe(before.journal)
  expect(useRawDataStore.getState().items).toBe(before.items)

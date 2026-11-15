@@ -14,6 +14,8 @@
 import { addCalendarMonths } from './time.ts'
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
+import { creditedProjectRetention } from './projectExtractNet.ts'
+import { FinancialDataReviewError } from './financialDataReview.ts'
 
 export type ProjectStatus = 'active' | 'completed'
 
@@ -43,6 +45,8 @@ export interface Project {
   retentionPercent: number // نسبة محتجز ضمان الأعمال من كل مستخلص
   startDate: string // YYYY-MM-DD
   status: ProjectStatus
+  /** وقت إقفال النظام الفعلي عند تحصيل المحتجز؛ قد لا يوجد في المشاريع القديمة. */
+  completedAt?: string
   notes: string
   /* بيانات تشغيلية موسعة (أمر التعديل: نماذج احترافية) — كلها اختيارية */
   contractNumber?: string // رقم العقد الرسمي مع الجهة
@@ -50,6 +54,8 @@ export interface Project {
   expectedEndDate?: string // تاريخ التسليم المتوقع
   managerEmployeeId?: number | null // مدير المشروع من سجل الموظفين
   tags?: string[] // وسوم حرة للتصنيف والفلترة
+  /** أقسام جدول الكميات للعرض والتنظيم، لا تمثل بنوداً مالية. */
+  boqSections?: { id: string; nameAr: string }[]
   /**
    * تاريخ التسليم الفعلي للمشروع (سد فجوة تقرير النشاط #11 — لا تتبع لفترة
    * الضمان/الصيانة بعد التسليم). يختلف عن expectedEndDate (المتوقع قبل التنفيذ).
@@ -111,6 +117,26 @@ export function retentionDueWarnings(
     if (daysLeft <= warnDays) out.push({ projectId: p.id, projectNameAr: p.nameAr, dueDate, daysLeft, remainingRetentionMinor: remaining })
   }
   return out.sort((a, b) => a.daysLeft - b.daysLeft)
+}
+
+/** تنبيه المراجعة لا يخمّن قيمة المحتجز ولا يعطّل تنبيهات المشاريع السليمة. */
+export function retentionWarningsWithReview(
+  projects: readonly (Pick<Project, 'id' | 'nameAr' | 'actualHandoverDate' | 'defectsLiabilityMonths'>)[],
+  remaining: (projectId: number) => Minor,
+  todayIso: string,
+  warnDays = 30,
+): { due: RetentionDueWarning[]; review: { projectId: number; projectNameAr: string }[] } {
+  const review: { projectId: number; projectNameAr: string }[] = []
+  const byId = new Map(projects.map(project => [project.id, project]))
+  const due = retentionDueWarnings(projects, id => {
+    try { return remaining(id) } catch (error) {
+      if (!(error instanceof FinancialDataReviewError)) throw error
+      const project = byId.get(id)!
+      review.push({ projectId: id, projectNameAr: project.nameAr })
+      return 0 // استبعاد التنبيه المالي فقط، وليس اعتماد رصيد صفري
+    }
+  }, todayIso, warnDays)
+  return { due, review }
 }
 
 /**
@@ -380,7 +406,9 @@ export function quotationLineNetMinor(line: QuotationLine): Minor {
 export function quotationLineTaxMinor(line: QuotationLine): Minor {
   const percent = line.vatPercent ?? 0
   if (!percent) return 0
-  return Math.round(quotationLineNetMinor(line) * percent / 100)
+  const net = quotationLineNetMinor(line)
+  // السعر الشامل ثابت؛ التقريب يُطبَّق مرة واحدة على الصافي والضريبة هي الباقي.
+  return line.taxIncluded ? Math.round(line.qty * line.unitPriceMinor) - net : Math.round(net * percent / 100)
 }
 /** إجمالي البند شاملاً الضريبة */
 export function quotationLineGrossMinor(line: QuotationLine): Minor {
@@ -403,7 +431,8 @@ export function quotationEstCost(lines: readonly QuotationLine[]): Minor {
 
 export interface Quotation {
   id: number
-  /** حذف منطقي يحفظ الرقم والمرجع التاريخي ولا يمس اليومية. */
+  branchId?: number | null
+  /** توافق العروض المخفية قديماً؛ الحذف الجديد يحتفظ بالرقم فقط في سجل مستقل. */
   deletedAt?: string
   quoteNumber: string // QT-0001
   kind: 'quotation' | 'tender' // عرض سعر | مناقصة
@@ -423,11 +452,11 @@ export interface Quotation {
   bidBondMinor: Minor
 }
 
-/** خط أنابيب المناقصات: القيمة المتوقعة = Σ قيمة العرض × احتمالية فوزه (للمقدَّمة فقط) */
+/** خط أنابيب المناقصات: القيمة الشاملة للضريبة × احتمالية الفوز (للمقدَّمة فقط). */
 export function quotationPipeline(quotes: readonly Quotation[]): { submittedCount: number; submittedMinor: Minor; expectedMinor: Minor } {
   const submitted = quotes.filter((q) => q.status === 'submitted')
-  const submittedMinor = submitted.reduce((a, q) => a + quotationTotal(q.lines), 0)
-  const expectedMinor = submitted.reduce((a, q) => a + Math.round(quotationTotal(q.lines) * q.winProbability / 100), 0)
+  const submittedMinor = submitted.reduce((a, q) => a + quotationTotals(q.lines).grossMinor, 0)
+  const expectedMinor = submitted.reduce((a, q) => a + Math.round(quotationTotals(q.lines).grossMinor * q.winProbability / 100), 0)
   return { submittedCount: submitted.length, submittedMinor, expectedMinor }
 }
 
@@ -472,6 +501,8 @@ export const QUOTATION_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> =
 export interface BoqItem {
   id: number
   projectId: number
+  /** ربط اختياري بقسم المشروع، لا يغيّر قيمة البند. */
+  sectionId?: string | null
   code: string // ترقيم البند: 1-1، 2-3…
   descriptionAr: string
   unit: string // م2، م3، طن، مقطوعية…
@@ -481,6 +512,8 @@ export interface BoqItem {
   estCostMinor: Minor
   /** نسبة الإنجاز 0–100 — تُحدَّث مع المستخلصات لمتابعة التقدم البندي */
   progressPercent: number
+  /** شريحة زيادة معتمدة لا تغير أساس البند الأصلي أو نسب مستخلصاته القديمة. */
+  quantityChange?: { orderId: number; originalBoqItemId: number }
 }
 
 export function boqItemTotal(item: Pick<BoqItem, 'qty' | 'unitPriceMinor'>): Minor {
@@ -516,6 +549,10 @@ export interface ExtractLineComputed {
   newProgressPercent: number
   /** قيمة الشريحة المنفذة في هذا المستخلص */
   lineValueMinor: Minor
+  /** دليل الحصر؛ غيابه يعني أن البيانات القديمة لم تحفظ كمية مقاسة. */
+  prevExecutedQty?: number
+  newExecutedQty?: number
+  previousQtyEstimated?: boolean
 }
 
 /** حساب بنود المستخلص من BOQ — يرمي عند نسبة راجعة أو فوق 100 أو بند غير موجود */
@@ -610,8 +647,13 @@ export interface ChangeOrder {
   titleAr: string
   /** موجب = أعمال إضافية، سالب = تخفيض نطاق */
   amountMinor: Minor
+  /** زيادة كمية بسعر البند الأصلي؛ الأساس لقفل المسودة، والبند الجديد يُنشأ عند الاعتماد فقط. */
+  quantityChange?: { originalBoqItemId: number; qty: number; originalQty: number; unitPriceMinor: number; unit: string; generatedBoqItemId?: number }
   status: ChangeOrderStatus
+  /** تاريخ المستند الذي أدخله المستخدم، وليس وقت الإنشاء أو الاعتماد. */
   date: string
+  /** غير متوفر في الأوامر القديمة؛ لا يُخمَّن من تاريخ المستند. */
+  createdAt?: string
   approvedAt: string | null
 }
 
@@ -671,14 +713,14 @@ export interface ProjectDocumentationReturn {
 
 /** Remaining documentation capacity per extract, after prior document invoices and returns. */
 export function remainingDocumentableByExtract(
-  extracts: readonly { id: number; totals: { grossMinor: Minor; vatMinor: Minor }; refundedMinor?: Minor }[],
+  extracts: readonly { id: number; totals: { grossMinor: Minor; vatMinor: Minor }; refundedMinor?: Minor; quantityCreditVersion?: number; refunds?: readonly { retentionMinor?: number }[] }[],
   invoices: readonly ProjectDocumentationInvoice[],
   returns: readonly ProjectDocumentationReturn[] = [],
 ): Map<number, Minor> {
   const ordered = [...extracts].sort((a, b) => a.id - b.id)
   const remaining = new Map(ordered.map((extract) => [
     extract.id,
-    Math.max(0, extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0)),
+    Math.max(0, extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0) - creditedProjectRetention(extract)),
   ]))
   const returnedByInvoice = new Map<number, number>()
   for (const ret of returns) returnedByInvoice.set(ret.saleId, (returnedByInvoice.get(ret.saleId) ?? 0) + ret.totals.totalMinor)
@@ -709,7 +751,7 @@ export function remainingDocumentableByExtract(
 export function computeProjectBillingGuard(input: {
   contractValueMinor: Minor
   changeOrders: readonly ChangeOrder[]
-  extracts: readonly { totals: ExtractTotals; refundedMinor?: number; refundedTaxMinor?: number }[]
+  extracts: readonly { totals: ExtractTotals; refundedMinor?: number; refundedTaxMinor?: number; quantityCreditVersion?: number; refunds?: readonly { retentionMinor?: number }[] }[]
   saleInvoices: readonly { id: number; projectBilling?: ProjectBillingNature; totals: { totalMinor: Minor; taxMinor: Minor } }[]
   saleReturns?: readonly { saleId: number; totals: { totalMinor: Minor; taxMinor: Minor } }[]
 }): ProjectBillingGuard {
@@ -718,10 +760,11 @@ export function computeProjectBillingGuard(input: {
   let extractedVatMinor = 0
   let documentableGrossMinor = 0
   for (const e of input.extracts) {
-    const refundedNet = Math.max(0, (e.refundedMinor ?? 0) - (e.refundedTaxMinor ?? 0))
+    const retained = creditedProjectRetention(e)
+    const refundedNet = Math.max(0, (e.refundedMinor ?? 0) - (e.refundedTaxMinor ?? 0) + retained)
     extractedNetMinor += Math.max(0, e.totals.grossMinor - refundedNet)
     extractedVatMinor += Math.max(0, e.totals.vatMinor - (e.refundedTaxMinor ?? 0))
-    documentableGrossMinor += Math.max(0, e.totals.grossMinor + e.totals.vatMinor - (e.refundedMinor ?? 0))
+    documentableGrossMinor += Math.max(0, e.totals.grossMinor + e.totals.vatMinor - (e.refundedMinor ?? 0) - retained)
   }
   const returnedByInvoice = new Map<number, { total: number; tax: number }>()
   for (const r of input.saleReturns ?? []) {

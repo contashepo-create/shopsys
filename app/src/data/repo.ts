@@ -44,6 +44,7 @@ import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry,
 import { buildInterBranchTransferLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE } from '../core/branchAccounting.ts'
 import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { FinancialDataReviewError } from '../core/financialDataReview.ts'
+import { assertFinancialEntityProfiles, financialEntityBasis, type FinancialEntityInput, type FinancialEntityProfile } from '../core/financialEntities.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { SOURCE_REFERENCE_COLLECTIONS } from '../core/sourceTypes.ts'
 import type { SourceType } from '../core/ledger.ts'
@@ -52,9 +53,18 @@ import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyalt
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
+import { planProjectCreditAmounts, projectCreditEvidence } from '../core/projectCreditAllocation.ts'
+import type { ProjectRefundQuantity } from '../core/projectRefundQuantities.ts'
+import { assertQuantityChangeLinks, computeQuantityExtractLines, quantityChangeValue, type QuantityExtractInput } from '../core/projectExtractQuantity.ts'
+import { closeoutLines, closeoutNetLines, type ProjectCloseout } from '../core/projectCloseout.ts'
+import { reviseProjectSurvey, assertSurveyIntegrity, exactBilledQuantities, type ProjectSurvey, type SurveyLine } from '../core/projectSurvey.ts'
 import { assertProjectExtractOriginalIntegrity, assertProjectExtractRefundIntegrity, netProjectExtractTotals } from '../core/projectExtractRefundIntegrity.ts'
+import { creditedProjectRetention } from '../core/projectExtractNet.ts'
+import { projectNetQuantityHistory, type ProjectNetQuantityReport } from '../core/projectNetQuantityHistory.ts'
+import { assertAdvanceRecoveryBasis, allocateProjectAdvance, undoProjectAdvanceRecovery, type ProjectAdvanceAllocation } from '../core/projectAdvanceRecovery.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
+import { commissionStatementRows } from '../core/staffCommissionStatement.ts'
 import { proportionalCommissionReturnMinor } from '../core/invoiceCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../core/treasuryAccess.ts'
@@ -98,7 +108,8 @@ import { customerStatement, supplierStatement, statementBalance, customerUnitDoc
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
 import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxConversionHistoryIssues, fxHoldingsFromFlows, proportionalFxCost, validateFxConversion, FX_GAIN_ACCOUNT, FX_LOSS_ACCOUNT, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
-import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, type FiscalYear } from '../core/fiscal.ts'
+import { buildYearClosingLines, validateYearClose, validateFiscalYear, dateInClosedYear, closingMechanismIds, fiscalYearsForBranch, isFiscalCloseArtifactValid, isFiscalCloseReversalValid, type FiscalYear } from '../core/fiscal.ts'
+import { reviewFiscalCloseJournal } from '../core/fiscalCloseReview.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, mergeOrderLines, linesReduceExistingQty, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
@@ -156,7 +167,7 @@ import {
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
 import type { PendingPartOrder, PendingPartOrderStatus } from '../core/partOrders.ts'
-import { calendarDateIso, localIsoTimestamp, localTimestampOn, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
+import { calendarDateIso, localIsoTimestamp, localTimestampOnDay, todayLocalIso } from '../core/time.ts'
 
 function checkedOpeningEffectiveDate(value: string | undefined, fallback: string): string {
   const date = (value ?? fallback).trim()
@@ -533,18 +544,33 @@ export interface LabOrder {
 
 /* ─── المقاولات (القرار 27) ─── */
 
+/** مسودة مشتقة من حصر معتمد؛ ليست فاتورة ولا قيداً. */
+export interface ProjectExtractDraft {
+  id: number
+  projectId: number
+  branchId?: number | null
+  surveyRevision: number
+  basis: string
+  lines: { boqItemId: number; cumulativeQty: number }[]
+  isFinal: boolean
+  createdAt: string
+  createdBy: string
+}
+
 /** مستخلص أعمال PRX-#### مربوط بقيده */
 export interface ProjectExtract {
   id: number
   extractNumber: string
   projectId: number
-  date: string // ISO
+  date: string // يوم إصدار المستند؛ قد يحمل ختم تاريخي
+  /** وقت تسجيل النظام الفعلي؛ الأقدم قد لا يملكه. */
+  createdAt?: string
   description: string
   payment: 'cash' | 'credit'
   totals: ExtractTotals
   journalEntryId: number
   /** بنود المستخلص البندي من BOQ (نمط AccFlex) — غيابها = مستخلص مبلغ إجمالي قديم */
-  lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number }[]
+  lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number; contractQty?: number; unitPriceMinor?: number; unit?: string; prevExecutedQty?: number; newExecutedQty?: number; previousQtyEstimated?: boolean }[]
   /** مستخلص ختامي (نمط pro-acc is_final): لا مستخلصات بعده — يمهد للتسليم والإفراج عن المحتجز */
   isFinal?: boolean
   /**
@@ -553,10 +579,14 @@ export interface ProjectExtract {
    * كشف الحساب أيضاً وإلا تضارب الدفتر مع الكشف
    */
   advanceRecoveryMinor?: number
+  /** دليل توزيع استرداد المقدمة عند الإصدار؛ لا يُختلق للسجلات القديمة. */
+  advanceAllocations?: ProjectAdvanceAllocation[]
   /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
   refundedMinor?: number
   refundedTaxMinor?: number
-  refunds?: ServiceRefundRecord[]
+  /** دليل إصدار إشعارات كمية؛ لا يُحوّل سجل قديم مالياً إلى سجل كمي تلقائياً. */
+  quantityCreditVersion?: 1 | 2
+  refunds?: (ServiceRefundRecord & { quantities?: ProjectRefundQuantity[]; grossMinor?: number; retentionMinor?: number; restoredAdvanceMinor?: number })[]
   /** §94: أثر التعديل بعد الإصدار — قيد عاكس ثم إعادة بناء بنفس الرقم (سجل تدقيق) */
   lastEditReason?: string
   editedAt?: string
@@ -628,6 +658,8 @@ export interface RetentionRelease {
   id: number
   projectId: number
   date: string
+  /** وقت التسجيل الفعلي؛ غير متوفر بالضرورة في السجلات السابقة. */
+  createdAt?: string
   amountMinor: number
   journalEntryId: number
 }
@@ -966,6 +998,8 @@ export interface ExternalCommission {
 
 /** تحويل مخزني مرحّل — حركة داخلية بلا قيد (لا تغيّر قيمة 1103) */
 export interface StockTransfer {
+  /** وقت تسجيل التحويل الفعلي. */
+  createdAt?: string
   id: number
   transferNumber: string // TRF-0001
   date: string // ISO
@@ -984,6 +1018,8 @@ export interface StockTransfer {
  * الربح = المحصَّل من العميل − المدفوع للمزوّد، مشتق آلياً.
  */
 export interface WalletServiceOp {
+  /** وقت التسجيل الفعلي منفصل عن تاريخ المستند. */
+  createdAt?: string
   id: number
   opNumber: string // WS-0001
   refCode: string // WLT-YYMMDD-XXXXXC
@@ -1002,6 +1038,8 @@ export interface WalletServiceOp {
   journalEntryId: number
   returnEntryId: number | null
   notes: string
+  /** الاسم الذي قُدِّم لاعتماد تجاوز حد الائتمان؛ لا يثبت وحده هوية المعتمد. */
+  creditLimitOverrideBy?: string | null
   /** موافقة المشرف على المرتجع (نمط POS العالمي) — undefined = سجل قديم */
   approvedBy?: string
   requestedBy?: string
@@ -1085,7 +1123,7 @@ export interface WastageDoc {
   wastageNumber: string // WST-0001
   date: string // ISO
   reason: string
-  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number }[]
+  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number; costTotalMinor?: number; batchAllocations?: { batchId: number; qty: number }[] }[]
   totalCostMinor: number
   journalEntryId: number
   notes: string
@@ -1098,7 +1136,7 @@ export interface ConsumptionDoc {
   date: string // ISO
   purpose: string
   expenseAccount: string // 5114 افتراضياً أو حساب مصروف آخر
-  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number }[]
+  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number; costTotalMinor?: number; batchAllocations?: { batchId: number; qty: number }[] }[]
   totalCostMinor: number
   journalEntryId: number
   notes: string
@@ -1111,6 +1149,7 @@ export interface ConsumptionDoc {
  * فلا ينفصل الدفتر عن الكشوف (الثابت السابع) ولا يُلجأ لقيد يدوي على حساب مراقبة.
  */
 export interface PartyOffsetDoc {
+  createdAt?: string
   id: number
   offsetNumber: string // OFS-0001
   date: string // YYYY-MM-DD
@@ -1283,12 +1322,16 @@ export interface PurchaseInvoice {
   invoiceNumber: string
   /** مفتاح مسودة المحرر لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
   sourceDraftId?: string
+  /** مدخل المسودة المطبع للمقارنة عند إعادة المحاولة؛ لا يُستنتج للفواتير القديمة. */
+  sourceDraftEvidence?: string
   /** الرقم المرجعي الفريد للتتبع — PUR-YYMMDD-XXXXXC (يُطبع ويُبحث به) */
   refCode: string
   supplierId: number
   /** رقم مستند المورد الخارجي ومراجع دورة التوريد */
   supplierInvoiceNumber?: string
   purchaseOrderNumber?: string
+  /** الربط الفعلي لأمر الاستلام؛ لا يُستنتج من المرجع النصي القديم. */
+  sourcePurchaseOrderId?: number | null
   receiptStatus?: 'pending' | 'partial' | 'received'
   dueDate?: string
   approvedBy?: string | null
@@ -1372,6 +1415,8 @@ export interface Stocktake {
 export interface Voucher {
   id: number
   voucherNumber: string // RV-0001 / PV-0001 / TV-0001
+  /** وقت التسجيل الفعلي للتحويل المؤرخ صراحة؛ التاريخ التشغيلي مستقل. */
+  createdAt?: string
   /** محصّل سند القبض المختار صراحةً؛ لا يستنتج من طرف السند أو مستخدم النظام. */
   receiptCollectorEmployeeId?: number | null
   kind: VoucherKind
@@ -1419,6 +1464,8 @@ export interface Voucher {
  * (طريقة صافي التكلفة). recoveredMinor يتتبع المخصوم منه عبر المسيرات (كامل/جزء/تأجيل).
  */
 export interface EmployeeDeduction {
+  createdAt?: string
+  dateSelected?: boolean
   id: number
   dedNumber: string // DED-0001
   employeeId: number
@@ -1432,10 +1479,14 @@ export interface EmployeeDeduction {
   waivedBy?: string | null
   waivedReason?: string
   waivedAt?: string | null
+  /** تاريخ العفو التجاري؛ waivedAt وقت تسجيله. */
+  waivedDate?: string
 }
 
 /** سداد نقدي لسلفة موظف خارج المسير: خزينة مدين / 1107 دائن */
 export interface AdvanceRepayment {
+  createdAt?: string
+  dateSelected?: boolean
   id: number
   repayNumber: string // ADR-0001
   employeeId: number
@@ -1447,6 +1498,8 @@ export interface AdvanceRepayment {
 
 /** سلفة موظف — أصل على الموظف (1107) تُخصم من الرواتب على دفعات بحرية المالك */
 export interface EmployeeAdvance {
+  createdAt?: string
+  dateSelected?: boolean
   id: number
   advanceNumber: string // ADV-0001
   employeeId: number
@@ -1503,6 +1556,8 @@ export interface SaleInvoice {
   salesRepEmployeeId?: number | null
   /** مفتاح مسودة واجهة الفاتورة لمنع تكرار الترحيل عند ضياع رد الحفظ أو إعادة المحاولة. */
   sourceDraftId?: string
+  /** مدخل المسودة المطبع للمقارنة عند إعادة المحاولة؛ لا يُستنتج للفواتير القديمة. */
+  sourceDraftEvidence?: string
   /** الرقم المرجعي الفريد للتتبع — SAL-YYMMDD-XXXXXC (يُطبع على الإيصال ويُبحث به) */
   refCode: string
   date: string // ISO datetime
@@ -1547,7 +1602,7 @@ export interface SaleInvoice {
   approvedBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
-  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string }[]
+  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string; priceFloorOverrideBy?: string; creditLimitOverrideBy?: string }[]
   /** المخزن الذي بيعت منه — يُطبّع للرئيسي عند غياب الاختيار في المسارات القديمة */
   warehouseId?: number | null
   /**
@@ -1749,6 +1804,8 @@ interface DataState {
   warehouses: Warehouse[]
   /** الفروع الحقيقية (سد فجوة التدقيق): فرع = مخزن + خزينة + هوية — فارغة = وضع الفرع الواحد */
   branches: Branch[]
+  /** إعداد وصفي خاص بالمالك؛ لا يُنسب به قيد أو يُثبت إعفاء نظامي. */
+  financialEntityProfiles: FinancialEntityProfile[]
   /** الفرع المختار حالياً في الواجهة (للمالك/المدير العام: null = كل الفروع شامل؛ أو معرّف فرع محدد لتصفية أقسامه ونشاطه) */
   activeBranchId: number | null
   paymentTerminals: PaymentTerminal[]
@@ -1801,6 +1858,13 @@ interface DataState {
   }) => PendingPartOrder
   setPendingPartOrderStatus: (id: number, status: PendingPartOrderStatus) => void
   deletePendingPartOrder: (id: number) => void
+  /** أرقام المشاريع المحذوفة غير المرحّلة محجوزة في سجل التدقيق. */
+  projectDeletionRecords: { id: number; code: string; nameAr: string; reason: string; at: string; by: string; branchId?: number | null }[]
+  projectSurveys: ProjectSurvey[]
+  projectCloseouts: ProjectCloseout[]
+  projectExtractDrafts: ProjectExtractDraft[]
+  surveyDeletionRecords: { id: number; projectId: number; reason: string; at: string; by: string; branchId?: number | null }[]
+  quotationDeletionRecords: { id: number; quoteNumber: string; projectId: number | null; reason: string; at: string; by: string; branchId?: number | null }[]
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
   /** تصنيفات مصروفات المشروعات الحرة (تنمو من «أخرى…» في نافذة المصروف وتُحفظ دائماً) */
@@ -1901,6 +1965,9 @@ interface DataState {
   addLeaveRequest: (args: { employeeId: number; typeId: string; from: string; to: string; reason: string }) => LeaveRequest
   /** اعتماد أو رفض إجازة معلقة (باسم صاحب القرار) */
   decideLeaveRequest: (id: number, approve: boolean, by: string) => LeaveRequest
+  /** إلغاء إجازة معتمدة مع الاحتفاظ بتاريخ القرار ومراجعة أثر الحضور والرواتب. */
+  cancelLeaveRequest: (id: number, by: string, reason: string) => LeaveRequest
+  returnFromLeave: (id: number, returnDate: string, by: string, reason: string) => LeaveRequest
   /** حذف طلب إجازة معلّق */
   deleteLeaveRequest: (id: number) => void
   /** تحديث قواعد الاحتساب (وردية المنشأة وخصوماتها) */
@@ -2149,6 +2216,10 @@ interface DataState {
   postPurchase: (inv: {
     /** مفتاح مسودة واجهة الفاتورة؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر (نفس عقد postSale). */
     sourceDraftId?: string
+    /** داخلي: دليل مدخل المسودة الأصلي المحفوظ في طلب الاعتماد. */
+    __sourceDraftEvidence?: string
+    /** أمر استلام مرتبط: يُحدَّث مع الفاتورة في كتابة واحدة، لا يُستنتج من المرجع النصي. */
+    sourcePurchaseOrderId?: number | null
     /** صفر = شراء نقدي بلا مورد؛ لا يُنشأ مورد افتراضي ولا دين مورد */
     supplierId: number
     supplierInvoiceNumber?: string
@@ -2194,6 +2265,8 @@ interface DataState {
   postSale: (args: {
     /** UUID ثابت لمسودة المحرر؛ إعادة إرسال نفس الترحيل تعيد الفاتورة السابقة بلا قيد/خصم مخزون مكرر. */
     sourceDraftId?: string
+    /** داخلي: دليل مدخل المسودة الأصلي المحفوظ في طلب الاعتماد. */
+    __sourceDraftEvidence?: string
     /** مندوب البيع مستقل عن موظف العمولة وتحصيل العميل. */
     salesRepEmployeeId?: number | null
     lines: CartLine[]
@@ -2330,9 +2403,9 @@ interface DataState {
    */
   postStocktake: (counts: CountInput[], notes: string) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
-  postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string }) => WastageDoc
+  postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string; date?: string }) => WastageDoc
   /** صرف داخلي (استهلاك مخزون للتشغيل): يخصم الرصيد + FEFO + قيد مصروف/1103 بالمتوسط المرجح */
-  postConsumption: (args: { purpose: string; expenseAccount?: string; lines: { itemId: number; qty: number }[]; notes: string }) => ConsumptionDoc
+  postConsumption: (args: { purpose: string; expenseAccount?: string; lines: { itemId: number; qty: number }[]; notes: string; date?: string }) => ConsumptionDoc
   /**
    * ضبط رصيد افتتاحي (نمط mobileshop): عميل/مورد/خزينة/سلفة موظف —
    * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
@@ -2466,7 +2539,7 @@ interface DataState {
     __approvalBypass?: boolean
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
-  grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
+  grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string; date?: string }) => EmployeeAdvance
   /** قيد يدوي — يُرفض بنيوياً إن لم يتوازن (validateManualEntry ثم assertBalanced) */
   postManualEntry: (args: { date: string; description: string; lines: JournalLine[] }) => JournalEntry
   /** عكس قيد موثق — التصحيح الوحيد المسموح (Append-Only) */
@@ -2541,6 +2614,8 @@ interface DataState {
    * من الرخصة الموقعة) — أول فرع يُنشأ يصبح «الرئيسي» تلقائياً على المخزن
    * والخزينة الرئيسيين، والفرع الجديد بمخزنه وخزينته الخاصين (يُنشآن إن طُلب).
    */
+  saveFinancialEntityProfile: (input: FinancialEntityInput, expectedBasis: string, reason: string) => FinancialEntityProfile
+  removeFinancialEntityProfile: (id: string, expectedBasis: string, reason: string) => void
   addBranch: (input: BranchInput & { createWarehouse?: boolean; createTreasury?: 'cash' | 'bank' | null }, maxBranchesAllowed: number) => Branch
   updateBranch: (id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>) => void
   /** حذف فرع (فك الربط التنظيمي فقط — المخزن والخزينة وتاريخهما باقيان) */
@@ -2588,13 +2663,13 @@ interface DataState {
   /** المتبقي غير المسترد من سلف موظف (سلفة نقدية أو عجز عهدة) — للخصم الحر بالمسير */
   getEmployeeAdvanceBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; advances: EmployeeAdvance[] }
   /** تسجيل جزاء/خصم على موظف — يُخصم من المسيرات لاحقاً (كامل/جزء/تأجيل بحرية المالك) */
-  addEmployeeDeduction: (args: { employeeId: number; amountMinor: number; reason: string; notes?: string }) => EmployeeDeduction
+  addEmployeeDeduction: (args: { employeeId: number; amountMinor: number; reason: string; notes?: string; date?: string }) => EmployeeDeduction
   /** متبقي الجزاءات غير المخصومة لموظف — يغذي زر «خصم الكل» في المسير */
   getEmployeeDeductionBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; deductions: EmployeeDeduction[] }
   /** عفو/إلغاء متبقي جزاء (تسجيل خاطئ أو صفح) — بلا قيد (لم يتولد قيد أصلاً) مع توثيق المعتمد */
-  waiveEmployeeDeduction: (args: { deductionId: number; approvedBy: string; reason: string }) => EmployeeDeduction
+  waiveEmployeeDeduction: (args: { deductionId: number; approvedBy: string; reason: string; date?: string }) => EmployeeDeduction
   /** سداد نقدي لسلفة خارج المسير: قيد خزينة ← 1107 ويخفض متبقي السلفة */
-  repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount }) => AdvanceRepayment
+  repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; date?: string }) => AdvanceRepayment
   /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
   /** إعادة فتح سنة مقفلة (نمط عالمي — Reopen books): تعكس قيد الإقفال وتفتح الفترة للتصحيح */
@@ -2881,6 +2956,18 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  issueProjectCloseout: (args: { projectId: number; expectedRevision: number; notes: string; confirmed: boolean }) => ProjectCloseout
+  isProjectCloseoutCurrent: (id: number) => boolean
+  assertProjectExtractDraftCurrent: (projectId: number) => void
+  prepareProjectExtractDraft: (projectId: number, expectedRevision: number) => ProjectExtractDraft
+  deleteProjectExtractDraft: (projectId: number, reason: string) => void
+  deleteUnpostedSurvey: (projectId: number, reason: string) => void
+  saveProjectSurvey: (args: { projectId: number; lines: SurveyLine[]; expectedRevision: number; reason: string; isFinal: boolean; measurementDate?: string }) => ProjectSurvey
+  deleteUnpostedProject: (id: number, reason: string, expectedFingerprint: string | undefined, ownerPin: string) => Promise<void>
+  previewProjectDeletionFingerprint: (id: number) => string
+  addProjectWithBoq: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }, lines: Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'>[]) => Project
+  previewProjectEditFingerprint: (id: number) => string
+  updateProjectWithBoq: (args: { id: number; expectedFingerprint: string; changes: Parameters<DataState['updateProject']>[1]; sections: NonNullable<Project['boqSections']>; lines: (Omit<BoqItem, 'id' | 'projectId' | 'progressPercent'> & { id?: number })[] }) => Project
   /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
   updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[]; actualHandoverDate?: string | null; defectsLiabilityMonths?: number | null }) => Project
   previewMissingProjectCustomerBackup: (projectId: number, backup: string) => { customer: Customer; backupShopName: string; backupDate: string; backupChecksum: string; scopeName: string; balanceMinor: number; statement: StatementRow[]; fingerprint: string }
@@ -2889,7 +2976,7 @@ interface DataState {
   resolveLegacyProjectCustomer: (args: { projectId: number; customerId: number; expectedDueMinor: number; fingerprint: string; reason: string; confirmed: boolean }) => void
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
-  deleteQuotation: (id: number) => void
+  deleteQuotation: (id: number, expectedProjectId?: number | null, reason?: string, expectedQuote?: string) => void
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** §94-مراجعة: تعديل عرض/مناقصة محفوظ (فتحه وإصلاحه) — محظور بعد تحوله لمشروع */
   updateQuotation: (id: number, changes: { kind?: 'quotation' | 'tender'; clientName?: string; clientId?: number | null; titleAr?: string; validUntil?: string; lines?: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes?: string; winProbability?: number; bidBondMinor?: number }) => Quotation
@@ -2907,7 +2994,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; date?: string; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; sourceSurveyDraft?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind?: CostKind; amountMinor?: number; payment: 'cash' | 'credit' | 'mixed'; paidMinor?: number; supplierId?: number | null; description?: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null; lines?: ProjectExpenseLineInput[]; invoiceRef?: string; defaultVatPercent?: number; date?: string }) => ProjectCost
   /** إضافة تصنيف مصروف مشروع حر لقائمة المنشأة (منع التكرار بالاسم المطبّع — يعيد الموجود) */
@@ -2971,7 +3058,7 @@ interface DataState {
   /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
   getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
-  releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { amount: number }
+  releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }, date?: string) => { amount: number }
   /** المحتجز المتبقي (غير المُفرَج عنه) لمشروع — سد فجوة تقرير النشاط #11: تذكير استحقاق الإفراج */
   getRemainingRetention: (projectId: number) => number
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
@@ -2981,6 +3068,8 @@ interface DataState {
   /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
   getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   assertProjectExtractRefunds: (projectId: number) => void
+  /** قراءة فقط: صافي الكميات بعد الإشعارات المثبتة، دون إعادة فتح الختامي. */
+  getProjectNetQuantityReport: (projectId: number, asOf?: string) => ProjectNetQuantityReport
   assertProjectExtractOriginals: (projectId: number) => void
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
   addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
@@ -2988,10 +3077,10 @@ interface DataState {
   updateBoqItem: (id: number, changes: { code?: string; descriptionAr?: string; unit?: string; qty?: number; unitPriceMinor?: number; estCostMinor?: number }) => BoqItem
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
-  addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
+  addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number; date?: string; quantityChange?: { originalBoqItemId: number; qty: number } }) => ChangeOrder
   setChangeOrderStatus: (id: number, status: 'approved' | 'invoiced' | 'rejected') => void
   /** دفعة مقدمة من عميل المشروع: نقدية ← 2109 (التزام حتى تنفيذ الأعمال) */
-  receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
+  receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; date?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
   /** رصيد الدفعات المقدمة غير المستردة لمشروع */
   getAdvanceBalance: (projectId: number) => number
   addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status' | 'supplierId' | 'taxWithholdPercent' | 'boqItemIds' | 'advanceRecoveryPercent' | 'progressPercent'> & { supplierId?: number | null; taxWithholdPercent?: number; boqItemIds?: number[]; advanceRecoveryPercent?: number }) => SubContract
@@ -3018,7 +3107,7 @@ interface DataState {
   settleDailyWorker: (workerId: number, treasury: string) => { total: number; recordCount: number }
   /* ─── أوامر التعديل: أذون صرف مواد + تحصيلات FIFO + دفعات باطن + EVM + موافقات ─── */
   /** إذن صرف مواد لمشروع: خصم مخزون بالمتوسط المرجح → 5110/1103 بصارف ومستلم إلزاميين */
-  issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string }) => MaterialRequisition
+  issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string; date?: string }) => MaterialRequisition
   /** الفواتير المفتوحة لعميل (بيع آجل + مستخلصات مشاريعه الآجلة) بعد التحصيلات والمرتجعات */
   /**
    * @param includeSettled إرجاع المستندات المسدّدة بالكامل أيضاً (للتقارير التحليلية
@@ -3270,7 +3359,7 @@ interface DataState {
   /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
   returnWalletService: (opId: number, reason: string, approvedBy?: string, terminalRefund?: { originalTransactionId: string; providerReference: string }) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
-  postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
+  postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string; date?: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
   addAsset: (args: AssetInput & {
     notes: string; treasury?: string
@@ -3302,13 +3391,13 @@ interface DataState {
   collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ExternalCommission
   /* ─── عمولات الموظفين (طلب المالك): مربوطة بالعمليات، مصروف لحظة الاستحقاق، تُصرف منفردة أو مع الراتب ─── */
   /** استحقاق عمولة موظف عن عملية: 5117/2116 — تدخل ربحية الفترة فوراً */
-  addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number }) => StaffCommission
+  addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number; date?: string }) => StaffCommission
   /** صرف عمولة منفردة بسند: 2116/خزينة */
-  payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount }) => StaffCommission
+  payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount; date?: string }) => StaffCommission
   /** إلغاء عمولة مستحقة (غير مصروفة): قيد عاكس 2116/5117 */
-  cancelStaffCommission: (args: { commissionId: number; reason: string }) => StaffCommission
+  cancelStaffCommission: (args: { commissionId: number; reason: string; date?: string }) => StaffCommission
   /** تعديل مبلغ عمولة مستحقة: إلغاء + استحقاق جديد بأثر تدقيقي كامل */
-  updateStaffCommissionAmount: (args: { commissionId: number; newAmountMinor: number; reason: string }) => StaffCommission
+  updateStaffCommissionAmount: (args: { commissionId: number; newAmountMinor: number; reason: string; date?: string }) => StaffCommission
   /** عمولات موظف المستحقة غير المصروفة — لعرضها في مسير الرواتب */
   getStaffCommissionsDue: (employeeId: number) => { totalMinor: number; commissions: StaffCommission[] }
   /** إضافة حساب مخصص لشجرة الحسابات — يُستخدم فوراً في القيود والتقارير (الشجرة ليست مفروضة) */
@@ -3363,9 +3452,9 @@ interface DataState {
   /** مرتجع عقد إيجار (خصم تعويضي): يعكس 4102+2102 نسبياً — التأمين له مساره في إقفال العقد */
   refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
-  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
+  refundProjectExtract: (args: { extractId: number; amountMinor: number; quantities: ProjectRefundQuantity[]; restoredAdvanceMinor?: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
   /** §94: تعديل مستخلص صادر — عكس قيده وإرجاع تقدم BOQ واسترداد الدفعة ثم إعادة بناء بنفس الرقم */
-  editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
+  editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; extractQtyLines?: QuantityExtractInput[]; acceptEstimatedPrior?: boolean; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -3383,6 +3472,14 @@ interface DataState {
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
+/** القسائم والمسير المجمّع يشتركان في مصدر payroll؛ لا يجوز إعادة رقم مسير موجود أو قيد قديم يتيم. */
+function nextPayrollSourceId(state: DataState): number {
+  const ids = [...state.payrollRuns.map(r => r.id), ...state.payrollSlips.map(s => s.runId), ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null).map(e => e.sourceId!)]
+  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('معرف مسير قديم غير صالح — راجع سجلات الرواتب')
+  const id = ids.reduce((max, value) => Math.max(max, value), 0) + 1
+  if (!Number.isSafeInteger(id)) throw new Error('تعذر إنشاء رقم مسير آمن')
+  return id
+}
 
 // لا يُعاد استعمال رقم عميل ما زال يظهر في أي سجل تاريخي، حتى إن
 // كان سجل العميل نفسه مفقوداً. يشمل الفروع غير النشطة والقيود والمراكز.
@@ -3441,6 +3538,97 @@ function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): s
   return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
 }
 
+/** لا يُستبدل مستلم تاريخي محسوب ما لم تتطابق الأدلة الكاملة مع الرصيد الحالي. */
+function verifiedLinkedPurchaseOrder(state: Pick<DataState, 'purchaseOrders' | 'purchases' | 'purchaseReturns'>, purchase: PurchaseInvoice): PurchaseOrder | null {
+  const linked = state.purchaseOrders.filter(order => order.invoiceIds?.includes(purchase.id))
+  if (linked.length > 1 || (purchase.sourcePurchaseOrderId != null && (linked.length !== 1 || linked[0].id !== purchase.sourcePurchaseOrderId))) throw new Error('ربط فاتورة أمر الشراء غير مكتمل أو غير فريد — يلزم مراجعة التاريخ')
+  const order = linked[0]
+  if (!order) return null
+  const fail = (): never => { throw new Error('مستلم أمر الشراء لا يطابق أدلة الفواتير والمرتجعات — يلزم مراجعة التاريخ') }
+  if (state.purchaseOrders.filter(row => row.id === order.id).length !== 1 || !Array.isArray(order.invoiceIds) || new Set(order.invoiceIds).size !== order.invoiceIds.length) fail()
+  const ordered = new Map<number, number>(), actual = new Map<number, number>(), net = new Map<number, number>()
+  const add = (map: Map<number, number>, item: number, qty: number) => {
+    const sum = (map.get(item) ?? 0) + qty
+    if (!Number.isSafeInteger(sum)) fail()
+    map.set(item, sum)
+  }
+  const units = (qty: number, zero = false) => {
+    try { return Math.round(normalizeMovementQty(qty, zero) * 1000) } catch { return fail() }
+  }
+  for (const line of order.lines) {
+    const amount = units(line.qty), received = units(line.receivedQty ?? 0, true)
+    if (received > amount) fail()
+    add(ordered, line.itemId, amount); add(actual, line.itemId, received)
+  }
+  for (const id of order.invoiceIds) {
+    const matches = state.purchases.filter(row => row.id === id)
+    if (matches.length !== 1 || state.purchaseOrders.filter(row => row.invoiceIds?.includes(id)).length !== 1) fail()
+    const invoice = matches[0]
+    if (invoice.sourcePurchaseOrderId != null && invoice.sourcePurchaseOrderId !== order.id) fail()
+    const invoiceNet = new Map<number, number>()
+    for (const line of invoice.lines) {
+      if (!ordered.has(line.itemId)) fail()
+      add(invoiceNet, line.itemId, units(line.qty))
+    }
+    for (const ret of state.purchaseReturns.filter(row => row.purchaseId === id)) {
+      for (const line of ret.lines) {
+        if (!invoiceNet.has(line.itemId)) fail()
+        add(invoiceNet, line.itemId, -units(line.qty))
+      }
+    }
+    for (const [item, qty] of invoiceNet) {
+      if (qty < 0) fail()
+      add(net, item, qty)
+    }
+  }
+  for (const [id, capacity] of ordered) {
+    const qty = net.get(id) ?? 0
+    if (qty < 0 || qty > capacity || qty !== (actual.get(id) ?? 0)) fail()
+  }
+  return order
+}
+
+/** لا يُعلن وصول آلي إلا لصنف يغطّي مستلمه جميع طلباته غير الملغاة. */
+function partArrivalCovered(order: PurchaseOrder, parts: PendingPartOrder[], itemId: number): boolean {
+  let received = 0, claimed = 0
+  try {
+    for (const line of order.lines) if (line.itemId === itemId) {
+      received += Math.round(normalizeMovementQty(line.receivedQty ?? 0, true) * 1000)
+      if (!Number.isSafeInteger(received)) return false
+    }
+    for (const part of parts) if (part.linkedPurchaseOrderId === order.id && part.itemId === itemId && part.status !== 'cancelled') {
+      claimed += Math.round(normalizeMovementQty(part.qty) * 1000)
+      if (!Number.isSafeInteger(claimed)) return false
+    }
+  } catch { return false }
+  return claimed > 0 && received >= claimed
+}
+
+/** عكس الوصول الآلي فقط، دون تغيير وصول يدوي أو طلب مُسلَّم. */
+function reconcilePartOrders(parts: PendingPartOrder[], before: PurchaseOrder[], after: PurchaseOrder[]): PendingPartOrder[] {
+  return parts.map(part => {
+    if (part.linkedPurchaseOrderId == null) return part
+    const old = before.find(order => order.id === part.linkedPurchaseOrderId)
+    const next = after.find(order => order.id === part.linkedPurchaseOrderId)
+    if (!old || !next || old.status === next.status) return part
+    if (old.status !== 'closed' && next.status === 'closed' && part.status === 'pending' && partArrivalCovered(next, parts, part.itemId)) return { ...part, status: 'arrived', arrivedAt: new Date().toISOString(), autoArrivedFromPurchaseOrderId: next.id }
+    if (old.status === 'closed' && next.status !== 'closed' && part.status === 'arrived' && part.autoArrivedFromPurchaseOrderId === next.id) return { ...part, status: 'pending', arrivedAt: null, autoArrivedFromPurchaseOrderId: null }
+    return part
+  })
+}
+
+/** التغييرات اللاحقة في طلبات القطع قد تُبطل إثبات وصول آلي سابق، دون مساس بالحالة اليدوية. */
+function invalidateUncoveredAutoParts(parts: PendingPartOrder[], orders: PurchaseOrder[], orderId: number | null): PendingPartOrder[] {
+  if (orderId == null) return parts
+  const matches = orders.filter(order => order.id === orderId)
+  const order = matches.length === 1 ? matches[0] : null
+  return parts.map(part => {
+    if (part.status !== 'arrived' || part.linkedPurchaseOrderId !== orderId || part.autoArrivedFromPurchaseOrderId !== orderId) return part
+    if (order && order.status === 'closed' && partArrivalCovered(order, parts, part.itemId)) return part
+    return { ...part, status: 'pending', arrivedAt: null, autoArrivedFromPurchaseOrderId: null }
+  })
+}
+
 /**
  * إعادة احتساب «المستلم» في أمر شراء من فواتيره الصافية — مجموع سطور فواتير الأمر
  * المرتبطة بعد خصم مرتجعاتها — وتوزيعه توزيعاً متدرجاً على سطور الأمر (الأول أولاً).
@@ -3458,18 +3646,18 @@ function recomputeOrderReceivedFromInvoices(
   for (const invoiceId of order.invoiceIds) {
     const source = invoiceOverrides?.get(invoiceId) ?? state.purchases.find((p) => p.id === invoiceId)
     if (!source) continue
-    for (const l of source.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) + l.qty)
+    for (const l of source.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) + Math.round(l.qty * 1000))
   }
   const orderReturns = state.purchaseReturns.filter((r) => order.invoiceIds.includes(r.purchaseId))
   for (const ret of extraReturn ? [...orderReturns, extraReturn] : orderReturns) {
-    for (const l of ret.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) - l.qty)
+    for (const l of ret.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) - Math.round(l.qty * 1000))
   }
   const remaining = new Map(receivedByItem)
   const lines = order.lines.map((line) => {
     const left = remaining.get(line.itemId) ?? 0
-    const take = Math.max(0, Math.min(line.qty, left))
+    const take = Math.max(0, Math.min(Math.round(line.qty * 1000), left))
     remaining.set(line.itemId, left - take)
-    return take === (line.receivedQty || 0) ? line : { ...line, receivedQty: take }
+    return take === Math.round((line.receivedQty || 0) * 1000) ? line : { ...line, receivedQty: take / 1000 }
   })
   const next: PurchaseOrder = { ...order, lines }
   return { ...next, status: derivePurchaseOrderStatus(next) }
@@ -3524,6 +3712,28 @@ function stampApprovalDocDate(payload: string, kind: ApprovalDocKind): string {
   return serializeApprovalPayload(obj)
 }
 
+/** مقارنة حتمية لمدخل المسودة، دون الأعلام الداخلية التي يضيفها تنفيذ الاعتماد. */
+function draftInputEvidence(input: Record<string, unknown>): string {
+  const { __approvalBypass, __sourceDraftEvidence, ...document } = input
+  void __approvalBypass; void __sourceDraftEvidence
+  return JSON.stringify(document, (_key, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+  })
+}
+
+function verifyDraftRetry(evidence: string | undefined, requested: string, edited: unknown): void {
+  if (!evidence || edited) throw new Error('الفاتورة أُنشئت مسبقاً لكن دليل مدخلها غير متاح أو عُدلت لاحقاً — راجع الفاتورة')
+  if (evidence !== requested) throw new Error('بيانات المسودة تغيّرت بعد ترحيلها — راجع الفاتورة المسجلة قبل إعادة المحاولة')
+}
+
+function approvalDraftId(payload: string): string | null {
+  try {
+    const value: unknown = deserializeApprovalPayload<Record<string, unknown>>(payload)?.sourceDraftId
+    return typeof value === 'string' ? value.trim() || null : null
+  } catch { return null }
+}
+
 /**
  * بوابة الاعتماد: إن كان نوع المستند خاضعاً للنظام والمُدخِل لا يملك تجاوزاً،
  * يُسجَّل الطلب بلا أي كتابة في الدفتر أو المخزون ثم يُرمى خطأ إخباري.
@@ -3536,6 +3746,11 @@ function enforceApprovalGate(
   meta: { title: string; partyName: string; payload: string },
 ): void {
   const state = get()
+  // لا يُستبدل طلب معلق أو يُتجاوز بتقديم نسخة جديدة من المسودة نفسها، حتى لو عُطّل نظام الاعتماد.
+  const draftId = kind === 'purchase' || kind === 'sale' ? approvalDraftId(meta.payload) : null
+  if (draftId && state.docApprovals.some(row => row.kind === kind && row.status === 'pending' && approvalDraftId(row.payload) === draftId)) {
+    throw new Error('يوجد طلب اعتماد معلق مسبقاً لهذه المسودة — راجع طلب الاعتماد قبل إعادة التقديم أو تغيير المستند')
+  }
   const settings = useAppStore.getState().approvals
   if (!settings.enabled) return
   const scopedState = getBranchScopedDataState(state)
@@ -3715,6 +3930,74 @@ type PersistedAppState = {
   branchBusinessProfiles?: Record<string, Partial<OperationalSetup>>
 }
 
+/** تاريخ مستند الفاتورة ليس تاريخ الاستحقاق أو صلاحية المخزون. */
+function assertInvoicePostingDate(state: DataState, date: string, allowLegacyTimestamp = false): void {
+  // عقود شراء أقدم تمرر ختماً كاملاً؛ يُحرس يومه المكتوب نفسه الذي تطبّعه اليومية.
+  const timestamp = allowLegacyTimestamp && typeof date === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(date) && Number.isFinite(Date.parse(date))
+  const day = timestamp ? date.slice(0, 10) : date
+  if (!isValidExpiryDate(day)) throw new Error('تاريخ الفاتورة غير صالح')
+  if (day > todayLocalIso()) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
+  const branch = getEffectiveActiveBranch(state)
+  const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
+  const closed = dateInClosedYear(day, years)
+  if (closed) throw new Error(`التاريخ ${day} داخل السنة المالية المقفلة «${closed.nameAr}» — لا ترحيل في فترة مقفلة`)
+}
+
+/** المرتجع يستخدم وقت التسجيل الحالي فقط؛ لا نفترض رصيداً أو تكلفة تاريخيين. */
+function assertReturnPostingContext(state: DataState, originDate: unknown, previousDates: unknown[]): string {
+  const branch = getEffectiveActiveBranch(state)
+  if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل ترحيل المرتجع')
+  const fiscalBranch = branch ?? (state.branches.length === 1 ? state.branches[0] : null)
+  const now = localIsoTimestamp(), day = now.slice(0, 10)
+  const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, fiscalBranch?.id ?? null, Boolean(fiscalBranch?.isMain)))
+  if (closed) throw new Error(`تاريخ المرتجع داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const dates = [originDate, ...previousDates]
+  if (dates.some(value => typeof value !== 'string' || !isValidExpiryDate(value.slice(0, 10)) || value.slice(0, 10) > day)) {
+    throw new Error('تاريخ الفاتورة الأصلية أو مرتجع سابق غير صالح أو لاحق لليوم — راجع تسلسل المرتجعات')
+  }
+  const originDay = (originDate as string).slice(0, 10)
+  if (previousDates.some(value => (value as string).slice(0, 10) < originDay)) throw new Error('تاريخ مرتجع سابق يسبق الفاتورة الأصلية — راجع تسلسل المرتجعات')
+  return now
+}
+
+/** تحفظ السلف تاريخ المستند دون إعادة ترتيب التخصيص المسجل سابقاً. */
+function employeeAdvanceDocumentDate(state: DataState, employeeId: number, selected: string | undefined): string {
+  const day = selected ?? todayLocalIso()
+  if (!isValidExpiryDate(day) || day > todayLocalIso()) throw new Error('تاريخ حركة السلفة غير صالح أو في المستقبل')
+  const branch = getEffectiveActiveBranch(state)
+  const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+  if (closed) throw new Error(`تاريخ حركة السلفة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const advances = state.employeeAdvances.filter(a => a.employeeId === employeeId)
+  if (advances.some(a => !Number.isSafeInteger(a.amountMinor) || !Number.isSafeInteger(a.recoveredMinor) || a.amountMinor < 0 || a.recoveredMinor < 0 || a.recoveredMinor > a.amountMinor)) throw new Error('رصيد سلفة سابق غير صالح — راجع التخصيص قبل الترحيل')
+  const payrollIds = new Set([...state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.advancesMinor > 0)).map(r => r.id), ...state.payrollSlips.filter(r => r.employeeId === employeeId && r.advanceMinor > 0).map(r => r.runId)])
+  const days = [
+    ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null && payrollIds.has(e.sourceId) && e.lines.some(l => l.accountCode === '1107')).map(e => e.date?.slice(0, 10)),
+    ...advances.map(a => a.date?.slice(0, 10)),
+    ...state.advanceRepayments.filter(a => a.employeeId === employeeId).map(a => a.date?.slice(0, 10)),
+    ...state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.advancesMinor > 0)).map(r => r.date?.slice(0, 10)),
+    ...state.payrollSlips.filter(r => r.employeeId === employeeId && r.advanceMinor > 0).map(r => r.accruedAt?.slice(0, 10)),
+  ]
+  if (days.some(d => !isValidExpiryDate(d) || d > day)) throw new Error('تاريخ حركة السلفة يسبق حركة أو استقطاعاً مسجلاً أو تاريخه غير مثبت — راجع تسلسل السلف')
+  return day
+}
+
+/** تاريخ الجزاء والتسلسل لا يعيدان استقطاع مسير سابق من سجل جديد. */
+function employeeDeductionDocumentDate(state: DataState, employeeId: number, selected: string | undefined): string {
+  const date = selected ?? todayLocalIso()
+  if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ الجزاء غير صالح أو في المستقبل')
+  const branch = getEffectiveActiveBranch(state)
+  const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+  if (closed) throw new Error(`تاريخ الجزاء داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const deductions = state.employeeDeductions.filter(d => d.employeeId === employeeId)
+  if (deductions.some(d => !Number.isSafeInteger(d.amountMinor) || !Number.isSafeInteger(d.recoveredMinor) || !Number.isSafeInteger(d.waivedMinor ?? 0) || d.amountMinor < 0 || d.recoveredMinor < 0 || (d.waivedMinor ?? 0) < 0 || d.recoveredMinor + (d.waivedMinor ?? 0) > d.amountMinor)) throw new Error('رصيد جزاء سابق غير صالح — راجع السجل')
+  const runs = state.payrollRuns.filter(r => r.lines.some(l => l.employeeId === employeeId && l.deductionsMinor > 0))
+  const slips = state.payrollSlips.filter(r => r.employeeId === employeeId && r.deductionsMinor > 0)
+  const ids = new Set([...runs.map(r => r.id), ...slips.map(r => r.runId)])
+  const dates = [...deductions.map(d => d.date?.slice(0, 10)), ...deductions.filter(d => d.waivedDate != null || d.waivedAt).map(d => d.waivedDate ?? (Number.isFinite(Date.parse(d.waivedAt!)) ? todayLocalIso(new Date(d.waivedAt!)) : '')), ...runs.map(r => r.date?.slice(0, 10)), ...slips.map(r => r.accruedAt?.slice(0, 10)), ...state.journal.filter(e => e.sourceType === 'payroll' && e.sourceId != null && ids.has(e.sourceId)).map(e => e.date?.slice(0, 10))]
+  if (dates.some(d => !isValidExpiryDate(d) || d > date)) throw new Error('تاريخ الجزاء يسبق خصماً أو مسيراً أو عفواً مسجلاً أو تاريخه غير مثبت — راجع التسلسل')
+  return date
+}
+
 function appSetupForState(state: DataState): OperationalSetup {
   const appState = useAppStore.getState()
   const companySetup = appState.companySetup ?? appState.setup
@@ -3857,6 +4140,13 @@ function assertCanManageBranches(state: DataState): void {
   if (activeUser && activeUser.roleId !== 'owner') throw new Error('إدارة الفروع العامة متاحة للمالك فقط')
 }
 
+function canManageFinancialEntities(state: DataState): boolean {
+  return !state.loggedOut && (state.currentUserId == null || state.appUsers.some(user => user.id === state.currentUserId && user.roleId === 'owner' && user.active))
+}
+function assertCanManageFinancialEntities(state: DataState): void {
+  if (!canManageFinancialEntities(state)) throw new Error('إعداد الكيانات متاح للمالك المسجل دخوله فقط')
+}
+
 function assertCustomRoleManagementScope(state: DataState, role: { id: string; nameAr: string; branchId?: number | null }): void {
   const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
   const activeBranch = getEffectiveActiveBranch(state)
@@ -3902,7 +4192,7 @@ function assertCanUpdateBranch(state: DataState, id: number, patch: Partial<Omit
 const BRANCH_STAMP_ID_KEYS = [
   'customers', 'suppliers', 'employees', 'warehouses', 'items', 'categories',
   'sales', 'saleReturns', 'purchases', 'purchaseReturns', 'purchaseOrders',
-  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectExtracts',
+  'vouchers', 'cheques', 'custodyFiles', 'custodyTxs', 'projects', 'projectDeletionRecords', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectSurveys', 'projectCloseouts', 'projectExtractDrafts', 'projectExtracts',
   'projectCosts', 'retentionReleases', 'projectBudgets', 'projectTasks', 'changeOrders',
   'clientAdvances', 'boqItems', 'subContracts', 'subCertificates', 'subPayments',
   'subAdvances', 'bonds', 'dailyWorkers', 'dailyWorkRecords', 'materialRequisitions',
@@ -4042,6 +4332,32 @@ function customerReviewJournal(raw: DataState): Map<number, JournalEntry> {
   // المستند المتأثر يفشل مطابقة القيد كدليل ملتبس، دون حجب القيود السليمة الأخرى.
   for (const id of duplicateIds) journal.delete(id)
   return journal
+}
+
+function assertQuantityCreditBillingBasis(state: DataState, projectId: number): void {
+  const extracts = state.projectExtracts.filter(row => row.projectId === projectId)
+  if (!extracts.some(row => row.quantityCreditVersion != null || (row.refunds ?? []).some(refund => refund.quantities != null || refund.retentionMinor != null))) return
+  const journal = customerReviewJournal(state)
+  for (const extract of extracts) assertProjectExtractOriginalIntegrity(extract, journal)
+  assertProjectExtractRefundIntegrity(extracts, journal)
+}
+
+function checkedProjectAdvanceBasis(state: DataState, project: Project): { advances: DataState['clientAdvances']; extracts: ProjectExtract[] } {
+  const scoped = getBranchScopedDataState(state)
+  if (state.projects.filter(row => row.id === project.id).length !== 1 || scoped.projects.filter(row => row.id === project.id).length !== 1) throw new Error('المشروع غير فريد في الفرع الحالي — راجع البيانات')
+  assertProjectCustomerBranch(state, project)
+  const advances = state.clientAdvances.filter(row => row.projectId === project.id)
+  const extracts = state.projectExtracts.filter(row => row.projectId === project.id)
+  if (advances.length !== scoped.clientAdvances.filter(row => row.projectId === project.id).length || extracts.length !== scoped.projectExtracts.filter(row => row.projectId === project.id).length) throw new Error('مقدمات أو مستخلصات المشروع تتبع فرعاً آخر — راجع البيانات')
+  const advanceIds = new Set(advances.map(row => row.id)), extractIds = new Set(extracts.map(row => row.id))
+  if (state.clientAdvances.filter(row => advanceIds.has(row.id)).length !== advances.length || state.projectExtracts.filter(row => extractIds.has(row.id)).length !== extracts.length || advanceIds.size !== advances.length || extractIds.size !== extracts.length) throw new Error('معرف دفعة أو مستخلص مكرر — راجع البيانات')
+  const journal = customerReviewJournal(state)
+  for (const extract of extracts) if ((extract.advanceRecoveryMinor ?? 0) > 0) {
+    assertProjectExtractOriginalIntegrity(extract, journal)
+    if (!isValidExpiryDate(extract.date?.slice(0, 10)) || journal.get(extract.journalEntryId)?.date !== extract.date.slice(0, 10)) throw new FinancialDataReviewError(`تاريخ المستخلص ${extract.extractNumber}`)
+  }
+  assertAdvanceRecoveryBasis(project.id, advances, extracts, journal, new Set(scoped.treasuries.map(row => row.code)))
+  return { advances, extracts }
 }
 
 function assertInsuredOriginal(entry: JournalEntry | undefined, sourceType: 'lab_order' | 'clinic_visit', sourceId: number, total: number, label: string): JournalEntry {
@@ -4260,6 +4576,73 @@ function assertSingleFxTreasury(treasury: string, paidMinor: number, allocations
 function assertSerialBatchMovementSupported(state: DataState, itemId: number): void {
   const item = state.items.find(row => row.id === itemId)
   if ((item?.trackSerial && item.trackExpiry) || state.serials.some(unit => unit.itemId === itemId && unit.expiryBatch != null)) throw new Error('هذه العملية لا توثق السيريال ودفعة صلاحيته — استخدم مساراً يدعم الوحدات المحددة أو راجع المخزون')
+}
+
+/** يخطط استهلاك الموافقة دون تعديل الحالة؛ يُنشر مع المستند في set واحد. */
+function planApprovalConsumption(state: DataState, action: ApprovalAction, refId: number, subject: string, amountMinor?: number): ApprovalRequest[] {
+  if (state.branches.length && !getEffectiveActiveBranch(state) && state.approvalFlows.some(f => f.action === action && f.active)) throw new Error('حدد الفرع قبل استخدام مسار الموافقات')
+  const scoped = getBranchScopedDataState(state)
+  const flows = scoped.approvalFlows.filter(f => f.action === action && f.active)
+  if (flows.length > 1) throw new Error('مسار الموافقات غير فريد في الفرع — راجع الإعدادات')
+  const flow = flows[0]
+  if (!flow) return state.approvalRequests
+  if (flow.thresholdMinor != null && (!Number.isSafeInteger(flow.thresholdMinor) || flow.thresholdMinor < 0)) throw new Error('حد مسار الموافقات غير صالح')
+  if (flow.thresholdMinor != null && amountMinor != null && amountMinor < flow.thresholdMinor) return state.approvalRequests
+  const approved = scoped.approvalRequests.find(r => r.action === action && r.refId === refId && r.status === 'approved' && r.consumedAt == null)
+  if (!approved) throw new Error(`«${APPROVAL_ACTION_LABELS[action]}» يتطلب اعتماداً مكتملاً عبر مسار الموافقات — ${subject}`)
+  if (state.approvalRequests.filter(r => r.id === approved.id).length !== 1) throw new Error('طلب الموافقة غير فريد — راجع البيانات')
+  const consumedAt = new Date().toISOString()
+  return state.approvalRequests.map(r => r.id === approved.id ? { ...r, consumedAt } : r)
+}
+
+/** تخطيط محافظ للصرف الداخلي والإتلاف: من مخزن الصنف الأساسي وبقيمة المخزون الدقيقة. */
+function planInventoryOutflow(state: DataState, requested: { itemId: number; qty: number }[], date: string | undefined, permission: 'inv.adjust' | 'ops.activity.use' = 'inv.adjust') {
+  const scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
+  if (state.branches.length && !branch) throw new Error('حدد الفرع الحالي قبل إخراج المخزون')
+  if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has(permission)) throw new Error('لا تملك صلاحية حركة المخزون المطلوبة') }
+  const now = localIsoTimestamp(), day = date ?? now.slice(0, 10)
+  if (!isValidExpiryDate(day)) throw new Error('تاريخ حركة المخزون غير صالح')
+  if (day !== now.slice(0, 10)) throw new Error('حركة المخزون متاحة بتاريخ اليوم فقط — الرصيد والتكلفة التاريخيان غير مثبتين')
+  const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+  if (closed) throw new Error(`تاريخ حركة المخزون داخل السنة المالية المقفلة «${closed.nameAr}»`)
+  const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+  const main = state.warehouses.find(w => w.isMain)
+  const seen = new Set<number>()
+  const withdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
+  const takeByBatch = new Map<number, number>()
+  const lines = requested.map(row => {
+    if (seen.has(row.itemId)) throw new Error('الصنف مكرر — اجمع الكمية في سطر واحد')
+    seen.add(row.itemId)
+    const matches = state.items.filter(item => item.id === row.itemId), item = matches[0]
+    if (matches.length !== 1 || !scoped.items.some(candidate => candidate.id === row.itemId)) throw new Error('صنف المخزون غير موجود أو غير فريد في الفرع الحالي')
+    assertSerialBatchMovementSupported(state, row.itemId)
+    if (item.isService) throw new Error('الخدمة ليست صنفاً مخزنياً')
+    if (item.trackSerial || state.serials.some(unit => unit.itemId === row.itemId && unit.status === 'in_stock')) throw new Error('حركة السيريال لا تحدد وحداتها — راجع المخزون')
+    const qty = Math.round(row.qty * 1000) / 1000
+    if (!Number.isFinite(row.qty) || row.qty <= 0 || !Number.isSafeInteger(Math.round(row.qty * 1000)) || qty <= 0 || Math.abs(row.qty - qty) > 1e-9) throw new Error('الكمية يجب أن تكون موجبة وصالحة حتى ثلاث خانات')
+    const totalQty = item.stockQty ?? 0
+    if (!Number.isFinite(totalQty) || !Number.isSafeInteger(Math.round(totalQty * 1000)) || Math.abs(totalQty - Math.round(totalQty * 1000) / 1000) > 1e-7 || totalQty < qty) throw new Error('الكمية تتجاوز رصيد الصنف أو الرصيد غير صالح')
+    const homeId = item.warehouseId ?? main?.id
+    if (state.warehouses.length && (!homeId || state.warehouses.filter(w => w.id === homeId).length !== 1 || !scoped.warehouses.some(w => w.id === homeId))) throw new Error('مخزن الصنف الأساسي غير موجود أو خارج الفرع')
+    if (state.warehouses.length && (!main || !Number.isFinite(stock.get(homeId!)?.get(item.id)) || (stock.get(homeId!)?.get(item.id) ?? 0) + 1e-9 < qty)) throw new Error('الكمية تتجاوز رصيد المخزن الأساسي أو الرصيد غير مثبت')
+    if (!Number.isSafeInteger(item.costMinor) || item.costMinor < 0) throw new Error('تكلفة الصنف غير صالحة')
+    const value = item.stockValueMinor ?? Math.round(totalQty * item.costMinor)
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error('قيمة المخزون غير صالحة')
+    const withdrawal = withdrawStockValue(totalQty, value, qty)
+    withdrawals.set(row.itemId, withdrawal)
+    const itemBatches = state.batches.filter(b => b.itemId === item.id)
+    if (itemBatches.some(b => state.batches.filter(other => other.id === b.id).length !== 1 || !Number.isFinite(b.qty) || b.qty < 0 || !Number.isSafeInteger(Math.round(b.qty * 1000)) || Math.abs(b.qty - Math.round(b.qty * 1000) / 1000) > 1e-7 || (b.expiryDate != null && !isValidExpiryDate(b.expiryDate)) || (b.qty > 0 && b.warehouseId == null && state.warehouses.length > 1))) throw new Error('دفعات الصنف غير صالحة أو غير فريدة أو مخزنها غير مثبت')
+    const activeBatches = itemBatches.filter(b => b.qty > 0)
+    const candidates = activeBatches.filter(b => b.warehouseId == null || b.warehouseId === homeId)
+    const tracked = item.trackExpiry || activeBatches.length > 0
+    const plan = planFefo(candidates, item.id, qty, day)
+    if (tracked && plan.untrackedQty > 0) throw new Error('دفعات الصنف لا تكفي في مخزنه الأساسي أو غير مثبتة')
+    for (const allocation of plan.allocations) takeByBatch.set(allocation.batchId, allocation.qty)
+    return { itemId: item.id, nameAr: item.nameAr, qty, unitCostMinor: item.costMinor, costTotalMinor: withdrawal.withdrawnValueMinor, batchAllocations: plan.allocations.map(a => ({ batchId: a.batchId, qty: a.qty })) }
+  })
+  const total = lines.reduce((sum, line) => sum + line.costTotalMinor, 0)
+  if (!Number.isSafeInteger(total)) throw new Error('إجمالي تكلفة المخزون خارج الحدود الآمنة')
+  return { now, lines, withdrawals, batches: state.batches.map(batch => takeByBatch.has(batch.id) ? { ...batch, qty: Math.round((batch.qty - takeByBatch.get(batch.id)!) * 1000) / 1000 } : batch) }
 }
 
 /** الحركة النقدية لا تستعمل حساب إيراد أو مصروف كأنه خزينة. */
@@ -5033,10 +5416,11 @@ export function getBranchScopedDataState(state: DataState): DataState {
   if (!activeBranch) {
     const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
     if (activeUser && activeUser.roleId !== 'owner' && state.branches.length > 0) return deniedBranchScope(state)
-    if (!state.quotations.some(q => q.deletedAt)) return state
+    const hideEntities = !canManageFinancialEntities(state) && (state.financialEntityProfiles?.length ?? 0) > 0
+    if (!hideEntities && !state.quotations.some(q => q.deletedAt)) return state
     let visible = visibleQuotationStateCache.get(state)
     if (!visible) {
-      visible = { ...state, quotations: state.quotations.filter(q => !q.deletedAt) }
+      visible = { ...state, quotations: state.quotations.filter(q => !q.deletedAt), ...(hideEntities ? { financialEntityProfiles: [] } : {}) }
       visibleQuotationStateCache.set(state, visible)
     }
     return visible
@@ -5446,6 +5830,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
   const scoped: DataState = {
     ...state,
     branches: scopedBranches,
+    financialEntityProfiles: canManageFinancialEntities(state) ? (state.financialEntityProfiles ?? []) : [],
     warehouses: scopedWarehouses,
     treasuries: scopedTreasuries,
     customers: scopedCustomers,
@@ -5505,6 +5890,12 @@ export function getBranchScopedDataState(state: DataState): DataState {
     custodyFiles: scopedCustodyFiles,
     custodyTxs: scopedCustodyTxs,
     projects: scopedProjects,
+    projectDeletionRecords: inBranch(state.projectDeletionRecords ?? []),
+    quotationDeletionRecords: inBranch(state.quotationDeletionRecords ?? []),
+    surveyDeletionRecords: inBranch(state.surveyDeletionRecords ?? []),
+    projectSurveys: state.projectSurveys.filter(survey => inBranchOrRelated(survey, scopedProjectIds.has(survey.projectId))),
+    projectExtractDrafts: state.projectExtractDrafts.filter(draft => inBranchOrRelated(draft, scopedProjectIds.has(draft.projectId))),
+    projectCloseouts: state.projectCloseouts.filter(row => inBranchOrRelated(row, scopedProjectIds.has(row.projectId))),
     projectExtracts: scopedProjectExtracts,
     projectCosts: scopedProjectCosts,
     retentionReleases: scopedRetentionReleases,
@@ -5597,6 +5988,15 @@ export function getBranchScopedDataState(state: DataState): DataState {
   return scoped
 }
 
+/** لا تُستعمل ملكية مشروع لتجاوز فرع صريح في بند أو مستند مرتبط. */
+function assertProjectRelatedBranches(state: DataState, project: Project, projectBranch: Branch): void {
+  // السجل القديم بلا فرع يبقى مرتبطاً بالمشروع؛ المختلف صراحة يحتاج مراجعة.
+  const related = [state.boqItems, state.projectSurveys, state.projectExtractDrafts, state.projectCloseouts, state.changeOrders]
+  if (related.some(rows => rows.some(row => row.projectId === project.id && (row as BranchScopedRecord).branchId != null && (row as BranchScopedRecord).branchId !== projectBranch.id))) {
+    throw new Error('بند أو مستند للمشروع تابع صراحة لفرع آخر — راجع الارتباط قبل المتابعة')
+  }
+}
+
 /** إلى أن يُدعم عميل مستقل لكل فرع في المشروع الواحد، لا تُنشأ ذمة عابرة للفروع. */
 function assertProjectCustomerBranch(state: DataState, project: Project, extract?: ProjectExtract): void {
   if (!state.branches.length) return
@@ -5605,6 +6005,7 @@ function assertProjectCustomerBranch(state: DataState, project: Project, extract
   if (projectBranches.length !== 1 || (active && projectBranches[0].id !== active.id)) throw new Error('المشروع تابع لفرع آخر لا الفرع الحالي أو أن فرعه غير واضح')
   const projectBranch = projectBranches[0]
   if (!active && !projectBranch.isMain) throw new Error('اختر الفرع قبل إصدار أو تعديل مستخلص مشروع فرعي')
+  assertProjectRelatedBranches(state, project, projectBranch)
   if ((extract && !belongsToBranch(extract, projectBranch, state.branches))
     || state.projectExtracts.some(item => item.projectId === project.id && !belongsToBranch(item, projectBranch, state.branches))
     || state.clientAdvances.some(item => item.projectId === project.id && !belongsToBranch(item, projectBranch, state.branches))) {
@@ -5612,6 +6013,49 @@ function assertProjectCustomerBranch(state: DataState, project: Project, extract
   }
   const customer = state.customers.find(item => item.id === project.clientId)
   if (customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر — يلزم مراجعة الفروع قبل المستخلص')
+}
+
+/** منع تصفية مستحق عهدة لا يثبت رصيده وتسلسله داخل الفرع الحالي. */
+function assertPayrollCustodyExcessHistory(state: DataState, scoped: DataState, employeeId: number): void {
+  const today = todayLocalIso()
+  const files = state.custodyFiles.filter(file => file.employeeId === employeeId)
+  const fileIds = new Set(files.map(file => file.id))
+  const rows = state.custodyTxs.filter(tx => fileIds.has(tx.fileId))
+  const events: { date: string; amount: number; paid: boolean }[] = []
+  for (const tx of rows) {
+    const excess = tx.excessMinor
+    if (!Number.isSafeInteger(excess) || excess < 0 || !Number.isSafeInteger(tx.amountMinor) || tx.amountMinor < 0 || excess > tx.amountMinor) throw new Error('مبلغ زيادة العهدة غير صالح — راجع الحركة')
+    if (!excess) continue
+    const matches = state.custodyFiles.filter(file => file.id === tx.fileId)
+    if (matches.length !== 1 || state.custodyTxs.filter(row => row.id === tx.id).length !== 1) throw new Error('ملف العهدة أو الحركة غير فريد — راجع السجلات')
+    const file = matches[0]
+    if (!scoped.custodyFiles.includes(file) || !scoped.custodyTxs.includes(tx)) throw new Error('ملف العهدة أو حركته تابع لفرع آخر — راجع السجلات')
+    const date = typeof tx.date === 'string' ? tx.date.slice(0, 10) : ''
+    const opened = typeof file.openedAt === 'string' ? file.openedAt.slice(0, 10) : ''
+    if (!isValidExpiryDate(date) || !isValidExpiryDate(opened) || date > today || opened > date) throw new Error('تاريخ زيادة العهدة أو فتح الملف غير صالح أو لاحق للمسير — راجع التسلسل')
+    if (tx.type !== 'expense' && tx.type !== 'invoice') throw new Error('مبلغ زيادة العهدة غير مرتبط بمصروف — راجع الحركة')
+    events.push({ date, amount: excess, paid: false })
+  }
+  for (const run of state.payrollRuns) {
+    const lines = run.lines.filter(line => line.employeeId === employeeId && line.excessPaidMinor != null && line.excessPaidMinor !== 0)
+    if (!lines.length) continue
+    if (state.payrollRuns.filter(row => row.id === run.id).length !== 1) throw new Error('مسير مستحق العهدة غير فريد — راجع السجلات')
+    if (!scoped.payrollRuns.includes(run)) throw new Error('مسير مستحق العهدة تابع لفرع آخر — راجع السجلات')
+    const date = typeof run.date === 'string' ? run.date.slice(0, 10) : ''
+    if (!isValidExpiryDate(date) || date > today) throw new Error('تاريخ مسير مستحق العهدة غير صالح أو مستقبلي — راجع التسلسل')
+    for (const line of lines) {
+      const amount = line.excessPaidMinor!
+      if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('مبلغ صرف مستحق العهدة غير صالح — راجع المسير')
+      events.push({ date, amount, paid: true })
+    }
+  }
+  // الأصول القديمة لا تثبت ترتيب الساعة في اليوم الواحد، لذا تُجمع زياداته قبل صرفه.
+  events.sort((a, b) => a.date.localeCompare(b.date) || Number(a.paid) - Number(b.paid))
+  let due = 0
+  for (const event of events) {
+    due += event.paid ? -event.amount : event.amount
+    if (!Number.isSafeInteger(due) || due < 0) throw new Error('تسلسل صرف مستحق العهدة غير مثبت — راجع المسيرات والمصروفات السابقة')
+  }
 }
 
 function assertEmployeeInActiveBranch(state: DataState, employeeId: number): void {
@@ -5622,15 +6066,91 @@ function assertEmployeeInActiveBranch(state: DataState, employeeId: number): voi
   }
 }
 
+/** إدارة الإجازات تُراجع سياق الفرع وصلاحية المستخدم عند كل كتابة. */
+function assertLeaveAccess(state: DataState): DataState {
+  const scoped = getBranchScopedDataState(state)
+  if (state.branches.length > 1 && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الإجازات')
+  if (state.currentUserId != null) {
+    const user = scoped.appUsers.find((row) => row.id === state.currentUserId && row.active)
+    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+    if (!user || !effectivePermissionsFor(user, roles).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين والإجازات')
+  }
+  return scoped
+}
+
+/** لا يُغيّر الإجازة أثر حضور دخل مسيراً أو فترة مالية مقفلة دون تصحيح مستقل. */
+function assertLeavePeriodMutable(state: DataState, request: LeaveRequest, operation: string): string[] {
+  if (!isValidExpiryDate(request.from) || !isValidExpiryDate(request.to)) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
+  const dates = leaveDates(request)
+  if (!dates.length) throw new Error('تواريخ الإجازة غير سليمة — راجع السجل')
+  const months = new Set(dates.map((date) => date.slice(0, 7)))
+  if (state.payrollSlips.some((slip) => slip.employeeId === request.employeeId && months.has(slip.month) && slip.status !== 'cancelled') || state.payrollRuns.some((run) => months.has(run.month) && run.lines.some((line) => line.employeeId === request.employeeId))) throw new Error(`يوجد مسير أو قسيمة مرحلة لفترة الإجازة — راجع الرواتب قبل ${operation}`)
+  const branch = getEffectiveActiveBranch(state) ?? (state.branches.length === 1 ? state.branches[0] : null)
+  const years = fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain))
+  if (dates.some((date) => dateInClosedYear(date, years))) throw new Error(`تقع الإجازة في فترة مالية مقفلة — راجع المحاسب قبل ${operation}`)
+  return dates
+}
+
 /** صلاحيات العروض تُراجع عند الكتابة أيضاً، حتى بعد سحب الصلاحية من نافذة مفتوحة. */
 function assertQuotationAccess(state: DataState, permission = 'sales.quotation.manage'): DataState {
   const scoped = getBranchScopedDataState(state)
   if (state.currentUserId != null) {
     const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
-    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+    const company = useAppStore.getState().companySetup ?? useAppStore.getState().setup
+    const activityId = resolveBranchActivityId(getEffectiveActiveBranch(state), company.activityId)
+    const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, activityId)
     if (!user || !effectivePermissionsFor(user, roles).has(permission)) throw new Error('لا تملك صلاحية تنفيذ هذه العملية على عروض الأسعار')
   }
   return scoped
+}
+
+/** الإقفال وإعادة الفتح يتطلبان صلاحية الفرع الفعلية عند التنفيذ. */
+function assertFiscalCloseAccess(state: DataState): void {
+  if (state.loggedOut) throw new Error('سجل الدخول قبل إقفال السنة أو إعادة فتحها')
+  if (state.currentUserId == null) return // جلسة المالك الافتراضية في البيانات القديمة
+  const user = state.appUsers.find(row => row.id === state.currentUserId && row.active)
+  if (!user) throw new Error('لا تملك صلاحية إقفال السنة أو إعادة فتحها')
+  if (user.roleId !== 'owner' && state.branches.length > 0 && !getEffectiveActiveBranch(state)) throw new Error('لا يوجد فرع نشط مخوّل لإقفال السنة')
+  const scoped = getBranchScopedDataState(state)
+  const scopedUser = scoped.appUsers.find(row => row.id === user.id && row.active)
+  const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+  if (!scopedUser || !effectivePermissionsFor(scopedUser, roles).has('acc.fiscal.close')) throw new Error('لا تملك صلاحية إقفال السنة أو إعادة فتحها')
+}
+
+/** لا نثق بنسخة السنة أو قائمة السنوات القادمة من النافذة: القرار على السجل المحفوظ. */
+function verifiedFiscalYear(state: DataState, requested: FiscalYear): { year: FiscalYear; years: FiscalYear[]; branchId: number | undefined; mainBranchId: number | undefined } {
+  const years = useAppStore.getState().fiscalYears
+  if (!requested || !Number.isSafeInteger(requested.id) || requested.id <= 0 || !Array.isArray(years)) throw new Error('بيانات السنة المالية غير صالحة — راجع الإعداد')
+  const matches = years.filter(row => row?.id === requested.id)
+  if (matches.length !== 1) throw new Error('السنة المالية غير موجودة أو مكررة — راجع البيانات قبل المتابعة')
+  const year = matches[0]
+  const mainBranches = state.branches.filter(row => row.isMain)
+  if (state.branches.length && mainBranches.length !== 1) throw new Error('الفرع الرئيسي غير محدد أو مكرر — راجع البيانات')
+  const mainBranchId = mainBranches[0]?.id
+  const branchOf = (row: FiscalYear) => row.branchId ?? (state.branches.length ? mainBranchId : undefined)
+  const branchId = branchOf(year)
+  if (branchId != null && !state.branches.some(branch => branch.id === branchId && branch.active)) throw new Error('فرع السنة المالية غير موجود أو غير نشط')
+  if (requested.nameAr !== year.nameAr || requested.startDate !== year.startDate || requested.endDate !== year.endDate || branchOf(requested) !== branchId) throw new Error('تغيرت بيانات السنة المالية — أعد فتح النافذة وراجعها')
+  if (typeof year.nameAr !== 'string' || typeof year.startDate !== 'string' || typeof year.endDate !== 'string' || (year.status !== 'open' && year.status !== 'closed') || validateFiscalYear(year, []).length) throw new Error('بيانات السنة المالية غير صالحة — راجع الإعداد')
+  const related = years.filter(row => row && branchOf(row) === branchId)
+  const seen = new Set<number>()
+  for (const row of related) {
+    if (!Number.isSafeInteger(row.id) || row.id <= 0 || seen.has(row.id) || typeof row.nameAr !== 'string' || typeof row.startDate !== 'string' || typeof row.endDate !== 'string' || (row.status !== 'open' && row.status !== 'closed') || validateFiscalYear(row, []).length) throw new Error('سجل السنوات المالية غير صالح أو مكرر — راجع البيانات')
+    seen.add(row.id)
+    if (row.id !== year.id && row.startDate <= year.endDate && row.endDate >= year.startDate) throw new Error('تتداخل السنة المالية مع فترة أخرى — راجع البيانات قبل المتابعة')
+  }
+  return { year, years, branchId, mainBranchId }
+}
+
+/** قيد الإقفال ومرجعه وتاريخه وفرعه يجب أن تتفق قبل استعادة أو عكس الحالة. */
+function fiscalClosingEntries(state: DataState, fy: FiscalYear, branchId: number | undefined, mainBranchId: number | undefined): JournalEntry[] {
+  const entries = state.journal.filter(entry => entry.sourceType === 'year_closing' && entry.sourceId === fy.id)
+  if (entries.filter(entry => entry.reversedByEntryId == null).length > 1) throw new Error('قيود إقفال مكررة للسنة — راجع الدفتر قبل المتابعة')
+  for (const entry of entries) {
+    if (!isFiscalCloseArtifactValid(entry, fy, branchId, mainBranchId) || state.journal.filter(row => row.id === entry.id).length !== 1) throw new Error('قيد إقفال السنة لا يطابق تاريخها أو فرعها أو توازنه — راجع الدفتر')
+    if (entry.reversedByEntryId != null && !isFiscalCloseReversalValid(state.journal, entry, mainBranchId)) throw new Error('عكس قيد الإقفال غير مثبت — راجع الدفتر')
+  }
+  return entries
 }
 
 /** التصحيح التاريخي حساس حتى وإن لم يغيّر قيد اليومية. */
@@ -5830,6 +6350,206 @@ function collectFxFlows(raw: DataState, exclude?: { kind: 'sale' | 'purchase' | 
     flows.push(...fxConversionFlows(doc, book.code, book.decimals).map(flow => ({ ...flow, date: memoDate })))
   }
   return flows
+}
+
+/** يحمي التأكيد من حذف بيانات تخطيطية تغيّرت بعد فتح النافذة. */
+function projectDeletionFingerprint(state: DataState, id: number): string {
+  return JSON.stringify({ project: state.projects.find(p => p.id === id), boq: state.boqItems.filter(b => b.projectId === id), budgets: state.projectBudgets.filter(b => b.projectId === id), tasks: state.projectTasks.filter(t => t.projectId === id), changes: state.changeOrders.filter(c => c.projectId === id), quotations: state.quotations.filter(q => q.projectId === id && !q.deletedAt), surveys: state.projectSurveys.filter(row => row.projectId === id), drafts: state.projectExtractDrafts.filter(row => row.projectId === id) })
+}
+
+/** احترازياً تُرفض الروابط المباشرة والمتداخلة التي قد تخفي أثراً مالياً. */
+function assertNoProjectFinancialReferences(state: DataState, id: number): void {
+  const ignored = new Set(['projects', 'boqItems', 'projectBudgets', 'projectTasks', 'changeOrders', 'quotations', 'quotationDeletionRecords', 'surveyDeletionRecords', 'projectSurveys', 'projectExtractDrafts', 'projectDeletionRecords', 'auditLog'])
+  const hasRef = (value: unknown, depth = 0): boolean => {
+    if (depth > 12 || value == null) return false
+    if (typeof value === 'string') {
+      if (!value.includes('"projectId"') || !(value.trimStart().startsWith('{') || value.trimStart().startsWith('['))) return false
+      try { return hasRef(JSON.parse(value), depth + 1) } catch { return true }
+    }
+    if (Array.isArray(value)) return value.some(row => hasRef(row, depth + 1))
+    if (typeof value !== 'object') return false
+    const record = value as Record<string, unknown>
+    if (record.projectId === id || (record.source === 'project' && record.sourceId === id)) return true
+    return Object.values(record).some(row => hasRef(row, depth + 1))
+  }
+  if (Object.entries(state).some(([key, value]) => !ignored.has(key) && Array.isArray(value) && hasRef(value))) throw new Error('المشروع مرتبط بمستند أو حركة قد تكون مرحّلة — عالج الارتباط قبل الحذف')
+  if (state.journal.some(entry => entry.sourceType === 'client_advance' && entry.sourceId === id)) throw new Error('المشروع مرتبط بقيد دفعة مقدمة — راجع الدفتر قبل الحذف')
+}
+
+function nextSurveyId(state: DataState, preferred: number): number {
+  const rows = [...state.projectSurveys, ...state.surveyDeletionRecords]
+  return rows.some(row => row.id === preferred) ? nextId(rows) : preferred
+}
+
+/**
+ * يُسمح فقط بإشعار مستخلص لا تمسه فواتير التوثيق أحادية المستخلص المثبتة.
+ * لا نوزع مستنداً مشتركاً أو قديماً آلياً ولا نحتسب مرتجع توثيق تقديرياً.
+ */
+function assertUnrelatedProjectDocumentation(raw: DataState, project: Project, target: ProjectExtract): void {
+  const extracts = raw.projectExtracts.filter(row => row.projectId === project.id)
+  const ids = new Set(extracts.map(row => row.id))
+  // A corrupt or legacy invoice can refer to an extract while claiming a
+  // different project or billing nature; never make that reference invisible.
+  const docs = raw.sales.filter(sale => (sale.projectId === project.id && sale.projectBilling === 'documentation') || (Array.isArray(sale.extractIds) && sale.extractIds.some(id => ids.has(id))))
+  if (!docs.length) return
+  const fail = (): never => { throw new Error('فاتورة توثيق المشروع أو ارتباطها غير مثبت أو يمس المستخلص — راجع تسوية المستندات قبل الإشعار') }
+  const scoped = getBranchScopedDataState(raw)
+  if (extracts.length !== scoped.projectExtracts.filter(row => row.projectId === project.id).length || new Set(extracts.map(row => row.id)).size !== extracts.length) return fail()
+  const journal = customerReviewJournal(raw), branches = raw.branches.filter(branch => belongsToBranch(project, branch, raw.branches))
+  if (raw.branches.length && (branches.length !== 1 || extracts.some(row => !belongsToBranch(row, branches[0], raw.branches)))) return fail()
+  const branch = branches[0], totals = new Map<number, number>()
+  for (const doc of docs) {
+    if (doc.projectId !== project.id || doc.projectBilling !== 'documentation' || !Number.isSafeInteger(doc.id) || doc.id <= 0 || raw.sales.filter(row => row.id === doc.id).length !== 1 || !scoped.sales.some(row => row.id === doc.id) || (branch && !belongsToBranch(doc, branch, raw.branches)) || !Array.isArray(doc.extractIds) || doc.extractIds.length !== 1 || doc.extractIds[0] === target.id || !Number.isSafeInteger(doc.extractIds[0]) || doc.customerId == null || doc.customerId !== project.clientId || doc.partyKind != null || doc.partyId != null || doc.payment !== 'credit' || (doc.paidMinor ?? 0) !== 0 || doc.fx != null || (doc.paymentAllocations?.length ?? 0) > 0 || (doc.internalExpenses?.length ?? 0) > 0 || (doc.customerCharges?.length ?? 0) > 0 || !Number.isSafeInteger(doc.totals?.totalMinor) || doc.totals.totalMinor <= 0 || !Array.isArray(doc.lines) || !doc.lines.length || doc.taxPercent == null || doc.taxInclusive == null || !Number.isFinite(doc.invoiceDiscountPercent) || raw.saleReturns.some(row => row.saleId === doc.id) || raw.vouchers.some(row => row.allocations?.some(part => part.docKey === `sale:${doc.id}`)) || raw.clientSettlements.some(row => row.allocations?.some(part => part.docKey === `sale:${doc.id}`)) || raw.paymentTerminalTransactions.some(row => row.documentType === 'sale' && row.documentId === String(doc.id)) || raw.stockMoves.some(row => row.docType === 'sale' && row.docId === doc.id) || raw.staffCommissions.some(row => row.source === 'sale' && row.sourceId === doc.id)) return fail()
+    const linked = extracts.filter(row => row.id === doc.extractIds![0]), extract = linked[0]
+    if (linked.length !== 1 || raw.projectExtracts.filter(row => row.id === doc.extractIds![0]).length !== 1 || extract.editedAt != null || extract.lastEditReason != null || extract.editReversalEntryId != null) return fail()
+    try {
+      assertProjectExtractOriginalIntegrity(extract, journal)
+      assertProjectExtractRefundIntegrity([extract], journal)
+      if (doc.lines.some(line => !Number.isSafeInteger(line.itemId) || line.itemId <= 0 || !Number.isFinite(line.qty) || line.qty <= 0 || !Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0 || !Number.isSafeInteger(line.unitCostMinor) || line.unitCostMinor < 0 || !Number.isFinite(line.discountPercent) || line.discountPercent < 0 || line.discountPercent > 100 || raw.items.filter(item => item.id === line.itemId).length !== 1 || !raw.items.some(item => item.id === line.itemId && item.isService))) return fail()
+      const computed = computeTotals(doc.lines, doc.invoiceDiscountPercent, doc.taxPercent, doc.taxInclusive, checkedSaleRoundingVersion(raw, doc))
+      const fields: (keyof CartTotals)[] = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor', 'cogsMinor']
+      if (fields.some(field => !Number.isSafeInteger(doc.totals[field]) || doc.totals[field] !== computed[field]) || doc.totals.cogsMinor !== 0) return fail()
+    } catch { return fail() }
+    const entry = journal.get(doc.journalEntryId), date = typeof doc.date === 'string' ? doc.date.slice(0, 10) : ''
+    if (!isValidExpiryDate(date) || !entry || entry.date !== date || entry.sourceType !== 'sale' || entry.sourceId !== doc.id || (entry.sourceCollection != null && entry.sourceCollection !== 'sales') || entry.memoOnly !== true || !Array.isArray(entry.lines) || entry.lines.length || entry.reversedByEntryId != null || entry.reversesEntryId != null || (branch && entry.branchId != null && entry.branchId !== branch.id) || doc.journalEntryId <= extract.journalEntryId || typeof extract.date !== 'string' || !isValidExpiryDate(extract.date.slice(0, 10)) || date < extract.date.slice(0, 10)) return fail()
+    const accumulated = (totals.get(extract.id) ?? 0) + doc.totals.totalMinor
+    const capacity = extract.totals.grossMinor + extract.totals.vatMinor - (extract.refundedMinor ?? 0) - creditedProjectRetention(extract)
+    if (!Number.isSafeInteger(accumulated) || !Number.isSafeInteger(capacity) || capacity < 0 || accumulated > capacity) return fail()
+    totals.set(extract.id, accumulated)
+  }
+}
+
+/** لا يُعرض أو يُصرف رصيد محتجز اعتماداً على سجل تحصيل غير مطابق للدفتر. */
+function checkedProjectRetention(raw: DataState, projectId: number): { held: number; released: number; remaining: number } {
+  const fail = (): never => { throw new FinancialDataReviewError('محتجز المشروع', 'المستخلصات أو تحصيلات المحتجز أو قيودها غير متطابقة أو تابعة لفرع آخر') }
+  const scoped = getBranchScopedDataState(raw)
+  const projects = raw.projects.filter(row => row.id === projectId)
+  if (projects.length !== 1 || !scoped.projects.some(row => row.id === projectId)) return fail()
+  const extracts = raw.projectExtracts.filter(row => row.projectId === projectId)
+  const releases = raw.retentionReleases.filter(row => row.projectId === projectId)
+  if (scoped.projectExtracts.filter(row => row.projectId === projectId).length !== extracts.length || scoped.retentionReleases.filter(row => row.projectId === projectId).length !== releases.length) return fail()
+  const extractIds = new Set(extracts.map(row => row.id)), releaseIds = new Set(releases.map(row => row.id))
+  if (extractIds.size !== extracts.length || releaseIds.size !== releases.length || raw.projectExtracts.filter(row => extractIds.has(row.id)).length !== extracts.length || raw.retentionReleases.filter(row => releaseIds.has(row.id)).length !== releases.length) return fail()
+  const branchMatches = raw.branches.filter(branch => belongsToBranch(projects[0], branch, raw.branches))
+  if (raw.branches.length && (branchMatches.length !== 1 || extracts.some(extract => !belongsToBranch(extract, branchMatches[0], raw.branches)))) return fail()
+  const journal = customerReviewJournal(raw), branch = branchMatches[0]
+  const allEntryIds = [...extracts.flatMap(row => [row.journalEntryId, ...(row.refunds ?? []).map(refund => refund.journalEntryId)]), ...releases.map(row => row.journalEntryId)]
+  if (new Set(allEntryIds).size !== allEntryIds.length || allEntryIds.some(id => { const entry = journal.get(id); return !entry || (branch != null && entry.branchId != null && entry.branchId !== branch.id) })) return fail()
+  try {
+    for (const extract of extracts) assertProjectExtractOriginalIntegrity(extract, journal)
+    assertProjectExtractRefundIntegrity(extracts, journal)
+    let held = 0, released = 0
+    for (const extract of extracts) {
+      const value = extract.totals.retentionMinor - creditedProjectRetention(extract)
+      if (!Number.isSafeInteger(value) || value < 0 || !Number.isSafeInteger(held + value)) return fail()
+      held += value
+    }
+    for (const prior of releases) {
+      const entry = journal.get(prior.journalEntryId), date = typeof prior.date === 'string' ? prior.date.slice(0, 10) : ''
+      if (!Number.isSafeInteger(prior.id) || prior.id <= 0 || !Number.isSafeInteger(prior.journalEntryId) || prior.journalEntryId <= 0 || !Number.isSafeInteger(prior.amountMinor) || prior.amountMinor <= 0 || !isValidExpiryDate(date) || !entry || entry.sourceType !== 'retention_release' || entry.sourceId !== prior.id || (entry.sourceCollection != null && entry.sourceCollection !== 'retentionReleases') || entry.reversedByEntryId != null || entry.reversesEntryId != null || entry.date !== date || !Array.isArray(entry.lines) || entry.lines.length !== 2 || !entry.lines.some(line => line.accountCode === '1105' && line.credit === prior.amountMinor && line.debit === 0) || !entry.lines.some(line => line.accountCode !== '1105' && line.debit === prior.amountMinor && line.credit === 0) || !Number.isSafeInteger(released + prior.amountMinor)) return fail()
+      released += prior.amountMinor
+    }
+    const remaining = held - released
+    if (!Number.isSafeInteger(remaining) || remaining < 0) return fail()
+    if (releases.length) {
+      // A valid final total alone can hide a release before its corresponding
+      // retention existed. Replay known retention movements in journal order;
+      // backdated or edited histories without an unambiguous sequence need review.
+      const events: { id: number; date: string; delta: number }[] = []
+      for (const extract of extracts) {
+        if (!extract.totals.retentionMinor) continue
+        const date = typeof extract.date === 'string' ? extract.date.slice(0, 10) : ''
+        if (!isValidExpiryDate(date) || journal.get(extract.journalEntryId)?.date !== date) return fail()
+        events.push({ id: extract.journalEntryId, date, delta: extract.totals.retentionMinor })
+        if (extract.quantityCreditVersion === 2) for (const refund of extract.refunds ?? []) {
+          if (!Number.isSafeInteger(refund.retentionMinor) || refund.retentionMinor! < 0) return fail()
+          events.push({ id: refund.journalEntryId, date: refund.date, delta: -refund.retentionMinor! })
+        }
+      }
+      for (const release of releases) events.push({ id: release.journalEntryId, date: release.date.slice(0, 10), delta: -release.amountMinor })
+      events.sort((a, b) => a.id - b.id)
+      let running = 0, lastDate = ''
+      for (const event of events) {
+        if (!isValidExpiryDate(event.date) || event.date < lastDate || !Number.isSafeInteger(running + event.delta) || running + event.delta < 0) return fail()
+        running += event.delta; lastDate = event.date
+      }
+      if (running !== remaining) return fail()
+    }
+    return { held, released, remaining }
+  } catch (error) {
+    if (error instanceof FinancialDataReviewError) throw error
+    return fail()
+  }
+}
+
+function checkedProjectNetQuantityReport(raw: DataState, projectId: number, asOf?: string): ProjectNetQuantityReport {
+  const scoped = getBranchScopedDataState(raw)
+  const projects = scoped.projects.filter(project => project.id === projectId)
+  if (projects.length !== 1 || raw.projects.filter(project => project.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+  assertProjectCustomerBranch(raw, projects[0])
+  const items = scoped.boqItems.filter(row => row.projectId === projectId)
+  const extracts = scoped.projectExtracts.filter(row => row.projectId === projectId)
+  const changes = scoped.changeOrders.filter(row => row.projectId === projectId)
+  if (raw.boqItems.filter(row => row.projectId === projectId).length !== items.length || raw.projectExtracts.filter(row => row.projectId === projectId).length !== extracts.length || raw.changeOrders.filter(row => row.projectId === projectId).length !== changes.length) throw new Error('بنود أو مستندات المشروع تابعة لفرع آخر — راجع البيانات')
+  const itemIds = new Set(items.map(row => row.id)), extractIds = new Set(extracts.map(row => row.id)), changeIds = new Set(changes.map(row => row.id))
+  if (raw.boqItems.filter(row => itemIds.has(row.id)).length !== items.length || raw.projectExtracts.filter(row => extractIds.has(row.id)).length !== extracts.length || raw.changeOrders.filter(row => changeIds.has(row.id)).length !== changes.length) throw new Error('معرف بند أو مستند مشروع مكرر — راجع البيانات')
+  assertQuantityChangeLinks(items, changes)
+  const journal = customerReviewJournal(raw)
+  const branch = raw.branches.find(row => belongsToBranch(projects[0], row, raw.branches))
+  // The all-branches view must not borrow a same-ID entry explicitly posted
+  // to another branch. Legacy unassigned entries remain subject to review.
+  if (branch && extracts.some(extract => [extract.journalEntryId, ...(extract.refunds ?? []).map(refund => refund.journalEntryId)].some(id => { const entry = journal.get(id); return entry?.branchId != null && entry.branchId !== branch.id }))) throw new FinancialDataReviewError('تاريخ كميات المشروع', 'قيد المستخلص أو الإشعار يتبع فرعاً آخر')
+  return projectNetQuantityHistory(items, extracts, journal, asOf)
+}
+
+function validateCloseout(state: DataState, projectId: number, expectedRevision?: number) {
+  const scoped = getBranchScopedDataState(state)
+  const project = scoped.projects.find(row => row.id === projectId)
+  if (!project || state.projects.filter(row => row.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+  assertProjectCustomerBranch(state, project)
+  const surveys = scoped.projectSurveys.filter(row => row.projectId === projectId)
+  if (surveys.length !== 1 || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1) throw new Error('حصر المشروع غير موجود أو غير فريد في الفرع الحالي')
+  const survey = surveys[0]
+  if (expectedRevision != null && survey.revisions.length !== expectedRevision) throw new Error('تغير الحصر — أعد مراجعته')
+  const items = scoped.boqItems.filter(row => row.projectId === projectId)
+  const history = scoped.projectExtracts.filter(row => row.projectId === projectId)
+  if (state.boqItems.filter(row => row.projectId === projectId).length !== items.length || state.projectExtracts.filter(row => row.projectId === projectId).length !== history.length) throw new Error('بنود أو مستخلصات المشروع تابعة لفرع آخر — راجع البيانات')
+  assertQuantityChangeLinks(items, state.changeOrders.filter(row => row.projectId === projectId))
+  const journal = customerReviewJournal(state)
+  for (const extract of history) {
+    assertProjectExtractOriginalIntegrity(extract, journal)
+    if (extract.lines?.length && extract.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== extract.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده')
+    for (const line of extract.lines ?? []) {
+      const item = items.find(row => row.id === line.boqItemId)
+      if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('بند العقد لا يطابق مستخلصاً سابقاً')
+    }
+  }
+  assertProjectExtractRefundIntegrity(history, journal)
+  const hasCredits = history.some(row => (row.refundedMinor ?? 0) !== 0 || (row.refunds?.length ?? 0) > 0 || row.quantityCreditVersion != null)
+  const report = hasCredits ? checkedProjectNetQuantityReport(state, projectId) : null
+  const lines = report ? closeoutNetLines(survey, items, history, report) : closeoutLines(survey, items, history)
+  return { project, survey, history, lines, report, basis: projectSurveyDraftBasis(state, projectId) }
+}
+
+function projectSurveyDraftBasis(state: DataState, id: number): string {
+  return JSON.stringify({ project: state.projects.find(row => row.id === id), boq: state.boqItems.filter(row => row.projectId === id), surveys: state.projectSurveys.filter(row => row.projectId === id), history: state.projectExtracts.filter(row => row.projectId === id), advances: state.clientAdvances.filter(row => row.projectId === id), changes: state.changeOrders.filter(row => row.projectId === id) })
+}
+
+function prepareNewProject(state: DataState, p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }): Project {
+  const errors = validateProject(p)
+  if (p.boqSections && (p.boqSections.some(section => !section.id?.trim() || !section.nameAr?.trim()) || new Set(p.boqSections.map(section => section.id)).size !== p.boqSections.length)) errors.push('أسماء ومعرّفات أقسام المشروع مطلوبة وفريدة')
+  if (errors.length) throw new Error(errors.join(' — '))
+  // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
+  if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
+  const branch = getEffectiveActiveBranch(state)
+  const projectBranch = branch ?? state.branches.find(item => item.isMain) ?? null
+  if (state.branches.length && !projectBranch) throw new Error('حدد الفرع الرئيسي قبل إنشاء المشروع')
+  const customer = state.customers.find(c => c.id === p.clientId)
+  if (projectBranch && customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر')
+  if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
+  const id = nextId([...state.projects, ...(state.projectDeletionRecords ?? [])])
+  const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
+  return project
 }
 
 export const useRawDataStore = create<DataState>()(
@@ -6060,6 +6780,9 @@ export const useRawDataStore = create<DataState>()(
             ['custodyTxs', 'projectId', 'projects', true],
             ['custodyTxs', 'purchaseId', 'purchases', true],
             ['projectExtracts', 'projectId', 'projects', false],
+            ['projectSurveys', 'projectId', 'projects', false],
+            ['projectExtractDrafts', 'projectId', 'projects', false],
+            ['projectCloseouts', 'projectId', 'projects', false],
             ['projectCosts', 'projectId', 'projects', false],
             ['projectCosts', 'costCenterId', 'costCenters', true],
             ['projectCosts', 'custodyFileId', 'custodyFiles', true],
@@ -6308,6 +7031,17 @@ export const useRawDataStore = create<DataState>()(
               : entry)
           }
           if (nextJournal !== rawJournal) (patch as Partial<DataState>).journal = nextJournal
+          // إذا توقف الإقفال بعد حفظ القيد وقبل تحديث مخزن السنوات،
+          // لا نسمح بحركة جديدة في الفترة قبل إصلاح الحالة أو مراجعة التعارض.
+          // ينطبق على القيود الجديدة في هذا الكاتب فقط، لا على التخزين الخارجي.
+          const fiscalYears = useAppStore.getState().fiscalYears
+          const mainBranchId = state.branches.find(branch => branch.isMain)?.id
+          for (const entry of nextJournal) {
+            if (previousEntryIds.has(entry.id)) continue
+            const branchId = entry.branchId ?? (state.branches.length ? mainBranchId : undefined)
+            const interrupted = fiscalYears.find(year => year.status === 'open' && (year.branchId ?? (state.branches.length ? mainBranchId : undefined)) === branchId && entry.date >= year.startDate && entry.date <= year.endDate && state.journal.some(old => old.sourceType === 'year_closing' && old.sourceId === year.id && old.reversedByEntryId == null))
+            if (interrupted) throw new Error(`السنة «${interrupted.nameAr}» تحتوي على قيد إقفال وحالتها مفتوحة — راجع واستعد حالة الإقفال أولاً`)
+          }
           if (activeBranch) {
             const foreignTreasuryCodes = new Set(state.treasuries.filter((treasury) => {
               const owner = state.branches.find((branch) => branch.treasuryCode === treasury.code)
@@ -6421,6 +7155,7 @@ export const useRawDataStore = create<DataState>()(
       warehouses: [],
       branches: [],
       activeBranchId: null,
+      financialEntityProfiles: [],
       paymentTerminals: [],
       paymentTerminalTransactions: [],
       paymentTerminalSettlements: [],
@@ -6436,8 +7171,42 @@ export const useRawDataStore = create<DataState>()(
       fxConversions: [],
       accruePayrollSlips: (args) => {
         const state = get()
-        if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
         if (!args.rows.length) throw new Error('اختر موظفاً واحداً على الأقل')
+        const scoped = getBranchScopedDataState(state)
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع الحالي قبل ترحيل القسائم')
+        if (new Set(args.rows.map(row => row.employeeId)).size !== args.rows.length) throw new Error('الموظف مكرر في المسير — سطر واحد لكل موظف')
+        for (const row of args.rows) {
+          if (!state.employees.some(e => e.id === row.employeeId)) throw new Error('موظف غير موجود في المسير')
+          if (state.employees.filter(e => e.id === row.employeeId).length !== 1 || !scoped.employees.some(e => e.id === row.employeeId)) throw new Error('موظف المسير تابع لفرع آخر أو غير فريد في الفرع الحالي')
+          if (![row.grossMinor, row.allowancesMinor, row.deductionsMinor, row.advanceMinor].every(Number.isSafeInteger)) throw new Error('مبالغ القسيمة يجب أن تكون أرقاماً صحيحة وآمنة')
+        }
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين')
+        }
+        for (const row of args.rows) {
+          const assertLocal = <T extends { id: number; date: string }>(all: T[], visible: T[], universe: T[], label: string) => {
+            if (all.some(record => universe.filter(other => other.id === record.id).length !== 1 || !visible.includes(record))) throw new Error(`${label} غير فريد أو تابع لفرع آخر — راجع تخصيص القسيمة`)
+            if (all.some(record => !isValidExpiryDate(record.date?.slice(0, 10)))) throw new Error(`${label} تاريخه غير صالح — راجع السجل`)
+          }
+          if (row.advanceMinor > 0) assertLocal(state.employeeAdvances.filter(a => a.employeeId === row.employeeId && a.amountMinor > a.recoveredMinor), scoped.employeeAdvances, state.employeeAdvances, 'سجل السلفة')
+          if (row.deductionsMinor > 0) assertLocal(state.employeeDeductions.filter(d => d.employeeId === row.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0)), scoped.employeeDeductions, state.employeeDeductions, 'سجل الجزاء')
+        }
+        const slipDate = args.date ?? todayLocalIso()
+        if (!isValidExpiryDate(slipDate) || slipDate > todayLocalIso()) throw new Error('تاريخ استحقاق القسيمة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(slipDate, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ استحقاق القسيمة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (state.journal.some(entry => entry.lines.some(line => line.accountCode === '2104') && (!isValidExpiryDate(entry.date?.slice(0, 10)) || entry.date.slice(0, 10) > slipDate))) throw new Error('تاريخ استحقاق القسيمة يسبق حركة رواتب مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        for (const row of args.rows.filter(r => r.advanceMinor > 0)) {
+          try { employeeAdvanceDocumentDate(state, row.employeeId, slipDate) }
+          catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق حركة سلفة مسجلة — راجع تسلسل الاستقطاع') }
+        }
+        for (const row of args.rows.filter(r => r.deductionsMinor > 0)) {
+          try { employeeDeductionDocumentDate(state, row.employeeId, slipDate) }
+          catch { throw new Error('تاريخ القسيمة غير صالح أو خارج الفترة أو يسبق جزاءً أو استقطاعاً مسجلاً — راجع التسلسل') }
+        }
         const drafts = args.rows.map((row) => {
           const employee = state.employees.find((e) => e.id === row.employeeId)
           if (!employee) throw new Error('موظف غير موجود في المسير')
@@ -6447,9 +7216,15 @@ export const useRawDataStore = create<DataState>()(
              والجزاء يُستردان كاملين دون أن يغطيهما الراتب. يُرفض المسير كله، مهما كان
              الاعتماد (الاعتماد يسمح بتجاوز نصف الراتب، لا بصافٍ سالب). */
           const rawNet = row.grossMinor + row.allowancesMinor - row.deductionsMinor - row.advanceMinor
+          if (!Number.isSafeInteger(row.grossMinor + row.allowancesMinor) || !Number.isSafeInteger(rawNet)) throw new Error('إجمالي القسيمة يتجاوز الحدود الآمنة')
           if (rawNet < 0) throw new Error(`${employee.nameAr}: الخصومات والسلف تتجاوز الراتب والبدلات — صافي القسيمة سالب`)
           return { ...row, employeeName: employee.nameAr, netMinor: slipNetMinor(row) }
         })
+        let payrollTotal = 0
+        for (const draft of drafts) {
+          payrollTotal += draft.netMinor + draft.advanceMinor
+          if (!Number.isSafeInteger(payrollTotal)) throw new Error('إجمالي المسير يتجاوز الحدود الآمنة')
+        }
         /* منع تكرار استحقاق نفس الموظف لنفس الشهر */
         for (const draft of drafts) {
           const twice = state.payrollSlips.some((slip) => slip.month === args.month && slip.employeeId === draft.employeeId && slip.status !== 'cancelled')
@@ -6460,6 +7235,7 @@ export const useRawDataStore = create<DataState>()(
         // باستقطاع فوق الحقيقة لاحقاً). الآن: حارس المتبقي + توزيع الأقدم أولاً
         // (نفس منهج المسير والسداد النقدي).
         let employeeAdvances = state.employeeAdvances
+        const recoveredAdvancesByEmployee = new Map<number, { advanceId: number; minor: number }[]>()
         for (const draft of drafts) {
           if ((draft.advanceMinor ?? 0) <= 0) continue
           const remaining = employeeAdvances
@@ -6469,14 +7245,18 @@ export const useRawDataStore = create<DataState>()(
             throw new Error(`${draft.employeeName}: السلفة المستقطعة (${draft.advanceMinor}) أكبر من متبقي سلفه (${remaining})`)
           }
           let toRecover = draft.advanceMinor
-          employeeAdvances = employeeAdvances.map((a) => {
-            if (a.employeeId !== draft.employeeId || toRecover <= 0) return a
-            const open = a.amountMinor - a.recoveredMinor
-            if (open <= 0) return a
-            const take = Math.min(open, toRecover)
+          employeeAdvances = [...employeeAdvances]
+          const taken: { advanceId: number; minor: number }[] = []
+          const indices = employeeAdvances.map((a, i) => ({ a, i })).filter(({ a }) => a.employeeId === draft.employeeId && a.amountMinor > a.recoveredMinor)
+            .sort((x, y) => x.a.date.slice(0, 10).localeCompare(y.a.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const a = employeeAdvances[i], take = Math.min(a.amountMinor - a.recoveredMinor, toRecover)
             toRecover -= take
-            return { ...a, recoveredMinor: a.recoveredMinor + take }
-          })
+            taken.push({ advanceId: a.id, minor: take })
+            employeeAdvances[i] = { ...a, recoveredMinor: a.recoveredMinor + take }
+          }
+          if (taken.length) recoveredAdvancesByEmployee.set(draft.employeeId, taken)
         }
         /* §93 (إصلاح سلسلة الرواتب): الخصومات المسجلة (الجزاءات) تُخصم من
            سجلاتها الأقدم أولاً — كما يفعل المسير المجمّع تماماً. قبل هذا
@@ -6489,20 +7269,22 @@ export const useRawDataStore = create<DataState>()(
           if ((draft.deductionsMinor ?? 0) <= 0) continue
           let toRecover = draft.deductionsMinor
           const taken: { deductionId: number; minor: number }[] = []
-          employeeDeductions = employeeDeductions.map((d) => {
-            if (d.employeeId !== draft.employeeId || toRecover <= 0) return d
-            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
-            if (open <= 0) return d
-            const take = Math.min(open, toRecover)
+          employeeDeductions = [...employeeDeductions]
+          const indices = employeeDeductions.map((d, i) => ({ d, i })).filter(({ d }) => d.employeeId === draft.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0))
+            .sort((x, y) => x.d.date.slice(0, 10).localeCompare(y.d.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const d = employeeDeductions[i], take = Math.min(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0), toRecover)
             toRecover -= take
             taken.push({ deductionId: d.id, minor: take })
-            return { ...d, recoveredMinor: d.recoveredMinor + take }
-          })
+            employeeDeductions[i] = { ...d, recoveredMinor: d.recoveredMinor + take }
+          }
           if (taken.length) recoveredDeductionsByEmployee.set(draft.employeeId, taken)
         }
-        const runId = nextId(state.payrollRuns)
+        const runId = nextPayrollSourceId(state)
         const baseId = nextId(state.payrollSlips)
-        const now = args.date ? localTimestampOn(args.date, 9) : localIsoTimestamp()
+        const createdAt = localIsoTimestamp()
+        const now = args.date ? localTimestampOnDay(slipDate, new Date()) : createdAt
         const numbered = drafts.map((draft, index) => ({ ...draft, slipNumber: `PS-${String(baseId + index).padStart(4, '0')}` }))
         const monthLabel = monthLabelAr(args.month)
         const lines = buildSlipAccrualLines(numbered, monthLabel)
@@ -6511,7 +7293,7 @@ export const useRawDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `استحقاق رواتب ${monthLabel} — ${numbered.length} موظف`,
           sourceType: 'payroll', sourceId: runId, lines,
-          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(state), createdAt, reversedByEntryId: null, reversesEntryId: null,
         }
         const slips: PayrollSlip[] = numbered.map((draft, index) => ({
           id: baseId + index,
@@ -6527,9 +7309,11 @@ export const useRawDataStore = create<DataState>()(
           netMinor: draft.netMinor,
           status: 'accrued',
           accruedAt: now,
+          createdAt,
           accrualEntryId: entryId,
           notes: draft.notes ?? '',
           recoveredDeductions: recoveredDeductionsByEmployee.get(draft.employeeId),
+          recoveredAdvances: recoveredAdvancesByEmployee.get(draft.employeeId),
         }))
         set({
           payrollSlips: [...state.payrollSlips, ...slips],
@@ -6543,29 +7327,71 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
+        const scoped = getBranchScopedDataState(state)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || state.payrollSlips.filter(row => row.id === slip.id).length !== 1 || !scoped.payrollSlips.some(row => row.id === slip.id) || state.employees.filter(row => row.id === slip.employeeId).length !== 1 || !scoped.employees.some(row => row.id === slip.employeeId)) throw new Error('القسيمة أو الموظف غير فريد أو تابع لفرع آخر')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (state.treasuries.filter(row => row.code === args.treasury).length !== 1 || !scoped.treasuries.some(row => row.code === args.treasury)) throw new Error('خزينة الصرف غير موجودة أو غير فريدة أو تابعة لفرع آخر')
         if (slip.status === 'paid') throw new Error('هذه القسيمة مصروفة بالفعل')
         if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة')
         const remaining = slipRemainingMinor(slip)
         if (remaining <= 0) throw new Error('لا متبقي للصرف في هذه القسيمة')
         /* بلاغ المالك: الصرف قد يكون جزئياً — الافتراضي المتبقي، ولا يُصرف أكثر منه */
         const amount = args.amountMinor ?? remaining
-        if (!Number.isInteger(amount) || amount <= 0) throw new Error('مبلغ الصرف يجب أن يكون موجباً')
+        if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('مبلغ الصرف يجب أن يكون موجباً وآمناً')
+        const accessErrors = validateTreasuryAccess(state.appUsers.find(user => user.id === state.currentUserId && user.active)?.treasuryAccess, args.treasury, 'payment', amount)
+        if (accessErrors.length) throw new Error(accessErrors.join(' — '))
         if (amount > remaining) throw new Error(`مبلغ الصرف (${amount}) أكبر من المتبقي من القسيمة (${remaining})`)
-        const now = args.date ? localTimestampOn(args.date, 12) : localIsoTimestamp()
+        const now = localIsoTimestamp(), date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ صرف القسيمة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ صرف القسيمة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        const day = slip.accruedAt?.slice(0, 10), origins = state.journal.filter(e => e.id === slip.accrualEntryId), origin = origins[0]
+        if (!isValidExpiryDate(day) || day > date) throw new Error('تاريخ صرف القسيمة يسبق استحقاقها أو تاريخه غير صالح')
+        if (!Number.isSafeInteger(slip.netMinor) || slip.netMinor <= 0 || origins.length !== 1 || !scoped.journal.includes(origin) || origin.sourceType !== 'payroll' || origin.sourceId !== slip.runId || origin.date !== day || origin.reversedByEntryId != null || !Array.isArray(origin.lines) || origin.lines.filter(l => l.accountCode === '2104' && l.credit === slip.netMinor && l.debit === 0 && l.note?.startsWith(`${slip.slipNumber} — `)).length !== 1) throw new Error('قيد استحقاق القسيمة غير مثبت أو لا يطابقها — راجع القسيمة')
+        let paid = 0
+        for (const payment of slip.payments ?? []) {
+          if (!Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0 || !isValidExpiryDate(payment.date) || payment.date < day || payment.date > date) throw new Error('تاريخ أو مبلغ دفعة القسيمة غير صالح أو لاحق — راجع التسلسل')
+          const entries = state.journal.filter(e => e.id === payment.entryId), previous = entries[0]
+          if (entries.length !== 1 || !scoped.journal.includes(previous) || previous.date !== payment.date || previous.reversedByEntryId != null || !Array.isArray(previous.lines)) throw new Error('قيد دفعة القسيمة غير مثبت أو لا يطابق تاريخها — راجع القسيمة')
+          const linked = state.payrollSlips.flatMap(row => (row.payments ?? []).filter(p => p.entryId === payment.entryId).map(p => ({ row, p })))
+          const total = linked.reduce((sum, item) => sum + item.p.amountMinor, 0)
+          if (linked.filter(item => item.row.id === slip.id).length !== 1 || linked.some(item => item.row.employeeId !== slip.employeeId || !Number.isSafeInteger(item.p.amountMinor) || item.p.amountMinor <= 0 || item.p.date !== payment.date) || !Number.isSafeInteger(total) || !previous.lines.some(l => l.accountCode === '2104' && l.debit >= total && l.credit === 0)) throw new Error('تخصيص دفعة القسيمة غير مثبت — راجع القسيمة')
+          if (previous.sourceType === 'payment_voucher') {
+            const vouchers = state.vouchers.filter(v => v.journalEntryId === previous.id && v.id === previous.sourceId && v.kind === 'payment' && v.partyKind === 'employee' && v.partyId === slip.employeeId && !v.reversalEntryId)
+            if (vouchers.length !== 1 || !scoped.vouchers.includes(vouchers[0]) || payment.from !== `سند صرف ${vouchers[0].voucherNumber}` || vouchers[0].amountMinor < total) throw new Error('سند دفعة القسيمة غير مثبت — راجع القسيمة')
+          } else if (previous.sourceType !== 'payroll' || previous.sourceId !== slip.runId || linked.length !== 1 || !previous.lines.some(l => l.accountCode === payment.from && l.credit === payment.amountMinor && l.debit === 0)) throw new Error('مصدر دفعة القسيمة غير مثبت — راجع القسيمة')
+          paid += payment.amountMinor
+          if (!Number.isSafeInteger(paid) || paid > slip.netMinor) throw new Error('مجموع دفعات القسيمة غير صالح')
+        }
+        const affected = new Set(['2104', args.treasury])
+        const moves = state.journal.filter(e => e.lines.some(l => affected.has(l.accountCode)))
+        if (moves.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة رواتب أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        if (date < now.slice(0, 10)) {
+          if (moves.some(entry => entry.lines.some(line => line.accountCode === args.treasury) && !scoped.journal.includes(entry))) throw new Error('حركة الخزينة خارج الفرع أو غير واضحة — راجع الرصيد التاريخي')
+          let cash = 0
+          for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
+            if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة — راجع الرصيد')
+            cash += line.debit - line.credit
+            if (!Number.isSafeInteger(cash)) throw new Error('رصيد الخزينة غير صالح')
+          }
+          if (cash < amount) throw new Error('رصيد الخزينة لا يكفي في تاريخ صرف القسيمة')
+        }
+        const transactionAt = args.date ? `${date}T${now.slice(11)}` : now
         const lines = buildSlipPaymentLines({ slipNumber: slip.slipNumber, employeeName: slip.employeeName, netMinor: amount }, args.treasury)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `صرف راتب ${slip.employeeName} — ${slip.slipNumber}`,
           sourceType: 'payroll', sourceId: slip.runId, lines,
           createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const payment: SlipPayment = { entryId, amountMinor: amount, date: now.slice(0, 10), from: args.treasury }
+        const payment: SlipPayment = { entryId, amountMinor: amount, date, createdAt: now, from: args.treasury }
         const payments = [...(slip.payments ?? []), payment]
         const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
         const fullyPaid = paidNow >= slip.netMinor
         const updated: PayrollSlip = fullyPaid
-          ? { ...slip, status: 'paid', paidAt: now, paidEntryId: entry.id, paidFrom: args.treasury, payments }
+          ? { ...slip, status: 'paid', paidAt: transactionAt, paidEntryId: entry.id, paidFrom: args.treasury, payments }
           : { ...slip, payments }
         set({
           payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? updated : row)),
@@ -6577,12 +7403,18 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
+        const scoped = getBranchScopedDataState(state)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || state.payrollSlips.filter(row => row.id === slip.id).length !== 1 || !scoped.payrollSlips.some(row => row.id === slip.id) || state.employees.filter(row => row.id === slip.employeeId).length !== 1 || !scoped.employees.some(row => row.id === slip.employeeId)) throw new Error('القسيمة أو الموظف غير فريد أو تابع لفرع آخر')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
         if (slip.status === 'paid') throw new Error('لا تُلغى قسيمة مصروفة — سجّل تسوية بدلاً منها')
         if (slipPaidMinor(slip) > 0) throw new Error('لا تُلغى قسيمة بها صرف جزئي — ألغِ الدفعات أولاً أو سجّل تسوية')
         // إصلاح §83 (بوابة العمق): الملغاة كانت تُلغى مرة ثانية فيولَّد قيد عكسي
         // مزدوج بلا مقابل — يفسد مصروف الرواتب والذمة معاً. القاتل في المستودع.
         if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة بالفعل — لا يُلغى مستند ملغى')
         if (!reason.trim()) throw new Error('سبب الإلغاء مطلوب')
+        // لا يملك النظام أدلة تخصيص السلفة لكل قسيمة؛ العكس القديم يسترجع من
+        // السلف حسب ترتيبها الحالي وقد يعكس سداداً آخر. افشل مغلقاً للمسار المؤرخ.
+        if (slip.advanceMinor > 0 && (state.employeeAdvances.some(a => a.employeeId === slip.employeeId && a.dateSelected) || state.advanceRepayments.some(a => a.employeeId === slip.employeeId && a.dateSelected))) throw new Error('إلغاء استقطاع سلفة مؤرخة يتطلب مراجعة وتسوية يدوية — لا توجد أدلة تخصيص كافية للعكس الآلي')
         // إصلاح §83 (ث9): كان القيد يحمل reversesEntryId لقيد الاستحقاق المجمَّع
         // بلا تحديث الطرف الآخر — كسر التبادلية. والأدق محاسبياً: الإلغاء يعكس
         // **سطر قسيمة واحد** من قيد مجمَّع (سطر 2104 باسم الموظف) لا القيد كله،
@@ -6599,20 +7431,30 @@ export const useRawDataStore = create<DataState>()(
         ]
         // §93: عكس استرداد الجزاءات المسجلة — يعود الجزاء «قائماً» كما قبل المسير
         let employeeDeductions = state.employeeDeductions
+        const recoveredDeductions = slip.recoveredDeductions ?? []
+        if (!Array.isArray(recoveredDeductions) || new Set(recoveredDeductions.map(a => a.deductionId)).size !== recoveredDeductions.length || recoveredDeductions.some(a => !Number.isSafeInteger(a.minor) || a.minor <= 0) || !Number.isSafeInteger(slip.deductionsMinor) || recoveredDeductions.reduce((sum, a) => sum + a.minor, 0) > slip.deductionsMinor) throw new Error('تخصيص الجزاء في القسيمة غير صالح — راجع التسوية')
+        for (const rd of recoveredDeductions) {
+          const matches = state.employeeDeductions.filter(d => d.id === rd.deductionId)
+          if (matches.length !== 1 || matches[0].employeeId !== slip.employeeId || !scoped.employeeDeductions.includes(matches[0]) || !Number.isSafeInteger(matches[0].recoveredMinor) || matches[0].recoveredMinor < rd.minor) throw new Error('سجل الجزاء المخصص غير مثبت أو غير كاف للعكس — راجع التسوية')
+        }
         for (const rd of slip.recoveredDeductions ?? []) {
           employeeDeductions = employeeDeductions.map((d) => (d.id === rd.deductionId ? { ...d, recoveredMinor: Math.max(0, d.recoveredMinor - rd.minor) } : d))
         }
         // عكس توزيع السلفة على السجلات (بما استُرد بمقدارها، الأقدم أولاً)
         let employeeAdvances = state.employeeAdvances
         if (slip.advanceMinor > 0) {
-          let toGive = slip.advanceMinor
-          employeeAdvances = employeeAdvances.map((a) => {
-            if (a.employeeId !== slip.employeeId || toGive <= 0) return a
-            const give = Math.min(a.recoveredMinor, toGive)
-            if (give <= 0) return a
-            toGive -= give
-            return { ...a, recoveredMinor: a.recoveredMinor - give }
-          })
+          if (slip.recoveredAdvances != null) {
+            const allocations = slip.recoveredAdvances
+            if (!Array.isArray(allocations) || new Set(allocations.map(a => a.advanceId)).size !== allocations.length || allocations.some(a => !Number.isSafeInteger(a.minor) || a.minor <= 0) || allocations.reduce((sum, a) => sum + a.minor, 0) !== slip.advanceMinor) throw new Error('تخصيص السلفة في القسيمة غير صالح — راجع التسوية')
+            for (const a of allocations) {
+              const matches = state.employeeAdvances.filter(row => row.id === a.advanceId)
+              if (matches.length !== 1 || matches[0].employeeId !== slip.employeeId || !scoped.employeeAdvances.includes(matches[0]) || !Number.isSafeInteger(matches[0].recoveredMinor) || matches[0].recoveredMinor < a.minor) throw new Error('سجل السلفة المخصص غير مثبت أو غير كاف للعكس — راجع التسوية')
+            }
+            const amounts = new Map(allocations.map(a => [a.advanceId, a.minor]))
+            employeeAdvances = employeeAdvances.map(a => amounts.has(a.id) ? { ...a, recoveredMinor: a.recoveredMinor - amounts.get(a.id)! } : a)
+          } else {
+            throw new Error('إلغاء استقطاع سلفة قديمة يتطلب مراجعة وتسوية يدوية — لا توجد أدلة تخصيص كافية للعكس الآلي')
+          }
         }
         const nowIso = localIsoTimestamp()
         const entryId = nextId(state.journal)
@@ -6691,7 +7533,7 @@ export const useRawDataStore = create<DataState>()(
       },
       addLeaveRequest: (args) => {
         const state = get()
-        const scoped = getBranchScopedDataState(state)
+        const scoped = assertLeaveAccess(state)
         // لا نسجل إجازة لموظف شبح أو تابع لفرع آخر في هذا النطاق.
         assertEmployeeInActiveBranch(state, args.employeeId)
         const days = leaveDaysBetween(args.from, args.to)
@@ -6708,36 +7550,127 @@ export const useRawDataStore = create<DataState>()(
       },
       decideLeaveRequest: (id, approve, by) => {
         const state = get()
-        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
-        if (!request) throw new Error('طلب الإجازة غير موجود')
+        const scoped = assertLeaveAccess(state)
+        const request = scoped.leaveRequests.find((l) => l.id === id)
+        if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        assertEmployeeInActiveBranch(state, request.employeeId)
         if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
+        if (approve) {
+          assertLeavePeriodMutable(state, request, 'الاعتماد')
+          const errors = validateLeaveRequest({ employeeId: request.employeeId, typeId: request.typeId, from: request.from, to: request.to, leaves: scoped.leaveRequests.filter((leave) => leave.id !== id), types: scoped.leaveTypes })
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         const now = localIsoTimestamp()
         const decided: LeaveRequest = { ...request, status: approve ? 'approved' : 'rejected', decidedBy: by || 'المالك', decidedAt: now }
         /* عند الاعتماد: تُعلَّم أيام الإجازة في شبكة الحضور تلقائياً (فوق أي «حاضر» سابق) */
         if (approve) {
           const dates = leaveDates(request)
+          for (const date of dates) {
+            const rows = state.attendanceRecords.filter((row) => row.employeeId === request.employeeId && row.date === date)
+            if (rows.length > 1 || rows.some((row) => state.attendanceRecords.filter((other) => other.id === row.id).length !== 1)) throw new Error('سجل الحضور غير فريد — راجعه قبل اعتماد الإجازة')
+          }
           const byDay = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
           const nextRecords = [...state.attendanceRecords]
+          const attendanceAtApproval: NonNullable<LeaveRequest['attendanceAtApproval']> = []
           for (const date of dates) {
             const existing = byDay.get(`${request.employeeId}|${date}`)
             if (existing) {
               const idx = nextRecords.findIndex((r) => r.id === existing.id)
-              nextRecords[idx] = { ...existing, status: 'leave' as const, notes: `إجازة معتمدة #${request.id}` }
+              const applied = { ...existing, status: 'leave' as const, notes: `إجازة معتمدة #${request.id}` }
+              nextRecords[idx] = applied
+              attendanceAtApproval.push({ date, previous: { ...existing }, applied: { ...applied } })
             } else {
-              nextRecords.push({ id: nextId(nextRecords), employeeId: request.employeeId, date, status: 'leave' as const, checkIn: null, checkOut: null, source: 'manual' as const, importBatch: null, notes: `إجازة معتمدة #${request.id}` })
+              const applied: AttendanceRecord = { id: nextId(nextRecords), employeeId: request.employeeId, date, status: 'leave', checkIn: null, checkOut: null, source: 'manual', importBatch: null, notes: `إجازة معتمدة #${request.id}` }
+              nextRecords.push(applied)
+              attendanceAtApproval.push({ date, previous: null, applied: { ...applied } })
             }
           }
-          set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)), attendanceRecords: nextRecords })
-          return decided
+          const approved = { ...decided, attendanceAtApproval }
+          set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? approved : l)), attendanceRecords: nextRecords })
+          return approved
         }
         set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)) })
         return decided
       },
+      cancelLeaveRequest: (id, by, reason) => {
+        const state = get()
+        const matches = state.leaveRequests.filter((l) => l.id === id)
+        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
+        if (matches.length !== 1 || !request) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        if (request.status !== 'approved') throw new Error('لا يمكن إلغاء طلب غير معتمد')
+        if (!reason.trim()) throw new Error('اكتب سبب إلغاء الإجازة')
+        assertLeaveAccess(state)
+        assertEmployeeInActiveBranch(state, request.employeeId)
+        const dates = assertLeavePeriodMutable(state, request, 'الإلغاء')
+        let records = [...state.attendanceRecords]
+        const legacy: AttendanceRecord[] = []
+        if (request.attendanceAtApproval) {
+          for (const snapshot of request.attendanceAtApproval) {
+            const matching = records.filter((row) => row.employeeId === request.employeeId && row.date === snapshot.date)
+            if (matching.length > 1 || records.filter((row) => row.id === snapshot.applied.id).length > 1) throw new Error('سجل الحضور غير فريد — راجعه قبل الإلغاء')
+            const index = records.findIndex((row) => row.id === snapshot.applied.id && row.employeeId === request.employeeId && row.date === snapshot.date)
+            // لا نطمس أي تعديل أو استيراد لاحق على سجل الحضور.
+            if (index < 0 || JSON.stringify(records[index]) !== JSON.stringify(snapshot.applied)) continue
+            if (snapshot.previous) records[index] = snapshot.previous
+            else records.splice(index, 1)
+          }
+        } else {
+          // في البيانات القديمة لم تحفظ حالة الحضور الأصلية؛ نؤرشف السجل كما هو
+          // ونزيل العلامة الآلية فقط. يلزم المستخدم مراجعة تلك الأيام يدوياً.
+          records = records.filter((row) => {
+            const automatic = row.employeeId === request.employeeId && dates.includes(row.date) && row.status === 'leave' && row.notes === `إجازة معتمدة #${id}`
+            if (automatic) legacy.push({ ...row })
+            return !automatic
+          })
+        }
+        const cancelled: LeaveRequest = { ...request, status: 'cancelled', cancelledBy: by.trim() || 'المالك', cancelledAt: localIsoTimestamp(), cancellationReason: reason.trim(), ...(legacy.length ? { legacyAttendanceAtCancellation: legacy } : {}) }
+        set({ leaveRequests: state.leaveRequests.map((row) => row.id === id ? cancelled : row), attendanceRecords: records })
+        return cancelled
+      },
+      returnFromLeave: (id, returnDate, by, reason) => {
+        const state = get()
+        const scoped = assertLeaveAccess(state)
+        const request = scoped.leaveRequests.find((row) => row.id === id)
+        if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        assertEmployeeInActiveBranch(state, request.employeeId)
+        if (request.status !== 'approved') throw new Error('لا يمكن قطع إجازة غير معتمدة')
+        if (request.returnHistory?.length) throw new Error('سُجّل قطع هذه الإجازة مسبقاً — لا يمكن تسجيله مرة أخرى')
+        if (!reason.trim()) throw new Error('اكتب سبب قطع الإجازة')
+        if (!isValidExpiryDate(returnDate) || returnDate < request.from || returnDate > request.to) throw new Error('تاريخ العودة يجب أن يقع داخل مدة الإجازة المعتمدة')
+        if (returnDate === request.from) return state.cancelLeaveRequest(id, by, reason)
+        // الماضي الذي قُضي فعلاً لا يمس؛ الحارس ينطبق فقط على الأيام المُلغاة.
+        const dates = assertLeavePeriodMutable(state, { ...request, from: returnDate }, 'قطع الإجازة')
+        let records = [...state.attendanceRecords]
+        const legacy: AttendanceRecord[] = []
+        for (const date of dates) {
+          const rows = records.filter((row) => row.employeeId === request.employeeId && row.date === date)
+          if (rows.length > 1 || rows.some((row) => records.filter((other) => other.id === row.id).length !== 1)) throw new Error('سجل الحضور غير فريد — راجعه قبل قطع الإجازة')
+          const snapshot = request.attendanceAtApproval?.find((row) => row.date === date)
+          if (snapshot) {
+            const index = records.findIndex((row) => row.id === snapshot.applied.id && row.employeeId === request.employeeId && row.date === date)
+            if (index < 0 || JSON.stringify(records[index]) !== JSON.stringify(snapshot.applied)) continue
+            if (snapshot.previous) records[index] = snapshot.previous
+            else records.splice(index, 1)
+          } else if (!request.attendanceAtApproval && rows[0]?.status === 'leave' && rows[0].notes === `إجازة معتمدة #${id}`) {
+            legacy.push({ ...rows[0] })
+            records = records.filter((row) => row.id !== rows[0].id)
+          }
+        }
+        const newTo = leaveDates({ from: request.from, to: returnDate }).at(-2)!
+        const updated: LeaveRequest = {
+          ...request, to: newTo, days: leaveDaysBetween(request.from, newTo),
+          ...(request.attendanceAtApproval ? { attendanceAtApproval: request.attendanceAtApproval.filter((row) => row.date < returnDate) } : {}),
+          returnHistory: [...(request.returnHistory ?? []), { returnDate, previousTo: request.to, by: by.trim() || 'المالك', at: localIsoTimestamp(), reason: reason.trim(), ...(legacy.length ? { legacyAttendance: legacy } : {}) }],
+        }
+        set({ leaveRequests: state.leaveRequests.map((row) => row.id === id ? updated : row), attendanceRecords: records })
+        return updated
+      },
       deleteLeaveRequest: (id) => {
         const state = get()
-        const request = getBranchScopedDataState(state).leaveRequests.find((l) => l.id === id)
-        if (!request) throw new Error('طلب الإجازة غير موجود')
-        if (request.status === 'approved') throw new Error('لا يُحذف طلب معتمد — راسل طلباً معاكساً أو عدّل شبكة الحضور')
+        const request = assertLeaveAccess(state).leaveRequests.find((l) => l.id === id)
+        if (!request || state.leaveRequests.filter((row) => row.id === id).length !== 1) throw new Error('طلب الإجازة غير موجود أو غير فريد في الفرع')
+        assertEmployeeInActiveBranch(state, request.employeeId)
+        if (request.status !== 'pending') throw new Error('لا يُحذف طلب محسوم — احتفظ بسجل القرار واستخدم الإلغاء للطلب المعتمد')
         set({ leaveRequests: state.leaveRequests.filter((l) => l.id !== id) })
       },
       updateHrRules: (patch) => {
@@ -6865,6 +7798,11 @@ export const useRawDataStore = create<DataState>()(
         let postedId: number | null = null
         let postedRef: string | null = null
         if (decision.status === 'approved') {
+          // طلبات تاريخية مكررة قد تشير إلى مسودة رُحّلت بالفعل بطلب آخر أو قبل تأكيد القرار.
+          // لا ندّعي ترحيلها باسم هذا الطلب دون إثبات، بل نتركها معلقة للمراجعة.
+          const draftId = target.kind === 'purchase' || target.kind === 'sale' ? approvalDraftId(target.payload) : null
+          const alreadyPosted = draftId && (target.kind === 'purchase' ? state.purchases : state.sales).some(row => row.sourceDraftId === draftId)
+          if (alreadyPosted) throw new Error('فاتورة هذه المسودة رُحّلت مسبقاً — راجع طلب الاعتماد قبل اتخاذ القرار')
           const posted = postApprovedDocument(get, target.kind, target.payload)
           postedId = posted.id
           postedRef = posted.ref
@@ -6924,10 +7862,11 @@ export const useRawDataStore = create<DataState>()(
           if (order.status === 'closed') throw new Error('أمر الشراء مكتمل الاستلام — لا يُلغى')
           if ((order.invoiceIds ?? []).length > 0) throw new Error('الأمر مرتبط بفواتير شراء مسجلة — لا يُلغى')
         }
-        return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status } : o)) }
+        if ((status === 'draft' || status === 'sent' || status === 'cancelled') && order.lines.some(line => (line.receivedQty ?? 0) > 0) && status !== order.status) throw new Error('الأمر فيه مستلم — لا تُغيّر حالة الاستلام يدوياً')
+        return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status, statusBeforeReceipt: status === 'draft' || status === 'sent' ? status : o.statusBeforeReceipt } : o)) }
       }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => {
-        let justClosed = false
+        if (invoiceId != null && state.purchaseOrders.some(order => order.id === id && order.invoiceIds?.includes(invoiceId))) return state
         const purchaseOrders = state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
           // إصلاح (مراجعة المالك 2026-10-01): المستلم يُجمَّع لكل صنف أولاً — سطور
@@ -6948,32 +7887,34 @@ export const useRawDataStore = create<DataState>()(
           })
           const next: PurchaseOrder = {
             ...order,
+            statusBeforeReceipt: order.statusBeforeReceipt ?? (order.status === 'draft' || order.status === 'sent' ? order.status : undefined),
             lines,
             invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
           }
           const updated = { ...next, status: derivePurchaseOrderStatus(next) }
-          if (updated.status === 'closed' && order.status !== 'closed') justClosed = true
           return updated
         })
-        // سد فجوة فورية #2 (النشاط #7: قطع غيار) — اكتمال استلام الأمر يُحوّل
-        // تلقائياً أي طلب عميل معلّق مرتبط به من «بانتظار الوصول» إلى «وصلت»،
-        // فيظهر كتنبيه جاهز للتسليم في مركز التنبيهات دون متابعة يدوية.
-        const pendingPartOrders = justClosed
-          ? state.pendingPartOrders.map((po) => (
-              po.linkedPurchaseOrderId === id && po.status === 'pending'
-                ? { ...po, status: 'arrived' as const, arrivedAt: new Date().toISOString() }
-                : po
-            ))
-          : state.pendingPartOrders
+        const pendingPartOrders = reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, purchaseOrders)
         return { purchaseOrders, pendingPartOrders }
       }),
-      deletePurchaseOrder: (id) => set((state) => ({ purchaseOrders: state.purchaseOrders.filter((order) => order.id !== id) })),
+      deletePurchaseOrder: (id) => set((state) => {
+        const order = state.purchaseOrders.find(row => row.id === id)
+        if (order && ((order.invoiceIds ?? []).length > 0 || state.purchases.some(purchase => purchase.sourcePurchaseOrderId === id))) throw new Error('أمر الشراء مرتبط بفواتير — لا يُحذف')
+        if (order && (order.status !== 'draft' || order.lines.some(line => (line.receivedQty ?? 0) > 0) || state.pendingPartOrders.some(part => part.linkedPurchaseOrderId === id))) throw new Error('أمر الشراء غير قابل للحذف لوجود استلام أو ارتباط أو لأنه ليس مسودة')
+        return { purchaseOrders: state.purchaseOrders.filter(row => row.id !== id) }
+      }),
       pendingPartOrders: [],
       addPendingPartOrder: (input) => {
         const state = get()
         if (!input.itemId) throw new Error('اختر الصنف المطلوب')
-        if (!(input.qty > 0)) throw new Error('الكمية يجب أن تكون أكبر من صفر')
+        const qty = normalizeMovementQty(input.qty)
         if (!input.customerName.trim()) throw new Error('اسم العميل مطلوب')
+        if (input.linkedPurchaseOrderId != null) {
+          const matches = state.purchaseOrders.filter(row => row.id === input.linkedPurchaseOrderId)
+          const scoped = getBranchScopedDataState(state).purchaseOrders
+          if (matches.length !== 1 || !scoped.some(row => row.id === input.linkedPurchaseOrderId) || matches[0].status === 'closed' || matches[0].status === 'cancelled') throw new Error('أمر الشراء المرتبط غير متاح أو مكتمل أو ملغى — اختر أمراً مفتوحاً')
+          if (!matches[0].lines.some(line => line.itemId === input.itemId)) throw new Error('صنف القطعة غير موجود في أمر الشراء المرتبط')
+        }
         const id = nextId(state.pendingPartOrders)
         const order: PendingPartOrder = {
           id,
@@ -6983,7 +7924,7 @@ export const useRawDataStore = create<DataState>()(
           customerId: input.customerId ?? null,
           customerName: input.customerName.trim(),
           customerPhone: input.customerPhone.trim(),
-          qty: input.qty,
+          qty,
           orderedAt: input.orderedAt || new Date().toISOString(),
           status: 'pending',
           linkedPurchaseOrderId: input.linkedPurchaseOrderId ?? null,
@@ -6998,13 +7939,18 @@ export const useRawDataStore = create<DataState>()(
         const order = state.pendingPartOrders.find((o) => o.id === id)
         if (!order) throw new Error('الطلب غير موجود')
         const now = localIsoTimestamp()
-        return {
-          pendingPartOrders: state.pendingPartOrders.map((o) => (o.id === id
-            ? { ...o, status, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
-            : o)),
-        }
+        const parts = state.pendingPartOrders.map((o) => (o.id === id
+          ? { ...o, status, autoArrivedFromPurchaseOrderId: null, arrivedAt: status === 'arrived' ? (o.arrivedAt ?? now) : o.arrivedAt, deliveredAt: status === 'delivered' ? now : o.deliveredAt }
+          : o))
+        return { pendingPartOrders: invalidateUncoveredAutoParts(parts, state.purchaseOrders, order.linkedPurchaseOrderId) }
       }),
       deletePendingPartOrder: (id) => set((state) => ({ pendingPartOrders: state.pendingPartOrders.filter((o) => o.id !== id) })),
+      projectDeletionRecords: [],
+      quotationDeletionRecords: [],
+      surveyDeletionRecords: [],
+      projectSurveys: [],
+      projectCloseouts: [],
+      projectExtractDrafts: [],
       projectExtracts: [],
       projectCosts: [],
       projectExpenseCategories: [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],
@@ -7434,11 +8380,16 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         /* منع التكرار عند إعادة المحاولة بعد ضياع رد الحفظ (عقد sourceDraftId) */
         const sourceDraftId = rawInv.sourceDraftId?.trim()
+        const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
+        const evidence = sourceDraftId ? (rawInv.__approvalBypass ? rawInv.__sourceDraftEvidence : draftInputEvidence(normalizedInv)) : undefined
         if (sourceDraftId) {
           const alreadyPosted = state.purchases.find((purchase) => purchase.sourceDraftId === sourceDraftId)
-          if (alreadyPosted) return alreadyPosted
+          if (alreadyPosted) {
+            if (rawInv.sourcePurchaseOrderId != null && !state.purchaseOrders.some(order => order.id === rawInv.sourcePurchaseOrderId && order.invoiceIds?.includes(alreadyPosted.id))) throw new Error('الفاتورة أُنشئت سابقاً دون ربط مؤكد بالأمر — راجع الفاتورة والأمر قبل المتابعة')
+            verifyDraftRetry(alreadyPosted.sourceDraftEvidence, evidence ?? '', alreadyPosted.editHistory?.length)
+            return alreadyPosted
+          }
         }
-        const normalizedInv = { ...rawInv, lines: rawInv.lines.map(line => ({ ...line, qty: normalizeMovementQty(line.qty) })) }
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
         const inv = activeBranch && !activeBranch.isMain
@@ -7452,6 +8403,7 @@ export const useRawDataStore = create<DataState>()(
               })),
             }
           : normalizedInv
+        assertInvoicePostingDate(state, inv.date, true)
         // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!inv.__approvalBypass) {
           const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
@@ -7460,7 +8412,7 @@ export const useRawDataStore = create<DataState>()(
           enforceApprovalGate(get, 'purchase', approvalGoodsMinor, {
             title: `فاتورة مشتريات — ${inv.lines.length} بند`,
             partyName: inv.supplierId !== 0 ? state.suppliers.find((row) => row.id === inv.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
-            payload: serializeApprovalPayload(inv),
+            payload: serializeApprovalPayload({ ...inv, __sourceDraftEvidence: evidence }),
           })
         }
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
@@ -7525,6 +8477,32 @@ export const useRawDataStore = create<DataState>()(
             const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, payment.accountCode, 'payment', payment.amountMinor)
             if (errors.length) throw new Error(errors.join(' — '))
           }
+        }
+        // تأكيد الأمر من الحالة الحالية قبل الكتابة؛ على المستدعي تأمين إعادة التحميل والقفل بين النوافذ.
+        let sourceOrder: PurchaseOrder | null = null
+        if (inv.sourcePurchaseOrderId != null) {
+          if (!Number.isSafeInteger(inv.sourcePurchaseOrderId) || inv.sourcePurchaseOrderId <= 0) throw new Error('معرّف أمر الشراء غير صالح')
+          const matching = state.purchaseOrders.filter(order => order.id === inv.sourcePurchaseOrderId)
+          if (matching.length !== 1 || !getBranchScopedDataState(state).purchaseOrders.some(order => order.id === inv.sourcePurchaseOrderId)) throw new Error('أمر الشراء المرتبط غير موجود أو غير فريد في الفرع')
+          sourceOrder = matching[0]
+          if (sourceOrder.status === 'cancelled') throw new Error('أمر الشراء المرتبط ملغى')
+          if (inv.receiptStatus === 'pending') throw new Error('فاتورة الأمر بانتظار الاستلام — احفظها مسودة حتى استلام الأصناف')
+          if (sourceOrder.supplierId != null && sourceOrder.supplierId !== inv.supplierId) throw new Error('مورد الفاتورة لا يطابق مورد أمر الشراء المرتبط')
+          const available = new Map<number, number>()
+          for (const line of sourceOrder.lines) {
+            const ordered = Math.round(line.qty * 1000), received = Math.round((line.receivedQty ?? 0) * 1000)
+            if (!Number.isSafeInteger(ordered) || !Number.isSafeInteger(received) || ordered < 0 || received < 0 || received > ordered) throw new Error('كميات أمر الشراء غير صالحة — راجع الأمر')
+            const total = (available.get(line.itemId) ?? 0) + ordered - received
+            if (!Number.isSafeInteger(total)) throw new Error('مجموع كميات أمر الشراء غير صالح')
+            available.set(line.itemId, total)
+          }
+          const requested = new Map<number, number>()
+          for (const line of inv.lines) {
+            const total = (requested.get(line.itemId) ?? 0) + Math.round(line.qty * 1000)
+            if (!Number.isSafeInteger(total)) throw new Error('مجموع كميات الفاتورة غير صالح')
+            requested.set(line.itemId, total)
+          }
+          for (const [itemId, qty] of requested) if (!available.has(itemId) || qty > available.get(itemId)!) throw new Error(`كمية الصنف #${itemId} تتجاوز المتبقي في أمر الشراء أو لا تنتمي إليه — راجع الأمر`)
         }
         // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
         for (const l of inv.lines) {
@@ -7711,6 +8689,8 @@ export const useRawDataStore = create<DataState>()(
           id: purchaseId,
           invoiceNumber,
           sourceDraftId: sourceDraftId || undefined,
+          sourceDraftEvidence: evidence,
+          sourcePurchaseOrderId: sourceOrder?.id ?? null,
           refCode,
           supplierId: inv.supplierId,
           supplierInvoiceNumber: supplierDocument || undefined,
@@ -7884,8 +8864,27 @@ export const useRawDataStore = create<DataState>()(
           ...payable,
           vehicleCostEntryId: createdVehicleCostEntries.find((row) => row.payableId === payable.id)?.id ?? null,
         }))
+        // الفاتورة ومخزونها وقيدها واستلام الأمر في تحديث حالة واحد؛ لا توجد لقطة وسيطة بلا رابط.
+        let linkedOrder: PurchaseOrder | null = null
+        if (sourceOrder) {
+          const remaining = new Map<number, number>()
+          for (const line of inv.lines) remaining.set(line.itemId, (remaining.get(line.itemId) ?? 0) + Math.round(line.qty * 1000))
+          const lines = sourceOrder.lines.map(line => {
+            const left = remaining.get(line.itemId) ?? 0
+            const room = Math.round(line.qty * 1000) - Math.round((line.receivedQty ?? 0) * 1000)
+            const take = Math.min(left, room)
+            remaining.set(line.itemId, left - take)
+            return take > 0 ? { ...line, receivedQty: (Math.round((line.receivedQty ?? 0) * 1000) + take) / 1000 } : line
+          })
+          const next = { ...sourceOrder, statusBeforeReceipt: sourceOrder.statusBeforeReceipt ?? (sourceOrder.status === 'draft' || sourceOrder.status === 'sent' ? sourceOrder.status : undefined), lines, invoiceIds: [...(sourceOrder.invoiceIds ?? []), invoice.id] }
+          linkedOrder = { ...next, status: derivePurchaseOrderStatus(next) }
+        }
+        const purchaseOrders = linkedOrder ? state.purchaseOrders.map(order => order.id === linkedOrder!.id ? linkedOrder! : order) : state.purchaseOrders
+        const pendingPartOrders = reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, purchaseOrders)
         set({
           purchases: [...state.purchases, invoice],
+          purchaseOrders,
+          pendingPartOrders,
           purchaseExpensePayables: [...state.purchaseExpensePayables, ...linkedPayables],
           vehicleCostEntries: [...state.vehicleCostEntries, ...createdVehicleCostEntries],
           journal: [...state.journal, entry],
@@ -8068,11 +9067,15 @@ export const useRawDataStore = create<DataState>()(
       postSale: (rawArgs) => {
         const state = get()
         const sourceDraftId = rawArgs.sourceDraftId?.trim()
+        const normalizedArgs = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
+        const evidence = sourceDraftId ? (rawArgs.__approvalBypass ? rawArgs.__sourceDraftEvidence : draftInputEvidence(normalizedArgs)) : undefined
         if (sourceDraftId) {
           const alreadyPosted = state.sales.find((sale) => sale.sourceDraftId === sourceDraftId)
-          if (alreadyPosted) return alreadyPosted
+          if (alreadyPosted) {
+            verifyDraftRetry(alreadyPosted.sourceDraftEvidence, evidence ?? '', alreadyPosted.editHistory?.length)
+            return alreadyPosted
+          }
         }
-        const normalizedArgs = { ...rawArgs, lines: rawArgs.lines.map(normalizeSaleMovementLine) }
         assertSaleItemsExist(state, normalizedArgs.lines, true)
         const activeBranch = getEffectiveActiveBranch(state)
         const mainWhId = state.warehouses.find((w) => w.isMain)?.id ?? null
@@ -8087,6 +9090,8 @@ export const useRawDataStore = create<DataState>()(
               })),
             }
           : normalizedArgs
+        const postingDate = args.documentDate || todayLocalIso()
+        assertInvoicePostingDate(state, postingDate)
         if (args.salesRepEmployeeId != null) {
           const id = args.salesRepEmployeeId
           if (!Number.isSafeInteger(id) || state.employees.filter(employee => employee.id === id).length !== 1 || !getBranchScopedDataState(state).employees.some(employee => employee.id === id && employee.active)) throw new Error('مندوب البيع غير موجود أو غير فريد أو غير نشط في الفرع')
@@ -8100,7 +9105,7 @@ export const useRawDataStore = create<DataState>()(
             partyName: args.partyKind && args.partyKind !== 'customer'
               ? args.partyName ?? (args.partyKind === 'supplier' ? state.suppliers.find((p) => p.id === args.partyId)?.nameAr : state.employees.find((p) => p.id === args.partyId)?.nameAr) ?? 'طرف خارجي'
               : args.customerId != null ? state.customers.find((c) => c.id === args.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
-            payload: serializeApprovalPayload(args),
+            payload: serializeApprovalPayload({ ...args, __sourceDraftEvidence: evidence }),
           })
         }
         // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
@@ -8353,6 +9358,7 @@ export const useRawDataStore = create<DataState>()(
           if (!billingProject) throw new Error('المشروع المرتبط بالفاتورة غير موجود في هذا الفرع')
           const projectInvoices = branchState.sales.filter((inv) => inv.projectId === billingProject.id)
           const projectInvoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+          assertQuantityCreditBillingBasis(state, billingProject.id)
           const billingGuard = computeProjectBillingGuard({
             contractValueMinor: billingProject.contractValueMinor,
             changeOrders: branchState.changeOrders.filter((o) => o.projectId === billingProject.id),
@@ -8436,14 +9442,6 @@ export const useRawDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
-        const systemDate = todayLocalIso()
-        const chosenDate = (args.documentDate ?? '').slice(0, 10)
-        if (chosenDate && !/^\d{4}-\d{2}-\d{2}$/.test(chosenDate)) throw new Error('تاريخ الفاتورة غير صالح')
-        // يُسمح بتأريخ الفاتورة بيوم سابق (فواتير متأخرة الإدخال) ولا يُسمح بالمستقبل.
-        // المقارنة بيوم إضافي لأن ساعة الجهاز محلية وتاريخ النظام بتوقيت UTC.
-        const tomorrow = todayLocalIso(new Date(Date.now() + 86_400_000))
-        if (chosenDate && chosenDate > tomorrow) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
-        const postingDate = chosenDate || systemDate
         if (args.dueDate && args.dueDate < postingDate) throw new Error('تاريخ استحقاق البيع لا يسبق تاريخ الترحيل')
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('لا حاجة لتاريخ استحقاق لفاتورة محصلة بالكامل')
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
@@ -8518,7 +9516,7 @@ export const useRawDataStore = create<DataState>()(
           lines: entryLines,
           ...(isDocumentation ? { memoOnly: true } : {}),
           createdBy: activeUserName(get()),
-          createdAt: now,
+          createdAt: stamp,
           reversedByEntryId: null,
           reversesEntryId: null,
         }
@@ -8527,7 +9525,7 @@ export const useRawDataStore = create<DataState>()(
           id: saleId,
           invoiceNumber,
           salesRepEmployeeId: args.salesRepEmployeeId ?? null,
-          ...(sourceDraftId ? { sourceDraftId } : {}),
+          ...(sourceDraftId ? { sourceDraftId, sourceDraftEvidence: evidence } : {}),
           refCode,
           date: now,
           customerId: salePartyKind === 'customer' ? args.customerId : null,
@@ -8597,8 +9595,8 @@ export const useRawDataStore = create<DataState>()(
           const commissionId = nextId(state.staffCommissions) + index
           const commissionEntryId = entryId + 1 + index
           const code = `SCM-${String(commissionId).padStart(4, '0')}`
-          commissionEntries.push({ id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10), description: `استحقاق عمولة ${code} — ${employee.nameAr}`, sourceType: 'staff_commission', sourceId: commissionId, lines: buildStaffCommissionAccrual(input.amountMinor, employee.nameAr, description), createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null })
-          commissions.push({ id: commissionId, code, employeeId: employee.id, source: 'sale', sourceId: saleId, description, amountMinor: input.amountMinor, date: now.slice(0, 10), status: 'accrued', accrualEntryId: commissionEntryId, payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(get()), createdAt: now })
+          commissionEntries.push({ id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10), description: `استحقاق عمولة ${code} — ${employee.nameAr}`, sourceType: 'staff_commission', sourceId: commissionId, lines: buildStaffCommissionAccrual(input.amountMinor, employee.nameAr, description), createdBy: activeUserName(get()), createdAt: stamp, reversedByEntryId: null, reversesEntryId: null })
+          commissions.push({ id: commissionId, code, employeeId: employee.id, source: 'sale', sourceId: saleId, description, amountMinor: input.amountMinor, date: now.slice(0, 10), status: 'accrued', accrualEntryId: commissionEntryId, payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(get()), createdAt: stamp })
         }
 
         // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
@@ -8656,8 +9654,10 @@ export const useRawDataStore = create<DataState>()(
 
       postSaleReturn: (args) => {
         const state = get()
-        const sale = state.sales.find((s) => s.id === args.saleId)
-        if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        const sourceSales = state.sales.filter((s) => s.id === args.saleId)
+        const sale = sourceSales[0]
+        if (sourceSales.length !== 1 || !getBranchScopedDataState(state).sales.some(row => row.id === args.saleId)) throw new Error('الفاتورة الأصلية غير موجودة أو غير فريدة في الفرع')
+        const now = assertReturnPostingContext(state, sale.date, state.saleReturns.filter(row => row.saleId === sale.id).map(row => row.date))
         const repEntries = state.journal.filter(entry => entry.id === sale.journalEntryId)
         if (sale.salesRepEmployeeId !== undefined || repEntries.some(entry => entry.saleRepresentativeId !== undefined)) {
           const entry = repEntries[0]
@@ -8879,7 +9879,6 @@ export const useRawDataStore = create<DataState>()(
         const entryLines = isDocReturn ? [] : buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const returnNumber = `R-${String(returnId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('SRT', now, usedRefCodes(state))
 
@@ -9083,8 +10082,11 @@ export const useRawDataStore = create<DataState>()(
         }
         const state = get()
         const matches = state.purchases.filter(p => p.id === args.purchaseId)
-        if (matches.length !== 1) throw new Error('فاتورة الشراء الأصلية غير موجودة أو غير فريدة')
+        if (matches.length !== 1 || !getBranchScopedDataState(state).purchases.some(row => row.id === args.purchaseId)) throw new Error('فاتورة الشراء الأصلية غير موجودة أو غير فريدة في الفرع')
         const purchase = matches[0]
+        // بضاعة المشروع محمّلة على التكلفة لا على المخزون، فلا يُنشأ لها هذا النوع من المرتجع.
+        if (purchase.projectId != null) throw new Error('فاتورة مشروع مقاولات — لا مرتجع مخزنياً لها: سجّل التسوية بسند قبض من المورد')
+        const now = assertReturnPostingContext(state, purchase.date, state.purchaseReturns.filter(row => row.purchaseId === purchase.id).map(row => row.date))
         if (args.refund !== 'cash' && args.refund !== 'debt') throw new Error('نوع استرداد مرتجع الشراء غير صالح')
         // بوابة اعتماد المستندات (خطة ③): مرتجع شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
         if (!args.__approvalBypass) {
@@ -9100,11 +10102,6 @@ export const useRawDataStore = create<DataState>()(
             partyName: purchase.supplierId !== 0 ? state.suppliers.find((row) => row.id === purchase.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
             payload: serializeApprovalPayload(args),
           })
-        }
-        // فاتورة مشروع: بضاعتها حُمّلت تكلفة موقع 5110 لا مخزوناً — مرتجعها يُسوَّى
-        // بسند قبض من المورد أو تسوية تكلفة على المشروع، لا بمرتجع مخزني يفسد 1103
-        if (purchase.projectId != null) {
-          throw new Error('فاتورة مشروع مقاولات — لا مرتجع مخزنياً لها: سجّل التسوية بسند قبض من المورد')
         }
         // 1) سطور المرتجع بتكلفة الوحدة النهائية — بلا تجاوز للمتبقي ولا للمخزون
         const prior = state.purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
@@ -9250,7 +10247,6 @@ export const useRawDataStore = create<DataState>()(
         assertBalanced(entryLines)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const returnNumber = `PR-${String(returnId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('PRT', now, usedRefCodes(state))
         const entry: JournalEntry = {
@@ -9357,6 +10353,7 @@ export const useRawDataStore = create<DataState>()(
         const updatedSerials = selectedSupplierSerials.size ? state.serials.map(unit => selectedSupplierSerials.has(unit.serial) ? { ...unit, status: 'returned_supplier' as const } : unit) : state.serials
         // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
         // يترك كميات «المستلم» في الأمر كما كانت — يُعاد احتسابها الآن صافية
+        verifiedLinkedPurchaseOrder(state, purchase)
         const updatedOrdersAfterReturn = (() => {
           const linked = state.purchaseOrders.filter((o) => (o.invoiceIds ?? []).includes(purchase.id))
           if (!linked.length) return state.purchaseOrders
@@ -9364,7 +10361,7 @@ export const useRawDataStore = create<DataState>()(
             order.invoiceIds.includes(purchase.id) ? recomputeOrderReceivedFromInvoices(state, order, undefined, ret) : order,
           )
         })()
-        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, purchaseOrders: updatedOrdersAfterReturn })
+        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, purchaseOrders: updatedOrdersAfterReturn, pendingPartOrders: reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, updatedOrdersAfterReturn) })
         return ret
       },
 
@@ -9449,22 +10446,13 @@ export const useRawDataStore = create<DataState>()(
 
       postWastage: (args) => {
         const state = get()
-        // 1) إثراء السطور بالتكلفة المرجحة ثم تحقق النواة الخالصة قبل أي كتابة
-        const lines = args.lines.map((l) => {
-          const item = state.items.find((it) => it.id === l.itemId)
-          if (!item) throw new Error('صنف غير موجود بالمخزون')
-          assertSerialBatchMovementSupported(state, item.id)
-          return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
-        })
-        const errors = validateWastage(
-          { reason: args.reason, lines },
-          (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0,
-        )
+        const plan = planInventoryOutflow(state, args.lines, args.date)
+        const { lines, now, withdrawals, batches } = plan
+        const errors = validateWastage({ reason: args.reason, lines }, itemId => state.items.find(it => it.id === itemId)?.stockQty ?? 0)
         if (errors.length) throw new Error(errors.join(' — '))
 
         const wastageId = nextId(state.wastages)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const wastageNumber = `WST-${String(wastageId).padStart(4, '0')}`
         const entryLines = buildWastageEntry(lines, wastageNumber)
         const entry: JournalEntry = {
@@ -9481,24 +10469,11 @@ export const useRawDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
-        // 2) خصم الكميات + استهلاك دفعات الصلاحية الأقدم أولاً (يشمل المنتهية — هذا هو الإعدام)
-        const qtyBy = new Map(lines.map((l) => [l.itemId, l.qty]))
-        const updatedItems = state.items.map((it) =>
-          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
-        )
-        let batches = state.batches
-        for (const l of lines) {
-          let rest = l.qty
-          batches = batches
-            .slice()
-            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
-            .map((b) => {
-              if (b.itemId !== l.itemId || rest <= 0 || b.qty <= 0) return b
-              const take = Math.min(b.qty, rest)
-              rest -= take
-              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
-            })
-        }
+        const updatedItems = state.items.map(it => {
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor, costMinor: withdrawal.remainingQty > 0 ? Math.round(withdrawal.remainingValueMinor / withdrawal.remainingQty) : it.costMinor })
+        })
 
         const doc: WastageDoc = {
           id: wastageId,
@@ -9517,29 +10492,19 @@ export const useRawDataStore = create<DataState>()(
       postConsumption: (args) => {
         const state = get()
         const expenseAccount = (args.expenseAccount ?? INTERNAL_USE_ACCOUNT).trim()
-        // 1) إثراء السطور بالتكلفة المرجحة ثم تحقق النواة الخالصة قبل أي كتابة
-        const lines = args.lines.map((l) => {
-          const item = state.items.find((it) => it.id === l.itemId)
-          if (!item) throw new Error('صنف غير موجود بالمخزون')
-          assertSerialBatchMovementSupported(state, item.id)
-          return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
-        })
+        const plan = planInventoryOutflow(state, args.lines, args.date)
+        const { lines, now, withdrawals, batches } = plan
         const isExpense = (code: string) => {
           const std = STANDARD_COA.find((a) => a.code === code)
           if (std) return std.rootType === 'expenses' && std.isPostable
           const custom = state.customAccounts.find((a) => a.code === code)
           return !!custom && custom.rootType === 'expenses'
         }
-        const errors = validateConsumption(
-          { purpose: args.purpose, expenseAccount, lines },
-          (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0,
-          isExpense,
-        )
+        const errors = validateConsumption({ purpose: args.purpose, expenseAccount, lines }, itemId => state.items.find(it => it.id === itemId)?.stockQty ?? 0, isExpense)
         if (errors.length) throw new Error(errors.join(' — '))
 
         const consumptionId = nextId(state.consumptions)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const consumptionNumber = `CNS-${String(consumptionId).padStart(4, '0')}`
         const entryLines = buildConsumptionEntry(lines, expenseAccount, consumptionNumber)
         const entry: JournalEntry = {
@@ -9556,24 +10521,11 @@ export const useRawDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
-        // 2) خصم الكميات + استهلاك دفعات الصلاحية الأقدم أولاً (FEFO — نفس نمط الإتلاف)
-        const qtyBy = new Map(lines.map((l) => [l.itemId, l.qty]))
-        const updatedItems = state.items.map((it) =>
-          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
-        )
-        let batches = state.batches
-        for (const l of lines) {
-          let rest = l.qty
-          batches = batches
-            .slice()
-            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
-            .map((b) => {
-              if (b.itemId !== l.itemId || rest <= 0 || b.qty <= 0) return b
-              const take = Math.min(b.qty, rest)
-              rest -= take
-              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
-            })
-        }
+        const updatedItems = state.items.map(it => {
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor, costMinor: withdrawal.remainingQty > 0 ? Math.round(withdrawal.remainingValueMinor / withdrawal.remainingQty) : it.costMinor })
+        })
 
         const doc: ConsumptionDoc = {
           id: consumptionId,
@@ -9768,12 +10720,21 @@ export const useRawDataStore = create<DataState>()(
 
       postPartyOffset: (args) => {
         const state = get()
-        const customer = state.customers.find((x) => x.id === args.customerId)
-        if (!customer) throw new Error('العميل غير موجود')
-        const supplier = state.suppliers.find((x) => x.id === args.supplierId)
-        if (!supplier) throw new Error('المورد غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل إجراء المقاصة')
+        const customer = scoped.customers.find((x) => x.id === args.customerId)
+        if (!customer || state.customers.filter(x => x.id === args.customerId).length !== 1) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        const supplier = scoped.suppliers.find((x) => x.id === args.supplierId)
+        if (!supplier || state.suppliers.filter(x => x.id === args.supplierId).length !== 1) throw new Error('المورد غير موجود أو غير فريد في الفرع الحالي')
         const amountMinor = args.amountMinor
-        if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة المقاصة مطلوبة بالقرش الصحيح وأكبر من صفر')
+        if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة المقاصة مطلوبة بالقرش الصحيح وأكبر من صفر')
+        const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ المقاصة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ المقاصة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (date < now.slice(0, 10) && state.journal.some(e => e.lines.some(l => l.accountCode === '1104' || l.accountCode === '2101') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ المقاصة يسبق حركة ذمة مسجلة — راجع الأصل والرصيد التاريخي')
         const customerBalance = get().getCustomerBalance(args.customerId)
         const supplierBalance = get().getSupplierBalance(args.supplierId)
         if (customerBalance <= 0) throw new Error(`لا مديونية على «${customer.nameAr}» لإجراء مقاصة`)
@@ -9782,8 +10743,6 @@ export const useRawDataStore = create<DataState>()(
         if (amountMinor > ceiling) {
           throw new Error(`أقصى مقاصة ممكنة ${(ceiling / 100).toFixed(2)} — دين العميل ${(customerBalance / 100).toFixed(2)} ومستحق المورد ${(supplierBalance / 100).toFixed(2)}`)
         }
-        const now = localIsoTimestamp()
-        const date = (args.date ?? now).slice(0, 10)
         const id = nextId(state.partyOffsets)
         const entryId = nextId(state.journal)
         const offsetNumber = `OFS-${String(id).padStart(4, '0')}`
@@ -9795,7 +10754,7 @@ export const useRawDataStore = create<DataState>()(
         const doc: PartyOffsetDoc = {
           id,
           offsetNumber,
-          date,
+          date, createdAt: now,
           customerId: args.customerId,
           supplierId: args.supplierId,
           customerNameAr: customer.nameAr,
@@ -9825,24 +10784,32 @@ export const useRawDataStore = create<DataState>()(
       },
 
       applySettlement: (args) => {
-        const state = get()
-        // 1) الرصيد الدفتري الحالي للقسم من نفس مصادر الشاشات (لا حساب موازٍ)
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const branch = getEffectiveActiveBranch(state)
+        if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل ترحيل التسوية')
+        if (args.section !== 'treasury' && args.section !== 'customer' && args.section !== 'supplier') throw new Error('نوع التسوية غير صالح')
+        const now = localIsoTimestamp()
+        const fiscalBranch = branch ?? (state.branches.length === 1 ? state.branches[0] : null)
+        const closed = dateInClosedYear(now.slice(0, 10), fiscalYearsForBranch(useAppStore.getState().fiscalYears, fiscalBranch?.id ?? null, Boolean(fiscalBranch?.isMain)))
+        if (closed) throw new Error(`تاريخ التسوية داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        // 1) الرصيد الدفتري الحالي داخل الفرع من نفس مصادر الشاشات (لا حساب موازٍ)
         let bookMinor = 0
         let refNameAr = ''
         if (args.section === 'treasury') {
-          const t = state.treasuries.find((x) => x.code === String(args.refId))
-          if (!t) throw new Error('الخزينة/البنك غير موجود')
+          const matches = state.treasuries.filter((x) => x.code === String(args.refId))
+          const t = matches[0]
+          if (matches.length !== 1 || !scoped.treasuries.some(x => x.code === t.code)) throw new Error('الخزينة/البنك غير موجود أو غير فريد في الفرع')
           refNameAr = t.nameAr
-          for (const e of state.journal) for (const l of e.lines) if (l.accountCode === t.code) bookMinor += l.debit - l.credit
+          for (const e of scoped.journal) for (const l of e.lines) if (l.accountCode === t.code) bookMinor += l.debit - l.credit
         } else if (args.section === 'customer') {
-          const c = state.customers.find((x) => x.id === Number(args.refId))
-          if (!c) throw new Error('العميل غير موجود')
+          const matches = state.customers.filter((x) => x.id === Number(args.refId)), c = matches[0]
+          if (matches.length !== 1 || !scoped.customers.some(x => x.id === c.id)) throw new Error('العميل غير موجود أو غير فريد في الفرع')
           refNameAr = c.nameAr
           // الرصيد الموحّد من كل الأنشطة (إصلاح الترابط) — نفس مصدر كل الشاشات
           bookMinor = get().getCustomerBalance(c.id)
         } else {
-          const sup = state.suppliers.find((x) => x.id === Number(args.refId))
-          if (!sup) throw new Error('المورد غير موجود')
+          const matches = state.suppliers.filter((x) => x.id === Number(args.refId)), sup = matches[0]
+          if (matches.length !== 1 || !scoped.suppliers.some(x => x.id === sup.id)) throw new Error('المورد غير موجود أو غير فريد في الفرع')
           refNameAr = sup.nameAr
           // الرصيد الموحّد — نفس مصدر كل الشاشات (كشف المورد: الدائن = له علينا)
           bookMinor = get().getSupplierBalance(sup.id)
@@ -9858,11 +10825,11 @@ export const useRawDataStore = create<DataState>()(
         }
         const errors = validateSettlement(input)
         if (errors.length) throw new Error(errors.join(' — '))
+        if (!Number.isSafeInteger(bookMinor) || !Number.isSafeInteger(args.actualMinor) || !Number.isSafeInteger(args.actualMinor - bookMinor)) throw new Error('رصيد التسوية أو فرقها غير صالح أو يتجاوز الدقة الآمنة — يلزم المراجعة')
 
         // 3) قيد الفرق (يضرب 5112 إجبارياً — درس عجز الـ5,000 المتبخر في mobileshop)
         const variance = settlementVariance(input)
         const entryLines = buildSettlementEntry(input)
-        const now = localIsoTimestamp()
         const id = nextId(state.settlements)
         const doc: SettlementDoc = {
           id,
@@ -10214,15 +11181,60 @@ export const useRawDataStore = create<DataState>()(
         if (args.settleSlipIds?.length) {
           if (args.kind !== 'payment' || args.counterAccountCode !== '2104' || args.partyKind !== 'employee' || args.partyId == null)
             throw new Error('سداد القسائم متاح في سند صرف على «رواتب مستحقة 2104» لموظف محدد')
+          const scoped = getBranchScopedDataState(state), date = args.date ?? todayLocalIso()
+          if (args.fx) throw new Error('صرف قسيمة بعملة أجنبية يحتاج تخصيصاً وسعراً موثقين — استخدم عملة الدفتر')
+          if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ صرف القسيمة غير صالح أو في المستقبل')
+          if (state.branches.length && !activeBranch) throw new Error('حدد الفرع الحالي قبل صرف القسيمة')
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, activeBranch?.id ?? null, Boolean(activeBranch?.isMain)))
+          if (closed) throw new Error(`تاريخ صرف القسيمة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ صرف القسيمة غير صالح')
+          if (new Set(args.settleSlipIds).size !== args.settleSlipIds.length) throw new Error('القسيمة مكررة في السند')
+          if (state.employees.filter(e => e.id === args.partyId).length !== 1 || !scoped.employees.some(e => e.id === args.partyId)) throw new Error('موظف القسيمة غير فريد أو ليس في الفرع الحالي')
+          if (state.treasuries.filter(t => t.code === args.treasury).length !== 1 || !scoped.treasuries.some(t => t.code === args.treasury)) throw new Error('الخزينة غير فريدة أو ليست في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
           settleSlips = args.settleSlipIds
             .map((id) => state.payrollSlips.find((slip) => slip.id === id))
             .filter((slip): slip is PayrollSlip => !!slip)
           if (settleSlips.length !== args.settleSlipIds.length) throw new Error('قسيمة غير موجودة في سداد القسائم')
           for (const slip of settleSlips) {
+            if (state.payrollSlips.filter(row => row.id === slip.id).length !== 1 || !scoped.payrollSlips.some(row => row.id === slip.id)) throw new Error('القسيمة غير فريدة أو ليست في الفرع الحالي')
+            const accruals = state.journal.filter(entry => entry.id === slip.accrualEntryId)
+            const origin = accruals[0]
+            const day = slip.accruedAt?.slice(0, 10)
+            if (!isValidExpiryDate(day) || day > date) throw new Error('تاريخ صرف القسيمة يسبق استحقاقها أو تاريخ الاستحقاق غير صالح')
+            if (!Number.isSafeInteger(slip.netMinor) || slip.netMinor <= 0 || accruals.length !== 1 || !scoped.journal.includes(origin) || origin.sourceType !== 'payroll' || origin.sourceId !== slip.runId || origin.date !== day || origin.reversedByEntryId != null || !Array.isArray(origin.lines) || origin.lines.filter(line => line.accountCode === '2104' && line.credit === slip.netMinor && line.debit === 0 && line.note?.startsWith(`${slip.slipNumber} — `)).length !== 1) throw new Error('قيد استحقاق القسيمة غير مثبت أو لا يطابقها — راجع القسيمة')
+            let paid = 0
+            for (const payment of slip.payments ?? []) {
+              if (!Number.isSafeInteger(payment.amountMinor) || payment.amountMinor <= 0 || !isValidExpiryDate(payment.date) || payment.date < day || payment.date > date) throw new Error('تاريخ أو مبلغ دفعة القسيمة غير صالح أو لاحق — راجع التسلسل')
+              const entries = state.journal.filter(e => e.id === payment.entryId), previous = entries[0]
+              if (entries.length !== 1 || !scoped.journal.includes(previous) || previous.date !== payment.date || previous.reversedByEntryId != null || !Array.isArray(previous.lines)) throw new Error('قيد دفعة القسيمة غير مثبت أو لا يطابق تاريخها — راجع القسيمة')
+              const linked = state.payrollSlips.flatMap(row => (row.payments ?? []).filter(p => p.entryId === payment.entryId).map(p => ({ row, p })))
+              const total = linked.reduce((sum, item) => sum + item.p.amountMinor, 0)
+              if (linked.filter(item => item.row.id === slip.id).length !== 1 || linked.some(item => item.row.employeeId !== slip.employeeId || !Number.isSafeInteger(item.p.amountMinor) || item.p.amountMinor <= 0 || item.p.date !== payment.date) || !Number.isSafeInteger(total) || !previous.lines.some(l => l.accountCode === '2104' && l.debit >= total && l.credit === 0)) throw new Error('تخصيص دفعة القسيمة غير مثبت — راجع القسيمة')
+              if (previous.sourceType === 'payment_voucher') {
+                const vouchers = state.vouchers.filter(v => v.journalEntryId === previous.id && v.id === previous.sourceId && v.kind === 'payment' && v.partyKind === 'employee' && v.partyId === slip.employeeId && !v.reversalEntryId)
+                if (vouchers.length !== 1 || !scoped.vouchers.includes(vouchers[0]) || payment.from !== `سند صرف ${vouchers[0].voucherNumber}` || vouchers[0].amountMinor < total) throw new Error('سند دفعة القسيمة غير مثبت — راجع القسيمة')
+              } else if (previous.sourceType !== 'payroll' || previous.sourceId !== slip.runId || linked.length !== 1 || !previous.lines.some(l => l.accountCode === payment.from && l.credit === payment.amountMinor && l.debit === 0)) throw new Error('مصدر دفعة القسيمة غير مثبت — راجع القسيمة')
+              paid += payment.amountMinor
+              if (!Number.isSafeInteger(paid) || paid > slip.netMinor) throw new Error('مجموع دفعات القسيمة غير صالح')
+            }
             if (slip.employeeId !== args.partyId) throw new Error(`القسيمة ${slip.slipNumber} ليست لهذا الموظف — ${slip.employeeName}`)
             if (slip.status === 'paid') throw new Error(`القسيمة ${slip.slipNumber} مصروفة بالفعل — لا يُسدَّد مرتين`)
             if (slip.status === 'cancelled') throw new Error(`القسيمة ${slip.slipNumber} ملغاة`)
             if (slipRemainingMinor(slip) <= 0) throw new Error(`القسيمة ${slip.slipNumber} لا متبقي فيها للصرف`)
+          }
+          const affected = new Set(['2104', args.treasury])
+          const moves = state.journal.filter(entry => entry.lines.some(line => affected.has(line.accountCode)))
+          if (moves.some(entry => !isValidExpiryDate(entry.date?.slice(0, 10)) || entry.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة رواتب أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+          if (date < todayLocalIso()) {
+            if (moves.some(entry => entry.lines.some(line => line.accountCode === args.treasury) && !scoped.journal.includes(entry))) throw new Error('حركة الخزينة خارج الفرع أو غير واضحة — راجع الرصيد التاريخي')
+            let cash = 0
+            for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
+              if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة — راجع الرصيد')
+              cash += line.debit - line.credit
+              if (!Number.isSafeInteger(cash)) throw new Error('رصيد الخزينة غير صالح')
+            }
+            if (cash < args.amountMinor) throw new Error('رصيد الخزينة لا يكفي في تاريخ صرف القسيمة')
           }
           /* بلاغ المالك: السند الجزئي يسدد جزءاً من القسيمة (لا كلها) — يُوزَّع المبلغ على المحددة
              من الأقدم، ويُسدَّد المتبقي فقط. ما زاد عن مجموع المتبقي يبقى مبلغاً عاماً. */
@@ -10294,6 +11306,40 @@ export const useRawDataStore = create<DataState>()(
         if (interBranch && activeUser && activeUser.roleId !== 'owner') {
           throw new Error('التحويل بين الفروع يتطلب صلاحية المالك؛ يُرحَّل القيدان المتناظران معاً')
         }
+        // هذا العقد يخص تاريخ تحويل الخزائن المختار صراحة، لا يوسّع سندات القبض والصرف الأخرى.
+        if (args.kind === 'transfer' && args.date !== undefined) {
+          const date = args.date
+          if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ التحويل غير صالح أو في المستقبل')
+          if (state.branches.length && !activeBranch) throw new Error('اختر فرعاً نشطاً قبل تسجيل التحويل')
+          if (state.currentUserId != null && !state.appUsers.some(user => user.id === state.currentUserId && user.active)) throw new Error('المستخدم غير موجود أو غير نشط')
+          if ([args.treasury, args.counterAccountCode].some(code => state.treasuries.filter(t => t.code === code).length !== 1)) throw new Error('الخزينة غير موجودة أو غير فريدة')
+          for (const code of [args.treasury, args.counterAccountCode]) {
+            const treasury = state.treasuries.find(t => t.code === code)!
+            const linked = state.branches.filter(branch => branch.treasuryCode === code)
+            const assigned = treasury.branchId == null ? null : state.branches.find(branch => branch.id === treasury.branchId)
+            if (linked.length > 1 || (treasury.branchId != null && (!assigned || !assigned.active)) || (linked[0] && (!linked[0].active || (assigned && assigned.id !== linked[0].id)))) throw new Error('فرع الخزينة غير نشط أو ربطه غير واضح — راجع تعريف الخزائن والفروع')
+          }
+          if (!interBranch && [args.treasury, args.counterAccountCode].some(code => !getBranchScopedDataState(state).treasuries.some(t => t.code === code))) throw new Error('الخزينة ليست في الفرع الحالي')
+          const branches = interBranch ? [sourceBranch!, destinationBranch!] : [activeBranch]
+          for (const branch of branches) {
+            const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+            if (closed) throw new Error(`تاريخ التحويل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          }
+          if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0 || !Number.isSafeInteger(args.feeMinor ?? 0) || (args.feeMinor ?? 0) < 0 || !Number.isSafeInteger(args.amountMinor + (args.feeMinor ?? 0))) throw new Error('مبلغ التحويل أو رسومه غير صالح')
+          if (date < todayLocalIso()) {
+            if (interBranch) throw new Error('التحويل السابق بين فرعين يحتاج تدقيق تسلسل الحسابات المتبادلة — استخدم تاريخ اليوم')
+            const codes = new Set([args.treasury, args.counterAccountCode])
+            const moves = state.journal.filter(e => e.lines.some(line => codes.has(line.accountCode)))
+            if (moves.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date)) throw new Error('تاريخ التحويل يسبق حركة خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+            let balance = 0
+            for (const entry of moves) for (const line of entry.lines) if (line.accountCode === args.treasury) {
+              if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة خزينة غير صالحة — راجع الرصيد')
+              balance += line.debit - line.credit
+              if (!Number.isSafeInteger(balance)) throw new Error('رصيد الخزينة غير صالح')
+            }
+            if (balance < args.amountMinor + (args.feeMinor ?? 0)) throw new Error('رصيد خزينة المصدر لا يكفي للتحويل في التاريخ المختار')
+          }
+        }
         let interBranchLines: ReturnType<typeof buildInterBranchTransferLines> | null = null
         if (interBranch) {
           const sourcePositionMinor = state.journal
@@ -10351,6 +11397,7 @@ export const useRawDataStore = create<DataState>()(
         const voucher: Voucher = {
           id: voucherId,
           voucherNumber,
+          ...((args.kind === 'transfer' || settleAllocations.length > 0) && args.date !== undefined ? { createdAt: now } : {}),
           kind: args.kind,
           ...(args.kind === 'receipt' ? { receiptCollectorEmployeeId: args.receiptCollectorEmployeeId ?? null } : {}),
           date: transactionAt,
@@ -10423,35 +11470,34 @@ export const useRawDataStore = create<DataState>()(
           sourceType: 'payment_voucher', sourceId: voucherId, sourceCollection: 'vouchers', lines: interBranchLines.destinationLines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         } : null
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry, ...(destinationEntry ? [destinationEntry] : [])], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
-        /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
-           القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
-        if (settleAllocations.length) {
-          const applied = new Map(settleAllocations.map((row) => [row.slipId, row.amountMinor]))
-          const settledNow = localIsoTimestamp()
-          const from = `سند صرف ${voucherNumber}`
-          set({
-            payrollSlips: get().payrollSlips.map((slip) => {
-              const amount = applied.get(slip.id)
-              if (!amount) return slip
-              const payments: SlipPayment[] = [...(slip.payments ?? []), { entryId, amountMinor: amount, date: settledNow.slice(0, 10), from }]
-              const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
-              return paidNow >= slip.netMinor
-                ? { ...slip, status: 'paid' as const, paidAt: settledNow, paidEntryId: entryId, paidFrom: from, payments }
-                : { ...slip, payments }
-            }),
-          })
-        }
+        // السند والقيد وتخصيص القسائم كتابة واحدة حتى لا يُحفظ الصرف دون تسوية القسيمة.
+        const applied = new Map(settleAllocations.map((row) => [row.slipId, row.amountMinor]))
+        const from = `سند صرف ${voucherNumber}`
+        const payrollSlips = state.payrollSlips.map((slip) => {
+          const amount = applied.get(slip.id)
+          if (!amount) return slip
+          const payments: SlipPayment[] = [...(slip.payments ?? []), { entryId, amountMinor: amount, date: entry.date, from }]
+          const paidNow = payments.reduce((sum, p) => sum + p.amountMinor, 0)
+          return paidNow >= slip.netMinor
+            ? { ...slip, status: 'paid' as const, paidAt: transactionAt, paidEntryId: entryId, paidFrom: from, payments }
+            : { ...slip, payments }
+        })
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry, ...(destinationEntry ? [destinationEntry] : [])], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}), ...(applied.size ? { payrollSlips } : {}) })
         return voucher
       },
 
       grantEmployeeAdvance: (args) => {
         const state = get()
-        const emp = state.employees.find((e) => e.id === args.employeeId)
-        if (!emp) throw new Error('الموظف غير موجود')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السلفة يجب أن يكون موجباً')
+        const scoped = getBranchScopedDataState(state)
+        const emp = scoped.employees.find((e) => e.id === args.employeeId)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || !emp || state.employees.filter(e => e.id === args.employeeId).length !== 1) throw new Error('الموظف غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السلفة يجب أن يكون موجباً')
         // إعادة مراجعة الموظفين (R7): خزينة شبح كانت تمر وتولد قيداً على حساب غير موجود
         if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
+        assertTreasuryForPosting(state, args.treasury, 'payment', args.amountMinor)
+        const documentDate = employeeAdvanceDocumentDate(state, args.employeeId, args.date)
+        if (args.date && state.journal.some(e => e.lines.some(l => l.accountCode === args.treasury) && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > documentDate))) throw new Error('تاريخ الصرف يسبق حركة خزينة مسجلة أو تاريخها غير مثبت — راجع الرصيد التاريخي')
         // قيد السلفة: مدين 1107 (أصل على الموظف) / دائن الخزينة المختارة
         const entryLines: JournalLine[] = [
           { accountCode: '1107', debit: args.amountMinor, credit: 0, note: `سلفة ${emp.nameAr}` },
@@ -10464,7 +11510,7 @@ export const useRawDataStore = create<DataState>()(
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
-          date: now.slice(0, 10),
+          date: documentDate,
           description: `سلفة موظف ${advanceNumber} — ${emp.nameAr}${args.notes ? ` — ${args.notes}` : ''}`,
           sourceType: 'payment_voucher',
           sourceId: advId, sourceCollection: 'employeeAdvances',
@@ -10478,7 +11524,7 @@ export const useRawDataStore = create<DataState>()(
           id: advId,
           advanceNumber,
           employeeId: args.employeeId,
-          date: now,
+          date: documentDate, createdAt: now, ...(args.date !== undefined ? { dateSelected: true } : {}),
           amountMinor: args.amountMinor,
           recoveredMinor: 0,
           source: 'cash',
@@ -10531,6 +11577,7 @@ export const useRawDataStore = create<DataState>()(
       },
 
       reverseEntry: (entryId, reason) => {
+        if (get().payrollSlips.some(slip => slip.paidEntryId === entryId || slip.payments?.some(payment => payment.entryId === entryId))) throw new Error('عكس قيد يسدد قسيمة يتطلب تسوية القسيمة ومراجعة تخصيص الدفعات — لا يعكس آلياً')
         const state = get()
         const original = state.journal.find((e) => e.id === entryId)
         if (!reason.trim()) throw new Error('سبب العكس إلزامي — اكتب سبباً واضحاً للمراجعة')
@@ -11020,6 +12067,7 @@ export const useRawDataStore = create<DataState>()(
           if (editProject) {
             const otherInvoices = branchState.sales.filter((inv) => inv.projectId === editProject.id && inv.id !== sale.id)
             const otherIds = new Set(otherInvoices.map((inv) => inv.id))
+            assertQuantityCreditBillingBasis(state, editProject.id)
             const editGuard = computeProjectBillingGuard({
               contractValueMinor: editProject.contractValueMinor,
               changeOrders: branchState.changeOrders.filter((o) => o.projectId === editProject.id),
@@ -11172,7 +12220,7 @@ export const useRawDataStore = create<DataState>()(
           journalEntryId: newEntryId,
           editHistory: [
             ...(sale.editHistory ?? []),
-            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state) },
+            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state), ...(args.priceFloorOverrideBy ? { priceFloorOverrideBy: args.priceFloorOverrideBy } : {}), ...(args.creditLimitOverrideBy ? { creditLimitOverrideBy: args.creditLimitOverrideBy } : {}) },
           ],
         }
         const editCustodyExpenseTxs: CustodyTx[] = internalExpenses.filter((expense) => expense.custodyFileId != null && expense.amountMinor > 0).map((expense, index) => ({
@@ -11230,6 +12278,18 @@ export const useRawDataStore = create<DataState>()(
         if (inv.journalEntryId == null) throw new Error('فاتورة قديمة بلا قيد — لا تُعدَّل')
         if (state.purchaseReturns.some((r) => r.purchaseId === inv.id)) {
           throw new Error('عليها مرتجعات شراء — صحّح بمرتجع إضافي أو فاتورة جديدة')
+        }
+        const linkedOrder = verifiedLinkedPurchaseOrder(state, inv)
+        if (linkedOrder) {
+          if (editedSupplierId !== inv.supplierId || (linkedOrder.supplierId != null && linkedOrder.supplierId !== editedSupplierId)) throw new Error('لا يمكن تغيير مورد فاتورة مرتبطة بأمر شراء')
+          const quantities = new Map<number, number>()
+          for (const line of linkedOrder.lines) quantities.set(line.itemId, (quantities.get(line.itemId) ?? 0) + Math.round(line.qty * 1000) - Math.round((line.receivedQty ?? 0) * 1000))
+          for (const line of inv.lines) quantities.set(line.itemId, (quantities.get(line.itemId) ?? 0) + Math.round(line.qty * 1000))
+          for (const line of args.lines) {
+            const available = quantities.get(line.itemId)
+            if (available == null || available < Math.round(line.qty * 1000)) throw new Error('كمية الصنف تتجاوز المتبقي أو لا تنتمي لأمر الشراء')
+            quantities.set(line.itemId, available - Math.round(line.qty * 1000))
+          }
         }
         const scopedPurchaseItems = getBranchScopedDataState(state).items
         if (inv.purchaseExpiryBatches?.length || state.journal.some(entry => entry.id === inv.journalEntryId && entry.purchaseExpiryBatches?.length)) throw new Error('تعديل شراء الصلاحية لا يثبت تسوية الدفعات — استخدم مرتجعاً أو راجع المخزون')
@@ -11441,6 +12501,7 @@ export const useRawDataStore = create<DataState>()(
           items: updatedItems,
           batches: [...keptBatches, ...newBatches],
           purchaseOrders: updatedPurchaseOrders,
+          pendingPartOrders: reconcilePartOrders(state.pendingPartOrders, state.purchaseOrders, updatedPurchaseOrders),
         })
         return updatedInv
       },
@@ -11556,7 +12617,9 @@ export const useRawDataStore = create<DataState>()(
         assertCanManageUsers(state)
         const scoped = getBranchScopedDataState(state)
         const activeBranch = getEffectiveActiveBranch(state)
-        if (!rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId).some((role) => role.id === roleId)) {
+        const company = useAppStore.getState().companySetup ?? useAppStore.getState().setup
+        const activityId = resolveBranchActivityId(activeBranch, company.activityId)
+        if (!rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, activityId).some((role) => role.id === roleId)) {
           throw new Error('الدور غير موجود في نطاق هذا الفرع')
         }
         const cleanPermissions = [...new Set(permissions)]
@@ -11970,6 +13033,34 @@ export const useRawDataStore = create<DataState>()(
         // خارج أي مخزن فتتعطل أوامر الإنتاج وأذون الصرف والفروع على البيانات القديمة.
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: !s.warehouses.some((w) => w.isMain) }] })),
 
+      saveFinancialEntityProfile: (input, expectedBasis, reason) => {
+        const state = get(), profiles = state.financialEntityProfiles ?? []
+        assertCanManageFinancialEntities(state)
+        if (typeof expectedBasis !== 'string' || expectedBasis !== financialEntityBasis(profiles, state.branches)) throw new Error('تغيرت إعدادات الكيانات أو الفروع — أعد المراجعة قبل الحفظ')
+        if (typeof reason !== 'string' || !reason.trim() || reason.length > 500) throw new Error('سبب إعداد أو تعديل الكيان مطلوب ولا يتجاوز 500 حرف')
+        if (!input || typeof input.nameAr !== 'string' || !Array.isArray(input.branchIds)) throw new Error('بيانات الكيان غير صالحة')
+        if (input.id != null && !profiles.some(row => row.id === input.id)) throw new Error('الكيان المطلوب تعديله غير موجود')
+        const id = input.id ?? crypto.randomUUID()
+        const profile: FinancialEntityProfile = { id, nameAr: input.nameAr.trim(), branchIds: [...input.branchIds], framework: input.framework, externalAudit: input.externalAudit }
+        const updated = input.id ? profiles.map(row => row.id === id ? profile : row) : [...profiles, profile]
+        assertFinancialEntityProfiles(updated, state.branches)
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ financialEntityProfiles: updated, auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `إعداد وصفي لكيان القوائم ${profile.nameAr} — ${reason.trim()}` }]) })
+        return profile
+      },
+      removeFinancialEntityProfile: (id, expectedBasis, reason) => {
+        const state = get(), profiles = state.financialEntityProfiles ?? []
+        assertCanManageFinancialEntities(state)
+        if (typeof expectedBasis !== 'string' || expectedBasis !== financialEntityBasis(profiles, state.branches)) throw new Error('تغيرت إعدادات الكيانات أو الفروع — أعد المراجعة قبل الحذف')
+        if (typeof reason !== 'string' || !reason.trim() || reason.length > 500) throw new Error('سبب حذف إعداد الكيان مطلوب ولا يتجاوز 500 حرف')
+        const existing = profiles.filter(row => row.id === id)
+        if (existing.length !== 1) throw new Error('إعداد الكيان غير موجود أو غير فريد')
+        const updated = profiles.filter(row => row.id !== id)
+        assertFinancialEntityProfiles(updated, state.branches)
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ financialEntityProfiles: updated, auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف الإعداد الوصفي لكيان القوائم ${existing[0].nameAr} — ${reason.trim()}` }]) })
+      },
+
       addBranch: (input, maxBranchesAllowed) => {
         const state = get()
         assertCanManageBranches(state)
@@ -12048,6 +13139,9 @@ export const useRawDataStore = create<DataState>()(
         if (!b) throw new Error('الفرع غير موجود')
         const blocked = canRemoveBranch(b, state.branches)
         if (blocked) throw new Error(blocked)
+        const profiles = state.financialEntityProfiles ?? []
+        assertFinancialEntityProfiles(profiles, state.branches)
+        if (profiles.some(profile => profile.branchIds.includes(id)) || (state.branches.length === 2 && profiles.some(profile => profile.branchIds.length > 0))) throw new Error('أزل ارتباط الفروع بإعدادات الكيانات قبل حذف الفرع؛ فقد يؤدي الحذف للعودة إلى وضع الفرع الواحد')
         const hasLinkedData = BRANCH_STAMP_ID_KEYS.some((key) => {
           if (key === 'warehouses') return false // المخزن الافتراضي بنية للفرع، لا سجل تشغيل يمنع حذف فرع فارغ
           const rows = (state as unknown as Record<string, unknown>)[key]
@@ -12382,16 +13476,34 @@ export const useRawDataStore = create<DataState>()(
 
       postPayroll: (args) => {
         const state = get()
-        // إصلاح §83 (قياس أثر): مسير بموظف شبح كان يمر — نقد حقيقي يخرج من
-        // الخزينة ومصروف 5102 يُحمَّل لمستفيد غير موجود في السجلات. القاتل في المستودع.
+        const scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
+        if (state.branches.length && !branch) throw new Error('حدد الفرع الحالي قبل ترحيل المسير')
         const ghost = [...new Set(args.lines.map((l) => l.employeeId))].filter((id) => !state.employees.some((e) => e.id === id))
         if (ghost.length) throw new Error(`موظف غير موجود بالسجلات (رقم ${ghost.join('، ')}) — لا يُصرف راتب لمن ليس له ملف`)
+        for (const line of args.lines) if (state.employees.filter(e => e.id === line.employeeId).length !== 1 || !scoped.employees.some(e => e.id === line.employeeId)) throw new Error('موظف المسير تابع لفرع آخر أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين')
+        }
+        for (const line of args.lines) {
+          // لا يُخصم سجل تابع لفرع آخر بمجرد تطابق رقم الموظف، حتى لو ظهر رصيده هنا مصادفة.
+          const assertLocal = <T extends { id: number; date: string }>(all: T[], visible: T[], universe: T[], label: string) => {
+            if (all.some(row => universe.filter(other => other.id === row.id).length !== 1 || !visible.includes(row))) throw new Error(`${label} غير فريد أو تابع لفرع آخر — راجع تخصيص المسير`)
+            if (all.some(row => !isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > todayLocalIso())) throw new Error(`${label} تاريخه غير صالح أو لاحق للمسير — راجع التسلسل`)
+          }
+          if (line.advancesMinor > 0) assertLocal(state.employeeAdvances.filter(row => row.employeeId === line.employeeId && row.amountMinor > row.recoveredMinor), scoped.employeeAdvances, state.employeeAdvances, 'سجل السلفة')
+          if (line.deductionsMinor > 0) assertLocal(state.employeeDeductions.filter(row => row.employeeId === line.employeeId && row.amountMinor > row.recoveredMinor + (row.waivedMinor ?? 0)), scoped.employeeDeductions, state.employeeDeductions, 'سجل الجزاء')
+          if ((line.commissionsPaidMinor ?? 0) > 0) assertLocal(state.staffCommissions.filter(row => row.employeeId === line.employeeId && row.status === 'accrued'), scoped.staffCommissions, state.staffCommissions, 'سجل العمولة')
+          if ((line.driverDuesPaidMinor ?? 0) > 0) assertLocal(state.driverDues.filter(row => row.driverId === line.employeeId && !row.settled), scoped.driverDues, state.driverDues, 'مستحق السائق')
+        }
+        if (args.payMode === 'cash' && args.custodyFileId != null && (state.custodyFiles.filter(f => f.id === args.custodyFileId).length !== 1 || !scoped.custodyFiles.some(f => f.id === args.custodyFileId))) throw new Error('ملف العهدة غير فريد أو ليس في الفرع الحالي')
+        if (args.payMode === 'cash' && args.custodyFileId == null && (state.treasuries.filter(t => t.code === args.treasury).length !== 1 || !scoped.treasuries.some(t => t.code === args.treasury))) throw new Error('خزينة الصرف غير موجودة أو غير فريدة أو ليست في الفرع الحالي')
         // 1) حساب كل سطر بالنواة الخالصة (يرمي لو صافي سطر سالب)
         const computed: PayrollLineComputed[] = args.lines.map(computePayrollLine)
         // 2) تحقق شامل قبل أي كتابة
         // مسير راتب موظف واحد (طلب المالك): الشهر يقبل أكثر من مسير، والممنوع
         // هو تكرار صرف راتب الموظف نفسه في الشهر نفسه — برسالة باسمه لا برقمه.
-        const scopedPayrollRuns = getBranchScopedDataState(state).payrollRuns
+        const scopedPayrollRuns = scoped.payrollRuns
         const monthRuns = scopedPayrollRuns.filter((r) => r.month === args.month)
         const alreadyPaid = computed
           .map((line) => line.employeeId)
@@ -12435,6 +13547,8 @@ export const useRawDataStore = create<DataState>()(
         for (const l of computed) {
           const excess = l.excessPaidMinor ?? 0
           if (excess <= 0) continue
+          if (!Number.isSafeInteger(excess)) throw new Error('مبلغ صرف مستحق العهدة غير صالح')
+          assertPayrollCustodyExcessHistory(state, scoped, l.employeeId)
           const due = get().getEmployeeExcessDue(l.employeeId)
           if (excess > due) {
             const emp = state.employees.find((e) => e.id === l.employeeId)
@@ -12483,13 +13597,19 @@ export const useRawDataStore = create<DataState>()(
         const commissionsPaid = computed.reduce((a, l) => a + (l.commissionsPaidMinor ?? 0), 0)
         const driverDuesPaid = computed.reduce((a, l) => a + (l.driverDuesPaidMinor ?? 0), 0)
         const totalOut = totals.netMinor + excessPaid + commissionsPaid + driverDuesPaid
+        if (args.payMode === 'cash' && !payCustodyFile) {
+          const user = state.appUsers.find(u => u.id === state.currentUserId && u.active)
+          const access = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'payment', totalOut)
+          if (access.length) throw new Error(access.join(' — '))
+        }
+        if (payCustodyFile && state.custodyTxs.some(tx => tx.fileId === payCustodyFile!.id && !scoped.custodyTxs.includes(tx))) throw new Error('حركات العهدة موزعة على فروع مختلفة — راجع التخصيص')
         if (payCustodyFile) {
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === payCustodyFile!.id)).remainingMinor
           if (totalOut > remaining) throw new Error(`المسير (${totalOut}) أكبر من المتبقي في ملف العهدة (${remaining})`)
         }
         const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid, commissionsPaid, driverDuesPaid)
 
-        const runId = nextId(state.payrollRuns)
+        const runId = nextPayrollSourceId(state)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const runNumber = `SAL-${String(runId).padStart(4, '0')}`
@@ -12531,48 +13651,47 @@ export const useRawDataStore = create<DataState>()(
           list.push(item)
           carryItemsByEmployee.set(employeeId, list)
         }
-        // توزيع المخصوم على سلف كل موظف — الأقدم أولاً (تتبع السلفة عبر عدة أشهر)
+        // ترتيب السجلات بتاريخ المستند ثم ترتيب التسجيل في اليوم نفسه، مع إبقاء ترتيب التخزين الأصلي.
         let employeeAdvances = state.employeeAdvances
         for (const l of computed) {
           let toRecover = l.advancesMinor
           if (toRecover <= 0) continue
-          employeeAdvances = employeeAdvances.map((a) => {
-            if (a.employeeId !== l.employeeId || toRecover <= 0) return a
-            const open = a.amountMinor - a.recoveredMinor
-            if (open <= 0) return a
+          employeeAdvances = [...employeeAdvances]
+          const indices = employeeAdvances.map((a, i) => ({ a, i })).filter(({ a }) => a.employeeId === l.employeeId && a.amountMinor > a.recoveredMinor)
+            .sort((x, y) => x.a.date.slice(0, 10).localeCompare(y.a.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const a = employeeAdvances[i], open = a.amountMinor - a.recoveredMinor
             const take = Math.min(open, toRecover)
             toRecover -= take
             const originMonth = a.date.slice(0, 7)
-            if (take > 0 && originMonth !== args.month) {
-              pushCarry(l.employeeId, {
-                kind: 'advance', number: a.advanceNumber, reason: a.notes || undefined,
-                originMonth, carriedOverMinor: open, takenMinor: take,
-              })
-            }
-            return { ...a, recoveredMinor: a.recoveredMinor + take }
-          })
+            if (originMonth !== args.month) pushCarry(l.employeeId, {
+              kind: 'advance', number: a.advanceNumber, reason: a.notes || undefined,
+              originMonth, carriedOverMinor: open, takenMinor: take,
+            })
+            employeeAdvances[i] = { ...a, recoveredMinor: a.recoveredMinor + take }
+          }
         }
-        // توزيع الخصومات على الجزاءات المسجلة — الأقدم أولاً (تتبع الجزاء كامل/جزء/تأجيل)
-        // الفائض عن المسجل = خصم مباشر لهذا الشهر (غياب/تأخير لحظي) — مسموح بلا سجل
+        // الفائض عن الجزاءات المسجلة خصم مباشر لهذا الشهر، مسموح بلا سجل.
         let employeeDeductions = state.employeeDeductions
         for (const l of computed) {
           let toRecover = l.deductionsMinor
           if (toRecover <= 0) continue
-          employeeDeductions = employeeDeductions.map((d) => {
-            if (d.employeeId !== l.employeeId || toRecover <= 0) return d
-            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
-            if (open <= 0) return d
+          employeeDeductions = [...employeeDeductions]
+          const indices = employeeDeductions.map((d, i) => ({ d, i })).filter(({ d }) => d.employeeId === l.employeeId && d.amountMinor > d.recoveredMinor + (d.waivedMinor ?? 0))
+            .sort((x, y) => x.d.date.slice(0, 10).localeCompare(y.d.date.slice(0, 10)) || x.i - y.i)
+          for (const { i } of indices) {
+            if (toRecover <= 0) break
+            const d = employeeDeductions[i], open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
             const take = Math.min(open, toRecover)
             toRecover -= take
             const originMonth = d.date.slice(0, 7)
-            if (take > 0 && originMonth !== args.month) {
-              pushCarry(l.employeeId, {
-                kind: 'deduction', number: d.dedNumber, reason: d.reason || undefined,
-                originMonth, carriedOverMinor: open, takenMinor: take,
-              })
-            }
-            return { ...d, recoveredMinor: d.recoveredMinor + take }
-          })
+            if (originMonth !== args.month) pushCarry(l.employeeId, {
+              kind: 'deduction', number: d.dedNumber, reason: d.reason || undefined,
+              originMonth, carriedOverMinor: open, takenMinor: take,
+            })
+            employeeDeductions[i] = { ...d, recoveredMinor: d.recoveredMinor + take }
+          }
         }
         if (carryItemsByEmployee.size) {
           run.lines = run.lines.map((l) => {
@@ -12621,14 +13740,18 @@ export const useRawDataStore = create<DataState>()(
 
       addEmployeeDeduction: (args) => {
         const state = get()
-        const emp = state.employees.find((e) => e.id === args.employeeId)
-        if (!emp) throw new Error('الموظف غير موجود')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الخصم يجب أن يكون موجباً')
+        const scoped = getBranchScopedDataState(state)
+        const emp = scoped.employees.find((e) => e.id === args.employeeId)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || !emp || state.employees.filter(e => e.id === args.employeeId).length !== 1) throw new Error('الموظف غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الخصم يجب أن يكون موجباً')
         if (!args.reason.trim()) throw new Error('سبب الخصم مطلوب — غياب، تأخير، جزاء…')
+        const date = employeeDeductionDocumentDate(state, args.employeeId, args.date)
+        if (state.employeeDeductions.filter(d => d.employeeId === args.employeeId).length !== scoped.employeeDeductions.filter(d => d.employeeId === args.employeeId).length) throw new Error('الجزاءات موزعة على فروع مختلفة — راجع التخصيص قبل التسجيل')
         const id = nextId(state.employeeDeductions)
         const ded: EmployeeDeduction = {
           id, dedNumber: `DED-${String(id).padStart(4, '0')}`, employeeId: args.employeeId,
-          date: localIsoTimestamp(), amountMinor: args.amountMinor, recoveredMinor: 0,
+          date, createdAt: localIsoTimestamp(), ...(args.date !== undefined ? { dateSelected: true } : {}), amountMinor: args.amountMinor, recoveredMinor: 0,
           reason: args.reason.trim(), notes: args.notes?.trim() ?? '',
         }
         // لا قيد الآن — الخصم يتحقق محاسبياً عند المسير (يخفض 5102 بطريقة صافي التكلفة)
@@ -12648,8 +13771,14 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const ded = state.employeeDeductions.find((d) => d.id === args.deductionId)
         if (!ded) throw new Error('الجزاء غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || state.employeeDeductions.filter(d => d.id === ded.id).length !== 1 || !scoped.employeeDeductions.includes(ded) || state.employees.filter(e => e.id === ded.employeeId).length !== 1 || !scoped.employees.some(e => e.id === ded.employeeId)) throw new Error('الجزاء أو الموظف غير فريد أو تابع لفرع آخر')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
         if (!args.approvedBy.trim()) throw new Error('اسم معتمد العفو مطلوب')
         if (!args.reason.trim()) throw new Error('سبب العفو مطلوب — تسجيل خاطئ، صفح، حكم…')
+        const date = employeeDeductionDocumentDate(state, ded.employeeId, args.date)
+        if (date < todayLocalIso() && ded.recoveredMinor > 0) throw new Error('لا يمكن إثبات ترتيب الاستقطاعات السابقة لعفو مؤرخ — راجع الجزاء يدوياً')
+        if (state.employeeDeductions.filter(d => d.employeeId === ded.employeeId).length !== scoped.employeeDeductions.filter(d => d.employeeId === ded.employeeId).length) throw new Error('الجزاءات موزعة على فروع مختلفة — راجع التخصيص')
         const remaining = ded.amountMinor - ded.recoveredMinor - (ded.waivedMinor ?? 0)
         if (remaining <= 0) throw new Error('لا متبقي على هذا الجزاء — خُصم أو عُفي عنه بالكامل')
         // لا قيد: الجزاء لم يولّد قيداً عند تسجيله (يتحقق محاسبياً بالمسير فقط)
@@ -12658,7 +13787,8 @@ export const useRawDataStore = create<DataState>()(
           waivedMinor: (ded.waivedMinor ?? 0) + remaining,
           waivedBy: args.approvedBy.trim(),
           waivedReason: args.reason.trim(),
-          waivedAt: new Date().toISOString(),
+          waivedAt: localIsoTimestamp(),
+          waivedDate: date,
         }
         set({ employeeDeductions: state.employeeDeductions.map((d) => (d.id === ded.id ? updated : d)) })
         return updated
@@ -12666,11 +13796,16 @@ export const useRawDataStore = create<DataState>()(
 
       repayEmployeeAdvance: (args) => {
         const state = get()
-        const emp = state.employees.find((e) => e.id === args.employeeId)
-        if (!emp) throw new Error('الموظف غير موجود')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
+        const scoped = getBranchScopedDataState(state)
+        const emp = scoped.employees.find((e) => e.id === args.employeeId)
+        if ((state.branches.length && !getEffectiveActiveBranch(state)) || !emp || state.employees.filter(e => e.id === args.employeeId).length !== 1) throw new Error('الموظف غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
         // إعادة مراجعة الموظفين (R8): خزينة شبح كانت تمر
         if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
+        assertTreasuryForPosting(state, args.treasury, 'receipt', args.amountMinor)
+        const documentDate = employeeAdvanceDocumentDate(state, args.employeeId, args.date)
+        if (state.employeeAdvances.filter(a => a.employeeId === args.employeeId).length !== scoped.employeeAdvances.filter(a => a.employeeId === args.employeeId).length) throw new Error('السلف موزعة على فروع مختلفة — راجع التخصيص قبل السداد')
         const remaining = state.employeeAdvances
           .filter((a) => a.employeeId === args.employeeId)
           .reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
@@ -12680,7 +13815,7 @@ export const useRawDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: documentDate,
           description: `سداد نقدي لسلفة — ${emp.nameAr} (${repayNumber})`,
           sourceType: 'receipt_voucher', sourceId: id, sourceCollection: 'advanceRepayments',
           lines: [
@@ -12699,50 +13834,51 @@ export const useRawDataStore = create<DataState>()(
           toRecover -= take
           return { ...a, recoveredMinor: a.recoveredMinor + take }
         })
-        const repayment: AdvanceRepayment = { id, repayNumber, employeeId: args.employeeId, date: now, amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }
+        const repayment: AdvanceRepayment = { id, repayNumber, employeeId: args.employeeId, date: documentDate, createdAt: now, ...(args.date !== undefined ? { dateSelected: true } : {}), amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }
         set({ advanceRepayments: [...state.advanceRepayments, repayment], employeeAdvances, journal: [...state.journal, entry] })
         return repayment
       },
 
-      closeFiscalYear: (fy, allYears) => {
+      closeFiscalYear: (requested, _allYears) => {
         const state = get()
+        assertFiscalCloseAccess(state)
+        const { year: fy, years: storedYears, branchId: fiscalBranchId, mainBranchId } = verifiedFiscalYear(state, requested)
         const effectiveBranch = getEffectiveActiveBranch(state)
-        const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
-        const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
         if (state.branches.length > 0 && fiscalBranchId == null) throw new Error('لا يوجد فرع رئيسي صالح لإسناد السنة المالية القديمة')
         if (fiscalBranchId != null && effectiveBranch && effectiveBranch.id !== fiscalBranchId) {
           throw new Error('لا يمكن إقفال سنة مالية تخص فرعاً آخر من النطاق الحالي')
-        }
-        if (fy.branchId == null && fiscalBranchId != null) {
-          useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         }
         // ① قيد إقفال محفوظ مع سنة ما زالت مفتوحة يعني أن التطبيق توقف بين
         // تخزين الدفتر وحالة الفترة؛ أصلح الحالة تكرارياً بدلاً من تعطيل المستخدم.
         const branchJournal = fiscalBranchId == null
           ? state.journal
           : getBranchScopedDataState({ ...state, activeBranchId: fiscalBranchId }).journal
-        const existingClosing = branchJournal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        const existingClosing = fiscalClosingEntries(state, fy, fiscalBranchId, mainBranchId).find(entry => !entry.reversedByEntryId)
         if (existingClosing) {
           // استعادة الحالة بعد انقطاع سابق، لكن لا تُعامل محاولة الإقفال المكررة كنجاح.
           // علّم الفترة مغلقة ثم ارفض الطلب كي يظل عقد API مانعاً للتكرار.
+          if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
           useAppStore.getState().markFiscalYearClosed(fy.id)
           throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل — تمت استعادة حالة الإقفال`)
         }
         // ② تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني داخل الفرع نفسه).
         // استخدم سجل السنوات المركزي لتفادي أن يمنع تقويم فرع آخر هذا الإقفال؛
         // واربط الفترات التاريخية غير المنسوبة بالرئيسي قبل تطبيق ترتيب الفترات.
-        const storedYears = useAppStore.getState().fiscalYears
+        if (requested.status !== fy.status) throw new Error('تغيرت حالة السنة المالية — أعد فتح النافذة وراجعها')
         const orderedYears = state.branches.length > 0 && mainBranchId != null
           ? storedYears.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
-          : allYears
+          : storedYears
         const orderedYear = fiscalBranchId == null ? fy : { ...fy, branchId: fiscalBranchId }
         const errors = validateYearClose(orderedYear, orderedYears, todayLocalIso())
         if (errors.length) throw new Error(errors.join(' — '))
+        const review = reviewFiscalCloseJournal(branchJournal, fy)
+        if (!review.valid) throw new Error(`تعذر الإقفال: توجد قيود غير سليمة أو غير متوازنة — راجع الدفتر (${review.invalidEntryIds.slice(0, 10).map(id => `#${id}`).join('، ')})`)
         // ③ يبني الإقفال من دفتر الفرع صاحب الفترة وحده؛ العرض/الإقفال العام القديم
         // يبقى على اليومية الكاملة للتوافق مع السجلات غير المنسوبة.
         const mechanism = closingMechanismIds(branchJournal)
         const result = buildYearClosingLines(branchJournal.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
+        if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
         const entry: JournalEntry = {
@@ -12755,31 +13891,28 @@ export const useRawDataStore = create<DataState>()(
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({ journal: [...state.journal, entry] })
-        // حدّث حالة الفترة ضمن العملية نفسها بعد قبول قيد الدفتر؛ الإقفال الذري
-        // محلياً ويُستعاد عند إعادة المحاولة إن انقطع الحفظ بين المخزنين.
+        // تحديث حالة الفترة بعد قبول القيد؛ المخزنان منفصلان وليسا معاملة ذرية.
+        // يعالج مسار الاستعادة بعض الانقطاعات المثبتة ولا يضمن سلامة جميع الكتّاب.
         useAppStore.getState().markFiscalYearClosed(fy.id)
         return { entryId, netProfitMinor: result.netProfitMinor }
       },
 
-      reopenFiscalYear: (fy, allYears) => {
+      reopenFiscalYear: (requested, _allYears) => {
         const state = get()
+        assertFiscalCloseAccess(state)
+        const { year: fy, years: storedYears, branchId: fiscalBranchId, mainBranchId } = verifiedFiscalYear(state, requested)
         const effectiveBranch = getEffectiveActiveBranch(state)
-        const mainBranchId = state.branches.find((branch) => branch.isMain)?.id
-        const fiscalBranchId = fy.branchId ?? (state.branches.length > 0 ? mainBranchId : undefined)
         if (state.branches.length > 0 && fiscalBranchId == null) throw new Error('لا يوجد فرع رئيسي صالح لإسناد السنة المالية القديمة')
         if (fiscalBranchId != null && effectiveBranch && effectiveBranch.id !== fiscalBranchId) {
           throw new Error('لا يمكن إعادة فتح سنة مالية تخص فرعاً آخر من النطاق الحالي')
         }
-        if (fy.branchId == null && fiscalBranchId != null) {
-          useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
-        }
+        if (requested.status !== fy.status) throw new Error('تغيرت حالة السنة المالية — أعد فتح النافذة وراجعها')
         if (fy.status !== 'closed') throw new Error('السنة مفتوحة أصلاً — لا شيء يُعاد فتحه')
         // الترتيب العكسي (نمط Odoo): لا إعادة فتح لسنة توجد بعدها سنة مقفلة —
         // قيد إقفال السنة الأحدث بُني على أرصدة أُغلق عليها الأقدم، ففكّ الأحدث أولاً
-        const storedYears = useAppStore.getState().fiscalYears
         const orderedYears = state.branches.length > 0 && mainBranchId != null
           ? storedYears.map((year) => year.branchId == null ? { ...year, branchId: mainBranchId } : year)
-          : allYears
+          : storedYears
         const orderedBranchId = fiscalBranchId
         const orderedFiscalYear = orderedBranchId == null ? fy : { ...fy, branchId: orderedBranchId }
         const newerClosed = orderedYears.find((y) => y.id !== fy.id
@@ -12787,11 +13920,17 @@ export const useRawDataStore = create<DataState>()(
           && y.status === 'closed'
           && y.startDate > fy.endDate)
         if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
-        const closingEntry = state.journal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        const closingEntries = fiscalClosingEntries(state, fy, fiscalBranchId, mainBranchId)
+        const closingEntry = closingEntries.find(entry => !entry.reversedByEntryId)
         if (!closingEntry) {
+          // قد يكون العكس حُفظ قبل حالة الفتح؛ لا نفتح سنة بلا دليل عكس صحيح.
+          const latest = closingEntries.at(-1)
+          if (!latest || !isFiscalCloseReversalValid(state.journal, latest, mainBranchId)) throw new Error('لا يوجد قيد إقفال أو عكس مثبت للسنة — راجع الدفتر قبل إعادة الفتح')
+          if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
           useAppStore.getState().reopenFiscalYear(fy.id)
-          return { reversedEntryId: null } // مقفلة بلا قيد إقفال أو عُكس سابقاً — يكفي فتح الحالة
+          return { reversedEntryId: null }
         }
+        if (fy.branchId == null && fiscalBranchId != null) useAppStore.getState().bindLegacyFiscalYearsToMain(fiscalBranchId)
         // قيد عاكس لقيد الإقفال: يعيد أرصدة الإيرادات والمصروفات وأثر الأرباح المرحلة،
         // بتاريخ آخر يوم بالسنة المعاد فتحها (يلغي أثر التصفير داخل فترته نفسها)
         const entryId = nextId(state.journal)
@@ -12898,12 +14037,15 @@ export const useRawDataStore = create<DataState>()(
             creditMinor: voucher.kind === 'receipt' ? voucher.amountMinor : 0,
           })
         }
-        /* ── العمولات: مستحقة = دائن، مصروفة = محايدة (صرفها النقدي يظهر بسند باسمه أو بالمسير) ── */
+        /* العمولات ذات الأدلة الكاملة تُعرض بأيام الاستحقاق والتسوية والصرف، لا كسطر محايد بتاريخ الاستحقاق. */
         for (const commission of state.staffCommissions.filter((row) => row.employeeId === employeeId)) {
+          const evidence = commissionStatementRows(commission, state.journal)
+          if (evidence) { rows.push(...evidence); continue }
+          // السجلات القديمة غير المثبتة تبقى على الرصيد التوافقي ولا نختلق لها تاريخاً.
           const amount = Math.max(0, commission.amountMinor)
           if (amount <= 0 || commission.status === 'cancelled') continue
           if (commission.status === 'accrued') rows.push({ date: commission.date, ref: commission.code, description: `عمولة مستحقة — ${commission.description}`, debitMinor: 0, creditMinor: amount })
-          else rows.push({ date: commission.date, ref: commission.code, description: `عمولة مصروفة — ${commission.description}`, debitMinor: amount, creditMinor: amount })
+          else rows.push({ date: commission.date, ref: commission.code, description: `عمولة مصروفة (تاريخ الحركة غير مثبت في الكشف) — ${commission.description}`, debitMinor: amount, creditMinor: amount })
         }
         /* ── حركات العهدة: تعزيز/عجز مدين، تسوية/مردود دائن ── */
         for (const tx of state.custodyTxs) {
@@ -14981,22 +16123,293 @@ export const useRawDataStore = create<DataState>()(
       },
 
       /* ─── المقاولات (القرار 27) ─── */
+      issueProjectCloseout: ({ projectId, expectedRevision, notes, confirmed }) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        if (!confirmed) throw new Error('أكد مراجعة كميات الحصر والمستخلصات قبل إصدار المحضر')
+        if (typeof notes !== 'string' || notes.length > 1000) throw new Error('ملاحظات المحضر غير صالحة أو طويلة جداً')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
+        }
+        const { project, survey, history, lines, report, basis } = validateCloseout(state, projectId, expectedRevision)
+        if (project.status !== 'active') throw new Error('المشروع غير نشط — راجع حالته قبل إصدار المحضر')
+        if (state.projectExtractDrafts.some(row => row.projectId === projectId)) throw new Error('توجد مسودة مستخلص للمشروع — راجعها أو احذفها قبل إصدار المحضر')
+        if (state.projectCloseouts.some(row => row.projectId === projectId && row.basis === basis)) throw new Error('يوجد محضر لهذا الحصر بالفعل — افتحه من السجل')
+        const id = nextId(state.projectCloseouts), at = localIsoTimestamp(), by = activeUserName(state)
+        const branchId = (project as Project & { branchId?: number | null }).branchId ?? survey.branchId
+        const record: ProjectCloseout = { id, number: `PC-${String(id).padStart(4, '0')}`, projectId, ...(branchId != null ? { branchId } : {}), projectCode: project.code, projectName: project.nameAr, clientName: project.clientName, surveyId: survey.id, surveyRevision: survey.revisions.length, at, by, notes: notes.trim(), basis, extractNumbers: history.map(row => row.extractNumber), ...(report ? { quantityBasis: 'net-after-credit', quantityEvents: report.events.map(event => ({ ...event })) } : {}), lines }
+        set({ projectCloseouts: [...state.projectCloseouts, record], auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `إصدار محضر إقفال كميات ${record.number} للمشروع ${project.code}` }]) })
+        return record
+      },
+      isProjectCloseoutCurrent: (id) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const record = scoped.projectCloseouts.find(row => row.id === id)
+        if (!record || state.projectCloseouts.filter(row => row.id === id).length !== 1) return false
+        try {
+          const current = validateCloseout(state, record.projectId, record.surveyRevision)
+          return current.survey.id === record.surveyId && current.basis === record.basis
+            && record.projectCode === current.project.code && record.projectName === current.project.nameAr && record.clientName === current.project.clientName
+            && record.quantityBasis === (current.report ? 'net-after-credit' : undefined)
+            && JSON.stringify(record.quantityEvents) === JSON.stringify(current.report?.events)
+            && JSON.stringify(current.lines) === JSON.stringify(record.lines) && JSON.stringify(current.history.map(row => row.extractNumber)) === JSON.stringify(record.extractNumbers)
+        } catch { return false }
+      },
+      assertProjectExtractDraftCurrent: (projectId) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const drafts = scoped.projectExtractDrafts.filter(row => row.projectId === projectId)
+        if (drafts.length !== 1 || state.projectExtractDrafts.filter(row => row.projectId === projectId).length !== 1 || drafts[0].basis !== projectSurveyDraftBasis(state, projectId)) throw new Error('مسودة المستخلص متقادمة أو غير موجودة — جهزها مجدداً من الحصر')
+      },
+      prepareProjectExtractDraft: (projectId, expectedRevision) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === projectId)
+        if (!project || project.status !== 'active') throw new Error('المشروع غير موجود أو مقفل في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر والمسودات')
+        }
+        assertProjectCustomerBranch(state, project)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
+        const surveys = scoped.projectSurveys.filter(row => row.projectId === projectId)
+        if (surveys.length !== 1 || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1) throw new Error('حصر المشروع غير موجود أو غير فريد')
+        const survey = surveys[0]
+        if (survey.revisions.length !== expectedRevision) throw new Error('تغير الحصر — أعد مراجعته قبل تجهيز المستخلص')
+        const items = scoped.boqItems.filter(row => row.projectId === projectId)
+        const history = scoped.projectExtracts.filter(row => row.projectId === projectId)
+        if (history.some(row => row.isFinal)) throw new Error('صدر مستخلص ختامي — لا مستخلصات بعده')
+        if (state.projectExtracts.filter(row => row.projectId === projectId).length !== history.length) throw new Error('مستخلص سابق تابع لفرع آخر — راجع البيانات')
+        for (const extract of history) {
+          assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
+          if (extract.lines?.length && extract.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== extract.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+          for (const line of extract.lines ?? []) {
+            const item = items.find(row => row.id === line.boqItemId)
+            if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('بند العقد لا يطابق المستخلص السابق — راجع الحصر')
+          }
+        }
+        assertProjectExtractRefundIntegrity(history, customerReviewJournal(state))
+        assertSurveyIntegrity(survey, items, history)
+        const billed = new Map(exactBilledQuantities(items, history).map(line => [line.boqItemId, line.cumulativeQty]))
+        const lines = survey.lines.filter(line => line.cumulativeQty > (billed.get(line.boqItemId) ?? 0)).map(line => ({ boqItemId: line.boqItemId, cumulativeQty: line.cumulativeQty }))
+        if (!lines.length) throw new Error('لا توجد كمية محصورة غير مستخلصة — لا تُنشأ فاتورة صفرية')
+        computeQuantityExtractLines(lines, items, history)
+        const drafts = state.projectExtractDrafts.filter(row => row.projectId === projectId)
+        if (drafts.length > 1 || (drafts.length && !scoped.projectExtractDrafts.some(row => row.id === drafts[0].id))) throw new Error('مسودة المشروع غير فريدة أو تابعة لفرع آخر — راجع البيانات')
+        const previous = drafts[0]
+        const draft: ProjectExtractDraft = { id: previous?.id ?? projectId, projectId, ...(previous?.branchId != null ? { branchId: previous.branchId } : {}), surveyRevision: survey.revisions.length, basis: projectSurveyDraftBasis(state, projectId), lines, isFinal: survey.isFinal, createdAt: localIsoTimestamp(), createdBy: activeUserName(state) }
+        set({ projectExtractDrafts: [...state.projectExtractDrafts.filter(row => row.projectId !== projectId), draft] })
+        return draft
+      },
+      deleteProjectExtractDraft: (projectId, reason) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const draft = scoped.projectExtractDrafts.find(row => row.projectId === projectId)
+        if (!draft) throw new Error('مسودة المستخلص غير موجودة في الفرع الحالي')
+        if (!reason.trim()) throw new Error('سبب حذف المسودة مطلوب')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر والمسودات')
+        }
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ projectExtractDrafts: state.projectExtractDrafts.filter(row => row.id !== draft.id), auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف مسودة مستخلص المشروع #${projectId} — ${reason.trim()}` }]) })
+      },
+      deleteUnpostedSurvey: (projectId, reason) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const survey = scoped.projectSurveys.find(row => row.projectId === projectId)
+        if (!survey || state.projectSurveys.filter(row => row.projectId === projectId).length !== 1 || state.projectExtractDrafts.filter(row => row.projectId === projectId).some(row => !scoped.projectExtractDrafts.some(candidate => candidate.id === row.id))) throw new Error('الحصر غير موجود أو غير فريد أو تابع لفرع آخر')
+        if (!reason.trim()) throw new Error('سبب حذف الحصر مطلوب')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
+        }
+        if (!scoped.projects.some(project => project.id === projectId && project.status === 'active')) throw new Error('المشروع غير موجود أو مقفل في الفرع الحالي')
+        assertNoProjectFinancialReferences(state, projectId)
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({ surveyDeletionRecords: [...state.surveyDeletionRecords, { id: survey.id, projectId, reason: reason.trim(), at, by, ...(survey.branchId != null ? { branchId: survey.branchId } : {}) }], projectSurveys: state.projectSurveys.filter(row => row.id !== survey.id), projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== projectId), auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف حصر غير مرحّل للمشروع #${projectId} — ${reason.trim()}` }]) })
+      },
+      saveProjectSurvey: (args) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('contracting.survey.manage')) throw new Error('لا تملك صلاحية إدارة الحصر')
+        }
+        assertProjectCustomerBranch(state, project)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
+        if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — لا يُعدّل الحصر')
+        const history = state.projectExtracts.filter(extract => extract.projectId === project.id)
+        const items = state.boqItems.filter(item => item.projectId === project.id)
+        const matches = state.projectSurveys.filter(row => row.projectId === project.id)
+        if (matches.length > 1 || (matches.length && !scoped.projectSurveys.some(row => row.id === matches[0].id))) throw new Error('حصر المشروع غير فريد أو تابع لفرع آخر — راجع البيانات')
+        if (args.measurementDate != null) {
+          const date = args.measurementDate
+          if (!isValidExpiryDate(date) || date > todayLocalIso()) throw new Error('تاريخ قياس الحصر غير صالح أو في المستقبل')
+          if (matches[0]?.revisions.some(row => row.measurementDate != null && (!isValidExpiryDate(row.measurementDate) || row.measurementDate > date))) throw new Error('تاريخ القياس يسبق مراجعة قياس مسجلة — راجع التسلسل')
+        }
+        const survey = reviseProjectSurvey({ survey: matches[0], projectId: project.id, items, history, lines: args.lines, source: 'manual', measurementDate: args.measurementDate, reason: args.reason, at: localIsoTimestamp(), by: activeUserName(state), isFinal: args.isFinal, expectedRevision: args.expectedRevision })
+        if (!matches[0]) survey.id = nextSurveyId(state, project.id)
+        set({ projectSurveys: [...state.projectSurveys.filter(row => row.projectId !== project.id), survey] })
+        return survey
+      },
+      previewProjectDeletionFingerprint: (id) => {
+        const scoped = getBranchScopedDataState(get())
+        if (!scoped.projects.some(project => project.id === id)) throw new Error('المشروع غير موجود في الفرع الحالي')
+        return projectDeletionFingerprint(scoped, id)
+      },
+      /** حذف غير المرحّل فقط؛ يفحص الروابط من الحالة الخام لا من الفرع المرئي وحده. */
+      deleteUnpostedProject: async (id, reason, expectedFingerprint, ownerPin) => {
+        const initial = get()
+        const ownerHash = initial.ownerPinHash
+        if (!ownerHash) throw new Error('يجب تعيين الرقم السري للمالك في الصلاحيات قبل الحذف')
+        if (typeof ownerPin !== 'string' || !ownerPin) throw new Error('أدخل الرقم السري للمالك قبل الحذف')
+        const nowIso = localIsoTimestamp()
+        const locked = lockoutMinutesLeft(initial.loginGuard, nowIso)
+        if (locked > 0) throw new Error(`محاولات كثيرة خاطئة — الاعتماد مقفول ${locked} دقيقة`)
+        const ok = await verifyPin(ownerPin, ownerHash)
+        const state = get()
+        if (state.ownerPinHash !== ownerHash || state.currentUserId !== initial.currentUserId || state.activeBranchId !== initial.activeBranchId || state.loggedOut !== initial.loggedOut || getEffectiveActiveBranch(state)?.id !== getEffectiveActiveBranch(initial)?.id) throw new Error('تغير المستخدم أو الفرع أو رقم المالك — أعد المحاولة')
+        if (lockoutMinutesLeft(state.loginGuard, localIsoTimestamp()) > 0) throw new Error('الاعتماد مقفول مؤقتاً بعد محاولات خاطئة')
+        if (!ok) {
+          const guard = registerFailure(state.loginGuard, localIsoTimestamp())
+          set({ loginGuard: guard, auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: activeUserName(state), kind: 'auth', title: 'محاولة حذف مشروع برقم مالك غير صحيح' }]) })
+          throw new Error('الرقم السري للمالك غير صحيح')
+        }
+        const scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === id)
+        if (!project || state.projects.filter(row => row.id === id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          const roles = rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)
+          if (!user || !effectivePermissionsFor(user, roles).has('contracting.project.delete')) throw new Error('لا تملك صلاحية حذف المشروع')
+        }
+        if (!reason.trim()) throw new Error('سبب حذف المشروع مطلوب')
+        if (state.branches.length) {
+          const owners = state.branches.filter(branch => belongsToBranch(project, branch, state.branches))
+          if (owners.length !== 1) throw new Error('فرع المشروع غير واضح — راجع الارتباط قبل الحذف')
+          assertProjectRelatedBranches(state, project, owners[0])
+        }
+        if (state.changeOrders.some(order => order.projectId === id && order.status !== 'draft')) throw new Error('المشروع يتضمن أمر تغيير محسوم — احتفظ بمستند العقد وراجع ارتباطه قبل الحذف')
+        if (expectedFingerprint != null && expectedFingerprint !== projectDeletionFingerprint(scoped, id)) throw new Error('تغير المشروع أو متعلقاته منذ التأكيد — راجعه قبل الحذف')
+        if (project.status !== 'active') throw new Error('المشروع مقفل أو مسلّم — راجع حالته قبل الحذف')
+        const projectBoqIds = new Set(state.boqItems.filter(item => item.projectId === id).map(item => item.id))
+        if (state.subContracts.some(contract => contract.boqItemIds.some(itemId => projectBoqIds.has(itemId))) || state.projectTasks.some(task => task.projectId !== id && task.boqItemId != null && projectBoqIds.has(task.boqItemId))) throw new Error('بنود المشروع مرتبطة بمستندات أخرى — راجع الروابط قبل الحذف')
+        assertNoProjectFinancialReferences(state, id)
+        const surveys = state.projectSurveys.filter(row => row.projectId === id)
+        if (surveys.length > 1 || surveys.some(row => !scoped.projectSurveys.some(candidate => candidate.id === row.id)) || state.projectExtractDrafts.filter(row => row.projectId === id).some(row => !scoped.projectExtractDrafts.some(candidate => candidate.id === row.id))) throw new Error('الحصر أو المسودة غير فريدة أو تتبع فرعاً آخر')
+        const quotes = state.quotations.filter(q => q.projectId === id)
+        if (quotes.length) {
+          const qScope = assertQuotationAccess(state, 'sales.quotation.delete')
+          const branch = getEffectiveActiveBranch(state)
+          if (quotes.some(q => q.deletedAt ? (branch != null && !belongsToBranch(q, branch, state.branches)) : !qScope.quotations.some(row => row.id === q.id))) throw new Error('عرض مرتبط تابع لفرع آخر — راجع الارتباط قبل الحذف')
+        }
+        const at = localIsoTimestamp(), by = activeUserName(state)
+        set({
+          projects: state.projects.filter(row => row.id !== id),
+          boqItems: state.boqItems.filter(row => row.projectId !== id),
+          projectBudgets: state.projectBudgets.filter(row => row.projectId !== id),
+          projectTasks: state.projectTasks.filter(row => row.projectId !== id),
+          surveyDeletionRecords: [...state.surveyDeletionRecords, ...surveys.map(survey => ({ id: survey.id, projectId: id, reason: `حذف المشروع: ${reason.trim()}`, at, by, ...(survey.branchId != null ? { branchId: survey.branchId } : {}) }))],
+          projectSurveys: state.projectSurveys.filter(row => row.projectId !== id),
+          projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== id),
+          changeOrders: state.changeOrders.filter(row => row.projectId !== id),
+          quotations: state.quotations.filter(q => q.projectId !== id),
+          quotationDeletionRecords: [...state.quotationDeletionRecords, ...quotes.map(q => ({ id: q.id, quoteNumber: q.quoteNumber, projectId: id, reason: `حذف المشروع: ${reason.trim()}`, at, by, ...(q.branchId != null ? { branchId: q.branchId } : {}) }))],
+          projectDeletionRecords: [...(state.projectDeletionRecords ?? []), { id, code: project.code, nameAr: project.nameAr, reason: reason.trim(), at, by }],
+          loginGuard: EMPTY_GUARD,
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف المشروع غير المرحّل ${project.code} بموافقة المالك — ${reason.trim()}` }]),
+        })
+      },
       addProject: (p) => {
         const state = get()
-        const errors = validateProject(p)
-        if (errors.length) throw new Error(errors.join(' — '))
-        // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
-        if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
-        const branch = getEffectiveActiveBranch(state)
-        const projectBranch = branch ?? state.branches.find(item => item.isMain) ?? null
-        if (state.branches.length && !projectBranch) throw new Error('حدد الفرع الرئيسي قبل إنشاء المشروع')
-        const customer = state.customers.find(c => c.id === p.clientId)
-        if (projectBranch && customer && !belongsToBranch(customer, projectBranch, state.branches)) throw new Error('عميل المشروع تابع لفرع آخر')
-        if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
-        const id = nextId(state.projects)
-        const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
+        const project = prepareNewProject(state, p)
         set({ projects: [...state.projects, project] })
         return project
+      },
+      addProjectWithBoq: (p, lines) => {
+        const state = get()
+        const project = prepareNewProject(state, p)
+        if (!lines.length) throw new Error('أدخل بند جدول كميات واحداً على الأقل')
+        let next = nextId(state.boqItems)
+        const items = lines.map(line => {
+          const errors = validateBoqItem(line)
+          if (!Number.isFinite(line.qty)) errors.push('الكمية غير صالحة')
+          if (!Number.isSafeInteger(line.unitPriceMinor) || !Number.isSafeInteger(line.estCostMinor) || line.estCostMinor < 0) errors.push('سعر أو تكلفة البند غير صالحين')
+          if (line.sectionId != null && !project.boqSections?.some(section => section.id === line.sectionId)) errors.push('قسم البند غير موجود')
+          if (errors.length) throw new Error(errors.join(' — '))
+          return { ...line, projectId: project.id, id: next++, progressPercent: 0 }
+        })
+        const total = items.reduce((sum, line) => sum + boqItemTotal(line), 0)
+        if (!Number.isSafeInteger(total) || total !== project.contractValueMinor) throw new Error('قيمة العقد لا تطابق مجموع بنود المشروع')
+        set({ projects: [...state.projects, project], boqItems: [...state.boqItems, ...items] })
+        return project
+      },
+      previewProjectEditFingerprint: (id) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        if (!scoped.projects.some(row => row.id === id)) throw new Error('المشروع غير موجود في الفرع الحالي')
+        return JSON.stringify({ branch: state.activeBranchId, user: state.currentUserId, data: projectDeletionFingerprint(scoped, id) })
+      },
+      /** تعديل المشروع وبنوده في لقطة واحدة؛ لا يُعاد بناء عقد له أثر أو حصر سابق. */
+      updateProjectWithBoq: ({ id, expectedFingerprint, changes, sections, lines }) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(row => row.id === id)
+        if (!project || state.projects.filter(row => row.id === id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (expectedFingerprint !== JSON.stringify({ branch: state.activeBranchId, user: state.currentUserId, data: projectDeletionFingerprint(scoped, id) })) throw new Error('تغير المشروع أو بنوده أو الفرع منذ فتح التعديل — أعد مراجعته')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تعديل المشروع')
+        }
+        assertProjectCustomerBranch(state, project)
+        if (!Array.isArray(sections) || !Array.isArray(lines)) throw new Error('بيانات جدول الكميات غير صالحة')
+        if (sections.some(section => !section || Reflect.ownKeys(section).some(key => key !== 'id' && key !== 'nameAr') || !section.id?.trim() || !section.nameAr?.trim()) || new Set(sections.map(section => section.id)).size !== sections.length) throw new Error('أسماء ومعرّفات الأقسام مطلوبة وفريدة')
+        const oldItems = state.boqItems.filter(row => row.projectId === id)
+        const allowed = new Set(['code', 'descriptionAr', 'unit', 'qty', 'unitPriceMinor', 'estCostMinor', 'sectionId', 'id'])
+        if (lines.some(line => !line || Reflect.ownKeys(line).some(key => typeof key !== 'string' || !allowed.has(key)))) throw new Error('حقل بند غير مسموح')
+        const ids = lines.flatMap(line => line.id == null ? [] : [line.id])
+        if (new Set(ids).size !== ids.length || ids.some(itemId => !Number.isSafeInteger(itemId) || oldItems.filter(item => item.id === itemId).length !== 1)) throw new Error('معرّف بند المشروع غير صحيح أو مكرر')
+        const editable = (item: BoqItem) => ({ id: item.id, code: item.code, descriptionAr: item.descriptionAr, unit: item.unit, qty: item.qty, unitPriceMinor: item.unitPriceMinor, estCostMinor: item.estCostMinor, sectionId: item.sectionId ?? null })
+        const proposed = lines.map(line => ({ id: line.id, code: line.code, descriptionAr: line.descriptionAr, unit: line.unit, qty: line.qty, unitPriceMinor: line.unitPriceMinor, estCostMinor: line.estCostMinor, sectionId: line.sectionId ?? null }))
+        const changed = JSON.stringify(oldItems.map(editable)) !== JSON.stringify(proposed) || JSON.stringify(project.boqSections ?? []) !== JSON.stringify(sections)
+        if (changed) {
+          if (project.status !== 'active' || oldItems.some(row => row.progressPercent !== 0)) throw new Error('المشروع مقفل أو يتضمن تقدماً مسجلاً — لا يُعدّل جدول الكميات')
+          if (state.projectSurveys.some(row => row.projectId === id) || state.projectExtractDrafts.some(row => row.projectId === id) || state.projectCloseouts.some(row => row.projectId === id) || state.changeOrders.some(row => row.projectId === id && row.status !== 'draft')) throw new Error('جدول الكميات مرتبط بحصر أو مستند عقد محسوم — راجعه قبل التعديل')
+          const oldIds = new Set(oldItems.map(row => row.id))
+          if (state.subContracts.some(row => row.boqItemIds.some(itemId => oldIds.has(itemId))) || state.projectTasks.some(row => row.boqItemId != null && oldIds.has(row.boqItemId))) throw new Error('بنود المشروع مرتبطة بمهام أو عقود أخرى — راجع الروابط قبل التعديل')
+          assertNoProjectFinancialReferences(state, id)
+          if (oldItems.length && !lines.length) throw new Error('لا يمكن تفريغ جدول الكميات بالكامل')
+        }
+        const projectKeys = new Set(['nameAr', 'clientName', 'clientId', 'contractValueMinor', 'retentionPercent', 'startDate', 'contractNumber', 'location', 'expectedEndDate', 'managerEmployeeId', 'notes', 'tags', 'actualHandoverDate', 'defectsLiabilityMonths'])
+        if (!changes || Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !projectKeys.has(key))) throw new Error('حقل تعديل مشروع غير مسموح')
+        const hasExtracts = state.projectExtracts.some(row => row.projectId === id)
+        if (changes.clientId !== undefined && (changes.clientId ?? null) !== (project.clientId ?? null) && (hasExtracts || state.clientAdvances.some(row => row.projectId === id))) throw new Error('لا يمكن تغيير عميل المشروع بعد مستخلص أو دفعة مقدمة')
+        let next = nextId(state.boqItems)
+        const updatedItems = changed ? lines.map(line => {
+          const errors = validateBoqItem(line)
+          normalizeMovementQty(line.qty)
+          if (!Number.isSafeInteger(line.unitPriceMinor) || !Number.isSafeInteger(line.estCostMinor) || line.estCostMinor < 0) errors.push('سعر أو تكلفة البند غير صالحين')
+          if (line.sectionId != null && !sections.some(section => section.id === line.sectionId)) errors.push('قسم البند غير موجود')
+          if (errors.length) throw new Error(errors.join(' — '))
+          const prior = line.id == null ? undefined : oldItems.find(row => row.id === line.id)
+          return { ...prior, ...line, id: prior?.id ?? next++, projectId: id, progressPercent: prior?.progressPercent ?? 0 }
+        }) : oldItems
+        const total = updatedItems.reduce((sum, item) => sum + boqItemTotal(item), 0)
+        if (changed && updatedItems.length && (!Number.isSafeInteger(total) || total <= 0)) throw new Error('قيمة جدول الكميات غير صالحة')
+        const financialChanged = oldItems.length !== updatedItems.length || updatedItems.some(item => {
+          const prior = oldItems.find(row => row.id === item.id)
+          return !prior || prior.qty !== item.qty || prior.unitPriceMinor !== item.unitPriceMinor
+        })
+        if (financialChanged && state.quotations.some(row => row.projectId === id && row.status === 'won')) throw new Error('المشروع مرتبط بعرض فائز — راجع العقد المعتمد قبل تغيير كميات البنود أو أسعارها')
+        const oldTotal = oldItems.reduce((sum, item) => sum + boqItemTotal(item), 0)
+        if (financialChanged && oldItems.length && oldTotal !== project.contractValueMinor) throw new Error('قيمة العقد لا تطابق مجموع البنود السابق — راجع العقد المعتمد قبل تغيير القيمة')
+        const newValue = updatedItems.length ? (financialChanged ? total : project.contractValueMinor) : (changes.contractValueMinor ?? project.contractValueMinor)
+        if (hasExtracts && newValue !== project.contractValueMinor) throw new Error('صدرت مستخلصات — لا تغير قيمة العقد مباشرة')
+        const updated: Project = { ...project, ...changes, contractValueMinor: newValue, boqSections: sections }
+        const errors = validateProject(updated)
+        if (!Number.isFinite(updated.retentionPercent)) errors.push('نسبة المحتجز غير صالحة')
+        if (updated.defectsLiabilityMonths != null && (!Number.isSafeInteger(updated.defectsLiabilityMonths) || updated.defectsLiabilityMonths < 0)) errors.push('فترة الضمان غير صالحة')
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (updated.clientId != null && !scoped.customers.some(row => row.id === updated.clientId)) throw new Error('عميل المشروع غير موجود في الفرع الحالي')
+        if (updated.managerEmployeeId != null && updated.managerEmployeeId !== project.managerEmployeeId && !scoped.employees.some(row => row.id === updated.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في الفرع الحالي')
+        assertProjectCustomerBranch(state, updated)
+        set({ projects: state.projects.map(row => row.id === id ? updated : row), ...(changed ? { boqItems: [...state.boqItems.filter(row => row.projectId !== id), ...updatedItems] } : {}) })
+        return updated
       },
       /* ─── §94-مراجعة: تعديل بيانات المشروع (طلب المالك) — قيمة العقد قبل أول مستخلص فقط ─── */
       updateProject: (id, changes) => {
@@ -15501,6 +16914,8 @@ export const useRawDataStore = create<DataState>()(
       addQuotation: (q) => {
         const state = get()
         const scoped = assertQuotationAccess(state)
+        const branch = getEffectiveActiveBranch(state)
+        if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل إنشاء عرض السعر لضمان استقلال بياناته')
         // بنود كاملة: اسم + وصف + كمية + وحدة + سعر + تكلفة تقديرية (أمر التعديل)
         const fullLines: QuotationLine[] = q.lines.map((l) => ({
           nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
@@ -15517,9 +16932,10 @@ export const useRawDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         // ربط العميل إداري — لا أثر على رصيده المحاسبي إطلاقاً
         if (q.clientId != null && !scoped.customers.find((c) => c.id === q.clientId)) throw new Error('العميل المربوط غير موجود في الفرع الحالي')
-        const id = nextId(state.quotations)
+        const id = nextId([...state.quotations, ...state.quotationDeletionRecords])
         const quote: Quotation = {
           id,
+          ...(branch ? { branchId: branch.id } : {}),
           quoteNumber: `${q.kind === 'tender' ? 'TN' : 'QT'}-${String(id).padStart(4, '0')}`,
           kind: q.kind,
           clientName: q.clientName.trim(),
@@ -15538,16 +16954,20 @@ export const useRawDataStore = create<DataState>()(
         return quote
       },
 
-      deleteQuotation: (id) => {
+      deleteQuotation: (id, expectedProjectId, reason = 'حذف عرض سعر', expectedQuote) => {
         const state = get()
         const scoped = assertQuotationAccess(state, 'sales.quotation.delete')
         const q = scoped.quotations.find(row => row.id === id)
         if (!q) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
-        if (q.projectId != null) throw new Error('لا يمكن حذف عرض تحوّل إلى مشروع — احتفظ به كمرجع للمشروع')
-        const at = localIsoTimestamp()
+        if (expectedProjectId !== undefined && (q.projectId ?? null) !== expectedProjectId) throw new Error('تغير ارتباط العرض بالمشروع — راجعه قبل تأكيد الحذف')
+        if (expectedQuote != null && JSON.stringify(q) !== expectedQuote) throw new Error('تغير العرض منذ التأكيد — راجعه قبل الحذف')
+        if (!reason.trim()) throw new Error('سبب حذف عرض السعر مطلوب')
+        if (q.projectId != null) assertNoProjectFinancialReferences(state, q.projectId)
+        const at = localIsoTimestamp(), by = activeUserName(state)
         set({
-          quotations: state.quotations.map(row => row.id === id ? { ...row, deletedAt: at } : row),
-          auditLog: appendAudit(state.auditLog, [{ at, user: activeUserName(state), kind: 'ops', title: `حذف عرض السعر ${q.quoteNumber} — ${q.titleAr}` }]),
+          quotations: state.quotations.filter(row => row.id !== id),
+          quotationDeletionRecords: [...state.quotationDeletionRecords, { id, quoteNumber: q.quoteNumber, projectId: q.projectId ?? null, reason: reason.trim(), at, by, ...(q.branchId != null ? { branchId: q.branchId } : {}) }],
+          auditLog: appendAudit(state.auditLog, [{ at, user: by, kind: 'ops', title: `حذف عرض السعر ${q.quoteNumber} — ${reason.trim()}` }]),
         })
       },
 
@@ -15569,6 +16989,10 @@ export const useRawDataStore = create<DataState>()(
         const q = scoped.quotations.find((x) => x.id === id)
         if (!q || q.deletedAt) throw new Error('العرض غير موجود في الفرع الحالي أو محذوف')
         if (q.projectId != null) throw new Error('العرض تحوّل لمشروع — لا يُعدَّل؛ بنوده صارت جدول كميات المشروع (أوامر التغيير من المشروع)')
+        // أنواع TypeScript لا تحمي وقت التشغيل: هوية العرض وحالته وفرعه وربطه
+        // لا تُغيَّر عبر محرر المحتوى، حتى لو مرّر مستدعٍ حقولاً إضافية.
+        const editableFields = new Set(['kind', 'clientName', 'clientId', 'titleAr', 'validUntil', 'lines', 'notes', 'winProbability', 'bidBondMinor'])
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes) || Reflect.ownKeys(changes).some(key => typeof key !== 'string' || !editableFields.has(key))) throw new Error('حقل تعديل عرض السعر غير مسموح — راجع بيانات المستند')
         const merged: Quotation = { ...q, ...changes, lines: q.lines } /* البنود تُستبدل بعد التطبيع أدناه — لا تتسرب بنود النوع الفضفاض */
         const fullLines: QuotationLine[] = (changes.lines ?? q.lines).map((l) => ({
           nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
@@ -15608,10 +17032,15 @@ export const useRawDataStore = create<DataState>()(
            فلو دخلت قيمة العقد لتضخم سقف المستخلصات ونسب الإنجاز. البنود كذلك بأسعار صافية
            (إن كان سعر العرض شاملاً الضريبة تُستخرج منه). */
         const netContractMinor = quotationTotals(q.lines).netMinor
-        // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
-        // (الحد المالي الاختياري — إن وُجد — يُقاس بصافي قيمة العقد الناتج)
-        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
-        const project = get().addProject({
+        // جدول الكميات يخزن سعر وحدة صحيحاً؛ لا ننشئ مشروعاً إذا غيّر التقريب صافي أي بند.
+        for (const line of q.lines) {
+          const net = quotationLineNetMinor(line)
+          const unit = Math.round(net / line.qty)
+          if (!Number.isFinite(line.qty) || line.qty <= 0 || !Number.isSafeInteger(net) || !Number.isSafeInteger(unit) || Math.round(line.qty * unit) !== net) {
+            throw new Error('لا يمكن تحويل العرض إلى مشروع بدقة بسبب تقريب صافي سعر الوحدة؛ راجع كمية البند أو سعره قبل التحويل')
+          }
+        }
+        const project = prepareNewProject(get(), {
           nameAr: q.titleAr,
           clientName: q.clientName,
           clientId: q.clientId ?? null, // الربط الإداري ينتقل مع التحويل — بلا أي أثر مالي
@@ -15633,7 +17062,12 @@ export const useRawDataStore = create<DataState>()(
           estCostMinor: l.estCostMinor,
           progressPercent: 0,
         }))
+        // استهلاك الاعتماد ينشر مع المشروع وبنوده في تحديث واحد.
+        const approvalRequests = planApprovalConsumption(state, 'quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`, netContractMinor)
+        // تُنشر هوية المشروع وبنوده وربطه بالعرض معاً؛ لا تُظهر اللقطة مشروعاً ناقصاً.
         set((s) => ({
+          approvalRequests,
+          projects: [...s.projects, project],
           quotations: s.quotations.map((x) => (x.id === id ? { ...x, projectId: project.id } : x)),
           boqItems: [...s.boqItems, ...boq],
         }))
@@ -16104,12 +17538,27 @@ export const useRawDataStore = create<DataState>()(
         return doc
       },
 
+      /** لا يُستند إلى حصر تاريخي لا تطابق سطوره وقيمه القيود وبنود العقد. */
+      // تستعمل داخل الإصدار والتعديل أدناه قبل احتساب الكميات.
       addProjectExtract: (args) => {
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         assertProjectCustomerBranch(state, project)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل إصدار المستخلص')
+        const documentDate = args.date ?? todayLocalIso()
+        assertInvoicePostingDate(state, documentDate)
+        if (args.terminalPayment && documentDate !== todayLocalIso()) throw new Error('تحصيل الماكينة للمستخلص بتاريخ اليوم فقط — راجع إثبات التحصيل')
+        if (state.projectExtracts.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > documentDate))) throw new Error('تاريخ المستخلص يسبق مستخلصاً مسجلاً — راجع تسلسل الأعمال')
+        if ((args.advanceRecoveryMinor ?? 0) > 0 && state.clientAdvances.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date) || row.date > documentDate))) throw new Error('تاريخ المستخلص يسبق دفعة مقدمة مسجلة — راجع تسلسل الاسترداد')
+        if (documentDate < todayLocalIso()) {
+          const orders = state.changeOrders.filter(row => row.projectId === project.id && (row.status === 'approved' || row.status === 'invoiced'))
+          if (orders.some(row => !row.approvedAt || !Number.isFinite(Date.parse(row.approvedAt)) || todayLocalIso(new Date(row.approvedAt)) > documentDate)) throw new Error('لا يمكن تأريخ المستخلص قبل اعتماد أمر تغيير أو دون إثبات تاريخ اعتماده')
+          const survey = args.sourceSurveyDraft ? state.projectSurveys.find(row => row.projectId === project.id) : undefined
+          if (survey?.revisions.some(row => row.source === 'manual' && (!row.measurementDate || !isValidExpiryDate(row.measurementDate) || row.measurementDate > documentDate))) throw new Error('لا يمكن تأريخ مسودة المستخلص المستمدة من الحصر قبل قياسه أو دون تاريخ قياس مثبت')
+        }
         /* §95 (محاذاة pro-acc — طلب المالك): سقف صارم — المستخلصات المتراكمة لا تتجاوز
            قيمة العقد الفعلية (الأصلية + أوامر التغيير المعتمدة/المستخلصة). الفارق؟ أمر تغيير. */
         const extractCeiling = (newGross: number, excludeExtractId?: number) => {
@@ -16120,15 +17569,47 @@ export const useRawDataStore = create<DataState>()(
           if (claimed + newGross > effective) {
             throw new Error(`المستخلصات (${fmtMinorPlain(claimed + newGross)}) ستتجاوز قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير بالفارق أولاً أو خفّض قيمة المستخلص`)
           }
+          const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
+          const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          assertQuantityCreditBillingBasis(state, project.id)
+          const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
+          if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + newGross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
+          if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + newGross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
+          if (args.isFinal && state.projectExtracts.some(e => e.projectId === project.id && (e.refundedMinor ?? 0) > 0)) throw new Error('يوجد مرتجع مستخلص سابق — راجع تسوية العقد قبل المستخلص الختامي')
+          if (args.isFinal && claimed + newGross !== effective) throw new Error(`المستخلص الختامي يتطلب مساواة إجمالي المستخلصات لقيمة العقد الفعلية؛ الفرق ${fmtMinorPlain(effective - claimed - newGross)} — راجع كميات العقد وأوامر التغيير`)
         }
         // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
+        if (args.sourceSurveyDraft) {
+          const drafts = state.projectExtractDrafts.filter(row => row.projectId === project.id)
+          if (drafts.length !== 1 || drafts[0].basis !== projectSurveyDraftBasis(state, project.id)) throw new Error('مسودة المستخلص متقادمة أو غير موجودة — جهزها مجدداً من الحصر')
+        }
         if (state.projectExtracts.some((x) => x.projectId === project.id && x.isFinal)) {
           throw new Error('صدر المستخلص الختامي لهذا المشروع — لا مستخلصات بعده، أفرج عن المحتجز لإقفاله')
         }
+        // لا تتجاوز مسارات المبلغ والنسبة حارس تسلسل الكميات بعد إشعار قائم.
+        if (state.projectExtracts.some(row => row.projectId === project.id && ((row.refundedMinor ?? 0) !== 0 || (row.refundedTaxMinor ?? 0) !== 0 || (row.refunds?.length ?? 0) > 0 || row.quantityCreditVersion != null))) throw new Error('يوجد إشعار دائن لمستخلص المشروع — راجع تسلسل الكميات والتسوية قبل إصدار مستخلص جديد')
         // المستخلص البندي (نمط AccFlex): بنود من BOQ بنسب تراكمية — أو مبلغ إجمالي (النمط القديم)
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
-        if (args.extractLines && args.extractLines.length > 0) {
+        if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
+        const surveys = state.projectSurveys.filter(row => row.projectId === project.id)
+        if (surveys.length > 1) throw new Error('يوجد أكثر من حصر رئيسي للمشروع — راجع البيانات')
+        if (args.extractQtyLines?.length) {
+          const prior = state.projectExtracts.filter(e => e.projectId === project.id)
+          const journal = customerReviewJournal(state)
+          for (const ex of prior) {
+            assertProjectExtractOriginalIntegrity(ex, journal)
+            if (ex.lines?.length && ex.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== ex.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+            for (const line of ex.lines ?? []) {
+              const item = state.boqItems.find(b => b.projectId === project.id && b.id === line.boqItemId)
+              if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('قيمة بند العقد لا تطابق مستخلصاً سابقاً — راجع الحصر')
+            }
+          }
+          assertProjectExtractRefundIntegrity(prior, journal)
+          const r = computeQuantityExtractLines(args.extractQtyLines, state.boqItems.filter(b => b.projectId === project.id), prior, args.acceptEstimatedPrior)
+          extractLinesComputed = r.computed
+          gross = r.grossMinor
+        } else if (args.extractLines && args.extractLines.length > 0) {
           const priorExtracts = state.projectExtracts.filter((e) => e.projectId === project.id)
           const projBoq = state.boqItems
             .filter((b) => b.projectId === project.id)
@@ -16146,7 +17627,7 @@ export const useRawDataStore = create<DataState>()(
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
         // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل) — تُقاس بقيمة
         // المستخلص الإجمالية (الحد المالي الاختياري إن وُجد)
-        get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`, gross)
+        const approvalRequests = planApprovalConsumption(state, 'project_extract', project.id, `مستخلص جديد — ${project.nameAr}`, gross)
         extractCeiling(gross)
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
@@ -16154,10 +17635,8 @@ export const useRawDataStore = create<DataState>()(
         // استرداد الدفعة المقدمة (اختياري): يخصم من مستحق المستخلص ويطفئ 2109
         const recovery = args.advanceRecoveryMinor ?? 0
         if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > totals.dueMinor) throw new Error('استرداد الدفعة يجب أن يكون مبلغاً صحيحاً بين صفر ومستحق المستخلص')
-        if (recovery > 0) {
-          const advBalance = state.clientAdvances.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
-          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
-        }
+        if (recovery > 0) checkedProjectAdvanceBasis(state, project)
+        const advancePlan = allocateProjectAdvance(project.id, state.clientAdvances, recovery)
         // حد الائتمان: المستخلص الآجل دين على عميل المشروع (المستحق بعد استرداد الدفعة)
         if (args.payment === 'credit') {
           if (totals.dueMinor > recovery && (project.clientId == null || !state.customers.some(customer => customer.id === project.clientId))) throw new Error('المستخلص الآجل يتطلب ربط المشروع بعميل مسجل قبل إصدار ذمة')
@@ -16169,16 +17648,16 @@ export const useRawDataStore = create<DataState>()(
         const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: documentDate,
           description: `مستخلص ${extractNumber} — ${project.nameAr}`,
           sourceType: 'project_extract', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const extract: ProjectExtract = {
-          id, extractNumber, projectId: project.id, date: now,
+          id, extractNumber, projectId: project.id, date: documentDate, createdAt: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
-          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
-          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery, advanceAllocations: advancePlan.allocations } : {}),
           ...(args.isFinal ? { isFinal: true } : {}),
         }
         // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
@@ -16188,15 +17667,8 @@ export const useRawDataStore = create<DataState>()(
               return c ? { ...b, progressPercent: c.newProgressPercent } : b
             })
           : state.boqItems
-        // استهلاك الدفعات المقدمة FIFO (الأقدم أولاً)
-        let toRecover = recovery
-        const updatedAdvances = state.clientAdvances.map((a) => {
-          if (toRecover <= 0 || a.projectId !== project.id) return a
-          const room = a.amountMinor - a.recoveredMinor
-          const take = Math.min(room, toRecover)
-          toRecover -= take
-          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
-        })
+        // الاسترداد وتفصيله حُسبا من الحالة نفسها قبل أي تعديل.
+        const updatedAdvances = advancePlan.advances
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (args.terminalPayment) {
           if (args.payment !== 'cash') throw new Error('الماكينة متاحة للمستخلص المحصل فقط')
@@ -16207,7 +17679,7 @@ export const useRawDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: String(id), amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ approvalRequests, projectExtracts: [...state.projectExtracts, extract], ...(args.sourceSurveyDraft ? { projectExtractDrafts: state.projectExtractDrafts.filter(row => row.projectId !== project.id) } : {}), clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
       },
       /* ─── §94: تعديل مستخلص صادر (طلب المالك: «أصدرت مستخلصاً ولم أجد واجهة لمراجعته أو تعديله») ───
@@ -16218,12 +17690,15 @@ export const useRawDataStore = create<DataState>()(
         const scoped = getBranchScopedDataState(state)
         const extract = scoped.projectExtracts.find((e) => e.id === args.extractId)
         if (!extract) throw new Error('المستخلص غير موجود في هذا الفرع')
+        if (extract.createdAt && (!Number.isFinite(Date.parse(extract.createdAt)) || extract.date.slice(0, 10) !== todayLocalIso(new Date(extract.createdAt)))) throw new Error('المستخلص مؤرخ قبل وقت تسجيله — لا يُعدّل عبر مسار يعيد تأريخه؛ راجع المحاسب')
         const project = scoped.projects.find((p) => p.id === extract.projectId)
         if (!project) throw new Error('المشروع غير موجود في هذا الفرع')
         assertProjectCustomerBranch(state, project, extract)
+        assertQuantityChangeLinks(state.boqItems.filter(item => item.projectId === project.id), state.changeOrders.filter(order => order.projectId === project.id))
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تُعدَّل مستخلصاته')
         if (extract.refunds?.length) throw new Error('على المستخلص إشعار دائن قائم — عالجه أولاً (إلغاؤه أو مستخلص بديل)')
+        if (state.projectExtracts.some(row => row.projectId === project.id && ((row.refundedMinor ?? 0) !== 0 || (row.refundedTaxMinor ?? 0) !== 0 || (row.refunds?.length ?? 0) > 0 || row.quantityCreditVersion != null))) throw new Error('يوجد إشعار دائن لمستخلص المشروع — راجع تسلسل الكميات والتسوية قبل تعديل مستخلص آخر')
         const extractKey = `extract:${extract.id}`
         const hasAllocatedReceipt = scoped.vouchers.some(v => !v.reversalEntryId && v.kind === 'receipt' && v.allocations?.some(a => a.docKey === extractKey))
           || scoped.clientSettlements.some(st => st.allocations?.some(a => a.docKey === extractKey))
@@ -16234,9 +17709,13 @@ export const useRawDataStore = create<DataState>()(
         if (!reason) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         /* النسب التراكمية: لا تعديل لملموس من مستخلص أحدث — التسلسل من الأحدث للأقدم
            (فقط عند إعادة احتساب البنود؛ التعديل بمبلغ إجمالي لا يمس تقدم BOQ) */
-        const recomputeLines = !!(args.extractLines && args.extractLines.length > 0)
-        if (recomputeLines && extract.lines?.length) {
-          const mine = new Set(extract.lines.map((l) => l.boqItemId))
+        if (args.extractQtyLines?.length && args.extractLines?.length) throw new Error('اختر إدخال النسبة أو الكمية لا كليهما')
+        if (extract.lines?.some(line => line.newExecutedQty != null) && !args.extractQtyLines?.length) throw new Error('المستخلص يحفظ دليل الكمية — عدّله بالكميات ولا تُسقط الحصر')
+        const linkedSurvey = state.projectSurveys.filter(row => row.projectId === project.id)
+        if (linkedSurvey.length > 1) throw new Error('يوجد أكثر من حصر رئيسي للمشروع — راجع البيانات')
+        const recomputeLines = !!(args.extractLines?.length || args.extractQtyLines?.length)
+        if (recomputeLines) {
+          const mine = new Set([...(extract.lines ?? []).map((l) => l.boqItemId), ...(args.extractQtyLines ?? []).map(line => line.boqItemId), ...(args.extractLines ?? []).map(line => line.boqItemId)])
           const later = state.projectExtracts.find((e) => e.projectId === extract.projectId && e.id > extract.id && e.lines?.some((l) => mine.has(l.boqItemId)))
           if (later) throw new Error(`المستخلص ${later.extractNumber} الأحدث عدّل نسب بنود هذا المستخلص — عدّل الأحدث أولاً أو أصدر مستخلصاً بديلاً`)
         }
@@ -16262,31 +17741,41 @@ export const useRawDataStore = create<DataState>()(
               return l ? { ...b, progressPercent: l.prevProgressPercent } : b
             })
           : state.boqItems
-        /* ③ استرداد الدفعة المقدمة يُرجَع (إجمالي 2109 يظل مطابقاً — القيد العاكس عكس نصيبه) */
-        let toGiveBack = extract.advanceRecoveryMinor ?? 0
+        /* ③ لا نعكس تخصيص مقدمة تخميناً من آخر دفعة؛ نراجع دليله وترتيب المستخلصات. */
+        const previousRecovery = extract.advanceRecoveryMinor ?? 0
+        const nextRecovery = args.advanceRecoveryMinor ?? 0
         let advancesAfterRevert = state.clientAdvances
-        if (toGiveBack > 0) {
-          advancesAfterRevert = state.clientAdvances.map((a) => ({ ...a }))
-          for (let i = advancesAfterRevert.length - 1; i >= 0 && toGiveBack > 0; i--) {
-            const a = advancesAfterRevert[i]
-            if (a.projectId !== extract.projectId || a.recoveredMinor <= 0) continue
-            const give = Math.min(a.recoveredMinor, toGiveBack)
-            a.recoveredMinor -= give
-            toGiveBack -= give
-          }
-          if (toGiveBack > 0) throw new Error('خلل في إرجاع استرداد الدفعة المقدمة — راجع الدعم الفني')
+        if (previousRecovery > 0 || nextRecovery > 0) {
+          const basis = checkedProjectAdvanceBasis(state, project)
+          if (basis.extracts.some(row => row.id !== extract.id && (row.advanceRecoveryMinor ?? 0) > 0 && row.journalEntryId > extract.journalEntryId)) throw new Error('يوجد استرداد مقدمة أحدث — راجعه أولاً قبل تعديل المستخلص')
+          advancesAfterRevert = undoProjectAdvanceRecovery(project.id, state.clientAdvances, basis.extracts, extract)
         }
         /* ④ إعادة البناء من الحالة المرجَعة — نفس حراس الإصدار (نفس الرقم والمعرف) */
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
         if (recomputeLines) {
-          const r = computeExtractLines(args.extractLines!, boqAfterRevert.filter((b) => b.projectId === project.id))
+          if (args.extractQtyLines?.length) {
+            const prior = state.projectExtracts.filter(e => e.projectId === project.id && e.id < extract.id)
+            const journal = customerReviewJournal(state)
+            for (const ex of prior) {
+              assertProjectExtractOriginalIntegrity(ex, journal)
+              if (ex.lines?.length && ex.lines.reduce((sum, line) => sum + line.lineValueMinor, 0) !== ex.totals.grossMinor) throw new Error('مجموع بنود مستخلص سابق لا يطابق قيده — راجع الحصر')
+              for (const line of ex.lines ?? []) {
+                const item = state.boqItems.find(b => b.projectId === project.id && b.id === line.boqItemId)
+                if (!item || (line.contractQty != null && line.contractQty !== item.qty) || (line.unitPriceMinor != null && line.unitPriceMinor !== item.unitPriceMinor) || (line.unit != null && line.unit !== item.unit)) throw new Error('قيمة بند العقد لا تطابق مستخلصاً سابقاً — راجع الحصر')
+              }
+            }
+            assertProjectExtractRefundIntegrity(prior, journal)
+          }
+          const r = args.extractQtyLines?.length
+            ? computeQuantityExtractLines(args.extractQtyLines, boqAfterRevert.filter(b => b.projectId === project.id), state.projectExtracts.filter(e => e.projectId === project.id && e.id < extract.id), args.acceptEstimatedPrior)
+            : computeExtractLines(args.extractLines!, boqAfterRevert.filter((b) => b.projectId === project.id))
           extractLinesComputed = r.computed
           gross = r.grossMinor
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
         // بوابة الموافقات: تعديل مستخلص إجراء حرج كالإصدار — تُقاس بقيمة المستخلص الجديدة
-        get().assertApproved('project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`, gross)
+        const approvalRequests = planApprovalConsumption(state, 'project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`, gross)
         /* سقف العقد مع إقصاء قيمة هذا المستخلص القديمة — التعديل يعيد حساب المتراكم كأنه استُبدل */
         {
           const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
@@ -16296,14 +17785,20 @@ export const useRawDataStore = create<DataState>()(
           if (claimed + gross > effective) {
             throw new Error(`بعد التعديل سيتجاوز المتراكم (${fmtMinorPlain(claimed + gross)}) قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير أو خفّض القيمة`)
           }
+          const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
+          const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          assertQuantityCreditBillingBasis(state, project.id)
+          const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(order => order.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
+          if (!Number.isSafeInteger(billing.extraInvoicedNetMinor) || billing.extraInvoicedNetMinor < 0 || claimed + gross + billing.extraInvoicedNetMinor > effective) throw new Error('المستخلص مع فواتير المشروع الإضافية يتجاوز قيمة العقد — راجع الفواتير أو اعتمد أمر تغيير أولاً')
+          if (!Number.isSafeInteger(effective) || !Number.isSafeInteger(claimed + gross)) throw new Error('قيمة العقد أو المستخلصات غير آمنة — راجع البيانات')
+          const hasFinal = !!args.isFinal || state.projectExtracts.some(e => e.projectId === project.id && e.id !== extract.id && e.isFinal)
+          if (hasFinal && state.projectExtracts.some(e => e.projectId === project.id && (e.refundedMinor ?? 0) > 0)) throw new Error('يوجد مرتجع مستخلص سابق — راجع تسوية العقد قبل المستخلص الختامي')
+          if (hasFinal && claimed + gross !== effective) throw new Error(`المستخلص الختامي يتطلب مساواة إجمالي المستخلصات لقيمة العقد الفعلية؛ الفرق ${fmtMinorPlain(effective - claimed - gross)} — راجع كميات العقد وأوامر التغيير`)
         }
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const recovery = args.advanceRecoveryMinor ?? 0
         if (!Number.isSafeInteger(recovery) || recovery < 0 || recovery > totals.dueMinor) throw new Error('استرداد الدفعة يجب أن يكون مبلغاً صحيحاً بين صفر ومستحق المستخلص')
-        if (recovery > 0) {
-          const advBalance = advancesAfterRevert.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
-          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
-        }
+        const advancePlan = allocateProjectAdvance(project.id, advancesAfterRevert, recovery)
         if (args.payment === 'credit') {
           if (totals.dueMinor > recovery && (project.clientId == null || !state.customers.some(customer => customer.id === project.clientId))) throw new Error('المستخلص الآجل يتطلب ربط المشروع بعميل مسجل قبل إصدار ذمة')
           const previousCredit = extract.payment === 'credit' ? Math.max(0, extract.totals.dueMinor - (extract.advanceRecoveryMinor ?? 0)) : 0
@@ -16323,8 +17818,8 @@ export const useRawDataStore = create<DataState>()(
         const rebuilt: ProjectExtract = {
           ...extract,
           date: now, description: args.description, payment: args.payment, totals, journalEntryId: entryId,
-          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
-          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : { advanceRecoveryMinor: undefined }),
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor, ...(c.newExecutedQty != null ? { prevExecutedQty: c.prevExecutedQty, newExecutedQty: c.newExecutedQty, previousQtyEstimated: c.previousQtyEstimated, contractQty: state.boqItems.find(b => b.id === c.boqItemId)?.qty, unitPriceMinor: state.boqItems.find(b => b.id === c.boqItemId)?.unitPriceMinor, unit: state.boqItems.find(b => b.id === c.boqItemId)?.unit } : {}) })),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery, advanceAllocations: advancePlan.allocations } : { advanceRecoveryMinor: undefined, advanceAllocations: undefined }),
           ...(args.isFinal ? { isFinal: true } : { isFinal: undefined }),
           lastEditReason: reason, editedAt: now, editReversalEntryId: reversalId,
         }
@@ -16335,17 +17830,11 @@ export const useRawDataStore = create<DataState>()(
               return c ? { ...b, progressPercent: c.newProgressPercent } : b
             })
           : boqAfterRevert
-        let toRecover = recovery
-        const updatedAdvances = advancesAfterRevert.map((a) => {
-          if (toRecover <= 0 || a.projectId !== project.id) return a
-          const room = a.amountMinor - a.recoveredMinor
-          const take = Math.min(room, toRecover)
-          toRecover -= take
-          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
-        })
+        const updatedAdvances = advancePlan.advances
         set({
-          projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
+          approvalRequests,
           clientAdvances: updatedAdvances, boqItems: updatedBoq,
+          projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
           journal: [...journalAfterReversal, reversal, entry],
         })
         return rebuilt
@@ -16981,41 +18470,56 @@ export const useRawDataStore = create<DataState>()(
         set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry], custodyTxs })
         return cost
       },
-      getRemainingRetention: (projectId) => {
-        const state = get()
-        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
-        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
-        return held - released
-      },
-      releaseRetention: (projectId, treasury = '1101', terminalPaymentInput) => {
-        const state = get()
-        const project = state.projects.find((p) => p.id === projectId)
-        if (!project) throw new Error('المشروع غير موجود')
-        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
-        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
-        const remaining = held - released
-        const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury) // يرمي لو صفر
-        const now = localIsoTimestamp()
+      getRemainingRetention: (projectId) => checkedProjectRetention(get(), projectId).remaining,
+      releaseRetention: (projectId, treasury = '1101', terminalPaymentInput, selectedDate) => {
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find((p) => p.id === projectId)
+        if (!project || state.projects.filter(p => p.id === projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        assertProjectCustomerBranch(state, project)
+        if (project.status !== 'active') throw new Error('المشروع مقفل')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تحصيل محتجز المشروع')
+        }
+        const now = localIsoTimestamp(), date = selectedDate ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ تحصيل المحتجز غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ التحصيل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (terminalPaymentInput && date !== now.slice(0, 10)) throw new Error('تاريخ عملية الماكينة لا يُعدّل إلى يوم سابق — راجع إثبات التحصيل')
+        const extracts = state.projectExtracts.filter(e => e.projectId === projectId)
+        const releases = state.retentionReleases.filter(r => r.projectId === projectId)
+        if (scoped.retentionReleases.filter(r => r.projectId === projectId).length !== releases.length) throw new Error('تحصيل محتجز مرتبط بفرع آخر — راجع الارتباط')
+        if (extracts.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date || (e.quantityCreditVersion === 2 && (e.refunds ?? []).some(r => !isValidExpiryDate(r.date) || r.date > date))) || releases.some(r => !isValidExpiryDate(r.date?.slice(0, 10)) || r.date.slice(0, 10) > date)) throw new Error('تاريخ التحصيل يسبق مستخلصاً أو إشعاراً أو تحصيلاً مسجلاً — راجع تسلسل المحتجز')
+        const journal = customerReviewJournal(state)
+        for (const extract of extracts) {
+          assertProjectCustomerBranch(state, project, extract)
+          assertProjectExtractOriginalIntegrity(extract, journal)
+        }
+        assertProjectExtractRefundIntegrity(extracts, journal)
+        const { remaining } = checkedProjectRetention(state, projectId)
+        const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury)
+        assertTreasuryForPosting(state, treasury, 'receipt', remaining)
         const id = nextId(state.retentionReleases)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `إفراج عن محتجزات ${project.nameAr} وإقفال المشروع`,
           sourceType: 'retention_release', sourceId: id, sourceCollection: 'retentionReleases', lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (terminalPaymentInput) {
-          const terminal = state.paymentTerminals.find((row) => row.id === terminalPaymentInput.terminalId)
-          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          const terminal = scoped.paymentTerminals.find((row) => row.id === terminalPaymentInput.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل في الفرع الحالي')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === terminalPaymentInput.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', remaining)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `retention:${id}`, amountMinor: remaining, providerReference: terminalPaymentInput.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPaymentInput.cardLast4 })
         }
         set({
-          retentionReleases: [...state.retentionReleases, { id, projectId, date: now, amountMinor: remaining, journalEntryId: entryId }],
+          retentionReleases: [...state.retentionReleases, { id, projectId, date, createdAt: now, amountMinor: remaining, journalEntryId: entryId }],
           journal: [...state.journal, entry],
-          projects: state.projects.map((p) => (p.id === projectId ? { ...p, status: 'completed' as const } : p)),
+          projects: state.projects.map((p) => (p.id === projectId ? { ...p, status: 'completed' as const, completedAt: now } : p)),
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return { amount: remaining }
@@ -17034,6 +18538,8 @@ export const useRawDataStore = create<DataState>()(
         if (!scoped.projects.some(project => project.id === projectId)) throw new Error('المشروع غير موجود في هذا الفرع')
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(extract => extract.projectId === projectId), customerReviewJournal(raw))
       },
+
+      getProjectNetQuantityReport: (projectId, asOf) => checkedProjectNetQuantityReport(get(), projectId, asOf),
 
       getProjectCostBreakdown: (projectId) => {
         const state = getBranchScopedDataState(get())
@@ -17066,6 +18572,7 @@ export const useRawDataStore = create<DataState>()(
         if (!project) throw new Error('المشروع غير موجود')
         const projectInvoices = state.sales.filter((inv) => inv.projectId === projectId)
         const invoiceIds = new Set(projectInvoices.map((inv) => inv.id))
+        assertQuantityCreditBillingBasis(get(), projectId)
         return computeProjectBillingGuard({
           contractValueMinor: project.contractValueMinor,
           changeOrders: state.changeOrders.filter((o) => o.projectId === projectId),
@@ -17082,7 +18589,7 @@ export const useRawDataStore = create<DataState>()(
         const journal = customerReviewJournal(get())
         for (const extract of projectExtracts) assertProjectExtractOriginalIntegrity(extract, journal)
         assertProjectExtractRefundIntegrity(projectExtracts, journal)
-        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        const { released } = checkedProjectRetention(get(), projectId)
         /* §95 (محاذاة pro-acc): التكاليف من كل مصادرها — اليدوية + شهادات الباطن
            (باطن) + أجور اليومية المسوّاة (عمالة) + المشتريات المرتبطة (مواد، بلا ض.مدخلات)
            − مرتجعاتها. قبل هذا كان الربح يبدو أعلى من الحقيقة بقدر التكاليف المرحّلة تلقائياً. */
@@ -17101,7 +18608,7 @@ export const useRawDataStore = create<DataState>()(
         ]
         return projectProfit(
           project,
-          state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: netProjectExtractTotals(e).grossMinor, retentionMinor: e.totals.retentionMinor })),
+          state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: netProjectExtractTotals(e).grossMinor, retentionMinor: e.totals.retentionMinor - creditedProjectRetention(e) })),
           costs,
           released,
         )
@@ -17110,7 +18617,9 @@ export const useRawDataStore = create<DataState>()(
       /* ─── عمق المقاولات: BOQ وأوامر التغيير والدفعات المقدمة والباطن والضمانات واليوميات ─── */
       addBoqItem: (args) => {
         const state = get()
-        if (!state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        const project = state.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (args.sectionId != null && !project.boqSections?.some(section => section.id === args.sectionId)) throw new Error('قسم بند المشروع غير موجود')
         const errors = validateBoqItem(args)
         const estCost = args.estCostMinor ?? 0
         if (!Number.isInteger(estCost) || estCost < 0) errors.push('التكلفة التقديرية غير صحيحة')
@@ -17124,8 +18633,11 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يعدّل مباشرة')
         const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
-        if (priceQtyChange && boq.progressPercent > 0) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
+        if ((priceQtyChange || (changes.unit !== undefined && changes.unit !== boq.unit)) && state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا تغير الكمية أو السعر أو الوحدة')
+        if (priceQtyChange && (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id)))) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
+        if (changes.unit !== undefined && changes.unit !== boq.unit && state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه حصر سابق — لا تغير وحدة القياس؛ أنشئ بنداً جديداً')
         const merged: BoqItem = { ...boq, ...changes }
         const errors = validateBoqItem({ descriptionAr: merged.descriptionAr, unit: merged.unit, qty: merged.qty, unitPriceMinor: merged.unitPriceMinor })
         if (errors.length) throw new Error(errors.join(' — '))
@@ -17140,9 +18652,11 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const boq = state.boqItems.find((b) => b.id === id)
         if (!boq) throw new Error('بند الكميات غير موجود')
+        if (boq.quantityChange || state.boqItems.some(item => item.quantityChange?.originalBoqItemId === boq.id)) throw new Error('البند مرتبط بأمر تغيير كميات معتمد — لا يحذف مباشرة')
+        if (state.projectSurveys.some(survey => survey.projectId === boq.projectId && survey.lines.some(line => line.boqItemId === id))) throw new Error('البند مرتبط بحصر محفوظ — لا يُحذف')
         // حارس الفئة (الحذف الآمن): بند بتقدم مرحَّل عليه مستخلصات — حذفه يشوه
         // المستخلصات التراكمية القادمة والتقارير؛ وبند مربوط بعقد باطن يكسر نطاق العقد
-        if (boq.progressPercent > 0) throw new Error('البند عليه مستخلصات مرحلة — لا يُحذف حفاظاً على تسلسل التقدم')
+        if (boq.progressPercent > 0 || state.projectExtracts.some(ex => ex.projectId === boq.projectId && ex.lines?.some(line => line.boqItemId === id))) throw new Error('البند عليه مستخلصات مرحلة — لا يُحذف حفاظاً على تسلسل التقدم')
         if (state.subContracts.some((sc) => sc.boqItemIds.includes(id))) throw new Error('البند مربوط بعقد مقاول باطن — فك الربط أولاً')
         set({ boqItems: state.boqItems.filter((b) => b.id !== id) })
       },
@@ -17152,13 +18666,29 @@ export const useRawDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا أوامر تغيير')
+        if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل إضافة أمر تغيير')
         if (!args.titleAr.trim()) throw new Error('عنوان أمر التغيير مطلوب')
-        if (!Number.isInteger(args.amountMinor) || args.amountMinor === 0) throw new Error('قيمة أمر التغيير لا تكون صفراً')
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor === 0) throw new Error('قيمة أمر التغيير لا تكون صفراً')
+        let quantityChange: ChangeOrder['quantityChange']
+        if (args.quantityChange) {
+          const scoped = getBranchScopedDataState(state)
+          if (!scoped.projects.some(p => p.id === project.id) || state.projects.filter(p => p.id === project.id).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+          assertProjectCustomerBranch(state, project)
+          if (state.projectExtracts.some(row => row.projectId === project.id && row.isFinal)) throw new Error('صدر مستخلص ختامي — لا تُضاف كميات دون مراجعة الإقفال')
+          const candidates = state.boqItems.filter(row => row.id === args.quantityChange!.originalBoqItemId && row.projectId === project.id)
+          if (candidates.length !== 1 || !scoped.boqItems.some(row => row.id === candidates[0].id) || candidates[0].quantityChange) throw new Error('بند العقد الأصلي غير موجود أو غير فريد في الفرع')
+          const item = candidates[0], qty = normalizeMovementQty(args.quantityChange.qty)
+          if (quantityChangeValue(qty, item.unitPriceMinor) !== args.amountMinor) throw new Error('قيمة أمر التغيير لا تطابق الكمية بسعر بند العقد')
+          quantityChange = { originalBoqItemId: item.id, qty, originalQty: item.qty, unitPriceMinor: item.unitPriceMinor, unit: item.unit }
+        }
+        const date = args.date ?? todayLocalIso()
+        const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : new Date(Number.NaN)
+        if (!Number.isFinite(parsed.getTime()) || calendarDateIso(parsed) !== date) throw new Error('تاريخ أمر التغيير غير صالح')
         const id = nextId(state.changeOrders)
         const order: ChangeOrder = {
           id, projectId: args.projectId, number: `CO-${String(id).padStart(4, '0')}`,
-          titleAr: args.titleAr.trim(), amountMinor: args.amountMinor,
-          status: 'draft', date: todayLocalIso(), approvedAt: null,
+          titleAr: args.titleAr.trim(), amountMinor: args.amountMinor, ...(quantityChange ? { quantityChange } : {}),
+          status: 'draft', date, createdAt: localIsoTimestamp(), approvedAt: null,
         }
         set({ changeOrders: [...state.changeOrders, order] })
         return order
@@ -17171,28 +18701,69 @@ export const useRawDataStore = create<DataState>()(
         if (status === 'invoiced') {
           if (order.status !== 'approved') throw new Error('لا يُستخلَص إلا أمر تغيير معتمد')
         } else if (order.status !== 'draft') throw new Error('أمر التغيير محسوم بالفعل')
-        // التخفيض لا يهبط بالعقد الفعلي تحت الصفر
+        if (status === 'approved' && state.projectExtracts.some(row => row.projectId === order.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع إقفال المشروع قبل اعتماد أمر تغيير')
+        // لا يُعتمد تخفيض يهبط بقيمة العقد تحت الأعمال التي فُوترت بالفعل.
         if (status === 'approved' && order.amountMinor < 0) {
-          const project = state.projects.find((p) => p.id === order.projectId)!
-          const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === order.projectId))
-          if (effective + order.amountMinor < 0) throw new Error('التخفيض أكبر من قيمة العقد الفعلية')
+          const project = state.projects.find((p) => p.id === order.projectId)
+          if (!project) throw new Error('المشروع غير موجود')
+          const projectInvoices = state.sales.filter(invoice => invoice.projectId === project.id)
+          const invoiceIds = new Set(projectInvoices.map(invoice => invoice.id))
+          assertQuantityCreditBillingBasis(state, project.id)
+          const billing = computeProjectBillingGuard({ contractValueMinor: project.contractValueMinor, changeOrders: state.changeOrders.filter(row => row.projectId === project.id), extracts: state.projectExtracts.filter(row => row.projectId === project.id), saleInvoices: projectInvoices, saleReturns: state.saleReturns.filter(row => invoiceIds.has(row.saleId)) })
+          const next = billing.effectiveContractNetMinor + order.amountMinor
+          if (!Number.isSafeInteger(next) || next < 0) throw new Error('التخفيض أكبر من قيمة العقد الفعلية')
+          if (!Number.isSafeInteger(billing.billedNetMinor) || next < billing.billedNetMinor) throw new Error('التخفيض يهبط بالعقد تحت المستخلصات والفواتير الإضافية المرحلة — راجع التسوية أولاً')
         }
-        set({
-          changeOrders: state.changeOrders.map((o) =>
-            o.id === id ? { ...o, status, approvedAt: status === 'approved' ? new Date().toISOString() : o.approvedAt } : o),
-        })
+        let addedItem: BoqItem | undefined
+        let quantityChange = order.quantityChange
+        if (status === 'approved' && quantityChange) {
+          const scoped = getBranchScopedDataState(state)
+          const projects = state.projects.filter(p => p.id === order.projectId)
+          if (projects.length !== 1 || projects[0].status !== 'active' || !scoped.projects.some(p => p.id === order.projectId)) throw new Error('المشروع غير متاح في الفرع الحالي')
+          assertProjectCustomerBranch(state, projects[0])
+          if (state.projectExtracts.some(row => row.projectId === order.projectId && row.isFinal)) throw new Error('صدر مستخلص ختامي — راجع الإقفال قبل اعتماد أمر التغيير')
+          const matches = state.boqItems.filter(row => row.id === quantityChange!.originalBoqItemId && row.projectId === order.projectId)
+          const item = matches[0]
+          if (matches.length !== 1 || !scoped.boqItems.some(row => row.id === item.id) || item.quantityChange || item.qty !== quantityChange.originalQty || item.unitPriceMinor !== quantityChange.unitPriceMinor || item.unit !== quantityChange.unit) throw new Error('تغير بند العقد منذ إنشاء الأمر — راجعه وأعد إنشاء الأمر')
+          if (quantityChange.generatedBoqItemId != null || state.boqItems.some(row => row.quantityChange?.orderId === order.id)) throw new Error('شريحة أمر التغيير موجودة بالفعل — راجع البيانات')
+          if (quantityChangeValue(quantityChange.qty, item.unitPriceMinor) !== order.amountMinor) throw new Error('قيمة أمر التغيير لا تطابق الكمية والسعر')
+          const newId = nextId(state.boqItems)
+          addedItem = { ...item, id: newId, code: `${item.code} / ${order.number}`, qty: quantityChange.qty, progressPercent: 0, quantityChange: { orderId: order.id, originalBoqItemId: item.id } }
+          quantityChange = { ...quantityChange, generatedBoqItemId: newId }
+        }
+        const nextOrders = state.changeOrders.map((o) =>
+          o.id === id ? { ...o, status, ...(quantityChange ? { quantityChange } : {}), approvedAt: status === 'approved' ? new Date().toISOString() : o.approvedAt } : o)
+        const nextBoq = addedItem ? [...state.boqItems, addedItem] : state.boqItems
+        assertQuantityChangeLinks(nextBoq.filter(item => item.projectId === order.projectId), nextOrders.filter(row => row.projectId === order.projectId))
+        set({ changeOrders: nextOrders, ...(addedItem ? { boqItems: nextBoq } : {}) })
       },
 
       receiveClientAdvance: (args) => {
         const state = get()
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find((p) => p.id === args.projectId)
+        if (!project || state.projects.filter(row => row.id === args.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        assertProjectCustomerBranch(state, project)
         if (project.status === 'completed') throw new Error('المشروع مقفل')
-        const lines = buildClientAdvanceEntry(args.amountMinor, args.treasury, project.nameAr)
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(row => row.id === state.currentUserId && row.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تسجيل دفعة المشروع')
+        }
+        if (!Number.isSafeInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('قيمة الدفعة المقدمة غير صالحة')
+        assertTreasuryForPosting(state, args.treasury, 'receipt', args.amountMinor)
         const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ الدفعة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ الدفعة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (args.terminalPayment && date !== now.slice(0, 10)) throw new Error('تاريخ عملية الماكينة لا يُعدّل إلى يوم سابق — راجع إثبات التحصيل')
+        // لا نعكس ترتيب FIFO ولا نُدرج دفعة قبل مستخلص مسجل دون إعادة بناء تاريخ التخصيص.
+        if (state.clientAdvances.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date) || row.date > date)) || state.projectExtracts.some(row => row.projectId === project.id && (!isValidExpiryDate(row.date?.slice(0, 10)) || row.date.slice(0, 10) > date))) throw new Error('تاريخ الدفعة يسبق دفعة أو مستخلصاً مسجلاً للمشروع — راجع تسلسل الاسترداد')
+        const lines = buildClientAdvanceEntry(args.amountMinor, args.treasury, project.nameAr)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `دفعة مقدمة من عميل ${project.nameAr}`,
           sourceType: 'client_advance', sourceId: project.id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
@@ -17200,13 +18771,13 @@ export const useRawDataStore = create<DataState>()(
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (args.terminalPayment) {
           const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
-          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== args.treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== args.treasury || (branch && terminal.branchId !== String(branch.id))) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل أو لا يتبع الفرع')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `advance:${project.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
         set({
-          clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date: now.slice(0, 10), amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
+          clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date, amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
           journal: [...state.journal, entry],
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
@@ -17285,7 +18856,7 @@ export const useRawDataStore = create<DataState>()(
         }
         if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الشهادة يجب أن تكون موجبة — أدخل مبلغاً أو نسبة إنجاز جديدة')
         // بوابة الموافقات: اعتماد مستخلص الباطن إجراء حرج — تُقاس بقيمة الشهادة
-        get().assertApproved('sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`, amountMinor)
+        const approvalRequests = planApprovalConsumption(state, 'sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`, amountMinor)
         // حماية تجاوز قيمة العقد
         const certified = state.subCertificates.filter((c) => c.contractId === contract.id).reduce((s, c) => s + c.amountMinor, 0)
         if (certified + amountMinor > contract.contractValueMinor) {
@@ -17338,7 +18909,7 @@ export const useRawDataStore = create<DataState>()(
         const updatedContracts = newProgress !== null
           ? state.subContracts.map((c) => (c.id === contract.id ? { ...c, progressPercent: newProgress } : c))
           : state.subContracts
-        set({ subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, subContracts: updatedContracts, journal: [...state.journal, entry] })
+        set({ approvalRequests, subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, subContracts: updatedContracts, journal: [...state.journal, entry] })
         return cert
       },
       paySubContractor: (args) => {
@@ -17518,78 +19089,79 @@ export const useRawDataStore = create<DataState>()(
 
       /* ─── أوامر التعديل: أذون صرف مواد + تحصيلات FIFO + دفعات باطن + EVM + موافقات ─── */
       issueMaterials: (args) => {
-        const state = get()
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
-        if (project.status === 'completed') throw new Error('المشروع مقفل — لا صرف مواد عليه')
-        // الصارف والمستلم إلزاميان من قاعدة الموظفين (أمر التعديل)
-        const issuer = state.employees.find((e) => e.id === args.issuedByEmployeeId)
-        if (!issuer) throw new Error('حدد أمين المخزن (الصارف) من سجل الموظفين')
-        const receiver = state.employees.find((e) => e.id === args.receivedByEmployeeId)
-        if (!receiver) throw new Error('حدد مهندس الموقع/المشرف (المستلم) من سجل الموظفين')
+        const state = get(), scoped = getBranchScopedDataState(state)
+        const project = scoped.projects.find(p => p.id === args.projectId)
+        if (!project || state.projects.filter(p => p.id === args.projectId).length !== 1) throw new Error('المشروع غير موجود أو غير فريد في الفرع الحالي')
+        if (project.status !== 'active') throw new Error('المشروع مقفل — لا صرف مواد عليه')
+        const issuer = scoped.employees.find(e => e.id === args.issuedByEmployeeId && e.active)
+        if (!issuer || state.employees.filter(e => e.id === args.issuedByEmployeeId).length !== 1) throw new Error('حدد أمين المخزن (الصارف) النشط من سجل موظفي الفرع')
+        const receiver = scoped.employees.find(e => e.id === args.receivedByEmployeeId && e.active)
+        if (!receiver || state.employees.filter(e => e.id === args.receivedByEmployeeId).length !== 1) throw new Error('حدد مهندس الموقع/المشرف (المستلم) النشط من سجل موظفي الفرع')
         if (issuer.id === receiver.id) throw new Error('الصارف والمستلم لا يكونان نفس الموظف')
         if (args.lines.length === 0) throw new Error('أضف صنفاً واحداً على الأقل')
-        // بناء السطور بالتحويل للوحدة الأساسية وفحص التوافر الصارم (لا سالب إطلاقاً)
         const planned = new Map<number, number>()
-        const lines: MaterialIssueLine[] = args.lines.map((input) => {
-          const item = state.items.find((it) => it.id === input.itemId)
-          if (!item) throw new Error('صنف غير موجود في إذن الصرف')
-          assertSerialBatchMovementSupported(state, item.id)
+        const provisional: MaterialIssueLine[] = args.lines.map(input => {
+          const item = scoped.items.find(it => it.id === input.itemId)
+          if (!item || state.items.filter(it => it.id === input.itemId).length !== 1) throw new Error('صنف غير موجود أو غير فريد في الفرع الحالي')
           const line = buildIssueLine(input, item, planned.get(item.id) ?? 0)
-          planned.set(item.id, (planned.get(item.id) ?? 0) + line.baseQty)
+          const total = Math.round(((planned.get(item.id) ?? 0) + line.baseQty) * 1000) / 1000
+          if (!Number.isSafeInteger(Math.round(total * 1000))) throw new Error('الكمية المجمعة خارج الحدود الآمنة')
+          planned.set(item.id, total)
           return line
         })
-        const totalCost = lines.reduce((sum, l) => sum + l.costMinor, 0)
-        // بوابة الموافقات: إذن الصرف إجراء حرج — تُقاس بإجمالي تكلفة الإذن
-        get().assertApproved('material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`, totalCost)
-        const id = nextId(state.materialRequisitions)
-        const reqNumber = `MRQ-${String(id).padStart(4, '0')}`
+        const plan = planInventoryOutflow(state, [...planned].map(([itemId, qty]) => ({ itemId, qty })), args.date, 'ops.activity.use')
+        const { now, withdrawals } = plan
+        if (project.startDate && (!isValidExpiryDate(project.startDate) || project.startDate > now.slice(0, 10))) throw new Error('تاريخ المشروع غير صالح أو بعد تاريخ صرف المواد')
+        // توزيع القيمة المحمولة بدقة على سطور الصنف المتكرر من إجمالي السحب نفسه.
+        const cumulative = new Map<number, number>(), allocated = new Map<number, number>()
+        const lines = provisional.map(line => {
+          const totalQty = planned.get(line.itemId)!, totalValue = withdrawals.get(line.itemId)!.withdrawnValueMinor
+          const nextQty = Math.round(((cumulative.get(line.itemId) ?? 0) + line.baseQty) * 1000) / 1000
+          const nextCost = nextQty === totalQty ? totalValue : Math.round(totalValue * (nextQty / totalQty))
+          const costMinor = nextCost - (allocated.get(line.itemId) ?? 0)
+          cumulative.set(line.itemId, nextQty); allocated.set(line.itemId, nextCost)
+          return { ...line, costMinor }
+        })
+        const totalCost = lines.reduce((sum, line) => sum + line.costMinor, 0)
+        if (!Number.isSafeInteger(totalCost)) throw new Error('تكلفة إذن الصرف خارج الحدود الآمنة')
+        const approvalRequests = planApprovalConsumption(state, 'material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`, totalCost)
+        const id = nextId(state.materialRequisitions), reqNumber = `MRQ-${String(id).padStart(4, '0')}`
         const entryLines = buildMaterialIssueEntry(totalCost, `${reqNumber} — ${project.nameAr}`)
-        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إذن صرف مواد ${reqNumber} — ${project.nameAr}`,
           sourceType: 'material_issue', sourceId: id, lines: entryLines,
-          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const req: MaterialRequisition = {
           id, reqNumber, projectId: project.id, date: now,
           issuedByEmployeeId: issuer.id, issuedByName: issuer.nameAr,
           receivedByEmployeeId: receiver.id, receivedByName: receiver.nameAr,
-          lines, totalCostMinor: totalCost, notes: args.notes, status: 'issued', journalEntryId: entryId,
+          lines, totalCostMinor: totalCost, notes: sanitizeText(args.notes, 500), status: 'issued', journalEntryId: entryId,
+          batchAllocations: plan.lines.flatMap(line => line.batchAllocations.map(batch => ({ itemId: line.itemId, ...batch }))),
         }
-        // خصم المخزون بالوحدة الأساسية + سجل تدقيق كامل للحركة (Audit Trail)
-        const updatedItems = state.items.map((it) => {
-          const issued = planned.get(it.id)
-          return issued ? { ...it, stockQty: Math.round((it.stockQty - issued) * 1000) / 1000 } : it
+        const updatedItems = state.items.map(it => {
+          const withdrawal = withdrawals.get(it.id)
+          if (!withdrawal) return it
+          return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor, costMinor: withdrawal.remainingQty > 0 ? Math.round(withdrawal.remainingValueMinor / withdrawal.remainingQty) : it.costMinor })
         })
-        // دفعات الصلاحية (مواد كيماوية/إضافات لها تاريخ): الصرف يستهلك الدفعات FEFO
-        // كي لا تبقى أرصدة وهمية تولد تنبيهات صلاحية كاذبة — الصرف للتشغيل يقبل حتى المنتهي
-        // (قرار المهندس في الموقع) لذا لا حظر هنا، فقط الخصم المنظم
-        let issueBatches = state.batches
-        for (const [itemId, qty] of planned) {
-          if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
-          issueBatches = applyFefo(issueBatches, planFefo(issueBatches, itemId, qty, now))
-        }
         let moveId = nextId(state.stockMoves)
-        const moves: StockMove[] = lines.map((l) => ({
-          id: moveId++, date: now, itemId: l.itemId, qtyDelta: -l.baseQty,
-          balanceAfter: updatedItems.find((it) => it.id === l.itemId)?.stockQty ?? 0,
-          reason: `إذن صرف ${reqNumber} — ${project.nameAr}`, docType: 'material_issue', docId: id, byUser: issuer.nameAr,
-        }))
-        // التكلفة تدخل تكاليف المشروع المباشرة فوراً (بند مواد) — لدقة الربحية وEVM
+        const balances = new Map(state.items.map(item => [item.id, item.stockQty]))
+        const moves: StockMove[] = lines.map(line => {
+          const balanceAfter = Math.round(((balances.get(line.itemId) ?? 0) - line.baseQty) * 1000) / 1000
+          balances.set(line.itemId, balanceAfter)
+          return { id: moveId++, date: now, itemId: line.itemId, qtyDelta: -line.baseQty, balanceAfter,
+            reason: `إذن صرف ${reqNumber} — ${project.nameAr}`, docType: 'material_issue', docId: id, byUser: issuer.nameAr }
+        })
         const cost = {
           id: nextId(state.projectCosts), projectId: project.id, date: now.slice(0, 10),
           kind: 'materials' as CostKind, description: `مواد منصرفة ${reqNumber}`,
           amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId, source: 'material_issue' as const,
         }
-        set({
-          materialRequisitions: [...state.materialRequisitions, req],
-          stockMoves: [...state.stockMoves, ...moves],
-          projectCosts: [...state.projectCosts, cost],
-          items: updatedItems, batches: issueBatches, journal: [...state.journal, entry],
-        })
+        set({ approvalRequests, materialRequisitions: [...state.materialRequisitions, req],
+          stockMoves: [...state.stockMoves, ...moves], projectCosts: [...state.projectCosts, cost],
+          items: updatedItems, batches: plan.batches, journal: [...state.journal, entry] })
         return req
       },
 
@@ -17643,16 +19215,23 @@ export const useRawDataStore = create<DataState>()(
       },
 
       receiveClientPayment: (args) => {
-        const state = get()
-        const customer = state.customers.find((c) => c.id === args.customerId)
-        if (!customer) throw new Error('العميل غير موجود')
+        const state = get(), scoped = getBranchScopedDataState(state), branch = getEffectiveActiveBranch(state)
+        if (state.branches.length > 1 && !branch) throw new Error('حدد الفرع قبل تحصيل العميل')
+        const customers = state.customers.filter(c => c.id === args.customerId), customer = customers[0]
+        if (customers.length !== 1 || !scoped.customers.some(c => c.id === customer.id)) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        const now = localIsoTimestamp(), day = now.slice(0, 10)
+        const fiscalBranch = branch ?? (state.branches.length === 1 ? state.branches[0] : null)
+        const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, fiscalBranch?.id ?? null, Boolean(fiscalBranch?.isMain)))
+        if (closed) throw new Error(`تاريخ التحصيل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        assertTreasuryForPosting(state, args.treasury, 'receipt', args.amountMinor)
         // التحصيل على مستوى الحساب الإجمالي: FIFO افتراضياً، ومطابقة محددة عند الطلب (أمر الإصلاح)
         const openInvoices = get().getOpenClientInvoices(customer.id)
         const { allocations, unallocatedMinor } = allocateClientPayment(args.amountMinor, openInvoices, args.specificDocKey ?? null)
+        const allocated = new Set(allocations.map(row => row.docKey))
+        if (openInvoices.some(row => allocated.has(row.docKey) && row.date !== '0000-00-00' && (!isValidExpiryDate(row.date.slice(0, 10)) || row.date.slice(0, 10) > day))) throw new Error('تاريخ المستند المخصص غير صالح أو لاحق للتحصيل — راجع التسلسل')
         const id = nextId(state.clientSettlements)
         const settlementNumber = `CLR-${String(id).padStart(4, '0')}`
         const entryLines = buildClientReceiptEntry(args.amountMinor, args.treasury, `${settlementNumber} — ${customer.nameAr}`)
-        const now = localIsoTimestamp()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -17667,10 +19246,12 @@ export const useRawDataStore = create<DataState>()(
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (args.terminalPayment) {
-          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
-          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          const terminals = state.paymentTerminals.filter((row) => row.id === args.terminalPayment!.terminalId), terminal = terminals[0]
+          if (terminals.length !== 1 || !terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير فريدة أو غير نشطة')
+          if (fiscalBranch && terminal.branchId !== String(fiscalBranch.id) && (state.branches.length > 1 || terminal.branchId.trim() !== '')) throw new Error('ماكينة الدفع لا تتبع الفرع الحالي')
           if (terminal.settlementAccountCode !== args.treasury) throw new Error('حساب التحصيل لا يطابق حساب الماكينة')
-          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
+          const providerReference = args.terminalPayment.providerReference.trim()
+          if (providerReference && state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && typeof row.providerReference === 'string' && row.providerReference.trim() === providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
           terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `client-collection:${id}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: 'client_collection', documentId: String(id), amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference.trim() || `AUTO-${crypto.randomUUID()}`, occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
@@ -17750,15 +19331,19 @@ export const useRawDataStore = create<DataState>()(
 
       setApprovalFlow: (action, steps, active, thresholdMinor) => {
         const state = get()
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الموافقات')
         const scoped = getBranchScopedDataState(state)
         const errors = validateApprovalFlow(steps)
         if (errors.length) throw new Error(errors.join(' — '))
         for (const st of steps) {
           if (st.employeeId != null && !scoped.employees.find((e) => e.id === st.employeeId)) throw new Error(`موظف المستوى «${st.roleAr}» غير موجود في هذا الفرع`)
         }
-        if (thresholdMinor != null && (!Number.isInteger(thresholdMinor) || thresholdMinor < 0)) throw new Error('الحد المالي يجب أن يكون صفراً أو رقماً صحيحاً موجباً')
-        const existing = scoped.approvalFlows.find((f) => f.action === action)
+        if (thresholdMinor != null && (!Number.isSafeInteger(thresholdMinor) || thresholdMinor < 0)) throw new Error('الحد المالي يجب أن يكون صفراً أو رقماً صحيحاً موجباً')
+        const existingFlows = scoped.approvalFlows.filter(f => f.action === action)
+        if (existingFlows.length > 1 || (existingFlows[0] && state.approvalFlows.filter(f => f.id === existingFlows[0].id).length !== 1)) throw new Error('مسار الموافقات غير فريد في الفرع')
+        const existing = existingFlows[0]
         const flow: ApprovalFlow = {
+          ...existing,
           id: existing?.id ?? nextId(state.approvalFlows),
           action,
           steps: steps.map((st, i) => ({ order: i + 1, roleAr: st.roleAr.trim(), employeeId: st.employeeId })),
@@ -17771,9 +19356,11 @@ export const useRawDataStore = create<DataState>()(
 
       requestApproval: (action, subject, refId) => {
         const state = get()
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الموافقات')
         const scoped = getBranchScopedDataState(state)
-        const flow = scoped.approvalFlows.find((f) => f.action === action && f.active)
-        if (!flow) throw new Error(`لا مسار موافقات نشطاً للإجراء «${APPROVAL_ACTION_LABELS[action]}»`)
+        const flows = scoped.approvalFlows.filter(f => f.action === action && f.active)
+        if (flows.length > 1) throw new Error('مسار الموافقات غير فريد في الفرع')
+        if (!flows.length) throw new Error(`لا مسار موافقات نشطاً للإجراء «${APPROVAL_ACTION_LABELS[action]}»`)
         const duplicate = scoped.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'pending')
         if (duplicate) throw new Error('يوجد طلب اعتماد معلق لنفس المستند')
         const req: ApprovalRequest = {
@@ -17786,10 +19373,13 @@ export const useRawDataStore = create<DataState>()(
 
       decideApproval: (requestId, decision, decidedBy, note) => {
         const state = get()
-        const req = state.approvalRequests.find((r) => r.id === requestId)
-        if (!req) throw new Error('طلب الاعتماد غير موجود')
-        const flow = state.approvalFlows.find((f) => f.action === req.action)
-        if (!flow) throw new Error('مسار الموافقات غير معرف')
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('حدد الفرع قبل إدارة الموافقات')
+        const scoped = getBranchScopedDataState(state)
+        const req = scoped.approvalRequests.find((r) => r.id === requestId)
+        if (!req || state.approvalRequests.filter(r => r.id === requestId).length !== 1) throw new Error('طلب الاعتماد غير موجود أو غير فريد في الفرع الحالي')
+        const flows = scoped.approvalFlows.filter(f => f.action === req.action)
+        if (flows.length !== 1) throw new Error('مسار الموافقات غير معرف أو غير فريد في الفرع الحالي')
+        const flow = flows[0]
         const updated = applyApprovalDecision(req, flow, decision, decidedBy, note ?? '')
         set({ approvalRequests: state.approvalRequests.map((r) => (r.id === requestId ? updated : r)) })
         return updated
@@ -17797,14 +19387,8 @@ export const useRawDataStore = create<DataState>()(
 
       assertApproved: (action, refId, subject, amountMinor) => {
         const state = get()
-        const flow = state.approvalFlows.find((f) => f.action === action && f.active)
-        if (!flow) return // لا مسار نشطاً = الإجراء حر (المحرك اختياري قابل للتخصيص)
-        // حد مالي اختياري (سد فجوة تقرير النشاط #11): دون الحد يمر المستند حراً بلا اعتماد
-        if (flow.thresholdMinor != null && amountMinor != null && amountMinor < flow.thresholdMinor) return
-        const approved = state.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'approved' && r.consumedAt == null)
-        if (!approved) throw new Error(`«${APPROVAL_ACTION_LABELS[action]}» يتطلب اعتماداً مكتملاً عبر مسار الموافقات — ${subject}`)
-        // استهلاك الاعتماد: كل تنفيذ يحتاج اعتماداً جديداً
-        set({ approvalRequests: state.approvalRequests.map((r) => (r.id === approved.id ? { ...r, consumedAt: new Date().toISOString() } : r)) })
+        const approvalRequests = planApprovalConsumption(state, action, refId, subject, amountMinor)
+        if (approvalRequests !== state.approvalRequests) set({ approvalRequests })
       },
 
       /* ─── الوصفات والتصنيع (مطاعم — سد فجوة Foodics) ─── */
@@ -19307,17 +20891,38 @@ export const useRawDataStore = create<DataState>()(
         const state = get()
         const errors = validateWalletService(input)
         if (errors.length) throw new Error(errors.join(' — '))
-        if (input.customerId != null && !state.customers.some((c) => c.id === input.customerId)) throw new Error('العميل غير موجود')
+        const scoped = getBranchScopedDataState(state)
+        if (state.branches.length && !getEffectiveActiveBranch(state)) throw new Error('اختر الفرع قبل تسجيل العملية')
+        if (state.currentUserId != null) {
+          const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('ops.activity.use')) throw new Error('لا تملك صلاحية تسجيل عملية المحافظ')
+        }
+        if (input.customerId != null && (!scoped.customers.some(c => c.id === input.customerId) || state.customers.filter(c => c.id === input.customerId).length !== 1)) throw new Error('العميل غير موجود أو غير فريد في الفرع الحالي')
+        if (![input.paidToProviderMinor, input.chargeMinor, input.paidMinor].every(Number.isSafeInteger) || !Number.isFinite(input.vatPercent)) throw new Error('مبالغ أو ضريبة عملية المحافظ غير صالحة')
         if (!state.treasuries.some((t) => t.code === input.fundingTreasury)) throw new Error('خزينة التمويل غير موجودة')
         if (input.paidMinor > 0 && !state.treasuries.some((t) => t.code === input.receiveTreasury)) throw new Error('خزينة الاستلام غير موجودة')
+        assertTreasuryForPosting(state, input.fundingTreasury, 'payment', input.paidToProviderMinor)
+        if (input.paidMinor > 0) assertTreasuryForPosting(state, input.receiveTreasury, 'receipt', input.paidMinor)
         const totals = computeWalletTotals(input)
+        const now = localIsoTimestamp()
+        const date = input.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ عملية المحافظ غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ العملية داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        if (input.terminalPayment && date !== now.slice(0, 10)) throw new Error('لا يُسجّل تحصيل الماكينة بتاريخ سابق — راجع إثبات الدفع')
+        // لا يعيد الحقل ترتيب الرصيد/الائتمان بأثر رجعي. منع محافظ للحركة
+        // اللاحقة على أي حساب متأثر حتى لا يحسب الرصيد الحالي كتاريخي.
+        if (date < now.slice(0, 10)) {
+          const codes = new Set([input.fundingTreasury, ...(input.paidMinor > 0 ? [input.receiveTreasury] : []), ...(totals.remainingMinor > 0 ? ['1104'] : [])])
+          if (state.journal.some(e => e.lines.some(l => codes.has(l.accountCode)) && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('التاريخ يسبق حركة خزينة أو ذمة مسجلة — راجع التسلسل والرصيد التاريخي')
+        }
         // حد الائتمان: المتبقي غير المحصَّل دين 1104 على العميل
-        guardCreditLimit(get(), input.customerId, totals.remainingMinor, input.creditLimitOverrideBy)
+        const overrideBy = typeof input.creditLimitOverrideBy === 'string' ? input.creditLimitOverrideBy.trim() : ''
+        guardCreditLimit(get(), input.customerId, totals.remainingMinor, overrideBy || null)
         const opId = nextId(state.walletOps)
         const opNumber = `WS-${String(opId).padStart(4, '0')}`
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
-        const date = input.date ?? now.slice(0, 10)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date,
           description: `خدمة محافظ ${opNumber} — ${input.provider}`,
@@ -19328,7 +20933,7 @@ export const useRawDataStore = create<DataState>()(
         const op: WalletServiceOp = {
           id: opId, opNumber,
           refCode: makeUniqueRefCode('WLT', date, usedRefCodes(state)),
-          date, type: input.type, provider: input.provider,
+          date, createdAt: now, type: input.type, provider: input.provider,
           targetPhone: sanitizeText(input.targetPhone, 30),
           customerId: input.customerId,
           paidToProviderMinor: input.paidToProviderMinor,
@@ -19338,11 +20943,12 @@ export const useRawDataStore = create<DataState>()(
           receiveTreasury: input.receiveTreasury,
           totals, status: 'done', journalEntryId: entryId, returnEntryId: null,
           notes: sanitizeText(input.notes, 300),
+          ...(overrideBy ? { creditLimitOverrideBy: sanitizeText(overrideBy, 80) } : {}),
         }
         let terminalTransaction: PaymentTerminalTransaction | null = null
         if (input.terminalPayment) {
           if (input.paidMinor <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
-          const terminal = state.paymentTerminals.find((row) => row.id === input.terminalPayment!.terminalId)
+          const terminal = scoped.paymentTerminals.find((row) => row.id === input.terminalPayment!.terminalId)
           if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== input.receiveTreasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === input.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
@@ -19394,6 +21000,21 @@ export const useRawDataStore = create<DataState>()(
         if (!scoped.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود في هذا الفرع')
         if (!scoped.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود في هذا الفرع')
         if (state.warehouses.filter(w => w.id === args.fromWarehouseId).length !== 1 || state.warehouses.filter(w => w.id === args.toWarehouseId).length !== 1) throw new Error('هوية مخزن التحويل غير فريدة — يلزم المراجعة')
+        const branch = getEffectiveActiveBranch(state)
+        if (state.branches.length && !branch && state.activeBranchId != null) throw new Error('الفرع الحالي غير موجود أو غير نشط')
+        if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('inv.transfer')) throw new Error('لا تملك صلاحية تحويل المخزون') }
+        const createdAt = localIsoTimestamp()
+        const date = args.date ?? createdAt.slice(0, 10)
+        if (!isValidExpiryDate(date)) throw new Error('تاريخ التحويل المخزني غير صالح')
+        if (date !== createdAt.slice(0, 10)) throw new Error('التحويل المخزني متاح بتاريخ اليوم فقط — لا يمكن إثبات رصيد المخزن في تاريخ آخر')
+        const affectedBranches = branch ? [branch] : state.branches.length ? [args.fromWarehouseId, args.toWarehouseId].map(id => {
+          const owners = state.branches.filter(b => filterWarehousesByBranch(state.warehouses, b, state.branches).some(w => w.id === id))
+          if (owners.length !== 1 || !owners[0].active) throw new Error('فرع المخزن غير فريد أو غير نشط — يلزم المراجعة')
+          return owners[0]
+        }) : []
+        const years = useAppStore.getState().fiscalYears
+        const closed = affectedBranches.length ? affectedBranches.map(b => dateInClosedYear(date, fiscalYearsForBranch(years, b.id, Boolean(b.isMain)))).find(Boolean) : dateInClosedYear(date, fiscalYearsForBranch(years, null))
+        if (closed) throw new Error(`تاريخ التحويل داخل السنة المالية المقفلة «${closed.nameAr}»`)
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
         const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
@@ -19419,7 +21040,8 @@ export const useRawDataStore = create<DataState>()(
         const transfer: StockTransfer = {
           id,
           transferNumber: `TRF-${String(id).padStart(4, '0')}`,
-          date: localIsoTimestamp(),
+          date: createdAt,
+          createdAt,
           fromWarehouseId: args.fromWarehouseId,
           toWarehouseId: args.toWarehouseId,
           lines: args.lines.map((l) => ({
@@ -19728,12 +21350,34 @@ export const useRawDataStore = create<DataState>()(
             : true // manual لا مستند لها
           if (!exists) throw new Error('المستند المصدر غير موجود — لا تُسجل عمولة على عملية غير مسجلة')
         }
+        if (!Number.isSafeInteger(args.amountMinor)) throw new Error('مبلغ العمولة غير صالح')
+        const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ العمولة غير صالح أو في المستقبل')
+        const branch = getEffectiveActiveBranch(state)
+        const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+        if (closed) throw new Error(`تاريخ العمولة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+        // التاريخ المختار من محرر الموظفين فقط؛ لا نفترض تاريخ عملية غير مثبت.
+        if (args.date !== undefined) {
+          const scoped = getBranchScopedDataState(state)
+          if ((state.branches.length && !branch) || !scoped.employees.some(e => e.id === emp.id) || state.employees.filter(e => e.id === emp.id).length !== 1) throw new Error('الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+          if (args.source === 'manual' && args.sourceId != null) throw new Error('العمولة اليدوية لا تقبل معرف مستند')
+          if (args.source !== 'manual' && args.sourceId == null) throw new Error('اختر المستند المصدر للعمولة')
+          if (date < now.slice(0, 10) && args.source !== 'manual') throw new Error('التاريخ السابق متاح للعمولة اليدوية فقط — يلزم تدقيق تسلسل المستند المرتبط')
+          if (args.source !== 'manual') {
+            const all = args.source === 'sale' ? state.sales : args.source === 'car_sale' ? state.cars : args.source === 'project' ? state.projects : args.source === 'lease' ? state.leases : args.source === 'property_sale' ? state.properties : []
+            const visible = args.source === 'sale' ? scoped.sales : args.source === 'car_sale' ? scoped.cars : args.source === 'project' ? scoped.projects : args.source === 'lease' ? scoped.leases : args.source === 'property_sale' ? scoped.properties : []
+            if (all.filter(row => row.id === args.sourceId).length !== 1 || !visible.some(row => row.id === args.sourceId)) throw new Error('المستند المصدر غير فريد أو ليس في الفرع الحالي')
+          }
+          if (date < now.slice(0, 10) && state.staffCommissions.some(c => !isValidExpiryDate(c.date) || c.date > date)) throw new Error('تاريخ العمولة يسبق عمولة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+          if (date < now.slice(0, 10) && state.journal.some(e => e.lines.some(l => l.accountCode === '2116') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ العمولة يسبق حركة عمولات مسجلة — راجع التسلسل')
+        }
         const id = nextId(state.staffCommissions)
         const entryId = nextId(state.journal)
-        const now = localIsoTimestamp()
         const code = `SCM-${String(id).padStart(4, '0')}`
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `استحقاق عمولة ${code} — ${emp.nameAr}: ${args.description.trim()}`,
           sourceType: 'staff_commission', sourceId: id,
           lines: buildStaffCommissionAccrual(args.amountMinor, emp.nameAr, args.description.trim()),
@@ -19742,7 +21386,7 @@ export const useRawDataStore = create<DataState>()(
         const commission: StaffCommission = {
           id, code, employeeId: emp.id, source: args.source, sourceId: args.sourceId,
           description: args.description.trim(), amountMinor: args.amountMinor,
-          date: now.slice(0, 10), status: 'accrued', accrualEntryId: entryId,
+          date, status: 'accrued', accrualEntryId: entryId,
           payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '',
           createdBy: activeUserName(get()), createdAt: now,
         }
@@ -19760,14 +21404,51 @@ export const useRawDataStore = create<DataState>()(
         const emp = state.employees.find((e) => e.id === com.employeeId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (args.date !== undefined) {
+          if (com.status !== 'accrued') throw new Error('حالة العمولة غير صالحة للصرف')
+          if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ صرف العمولة غير صالح أو في المستقبل')
+          const branch = getEffectiveActiveBranch(state), scoped = getBranchScopedDataState(state)
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+          if (closed) throw new Error(`تاريخ صرف العمولة داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if ((state.branches.length && !branch) || state.staffCommissions.filter(c => c.id === com.id).length !== 1 || !scoped.staffCommissions.some(c => c.id === com.id) || state.employees.filter(e => e.id === com.employeeId).length !== 1 || !scoped.employees.some(e => e.id === com.employeeId)) throw new Error('العمولة أو الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.treasuries.filter(t => t.code === args.treasury).length !== 1 || !scoped.treasuries.some(t => t.code === args.treasury)) throw new Error('خزينة الصرف غير فريدة أو ليست في الفرع الحالي')
+          const user = state.appUsers.find(u => u.id === state.currentUserId && u.active)
+          if (state.currentUserId != null && (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage'))) throw new Error('لا تملك صلاحية إدارة الموظفين')
+          const access = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'payment', com.amountMinor)
+          if (access.length) throw new Error(access.join(' — '))
+          if (!Number.isSafeInteger(com.amountMinor) || com.amountMinor <= 0 || !isValidExpiryDate(com.date) || com.date > date) throw new Error('تاريخ الاستحقاق أو مبلغه غير صالح أو لاحق للصرف')
+          const entries = state.journal.filter(e => e.sourceType === 'staff_commission' && e.sourceId === com.id)
+          const origin = entries.filter(e => e.id === com.accrualEntryId)
+          if (origin.length !== 1 || state.journal.filter(e => e.id === com.accrualEntryId).length !== 1 || origin[0].date !== com.date || entries.some(e => e.reversedByEntryId != null || !scoped.journal.some(j => j.id === e.id) || !isValidExpiryDate(e.date) || e.date > date)) throw new Error('قيد الاستحقاق أو تعديلاته غير مثبتة قبل تاريخ الصرف في الفرع')
+          let payable = 0
+          for (const entry of entries) for (const line of entry.lines) if (line.accountCode === '2116') {
+            if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('قيد الاستحقاق غير صالح')
+            payable += line.credit - line.debit
+            if (!Number.isSafeInteger(payable)) throw new Error('رصيد العمولة غير صالح')
+          }
+          if (payable !== com.amountMinor) throw new Error('رصيد العمولة لا يطابق قيودها — راجع الاستحقاق والتعديلات')
+          const affected = new Set(['2116', args.treasury])
+          const moves = state.journal.filter(e => e.lines.some(line => affected.has(line.accountCode)))
+          if (moves.some(e => !isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date)) throw new Error('تاريخ الصرف يسبق حركة عمولات أو خزينة مسجلة أو تاريخها غير واضح — راجع التسلسل')
+          if (date < now.slice(0, 10)) {
+            let cash = 0
+            for (const e of moves) for (const line of e.lines) if (line.accountCode === args.treasury) {
+              if (!Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0) throw new Error('حركة الخزينة غير صالحة')
+              cash += line.debit - line.credit
+              if (!Number.isSafeInteger(cash)) throw new Error('رصيد الخزينة غير صالح')
+            }
+            if (cash < com.amountMinor) throw new Error('رصيد الخزينة لا يكفي في التاريخ المختار')
+          }
+        }
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `صرف عمولة ${com.code} — ${emp?.nameAr ?? ''} (منفردة)`,
           sourceType: 'staff_commission_payout', sourceId: com.id,
           lines: buildStaffCommissionPayout(com.amountMinor, args.treasury, emp?.nameAr ?? ''),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const updated: StaffCommission = { ...com, status: 'paid', payoutEntryId: entryId, payoutMode: 'voucher' }
+        const updated: StaffCommission = { ...com, status: 'paid', payoutEntryId: entryId, payoutMode: 'voucher', ...(args.date !== undefined ? { payoutDate: date, payoutCreatedAt: now } : {}) }
         set({ staffCommissions: state.staffCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
       },
@@ -19782,14 +21463,28 @@ export const useRawDataStore = create<DataState>()(
         const emp = state.employees.find((e) => e.id === com.employeeId)
         const entryId = nextId(state.journal)
         const now = localIsoTimestamp()
+        const date = args.date ?? now.slice(0, 10)
+        if (args.date !== undefined) {
+          if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ إلغاء العمولة غير صالح أو في المستقبل')
+          const branch = getEffectiveActiveBranch(state), scoped = getBranchScopedDataState(state)
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+          if (closed) throw new Error(`تاريخ الإلغاء داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if ((state.branches.length && !branch) || state.staffCommissions.filter(c => c.id === com.id).length !== 1 || !scoped.staffCommissions.some(c => c.id === com.id) || state.employees.filter(e => e.id === com.employeeId).length !== 1 || !scoped.employees.some(e => e.id === com.employeeId)) throw new Error('العمولة أو الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+          if (com.status !== 'accrued' || !Number.isSafeInteger(com.amountMinor) || com.amountMinor <= 0 || !isValidExpiryDate(com.date) || com.date > date) throw new Error('تاريخ الاستحقاق أو حالة العمولة غير صالحة للإلغاء')
+          const entries = state.journal.filter(e => e.sourceType === 'staff_commission' && e.sourceId === com.id)
+          const evidence = commissionStatementRows(com, state.journal)
+          if (!evidence || entries.some(e => !scoped.journal.includes(e)) || evidence.some(row => row.date > date)) throw new Error('قيد الاستحقاق أو تسوياته غير مثبت قبل تاريخ الإلغاء — راجع العمولة')
+          if (state.journal.some(e => e.lines.some(line => line.accountCode === '2116') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ الإلغاء يسبق حركة عمولات مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        }
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date,
           description: `إلغاء عمولة ${com.code} — ${emp?.nameAr ?? ''}: ${args.reason.trim()}`,
           sourceType: 'staff_commission_cancel', sourceId: com.id,
           lines: buildStaffCommissionCancel(com.amountMinor, emp?.nameAr ?? '', args.reason.trim()),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: entryId, cancelReason: args.reason.trim() }
+        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: entryId, cancelReason: args.reason.trim(), ...(args.date !== undefined ? { cancelDate: date, cancelCreatedAt: now } : {}) }
         set({ staffCommissions: state.staffCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
       },
@@ -19799,15 +21494,73 @@ export const useRawDataStore = create<DataState>()(
         const com = state.staffCommissions.find((c) => c.id === args.commissionId)
         if (!com) throw new Error('العمولة غير موجودة')
         if (com.status !== 'accrued') throw new Error('يُعدل مبلغ العمولات المستحقة فقط — المصروفة والملغاة لا تُعدل')
-        if (!Number.isInteger(args.newAmountMinor) || args.newAmountMinor <= 0) throw new Error('المبلغ الجديد يجب أن يكون رقماً صحيحاً موجباً')
+        if (!Number.isSafeInteger(args.newAmountMinor) || args.newAmountMinor <= 0) throw new Error('المبلغ الجديد يجب أن يكون رقماً صحيحاً موجباً')
         if (args.newAmountMinor === com.amountMinor) throw new Error('المبلغ الجديد مساوٍ للحالي — لا تعديل')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب — يبقى في سجل التدقيق')
-        // إلغاء ثم استحقاق جديد (أثر تدقيقي كامل — لا تعديل صامت على قيد مرحّل)
-        get().cancelStaffCommission({ commissionId: com.id, reason: `تعديل المبلغ: ${args.reason.trim()}` })
-        return get().addStaffCommission({
-          employeeId: com.employeeId, source: com.source, sourceId: com.sourceId,
-          description: `${com.description} (معدلة من ${com.code})`, amountMinor: args.newAmountMinor,
-        })
+        const emp = state.employees.find(e => e.id === com.employeeId)
+        if (!emp || !emp.active) throw new Error('الموظف غير موجود أو غير نشط — راجع العمولة')
+        if (!isValidExpiryDate(com.date) || com.date > todayLocalIso()) throw new Error('تاريخ استحقاق العمولة غير صالح أو في المستقبل — راجع الأصل')
+        if (com.returnAdjustedMinor != null && (!Number.isSafeInteger(com.returnAdjustedMinor) || com.returnAdjustedMinor !== 0)) throw new Error('العمولة تحمل تسوية مرتجع — يلزم تدقيق التخصيص قبل تعديلها')
+        if (com.source === 'sale' && com.sourceId != null && state.saleReturns.some(row => row.saleId === com.sourceId)) throw new Error('للفاتورة مرتجع — يلزم تدقيق تخصيص العمولة قبل تعديلها')
+        if (com.sourceId != null) {
+          const exists = com.source === 'lease' ? state.leases.some(l => l.id === com.sourceId)
+            : com.source === 'property_sale' ? state.properties.some(p => p.id === com.sourceId)
+            : com.source === 'sale' ? state.sales.some(sale => sale.id === com.sourceId)
+            : com.source === 'car_sale' ? state.cars.some(car => car.id === com.sourceId)
+            : com.source === 'project' ? state.projects.some(project => project.id === com.sourceId)
+            : true
+          if (!exists) throw new Error('المستند المصدر غير موجود — راجع العمولة قبل تعديلها')
+        }
+        const description = `${com.description} (معدلة من ${com.code})`
+        const errors = validateStaffCommission({ employeeId: emp.id, amountMinor: args.newAmountMinor, description })
+        if (errors.length) throw new Error(errors.join(' — '))
+        // الكتابة الذرية: إن رفض الدفتر أحد القيدين لا تلغى العمولة الأصلية وحدها.
+        const now = localIsoTimestamp(), date = args.date ?? now.slice(0, 10)
+        if (args.date !== undefined) {
+          if (!isValidExpiryDate(date) || date > now.slice(0, 10)) throw new Error('تاريخ تعديل العمولة غير صالح أو في المستقبل')
+          const branch = getEffectiveActiveBranch(state), scoped = getBranchScopedDataState(state)
+          const closed = dateInClosedYear(date, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
+          if (closed) throw new Error(`تاريخ التعديل داخل السنة المالية المقفلة «${closed.nameAr}»`)
+          if ((state.branches.length && !branch) || state.staffCommissions.filter(c => c.id === com.id).length !== 1 || !scoped.staffCommissions.some(c => c.id === com.id) || state.employees.filter(e => e.id === com.employeeId).length !== 1 || !scoped.employees.some(e => e.id === com.employeeId)) throw new Error('العمولة أو الموظف غير فريد أو ليس في الفرع الحالي')
+          if (state.currentUserId != null) { const user = scoped.appUsers.find(u => u.id === state.currentUserId && u.active); if (!user || !effectivePermissionsFor(user, rolesWithOverrides(scoped.roleOverrides, scoped.customRoles, appSetupForState(state).activityId)).has('party.employee.manage')) throw new Error('لا تملك صلاحية إدارة الموظفين') }
+          if (!Number.isSafeInteger(com.amountMinor) || com.amountMinor <= 0 || com.date > date) throw new Error('تاريخ الاستحقاق أو مبلغ العمولة غير صالح للتعديل')
+          if (com.source === 'manual' && com.sourceId != null) throw new Error('العمولة اليدوية تحمل مستنداً غير صالح')
+          if (com.source !== 'manual') {
+            if (date < now.slice(0, 10)) throw new Error('التاريخ السابق متاح لتعديل العمولة اليدوية فقط — راجع تسلسل المستند المصدر')
+            const all = com.source === 'sale' ? state.sales : com.source === 'car_sale' ? state.cars : com.source === 'project' ? state.projects : com.source === 'lease' ? state.leases : com.source === 'property_sale' ? state.properties : []
+            const visible = com.source === 'sale' ? scoped.sales : com.source === 'car_sale' ? scoped.cars : com.source === 'project' ? scoped.projects : com.source === 'lease' ? scoped.leases : com.source === 'property_sale' ? scoped.properties : []
+            if (com.sourceId == null || all.filter(row => row.id === com.sourceId).length !== 1 || !visible.some(row => row.id === com.sourceId)) throw new Error('المستند المصدر غير فريد أو ليس في الفرع الحالي')
+          }
+          const entries = state.journal.filter(e => e.sourceType === 'staff_commission' && e.sourceId === com.id)
+          const evidence = commissionStatementRows(com, state.journal)
+          if (!evidence || entries.some(e => !scoped.journal.includes(e)) || evidence.some(row => row.date > date)) throw new Error('قيد الاستحقاق أو تسوياته غير مثبت قبل تاريخ التعديل — راجع العمولة')
+          if (state.journal.some(e => e.lines.some(line => line.accountCode === '2116') && (!isValidExpiryDate(e.date?.slice(0, 10)) || e.date.slice(0, 10) > date))) throw new Error('تاريخ التعديل يسبق حركة عمولات مسجلة أو تاريخها غير واضح — راجع التسلسل')
+        }
+        const cancelId = nextId(state.journal), accrueId = cancelId + 1
+        const newId = nextId(state.staffCommissions), code = `SCM-${String(newId).padStart(4, '0')}`
+        const reason = `تعديل المبلغ: ${args.reason.trim()}`
+        const cancelEntry: JournalEntry = {
+          id: cancelId, entryNumber: cancelId, date,
+          description: `إلغاء عمولة ${com.code} — ${emp.nameAr}: ${reason}`,
+          sourceType: 'staff_commission_cancel', sourceId: com.id,
+          lines: buildStaffCommissionCancel(com.amountMinor, emp.nameAr, reason),
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const accrueEntry: JournalEntry = {
+          id: accrueId, entryNumber: accrueId, date,
+          description: `استحقاق عمولة ${code} — ${emp.nameAr}: ${description.trim()}`,
+          sourceType: 'staff_commission', sourceId: newId,
+          lines: buildStaffCommissionAccrual(args.newAmountMinor, emp.nameAr, description.trim()),
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: cancelId, cancelReason: reason, ...(args.date !== undefined ? { cancelDate: date, cancelCreatedAt: now } : {}) }
+        const replacement: StaffCommission = {
+          id: newId, code, employeeId: emp.id, source: com.source, sourceId: com.sourceId,
+          description: description.trim(), amountMinor: args.newAmountMinor, date, status: 'accrued', accrualEntryId: accrueId,
+          payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(state), createdAt: now,
+        }
+        set({ staffCommissions: [...state.staffCommissions.map(c => c.id === com.id ? updated : c), replacement], journal: [...state.journal, cancelEntry, accrueEntry] })
+        return replacement
       },
 
       getStaffCommissionsDue: (employeeId) => {
@@ -20617,19 +22370,50 @@ export const useRawDataStore = create<DataState>()(
         assertProjectCustomerBranch(state, project, extract)
         assertProjectExtractRefundIntegrity(scoped.projectExtracts.filter(e => e.projectId === extract.projectId), customerReviewJournal(state))
         assertProjectExtractOriginalIntegrity(extract, customerReviewJournal(state))
+        const originalEntry = state.journal.find(row => row.id === extract.journalEntryId)
+        const now = assertReturnPostingContext(state, extract.date, [...(extract.refunds ?? []).map(row => row.date), ...(originalEntry ? [originalEntry.date] : [])])
+        if (args.mode !== 'cash' && args.mode !== 'customer_credit') throw new Error('طريقة رد المستخلص غير صالحة')
         if (args.mode === 'customer_credit' && (project.clientId == null || !scoped.customers.some(customer => customer.id === project.clientId))) {
           throw new Error('المستخلص لمشروع بلا عميل مرتبط — لا يُنشأ رصيد عميل بلا صاحب')
         }
-        const built = buildServiceRefundEntry({
-          refundValueMinor: args.amountMinor,
-          deliveredGrandMinor: extract.totals.dueMinor,
-          deliveredTaxMinor: extract.totals.vatMinor,
-          priorRefundedMinor: extract.refundedMinor ?? 0,
-          priorRefundedTaxMinor: extract.refundedTaxMinor ?? 0,
-          mode: args.mode, treasury: args.treasury,
-          note: `إشعار دائن على مستخلص ${extract.extractNumber}`,
-        })
-        const now = localIsoTimestamp()
+        if (args.mode === 'cash') assertTreasuryForPosting(state, args.treasury ?? '1101', 'refund', args.amountMinor)
+        if (!Array.isArray(args.quantities) || args.quantities.length === 0) throw new Error('اختر البنود والكميات للرد على المستخلص')
+        const recovery = extract.advanceRecoveryMinor ?? 0
+        if (recovery > 0) {
+          // المسار المحدود لا يعيد أي جزء من المقدمة؛ يلزم اختيار الصفر
+          // صراحة وتدقيق التوزيع الأصلي قبل الاعتماد على صافي المستحق.
+          if (args.restoredAdvanceMinor !== 0) throw new Error('حالياً لا يدعم الإشعار إلا اختيار صفر للمقدمة المعادة؛ تسوية رد المقدمة نفسها غير متاحة — راجع المحاسب')
+          if (!extract.advanceAllocations?.length) throw new Error('توزيع استرداد المقدمة غير مثبت — راجع التاريخ')
+          checkedProjectAdvanceBasis(state, project)
+        } else if (args.restoredAdvanceMinor != null && args.restoredAdvanceMinor !== 0) throw new Error('لا توجد مقدمة مستردة يمكن إعادتها')
+        // لا يمكن إسناد تحصيل محتجز أو فاتورة توثيق مشتركة سابقة إلى كل شريحة بدقة.
+        if (extract.totals.retentionMinor > 0 && state.retentionReleases.some(row => row.projectId === project.id)) throw new Error('سبق تحصيل محتجز المشروع بلا توزيع مثبت على المستخلصات — راجع تسوية المحتجز')
+        assertUnrelatedProjectDocumentation(state, project, extract)
+        if (!args.reason.trim()) throw new Error('سبب الإشعار مطلوب')
+        if (!extract.lines?.length) throw new Error('المستخلص بلا بنود كمية مثبتة — راجع التاريخ')
+        const items = scoped.boqItems.filter(row => row.projectId === project.id)
+        if (state.boqItems.filter(row => row.projectId === project.id).length !== items.length) throw new Error('بنود المستخلص تابعة لفرع آخر — راجع البيانات')
+        assertQuantityChangeLinks(items, state.changeOrders.filter(row => row.projectId === project.id))
+        for (const line of extract.lines) {
+          const matches = items.filter(item => item.id === line.boqItemId), item = matches[0]
+          // سعر الإصدار وكميته من لقطة المستخلص، لا من بطاقة البند التي قد تتغير لاحقاً.
+          if (matches.length !== 1 || !item || line.previousQtyEstimated || line.prevExecutedQty == null || line.newExecutedQty == null || typeof line.unitPriceMinor !== 'number' || !Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) throw new Error('أساس بند المستخلص أو كمية البند غير مثبت — راجع البيانات')
+          const previous = Math.round(normalizeMovementQty(line.prevExecutedQty, true) * 1000), next = Math.round(normalizeMovementQty(line.newExecutedQty, true) * 1000)
+          if (next <= previous || roundNonNegativeRatio(line.unitPriceMinor, next, 1000) - roundNonNegativeRatio(line.unitPriceMinor, previous, 1000) !== line.lineValueMinor) throw new Error('قيمة البند لا تطابق الكمية وسعرها المسجلين — راجع البيانات')
+        }
+        const quantityCredit = planProjectCreditAmounts({ lines: extract.lines, totals: extract.totals, refunds: projectCreditEvidence(extract.refunds ?? []), refundedMinor: extract.refundedMinor ?? 0, refundedTaxMinor: extract.refundedTaxMinor ?? 0, selected: args.quantities })
+        if (quantityCredit.amountMinor !== args.amountMinor) throw new Error('تغيرت قيمة الإشعار منذ اختيار الكميات — أعد المعاينة')
+        if (recovery > 0 && (extract.refundedMinor ?? 0) + args.amountMinor > extract.totals.dueMinor - recovery) throw new Error('المتبقي من المستخلص لا يغطي المقدمة المستردة — يلزم تسوية المقدمة قبل الإشعار')
+        const built = {
+          taxShareMinor: quantityCredit.taxShareMinor,
+          lines: [
+            { accountCode: '4102', debit: quantityCredit.grossMinor, credit: 0, note: `رد أعمال مستخلص ${extract.extractNumber}` },
+            ...(quantityCredit.taxShareMinor ? [{ accountCode: '2102', debit: quantityCredit.taxShareMinor, credit: 0, note: 'تخفيض ض.ق.م' }] : []),
+            ...(quantityCredit.retentionMinor ? [{ accountCode: '1105', debit: 0, credit: quantityCredit.retentionMinor, note: 'عكس محتجز الأعمال المردودة' }] : []),
+            { accountCode: args.mode === 'cash' ? args.treasury ?? '1101' : '1104', debit: 0, credit: quantityCredit.amountMinor, note: 'رد مستخلص بالكميات' },
+          ],
+        }
+        assertBalanced(built.lines)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -20641,16 +22425,21 @@ export const useRawDataStore = create<DataState>()(
           ...extract,
           refundedMinor: (extract.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
+          quantityCreditVersion: extract.totals.retentionMinor > 0 ? 2 : 1,
+          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, quantities: args.quantities.map(row => ({ ...row })), grossMinor: quantityCredit.grossMinor, retentionMinor: quantityCredit.retentionMinor, ...(recovery > 0 ? { restoredAdvanceMinor: 0 } : {}), ...approvalStamp(get(), args.approvedBy) }],
         }
         let terminalRefund: PaymentTerminalTransaction | null = null
         if (args.terminalRefund) {
-          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(extract.id))
-          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          const originals = state.paymentTerminalTransactions.filter((row) => row.id === args.terminalRefund!.originalTransactionId)
+          const original = originals[0]
+          if (originals.length !== 1 || !original || original.kind !== 'charge' || original.documentType !== 'project_extract' || original.documentId !== String(extract.id)) throw new Error('تحصيل الماكينة الأصلي غير موجود أو غير فريد')
           if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
-          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
-          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
-          if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const terminals = state.paymentTerminals.filter((row) => row.id === original.terminalId), originalTerminal = terminals[0]
+          if (terminals.length !== 1 || !originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
+          const branch = getEffectiveActiveBranch(state)
+          if (original.branchId !== originalTerminal.branchId || (branch && originalTerminal.branchId !== String(branch.id) && (state.branches.length > 1 || originalTerminal.branchId.trim() !== ''))) throw new Error('تحصيل الماكينة أو الماكينة لا يتبع الفرع الحالي')
+          const reference = args.terminalRefund.providerReference.trim()
+          if (reference && state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && typeof row.providerReference === 'string' && row.providerReference.trim() === reference)) throw new Error('مرجع رد المزود مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
           terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${extract.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
         }
@@ -21039,6 +22828,7 @@ export const useRawDataStore = create<DataState>()(
           priceLists: s.priceLists ?? [],
           promotions: s.promotions ?? [], // الإصدار 19: العروض الترويجية/الباقات
           branches: s.branches ?? [], // الإصدار 20: الفروع الحقيقية (فرع = مخزن + خزينة)
+          financialEntityProfiles: s.financialEntityProfiles ?? [],
           paymentTerminals: s.paymentTerminals ?? [],
           paymentTerminalTransactions: s.paymentTerminalTransactions ?? [],
           paymentTerminalSettlements: s.paymentTerminalSettlements ?? [],
@@ -21052,6 +22842,12 @@ export const useRawDataStore = create<DataState>()(
             source: a.source ?? ('cash' as const),
             custodyFileId: a.custodyFileId ?? null,
           })),
+          projectDeletionRecords: s.projectDeletionRecords ?? [],
+          quotationDeletionRecords: s.quotationDeletionRecords ?? [],
+          surveyDeletionRecords: s.surveyDeletionRecords ?? [],
+          projectSurveys: s.projectSurveys ?? [],
+          projectCloseouts: s.projectCloseouts ?? [],
+          projectExtractDrafts: s.projectExtractDrafts ?? [],
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
           projectExpenseCategories: s.projectExpenseCategories && s.projectExpenseCategories.length ? s.projectExpenseCategories : [...DEFAULT_PROJECT_EXPENSE_CATEGORIES],

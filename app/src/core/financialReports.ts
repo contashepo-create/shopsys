@@ -1,6 +1,6 @@
 /**
  * التقارير المالية العالمية (أمر المالك: «أين قائمة الدخل والموازنة ودفتر الأستاذ…»):
- * كلها مشتقة من دفتر اليومية الموحد — مصدر حقيقة واحد فلا تتناقض أبداً:
+ * مشتقة من اليومية المرئية؛ تختلف طريقة عرض النطاق والاستبعادات بين التقارير، ولا يثبت ذلك صحة البيانات:
  * ① ميزان المراجعة  ② قائمة الدخل (ربح/خسارة)  ③ المركز المالي (الميزانية)
  * ④ دفتر الأستاذ العام (حركة حساب برصيد جارٍ)  ⑤ التدفق النقدي (نقدية/سيولة)
  * ⑥ تقرير الضريبة (ض.ق.م مخرجات/مدخلات/صافي)
@@ -8,8 +8,8 @@
  */
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
-import { closingMechanismIds } from './fiscal.ts'
-import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferEntryIds } from './branchAccounting.ts'
+import { closingMechanismIds, isValidFiscalDate } from './fiscal.ts'
+import { eliminatePairedInterBranchLines, INTERBRANCH_PAYABLE, INTERBRANCH_RECEIVABLE, pairedInterBranchTransferGroups } from './branchAccounting.ts'
 import { economicSourceResolver } from './journalSource.ts'
 
 export interface FinPeriod {
@@ -51,7 +51,9 @@ export interface TrialBalance {
 
 export function trialBalance(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): TrialBalance {
   const t = new Map<string, { d: Minor; c: Minor }>()
-  for (const e of eliminatePairedInterBranchLines(journal)) {
+  // Pair only entries visible by the report cutoff; a future counterpart must not
+  // erase a historical clearing balance. Entries before p.from can still pair.
+  for (const e of eliminatePairedInterBranchLines(journal.filter(entry => entry.date <= p.to))) {
     if (!inP(e.date, p)) continue
     for (const l of e.lines) {
       const cur = t.get(l.accountCode) ?? { d: 0, c: 0 }
@@ -66,6 +68,56 @@ export function trialBalance(journal: readonly JournalEntry[], p: FinPeriod, ext
   const totalDebitMinor = rows.reduce((a, r) => a + r.debitMinor, 0)
   const totalCreditMinor = rows.reduce((a, r) => a + r.creditMinor, 0)
   return { rows, totalDebitMinor, totalCreditMinor, balanced: totalDebitMinor === totalCreditMinor }
+}
+
+/* ميزان دفتر الخام بالمجاميع والأرصدة: لا يحذف معاملات بين الفروع. لا يغير
+   trialBalance المستخدم داخلياً في التقارير الأخرى، ولا يمثل قائمة توحيد. */
+export interface TrialBalanceDetailRow {
+  code: string
+  nameAr: string
+  openingDebitMinor: Minor
+  openingCreditMinor: Minor
+  movementDebitMinor: Minor
+  movementCreditMinor: Minor
+  closingDebitMinor: Minor
+  closingCreditMinor: Minor
+}
+export type TrialBalanceDetailAmounts = Omit<TrialBalanceDetailRow, 'code' | 'nameAr'>
+export interface TrialBalanceDetail {
+  rows: TrialBalanceDetailRow[]
+  totals: TrialBalanceDetailAmounts
+  openingBalanced: boolean
+  movementBalanced: boolean
+  closingBalanced: boolean
+}
+
+/** Valid calendar dates are essential: an inverted interval must not look like a balanced empty report. */
+export function validFinancialPeriod(p: FinPeriod): boolean {
+  return isValidFiscalDate(p.from) && isValidFiscalDate(p.to) && p.from <= p.to
+}
+
+export function trialBalanceDetail(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): TrialBalanceDetail {
+  if (!validFinancialPeriod(p)) throw new Error('فترة التقرير غير صالحة — راجع تاريخ البداية والنهاية')
+  const accounts = new Map<string, { opening: Minor; debit: Minor; credit: Minor }>()
+  for (const entry of journal) {
+    if (entry.date > p.to) continue
+    for (const line of entry.lines) {
+      const row = accounts.get(line.accountCode) ?? { opening: 0, debit: 0, credit: 0 }
+      if (entry.date < p.from) row.opening += line.debit - line.credit
+      else { row.debit += line.debit; row.credit += line.credit }
+      accounts.set(line.accountCode, row)
+    }
+  }
+  const amounts = (opening: Minor, debit: Minor, credit: Minor): TrialBalanceDetailAmounts => {
+    const closing = opening + debit - credit
+    return { openingDebitMinor: Math.max(opening, 0), openingCreditMinor: Math.max(-opening, 0), movementDebitMinor: debit, movementCreditMinor: credit, closingDebitMinor: Math.max(closing, 0), closingCreditMinor: Math.max(-closing, 0) }
+  }
+  const rows = [...accounts.entries()].map(([code, value]) => ({ code, nameAr: nameOf(code, extraNames), ...amounts(value.opening, value.debit, value.credit) }))
+    .filter(row => Object.values(row).some(value => typeof value === 'number' && value !== 0))
+    .sort((a, b) => a.code.localeCompare(b.code))
+  const totals: TrialBalanceDetailAmounts = { openingDebitMinor: 0, openingCreditMinor: 0, movementDebitMinor: 0, movementCreditMinor: 0, closingDebitMinor: 0, closingCreditMinor: 0 }
+  for (const row of rows) for (const key of Object.keys(totals) as (keyof TrialBalanceDetailAmounts)[]) totals[key] += row[key]
+  return { rows, totals, openingBalanced: totals.openingDebitMinor === totals.openingCreditMinor, movementBalanced: totals.movementDebitMinor === totals.movementCreditMinor, closingBalanced: totals.closingDebitMinor === totals.closingCreditMinor }
 }
 
 /* ─── ② قائمة الدخل ─── */
@@ -294,18 +346,37 @@ export function cashFlowReport(
   const cashSet = new Set(cashCodes)
   let opening = 0
   let openingBalanceAdjustments = 0
-  const inMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
-  const outMap = new Map<string, { amountMinor: Minor; activity: CashFlowActivity }>()
+  const inMap = new Map<string, CashFlowRow>()
+  const outMap = new Map<string, CashFlowRow>()
   let operatingNetMinor = 0, investingNetMinor = 0, financingNetMinor = 0
   const sourceOf = economicSourceResolver(journal)
-  const pairedTransfers = pairedInterBranchTransferEntryIds(journal)
+  // A transfer can be removed from gross movement only if both cash legs are
+  // inside this period and included in the selected cash accounts. Across a
+  // boundary retain each leg: otherwise opening/closing cash becomes fictional.
+  const pairedTransfers = new Set<number>()
+  for (const group of pairedInterBranchTransferGroups(journal.filter(entry => inP(entry.date, p)))) {
+    const safe = group.every(entry => {
+      if (sourceOf(entry) === 'opening') return false
+      const dueLines = entry.lines.filter(line => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
+      const cashLines = entry.lines.filter(line => cashSet.has(line.accountCode))
+      const otherLines = entry.lines.filter(line => !dueLines.includes(line) && !cashLines.includes(line))
+      // The generated transfer uses one cash account and optional 5108 fee.
+      // Compound or partly selected cash entries are too ambiguous to eliminate.
+      if (cashLines.length !== 1 || dueLines.includes(cashLines[0]) || otherLines.some(line => line.accountCode !== '5108')) return false
+      const cash = cashLines[0].debit - cashLines[0].credit
+      const due = dueLines.reduce((sum, line) => sum + line.debit - line.credit, 0)
+      const fees = otherLines.reduce((sum, line) => sum + line.debit - line.credit, 0)
+      return Number.isSafeInteger(cash) && Number.isSafeInteger(due) && Number.isSafeInteger(fees) && due !== 0 && cash + due + fees === 0 && dueLines.every(line => due > 0 ? line.credit === 0 : line.debit === 0) && ((due > 0 && cash <= -due) || (due < 0 && cash >= -due))
+    })
+    if (safe) group.forEach(entry => pairedTransfers.add(entry.id))
+  }
   for (const e of journal) {
     const rawCashDelta = e.lines.reduce((a, l) => a + (cashSet.has(l.accountCode) ? l.debit - l.credit : 0), 0)
     // In the company-wide view, matched due-to/due-from lines identify the
     // internal principal. Remove that amount from gross cash movement while
     // preserving real bank fees posted on the source entry. Branch-scoped
     // reports contain only one side and intentionally retain the transfer.
-    const internalPrincipalDelta = pairedTransfers.has(e.id)
+    const internalPrincipalDelta = inP(e.date, p) && pairedTransfers.has(e.id)
       ? e.lines.filter((line) => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
         .reduce((sum, line) => sum + line.debit - line.credit, 0)
       : 0
@@ -314,7 +385,7 @@ export function cashFlowReport(
     // قيد التأسيس ليس تدفقاً تشغيلياً. إن سبق بداية الفترة يدخل رصيد أولها؛
     // وإن وقع داخلها يظهر كتسوية رصيد افتتاحي مستقلة حتى لا يُضخّم نقدية أول الفترة.
     if (sourceOf(e) === 'opening') {
-      if (e.date <= p.from) opening += cashDelta
+      if (e.date < p.from) opening += cashDelta
       else if (e.date <= p.to) openingBalanceAdjustments += cashDelta
       continue
     }
@@ -341,12 +412,15 @@ export function cashFlowReport(
     else if (activity === 'investing') investingNetMinor += cashDelta
     else financingNetMinor += cashDelta
     const map = cashDelta > 0 ? inMap : outMap
-    const cur = map.get(label) ?? { amountMinor: 0, activity }
+    // Distinct account codes can share a display name (and even an activity).
+    // Never merge their movements under an arbitrary first activity.
+    const key = JSON.stringify([counter?.accountCode ?? null, activity, label])
+    const cur = map.get(key) ?? { label, amountMinor: 0, activity }
     cur.amountMinor += Math.abs(cashDelta)
-    map.set(label, cur)
+    map.set(key, cur)
   }
-  const inflows = [...inMap.entries()].map(([label, v]) => ({ label, amountMinor: v.amountMinor, activity: v.activity })).sort((a, b) => b.amountMinor - a.amountMinor)
-  const outflows = [...outMap.entries()].map(([label, v]) => ({ label, amountMinor: v.amountMinor, activity: v.activity })).sort((a, b) => b.amountMinor - a.amountMinor)
+  const inflows = [...inMap.values()].sort((a, b) => b.amountMinor - a.amountMinor)
+  const outflows = [...outMap.values()].sort((a, b) => b.amountMinor - a.amountMinor)
   const totalInMinor = inflows.reduce((a, r) => a + r.amountMinor, 0)
   const totalOutMinor = outflows.reduce((a, r) => a + r.amountMinor, 0)
   const netChangeMinor = totalInMinor - totalOutMinor

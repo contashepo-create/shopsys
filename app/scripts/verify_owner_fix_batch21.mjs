@@ -33,7 +33,7 @@ const css = read('index.css')
   R.ok('أزرار «مفتاح كهرباء» بلمبة حالة في فاتورتي البيع والشراء')
 }
 {
-  assert.ok(/if\(printSwitches\.printAfterSave\)\{try\{printDraft\(printSwitches\.cashierPrint\?'thermal':'a4'\)/.test(sales),
+  assert.ok(/if\(printSwitches\.printAfterSave&&committedPrint\)\{if\(currentPreviewScope\(\)!==expectedScope\)[\s\S]{0,250}printDraft\(printSwitches\.cashierPrint\?'thermal':'a4',committedPrint\)/.test(sales),
     'الطباعة بعد الحفظ لا تحترم مفتاح الكاشير')
   /* §102: التوقيع اتسع بخيار printerName (توجيه النسخة لطابعتها المسماة عبر
      جسر سطح المكتب)، ثم بخيار preview/fromPreview في 2026-10-27 (معاينة كل

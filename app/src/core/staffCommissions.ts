@@ -66,10 +66,16 @@ export interface StaffCommission {
   accrualEntryId: number
   /** قيد الصرف المنفرد أو قيد مسير الرواتب الذي صُرفت ضمنه */
   payoutEntryId: number | null
+  /** تاريخ الصرف المنفرد المختار ووقت تسجيله؛ لا يفترضان للقيم القديمة أو المسير. */
+  payoutDate?: string
+  payoutCreatedAt?: string
   /** كيف صُرفت: سند منفرد أم ضمن مسير رواتب */
   payoutMode: 'voucher' | 'payroll' | null
   /** قيد الإلغاء العاكس إن أُلغيت */
   cancelEntryId: number | null
+  /** تاريخ الإلغاء المختار ووقت تسجيله، لا يتغير تاريخ الاستحقاق. */
+  cancelDate?: string
+  cancelCreatedAt?: string
   cancelReason: string
   createdBy: string
   createdAt: string

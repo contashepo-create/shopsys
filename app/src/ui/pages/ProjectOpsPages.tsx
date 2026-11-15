@@ -6,9 +6,12 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * EvmDashboardPage — لوحة القيمة المكتسبة (موازنة/فعلي/إنجاز + تنبيهات تجاوز)
  * ApprovalsPage — مسارات الموافقات التسلسلية وطلبات الاعتماد
  */
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PackageMinus, Plus, Trash2, HandCoins, Gauge, ShieldCheck, CheckCircle2, XCircle, AlertTriangle, ListChecks } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { inventoryOutflowFingerprint } from './inventoryOutflowFingerprint.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -33,7 +36,7 @@ function useCur() {
 interface DraftIssueLine { itemId: string; qty: string; unitAr: string }
 
 export function MaterialIssuesPage() {
-  const { materialRequisitions, projects, employees, items, issueMaterials } = useDataStore()
+  const { materialRequisitions, projects, employees, items } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -44,6 +47,16 @@ export function MaterialIssuesPage() {
   const [receivedBy, setReceivedBy] = useState('')
   const [lines, setLines] = useState<DraftIssueLine[]>([])
   const [notes, setNotes] = useState('')
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false), basis = useRef('')
+  const signature = JSON.stringify([open, projectId, issuedBy, receivedBy, lines, notes, date])
+  const currentSignature = useRef(signature)
+  useLayoutEffect(() => { currentSignature.current = signature }, [signature])
+  const fingerprint = () => {
+    const s = useRawDataStore.getState()
+    return JSON.stringify([inventoryOutflowFingerprint(), s.projects, s.employees, s.materialRequisitions, s.stockMoves, s.projectCosts, s.approvalFlows, s.approvalRequests])
+  }
 
   const activeEmployees = employees.filter((e) => e.active)
   const stockItems = items.filter((it) => it.isActive)
@@ -51,6 +64,7 @@ export function MaterialIssuesPage() {
   const openNew = () => {
     setProjectId(''); setIssuedBy(''); setReceivedBy(''); setNotes('')
     setLines([{ itemId: '', qty: '1', unitAr: '' }])
+    setDate(todayLocalIso()); basis.current = fingerprint()
     setOpen(true)
   }
 
@@ -60,20 +74,28 @@ export function MaterialIssuesPage() {
     return [it.baseUnit, ...it.extraUnits.map((u) => u.nameAr)]
   }
 
-  const save = () => {
+  const save = async () => {
+    if (pending.current) return
+    pending.current = true; setSaving(true)
+    const expectedSignature = signature
+    let committed = false
     try {
-      const parsed: IssueLineInput[] = lines
-        .filter((l) => l.itemId && Number(l.qty) > 0)
-        .map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty), unitAr: l.unitAr }))
-      const req = issueMaterials({
-        projectId: Number(projectId),
-        issuedByEmployeeId: Number(issuedBy),
-        receivedByEmployeeId: Number(receivedBy),
-        lines: parsed, notes: notes.trim(),
+      const req = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (currentSignature.current !== expectedSignature || fingerprint() !== basis.current) throw new Error('تغير نموذج الإذن أو بيانات المشروع والمخزون — أغلق النافذة وراجع البيانات')
+        const parsed: IssueLineInput[] = lines.filter(l => l.itemId).map(l => ({ itemId: Number(l.itemId), qty: Number(l.qty), unitAr: l.unitAr }))
+        const result = useRawDataStore.getState().issueMaterials({
+          projectId: Number(projectId), issuedByEmployeeId: Number(issuedBy), receivedByEmployeeId: Number(receivedBy),
+          lines: parsed, notes: notes.trim(), date,
+        })
+        committed = true
+        return result
       })
       toast.show(`صدر إذن الصرف ${req.reqNumber} بتكلفة ${fmt(req.totalCostMinor)} — حُمِّلت على المشروع ✅`)
       setOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (committed) { setOpen(false); toast.show('سُجل الإذن محلياً لكن تعذر تأكيد الحفظ — راجع الإذن والقيد والمخزون قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر تأمين إذن الصرف', 'error')
+    } finally { pending.current = false; setSaving(false) }
   }
 
   return (
@@ -123,6 +145,8 @@ export function MaterialIssuesPage() {
 
       <Modal open={open} onClose={() => setOpen(false)} title="إذن صرف مواد لمشروع" wide subtitle="مستند إذن صرف: خروج مواد من المخزن إلى مشروع">
         <div className="space-y-4"><DocSectionHead step="١" title="المشروع والمواد المنصرفة" hint="صرف المواد تكلفة مشروع لا مصروف عام" />
+          <Field label="تاريخ صرف المواد"><input aria-label="تاريخ صرف المواد" type="date" value={date} min={todayLocalIso()} max={todayLocalIso()} onChange={e => setDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          <p className="text-[11px] text-slate-500">الترحيل بتاريخ اليوم فقط ومن مخزن الصنف الأساسي؛ الماضي غير متاح لعدم إثبات رصيده وتكلفته. صرف الدفعة المنتهية يخضع لقرار الموقع، فراجع الصلاحية قبل التسجيل.</p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="المشروع *">
               <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
@@ -172,7 +196,7 @@ export function MaterialIssuesPage() {
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="صبّة القواعد — بلوك أ…" /></Field>
           <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بتكلفة المنصرف على مركز تكلفة المشروع · <b>1103 المخزون</b> دائناً بها بالمتوسط المرجح لحظة الصرف.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
+            <Btn onClick={() => void save()} shortcut="F9" disabled={saving || !projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
           </div>
         </div>
       </Modal>
@@ -183,7 +207,7 @@ export function MaterialIssuesPage() {
 /* ═══════════════ تحصيلات العملاء FIFO ═══════════════ */
 
 export function ClientCollectionsPage() {
-  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, receiveClientPayment, vouchers, projects } = useDataStore()
+  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, vouchers, projects } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -198,25 +222,45 @@ export function ClientCollectionsPage() {
   const [specific, setSpecific] = useState(false)
   const [specificKey, setSpecificKey] = useState('')
   const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false)
+  const draft = JSON.stringify([customerId, amount, treasury, terminalId, terminalReference, cardLast4, specific, specificKey, notes, cur])
+  const currentDraft = useRef(draft)
+  useLayoutEffect(() => { currentDraft.current = draft }, [draft])
 
   const openInvoices = customerId ? getOpenClientInvoices(Number(customerId)) : []
   const totalOpen = openInvoices.reduce((s, inv) => s + inv.dueMinor - inv.settledMinor, 0)
-
-  const collect = () => {
+  const fingerprint = (id: number) => {
+    const raw = useRawDataStore.getState(), live = useDataStore.getState(), app = useAppStore.getState()
+    return JSON.stringify([raw.currentUserId, raw.activeBranchId, raw.branches, raw.appUsers, raw.employees, raw.roleOverrides, raw.customRoles, raw.treasuries, raw.paymentTerminals, raw.paymentTerminalTransactions, raw.journal, live.customers.filter(row => row.id === id), live.getOpenClientInvoices(id), app.setup, app.fiscalYears, todayLocalIso()])
+  }
+  const clearDraft = () => { setAmount(''); setNotes(''); setSpecificKey(''); setSpecific(false); setTerminalReference(''); setCardLast4('') }
+  const collect = async () => {
+    if (pending.current || !customerId || !amount) return
+    pending.current = true; setSaving(true)
+    let committed = false
+    const expectedDraft = currentDraft.current, id = Number(customerId)
     try {
+      const expected = fingerprint(id)
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      const r = receiveClientPayment({
-        customerId: Number(customerId),
-        amountMinor: toMinor(amount, cur.decimals),
-        treasury: terminal?.settlementAccountCode ?? treasury,
-        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
-        specificDocKey: specific && specificKey ? specificKey : null,
-        notes: notes.trim(),
+      if (terminalId && !terminal) throw new Error('ماكينة التحصيل غير متاحة — أعد اختيارها')
+      const r = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (currentDraft.current !== expectedDraft || fingerprint(id) !== expected) throw new Error('تغيرت بيانات التحصيل أو الذمم — أعد المراجعة قبل الترحيل')
+        const result = useRawDataStore.getState().receiveClientPayment({
+          customerId: id, amountMinor: toMinor(amount, cur.decimals), treasury: terminal?.settlementAccountCode ?? treasury,
+          terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
+          specificDocKey: specific && specificKey ? specificKey : null, notes: notes.trim(),
+        })
+        committed = true
+        return result
       })
       const applied = r.allocations.map((a) => `${a.docLabel}: ${fmt(a.appliedMinor)}`).join('، ')
       toast.show(`${r.settlementNumber} ✅ ${applied}${r.unallocatedMinor > 0 ? ` + ${fmt(r.unallocatedMinor)} تحت الحساب` : ''}`)
-      setAmount(''); setNotes(''); setSpecificKey(''); setSpecific(false); setTerminalReference(''); setCardLast4('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      if (currentDraft.current === expectedDraft) clearDraft()
+    } catch (e) {
+      if (committed) { if (currentDraft.current === expectedDraft) clearDraft(); toast.show('سُجل التحصيل محلياً لكن تعذر تأكيد الحفظ — راجع التحصيلات والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر تأمين التحصيل', 'error')
+    } finally { pending.current = false; setSaving(false) }
   }
 
   return (
@@ -283,7 +327,7 @@ export function ClientCollectionsPage() {
         )}
 
         <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-        <Btn onClick={collect} shortcut="F9" disabled={!customerId || !amount} className="w-full">💰 تحصيل وتوزيع تلقائي</Btn>
+        <Btn onClick={() => void collect()} shortcut="F9" disabled={saving || !customerId || !amount} className="w-full">{saving ? 'جارٍ تأمين التحصيل…' : '💰 تحصيل وتوزيع تلقائي'}</Btn>
       </div>
 
       {/* §95 (محاذاة pro-acc): سندات القبض المرتبطة بمشروع — أثر تحليلي على المشروع، ورصيد العميل نُزل من طرف السند */}

@@ -123,6 +123,8 @@ export interface BranchLegalIdentity {
  * تُحفظ هنا كاملة ولا تُستعار من الملف الأساسي للفرع الرئيسي.
  */
 export interface BranchBusinessProfile {
+  /** تفضيل عرض لا يمنح صلاحيات محاسبية. */
+  accountingMode?: 'simple' | 'full'
   shopName: string
   phone: string
   email: string
@@ -711,6 +713,7 @@ function effectiveBranchAppSettings(
     allowNegativeTreasury: profile.allowNegativeTreasury,
     allowNegativeStock: profile.allowNegativeStock,
     requireOpenShiftForSales: profile.requireOpenShiftForSales,
+    accountingMode: profile.accountingMode ?? companySetup.accountingMode,
     activityId,
     defaultWarehouseId: branch.warehouseId,
     modules: resolveBranchModules(branch, companySetup.modules),
@@ -765,7 +768,7 @@ function companySetupPatch(state: AppState, patch: Partial<SetupState>): Partial
     // والدولة والعملة والترخيص ما تزال على مستوى قاعدة البيانات/المنشأة الأم.
     const branchSettingKeys = new Set<keyof SetupState>([
       'shopName', 'phone', 'email', 'website', 'city', 'street', 'buildingNo', 'postalCode', 'poBox', 'commercialRegister',
-      'doctorSpecialty', 'allowNegativeTreasury', 'allowNegativeStock', 'requireOpenShiftForSales',
+      'doctorSpecialty', 'allowNegativeTreasury', 'allowNegativeStock', 'requireOpenShiftForSales', 'accountingMode',
     ])
     const unsupported = Object.keys(patch).filter((key) => !branchSettingKeys.has(key as keyof SetupState))
     if (unsupported.length) throw new Error('الإعدادات العامة للشركة لا تُعدّل من داخل فرع مستقل — غيّر الفرع إلى الرئيسي أولاً')

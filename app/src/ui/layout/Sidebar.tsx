@@ -4,14 +4,16 @@
  */
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop } from 'lucide-react'
+import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop, Star } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
+import { APP_VERSION } from '../../core/updates.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
+import { useNavigationFavorites } from '../hooks/useNavigationFavorites.ts'
 import { openSectionWindow } from '../windows/windowStore.ts'
 
 function titleForPath(path: string): string {
@@ -50,8 +52,9 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
   // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط أو الفرع المخصص (طلب المالك):
   // القسم كله يختفي لو وحدته مطفأة، والفرع المرتبط بوحدة يختفي وحده داخل قسم عام
-  const visibleSections = NAV_SECTIONS
+  const permittedSections = NAV_SECTIONS
     .filter((sec) => {
+      if (sec.id === 'quotations' && effectiveModules.includes('contracting')) return false
       if (sec.module && !effectiveModules.includes(sec.module)) return false
       if (sec.accountingOnly && setup.accountingMode !== 'full') return false
       return true
@@ -73,6 +76,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       nameAr: labelFor(effectiveActivityId, sec.id, sec.nameAr),
     }))
     .filter((sec) => sec.children.length > 0)
+  const { sections: visibleSections, paths: favoritePaths, toggle: toggleFavorite } = useNavigationFavorites(permittedSections)
 
   const toggle = (id: string) =>
     setOpenSections((prev) => {
@@ -113,18 +117,19 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           const colors = SECTION_COLORS[sec.color]
           const isOpen = openSections.has(sec.id)
           const hasActive = sec.children.some((c) => c.path === location.pathname)
-          const single = sec.children.length === 1
+          // لا نُخفي اسم الشاشة عندما لا يملك موظف الفرع إلا صلاحية واحدة في المقاولات.
+          const single = sec.children.length === 1 && sec.id !== 'contracting'
 
           if (single) {
             const child = sec.children[0]
             return (
+              <div key={sec.id} className="flex items-center">
               <NavLink
-                key={sec.id}
                 to={child.path}
                 onClick={(event) => guardLink(event, child.path)}
                 style={{ animationDelay: `${i * 35}ms` }}
                 className={({ isActive }) =>
-                  `anim-up group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
+                  `anim-up group flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
                     isActive
                       ? `${colors.activeBg} ${colors.activeText} font-bold shadow-sm`
                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:translate-x-[-3px]'
@@ -136,6 +141,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 </span>
                 <span className="text-sm">{sec.nameAr}</span>
               </NavLink>
+              {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="shrink-0 p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
+              </div>
             )
           }
 
@@ -169,12 +176,12 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 <div className="overflow-hidden">
                   <div className={`mr-5 my-1 pr-3 border-r-2 ${colors.border} space-y-0.5`}>
                     {sec.children.map((child) => (
+                      <div key={child.id} className="flex items-center">
                       <NavLink
-                        key={child.id}
                         to={child.path}
                         onClick={(event) => guardLink(event, child.path)}
                         className={({ isActive }) =>
-                          `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
+                          `group flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
                             isActive
                               ? `${colors.activeBg} ${colors.activeText} font-bold`
                               : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:translate-x-[-3px]'
@@ -185,6 +192,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                         <child.icon size={15} className="opacity-70" />
                         <span>{child.nameAr}</span>
                       </NavLink>
+                      {child.path !== '/' && <button type="button" aria-label={`${favoritePaths.includes(child.path) ? 'إزالة' : 'إضافة'} ${child.nameAr} ${favoritePaths.includes(child.path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(child.path)} onClick={() => toggleFavorite(child.path)} className="shrink-0 p-2 text-amber-500"><Star size={15} fill={favoritePaths.includes(child.path) ? 'currentColor' : 'none'} /></button>}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -196,7 +205,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
       {/* الإصدار */}
       <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 dark:text-slate-600 flex items-center justify-between">
-        <span dir="ltr">TAHAKAM ERP v0.1.0</span>
+        <span dir="ltr">TAHAKAM ERP v{APP_VERSION}</span>
         <span className="px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 font-bold">م / محمد عبدة</span>
       </div>
     </aside>

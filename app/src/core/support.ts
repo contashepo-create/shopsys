@@ -330,7 +330,9 @@ export async function fetchConversation(baseUrl: string, deviceId: string, token
         if (res.status === 0 || res.status === 404) continue
         return null
       }
-      return parseConversation(JSON.parse(res.body) as unknown)
+      const raw: unknown = JSON.parse(res.body)
+      if (!Array.isArray(raw)) return null // الرد غير الصالح ليس محادثة فارغة
+      return parseConversation(raw)
     }
     return null
   } catch { return null }

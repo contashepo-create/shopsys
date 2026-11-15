@@ -114,8 +114,12 @@ export function PurchasesPage() {
   }
 
   const [open, setOpen] = useState(false)
+  const [purchaseDate, setPurchaseDate] = useState(() => todayLocalIso())
   const [isPosting, setIsPosting] = useState(false)
   const postingRef = useRef(false)
+  // مفتاح يبقى ثابتاً طوال فتح المحرر، بما في ذلك فشل تأكيد التخزين بعد الترحيل.
+  const quickPurchaseDraftId = useRef<string | null>(null)
+  const postedQuickSignature = useRef<string | null>(null)
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
   // طباعة فاتورة الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseInvoice | null>(null)
@@ -319,6 +323,9 @@ export function PurchasesPage() {
   }
 
   const openNew = () => {
+    quickPurchaseDraftId.current = crypto.randomUUID()
+    postedQuickSignature.current = null
+    setPurchaseDate(todayLocalIso())
     setSupplierId(0)
     setLines([makeDraftLine()])
     setExpenses([])
@@ -398,7 +405,7 @@ export function PurchasesPage() {
     }
   })()
 
-  const invoiceSignature = JSON.stringify({ supplierId, lines, expenses, paid, paySource, warehouseId, projectId, notes, taxPolicy: taxPolicy.effectivePercent })
+  const invoiceSignature = JSON.stringify({ purchaseDate, supplierId, lines, expenses, paid, paySource, warehouseId, projectId, notes, taxPolicy: taxPolicy.effectivePercent })
   const unsaved = useUnsavedChangesGuard(invoiceSignature)
   useEffect(() => { if (open) unsaved.markClean() }, [open, unsaved])
 
@@ -409,6 +416,14 @@ export function PurchasesPage() {
       return
     }
     if (postingRef.current) return
+    const attemptSignature = JSON.stringify({ invoiceSignature, preview, currency: cur })
+    if (postedQuickSignature.current != null && postedQuickSignature.current !== attemptSignature) {
+      toast.show('سبق ترحيل الفاتورة وتعذّر تأكيد الحفظ؛ أعد القيم السابقة قبل إعادة المحاولة أو راجع الفاتورة المسجلة', 'error')
+      return
+    }
+    const sourceDraftId = quickPurchaseDraftId.current
+    if (!sourceDraftId) { toast.show('تعذّر تحديد مفتاح الفاتورة؛ أغلق الإدخال وافتحه من جديد', 'error'); return }
+    let committedInvoiceNumber: string | null = null
     postingRef.current = true
     setIsPosting(true)
     void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
@@ -421,8 +436,9 @@ export function PurchasesPage() {
       return
     }
     const inv = postPurchase({
+      sourceDraftId,
       supplierId,
-      date: todayLocalIso(),
+      date: purchaseDate,
       lines: preview.landed.map((l, i) => {
         const d = enteredLines[i]
         return {
@@ -469,6 +485,8 @@ export function PurchasesPage() {
       purchaseExpenseTaxRecoverable: taxPolicy.canRecoverInputTax,
       notes,
     })
+    committedInvoiceNumber = inv.invoiceNumber
+    postedQuickSignature.current = attemptSignature
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
     return true
     } catch (e) {
@@ -476,7 +494,10 @@ export function PurchasesPage() {
       return false
     }
     }).then((completed) => { if (completed) { unsaved.markClean(); setOpen(false) } })
-      .catch((e: unknown) => toast.show(e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة', 'error'))
+      .catch((e: unknown) => {
+        const detail = e instanceof Error ? e.message : 'تعذّر تأمين حفظ الفاتورة'
+        toast.show(committedInvoiceNumber ? `تم ترحيل الفاتورة ${committedInvoiceNumber} لكن ${detail}؛ أعد المحاولة بالقيم نفسها أو راجع الفاتورة قبل إغلاق الإدخال` : detail, 'error')
+      })
       .finally(() => { postingRef.current = false; setIsPosting(false) })
   }
 
@@ -610,6 +631,9 @@ export function PurchasesPage() {
                 onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
                 autoFocus
               /></div>{supplierId > 0 ? <button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="mt-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}</div>
+            </Field>
+            <Field label="تاريخ الفاتورة" hint="اليوم افتراضياً؛ يمكن إدخال تاريخ سابق في سنة مفتوحة">
+              <input type="date" max={todayLocalIso()} value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} aria-label="تاريخ فاتورة الشراء السريع" className={inputCls} />
             </Field>
           </div>
           {warehouses.length > 1 && (

@@ -61,13 +61,14 @@ const frame = read('components/InvoicePOSFrame.tsx')
   R.ok('لا خلفية بيضاء ثابتة داخل أي نافذة سند — الوضع الليلي يقرأ المستند كاملاً')
 }
 
-/* ② النوافذ الأربع كلها بلغة المستند (إنشاء · معاينة · عرض مرحّل · عكس) */
+/* ② الإنشاء والعرض والعكس بنوافذ المستند؛ المعاينة تستعمل نافذة الطباعة المشتركة. */
 {
   const modals = vouchers.split('<Modal ').slice(1)
-  assert.ok(modals.length >= 4, `عدد نوافذ السندات ${modals.length} — متوقع 4 على الأقل`)
+  assert.ok(modals.length >= 3, `عدد نوافذ السندات ${modals.length} — متوقع 3 على الأقل`)
   const documentStyled = modals.filter((m) => m.includes('doc-head') || m.includes('doc-sheet') || m.includes('#7a2431'))
   assert.equal(documentStyled.length, modals.length, `${modals.length - documentStyled.length} نافذة ما زالت بالشكل القديم`)
-  R.ok(`نوافذ السندات الأربع (إنشاء · معاينة · سند مرحّل · عكس) كلها بلغة المستند — لا نافذة بالشكل القديم`)
+  assert.ok(vouchers.includes("preview: { title: 'معاينة مسودة السند قبل الطباعة', rebuild:") && vouchers.includes('onClick={printDraft} title="معاينة السند"'), 'معاينة السند لا تفتح نافذة الطباعة المشتركة')
+  R.ok('نوافذ الإنشاء والعرض والعكس بلغة المستند، والمعاينة تستخدم نافذة الطباعة المشتركة')
 }
 
 /* ③ السند المرحّل مستند كامل: رقم وحالة وطرف ومبلغ بالحروف وقيد وتوقيعات */
@@ -89,7 +90,7 @@ const frame = read('components/InvoicePOSFrame.tsx')
 
 /* ④ نافذة الإنشاء تخدم كل سيناريوهات القبض والصرف */
 {
-  const create = vouchers.slice(vouchers.indexOf('<Modal open={open}'), vouchers.indexOf('<Modal open={previewOpen}'))
+  const create = vouchers.slice(vouchers.indexOf('<Modal open={open}'), vouchers.indexOf('<Modal open={!!viewing}'))
   const scenarios = [
     ['PartyQuickPicker', 'اختيار العميل/المورد بالبحث السريع'],
     ['liveBalance', 'عرض رصيد الطرف قبل السند'],
@@ -132,7 +133,7 @@ const frame = read('components/InvoicePOSFrame.tsx')
 /* ⑦ الطباعة تحمل نفس هوية المستند */
 {
   assert.ok(vouchers.includes('printDraft') && vouchers.includes('amountInWords'), 'الطباعة بلا مبلغ بالحروف')
-  assert.ok(vouchers.slice(vouchers.indexOf('const printDraft')).includes('#0f172a'), 'الطباعة بلا هوية لونية موحدة (حبر المستند #0f172a)')
+  assert.ok(vouchers.slice(vouchers.indexOf('const buildDraftPreview'), vouchers.indexOf('const printDraft')).includes('#0f172a'), 'الطباعة بلا هوية لونية موحدة (حبر المستند #0f172a)')
   R.ok('نسخة الطباعة تحمل هوية المستند نفسها (ألوان وترويسة ومبلغ بالحروف)')
 }
 

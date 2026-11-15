@@ -35,6 +35,7 @@ useAppStore.getState().updateSetup({ allowNegativeTreasury: true, shopName: 'ا�
 const { compareBranches, branchOfWarehouse, validateBranch, resolveBranchModules, resolveBranchActivityId } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
 const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
 const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
+const { todayLocalIso } = await import(pathToFileURL(join(root, 'src/core/time.ts')).href)
 const st = () => useDataStore.getState()
 const raw = () => useRawDataStore.getState()
 let pass = 0
@@ -166,7 +167,9 @@ console.log('\n═══ 3) بيع من كل فرع → المقارنة تعك�
 
 console.log('\n═══ 4) تحويل نقدية بين خزينتي الفرعين بمستند سند ═══')
 {
-  st().postVoucher({ kind: 'transfer', date: '2026-09-20', treasury: branchNew.treasuryCode, counterAccountCode: '1101', amountMinor: 3000, description: 'توريد نقدية فرع المعادي للمركز' })
+  st().setActiveBranchId(branchNew.id)
+  st().postVoucher({ kind: 'transfer', date: todayLocalIso(), treasury: branchNew.treasuryCode, counterAccountCode: '1101', amountMinor: 3000, description: 'توريد نقدية فرع المعادي للمركز' })
+  st().setActiveBranchId(null)
   const balances = new Map()
   for (const e of st().journal) for (const l of e.lines) balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
   assert.equal(balances.get(branchNew.treasuryCode), 2000, 'خزينة المعادي 50.00−30.00=20.00')
@@ -176,7 +179,7 @@ console.log('\n═══ 4) تحويل نقدية بين خزينتي الفرع
   assert.equal(pair.length, 2, 'التحويل يُنشئ قيداً في دفتر كل فرع')
   assert.deepEqual(new Set(pair.map((entry) => entry.branchId)), new Set([mainBranch.id, branchNew.id]))
   assert.ok(pair.every((entry) => entry.lines.reduce((sum, line) => sum + line.debit, 0) === entry.lines.reduce((sum, line) => sum + line.credit, 0)), 'القيدان متوازنان منفردين')
-  const consolidated = trialBalance(st().journal, { from: '2026-01-01', to: '2026-12-31' })
+  const consolidated = trialBalance(st().journal, { from: '2026-01-01', to: '9999-12-31' })
   assert.equal(consolidated.rows.some((row) => row.code === '1114' || row.code === '2118'), false, 'الرصيد البيني يُستبعد من التقرير المجمع بعد التحقق من اقتران القيدين')
   const reversed = st().reverseVoucher(voucher.id, 'اختبار عكس مزدوج')
   assert.ok(reversed.branchTransfer.destinationReversalEntryId, 'عكس السند يُنشئ قيد عكس ثانياً للفرع المقابل')

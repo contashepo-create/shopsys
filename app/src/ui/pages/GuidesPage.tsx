@@ -51,6 +51,7 @@ export function GuidesPage() {
         icon: sec.icon,
         color: SECTION_COLORS[sec.color] ?? SECTION_COLORS.slate,
         rows: sec.children
+          .filter((c) => !c.navigationAlias)
           .filter((c) => !c.module || setup.modules.includes(c.module))
           .filter((c) => !c.feature || setup.features.includes(c.feature))
           .filter((c) => !c.activities || c.activities.includes(setup.activityId ?? ''))

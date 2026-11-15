@@ -4,14 +4,20 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * مطابقة الدفاتر بالواقع: عدّ نقدية الخزائن، ومطابقة أرصدة العملاء والموردين —
  * كل فرق يضرب قائمة الدخل عبر 5112 إجبارياً (لا عجز «يتبخر» بتعديل صامت).
  */
-import { useMemo, useState } from 'react'
-import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2, ArrowLeftRight, X } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2, ArrowLeftRight, Eye, Printer, X } from 'lucide-react'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, useToast, EmptyState, Modal } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { htmlTableHtml, renderReportShell } from '../../core/reportPrint.ts'
+import { ACCOUNT_NAMES } from './accountNames.ts'
+import { buildSettlementEntry } from '../../core/settlement.ts'
 
 type Section = 'treasury' | 'customer' | 'supplier'
 
@@ -23,22 +29,61 @@ const SECTIONS: { id: Section; nameAr: string; icon: typeof Scale; hint: string 
 
 export function SettlementsPage() {
   const store = useDataStore()
-  const { treasuries, customers, suppliers, journal, settlements, applySettlement } = store
+  const { treasuries, customers, suppliers, journal, settlements } = store
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [section, setSection] = useState<Section>('treasury')
+  const [viewSettlementId, setViewSettlementId] = useState<number | null>(null)
+  const viewing = settlements.find(row => row.id === viewSettlementId)
+  const previewSettlement = (id: number) => {
+    const build = () => {
+      const fresh = useDataStore.getState(), rows = fresh.settlements.filter(row => row.id === id)
+      if (rows.length !== 1) throw new Error('التسوية غير موجودة أو غير فريدة في الفرع الحالي')
+      const row = rows[0], entries = row.journalEntryId == null ? [] : fresh.journal.filter(entry => entry.id === row.journalEntryId)
+      if (![row.bookMinor, row.actualMinor, row.varianceMinor].every(Number.isSafeInteger) || row.actualMinor - row.bookMinor !== row.varianceMinor) throw new Error('قيمة التسوية أو فرقها غير مطابق — راجع السجل')
+      if ((row.varianceMinor !== 0 && entries.length !== 1) || (row.varianceMinor === 0 && row.journalEntryId != null) || (entries[0] && (entries[0].sourceType !== 'adjustment' || entries[0].sourceId !== row.id || (entries[0].sourceCollection != null && entries[0].sourceCollection !== 'settlements')))) throw new Error('قيد التسوية غير متاح أو لا يطابق المستند — راجع السجل')
+      if (entries[0]) {
+        const expected = buildSettlementEntry({ section: row.section, bookMinor: row.bookMinor, actualMinor: row.actualMinor, treasuryCode: row.section === 'treasury' ? String(row.refId) : undefined, reason: row.reason })
+        const amounts = (lines: typeof expected) => lines.map(line => [line.accountCode, line.debit, line.credit]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+        if (!Array.isArray(entries[0].lines) || JSON.stringify(amounts(entries[0].lines)) !== JSON.stringify(amounts(expected))) throw new Error('قيد التسوية لا يطابق قيمها — راجع السجل')
+      }
+      const app = useAppStore.getState(), currency = (app.setup.countryCode && getCountry(app.setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+      const money = (amount: number) => `${formatMinor(amount, currency, false)} ${currency.symbol}`
+      const details = htmlTableHtml({ headers: ['البيان', 'القيمة'], rows: [['رقم المستند', row.settlementNumber], ['التاريخ', row.date.slice(0, 10)], ['نوع التسوية', SECTIONS.find(item => item.id === row.section)?.nameAr ?? row.section], ['الجهة', row.refNameAr], ['الرصيد الدفتري', money(row.bookMinor)], ['الرصيد الفعلي', money(row.actualMinor)], ['الفرق (الفعلي − الدفتري)', money(row.varianceMinor)], ['السبب', row.reason], ['المعتمد', row.approvedBy ?? 'غير مسجل']] })
+      const entry = entries[0]
+      const ledger = entry ? htmlTableHtml({ headers: ['الحساب', 'مدين', 'دائن'], rows: entry.lines.map(line => [`${line.accountCode} — ${ACCOUNT_NAMES[line.accountCode] ?? ''}`, line.debit ? money(line.debit) : '—', line.credit ? money(line.credit) : '—']) }) : '<p>مطابقة تامة — لا يوجد قيد فرق.</p>'
+      return renderReportShell({ title: `مستند تسوية ${row.settlementNumber}`, subtitle: 'تفاصيل التسوية المسجلة والقيد المرتبط', companyName: app.setup.shopName || 'المنشأة', logoDataUrl: app.receipt.logoDataUrl, settings: app.reportPrint, bodyHtml: `${details}<h2>القيد المحاسبي</h2>${ledger}` })
+    }
+    try { openPrintPreview({ html: build(), rebuild: build, wide: true, title: 'معاينة مستند التسوية قبل الطباعة' }) } catch (error) { toast.show(error instanceof Error ? error.message : 'تعذرت معاينة التسوية', 'error') }
+  }
   // مقاصة عميل/مورد (AUDIT-012): الطرف الواحد الذي هو عميل ومورد معاً
   const [offsetOpen, setOffsetOpen] = useState(false)
   const [offsetCustomer, setOffsetCustomer] = useState(0)
   const [offsetSupplier, setOffsetSupplier] = useState(0)
   const [offsetAmount, setOffsetAmount] = useState('')
   const [offsetNotes, setOffsetNotes] = useState('')
+  const [offsetDate, setOffsetDate] = useState(() => todayLocalIso())
+  const [offsetSaving, setOffsetSaving] = useState(false)
+  const offsetPending = useRef(false), offsetSession = useRef(0), offsetBasis = useRef(''), offsetDraft = useRef('')
+  const draftValue = JSON.stringify([offsetCustomer, offsetSupplier, offsetAmount, offsetNotes, offsetDate])
+  useLayoutEffect(() => { offsetDraft.current = draftValue }, [draftValue])
+  const closeOffset = () => { offsetSession.current++; setOffsetOpen(false) }
+  const fingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.customers, s.suppliers, s.sales, s.purchases, s.vouchers, s.cheques, s.openingBalances, s.clientSettlements, s.partyOffsets, s.loyaltyRedemptions, s.journal]) }
   const [refId, setRefId] = useState<string>('')
   const [actual, setActual] = useState('')
   const [reason, setReason] = useState('')
+  const [settlementSaving, setSettlementSaving] = useState(false)
+  const settlementPending = useRef(false)
+  const settlementDraft = useRef('')
+  const settlementDraftValue = JSON.stringify([section, refId, actual, reason])
+  useLayoutEffect(() => { settlementDraft.current = settlementDraftValue }, [settlementDraftValue])
+  const settlementScope = () => {
+    const s = useRawDataStore.getState()
+    return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.employees, s.roleOverrides, s.branchRoleOverrides, s.customRoles, s.treasuries, s.customers, s.suppliers, useAppStore.getState().setup, useAppStore.getState().fiscalYears, todayLocalIso()])
+  }
   const meta = SECTIONS.find((s) => s.id === section)!
 
   const options = useMemo(() => {
@@ -69,17 +114,36 @@ export function SettlementsPage() {
   // التسويات تضرب حساب 5112 مباشرة — عملية حساسة تتطلب اعتماد مشرف (inv.adjust)
   const approval = useSupervisorApproval('inv.adjust')
   const submit = () => {
-    if (!refId || actualMinor == null) return
+    if (!refId || actualMinor == null || bookMinor == null || settlementPending.current) return
+    const expectedDraft = settlementDraft.current, expectedScope = settlementScope(), expectedBook = bookMinor
     approval.request((approvedBy) => {
-    try {
-      const doc = applySettlement({ section, refId: section === 'treasury' ? refId : Number(refId), actualMinor, reason, approvedBy })
-      toast.show(
-        doc.varianceMinor === 0
-          ? `مطابقة تامة ✓ وُثقت ${doc.settlementNumber} بلا قيد (لا فرق)`
-          : `رُحّلت ${doc.settlementNumber}: فرق ${fmt(Math.abs(doc.varianceMinor))} ${cur.symbol} ضرب حساب فروق التسويات 5112`,
-      )
-      setActual(''); setReason('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      if (settlementPending.current) return
+      if (settlementDraft.current !== expectedDraft || settlementScope() !== expectedScope) return toast.show('تغيرت بيانات التسوية قبل الاعتماد — راجعها وأعد المحاولة', 'error')
+      settlementPending.current = true; setSettlementSaving(true)
+      let committed = false
+      void (async () => {
+        try {
+          const doc = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+            const live = useDataStore.getState()
+            const liveBook = section === 'treasury'
+              ? live.journal.reduce((sum, entry) => sum + entry.lines.reduce((n, line) => n + (line.accountCode === refId ? line.debit - line.credit : 0), 0), 0)
+              : section === 'customer' ? live.getCustomerBalance(Number(refId)) : live.getSupplierBalance(Number(refId))
+            if (settlementDraft.current !== expectedDraft || settlementScope() !== expectedScope || liveBook !== expectedBook) throw new Error('تغير الرصيد أو بيانات التسوية — راجعها قبل الترحيل')
+            const result = useRawDataStore.getState().applySettlement({ section, refId: section === 'treasury' ? refId : Number(refId), actualMinor, reason, approvedBy })
+            committed = true
+            return result
+          })
+          toast.show(doc.varianceMinor === 0
+            ? `مطابقة تامة ✓ وُثقت ${doc.settlementNumber} بلا قيد (لا فرق)`
+            : `رُحّلت ${doc.settlementNumber}: فرق ${fmt(Math.abs(doc.varianceMinor))} ${cur.symbol} ضرب حساب فروق التسويات 5112`)
+          if (settlementDraft.current === expectedDraft) { setActual(''); setReason('') }
+        } catch (e) {
+          if (committed) {
+            if (settlementDraft.current === expectedDraft) { setActual(''); setReason('') }
+            toast.show('سُجلت التسوية محلياً لكن تعذر تأكيد الحفظ — راجع سجل التسويات والدفتر قبل إعادة المحاولة', 'error')
+          } else toast.show(e instanceof Error ? e.message : 'تعذر تأمين ترحيل التسوية', 'error')
+        } finally { settlementPending.current = false; setSettlementSaving(false) }
+      })()
     })
   }
 
@@ -90,13 +154,27 @@ export function SettlementsPage() {
   const offsetAmountMinor = offsetAmount.trim() === '' ? null : (() => { try { return toMinor(offsetAmount, cur.decimals) } catch { return null } })()
   const offsetApproval = useSupervisorApproval('inv.adjust')
   const submitOffset = () => {
-    if (!offsetCustomer || !offsetSupplier || !offsetAmountMinor) return
+    if (!offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetPending.current) return
+    const requestSession = offsetSession.current, expectedDraft = offsetDraft.current
     offsetApproval.request(() => {
-      try {
-        const doc = store.postPartyOffset({ customerId: offsetCustomer, supplierId: offsetSupplier, amountMinor: offsetAmountMinor, notes: offsetNotes })
-        toast.show(`رُحّلت المقاصة ${doc.offsetNumber}: خُفض دين العميل ومستحق المورد بـ${fmt(doc.amountMinor)} ${cur.symbol} بقيد واحد`)
-        setOffsetAmount(''); setOffsetNotes(''); setOffsetOpen(false)
-      } catch (e) { toast.show((e as Error).message, 'error') }
+      if (requestSession !== offsetSession.current || expectedDraft !== offsetDraft.current) return toast.show('تغيرت المقاصة قبل الاعتماد — راجعها وأعد المحاولة', 'error')
+      if (offsetPending.current) return
+      offsetPending.current = true; setOffsetSaving(true)
+      let committed = false
+      void (async () => {
+        try {
+          const doc = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+            if (requestSession !== offsetSession.current || expectedDraft !== offsetDraft.current || fingerprint() !== offsetBasis.current) throw new Error('تغيرت الأرصدة أو بيانات المقاصة — أغلق النافذة وراجعها')
+            const result = useRawDataStore.getState().postPartyOffset({ customerId: offsetCustomer, supplierId: offsetSupplier, amountMinor: offsetAmountMinor, notes: offsetNotes, date: offsetDate })
+            committed = true; return result
+          })
+          toast.show(`رُحّلت المقاصة ${doc.offsetNumber}: خُفض دين العميل ومستحق المورد بـ${fmt(doc.amountMinor)} ${cur.symbol} بقيد واحد`)
+          setOffsetAmount(''); setOffsetNotes(''); closeOffset()
+        } catch (e) {
+          if (committed) { closeOffset(); toast.show('سُجلت المقاصة محلياً لكن تعذر تأكيد الحفظ — راجع كشفي الطرفين والدفتر قبل إعادة المحاولة', 'error') }
+          else toast.show((e as Error).message, 'error')
+        } finally { offsetPending.current = false; setOffsetSaving(false) }
+      })()
     })
   }
 
@@ -123,7 +201,7 @@ export function SettlementsPage() {
       </div>
       <div className="anim-up flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11.5px] text-slate-400">{meta.hint}</p>
-        <Btn variant="ghost" onClick={() => setOffsetOpen(true)}><ArrowLeftRight size={14} /> مقاصة عميل/مورد</Btn>
+        <Btn variant="ghost" onClick={() => { offsetSession.current++; setOffsetDate(todayLocalIso()); offsetBasis.current = fingerprint(); setOffsetOpen(true) }}><ArrowLeftRight size={14} /> مقاصة عميل/مورد</Btn>
       </div>
 
       <div className="anim-up grid lg:grid-cols-2 gap-4">
@@ -155,7 +233,7 @@ export function SettlementsPage() {
           <Field label="سبب التسوية" hint="إلزامي — يظهر في القيد وسجل المراجعة">
             <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} placeholder="مثال: جرد نهاية الشهر / اتفاق مع العميل على خصم…" />
           </Field>
-          <Btn onClick={submit} shortcut="F9" disabled={!refId || actualMinor == null || !reason.trim()} className="w-full">ترحيل التسوية</Btn>
+          <Btn onClick={submit} shortcut="F9" disabled={settlementSaving || !refId || actualMinor == null || !reason.trim()} className="w-full">{settlementSaving ? 'جارٍ تأمين التسوية…' : 'ترحيل التسوية'}</Btn>
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -171,6 +249,7 @@ export function SettlementsPage() {
                   <th className="px-3 py-2">الدفتري</th>
                   <th className="px-3 py-2">الفعلي</th>
                   <th className="px-3 py-2">الفرق</th>
+                  <th className="px-3 py-2">معاينة</th>
                 </tr>
               </thead>
               <tbody>
@@ -186,6 +265,7 @@ export function SettlementsPage() {
                     <td className={`px-3 py-2 font-mono font-bold ${st.varianceMinor === 0 ? 'text-emerald-600' : st.varianceMinor > 0 ? 'text-sky-600' : 'text-rose-500'}`} dir="ltr">
                       {st.varianceMinor > 0 ? '+' : ''}{fmt(st.varianceMinor)}
                     </td>
+                    <td className="px-3 py-2"><button type="button" aria-label={`معاينة ${st.settlementNumber}`} onClick={() => setViewSettlementId(st.id)} className="rounded p-1 hover:bg-sky-500/10"><Eye size={15} /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -193,8 +273,20 @@ export function SettlementsPage() {
           )}
         </div>
       </div>
+      <Modal open={!!viewing} onClose={() => setViewSettlementId(null)} title={viewing ? `معاينة ${viewing.settlementNumber}` : ''} subtitle="بيانات التسوية المسجلة للقراءة فقط" wide>
+        {viewing && <div className="space-y-4 text-sm">
+          <div className="grid gap-2 sm:grid-cols-2">{[
+            ['التاريخ', viewing.date.slice(0, 10)], ['نوع التسوية', SECTIONS.find(row => row.id === viewing.section)?.nameAr ?? viewing.section],
+            ['الجهة', viewing.refNameAr], ['الرصيد الدفتري', `${fmt(viewing.bookMinor)} ${cur.symbol}`],
+            ['الرصيد الفعلي', `${fmt(viewing.actualMinor)} ${cur.symbol}`], ['الفرق', `${fmt(viewing.varianceMinor)} ${cur.symbol}`],
+            ['السبب', viewing.reason], ['المعتمد', viewing.approvedBy ?? 'غير مسجل'],
+            ['القيد', viewing.journalEntryId == null ? 'مطابقة تامة — لا قيد' : journal.some(row => row.id === viewing.journalEntryId) ? `#${viewing.journalEntryId}` : 'غير متاح — راجع السجل'],
+          ].map(([label, value]) => <div key={label} className="rounded-lg border p-3"><span className="text-slate-500">{label}</span><div className="font-bold break-words">{value}</div></div>)}</div>
+          <div className="flex justify-end"><Btn onClick={() => previewSettlement(viewing.id)}><Printer size={15} /> معاينة وطباعة مستند التسوية</Btn></div>
+        </div>}
+      </Modal>
       {/* مقاصة عميل/مورد — بلغة المستند نفسها (AUDIT-012 + المرحلة 6) */}
-      <Modal open={offsetOpen} onClose={() => setOffsetOpen(false)} title="" wide bare>
+      <Modal open={offsetOpen} onClose={closeOffset} title="" wide bare>
         <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">
           <div className="flex items-center justify-between gap-4 doc-head px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
@@ -208,7 +300,7 @@ export function SettlementsPage() {
                 <p className="mt-0.5 truncate text-[11px] doc-head-sub">الطرف الذي يشتري منك ويبيع لك: بدل أن يدفع لك وتدفع له، تُخصم الأقل من الأكبر بقيد واحد</p>
               </div>
             </div>
-            <button type="button" onClick={() => setOffsetOpen(false)} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={18} /></button>
+            <button type="button" onClick={closeOffset} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={18} /></button>
           </div>
 
           <div className="space-y-4 px-5 py-4">
@@ -236,13 +328,14 @@ export function SettlementsPage() {
                 <Field label={`قيمة المقاصة (${cur.symbol})`} hint={`أقصى مقاصة ممكنة: ${fmt(offsetCapMinor)} ${cur.symbol} — أقل الرصيدين`}>
                   <input value={offsetAmount} onChange={(e) => setOffsetAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
                 </Field>
-                <Btn variant="ghost" onClick={() => setOffsetAmount(String(offsetCapMinor / 100))} disabled={offsetCapMinor <= 0}>استخدم الحد الأقصى</Btn>
+                <Btn variant="ghost" onClick={() => setOffsetAmount(String(offsetCapMinor / 10 ** cur.decimals))} disabled={offsetCapMinor <= 0}>استخدم الحد الأقصى</Btn>
               </div>
               {offsetAmountMinor != null && offsetAmountMinor > offsetCapMinor && (
                 <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700">
                   <AlertTriangle size={14} /> المبلغ يتجاوز أقل الرصيدين — المقاصة لا تخلق رصيداً سالباً لأي طرف
                 </div>
               )}
+              <Field label="تاريخ المقاصة"><input aria-label="تاريخ المقاصة" type="date" max={todayLocalIso()} value={offsetDate} onChange={e => setOffsetDate(e.target.value)} className={inputCls} /></Field>
               <Field label="ملاحظات (اختياري)">
                 <input value={offsetNotes} onChange={(e) => setOffsetNotes(e.target.value)} className={inputCls} placeholder="مثال: تسوية ربع سنوية باتفاق موقّع" />
               </Field>
@@ -258,8 +351,8 @@ export function SettlementsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 doc-footer px-5 py-3">
             <span className="text-[10px] doc-faint">المقاصة مستند OFS مستقل قابل للمراجعة — لا تعديل صامت على أي رصيد</span>
             <div className="flex items-center gap-2">
-              <Btn variant="ghost" onClick={() => setOffsetOpen(false)}>إلغاء</Btn>
-              <Btn onClick={submitOffset} disabled={!offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetAmountMinor > offsetCapMinor}>ترحيل المقاصة</Btn>
+              <Btn variant="ghost" onClick={closeOffset}>إلغاء</Btn>
+              <Btn onClick={submitOffset} disabled={offsetSaving || !offsetDate || !offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetAmountMinor > offsetCapMinor}>ترحيل المقاصة</Btn>
             </div>
           </div>
         </div>

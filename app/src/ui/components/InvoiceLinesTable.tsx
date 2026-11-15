@@ -90,6 +90,8 @@ const COLW = {
 type Props = {
   kind: 'sale' | 'purchase'
   mode: InvoiceEditorMode
+  /** أمر الشراء يحدد المطلوب فقط؛ الاستلام والمرفوض يخصان فاتورة الاستلام. */
+  orderOnly?: boolean
   lines: InvoiceTableLine[]
   items: InvoiceLineItem[]
   warehouses: Warehouse[]
@@ -121,6 +123,7 @@ type Props = {
   onPrices?: (id: number) => void
   /** نقرتان على اسم صنف في الجدول ⇒ نافذة اختيار صنف تستبدله (بلاغ المالك) */
   onReplaceLine?: (key: string, itemId: number) => void
+  onCreateItem?: (name: string, replaceLineKey: string) => void
   amountLabel?: (item: InvoiceLineItem) => string
   placeholder: string
   showPicker?: boolean
@@ -191,10 +194,11 @@ const MIN_MARGIN_RATIO = 0.1
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, saleRoundingVersion, taxEnabled = false, showNotes = false, warnings, costShares, belowCostKeys,
-  onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
-  entry, entryFilter, showReceivingTracking = false,
+  onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onCreateItem, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  entry, entryFilter, showReceivingTracking = false, orderOnly = false,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
+  const showReceivingColumns = kind === 'purchase' && mode !== 'simple' && !orderOnly
   /* أعمدة العرض الاختيارية — من زر «تخصيص الحقول»؛ إخفاؤها لا يغيّر أي حساب */
   const columns = useAppStore((state) => state.invoiceColumns)
   /* عمود الضريبة لا يظهر إلا إذا كانت الضريبة مفعَّلة **وفي نمط الربحية أو المتقدم**
@@ -229,7 +233,9 @@ export function InvoiceLinesTable({
     openItemPickerWindow({
       parentId: windowHost.windowId,
       initialQuery: currentName,
-      items,
+      items: kind === 'sale' ? items.filter(item => item.isActive !== false) : items,
+      saleDetails: kind === 'sale',
+      onCreate: onCreateItem ? (name: string) => onCreateItem(name, lineKey) : undefined,
       itemMeta: (row: { id: number }) => {
         const full = items.find((entry) => entry.id === row.id)
         return {
@@ -237,7 +243,7 @@ export function InvoiceLinesTable({
           stock: full?.isService ? 'خدمة' : String(full?.stockQty ?? 0),
           low: !full?.isService && (full?.stockQty ?? 0) <= 0,
           price: fmt(full?.priceMinor ?? 0),
-          cost: fmt(full?.costMinor ?? 0),
+          cost: kind !== 'sale' || canViewCost ? fmt(full?.costMinor ?? 0) : undefined,
         }
       },
       onPick: (itemId: number) => onReplaceLine(lineKey, itemId),
@@ -334,7 +340,7 @@ export function InvoiceLinesTable({
     plan.push({ key: 'name', base: COLW.name })
     if (showNotes) plan.push({ key: 'notes', base: COLW.notes })
     if (lineWarehouseMode) plan.push({ key: 'warehouse', base: COLW.warehouse })
-    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'ordered', base: COLW.qty }, { key: 'received', base: COLW.qty }, { key: 'rejected', base: COLW.qty })
+    if (showReceivingColumns) plan.push({ key: 'ordered', base: COLW.qty }, { key: 'received', base: COLW.qty }, { key: 'rejected', base: COLW.qty })
     else plan.push({ key: 'qty', base: COLW.qty })
     if (columns.unit) plan.push({ key: 'unit', base: COLW.unit })
     plan.push({ key: 'price', base: COLW.price })
@@ -344,7 +350,7 @@ export function InvoiceLinesTable({
     if (showTaxColumn) plan.push({ key: 'tax', base: COLW.tax })
     plan.push({ key: 'total', base: COLW.total }, { key: 'tools', base: COLW.tools })
     return plan
-  }, [canViewCost, columns.code, columns.unit, kind, lineWarehouseMode, mode, showNotes, showTaxColumn])
+  }, [canViewCost, columns.code, columns.unit, kind, lineWarehouseMode, mode, showNotes, showTaxColumn, showReceivingColumns])
 
   const widthsKey = `shopsys-invoice-cols-${kind}`
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
@@ -401,7 +407,7 @@ export function InvoiceLinesTable({
     + 1
     + (showNotes ? 1 : 0)
     + (lineWarehouseMode ? 1 : 0)
-    + (kind === 'purchase' && mode !== 'simple' ? 3 : 1)
+    + (showReceivingColumns ? 3 : 1)
     + (columns.unit ? 1 : 0)
     + 1
     + (kind === 'sale' ? 1 : 0)
@@ -461,7 +467,7 @@ export function InvoiceLinesTable({
               <th className={`p-2 ${COL.name}`} scope="col">الصنف / الوصف</th>
               {showNotes && <th className={`p-2 ${COL.notes}`} scope="col">ملاحظات البند</th>}
               {lineWarehouseMode && <th className={`p-2 ${COL.warehouse}`} scope="col">المخزن</th>}
-              {kind === 'purchase' && mode !== 'simple'
+              {showReceivingColumns
                 ? <><th className={`p-2 ${COL.qty}`} scope="col">المطلوب</th><th className={`p-2 ${COL.qty}`} scope="col">المستلم</th><th className={`p-2 ${COL.qty}`} scope="col">المرفوض</th></>
                 : <th className={`p-2 ${COL.qty}`} scope="col">الكمية</th>}
               {columns.unit && <th className={`p-2 ${COL.unit}`} scope="col">الوحدة</th>}
@@ -544,7 +550,7 @@ export function InvoiceLinesTable({
                     </td>
                   )}
                   {lineWarehouseMode && <td className={`p-1 align-middle ${COL.warehouse}`}><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}
-                  {kind === 'purchase' && mode !== 'simple' ? <>
+                  {showReceivingColumns ? <>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
@@ -643,13 +649,12 @@ export function InvoiceLinesTable({
                 </td>
                 {showNotes && <td className={`p-1 ${COL.notes}`} />}
                 {lineWarehouseMode && <td className={`p-1 ${COL.warehouse}`} />}
-                {kind === 'purchase' && mode !== 'simple'
+                {showReceivingColumns
                   ? <>{ghostCell('ordered', `num-cell ${COL.qty}`)}{ghostCell('qty', `num-cell ${COL.qty}`)}{ghostCell('rejected', `num-cell ${COL.qty}`)}</>
                   : ghostCell('qty', `num-cell ${COL.qty}`)}
                 {columns.unit && <td className={`unit-cell p-1 ${COL.unit}`} />}
                 {ghostCell('price', `num-cell price-cell ${COL.price}`)}
                 {kind === 'sale' && ghostCell('discount', `num-cell ${COL.percent}`)}
-                {kind === 'purchase' && mode !== 'simple' && ghostCell('vat', `num-cell ${COL.percent}`)}
                 {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`p-1 ${COL.money}`} /><td className={`p-1 ${COL.money}`} /></>}
                 {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`p-1 ${COL.money}`} />}
                 {showTaxColumn && <td className={`p-1 ${COL.tax}`} />}

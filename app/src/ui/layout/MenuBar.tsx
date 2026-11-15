@@ -10,7 +10,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRight, Check, MoreHorizontal } from 'lucide-react'
+import { ChevronDown, PanelRight, Check, MoreHorizontal, Star } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { openSectionWindow } from '../windows/windowStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -20,6 +20,7 @@ import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../.
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation, OverlayPortal, useToast } from '../components/ui.tsx'
 import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
+import { useNavigationFavorites } from '../hooks/useNavigationFavorites.ts'
 
 /** موضع القائمة تحت عنوانها مباشرة — محاذاة يمينية (RTL) مع انقلاب عند ضيق الشاشة */
 function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
@@ -66,8 +67,8 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   const { effectiveModules, effectiveActivityId } = useEffectiveBranchScope()
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId))
-  const sections = NAV_SECTIONS
-    .filter((sec) => (!sec.module || effectiveModules.includes(sec.module)) && (!sec.accountingOnly || setup.accountingMode === 'full'))
+  const permittedSections = NAV_SECTIONS
+    .filter((sec) => !(sec.id === 'quotations' && effectiveModules.includes('contracting')) && (!sec.module || effectiveModules.includes(sec.module)) && (!sec.accountingOnly || setup.accountingMode === 'full'))
     .map((sec) => ({
       ...sec,
       nameAr: labelFor(effectiveActivityId, sec.id, sec.nameAr),
@@ -80,6 +81,8 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
         .map((c) => ({ ...c, nameAr: labelFor(effectiveActivityId, `${sec.id}.${c.id}`, c.nameAr) })),
     }))
     .filter((sec) => sec.children.length > 0)
+  const { sections, paths: favoritePaths, toggle: toggleFavorite } = useNavigationFavorites(permittedSections)
+  const star = (path: string, name: string) => path === '/' ? null : <button type="button" aria-label={`${favoritePaths.includes(path) ? 'إزالة' : 'إضافة'} ${name} ${favoritePaths.includes(path) ? 'من' : 'إلى'} المفضلة`} aria-pressed={favoritePaths.includes(path)} onClick={() => toggleFavorite(path)} className="shrink-0 p-2 text-amber-500"><Star size={14} fill={favoritePaths.includes(path) ? 'currentColor' : 'none'} /></button>
 
   /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) + إشعار فوري عند
      وصول مستند جديد بانتظاره: يدخل نظام الاعتماد ويعتمد ما أدخله موظف آخر. */
@@ -121,7 +124,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
         if (used > available) break
         fit += 1
       }
-      setVisibleCount(Math.max(1, fit))
+      setVisibleCount(fit)
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -154,11 +157,12 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
     }
   }, [openId])
 
-  const focusTitle = (id: string) => titleRefs.current.get(id)?.focus()
+  const titleElement = (id: string) => id === '__more__' ? moreRef.current : titleRefs.current.get(id)
+  const focusTitle = (id: string) => titleElement(id)?.focus()
   const openMenu = (id: string, el?: HTMLElement | null) => {
     setOpenId(id)
     setActiveIndex(0)
-    setAnchorEl(el ?? titleRefs.current.get(id) ?? null)
+    setAnchorEl(el ?? titleElement(id) ?? null)
   }
   const closeMenu = (refocus = true) => {
     const current = openId
@@ -167,11 +171,12 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   }
   /** تنقل بين عناوين القوائم — في RTL السهم الأيسر يتقدم للعنوان التالي */
   const stepSection = (delta: number) => {
-    if (sections.length === 0) return
-    const current = sections.findIndex((sec) => sec.id === openId)
-    const next = sections[(current + delta + sections.length) % sections.length]
-    openMenu(next.id, titleRefs.current.get(next.id))
-    focusTitle(next.id)
+    const ids = [...visibleSections.map((sec) => sec.id), ...(hiddenSections.length ? ['__more__'] : [])]
+    if (ids.length === 0) return
+    const current = ids.indexOf(openId ?? '')
+    const next = current < 0 ? (delta > 0 ? ids[0] : ids[ids.length - 1]) : ids[(current + delta + ids.length) % ids.length]
+    openMenu(next)
+    focusTitle(next)
   }
   const go = (path: string) => {
     setOpenId(null)
@@ -241,12 +246,6 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
             </button>
           )
         })}
-        {pendingApprovals > 0 && (
-          <button type="button" className="menubar-approvals" data-approvals-alert title={`${pendingApprovals} مستند بانتظار اعتمادك`}
-            onClick={() => go('/settings/approvals')}>
-            ⏳ اعتماد <span>{pendingApprovals}</span>
-          </button>
-        )}
         {hiddenSections.length > 0 && (
           <button
             ref={moreRef}
@@ -258,7 +257,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
             title={`أقسام إضافية: ${hiddenSections.map((sec) => sec.nameAr).join('، ')}`}
             onClick={(event) => (overflowOpen ? closeMenu(false) : openMenu('__more__', event.currentTarget))}
             onMouseEnter={(event) => { if (openId && !overflowOpen) openMenu('__more__', event.currentTarget) }}
-            className={`flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 py-1.5 text-[12.5px] font-bold transition-colors ${
+            className={`flex max-w-full shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap rounded px-2 py-1.5 text-[12.5px] font-bold transition-colors ${
               overflowOpen ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
             }`}
           >
@@ -269,6 +268,13 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
         )}
       </div>
 
+      {/* خارج شريط الأقسام حتى ينقص عرضه من المساحة المقاسة تلقائياً ولا يحجب «المزيد». */}
+      {pendingApprovals > 0 && (
+        <button type="button" className="menubar-approvals shrink-0" data-approvals-alert title={`${pendingApprovals} مستند بانتظار اعتمادك`}
+          onClick={() => go('/settings/approvals')}>
+          ⏳ اعتماد <span>{pendingApprovals}</span>
+        </button>
+      )}
       <span className="mx-1 hidden h-4 w-px shrink-0 bg-slate-200 sm:block dark:bg-slate-700" />
       <span className="hidden max-w-[12rem] shrink-0 truncate text-[11px] text-slate-400 lg:block">{setup.shopName || 'تَحَكَّم في إدارة أعمالك'}</span>
       {/* زر التحويل إلى الشريط الجانبي — في نهاية الشريط (يساره في RTL) */}
@@ -301,13 +307,13 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
                   <span className="ms-auto font-mono opacity-60">{sec.children.length}</span>
                 </div>
                 {sec.children.map((child) => (
+                  <div key={child.id} className="flex items-center">
                   <NavLink
-                    key={child.id}
                     to={child.path}
                     role="menuitem"
                     data-menubar-item={child.id}
                     onClick={(event) => onItemClick(event, child.path)}
-                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                    className={`flex min-w-0 flex-1 items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
                       child.path === location.pathname ? 'font-bold' : ''
                     }`}
                   >
@@ -315,6 +321,8 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
                     <span className="flex-1 truncate">{child.nameAr}</span>
                     {child.path === location.pathname && <Check size={13} className="shrink-0 text-emerald-500" />}
                   </NavLink>
+                  {star(child.path, child.nameAr)}
+                  </div>
                 ))}
               </div>
             ))}
@@ -339,14 +347,14 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
             {openSection.children.map((child, index) => {
               const isCurrent = child.path === location.pathname
               return (
+                <div key={child.id} className="flex items-center">
                 <NavLink
-                  key={child.id}
                   to={child.path}
                   role="menuitem"
                   data-menubar-item={child.id}
                   onClick={(event) => onItemClick(event, child.path)}
                   onMouseEnter={() => setActiveIndex(index)}
-                  className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors ${
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors ${
                     index === activeIndex ? 'bg-brand-500/15 text-brand-700 dark:text-brand-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
                   } ${isCurrent ? 'font-bold' : ''}`}
                 >
@@ -354,6 +362,8 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
                   <span className="flex-1 truncate">{child.nameAr}</span>
                   {isCurrent && <Check size={13} className="shrink-0 text-emerald-500" />}
                 </NavLink>
+                {star(child.path, child.nameAr)}
+                </div>
               )
             })}
           </div>

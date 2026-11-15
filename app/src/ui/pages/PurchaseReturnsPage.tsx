@@ -5,7 +5,8 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { returnPostingFingerprint } from './returnPostingFingerprint.ts'
 import { useSearchParams } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, useRawDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
@@ -57,6 +58,9 @@ export function PurchaseReturnsPage() {
   const [printTarget, setPrintTarget] = useState<PurchaseReturn | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
   const returnSignature = JSON.stringify({ qtys, serialsByLine, batchByLine, returnWarehouses, refund, treasury, reason })
+  const liveReturnDraft = useRef('')
+  const returnDraftValue = JSON.stringify([purchase?.id, returnSignature, confirmedBatches])
+  useLayoutEffect(() => { liveReturnDraft.current = returnDraftValue }, [returnDraftValue])
   const unsaved = useUnsavedChangesGuard(returnSignature)
   useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
   const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
@@ -188,8 +192,10 @@ export function PurchaseReturnsPage() {
   const approval = useSupervisorApproval()
   const submit = () => {
     if (!purchase || postingRef.current || !batchesReady) return
+    const expectedDraft = liveReturnDraft.current, expectedBasis = returnPostingFingerprint('purchase', purchase.id)
     approval.request((approvedBy) => {
       if (postingRef.current) return
+      if (liveReturnDraft.current !== expectedDraft || returnPostingFingerprint('purchase', purchase.id) !== expectedBasis) return toast.show('تغيرت بيانات المرتجع أو أساسه قبل الاعتماد — راجعه', 'error')
       postingRef.current = true
       setIsPosting(true)
       const lineSpecs = Object.entries(qtys).flatMap(([indexText, value]) => {
@@ -201,13 +207,20 @@ export function PurchaseReturnsPage() {
         const batchId = batchByLine[lineIndex]
         return [{ lineIndex, qty, warehouseId, serials: serialsByLine[lineIndex], ...(batchId != null ? { batchAllocations: [{ batchId, qty }] } : {}) }]
       })
-      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => postPurchaseReturn({
-        purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy,
-      })).then((ret) => {
+      let committed: PurchaseReturn | null = null
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (liveReturnDraft.current !== expectedDraft || returnPostingFingerprint('purchase', purchase.id) !== expectedBasis) throw new Error('تغيرت بيانات المرتجع أو أساسه — راجعه قبل الترحيل')
+        const result = postPurchaseReturn({ purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy })
+        committed = result
+        return result
+      }).then((ret) => {
         toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
         setPurchase(null)
       }).catch((e: unknown) => {
-        toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل مرتجع الشراء', 'error')
+        if (committed) {
+          setPurchase(null); setViewing(committed)
+          toast.show('سُجل المرتجع محلياً لكن تعذر تأكيد الحفظ — راجع سجل المرتجعات والدفتر قبل إعادة المحاولة', 'error')
+        } else toast.show(e instanceof Error ? e.message : 'تعذّر تأمين ترحيل مرتجع الشراء', 'error')
       }).finally(() => { postingRef.current = false; setIsPosting(false) })
     })
   }

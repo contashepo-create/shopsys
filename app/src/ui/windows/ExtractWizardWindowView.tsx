@@ -6,17 +6,22 @@
  * (مبلغ مقطوع أو بنود جدول كميات بنسب إنجاز)، ويستعمل نفس المحرك
  * addProjectExtract بلا أي مسار ترحيل موازٍ — فلا فرق دفترياً إطلاقاً.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, ChevronLeft, ChevronRight, FileCheck2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
+import { projectExtractFingerprint, ProjectCommitUnconfirmedError, withProjectExtractCommit } from '../../data/projectExtractCommit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { boqItemTotal, computeExtractLines, computeExtractTotals } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useWindowHost } from './windowHostContext.ts'
 import { openProjectEditorWindow } from './windowStore.ts'
+import { ExtractQuantityEditor } from '../contracting/ExtractQuantityEditor.tsx'
+import { quantityDraftPreview, type QuantityDraft, type QuantityEntryMode } from '../contracting/extractQuantityDraft.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -32,26 +37,36 @@ export function ExtractWizardWindowView() {
   const toast = useToast()
   const { setup } = useAppStore()
   const {
-    projects, boqItems, projectExtracts, clientAdvances, treasuries,
+    projects, boqItems, projectExtracts, clientAdvances, treasuries, changeOrders, activeBranchId, projectSurveys, projectCloseouts, projectExtractDrafts,
     addProjectExtract, getProjectBillingGuard,
   } = useDataStore()
 
   const [step, setStep] = useState(1)
   const [projectId, setProjectId] = useState(preselectProjectId)
-  const [mode, setMode] = useState<'gross' | 'lines'>('gross')
+  const [mode, setMode] = useState<'gross' | 'lines' | 'quantity'>('gross')
   const [gross, setGross] = useState('')
+  const [documentDate, setDocumentDate] = useState(todayLocalIso())
   const [linePct, setLinePct] = useState<Record<number, string>>({})
+  const [qtyMode, setQtyMode] = useState<QuantityEntryMode>('cumulative')
+  const [qtyValues, setQtyValues] = useState<QuantityDraft>({})
+  const [acceptEstimate, setAcceptEstimate] = useState(false)
+  const [confirmedFinal, setConfirmedFinal] = useState('')
   const [desc, setDesc] = useState('')
   const [vatOn, setVatOn] = useState(setup.vatPercent > 0)
   const [payment, setPayment] = useState<'credit' | 'cash'>('credit')
   const [treasury, setTreasury] = useState('1101')
   const [recovery, setRecovery] = useState('')
   const [isFinal, setIsFinal] = useState(false)
-  const [posted, setPosted] = useState<{ id: number; extractNumber: string; dueMinor: number; retentionMinor: number } | null>(null)
+  const [posted, setPosted] = useState<{ id: number; extractNumber: string; dueMinor: number; retentionMinor: number; confirmed: boolean } | null>(null)
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const projectBoq = useMemo(() => boqItems.filter((b) => b.projectId === projectId), [boqItems, projectId])
-  const guard = projectId > 0 ? getProjectBillingGuard(projectId) : null
+  let guard: ReturnType<typeof getProjectBillingGuard> | null = null
+  let billingReview = ''
+  try { if (projectId > 0) guard = getProjectBillingGuard(projectId) } catch (error) {
+    if (!(error instanceof FinancialDataReviewError)) throw error
+    billingReview = error.message
+  }
   const advanceRemaining = clientAdvances
     .filter((a) => a.projectId === projectId)
     .reduce((sum, a) => sum + Math.max(0, a.amountMinor - a.recoveredMinor), 0)
@@ -82,8 +97,11 @@ export function ExtractWizardWindowView() {
     }
   }, [mode, linesInput, projectBoq])
 
+  const qtyHistory = projectExtracts.filter(ex => ex.projectId === projectId)
+  const qtyPreview = quantityDraftPreview(projectBoq, qtyHistory, qtyValues, qtyMode, acceptEstimate)
+  const finalSignature = JSON.stringify({ basis: project ? projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, project.id) : null, projectId, documentDate, mode, gross, linePct, qtyMode, qtyValues, acceptEstimate, vatOn, vatPercent: setup.vatPercent, payment, treasury, recovery, isFinal })
   const parseMoney = (s: string): number => { try { return s.trim() ? toMinor(s, cur.decimals) : 0 } catch { return -1 } }
-  const grossMinor = mode === 'gross' ? Math.max(0, parseMoney(gross)) : linesPreview.grossMinor
+  const grossMinor = mode === 'gross' ? Math.max(0, parseMoney(gross)) : mode === 'quantity' ? qtyPreview.grossMinor : linesPreview.grossMinor
   const recoveryMinor = Math.max(0, parseMoney(recovery))
   const totals = project && grossMinor > 0
     ? computeExtractTotals(grossMinor, project.retentionPercent, vatOn ? setup.vatPercent : 0)
@@ -95,54 +113,66 @@ export function ExtractWizardWindowView() {
   useEffect(() => { host?.setDirty(dirty) }, [host, dirty])
 
   const stepError = (): string => {
+    if (billingReview) return billingReview
     if (step === 1) return project ? '' : 'اختر المشروع أولاً'
     if (step === 2) {
       if (mode === 'gross') return parseMoney(gross) > 0 ? '' : 'أدخل قيمة الأعمال المنفذة'
+      if (mode === 'quantity') return qtyPreview.error || (qtyPreview.inputs.length && qtyPreview.grossMinor > 0 ? '' : 'أدخل كمية لبند واحد على الأقل')
       if (linesInput.length === 0) return 'ارفع نسبة إنجاز بند واحد على الأقل'
       return linesPreview.error
     }
+    if (isFinal && confirmedFinal !== finalSignature) return 'راجع وأكد الحصر الختامي'
     if (recoveryMinor > advanceRemaining) return `استرداد الدفعة يتجاوز المتبقي منها (${fmt(advanceRemaining)})`
     if (totals && recoveryMinor > totals.dueMinor) return 'استرداد الدفعة أكبر من مستحق هذا المستخلص'
     return ''
   }
 
   const reset = () => {
-    setStep(1); setPosted(null); setGross(''); setLinePct({}); setDesc(''); setRecovery(''); setIsFinal(false)
+    setStep(1); setPosted(null); setDocumentDate(todayLocalIso()); setGross(''); setLinePct({}); setQtyValues({}); setAcceptEstimate(false); setConfirmedFinal(''); setDesc(''); setRecovery(''); setIsFinal(false)
   }
 
-  const submit = () => {
-    if (!project) return
+  const submitting = useRef(false)
+  const submit = async () => {
+    if (!project || submitting.current) return
     const err = stepError()
     if (err) { toast.show(err, 'error'); return }
+    submitting.current = true
     try {
-      const ex = addProjectExtract({
-        projectId: project.id,
+      const ex = await withProjectExtractCommit(project.id, projectExtractFingerprint({ activeBranchId, projects, boqItems, projectExtracts, projectSurveys, projectCloseouts, projectExtractDrafts, clientAdvances, changeOrders }, project.id), () => addProjectExtract({
+        projectId: project.id, date: documentDate,
         grossMinor: mode === 'gross' ? grossMinor : undefined,
         extractLines: mode === 'lines' ? linesInput : undefined,
+        extractQtyLines: mode === 'quantity' ? qtyPreview.inputs : undefined,
+        acceptEstimatedPrior: acceptEstimate,
         vatPercent: vatOn ? setup.vatPercent : 0,
         payment,
         description: desc.trim() || 'أعمال منفذة',
         treasury,
         advanceRecoveryMinor: recoveryMinor,
         isFinal,
-      })
-      setPosted({ id: ex.id, extractNumber: ex.extractNumber, dueMinor: ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0), retentionMinor: ex.totals.retentionMinor })
+      }))
+      setPosted({ id: ex.id, extractNumber: ex.extractNumber, dueMinor: ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0), retentionMinor: ex.totals.retentionMinor, confirmed: true })
       toast.show(`سُجل المستخلص ${ex.extractNumber} ✅`)
       onPosted?.(ex.id)
     } catch (e) {
+      if (e instanceof ProjectCommitUnconfirmedError) {
+        const ex = e.result
+        setPosted({ id: ex.id, extractNumber: ex.extractNumber, dueMinor: ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0), retentionMinor: ex.totals.retentionMinor, confirmed: false })
+      }
       toast.show((e as Error).message, 'error')
-    }
+    } finally { submitting.current = false }
   }
 
   if (posted) {
     return (
       <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-8 text-center" data-window-view="extract-wizard" data-wizard-done>
         <CheckCircle2 className="w-12 h-12 text-emerald-500" />
-        <b className="text-lg">سُجل المستخلص {posted.extractNumber} بنجاح</b>
+        <b className="text-lg">{posted.confirmed ? `سُجل المستخلص ${posted.extractNumber} بنجاح` : `المستخلص ${posted.extractNumber} سُجل محلياً ولم يُؤكد حفظه`}</b>
+        {!posted.confirmed && <p role="alert" className="text-amber-700">راجع المستخلص والدفتر قبل أي محاولة جديدة؛ لم يكتمل تأكيد الحفظ.</p>}
         <p className="text-sm text-slate-500">المستحق للعميل الآن: <b>{fmt(posted.dueMinor)} {cur.symbol}</b> · محتجز الضمان: <b>{fmt(posted.retentionMinor)} {cur.symbol}</b></p>
         <p className="text-xs text-slate-400">الذمة والضريبة نشأتا من هذا المستخلص — وفاتورته الضريبية عند الحاجة تكون «توثيقاً» من فاتورة البيع.</p>
         <div className="flex gap-2">
-          <Btn onClick={reset}>مستخلص آخر</Btn>
+          {posted.confirmed && <Btn onClick={reset}>مستخلص آخر</Btn>}
           <Btn variant="primary" onClick={() => host?.close()}>تم — إغلاق</Btn>
         </div>
       </div>
@@ -169,7 +199,7 @@ export function ExtractWizardWindowView() {
           <div className="space-y-3">
             <Field label="المشروع *">
               <div className="flex gap-2">
-                <QuickSelect className={inputCls} value={projectId} onChange={(e) => { setProjectId(Number(e.target.value)); setLinePct({}) }} data-window-autofocus aria-label="مشروع المستخلص">
+                <QuickSelect className={inputCls} value={projectId} onChange={(e) => { setProjectId(Number(e.target.value)); setLinePct({}); setQtyValues({}); setAcceptEstimate(false); setConfirmedFinal('') }} data-window-autofocus aria-label="مشروع المستخلص">
                   <option value={0}>اختر المشروع…</option>
                   {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
                 </QuickSelect>
@@ -177,10 +207,11 @@ export function ExtractWizardWindowView() {
                   type="button" data-wizard-new-project
                   className="shrink-0 rounded-lg border border-emerald-300 px-2 py-0.5 font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300"
                   title="مشروع غير موجود بعد؟ أنشئه في نافذة ابنة ويُختار هنا تلقائياً"
-                  onClick={() => openProjectEditorWindow(0, host?.windowId ?? null, (id) => { setProjectId(id); setLinePct({}) })}
+                  onClick={() => openProjectEditorWindow(0, host?.windowId ?? null, (id) => { setProjectId(id); setLinePct({}); setQtyValues({}); setAcceptEstimate(false); setConfirmedFinal('') })}
                 >+ مشروع جديد</button>
               </div>
             </Field>
+            <Field label="تاريخ فاتورة المستخلص" hint="اليوم أو تاريخ سابق صالح؛ تحصيل الماكينة بتاريخ اليوم فقط"><input type="date" aria-label="تاريخ فاتورة المستخلص" max={todayLocalIso()} value={documentDate} onChange={event => setDocumentDate(event.target.value)} className={inputCls} /></Field>
             {project && guard && (
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 grid grid-cols-2 gap-2 text-[12px]" data-wizard-project-summary>
                 <span>العميل: <b>{project.clientName || '—'}</b></span>
@@ -198,12 +229,15 @@ export function ExtractWizardWindowView() {
           <div className="space-y-3">
             <div className="flex gap-2">
               <button type="button" data-wizard-mode="gross" onClick={() => setMode('gross')} className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold ${mode === 'gross' ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-300 dark:border-slate-600'}`}>مبلغ أعمال إجمالي</button>
+              <button type="button" data-wizard-mode="quantity" disabled={projectBoq.length === 0} onClick={() => setMode('quantity')} className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold disabled:opacity-40 ${mode === 'quantity' ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-300'}`}>حصر كميات البنود</button>
               <button type="button" data-wizard-mode="lines" disabled={projectBoq.length === 0} onClick={() => setMode('lines')} className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold disabled:opacity-40 ${mode === 'lines' ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-300 dark:border-slate-600'}`}>بنود جدول الكميات بنسب إنجاز</button>
             </div>
             {mode === 'gross' ? (
               <Field label={`قيمة الأعمال المنفذة في هذا المستخلص — قبل الضريبة (${cur.symbol}) *`}>
                 <input className={inputCls} inputMode="decimal" value={gross} onChange={(e) => setGross(e.target.value)} placeholder="0.00" data-window-autofocus aria-label="قيمة أعمال المستخلص" />
               </Field>
+            ) : mode === 'quantity' ? (
+              <ExtractQuantityEditor project={project} items={projectBoq} history={qtyHistory} values={qtyValues} setValues={setQtyValues} mode={qtyMode} setMode={setQtyMode} acceptEstimatedPrior={acceptEstimate} setAcceptEstimatedPrior={setAcceptEstimate} fmt={fmt} currency={cur.symbol} />
             ) : (
               <div className="space-y-1" data-wizard-boq>
                 {projectBoq.map((b) => {
@@ -268,7 +302,9 @@ export function ExtractWizardWindowView() {
                 </label>
               </Field>
             </div>
+            {isFinal && <div className="space-y-2 rounded bg-amber-500/10 p-2 text-xs"><p>راجع البنود والكميات المتبقية من خطوة الأعمال قبل الإقفال؛ لا يشترط تنفيذ كامل العقد.</p>{mode === 'quantity' && <ExtractQuantityEditor project={project} items={projectBoq} history={qtyHistory} values={qtyValues} setValues={setQtyValues} mode={qtyMode} setMode={setQtyMode} acceptEstimatedPrior={acceptEstimate} setAcceptEstimatedPrior={setAcceptEstimate} fmt={fmt} currency={cur.symbol} />}<label><input type="checkbox" checked={confirmedFinal === finalSignature} onChange={e => setConfirmedFinal(e.target.checked ? finalSignature : '')} /> راجعت الحصر الختامي وأؤكد عدم إصدار مستخلص لاحق.</label></div>}
             <div className="rounded-xl border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-900/20 p-3 text-[12px] space-y-1" data-wizard-totals>
+              <div>تاريخ فاتورة المستخلص: <b dir="ltr">{documentDate}</b></div>
               <div className="flex justify-between"><span>قيمة الأعمال</span><b>{fmt(totals.grossMinor)}</b></div>
               <div className="flex justify-between"><span>ض.ق.م</span><b>{fmt(totals.vatMinor)}</b></div>
               <div className="flex justify-between"><span>محتجز ضمان {project.retentionPercent}٪ (−)</span><b>{fmt(totals.retentionMinor)}</b></div>
@@ -287,7 +323,7 @@ export function ExtractWizardWindowView() {
         {step < 3 ? (
           <Btn variant="primary" disabled={!!stepError()} onClick={() => setStep(step + 1)}>التالي <ChevronLeft className="w-4 h-4" /></Btn>
         ) : (
-          <Btn variant="primary" disabled={!!stepError() || !totals} onClick={submit} data-wizard-post><FileCheck2 className="w-4 h-4" /> ترحيل المستخلص</Btn>
+          <Btn variant="primary" disabled={!!stepError() || !totals} onClick={() => void submit()} data-wizard-post><FileCheck2 className="w-4 h-4" /> ترحيل المستخلص</Btn>
         )}
       </div>
     </div>

@@ -37,6 +37,7 @@ import { probeSnapshotKey } from './snapshotKeyProbe.ts'
 import { DESKTOP_APP_NAME, preserveCurrentUserData, selectRuntimeUserData } from './runtimeData.ts'
 import { installSilentUpdate, withDeadline, requestSilentInstall, assertDownloadedInstaller, observeUpdateCheck, decideManualCheck, UPDATE_CHECK_INTERVAL_MS, updateCheckRetryDelay } from './updateLifecycle.ts'
 import { CHROMIUM_ERR_ABORTED, MAIN_FRAME_ABORT_RETRY_LIMIT, classifyMainFrameLoadFailure, type MainFrameLoadState } from './mainLoad.ts'
+import { readSupportMainLog } from './supportDiagnostic.ts'
 import {
   ROTATION, PRE_UPDATE_KEEP, filesToPrune, newestFirst, bestExistingCandidate,
   type CustomLocationStatus, type ExistingDataCandidate,
@@ -116,8 +117,7 @@ app.setPath('userData', stableUserData)
 app.setPath('sessionData', stableUserData)
 const installationDir = (): string => dirname(app.getPath('exe'))
 
-/* ── سجل تشغيلي ملفي: تُكتب الأحداث المهمة محلياً في userData/main.log للفحص الداخلي؛
-      لا يُرسل الملف ولا قاعدة البيانات تلقائياً أو يُطلب من المستخدم رفعهما. ── */
+/* سجل محلي؛ لا يُرسل تلقائياً. صفحة الدعم تتيح معاينة مقتطف منقّى وإرساله بموافقة صريحة. */
 function logLine(tag: string, message: string): void {
   const stamp = new Date().toISOString()
   const line = `[${stamp}] [${tag}] ${message}\n`
@@ -1705,6 +1705,12 @@ function wireIpc(): void {
     } finally {
       clearTimeout(timer)
     }
+  })
+
+  // لا مسار أو حجم من المُصيّر: مقتطف منقّى من main.log فقط، لمستخدم مخوّل.
+  ipcMain.handle('support:readMainLog', (event) => {
+    requireAuthorizedWebContents(event.sender.id)
+    return readSupportMainLog(app.getPath('userData'))
   })
 
   /* بند 5: اعتماد قناة الدعم خارج القاعدة (يبقى ثابتاً بعد مسحها ⇒ لا رفض 401) */

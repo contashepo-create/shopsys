@@ -14,6 +14,7 @@ import { FormalReport } from '../components/FormalReport.tsx'
 import { EmptyState } from '../components/ui.tsx'
 import { todayLocalIso } from '../../core/time.ts'
 import { FinancialDataReviewError } from '../../core/financialDataReview.ts'
+import { creditedProjectRetention } from '../../core/projectExtractNet.ts'
 
 interface Props {
   /** معرّف المشروع المختار (نص) — يشارك التاب «مشروع بعينه» اختياره */
@@ -158,6 +159,7 @@ export function AnalyticalProjectReportView({ projectId, onProjectChange }: Prop
         vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, dueMinor: e.totals.dueMinor,
         payment: e.payment, advanceRecoveryMinor: e.advanceRecoveryMinor ?? 0,
         refundedMinor: e.refundedMinor ?? 0, refundedTaxMinor: e.refundedTaxMinor ?? 0,
+        refundedRetentionMinor: refundLedgerIncomplete ? 0 : creditedProjectRetention(e),
         refunds: e.refunds ?? [],
       })),
       expenses: [

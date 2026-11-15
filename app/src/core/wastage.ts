@@ -22,6 +22,7 @@ export interface WastageLineInput {
   itemId: number
   nameAr: string
   qty: number
+  costTotalMinor?: Minor // قيمة المسحوبة الدقيقة عند الترحيل
   unitCostMinor: Minor // متوسط التكلفة المرجح وقت الإتلاف
 }
 
@@ -39,21 +40,25 @@ export function validateWastage(input: WastageInput, availableQty: (itemId: numb
   input.lines.forEach((l, i) => {
     if (seen.has(l.itemId)) errors.push(`سطر ${i + 1}: الصنف مكرر — اجمع الكمية في سطر واحد`)
     seen.add(l.itemId)
-    if (!(l.qty > 0)) errors.push(`سطر ${i + 1}: الكمية يجب أن تكون موجبة`)
-    else if (l.qty > availableQty(l.itemId)) errors.push(`سطر ${i + 1}: الكمية تتجاوز رصيد «${l.nameAr}» (المتاح ${availableQty(l.itemId)})`)
-    if (!Number.isInteger(l.unitCostMinor) || l.unitCostMinor < 0) errors.push(`سطر ${i + 1}: تكلفة غير سليمة`)
+    const normalized = Math.round(l.qty * 1000) / 1000
+    const available = availableQty(l.itemId)
+    if (!Number.isFinite(l.qty) || l.qty <= 0 || !Number.isSafeInteger(Math.round(l.qty * 1000)) || normalized <= 0 || Math.abs(l.qty - normalized) > 1e-9) errors.push(`سطر ${i + 1}: الكمية يجب أن تكون موجبة وصالحة حتى ثلاث خانات`)
+    else if (!Number.isFinite(available) || !Number.isSafeInteger(Math.round(available * 1000)) || Math.abs(available - Math.round(available * 1000) / 1000) > 1e-7) errors.push(`سطر ${i + 1}: رصيد المخزون غير صالح`)
+    else if (normalized > Math.round(available * 1000) / 1000) errors.push(`سطر ${i + 1}: الكمية تتجاوز رصيد «${l.nameAr}» (المتاح ${available})`)
+    if (!Number.isSafeInteger(l.unitCostMinor) || l.unitCostMinor < 0 || (l.costTotalMinor != null && (!Number.isSafeInteger(l.costTotalMinor) || l.costTotalMinor < 0))) errors.push(`سطر ${i + 1}: تكلفة غير سليمة`)
   })
   return errors
 }
 
 /** إجمالي قيمة الإتلاف بالتكلفة */
 export function wastageTotalMinor(lines: WastageLineInput[]): Minor {
-  return lines.reduce((a, l) => a + Math.round(l.qty * l.unitCostMinor), 0)
+  return lines.reduce((a, l) => a + (l.costTotalMinor ?? Math.round(l.qty * l.unitCostMinor)), 0)
 }
 
 /** قيد الإتلاف المتوازن: 5111 هالك / 1103 مخزون */
 export function buildWastageEntry(lines: WastageLineInput[], label: string): JournalLine[] {
   const total = wastageTotalMinor(lines)
+  if (!Number.isSafeInteger(total)) throw new Error('إجمالي تكلفة المخزون خارج الحدود الآمنة')
   if (total <= 0) throw new Error('قيمة الإتلاف يجب أن تكون موجبة — أصناف بتكلفة صفرية لا تولّد قيداً')
   const entry: JournalLine[] = [
     { accountCode: '5111', debit: total, credit: 0, note: `هالك وتوالف ${label}` },

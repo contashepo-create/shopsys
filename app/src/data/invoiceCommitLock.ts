@@ -1,6 +1,6 @@
 import { desktopBridge } from './desktopBridge.ts'
 import { flushPendingDesktopSnapshots, refreshDesktopSnapshot } from './persistentStorage.ts'
-import { flushSecureStorageWrites } from './secureStorage.ts'
+import { flushSecureStorageWrites, isStorageSealed, storageWriteGeneration } from './secureStorage.ts'
 
 /**
  * تصريف الكتابات المؤجلة بعد ترحيل ناجح، مع إعادة محاولة قصيرة.
@@ -63,10 +63,17 @@ export async function withInvoiceCommitLock<T>(
     throw new Error('هذا المتصفح لا يدعم قفل الترحيل الآمن بين التبويبات. حدّث المتصفح ثم أعد المحاولة.')
   }
   return lockManager.request('shopsys:invoice-commit', { mode: 'exclusive' }, async () => {
+    const generation = storageWriteGeneration()
+    const assertWritable = () => {
+      if (isStorageSealed() || storageWriteGeneration() !== generation) throw new Error('التخزين مختوم أو تغير مفتاحه — أعد تشغيل التطبيق وراجع البيانات قبل أي محاولة')
+    }
+    assertWritable()
     await flushSecureStorageWrites('shopsys-data')
     await refreshLiveData()
+    assertWritable()
     const result = await commit()
     await flushAfterCommit(() => flushSecureStorageWrites('shopsys-data'))
+    assertWritable()
     return result
   })
 }

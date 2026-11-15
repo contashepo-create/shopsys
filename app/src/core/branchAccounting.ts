@@ -50,32 +50,55 @@ export function buildInterBranchTransferLines(args: {
   return { sourceLines, destinationLines }
 }
 
-/** Return entry IDs participating in a verified company-wide inter-branch pair. */
-export function pairedInterBranchTransferEntryIds(journal: readonly JournalEntry[]): Set<number> {
+/**
+ * Conservative structural pairing; this is not proof of legal consolidation.
+ * Match every clearing line to the opposite account and reciprocal branch.
+ * A shared source id or an overall zero alone is not sufficient evidence.
+ */
+export function pairedInterBranchTransferGroups(journal: readonly JournalEntry[]): JournalEntry[][] {
   const grouped = new Map<string, JournalEntry[]>()
   for (const entry of journal) {
     if (!entry.branchId || entry.sourceId == null) continue
     const key = entry.interBranchTransferId != null
-      ? `inter-branch:${entry.interBranchTransferId}`
+      ? `inter-branch:${entry.interBranchTransferId}:${entry.reversesEntryId != null || entry.sourceType === 'reversal' ? 'reversal' : 'original'}`
       : `${entry.sourceType}:${entry.sourceId}`
     const rows = grouped.get(key) ?? []
     rows.push(entry)
     grouped.set(key, rows)
   }
-  const pairedIds = new Set<number>()
+  const groups: JournalEntry[][] = []
   for (const entries of grouped.values()) {
-    const branchIds = new Set(entries.map((entry) => entry.branchId).filter((id): id is number => id != null))
-    if (branchIds.size < 2) continue
-    const dueLines = entries.flatMap((entry) => entry.lines
-      .filter((line) => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
-      .map((line) => ({ entry, line })))
-    const totalDue = dueLines.reduce((sum, row) => sum + row.line.debit - row.line.credit, 0)
-    const allCounterpartiesPresent = dueLines.every(({ entry, line }) => branchIds.has(entry.branchId!) && branchIds.has(line.relatedBranchId!))
-    if (dueLines.length > 0 && totalDue === 0 && allCounterpartiesPresent) {
-      for (const entry of entries) pairedIds.add(entry.id)
+    const branches = new Set(entries.map(entry => entry.branchId))
+    if (branches.size !== 2 || entries.length !== 2 || new Set(entries.map(entry => entry.id)).size !== entries.length) continue
+    const amounts = new Map<string, number>()
+    let valid = true
+    for (const entry of entries) {
+      const due = entry.lines.filter(line => (line.accountCode === INTERBRANCH_RECEIVABLE || line.accountCode === INTERBRANCH_PAYABLE) && line.relatedBranchId != null)
+      if (!due.length) { valid = false; break }
+      for (const line of due) {
+        if (!Number.isSafeInteger(entry.branchId) || entry.branchId! <= 0 || line.relatedBranchId == null || !Number.isSafeInteger(line.relatedBranchId) || line.relatedBranchId <= 0 || line.relatedBranchId === entry.branchId || !branches.has(line.relatedBranchId) || !Number.isSafeInteger(line.debit) || !Number.isSafeInteger(line.credit) || line.debit < 0 || line.credit < 0 || (line.debit > 0 && line.credit > 0) || line.debit === line.credit) { valid = false; break }
+        const key = JSON.stringify([entry.branchId, line.relatedBranchId, line.accountCode])
+        const total = (amounts.get(key) ?? 0) + line.debit - line.credit
+        if (!Number.isSafeInteger(total)) { valid = false; break }
+        amounts.set(key, total)
+      }
+      if (!valid) break
     }
+    if (!valid) continue
+    for (const [key, amount] of amounts) {
+      const [branch, other, code] = JSON.parse(key) as [number, number, string]
+      const opposite = code === INTERBRANCH_RECEIVABLE ? INTERBRANCH_PAYABLE : INTERBRANCH_RECEIVABLE
+      const counterpart = JSON.stringify([other, branch, opposite])
+      if (!amounts.has(counterpart) || amount !== -amounts.get(counterpart)!) { valid = false; break }
+    }
+    if (valid) groups.push(entries)
   }
-  return pairedIds
+  return groups
+}
+
+/** Return IDs belonging to structurally paired visible inter-branch transfers. */
+export function pairedInterBranchTransferEntryIds(journal: readonly JournalEntry[]): Set<number> {
+  return new Set(pairedInterBranchTransferGroups(journal).flatMap(entries => entries.map(entry => entry.id)))
 }
 
 /** Eliminate only verified, paired clearing lines in company-wide reports. */

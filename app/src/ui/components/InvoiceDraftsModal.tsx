@@ -70,7 +70,7 @@ export function InvoiceDraftsModal({
 
         <div className="max-h-[52vh] space-y-2 overflow-y-auto pl-1">
           {rows.map((draft) => {
-            const summary = summarizeDraft(draft)
+            const summary = summarizeDraft(draft, currency.decimals)
             const isCurrent = draft.id === currentDraftId
             return (
               <div

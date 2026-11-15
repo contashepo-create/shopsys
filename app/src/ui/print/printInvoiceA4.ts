@@ -484,7 +484,12 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   .project-title h1 { font-size:20px; } .project-title small { color:#475569; }
   .project-summary { display:flex; flex-direction:column; gap:8px; align-items:flex-end; margin-top:12px; }
   .project-summary .words { width:100%; }
-  @media print { .items thead { display:table-header-group; } .items tr { break-inside:avoid; } }
+  @media print {
+    /* لا تجعل حاوية الشكل تقص الصفوف عند انتقال الفاتورة إلى صفحة أخرى. */
+    .sheet, .tbl-wrap { overflow: visible !important; }
+    .items thead { display:table-header-group; }
+    .items tr { break-inside:avoid; }
+  }
 
 </style></head><body>
 ${watermark(settings)}

@@ -8,7 +8,8 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch, CalendarCheck2, UserCog, Banknote, HandCoins, Percent } from 'lucide-react'
-import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
 import { suggestRoleForJobTitle } from '../../core/audit.ts'
 import type { PartyExtended } from '../../data/repo.ts'
@@ -95,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -112,8 +113,6 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
-  const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
-  const postVoucher = useDataStore((state) => state.postVoucher)
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
@@ -154,6 +153,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       : 'لم يُضف أي موظف — راجع الصفوف المرفوضة', outcome.added ? undefined : 'error')
   }
   const [slipMonth, setSlipMonth] = useState(() => todayLocalIso().slice(0, 7))
+  const [slipDate, setSlipDate] = useState(() => todayLocalIso())
+  const [slipSaving, setSlipSaving] = useState(false)
+  const slipPending = useRef(false), slipBasis = useRef(''), slipWarningBasis = useRef('')
+  const slipFingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.payrollSlips, s.payrollRuns, s.employeeAdvances, s.advanceRepayments, s.employeeDeductions, s.attendanceRecords, s.leaveRequests, s.hrRules, s.branchHrSettings, s.journal, app.fiscalYears, app.setup]) }
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
   const getEmployeeStatementRows = useDataStore((state) => state.getEmployeeStatementRows)
@@ -247,27 +250,37 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       ? `حُمّلت المتأخرات من سجلاتها: سلف لـ${advCount} موظف (${fmt(advSum)}) وجزاءات لـ${dedCount} (${fmt(dedSum)}) — راجعها قبل الترحيل`
       : 'لا سلف ولا جزاءات قائمة لأي من المحددين — القسائم صافية')
   }
-  const accrueSlips = () => {
-    /* جسر الحضور ⑤ (جولة «اكمل ونفذ»): لا ترحيل أعمى لمسير شهرٍ بلا أي سجلات
-       حضور لمحددينه — تحذير صريح بالأسماء، والقرار النهائي للمالك بموافقة ثانية */
+  const accrueSlips = async () => {
+    if (slipPending.current) return
     const chosen = slipRowsEffective.filter((row) => row.on)
+    const rows = chosen.map((row) => ({ employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances, deductionsMinor: row.deductions, advanceMinor: row.advance }))
+    const formBasis = JSON.stringify([slipMonth, slipDate, rows])
     const withRecords = new Set(attendanceRecords.filter((r) => r.date.startsWith(slipMonth)).map((r) => r.employeeId))
     const missing = chosen.filter((row) => !withRecords.has(row.employeeId)).map((row) => row.name)
     if (missing.length > 0 && slipNoAttendance == null) {
+      slipWarningBasis.current = formBasis
       setSlipNoAttendance(missing)
       toast.show(`تحذير: ${missing.length} من المحددَدين بلا أي سجل حضور في ${slipMonth} — أكّد الترحيل رغم ذلك`)
       return
     }
+    if (slipNoAttendance != null && slipWarningBasis.current !== formBasis) {
+      setSlipNoAttendance(null); toast.show('تغير المسير بعد تحذير الحضور — راجعه وأعد التأكيد', 'error'); return
+    }
     setSlipNoAttendance(null)
+    slipPending.current = true; setSlipSaving(true)
+    let committed = false
     try {
-      const rows = slipRowsEffective.filter((row) => row.on).map((row) => ({
-        employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances,
-        deductionsMinor: row.deductions, advanceMinor: row.advance,
-      }))
-      const slips = accruePayrollSlips({ month: slipMonth, rows })
+      const slips = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (slipFingerprint() !== slipBasis.current) throw new Error('تغير أساس المسير أو الحضور أو اليومية — أغلق النافذة وراجعها قبل الترحيل')
+        const result = useRawDataStore.getState().accruePayrollSlips({ month: slipMonth, date: slipDate, rows })
+        committed = true; return result
+      })
       toast.show(`استُحقت ${slips.length} قسيمة لشهر ${slipMonth} — كل موظف بذمة مستقلة`)
       setSlipDraftOpen(false)
-    } catch (error) { toast.show((error as Error).message, 'error') }
+    } catch (error) {
+      if (committed) { setSlipDraftOpen(false); toast.show('سُجل استحقاق القسائم محلياً لكن تعذر تأكيد الحفظ — راجع القسائم واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((error as Error).message, 'error')
+    } finally { slipPending.current = false; setSlipSaving(false) }
   }
   /* §93 (إصلاح سلسلة الرواتب): صرف القسيمة بمستند «سند صرف» رسمي على 2104
      باسم الموظف — فيُسدَّد القسيمة بسندها القابل للطباعة بدل قيد مجهّل
@@ -277,20 +290,61 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [paySlipDate, setPaySlipDate] = useState(() => todayLocalIso())
   /* مبلغ سند الصرف: افتراضياً المتبقي من القسيمة فقط (بلاغ المالك) — وقابل للتعديل للصرف الجزئي */
   const [paySlipAmount, setPaySlipAmount] = useState(0)
-  const postSlipVoucher = () => {
-    if (!paySlipFor) return
-    if (!Number.isInteger(paySlipAmount) || paySlipAmount <= 0) { toast.show('مبلغ السند يجب أن يكون أكبر من صفر', 'error'); return }
+  const [paySlipSaving, setPaySlipSaving] = useState(false)
+  const paySlipPending = useRef(false), paySlipBasis = useRef('')
+  const paySlipFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.payrollSlips, s.vouchers, s.treasuries, s.journal, s.docApprovals, useAppStore.getState().fiscalYears, useAppStore.getState().setup]) }
+  const postSlipVoucher = async () => {
+    if (!paySlipFor || paySlipPending.current) return
+    if (!Number.isSafeInteger(paySlipAmount) || paySlipAmount <= 0) { toast.show('مبلغ السند يجب أن يكون أكبر من صفر', 'error'); return }
+    paySlipPending.current = true; setPaySlipSaving(true)
+    let committed = false
     try {
-      const voucher = postVoucher({
-        kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
-        amountMinor: paySlipAmount,
-        description: `صرف راتب ${monthLabelAr(paySlipFor.month)} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
-        partyKind: 'employee', partyId: paySlipFor.employeeId,
-        settleSlipIds: [paySlipFor.id], date: paySlipDate || undefined,
+      const voucher = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (paySlipFingerprint() !== paySlipBasis.current) throw new Error('تغيرت القسيمة أو الخزينة أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().postVoucher({
+          kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
+          amountMinor: paySlipAmount,
+          description: `صرف راتب ${monthLabelAr(paySlipFor.month)} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
+          partyKind: 'employee', partyId: paySlipFor.employeeId,
+          settleSlipIds: [paySlipFor.id], date: paySlipDate,
+        })
+        committed = true; return result
       })
-      toast.show(`سند صرف ${voucher.voucherNumber} سدّد القسيمة ${paySlipFor.slipNumber} بقيد متوازن ✓`)
-      setPaySlipFor(null)
-    } catch (error) { toast.show((error as Error).message, 'error') }
+      toast.show(`سند صرف ${voucher.voucherNumber} سدّد القسيمة ${paySlipFor.slipNumber} بقيد متوازن ✓`); setPaySlipFor(null)
+    } catch (error) {
+      if (committed) { setPaySlipFor(null); toast.show('سُجل سند الراتب محلياً لكن تعذر تأكيد الحفظ — راجع القسيمة والسند واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((error as Error).message, 'error')
+    } finally { paySlipPending.current = false; setPaySlipSaving(false) }
+  }
+  const [waiverId, setWaiverId] = useState<number | null>(null)
+  const [waiverDate, setWaiverDate] = useState(() => todayLocalIso())
+  const [waiverReason, setWaiverReason] = useState('')
+  const [waiverSaving, setWaiverSaving] = useState(false)
+  const waiverPending = useRef(false), waiverBasis = useRef('')
+  const waiverForm = useRef('')
+  waiverForm.current = JSON.stringify([tab, waiverId, waiverDate, waiverReason])
+  const waiverFingerprint = () => { const s = useRawDataStore.getState(); const app = useAppStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.employeeDeductions, s.payrollRuns, s.payrollSlips, s.journal, app.fiscalYears, app.setup]) }
+  const requestWaiver = () => {
+    if (waiverPending.current || waiverId == null || !waiverDate || !waiverReason.trim()) return
+    const basis = waiverForm.current, id = waiverId, date = waiverDate, reason = waiverReason
+    waiveApproval.request((approvedBy) => { void (async () => {
+      if (waiverPending.current) return
+      waiverPending.current = true; setWaiverSaving(true)
+      let committed = false
+      try {
+        const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+          if (waiverForm.current !== basis || waiverFingerprint() !== waiverBasis.current) throw new Error('تغيرت بيانات العفو أو الجزاء أو المسير — أغلق النافذة وراجعها قبل المحاولة')
+          const s = useRawDataStore.getState()
+          const approver = approvedBy ?? s.appUsers.find(u => u.id === s.currentUserId && u.active)?.nameAr ?? 'المالك'
+          const updated = s.waiveEmployeeDeduction({ deductionId: id, approvedBy: approver, reason, date })
+          committed = true; return updated
+        })
+        setWaiverId(null); toast.show(`عُفي عن متبقي ${result.dedNumber} — لن يُخصم من المسيرات ✓`)
+      } catch (error) {
+        if (committed) { setWaiverId(null); toast.show('سُجل عفو الجزاء محلياً لكن تعذر تأكيد الحفظ — راجع الجزاء قبل إعادة المحاولة', 'error') }
+        else toast.show((error as Error).message, 'error')
+      } finally { waiverPending.current = false; setWaiverSaving(false) }
+    })() })
   }
   const roleOptions = useMemo(
     () => visibleRolesForModules(rolesWithOverrides(roleOverrides, customRoles, setup.activityId), setup.modules).filter((role) => !role.isOwner),
@@ -304,27 +358,99 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comSourceId, setComSourceId] = useState('')
   const [comAmount, setComAmount] = useState('')
   const [comDesc, setComDesc] = useState('')
+  const [comDate, setComDate] = useState(() => todayLocalIso())
+  const [comSaving, setComSaving] = useState(false)
+  const comPending = useRef(false)
+  const comBasis = useRef('')
+  const comFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.roleOverrides, s.customRoles, s.employees, s.staffCommissions, s.treasuries, s.sales, s.saleReturns, s.cars, s.projects, s.leases, s.properties, s.journal, useAppStore.getState().fiscalYears, useAppStore.getState().setup]) }
   const [comPayId, setComPayId] = useState<number | null>(null)
+  const [comPayDate, setComPayDate] = useState(() => todayLocalIso())
+  const [comPaySaving, setComPaySaving] = useState(false)
+  const comPayPending = useRef(false), comPayBasis = useRef('')
   /* §98: تعديل/إلغاء العمولة بنوافذ النظام بدل prompt() الأصلية (مراجعة شاملة:
      النوافذ الأصلية تكسر نمط البرنامج وتحجب الخلفية بلا Arabic UX ولا تحقق) */
   const [comEdit, setComEdit] = useState<{ id: number; code: string; amountMinor: number } | null>(null)
   const [comEditAmount, setComEditAmount] = useState('')
   const [comEditReason, setComEditReason] = useState('')
+  const [comEditDate, setComEditDate] = useState(() => todayLocalIso())
+  const [comEditSaving, setComEditSaving] = useState(false)
+  const comEditPending = useRef(false), comEditBasis = useRef('')
   const [comCancel, setComCancel] = useState<{ id: number; code: string } | null>(null)
   const [comCancelReason, setComCancelReason] = useState('')
+  const [comCancelDate, setComCancelDate] = useState(() => todayLocalIso())
+  const [comCancelSaving, setComCancelSaving] = useState(false)
+  const comCancelPending = useRef(false), comCancelBasis = useRef('')
   const [comPayTreasury, setComPayTreasury] = useState('1101')
-  const saveCommission = () => {
+  const saveCommission = async () => {
+    if (comPending.current) return
+    comPending.current = true; setComSaving(true)
+    let committed = false
     try {
-      const c = addStaffCommission({
-        employeeId: comEmployeeId,
-        source: comSource,
-        sourceId: comSourceId.trim() ? Number(comSourceId) : null,
-        description: comDesc.trim(),
-        amountMinor: toMinor(comAmount, cur.decimals),
+      const c = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comBasis.current) throw new Error('تغيرت بيانات العمولة أو الموظف أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().addStaffCommission({ employeeId: comEmployeeId, source: comSource, sourceId: comSourceId.trim() ? Number(comSourceId) : null, description: comDesc.trim(), amountMinor: toMinor(comAmount, cur.decimals), date: comDate })
+        committed = true; return result
       })
       toast.show(`سُجلت العمولة ${c.code} — حُمّلت مصروفاً وتُصرف منفردة أو مع الراتب ✓`)
       setComOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (committed) { setComOpen(false); toast.show('سُجلت العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولات والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { comPending.current = false; setComSaving(false) }
+  }
+
+  const saveCommissionPayout = async () => {
+    if (comPayPending.current || comPayId == null) return
+    comPayPending.current = true; setComPaySaving(true)
+    let committed = false
+    try {
+      const c = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comPayBasis.current) throw new Error('تغيرت العمولة أو الخزائن أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().payStaffCommission({ commissionId: comPayId, treasury: comPayTreasury, date: comPayDate })
+        committed = true; return result
+      })
+      toast.show(`صُرفت ${c.code} من الخزينة ✓`); setComPayId(null)
+    } catch (e) {
+      if (committed) { setComPayId(null); toast.show('سُجل صرف العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { comPayPending.current = false; setComPaySaving(false) }
+  }
+
+  const saveCommissionEdit = async () => {
+    if (comEditPending.current || !comEdit) return
+    if (!comEditAmount.trim()) return toast.show('المبلغ الجديد مطلوب', 'error')
+    if (!comEditReason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
+    comEditPending.current = true; setComEditSaving(true)
+    let committed = false
+    try {
+      const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comEditBasis.current) throw new Error('تغيرت العمولة أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const revised = useRawDataStore.getState().updateStaffCommissionAmount({ commissionId: comEdit.id, newAmountMinor: toMinor(comEditAmount, cur.decimals), reason: comEditReason.trim(), date: comEditDate })
+        committed = true; return revised
+      })
+      toast.show(`عُدلت — العمولة الجديدة ${result.code} ✓`); setComEdit(null)
+    } catch (e) {
+      if (committed) { setComEdit(null); toast.show('سُجل تعديل العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { comEditPending.current = false; setComEditSaving(false) }
+  }
+
+  const saveCommissionCancel = async () => {
+    if (comCancelPending.current || !comCancel) return
+    if (!comCancelReason.trim()) return toast.show('سبب الإلغاء مطلوب', 'error')
+    comCancelPending.current = true; setComCancelSaving(true)
+    let committed = false
+    try {
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (comFingerprint() !== comCancelBasis.current) throw new Error('تغيرت العمولة أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        useRawDataStore.getState().cancelStaffCommission({ commissionId: comCancel.id, reason: comCancelReason.trim(), date: comCancelDate })
+        committed = true
+      })
+      toast.show(`أُلغيت ${comCancel.code} بقيد عاكس ✓`); setComCancel(null)
+    } catch (e) {
+      if (committed) { setComCancel(null); toast.show('سُجل إلغاء العمولة محلياً لكن تعذر تأكيد الحفظ — راجع العمولة واليومية قبل إعادة المحاولة', 'error') }
+      else toast.show((e as Error).message, 'error')
+    } finally { comCancelPending.current = false; setComCancelSaving(false) }
   }
 
   /* ─── تبويب السلف (طلب المالك) ─── */
@@ -333,6 +459,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [advAmount, setAdvAmount] = useState('')
   const [advTreasury, setAdvTreasury] = useState('1101')
   const [advNotes, setAdvNotes] = useState('')
+  const [advDate, setAdvDate] = useState(() => todayLocalIso())
+  const [repayDate, setRepayDate] = useState(() => todayLocalIso())
+  const [advanceSaving, setAdvanceSaving] = useState(false)
+  const advancePending = useRef(false)
+  const advanceBasis = useRef('')
+  const advanceFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.employees, s.employeeAdvances, s.advanceRepayments, s.employeeDeductions, s.payrollRuns, s.payrollSlips, s.treasuries, s.journal]) }
 
   /* ─── تبويب الخصومات والجزاءات (إصلاح فجوة الرواتب) ─── */
   const [dedOpen, setDedOpen] = useState(false)
@@ -340,17 +472,22 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [dedAmount, setDedAmount] = useState('')
   const [dedReason, setDedReason] = useState('')
   const [dedNotes, setDedNotes] = useState('')
-  const saveDeduction = () => {
+  const [dedDate, setDedDate] = useState(() => todayLocalIso())
+  const saveDeduction = async () => {
+    if (advancePending.current) return
+    advancePending.current = true; setAdvanceSaving(true)
+    let committed = false
     try {
-      const ded = addEmployeeDeduction({
-        employeeId: dedEmployeeId,
-        amountMinor: toMinor(dedAmount, cur.decimals),
-        reason: dedReason.trim(),
-        notes: dedNotes.trim(),
+      const ded = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (advanceFingerprint() !== advanceBasis.current) throw new Error('تغيرت بيانات الموظفين أو الجزاءات أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().addEmployeeDeduction({ employeeId: dedEmployeeId, amountMinor: toMinor(dedAmount, cur.decimals), reason: dedReason.trim(), notes: dedNotes.trim(), date: dedDate })
+        committed = true; return result
       })
-      toast.show(`سُجل الخصم ${ded.dedNumber} — يُخصم من مسير الرواتب (كامل أو جزء بحريتك) ✓`)
-      setDedOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+      toast.show(`سُجل الخصم ${ded.dedNumber} — يُخصم من مسير الرواتب ✓`); setDedOpen(false)
+    } catch (err) {
+      if (committed) { setDedOpen(false); toast.show('سُجل الجزاء محلياً لكن تعذر تأكيد الحفظ — راجع الجزاءات قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { advancePending.current = false; setAdvanceSaving(false) }
   }
 
   /* ─── سداد نقدي لسلفة خارج المسير ─── */
@@ -358,29 +495,38 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [repayEmployeeId, setRepayEmployeeId] = useState(0)
   const [repayAmount, setRepayAmount] = useState('')
   const [repayTreasury, setRepayTreasury] = useState('1101')
-  const saveRepayment = () => {
+  const saveRepayment = async () => {
+    if (advancePending.current) return
+    advancePending.current = true; setAdvanceSaving(true)
+    let committed = false
     try {
-      const rp = repayEmployeeAdvance({
-        employeeId: repayEmployeeId,
-        amountMinor: toMinor(repayAmount, cur.decimals),
-        treasury: repayTreasury,
+      const rp = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (advanceFingerprint() !== advanceBasis.current) throw new Error('تغيرت بيانات السلف أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().repayEmployeeAdvance({ employeeId: repayEmployeeId, amountMinor: toMinor(repayAmount, cur.decimals), treasury: repayTreasury, date: repayDate })
+        committed = true; return result
       })
-      toast.show(`سُدد ${rp.repayNumber} نقداً — انخفض متبقي سلف الموظف ✓`)
-      setRepayOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+      toast.show(`سُدد ${rp.repayNumber} نقداً — انخفض متبقي سلف الموظف ✓`); setRepayOpen(false)
+    } catch (err) {
+      if (committed) { setRepayOpen(false); toast.show('سُجل السداد محلياً لكن تعذر تأكيد الحفظ — راجع السلف والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { advancePending.current = false; setAdvanceSaving(false) }
   }
 
-  const saveAdvance = () => {
+  const saveAdvance = async () => {
+    if (advancePending.current) return
+    advancePending.current = true; setAdvanceSaving(true)
+    let committed = false
     try {
-      const adv = grantEmployeeAdvance({
-        employeeId: advEmployeeId,
-        amountMinor: toMinor(advAmount || '0', cur.decimals),
-        treasury: advTreasury,
-        notes: advNotes.trim(),
+      const adv = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (advanceFingerprint() !== advanceBasis.current) throw new Error('تغيرت بيانات السلف أو اليومية — أغلق النافذة وراجعها قبل المحاولة')
+        const result = useRawDataStore.getState().grantEmployeeAdvance({ employeeId: advEmployeeId, amountMinor: toMinor(advAmount || '0', cur.decimals), treasury: advTreasury, notes: advNotes.trim(), date: advDate })
+        committed = true; return result
       })
-      toast.show(`صُرفت السلفة ${adv.advanceNumber} — تُسترد من مسير الرواتب (خانة «سلف») ✓`)
-      setAdvOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      toast.show(`صُرفت السلفة ${adv.advanceNumber} — تُسترد من مسير الرواتب أو نقداً ✓`); setAdvOpen(false)
+    } catch (err) {
+      if (committed) { setAdvOpen(false); toast.show('سُجلت السلفة محلياً لكن تعذر تأكيد الحفظ — راجع السلف والدفتر قبل إعادة المحاولة', 'error') }
+      else toast.show((err as Error).message, 'error')
+    } finally { advancePending.current = false; setAdvanceSaving(false) }
   }
 
   /* ─── تبويب الموظفين ─── */
@@ -651,10 +797,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <b> التقارير ← كشوف الحساب</b>.
             </p>
             <div className="flex gap-2">
-              <Btn variant="ghost" onClick={() => { setRepayEmployeeId(employees[0]?.id ?? 0); setRepayAmount(''); setRepayTreasury('1101'); setRepayOpen(true) }} disabled={employeeAdvances.length === 0}>
+              <Btn variant="ghost" onClick={() => { setRepayEmployeeId(employees[0]?.id ?? 0); setRepayAmount(''); setRepayTreasury('1101'); setRepayDate(todayLocalIso()); advanceBasis.current = advanceFingerprint(); setRepayOpen(true) }} disabled={employeeAdvances.length === 0}>
                 💵 سداد نقدي لسلفة
               </Btn>
-              <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvOpen(true) }} disabled={employees.length === 0}>
+              <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvDate(todayLocalIso()); advanceBasis.current = advanceFingerprint(); setAdvOpen(true) }} disabled={employees.length === 0}>
                 <Plus size={15} /> صرف سلفة
               </Btn>
             </div>
@@ -717,11 +863,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label={`المبلغ المسدد (${cur.symbol}) *`} hint="قيد فوري: الخزينة ← سلف وعهد الموظفين 1107">
                 <input value={repayAmount} onChange={(e) => setRepayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
+              <Field label="تاريخ سداد السلفة"><input aria-label="تاريخ سداد السلفة" type="date" max={todayLocalIso()} value={repayDate} onChange={e => setRepayDate(e.target.value)} className={inputCls} /></Field>
               <Field label="إلى أي خزينة؟"><TreasuryPicker value={repayTreasury} onChange={setRepayTreasury} /></Field>
               <DocOutcome>الأثر: <b>الخزينة/البنك</b> مديناً بالمبلغ · <b>1107 سلف وعهد الموظفين</b> دائناً — فيقل متبقي السلفة فوراً ولا يمسّ مصروف الرواتب.</DocOutcome>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setRepayOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveRepayment} shortcut="F9" disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
+                <Btn onClick={saveRepayment} shortcut="F9" disabled={advanceSaving || !repayEmployeeId || !repayAmount.trim() || !repayDate}>💾 تسجيل السداد</Btn>
               </div>
             </div>
           </Modal>
@@ -733,6 +880,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label={`المبلغ (${cur.symbol}) *`}>
                 <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
               </Field>
+              <Field label="تاريخ صرف السلفة"><input aria-label="تاريخ صرف السلفة" type="date" max={todayLocalIso()} value={advDate} onChange={e => setAdvDate(e.target.value)} className={inputCls} /></Field>
               <Field label="من أي خزينة/بنك؟">
                 <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />
               </Field>
@@ -741,7 +889,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </Field>
               <DocOutcome>الأثر: <b>1107 سلف الموظفين</b> مديناً بالمبلغ · <b>الخزينة</b> دائناً · ويُخصم من المسير أو يُسدَّد نقداً لاحقاً.</DocOutcome><div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setAdvOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveAdvance} shortcut="F9" disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
+                <Btn onClick={saveAdvance} shortcut="F9" disabled={advanceSaving || !advEmployeeId || !advAmount.trim() || !advDate}>💾 صرف السلفة</Btn>
               </div>
             </div>
           </Modal>
@@ -756,7 +904,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               يتحقق محاسبياً عند مسير الرواتب حيث تخصمه <b>كاملاً أو جزءاً أو تؤجله</b> بحرية،
               والمتبقي يظل متتبَّعاً للشهور التالية.
             </p>
-            <Btn onClick={() => { setDedEmployeeId(employees[0]?.id ?? 0); setDedAmount(''); setDedReason(''); setDedNotes(''); setDedOpen(true) }} disabled={employees.length === 0}>
+            <Btn onClick={() => { setDedEmployeeId(employees[0]?.id ?? 0); setDedAmount(''); setDedReason(''); setDedNotes(''); setDedDate(todayLocalIso()); advanceBasis.current = advanceFingerprint(); setDedOpen(true) }} disabled={employees.length === 0}>
               <Plus size={15} /> تسجيل خصم / جزاء
             </Btn>
           </div>
@@ -800,12 +948,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                         {d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0) > 0 && (
                           <button
                             title="عفو/إلغاء المتبقي (تسجيل خاطئ أو صفح) — يتطلب اعتماد المشرف"
-                            onClick={() => waiveApproval.request((approvedBy) => {
-                              try {
-                                waiveEmployeeDeduction({ deductionId: d.id, approvedBy: approvedBy ?? 'المالك', reason: 'عفو معتمد من الشاشة' })
-                                toast.show(`عُفي عن متبقي ${d.dedNumber} — لن يُخصم من المسيرات ✓`)
-                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                            })}
+                            onClick={() => { waiverBasis.current = waiverFingerprint(); setWaiverDate(todayLocalIso()); setWaiverReason(''); setWaiverId(d.id) }}
                             className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-colors"
                           >🕊️ عفو</button>
                         )}
@@ -816,6 +959,15 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </table>
             </div>
           )}
+          <Modal open={waiverId != null} onClose={() => { if (!waiverPending.current) { waiverForm.current = ''; setWaiverId(null) } }} title="عفو عن متبقي الجزاء" subtitle="العفو يوقف استقطاع المتبقي ولا يعكس ما خُصم سابقاً">
+            <fieldset disabled={waiverSaving}><div className="space-y-4">
+              {employeeDeductions.filter(d => d.id === waiverId).map(d => <div key={d.id} className="rounded-xl bg-amber-500/10 p-3 text-sm font-bold">{d.dedNumber} · {employees.find(e => e.id === d.employeeId)?.nameAr ?? '—'} · المتبقي {fmt(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0))} {cur.symbol}</div>)}
+              <Field label="تاريخ العفو"><input aria-label="تاريخ عفو الجزاء" type="date" max={todayLocalIso()} value={waiverDate} onChange={e => setWaiverDate(e.target.value)} className={inputCls} /></Field>
+              <Field label="سبب العفو"><input aria-label="سبب عفو الجزاء" value={waiverReason} onChange={e => setWaiverReason(e.target.value)} className={inputCls} /></Field>
+              <DocOutcome>لا قيد عند العفو؛ يُمنع استقطاع المبلغ المعفو عنه لاحقاً. راجع الجزاء وتاريخ المسير قبل التأكيد.</DocOutcome>
+              <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => { waiverForm.current = ''; setWaiverId(null) }}>إلغاء</Btn><Btn onClick={requestWaiver} disabled={waiverSaving || !waiverDate || !waiverReason.trim()}>اعتماد العفو</Btn></div>
+            </div></fieldset>
+          </Modal>
           <Modal open={dedOpen} onClose={() => setDedOpen(false)} title="تسجيل خصم / جزاء على موظف" subtitle="مستند خصم: جزاء يُخصم من مستحقات الراتب">
             <div className="space-y-4"><DocSectionHead step="١" title="الموظف وقيمة الخصم وسببه" hint="الخصم يقلّل مصروف الرواتب ولا يُعد إيراداً" />
               <Field label="الموظف *">
@@ -824,6 +976,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label={`مبلغ الخصم (${cur.symbol}) *`}>
                 <input value={dedAmount} onChange={(e) => setDedAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
+              <Field label="تاريخ الجزاء"><input aria-label="تاريخ الجزاء" type="date" max={todayLocalIso()} value={dedDate} onChange={e => setDedDate(e.target.value)} className={inputCls} /></Field>
               <Field label="السبب *" hint="غياب، تأخير متكرر، تلفيات، جزاء إداري…">
                 <input value={dedReason} onChange={(e) => setDedReason(e.target.value)} className={inputCls} placeholder="غياب 3 أيام بدون إذن" />
               </Field>
@@ -836,7 +989,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <DocOutcome>الأثر: يُخصم من صافي مستحق الموظف في المسير القادم، ويظهر في كشف حسابه بسببه الموثّق.</DocOutcome><div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setDedOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveDeduction} shortcut="F9" disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
+                <Btn onClick={saveDeduction} shortcut="F9" disabled={advanceSaving || !dedDate || !dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
               </div>
             </div>
           </Modal>
@@ -853,7 +1006,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             <Btn onClick={() => {
               if (employees.filter((e) => e.active).length === 0) return toast.show('لا يوجد موظفون نشطون', 'error')
               setComEmployeeId(employees.find((e) => e.active)?.id ?? 0)
-              setComSource('manual'); setComSourceId(''); setComAmount(''); setComDesc(''); setComOpen(true)
+              setComSource('manual'); setComSourceId(''); setComAmount(''); setComDesc(''); setComDate(todayLocalIso()); comBasis.current = comFingerprint(); setComOpen(true)
             }}><span className="flex items-center gap-1.5"><Plus size={15} /> عمولة جديدة</span></Btn>
           </div>
           {staffCommissions.length === 0 ? (
@@ -893,16 +1046,16 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       <td className="px-4 py-3 text-left whitespace-nowrap">
                         {c.status === 'accrued' && (
                           <>
-                            <button title="صرف منفرد الآن من الخزينة" onClick={() => setComPayId(c.id)}
+                            <button title="صرف منفرد الآن من الخزينة" onClick={() => { setComPayDate(todayLocalIso()); comPayBasis.current = comFingerprint(); setComPayId(c.id) }}
                               className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors">💵 صرف</button>
                             <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" data-commission-edit onClick={() => {
                               setComEdit({ id: c.id, code: c.code, amountMinor: c.amountMinor })
                               setComEditAmount(String(c.amountMinor / 10 ** cur.decimals))
-                              setComEditReason('')
+                              setComEditReason(''); setComEditDate(todayLocalIso()); comEditBasis.current = comFingerprint()
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-colors">✏️ تعديل</button>
                             <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" data-commission-cancel onClick={() => {
                               setComCancel({ id: c.id, code: c.code })
-                              setComCancelReason('')
+                              setComCancelReason(''); setComCancelDate(todayLocalIso()); comCancelBasis.current = comFingerprint()
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">🚫 إلغاء</button>
                           </>
                         )}
@@ -913,8 +1066,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </table>
             </div>
           )}
-          <Modal open={comOpen} onClose={() => setComOpen(false)} title="استحقاق عمولة موظف عن عملية" subtitle="مستند استحقاق: عمولة مرتبطة بعمليتها تدخل الأرباح لحظة الاستحقاق">
-            <div className="space-y-4"><DocSectionHead step="١" title="الموظف والعملية المرتبطة" hint="لا عمولة معلّقة في الهواء — لكل عمولة مستندها" />
+          <Modal open={comOpen} onClose={() => { if (!comPending.current) setComOpen(false) }} title="استحقاق عمولة موظف عن عملية" subtitle="مستند استحقاق: عمولة مرتبطة بعمليتها تدخل الأرباح لحظة الاستحقاق">
+            <fieldset disabled={comSaving}><div className="space-y-4"><DocSectionHead step="١" title="الموظف والعملية المرتبطة" hint="لا عمولة معلّقة في الهواء — لكل عمولة مستندها" />
               <Field label="الموظف *">
                 <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={comEmployeeId} onChange={setComEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
@@ -939,6 +1092,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   )}
                 </Field>
               </div>
+              <Field label="تاريخ استحقاق العمولة" hint="التاريخ السابق متاح للعمولة اليدوية فقط؛ بقية المصادر بتاريخ اليوم لحين تدقيق تسلسلها">
+                <input aria-label="تاريخ استحقاق العمولة" type="date" max={todayLocalIso()} value={comDate} onChange={e => setComDate(e.target.value)} className={inputCls} />
+              </Field>
               <DocSectionHead step="٢" title="قيمة العمولة وبيانها" hint="البيان يظهر في القيد وكشف متابعة العمولات" />
               <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
                 <input value={comAmount} onChange={(e) => setComAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -952,36 +1108,31 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <DocOutcome>الأثر: <b>5117 عمولات موظفين</b> مديناً · <b>2116 عمولات مستحقة</b> دائناً — ولا نقدية تتحرك الآن؛ الصرف لاحقاً يقفل الالتزام.</DocOutcome>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveCommission} shortcut="F9" disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
+                <Btn variant="ghost" disabled={comSaving} onClick={() => setComOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveCommission} shortcut="F9" disabled={comSaving || !comEmployeeId || !comAmount.trim() || !comDesc.trim() || !comDate}>💾 استحقاق العمولة</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
-          <Modal open={comPayId != null} onClose={() => setComPayId(null)} title="صرف عمولة منفردة" subtitle="مستند صرف: تصفية عمولة مستحقة سبق قيدها">
-            <div className="space-y-4"><DocSectionHead step="١" title="العمولة المستحقة ومصدر الصرف" hint="الصرف تصفية التزام لا مصروف جديد" />
+          <Modal open={comPayId != null} onClose={() => { if (!comPayPending.current) setComPayId(null) }} title="صرف عمولة منفردة" subtitle="مستند صرف: تصفية عمولة مستحقة سبق قيدها">
+            <fieldset disabled={comPaySaving}><div className="space-y-4"><DocSectionHead step="١" title="العمولة المستحقة ومصدر الصرف" hint="الصرف تصفية التزام لا مصروف جديد" />
               {(() => {
                 const c = staffCommissions.find((x) => x.id === comPayId)
                 if (!c) return null
                 return <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{c.code} — {employees.find((e) => e.id === c.employeeId)?.nameAr}: <span className="text-violet-600 font-black">{fmt(c.amountMinor)}</span></div>
               })()}
               <Field label="الصرف من *"><TreasuryPicker value={comPayTreasury} onChange={setComPayTreasury} /></Field>
+              <Field label="تاريخ صرف العمولة" hint="التاريخ السابق لا يسبق الاستحقاق أو حركة عمولات أو خزينة مسجلة"><input aria-label="تاريخ صرف العمولة" type="date" max={todayLocalIso()} value={comPayDate} onChange={e => setComPayDate(e.target.value)} className={inputCls} /></Field>
               <DocOutcome>الأثر: <b>2116 عمولات مستحقة</b> مديناً بقيمة العمولة · <b>الخزينة/البنك</b> دائناً — ولا يتكرر تحميل <b>5117</b> مرة ثانية.</DocOutcome>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComPayId(null)}>إلغاء</Btn>
-                <Btn onClick={() => {
-                  try {
-                    const c = payStaffCommission({ commissionId: comPayId!, treasury: comPayTreasury })
-                    toast.show(`صُرفت ${c.code} من الخزينة ✓`)
-                    setComPayId(null)
-                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                }}>💵 صرف الآن</Btn>
+                <Btn variant="ghost" disabled={comPaySaving} onClick={() => setComPayId(null)}>إلغاء</Btn>
+                <Btn onClick={saveCommissionPayout} disabled={comPaySaving || !comPayDate}>💵 صرف الآن</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
 
           {/* §98: تعديل مبلغ عمولة — نافذة نظام بتحقق، كانت prompt() أصلية */}
-          <Modal open={comEdit != null} onClose={() => setComEdit(null)} title="تعديل مبلغ عمولة" subtitle="إلغاء واستحقاق جديد بأثر تدقيقي — السبب إلزامي">
-            <div className="space-y-4">
+          <Modal open={comEdit != null} onClose={() => { if (!comEditPending.current) setComEdit(null) }} title="تعديل مبلغ عمولة" subtitle="إلغاء واستحقاق جديد بأثر تدقيقي — السبب إلزامي">
+            <fieldset disabled={comEditSaving}><div className="space-y-4">
               <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comEdit?.code}: <span className="text-violet-600 font-black">{comEdit ? fmt(comEdit.amountMinor) : ''}</span> ← <span className="text-amber-600 font-black">{comEditAmount.trim() ? `${fmt(toMinor(comEditAmount, cur.decimals))}` : '—'}</span></div>
               <Field label={`المبلغ الجديد (${cur.symbol}) *`}>
                 <input className={inputCls} inputMode="decimal" value={comEditAmount} data-commission-amount onChange={(e) => setComEditAmount(e.target.value)} aria-label="المبلغ الجديد" />
@@ -989,42 +1140,27 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label="سبب التعديل *" hint="يُوثَّق على القيد العاكس والعمولة الجديدة">
                 <input className={inputCls} value={comEditReason} data-commission-reason onChange={(e) => setComEditReason(e.target.value)} aria-label="سبب التعديل" placeholder="مثال: تصحيح نسبة العمولة مع العميل" />
               </Field>
+              <Field label="تاريخ تعديل العمولة" hint="التاريخ السابق للعمولة اليدوية فقط ولا يسبق الاستحقاق أو حركة عمولات مسجلة"><input aria-label="تاريخ تعديل العمولة" type="date" max={todayLocalIso()} value={comEditDate} onChange={e => setComEditDate(e.target.value)} className={inputCls} /></Field>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComEdit(null)}>إلغاء</Btn>
-                <Btn onClick={() => {
-                  if (!comEdit) return
-                  if (!comEditAmount.trim()) return toast.show('المبلغ الجديد مطلوب', 'error')
-                  if (!comEditReason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
-                  try {
-                    const nc = updateStaffCommissionAmount({ commissionId: comEdit.id, newAmountMinor: toMinor(comEditAmount, cur.decimals), reason: comEditReason.trim() })
-                    toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
-                    setComEdit(null)
-                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                }}>✏️ اعتماد التعديل</Btn>
+                <Btn variant="ghost" disabled={comEditSaving} onClick={() => setComEdit(null)}>إلغاء</Btn>
+                <Btn onClick={saveCommissionEdit} disabled={comEditSaving || !comEditDate}>✏️ اعتماد التعديل</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
 
           {/* §98: إلغاء عمولة — قيد عاكس بسبب موثق من نافذة لا prompt() */}
-          <Modal open={comCancel != null} onClose={() => setComCancel(null)} title="إلغاء عمولة" subtitle="قيد عاكس يطفئ العمولة — السبب إلزامي للتدقيق">
-            <div className="space-y-4">
+          <Modal open={comCancel != null} onClose={() => { if (!comCancelPending.current) setComCancel(null) }} title="إلغاء عمولة" subtitle="قيد عاكس يطفئ العمولة — السبب إلزامي للتدقيق">
+            <fieldset disabled={comCancelSaving}><div className="space-y-4">
               <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comCancel?.code}</div>
               <Field label="سبب الإلغاء *">
                 <input className={inputCls} value={comCancelReason} data-commission-cancel-reason onChange={(e) => setComCancelReason(e.target.value)} aria-label="سبب الإلغاء" placeholder="مثال: أُلغيت العملية المرتبطة بالعمولة" />
               </Field>
+              <Field label="تاريخ إلغاء العمولة" hint="لا يسبق تاريخ الاستحقاق أو تسوية مسجلة"><input aria-label="تاريخ إلغاء العمولة" type="date" max={todayLocalIso()} value={comCancelDate} onChange={e => setComCancelDate(e.target.value)} className={inputCls} /></Field>
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => setComCancel(null)}>تراجع</Btn>
-                <Btn variant="danger" onClick={() => {
-                  if (!comCancel) return
-                  if (!comCancelReason.trim()) return toast.show('سبب الإلغاء مطلوب', 'error')
-                  try {
-                    cancelStaffCommission({ commissionId: comCancel.id, reason: comCancelReason.trim() })
-                    toast.show(`أُلغيت ${comCancel.code} بقيد عاكس ✓`)
-                    setComCancel(null)
-                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
-                }}>🚫 إلغاء العمولة</Btn>
+                <Btn variant="ghost" disabled={comCancelSaving} onClick={() => setComCancel(null)}>تراجع</Btn>
+                <Btn variant="danger" onClick={saveCommissionCancel} disabled={comCancelSaving || !comCancelDate}>🚫 إلغاء العمولة</Btn>
               </div>
-            </div>
+            </div></fieldset>
           </Modal>
         </>
       )}
@@ -1106,14 +1242,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <div className="flex items-center gap-2">
                 <input type="month" className={inputCls + ' w-36'} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر الاستحقاق" />
-                <Btn onClick={() => setSlipDraftOpen(true)} disabled={!employees.length}>
+                <Btn onClick={() => { slipBasis.current = slipFingerprint(); setSlipDate(todayLocalIso()); setSlipNoAttendance(null); setSlipDraftOpen(true) }} disabled={!employees.length}>
                   <span className="flex items-center gap-1.5"><Plus size={15} /> استحقاق قسائم</span>
                 </Btn>
               </div>
             </div>
 
-      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" extraWide subtitle="مستند استحقاق شهري — قسيمة مستقلة باسم كل موظف تُصرف كلٌّ بيومه">
-              <div dir="rtl" data-slip-draft>
+      <Modal open={slipDraftOpen} onClose={() => { if (!slipPending.current) setSlipDraftOpen(false) }} title="مسير رواتب — قسائم الموظفين" extraWide subtitle="مستند استحقاق شهري — قسيمة مستقلة باسم كل موظف تُصرف كلٌّ بيومه">
+              <fieldset disabled={slipSaving}><div dir="rtl" data-slip-draft>
                 {/* ═══ §92: ترويسة مستند رسمي صلبة ═══ */}
                 <div className="payroll-doc-head rounded-2xl bg-slate-900 dark:bg-slate-950 text-white overflow-hidden shadow-lg shadow-slate-900/20" data-slip-head>
                   <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
@@ -1140,7 +1276,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 </div>
 
                 {/* ═══ شريط الأدوات: الشهر والبحث والنطاق ═══ */}
-                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                <div className="mt-3 grid gap-2 md:grid-cols-4">
+                  <Field label="تاريخ الاستحقاق" hint="تاريخ القيد، مستقل عن شهر الراتب">
+                    <input type="date" className={inputCls} value={slipDate} max={todayLocalIso()} onChange={(event) => setSlipDate(event.target.value)} aria-label="تاريخ استحقاق القسائم" />
+                  </Field>
                   <Field label="شهر الاستحقاق">
                     <input type="month" className={inputCls} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر المسير" />
                   </Field>
@@ -1239,24 +1378,24 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       </Btn>
                       <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
                     </div>
-                    <Btn onClick={accrueSlips} disabled={slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
+                    <Btn onClick={accrueSlips} disabled={slipSaving || !slipDate || slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
                       💾 ترحيل المسير — {slipTotals.count} قسيمة بقيد متوازن
                     </Btn>
                   </div>
                 </div>
-              </div>
+              </div></fieldset>
             </Modal>
 
             {/* §93: سند صرف القسيمة — تسديد رسمي بمستند مطبوع على 2104 باسم الموظف */}
-            <Modal open={paySlipFor != null} onClose={() => setPaySlipFor(null)} title={`سند صرف راتب — ${paySlipFor?.employeeName ?? ''}`} subtitle={`تسديد القسيمة ${paySlipFor?.slipNumber ?? ''} · ${paySlipFor ? monthLabelAr(paySlipFor.month) : ''} بمستند رسمي يسددها باسمها`}>
+            <Modal open={paySlipFor != null} onClose={() => { if (!paySlipPending.current) setPaySlipFor(null) }} title={`سند صرف راتب — ${paySlipFor?.employeeName ?? ''}`} subtitle={`تسديد القسيمة ${paySlipFor?.slipNumber ?? ''} · ${paySlipFor ? monthLabelAr(paySlipFor.month) : ''} بمستند رسمي يسددها باسمها`}>
               {paySlipFor && (
-                <div className="space-y-3" data-slip-voucher>
+                <fieldset disabled={paySlipSaving}><div className="space-y-3" data-slip-voucher>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <Field label="الخزينة / البنك المصروف منه">
                       <TreasuryPicker value={paySlipTreasury} onChange={setPaySlipTreasury} operation="payment" />
                     </Field>
                     <Field label="تاريخ السند">
-                      <input type="date" className={inputCls} value={paySlipDate} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
+                      <input type="date" className={inputCls} value={paySlipDate} max={todayLocalIso()} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
                     </Field>
                     <Field label={`المبلغ المصروف الآن (${cur.symbol}) — المتبقي ${fmt(slipRemainingMinor(paySlipFor))}`}>
                       <input className={inputCls + ' text-center font-mono font-black'} inputMode="decimal" value={String(paySlipAmount / 10 ** cur.decimals)} aria-label="مبلغ سند صرف الراتب"
@@ -1265,12 +1404,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </div>
                   <DocOutcome>الأثر: سند صرف PV يُقفل «رواتب مستحقة 2104» مديناً باسم الموظف والخزينة دائنةً بالنقد المصروف — القسيمة تُوسم «مصروفة» باسم هذا السند، وتظهر في كشف حساب الموظف مرة واحدة بلا ازدواج.</DocOutcome>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Btn variant="ghost" onClick={() => setPaySlipFor(null)}>رجوع</Btn>
-                    <Btn onClick={postSlipVoucher} className="!bg-teal-600 hover:!bg-teal-500 !text-white font-black px-5" data-slip-voucher-post>
+                    <Btn variant="ghost" disabled={paySlipSaving} onClick={() => setPaySlipFor(null)}>رجوع</Btn>
+                    <Btn onClick={postSlipVoucher} disabled={paySlipSaving || !paySlipDate} className="!bg-teal-600 hover:!bg-teal-500 !text-white font-black px-5" data-slip-voucher-post>
                       💸 ترحيل سند الصرف وتسديد {paySlipFor.slipNumber}
                     </Btn>
                   </div>
-                </div>
+                </div></fieldset>
               )}
             </Modal>
 
@@ -1315,7 +1454,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)); paySlipBasis.current = paySlipFingerprint() }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>

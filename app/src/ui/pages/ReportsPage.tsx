@@ -292,7 +292,7 @@ export function ReportsPage() {
         customerId: newPartOrderCustomerId ? Number(newPartOrderCustomerId) : null,
         customerName: newPartOrderCustomerId ? custName(Number(newPartOrderCustomerId)) : newPartOrderCustomerName,
         customerPhone: newPartOrderCustomerPhone,
-        qty: Number(newPartOrderQty) || 1,
+        qty: Number(newPartOrderQty),
         orderedAt: new Date().toISOString(),
         linkedPurchaseOrderId: newPartOrderPoId ? Number(newPartOrderPoId) : null,
       })
@@ -752,7 +752,7 @@ export function ReportsPage() {
             </div>
             <div>
               <label className="text-[11px] font-bold text-slate-500 block mb-1">الكمية</label>
-              <input type="number" min={1} value={newPartOrderQty} onChange={(e) => setNewPartOrderQty(e.target.value)} className={inputCls} dir="ltr" />
+              <input type="number" min={0.001} step={0.001} value={newPartOrderQty} onChange={(e) => setNewPartOrderQty(e.target.value)} className={inputCls} dir="ltr" />
             </div>
             <div>
               <label className="text-[11px] font-bold text-slate-500 block mb-1">أمر شراء مرتبط (اختياري)</label>

@@ -18,6 +18,7 @@ import { getCountry } from '../../core/countries.ts'
 import { toMinor } from '../../core/money.ts'
 import { Btn, DecimalInput, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 import { localDateTimeLabel } from '../../core/time.ts'
+import { useEffectiveBranchScope } from '../hooks/useNavSections.ts'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
@@ -26,13 +27,14 @@ export function PermissionsPage() {
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const setup = useAppStore((s) => s.setup)
   const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
-  const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
+  const { effectiveActivityId, effectiveModules } = useEffectiveBranchScope()
+  const allRoles = rolesWithOverrides(roleOverrides, customRoles, effectiveActivityId)
   // فلترة حسب النشاط (أمر المالك): «كاشير» لا يظهر لنشاط بلا كاشير،
   // والصلاحيات المعروضة = العامة + ما تخص وحدات النشاط المفعلة فقط
-  const roles = visibleRolesForModules(allRoles, setup.modules)
-  const PERMISSIONS = permissionsForModules(setup.modules)
-  const PERMISSION_SECTIONS = permissionSectionsForModules(setup.modules)
-  const CRUD_ROWS = crudMatrixForModules(setup.modules)
+  const roles = visibleRolesForModules(allRoles, effectiveModules)
+  const PERMISSIONS = permissionsForModules(effectiveModules)
+  const PERMISSION_SECTIONS = permissionSectionsForModules(effectiveModules)
+  const CRUD_ROWS = crudMatrixForModules(effectiveModules)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
@@ -130,7 +132,7 @@ export function PermissionsPage() {
     const next = activeRole.permissions.includes(permId)
       ? activeRole.permissions.filter((p) => p !== permId)
       : [...activeRole.permissions, permId]
-    setRolePermissions(activeRoleId, next) // حفظ دائم — يسري فوراً على القائمة والمسارات
+    setRolePermissions(activeRole.id, next) // حفظ دائم — يسري فوراً على القائمة والمسارات
   }
 
   const toggleSection = (sectionId: string, checkAll: boolean) => {
@@ -139,7 +141,7 @@ export function PermissionsPage() {
     const next = checkAll
       ? [...new Set([...activeRole.permissions, ...sectionPerms])]
       : activeRole.permissions.filter((p) => !sectionPerms.includes(p))
-    setRolePermissions(activeRoleId, next)
+    setRolePermissions(activeRole.id, next)
   }
 
   const toggleCrudAction = (permissionIds: string[]) => {
@@ -148,7 +150,7 @@ export function PermissionsPage() {
     const next = enabled
       ? activeRole.permissions.filter((permissionId) => !permissionIds.includes(permissionId))
       : [...new Set([...activeRole.permissions, ...permissionIds])]
-    setRolePermissions(activeRoleId, next)
+    setRolePermissions(activeRole.id, next)
   }
 
   const crudLabels: Record<CrudOperation, string> = { create: 'إنشاء', read: 'عرض', update: 'تعديل', delete: 'حذف / عكس' }
@@ -172,7 +174,7 @@ export function PermissionsPage() {
               key={r.id}
               onClick={() => setActiveRoleId(r.id)}
               className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
-                r.id === activeRoleId
+                r.id === activeRole.id
                   ? 'bg-brand-500/12 text-brand-700 dark:text-brand-300 font-bold shadow-sm'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60'
               }`}
@@ -220,6 +222,10 @@ export function PermissionsPage() {
             </div>
           </div>
         )}
+
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          إذا لم يظهر قسم عروض الأسعار لموظف، اختر فئته وفعّل «إدارة ومعاينة عروض الأسعار والمناقصات» ضمن المبيعات. قد تحتاج الفئات المحفوظة قبل إضافة الصلاحية إلى تفعيلها يدوياً؛ وتُراجع استثناءات الموظف والفرع أيضاً.
+        </p>
 
         {/* مصفوفة CRUD — اختصار عملي لتحديد إنشاء/عرض/تعديل/حذف لكل شاشة */}
         <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">

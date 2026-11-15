@@ -4,9 +4,11 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * أرصدة حية من دفتر الأستاذ + إضافة/تعديل/حذف خزائن وبنوك +
  * تحويل بين أي خزينتين + كشف حركة لكل خزينة.
  */
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Landmark, PiggyBank, ArrowLeftRight, BookOpenText, Plus, Pencil, Trash2 } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -21,7 +23,7 @@ import { allowedTreasuryCodes } from '../../core/treasuryAccess.ts'
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
 export function TreasuryPage() {
-  const { journal, treasuries, appUsers, currentUserId, postVoucher, addTreasury, renameTreasury, removeTreasury } = useDataStore()
+  const { journal, treasuries, appUsers, currentUserId, addTreasury, renameTreasury, removeTreasury } = useDataStore()
   const activeUser = appUsers.find((user) => user.id === currentUserId)
   const visibleTreasuries = useMemo(() => {
     const visibleCodes = allowedTreasuryCodes(activeUser?.treasuryAccess, 'view_balance')
@@ -38,6 +40,13 @@ export function TreasuryPage() {
   const [amount, setAmount] = useState('')
   const [fee, setFee] = useState('') // مصروف التحويل — رسوم بنكية/عمولة (طلب المالك)
   const [desc, setDesc] = useState('')
+  const [transferDate, setTransferDate] = useState(() => todayLocalIso())
+  const [transferSaving, setTransferSaving] = useState(false)
+  const transferPending = useRef(false), transferSession = useRef(0), transferBasis = useRef(''), transferDraft = useRef('')
+  const transferDraftValue = JSON.stringify([from, to, amount, fee, desc, transferDate])
+  useLayoutEffect(() => { transferDraft.current = transferDraftValue }, [transferDraftValue])
+  const transferFingerprint = () => { const s = useRawDataStore.getState(); return JSON.stringify([s.currentUserId, s.activeBranchId, s.branches, s.appUsers, s.employees, s.roleOverrides, s.customRoles, s.treasuries, s.vouchers, s.journal]) }
+  const closeTransfer = () => { transferSession.current++; setTransferOpen(false) }
   const [statement, setStatement] = useState<string | null>(null)
   const [cashReportFrom, setCashReportFrom] = useState('')
   const [cashReportTo, setCashReportTo] = useState('')
@@ -86,25 +95,28 @@ export function TreasuryPage() {
   // تحريك النقدية بين الخزائن عملية حساسة — اعتماد مشرف (نفس صلاحية سند الصرف)
   const transferApproval = useSupervisorApproval('trs.payment.approve')
   const doTransfer = () => {
+    if (transferPending.current) return
+    const session = transferSession.current, draft = transferDraft.current
     transferApproval.request(() => {
-    try {
-      const feeMinor = fee ? toMinor(fee, cur.decimals) : 0
-      const v = postVoucher({
-        kind: 'transfer',
-        treasury: from,
-        counterAccountCode: to,
-        amountMinor: toMinor(amount || '0', cur.decimals),
-        description: desc.trim() || `تحويل من ${nameOf(from)} إلى ${nameOf(to)}`,
-        feeMinor,
-      })
-      toast.show(`تم التحويل ${v.voucherNumber} — ${fmt(v.amountMinor)}${feeMinor ? ` + رسوم ${fmt(feeMinor)}` : ''} من ${nameOf(from)} إلى ${nameOf(to)} ✓`)
-      setTransferOpen(false)
-      setAmount('')
-      setFee('')
-      setDesc('')
-    } catch (e) {
-      toast.show((e as Error).message, 'error')
-    }
+      if (session !== transferSession.current || draft !== transferDraft.current) return toast.show('تغير التحويل قبل الاعتماد — راجعه وأعد المحاولة', 'error')
+      if (transferPending.current) return
+      transferPending.current = true; setTransferSaving(true)
+      let committed = false
+      void (async () => {
+        try {
+          const feeMinor = fee ? toMinor(fee, cur.decimals) : 0
+          const v = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+            if (session !== transferSession.current || draft !== transferDraft.current || transferFingerprint() !== transferBasis.current) throw new Error('تغيرت بيانات الخزائن أو اليومية — أغلق التحويل وراجعه قبل المحاولة')
+            const result = useRawDataStore.getState().postVoucher({ kind: 'transfer', treasury: from, counterAccountCode: to, amountMinor: toMinor(amount || '0', cur.decimals), description: desc.trim() || `تحويل من ${nameOf(from)} إلى ${nameOf(to)}`, feeMinor, date: transferDate })
+            committed = true; return result
+          })
+          toast.show(`تم التحويل ${v.voucherNumber} — ${fmt(v.amountMinor)}${feeMinor ? ` + رسوم ${fmt(feeMinor)}` : ''} من ${nameOf(from)} إلى ${nameOf(to)} ✓`)
+          closeTransfer(); setAmount(''); setFee(''); setDesc('')
+        } catch (e) {
+          if (committed) { closeTransfer(); toast.show('سُجل التحويل محلياً لكن تعذر تأكيد الحفظ — راجع السند واليومية قبل إعادة المحاولة', 'error') }
+          else toast.show((e as Error).message, 'error')
+        } finally { transferPending.current = false; setTransferSaving(false) }
+      })()
     })
   }
 
@@ -150,7 +162,7 @@ export function TreasuryPage() {
         <div className="flex gap-2">
           {/* زر الإضافة بنفس بروز زر التحويل (ملاحظة المالك: كان باهتاً وغير عملي) */}
           <Btn onClick={openAdd}><Plus size={15} /> خزينة / بنك جديد</Btn>
-          <Btn onClick={() => { setAmount(''); setFee(''); setDesc(''); setTransferOpen(true) }} disabled={treasuries.length < 2}>
+          <Btn onClick={() => { setAmount(''); setFee(''); setDesc(''); setTransferDate(todayLocalIso()); transferSession.current++; transferBasis.current = transferFingerprint(); setTransferOpen(true) }} disabled={treasuries.length < 2}>
             <ArrowLeftRight size={15} /> تحويل بين الخزائن
           </Btn>
         </div>
@@ -285,8 +297,8 @@ export function TreasuryPage() {
       </Modal>
 
       {/* تحويل بين أي خزينتين — بلغة المستند: أقسام مرقّمة + رصيد حي + القيد قبل الترحيل */}
-      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="" wide bare>
-        <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+      <Modal open={transferOpen} onClose={() => { if (!transferPending.current) closeTransfer() }} title="" wide bare>
+        <fieldset disabled={transferSaving}><div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
           <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
             <div className="flex items-center gap-2.5">
               <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><ArrowLeftRight size={19} /></span>
@@ -329,6 +341,9 @@ export function TreasuryPage() {
               )}
             </DocSection>
 
+            <Field label="تاريخ التحويل" hint="التاريخ السابق داخل الفرع فقط وبعد آخر حركة للخزينتين؛ التحويل بين الفروع بتاريخ اليوم">
+              <input aria-label="تاريخ التحويل" type="date" max={todayLocalIso()} value={transferDate} onChange={e => setTransferDate(e.target.value)} className={inputCls} />
+            </Field>
             <DocSection step="٣" title="البيان" hint="يظهر في كشف حركة الخزينتين وفي الدفتر">
               <input value={desc} onChange={(e) => setDesc(e.target.value)} className={inputCls} placeholder="مثال: تغذية خزينة الفرع من الحساب البنكي" />
             </DocSection>
@@ -343,11 +358,11 @@ export function TreasuryPage() {
           <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
             <span className="text-[11px] doc-faint">يصل إلى {nameOf(to)} صافياً: <b className="font-mono doc-ink">{fmt(transferAmountMinor)}</b></span>
             <div className="flex gap-2">
-              <Btn variant="ghost" onClick={() => setTransferOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doTransfer} shortcut="F9" disabled={transferAmountMinor <= 0 || from === to || transferShort > 0}>تنفيذ التحويل</Btn>
+              <Btn variant="ghost" disabled={transferSaving} onClick={closeTransfer}>إلغاء</Btn>
+              <Btn onClick={doTransfer} shortcut="F9" disabled={transferSaving || !transferDate || transferAmountMinor <= 0 || from === to || transferShort > 0}>تنفيذ التحويل</Btn>
             </div>
           </div>
-        </div>
+        </div></fieldset>
       </Modal>
 
       {/* كشف حساب خزينة */}

@@ -1,3 +1,4 @@
+import { previewWarehouseReceipt } from '../print/previewWarehouseReceipt.ts'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * إعدادات الطباعة (المرحلة 5) — تحكم كامل في الفاتورة:
@@ -8,7 +9,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Printer, FileText, ImagePlus, Trash2, Stamp, Eye, Palette, ClipboardList, PackageCheck } from 'lucide-react'
 import { renderReportShell } from '../../core/reportPrint.ts'
-import { WAREHOUSE_RECEIPT_LABELS, buildWarehouseReceiptHtml, type WarehouseReceiptSettings } from '../../core/warehouseReceipt.ts'
+import { WAREHOUSE_RECEIPT_LABELS, type WarehouseReceiptSettings } from '../../core/warehouseReceipt.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { buildReceiptModel, A4_STYLES, type PaperWidth, type InvoiceTemplate, type ReceiptSettings } from '../../core/receipt.ts'
@@ -202,15 +203,15 @@ export function PrintSettingsPage() {
             </Field>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Btn variant="ghost" onClick={() => printHtml(buildWarehouseReceiptHtml({
+            <Btn variant="ghost" onClick={() => previewWarehouseReceipt({
               title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: todayLocalIso(),
               partyLabel: 'جهة تجريبية', branchLabel: activeBranchContext?.nameAr || setup.shopName || 'المنشأة', companyName: setup.shopName || 'المنشأة',
-              userLabel: setup.ownerName || 'المالك', settings: warehouseReceipt,
+              userLabel: setup.ownerName || 'المالك',
               lines: [
                 { nameAr: 'صنف تجريبي أول', qty: 10, unit: 'قطعة', code: 'A-001', barcode: '6221000000017', warehouseAr: 'المخزن الرئيسي', location: 'ممر 1 — رف 3' },
                 { nameAr: 'صنف تجريبي ثانٍ', qty: 2.5, unit: 'كرتونة', code: 'A-002', warehouseAr: 'المخزن الرئيسي' },
               ],
-            }))}><Eye size={14} /> معاينة الإذن</Btn>
+            })}><Eye size={14} /> معاينة الإذن</Btn>
             <Btn variant="ghost" onClick={() => { resetWarehouseReceipt(); toast.show('أُعيدت إعدادات إذن الاستلام للوضع الافتراضي ✓') }}><Trash2 size={14} /> إعادة الافتراضي</Btn>
           </div>
         </div>

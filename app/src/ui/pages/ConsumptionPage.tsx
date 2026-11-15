@@ -6,12 +6,15 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * «مصروف (5114 افتراضياً) / مخزون 1103» بمتوسط التكلفة المرجح —
  * فيظهر المصروف في قائمة الدخل وقت الاستهلاك (المعالجة العالمية القياسية).
  */
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PlusCircle, Eye, BookOpenText, Trash2 } from 'lucide-react'
-import { useDataStore, type ConsumptionDoc } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore, type ConsumptionDoc } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { inventoryOutflowFingerprint } from './inventoryOutflowFingerprint.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
+import { todayLocalIso } from '../../core/time.ts'
 import { CONSUMPTION_PURPOSES, INTERNAL_USE_ACCOUNT } from '../../core/consumption.ts'
 
 /** خيار الكتابة الحرة في قائمة الغرض — يظهر حقلاً نصياً عند اختياره */
@@ -24,7 +27,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 interface DraftLine { itemId: string; qty: string }
 
 export function ConsumptionPage() {
-  const { items, consumptions, journal, postConsumption, customAccounts } = useDataStore()
+  const { items, consumptions, journal, customAccounts } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -46,7 +49,14 @@ export function ConsumptionPage() {
   const [account, setAccount] = useState(INTERNAL_USE_ACCOUNT)
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<DraftLine[]>([{ itemId: '', qty: '1' }])
+  const [date, setDate] = useState(() => todayLocalIso())
+  const [saving, setSaving] = useState(false)
+  const pending = useRef(false), basis = useRef('')
   const patch = (i: number, p: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l)))
+
+  const formSignature = JSON.stringify([open, date, purpose, customPurpose, account, notes, lines])
+  const latestFormSignature = useRef(formSignature)
+  useLayoutEffect(() => { latestFormSignature.current = formSignature }, [formSignature])
 
   const totalPreview = useMemo(() => {
     let t = 0
@@ -63,6 +73,7 @@ export function ConsumptionPage() {
     setAccount(INTERNAL_USE_ACCOUNT)
     setNotes('')
     setLines([{ itemId: '', qty: '1' }])
+    setDate(todayLocalIso()); basis.current = inventoryOutflowFingerprint()
     setOpen(true)
   }
 
@@ -70,17 +81,30 @@ export function ConsumptionPage() {
   const approval = useSupervisorApproval('inv.adjust')
   const save = () => {
     if (purpose === CUSTOM_PURPOSE && !customPurpose.trim()) { toast.show('اكتب الغرض الحر أولاً — التوثيق إلزامي', 'error'); return }
+    if (pending.current) return
+    // المحرك يتطلب صلاحية المستخدم نفسه؛ اسم معتمد PIN ليس دليلاً يمكن التحقق منه في المستودع.
+    if (approval.willAskPin) { toast.show('يلزم تسجيل الدخول بمستخدم يملك صلاحية تسوية المخزون؛ اعتماد المشرف وحده غير مدعوم في هذا المسار', 'error'); return }
+    const signature = formSignature
     approval.request(() => {
-    try {
-      const doc = postConsumption({
-        purpose: effectivePurpose,
-        expenseAccount: account,
-        lines: lines.filter((l) => l.itemId && Number(l.qty) > 0).map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty) })),
-        notes: notes.trim(),
-      })
-      toast.show(`رُحّل الصرف ${doc.consumptionNumber} بقيمة ${fmt(doc.totalCostMinor)} ${cur.symbol} — تولد قيد ${doc.expenseAccount}/1103 ✓`)
-      setOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      if (pending.current) return
+      pending.current = true; setSaving(true)
+      let committed = false
+      void withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (latestFormSignature.current !== signature || inventoryOutflowFingerprint() !== basis.current) throw new Error('تغير النموذج أو أرصدة المخزون — أغلق النافذة وراجع البيانات قبل الترحيل')
+        const doc = useRawDataStore.getState().postConsumption({
+          purpose: effectivePurpose, expenseAccount: account,
+          lines: lines.filter(l => l.itemId).map(l => ({ itemId: Number(l.itemId), qty: Number(l.qty) })),
+          notes: notes.trim(), date,
+        })
+        committed = true
+        return doc
+      }).then(doc => {
+        toast.show(`رُحّل الصرف ${doc.consumptionNumber} بقيمة ${fmt(doc.totalCostMinor)} ${cur.symbol} — تولد قيد ${doc.expenseAccount}/1103 ✓`)
+        setOpen(false)
+      }).catch((e: unknown) => {
+        if (committed) { setOpen(false); toast.show('سُجل الصرف محلياً لكن تعذر تأكيد الحفظ — راجع المستند واليومية والمخزون قبل إعادة المحاولة', 'error') }
+        else toast.show(e instanceof Error ? e.message : 'تعذر تأمين الترحيل', 'error')
+      }).finally(() => { pending.current = false; setSaving(false) })
     })
   }
 
@@ -149,6 +173,7 @@ export function ConsumptionPage() {
       {/* مستند جديد */}
       <Modal open={open} onClose={() => setOpen(false)} title="مستند صرف داخلي (استهلاك تشغيل)" wide>
         <div className="space-y-4">
+          <Field label="تاريخ الصرف الداخلي"><input aria-label="تاريخ الصرف الداخلي" type="date" value={date} min={todayLocalIso()} max={todayLocalIso()} onChange={e => setDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="الغرض *" hint="التوثيق إلزامي — يظهر في القيد والسجل، ويمكن كتابة غرض حر">
               <QuickSelect value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputCls}>
@@ -198,13 +223,15 @@ export function ConsumptionPage() {
           </div>
 
           <div className="rounded-2xl bg-amber-500/5 border border-amber-500/15 p-3.5 flex items-center justify-between text-[12.5px]">
-            <span className="font-bold text-slate-600 dark:text-slate-300">إجمالي المصروف الذي سيظهر في قائمة الدخل</span>
+            <span className="font-bold text-slate-600 dark:text-slate-300">إجمالي المصروف التقديري — تحدد القيمة الدقيقة عند الترحيل</span>
             <b className="text-amber-500 text-base">{fmt(totalPreview)} {cur.symbol}</b>
           </div>
 
+          <p className="text-[11px] text-slate-500">تُسجل الحركة بتاريخ اليوم فقط ومن مخزن الصنف الأساسي؛ القيم أعلاه تقديرية وقد تختلف بفروق التقريب. التاريخ السابق غير متاح لعدم إثبات رصيد المخزون وتكلفته تاريخياً.</p>
+
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9">📦 ترحيل الصرف وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={saving}>📦 ترحيل الصرف وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>
@@ -225,7 +252,7 @@ export function ConsumptionPage() {
                     <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-4 py-1.5 font-bold">{l.nameAr}</td>
                       <td className="px-4 py-1.5 text-slate-400">{l.qty} × {fmt(l.unitCostMinor)}</td>
-                      <td className="px-4 py-1.5 font-bold text-left text-amber-500">{fmt(Math.round(l.qty * l.unitCostMinor))}</td>
+                      <td className="px-4 py-1.5 font-bold text-left text-amber-500">{fmt(l.costTotalMinor ?? Math.round(l.qty * l.unitCostMinor))}</td>
                     </tr>
                   ))}
                 </tbody>

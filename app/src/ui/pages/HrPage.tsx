@@ -10,13 +10,15 @@
  *
  * التصميم يتماشى مع لغة التطبيق (بطاقات rounded-2xl · ألوان الأقسام · RTL).
  */
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   CalendarCheck2, ClipboardPaste, FileDown, Fingerprint,
   Printer, Settings2, Users, CheckCircle2, Trash2, Plus, CalendarRange,
 } from 'lucide-react'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, useRawDataStore } from '../../data/repo.ts'
+import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
+import { currentPreviewScope } from '../components/printPreviewStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -510,7 +512,7 @@ function FingerprintTab() {
 /* ═══════════════════ 3) الإجازات ═══════════════════ */
 
 function LeavesTab() {
-  const { employees, leaveRequests, leaveTypes, addLeaveRequest, decideLeaveRequest, deleteLeaveRequest, getLeaveBalances } = useDataStore()
+  const { employees, leaveRequests, leaveTypes, getLeaveBalances } = useDataStore()
   const toast = useToast()
   const [open, setOpen] = useState(false)
   const [employeeId, setEmployeeId] = useState(0)
@@ -519,15 +521,49 @@ function LeavesTab() {
   const [to, setTo] = useState(todayLocalIso())
   const [reason, setReason] = useState('')
   const [month, setMonth] = useState(() => todayLocalIso().slice(0, 7))
+  const [calendarEmployee, setCalendarEmployee] = useState('all')
+  const [cancelId, setCancelId] = useState<number | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [returnId, setReturnId] = useState<number | null>(null)
+  const [returnDate, setReturnDate] = useState('')
+  const [returnReason, setReturnReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+  const cancelLock = useRef(false)
   const active = useMemo(() => employees.filter((e) => e.active), [employees])
 
-  const submit = () => {
+  const operationLock = useRef(false)
+  const [saving, setSaving] = useState(false)
+  const liveDraft = useRef('')
+  const draftValue = JSON.stringify([open, employeeId, typeId, from, to, reason])
+  useLayoutEffect(() => { liveDraft.current = draftValue }, [draftValue])
+  const leaveBasis = () => {
+    const s = useRawDataStore.getState(), app = useAppStore.getState()
+    return JSON.stringify([currentPreviewScope(), s.branches, s.appUsers, s.roleOverrides, s.branchRoleOverrides, s.customRoles, s.employees, s.leaveRequests, s.leaveTypes, s.branchHrSettings, s.attendanceRecords, s.payrollSlips, s.payrollRuns, app.setup, app.fiscalYears])
+  }
+  const performLeaveAction = async (kind: 'create' | 'approve' | 'reject' | 'delete', id?: number) => {
+    if (operationLock.current || cancelLock.current) return
+    const expectedBasis = leaveBasis(), expectedDraft = liveDraft.current
+    operationLock.current = true; setSaving(true)
+    let committed = false
     try {
-      addLeaveRequest({ employeeId, typeId, from, to, reason })
-      toast.show('سُجّل طلب الإجازة — بانتظار الاعتماد')
-      setOpen(false)
-      setReason('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (leaveBasis() !== expectedBasis || (kind === 'create' && liveDraft.current !== expectedDraft)) throw new Error('تغيرت بيانات الإجازة أو الفرع — راجعها قبل المتابعة')
+        const state = useRawDataStore.getState()
+        const user = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        if (kind === 'create') state.addLeaveRequest({ employeeId, typeId, from, to, reason })
+        else if (id != null && kind === 'delete') state.deleteLeaveRequest(id)
+        else if (id != null) state.decideLeaveRequest(id, kind === 'approve', user)
+        else throw new Error('طلب الإجازة غير محدد')
+        committed = true
+      })
+      if (kind === 'create') { setOpen(false); setReason('') }
+      toast.show(kind === 'create' ? 'سُجّل طلب الإجازة — بانتظار الاعتماد' : kind === 'approve' ? 'اعتُمدت الإجازة ووُسمت أيامها في شبكة الحضور ✓' : kind === 'reject' ? 'رُفض الطلب' : 'حُذف الطلب')
+    } catch (e) {
+      if (committed) {
+        if (kind === 'create') { setOpen(false); setReason('') }
+        toast.show('نُفذت العملية محلياً لكن تعذر تأكيد الحفظ — راجع سجل الإجازات والحضور قبل إعادة المحاولة', 'error')
+      } else toast.show(e instanceof Error ? e.message : 'تعذر تأمين عملية الإجازة', 'error')
+    } finally { operationLock.current = false; setSaving(false) }
   }
 
   const pending = leaveRequests.filter((l) => l.status === 'pending')
@@ -537,12 +573,63 @@ function LeavesTab() {
   const empName = useCallback((id: number) => employees.find((e) => e.id === id)?.nameAr ?? `#${id}`, [employees])
   /* تقويم الفريق: لكل يوم من الشهر — من في إجازة معتمدة */
   const calendar = useMemo(() => {
-    const approved = leaveRequests.filter((l) => l.status === 'approved')
+    const selectedEmployee = calendarEmployee !== 'all' && employees.some((e) => String(e.id) === calendarEmployee) ? Number(calendarEmployee) : null
+    const approved = leaveRequests.filter((l) => l.status === 'approved' && (selectedEmployee == null || l.employeeId === selectedEmployee))
     return dates.map((date) => ({
       date,
       onLeave: approved.filter((l) => leaveDates(l).includes(date)).map((l) => ({ employee: empName(l.employeeId), type: typeName(l.typeId) })),
     }))
-  }, [dates, leaveRequests, empName, typeName])/* §97: تبعية دوال الأسماء الفعلية */
+  }, [dates, leaveRequests, empName, typeName, calendarEmployee, employees])
+
+  const returnFromLeave = async () => {
+    if (returnId == null || cancelLock.current || operationLock.current) return
+    const request = leaveRequests.find((row) => row.id === returnId)
+    if (!request || !returnReason.trim()) return toast.show('اكتب سبب قطع الإجازة', 'error')
+    const basis = leaveBasis(), date = returnDate, reason = returnReason.trim()
+    cancelLock.current = true; setCancelling(true)
+    let committed = false
+    try {
+      const updated = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (leaveBasis() !== basis) throw new Error('تغيرت بيانات الإجازة أو الفرع — راجعها قبل قطع الإجازة')
+        const state = useRawDataStore.getState()
+        const user = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const result = state.returnFromLeave(returnId, date, user, reason)
+        committed = true
+        return result
+      })
+      setReturnId(null)
+      const legacy = updated.returnHistory?.at(-1)?.legacyAttendance?.length || updated.legacyAttendanceAtCancellation?.length
+      toast.show(legacy ? 'سُجلت العودة — راجع سجلات الحضور القديمة المؤرشفة يدوياً' : 'سُجل قطع الإجازة — راجع حضور الموظف من يوم العودة')
+    } catch (e) {
+      if (committed) { setReturnId(null); toast.show('نُفذت العملية محلياً لكن تعذر تأكيد الحفظ — راجع الإجازات والحضور قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر قطع الإجازة', 'error')
+    } finally { cancelLock.current = false; setCancelling(false) }
+  }
+
+  const cancelLeave = async () => {
+    if (cancelId == null || cancelLock.current || operationLock.current) return
+    const current = leaveRequests.find((l) => l.id === cancelId)
+    if (!current || !cancelReason.trim()) return toast.show('اكتب سبب الإلغاء', 'error')
+    const expected = JSON.stringify(current), scope = currentPreviewScope(), reason = cancelReason.trim()
+    cancelLock.current = true; setCancelling(true)
+    let cancelled = false
+    try {
+      const result = await withInvoiceCommitLock(async () => { await useRawDataStore.persist.rehydrate() }, () => {
+        if (currentPreviewScope() !== scope) throw new Error('تغير المستخدم أو الفرع — راجع الإجازة قبل إلغائها')
+        const state = useRawDataStore.getState()
+        if (JSON.stringify(state.leaveRequests.find((l) => l.id === cancelId)) !== expected) throw new Error('تغير طلب الإجازة — راجعه قبل إلغائه')
+        const user = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const updated = state.cancelLeaveRequest(cancelId, user, reason)
+        cancelled = true
+        return updated
+      })
+      setCancelId(null); setCancelReason('')
+      toast.show(result.legacyAttendanceAtCancellation?.length ? 'أُلغيت الإجازة القديمة — راجع سجل الحضور يدوياً للأيام المؤرشفة' : 'أُلغيت الإجازة — راجع أي حضور عُدّل بعد اعتمادها', result.legacyAttendanceAtCancellation?.length ? 'error' : 'success')
+    } catch (e) {
+      if (cancelled) { setCancelId(null); setCancelReason(''); toast.show('أُلغيت الإجازة محلياً لكن تعذر تأكيد الحفظ — راجع السجل والحضور قبل إعادة المحاولة', 'error') }
+      else toast.show(e instanceof Error ? e.message : 'تعذر إلغاء الإجازة', 'error')
+    } finally { cancelLock.current = false; setCancelling(false) }
+  }
 
   return (
     <div className="space-y-4" data-hr-leaves>
@@ -555,7 +642,7 @@ function LeavesTab() {
       <section className="anim-up rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-card-dark">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-black">طلبات الإجازات</h3>
-          <Btn onClick={() => { setEmployeeId(active[0]?.id ?? 0); setOpen(true) }} disabled={!active.length}><span className="flex items-center gap-1.5"><Plus size={15} /> طلب إجازة</span></Btn>
+          <Btn onClick={() => { setEmployeeId(active[0]?.id ?? 0); setOpen(true) }} disabled={!active.length || saving || cancelling}><span className="flex items-center gap-1.5"><Plus size={15} /> طلب إجازة</span></Btn>
         </div>
 
         {pending.length > 0 && (
@@ -573,9 +660,9 @@ function LeavesTab() {
                     <td className="p-1.5 text-[11px]">{leave.reason || '—'}</td>
                     <td className="p-1.5">
                       <div className="flex items-center justify-center gap-1">
-                        <button type="button" className="rounded-lg bg-emerald-500/15 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300" onClick={() => { try { decideLeaveRequest(leave.id, true, 'المالك'); toast.show('اعتُمدت الإجازة ووُسمت أيامها في شبكة الحضور ✓') } catch (e) { toast.show((e as Error).message, 'error') } }}>اعتماد</button>
-                        <button type="button" className="rounded-lg bg-rose-500/15 px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-500/25 dark:text-rose-300" onClick={() => { try { decideLeaveRequest(leave.id, false, 'المالك'); toast.show('رُفض الطلب') } catch (e) { toast.show((e as Error).message, 'error') } }}>رفض</button>
-                        <button type="button" className="rounded-lg px-1.5 py-1 text-slate-400 hover:text-rose-600" title="حذف الطلب" onClick={() => { try { deleteLeaveRequest(leave.id); toast.show('حُذف الطلب') } catch (e) { toast.show((e as Error).message, 'error') } }}><Trash2 size={13} /></button>
+                        <button type="button" className="rounded-lg bg-emerald-500/15 px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300" disabled={saving || cancelling} onClick={() => { void performLeaveAction('approve', leave.id) }}>اعتماد</button>
+                        <button type="button" className="rounded-lg bg-rose-500/15 px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-500/25 dark:text-rose-300" disabled={saving || cancelling} onClick={() => { void performLeaveAction('reject', leave.id) }}>رفض</button>
+                        <button type="button" className="rounded-lg px-1.5 py-1 text-slate-400 hover:text-rose-600" title="حذف الطلب" disabled={saving || cancelling} onClick={() => { void performLeaveAction('delete', leave.id) }}><Trash2 size={13} /></button>
                       </div>
                     </td>
                   </tr>
@@ -588,7 +675,7 @@ function LeavesTab() {
         {history.length > 0 && (
           <div className="mt-3 max-h-72 overflow-auto">
             <table className="w-full text-[12px]">
-              <thead className="text-slate-500"><tr><th className="p-1.5 text-right">الموظف</th><th className="p-1.5">النوع</th><th className="p-1.5">من</th><th className="p-1.5">إلى</th><th className="p-1.5">الأيام</th><th className="p-1.5">الحالة</th><th className="p-1.5">القرار</th></tr></thead>
+              <thead className="text-slate-500"><tr><th className="p-1.5 text-right">الموظف</th><th className="p-1.5">النوع</th><th className="p-1.5">من</th><th className="p-1.5">إلى</th><th className="p-1.5">الأيام</th><th className="p-1.5">الحالة</th><th className="p-1.5">القرار</th><th className="p-1.5">إجراء</th></tr></thead>
               <tbody>
                 {history.map((leave) => (
                   <tr key={leave.id} className="border-t border-slate-100 dark:border-slate-800">
@@ -599,10 +686,11 @@ function LeavesTab() {
                     <td className="p-1.5 text-center font-mono">{leave.days}</td>
                     <td className="p-1.5 text-center">
                       <span className={`rounded-md px-1.5 py-0.5 text-[10.5px] font-bold ${leave.status === 'approved' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : leave.status === 'rejected' ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300' : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'}`}>
-                        {leave.status === 'approved' ? 'معتمدة' : leave.status === 'rejected' ? 'مرفوضة' : 'معلقة'}
+                        {leave.status === 'approved' ? 'معتمدة' : leave.status === 'rejected' ? 'مرفوضة' : leave.status === 'cancelled' ? 'ملغاة' : 'معلقة'}
                       </span>
                     </td>
                     <td className="p-1.5 text-center text-[10.5px] text-slate-400">{leave.decidedBy ?? '—'}{leave.decidedAt ? ` · ${leave.decidedAt.slice(0, 10)}` : ''}</td>
+                    <td className="p-1.5 text-center">{leave.status === 'approved' && <button type="button" disabled={saving || cancelling} onClick={() => { setCancelId(leave.id); setCancelReason('') }} className="rounded-lg bg-rose-500/15 px-2 py-1 font-bold text-rose-700">إلغاء الإجازة</button>}{leave.status === 'approved' && !leave.returnHistory?.length && <button type="button" disabled={saving || cancelling} onClick={() => { setReturnId(leave.id); setReturnDate(todayLocalIso() >= leave.from && todayLocalIso() <= leave.to ? todayLocalIso() : ''); setReturnReason('') }} className="m-1 rounded-lg bg-sky-500/15 px-2 py-1 font-bold text-sky-700">قطع الإجازة وعودة للعمل</button>}{!!leave.returnHistory?.length && <details><summary>تفاصيل العودة</summary>{leave.returnHistory.map((entry, i) => <div key={i}>العودة {entry.returnDate} · النهاية السابقة {entry.previousTo} · {entry.by} · {entry.at} · {entry.reason}{entry.legacyAttendance?.length ? <div>سجلات الحضور القديمة المؤرشفة للمراجعة: {entry.legacyAttendance.map((row) => `${row.date} (${row.checkIn ?? '—'}–${row.checkOut ?? '—'}، ${row.source})`).join('، ')}</div> : null}</div>)}</details>}{leave.status === 'cancelled' && <details><summary>تفاصيل الإلغاء</summary><div>{leave.cancelledBy} · {leave.cancelledAt} · {leave.cancellationReason}</div>{leave.legacyAttendanceAtCancellation?.length ? <div>سجلات الحضور القديمة المؤرشفة للمراجعة: {leave.legacyAttendanceAtCancellation.map((row) => `${row.date} (${row.checkIn ?? '—'}–${row.checkOut ?? '—'}، ${row.source})`).join('، ')}</div> : null}</details>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -648,11 +736,17 @@ function LeavesTab() {
       <section className="anim-up rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-card-dark">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-black">تقويم الفريق — {monthLabelAr(month)}</h3>
+          <div className="flex flex-wrap gap-2">
+            <QuickSelect className={inputCls + ' w-44'} aria-label="موظف تقويم الإجازات" value={calendarEmployee !== 'all' && !employees.some((e) => String(e.id) === calendarEmployee) ? 'all' : calendarEmployee} onChange={(e) => setCalendarEmployee(e.target.value)}>
+              <option value="all">كل الموظفين</option>
+              {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.nameAr}{employee.active ? '' : ' (غير نشط)'}</option>)}
+            </QuickSelect>
           <input type="month" className={inputCls + ' w-40'} value={month} onChange={(e) => setMonth(e.target.value)} aria-label="شهر التقويم" />
+          </div>
         </div>
         <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10.5px] sm:grid-cols-10 md:grid-cols-[repeat(15,minmax(0,1fr))]">
           {calendar.map(({ date, onLeave }) => (
-            <div key={date} className={`rounded-lg border p-1 ${onLeave.length ? 'border-sky-500/40 bg-sky-500/10' : 'border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/40'}`} title={onLeave.map((row) => `${row.employee} — ${row.type}`).join('\n') || 'لا إجازات'}>
+            <div key={date} data-leave-date={date} className={`rounded-lg border p-1 ${onLeave.length ? 'border-sky-500/40 bg-sky-500/10' : 'border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/40'}`} title={onLeave.map((row) => `${row.employee} — ${row.type}`).join('\n') || 'لا إجازات'}>
               <div className="font-mono font-bold text-slate-600 dark:text-slate-300">{Number(date.slice(8))}</div>
               {onLeave.length > 0 && <div className="text-[9.5px] font-bold text-sky-700 dark:text-sky-300">{onLeave.length} إجازة</div>}
             </div>
@@ -660,7 +754,24 @@ function LeavesTab() {
         </div>
       </section>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="طلب إجازة">
+      <Modal open={returnId != null} onClose={() => { if (!cancelling) setReturnId(null) }} title="قطع الإجازة والعودة للعمل">
+        <div className="space-y-3" dir="rtl">
+          <p>حدد أول يوم عاد فيه الموظف للعمل. تبقى الأيام السابقة إجازة معتمدة ويُلغى المتبقي من يوم العودة؛ لا يُسجَّل الحضور تلقائياً. يُمنع تعديل أيام دخلت راتباً مرحّلاً أو فترة مقفلة.</p>
+          <Field label="تاريخ العودة للعمل"><input type="date" aria-label="تاريخ العودة للعمل" className={inputCls} disabled={cancelling} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} min={leaveRequests.find((row) => row.id === returnId)?.from} max={leaveRequests.find((row) => row.id === returnId)?.to} /></Field>
+          <Field label="سبب قطع الإجازة"><input aria-label="سبب قطع الإجازة" className={inputCls} disabled={cancelling} value={returnReason} onChange={(e) => setReturnReason(e.target.value)} /></Field>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" disabled={cancelling} onClick={() => setReturnId(null)}>تراجع</Btn><Btn disabled={cancelling || !returnReason.trim() || !returnDate} onClick={() => { void returnFromLeave() }}>{cancelling ? 'جارٍ التسجيل…' : 'تأكيد قطع الإجازة'}</Btn></div>
+        </div>
+      </Modal>
+
+      <Modal open={cancelId != null} onClose={() => { if (!cancelling) setCancelId(null) }} title="إلغاء إجازة معتمدة">
+        <div className="space-y-3" dir="rtl">
+          <p>سيُلغى الطلب ويُستعاد الحضور السابق إذا لم يتغير بعد الاعتماد. راجع الحضور والرواتب؛ قد تتطلب السجلات القديمة تصحيحاً يدوياً.</p>
+          <Field label="سبب الإلغاء"><input aria-label="سبب إلغاء الإجازة" className={inputCls} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} /></Field>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" disabled={cancelling} onClick={() => setCancelId(null)}>تراجع</Btn><Btn disabled={cancelling || !cancelReason.trim()} onClick={() => { void cancelLeave() }}>{cancelling ? 'جارٍ الإلغاء…' : 'تأكيد إلغاء الإجازة'}</Btn></div>
+        </div>
+      </Modal>
+
+      <Modal open={open} onClose={() => { if (!saving) setOpen(false) }} title="طلب إجازة">
         <div className="space-y-3" dir="rtl" data-leave-form>
           <div className="grid gap-2 sm:grid-cols-2">
             <Field label="الموظف">
@@ -678,8 +789,8 @@ function LeavesTab() {
           </div>
           <Field label="السبب"><input className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="اختياري" /></Field>
           <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={submit}>تسجيل الطلب</Btn>
+            <Btn variant="ghost" disabled={saving} onClick={() => setOpen(false)}>إلغاء</Btn>
+            <Btn disabled={saving} onClick={() => { void performLeaveAction('create') }}>{saving ? 'جارٍ الحفظ…' : 'تسجيل الطلب'}</Btn>
           </div>
         </div>
       </Modal>

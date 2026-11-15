@@ -1,3 +1,4 @@
+import { useLiveWarehouseReceipt } from '../print/previewWarehouseReceipt.ts'
 /**
  * أوامر الشراء — طلب المالك.
  * أمر الشراء التزام تجاري لا قيد محاسبي: يوثّق المطلوب من المورد بكمياته
@@ -37,12 +38,10 @@ import {
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
-import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
-import { printHtml } from '../print/printReceipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { resolveDocumentPrintSettings } from '../print/branchPrint.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
-import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { useLivePrintPreview } from '../hooks/useLivePrintPreview.ts'
 import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
@@ -73,7 +72,6 @@ export function PurchaseOrdersPage() {
     partyNotes, addPartyNote, appUsers, currentUserId, userPrefs, roleOverrides, customRoles, getSupplierBalance, tickets,
   } = useDataStore()
   const setup = useAppStore((s) => s.setup)
-  const warehouseReceipt = useAppStore((s) => s.warehouseReceipt)
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur, false)
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
@@ -220,15 +218,19 @@ export function PurchaseOrdersPage() {
     settings: resolveDocumentPrintSettings(currentPrintRecord()).receipt,
     extraFooter: [reference.trim() && `المرجع: ${reference.trim()}`, notes.trim()].filter(Boolean).join('\n') || undefined,
   })
+  const openLiveDraft = useLivePrintPreview((template: InvoiceTemplate) => {
+    if (!lines.some((line) => line.itemId > 0)) throw new Error('أضف أصنافاً قبل المعاينة')
+    const r = resolveDocumentPrintSettings(currentPrintRecord()).receipt
+    return buildModelHtml(buildPrintModel(), cur, r, template)
+  })
   const printDraft = (template: InvoiceTemplate) => {
     if (!lines.length) return toast.show('أضف أصنافاً قبل المعاينة', 'error')
     const model = buildPrintModel()
     const live = resolveDocumentPrintSettings(currentPrintRecord()).receipt
     if (!printSwitches.silentPrint) {
-      openPrintPreview({
-        html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal',
+      openLiveDraft(template, {
+        wide: template !== 'thermal',
         title: template !== 'thermal' ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال',
-        rebuild: () => { const r = resolveDocumentPrintSettings(currentPrintRecord()).receipt; return buildModelHtml(buildPrintModel(), cur, r, template) },
       })
       return
     }
@@ -250,23 +252,27 @@ export function PurchaseOrdersPage() {
    * إذن استلام بنود الأمر (GRN) — كميات فقط بلا أي سعر، للمطابقة عند التسليم.
    * لا يُحرّك مخزوناً: الحركة الفعلية تُرحَّل مع فاتورة الشراء وحدها.
    */
-  const printWarehouseReceipt = () => {
+  const buildWarehouseReceipt = () => {
     const clean = lines.filter((line) => line.itemId > 0 && line.qty > 0)
-    if (!clean.length) return toast.show('أضف أصنافاً قبل طباعة إذن الاستلام', 'error')
-    printHtml(buildWarehouseReceiptHtml({
+    if (!clean.length) throw new Error('أضف أصنافاً قبل المعاينة')
+    return {
       title: 'إذن استلام بنود أمر شراء (كميات فقط)',
       docNumber: pendingDraftNumber(purchaseOrders),
       dateLabel: `التسليم المتوقع ${expectedDate}`,
       partyLabel: selectedSupplier?.nameAr ?? (supplierName.trim() || 'مورد نقدي'),
-      branchLabel: resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName || (branches.find((b) => b.warehouseId === warehouseId)?.nameAr ?? warehouses.find((w) => w.id === warehouseId)?.nameAr ?? 'المنشأة'),
+      branchLabel: resolveDocumentPrintSettings(currentPrintRecord()).branchName,
       companyName: resolveDocumentPrintSettings(currentPrintRecord()).setup.shopName ?? 'المنشأة',
       userLabel: currentUser?.nameAr ?? setup.ownerName ?? 'المالك',
       lines: clean.map((line) => {
         const item = items.find((row) => row.id === line.itemId)
         return { nameAr: item?.nameAr ?? line.nameAr, qty: line.qty, unit: item?.baseUnit, code: item?.sku, barcode: item?.barcodes?.[0], warehouseAr: warehouses.find((w) => w.id === (line.warehouseId ?? warehouseId))?.nameAr }
       }),
-      settings: warehouseReceipt,
-    }))
+    }
+  }
+  const openWarehouseReceipt = useLiveWarehouseReceipt(buildWarehouseReceipt)
+  const printWarehouseReceipt = () => {
+    if (!lines.some((line) => line.itemId > 0 && line.qty > 0)) return toast.show('أضف أصنافاً قبل طباعة إذن الاستلام', 'error')
+    openWarehouseReceipt()
     toast.show('إذن الاستلام جاهز — كميات فقط بلا أسعار 📦 (لا يُحرّك المخزون)')
   }
   const quickPrint = () => printDraft((userPrefs[String(currentUserId ?? 'owner')]?.preferredPrintTemplate) ?? (printSwitches.cashierPrint ? 'thermal' : 'a4'))
@@ -449,6 +455,7 @@ export function PurchaseOrdersPage() {
                   </QuickSelect>}
                   kind="purchase"
                   mode="advanced"
+                  orderOnly
                   lines={lines.map((line) => ({ ...line, warehouseId: line.warehouseId ?? warehouseId }))}
                   items={items}
                   warehouses={warehouses}
@@ -614,7 +621,7 @@ export function PurchaseOrdersPage() {
                         {order.status !== 'closed' && order.status !== 'cancelled' && (
                           <button onClick={() => nav(`/purchases/invoices/new?po=${order.id}`)} title="فتح فاتورة شراء معبَّأة من بنود هذا الأمر المتبقية مباشرة" className="px-2 py-1 rounded-lg text-[10.5px] font-bold text-cyan-700 bg-cyan-500/10 hover:bg-cyan-500/20 transition-all dark:text-cyan-300">فاتورة استلام</button>
                         )}
-                        {order.status === 'draft' && (
+                        {order.status === 'draft' && !(order.invoiceIds ?? []).length && (
                           <button onClick={() => { try { deletePurchaseOrder(order.id); toast.show('حُذف الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }} title="حذف" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"><Trash2 size={14} /></button>
                         )}
                       </div>

@@ -135,16 +135,18 @@ throws('لا رد فوق الوعاء الكامل', () => S().refundRental({ co
 ok('الميزان متوازن', balanced())
 
 console.log('\n6️⃣ المقاولات — إشعار دائن على مستخلص معتمد')
-S().addProject({ nameAr: 'برج النيل', clientId: cust.id, contractValueMinor: 10000000, retentionPercent: 5, startDate: '2026-01-01', expectedEndDate: '', description: '' })
+S().addProject({ nameAr: 'برج النيل', clientId: cust.id, contractValueMinor: 10000000, retentionPercent: 0, startDate: '2026-01-01', expectedEndDate: '', description: '' })
 const proj = S().projects.at(-1)
-S().addProjectExtract({ projectId: proj.id, grossMinor: 1000000, vatPercent: 14, payment: 'credit', description: 'أعمال حفر' })
+const boq = S().addBoqItem({ projectId: proj.id, code: 'B1', descriptionAr: 'حفر', unit: 'م', qty: 1000, unitPriceMinor: 1000 })
+S().addProjectExtract({ projectId: proj.id, extractQtyLines: [{ boqItemId: boq.id, cumulativeQty: 1000 }], vatPercent: 14, payment: 'credit', description: 'أعمال حفر' })
 const ex = S().projectExtracts.at(-1)
-// due = 1000000 + 140000 - 50000 = 1090000
-ok('المستخلص: المستحق 10900', ex.totals.dueMinor === 1090000)
+// إصدار بندي دون محتجز: المستحق 1000000 + 140000
+ok('المستخلص: المستحق 11400', ex.totals.dueMinor === 1140000)
 const ar1 = bal('1104'), vat1 = bal('2102')
-const uex = S().refundProjectExtract({ extractId: ex.id, amountMinor: 109000, mode: 'customer_credit', reason: 'رفض الاستشاري بنداً' })
-ok('إشعار دائن 1090 على الحساب: 1104 انخفض', ar1 - bal('1104') === 109000)
-ok('الضريبة النسبية عُكست (109000×140000/1090000=14000)', uex.refundedTaxMinor === 14000, `فعلي ${uex.refundedTaxMinor}`)
+throws('لا إشعار حر دون كمية', () => S().refundProjectExtract({ extractId: ex.id, amountMinor: 114000, mode: 'customer_credit', reason: 'رفض الاستشاري بنداً' }), 'البنود والكميات')
+const uex = S().refundProjectExtract({ extractId: ex.id, quantities: [{ boqItemId: boq.id, qty: 100 }], amountMinor: 114000, mode: 'customer_credit', reason: 'رفض الاستشاري بنداً' })
+ok('إشعار دائن 1140 على الحساب: 1104 انخفض', ar1 - bal('1104') === 114000)
+ok('الضريبة على كمية الأعمال عُكست 14000', uex.refundedTaxMinor === 14000, `فعلي ${uex.refundedTaxMinor}`)
 ok('الميزان متوازن ختاماً', balanced())
 
 console.log('\n7️⃣ التكامل — كشف حساب العميل يشمل مرتجعات الخدمات «على الحساب»')
@@ -156,7 +158,7 @@ const docs = customerUnitDocs({
   projectExtracts: S().projectExtracts, linkedProjectIds: S().projects.filter((p) => p.clientId === cust.id).map((p) => p.id),
 })
 ok('كشف العميل: سطر مرتجع الصيانة دائن 342', docs.some((d) => d.docLabel.includes('مرتجع صيانة') && d.creditMinor === 34200))
-ok('كشف العميل: سطر إشعار دائن المستخلص 1090', docs.some((d) => d.docLabel.includes('إشعار دائن مستخلص') && d.creditMinor === 109000))
+ok('كشف العميل: سطر إشعار دائن المستخلص 1140', docs.some((d) => d.docLabel.includes('إشعار دائن مستخلص') && d.creditMinor === 114000))
 
 console.log('\n8️⃣ G8: مرتجعات متتالية على طلب معمل — العمولة تُعكس بالكامل لا نصفها')
 S().addLabPatient({ nameAr: 'مريض G8', phone: '', gender: 'male', birthDate: '1991-01-01', notes: '', linkedCustomerId: null })
