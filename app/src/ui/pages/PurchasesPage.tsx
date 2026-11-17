@@ -15,6 +15,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { purchaseWeightDiscrepancy, moistureRiskLevel } from '../../core/purchases.ts'
 import { effectiveVatPercent, normalizeBarcode } from '../../core/items.ts'
+import { parseScaleBarcodeUniversal, matchScaleItem } from '../../core/barcode.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
@@ -74,7 +75,7 @@ function lineVatMinorFor(line: DraftLine, decimals: number, effectivePercent: nu
 
 export function PurchasesPage() {
   const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, costCenters, expenseTemplates, addExpenseTemplate, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase, getSupplierBalance, appUsers, currentUserId } = useDataStore()
-  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice, deviceFlags } = useAppStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice, deviceFlags, scaleRules } = useAppStore()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const [today] = useState(() => todayLocalIso())
@@ -367,6 +368,17 @@ export function PurchasesPage() {
       setScanBuf('')
       return
     }
+    // ملصق ميزان (وزن): الاستلام بالوزن مباشرة — وإلا استُلمت 0.750 كجم «كرتونة»
+    const scale = parseScaleBarcodeUniversal(q, scaleRules)
+    if (scale && scale.weightKg != null) {
+      const weighed = matchScaleItem(scale.itemCode, items, { requireWeighted: true })
+      if (weighed) {
+        setLines((arr) => [...arr, makeDraftLine(weighed.id, { qty: String(scale.weightKg) })])
+        toast.show(`⚖️ ${weighed.nameAr} — ${scale.weightKg} كجم من ملصق الميزان`)
+        setScanBuf('')
+        return
+      }
+    }
     toast.show(`لا صنف بالباركود «${q}» — أضفه أولاً (صنف جديد سريع) وسجّل الباركود عليه`, 'error')
     setScanBuf('')
   }
@@ -435,6 +447,14 @@ export function PurchasesPage() {
     if (lineWarehouseMode && enteredLines.some((l) => l.warehouseId == null)) {
       toast.show('اختر مخزناً لكل سطر — لا يمكن ترحيل بضاعة على مخزن غير مختار', 'error')
       return
+    }
+    /* أصناف تتتبع الصلاحية بلا تاريخ: لا نمنع الترحيل (خام يُفرز لاحقاً)، لكن
+       الدفعة لن تدخل FEFO ولا تنبيهات الانتهاء — فالتنبيه صريح هنا وفي تقرير الصلاحية. */
+    const noExpiry = enteredLines
+      .filter((l) => items.find((it) => it.id === l.itemId)?.trackExpiry && !l.expiryDate)
+      .map((l) => items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`)
+    if (noExpiry.length) {
+      toast.show(`⚠️ ${[...new Set(noExpiry)].map((n) => `«${n}»`).join('، ')} بلا تاريخ صلاحية — ستباع بلا أولوية FEFO ولا تنبيه انتهاء (أدخل التاريخ من عمود الصلاحية)`, 'error')
     }
     const inv = postPurchase({
       sourceDraftId,

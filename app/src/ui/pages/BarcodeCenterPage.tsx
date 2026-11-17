@@ -15,13 +15,14 @@ import { LABEL_SIZES, validateLabelPrint, type ItemLabelData, type SerialLabelDa
 import { renderItemLabelsHtml, renderSerialLabelsHtml } from '../print/printProLabels.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { normalizeSerial } from '../../core/serials.ts'
+import { planInternalBarcodes } from '../../core/barcode.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 type Tab = 'items' | 'serials' | 'template'
 
 export function BarcodeCenterPage() {
-  const { items, serials } = useDataStore()
-  const { setup, labelSettings, updateLabelSettings } = useAppStore()
+  const { items, serials, updateItem } = useDataStore()
+  const { setup, labelSettings, updateLabelSettings, scaleRules } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
 
@@ -30,11 +31,37 @@ export function BarcodeCenterPage() {
   /* ─── ملصقات الأصناف ─── */
   const [q, setQ] = useState('')
   const [counts, setCounts] = useState<Record<number, string>>({})
+  // سقف عرض متزايد بدل قصّ صامت: مركز الباركود должен يعرض كل الأصناف عند الحاجة
+  const [visibleRows, setVisibleRows] = useState(200)
   const activeItems = useMemo(() => {
     const query = q.trim()
     return items.filter((it) => it.isActive && (!query || it.nameAr.includes(query) || it.sku.includes(query) || it.barcodes.some((b) => b.includes(query))))
   }, [items, q])
   const totalItemLabels = useMemo(() => Object.values(counts).reduce((a, v) => a + (Number(v) || 0), 0), [counts])
+  /* أصناف نشطة بلا أي باركود — لا يمكن مسحها ولا طباعة ملصق قابل للقراءة قبل التوليد */
+  const missingBarcode = useMemo(
+    () => items.filter((it) => it.isActive && !it.barcodes.some((b) => b.trim()) && !it.sku.trim()),
+    [items],
+  )
+  const [bulkConfirm, setBulkConfirm] = useState(false)
+  /** توليد دفعة أكواد داخلية (EAN-13 بادئة 2) للأصناف بلا باركود ولا كود — خطة واحدة قابلة للاختبار */
+  const generateMissingBarcodes = () => {
+    const plan = planInternalBarcodes(items, scaleRules)
+    let done = 0
+    try {
+      for (const row of plan) {
+        const it = items.find((x) => x.id === row.id)
+        if (!it) continue
+        updateItem(it.id, { barcodes: [...it.barcodes, row.code] })
+        done += 1
+      }
+      toast.show(`تم توليد ${done} باركوداً داخلياً ✓ — اطبع ملصقاتها من الجدول`)
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : 'تعذّر توليد الباركود', 'error')
+    } finally {
+      setBulkConfirm(false)
+    }
+  }
 
   const printItemLabels = () => {
     const list: ItemLabelData[] = []
@@ -43,7 +70,7 @@ export function BarcodeCenterPage() {
       if (cnt <= 0) continue
       const it = items.find((x) => x.id === Number(idStr))
       if (!it) continue
-      list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), sku: it.sku, priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
+      list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), sku: it.sku, priceMinor: it.priceMinor, count: Math.min(cnt, 5000) })
     }
     const errors = validateLabelPrint(list.reduce((a, l) => a + l.count, 0))
     if (errors.length) { toast.show(errors.join(' — '), 'error'); return }
@@ -115,7 +142,22 @@ export function BarcodeCenterPage() {
             <Btn onClick={printItemLabels} disabled={totalItemLabels <= 0}>
               <Printer size={15} /> طباعة
             </Btn>
+            <Btn variant="soft" onClick={() => setBulkConfirm(true)} disabled={missingBarcode.length === 0} title="EAN-13 بادئته 2 وخانة تحقق صحيحة — يتخطى المسجّل وقواعد الميزان">
+              <Tags size={15} /> توليد باركود ({missingBarcode.length})
+            </Btn>
           </div>
+          {bulkConfirm && (
+            <div className="rounded-xl border border-amber-400/40 bg-amber-500/5 p-3 text-[12px] space-y-2">
+              <p className="font-bold text-amber-700 dark:text-amber-300">
+                سيُضاف باركود داخلي لـ{missingBarcode.length} صنفاً بلا باركود ولا كود — بادئة 200 (نطاق الاستخدام داخل المتجر) وخانة تحقق سليمة.
+              </p>
+              <p className="text-slate-500">لا يتأثر أي صنف له باركود مسجّل، ولن يُولَّد كود يفسّره الميزان كملصق وزن.</p>
+              <div className="flex gap-2">
+                <Btn onClick={generateMissingBarcodes}>تأكيد التوليد</Btn>
+                <Btn variant="ghost" onClick={() => setBulkConfirm(false)}>إلغاء</Btn>
+              </div>
+            </div>
+          )}
           {activeItems.length === 0 ? (
             <EmptyState icon="🏷️" title="لا أصناف مطابقة" sub="أضف أصنافاً من شاشة الأصناف أو عدّل البحث" />
           ) : (
@@ -130,14 +172,14 @@ export function BarcodeCenterPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {activeItems.slice(0, 200).map((it) => (
+                  {activeItems.slice(0, visibleRows).map((it) => (
                     <tr key={it.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="py-1.5 px-2 font-bold text-slate-700 dark:text-slate-200">{it.nameAr}</td>
                       <td className="py-1.5 px-2 font-mono text-slate-500" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
                       <td className="py-1.5 px-2 text-slate-500">{(it.priceMinor / 10 ** cur.decimals).toLocaleString('ar-EG')} {cur.symbol}</td>
                       <td className="py-1.5 px-2">
                         <input
-                          type="number" inputMode="decimal" step="any" min={0} max={500}
+                          type="number" inputMode="decimal" step="any" min={0} max={5000}
                           value={counts[it.id] ?? ''}
                           onChange={(e) => setCounts((c) => ({ ...c, [it.id]: e.target.value }))}
                           placeholder="0"
@@ -148,6 +190,16 @@ export function BarcodeCenterPage() {
                   ))}
                 </tbody>
               </table>
+              {activeItems.length > visibleRows && (
+                <div className="flex items-center justify-between gap-3 pt-2">
+                  <span className="text-[11.5px] text-slate-400">
+                    يُعرض {visibleRows} من {activeItems.length} صنفاً
+                  </span>
+                  <button onClick={() => setVisibleRows((n) => n + 300)} className="text-[12px] font-bold text-brand-600 dark:text-brand-400 hover:underline">
+                    عرض المزيد (+300)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

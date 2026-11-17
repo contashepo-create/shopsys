@@ -99,6 +99,31 @@ export function applyFefo(batches: StockBatch[], plan: FefoPlan): StockBatch[] {
     .filter((b) => b.qty > 0)
 }
 
+/* ─── دفعات بلا تاريخ صلاحية (لا تدخل FEFO ولا تنبيهات الانتهاء) ─── */
+
+export interface UndatedBatchRow {
+  itemId: number
+  nameAr: string
+  lotNumber: string | null
+  qty: number
+  warehouseId: number | null
+}
+
+/**
+ * دفعات متتبَّعة للصلاحية لكن بلا تاريخ — تُشترى خاماً (تمور/لحوم تُفرز لاحقاً)
+ * أو تُدخل بسرعة. لا نمنع الاستلام، لكن تمريرها بصمت يعني بيعاً منتهياً بلا تنبيه،
+ * فتُعرض في تقرير الصلاحية حتى يضبطها المسؤول.
+ */
+export function undatedBatches(
+  batches: readonly StockBatch[],
+  nameOf: (itemId: number) => string,
+): UndatedBatchRow[] {
+  return batches
+    .filter((b) => b.expiryDate == null && b.qty > 0)
+    .map((b) => ({ itemId: b.itemId, nameAr: nameOf(b.itemId), lotNumber: b.lotNumber ?? null, qty: b.qty, warehouseId: b.warehouseId ?? null }))
+    .sort((a, b) => b.qty - a.qty)
+}
+
 /* ─── تنبيهات الصلاحية ─── */
 
 export interface ExpiryAlertRow {

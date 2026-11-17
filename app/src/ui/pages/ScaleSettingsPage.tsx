@@ -19,6 +19,8 @@ import {
 } from '../../core/barcode.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useScaleDevice } from '../../hooks/useScaleDevice.ts'
+import { useScaleStore, isReadingFresh } from '../../stores/scale.store.ts'
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -26,6 +28,8 @@ export function ScaleSettingsPage() {
   const { setup, scaleRules, addScaleRule, updateScaleRule, removeScaleRule } = useAppStore()
   const { items } = useDataStore()
   const toast = useToast()
+  const scaleDevice = useScaleDevice()
+  const liveReading = useScaleStore((state) => state.reading)
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -124,6 +128,53 @@ export function ScaleSettingsPage() {
         النظام عالمي — أضف قاعدة لكل صيغة يطبعها ميزانك (من القوالب الجاهزة أو يدوياً)، وجرب ملصقاً
         حقيقياً في صندوق الاختبار، ثم ابرمج الميزان بقائمة PLU بالأسفل.
       </p>
+
+      {/* ─── قارئ ميزان مباشر (اختياري) ─── */}
+      <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-[13px] font-black text-slate-700 dark:text-slate-200 flex items-center gap-2">
+            <Scale size={15} /> ربط ميزان مباشر بجهاز الكاشير (اختياري)
+          </h2>
+          <span className={`text-[11px] font-bold flex items-center gap-1.5 ${scaleDevice.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
+            <span className={`w-2 h-2 rounded-full ${scaleDevice.connected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+            {scaleDevice.connected ? `متصل${scaleDevice.portLabel ? ` — ${scaleDevice.portLabel}` : ''}` : 'غير متصل'}
+          </span>
+        </div>
+        <p className="text-[11.5px] text-slate-400 leading-relaxed">
+          ميزان يطبع ملصقات (باركود 22…) لا يحتاج ربطاً: الكاشير يمسح الملصق. هذه البطاقة للميزان
+          المتصل بكابل RS-232/USB-Serial مع جهاز الكاشير ويرسل الوزن نصاً — يُقرأ الوزن هنا ويُطبَّق
+          في الكاشير بنقرة على السطر عبر لافتة الوزن الحيّ.
+        </p>
+        {!scaleDevice.support ? (
+          <p className="text-[11.5px] font-bold text-amber-600 dark:text-amber-400">
+            ⚠️ هذا المتصفح/الجهاز لا يدعم Web Serial. ميزان USB-HID (يكتب كأنه لوحة مفاتيح) يعمل بلا إعداد
+            من خانة المسح في الكاشير. للربط التسلسلي شغّل النسخة المكتبية (Electron/Chromium).
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="سرعة المنفذ (Baud)">
+              <QuickSelect value={String(scaleDevice.baudRate)} onChange={(e) => scaleDevice.setBaudRate(Number(e.target.value))} className={`${inputCls} !w-40`}>
+                {[4800, 9600, 19200, 38400, 57600, 115200].map((rate) => <option key={rate} value={rate}>{rate}</option>)}
+              </QuickSelect>
+            </Field>
+            {scaleDevice.connected
+              ? <Btn variant="ghost" onClick={() => void scaleDevice.disconnect()}>قطع الاتصال</Btn>
+              : <Btn onClick={() => void scaleDevice.connect()}>توصيل الميزان</Btn>}
+            <div className="ms-auto text-left">
+              <div className="text-[10.5px] text-slate-400 font-bold">آخر قراءة</div>
+              <div className={`text-[20px] font-black tabular-nums ${isReadingFresh(liveReading) ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-300 dark:text-slate-600'}`} dir="ltr">
+                {liveReading && isReadingFresh(liveReading) ? `${liveReading.kg.toFixed(3)} kg` : '— kg'}
+              </div>
+            </div>
+          </div>
+        )}
+        {scaleDevice.error && <p className="text-[11.5px] font-bold text-rose-600 dark:text-rose-400">⚠️ {scaleDevice.error}</p>}
+        <p className="text-[10.5px] text-slate-400 leading-relaxed">
+          💡 ملصق «السعر» لا يحمل سعر الكيلو: الكاشير يشتق الوزن = السعر ÷ سعر الكيلو الحالي. إن غيّرت سعر
+          الكيلو بعد طباعة الملصقات فأعد ضبط الميزان؛ الملصقات القديمة ستُسجّل وزناً مختلفاً عن الحقيقة
+          (المبلغ يبقى كما طُبع). قاعدة «وزن» هي الأنسب للبقالة.
+        </p>
+      </div>
 
       {/* ─── القواعد ─── */}
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-3">

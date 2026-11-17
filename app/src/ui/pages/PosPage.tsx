@@ -6,16 +6,17 @@
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil } from 'lucide-react'
+import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil, Scale } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
-import { computeTotals, lineTotal, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { computeTotals, lineTotal, CreditLimitError, stockShortage, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
+import { useScaleStore, isReadingFresh } from '../../stores/scale.store.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, normalizeBarcode, type Item } from '../../core/items.ts'
 import { matchesSearch, searchRank } from '../../core/search.ts'
@@ -187,6 +188,11 @@ export function PosPage() {
   // لخانة الباركود مباشرة ليعمل المسح المتواصل؛ الإضافة اليدوية بالاسم تُبقي
   // الدورة القديمة (كمية ← سعر) فلا يتغير سلوك الكاشير المعتاد.
   const scanFocusAtRef = useRef<number | null>(null)
+  // أصناف حُذّرنا من تجاوز رصيدها في هذه الفاتورة (تحذير واحد لا لكل مسحة)
+  const warnedStockRef = useRef<Set<number>>(new Set())
+  // وزن حيّ من ميزان متصل (Web Serial) — يُطبَّق على السطر المختار بنقرة
+  const liveScaleReading = useScaleStore((state) => state.reading)
+  const scaleReadingFresh = isReadingFresh(liveScaleReading)
   const posSignature = JSON.stringify({ cart, qtyDrafts, invoiceDiscount, payment, paymentTerminalId, terminalReference, terminalCardLast4, customerId, paidCash, treasury })
   const unsaved = useUnsavedChangesGuard(posSignature)
   useEffect(() => { if (!cart.length) unsaved.markClean() }, [cart.length, unsaved])
@@ -299,6 +305,39 @@ export function PosPage() {
     toast.show(`🔢 ${it.nameAr} — ${serial}`)
   }
 
+  /**
+   * تحذير رصيد **قبل** الدفع: الترحيل يرفض النقص برسالة عامة بعد أن يقف الطابور.
+   * ننبّه مرة واحدة لكل صنف حتى لا يتحول كل مسحة إلى إشعار. لا نمنع الإضافة
+   * (الرصيد قد يكون قديماً في جهاز الكاشير) — المنع النهائي عند الترحيل.
+   */
+  const warnIfBeyondStock = (it: Item, addBaseQty: number) => {
+    const inCart = cart.reduce((sum, l) => sum + (l.itemId === it.id ? l.qty * (l.unitFactor ?? 1) : 0), 0)
+    const shortage = stockShortage({
+      stockQty: it.stockQty ?? 0, inCartQty: inCart, addQty: addBaseQty,
+      allowNegative: setup.allowNegativeStock, isService: it.isService,
+    })
+    if (!shortage || warnedStockRef.current.has(it.id)) return
+    warnedStockRef.current.add(it.id)
+    toast.show(`⚠️ «${it.nameAr}»: المطلوب ${shortage.needed} والمتاح ${shortage.available} — لن يُرحَّل البيع قبل توفير الرصيد أو تفعيل «السماح بالبيع بالسالب»`, 'error')
+  }
+
+  useEffect(() => {
+    if (cart.length === 0) warnedStockRef.current.clear()
+  }, [cart.length])
+
+  /** تطبيق الوزن الحيّ على السطر المختار (يستبدل الكمية ولا يضيفها — الوزن قراءة كاملة) */
+  const applyLiveScaleWeight = () => {
+    const index = selectedCartIndex
+    const line = index == null ? null : cart[index]
+    if (!line) return
+    if (!line.soldByWeight) { toast.show('هذا السطر ليس صنفاً مسجلاً «بالوزن» — لا يمكن إسناد وزن إليه', 'error'); return }
+    if (!liveScaleReading || !isReadingFresh(liveScaleReading)) { toast.show('لا قراءة حديثة من الميزان — أعد الوزن', 'error'); return }
+    const kg = Math.round(liveScaleReading.kg * 1000) / 1000
+    if (kg <= 0) { toast.show('قراءة الميزان صفرية — لا تُطبَّق', 'error'); return }
+    setCart((prev) => prev.map((l, i) => (i === index ? { ...l, qty: kg } : l)))
+    toast.show(`⚖️ ${line.nameAr} — ${kg} كجم من الميزان`)
+  }
+
   const addToCart = (itemId: number, weightQty?: number) => {
     const it = items.find((x) => x.id === itemId)
     if (!it) return
@@ -307,6 +346,7 @@ export function PosPage() {
       toast.show(`«${it.nameAr}» بلا سعر بيع! حدّد سعره من المخزون ← الأصناف أولاً`, 'error')
       return
     }
+    warnIfBeyondStock(it, weightQty ?? (it.soldByWeight ? 0.5 : 1))
     // الصيدلية (نمط ShelfLifePro): الدواء النافد يقترح بدائله بنفس المادة الفعالة فوراً
     if (!it.isService && (it.stockQty ?? 0) <= 0 && (it.activeIngredient ?? '').trim()) {
       const alts = sameIngredientAlternatives(it, items)
@@ -371,6 +411,7 @@ export function PosPage() {
     const it = items.find((x) => x.id === itemId)
     const u = it?.extraUnits.find((x) => x.nameAr === unitName)
     if (!it || !u) return
+    warnIfBeyondStock(it, u.factor)
     const basePrice = getEffectivePrice(it.id, activePriceListId)
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.itemId === itemId && l.unitLabel === unitName)
@@ -914,6 +955,24 @@ export function PosPage() {
 
       {/* ═══ يسار: السلة ═══ */}
       <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
+        {scaleReadingFresh && liveScaleReading && (
+          <div data-scale-banner className="flex items-center justify-between gap-2 px-4 py-2 bg-sky-500/10 border-b border-sky-500/20 text-[11.5px] text-sky-700 dark:text-sky-300">
+            <span className="flex items-center gap-1.5 font-bold">
+              <Scale size={13} /> وزن حيّ من الميزان: <b dir="ltr" className="tabular-nums">{liveScaleReading.kg.toFixed(3)} kg</b>
+            </span>
+            {cart[selectedCartIndex ?? -1]?.soldByWeight ? (
+              <button
+                type="button"
+                onClick={() => applyLiveScaleWeight()}
+                className="font-black underline hover:text-sky-900 dark:hover:text-sky-100"
+              >
+                طبّق على «{cart[selectedCartIndex!].nameAr}»
+              </button>
+            ) : (
+              <span className="text-slate-500 dark:text-slate-400">اختر سطر صنف موزون ثم اضغط التطبيق</span>
+            )}
+          </div>
+        )}
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <span className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <ShoppingCart size={17} className="text-emerald-500" /> السلة ({cart.length})

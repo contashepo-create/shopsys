@@ -177,5 +177,31 @@ console.log('\n9️⃣ جولة جاهزية البقالة: حدود الوزن
   ok('قاعدة معطلة لا تُحسب تعارضاً', bc.scaleRuleConflicts([w, { ...priceRule, enabled: false }]).length === 0)
 }
 
+console.log('\n🔟 قارئ الميزان المباشر (Web Serial) — تفكيك السطور')
+{
+  const { parseScaleFrame, splitScaleBuffer } = await import('../src/core/scaleSerial.ts')
+  const r = parseScaleFrame('ST,GS,+  0.750kg')
+  ok('CAS: 0.750kg مستقرة', r && r.kg === 0.75 && r.stable)
+  ok('الجرام ← كجم', parseScaleFrame('US,GS, 750 g')?.kg === 0.75)
+  ok('غير المستقرة لا تُقبل', parseScaleFrame('US,NT,+ 0.750kg')?.stable === false)
+  ok('صفر/خطأ لا يُنتج قراءة', parseScaleFrame('0.000 kg') === null && parseScaleFrame('ERR 04') === null)
+  const cut = splitScaleBuffer('', 'ST,GS,+ 0.7')
+  ok('السطر المقطوع بين حزمتين يُكمَل', cut.lines.length === 0 && splitScaleBuffer(cut.rest, '50kg\r\n').lines[0] === 'ST,GS,+ 0.750kg')
+}
+
+console.log('\n1️⃣1️⃣ توليد الباركود الداخلي للأصناف بلا أي كود')
+{
+  const { planInternalBarcodes, ean13CheckDigit } = bc
+  const plan = planInternalBarcodes([
+    { id: 1, nameAr: 'أ', sku: '', barcodes: [], isActive: true },
+    { id: 2, nameAr: 'ب', sku: 'SKU-2', barcodes: [], isActive: true },
+    { id: 3, nameAr: 'ج', sku: '', barcodes: ['6281000000011'], isActive: true },
+    { id: 4, nameAr: 'د', sku: '', barcodes: [], isActive: false },
+  ], bc.DEFAULT_SCALE_RULES)
+  ok('يولّد لأول صنف فقط', plan.length === 1 && plan[0].id === 1)
+  ok('خانة تحقق EAN-13 سليمة', ean13CheckDigit(plan[0].code.slice(0, 12)) === Number(plan[0].code[12]))
+  ok('لا يفسّره الميزان كملصق', bc.parseScaleBarcodeUniversal(plan[0].code, bc.DEFAULT_SCALE_RULES) === null)
+}
+
 console.log(`\n═══ النتيجة: نجح ${pass} — فشل: ${fail} ═══`)
 if (fail > 0) process.exit(1)

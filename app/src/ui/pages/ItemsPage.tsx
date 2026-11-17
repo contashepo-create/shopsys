@@ -1510,10 +1510,12 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
   const add = () => {
     if (!valid) return
     const priceNum = Number(unitPrice)
+    // تطبيع باركود الوحدة أيضاً — أرقام عربية كانت تُحفظ ولا تُمسح
+    const code = normalizeBarcode(unitBarcode)
     p({ extraUnits: [...draft.extraUnits, {
       nameAr: name.trim(), factor: f,
       ...(priceNum > 0 ? { priceMinor: toMinor(unitPrice, unitCur.decimals) } : {}),
-      ...(unitBarcode.trim() ? { barcode: unitBarcode.trim() } : {}),
+      ...(code ? { barcode: code } : {}),
     }] })
     setName('')
     setFactor('')
@@ -1555,6 +1557,9 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">باركود الـ{name.trim() || 'وحدة الأكبر'} (اختياري)</div>
           <input value={unitBarcode} onChange={(e) => setUnitBarcode(e.target.value)} placeholder="امسح باركود العلبة/الشريط…" className={inputCls} dir="ltr" />
+          {unitBarcode.trim() && barcodeCheckWarning(unitBarcode) && (
+            <p className="mt-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">{barcodeCheckWarning(unitBarcode)}</p>
+          )}
         </div>
       </div>
       {/* معاينة حية تشرح المعادلة قبل الإضافة */}

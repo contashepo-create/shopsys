@@ -139,6 +139,31 @@ export function nextInternalBarcode(
   throw new Error('نفد نطاق الباركود الداخلي — راجع البادئة')
 }
 
+/**
+ * خطة توليد أكواد داخلية لدفعة أصناف: تُعطى فقط للأصناف النشطة التي لا تحمل
+ * أي باركود **ولا كود SKU** (من له SKU يُمسح به ويُطبع ملصقه) — والنتيجة قائمة
+ * جاهزة للتطبيق، بلا لمس أي صنف آخر.
+ */
+export function planInternalBarcodes(
+  items: readonly { id: number; nameAr: string; sku: string; barcodes: string[]; extraUnits?: readonly { barcode?: string }[]; isActive: boolean }[],
+  rules: readonly ScaleRule[] = [],
+  prefix = '200',
+): { id: number; nameAr: string; code: string }[] {
+  const taken = items.flatMap((it) => [
+    ...it.barcodes.filter(Boolean),
+    ...(it.extraUnits ?? []).map((u) => u.barcode).filter((b): b is string => Boolean(b)),
+  ])
+  const plan: { id: number; nameAr: string; code: string }[] = []
+  for (const it of items) {
+    if (!it.isActive) continue
+    if (it.barcodes.some((b) => b.trim()) || it.sku.trim()) continue
+    const code = nextInternalBarcode(taken, prefix, rules)
+    taken.push(code)
+    plan.push({ id: it.id, nameAr: it.nameAr, code })
+  }
+  return plan
+}
+
 /* أرقام عربية/فارسية ← لاتينية وحذف الفراغات (بيانات قديمة قد تحملها) */
 function normalizeDigits(input: string): string {
   const arabic = '٠١٢٣٤٥٦٧٨٩', persian = '۰۱۲۳۴۵۶۷۸۹'

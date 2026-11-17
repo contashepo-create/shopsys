@@ -8520,7 +8520,10 @@ export const useRawDataStore = create<DataState>()(
           }
           for (const [itemId, qty] of requested) if (!available.has(itemId) || qty > available.get(itemId)!) throw new Error(`كمية الصنف #${itemId} تتجاوز المتبقي في أمر الشراء أو لا تنتمي إليه — راجع الأمر`)
         }
-        // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
+        /* تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة.
+           الدفعة بلا تاريخ تبقى مسموحة (خام يُفرز لاحقاً بتواريخ مخرجات مثل التمور)،
+           لكنها لا تدخل FEFO ولا تنبيهات الانتهاء — فتُعرض في تقرير «دفعات بلا تاريخ»
+           بدل أن تمرّ بصمت، ويحذّر منها الكاشير قبل الترحيل. */
         for (const l of inv.lines) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (item?.trackExpiry && l.expiryDate && !isValidExpiryDate(l.expiryDate)) {

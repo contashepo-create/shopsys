@@ -260,6 +260,25 @@ export function checkStock(
 }
 
 /**
+ * هل تجاوزت الكمية المطلوبة رصيد الصنف؟ يُستدعى عند الإضافة لتنبيه الكاشير
+ * مبكراً (المنع النهائي عند الترحيل). يُراعي ما في السلة أصلاً ووحدة البيع،
+ * ويتجاهل الأصناف الخدمية وإعداد «السماح بالسالب».
+ */
+export function stockShortage(args: {
+  stockQty: number
+  inCartQty: number
+  addQty: number
+  allowNegative: boolean
+  isService?: boolean
+}): { needed: number; available: number } | null {
+  if (args.allowNegative || args.isService) return null
+  const needed = Math.round((args.inCartQty + args.addQty) * 1000) / 1000
+  const available = Math.max(0, args.stockQty)
+  if (Math.round(needed * 1000) <= Math.round(available * 1000)) return null
+  return { needed, available }
+}
+
+/**
  * بناء القيد المحاسبي لفاتورة البيع (القرار 9) — أربعة/خمسة أطراف:
  *   مدين: الخزينة (كاش) أو العملاء (آجل) بالإجمالي
  *   مدين: تكلفة البضاعة المباعة

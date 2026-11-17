@@ -22,7 +22,7 @@ import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 import { MODULE_LABELS, isInvoiceFirst, effectiveModules } from '../../core/activities.ts'
 import { visibleReportTabs, type ReportTabId } from '../../core/reportTabs.ts'
 import { reportCentersForModules } from '../../core/moduleCatalog.ts'
-import { expiryAlerts, markdownSuggestions, expiryValueAtRisk, supplierReturnCandidates } from '../../core/batches.ts'
+import { expiryAlerts, markdownSuggestions, expiryValueAtRisk, supplierReturnCandidates, undatedBatches } from '../../core/batches.ts'
 import { warrantyAttachRate, warrantyClaimRateByItem } from '../../core/warrantyReports.ts'
 import { deliveryOnTimeRate } from '../../core/deliveryReports.ts'
 import { variantLowStockAlerts } from '../../core/variants.ts'
@@ -205,6 +205,12 @@ export function ReportsPage() {
 
   const expAlerts = useMemo(
     () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, todayLocalIso()),
+    [batches, items],
+  )
+  /* دفعات متتبَّعة بلا تاريخ صلاحية: لا تدخل FEFO ولا تنبيهات الانتهاء،
+     وكانت تمرّ بصمت. تُعرض هنا ليضبط المسؤول تاريخها من دفعات الصنف. */
+  const undatedRows = useMemo(
+    () => undatedBatches(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`),
     [batches, items],
   )
   // قيمة المخزون المعرَّض لخطر الانتهاء بالعملة لكل أفق (سد فجوة فورية — النشاط #5: صيدلية)
@@ -1234,6 +1240,32 @@ export function ReportsPage() {
               </div>
             )}
           </div>
+          {undatedRows.length > 0 && (
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-amber-600 dark:text-amber-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                ⚠️ دفعات بلا تاريخ صلاحية ({undatedRows.length}) <span className="text-[10px] font-normal text-slate-400">— لا تدخل FEFO ولا تنبيهات الانتهاء</span>
+              </div>
+              <p className="px-4 pt-2 text-[11px] text-slate-400 leading-relaxed">
+                غالباً خام استُلم بلا تاريخ (تمور/لحوم تُفرز لاحقاً) أو استلام سريع. أدخل التاريخ عند الاستلام
+                القادم؛ الدفعات الحالية تُباع بلا حماية من الانتهاء.
+              </p>
+              <div className="max-h-60 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <tbody>
+                    {undatedRows.map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">
+                          {r.nameAr}{r.lotNumber && <span className="mr-1.5 font-mono font-normal text-[10px] text-slate-400" dir="ltr">(تشغيلة {r.lotNumber})</span>}
+                        </td>
+                        <td className="px-4 py-2 text-slate-400 text-[11px]">كمية {r.qty}</td>
+                        <td className="px-4 py-2 text-left"><span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full">بلا تاريخ</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {markdowns.length > 0 && (
             <div className={`${card} overflow-hidden`}>
               <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
