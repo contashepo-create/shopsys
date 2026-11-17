@@ -279,6 +279,22 @@ export function stockShortage(args: {
 }
 
 /**
+ * هل يصلح إسناد وزن الميزان الحيّ لهذا السطر؟
+ * سطر بوحدة أكبر (كرتونة/علبة) كميته «عدد وحدات» وسعره سعر الوحدة: إسناد كيلوجرامات
+ * إليه يستبدل 6 علب بـ0.750 ويحوّل سعر الكرتونة إلى ثمن وزن. null = يصلح.
+ */
+export function scaleWeightTargetError(
+  line: { soldByWeight: boolean; unitFactor?: number; unitLabel?: string } | null | undefined,
+): string | null {
+  if (!line) return 'اختر سطراً أولاً'
+  if (!line.soldByWeight) return 'هذا السطر ليس صنفاً مسجلاً «بالوزن» — لا يمكن إسناد وزن إليه'
+  if (line.unitFactor != null && line.unitFactor !== 1) {
+    return `سطر «${line.unitLabel ?? 'وحدة أكبر'}» بالعدد لا بالوزن — حوّله للوحدة الأساسية أولاً`
+  }
+  return null
+}
+
+/**
  * بناء القيد المحاسبي لفاتورة البيع (القرار 9) — أربعة/خمسة أطراف:
  *   مدين: الخزينة (كاش) أو العملاء (آجل) بالإجمالي
  *   مدين: تكلفة البضاعة المباعة

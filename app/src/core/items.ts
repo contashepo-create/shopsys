@@ -334,7 +334,11 @@ export function barcodeIssues(
     if (!code) return
     const fixed = normalizeBarcode(code)
     if (fixed !== code) {
-      issues.push({ itemId, nameAr, code, field, unitName, kind: 'arabic', message: `باركود غير مطبَّع (${code}) — لن يُمسح من الماسح حتى يُصحَّح إلى ${fixed}` })
+      // قد يكون الكود كله محارف غير مرئية ⇒ التصحيح = حذفه لا تحويله
+      const message = fixed
+        ? `باركود غير مطبَّع (${code}) — لن يُمسح من الماسح حتى يُصحَّح إلى ${fixed}`
+        : `باركود لا يحمل أي حرف مرئي (محارف مخفية فقط) — احذفه وأعد تسجيل باركود الصنف`
+      issues.push({ itemId, nameAr, code, field, unitName, kind: 'arabic', message })
       return
     }
     const check = barcodeCheckWarning(code)

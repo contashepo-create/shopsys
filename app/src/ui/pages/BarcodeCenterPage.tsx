@@ -32,7 +32,7 @@ export function BarcodeCenterPage() {
   /* ─── ملصقات الأصناف ─── */
   const [q, setQ] = useState('')
   const [counts, setCounts] = useState<Record<number, string>>({})
-  // سقف عرض متزايد بدل قصّ صامت: مركز الباركود должен يعرض كل الأصناف عند الحاجة
+  // سقف عرض متزايد بدل قصّ صامت: مركز الباركود يجب أن يعرض كل الأصناف عند الحاجة
   const [visibleRows, setVisibleRows] = useState(200)
   const activeItems = useMemo(() => {
     const query = q.trim()
@@ -69,19 +69,24 @@ export function BarcodeCenterPage() {
   const generateMissingBarcodes = () => {
     const plan = planInternalBarcodes(items, scaleRules)
     let done = 0
-    try {
-      for (const row of plan) {
-        const it = items.find((x) => x.id === row.id)
-        if (!it) continue
+    const failed: string[] = []
+    // فشل صنف واحد (تكرار/حارس مخزون) لا يوقف الدفعة — يُسمّى في الرسالة للمراجعة
+    for (const row of plan) {
+      const it = items.find((x) => x.id === row.id)
+      if (!it) continue
+      try {
         updateItem(it.id, { barcodes: [...it.barcodes, row.code] })
         done += 1
+      } catch (e) {
+        failed.push(`${row.nameAr}: ${e instanceof Error ? e.message : 'خطأ'}`)
       }
-      toast.show(`تم توليد ${done} باركوداً داخلياً ✓ — اطبع ملصقاتها من الجدول`)
-    } catch (e) {
-      toast.show(e instanceof Error ? e.message : 'تعذّر توليد الباركود', 'error')
-    } finally {
-      setBulkConfirm(false)
     }
+    if (failed.length) {
+      toast.show(`تم توليد ${done} باركوداً — تعذّر ${failed.length}: ${failed.slice(0, 2).join(' · ')}`, 'error')
+    } else {
+      toast.show(`تم توليد ${done} باركوداً داخلياً ✓ — اطبع ملصقاتها من الجدول`)
+    }
+    setBulkConfirm(false)
   }
 
   const printItemLabels = () => {

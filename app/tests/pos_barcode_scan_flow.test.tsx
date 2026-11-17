@@ -28,6 +28,10 @@ beforeAll(() => {
   S().addItem({ nameAr: 'جبنة رومي', sku: 'CHE-42', barcodes: [], categoryId: 1, baseUnit: 'كجم', extraUnits: [], costMinor: 1800, stockQty: 30, priceMinor: 2500, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: true, variantColors: [], variantSizes: [], isActive: true })
   // صنف بالعدد لكن كوده الرقمي 43 — يجب ألا يُباع بالوزن
   S().addItem({ nameAr: 'علبة جبنة', sku: 'BOX-43', barcodes: [], categoryId: 1, baseUnit: 'علبة', extraUnits: [], costMinor: 500, stockQty: 30, priceMinor: 900, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
+  /* صنف مصنع يحمل باركود EAN يستطيع الميزان تفكيكه (بادئة 22):
+     التطابق الحرفي لأي باركود مسجل يجب أن يسبق تفكيك الميزان،
+     وإلا بيع هذا المنتج «وزناً» أو رُفض بـ«كود صنف غير معروف». */
+  S().addItem({ nameAr: 'عصير مانجو', sku: 'JUI-1', barcodes: [scaleCode(77, 100)], categoryId: 1, baseUnit: 'علبة', extraUnits: [], costMinor: 300, stockQty: 20, priceMinor: 700, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
 })
 
 beforeEach(() => cleanup())
@@ -99,5 +103,17 @@ describe('كاشير البقالة — المسح المتواصل', () => {
     const active = document.activeElement as HTMLInputElement
     expect(active).not.toBe(searchInput(view))
     expect(active.getAttribute('inputmode')).toBe('decimal')
+  })
+})
+
+describe('ترتيب القرار: الباركود المسجل يسبق تفكيك الميزان', () => {
+  it('رقم يفككه الميزان (بادئة 22) ومسجل كباركود منتج ⇒ يُضاف المنتج قطعة لا وزناً', async () => {
+    const label = scaleCode(77, 100)
+    const view = render(<MemoryRouter><PosPage /></MemoryRouter>)
+    scan(view, label)
+    await waitFor(() => expect(rows(view)).toHaveLength(1))
+    expect(rows(view)[0].textContent).toContain('عصير مانجو')
+    expect(qtyOf(rows(view)[0])).toBe(1)
+    expect(S().items.find((it) => it.sku === 'JUI-1')?.soldByWeight).toBe(false)
   })
 })

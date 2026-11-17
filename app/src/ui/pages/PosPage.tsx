@@ -13,7 +13,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
-import { computeTotals, lineTotal, CreditLimitError, stockShortage, type CartLine } from '../../core/pos.ts'
+import { computeTotals, lineTotal, CreditLimitError, stockShortage, scaleWeightTargetError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem, weightFromPrintedPrice } from '../../core/barcode.ts'
 import { useScaleStore, isReadingFresh } from '../../stores/scale.store.ts'
@@ -324,15 +324,22 @@ export function PosPage() {
   }
 
   useEffect(() => {
-    if (cart.length === 0) warnedStockRef.current.clear()
-  }, [cart.length])
+    if (cart.length === 0) {
+      warnedStockRef.current.clear()
+      setPriceDerivedLine(null)
+      return
+    }
+    // حُذف سطر الصنف الذي جاء من باركود السعر ⇒ اللافتة بلا معنى
+    setPriceDerivedLine((current) => (current && cart.some((line) => line.itemId === current.itemId) ? current : null))
+  }, [cart])
 
   /** تطبيق الوزن الحيّ على السطر المختار (يستبدل الكمية ولا يضيفها — الوزن قراءة كاملة) */
   const applyLiveScaleWeight = () => {
     const index = selectedCartIndex
     const line = index == null ? null : cart[index]
     if (!line) return
-    if (!line.soldByWeight) { toast.show('هذا السطر ليس صنفاً مسجلاً «بالوزن» — لا يمكن إسناد وزن إليه', 'error'); return }
+    const targetError = scaleWeightTargetError(line)
+    if (targetError) { toast.show(targetError, 'error'); return }
     if (!liveScaleReading || !isReadingFresh(liveScaleReading)) { toast.show('لا قراءة حديثة من الميزان — أعد الوزن', 'error'); return }
     const kg = Math.round(liveScaleReading.kg * 1000) / 1000
     if (kg <= 0) { toast.show('قراءة الميزان صفرية — لا تُطبَّق', 'error'); return }
@@ -348,7 +355,6 @@ export function PosPage() {
       toast.show(`«${it.nameAr}» بلا سعر بيع! حدّد سعره من المخزون ← الأصناف أولاً`, 'error')
       return
     }
-    warnIfBeyondStock(it, weightQty ?? (it.soldByWeight ? 0.5 : 1))
     // الصيدلية (نمط ShelfLifePro): الدواء النافد يقترح بدائله بنفس المادة الفعالة فوراً
     if (!it.isService && (it.stockQty ?? 0) <= 0 && (it.activeIngredient ?? '').trim()) {
       const alts = sameIngredientAlternatives(it, items)
@@ -367,6 +373,10 @@ export function PosPage() {
       setVariantPickItem(it.id)
       return
     }
+    // تحذير الرصيد بعد التأكد أن السطر سيُضاف فعلاً: الصنف ذو التركيبات/السيريالات
+    // يُوجَّه لاختيار التركيبة، ورصيده في `variantStocks` لا في `stockQty` — فتحذيره
+    // هنا قبل التوجيه كان يظهر «المتاح 0» كذباً.
+    warnIfBeyondStock(it, weightQty ?? (it.soldByWeight ? 0.5 : 1))
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.itemId === itemId)
       if (idx >= 0 && !weightQty) {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { scaleWeightTargetError } from '../src/core/pos.ts'
 import { scalePriceToMinor, weightFromPrintedPrice, parseScaleBarcodeUniversal, buildWithRule, SCALE_RULE_PRESETS } from '../src/core/barcode.ts'
 
 /**
@@ -37,5 +38,21 @@ describe('اشتقاق الوزن من باركود السعر', () => {
     expect(kg).toBe(0.5)
     // المبلغ المدفوع = الوزن × سعر الكيلو = المبلغ المطبوع تماماً
     expect(Math.round(kg * 2500)).toBe(priceMinor)
+  })
+})
+
+describe('إسناد وزن الميزان الحيّ للسطر', () => {
+  it('سطر صنف موزون بالوحدة الأساسية يصلح', () => {
+    expect(scaleWeightTargetError({ soldByWeight: true })).toBeNull()
+    expect(scaleWeightTargetError({ soldByWeight: true, unitFactor: 1 })).toBeNull()
+  })
+
+  it('سطر بوحدة أكبر (كرتونة) يُرفض — كميته عدد لا كيلوجرامات', () => {
+    expect(scaleWeightTargetError({ soldByWeight: true, unitFactor: 6, unitLabel: 'كرتونة' })).toContain('كرتونة')
+  })
+
+  it('سطر صنف بالعدد يُرفض، وبلا سطر رسالة اختيار', () => {
+    expect(scaleWeightTargetError({ soldByWeight: false })).toContain('بالوزن')
+    expect(scaleWeightTargetError(null)).toContain('اختر سطراً')
   })
 })
