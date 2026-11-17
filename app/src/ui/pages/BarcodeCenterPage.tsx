@@ -16,6 +16,7 @@ import { renderItemLabelsHtml, renderSerialLabelsHtml } from '../print/printProL
 import { printHtml } from '../print/printReceipt.ts'
 import { normalizeSerial } from '../../core/serials.ts'
 import { planInternalBarcodes } from '../../core/barcode.ts'
+import { barcodeIssues, normalizeBarcode } from '../../core/items.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 type Tab = 'items' | 'serials' | 'template'
@@ -44,6 +45,26 @@ export function BarcodeCenterPage() {
     [items],
   )
   const [bulkConfirm, setBulkConfirm] = useState(false)
+  /* جودة بيانات الباركود: أكواد قديمة بأرقام عربية أو بخانة تحقق خاطئة لا تُمسح */
+  const issues = useMemo(() => barcodeIssues(items), [items])
+  const fixable = issues.filter((issue) => issue.kind === 'arabic')
+  const fixArabicBarcodes = () => {
+    let done = 0
+    for (const itemId of new Set(fixable.map((issue) => issue.itemId))) {
+      const it = items.find((row) => row.id === itemId)
+      if (!it) continue
+      try {
+        updateItem(it.id, {
+          barcodes: [...new Set(it.barcodes.map((code) => normalizeBarcode(code)).filter(Boolean))],
+          ...(it.extraUnits.length
+            ? { extraUnits: it.extraUnits.map((unit) => ({ ...unit, ...(unit.barcode ? { barcode: normalizeBarcode(unit.barcode) } : {}) })) }
+            : {}),
+        })
+        done += 1
+      } catch { /* تكرار بعد التطبيع — يُترك للمراجعة اليدوية */ }
+    }
+    toast.show(`صُحّحت باركودات ${done} صنفاً ✓ — راجع الأكواد المتبقية يدوياً`)
+  }
   /** توليد دفعة أكواد داخلية (EAN-13 بادئة 2) للأصناف بلا باركود ولا كود — خطة واحدة قابلة للاختبار */
   const generateMissingBarcodes = () => {
     const plan = planInternalBarcodes(items, scaleRules)
@@ -129,6 +150,37 @@ export function BarcodeCenterPage() {
         {tabBtn('serials', <ScanBarcode size={15} />, 'ملصقات السيريال')}
         {tabBtn('template', <Settings2 size={15} />, 'قالب الملصق (يُضبط مرة)')}
       </div>
+
+      {/* ─── جودة بيانات الباركود ─── */}
+      {tab === 'items' && issues.length > 0 && (
+        <div className="anim-up rounded-2xl border border-amber-400/40 bg-amber-500/5 p-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-[12.5px] font-black text-amber-700 dark:text-amber-300">
+              ⚠️ فحص جودة الباركود: {issues.length} ملاحظة على {new Set(issues.map((i) => i.itemId)).size} صنفاً
+            </h2>
+            {fixable.length > 0 && (
+              <Btn variant="soft" onClick={fixArabicBarcodes}>تصحيح الأرقام العربية ({fixable.length})</Btn>
+            )}
+          </div>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            «غير مطبَّع» = أرقام عربية/فارسية أو محارف غير مرئية محفوظة قبل التحديث — لا يقرأها الماسح أبداً.
+            «خانة تحقق» = رقم منقول خطأً من الملصق؛ صحّحه من بطاقة الصنف بعد التأكد من العلبة.
+          </p>
+          <div className="max-h-40 overflow-y-auto">
+            <table className="w-full text-[11.5px]">
+              <tbody>
+                {issues.slice(0, 100).map((issue, i) => (
+                  <tr key={i} className="border-b border-amber-500/10">
+                    <td className="py-1 px-2 font-bold text-slate-700 dark:text-slate-200">{issue.nameAr}{issue.unitName ? ` — ${issue.unitName}` : ''}</td>
+                    <td className="py-1 px-2 font-mono text-slate-500" dir="ltr">{issue.code}</td>
+                    <td className="py-1 px-2 text-amber-700 dark:text-amber-400">{issue.kind === 'arabic' ? 'غير مطبَّع' : 'خانة تحقق'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ─── ملصقات الأصناف ─── */}
       {tab === 'items' && (

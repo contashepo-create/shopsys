@@ -308,6 +308,45 @@ export function barcodeCheckWarning(raw: string): string | null {
   return valid ? null : `الباركود ${code}: خانة التحقق (EAN/UPC) غير صحيحة — تأكد من رقم الملصق قبل الاعتماد`
 }
 
+export interface BarcodeIssue {
+  itemId: number
+  nameAr: string
+  code: string
+  /** باركود الصنف أو باركود وحدة أكبر */
+  field: 'item' | 'unit'
+  unitName?: string
+  /** arabic = أرقام عربية/فارسية أو فراغات (قابلة للتصحيح آلياً) · check = خانة تحقق EAN/UPC خاطئة */
+  kind: 'arabic' | 'check'
+  message: string
+}
+
+/**
+ * فحص جودة باركودات البيانات القائمة: الأكواد التي حُفظت قبل إضافة التطبيع
+ * (أرقام عربية أو محارف غير مرئية) لا تُمسح أبداً، وأكواد EAN/UPC بخانة تحقق
+ * خاطئة تعني رقماً منقولاً خطأً من الملصق. تُعرض في مركز الباركود للإصلاح.
+ */
+export function barcodeIssues(
+  items: readonly Pick<Item, 'id' | 'nameAr' | 'barcodes' | 'extraUnits'>[],
+): BarcodeIssue[] {
+  const issues: BarcodeIssue[] = []
+  const inspect = (itemId: number, nameAr: string, raw: string, field: 'item' | 'unit', unitName?: string) => {
+    const code = raw.trim()
+    if (!code) return
+    const fixed = normalizeBarcode(code)
+    if (fixed !== code) {
+      issues.push({ itemId, nameAr, code, field, unitName, kind: 'arabic', message: `باركود غير مطبَّع (${code}) — لن يُمسح من الماسح حتى يُصحَّح إلى ${fixed}` })
+      return
+    }
+    const check = barcodeCheckWarning(code)
+    if (check) issues.push({ itemId, nameAr, code, field, unitName, kind: 'check', message: check })
+  }
+  for (const it of items) {
+    for (const code of it.barcodes ?? []) inspect(it.id, it.nameAr, code, 'item')
+    for (const unit of it.extraUnits ?? []) inspect(it.id, it.nameAr, unit.barcode ?? '', 'unit', unit.nameAr)
+  }
+  return issues
+}
+
 /** أخطاء التحقق — نصوص عربية جاهزة للعرض */
 export function validateItem(draft: ItemDraft, existing: Item[], editingId?: number): string[] {
   const errors: string[] = []
