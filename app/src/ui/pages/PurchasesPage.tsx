@@ -454,7 +454,13 @@ export function PurchasesPage() {
       .filter((l) => items.find((it) => it.id === l.itemId)?.trackExpiry && !l.expiryDate)
       .map((l) => items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`)
     if (noExpiry.length) {
-      toast.show(`⚠️ ${[...new Set(noExpiry)].map((n) => `«${n}»`).join('، ')} بلا تاريخ صلاحية — ستباع بلا أولوية FEFO ولا تنبيه انتهاء (أدخل التاريخ من عمود الصلاحية)`, 'error')
+      const names = [...new Set(noExpiry)].map((n) => `«${n}»`).join('، ')
+      // سياسة المنشأة (اختيارية): تُلزم التاريخ فتُوقف الترحيل هنا قبل أي كتابة
+      if (setup.requirePurchaseExpiry === true) {
+        toast.show(`⛔ سياسة المنشأة تُلزم تاريخ صلاحية لكل صنف متتبَّع — أكمل التاريخ لـ${names} (أو أوقف الإلزام من الإعدادات العامة)`, 'error')
+        return
+      }
+      toast.show(`⚠️ ${names} بلا تاريخ صلاحية — ستباع بلا أولوية FEFO ولا تنبيه انتهاء (أدخل التاريخ من عمود الصلاحية)`, 'error')
     }
     const inv = postPurchase({
       sourceDraftId,

@@ -233,6 +233,22 @@ export function scalePriceToMinor(priceRaw: number, ruleDecimals: number, curren
   return Math.round(priceRaw / 10 ** -shift)
 }
 
+/**
+ * وزن تقريبي من باركود **سعر** (الميزان طبع المبلغ الكلي لا الوزن):
+ * الوزن = السعر المطبوع ÷ سعر الكيلو **الحالي**، بثلاث خانات (جرامات).
+ *
+ * هذا حدّ تصميم لا خلل: المبلغ المدفوع مطابق للملصق دائماً، لكن الوزن المسجَّل
+ * للمخزون يتغيّر إن تغيّر سعر الكيلو بعد الطباعة. السعر الإجمالي يُقرأ من الملصق
+ * ولا يحمل سعر الوحدة، فالتصحيح الوحيد المتاح هو **وزن** (الملصق الوزني) أو
+ * تعديل الكاشير للكمية يدوياً — والكاشير يُنبّه لذلك صراحة على السطر.
+ * null = لا وزن صالح (سعر كيلو صفري أو وزن يتقرّب لصفر).
+ */
+export function weightFromPrintedPrice(priceMinor: number, pricePerKgMinor: number): number | null {
+  if (!Number.isFinite(priceMinor) || !Number.isFinite(pricePerKgMinor) || pricePerKgMinor <= 0 || priceMinor <= 0) return null
+  const kg = Math.round((priceMinor / pricePerKgMinor) * 1000) / 1000
+  return kg > 0 ? kg : null
+}
+
 /** توليد باركود بقاعدة (لطباعة ملصقات من النظام أو للاختبار) — مع خانة تحقق EAN-13 عند 12 خانة */
 export function buildWithRule(itemCode: number, value: number, rule: ScaleRule): string {
   if (!Number.isInteger(value) || value <= 0 || value >= 10 ** rule.valueLen) throw new RangeError('قيمة خارج نطاق الباركود')

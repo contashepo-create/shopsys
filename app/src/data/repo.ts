@@ -100,7 +100,7 @@ import { buildTerminalRefund } from '../core/paymentTerminalRefund.ts'
 import { buildInternalExpenseLines, type InternalExpense } from '../core/advancedInvoice.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
-import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
+import { planFefo, applyFefo, isValidExpiryDate, purchaseExpiryGuard, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, buildCapitalDeclarationEntry, openingKey, OPENING_KIND_LABELS, OPENING_COVERED_SYSTEM_KEYS, type OpeningItemDetail, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
@@ -3922,6 +3922,7 @@ type OperationalSetup = {
   requireOpenShiftForSales?: boolean
   allowNegativeTreasury?: boolean
   allowNegativeStock?: boolean
+  requirePurchaseExpiry?: boolean
 }
 
 type PersistedAppState = {
@@ -8529,6 +8530,16 @@ export const useRawDataStore = create<DataState>()(
           if (item?.trackExpiry && l.expiryDate && !isValidExpiryDate(l.expiryDate)) {
             throw new Error(`تاريخ صلاحية غير صحيح لـ«${item.nameAr}» — الصيغة YYYY-MM-DD`)
           }
+        }
+        /* سياسة المنشأة (اختيارية — الافتراضي مطفأة): من يشتري معبّأً فقط يُلزم
+           تاريخ الصلاحية، فيُرفض الترحيل هنا قبل أي كتابة بدل تمرير دفعة بلا تاريخ. */
+        const expiryPolicy = purchaseExpiryGuard({
+          requireExpiry: appSetupForState(state).requirePurchaseExpiry === true,
+          lines: inv.lines,
+          items: state.items,
+        })
+        if (expiryPolicy.blocked) {
+          throw new Error(`سياسة المنشأة تُلزم تاريخ صلاحية لكل صنف متتبَّع — ناقص: ${expiryPolicy.missingNames.map((n) => `«${n}»`).join('، ')} (أو أوقف الإلزام من الإعدادات العامة)`)
         }
         // سيريالات أصناف الموبايلات/الأجهزة (نمط موبايل شوب): تُفرز قبل أي كتابة
         // — لو أُدخلت يجب أن يطابق عددها الكمية وألا تتكرر أو تكون مسجلة من قبل

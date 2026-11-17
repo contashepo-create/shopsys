@@ -3,7 +3,7 @@ vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 
 const { EMPTY_EXTENDED, useDataStore, useRawDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
-const { undatedBatches } = await import('../src/core/batches.ts')
+const { undatedBatches, purchaseExpiryGuard } = await import('../src/core/batches.ts')
 
 const initial = useRawDataStore.getState()
 const app = useAppStore.getState()
@@ -76,4 +76,49 @@ it('الدفعة المستهلكة بالكامل لا تُلوّث تقرير 
   const batch = useRawDataStore.getState().batches.find((b) => b.purchaseId === p.id)!
   useRawDataStore.setState((state) => ({ batches: state.batches.map((b) => (b.id === batch.id ? { ...b, qty: 0 } : b)) }))
   expect(undatedBatches(useRawDataStore.getState().batches, () => 'لبن')).toEqual([])
+})
+
+/**
+ * سياسة المنشأة: من يشتري معبّأً فقط يفعّل «إلزام تاريخ الصلاحية» فيُرفض الترحيل
+ * قبل أي كتابة. الافتراضي يبقى مرناً (خام يُفرز لاحقاً).
+ */
+it('الإلزام مطفأ افتراضياً: استلام بلا تاريخ يمرّ', () => {
+  useAppStore.setState((s) => ({ setup: { ...s.setup, requirePurchaseExpiry: undefined } }))
+  const item = setup(true)
+  expect(() => purchase(item.id)).not.toThrow()
+})
+
+it('تفعيل الإلزام يرفض الاستلام بلا تاريخ بلا أي أثر محاسبي', () => {
+  useAppStore.setState((s) => ({ setup: { ...s.setup, requirePurchaseExpiry: true } }))
+  const item = setup(true)
+  const before = useRawDataStore.getState()
+  expect(() => purchase(item.id)).toThrow(/سياسة المنشأة تُلزم تاريخ صلاحية/)
+  const after = useRawDataStore.getState()
+  expect(after.purchases).toBe(before.purchases)
+  expect(after.batches).toBe(before.batches)
+  expect(after.journal).toBe(before.journal)
+})
+
+it('تفعيل الإلزام يسمح بالاستلام حين يُكتب التاريخ', () => {
+  useAppStore.setState((s) => ({ setup: { ...s.setup, requirePurchaseExpiry: true } }))
+  const item = setup(true)
+  const p = purchase(item.id, '2099-12-31')
+  expect(useRawDataStore.getState().batches.find((b) => b.purchaseId === p.id)?.expiryDate).toBe('2099-12-31')
+})
+
+it('تفعيل الإلزام لا يمس صنفاً لا يتتبع الصلاحية', () => {
+  useAppStore.setState((s) => ({ setup: { ...s.setup, requirePurchaseExpiry: true } }))
+  const item = setup(false)
+  expect(() => purchase(item.id)).not.toThrow()
+})
+
+it('حارس السياسة النقي: أسماء ناقصة بلا تكرار ورسالة واحدة', () => {
+  const items = [
+    { id: 1, nameAr: 'لبن', trackExpiry: true },
+    { id: 2, nameAr: 'أرز', trackExpiry: false },
+  ]
+  const lines = [{ itemId: 1 }, { itemId: 1, expiryDate: '2099-01-01' }, { itemId: 2 }]
+  expect(purchaseExpiryGuard({ requireExpiry: true, lines, items })).toEqual({ blocked: true, missingNames: ['لبن'] })
+  expect(purchaseExpiryGuard({ requireExpiry: false, lines, items })).toEqual({ blocked: false, missingNames: ['لبن'] })
+  expect(purchaseExpiryGuard({ requireExpiry: true, lines: [{ itemId: 1, expiryDate: '2099-01-01' }], items })).toEqual({ blocked: false, missingNames: [] })
 })

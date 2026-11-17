@@ -15,7 +15,7 @@ import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, lineTotal, CreditLimitError, stockShortage, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
-import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
+import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem, weightFromPrintedPrice } from '../../core/barcode.ts'
 import { useScaleStore, isReadingFresh } from '../../stores/scale.store.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, normalizeBarcode, type Item } from '../../core/items.ts'
@@ -114,6 +114,8 @@ export function PosPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
+  /** آخر سطر أُضيف من باركود **سعر**: الوزن مُشتق من سعر الكيلو الحالي — نُظهره للمراجعة */
+  const [priceDerivedLine, setPriceDerivedLine] = useState<{ itemId: number; kg: number; priceMinor: number } | null>(null)
   const [cart, setCart] = useState<CartLine[]>([])
   const [selectedCartIndex, setSelectedCartIndex] = useState<number | null>(null)
   // كتابة الكمية العشرية بحرية («.25» لربع كيلو): مسودة نصية لكل سطر أثناء الكتابة،
@@ -516,6 +518,7 @@ export function PosPage() {
       if (it) {
         if (scale.weightKg != null) {
           // قاعدة وزن: الكمية = الوزن والسعر من بطاقة الصنف
+          setPriceDerivedLine(null)
           addToCart(it.id, scale.weightKg)
           toast.show(`⚖️ ${it.nameAr} — ${scale.weightKg} كجم من باركود الميزان`)
         } else {
@@ -525,11 +528,12 @@ export function PosPage() {
           if (perKg <= 0) {
             toast.show(`«${it.nameAr}» بلا سعر بيع للكيلو — حدّده أولاً لتفكيك باركود السعر`, 'error')
           } else {
-            const weightKg = Math.round((priceMinor / perKg) * 1000) / 1000
-            if (weightKg <= 0) {
+            const weightKg = weightFromPrintedPrice(priceMinor, perKg)
+            if (weightKg == null) {
               toast.show('باركود سعر بقيمة أصغر من أن تكوّن وزناً — راجع كسور القاعدة', 'error')
             } else {
               addToCart(it.id, weightKg)
+              setPriceDerivedLine({ itemId: it.id, kg: weightKg, priceMinor })
               toast.show(`⚖️ ${it.nameAr} — ${fmt(priceMinor)} ${cur.symbol} ≈ ${weightKg} كجم من باركود الميزان`)
             }
           }
@@ -955,6 +959,16 @@ export function PosPage() {
 
       {/* ═══ يسار: السلة ═══ */}
       <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
+        {priceDerivedLine && (
+          <div data-scale-price-derived className="flex items-start justify-between gap-2 border-b border-amber-500/25 bg-amber-500/10 px-4 py-2 text-[11.5px] text-amber-800 dark:text-amber-300">
+            <span className="leading-relaxed">
+              ⚖️ وزن مُشتق من <b>سعر</b> الملصق: {items.find((it) => it.id === priceDerivedLine.itemId)?.nameAr ?? `صنف #${priceDerivedLine.itemId}`} —{' '}
+              <b dir="ltr" className="tabular-nums">{priceDerivedLine.kg.toFixed(3)} kg</b> مقابل {fmt(priceDerivedLine.priceMinor)} {cur.symbol}.
+              المبلغ مطابق للملصق، لكن الوزن يحسب بسعر الكيلو <b>الحالي</b> — إن تغيّر السعر بعد الطباعة فعدّل الكمية من السطر.
+            </span>
+            <button type="button" onClick={() => setPriceDerivedLine(null)} className="shrink-0 font-black underline">تم</button>
+          </div>
+        )}
         {scaleReadingFresh && liveScaleReading && (
           <div data-scale-banner className="flex items-center justify-between gap-2 px-4 py-2 bg-sky-500/10 border-b border-sky-500/20 text-[11.5px] text-sky-700 dark:text-sky-300">
             <span className="flex items-center gap-1.5 font-bold">
