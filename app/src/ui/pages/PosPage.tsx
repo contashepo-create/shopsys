@@ -17,7 +17,7 @@ import { computeTotals, lineTotal, CreditLimitError, type CartLine } from '../..
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
-import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
+import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, normalizeBarcode, type Item } from '../../core/items.ts'
 import { matchesSearch, searchRank } from '../../core/search.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
@@ -183,12 +183,30 @@ export function PosPage() {
   const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const priceRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const [searchIndex, setSearchIndex] = useState(0)
+  // وقت آخر إدخال يُشبه المسح (باركود/سيريال/ميزان). بعد إضافته يعود التركيز
+  // لخانة الباركود مباشرة ليعمل المسح المتواصل؛ الإضافة اليدوية بالاسم تُبقي
+  // الدورة القديمة (كمية ← سعر) فلا يتغير سلوك الكاشير المعتاد.
+  const scanFocusAtRef = useRef<number | null>(null)
   const posSignature = JSON.stringify({ cart, qtyDrafts, invoiceDiscount, payment, paymentTerminalId, terminalReference, terminalCardLast4, customerId, paidCash, treasury })
   const unsaved = useUnsavedChangesGuard(posSignature)
   useEffect(() => { if (!cart.length) unsaved.markClean() }, [cart.length, unsaved])
 
-  // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
-  useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])
+  /* التركيز بعد كل إضافة:
+     - إدخال باركود/ميزان ⇒ يبقى في خانة البحث: القارئ يرسل الرقم+Enter مرة واحدة،
+       ولو انتقل التركيز لخانة الكمية لالتُقط الباركود التالي **داخل الكمية**
+       (6,281,000,123,456 قطعة!) ولم يُضف الصنف التالي إطلاقاً — عيب كاشير بقالة حقيقي.
+     - إدخال يدوي بالاسم ⇒ الدورة المعتادة: الكمية ثم السعر ثم البحث. */
+  useEffect(() => {
+    const scanned = scanFocusAtRef.current != null && Date.now() - scanFocusAtRef.current < 3000
+    if (scanned) {
+      scanFocusAtRef.current = null
+      searchRef.current?.focus()
+      searchRef.current?.select()
+      return
+    }
+    if (cart.length) qtyRefs.current[cart.length - 1]?.focus()
+    else searchRef.current?.focus()
+  }, [cart.length])
   useEffect(() => { const focusItem = () => { searchRef.current?.focus(); searchRef.current?.select() }; window.addEventListener('shopsys:focus-item', focusItem); window.addEventListener('shopsys:open-item', focusItem); return () => { window.removeEventListener('shopsys:focus-item', focusItem); window.removeEventListener('shopsys:open-item', focusItem) } }, [])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
@@ -368,15 +386,67 @@ export function PosPage() {
   }
 
   /**
+   * هل الإدخال الحالي «مسح» لا كتابة بحث؟
+   * باركود/سيريال/باركود ميزان/كود صنف مطابق — يقرره التطابق الفعلي لا الطول
+   * وحده. يُستعمل لإعادة التركيز لخانة البحث بعد الإضافة (مسح متواصل).
+   */
+  const isScanEntry = (raw: string): boolean => {
+    const q = normalizeBarcode(raw)
+    if (!q) return false
+    if (/^\d{4,}$/.test(q)) return true
+    if (findBySerial(serials, q)) return true
+    if (parseScaleBarcodeUniversal(q, scaleRules)) return true
+    if (resolveVariantBarcode(q, sellable)) return true
+    return sellable.some((it) =>
+      it.barcodes.includes(q) || it.sku === q || it.extraUnits.some((u) => normalizeBarcode(u.barcode) === q),
+    )
+  }
+  const markScan = () => { scanFocusAtRef.current = Date.now() }
+
+  /**
    * مسح باركود (Enter):
+   * 0) باركود صنف/وحدة/تركيبة مطابق تماماً ⇒ هو الأسبق دائماً (وإلا التقطته
+   *    قاعدة ميزان بالبادئة نفسها فباع وزناً من صنف آخر)
    * 1) باركود ميزان (22XXXXXWWWWW) → يضيف الصنف بوزنه من الملصق مباشرة
-   * 2) باركود عادي مطابق → إضافة فورية
+   * 2) رقم سيريال → القطعة المعيّنة
    * 3) نتيجة بحث وحيدة → إضافة
    */
   const onSearchEnter = () => {
-    const q = query.trim()
+    const q = normalizeBarcode(query)
     if (!q) return
-    // مسح IMEI/سيريال مباشرة؟ (نمط موبايل شوب): متاح ⇒ يضيف القطعة نفسها،
+    // ① تطابق تام لأي باركود مسجل (الصنف/وحدة أكبر/تركيبة لون ومقاس) قبل أي تفكيك
+    const exactUnit = sellable
+      .flatMap((it) => it.extraUnits.filter((u) => normalizeBarcode(u.barcode) === q).map((u) => ({ it, u })))
+    if (exactUnit.length === 1) {
+      addUnitToCart(exactUnit[0].it.id, exactUnit[0].u.nameAr)
+      setQuery('')
+      return
+    }
+    const variantMatch = resolveVariantBarcode(q, sellable)
+    if (variantMatch) {
+      const it = sellable.find((x) => x.id === variantMatch.itemId)
+      if (it) {
+        const inCartQty = cart.reduce((s, l) => s + (l.itemId === variantMatch.itemId && (l.variantColor ?? '') === variantMatch.color && (l.variantSize ?? '') === variantMatch.size ? l.qty : 0), 0)
+        const stock = variantStocks.find((v) => v.itemId === variantMatch.itemId && variantKey(v.color, v.size) === variantKey(variantMatch.color, variantMatch.size))
+        const avail = Math.round(((stock?.qty ?? 0) - inCartQty) * 1000) / 1000
+        if (avail > 0) {
+          addVariantToCart(variantMatch.itemId, variantMatch.color, variantMatch.size)
+          setQuery('')
+          return
+        }
+        toast.show(`«${it.nameAr}» ${variantLabel(variantMatch.color, variantMatch.size)}: لا رصيد متاح`, 'error')
+        setQuery('')
+        return
+      }
+    }
+    // قارن بالشكل المطبَّع أيضاً: بيانات قديمة قد تحمل أرقاماً عربية في الحقل
+    const exact = sellable.find((it) => it.barcodes.some((b) => normalizeBarcode(b) === q) || it.sku === q)
+    if (exact) {
+      addToCart(exact.id)
+      setQuery('')
+      return
+    }
+    // ② مسح IMEI/سيريال مباشرة؟ (نمط موبايل شوب): متاح ⇒ يضيف القطعة نفسها،
     // مباع ⇒ يعرض حالة ضمانه بدل رسالة «غير موجود»
     const su = findBySerial(serials, q)
     if (su) {
@@ -396,10 +466,12 @@ export function PosPage() {
       setQuery('')
       return
     }
-    // باركود ميزان؟ (عالمي — يجرب كل قواعد التفكيك الممكّنة بالترتيب: وزن أو سعر)
+    // ③ باركود ميزان؟ (عالمي — يجرب كل قواعد التفكيك الممكّنة بالترتيب: وزن أو سعر)
     const scale = parseScaleBarcodeUniversal(q, scaleRules)
     if (scale) {
-      const it = matchScaleItem(scale.itemCode, sellable)
+      // قاعدة وزن لا تطابق إلا صنفاً «يُباع بالوزن» — وإلا خُصم مخزون صنف
+      // بالعدد بكسور (0.75 «قطعة»).
+      const it = matchScaleItem(scale.itemCode, sellable, { requireWeighted: scale.weightKg != null })
       if (it) {
         if (scale.weightKg != null) {
           // قاعدة وزن: الكمية = الوزن والسعر من بطاقة الصنف
@@ -424,41 +496,7 @@ export function PosPage() {
         setQuery('')
         return
       }
-      toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode}) — راجع قائمة PLU في إعدادات الميزان`, 'error')
-      setQuery('')
-      return
-    }
-    // باركود تركيبة لون/مقاس مستقل (تطوير مستقبلي ① — نشاط الملابس): يحدد التركيبة
-    // تلقائياً بدل فتح نافذة الاختيار اليدوي، بعد التحقق من توفرها فعلياً فوق ما في السلة
-    const variantMatch = resolveVariantBarcode(q, sellable)
-    if (variantMatch) {
-      const it = sellable.find((x) => x.id === variantMatch.itemId)
-      if (it) {
-        const inCartQty = cart.reduce((s, l) => s + (l.itemId === variantMatch.itemId && (l.variantColor ?? '') === variantMatch.color && (l.variantSize ?? '') === variantMatch.size ? l.qty : 0), 0)
-        const stock = variantStocks.find((v) => v.itemId === variantMatch.itemId && variantKey(v.color, v.size) === variantKey(variantMatch.color, variantMatch.size))
-        const avail = Math.round(((stock?.qty ?? 0) - inCartQty) * 1000) / 1000
-        if (avail > 0) {
-          addVariantToCart(variantMatch.itemId, variantMatch.color, variantMatch.size)
-          setQuery('')
-          return
-        }
-        toast.show(`«${it.nameAr}» ${variantLabel(variantMatch.color, variantMatch.size)}: لا رصيد متاح`, 'error')
-        setQuery('')
-        return
-      }
-    }
-    // باركود وحدة أكبر (شريط/علبة — جولة الصيدلية)؟ يضيف السطر بوحدته وسعره
-    for (const it of sellable) {
-      const u = it.extraUnits.find((x) => x.barcode === q)
-      if (u) {
-        addUnitToCart(it.id, u.nameAr)
-        setQuery('')
-        return
-      }
-    }
-    const exact = sellable.find((it) => it.barcodes.includes(q) || it.sku === q)
-    if (exact) {
-      addToCart(exact.id)
+      toast.show(`باركود ميزان لصنف غير معروف أو غير مسجل «بالوزن» (كود ${scale.itemCode}) — راجع قائمة PLU وإعداد الصنف`, 'error')
       setQuery('')
       return
     }
@@ -466,6 +504,18 @@ export function PosPage() {
       addToCart(filtered[0].id)
       setQuery('')
     }
+  }
+
+  /** Enter في خانة البحث: يضيف النتيجة المحددة أو يمرّر للمسح المباشر */
+  const submitSearchEntry = () => {
+    const selected = searchResults[searchIndex] ?? searchResults[0]
+    if (isScanEntry(query)) markScan()
+    if (selected) {
+      addToCart(selected.id)
+      setQuery('')
+      return
+    }
+    onSearchEnter()
   }
 
   const totals = useMemo(() => {
@@ -775,7 +825,7 @@ export function PosPage() {
             ref={searchRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSearchIndex(0) }}
-            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(searchResults.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Escape') { setQuery('') } else if (e.key === 'Enter') { e.preventDefault(); const selected = searchResults[searchIndex] ?? searchResults[0]; if (selected) { addToCart(selected.id); setQuery('') } else onSearchEnter() } }}
+            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(searchResults.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Escape') { setQuery('') } else if (e.key === 'Enter') { e.preventDefault(); submitSearchEntry() } }}
             placeholder="F2 بحث · امسح الباركود أو اكتب الاسم · Enter إضافة · F8 نقدي · F9 دفع"
             className={`${inputCls} pr-10 py-3 text-base border-brand-300 dark:border-brand-700 shadow-sm`}
           />

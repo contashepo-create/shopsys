@@ -15,7 +15,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
   SCALE_RULE_PRESETS, parseScaleBarcodeUniversal, parseWithRule, scalePriceToMinor,
-  buildPluRows, pluCsv, matchScaleItem, type ScaleRule,
+  buildPluRows, pluCsv, matchScaleItem, scaleRuleConflicts, type ScaleRule,
 } from '../../core/barcode.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -64,7 +64,7 @@ export function ScaleSettingsPage() {
     if (!/^\d{6,14}$/.test(q)) return null
     const hit = parseScaleBarcodeUniversal(q, scaleRules)
     if (!hit) return { ok: false as const }
-    const item = matchScaleItem(hit.itemCode, sellable)
+    const item = matchScaleItem(hit.itemCode, sellable, { requireWeighted: hit.weightKg != null })
     let detail: string
     if (hit.weightKg != null) {
       detail = `وزن ${hit.weightKg} كجم`
@@ -72,13 +72,17 @@ export function ScaleSettingsPage() {
       const priceMinor = scalePriceToMinor(hit.priceRaw ?? 0, hit.rule.valueDecimals, cur.decimals)
       detail = `سعر إجمالي ${formatMinor(priceMinor, cur, false)} ${cur.symbol}`
     }
-    return { ok: true as const, rule: hit.rule.nameAr, itemCode: hit.itemCode, detail, itemName: item?.nameAr ?? null }
+    // الباركود المسجل لصنف بعينه يسبق قاعدة الميزان في الكاشير (وإلا بيع
+    // صنف آخر بوزن مشتق من رقمه) — ننبّه هنا حتى لا يُخدع المدير بنجاح الاختبار.
+    const registeredItem = sellable.find((it) => it.barcodes.includes(q))
+    return { ok: true as const, rule: hit.rule.nameAr, itemCode: hit.itemCode, detail, itemName: item?.nameAr ?? null, registeredItem: registeredItem?.nameAr ?? null }
   }, [testCode, scaleRules, sellable, cur])
 
   /* ─── قائمة PLU ─── */
   const maxCodeLen = useMemo(() => Math.max(3, ...scaleRules.filter((r) => r.enabled).map((r) => r.itemCodeLen)), [scaleRules])
   const pluRows = useMemo(() => buildPluRows(items, maxCodeLen, cur.decimals), [items, maxCodeLen, cur.decimals])
   const pluWarnings = pluRows.filter((r) => r.warning)
+  const ruleConflicts = useMemo(() => scaleRuleConflicts(scaleRules), [scaleRules])
 
   const downloadCsv = () => {
     const blob = new Blob([pluCsv(pluRows)], { type: 'text/csv;charset=utf-8' })
@@ -170,6 +174,12 @@ export function ScaleSettingsPage() {
             ))}
           </div>
         )}
+        {ruleConflicts.length > 0 && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-500/5 p-2.5 text-[11px] text-rose-600 dark:text-rose-400 space-y-0.5">
+            <b>⚠️ تعارض قواعد ممكّنة:</b>
+            {ruleConflicts.map((message, i) => <div key={i}>• {message}</div>)}
+          </div>
+        )}
         <p className="text-[10.5px] text-slate-400">💡 تُجرب القواعد بترتيبها من الأعلى — أول مطابقة تفوز. لا تفعّل قاعدتين بنفس البادئة والأطوال بنوعين مختلفين.</p>
       </div>
 
@@ -181,7 +191,7 @@ export function ScaleSettingsPage() {
         <input
           value={testCode}
           onChange={(e) => setTestCode(e.target.value.replace(/\D/g, ''))}
-          placeholder="زِن أي صنف واطبع ملصقاً ثم اكتب/امسح رقمه هنا — مثال: 2200042007509"
+          placeholder="زِن أي صنف واطبع ملصقاً ثم اكتب/امسح رقمه هنا — مثال صحيح: 2200042007502"
           dir="ltr"
           className={`${inputCls} font-mono text-center tracking-widest`}
           maxLength={14}
@@ -196,6 +206,11 @@ export function ScaleSettingsPage() {
                   ? <>الصنف المطابق: <b>{testResult.itemName}</b> — سيضاف للسلة فوراً عند المسح في الكاشير ✅</>
                   : '⚠️ لا صنف يحمل هذا الكود — أضف الكود لباركودات الصنف أو راجع قائمة PLU بالأسفل'}
               </div>
+              {testResult.registeredItem && (
+                <div className="text-amber-600 dark:text-amber-400 font-bold">
+                  ℹ️ هذا الرقم مسجل كباركود صنف «{testResult.registeredItem}» — الكاشير يضيف الصنف نفسه قبل تفكيك قاعدة الميزان.
+                </div>
+              )}
             </div>
           ) : (
             <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-3 text-[12.5px] text-rose-600 dark:text-rose-400 font-bold flex items-center gap-1.5">

@@ -265,6 +265,49 @@ export function itemMatchesPartQuery(it: Item, rawQuery: string): boolean {
 
 export interface ItemDraft extends Omit<Item, 'id'> {}
 
+/**
+ * تطبيع باركود عند التسجيل وعند القراءة — نواة خالصة:
+ *  - أرقام عربية/فارسية ← لاتينية: قارئ الباركود يرسل ما تكتبه لوحة المفاتيح،
+ *    فلو كان تخطيط الجهاز عربياً يُسجَّل «٦٢٢١٠٠» أو يُمسح به فلا يطابق
+ *    «622100» أبداً (بايع صنفاً آخر أو «غير موجود» في المشتريات والجرد).
+ *  - حذف المسافات الطرفية والمحارف غير المرئية (ZWNJ/ZWJ/البادئة الصفرية).
+ * لا تُحذف المسافات الداخلية ولا الشرطات: باركود Code128 قد يحملهما فعلاً.
+ */
+export function normalizeBarcode(raw: unknown): string {
+  return String(raw ?? '')
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .replace(/[\u200b-\u200f\uFEFF]/g, '')
+    .trim()
+}
+
+/** تطبيع مصفوفة باركودات + إسقاط الفراغات */
+export function normalizeBarcodes(list: readonly string[] | undefined | null): string[] {
+  return (list ?? []).map(normalizeBarcode).filter(Boolean)
+}
+
+/**
+ * تحذير غير مانع لخانة تحقق EAN-13/UPC-A عند تسجيل باركود رقمي:
+ * طول 12 (UPC-A) أو 13 (EAN-13) بلا خانة تحقق صحيحة = خطأ طباعة/إدخال شائع،
+ * والقارئ سيرفضه أو يقرأ رقماً آخر. لا نمنع الحفظ: كثير من المتاجر تستخدم
+ * أكواداً داخلية لا تتبع EAN. null = لا تحذير.
+ */
+export function barcodeCheckWarning(raw: string): string | null {
+  const code = normalizeBarcode(raw)
+  if (!/^\d+$/.test(code)) return null
+  if (code.length !== 12 && code.length !== 13) return null
+  const sumOf = (digits: string) => {
+    let sum = 0
+    for (let i = 0; i < digits.length; i++) sum += Number(digits[i]) * (i % 2 === 0 ? 1 : 3)
+    return (10 - (sum % 10)) % 10
+  }
+  // EAN-13: أول 12 خانة + خانة تحقق. UPC-A: 11 + تحقق (يُفحص كـ12 بـ0 بادئة)
+  const valid = code.length === 13
+    ? sumOf(code.slice(0, 12)) === Number(code[12])
+    : sumOf(`0${code.slice(0, 11)}`) === Number(code[11])
+  return valid ? null : `الباركود ${code}: خانة التحقق (EAN/UPC) غير صحيحة — تأكد من رقم الملصق قبل الاعتماد`
+}
+
 /** أخطاء التحقق — نصوص عربية جاهزة للعرض */
 export function validateItem(draft: ItemDraft, existing: Item[], editingId?: number): string[] {
   const errors: string[] = []
@@ -281,16 +324,17 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
     errors.push('صنف الخدمة بلا مخزون — لا صلاحية ولا سيريال ولا وزن')
   }
   // تفرد الباركود عبر كل الأصناف (بما فيها باركودات الوحدات)
+  // التطبيع قبل المقارنة: «٦٢٢١٠٠» العربية و«622100» نفس الباركود فعلياً.
   const allCodes = new Set<string>()
   for (const it of existing) {
     if (it.id === editingId) continue
-    for (const b of it.barcodes) allCodes.add(b)
-    for (const u of it.extraUnits) if (u.barcode) allCodes.add(u.barcode)
+    for (const b of normalizeBarcodes(it.barcodes)) allCodes.add(b)
+    for (const u of it.extraUnits ?? []) { const ub = normalizeBarcode(u.barcode); if (ub) allCodes.add(ub) }
   }
   for (const b of draft.barcodes) {
-    if (allCodes.has(b)) errors.push(`الباركود ${b} مستخدم في صنف آخر`)
+    if (allCodes.has(normalizeBarcode(b))) errors.push(`الباركود ${normalizeBarcode(b)} مستخدم في صنف آخر`)
   }
-  const draftCodes = draft.barcodes.filter(Boolean)
+  const draftCodes = normalizeBarcodes(draft.barcodes).filter(Boolean)
   if (new Set(draftCodes).size !== draftCodes.length) errors.push('باركود مكرر داخل نفس الصنف')
   // §81: تفرد SKU غير الفارغ — الكاشير والواجهات يبحثون به ويعرضونه
   if (draft.sku.trim() && existing.some((it) => it.id !== editingId && it.sku === draft.sku.trim())) {
@@ -299,10 +343,11 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
   for (const u of draft.extraUnits) {
     if (u.factor <= 1) errors.push(`معامل الوحدة "${u.nameAr}" يجب أن يكون أكبر من 1`)
     // §81: باركود الوحدة الكبرى كان بلا فحص إطلاقاً — الكاشير يمسحه فيبيع صنفاً بدل آخر
-    if (u.barcode) {
-      if (allCodes.has(u.barcode)) errors.push(`باركود الوحدة «${u.nameAr}» (${u.barcode}) مستخدم في صنف آخر`)
-      if (draft.barcodes.includes(u.barcode)) errors.push(`الباركود ${u.barcode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
-      if (draft.extraUnits.filter((x) => x.barcode === u.barcode).length > 1) errors.push(`باركود الوحدة ${u.barcode} مكرر بين الوحدات`)
+    const unitCode = normalizeBarcode(u.barcode)
+    if (unitCode) {
+      if (allCodes.has(unitCode)) errors.push(`باركود الوحدة «${u.nameAr}» (${unitCode}) مستخدم في صنف آخر`)
+      if (draftCodes.includes(unitCode)) errors.push(`الباركود ${unitCode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
+      if (draft.extraUnits.filter((x) => normalizeBarcode(x.barcode) === unitCode).length > 1) errors.push(`باركود الوحدة ${unitCode} مكرر بين الوحدات`)
     }
   }
   return errors
@@ -326,10 +371,10 @@ export function itemBlockers(draft: Partial<ItemDraft>, existing: Item[], editin
   const allCodes = new Set<string>()
   for (const it of existing) {
     if (it.id === editingId) continue
-    for (const b of it.barcodes ?? []) allCodes.add(b)
-    for (const u of it.extraUnits ?? []) if (u.barcode) allCodes.add(u.barcode)
+    for (const b of normalizeBarcodes(it.barcodes)) allCodes.add(b)
+    for (const u of it.extraUnits ?? []) { const ub = normalizeBarcode(u.barcode); if (ub) allCodes.add(ub) }
   }
-  const draftCodes = (draft.barcodes ?? []).filter(Boolean)
+  const draftCodes = normalizeBarcodes(draft.barcodes)
   for (const b of draftCodes) if (allCodes.has(b)) errors.push(`الباركود ${b} مستخدم في صنف آخر`)
   if (new Set(draftCodes).size !== draftCodes.length) errors.push('باركود مكرر داخل نفس الصنف')
   if (draft.sku?.trim() && existing.some((it) => it.id !== editingId && it.sku === draft.sku!.trim())) {
@@ -338,11 +383,12 @@ export function itemBlockers(draft: Partial<ItemDraft>, existing: Item[], editin
   const seenUnitBarcodes = new Set<string>()
   for (const u of draft.extraUnits ?? []) {
     if (u.factor <= 1) errors.push(`معامل الوحدة "${u.nameAr}" يجب أن يكون أكبر من 1`)
-    if (u.barcode) {
-      if (allCodes.has(u.barcode)) errors.push(`باركود الوحدة «${u.nameAr}» (${u.barcode}) مستخدم في صنف آخر`)
-      if (draftCodes.includes(u.barcode)) errors.push(`الباركود ${u.barcode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
-      if (seenUnitBarcodes.has(u.barcode)) errors.push(`باركود الوحدة ${u.barcode} مكرر بين الوحدات`)
-      seenUnitBarcodes.add(u.barcode)
+    const unitCode = normalizeBarcode(u.barcode)
+    if (unitCode) {
+      if (allCodes.has(unitCode)) errors.push(`باركود الوحدة «${u.nameAr}» (${unitCode}) مستخدم في صنف آخر`)
+      if (draftCodes.includes(unitCode)) errors.push(`الباركود ${unitCode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
+      if (seenUnitBarcodes.has(unitCode)) errors.push(`باركود الوحدة ${unitCode} مكرر بين الوحدات`)
+      seenUnitBarcodes.add(unitCode)
     }
   }
   return errors

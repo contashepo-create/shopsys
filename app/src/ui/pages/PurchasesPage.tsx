@@ -14,7 +14,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { purchaseWeightDiscrepancy, moistureRiskLevel } from '../../core/purchases.ts'
-import { effectiveVatPercent } from '../../core/items.ts'
+import { effectiveVatPercent, normalizeBarcode } from '../../core/items.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
@@ -186,7 +186,7 @@ export function PurchasesPage() {
     if (catId == null) { toast.show('أضف قسماً أولاً من شاشة الأصناف', 'error'); return }
     try {
     addItem({
-      nameAr: qName.trim(), sku: '', barcodes: qBarcode.trim() ? [qBarcode.trim()] : [], categoryId: catId,
+      nameAr: qName.trim(), sku: '', barcodes: normalizeBarcode(qBarcode) ? [normalizeBarcode(qBarcode)] : [], categoryId: catId,
       baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 0,
       priceMinor: qPrice.trim() ? toMinor(qPrice, cur.decimals) : 0, minQty: 0,
       trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false,
@@ -347,10 +347,11 @@ export function PurchasesPage() {
   /** مسح باركود لإضافة سطر: يجد الصنف بباركود القطعة أو باركود الوحدة الأكبر (كرتونة المصنع) */
   const [scanBuf, setScanBuf] = useState('')
   const scanIntoLines = () => {
-    const q = scanBuf.trim()
+    // تطبيع الأرقام (لوحة مفاتيح عربية) قبل المطابقة: نفس علاج الكاشير
+    const q = normalizeBarcode(scanBuf)
     if (!q) return
     for (const it of items) {
-      const u = it.extraUnits.find((x) => x.barcode === q)
+      const u = it.extraUnits.find((x) => normalizeBarcode(x.barcode) === q)
       if (u) {
         // باركود كرتونة المصنع: سطر جاهز بوحدة الكرتونة — الكمية بالكرتونة والسعر سعرها
         setLines((arr) => [...arr, makeDraftLine(it.id, { qty: '1', unitName: u.nameAr })])
@@ -359,7 +360,7 @@ export function PurchasesPage() {
         return
       }
     }
-    const exact = items.find((it) => it.barcodes.includes(q) || it.sku === q)
+    const exact = items.find((it) => it.barcodes.some((b) => normalizeBarcode(b) === q) || it.sku === q)
     if (exact) {
       setLines((arr) => [...arr, makeDraftLine(exact.id, { qty: '1' })])
       toast.show(`✓ ${exact.nameAr} أُضيف من الباركود`)

@@ -13,7 +13,7 @@ import { appStorage, registerExternalSnapshotApplier } from './persistentStorage
 import type { Item, Category } from '../core/items.ts'
 import { draftFromCategory, nextSku } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
-import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
+import { priceFloorViolations, PriceFloorError, itemBlockers, normalizeBarcode, normalizeBarcodes } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
@@ -8150,11 +8150,18 @@ export const useRawDataStore = create<DataState>()(
         if (!created) throw new Error('تعذر إنشاء صنف الخدمة للبند الحر')
         return created.id
       },
-      addItem: (item) => {
+      addItem: (rawItem) => {
         // §81: حراس النواة داخل المستودع — الواجهة ليست المتصل الوحيد
         // (الإضافة السريعة في فاتورة الشراء، الاستيراد، نوافذ التحرير، بوت التليجرام…):
         // باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
         // يفسد خصم المخزون بالوحدة الأساسية. التحذيرات (سعر صفر/خسارة) قرار شاشة.
+        // التطبيع هنا (وليس في الشاشات فقط): قارئ بتخطيط لوحة مفاتيح عربية يُدخل
+        // «٦٢٢١٠٠» فيُحفظ بلا تطبيع ولا يُطابق «622100» عند المسح أو الاستيراد.
+        const item: typeof rawItem = {
+          ...rawItem,
+          barcodes: normalizeBarcodes(rawItem.barcodes),
+          extraUnits: (rawItem.extraUnits ?? []).map((unit) => ({ ...unit, ...(unit.barcode ? { barcode: normalizeBarcode(unit.barcode) } : {}) })),
+        }
         const guardState = get()
         const blockers = itemBlockers(item, getBranchScopedDataState(guardState).items)
         if (blockers.length) throw new Error(blockers[0])
@@ -8195,13 +8202,22 @@ export const useRawDataStore = create<DataState>()(
           openingItems: { ...state.openingItems, [id]: { qty: item.stockQty || 0, unitCostMinor: item.costMinor || 0 } },
         })
       },
-      updateItem: (id, patch) => {
+      updateItem: (id, rawPatch) => {
         const current = get().items.find((it) => it.id === id)
         if (!current) return
+        // تطبيع الباركود في التعديل أيضاً (نفس علة الإضافة)
+        const patch: typeof rawPatch = {
+          ...rawPatch,
+          ...(rawPatch.barcodes ? { barcodes: normalizeBarcodes(rawPatch.barcodes) } : {}),
+          ...(rawPatch.extraUnits ? { extraUnits: rawPatch.extraUnits.map((unit) => ({ ...unit, ...(unit.barcode ? { barcode: normalizeBarcode(unit.barcode) } : {}) })) } : {}),
+        }
         if ((patch.trackExpiry === false || patch.trackSerial === false) && get().serials.some(unit => unit.itemId === id && unit.expiryBatch != null)) throw new Error('لا يمكن تعطيل تتبع السيريال أو الصلاحية مع وجود وحدات مرتبطة بدفعات — يلزم معالجة المخزون أولاً')
         // §81: التحرير الجزئي يُحرَس على الصورة المدموجة كاملة — لا يمر تحرير
         // (نافذة سريعة/قائمة أسعار) بمعامل وحدة فاسد أو باركود مكرر أو سيريال+وزن.
-        const blockers = itemBlockers({ ...current, ...patch }, get().items.filter((it) => it.id !== id), id)
+        /* التكرار يُفحص داخل نطاق الفرع فقط: سلسلة بقالة تبيع نفس باركود المصنع
+           (EAN) في كل فرع — مقارنته بأصناف فرع آخر كانت تمنع تعديل البطاقة
+           نهائياً برسالة «مستخدم في صنف آخر» وهي في فرع مختلف. */
+        const blockers = itemBlockers({ ...current, ...patch }, getBranchScopedDataState(get()).items.filter((it) => it.id !== id), id)
         if (blockers.length) throw new Error(blockers[0])
         // v1.0.4 (بلاغ المالك — نمط العالمية): تحرير الكمية/التكلفة من بطاقة الصنف
         // لا يغيّر قيمة المخزون صامتاً — وإلا انكسر ثابت 1103 = Σ كمية×تكلفة.

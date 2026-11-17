@@ -15,10 +15,12 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants, GRADE_LABELS,
+  normalizeBarcode, barcodeCheckWarning,
   type ItemDraft, type Item, type Category,
 } from '../../core/items.ts'
 import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activities.ts'
 import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
+import { nextInternalBarcode } from '../../core/barcode.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -1028,8 +1030,8 @@ function ItemForm({
   onSave: () => void
   onCancel: () => void
 }) {
-  const { categories } = useDataStore()
-  const { setup } = useAppStore()
+  const { categories, items: allItems } = useDataStore()
+  const { setup, scaleRules } = useAppStore()
   const [barcodeInput, setBarcodeInput] = useState('')
   const [colorInput, setColorInput] = useState('')
   const [sizeInput, setSizeInput] = useState('')
@@ -1206,13 +1208,38 @@ function ItemForm({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && barcodeInput.trim()) {
               e.preventDefault()
-              p({ barcodes: [...draft.barcodes, barcodeInput.trim()] })
+              // تطبيع فوري: أرقام عربية/فارسية ← لاتينية وحذف الفراغات الطرفية،
+              // وإلا حُفظ باركود لا يُمسح أبداً ولا يُكتشف تكراره.
+              const code = normalizeBarcode(barcodeInput)
+              if (!code) { setBarcodeInput(''); return }
+              // التحذير معروض أسفل الخانة (خانة تحقق خاطئة أو وزن غير قياسي شائع
+              // عند بعض الموردين) — لا نمنع الحفظ لكن لا نُسجّل بصمت.
+              if (!draft.barcodes.includes(code)) p({ barcodes: [...draft.barcodes, code] })
               setBarcodeInput('')
             }
           }}
           placeholder="امسح أو اكتب ثم Enter"
           className={inputCls}
         />
+        {/* صنف بتعبئة داخلية بلا باركود مصنع: توليد EAN-13 داخلي (بادئة 2)
+            وخانة تحقق صحيحة — أفضل من ترك الباركود فارغاً فيُطبع الملصق بالـSKU */}
+        <button
+          type="button"
+          onClick={() => {
+            const taken = allItems.flatMap((it) => [
+              ...it.barcodes,
+              ...(it.extraUnits ?? []).map((u) => u.barcode).filter((b): b is string => Boolean(b)),
+            ])
+            const code = nextInternalBarcode(taken, '200', scaleRules)
+            if (!draft.barcodes.includes(code)) p({ barcodes: [...draft.barcodes, code] })
+          }}
+          className="mt-1.5 inline-flex items-center gap-1 text-[10.5px] font-bold text-brand-600 hover:underline dark:text-brand-400"
+        >
+          <Barcode size={11} /> توليد باركود داخلي بديل (بلا باركود مصنع)
+        </button>
+        {barcodeInput.trim() && barcodeCheckWarning(barcodeInput) && (
+          <p className="mt-1 text-[10.5px] font-bold text-amber-600 dark:text-amber-400">{barcodeCheckWarning(barcodeInput)}</p>
+        )}
         {draft.barcodes.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
             {draft.barcodes.map((b, i) => (
