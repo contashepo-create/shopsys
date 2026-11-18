@@ -25,7 +25,7 @@ export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
     activeBranchId, setActiveBranchId, currentUserId, appUsers, loggedOut,
-    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
+    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders, stocktakes,
   } = useDataStore()
   const canManageAllBranches = currentUserId == null || appUsers.find((user) => user.id === currentUserId)?.roleId === 'owner'
   useEffect(() => {
@@ -65,7 +65,7 @@ export function BranchesPage() {
         accountBalances.set(l.accountCode, (accountBalances.get(l.accountCode) ?? 0) + l.debit - l.credit)
       }
     }
-    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
+    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes))
     return compareBranches({
       branches,
       sales,
@@ -77,7 +77,7 @@ export function BranchesPage() {
       itemValueById: new Map(items.map((it) => [it.id, it.stockValueMinor ?? Math.round((it.stockQty ?? 0) * it.costMinor)])),
       itemQtyById: new Map(items.map((it) => [it.id, it.stockQty ?? 0])),
     })
-  }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal, productionOrders, processingOrders])
+  }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal, productionOrders, processingOrders, stocktakes])
 
   /* ─── إنشاء/تعديل فرع ─── */
   const [open, setOpen] = useState(false)

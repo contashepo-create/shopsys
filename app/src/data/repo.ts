@@ -1007,7 +1007,8 @@ export interface StockTransfer {
   branchId?: number | null
   fromWarehouseId: number
   toWarehouseId: number
-  lines: { itemId: number; nameAr: string; qty: number }[]
+  /** تخصيص الدفعات المنقولة (FEFO أو يدوي) — دليل نقل الصلاحية بين المخازن */
+  lines: { itemId: number; nameAr: string; qty: number; batchAllocations?: { batchId: number; qty: number }[] }[]
   totalQty: number
   notes: string
 }
@@ -1409,6 +1410,8 @@ export interface Stocktake {
   countedItems: number // عدد الأصناف المشمولة بالجرد
   journalEntryId: number | null // null لو الجرد مطابق تماماً (لا قيد)
   notes: string
+  /** مخزن الفرع الذي عُدّ فعلياً؛ null/undefined = جرد على مستوى الشركة (سجل قديم). */
+  warehouseId?: number | null
 }
 
 /** سند قبض/صرف/تحويل — كل سند مربوط بقيده */
@@ -4606,7 +4609,7 @@ function planInventoryOutflow(state: DataState, requested: { itemId: number; qty
   if (day !== now.slice(0, 10)) throw new Error('حركة المخزون متاحة بتاريخ اليوم فقط — الرصيد والتكلفة التاريخيان غير مثبتين')
   const closed = dateInClosedYear(day, fiscalYearsForBranch(useAppStore.getState().fiscalYears, branch?.id ?? null, Boolean(branch?.isMain)))
   if (closed) throw new Error(`تاريخ حركة المخزون داخل السنة المالية المقفلة «${closed.nameAr}»`)
-  const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+  const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes))
   const main = state.warehouses.find(w => w.isMain)
   const seen = new Set<number>()
   const withdrawals = new Map<number, ReturnType<typeof withdrawStockValue>>()
@@ -5479,7 +5482,7 @@ export function getBranchScopedDataState(state: DataState): DataState {
         state.items,
         state.warehouses,
         state.transfers,
-        buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+        buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
       )
     : null
   // صنفاً محوّلاً يمكن عرضه كمرجع في الفرع المستقبل، لكن كمية المخزون الظاهرة له هي كمية مخازن هذا الفرع فقط.
@@ -9229,7 +9232,7 @@ export const useRawDataStore = create<DataState>()(
           if (hasWarehouses) {
             const warehouseStock = computeWarehouseStock(
               state.items, state.warehouses, state.transfers,
-              buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+              buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
             )
             const needsByWarehouse = new Map<number, Map<number, number>>()
           for (const line of saleLines) {
@@ -9776,7 +9779,10 @@ export const useRawDataStore = create<DataState>()(
           const used = new Map<number, number>()
           const consume = (row: ReturnLine) => {
             const chosen = row.expiryBatchAllocations
-            if (row.saleLineIndex !== line.saleLineIndex || !Array.isArray(chosen) || !chosen.length || (row.warehouseId ?? sale.warehouseId ?? null) !== sourceWarehouse || (row.condition !== 'damaged' && row.condition !== 'resellable')) fail()
+            // رسالة صريحة لحالة «لم تُحدَّد الدفعة» بدل الرسالة العامة المضللة التي
+            // كانت تُقرأ كتلاعب في المستند (الحارس نفسه لم يتغير).
+            if (!Array.isArray(chosen) || !chosen.length) throw new Error(`«${row.nameAr}»: حدد الدفعة المستلمة المرتجعة (صلاحية مسجلة) قبل الترحيل`)
+            if (row.saleLineIndex !== line.saleLineIndex || (row.warehouseId ?? sale.warehouseId ?? null) !== sourceWarehouse || (row.condition !== 'damaged' && row.condition !== 'resellable')) fail()
             const ids = new Set<number>()
             let total = 0
             for (const allocation of chosen!) {
@@ -10195,7 +10201,7 @@ export const useRawDataStore = create<DataState>()(
         if (args.lineSpecs?.length) {
           const warehouseStock = computeWarehouseStock(
             state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
           )
           const needed = new Map<string, number>()
           for (const line of lines) {
@@ -10401,13 +10407,25 @@ export const useRawDataStore = create<DataState>()(
         // حراسة §80: صنف غير مسجل يولّد قيد تسوية (5111/4110) بلا أثر مخزوني فعلي
         // فينفصل 1103 الدفتري عن قيمة المخزون الحقيقية (قيس: عجز وهمي 50,000).
         // كذلك «الدفتري» المُمرر يجب أن يطابق رصيد اللحظة وإلا كان الجرد على أساس قديم.
+        //
+        // نطاق الجرد = نطاق الفرع النشط: الشاشة تعرض أرصدة مخازن الفرع (getBranchScopedDataState)،
+        // فمقارنة المعدود بالرصيد الكلي للشركة كانت ترفض كل جرد فرعي برسالة مضللة
+        // («الرصيد الدفتري تغير» والفرق هو بضاعة فرع آخر). والفارق يُطبَّق كفرق على الرصيد
+        // الكلي ثم يُنسب للمخزن المعدود في اشتقاق أرصدة المخازن (buildWarehouseDocs).
+        const scoped = getBranchScopedDataState(state)
+        const activeBranch = getEffectiveActiveBranch(state)
+        const branchWarehouseId = activeBranch?.warehouseId ?? null
+        const scopedWarehouseIds = new Set(scoped.warehouses.map((warehouse) => warehouse.id))
+        const deltaByItem = new Map<number, number>()
         for (const c of counts) {
           const it = state.items.find((row) => row.id === c.itemId)
           if (!it) throw new Error(`«${c.nameAr}» (#${c.itemId}) ليس صنفاً مسجلاً — أزل سطر الجرد`)
           if (Math.round(c.countedQty * 1000) !== Math.round(c.expectedQty * 1000)) assertSerialBatchMovementSupported(state, c.itemId)
-          if (Math.round((it.stockQty ?? 0) * 1000) !== Math.round(c.expectedQty * 1000)) {
-            throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${it.stockQty ?? 0} حالياً) — أعد الجرد على الرصيد الحالي`)
+          const bookQty = scoped.items.find((row) => row.id === c.itemId)?.stockQty ?? it.stockQty ?? 0
+          if (Math.round(bookQty * 1000) !== Math.round(c.expectedQty * 1000)) {
+            throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${bookQty} حالياً) — أعد الجرد على الرصيد الحالي`)
           }
+          deltaByItem.set(c.itemId, Math.round((c.countedQty - c.expectedQty) * 1000) / 1000)
         }
         const result = computeStocktake(counts)
         const stocktakeId = nextId(state.stocktakes)
@@ -10444,18 +10462,39 @@ export const useRawDataStore = create<DataState>()(
           countedItems: counts.length,
           journalEntryId: entryId,
           notes,
+          warehouseId: branchWarehouseId,
         }
 
-        // ضبط المخزون على المعدود فعلياً
-        const countedBy = new Map(counts.map((c) => [c.itemId, c.countedQty]))
+        // ضبط المخزون على المعدود فعلياً داخل النطاق: الرصيد الكلي يتحرك بفارق الجرد فقط،
+        // فلا يُكتب رصيد فرع فوق رصيد بقية الفروع.
         const updatedItems = state.items.map((it) =>
-          countedBy.has(it.id) ? { ...it, stockQty: countedBy.get(it.id)! } : it,
+          deltaByItem.has(it.id)
+            ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) + deltaByItem.get(it.id)!) * 1000) / 1000 }
+            : it,
         )
 
         // V2 (مراجعة المخزون): العجز يُخصم من دفعات الصلاحية أيضاً (FEFO — الأقدم
         // انتهاءً أولاً باعتباره الأرجح فقداً/تلفاً) وإلا بقيت الدفعات أعلى من الرصيد
-        // فتنذر «منتهي الصلاحية» عن بضاعة غير موجودة أصلاً
+        // فتنذر «منتهي الصلاحية» عن بضاعة غير موجودة أصلاً.
+        // والزيادة تُثبت كدفعة بلا صلاحية معلومة (تشغيلة «جرد») في المخزن المعدود:
+        // بدونها يصبح مجموع الدفعات أقل من الرصيد فيرفض الكاشير بيع الصنف لاحقاً.
         let batches = state.batches
+        let nextStocktakeBatchId = nextId(state.batches)
+        for (const v of result.variances) {
+          if (v.diffQty <= 0) continue
+          const trackedItem = state.items.find(row => row.id === v.itemId)
+          if (!(trackedItem?.trackExpiry || batches.some(batch => batch.itemId === v.itemId))) continue
+          batches = [...batches, {
+            id: nextStocktakeBatchId++,
+            itemId: v.itemId,
+            warehouseId: branchWarehouseId,
+            lotNumber: `جرد ${stocktakeNumber}`,
+            expiryDate: null,
+            qty: Math.round(v.diffQty * 1000) / 1000,
+            purchaseId: null,
+            receivedAt: now,
+          }]
+        }
         for (const v of result.variances) {
           if (v.diffQty >= 0) continue
           let rest = -v.diffQty
@@ -10464,6 +10503,8 @@ export const useRawDataStore = create<DataState>()(
             .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
             .map((b) => {
               if (b.itemId !== v.itemId || rest <= 0 || b.qty <= 0) return b
+              // دفعة مخزن آخر لا تُستنزف بجرد هذا الفرع؛ الدفعة بلا مخزن (سجل قديم) تبقى مشمولة.
+              if (branchWarehouseId != null && b.warehouseId != null && !scopedWarehouseIds.has(b.warehouseId)) return b
               const take = Math.min(b.qty, rest)
               rest -= take
               return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
@@ -19475,7 +19516,7 @@ export const useRawDataStore = create<DataState>()(
         const outputWarehouseId = args.outputWarehouseId ?? legacyWarehouseId
         if (ingredientWarehouseId != null && !state.warehouses.some((warehouse) => warehouse.id === ingredientWarehouseId)) throw new Error('اختر مخزن صرف خامات صحيحاً')
         if (outputWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === outputWarehouseId)) throw new Error('اختر مخزن استلام ناتج صحيحاً')
-        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes))
         const availableInWarehouse = (itemId: number, warehouseId: number | null) => warehouseStock.get(warehouseId ?? -1)?.get(itemId) ?? 0
         const ingredients: { itemId: number; qty: number; warehouseId?: number | null }[] = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches, warehouseId: ingredientWarehouseId }))
         const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
@@ -19587,7 +19628,7 @@ export const useRawDataStore = create<DataState>()(
           state.items,
           state.warehouses,
           state.transfers,
-          buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+          buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes),
         )
         const availableSource = warehouseStock.get(sourceWarehouseId)?.get(source.id) ?? 0
         if (!args.allowNegativeSource && availableSource < args.sourceQty) {
@@ -21047,7 +21088,7 @@ export const useRawDataStore = create<DataState>()(
         if (closed) throw new Error(`تاريخ التحويل داخل السنة المالية المقفلة «${closed.nameAr}»`)
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders, state.stocktakes))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },
@@ -21061,11 +21102,59 @@ export const useRawDataStore = create<DataState>()(
           if (item.isService) throw new Error('الخدمة لا تُحوَّل كمخزون')
           if (item.trackSerial || state.serials.some(unit => unit.itemId === l.itemId && unit.status === 'in_stock')) throw new Error('تحويل السيريال لا يحدد وحداته ومخازنها — يلزم مسار موثق')
           assertSerialBatchMovementSupported(state, l.itemId)
-          if (item.trackExpiry || state.batches.some(batch => batch.itemId === item.id)) throw new Error('تحويل الصلاحية لا يحدد الدفعات المنقولة — يلزم مسار موثق للدفعات')
+          const tracked = item.trackExpiry || state.batches.some(batch => batch.itemId === item.id)
+          if (!tracked) continue
+          // تحويل بضاعة بصلاحية كان مرفوضاً قطعاً ⇒ لا يمكن نقل الألبان/الأجبان بين المخازن
+          // إطلاقاً في نشاط بقالة. الآن يُخطَّط التخصيص (يدوي إن مُرِّر وإلا FEFO من المخزن
+          // المصدر) ويُنقل كمّ الدفعة إلى مخزن الوجهة بدفعة موثقة، فلا يضيع أثر الصلاحية.
+          const requested = l.batchAllocations
+          if (requested && requested.length) {
+            const sum = Math.round(requested.reduce((total, row) => total + row.qty, 0) * 1000) / 1000
+            if (Math.round(sum * 1000) !== Math.round(l.qty * 1000)) errors.push(`«${item.nameAr}»: مجموع الدفعات المحددة ${sum} لا يساوي كمية التحويل ${l.qty}`)
+            for (const row of requested) {
+              const batch = state.batches.find(candidate => candidate.id === row.batchId)
+              if (!batch || batch.itemId !== item.id) { errors.push(`«${item.nameAr}»: دفعة غير معروفة (#${row.batchId})`); continue }
+              if (!(row.qty > 0)) errors.push(`«${item.nameAr}»: كمية دفعة غير صالحة`)
+              if (Math.round(row.qty * 1000) > Math.round(batch.qty * 1000)) errors.push(`«${item.nameAr}»: الدفعة ${batch.lotNumber ?? batch.id} لا تحمل الكمية المطلوبة`)
+              if (batch.warehouseId != null && batch.warehouseId !== args.fromWarehouseId) errors.push(`«${item.nameAr}»: الدفعة ${batch.lotNumber ?? batch.id} في مخزن آخر غير المصدر`)
+            }
+          } else {
+            const plan = planFefo(state.batches, item.id, l.qty, createdAt.slice(0, 10), args.fromWarehouseId)
+            if (plan.untrackedQty > 1e-9) errors.push(`«${item.nameAr}»: دفعات المخزن المصدر لا تغطي الكمية (ناقص ${plan.untrackedQty}) — راجع استلام البضاعة`)
+          }
         }
         if (errors.length) throw new Error(errors.join(' — '))
 
-        // 2) مستند مرقّم — بلا قيد (حركة داخلية لا تغيّر قيمة 1103)
+        // 2) تخصيص الدفعات: تقليل كمّ المصدر وإنشاء دفعة مطابقة في مخزن الوجهة
+        //    (دفعة المصدر تُقسَّم عند النقل الجزئي، فلا تنفصل الدفعات عن الرصيد).
+        let batches = state.batches
+        let nextBatchId = nextId(state.batches)
+        const allocationsByItem = new Map<number, { batchId: number; qty: number }[]>()
+        for (const l of args.lines) {
+          const item = state.items.find(row => row.id === l.itemId)!
+          const tracked = item.trackExpiry || batches.some(batch => batch.itemId === item.id)
+          if (!tracked) continue
+          const chosen = l.batchAllocations?.length
+            ? l.batchAllocations.map(row => ({ batchId: row.batchId, qty: Math.round(row.qty * 1000) / 1000 }))
+            : planFefo(batches, item.id, l.qty, createdAt.slice(0, 10), args.fromWarehouseId).allocations.map(row => ({ batchId: row.batchId, qty: row.qty }))
+          allocationsByItem.set(l.itemId, chosen)
+          for (const allocation of chosen) {
+            batches = batches.map(batch => batch.id === allocation.batchId
+              ? { ...batch, qty: Math.round((batch.qty - allocation.qty) * 1000) / 1000 }
+              : batch)
+            const source = batches.find(batch => batch.id === allocation.batchId)!
+            batches = [...batches, {
+              ...source,
+              id: nextBatchId++,
+              qty: allocation.qty,
+              warehouseId: args.toWarehouseId,
+              receivedAt: createdAt,
+            }]
+          }
+          batches = batches.filter(batch => batch.qty > 0)
+        }
+
+        // 3) مستند مرقّم — بلا قيد (حركة داخلية لا تغيّر قيمة 1103)
         const id = nextId(state.transfers)
         const transfer: StockTransfer = {
           id,
@@ -21079,11 +21168,12 @@ export const useRawDataStore = create<DataState>()(
             nameAr: state.items.find((it) => it.id === l.itemId)?.nameAr ?? '',
             // احفظ ما تحققنا منه، لا ضجيج حسابات المتصفح الثنائية.
             qty: Math.round(l.qty * 1000) / 1000,
+            ...(allocationsByItem.has(l.itemId) ? { batchAllocations: allocationsByItem.get(l.itemId)! } : {}),
           })),
           totalQty: transferTotalQty(args.lines),
           notes: args.notes.trim(),
         }
-        set({ transfers: [...state.transfers, transfer] })
+        set({ transfers: [...state.transfers, transfer], batches })
         return transfer
       },
       addAsset: (args) => {

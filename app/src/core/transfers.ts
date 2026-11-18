@@ -13,6 +13,8 @@
 export interface TransferLine {
   itemId: number
   qty: number
+  /** تخصيص دفعات الصلاحية المنقولة؛ غيابه = تخطيط FEFO آلي من المخزن المصدر. */
+  batchAllocations?: { batchId: number; qty: number }[]
 }
 
 export interface TransferInput {
@@ -141,6 +143,11 @@ export function buildWarehouseDocs(
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; unitFactor?: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
   productionOrders: { warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[] = [],
   processingOrders: { sourceWarehouseId?: number | null; outputWarehouseId?: number | null; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number; unitFactor?: number }[] }[] = [],
+  /**
+   * تسويات الجرد المرتبطة بمخزن: فارق الجرد حركة بين مخزن الشركة الأصلي والمخزن
+   * المعدود، وإلا انحرف رصيد المخزن المعدود عن الواقع (جرد فرع لا يحرّك بقية الفروع).
+   */
+  stocktakes: { warehouseId?: number | null; result: { variances: { itemId: number; diffQty: number }[] } }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
@@ -194,6 +201,10 @@ export function buildWarehouseDocs(
   for (const order of processingOrders) {
     pushLineDoc(order.sourceWarehouseId ?? null, order.sourceItemId, -order.sourceQty)
     for (const output of order.outputs) pushLineDoc(order.outputWarehouseId ?? order.sourceWarehouseId ?? null, output.itemId, qtyBase(output))
+  }
+  // تسوية الجرد: الفارق يُنسب إلى المخزن الذي عُدّ فعلياً (والرصيد الكلي تغيّر بالفارق نفسه في postStocktake).
+  for (const st of stocktakes) {
+    for (const variance of st.result.variances ?? []) pushLineDoc(st.warehouseId ?? null, variance.itemId, variance.diffQty)
   }
 
   const purchaseById = new Map(purchases.filter((p) => p.id != null && p.projectId == null).map((p) => [p.id!, p]))

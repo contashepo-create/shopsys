@@ -23,7 +23,7 @@ import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.
 import { todayLocalIso } from '../../core/time.ts'
 
 export function ProcessingPage() {
-  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, postProcessing } = useDataStore()
+  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes, postProcessing } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -32,7 +32,7 @@ export function ProcessingPage() {
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
   const nameOf = (id: number) => items.find((it) => it.id === id)?.nameAr ?? '؟'
-  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
+  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes])
   const mainWarehouseId = setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0
 
   // نوع التجهيز من النشاط: التمور فرز، وكل ما عداها تقطيع (الجزارة الافتراضية)
