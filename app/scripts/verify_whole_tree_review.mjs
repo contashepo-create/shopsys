@@ -26,7 +26,7 @@
  * لا يطابق الواقع يُحذف).
  */
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
-import { join, relative, dirname, resolve, basename } from 'node:path'
+import { join, relative, dirname, resolve, basename, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { reporter } from './auditKit.mjs'
 import { DEAD_EXPORT_BASELINE, DEAD_EXPORT_CEILING } from './dead_export_baseline.mjs'
@@ -53,7 +53,11 @@ function walk(dir, out = []) {
 }
 
 const files = walk(SRC)
-const source = new Map(files.map((file) => [relative(appRoot, file), readFileSync(file, 'utf8')]))
+/* مسار نسبي بفواصل مائلة دائماً: البوابة تُشغَّل على ويندوز في مسار الإصدار،
+   و`relative()` هناك يعيد `src\ui\...` فلا يطابق أي مفتاح/استثناء ويظهر كل ملف
+   مخالفاً — بوابة تفشل على المنصة التي يُبنى عليها للعملاء وتنجح على لينكس فقط. */
+const relPath = (file) => relative(appRoot, file).split(sep).join('/')
+const source = new Map(files.map((file) => [relPath(file), readFileSync(file, 'utf8')]))
 const allText = [...source.values()].join('\n')
 const lineOf = (text, index) => text.slice(0, index).split('\n').length
 
@@ -80,7 +84,7 @@ const importPattern = /(?:from\s+|import\s*\(\s*)['"](\.[^'"]+)['"]/g
 function resolveImport(fromRel, spec) {
   const base = resolve(dirname(join(appRoot, fromRel)), spec)
   for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')]) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return relative(appRoot, candidate)
+    if (existsSync(candidate) && statSync(candidate).isFile()) return relPath(candidate)
   }
   return null
 }
