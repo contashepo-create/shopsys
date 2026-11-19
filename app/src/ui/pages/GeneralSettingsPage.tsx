@@ -5,7 +5,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins, Building2 } from 'lucide-react'
+import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins, Building2, CalendarClock } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
@@ -213,6 +213,37 @@ export function GeneralSettingsPage() {
             )
           })}
         </div>
+
+        {/* F8: تقريب الفئات النقدية — يخصّ النقد المستلم فقط */}
+        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <h4 className="font-bold text-[13px] text-slate-700 dark:text-slate-200 mb-1">💵 تقريب الفئات النقدية</h4>
+          <p className="text-[11.5px] text-slate-400 mb-2">
+            يُطبَّق على النقد المستلم في الفاتورة المحصلة كاملةً فقط — إجمالي الفاتورة الضريبية لا يتغيّر،
+            والفرق يُقيَّد في <b>5112 فروق تسويات نقدية</b>. اتركه على «بلا تقريب» في السعودية (هللة).
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {([
+              [0, 'بلا تقريب'],
+              [5, '0.05'],
+              [10, '0.10'],
+              [25, '0.25 (ربع)'],
+              [50, '0.50'],
+              [100, '1.00'],
+            ] as const).map(([step, label]) => {
+              const active = (setup.cashRoundingStepMinor ?? 0) === step
+              return (
+                <button
+                  key={step}
+                  data-cash-rounding={step}
+                  onClick={() => { updateSetup({ cashRoundingStepMinor: step }); toast.show(step === 0 ? 'أُوقف التقريب النقدي' : `التقريب النقدي: ${label} ${cur.symbol} — الفرق يُقيَّد في 5112 ✓`) }}
+                  className={`px-3 py-2 rounded-xl border-2 text-[12px] font-bold transition-all ${active ? 'border-brand-500/60 bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-500'}`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       </section>
 
       {/* سياسة الورديات (مراجعة المالك — النمط العالمي Toast/Square) */}
@@ -248,6 +279,47 @@ export function GeneralSettingsPage() {
                 عند التفعيل: شاشة الكاشير ترفض إتمام البيع أو الدفع حتى تُفتح وردية بعهدة افتتاحية
               </div>
               <div className={`text-[10.5px] font-bold mt-1 ${on ? 'text-violet-600' : 'text-amber-600'}`}>{on ? 'إلزامي للكاشير (مُوصى به)' : 'الكاشير بلا وردية مسموح — الأدوار الأخرى حسب سياقها'}</div>
+            </button>
+          )
+        })()}
+      </section>
+
+      {/* سياسة تاريخ الصلاحية عند الاستلام (البقالة: معبّأ صارم / خام مُفرز لاحقاً) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '131ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <CalendarClock size={17} className="text-emerald-500" /> تاريخ الصلاحية عند الاستلام
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          الافتراضي <b>مرن</b>: استلام صنف متتبَّع بلا تاريخ يمرّ مع تنبيه، ويظهر في تقرير «دفعات بلا تاريخ» —
+          مناسب للخام (التمور/اللحوم) الذي يُفرز لاحقاً بتواريخ مخرجات. إن كنت تشتري معبّأً فقط (ألبان/معلبات)
+          ففعّل الإلزام فيُرفض ترحيل الفاتورة حتى تُكمل التاريخ — يمنع بيعاً منتهياً بلا تنبيه.
+        </p>
+        {(() => {
+          const on = setup.requirePurchaseExpiry === true
+          return (
+            <button
+              onClick={() => {
+                try {
+                  updateSetup({ requirePurchaseExpiry: !on })
+                  toast.show(!on ? 'أصبح تاريخ الصلاحية إلزامياً عند استلام الأصناف المتتبَّعة ✓' : '⚠️ عاد الاستلام بلا تاريخ مسموحاً مع التنبيه وبطاقة «دفعات بلا تاريخ»')
+                } catch (err) { toast.show((err as Error).message, 'error') }
+              }}
+              className={`w-full sm:w-auto text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
+                on ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-sky-500/50 bg-sky-500/10'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-6">
+                <span className={`font-bold text-[13px] ${on ? 'text-emerald-700 dark:text-emerald-400' : 'text-sky-700 dark:text-sky-400'}`}>
+                  📅 منع ترحيل استلام صنف متتبَّع بلا تاريخ صلاحية
+                </span>
+                <span className={`w-10 h-5.5 rounded-full p-0.5 transition-colors ${on ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                  <span className={`block w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${on ? '-translate-x-4.5' : ''}`} />
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1.5">
+                عند التفعيل: شاشتا الشراء تمنعان الترحيل حتى يكتمل التاريخ — وإن كان لديك خام يُفرز لاحقاً فأطفئه
+              </div>
+              <div className={`text-[10.5px] font-bold mt-1 ${on ? 'text-emerald-600' : 'text-sky-600'}`}>{on ? 'إلزامي (مناسب للمعبّأ)' : 'مرن + تنبيه وتقرير (مناسب للخام)'}</div>
             </button>
           )
         })()}

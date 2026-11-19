@@ -5,6 +5,9 @@
  * — هذا ما يسمح بهايبر ماركت يبيع جبنة (صلاحية) وغسالة (سيريال) معاً.
  */
 import type { ItemFeature } from './activities.ts'
+import { MAX_TARE_GRAMS } from './barcode.ts'
+
+export { MAX_TARE_GRAMS }
 import type { Minor } from './money.ts'
 
 export interface Category {
@@ -33,6 +36,22 @@ export function categoryPath(cat: Category, all: Category[]): string {
 }
 
 /** كل الأقسام التابعة لقسم (نفسه + أحفاده) — للفلترة الهرمية */
+/** آباء الفئة من الأقرب إلى الجذر (بلا الفئة نفسها) — لتوريث قواعد الأسعار */
+export function categoryAncestors(catId: number | null | undefined, all: readonly Category[]): number[] {
+  if (catId == null) return []
+  const chain: number[] = []
+  const seen = new Set<number>()
+  let current = all.find((c) => c.id === catId)
+  let guard = 0
+  while (current?.parentId != null && guard++ < 10) {
+    if (seen.has(current.parentId)) break
+    seen.add(current.parentId)
+    chain.push(current.parentId)
+    current = all.find((c) => c.id === current!.parentId)
+  }
+  return chain
+}
+
 export function categoryDescendants(catId: number, all: Category[]): number[] {
   const result = [catId]
   const queue = [catId]
@@ -87,6 +106,11 @@ export interface Item {
   /** مدة الضمان الافتراضية بالأشهر (لأصناف السيريال — تُثبت على كل قطعة وقت بيعها) */
   warrantyMonths: number
   soldByWeight: boolean
+  /**
+   * وزن الوعاء/التغليف بالجرام للصنف الموزون (Tare) — يُطرح من وزن الملصق
+   * أو الميزان الحيّ قبل التسعير، فلا يدفع العميل ثمن العلبة. 0/غيابه = بلا طرح.
+   */
+  tareGrams?: number
   variantColors: string[] // عند variants
   variantSizes: string[]
   /**
@@ -164,14 +188,25 @@ export class PriceFloorError extends Error {
 export function priceFloorViolations(
   lines: readonly { itemId: number; unitPriceMinor: Minor; unitFactor?: number; discountPercent: number }[],
   items: readonly Pick<Item, 'id' | 'nameAr' | 'minSalePriceMinor' | 'costMinor'>[],
+  /**
+   * خصم الفاتورة (٪) — كان يُطبَّق في الإجماليات ولا يدخل فحص الأرضية،
+   * فيمكن تجاوز حماية «لا بيع تحت التكلفة» بخصم 50٪ على الفاتورة بدل السطر.
+   * الخصم على مستوى الفاتورة يوزَّع نسبياً على السطور، فتُقاس الأرضية هنا
+   * على السعر الفعلي بعد الخصمين معاً (تدقيق البقالة 2026-11-17).
+   */
+  invoiceDiscountPercent = 0,
 ): string[] {
+  if (!Number.isFinite(invoiceDiscountPercent) || invoiceDiscountPercent < 0 || invoiceDiscountPercent > 100) {
+    throw new RangeError('خصم الفاتورة يجب أن يكون بين 0 و100')
+  }
+  const invoiceFactor = 1 - invoiceDiscountPercent / 100
   const bad: string[] = []
   for (const l of lines) {
     const it = items.find((x) => x.id === l.itemId)
     const floor = Math.max(it?.minSalePriceMinor ?? 0, it?.costMinor ?? 0)
     if (!it || floor <= 0) continue
-    // السعر الفعلي بعد خصم السطر وبالوحدة الأساسية؛ يحمي من البيع بأقل من التكلفة حتى لو لم يضبط المستخدم حداً خاصاً.
-    const perBase = (l.unitPriceMinor * (1 - l.discountPercent / 100)) / (l.unitFactor ?? 1)
+    // السعر الفعلي بعد خصم السطر وخصم الفاتورة وبالوحدة الأساسية؛ يحمي من البيع بأقل من التكلفة حتى لو لم يضبط المستخدم حداً خاصاً.
+    const perBase = (l.unitPriceMinor * (1 - l.discountPercent / 100) * invoiceFactor) / (l.unitFactor ?? 1)
     if (perBase < floor - 0.5) bad.push(it.nameAr)
   }
   return [...new Set(bad)]
@@ -265,6 +300,92 @@ export function itemMatchesPartQuery(it: Item, rawQuery: string): boolean {
 
 export interface ItemDraft extends Omit<Item, 'id'> {}
 
+/**
+ * تطبيع باركود عند التسجيل وعند القراءة — نواة خالصة:
+ *  - أرقام عربية/فارسية ← لاتينية: قارئ الباركود يرسل ما تكتبه لوحة المفاتيح،
+ *    فلو كان تخطيط الجهاز عربياً يُسجَّل «٦٢٢١٠٠» أو يُمسح به فلا يطابق
+ *    «622100» أبداً (بايع صنفاً آخر أو «غير موجود» في المشتريات والجرد).
+ *  - حذف المسافات الطرفية والمحارف غير المرئية (ZWNJ/ZWJ/البادئة الصفرية).
+ * لا تُحذف المسافات الداخلية ولا الشرطات: باركود Code128 قد يحملهما فعلاً.
+ */
+export function normalizeBarcode(raw: unknown): string {
+  return String(raw ?? '')
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .replace(/[\u200b-\u200f\uFEFF]/g, '')
+    .trim()
+}
+
+/** تطبيع مصفوفة باركودات + إسقاط الفراغات */
+export function normalizeBarcodes(list: readonly string[] | undefined | null): string[] {
+  return (list ?? []).map(normalizeBarcode).filter(Boolean)
+}
+
+/**
+ * تحذير غير مانع لخانة تحقق EAN-13/UPC-A عند تسجيل باركود رقمي:
+ * طول 12 (UPC-A) أو 13 (EAN-13) بلا خانة تحقق صحيحة = خطأ طباعة/إدخال شائع،
+ * والقارئ سيرفضه أو يقرأ رقماً آخر. لا نمنع الحفظ: كثير من المتاجر تستخدم
+ * أكواداً داخلية لا تتبع EAN. null = لا تحذير.
+ */
+export function barcodeCheckWarning(raw: string): string | null {
+  const code = normalizeBarcode(raw)
+  if (!/^\d+$/.test(code)) return null
+  if (code.length !== 12 && code.length !== 13) return null
+  const sumOf = (digits: string) => {
+    let sum = 0
+    for (let i = 0; i < digits.length; i++) sum += Number(digits[i]) * (i % 2 === 0 ? 1 : 3)
+    return (10 - (sum % 10)) % 10
+  }
+  // EAN-13: أول 12 خانة + خانة تحقق. UPC-A: 11 + تحقق (يُفحص كـ12 بـ0 بادئة)
+  const valid = code.length === 13
+    ? sumOf(code.slice(0, 12)) === Number(code[12])
+    : sumOf(`0${code.slice(0, 11)}`) === Number(code[11])
+  return valid ? null : `الباركود ${code}: خانة التحقق (EAN/UPC) غير صحيحة — تأكد من رقم الملصق قبل الاعتماد`
+}
+
+export interface BarcodeIssue {
+  itemId: number
+  nameAr: string
+  code: string
+  /** باركود الصنف أو باركود وحدة أكبر */
+  field: 'item' | 'unit'
+  unitName?: string
+  /** arabic = أرقام عربية/فارسية أو فراغات (قابلة للتصحيح آلياً) · check = خانة تحقق EAN/UPC خاطئة */
+  kind: 'arabic' | 'check'
+  message: string
+}
+
+/**
+ * فحص جودة باركودات البيانات القائمة: الأكواد التي حُفظت قبل إضافة التطبيع
+ * (أرقام عربية أو محارف غير مرئية) لا تُمسح أبداً، وأكواد EAN/UPC بخانة تحقق
+ * خاطئة تعني رقماً منقولاً خطأً من الملصق. تُعرض في مركز الباركود للإصلاح.
+ */
+export function barcodeIssues(
+  items: readonly Pick<Item, 'id' | 'nameAr' | 'barcodes' | 'extraUnits'>[],
+): BarcodeIssue[] {
+  const issues: BarcodeIssue[] = []
+  const inspect = (itemId: number, nameAr: string, raw: string, field: 'item' | 'unit', unitName?: string) => {
+    const code = raw.trim()
+    if (!code) return
+    const fixed = normalizeBarcode(code)
+    if (fixed !== code) {
+      // قد يكون الكود كله محارف غير مرئية ⇒ التصحيح = حذفه لا تحويله
+      const message = fixed
+        ? `باركود غير مطبَّع (${code}) — لن يُمسح من الماسح حتى يُصحَّح إلى ${fixed}`
+        : `باركود لا يحمل أي حرف مرئي (محارف مخفية فقط) — احذفه وأعد تسجيل باركود الصنف`
+      issues.push({ itemId, nameAr, code, field, unitName, kind: 'arabic', message })
+      return
+    }
+    const check = barcodeCheckWarning(code)
+    if (check) issues.push({ itemId, nameAr, code, field, unitName, kind: 'check', message: check })
+  }
+  for (const it of items) {
+    for (const code of it.barcodes ?? []) inspect(it.id, it.nameAr, code, 'item')
+    for (const unit of it.extraUnits ?? []) inspect(it.id, it.nameAr, unit.barcode ?? '', 'unit', unit.nameAr)
+  }
+  return issues
+}
+
 /** أخطاء التحقق — نصوص عربية جاهزة للعرض */
 export function validateItem(draft: ItemDraft, existing: Item[], editingId?: number): string[] {
   const errors: string[] = []
@@ -276,21 +397,28 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
     errors.push('تنبيه: التكلفة أعلى من سعر البيع — بيع بخسارة')
   if (!draft.baseUnit.trim()) errors.push('الوحدة الأساسية مطلوبة')
   if (draft.trackSerial && draft.soldByWeight) errors.push('لا يجتمع السيريال مع البيع بالوزن')
+  // وزن الوعاء (Tare): رقم صحيح غير سالب، ولا معنى له إلا لصنف يُباع بالوزن
+  if (draft.tareGrams != null) {
+    if (!Number.isInteger(draft.tareGrams) || draft.tareGrams < 0) errors.push('وزن الوعاء بالجرام رقم صحيح غير سالب')
+    else if (draft.tareGrams > MAX_TARE_GRAMS) errors.push(`وزن الوعاء لا يتجاوز ${MAX_TARE_GRAMS} جرام — راجع الإدخال`)
+    else if (draft.tareGrams > 0 && !draft.soldByWeight) errors.push('وزن الوعاء يُضبط للأصناف التي تُباع بالوزن فقط')
+  }
   // صنف خدمة: لا مخزون — التتبعات المخزنية بلا معنى (نمط Square service items)
   if (draft.isService && (draft.trackSerial || draft.trackExpiry || draft.soldByWeight)) {
     errors.push('صنف الخدمة بلا مخزون — لا صلاحية ولا سيريال ولا وزن')
   }
   // تفرد الباركود عبر كل الأصناف (بما فيها باركودات الوحدات)
+  // التطبيع قبل المقارنة: «٦٢٢١٠٠» العربية و«622100» نفس الباركود فعلياً.
   const allCodes = new Set<string>()
   for (const it of existing) {
     if (it.id === editingId) continue
-    for (const b of it.barcodes) allCodes.add(b)
-    for (const u of it.extraUnits) if (u.barcode) allCodes.add(u.barcode)
+    for (const b of normalizeBarcodes(it.barcodes)) allCodes.add(b)
+    for (const u of it.extraUnits ?? []) { const ub = normalizeBarcode(u.barcode); if (ub) allCodes.add(ub) }
   }
   for (const b of draft.barcodes) {
-    if (allCodes.has(b)) errors.push(`الباركود ${b} مستخدم في صنف آخر`)
+    if (allCodes.has(normalizeBarcode(b))) errors.push(`الباركود ${normalizeBarcode(b)} مستخدم في صنف آخر`)
   }
-  const draftCodes = draft.barcodes.filter(Boolean)
+  const draftCodes = normalizeBarcodes(draft.barcodes).filter(Boolean)
   if (new Set(draftCodes).size !== draftCodes.length) errors.push('باركود مكرر داخل نفس الصنف')
   // §81: تفرد SKU غير الفارغ — الكاشير والواجهات يبحثون به ويعرضونه
   if (draft.sku.trim() && existing.some((it) => it.id !== editingId && it.sku === draft.sku.trim())) {
@@ -299,10 +427,11 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
   for (const u of draft.extraUnits) {
     if (u.factor <= 1) errors.push(`معامل الوحدة "${u.nameAr}" يجب أن يكون أكبر من 1`)
     // §81: باركود الوحدة الكبرى كان بلا فحص إطلاقاً — الكاشير يمسحه فيبيع صنفاً بدل آخر
-    if (u.barcode) {
-      if (allCodes.has(u.barcode)) errors.push(`باركود الوحدة «${u.nameAr}» (${u.barcode}) مستخدم في صنف آخر`)
-      if (draft.barcodes.includes(u.barcode)) errors.push(`الباركود ${u.barcode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
-      if (draft.extraUnits.filter((x) => x.barcode === u.barcode).length > 1) errors.push(`باركود الوحدة ${u.barcode} مكرر بين الوحدات`)
+    const unitCode = normalizeBarcode(u.barcode)
+    if (unitCode) {
+      if (allCodes.has(unitCode)) errors.push(`باركود الوحدة «${u.nameAr}» (${unitCode}) مستخدم في صنف آخر`)
+      if (draftCodes.includes(unitCode)) errors.push(`الباركود ${unitCode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
+      if (draft.extraUnits.filter((x) => normalizeBarcode(x.barcode) === unitCode).length > 1) errors.push(`باركود الوحدة ${unitCode} مكرر بين الوحدات`)
     }
   }
   return errors
@@ -320,16 +449,22 @@ export function itemBlockers(draft: Partial<ItemDraft>, existing: Item[], editin
   if (draft.nameAr != null && !draft.nameAr.trim()) errors.push('اسم الصنف مطلوب')
   if ((draft.priceMinor ?? 0) < 0 || (draft.costMinor ?? 0) < 0) errors.push('الأسعار لا تكون سالبة')
   if (draft.trackSerial && draft.soldByWeight) errors.push('لا يجتمع السيريال مع البيع بالوزن')
+  // وزن الوعاء (Tare): رقم صحيح غير سالب، ولا معنى له إلا لصنف يُباع بالوزن
+  if (draft.tareGrams != null) {
+    if (!Number.isInteger(draft.tareGrams) || draft.tareGrams < 0) errors.push('وزن الوعاء بالجرام رقم صحيح غير سالب')
+    else if (draft.tareGrams > MAX_TARE_GRAMS) errors.push(`وزن الوعاء لا يتجاوز ${MAX_TARE_GRAMS} جرام — راجع الإدخال`)
+    else if (draft.tareGrams > 0 && !draft.soldByWeight) errors.push('وزن الوعاء يُضبط للأصناف التي تُباع بالوزن فقط')
+  }
   if (draft.isService && (draft.trackSerial || draft.trackExpiry || draft.soldByWeight)) {
     errors.push('صنف الخدمة بلا مخزون — لا صلاحية ولا سيريال ولا وزن')
   }
   const allCodes = new Set<string>()
   for (const it of existing) {
     if (it.id === editingId) continue
-    for (const b of it.barcodes ?? []) allCodes.add(b)
-    for (const u of it.extraUnits ?? []) if (u.barcode) allCodes.add(u.barcode)
+    for (const b of normalizeBarcodes(it.barcodes)) allCodes.add(b)
+    for (const u of it.extraUnits ?? []) { const ub = normalizeBarcode(u.barcode); if (ub) allCodes.add(ub) }
   }
-  const draftCodes = (draft.barcodes ?? []).filter(Boolean)
+  const draftCodes = normalizeBarcodes(draft.barcodes)
   for (const b of draftCodes) if (allCodes.has(b)) errors.push(`الباركود ${b} مستخدم في صنف آخر`)
   if (new Set(draftCodes).size !== draftCodes.length) errors.push('باركود مكرر داخل نفس الصنف')
   if (draft.sku?.trim() && existing.some((it) => it.id !== editingId && it.sku === draft.sku!.trim())) {
@@ -338,11 +473,12 @@ export function itemBlockers(draft: Partial<ItemDraft>, existing: Item[], editin
   const seenUnitBarcodes = new Set<string>()
   for (const u of draft.extraUnits ?? []) {
     if (u.factor <= 1) errors.push(`معامل الوحدة "${u.nameAr}" يجب أن يكون أكبر من 1`)
-    if (u.barcode) {
-      if (allCodes.has(u.barcode)) errors.push(`باركود الوحدة «${u.nameAr}» (${u.barcode}) مستخدم في صنف آخر`)
-      if (draftCodes.includes(u.barcode)) errors.push(`الباركود ${u.barcode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
-      if (seenUnitBarcodes.has(u.barcode)) errors.push(`باركود الوحدة ${u.barcode} مكرر بين الوحدات`)
-      seenUnitBarcodes.add(u.barcode)
+    const unitCode = normalizeBarcode(u.barcode)
+    if (unitCode) {
+      if (allCodes.has(unitCode)) errors.push(`باركود الوحدة «${u.nameAr}» (${unitCode}) مستخدم في صنف آخر`)
+      if (draftCodes.includes(unitCode)) errors.push(`الباركود ${unitCode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
+      if (seenUnitBarcodes.has(unitCode)) errors.push(`باركود الوحدة ${unitCode} مكرر بين الوحدات`)
+      seenUnitBarcodes.add(unitCode)
     }
   }
   return errors

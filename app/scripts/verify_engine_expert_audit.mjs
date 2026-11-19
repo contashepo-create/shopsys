@@ -98,7 +98,7 @@ const [custA, custB] = st().customers
 const emp = st().employees[0]
 
 step('رصيد افتتاحي لعميل (1104/3101)', () => st().setOpeningBalance({ kind: 'customer', refId: custB.id, amountMinor: 100000, label: 'أول مدة' }))
-step('شراء آجل بمصروف نقل landed على المورد', () => st().postPurchase({ supplierId: supplier.id, date: '2026-09-19', treasury: '1101', notes: '', paidMinor: 0, expenses: [{ nameAr: 'نقل', amountMinor: 5000, allocation: 'quantity', paidFrom: 'supplier' }], lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 2500 }, { itemId: oil.id, qty: 50, unitPriceMinor: 6000 }] }))
+step('شراء آجل بمصروف نقل landed على المورد', () => st().postPurchase({ supplierId: supplier.id, date: '2026-09-19', treasury: '1101', notes: '', paidMinor: 0, expenses: [{ nameAr: 'نقل', amountMinor: 5000, method: 'qty', paidBy: 'supplier', costTreatment: 'inventory' }], lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 2500 }, { itemId: oil.id, qty: 50, unitPriceMinor: 6000 }] }))
 const riceCost = st().items.find((i) => i.id === rice.id).costMinor
 const oilCost = st().items.find((i) => i.id === oil.id).costMinor
 step('بيع آجل لعميل مسجل بضريبة شاملة', () => st().postSale({ lines: [{ itemId: rice.id, nameAr: 'أرز', qty: 10, unitPriceMinor: 4000, unitCostMinor: riceCost, discountPercent: 0, soldByWeight: false }], payment: 'credit', treasury: '1101', customerId: custA.id, invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: true, allowNegativeStock: false }))

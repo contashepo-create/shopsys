@@ -260,4 +260,7 @@ export const STANDARD_COA: Account[] = [
   { code: '5117', nameAr: 'مصروف عمولات موظفين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'staff_commission_expense' },
   { code: '5118', nameAr: 'خسائر بيع واستبعاد أصول ثابتة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'asset_disposal_loss' },
   { code: '5119', nameAr: 'خسائر فروق عملة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'fx_loss' },
+  /* F3: فصل الفقد غير المبرر عن الهالك المبرر — سؤال المالك الدائم «كم خسرته
+     انتهاء صلاحية/تلف، وكم سرق أو ضاع بلا سبب؟» لا يُجاب بحساب واحد. */
+  { code: '5120', nameAr: 'فقد وعجز جرد غير مبرر', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'stock_shortage' },
 ]

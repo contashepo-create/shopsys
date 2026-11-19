@@ -6,23 +6,25 @@
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil } from 'lucide-react'
+import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil, Scale } from 'lucide-react'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
-import { computeTotals, lineTotal, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { roundCashAmount } from '../../core/cashRounding.ts'
+import { computeTotals, lineTotal, repriceCartForPriceList, CreditLimitError, stockShortage, scaleWeightTargetError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
-import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
+import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem, weightFromPrintedPrice, itemTareGrams, netWeightKg } from '../../core/barcode.ts'
+import { useScaleStore, isReadingFresh } from '../../stores/scale.store.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
-import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
+import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, normalizeBarcode, type Item } from '../../core/items.ts'
 import { matchesSearch, searchRank } from '../../core/search.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey, resolveVariantBarcode } from '../../core/variants.ts'
-import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
+import { promotionActiveOn, promotionSavingsMinor, promotionRetailMinor } from '../../core/promotions.ts'
 import { ExpiredStockError, nearestExpiryByItem } from '../../core/batches.ts'
 import { jewelryBreakdown } from '../../core/jewelry.ts'
 import { emptyRxLine, validateRxLines, doseText, type RxLine } from '../../core/prescription.ts'
@@ -113,6 +115,8 @@ export function PosPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
+  /** آخر سطر أُضيف من باركود **سعر**: الوزن مُشتق من سعر الكيلو الحالي — نُظهره للمراجعة */
+  const [priceDerivedLine, setPriceDerivedLine] = useState<{ itemId: number; kg: number; priceMinor: number } | null>(null)
   const [cart, setCart] = useState<CartLine[]>([])
   const [selectedCartIndex, setSelectedCartIndex] = useState<number | null>(null)
   // كتابة الكمية العشرية بحرية («.25» لربع كيلو): مسودة نصية لكل سطر أثناء الكتابة،
@@ -164,10 +168,14 @@ export function PosPage() {
   }, [customerId, customers, priceLists])
   const pickCustomer = (id: number | null) => {
     setCustomerId(id)
-    // إعادة تسعير السطور غير المخصومة يدوياً حسب قائمة العميل الجديد
+    // إعادة تسعير السطور حسب قائمة العميل الجديد — **عدا** السطور التي عدّل
+    // الكاشير سعرها يدوياً (اتفاق سعر/خصم مباشر)، فلا يُمحى تعديله بصمت عند
+    // اختيار عميل. كانت الشاشة تعيد تسعير كل السطور دون استثناء.
     const c = id == null ? null : customers.find((x) => x.id === id)
     const listId = c?.priceListId ?? null
-    setCart((prev) => prev.map((l) => ({ ...l, unitPriceMinor: getEffectivePrice(l.itemId, listId) })))
+    setCart((prev) => repriceCartForPriceList(prev, (itemId) => getEffectivePrice(itemId, listId)))
+    const manualCount = cart.filter((l) => l.priceManual).length
+    if (manualCount > 0) toast.show(`أُبقيت أسعار ${manualCount} سطراً معدَّلة يدوياً كما هي`)
   }
   const customerPickerInfo = (party: { id: number; active?: boolean }) => {
     const balance = getCustomerBalance(party.id)
@@ -183,12 +191,35 @@ export function PosPage() {
   const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const priceRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const [searchIndex, setSearchIndex] = useState(0)
+  // وقت آخر إدخال يُشبه المسح (باركود/سيريال/ميزان). بعد إضافته يعود التركيز
+  // لخانة الباركود مباشرة ليعمل المسح المتواصل؛ الإضافة اليدوية بالاسم تُبقي
+  // الدورة القديمة (كمية ← سعر) فلا يتغير سلوك الكاشير المعتاد.
+  const scanFocusAtRef = useRef<number | null>(null)
+  // أصناف حُذّرنا من تجاوز رصيدها في هذه الفاتورة (تحذير واحد لا لكل مسحة)
+  const warnedStockRef = useRef<Set<number>>(new Set())
+  // وزن حيّ من ميزان متصل (Web Serial) — يُطبَّق على السطر المختار بنقرة
+  const liveScaleReading = useScaleStore((state) => state.reading)
+  const scaleReadingFresh = isReadingFresh(liveScaleReading)
   const posSignature = JSON.stringify({ cart, qtyDrafts, invoiceDiscount, payment, paymentTerminalId, terminalReference, terminalCardLast4, customerId, paidCash, treasury })
   const unsaved = useUnsavedChangesGuard(posSignature)
   useEffect(() => { if (!cart.length) unsaved.markClean() }, [cart.length, unsaved])
 
-  // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
-  useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])
+  /* التركيز بعد كل إضافة:
+     - إدخال باركود/ميزان ⇒ يبقى في خانة البحث: القارئ يرسل الرقم+Enter مرة واحدة،
+       ولو انتقل التركيز لخانة الكمية لالتُقط الباركود التالي **داخل الكمية**
+       (6,281,000,123,456 قطعة!) ولم يُضف الصنف التالي إطلاقاً — عيب كاشير بقالة حقيقي.
+     - إدخال يدوي بالاسم ⇒ الدورة المعتادة: الكمية ثم السعر ثم البحث. */
+  useEffect(() => {
+    const scanned = scanFocusAtRef.current != null && Date.now() - scanFocusAtRef.current < 3000
+    if (scanned) {
+      scanFocusAtRef.current = null
+      searchRef.current?.focus()
+      searchRef.current?.select()
+      return
+    }
+    if (cart.length) qtyRefs.current[cart.length - 1]?.focus()
+    else searchRef.current?.focus()
+  }, [cart.length])
   useEffect(() => { const focusItem = () => { searchRef.current?.focus(); searchRef.current?.select() }; window.addEventListener('shopsys:focus-item', focusItem); window.addEventListener('shopsys:open-item', focusItem); return () => { window.removeEventListener('shopsys:focus-item', focusItem); window.removeEventListener('shopsys:open-item', focusItem) } }, [])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
@@ -281,7 +312,55 @@ export function PosPage() {
     toast.show(`🔢 ${it.nameAr} — ${serial}`)
   }
 
-  const addToCart = (itemId: number, weightQty?: number) => {
+  /**
+   * تحذير رصيد **قبل** الدفع: الترحيل يرفض النقص برسالة عامة بعد أن يقف الطابور.
+   * ننبّه مرة واحدة لكل صنف حتى لا يتحول كل مسحة إلى إشعار. لا نمنع الإضافة
+   * (الرصيد قد يكون قديماً في جهاز الكاشير) — المنع النهائي عند الترحيل.
+   */
+  const warnIfBeyondStock = (it: Item, addBaseQty: number) => {
+    const inCart = cart.reduce((sum, l) => sum + (l.itemId === it.id ? l.qty * (l.unitFactor ?? 1) : 0), 0)
+    const shortage = stockShortage({
+      stockQty: it.stockQty ?? 0, inCartQty: inCart, addQty: addBaseQty,
+      allowNegative: setup.allowNegativeStock, isService: it.isService,
+    })
+    if (!shortage || warnedStockRef.current.has(it.id)) return
+    warnedStockRef.current.add(it.id)
+    toast.show(`⚠️ «${it.nameAr}»: المطلوب ${shortage.needed} والمتاح ${shortage.available} — لن يُرحَّل البيع قبل توفير الرصيد أو تفعيل «السماح بالبيع بالسالب»`, 'error')
+  }
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      warnedStockRef.current.clear()
+      setPriceDerivedLine(null)
+      return
+    }
+    // حُذف سطر الصنف الذي جاء من باركود السعر ⇒ اللافتة بلا معنى
+    setPriceDerivedLine((current) => (current && cart.some((line) => line.itemId === current.itemId) ? current : null))
+  }, [cart])
+
+  /** تطبيق الوزن الحيّ على السطر المختار (يستبدل الكمية ولا يضيفها — الوزن قراءة كاملة) */
+  const applyLiveScaleWeight = () => {
+    const index = selectedCartIndex
+    const line = index == null ? null : cart[index]
+    if (!line) return
+    const targetError = scaleWeightTargetError(line)
+    if (targetError) { toast.show(targetError, 'error'); return }
+    if (!liveScaleReading || !isReadingFresh(liveScaleReading)) { toast.show('لا قراءة حديثة من الميزان — أعد الوزن', 'error'); return }
+    const gross = Math.round(liveScaleReading.kg * 1000) / 1000
+    if (gross <= 0) { toast.show('قراءة الميزان صفرية — لا تُطبَّق', 'error'); return }
+    // وزن الوعاء يُطرح من قراءة الميزان الحيّة أيضاً؛ صنف بلا وعاء يبقى كما هو
+    const tare = itemTareGrams(items.find((it) => it.id === line.itemId))
+    const kg = tare > 0 ? netWeightKg(gross, tare) : gross
+    if (kg <= 0) { toast.show(`قراءة الميزان ${gross} كجم لا تغطي وزن الوعاء ${tare} جم — أعد الوزن`, 'error'); return }
+    setCart((prev) => prev.map((l, i) => (i === index ? { ...l, qty: kg } : l)))
+    toast.show(tare > 0 ? `⚖️ ${line.nameAr} — ${kg} كجم صافياً من الميزان (−${tare} جم وعاء)` : `⚖️ ${line.nameAr} — ${kg} كجم من الميزان`)
+  }
+
+  /**
+   * @param fixedTotalMinor إجمالي سطر ثابت من ملصق ميزان يحمل السعر (لا الوزن):
+   *        العميل يدفع ما على الملصق حرفياً، والوزن يبقى للخصم من المخزون.
+   */
+  const addToCart = (itemId: number, weightQty?: number, fixedTotalMinor?: number) => {
     const it = items.find((x) => x.id === itemId)
     if (!it) return
     // حماية من خطأ «السعر صفر»: لا صنف بلا سعر بيع يدخل السلة بصمت
@@ -305,6 +384,25 @@ export function PosPage() {
     // صنف موزع على تركيبات لون×مقاس ⇒ اختيار التركيبة أولاً (نمط استشاري)
     if (hasVariantStock(variantStocks, it.id)) {
       setVariantPickItem(it.id)
+      return
+    }
+    // تحذير الرصيد بعد التأكد أن السطر سيُضاف فعلاً: الصنف ذو التركيبات/السيريالات
+    // يُوجَّه لاختيار التركيبة، ورصيده في `variantStocks` لا في `stockQty` — فتحذيره
+    // هنا قبل التوجيه كان يظهر «المتاح 0» كذباً.
+    warnIfBeyondStock(it, weightQty ?? (it.soldByWeight ? 0.5 : 1))
+    if (fixedTotalMinor != null) {
+      setCart((prev) => {
+        /* كل ملصق سعري = سطر مستقل، ولا يُجمَع مع ملصق قائم لنفس الصنف:
+           الملصقان قد يحملان سعر كيلو مختلفاً (سعر تغيّر بين طباعتين)، فدمجهما في
+           سطر بإجمالي مجموع يجعل المرتجع الجزئي يوزّع السعر بالوزن — فيُرد من صنف
+           سعرُه أعلى بسعر الصنف الأرخص. سطر لكل ملصق يُبقي كل مبلغ على ملصقه. */
+        return [...prev, {
+          itemId: it.id, nameAr: it.nameAr, qty: weightQty ?? 1,
+          unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor,
+          vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id),
+          discountPercent: 0, soldByWeight: it.soldByWeight, lineTotalOverrideMinor: fixedTotalMinor,
+        }]
+      })
       return
     }
     setCart((prev) => {
@@ -333,7 +431,7 @@ export function PosPage() {
       if (!it) return l
       const basePrice = getEffectivePrice(it.id, activePriceListId)
       if (unitName === it.baseUnit) {
-        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id), unitFactor: undefined, unitLabel: undefined }
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: itemVatExemptPerUnit(it.id), unitFactor: undefined, unitLabel: undefined, priceManual: false }
       }
       const u = it.extraUnits.find((x) => x.nameAr === unitName)
       if (!u) return l
@@ -344,6 +442,8 @@ export function PosPage() {
         unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id), vatExemptPerUnitMinor: Math.round(itemVatExemptPerUnit(it.id) * u.factor),
         unitFactor: u.factor,
         unitLabel: u.nameAr,
+        // سعر الوحدة مشتق من معاملها ⇒ ليس تعديلاً يدوياً على الوحدة الجديدة
+        priceManual: false,
       }
     }))
   }
@@ -353,6 +453,7 @@ export function PosPage() {
     const it = items.find((x) => x.id === itemId)
     const u = it?.extraUnits.find((x) => x.nameAr === unitName)
     if (!it || !u) return
+    warnIfBeyondStock(it, u.factor)
     const basePrice = getEffectivePrice(it.id, activePriceListId)
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.itemId === itemId && l.unitLabel === unitName)
@@ -368,15 +469,67 @@ export function PosPage() {
   }
 
   /**
+   * هل الإدخال الحالي «مسح» لا كتابة بحث؟
+   * باركود/سيريال/باركود ميزان/كود صنف مطابق — يقرره التطابق الفعلي لا الطول
+   * وحده. يُستعمل لإعادة التركيز لخانة البحث بعد الإضافة (مسح متواصل).
+   */
+  const isScanEntry = (raw: string): boolean => {
+    const q = normalizeBarcode(raw)
+    if (!q) return false
+    if (/^\d{4,}$/.test(q)) return true
+    if (findBySerial(serials, q)) return true
+    if (parseScaleBarcodeUniversal(q, scaleRules)) return true
+    if (resolveVariantBarcode(q, sellable)) return true
+    return sellable.some((it) =>
+      it.barcodes.includes(q) || it.sku === q || it.extraUnits.some((u) => normalizeBarcode(u.barcode) === q),
+    )
+  }
+  const markScan = () => { scanFocusAtRef.current = Date.now() }
+
+  /**
    * مسح باركود (Enter):
+   * 0) باركود صنف/وحدة/تركيبة مطابق تماماً ⇒ هو الأسبق دائماً (وإلا التقطته
+   *    قاعدة ميزان بالبادئة نفسها فباع وزناً من صنف آخر)
    * 1) باركود ميزان (22XXXXXWWWWW) → يضيف الصنف بوزنه من الملصق مباشرة
-   * 2) باركود عادي مطابق → إضافة فورية
+   * 2) رقم سيريال → القطعة المعيّنة
    * 3) نتيجة بحث وحيدة → إضافة
    */
   const onSearchEnter = () => {
-    const q = query.trim()
+    const q = normalizeBarcode(query)
     if (!q) return
-    // مسح IMEI/سيريال مباشرة؟ (نمط موبايل شوب): متاح ⇒ يضيف القطعة نفسها،
+    // ① تطابق تام لأي باركود مسجل (الصنف/وحدة أكبر/تركيبة لون ومقاس) قبل أي تفكيك
+    const exactUnit = sellable
+      .flatMap((it) => it.extraUnits.filter((u) => normalizeBarcode(u.barcode) === q).map((u) => ({ it, u })))
+    if (exactUnit.length === 1) {
+      addUnitToCart(exactUnit[0].it.id, exactUnit[0].u.nameAr)
+      setQuery('')
+      return
+    }
+    const variantMatch = resolveVariantBarcode(q, sellable)
+    if (variantMatch) {
+      const it = sellable.find((x) => x.id === variantMatch.itemId)
+      if (it) {
+        const inCartQty = cart.reduce((s, l) => s + (l.itemId === variantMatch.itemId && (l.variantColor ?? '') === variantMatch.color && (l.variantSize ?? '') === variantMatch.size ? l.qty : 0), 0)
+        const stock = variantStocks.find((v) => v.itemId === variantMatch.itemId && variantKey(v.color, v.size) === variantKey(variantMatch.color, variantMatch.size))
+        const avail = Math.round(((stock?.qty ?? 0) - inCartQty) * 1000) / 1000
+        if (avail > 0) {
+          addVariantToCart(variantMatch.itemId, variantMatch.color, variantMatch.size)
+          setQuery('')
+          return
+        }
+        toast.show(`«${it.nameAr}» ${variantLabel(variantMatch.color, variantMatch.size)}: لا رصيد متاح`, 'error')
+        setQuery('')
+        return
+      }
+    }
+    // قارن بالشكل المطبَّع أيضاً: بيانات قديمة قد تحمل أرقاماً عربية في الحقل
+    const exact = sellable.find((it) => it.barcodes.some((b) => normalizeBarcode(b) === q) || it.sku === q)
+    if (exact) {
+      addToCart(exact.id)
+      setQuery('')
+      return
+    }
+    // ② مسح IMEI/سيريال مباشرة؟ (نمط موبايل شوب): متاح ⇒ يضيف القطعة نفسها،
     // مباع ⇒ يعرض حالة ضمانه بدل رسالة «غير موجود»
     const su = findBySerial(serials, q)
     if (su) {
@@ -396,15 +549,26 @@ export function PosPage() {
       setQuery('')
       return
     }
-    // باركود ميزان؟ (عالمي — يجرب كل قواعد التفكيك الممكّنة بالترتيب: وزن أو سعر)
+    // ③ باركود ميزان؟ (عالمي — يجرب كل قواعد التفكيك الممكّنة بالترتيب: وزن أو سعر)
     const scale = parseScaleBarcodeUniversal(q, scaleRules)
     if (scale) {
-      const it = matchScaleItem(scale.itemCode, sellable)
+      // قاعدة وزن لا تطابق إلا صنفاً «يُباع بالوزن» — وإلا خُصم مخزون صنف
+      // بالعدد بكسور (0.75 «قطعة»).
+      const it = matchScaleItem(scale.itemCode, sellable, { requireWeighted: scale.weightKg != null })
       if (it) {
         if (scale.weightKg != null) {
-          // قاعدة وزن: الكمية = الوزن والسعر من بطاقة الصنف
-          addToCart(it.id, scale.weightKg)
-          toast.show(`⚖️ ${it.nameAr} — ${scale.weightKg} كجم من باركود الميزان`)
+          // قاعدة وزن: الكمية = الصافي بعد طرح وزن الوعاء (Tare) والسعر من بطاقة الصنف
+          setPriceDerivedLine(null)
+          const tare = itemTareGrams(it)
+          const net = tare > 0 ? netWeightKg(scale.weightKg, tare) : scale.weightKg
+          if (net <= 0) {
+            toast.show(`⚖️ «${it.nameAr}»: الوزن ${scale.weightKg} كجم لا يغطي وزن الوعاء ${tare} جم — أعد الوزن بعد معايرة الميزان`, 'error')
+          } else {
+            addToCart(it.id, net)
+            toast.show(tare > 0
+              ? `⚖️ ${it.nameAr} — ${net} كجم صافياً (${scale.weightKg} − ${tare} جم وعاء)`
+              : `⚖️ ${it.nameAr} — ${scale.weightKg} كجم من باركود الميزان`)
+          }
         } else {
           // قاعدة سعر: الميزان طبع السعر الإجمالي — نشتق الوزن = السعر ÷ سعر الكيلو
           const priceMinor = scalePriceToMinor(scale.priceRaw ?? 0, scale.rule.valueDecimals, cur.decimals)
@@ -412,11 +576,13 @@ export function PosPage() {
           if (perKg <= 0) {
             toast.show(`«${it.nameAr}» بلا سعر بيع للكيلو — حدّده أولاً لتفكيك باركود السعر`, 'error')
           } else {
-            const weightKg = Math.round((priceMinor / perKg) * 1000) / 1000
-            if (weightKg <= 0) {
+            const weightKg = weightFromPrintedPrice(priceMinor, perKg)
+            if (weightKg == null) {
               toast.show('باركود سعر بقيمة أصغر من أن تكوّن وزناً — راجع كسور القاعدة', 'error')
             } else {
-              addToCart(it.id, weightKg)
+              // إجمالي السطر = سعر الملصق بالقرش حرفياً (الوزن مشتق ومقرَّب)
+              addToCart(it.id, weightKg, priceMinor)
+              setPriceDerivedLine({ itemId: it.id, kg: weightKg, priceMinor })
               toast.show(`⚖️ ${it.nameAr} — ${fmt(priceMinor)} ${cur.symbol} ≈ ${weightKg} كجم من باركود الميزان`)
             }
           }
@@ -424,41 +590,7 @@ export function PosPage() {
         setQuery('')
         return
       }
-      toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode}) — راجع قائمة PLU في إعدادات الميزان`, 'error')
-      setQuery('')
-      return
-    }
-    // باركود تركيبة لون/مقاس مستقل (تطوير مستقبلي ① — نشاط الملابس): يحدد التركيبة
-    // تلقائياً بدل فتح نافذة الاختيار اليدوي، بعد التحقق من توفرها فعلياً فوق ما في السلة
-    const variantMatch = resolveVariantBarcode(q, sellable)
-    if (variantMatch) {
-      const it = sellable.find((x) => x.id === variantMatch.itemId)
-      if (it) {
-        const inCartQty = cart.reduce((s, l) => s + (l.itemId === variantMatch.itemId && (l.variantColor ?? '') === variantMatch.color && (l.variantSize ?? '') === variantMatch.size ? l.qty : 0), 0)
-        const stock = variantStocks.find((v) => v.itemId === variantMatch.itemId && variantKey(v.color, v.size) === variantKey(variantMatch.color, variantMatch.size))
-        const avail = Math.round(((stock?.qty ?? 0) - inCartQty) * 1000) / 1000
-        if (avail > 0) {
-          addVariantToCart(variantMatch.itemId, variantMatch.color, variantMatch.size)
-          setQuery('')
-          return
-        }
-        toast.show(`«${it.nameAr}» ${variantLabel(variantMatch.color, variantMatch.size)}: لا رصيد متاح`, 'error')
-        setQuery('')
-        return
-      }
-    }
-    // باركود وحدة أكبر (شريط/علبة — جولة الصيدلية)؟ يضيف السطر بوحدته وسعره
-    for (const it of sellable) {
-      const u = it.extraUnits.find((x) => x.barcode === q)
-      if (u) {
-        addUnitToCart(it.id, u.nameAr)
-        setQuery('')
-        return
-      }
-    }
-    const exact = sellable.find((it) => it.barcodes.includes(q) || it.sku === q)
-    if (exact) {
-      addToCart(exact.id)
+      toast.show(`باركود ميزان لصنف غير معروف أو غير مسجل «بالوزن» (كود ${scale.itemCode}) — راجع قائمة PLU وإعداد الصنف`, 'error')
       setQuery('')
       return
     }
@@ -466,6 +598,18 @@ export function PosPage() {
       addToCart(filtered[0].id)
       setQuery('')
     }
+  }
+
+  /** Enter في خانة البحث: يضيف النتيجة المحددة أو يمرّر للمسح المباشر */
+  const submitSearchEntry = () => {
+    const selected = searchResults[searchIndex] ?? searchResults[0]
+    if (isScanEntry(query)) markScan()
+    if (selected) {
+      addToCart(selected.id)
+      setQuery('')
+      return
+    }
+    onSearchEnter()
   }
 
   const totals = useMemo(() => {
@@ -501,6 +645,47 @@ export function PosPage() {
     } catch { return 0 }
   }, [paidCash, totals, cur.decimals])
   const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
+  /** النقد المستلم من العميل قبل ضبطه على الإجمالي — المقبوض الفعلي في الدرج */
+  const cashTenderedMinor = useMemo(() => {
+    try { return Math.max(0, toMinor(paidCash || '0', cur.decimals)) } catch { return 0 }
+  }, [paidCash, cur.decimals])
+  /**
+   * الباقي للعميل: الكاشير يكتب ما استلمه (مثلاً 50 لفاتورة 37.50).
+   * قبل هذا الإصلاح كان المبلغ يُقصّ على الإجمالي بصمت فلا يرى الكاشير
+   * كم يُرجع للعميل — أهم شاشة في بقالة نقدية.
+   *
+   * F8: المطلوب من العميل هو المبلغ **بعد** تقريب الفئات (هو ما يُقيَّد في
+   * الدرج)، فالباقي = المستلم − المقرَّب. حسابه على الإجمالي قبل التقريب كان
+   * يُرجع للعميل فرق التقريب نقداً فيبقى الدرج ناقصاً بلا سبب ظاهر.
+   */
+  const cashToCollectMinor = useMemo(() => {
+    if (!totals) return 0
+    const step = setup.cashRoundingStepMinor ?? 0
+    if (!step) return totals.totalMinor
+    try { return roundCashAmount(totals.totalMinor, step).roundedMinor } catch { return totals.totalMinor }
+  }, [totals, setup.cashRoundingStepMinor])
+  const changeDueMinor = Math.max(0, cashTenderedMinor - cashToCollectMinor)
+  /**
+   * F8: معاينة تقريب الفئات — الكاشير يرى ما سيُحصَّل فعلاً قبل إتمام البيع.
+   * لا يغيّر الإجمالي المعروض ولا الضريبة؛ فرق التقريب يظهر صريحاً.
+   */
+  const cashRoundingPreview = useMemo(() => {
+    if (!totals || !(setup.cashRoundingStepMinor ?? 0)) return null
+    try {
+      const r = roundCashAmount(totals.totalMinor, setup.cashRoundingStepMinor)
+      return r.diffMinor === 0 ? null : r
+    } catch { return null }
+  }, [totals, setup.cashRoundingStepMinor])
+  /** فئات نقدية سريعة (المبلغ المطلوب تقريباً لأقرب فئة) — تُملأ بالضغط */
+  const quickCashMinor = useMemo(() => {
+    if (!totals) return [] as number[]
+    const unit = 10 ** cur.decimals
+    const total = totals.totalMinor
+    const steps = [5, 10, 50, 100].map((n) => Math.ceil(total / (n * unit)) * n * unit)
+    /* F8: أول اقتراح هو المبلغ بعد تقريب الفئات — ما سيدفعه العميل نقداً */
+    const rounded = (setup.cashRoundingStepMinor ?? 0) ? roundCashAmount(total, setup.cashRoundingStepMinor).roundedMinor : total
+    return [...new Set([rounded, total, ...steps])].filter((v) => v >= Math.min(rounded, total)).slice(0, 5)
+  }, [totals, cur.decimals, setup.cashRoundingStepMinor])
 
   /** طباعة إيصال فاتورة (المرحلة 5) — مع الرمز الضريبي عند تفعيل إحدى ميزتي
       الفاتورة الإلكترونية (زاتكا السعودية أو التحقق المحلي المصري) */
@@ -647,6 +832,8 @@ export function PosPage() {
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         priceFloorOverrideBy: priceFloorOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
+        /* F8: تقريب الفئات النقدية من الإعدادات — 0 = بلا تقريب */
+        cashRoundingStepMinor: setup.cashRoundingStepMinor ?? 0,
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
         ...(selectedTerminal ? { terminalPayment: { terminalId: selectedTerminal.id, providerReference: terminalReference.trim(), ...(terminalCardLast4 ? { cardLast4: terminalCardLast4 } : {}) } } : {}),
         ...(commissionEmployeeId && commissionMinor > 0 ? { staffCommission: { employeeId: commissionEmployeeId, amountMinor: commissionMinor } } : {}),
@@ -775,7 +962,7 @@ export function PosPage() {
             ref={searchRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSearchIndex(0) }}
-            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(searchResults.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Escape') { setQuery('') } else if (e.key === 'Enter') { e.preventDefault(); const selected = searchResults[searchIndex] ?? searchResults[0]; if (selected) { addToCart(selected.id); setQuery('') } else onSearchEnter() } }}
+            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(searchResults.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Escape') { setQuery('') } else if (e.key === 'Enter') { e.preventDefault(); submitSearchEntry() } }}
             placeholder="F2 بحث · امسح الباركود أو اكتب الاسم · Enter إضافة · F8 نقدي · F9 دفع"
             className={`${inputCls} pr-10 py-3 text-base border-brand-300 dark:border-brand-700 shadow-sm`}
           />
@@ -864,6 +1051,34 @@ export function PosPage() {
 
       {/* ═══ يسار: السلة ═══ */}
       <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
+        {priceDerivedLine && (
+          <div data-scale-price-derived className="flex items-start justify-between gap-2 border-b border-amber-500/25 bg-amber-500/10 px-4 py-2 text-[11.5px] text-amber-800 dark:text-amber-300">
+            <span className="leading-relaxed">
+              ⚖️ وزن مُشتق من <b>سعر</b> الملصق: {items.find((it) => it.id === priceDerivedLine.itemId)?.nameAr ?? `صنف #${priceDerivedLine.itemId}`} —{' '}
+              <b dir="ltr" className="tabular-nums">{priceDerivedLine.kg.toFixed(3)} kg</b> مقابل {fmt(priceDerivedLine.priceMinor)} {cur.symbol}.
+              المبلغ المدفوع مطابق للملصق حرفياً ({fmt(priceDerivedLine.priceMinor)}) والوزن للخصم من المخزون فقط. إن غيّرت الكمية يدوياً يعود السعر لسعر الكيلو.
+            </span>
+            <button type="button" onClick={() => setPriceDerivedLine(null)} className="shrink-0 font-black underline">تم</button>
+          </div>
+        )}
+        {scaleReadingFresh && liveScaleReading && (
+          <div data-scale-banner className="flex items-center justify-between gap-2 px-4 py-2 bg-sky-500/10 border-b border-sky-500/20 text-[11.5px] text-sky-700 dark:text-sky-300">
+            <span className="flex items-center gap-1.5 font-bold">
+              <Scale size={13} /> وزن حيّ من الميزان: <b dir="ltr" className="tabular-nums">{liveScaleReading.kg.toFixed(3)} kg</b>
+            </span>
+            {cart[selectedCartIndex ?? -1]?.soldByWeight ? (
+              <button
+                type="button"
+                onClick={() => applyLiveScaleWeight()}
+                className="font-black underline hover:text-sky-900 dark:hover:text-sky-100"
+              >
+                طبّق على «{cart[selectedCartIndex!].nameAr}»
+              </button>
+            ) : (
+              <span className="text-slate-500 dark:text-slate-400">اختر سطر صنف موزون ثم اضغط التطبيق</span>
+            )}
+          </div>
+        )}
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <span className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <ShoppingCart size={17} className="text-emerald-500" /> السلة ({cart.length})
@@ -1108,20 +1323,26 @@ export function PosPage() {
                   ) : (
                   <div className="flex items-center justify-center rounded-xl border-2 border-slate-200 dark:border-slate-700 overflow-hidden h-9">
                     <button
-                      onClick={() => { setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n }); setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, Math.round((x.qty - (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000) } : x))) }}
+                      onClick={() => { setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n }); setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, Math.round((x.qty - (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000), lineTotalOverrideMinor: undefined } : x))) }}
                       className="w-8 h-full text-slate-500 font-bold hover:bg-rose-500/10 hover:text-rose-500 transition-colors"
                     >−</button>
                     <input
                       ref={(node) => { qtyRefs.current[i] = node }}
                       value={qtyDrafts[i] ?? String(l.qty)}
                       inputMode="decimal"
+                      title={l.soldByWeight ? 'كجم بثلاث خانات عشرية' : 'كمية صحيحة — للبيع بالوزن فعّل «البيع بالوزن» في الصنف'}
                       onChange={(e) => {
                         const raw = e.target.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace('٫', '.').replace(',', '.')
+                        // البقالة: صنف بالقطعة لا يُباع بكسر (0.5 علبة بيض).
+                        // الأصناف غير الموزونة تقبل أرقاماً صحيحة فقط — الحماية من
+                        // كمية كسرية على صنف قطعة (تدقيق البقالة 2026-11-17)،
+                        // بينما الموزون يبقى بثلاث خانات عشرية.
+                        const quantityPattern = l.soldByWeight ? /^\d*\.?\d*$/ : /^\d*$/
                         // نقبل أثناء الكتابة: فارغ، «.», «0.», «2.» … حتى يكمل المستخدم الكسر
-                        if (!/^\d*\.?\d*$/.test(raw)) return
+                        if (!quantityPattern.test(raw)) return
                         setQtyDrafts((d) => ({ ...d, [i]: raw }))
                         const v = Number(raw)
-                        if (raw !== '' && Number.isFinite(v) && v > 0) setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: v } : x)))
+                        if (raw !== '' && Number.isFinite(v) && v > 0) setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: v, lineTotalOverrideMinor: undefined } : x)))
                       }}
                       onBlur={() => setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n })}
                       onFocus={(e) => e.target.select()}
@@ -1129,12 +1350,12 @@ export function PosPage() {
                       className="w-full h-full text-center text-[13px] font-black bg-transparent text-slate-800 dark:text-white outline-none"
                     />
                     <button
-                      onClick={() => { setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n }); setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.round((x.qty + (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000 } : x))) }}
+                      onClick={() => { setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n }); setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.round((x.qty + (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000, lineTotalOverrideMinor: undefined } : x))) }}
                       className="w-8 h-full text-slate-500 font-bold hover:bg-emerald-500/10 hover:text-emerald-600 transition-colors"
                     >+</button>
                   </div>
                   )}
-                  <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
+                  <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value, priceManual: value !== getEffectivePrice(line.itemId, activePriceListId), lineTotalOverrideMinor: undefined } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
                   {/* ضريبة السطر — تلقائية من بلد المنشأة أو النسبة الخاصة بالصنف؛
                       العمود كله يختفي للمنشأة المعفاة فلا يظهر عمود بلا قيم */}
                   {showTaxCol && (
@@ -1338,12 +1559,30 @@ export function PosPage() {
                     />
                   </div>
                   <div>
-                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">الباقي آجل على العميل</div>
-                    <div className={`px-3.5 py-2.5 rounded-xl border-2 text-center font-black text-lg ${creditRemainder > 0 ? 'border-violet-500/40 bg-violet-500/5 text-violet-600 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-300'}`}>
-                      {fmt(creditRemainder)}
+                    {cashRoundingPreview && (
+                      <div data-cash-rounding-preview className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mb-1.5">
+                        💵 تقريب الفئات: يُحصَّل {formatMinor(cashRoundingPreview.roundedMinor, cur)} بدل {formatMinor(totals.totalMinor, cur)} — فرق {cashRoundingPreview.diffMinor > 0 ? '+' : ''}{formatMinor(cashRoundingPreview.diffMinor, cur)} يُقيَّد في 5112
+                      </div>
+                    )}
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">{changeDueMinor > 0 ? 'الباقي للعميل (يُردّ من الدرج)' : 'الباقي آجل على العميل'}</div>
+                    <div data-testid="pos-change-due" className={`px-3.5 py-2.5 rounded-xl border-2 text-center font-black text-lg ${changeDueMinor > 0 ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : creditRemainder > 0 ? 'border-violet-500/40 bg-violet-500/5 text-violet-600 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-300'}`}>
+                      {fmt(changeDueMinor > 0 ? changeDueMinor : creditRemainder)}
                     </div>
                   </div>
                 </div>
+                {quickCashMinor.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5" data-testid="pos-quick-cash">
+                    <span className="text-[11px] font-bold text-slate-400 self-center">فئات سريعة:</span>
+                    {quickCashMinor.map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setPaidCash(String(value / 10 ** cur.decimals))}
+                        className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-[11.5px] font-bold text-slate-600 dark:text-slate-300 hover:bg-emerald-500/10 hover:border-emerald-400 transition-colors"
+                      >{fmt(value)}</button>
+                    ))}
+                  </div>
+                )}
               </>
             )}
 
@@ -1639,11 +1878,13 @@ export function PosPage() {
                 <span className="flex-1">
                   <span className="font-black block">🎁 {p.nameAr}</span>
                   <span className="text-[10.5px] text-slate-400">
-                    {p.components.map((c) => `${c.qty} × ${items.find((it) => it.id === c.itemId)?.nameAr ?? '؟'}`).join(' + ')}
+                    {p.kind === 'quantity' && p.quantityRule
+                      ? `${p.quantityRule.buyQty} + ${p.quantityRule.freeQty} مجاناً × ${items.find((it) => it.id === p.quantityRule!.itemId)?.nameAr ?? '؟'}`
+                      : p.components.map((c) => `${c.qty} × ${items.find((it) => it.id === c.itemId)?.nameAr ?? '؟'}`).join(' + ')}
                   </span>
                 </span>
                 <span className="text-left">
-                  <b className="text-pink-600 block">{fmt(p.bundlePriceMinor)}</b>
+                  <b className="text-pink-600 block">{fmt(p.kind === 'quantity' ? promotionRetailMinor(p, items) - savings : p.bundlePriceMinor)}</b>
                   {savings > 0 && <span className="text-emerald-600 text-[10px] font-bold">وفر {fmt(savings)}</span>}
                 </span>
               </button>

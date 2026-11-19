@@ -247,30 +247,6 @@ export function buildDepositRefundEntry(depositMinor: Minor, deductionMinor: Min
   return lines
 }
 
-/**
- * قيد بيع عقار مملوك (طريقة الإجمالي):
- *   نقدية/عميل مدين بسعر البيع ← 4115 إيراد بيع عقارات
- *   5116 تكلفة عقارات مباعة مدين ← 1113 العقارات (إخراج الأصل بتكلفته)
- */
-export function buildPropertySaleEntry(args: { salePriceMinor: Minor; costMinor: Minor; payment: 'cash' | 'credit'; treasury: string; vatMinor: Minor; label: string }): JournalLine[] {
-  const { salePriceMinor, costMinor, payment, treasury, vatMinor, label } = args
-  if (!Number.isInteger(salePriceMinor) || salePriceMinor <= 0) throw new Error('سعر البيع يجب أن يكون موجباً')
-  if (!Number.isInteger(costMinor) || costMinor < 0) throw new Error('التكلفة لا تكون سالبة')
-  if (!Number.isInteger(vatMinor) || vatMinor < 0) throw new Error('الضريبة غير صحيحة')
-  const debitAccount = payment === 'cash' ? treasury : '1104'
-  const lines: JournalLine[] = [
-    { accountCode: debitAccount, debit: salePriceMinor + vatMinor, credit: 0, note: `بيع عقار ${label}` },
-    { accountCode: '4115', debit: 0, credit: salePriceMinor, note: 'إيراد بيع عقارات' },
-  ]
-  if (vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: vatMinor, note: 'ض.ق.م' })
-  if (costMinor > 0) {
-    lines.push({ accountCode: '5116', debit: costMinor, credit: 0, note: 'تكلفة العقار المباع' })
-    lines.push({ accountCode: '1113', debit: 0, credit: costMinor, note: 'إخراج العقار من الأصول' })
-  }
-  assertBalanced(lines)
-  return lines
-}
-
 /** قيد اقتناء عقار بغرض الاستثمار/البيع: 1113 مدين ← نقدية/مورد دائن */
 export function buildPropertyAcquisitionEntry(costMinor: Minor, payment: 'cash' | 'credit', treasury: string, label: string): JournalLine[] {
   if (!Number.isInteger(costMinor) || costMinor <= 0) throw new Error('تكلفة الاقتناء يجب أن تكون موجبة')

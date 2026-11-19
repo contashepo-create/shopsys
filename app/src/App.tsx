@@ -37,12 +37,14 @@ import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
 import { LEGAL_VERSION } from './core/legal.ts'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
+import { PageErrorBoundary } from './ui/AppErrorBoundary.tsx'
 import { FinancialDataReviewBoundary } from './ui/components/FinancialDataReviewBoundary.tsx'
 
 import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
 import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { ToastHost, useToast } from './ui/components/ui.tsx'
+import { ConfirmHost } from './ui/components/ConfirmDialog.tsx'
 import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -315,11 +317,13 @@ function RouteTreeForPath({ path }: { path?: string }) {
   const here = useLocation()
   return (
     <div className="h-full min-h-0" data-route-tree={path ?? 'current'}>
-      <FinancialDataReviewBoundary resetKey={path ?? `${here.pathname}${here.search}`}>
-        <Suspense fallback={routeFallback}>
-          <Routes location={location}>{APP_ROUTES}</Routes>
-        </Suspense>
-      </FinancialDataReviewBoundary>
+      <PageErrorBoundary>
+        <FinancialDataReviewBoundary resetKey={path ?? `${here.pathname}${here.search}`}>
+          <Suspense fallback={routeFallback}>
+            <Routes location={location}>{APP_ROUTES}</Routes>
+          </Suspense>
+        </FinancialDataReviewBoundary>
+      </PageErrorBoundary>
     </div>
   )
 }
@@ -1072,6 +1076,7 @@ export default function App() {
           </div>
         </div>
         <ToastHost />
+        <ConfirmHost />
       </>
     )
   }
@@ -1082,6 +1087,7 @@ export default function App() {
       <>
         <LockScreen reason={lockReason} state={licenseState} />
         <ToastHost />
+        <ConfirmHost />
         {/* بند 10: العميل المقفول **أحوج** من غيره لتنبيه المطوّر (تعليمات التجديد،
             «أُرسل مفتاحك — أعد التشغيل»)، والاستطلاع يعمل في هذه الحالة أيضاً، فبدون
             التركيب هنا تصل التنبيهات ولا يعرضها شيء — ولا جرس في شاشة القفل. */}
@@ -1138,6 +1144,7 @@ export default function App() {
         </div>
       )}
       <ToastHost />
+      <ConfirmHost />
       {/* بند 10 (تدقيق 2026-10-08): نافذة تنبيه المطوّر المنبثقة. تظهر فقط لدرجتَي
           important/critical؛ أما info فبقي جرساً وتوستاً بلا مقاطعة.
           تُركَّب أيضاً في فرع شاشة القفل أعلاه (بوابة verify_dev_notice_levels تحصي

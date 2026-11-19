@@ -155,5 +155,53 @@ console.log('\n8️⃣ متجر التطبيق: إدارة القواعد بحم
   ok('حذف قاعدة', A().scaleRules.length === 1)
 }
 
+console.log('\n9️⃣ جولة جاهزية البقالة: حدود الوزن والتقريب والتعارض والمطابقة')
+{
+  const w = { ...bc.DEFAULT_SCALE_RULES[0], id: 9, enabled: true }
+  ok('وزن بـ4 كسور مرفوض في القاعدة', bc.validateScaleRule({ ...w, valueDecimals: 4 }).some((e) => e.includes('3 كسور')))
+  ok('سعر بـ4 كسور مقبول', !bc.validateScaleRule({ ...w, valueType: 'price', valueDecimals: 4 }).some((e) => e.includes('كسور')))
+  const dec4 = { ...w, valueDecimals: 4 }
+  ok('الوزن يُقرَّب لجرام', bc.parseWithRule('220004200075', dec4)?.weightKg === 0.008)
+  ok('وزن يتقرّب لصفر يُرفض', bc.parseWithRule('220004200001', dec4) === null)
+  const counted = { id: 1, nameAr: 'علبة', sku: 'BOX-42', barcodes: ['42'], soldByWeight: false }
+  const weighed = { id: 2, nameAr: 'جبنة', sku: 'CHE-42', barcodes: [], soldByWeight: true }
+  ok('قاعدة الوزن تتخطى صنفاً بالعدد يحمل نفس الرقم', bc.matchScaleItem('42', [counted, weighed], { requireWeighted: true })?.id === 2)
+  ok('بلا شرط الوزن يبقى السلوك القديم', bc.matchScaleItem('42', [counted, weighed])?.id === 1)
+  const rows = bc.buildPluRows([
+    { nameAr: 'لحم', sku: 'MEAT-77', barcodes: [], priceMinor: 6000, soldByWeight: true, isActive: true, baseUnit: 'كجم' },
+    { nameAr: 'بهارات', sku: 'SPICE-78', barcodes: [], priceMinor: 500, soldByWeight: true, isActive: true, baseUnit: 'جرام' },
+  ], 5, 2)
+  ok('وحدة غير كجم تُحذَّر في PLU', rows[0].warning === null && (rows[1].warning ?? '').includes('كيلوجرام'))
+  const priceRule = { ...w, id: 10, nameAr: 'سعر 22', valueType: 'price', valueDecimals: 2 }
+  ok('تعارض قاعدة وزن/سعر بنفس البادئة يُكشف', bc.scaleRuleConflicts([w, priceRule]).length === 1)
+  ok('قاعدة معطلة لا تُحسب تعارضاً', bc.scaleRuleConflicts([w, { ...priceRule, enabled: false }]).length === 0)
+}
+
+console.log('\n🔟 قارئ الميزان المباشر (Web Serial) — تفكيك السطور')
+{
+  const { parseScaleFrame, splitScaleBuffer } = await import('../src/core/scaleSerial.ts')
+  const r = parseScaleFrame('ST,GS,+  0.750kg')
+  ok('CAS: 0.750kg مستقرة', r && r.kg === 0.75 && r.stable)
+  ok('الجرام ← كجم', parseScaleFrame('US,GS, 750 g')?.kg === 0.75)
+  ok('غير المستقرة لا تُقبل', parseScaleFrame('US,NT,+ 0.750kg')?.stable === false)
+  ok('صفر/خطأ لا يُنتج قراءة', parseScaleFrame('0.000 kg') === null && parseScaleFrame('ERR 04') === null)
+  const cut = splitScaleBuffer('', 'ST,GS,+ 0.7')
+  ok('السطر المقطوع بين حزمتين يُكمَل', cut.lines.length === 0 && splitScaleBuffer(cut.rest, '50kg\r\n').lines[0] === 'ST,GS,+ 0.750kg')
+}
+
+console.log('\n1️⃣1️⃣ توليد الباركود الداخلي للأصناف بلا أي كود')
+{
+  const { planInternalBarcodes, ean13CheckDigit } = bc
+  const plan = planInternalBarcodes([
+    { id: 1, nameAr: 'أ', sku: '', barcodes: [], isActive: true },
+    { id: 2, nameAr: 'ب', sku: 'SKU-2', barcodes: [], isActive: true },
+    { id: 3, nameAr: 'ج', sku: '', barcodes: ['6281000000011'], isActive: true },
+    { id: 4, nameAr: 'د', sku: '', barcodes: [], isActive: false },
+  ], bc.DEFAULT_SCALE_RULES)
+  ok('يولّد لأول صنف فقط', plan.length === 1 && plan[0].id === 1)
+  ok('خانة تحقق EAN-13 سليمة', ean13CheckDigit(plan[0].code.slice(0, 12)) === Number(plan[0].code[12]))
+  ok('لا يفسّره الميزان كملصق', bc.parseScaleBarcodeUniversal(plan[0].code, bc.DEFAULT_SCALE_RULES) === null)
+}
+
 console.log(`\n═══ النتيجة: نجح ${pass} — فشل: ${fail} ═══`)
 if (fail > 0) process.exit(1)

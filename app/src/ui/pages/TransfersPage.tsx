@@ -18,11 +18,11 @@ import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
+  const { transfers, warehouses, items, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 
-  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
+  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes])
 
   const [tab, setTab] = usePersistedSectionView('transfers', 'list', ['list', 'balances'] as const)
 

@@ -48,7 +48,18 @@ export function buildReturnLines(
       const l = saleLines[i]
       if (l.itemId !== itemId || remaining[i] <= 0) continue
       const take = Math.min(left, remaining[i])
-      out.push({ ...l, serials: undefined, qty: Math.round(take * 1000) / 1000, saleLineIndex: i })
+      out.push({
+        ...l,
+        serials: undefined,
+        qty: Math.round(take * 1000) / 1000,
+        saleLineIndex: i,
+        /* المسار القديم لا يعرف التجزئة: حصة الفرق التراكمي بدل كامل التكلفة/الملصق.
+           `remaining[i]` هنا **قبل** خصم هذه الكمية (يُخصم بعد الإدراج)، فالمُرجَع
+           سابقاً = كمية الأصل − المتبقي. (كان يُطرح `take` أيضاً فيُحسب المُرجَع
+           سابقاً ناقصاً بمقدار هذه الدفعة — صحيح مصادفةً عندما تنقسم القيمة على 3.) */
+        ...(l.costTotalMinor != null ? { costTotalMinor: returnLineCostMinor(l, Math.round((l.qty - remaining[i]) * 1000) / 1000, take) } : {}),
+        ...(l.lineTotalOverrideMinor != null ? { lineTotalOverrideMinor: returnLineOverrideMinor(l, Math.round((l.qty - remaining[i]) * 1000) / 1000, take) } : {}),
+      })
       remaining[i] = Math.round((remaining[i] - take) * 1000) / 1000
       left = Math.round((left - take) * 1000) / 1000
     }
@@ -85,6 +96,9 @@ export function cumulativeSaleReturnTotals(
   const keys = ['grossMinor', 'discountMinor', 'netMinor', 'taxBaseMinor', 'taxMinor', 'totalMinor'] as const
   const quantities = new Map<number, number>()
   const costs = new Map<number, number>()
+  // سطر لا يعود للمخزون (طبق يُجهَّز عند الطلب): تكلفته صفر في التجميع التراكمي أيضاً،
+  // وإلا حُجب المرتجع بأن «تكلفة المرتجع المجزأ غير مثبت».
+  const nonRestockable = new Set<number>()
   let previous: CartTotals = { grossMinor: 0, discountMinor: 0, netMinor: 0, taxBaseMinor: 0, taxMinor: 0, totalMinor: 0, cogsMinor: 0 }
   const increment = (lines: readonly ReturnLine[]): CartTotals => {
     if (!lines.length) throw new Error('سطور المرتجع غير مثبتة — يلزم المراجعة')
@@ -94,11 +108,22 @@ export function cumulativeSaleReturnTotals(
       if (!Number.isSafeInteger(index) || !original || !Number.isFinite(line.qty) || line.qty <= 0 || line.itemId !== original.itemId || line.unitPriceMinor !== original.unitPriceMinor || line.discountPercent !== original.discountPercent || (line.unitFactor ?? 1) !== (original.unitFactor ?? 1) || (line.vatPercentOverride ?? null) !== (original.vatPercentOverride ?? null) || (line.vatExemptPerUnitMinor ?? 0) !== (original.vatExemptPerUnitMinor ?? 0)) throw new Error('سطر المرتجع أو أصله غير مثبت — يلزم المراجعة')
       if (!Number.isSafeInteger(line.unitCostMinor) || line.unitCostMinor < 0 || (costs.has(index!) && costs.get(index!) !== line.unitCostMinor)) throw new Error('تكلفة سطر المرتجع غير مثبتة — يلزم المراجعة')
       costs.set(index!, line.unitCostMinor)
+      if (line.nonRestockable) nonRestockable.add(index!)
       const qty = Math.round(((quantities.get(index!) ?? 0) + line.qty) * 1000) / 1000
       if (qty > original.qty + 1e-9) throw new Error('كمية المرتجع تتجاوز الأصل')
       quantities.set(index!, qty)
     }
-    const aggregated = [...quantities.entries()].sort(([a], [b]) => a - b).map(([index, qty]) => ({ ...saleLines[index], qty, unitCostMinor: costs.get(index)! }))
+    const aggregated = [...quantities.entries()].sort(([a], [b]) => a - b).map(([index, qty]) => {
+      const original = saleLines[index]
+      return {
+        ...original,
+        qty,
+        unitCostMinor: costs.get(index)!,
+        ...(original.costTotalMinor != null
+          ? { costTotalMinor: nonRestockable.has(index) ? 0 : Math.round((original.costTotalMinor * qty) / original.qty) }
+          : {}),
+      }
+    })
     const cumulative = computeTotals(aggregated, invoiceDiscountPercent, taxPercent, taxInclusive, 2)
     const standalone = computeTotals([...lines], invoiceDiscountPercent, taxPercent, taxInclusive, 2)
     const diff = { ...standalone }
@@ -227,6 +252,11 @@ export type ReturnLine = CartLine & {
   expiryBatchAllocations?: { batchId: number; qty: number }[]
   /** حالة البضاعة — undefined = سجل قديم (عوملت resellable) */
   condition?: ReturnCondition
+  /**
+   * سطر لا يمكن إعادته للمخزون مهما كانت حالته (طبق «يُجهَّز عند الطلب» أو خدمة):
+   * تكلفته لا تدخل 1103 بل تُحمَّل على الهالك 5111 — الخامات استُهلكت فعلاً.
+   */
+  nonRestockable?: boolean
 }
 
 /** طلب إرجاع سطر محدد بعينه من الفاتورة (النمط العالمي — لا تجميع بالصنف) */
@@ -292,6 +322,16 @@ export function buildReturnLinesPerLine(
     }
     out.push({
       ...src,
+      /* سطر بسعر ملصق ثابت: حصة الفرق التراكمي (لا ضرب مستقل) فلا يضيع قرش
+         عند تعدد المرتجعات الجزئية، والمرتجع الكامل يعيد إجمالي الملصق بالضبط. */
+      ...(src.lineTotalOverrideMinor != null
+        ? { lineTotalOverrideMinor: returnLineOverrideMinor(src, Math.round((src.qty - (rem[spec.lineIndex] ?? src.qty)) * 1000) / 1000, spec.qty) }
+        : {}),
+      /* تكلفة الجزء المُرجَع من سطر تكلفته مثبَّتة: فرق الحصة التراكمية، فيبقى
+         قيد 5101/1103 مطابقاً للقيمة الراجعة للمخزون بالقرش عند أي تجزئة. */
+      ...(src.costTotalMinor != null
+        ? { costTotalMinor: returnLineCostMinor(src, Math.round((src.qty - (rem[spec.lineIndex] ?? src.qty)) * 1000) / 1000, spec.qty) }
+        : {}),
       serials: spec.serials?.map(serial => serial.trim().toUpperCase()),
       ...(spec.batchAllocations !== undefined ? { expiryBatchAllocations: spec.batchAllocations.map(a => ({ ...a })) } : {}),
       qty: Math.round(spec.qty * 1000) / 1000,
@@ -305,11 +345,45 @@ export function buildReturnLinesPerLine(
   return out
 }
 
-/** تكلفة الجزء التالف من سطور مرتجع (لقيد الهالك 5111 وتخطي عودة المخزون) */
+/**
+ * حصة سعر السطر من سطر بسعر ملصق ثابت (lineTotalOverrideMinor).
+ *
+ * `lineTotalOverrideMinor` إجمالي **السطر** لا سعر وحدته (ملصق ميزان/عرض «3 بـ10»)،
+ * فإرجاع جزء منه يحتاج حصته النسبية. الحساب **فرق تراكمي** لا ضرب مستقل لكل مرتجع:
+ * ثلاثة مرتجعات بجزء واحد من سطر إجماليه 10.00 تعطي 3.33+3.33+3.34 = 10.00 بالقرش،
+ * بينما الضرب المستقل يعطي 3.33×3 = 9.99 — قرش يضيع في كل دورة إرجاع.
+ */
+export function returnLineOverrideMinor(original: CartLine, priorQty: number, qty: number): number | undefined {
+  const base = original.lineTotalOverrideMinor
+  if (base == null) return undefined
+  if (!Number.isFinite(original.qty) || original.qty <= 0) return Math.round(base * qty)
+  const share = (q: number): number => Math.round((base * q) / original.qty)
+  return share(priorQty + qty) - share(priorQty)
+}
+
+/**
+ * حصة تكلفة سطر مُرجَع من سطر بيع تكلفته مثبَّتة (costTotalMinor).
+ * تُحسب كفرق تراكمي: حصة(المرجَع سابقاً + الحالي) − حصة(المرجَع سابقاً)،
+ * فتبقى فروق المرتجعات المجزأة قابلة للجمع بلا قرش ضائع ولا مكرر.
+ * السطر القديم بلا تكلفة مثبتة يعود لتقريب (كمية × متوسط).
+ */
+export function returnLineCostMinor(original: CartLine, priorQty: number, qty: number): number {
+  const base = original.costTotalMinor
+  if (base == null || !Number.isFinite(original.qty) || original.qty <= 0) return Math.round(qty * original.unitCostMinor)
+  const share = (q: number): number => Math.round((base * q) / original.qty)
+  return share(priorQty + qty) - share(priorQty)
+}
+
+/**
+ * تكلفة ما لا يعود للمخزون من سطور المرتجع (تُحمَّل على الهالك 5111):
+ * السطر التالف + السطر غير القابل للإعادة (طبق يُجهَّز عند الطلب/خدمة).
+ * السطر غير القابل للإعادة كان يُcredited على 1103 بلا أي بضاعة تعود،
+ * فينتفخ رصيد المخزون الدفتري بلا مقابل (اكتُشف بمزعزع المطاعم).
+ */
 export function damagedCostOf(lines: ReturnLine[]): number {
   return lines
-    .filter((l) => l.condition === 'damaged')
-    .reduce((a, l) => a + Math.round(l.qty * l.unitCostMinor), 0)
+    .filter((l) => l.condition === 'damaged' || l.nonRestockable === true)
+    .reduce((a, l) => a + (l.costTotalMinor ?? Math.round(l.qty * l.unitCostMinor)), 0)
 }
 
 export function splitRefund(

@@ -105,13 +105,14 @@ const J = (minor) => minor * 10 // جنيه ⇒ قرش بعشرين قرشاً؟
   const ofs = c.st().postPartyOffset({ customerId: custB.id, supplierId: supB.id, amountMinor: 100000, notes: 'مقاصة §82' })
   assert.match(ofs.offsetNumber, /^OFS-\d{4}$/)
 
-  // الثابت الخامس بإزاحة محسوبة لا مكتوبة: التقييم السريع (كمية×متوسط مقرب للقرش)
-  // يفرق عن الدفتر الدقيق بفروق تقريب صغيرة عند تعدد مستويات أسعار الشراء —
-  // نحسبها ديناميكياً ونحرس سقفها (0.1% من قيمة المخزون) فلا يمر انحراف حقيقي متخفياً
-  const inventoryValued = c.st().items.filter((i) => !i.isService).reduce((s, i) => s + (i.stockQty ?? 0) * (i.costMinor ?? 0), 0)
-  const roundingOffset = inventoryValued - bal(c, '1103')
+  // الثابت الخامس بعد تصحيح مقياسه: التقييم صار بالقيمة الدفترية الدقيقة
+  // (`stockValueMinor`) لا بكمية×متوسط مقرب، فلم تعد هناك حاجة إلى إزاحة تقريب —
+  // وكانت الإزاحة المحسوبة بالمتوسط المقرب تُسقط الثابت زوراً (فرق 60 قرشاً).
+  // يبقى السقف التشخيصي ليُرصد أي انحراف تقريب جديد:
+  const coarseValued = c.st().items.filter((i) => !i.isService).reduce((s, i) => s + (i.stockQty ?? 0) * (i.costMinor ?? 0), 0)
+  const roundingOffset = coarseValued - bal(c, '1103')
   assert.ok(Math.abs(roundingOffset) <= Math.max(1000, Math.round(Math.abs(bal(c, '1103')) / 1000)), `فرق تقريب المخزون ${roundingOffset} داخل السقف`)
-  assertInvariants('السيناريو المتشابك قبل المطابقة', c, { inventoryOffsetMinor: roundingOffset })
+  assertInvariants('السيناريو المتشابك قبل المطابقة', c)
 
   // ——— المطابقة الكلية: كل طرف في الدفتر له كشف، وكل كشف له سطر دفتر ———
   const customers = c.st().customers

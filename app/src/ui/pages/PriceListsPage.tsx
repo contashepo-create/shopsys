@@ -9,7 +9,8 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { resolvePrice } from '../../core/priceLists.ts'
+import { resolvePrice, discountPercentFor } from '../../core/priceLists.ts'
+import { categoryAncestors } from '../../core/items.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
 
 export function PriceListsPage() {
@@ -63,7 +64,7 @@ export function PriceListsPage() {
   }, [items])
   const wholesaleList = priceLists.find((list) => /جمل[ةه]/.test(list.nameAr))
   const activeWholesaleList = activePriceLists.find((list) => /جمل[ةه]/.test(list.nameAr))
-  const discountFor = (retailMinor: number, priceMinor: number) => retailMinor > 0 ? Math.round(((retailMinor - priceMinor) / retailMinor) * 1000) / 10 : 0
+  const discountFor = (retailMinor: number, priceMinor: number) => discountPercentFor(retailMinor, priceMinor)
   const saveCatalogRetailPrice = (itemId: number, rawValue: string) => {
     const value = rawValue.trim()
     try {
@@ -256,7 +257,7 @@ export function PriceListsPage() {
                         ) : fmt(item.priceMinor)}
                       </td>
                       {activePriceLists.flatMap((list) => {
-                        const price = resolvePrice(item.id, item.priceMinor, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId)
+                        const price = resolvePrice(item.id, item.priceMinor, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId, categoryAncestors(item.categoryId, categories))
                         const discountPercent = discountFor(item.priceMinor, price)
                         const entry = priceListEntries.find((candidate) => candidate.listId === list.id && candidate.itemId === item.id)
                         const hasSpecialPrice = !!entry
@@ -311,7 +312,7 @@ export function PriceListsPage() {
             <div className="max-h-[26rem] overflow-y-auto space-y-1.5">
               {items.filter((it) => it.isActive && (!itemFilter || it.nameAr.includes(itemFilter) || it.sku.includes(itemFilter) || it.barcodes.some((barcode) => barcode.includes(itemFilter)))).slice(0, 60).map((it) => {
                 const entry = priceListEntries.find((e) => e.listId === pricingList.id && e.itemId === it.id)
-                const effective = resolvePrice(it.id, it.priceMinor, pricingList.id, priceLists, priceListEntries, priceListCategoryRules, it.categoryId)
+                const effective = resolvePrice(it.id, it.priceMinor, pricingList.id, priceLists, priceListEntries, priceListCategoryRules, it.categoryId, categoryAncestors(it.categoryId, categories))
                 const below = effective < it.costMinor
                 return (
                   <div key={it.id} className="flex items-center gap-2 text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-xl px-3 py-2">
@@ -354,7 +355,7 @@ export function PriceListsPage() {
                     const rule = ruleOf(categoryList.id, category.id)
                     const sample = items.find((item) => item.categoryId === category.id && item.isActive !== false)
                     const effective = sample
-                      ? resolvePrice(sample.id, sample.priceMinor, categoryList.id, priceLists, priceListEntries, priceListCategoryRules, category.id)
+                      ? resolvePrice(sample.id, sample.priceMinor, categoryList.id, priceLists, priceListEntries, priceListCategoryRules, category.id, categoryAncestors(category.id, categories))
                       : null
                     return (
                       <div key={category.id} className="flex items-center gap-2 text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-xl px-3 py-2" data-category-rule-row>

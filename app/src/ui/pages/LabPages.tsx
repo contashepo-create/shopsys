@@ -744,22 +744,38 @@ export function LabPatientsPage() {
 /* ═══════════════ 4) الأطباء المُحيلون ═══════════════ */
 
 export function LabReferrersPage() {
-  const { labReferrers, labOrders, addLabReferrer, toggleLabReferrer, payReferrerCommissions } = useDataStore()
+  const { labReferrers, labOrders, addLabReferrer, updateLabReferrer, toggleLabReferrer, payReferrerCommissions } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [nameAr, setNameAr] = useState('')
   const [phone, setPhone] = useState('')
   const [percent, setPercent] = useState('10')
   const [notes, setNotes] = useState('')
+  const resetReferrerForm = () => { setEditingId(null); setNameAr(''); setPhone(''); setPercent('10'); setNotes('') }
+  /** تصحيح اسم الطبيب أو نسبة عمولته أو هاتفه — العمولة تُثبت على كل طلب لحظة تسجيله،
+      فالتصحيح يخصّ الطلبات القادمة ولا يعيد كتابة كشوف سابقة. */
+  const openReferrerEditor = (id: number) => {
+    const referrer = labReferrers.find((row) => row.id === id)
+    if (!referrer) return
+    setEditingId(referrer.id); setNameAr(referrer.nameAr); setPhone(referrer.phone); setPercent(String(referrer.commissionPercent)); setNotes(referrer.notes)
+    setOpen(true)
+  }
 
   const save = () => {
     try {
-      addLabReferrer({ nameAr: nameAr.trim(), phone: phone.trim(), commissionPercent: Number(percent) || 0, notes: notes.trim() })
-      toast.show('أُضيف الطبيب ✅')
-      setOpen(false); setNameAr(''); setPhone(''); setPercent('10'); setNotes('')
+      const payload = { nameAr: nameAr.trim(), phone: phone.trim(), commissionPercent: Number(percent) || 0, notes: notes.trim() }
+      if (editingId != null) {
+        updateLabReferrer(editingId, payload)
+        toast.show('حُدِّث ملف الطبيب — النسبة الجديدة تسري على الطلبات القادمة ✅')
+      } else {
+        addLabReferrer(payload)
+        toast.show('أُضيف الطبيب ✅')
+      }
+      setOpen(false); resetReferrerForm()
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -820,6 +836,7 @@ export function LabReferrersPage() {
                           <button onClick={() => setPayoutFor({ id: r.id, name: r.nameAr })} title="صرف العمولات المستحقة" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                         )}
                         {/* تفعيل/أرشفة (سد فجوة تقرير النشاط #10 Immediate #4) — لا حذف، فقط إخفاء من اختيار الطلبات الجديدة */}
+                        <button onClick={() => openReferrerEditor(r.id)} className="text-[11px] font-bold text-slate-500 hover:text-violet-600 px-2" data-lab-referrer-edit={r.id}>تعديل</button>
                         <button onClick={() => toggleLabReferrer(r.id)} className="text-[11px] font-bold text-slate-400 hover:text-amber-600 px-2">{r.isActive ? 'تعطيل' : 'تفعيل'}</button>
                       </div>
                     </td>
@@ -831,7 +848,7 @@ export function LabReferrersPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="طبيب مُحيل جديد" subtitle="ملف مُحيل: نسبة عمولته التي تُستحق آلياً مع كل طلب باسمه">
+      <Modal open={open} onClose={() => { setOpen(false); resetReferrerForm() }} title={editingId != null ? 'تصحيح ملف طبيب مُحيل' : 'طبيب مُحيل جديد'} subtitle="ملف مُحيل: نسبة عمولته التي تُستحق آلياً مع كل طلب باسمه">
         <div className="space-y-3"><DocSectionHead step="١" title="بيانات الطبيب ونسبة عمولته" hint="العمولة تُقيَّد مصروفاً لحظة الطلب لا عند صرفها" />
           <Field label="اسم الطبيب *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
@@ -841,8 +858,8 @@ export function LabReferrersPage() {
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
           <DocOutcome>الأثر: <b>لا قيد</b> عند إضافة الطبيب — ومع كل طلب باسمه تُقيَّد عمولته <b>5109 عمولات المحيلين</b> مديناً و<b>2105 عمولات مستحقة للمحيلين</b> دائناً.</DocOutcome>
             <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!nameAr.trim()}>إضافة</Btn>
+            <Btn variant="ghost" onClick={() => { setOpen(false); resetReferrerForm() }}>إلغاء</Btn>
+            <Btn onClick={save} disabled={!nameAr.trim()} data-lab-referrer-save>{editingId != null ? 'حفظ التعديل' : 'إضافة'}</Btn>
           </div>
         </div>
       </Modal>

@@ -183,7 +183,7 @@ export function BoqPage() {
 
 /* ═══════════ مقاولو الباطن ═══════════ */
 export function SubcontractorsPage() {
-  const { projects, subContracts, subCertificates, subPayments, journal, suppliers, boqItems, addSubContract, updateSubContract, addSubCertificate, paySubContractor, releaseSubRetention, addSubAdvance, getSubAdvanceBalance } = useDataStore()
+  const { projects, subContracts, subCertificates, subPayments, journal, suppliers, boqItems, addSubContract, updateSubContract, addSubCertificate, paySubContractor, releaseSubRetention, addSubAdvance, getSubAdvanceBalance, remitWithholdingTax } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const printSwitches = usePrintSwitches()
@@ -327,6 +327,20 @@ export function SubcontractorsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  /* توريد ضريبة الاستقطاع (2112) للمصلحة — كان المسار جاهزاً ومختبراً بلا أي زر في الشاشة،
+     فيبقى الالتزام معلقاً على الحساب إلى الأبد. المعروض هنا رصيد الدفتر المحمّل،
+     والتوريد الفعلي يحسب رصيد فرع المستخدم داخل المتجر ويُعيده للتأكيد. */
+  const withholdDue = journal.reduce((total, entry) => total + entry.lines
+    .filter((line) => line.accountCode === '2112')
+    .reduce((sum, line) => sum + (line.credit || 0) - (line.debit || 0), 0), 0)
+  const [remitTreasury, setRemitTreasury] = useState('')
+  const doRemitWithholding = () => {
+    try {
+      const result = remitWithholdingTax(remitTreasury)
+      toast.show(`وُرّدت ضريبة الاستقطاع ${fmt(result.amount)} إلى المصلحة بسند صرف ✅`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   const doRelease = (c: SubContract) => {
     try {
       const r = releaseSubRetention(c.id, payTreasury)
@@ -347,6 +361,16 @@ export function SubcontractorsPage() {
         <Btn onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> عقد باطن جديد</Btn>
       </div>
       <div className="text-sm text-slate-500">عقد ← شهادات أعمال بمحتجز ← دفعات من المستحق ← إفراج المحتجزات عند الاستلام النهائي — وكل شهادة تدخل تكاليف مشروعها تلقائياً</div>
+
+      <div className={`${card} p-4 flex flex-wrap items-end gap-3`}>
+        <div className="flex-1 min-w-[220px]">
+          <div className="text-[12px] font-bold text-slate-500">ضريبة الاستقطاع المستحقة للمصلحة (2112)</div>
+          <div className={`text-lg font-black ${withholdDue > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(Math.max(0, withholdDue))}</div>
+          <div className="text-[11px] text-slate-400 mt-1">تتراكم من نسب الاستقطاع على شهادات مقاولي الباطن، وتُخفَّض بسند صرف عند التوريد — والتوريد يحسب مستحق فرعك الفعلي</div>
+        </div>
+        <div className="w-52"><Field label="من خزينة/بنك"><TreasuryPicker value={remitTreasury} onChange={setRemitTreasury} operation="payment" /></Field></div>
+        <Btn onClick={doRemitWithholding} disabled={withholdDue <= 0}>توريد للمصلحة</Btn>
+      </div>
 
       {subContracts.length === 0 ? (
         <EmptyState icon="👷" title="لا عقود باطن بعد" sub="سجّل مقاولي الباطن (حفر، حدادة، كهرباء…) بعقود ومحتجزات — التكلفة تُعترف بالشهادات المعتمدة لا بالدفع" />

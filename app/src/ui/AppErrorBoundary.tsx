@@ -61,3 +61,46 @@ export class AppErrorBoundary extends Component<Props, State> {
     )
   }
 }
+
+/**
+ * حدّ خطأ **على مستوى الصفحة** لا التطبيق.
+ *
+ * لماذا: الحدّ العام (`AppErrorBoundary`) يُستبدل الشجرة كلها — أي خطأ في شاشة
+ * واحدة (حقل ناقص، صف بلا مفتاح، بيانات قديمة) يمحو الشريط الجانبي ويجبر المالك
+ * على إعادة التشغيل، فيفقد عمله في بقية الشاشات. هذا الحدّ يُبقي الغلاف حياً
+ * ويعرض بطاقة داخل مكان الصفحة وحدها مع زر إرجاع فوري.
+ *
+ * `FinancialDataReviewBoundary` يُعيد رفع ما ليس خطأ مالي مراجعةً عن قصد، فيصل إلى
+ * هنا — وهو المسار المقصود: بيانات تحتاج مراجعة ≠ شاشة تحتاج إعادة تشغيل.
+ */
+export class PageErrorBoundary extends Component<Props, State> {
+  state: State = { error: null, incidentId: null }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { error, incidentId: incidentId() }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    const component = info.componentStack?.trim().split('\n')[0]?.trim() ?? 'unknown-component'
+    logEvent('error', `Page boundary ${this.state.incidentId ?? 'ERR-UNKNOWN'}: ${error.name}: ${error.message} @ ${component}`)
+  }
+
+  private retry = (): void => this.setState({ error: null, incidentId: null })
+
+  render(): ReactNode {
+    if (!this.state.error) return this.props.children
+    return (
+      <section dir="rtl" role="alert" data-page-error-boundary className="m-4 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-5 text-amber-900 dark:text-amber-200">
+        <h2 className="text-base font-bold">تعذّر عرض هذه الشاشة</h2>
+        <p className="mt-2 text-[13px] leading-6">
+          بقية التطبيق يعمل — الشريط الجانبي والأقسام الأخرى سليمة. أعد المحاولة، وإن تكرر الخطأ أرسل الرقم
+          <b className="mx-1 font-mono">{this.state.incidentId}</b>
+          للدعم مع اسم الشاشة.
+        </p>
+        <div className="mt-3 flex gap-2">
+          <button type="button" onClick={this.retry} className="rounded-xl bg-amber-600 px-3 py-2 text-[12px] font-bold text-white">إعادة المحاولة</button>
+        </div>
+      </section>
+    )
+  }
+}

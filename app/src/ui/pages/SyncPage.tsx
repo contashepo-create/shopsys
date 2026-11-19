@@ -12,6 +12,7 @@ import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { validateSyncConfig, fetchRemote, generateSyncSecret, generateStoreAccessToken, rotateStoreAccessToken, rotateSyncEncryptionSecret } from '../../data/syncClient.ts'
 import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 import { isCloudDisabled } from '../../core/featureFlags.ts'
 import { exportSyncPairing, importSyncPairing, PAIRING_PASSWORD_MIN } from '../../core/syncPairing.ts'
@@ -143,7 +144,12 @@ export function SyncPage() {
   }
 
   const restoreSnapshot = async (at: string) => {
-    if (!window.confirm('سيُستبدل ما على هذا الجهاز الآن بحالة اللقطة (وتُحفظ الحالة الحالية كلقطة جديدة أولاً — لا يضيع شيء). متابعة؟')) return
+    const ok = await confirmDialog({
+      title: 'استعادة لقطة تعارض',
+      message: 'سيُستبدل ما على هذا الجهاز الآن بحالة اللقطة. وتُحفظ الحالة الحالية كلقطة جديدة أولاً — لا يضيع شيء.',
+      confirmLabel: 'استعادة اللقطة', danger: true, testId: 'restore-conflict-snapshot',
+    })
+    if (!ok) return
     const r = await restoreConflictSnapshot(at)
     toast.show(r.message, r.ok ? undefined : 'error')
     setSnapVer((v) => v + 1)
@@ -174,7 +180,12 @@ export function SyncPage() {
   }
 
   const rotateAccess = async () => {
-    if (!window.confirm('سيُنشأ اعتماد جديد. يبقى القديم صالحاً 24 ساعة فقط لتحديث بقية الأجهزة. بعد النجاح نزّل ملف ربط جديداً فوراً. متابعة؟')) return
+    const okRotate = await confirmDialog({
+      title: 'تدوير اعتماد المزامنة',
+      message: 'سيُنشأ اعتماد جديد. يبقى القديم صالحاً 24 ساعة فقط لتحديث بقية الأجهزة. بعد النجاح نزّل ملف ربط جديداً فوراً.',
+      confirmLabel: 'تدوير الاعتماد', testId: 'rotate-access',
+    })
+    if (!okRotate) return
     const current = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
     const errors = validateSyncConfig(current)
     if (errors.length) return toast.show(errors[0], 'error')
@@ -191,7 +202,12 @@ export function SyncPage() {
 
   const rotateEncryptionSecret = async () => {
     if (sync.dirty) return toast.show('زامن التغييرات المحلية أولاً قبل تدوير مفتاح التشفير', 'error')
-    if (!window.confirm('سيُعاد تشفير لقطة المتجر كلها بمفتاح جديد. يجب تحديث كل الأجهزة بملف ربط جديد خلال دقائق، وإلا ستفشل مزامنتها. متابعة؟')) return
+    const okSecret = await confirmDialog({
+      title: 'إعادة تشفير لقطة المتجر',
+      message: 'سيُعاد تشفير لقطة المتجر كلها بمفتاح جديد. يجب تحديث كل الأجهزة بملف ربط جديد خلال دقائق، وإلا ستفشل مزامنتها.',
+      confirmLabel: 'إعادة التشفير', danger: true, testId: 'rotate-secret',
+    })
+    if (!okSecret) return
     const current = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
     const errors = validateSyncConfig(current)
     if (errors.length) return toast.show(errors[0], 'error')

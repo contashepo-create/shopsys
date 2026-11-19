@@ -47,8 +47,11 @@ export function invoiceStatusLabel(status: InvoiceReportStatus): string {
   return status === 'paid' ? 'مدفوعة' : status === 'partial' ? 'جزئية' : 'آجلة'
 }
 
-export function invoicePaymentLabel(payment: PaymentMethod): string {
-  return payment === 'cash' ? 'نقدي' : 'آجل'
+export function invoicePaymentLabel(payment: PaymentMethod | string): string {
+  return payment === 'cash' ? 'نقدي'
+    : payment === 'card' ? 'بطاقة'
+    : payment === 'terminal' ? 'ماكينة دفع'
+    : 'آجل'
 }
 
 export function invoiceReceiptStatusLabel(status?: string): string {

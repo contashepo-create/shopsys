@@ -1,4 +1,5 @@
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { useTextPrompt } from '../components/TextPrompt.tsx'
 /**
  * أوامر المطعم (جولة مراجعة نشاط المطعم — نمط Foodics):
  * شبكة طاولات وأوامر مفتوحة: افتح أمراً (صالة/تيك أواي/دليفري) ← أضف الأصناف
@@ -40,6 +41,8 @@ export function RestaurantOrdersPage() {
   const [nTable, setNTable] = useState('')
   const [nDelivery, setNDelivery] = useState('')
   const [activeId, setActiveId] = useState<number | null>(null)
+  /* نافذة إدخال النص (بديل window.prompt غير المدعوم في Electron) */
+  const textPrompt = useTextPrompt()
   const active = open.find((o) => o.id === activeId) ?? null
 
   const [itemQuery, setItemQuery] = useState('')
@@ -109,13 +112,20 @@ export function RestaurantOrdersPage() {
     setItemQuery('')
   }
 
-  const setQty = (idx: number, qty: number) => {
+  const setQty = async (idx: number, qty: number) => {
     if (!active) return
     const lines = qty <= 0 ? active.lines.filter((_, i) => i !== idx) : active.lines.map((l, i) => (i === idx ? { ...l, qty } : l))
     // سد فجوة النشاط #14 (Gap 1): حذف/تقليل صنف بعد إرساله للمطبخ يتطلب سبباً واعتماد مشرف
     if (active.kitchenFiredAt != null && linesReduceExistingQty(active.lines, lines)) {
-      const reason = window.prompt('حُذف/قُلِّل صنف بعد إرساله للمطبخ — ما السبب؟ (يُسجَّل بملاحظات الأمر)')
-      if (!reason?.trim()) return
+      /* نافذة الإدخال الخاصة بالتطبيق: window.prompt لا يعمل في Electron */
+      const reason = await textPrompt.ask({
+        title: 'تعديل صنف بعد إرساله للمطبخ',
+        label: 'سبب الحذف/التقليل',
+        placeholder: 'مثال: العميل غيّر طلبه',
+        hint: 'يُسجَّل السبب في ملاحظات الأمر ويحتاج اعتماد مشرف.',
+        testId: 'order-line-reason',
+      })
+      if (!reason) return
       voidApproval.request((approvedBy) => {
         try { setRestaurantOrderLines(active.id, lines, reason, approvedBy) } catch (e) { toast.show((e as Error).message, 'error') }
       })
@@ -238,9 +248,15 @@ export function RestaurantOrdersPage() {
               <Btn variant="soft" onClick={() => printKitchen(active)} disabled={active.lines.length === 0}><Printer size={14} /> بون المطبخ</Btn>
               <Btn variant="soft" onClick={() => { setSplitSel([]); setSplitOpen(true) }} disabled={active.lines.length < 2}><Scissors size={14} /> تقسيم</Btn>
               <Btn variant="soft" onClick={() => { setMergeSourceId(null); setMergeOpen(true) }} disabled={mergeCandidates.length === 0}><Combine size={14} /> دمج</Btn>
-              <Btn variant="soft" onClick={() => {
-                const reason = window.prompt('سبب الإلغاء؟')
-                if (reason?.trim()) { try { cancelRestaurantOrder(active.id, reason); setActiveId(null); toast.show('أُلغي الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }
+              <Btn variant="soft" onClick={async () => {
+                const reason = await textPrompt.ask({
+                  title: `إلغاء الأمر ${active.orderNumber}`,
+                  label: 'سبب الإلغاء',
+                  placeholder: 'مثال: طلب العميل الإلغاء',
+                  hint: 'يُحفظ السبب على الأمر ويظهر في تقرير الإلغاءات.',
+                  testId: 'order-cancel-reason',
+                })
+                if (reason) { try { cancelRestaurantOrder(active.id, reason); setActiveId(null); toast.show('أُلغي الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }
               }}><XCircle size={14} /> إلغاء</Btn>
               <Btn onClick={() => { setSettleFor(active.id); setPayTreasury(treasuries[0]?.code ?? '1101') }} disabled={active.lines.length === 0}><ReceiptText size={14} /> الفاتورة والدفع</Btn>
             </div>
@@ -397,6 +413,7 @@ export function RestaurantOrdersPage() {
       </Modal>
 
       {voidApproval.dialog}
+    {textPrompt.promptElement}
     </div>
   )
 }

@@ -77,16 +77,109 @@ export function ean13CheckDigit(digits12: string): number {
 }
 
 /** تحقق سلامة قاعدة قبل حفظها — قائمة أخطاء عربية (فارغة = سليمة) */
-export function validateScaleRule(rule: Pick<ScaleRule, 'prefix' | 'itemCodeLen' | 'valueLen' | 'valueDecimals' | 'nameAr'>): string[] {
+export function validateScaleRule(rule: Pick<ScaleRule, 'prefix' | 'itemCodeLen' | 'valueLen' | 'valueDecimals' | 'nameAr' | 'valueType'> & { checkDigit?: ScaleRule['checkDigit'] }): string[] {
   const errors: string[] = []
   if (!rule.nameAr.trim()) errors.push('اسم القاعدة مطلوب — سمّها باسم الميزان لتعرفها لاحقاً')
   if (!/^\d{1,3}$/.test(rule.prefix)) errors.push('البادئة: 1 إلى 3 خانات رقمية (20-29 هي المحجوزة عالمياً للاستخدام الداخلي)')
   if (!Number.isInteger(rule.itemCodeLen) || rule.itemCodeLen < 3 || rule.itemCodeLen > 7) errors.push('طول كود الصنف: 3 إلى 7 خانات')
   if (!Number.isInteger(rule.valueLen) || rule.valueLen < 3 || rule.valueLen > 7) errors.push('طول القيمة: 3 إلى 7 خانات')
   if (!Number.isInteger(rule.valueDecimals) || rule.valueDecimals < 0 || rule.valueDecimals > 4) errors.push('عدد الكسور: 0 إلى 4')
+  // الوزن يُرحَّل بثلاث خانات عشرية (جرامات). قاعدة وزن بأربع خانات تُنتج
+  // كمية 0.7505 كجم يرفضها حارس الحركات المخزنية لحظة الدفع — فتُرفض القاعدة
+  // مبكراً بدل أن يفشل الكاشير عند أول ملصق.
+  if (rule.valueType === 'weight' && Number.isInteger(rule.valueDecimals) && rule.valueDecimals > 3) {
+    errors.push('قاعدة الوزن: 3 كسور كحد أقصى (جرامات) — الكاشير يخزّن الوزن بثلاث خانات فقط')
+  }
   const total = rule.prefix.length + rule.itemCodeLen + rule.valueLen
   if (total > 13) errors.push(`الطول الكلي ${total} يتجاوز 13 — لا يصلح EAN-13`)
+  /* خانة التحقق تُحسب وتُفحص فقط لصيغة EAN-13 (12 رقماً + خانة). قاعدة بطول آخر
+     مع «إلزامية» تُقبل بلا فحص إطلاقاً — خيار يبدو حمايةً وهو بلا أثر. */
+  if (rule.checkDigit === 'require' && total !== 12) {
+    errors.push('«خانة التحقق إلزامية» تُفحص فقط في EAN-13 (12 رقماً + خانة) — اجعل الطول الكلي 12 أو اختر «إن وُجدت»')
+  }
   return errors
+}
+
+/**
+ * تعارضات القواعد الممكّنة: قاعدتان بنفس البادئة والأطوال تُجرب الأولى دائماً،
+ * فقاعدة السعر الثانية لا تعمل أبداً — وإذا اختلف نوع القيمة (وزن/سعر) قرأ
+ * الكاشير 12.50 جنيهاً كوزن 0.125 كجم. تحذير واجهة لا منع حفظ.
+ */
+export function scaleRuleConflicts(rules: readonly ScaleRule[]): string[] {
+  const seen = new Map<string, ScaleRule>()
+  const conflicts: string[] = []
+  for (const rule of rules) {
+    if (!rule.enabled) continue
+    const key = `${rule.prefix}:${rule.itemCodeLen}:${rule.valueLen}`
+    const first = seen.get(key)
+    if (first) {
+      conflicts.push(`«${rule.nameAr}» و«${first.nameAr}» بنفس البادئة والأطوال — الكاشير يطبّق الأولى فقط${rule.valueType !== first.valueType ? ' ونوع القيمة مختلف (وزن/سعر): خطر قراءة السعر وزناً' : ''}`)
+    } else {
+      seen.set(key, rule)
+    }
+  }
+  return conflicts
+}
+
+/**
+ * توليد باركود داخلي EAN-13 بادئته 2 (المخصص عالمياً للاستخدام داخل المتجر:
+ * تعبئة/تقفيل/وزن داخلي) وخانة تحقق صحيحة — للأصناف التي لا تحمل باركود مصنع.
+ * يتخطى أي كود مسجّل مسبقاً، وأي كود تفكّه قاعدة ميزان ممكّنة (وإلا قرأه
+ * الكاشير ملصقَ وزنٍ لصنف آخر)، ويرفض النطاق المنتهي.
+ */
+export function nextInternalBarcode(
+  taken: Iterable<string>,
+  prefix = '200',
+  rules: readonly ScaleRule[] = [],
+): string {
+  const used = new Set<string>()
+  for (const code of taken) used.add(normalizeDigits(code))
+  const blockedByScale = (code: string) =>
+    rules.some((rule) => rule.enabled && parseWithRule(code, rule) !== null)
+  for (let seq = 1; seq <= 999_999_999; seq++) {
+    const body = `${prefix}${String(seq).padStart(9, '0')}`.slice(0, 12)
+    const code = body + String(ean13CheckDigit(body))
+    if (!used.has(code) && !blockedByScale(code)) return code
+  }
+  throw new Error('نفد نطاق الباركود الداخلي — راجع البادئة')
+}
+
+/**
+ * خطة توليد أكواد داخلية لدفعة أصناف: تُعطى فقط للأصناف النشطة التي لا تحمل
+ * أي باركود **ولا كود SKU** (من له SKU يُمسح به ويُطبع ملصقه) — والنتيجة قائمة
+ * جاهزة للتطبيق، بلا لمس أي صنف آخر.
+ */
+export function planInternalBarcodes(
+  items: readonly { id: number; nameAr: string; sku: string; barcodes: string[]; extraUnits?: readonly { barcode?: string }[]; isActive: boolean }[],
+  rules: readonly ScaleRule[] = [],
+  prefix = '200',
+): { id: number; nameAr: string; code: string }[] {
+  const taken = items.flatMap((it) => [
+    ...it.barcodes.filter(Boolean),
+    ...(it.extraUnits ?? []).map((u) => u.barcode).filter((b): b is string => Boolean(b)),
+  ])
+  const plan: { id: number; nameAr: string; code: string }[] = []
+  for (const it of items) {
+    if (!it.isActive) continue
+    if (it.barcodes.some((b) => b.trim()) || it.sku.trim()) continue
+    const code = nextInternalBarcode(taken, prefix, rules)
+    taken.push(code)
+    plan.push({ id: it.id, nameAr: it.nameAr, code })
+  }
+  return plan
+}
+
+/* أرقام عربية/فارسية ← لاتينية وحذف الفراغات (بيانات قديمة قد تحملها) */
+function normalizeDigits(input: string): string {
+  const arabic = '٠١٢٣٤٥٦٧٨٩', persian = '۰۱۲۳۴۵۶۷۸۹'
+  let out = ''
+  for (const ch of String(input ?? '')) {
+    const a = arabic.indexOf(ch)
+    if (a >= 0) { out += String(a); continue }
+    const p = persian.indexOf(ch)
+    out += p >= 0 ? String(p) : ch
+  }
+  return out.replace(/\s/g, '')
 }
 
 /** محاولة تفكيك بقاعدة واحدة — null إن لم تطابق */
@@ -116,7 +209,11 @@ export function parseWithRule(raw: string, rule: ScaleRule): ScaleParseResult | 
   if (itemCode === '0') return null
 
   if (rule.valueType === 'weight') {
-    return { rule, itemCode, weightKg: value / 10 ** rule.valueDecimals, priceRaw: null }
+    // الوزن يُخزَّن بثلاث خانات (جرامات) في المخزون والفاتورة — نقرّب هنا حتى
+    // لا يصل الكاشير كسر أدق يرفضه حارس الحركات، ونرفض ما يتقرّب إلى صفر.
+    const weightKg = Math.round((value / 10 ** rule.valueDecimals) * 1000) / 1000
+    if (!(weightKg > 0)) return null
+    return { rule, itemCode, weightKg, priceRaw: null }
   }
   return { rule, itemCode, weightKg: null, priceRaw: value }
 }
@@ -139,6 +236,46 @@ export function scalePriceToMinor(priceRaw: number, ruleDecimals: number, curren
   const shift = currencyDecimals - ruleDecimals
   if (shift >= 0) return priceRaw * 10 ** shift
   return Math.round(priceRaw / 10 ** -shift)
+}
+
+/**
+ * وزن تقريبي من باركود **سعر** (الميزان طبع المبلغ الكلي لا الوزن):
+ * الوزن = السعر المطبوع ÷ سعر الكيلو **الحالي**، بثلاث خانات (جرامات).
+ *
+ * هذا حدّ تصميم لا خلل: المبلغ المدفوع مطابق للملصق دائماً، لكن الوزن المسجَّل
+ * للمخزون يتغيّر إن تغيّر سعر الكيلو بعد الطباعة. السعر الإجمالي يُقرأ من الملصق
+ * ولا يحمل سعر الوحدة، فالتصحيح الوحيد المتاح هو **وزن** (الملصق الوزني) أو
+ * تعديل الكاشير للكمية يدوياً — والكاشير يُنبّه لذلك صراحة على السطر.
+ * null = لا وزن صالح (سعر كيلو صفري أو وزن يتقرّب لصفر).
+ */
+export function weightFromPrintedPrice(priceMinor: number, pricePerKgMinor: number): number | null {
+  if (!Number.isFinite(priceMinor) || !Number.isFinite(pricePerKgMinor) || pricePerKgMinor <= 0 || priceMinor <= 0) return null
+  const kg = Math.round((priceMinor / pricePerKgMinor) * 1000) / 1000
+  return kg > 0 ? kg : null
+}
+
+/* ─── وزن الوعاء (Tare) — البقالة: العميل لا يدفع ثمن العلبة ───────────────
+ * كل وزن يصل من الميزان/الملصق وزن **إجمالي** ما لم يُعاير الميزان نفسه؛
+ * الصنف يحمل وزن وعائه بالجرام فنطرحه هنا قبل التسعير وخصم المخزون.
+ * الحد الأقصى حماية من إدخال خاطئ (5 كجم وعاء = خطأ إدخال بلا شك). */
+export const MAX_TARE_GRAMS = 5000
+
+/** وزن الوعاء الصالح للصنف (0 عند الغياب/الخطأ) */
+export function itemTareGrams(item: { tareGrams?: number } | null | undefined): number {
+  const tare = item?.tareGrams
+  return Number.isInteger(tare) && tare! > 0 && tare! <= MAX_TARE_GRAMS ? (tare as number) : 0
+}
+
+/**
+ * صافي الوزن القابل للتسعير = الإجمالي − وزن الوعاء، بثلاث خانات عشرية.
+ * يعيد 0 إذا كان الإجمالي لا يغطي الوعاء (يُرفض البيع برسالة صريحة ولا يُسعَّر سالباً).
+ */
+export function netWeightKg(grossKg: number, tareGrams: number): number {
+  if (!Number.isFinite(grossKg) || grossKg < 0) return 0
+  const tareKg = Number.isFinite(tareGrams) && tareGrams > 0 ? tareGrams / 1000 : 0
+  const net = grossKg - tareKg
+  if (net <= 0) return 0
+  return Math.round(net * 1000) / 1000
 }
 
 /** توليد باركود بقاعدة (لطباعة ملصقات من النظام أو للاختبار) — مع خانة تحقق EAN-13 عند 12 خانة */
@@ -178,9 +315,12 @@ export interface PluRow {
   warning: string | null
 }
 
+/** وحدات تُعدّ كيلوجراماً فعلياً — الميزان يطبع السعر «للكيلو» */
+const KG_UNITS = new Set(['كجم', 'كج', 'كغ', 'كغم', 'كيلو', 'كيلو غرام', 'كيلو جرام', 'كيلوجرام', 'كيلوغرام', 'kg', 'KG', 'Kg'])
+
 /** بناء جدول PLU للأصناف الموزونة + تحذيرات التعارض (كود مفقود/مكرر/أطول من القاعدة) */
 export function buildPluRows(
-  items: readonly { nameAr: string; sku: string; barcodes: string[]; priceMinor: number; soldByWeight: boolean; isActive: boolean }[],
+  items: readonly { nameAr: string; sku: string; barcodes: string[]; priceMinor: number; soldByWeight: boolean; isActive: boolean; baseUnit?: string }[],
   itemCodeLen: number,
   currencyDecimals: number,
 ): PluRow[] {
@@ -189,9 +329,18 @@ export function buildPluRows(
   return weighted.map((it) => {
     const plu = scalePluCode(it, itemCodeLen)
     let warning: string | null = null
-    if (!plu) warning = `لا كود رقمي يسع ${itemCodeLen} خانات — أضف باركوداً قصيراً للصنف`
-    else if (seen.has(plu)) warning = `الكود ${plu} مكرر مع «${seen.get(plu)}» — الميزان سيخلط بينهما`
-    else seen.set(plu, it.nameAr)
+    if (!plu) {
+      warning = `لا كود رقمي يسع ${itemCodeLen} خانات — أضف باركوداً قصيراً للصنف`
+    } else if (seen.has(plu)) {
+      warning = `الكود ${plu} مكرر مع «${seen.get(plu)}» — الميزان سيخلط بينهما`
+    } else {
+      seen.set(plu, it.nameAr)
+      // الميزان يطبع سعر الكيلوجرام دائماً: صنف وحدته «جرام» أو «علبة» بسعر
+      // الوحدة يُبرمَج في الميزان كسعر كيلو ⇒ فرق 1000 ضعف أو سعر بلا معنى.
+      if (it.baseUnit != null && it.baseUnit.trim() && !KG_UNITS.has(it.baseUnit.trim())) {
+        warning = `وحدة الصنف «${it.baseUnit}» ليست كيلوجراماً — سعر الكيلو في الميزان سيكون خاطئاً؛ اجعل وحدة الأصناف الموزونة كجم`
+      }
+    }
     const major = (it.priceMinor / 10 ** currencyDecimals).toFixed(currencyDecimals)
     return { plu, nameAr: it.nameAr, pricePerKg: major, warning }
   })
@@ -246,18 +395,24 @@ export function buildScaleBarcode(itemCode: number, weightKg: number, cfg: Scale
   return cfg.prefix + String(itemCode).padStart(cfg.itemCodeLen, '0') + String(grams).padStart(cfg.weightLen, '0')
 }
 
-/** مطابقة كود الميزان مع صنف: يقارن بالباركودات وبالرقم داخل SKU */
+/**
+ * مطابقة كود الميزان مع صنف: يقارن بالباركودات وبالرقم داخل SKU.
+ * `requireWeighted`: لقواعد الوزن — لا تُطابق إلا صنفاً «يُباع بالوزن»، وإلا
+ * أضاف الكاشير 0.750 «قطعة» من صنف يُباع بالعدد وخصم مخزونه بكسور.
+ */
 export function matchScaleItem<T extends { id: number; sku: string; barcodes: string[]; soldByWeight: boolean }>(
   itemCode: string,
   items: T[],
+  options: { requireWeighted?: boolean } = {},
 ): T | undefined {
+  const eligible = options.requireWeighted ? items.filter((it) => it.soldByWeight) : items
   // أولوية 1: باركود مسجل يساوي الكود (بأصفار أو بدونها)
-  const byBarcode = items.find((it) =>
-    it.barcodes.some((b) => b === itemCode || String(parseInt(b, 10)) === itemCode),
+  const byBarcode = eligible.find((it) =>
+    it.barcodes.some((b) => b === itemCode || (/^\d+$/.test(b) && String(parseInt(b, 10)) === itemCode)),
   )
   if (byBarcode) return byBarcode
   // أولوية 2: الرقم داخل SKU (ITM-1042 → 1042)
-  return items.find((it) => {
+  return eligible.find((it) => {
     const n = it.sku.replace(/\D/g, '')
     return n && String(parseInt(n, 10)) === itemCode && it.soldByWeight
   })

@@ -135,7 +135,12 @@ export function reconcileStockValue(
     // count adjustment, return or reversal) rather than a routine withdrawal.
     stockValueMinor = Math.round(nextQty * nextUnitCostMinor)
   } else if (nextQty < currentQty) {
-    stockValueMinor = withdrawStockValue(currentQty, currentValueMinor, currentQty - nextQty).remainingValueMinor
+    /* كمية الصرف تُقرَّب إلى ثلاث خانات قبل حساب القيمة: طرح عددين عشريين
+       (18.197 − 17.777 = 0.419999999999998) يجعل 1975×0.42 = 829.4999…
+       فيُقرَّب 829 بينما قيد التكلفة (بنفس الكمية 0.42) يُقرَّب 830 — فينفصل
+       رصيد 1103 عن قيمة الأصناف بقرش في كل حركة وزن، ويتراكم. */
+    const outgoingQty = Math.round((currentQty - nextQty) * 1000) / 1000
+    stockValueMinor = withdrawStockValue(currentQty, currentValueMinor, outgoingQty).remainingValueMinor
   } else if (nextQty > currentQty) {
     stockValueMinor = currentValueMinor + Math.round((nextQty - currentQty) * currentUnitCostMinor)
   } else {

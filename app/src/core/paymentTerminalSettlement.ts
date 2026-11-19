@@ -2,7 +2,12 @@ export interface TerminalSettlementInput { grossMinor: number; feeMinor: number;
 export interface PaymentTerminalSettlement extends TerminalSettlementInput { id: string; terminalId: string; bankAccountCode: string; transactionIds: string[]; settledAt: string; userId: number; differenceMinor: number; journalEntryId: number }
 export interface TerminalSettlementBreakdown extends TerminalSettlementInput { differenceMinor: number; balanced: boolean }
 export function calculateTerminalSettlement(input: TerminalSettlementInput): TerminalSettlementBreakdown {
-  for (const [name, value] of Object.entries(input)) if (!Number.isSafeInteger(value) || value < 0) throw new Error(`قيمة ${name} في التسوية غير صالحة`)
+  // تحقق الحقول المالية الأربعة صراحةً، لا كل ما يحمله الكائن: تمرير سجل التسوية
+  // كاملاً (بمعرّفه وتاريخه) كان يرمي «قيمة id غير صالحة» فيُعطّل التسوية كلها.
+  for (const name of ['grossMinor', 'feeMinor', 'feeTaxMinor', 'depositedMinor'] as const) {
+    const value = input[name]
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`قيمة ${name} في التسوية غير صالحة`)
+  }
   const expectedDeposit = input.grossMinor - input.feeMinor - input.feeTaxMinor
   if (expectedDeposit < 0) throw new Error('رسوم التسوية تتجاوز إجمالي التحصيل')
   const differenceMinor = input.depositedMinor - expectedDeposit

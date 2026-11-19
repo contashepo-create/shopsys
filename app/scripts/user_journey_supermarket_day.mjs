@@ -15,7 +15,7 @@ st().addItem({ nameAr: 'زيت', categoryId: null, unit: 'زجاجة', priceMino
 const [rice, oil] = st().items
 st().addSupplier({ nameAr: 'مورد جملة', phone: '', taxNumber: '', address: '', notes: '', isActive: true })
 st().postPurchase({ supplierId: st().suppliers[0].id, date: '2026-09-19', treasury: '1101', notes: '', paidMinor: 0,
-  expenses: [{ nameAr: 'نقل', amountMinor: 5000, allocation: 'quantity', paidFrom: 'supplier' }],
+  expenses: [{ nameAr: 'نقل', amountMinor: 5000, method: 'qty', paidBy: 'supplier', costTreatment: 'inventory' }],
   lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 2500 }, { itemId: oil.id, qty: 50, unitPriceMinor: 6000 }] })
 // landed: نقل 5000 على 150 وحدة = 33.33/وحدة → أرز ≈2533، زيت ≈6033
 const riceCost = st().items.find(i => i.id === rice.id).costMinor
@@ -76,5 +76,15 @@ assert.equal(bs.totalAssetsMinor, bs.totalLiabilitiesEquityMinor)
 const is1 = incomeStatement(st().journal, P)
 assert.ok(is1.totalRevenueMinor > 0 && is1.grossProfitMinor > 0, 'إيراد ومجمل ربح موجبان')
 ok(`الختام: ميزان متزن (${tb.totalDebitMinor})، ميزانية متزنة، مجمل ربح ${is1.grossProfitMinor}`)
+
+// ═══ بوابة الثوابت العشرة (نفس فاحص auditKit المعتمد) ═══
+{
+  const { assertJourneyInvariants } = await import('./journey_invariants.mjs')
+  const { useRawDataStore } = await import('../src/data/repo.ts')
+  const { useAppStore } = await import('../src/stores/app.store.ts')
+  const setup = useAppStore.getState().setup
+  const stats = assertJourneyInvariants(useRawDataStore.getState(), { label: 'supermarket_day', allowNegativeStock: setup.allowNegativeStock === true, allowNegativeTreasury: setup.allowNegativeTreasury !== false })
+  console.log(`  ✓ الثوابت: ${stats.entries} قيداً · مدين ${stats.totalDebit}`)
+}
 
 console.log(`\n✅ يوم سوبرماركت كامل: ${pass} محطات — كلها خضراء`)

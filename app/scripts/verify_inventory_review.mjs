@@ -88,8 +88,8 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
   ok('V3: الرصيد ضُبط على المعدود 45')
   assert.equal(bal('1103'), invBefore - 5 * 2000)
   const entry = st().journal.find((e) => e.id === stk.journalEntryId)
-  assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 10000)) // AUDIT-001
-  ok('V3: قيد العجز 5111 هالك مخزون مدين 100 / 1103 دائن 100 — متوازن')
+  assert.ok(entry.lines.some((l) => l.accountCode === '5120' && l.debit === 10000)) // AUDIT-001 + F3
+  ok('V3: قيد العجز 5120 فقد مخزون مدين 100 / 1103 دائن 100 — متوازن (F3)')
   // V2: الدفعة القريبة نقصت 5 (FEFO) — كانت الفجوة: تبقى 20+30=50 والرصيد 45
   const near = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === relDays(45))
   const far = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === relDays(400))
