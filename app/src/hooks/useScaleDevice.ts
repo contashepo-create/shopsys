@@ -57,6 +57,9 @@ export function useScaleDevice() {
     const api = serialApi()
     if (!api) { setError('هذا الجهاز لا يدعم Web Serial — استخدم ميزان USB يكتب كلوحة مفاتيح أو اطبع ملصقات الميزان'); return }
     setError(null)
+    /* اتصال مزدوج (نقرة مكررة) كان يترك المنفذ الأول مفتوحاً ويُفقد قارئه —
+       فيبقى محجوزاً لبرنامج آخر. نفصل الحالي أولاً ثم نفتح من جديد. */
+    if (portRef.current) await disconnect()
     try {
       const port = await api.requestPort()
       await port.open({ baudRate })
@@ -93,7 +96,7 @@ export function useScaleDevice() {
       setError(e instanceof Error ? e.message : 'تعذّر فتح منفذ الميزان')
       setConnected(false)
     }
-  }, [baudRate, setConnected, setError, setReading])
+  }, [baudRate, setConnected, setError, setReading, disconnect])
 
   // أغلق المنفذ عند مغادرة الشاشة حتى لا يبقى محجوزاً لبرنامج آخر
   useEffect(() => () => { void disconnect() }, [disconnect])

@@ -33,15 +33,12 @@ import { DEAD_EXPORT_BASELINE, DEAD_EXPORT_CEILING } from './dead_export_baselin
 
 const R = reporter('مراجعة الشجرة')
 /**
- * R.check: فحص واحد يمرّ أو يُفشل البوابة بقائمة المواضع المخالفة.
- * نُبقي `ok` العدّاد نفسه الذي تستخدمه بقية البوابات (reporter) كي تبقى
- * أعداد الفحوص قابلة للجمع في بوابة المنهجية.
+ * R.check صار في `auditKit.reporter` نفسه: يجمع المخالفات ويُفشل البوابة في
+ * `done()` بدل أن تعرّف كل بوابة نسختها. الفحص هنا يمرّر المخالفين في تفصيل
+ * الرسالة حتى يعرف المطوّر الموضع بلا إعادة تشغيل.
  */
-R.check = (condition, message, offenders = []) => {
-  if (condition) return R.ok(message)
-  const detail = offenders.length ? ` — المخالف: ${offenders.slice(0, 8).join(' · ')}` : ''
-  throw new Error(`❌ ${message}${detail}`)
-}
+const check = (condition, message, offenders = []) =>
+  R.check(condition, message, offenders.length ? `المخالف: ${offenders.slice(0, 8).join(' · ')}` : '')
 const appRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
 const SRC = join(appRoot, 'src')
 
@@ -65,14 +62,8 @@ const CONSOLE_ALLOWED = new Map([
   ['src/App.tsx', 'سجل تشخيص عند فشل تدقيق الترخيص عند الإقلاع — لا واجهة تُظهره للمستخدم'],
   ['src/data/lan/hostSession.ts', 'تحذير أمني عند محاولة اقتران برمز خاطئ — يُسجَّل للمشرف'],
 ])
-const SYSTEM_DIALOG_ALLOWED = new Map([
-  ['src/ui/pages/BranchesPage.tsx', 'تأكيد حذف فرع: window.confirm مدعوم في Electron ويعمل'],
-  ['src/ui/pages/DeliveryTasksPage.tsx', 'تأكيد إلغاء جدولة توصيل'],
-  ['src/ui/pages/FleetPage.tsx', 'تأكيد حذف قطعة من مخزون الصيانة'],
-  ['src/ui/pages/JewelryPage.tsx', 'تأكيد إزالة الوصف الذهبي'],
-  ['src/ui/pages/RecipesPage.tsx', 'تأكيد حذف تركيبة'],
-  ['src/ui/pages/SyncPage.tsx', 'تأكيد ثلاث عمليات مزامنة خطرة (استبدال/اعتماد/إعادة تشفير)'],
-])
+/* لا تسويف: نافذة تأكيد النظام ممنوعة في الشجرة كلها — البديل الداخلي
+   `<ConfirmHost/>` + `confirmDialog()` (نافذة تتبع لغة التطبيق وتعمل في Electron). */
 const FETCH_ALLOWED = new Map([
   ['src/ui/LoginScreen.tsx', 'إرسال رمز دخول عبر بوت تلغرام — العميل نفسه'],
   ['src/ui/pages/TelegramPage.tsx', 'لوحة إعداد البوت: استدعاء getMe/sendMessage'],
@@ -112,7 +103,7 @@ const unreachable = pageFiles.filter((file) => {
   const looksLikeScreen = components.some((name) => /Page$/.test(name))
   return looksLikeScreen && !reachable.has(file)
 })
-R.check(unreachable.length === 0, `R1 كل شاشة موصولة بشجرة App (${pageFiles.length} ملف صفحة)`, unreachable)
+check(unreachable.length === 0, `R1 كل شاشة موصولة بشجرة App (${pageFiles.length} ملف صفحة)`, unreachable)
 
 /* ─── R2/R3: النوافذ النظامية ─── */
 const promptHits = []
@@ -120,12 +111,10 @@ const dialogHits = []
 for (const [file, text] of source) {
   if (file === 'src/ui/components/TextPrompt.tsx') continue // الشرح لا الاستدعاء
   for (const match of text.matchAll(/window\.prompt\s*\(/g)) promptHits.push(`${file}:${lineOf(text, match.index)}`)
-  if (/window\.(alert|confirm)\s*\(/.test(text) && !SYSTEM_DIALOG_ALLOWED.has(file)) {
-    dialogHits.push(file)
-  }
+  if (/window\.(alert|confirm)\s*\(/.test(text)) dialogHits.push(file)
 }
-R.check(promptHits.length === 0, 'R2 لا window.prompt في الشجرة (غير مدعوم في Electron)', promptHits)
-R.check(dialogHits.length === 0, `R3 confirm/alert نظامية مقصورة على ${SYSTEM_DIALOG_ALLOWED.size} ملفاً موثّقاً`, dialogHits)
+check(promptHits.length === 0, 'R2 لا window.prompt في الشجرة (غير مدعوم في Electron)', promptHits)
+check(dialogHits.length === 0, 'R3 لا confirm/alert نظامية في الشجرة كلها (البديل ConfirmHost الداخلي)', dialogHits)
 
 /* ─── R4: console ─── */
 const consoleHits = []
@@ -133,7 +122,7 @@ for (const [file, text] of source) {
   const hits = [...text.matchAll(/console\.(log|debug|warn|error|info)\s*\(/g)]
   if (hits.length && !CONSOLE_ALLOWED.has(file)) consoleHits.push(`${file}:${hits.length}`)
 }
-R.check(consoleHits.length === 0, `R4 console مقصور على ${CONSOLE_ALLOWED.size} موضع تشخيص موثّق`, consoleHits)
+check(consoleHits.length === 0, `R4 console مقصور على ${CONSOLE_ALLOWED.size} موضع تشخيص موثّق`, consoleHits)
 
 /* ─── R5: حقن HTML ─── */
 const injection = []
@@ -141,7 +130,7 @@ for (const [file, text] of source) {
   if (/dangerouslySetInnerHTML/.test(text)) injection.push(`${file}: dangerouslySetInnerHTML`)
   if (/\beval\s*\(|new Function\s*\(/.test(text)) injection.push(`${file}: eval/Function`)
 }
-R.check(injection.length === 0, 'R5 لا حقن HTML ولا تنفيذ نصي ديناميكي', injection)
+check(injection.length === 0, 'R5 لا حقن HTML ولا تنفيذ نصي ديناميكي', injection)
 
 /* ─── R6: catch فارغ ─── */
 const emptyCatch = []
@@ -157,14 +146,14 @@ for (const [file, text] of source) {
     else emptyCatch.push(`${file}:${lineOf(text, match.index)} — بلا سبب`)
   }
 }
-R.check(emptyCatch.length === 0, `R6 لا catch صامت بلا سبب (${documentedSilence} صمتاً موثّقاً بتعليق)`, emptyCatch)
+check(emptyCatch.length === 0, `R6 لا catch صامت بلا سبب (${documentedSilence} صمتاً موثّقاً بتعليق)`, emptyCatch)
 
 /* ─── R7: معلقات ─── */
 const todoHits = []
 for (const [file, text] of source) {
   if (/\b(TODO|FIXME|HACK)\b/.test(text)) todoHits.push(file)
 }
-R.check(todoHits.length === 0, 'R7 لا TODO/FIXME/HACK معلّقة', todoHits)
+check(todoHits.length === 0, 'R7 لا TODO/FIXME/HACK معلّقة', todoHits)
 
 /* ─── R8: مساحات أسماء التخزين ─── */
 const badKeys = []
@@ -175,7 +164,7 @@ for (const [file, text] of source) {
     if (!/^(shopsys|tahakam)/.test(match[1])) badKeys.push(`${file}: ${match[1]}`)
   }
 }
-R.check(badKeys.length === 0, `R8 كل مفاتيح التخزين (${keys.size}) بمساحة اسم`, badKeys)
+check(badKeys.length === 0, `R8 كل مفاتيح التخزين (${keys.size}) بمساحة اسم`, badKeys)
 
 /* ─── R9: الشبكة ─── */
 const fetchHits = []
@@ -186,7 +175,7 @@ for (const [file, text] of source) {
   if (file.includes('/core/') || file.includes('/data/') || file.includes('/dev/')) continue
   if (!FETCH_ALLOWED.has(file)) fetchHits.push(file)
 }
-R.check(fetchHits.length === 0, `R9 fetch في الواجهة مقصور على ${FETCH_ALLOWED.size} مسوّغ`, fetchHits)
+check(fetchHits.length === 0, `R9 fetch في الواجهة مقصور على ${FETCH_ALLOWED.size} مسوّغ`, fetchHits)
 
 /* ─── R10: تصادم الأسماء ─── */
 const byName = new Map()
@@ -195,7 +184,7 @@ for (const file of source.keys()) {
   byName.set(key, [...(byName.get(key) ?? []), file])
 }
 const collisions = [...byName.values()].filter((group) => group.length > 1).flat()
-R.check(collisions.length === 0, `R10 لا تصادم أسماء ملفات (${source.size} ملفاً)`, collisions)
+check(collisions.length === 0, `R10 لا تصادم أسماء ملفات (${source.size} ملفاً)`, collisions)
 
 /* ─── R11: تصديرات بلا مستهلك ─── */
 const identifierCount = new Map()
@@ -223,12 +212,12 @@ const staleDispositions = [...DEAD_EXPORT_BASELINE.keys()].filter((name) => {
   const uses = (identifierCount.get(name) ?? 0) - (declared.get(name) ?? 0)
   return !coreExports.has(name) || uses > 0
 })
-R.check(dead.length === 0 && staleDispositions.length === 0,
+check(dead.length === 0 && staleDispositions.length === 0,
   `R11 كل تصدير تشغيلي في النواة (${coreExports.size}) له مستهلك أو في لقطة الدين (${DEAD_EXPORT_CEILING} سقفاً لا يزيد)`,
   [...dead, ...staleDispositions.map((name) => `${name} — له مستهلك الآن، احذفه من اللقطة`)])
 
 /* سقف الدين لا يزيد: لو زادت أسماء اللقطة عن السقف المكتوب فشل الفحص */
-R.check(DEAD_EXPORT_BASELINE.size <= DEAD_EXPORT_CEILING,
+check(DEAD_EXPORT_BASELINE.size <= DEAD_EXPORT_CEILING,
   `R11.1 سقف الدين ثابت: ${DEAD_EXPORT_BASELINE.size} من ${DEAD_EXPORT_CEILING} (لا يزيد)`)
 
 /* ─── R12: كل صفحة مفحوصة ─── */
@@ -246,7 +235,7 @@ const stalePageDispositions = [...UNTESTED_PAGES.keys()].filter((name) => {
   const moduleName = name.replace(/\.tsx$/, '')
   return testText.includes(`${moduleName}.tsx`)
 })
-R.check(untested.length === 0 && stalePageDispositions.length === 0,
+check(untested.length === 0 && stalePageDispositions.length === 0,
   `R12 كل صفحة (${pageFiles.length}) يشير إليها اختبار أو تسويف مطابق`,
   [...untested, ...stalePageDispositions.map((name) => `${name} — صار مفحوصاً، احذف التسويف`)])
 

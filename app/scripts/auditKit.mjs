@@ -378,10 +378,26 @@ export function addParty(c, kind, nameAr) {
 /** طابع طباعة موحد لنتيجة بوابة */
 export function reporter(title) {
   let pass = 0
+  const failures = []
   return {
     ok(msg) { pass++; console.log('  ✓', msg) },
+    /**
+     * تأكيد بشرط: يسجّل ✓ عند النجاح ويجمع المخالفات عند الفشل، ثم `done()` يرمي
+     * بقائمة واحدة. (كانت السكربتات تعرّف `check` محلياً لعدم وجودها هنا.)
+     */
+    check(condition, msg, detail) {
+      if (condition) { pass++; console.log('  ✓', msg); return true }
+      failures.push(detail ? `${msg} — ${detail}` : msg)
+      console.log('  ✗', msg)
+      return false
+    },
     section(msg) { console.log(`\n${msg}`) },
     done(extra = '') {
+      if (failures.length) {
+        console.log(`\n❌ ${title}: ${pass} ناجحاً · ${failures.length} مخالفة`)
+        for (const f of failures) console.log('   -', f)
+        throw new Error(`${title}: ${failures.length} مخالفة`)
+      }
       console.log(`\n✅ ${title}: ${pass} فحصاً ناجحاً ${extra}`.trim())
       return pass
     },

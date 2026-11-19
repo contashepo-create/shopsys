@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { ConfirmHost, acceptConfirmDialog, cancelConfirmDialog } from './helpers/confirmUi.tsx'
 import { MemoryRouter } from 'react-router-dom'
 import { FleetPage } from '../src/ui/pages/FleetPage.tsx'
 import { useRawDataStore } from '../src/data/repo.ts'
@@ -60,19 +61,19 @@ it('يعدّل رصيد قطعة قائمة بدل إضافة نسخة مكرر�
 })
 
 it('ينبّه على القطع التي وصلت حد إعادة الطلب ويحذف بعد التأكيد', async () => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
-  render(<MemoryRouter><FleetPage /></MemoryRouter>)
+  render(<MemoryRouter><ConfirmHost /><FleetPage /></MemoryRouter>)
   // الرصيد ٢ وحد الطلب ٣ ⇒ تنبيه ظاهر
   expect(document.body.textContent).toContain('قطع وصلت حد إعادة الطلب')
   fireEvent.click(document.querySelector('[data-vehicle-part-remove="1"]') as HTMLElement)
+  await acceptConfirmDialog()
   await waitFor(() => expect(useRawDataStore.getState().vehicleParts).toHaveLength(0))
   expect(useToast.getState().msg).toContain('حُذفت')
 })
 
-it('لا يحذف القطعة إن رُفض التأكيد', () => {
-  vi.spyOn(window, 'confirm').mockReturnValue(false)
-  render(<MemoryRouter><FleetPage /></MemoryRouter>)
+it('لا يحذف القطعة إن رُفض التأكيد', async () => {
+  render(<MemoryRouter><ConfirmHost /><FleetPage /></MemoryRouter>)
   fireEvent.click(document.querySelector('[data-vehicle-part-remove="1"]') as HTMLElement)
+  await cancelConfirmDialog()
   expect(useRawDataStore.getState().vehicleParts).toHaveLength(1)
   expect(useToast.getState().msg).toBeNull()
 })

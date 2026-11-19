@@ -273,3 +273,27 @@ describe('ملصق ميزان يحمل السعر: المدفوع = الملصق
     expect(view.container.textContent).not.toContain('9.99')
   })
 })
+
+describe('ملصقان بسعرين مختلفين لنفس الصنف', () => {
+  it('يبقيان سطرين مستقلين بإجمالي كل ملصق — لا سطر مدموج يوزّع السعرين بالوزن', async () => {
+    S().addItem(itemInput({ nameAr: 'زيتون سعرين', sku: 'OLV-54', barcodes: [], categoryId: 1, baseUnit: 'كجم', stockQty: 20, priceMinor: 3000, soldByWeight: true }) as never)
+    if (!useAppStore.getState().scaleRules.some((r) => r.prefix === '20' && r.enabled)) {
+      useAppStore.getState().addScaleRule({ nameAr: 'سعر 20', prefix: '20', itemCodeLen: 5, valueLen: 5, valueType: 'price', valueDecimals: 2, checkDigit: 'auto', enabled: true } as never)
+    }
+    const code = (price: number) => {
+      const body = `20${String(54).padStart(5, '0')}${String(price).padStart(5, '0')}`
+      return body + ean13CheckDigit(body)
+    }
+    const view = render(<MemoryRouter><PosPage /></MemoryRouter>)
+    const input = view.container.querySelector('input[placeholder^="F2"]') as HTMLInputElement
+    for (const price of [1000, 2000]) {
+      input.focus()
+      fireEvent.change(input, { target: { value: code(price) } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await waitFor(() => expect(view.container.textContent).toContain(price === 1000 ? '10.00' : '20.00'))
+    }
+    await waitFor(() => expect(view.container.querySelectorAll('[data-entry-row]')).toHaveLength(2))
+    expect(view.container.textContent).toContain('10.00')
+    expect(view.container.textContent).toContain('20.00')
+  })
+})

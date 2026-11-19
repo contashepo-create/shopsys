@@ -12,7 +12,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { currentOpenShift, zReportRows, zReportSequence, type Shift } from '../../core/shifts.ts'
+import { currentOpenShift, zReportRows, xReportRows, zReportSequence, type Shift } from '../../core/shifts.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { localDateTimeLabel, todayLocalIso } from '../../core/time.ts'
@@ -66,17 +66,9 @@ export function ShiftsPage() {
       const variance = summary.varianceMinor ?? 0
       /* F2: صفوف Z من دالة واحدة (`zReportRows`) تغذّي الإيصال والاختبار — لا حساب مزدوج */
       const zNumber = zReportSequence(shifts, shift.id)
-      const rows = mode === 'Z'
-        ? zReportRows(shift, summary).map((r) => ({ nameAr: r.nameAr, qty: 1, unitPriceMinor: r.valueMinor, totalMinor: r.valueMinor }))
-        : [
-          { nameAr: 'رصيد الدرج الافتتاحي', qty: 1, unitPriceMinor: shift.openingCashMinor, totalMinor: shift.openingCashMinor },
-          { nameAr: `محصل نقداً (${summary.invoiceCount} فاتورة)`, qty: 1, unitPriceMinor: summary.cashSalesMinor, totalMinor: summary.cashSalesMinor },
-          { nameAr: 'محصل على بنوك/محافظ', qty: 1, unitPriceMinor: summary.bankSalesMinor, totalMinor: summary.bankSalesMinor },
-          { nameAr: 'آجل غير محصل', qty: 1, unitPriceMinor: summary.creditSalesMinor, totalMinor: summary.creditSalesMinor },
-          { nameAr: `مرتجعات نقدية (${summary.returnCount})`, qty: 1, unitPriceMinor: -summary.cashRefundsMinor, totalMinor: -summary.cashRefundsMinor },
-          { nameAr: 'تحصيل تأمين نقداً', qty: 1, unitPriceMinor: summary.cashInsuranceReceiptsMinor, totalMinor: summary.cashInsuranceReceiptsMinor },
-          { nameAr: 'صرف تأمين نقداً', qty: 1, unitPriceMinor: -summary.cashInsurancePaymentsMinor, totalMinor: -summary.cashInsurancePaymentsMinor },
-        ]
+      /* X وZ من دالتين خالصتين تغذّيهما نفس `summarizeShift` — لا صفوف مبنية بيد الشاشة */
+      const rows = (mode === 'Z' ? zReportRows(shift, summary) : xReportRows(shift, summary))
+        .map((row) => ({ nameAr: row.nameAr, qty: 1, unitPriceMinor: row.valueMinor, totalMinor: row.valueMinor }))
       const settings = resolveDocumentPrintSettings(shift).receipt
       const model = buildSimpleDocModel({
         docTitle: mode === 'Z' ? 'تقرير Z — إقفال وردية' : 'تقرير X — معاينة وردية',

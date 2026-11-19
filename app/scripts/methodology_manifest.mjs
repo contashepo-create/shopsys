@@ -20,9 +20,9 @@ export const LAYERS = [
     numeral: '①',
     title: 'الحصر الآلي للأسطح',
     question: 'ماذا يوجد في الكود أصلاً؟ هل نُفِّذ كل سطح، وهل استُدعي في فحص؟',
-    scripts: ['verify_surface_coverage.mjs', 'verify_rare_surfaces.mjs'],
-    minChecks: 2,
-    closes: 'الأسطح النادرة التي لا يمرّ عليها أي فحص (4 أسطح كانت خارج كل تغطية)',
+    scripts: ['verify_surface_coverage.mjs', 'verify_rare_surfaces.mjs', 'verify_typecheck.mjs'],
+    minChecks: 3,
+    closes: 'الأسطح النادرة التي لا يمرّ عليها أي فحص (4 أسطح كانت خارج كل تغطية) + أنواع الشيفرة والاختبارات (كان tsc --noEmit يخرج بنجاح وهو لا يقرأ ملفاً)',
   },
   {
     id: 2,

@@ -13,6 +13,7 @@ import { localIsoTimestamp } from '../../core/time.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { KARAT_LABELS, ALL_KARATS, jewelryBreakdown, pricesAreStale, computeTradeInNet, type Karat } from '../../core/jewelry.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
@@ -134,9 +135,14 @@ export function JewelryPage() {
     return m
   }, [scrapLots])
 
-  const removeProfile = (itemId: number, nameAr: string) => {
+  const removeProfile = async (itemId: number, nameAr: string) => {
     // إزالة الوصف تعيد الصنف لسعر يدوي عادي — السعر المشتق الحالي يبقى كما هو على الصنف
-    if (!window.confirm(`إزالة الوصف الذهبي عن «${nameAr}»؟ سيتوقف اشتقاق سعره من سعر الجرام ويصبح سعره يدوياً كأي صنف.`)) return
+    const ok = await confirmDialog({
+      title: `إزالة الوصف الذهبي عن «${nameAr}»`,
+      message: 'سيتوقف اشتقاق سعره من سعر الجرام ويصبح سعره يدوياً كأي صنف. سعره الحالي يبقى كما هو.',
+      confirmLabel: 'إزالة الوصف', danger: true, testId: 'remove-jewelry-profile',
+    })
+    if (!ok) return
     try { removeJewelryProfile(itemId); toast.show(`أُزيل وصف «${nameAr}» — صار سعره يدوياً ✓`) }
     catch (e) { toast.show((e as Error).message, 'error') }
   }

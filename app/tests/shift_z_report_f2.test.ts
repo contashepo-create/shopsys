@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { summarizeShift, zReportRows, zReportSequence, type Shift, type ShiftDoc } from '../src/core/shifts.ts'
+import { summarizeShift, zReportRows, xReportRows, zReportSequence, type Shift, type ShiftDoc } from '../src/core/shifts.ts'
 import { useDataStore, useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
 
@@ -127,5 +127,53 @@ describe('F2 مع المتجر: Z يُقرأ من الفواتير الحقيق�
     /* الدرج مضبوط بالقرش: Z لا يخفي قرشاً ولا يضيفه */
     expect(after.varianceMinor).toBe(0)
     expect(zReportSequence(S().shifts, closed.id)).toBe(1)
+  })
+})
+
+/* ─── مراجعة صارمة (2026-11-17): F8 × الوردية ─── */
+describe('تقريب الفئات لا يُفسد تقرير Z', () => {
+  const s2: Shift = { ...shift, id: 9, countedCashMinor: null }
+  it('دفع نقدي مقرَّب لأعلى: الدرج يأخذ المستلم لا الإجمالي، ولا آجل سالب', () => {
+    const summary = summarizeShift(s2, [
+      doc({ shiftId: 9, totalMinor: 1_002, paidMinor: 1_005, cashRoundingMinor: 3 }),
+    ], [])
+    expect(summary.cashSalesMinor).toBe(1_005)
+    expect(summary.creditSalesMinor).toBe(0)
+    expect(summary.cashRoundingMinor).toBe(3)
+    expect(summary.expectedCashMinor).toBe(50_000 + 1_005)
+  })
+  it('دفع نقدي مقرَّب لأسفل: لا آجل وهمي بقيمة الخسارة', () => {
+    const summary = summarizeShift(s2, [
+      doc({ shiftId: 9, totalMinor: 1_002, paidMinor: 1_000, cashRoundingMinor: -2 }),
+    ], [])
+    expect(summary.creditSalesMinor).toBe(0)
+    expect(summary.cashSalesMinor).toBe(1_000)
+  })
+  it('دفع جزئي بلا تقريب يبقى آجلاً بالجزء غير المحصل', () => {
+    const summary = summarizeShift(s2, [doc({ shiftId: 9, totalMinor: 5_000, paidMinor: 2_000 })], [])
+    expect(summary.creditSalesMinor).toBe(3_000)
+  })
+  it('صف Z يعرض فرق التقريب كسطر مستقل', () => {
+    const summary = summarizeShift(s2, [doc({ shiftId: 9, totalMinor: 1_002, paidMinor: 1_005, cashRoundingMinor: 3 })], [])
+    const rows = zReportRows({ openingCashMinor: 0, countedCashMinor: null }, summary)
+    expect(rows.find((r) => r.nameAr.startsWith('فروق تقريب'))?.valueMinor).toBe(3)
+  })
+})
+
+/* ─── مراجعة صارمة (2026-11-17): X وZ من تلخيص واحد ─── */
+describe('تقرير X مصدره نفس التلخيص', () => {
+  it('صفوف X تحمل الإجمالي والخصم والضريبة والمرتجعات وفرق التقريب', () => {
+    const summary = summarizeShift(shift, [
+      doc({ totalMinor: 1_002, paidMinor: 1_005, cashRoundingMinor: 3, grossMinor: 1_002 }),
+    ], [])
+    const rows = xReportRows({ openingCashMinor: 50_000 }, summary)
+    const value = (label: string) => rows.find((r) => r.nameAr.startsWith(label))!.valueMinor
+    expect(value('إجمالي المبيعات')).toBe(1_002)
+    expect(value('ض.ق.م')).toBe(0)
+    expect(value('فروق تقريب')).toBe(3)
+    expect(value('المتوقع')).toBe(summary.expectedCashMinor)
+    /* X لا يُظهر «المعدود» و«الفرق» — الوردية لم تُقفل بعد */
+    expect(rows.some((r) => r.nameAr === 'المعدود فعلياً')).toBe(false)
+    expect(rows.some((r) => r.nameAr.startsWith('الفرق'))).toBe(false)
   })
 })

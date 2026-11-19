@@ -7,6 +7,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { PRODUCTION_VARIANCE_REASONS, computeRecipeNutrition, type ProductionExpense } from '../../core/recipes.ts'
 import { Btn, DecimalInput, Field, inputCls, useToast, OverlayPortal } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
 import { todayLocalIso } from '../../core/time.ts'
 
@@ -148,9 +149,14 @@ export function RecipesPage() {
   const doToggleRecipe = (recipeId: number, nameAr: string) => {
     try { toggleRecipe(recipeId); toast.show(`حُدِّث تفعيل تركيبة ${nameAr} ✓`) } catch (error) { toast.show((error as Error).message, 'error') }
   }
-  const doRemoveRecipe = (recipeId: number, nameAr: string) => {
+  const doRemoveRecipe = async (recipeId: number, nameAr: string) => {
     // الحذف محروس في المستودع: تُرفض التركيبة التي لها أوامر إنتاج مرحّلة ويُقترح التعطيل
-    if (!window.confirm(`حذف تركيبة «${nameAr}» نهائياً؟ إن كانت مستخدمة في أوامر إنتاج مرحّلة سيُرفض الحذف وعليك تعطيلها بدلاً من ذلك.`)) return
+    const ok = await confirmDialog({
+      title: `حذف تركيبة «${nameAr}»`,
+      message: 'إن كانت مستخدمة في أوامر إنتاج مرحّلة سيُرفض الحذف وعليك تعطيلها بدلاً من ذلك.',
+      confirmLabel: 'حذف نهائي', danger: true, testId: 'delete-recipe',
+    })
+    if (!ok) return
     try {
       removeRecipe(recipeId)
       if (editingRecipeId === recipeId) setEditingRecipeId(null)

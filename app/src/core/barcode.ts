@@ -77,7 +77,7 @@ export function ean13CheckDigit(digits12: string): number {
 }
 
 /** تحقق سلامة قاعدة قبل حفظها — قائمة أخطاء عربية (فارغة = سليمة) */
-export function validateScaleRule(rule: Pick<ScaleRule, 'prefix' | 'itemCodeLen' | 'valueLen' | 'valueDecimals' | 'nameAr' | 'valueType'>): string[] {
+export function validateScaleRule(rule: Pick<ScaleRule, 'prefix' | 'itemCodeLen' | 'valueLen' | 'valueDecimals' | 'nameAr' | 'valueType'> & { checkDigit?: ScaleRule['checkDigit'] }): string[] {
   const errors: string[] = []
   if (!rule.nameAr.trim()) errors.push('اسم القاعدة مطلوب — سمّها باسم الميزان لتعرفها لاحقاً')
   if (!/^\d{1,3}$/.test(rule.prefix)) errors.push('البادئة: 1 إلى 3 خانات رقمية (20-29 هي المحجوزة عالمياً للاستخدام الداخلي)')
@@ -92,6 +92,11 @@ export function validateScaleRule(rule: Pick<ScaleRule, 'prefix' | 'itemCodeLen'
   }
   const total = rule.prefix.length + rule.itemCodeLen + rule.valueLen
   if (total > 13) errors.push(`الطول الكلي ${total} يتجاوز 13 — لا يصلح EAN-13`)
+  /* خانة التحقق تُحسب وتُفحص فقط لصيغة EAN-13 (12 رقماً + خانة). قاعدة بطول آخر
+     مع «إلزامية» تُقبل بلا فحص إطلاقاً — خيار يبدو حمايةً وهو بلا أثر. */
+  if (rule.checkDigit === 'require' && total !== 12) {
+    errors.push('«خانة التحقق إلزامية» تُفحص فقط في EAN-13 (12 رقماً + خانة) — اجعل الطول الكلي 12 أو اختر «إن وُجدت»')
+  }
   return errors
 }
 

@@ -4791,7 +4791,10 @@ function shiftSummaryForState(raw: DataState, shiftId: number): ShiftSummary {
   const shift = shifts[0]
   const kindOf = (code?: string) => scoped.treasuries.find(t => t.code === (code ?? '1101'))?.kind ?? 'cash'
   /* F2: حقول تقرير Z تُمرَّر من نفس المستند — لا استعلام ثانٍ يختلف عنه */
-  const sales: ShiftDoc[] = scoped.sales.map(s => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury), projectBilling: s.projectBilling, grossMinor: s.totals.grossMinor, discountMinor: s.totals.discountMinor, taxMinor: s.totals.taxMinor }))
+  /* paidMinor = النقد المستلم فعلاً: تقريب الفئات يدفع العميل مبلغاً مختلفاً عن إجمالي
+     الفاتورة، ودرج الوردية يُعدّ ما دخل الدرج لا ما تقوله الفاتورة (وإلا ظهرت زيادة
+     وهمية في الإقفال تساوي فرق التقريب المقيَّد أصلاً في 5112). */
+  const sales: ShiftDoc[] = scoped.sales.map(s => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.cashReceivedMinor ?? s.paidMinor, treasuryKind: kindOf(s.treasury), projectBilling: s.projectBilling, grossMinor: s.totals.grossMinor, discountMinor: s.totals.discountMinor, taxMinor: s.totals.taxMinor, cashRoundingMinor: s.cashRoundingMinor }))
   const returns: ShiftDoc[] = scoped.saleReturns.map(r => ({ shiftId: r.shiftId, payment: 'cash', totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? scoped.sales.find(s => s.id === r.saleId)?.treasury), projectBilling: r.projectBilling, taxMinor: r.totals?.taxMinor }))
   const insuranceReceipts: ShiftDoc[] = [], insurancePayments: ShiftDoc[] = []
   const matched = new Set<number>()
@@ -8524,15 +8527,22 @@ export const useRawDataStore = create<DataState>()(
         const discountKeepPpm = goodsBeforeDiscount > 0 && requestedDiscountMinor > 0
           ? Math.max(0, goodsBeforeDiscount - requestedDiscountMinor) / goodsBeforeDiscount
           : 1
+        const discountedLines = rawInv.lines.map(line => ({
+          ...line,
+          qty: normalizeMovementQty(line.qty),
+          unitPriceMinor: discountKeepPpm === 1 ? line.unitPriceMinor : Math.round(line.unitPriceMinor * discountKeepPpm),
+        }))
+        /* الخصم المسجَّل على المستند = **الخصم المُقيَّد فعلاً** لا المطلوب:
+           توزيع الخصم على أسعار السطور يُقرَّب لكل سطر، فمجموع السطور قد يختلف عن
+           (البضاعة − المطلوب) بقرش أو قرشين. لو كتبنا المطلوب لصار في المستند خصمان:
+           رقم يُقرأ في التقارير، ورقم يدخل القيد والمخزون. */
+        const effectiveGoodsMinor = discountedLines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor, 0)
+        const effectiveDiscountMinor = Math.max(0, Math.round(goodsBeforeDiscount - effectiveGoodsMinor))
         const normalizedInv = {
           ...rawInv,
-          discountMinor: requestedDiscountMinor,
+          discountMinor: effectiveDiscountMinor,
           discountPercent: invoiceDiscountPercent,
-          lines: rawInv.lines.map(line => ({
-            ...line,
-            qty: normalizeMovementQty(line.qty),
-            unitPriceMinor: discountKeepPpm === 1 ? line.unitPriceMinor : Math.round(line.unitPriceMinor * discountKeepPpm),
-          })),
+          lines: discountedLines,
         }
         const evidence = sourceDraftId ? (rawInv.__approvalBypass ? rawInv.__sourceDraftEvidence : draftInputEvidence(normalizedInv)) : undefined
         if (sourceDraftId) {

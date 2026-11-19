@@ -20,6 +20,7 @@ import { formatMinor } from '../../core/money.ts'
 import { validateFiscalYear } from '../../core/fiscal.ts'
 import { getCountry } from '../../core/countries.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 
 export function BranchesPage() {
   const {
@@ -299,8 +300,13 @@ export function BranchesPage() {
                   </button>
                   {!b.isMain && canManageAllBranches && (
                     <button
-                      onClick={() => {
-                        if (!window.confirm(`حذف فرع «${b.nameAr}»؟ لا يُسمح بحذف فرع له مستخدمون أو سجلات تشغيلية؛ عطّله للحفاظ على تاريخه.`)) return
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: `حذف فرع «${b.nameAr}»`,
+                          message: 'لا يُسمح بحذف فرع له مستخدمون أو سجلات تشغيلية؛ عطّله للحفاظ على تاريخه. المخزن والخزينة المرتبطان به يبقيان بعد الحذف.',
+                          confirmLabel: 'حذف الفرع', danger: true, testId: 'delete-branch',
+                        })
+                        if (!ok) return
                         try { removeBranch(b.id); toast.show('حُذف الفرع (المخزن والخزينة باقيان)') }
                         catch (err) { toast.show((err as Error).message, 'error') }
                       }}

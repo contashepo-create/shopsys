@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { isDriverEmployee } from '../../core/jobTitles.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { confirmDialog } from '../components/confirmStore.ts'
 import { buildVehicleReport, vehicleReportCategories, type VehicleReportKind } from '../../core/vehicleReports.ts'
 import { vehicleComplianceWarnings, vehicleFuelStats, fuelDeviationWarnings, VEHICLE_COST_LABELS, type VehicleCostKind } from '../../core/logistics.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -189,8 +190,13 @@ export function FleetPage() {
       setPartFormOpen(false); resetPartForm()
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
-  const deletePart = (partId: number, nameAr: string) => {
-    if (!window.confirm(`حذف «${nameAr}» من مخزون قطع الغيار؟ القطع المرتبطة بمصاريف مسجَّلة لا تُحذف حفاظاً على مركز التكلفة.`)) return
+  const deletePart = async (partId: number, nameAr: string) => {
+    const ok = await confirmDialog({
+      title: `حذف «${nameAr}»`,
+      message: 'تُحذف القطعة من مخزون قطع الغيار. القطع المرتبطة بمصاريف مسجَّلة لا تُحذف حفاظاً على مركز التكلفة.',
+      confirmLabel: 'حذف', danger: true, testId: 'delete-vehicle-part',
+    })
+    if (!ok) return
     try { removeVehiclePart(partId); if (editingPartId === partId) resetPartForm(); toast.show(`حُذفت «${nameAr}» ✓`) }
     catch (err) { toast.show((err as Error).message, 'error') }
   }

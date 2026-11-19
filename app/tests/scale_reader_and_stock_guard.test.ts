@@ -92,3 +92,16 @@ describe('خطة توليد الباركود الداخلي دفعة واحدة'
     for (const row of plan) expect(parseScaleBarcodeUniversal(row.code, [priceRule])).toBeNull()
   })
 })
+
+/* ─── مراجعة صارمة (2026-11-17): قراءة تحت الجرام ─── */
+describe('parseScaleFrame — حماية من قراءة صفرية مقرَّبة', () => {
+  it('وزن 0.0004 كجم يُرفض ولا يتحول سطراً بكمية صفر', () => {
+    expect(parseScaleFrame('ST,GS,+ 0.0004 kg')).toBeNull()
+    expect(parseScaleFrame('0.4 g')).toBeNull()
+  })
+  it('أقل وزن صالح (1 جرام) يُقبل ويُقرأ 0.001', () => {
+    const reading = parseScaleFrame('ST,GS,+ 0.001 kg')
+    expect(reading?.kg).toBe(0.001)
+    expect(reading?.grams).toBe(1)
+  })
+})

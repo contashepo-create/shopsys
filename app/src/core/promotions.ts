@@ -73,7 +73,7 @@ export function validatePromotion(
   const errors: string[] = []
   const name = input.nameAr.trim()
   if (!name) errors.push('اسم العرض مطلوب')
-  if (existing.some((p) => p.nameAr === name && p.id !== editingId)) errors.push('يوجد عرض بهذا الاسم')
+  if (existing.some((p) => p.nameAr.trim() === name && p.id !== editingId)) errors.push('يوجد عرض بهذا الاسم')
   if (input.startIso && input.endIso && input.endIso < input.startIso) errors.push('نهاية العرض قبل بدايته')
 
   /* ① قاعدة كمّية «N + M مجاناً» (F9) */
@@ -94,7 +94,10 @@ export function validatePromotion(
       const unitPrice = it.priceMinor
       if (unitPrice <= 0) errors.push(`«${it.nameAr}» بلا سعر بيع — لا تُبنى قاعدة كمية على سعر صفر`)
       const floor = it.minSalePriceMinor ?? 0
-      if (floor > 0 && bundle.bundlePriceMinor / (rule.buyQty + rule.freeQty) < floor - 0.5) {
+      /* مقارنة صحيحة بأعداد صحيحة: سعر الوحدة الفعلي = سعر الدورة ÷ (N+M)،
+         فالمقارنة المكافئة لها بلا كسور ولا تسامح: bundle < floor × (N+M).
+         (كان فيها هامش 0.5 كان يمرّر عرضاً يهبط قرشاً تحت الحد الأدنى.) */
+      if (floor > 0 && bundle.bundlePriceMinor < floor * (rule.buyQty + rule.freeQty)) {
         errors.push(`قاعدة «${rule.buyQty}+${rule.freeQty}» تهبط بسعر الوحدة تحت حد «${it.nameAr}» الأدنى — عدّل الحد أو القاعدة`)
       }
       /* التكلفة تُقارن بتكلفة كل وحدات الدورة، لا بسعر الوحدة: «2+1» على سعر 10.00
@@ -136,7 +139,7 @@ export function validatePromotion(
     for (const l of lines) {
       const it = items.find((x) => x.id === l.itemId)
       const floor = it?.minSalePriceMinor ?? 0
-      if (it && floor > 0 && l.unitPriceMinor < floor - 0.5) {
+      if (it && floor > 0 && l.unitPriceMinor < floor) {
         errors.push(`سعر الباقة يهبط بـ«${it.nameAr}» تحت حده الأدنى للبيع — ارفع سعر الباقة أو عدّل حد الصنف`)
         break
       }
@@ -252,6 +255,11 @@ export function promotionCartLines(
   if (!Number.isInteger(count) || count < 1) throw new RangeError('عدد الباقات عدد صحيح ≥ 1')
   /* القاعدة الكمية تُحوَّل إلى باقة مكافئة أولاً — مسار حساب واحد للعرضين */
   const shape = promotionAsBundle(p, items)
+  /* سعر صفر أو نكرة يعني سطراً مجانياً يدخل الفاتورة بلا مقابل — يُرفض هنا لأن
+     القاعدة الكمية تُشتق من سعر الصنف، فقد يصبح صفراً بعد إنشاء العرض. */
+  if (!Number.isSafeInteger(shape.bundlePriceMinor) || shape.bundlePriceMinor <= 0) {
+    throw new Error(`«${p.nameAr}»: سعر العرض غير صالح — راجع سعر الصنف أو سعر الباقة`)
+  }
   const comps = shape.components.map((c) => {
     const it = items.find((x) => x.id === c.itemId)
     if (!it) throw new Error('مكوّن العرض غير موجود — راجع تعريف العرض')

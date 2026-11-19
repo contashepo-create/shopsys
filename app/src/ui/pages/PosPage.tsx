@@ -392,13 +392,10 @@ export function PosPage() {
     warnIfBeyondStock(it, weightQty ?? (it.soldByWeight ? 0.5 : 1))
     if (fixedTotalMinor != null) {
       setCart((prev) => {
-        // سطر ملصق قائم لنفس الصنف: تُجمع الكميات وإجماليات الملصقات معاً
-        const idx = prev.findIndex((l) => l.itemId === itemId && l.lineTotalOverrideMinor != null)
-        if (idx >= 0) {
-          return prev.map((l, i) => (i === idx
-            ? { ...l, qty: Math.round((l.qty + (weightQty ?? 0)) * 1000) / 1000, lineTotalOverrideMinor: (l.lineTotalOverrideMinor ?? 0) + fixedTotalMinor }
-            : l))
-        }
+        /* كل ملصق سعري = سطر مستقل، ولا يُجمَع مع ملصق قائم لنفس الصنف:
+           الملصقان قد يحملان سعر كيلو مختلفاً (سعر تغيّر بين طباعتين)، فدمجهما في
+           سطر بإجمالي مجموع يجعل المرتجع الجزئي يوزّع السعر بالوزن — فيُرد من صنف
+           سعرُه أعلى بسعر الصنف الأرخص. سطر لكل ملصق يُبقي كل مبلغ على ملصقه. */
         return [...prev, {
           itemId: it.id, nameAr: it.nameAr, qty: weightQty ?? 1,
           unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor,
@@ -656,8 +653,18 @@ export function PosPage() {
    * الباقي للعميل: الكاشير يكتب ما استلمه (مثلاً 50 لفاتورة 37.50).
    * قبل هذا الإصلاح كان المبلغ يُقصّ على الإجمالي بصمت فلا يرى الكاشير
    * كم يُرجع للعميل — أهم شاشة في بقالة نقدية.
+   *
+   * F8: المطلوب من العميل هو المبلغ **بعد** تقريب الفئات (هو ما يُقيَّد في
+   * الدرج)، فالباقي = المستلم − المقرَّب. حسابه على الإجمالي قبل التقريب كان
+   * يُرجع للعميل فرق التقريب نقداً فيبقى الدرج ناقصاً بلا سبب ظاهر.
    */
-  const changeDueMinor = totals ? Math.max(0, cashTenderedMinor - totals.totalMinor) : 0
+  const cashToCollectMinor = useMemo(() => {
+    if (!totals) return 0
+    const step = setup.cashRoundingStepMinor ?? 0
+    if (!step) return totals.totalMinor
+    try { return roundCashAmount(totals.totalMinor, step).roundedMinor } catch { return totals.totalMinor }
+  }, [totals, setup.cashRoundingStepMinor])
+  const changeDueMinor = Math.max(0, cashTenderedMinor - cashToCollectMinor)
   /**
    * F8: معاينة تقريب الفئات — الكاشير يرى ما سيُحصَّل فعلاً قبل إتمام البيع.
    * لا يغيّر الإجمالي المعروض ولا الضريبة؛ فرق التقريب يظهر صريحاً.

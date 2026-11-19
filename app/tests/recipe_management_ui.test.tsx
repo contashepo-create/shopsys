@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { ConfirmHost, acceptConfirmDialog, cancelConfirmDialog } from './helpers/confirmUi.tsx'
 import { RecipesPage } from '../src/ui/pages/RecipesPage.tsx'
 import { useRawDataStore } from '../src/data/repo.ts'
 import { useAppStore } from '../src/stores/app.store.ts'
@@ -71,17 +73,17 @@ it('يعدّل تركيبة محفوظة بدل إنشاء نسخة مكررة',
 })
 
 it('يحذف التركيبة بعد تأكيد صريح', async () => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
-  render(<RecipesPage />)
+  render(<MemoryRouter><ConfirmHost /><RecipesPage /></MemoryRouter>)
   fireEvent.click(document.querySelector('[data-recipe-remove="7"]') as HTMLElement)
+  await acceptConfirmDialog()
   await waitFor(() => expect(useRawDataStore.getState().recipes).toHaveLength(0))
   expect(useToast.getState().msg).toContain('حُذفت تركيبة')
   expect(document.querySelector('[data-recipes-panel]')).toBeNull()
 })
 
-it('لا يحذف التركيبة إن رفض المستخدم التأكيد', () => {
-  vi.spyOn(window, 'confirm').mockReturnValue(false)
-  render(<RecipesPage />)
+it('لا يحذف التركيبة إن رفض المستخدم التأكيد', async () => {
+  render(<MemoryRouter><ConfirmHost /><RecipesPage /></MemoryRouter>)
   fireEvent.click(document.querySelector('[data-recipe-remove="7"]') as HTMLElement)
+  await cancelConfirmDialog()
   expect(useRawDataStore.getState().recipes).toHaveLength(1)
 })

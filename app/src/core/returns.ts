@@ -53,8 +53,12 @@ export function buildReturnLines(
         serials: undefined,
         qty: Math.round(take * 1000) / 1000,
         saleLineIndex: i,
-        // المسار القديم لا يعرف التجزئة: يكفي حصة الفرق التراكمي بدل كامل التكلفة
-        ...(l.costTotalMinor != null ? { costTotalMinor: returnLineCostMinor(l, Math.round((l.qty - remaining[i] - take) * 1000) / 1000, take) } : {}),
+        /* المسار القديم لا يعرف التجزئة: حصة الفرق التراكمي بدل كامل التكلفة/الملصق.
+           `remaining[i]` هنا **قبل** خصم هذه الكمية (يُخصم بعد الإدراج)، فالمُرجَع
+           سابقاً = كمية الأصل − المتبقي. (كان يُطرح `take` أيضاً فيُحسب المُرجَع
+           سابقاً ناقصاً بمقدار هذه الدفعة — صحيح مصادفةً عندما تنقسم القيمة على 3.) */
+        ...(l.costTotalMinor != null ? { costTotalMinor: returnLineCostMinor(l, Math.round((l.qty - remaining[i]) * 1000) / 1000, take) } : {}),
+        ...(l.lineTotalOverrideMinor != null ? { lineTotalOverrideMinor: returnLineOverrideMinor(l, Math.round((l.qty - remaining[i]) * 1000) / 1000, take) } : {}),
       })
       remaining[i] = Math.round((remaining[i] - take) * 1000) / 1000
       left = Math.round((left - take) * 1000) / 1000
@@ -318,10 +322,10 @@ export function buildReturnLinesPerLine(
     }
     out.push({
       ...src,
-      /* سطر بسعر ملصق ثابت: الإرجاع الجزئي يأخذ حصته النسبية من إجمالي
-         الملصق، وإلا ردّ المرتجع الجزئي كامل مبلغ السطر. */
-      ...(src.lineTotalOverrideMinor != null && spec.qty < src.qty - 1e-9
-        ? { lineTotalOverrideMinor: Math.round((src.lineTotalOverrideMinor * spec.qty) / src.qty) }
+      /* سطر بسعر ملصق ثابت: حصة الفرق التراكمي (لا ضرب مستقل) فلا يضيع قرش
+         عند تعدد المرتجعات الجزئية، والمرتجع الكامل يعيد إجمالي الملصق بالضبط. */
+      ...(src.lineTotalOverrideMinor != null
+        ? { lineTotalOverrideMinor: returnLineOverrideMinor(src, Math.round((src.qty - (rem[spec.lineIndex] ?? src.qty)) * 1000) / 1000, spec.qty) }
         : {}),
       /* تكلفة الجزء المُرجَع من سطر تكلفته مثبَّتة: فرق الحصة التراكمية، فيبقى
          قيد 5101/1103 مطابقاً للقيمة الراجعة للمخزون بالقرش عند أي تجزئة. */
@@ -339,6 +343,22 @@ export function buildReturnLinesPerLine(
   }
   if (!out.length) throw new RangeError('لا كميات للإرجاع')
   return out
+}
+
+/**
+ * حصة سعر السطر من سطر بسعر ملصق ثابت (lineTotalOverrideMinor).
+ *
+ * `lineTotalOverrideMinor` إجمالي **السطر** لا سعر وحدته (ملصق ميزان/عرض «3 بـ10»)،
+ * فإرجاع جزء منه يحتاج حصته النسبية. الحساب **فرق تراكمي** لا ضرب مستقل لكل مرتجع:
+ * ثلاثة مرتجعات بجزء واحد من سطر إجماليه 10.00 تعطي 3.33+3.33+3.34 = 10.00 بالقرش،
+ * بينما الضرب المستقل يعطي 3.33×3 = 9.99 — قرش يضيع في كل دورة إرجاع.
+ */
+export function returnLineOverrideMinor(original: CartLine, priorQty: number, qty: number): number | undefined {
+  const base = original.lineTotalOverrideMinor
+  if (base == null) return undefined
+  if (!Number.isFinite(original.qty) || original.qty <= 0) return Math.round(base * qty)
+  const share = (q: number): number => Math.round((base * q) / original.qty)
+  return share(priorQty + qty) - share(priorQty)
 }
 
 /**

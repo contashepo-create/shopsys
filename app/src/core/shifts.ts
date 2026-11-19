@@ -46,6 +46,8 @@ export interface ShiftDoc {
   discountMinor?: Minor
   /** الضريبة المحصلة على المستند */
   taxMinor?: Minor
+  /** F8: فرق تقريب الفئات المقبوض فعلاً (موجب = العميل دفع أكثر) — 5112 */
+  cashRoundingMinor?: Minor
 }
 
 export interface ShiftSummary {
@@ -76,6 +78,8 @@ export interface ShiftSummary {
   returnsTotalMinor?: Minor
   /** المرتجعات على البنك/المحافظ — لا تُخصم من الدرج */
   bankRefundsMinor?: Minor
+  /** F8: صافي فروق تقريب الفئات داخل الوردية (موجب = ربح تقريب) */
+  cashRoundingMinor?: Minor
 }
 
 /** المحصل فعلاً من مستند (الدفع المجزأ) — التوافق الخلفي: cash=كامل، credit=صفر */
@@ -88,13 +92,17 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
   /* مستندات التوثيق الضريبية لا مبيعات وردية ولا تحصيل بها — خارج التلخيص */
   const mySales = sales.filter((s) => s.shiftId === shift.id && s.projectBilling !== 'documentation')
   const myReturns = returns.filter((r) => r.shiftId === shift.id && r.projectBilling !== 'documentation')
-  let cashSales = 0, bankSales = 0, creditSales = 0
+  let cashSales = 0, bankSales = 0, creditSales = 0, cashRounding = 0
   for (const s of mySales) {
     const paid = paidOf(s)
     // المحصل يذهب للدرج أو للبنك حسب الخزينة المختارة وقت البيع
     if (s.treasuryKind === 'bank') bankSales += paid
     else cashSales += paid
-    creditSales += s.totalMinor - paid // الجزء الآجل فقط — لا الفاتورة كلها
+    /* F8: تقريب الفئات يجعل المحصل ≠ الإجمالي بلا أي آجل — الفرق مقيَّد في 5112
+       ولا يجوز أن يظهر «آجل سالب». وجود الفرق يعني دفعاً نقدياً كاملاً مقرَّباً. */
+    const rounding = s.cashRoundingMinor ?? 0
+    if (rounding !== 0) cashRounding += rounding
+    else creditSales += Math.max(0, s.totalMinor - paid)
   }
   const cashRefunds = myReturns.filter((r) => r.payment === 'cash' && r.treasuryKind !== 'bank').reduce((a, r) => a + r.totalMinor, 0)
   const bankRefunds = myReturns.filter((r) => r.treasuryKind === 'bank').reduce((a, r) => a + r.totalMinor, 0)
@@ -124,6 +132,7 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
     netSalesMinor: netSales,
     returnsTotalMinor: returnsTotal,
     bankRefundsMinor: bankRefunds,
+    cashRoundingMinor: cashRounding,
   }
 }
 
@@ -160,6 +169,7 @@ export function zReportRows(
     { nameAr: 'الآجل غير المحصل', valueMinor: summary.creditSalesMinor },
     { nameAr: 'تحصيل تأمين نقداً', valueMinor: summary.cashInsuranceReceiptsMinor },
     { nameAr: 'صرف تأمين نقداً', valueMinor: -summary.cashInsurancePaymentsMinor },
+    { nameAr: 'فروق تقريب الفئات (5112)', valueMinor: summary.cashRoundingMinor ?? 0 },
     { nameAr: 'رصيد الدرج الافتتاحي', valueMinor: shift.openingCashMinor },
     { nameAr: 'المتوقع في الدرج', valueMinor: summary.expectedCashMinor },
     { nameAr: 'المعدود فعلياً', valueMinor: shift.countedCashMinor ?? 0 },
@@ -167,6 +177,36 @@ export function zReportRows(
       nameAr: variance === 0 ? 'الفرق (مضبوط)' : variance < 0 ? 'عجز في الدرج' : 'زيادة في الدرج',
       valueMinor: variance,
     },
+  ]
+}
+
+/**
+ * صفوف تقرير X — معاينة الوردية الجارية قبل إقفالها.
+ *
+ * لماذا دالة خالصة هنا: كانت الشاشة تبني صفوف X بيدها في صفّ مصفوفة، فظهر تقريران
+ * لنفس الوردية: ورقة X (بلا إجمالي/خصم/ضريبة وفرق تقريب) وورقة Z (بها كل ذلك من
+ * `summarizeShift`). رَقمان لوردية واحدة = مستندان لا يُطابق أحدهما الآخر.
+ * الآن X وZ يخرجان من نفس التلخيص؛ الفرق الوحيد أن X بلا «المعدود» و«الفرق».
+ */
+export function xReportRows(
+  shift: Pick<Shift, 'openingCashMinor'>,
+  summary: ShiftSummary,
+): ShiftReportRow[] {
+  return [
+    { nameAr: `إجمالي المبيعات قبل الخصم (${summary.invoiceCount} فاتورة)`, valueMinor: summary.grossSalesMinor ?? 0 },
+    { nameAr: 'الخصومات', valueMinor: -(summary.discountsMinor ?? 0) },
+    { nameAr: 'صافي المبيعات', valueMinor: summary.netSalesMinor ?? 0 },
+    { nameAr: 'ض.ق.م المحصلة', valueMinor: summary.taxMinor ?? 0 },
+    { nameAr: `مرتجعات (${summary.returnCount}) — الإجمالي`, valueMinor: -(summary.returnsTotalMinor ?? 0) },
+    { nameAr: 'منها على البنك/المحافظ', valueMinor: -(summary.bankRefundsMinor ?? 0) },
+    { nameAr: 'محصل نقداً في الدرج', valueMinor: summary.cashSalesMinor },
+    { nameAr: 'محصل على بنوك/محافظ', valueMinor: summary.bankSalesMinor },
+    { nameAr: 'الآجل غير المحصل', valueMinor: summary.creditSalesMinor },
+    { nameAr: 'تحصيل تأمين نقداً', valueMinor: summary.cashInsuranceReceiptsMinor },
+    { nameAr: 'صرف تأمين نقداً', valueMinor: -summary.cashInsurancePaymentsMinor },
+    { nameAr: 'فروق تقريب الفئات (5112)', valueMinor: summary.cashRoundingMinor ?? 0 },
+    { nameAr: 'رصيد الدرج الافتتاحي', valueMinor: shift.openingCashMinor },
+    { nameAr: 'المتوقع في الدرج', valueMinor: summary.expectedCashMinor },
   ]
 }
 

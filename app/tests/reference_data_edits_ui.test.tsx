@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { ConfirmHost, acceptConfirmDialog } from './helpers/confirmUi.tsx'
 import { MemoryRouter } from 'react-router-dom'
 import { InsuranceProvidersSection } from '../src/ui/components/InsuranceProvidersSection.tsx'
 import { LabReferrersPage } from '../src/ui/pages/LabPages.tsx'
@@ -59,32 +60,32 @@ it('يصحّح نسبة عمولة الطبيب المُحيل دون تكرار
 })
 
 it('يزيل الوصف الذهبي بعد التأكيد ويبقي الصنف', async () => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
-  const item = { id: 9, nameAr: 'خاتم 21', sku: 'G9', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 1, priceMinor: 0, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true }
+    const item = { id: 9, nameAr: 'خاتم 21', sku: 'G9', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 1, priceMinor: 0, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true }
   useRawDataStore.setState({
     items: [item] as never,
     jewelryProfiles: [{ itemId: 9, karat: 'k21', weightGrams: 5, workmanshipMinor: 10_000, makingCostMode: 'fixed' }] as never,
     gramPrices: { k18: 0, k21: 300_000, k24: 0, updatedAt: '2026-11-17T08:00:00Z' } as never,
   })
-  render(<MemoryRouter><JewelryPage /></MemoryRouter>)
+  render(<MemoryRouter><ConfirmHost /><JewelryPage /></MemoryRouter>)
   fireEvent.click(document.querySelector('[data-remove-jewelry-profile="9"]') as HTMLElement)
+  await acceptConfirmDialog()
   await waitFor(() => expect(useRawDataStore.getState().jewelryProfiles).toHaveLength(0))
   expect(useRawDataStore.getState().items).toHaveLength(1)
   expect(useToast.getState().msg).toContain('أُزيل وصف')
 })
 
 it('يلغي جدولة توصيل لم تبدأ ولا يمسّ طلباً بدأ تنفيذه', async () => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
-  useRawDataStore.setState({
+    useRawDataStore.setState({
     sales: [{ id: 1, invoiceNumber: 'INV-1' }, { id: 2, invoiceNumber: 'INV-2' }] as never,
     deliveryJobs: [
       { id: 4, saleId: 1, scheduledAt: '2026-11-18', status: 'scheduled', completedAt: null, assignedTo: 'خالد' },
       { id: 5, saleId: 2, scheduledAt: '2026-11-18', status: 'in_progress', completedAt: null, assignedTo: 'خالد' },
     ] as never,
   })
-  render(<MemoryRouter><DeliveryTasksPage /></MemoryRouter>)
+  render(<MemoryRouter><ConfirmHost /><DeliveryTasksPage /></MemoryRouter>)
   expect(document.querySelector('[data-delete-delivery-job="5"]')).toBeNull()
   fireEvent.click(document.querySelector('[data-delete-delivery-job="4"]') as HTMLElement)
+  await acceptConfirmDialog()
   await waitFor(() => expect(useRawDataStore.getState().deliveryJobs.map((job) => job.id)).toEqual([5]))
   expect(useToast.getState().msg).toContain('أُلغيت الجدولة')
 })

@@ -44,6 +44,7 @@ import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan
 import { bootRemoteSession, disconnectRemoteSession } from './data/lan/remoteSession.ts'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { ToastHost, useToast } from './ui/components/ui.tsx'
+import { ConfirmHost } from './ui/components/ConfirmDialog.tsx'
 import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -1075,6 +1076,7 @@ export default function App() {
           </div>
         </div>
         <ToastHost />
+        <ConfirmHost />
       </>
     )
   }
@@ -1085,6 +1087,7 @@ export default function App() {
       <>
         <LockScreen reason={lockReason} state={licenseState} />
         <ToastHost />
+        <ConfirmHost />
         {/* بند 10: العميل المقفول **أحوج** من غيره لتنبيه المطوّر (تعليمات التجديد،
             «أُرسل مفتاحك — أعد التشغيل»)، والاستطلاع يعمل في هذه الحالة أيضاً، فبدون
             التركيب هنا تصل التنبيهات ولا يعرضها شيء — ولا جرس في شاشة القفل. */}
@@ -1141,6 +1144,7 @@ export default function App() {
         </div>
       )}
       <ToastHost />
+      <ConfirmHost />
       {/* بند 10 (تدقيق 2026-10-08): نافذة تنبيه المطوّر المنبثقة. تظهر فقط لدرجتَي
           important/critical؛ أما info فبقي جرساً وتوستاً بلا مقاطعة.
           تُركَّب أيضاً في فرع شاشة القفل أعلاه (بوابة verify_dev_notice_levels تحصي

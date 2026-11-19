@@ -197,6 +197,9 @@ export function computeTotals(
   for (const l of lines) {
     if (l.qty <= 0) throw new RangeError(`كمية غير صالحة للصنف ${l.nameAr}`)
     if (!Number.isFinite(l.discountPercent) || l.discountPercent < 0 || l.discountPercent > 100) throw new RangeError('خصم سطر خارج النطاق')
+    if (l.lineTotalOverrideMinor != null && (!Number.isSafeInteger(l.lineTotalOverrideMinor) || l.lineTotalOverrideMinor < 0)) {
+      throw new RangeError(`إجمالي السطر المثبَّت غير صالح للصنف ${l.nameAr}`)
+    }
     const g = l.lineTotalOverrideMinor ?? mulQty(l.unitPriceMinor, l.qty)
     gross = roundingVersion === 2 ? addMinor(gross, g) : gross + g
     lineDiscounts = roundingVersion === 2 ? addMinor(lineDiscounts, percentage(g, l.discountPercent)) : lineDiscounts + percentage(g, l.discountPercent)

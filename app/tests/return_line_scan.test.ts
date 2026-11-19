@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolveReturnLineScan, RETURN_SCAN_ERROR_TEXT } from '../src/ui/pages/returnLineScan.ts'
 import { DEFAULT_SCALE_RULES, ean13CheckDigit } from '../src/core/barcode.ts'
+import { buildReturnLines, buildReturnLinesPerLine, type ReturnLine } from '../src/core/returns.ts'
 
 /**
  * مسح الباركود/ملصق الميزان داخل مرتجع البيع:
@@ -93,5 +94,35 @@ describe('ماسح سطور المرتجع', () => {
     ]
     const out = resolveReturnLineScan({ ...base, lines: repeated, code: '2000042007501', remaining: [0, 1] })
     expect(out).toMatchObject({ hit: { index: 1, qty: 1 } })
+  })
+})
+
+/* ─── مراجعة صارمة (2026-11-17): سطر بسعر ملصق ثابت يُرجَع على أجزاء ─── */
+describe('حصة سعر السطر المثبَّت عند الإرجاع المجزأ', () => {
+  const labelLine = {
+    key: 'k1', itemId: 1, nameAr: 'عرض 3 بـ10', qty: 3, unitPriceMinor: 3400, unitCostMinor: 1000,
+    discountPercent: 0, soldByWeight: false, ...{ lineTotalOverrideMinor: 10000, costTotalMinor: 3000 },
+  } as never
+
+  it('ثلاثة مرتجعات بجزء واحد تجمع 10.00 و3.00 بالقرش بلا قرش ضائع', () => {
+    let prior: ReturnLine[] = []
+    let overrideSum = 0
+    let costSum = 0
+    for (let i = 0; i < 3; i++) {
+      const out = buildReturnLinesPerLine([labelLine] as never, prior, [{ lineIndex: 0, qty: 1, condition: 'resellable' }])
+      overrideSum += out[0].lineTotalOverrideMinor ?? 0
+      costSum += out[0].costTotalMinor ?? 0
+      prior = [...prior, ...out]
+    }
+    expect(overrideSum).toBe(10000)
+    expect(costSum).toBe(3000)
+  })
+
+  it('المسار القديم (تجميع بالصنف) يحمل الحصة نفسها لا كامل الملصق', () => {
+    const first = buildReturnLines([labelLine] as never, [], new Map([[1, 1]]))
+    expect(first[0].lineTotalOverrideMinor).toBe(3333)
+    const second = buildReturnLines([labelLine] as never, [{ itemId: 1, qty: 1 } as never], new Map([[1, 1]]))
+    expect(second[0].lineTotalOverrideMinor).toBe(3334)
+    expect(second[0].costTotalMinor).toBe(1000)
   })
 })

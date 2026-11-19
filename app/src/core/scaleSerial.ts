@@ -42,10 +42,13 @@ export function parseScaleFrame(line: string): ScaleReading | null {
   const unit = (match[2] ?? '').toLowerCase()
   const kg = /^(g|جم|جرام|غرام)$/.test(unit) ? value / 1000 : value
   if (!Number.isFinite(kg) || kg < 0 || kg > MAX_KG) return null
-  // «0» أو «0.000» = الميزان فارغ؛ لا نملأ سطراً بوزن صفري
-  if (kg === 0) return null
+  /* «0» أو «0.000» = الميزان فارغ؛ ولا نملأ سطراً بوزن صفري.
+     الفحص على الوزن **بعد** التقريب لأقرب جرام: قراءة 0.0004 كجم كانت تمر
+     وتُخزَّن kg = 0 فتنتج سطر بيع بكمية صفر. */
+  const roundedKg = Math.round(kg * 1000) / 1000
+  if (roundedKg === 0) return null
   const stable = !/^US|^NT|UNSTABLE|MOTION/.test(upper)
-  return { kg: Math.round(kg * 1000) / 1000, grams: Math.round(kg * 1000), stable, raw }
+  return { kg: roundedKg, grams: Math.round(kg * 1000), stable, raw }
 }
 
 /**
