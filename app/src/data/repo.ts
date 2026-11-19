@@ -1848,6 +1848,14 @@ interface DataState {
   docApprovals: DocApprovalRequest[]
   submitDocForApproval: (input: { kind: ApprovalDocKind; title: string; partyName: string; amountMinor: number; payload: string; requestedBy: number | null; requestedByName: string }) => DocApprovalRequest
   decideDocApproval: (id: number, decision: { status: Exclude<DocApprovalStatus, 'pending'>; by: number | null; byName: string; reason?: string }) => DocApprovalRequest
+  markDocApprovalPosted: (id: number, documentId: number) => void
+  deleteDocApproval: (id: number) => void
+  /**
+   * حارس داخلي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ).
+   * amountMinor اختياري: إن حُدد حد مالي للمسار (thresholdMinor) ومرَّت قيمة أقل منه،
+   * يمر المستند حراً دون اعتماد.
+   */
+  assertApproved: (action: ApprovalAction, refId: number, subject: string, amountMinor?: number) => void
   purchaseOrders: PurchaseOrder[]
   addPurchaseOrder: (input: { supplierId: number | null; supplierName: string; date: string; expectedDate: string; warehouseId: number | null; lines: PurchaseOrderLine[]; notes: string; linkedTicketId?: number | null }) => PurchaseOrder
   setPurchaseOrderStatus: (id: number, status: PurchaseOrderStatus) => void
@@ -7822,6 +7830,28 @@ export const useRawDataStore = create<DataState>()(
         }
         set({ docApprovals: state.docApprovals.map((row) => (row.id === id ? updated : row)) })
         return updated
+      },
+      markDocApprovalPosted: (id, documentId) => set((state) => {
+        /* معرّف مجهول أو مستند غير صالح يُرفض بصراحة: الكتابة الصامتة على طلب غير
+         * موجود تُوهم المستخدم بأن الربط وقع، وهي عين ما تحرسه بوابة الطفرات الصامتة. */
+        if (!Number.isSafeInteger(documentId) || documentId <= 0) throw new Error('معرّف المستند المرحّل غير صالح')
+        const target = state.docApprovals.find((row) => row.id === id)
+        if (!target) throw new Error('طلب الاعتماد غير موجود')
+        if (target.postedDocumentId != null && target.postedDocumentId !== documentId) throw new Error('الطلب مرتبط بمستند آخر — لا يُعاد ربطه')
+        return { docApprovals: state.docApprovals.map((row) => (row.id === id ? { ...row, postedDocumentId: documentId } : row)) }
+      }),
+      deleteDocApproval: (id) => set((state) => {
+        const target = state.docApprovals.find((row) => row.id === id)
+        if (!target) throw new Error('طلب الاعتماد غير موجود')
+        /* مستند رُحّل لا يُحذف طلبه: الحذف يمحو أثر الاعتماد ويترك القيد بلا سند
+         * موافقة. المسموح: طلب معلّق أو مرفوض لم يرحّل شيئاً. */
+        if (target.postedDocumentId != null) throw new Error('لا يُحذف طلب مرتبط بمستند رُحّل — أثر الاعتماد لا يُمحى')
+        return { docApprovals: state.docApprovals.filter((row) => row.id !== id) }
+      }),
+      assertApproved: (action, refId, subject, amountMinor) => {
+        const state = get()
+        const approvalRequests = planApprovalConsumption(state, action, refId, subject, amountMinor)
+        if (approvalRequests !== state.approvalRequests) set({ approvalRequests })
       },
       purchaseOrders: [],
       addPurchaseOrder: (input) => {

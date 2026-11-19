@@ -6,7 +6,7 @@
  * حد المبلغ، المعتمِدون الإضافيون، ومن مستنداته معتمدة تلقائياً.
  */
 import { useMemo, useRef, useState } from 'react'
-import { BadgeCheck, ShieldCheck, ShieldX, Clock, FileText } from 'lucide-react'
+import { BadgeCheck, ShieldCheck, ShieldX, Clock, FileText, Trash2 } from 'lucide-react'
 import { ApprovalSettingsCard } from '../components/ApprovalSettingsCard.tsx'
 import { useDataStore, useRawDataStore } from '../../data/repo.ts'
 import { withInvoiceCommitLock } from '../../data/invoiceCommitLock.ts'
@@ -21,7 +21,7 @@ import { localDateTimeLabel } from '../../core/time.ts'
 
 export function ApprovalsPage() {
   const toast = useToast()
-  const { docApprovals, decideDocApproval, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const { docApprovals, decideDocApproval, deleteDocApproval, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const setup = useAppStore((s) => s.setup)
   const approvals = useAppStore((s) => s.approvals)
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -56,6 +56,15 @@ export function ApprovalsPage() {
       setRejecting(null); setReason('')
     }).catch((error: unknown) => toast.show(error instanceof Error ? error.message : 'تعذّر تأمين قرار الاعتماد', 'error'))
       .finally(() => { decidingRef.current = false; setIsDeciding(false) })
+  }
+
+  const remove = (id: number) => {
+    try {
+      deleteDocApproval(id)
+      toast.show('حُذف الطلب المرفوض — لا أثر محاسبي له')
+    } catch (error: unknown) {
+      toast.show(error instanceof Error ? error.message : 'تعذّر حذف الطلب', 'error')
+    }
   }
 
   return (
@@ -134,7 +143,18 @@ export function ApprovalsPage() {
                       </div>
                     )
                   )}
-                  {row.status !== 'pending' && <span className="text-[11px] text-slate-400">{row.decidedByName} · {localDateTimeLabel(row.decidedAt ?? '')}</span>}
+                  {row.status !== 'pending' && (
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-[11px] text-slate-400">{row.decidedByName} · {localDateTimeLabel(row.decidedAt ?? '')}</span>
+                      {/* طلب مرفوض لم يرحّل شيئاً: حذفه ينظّف القائمة بلا أثر محاسبي.
+                          المعتمد المرحّل لا يُحذف — الحارس في المستودع يرفضه. */}
+                      {row.status === 'rejected' && canConfigure && (
+                        <Btn variant="ghost" onClick={() => remove(row.id)} disabled={isDeciding} data-approval-delete={row.id}>
+                          <span className="flex items-center gap-1"><Trash2 size={12} /> حذف الطلب</span>
+                        </Btn>
+                      )}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
