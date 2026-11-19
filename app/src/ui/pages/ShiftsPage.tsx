@@ -47,6 +47,10 @@ export function ShiftsPage() {
   const [xReportOpen, setXReportOpen] = useState(false)
   const [settleShift, setSettleShift] = useState<Shift | null>(null)
   const [settleMode, setSettleMode] = useState<'expense' | 'advance'>('expense')
+  /* F5: تسوية الفرق في نفس الإقفال — يوفّر خطوة لاحقة ويترك المستند مكتملاً */
+  const [settleOnClose, setSettleOnClose] = useState(true)
+  /* F6: ربط الوردية بموظف مسجَّل — بلا ربط لا يُحمَّل عجز على شخص بثقة */
+  const [shiftEmployeeId, setShiftEmployeeId] = useState(0)
   const [settleEmployeeId, setSettleEmployeeId] = useState(0)
 
   const open = currentOpenShift(shifts)
@@ -55,7 +59,7 @@ export function ShiftsPage() {
    * طباعة تقرير X: ملخص الوردية الحالية كما هو، بلا قيد ولا إقفال.
    * يمر عبر نفس قالب الإيصال/الفاتورة المعتمد للفرع كي يخرج بشكل موحّد.
    */
-  const printXReport = (shift: Shift, summary: ReturnType<typeof getShiftSummary>) => {
+  const printXReport = (shift: Shift, summary: ReturnType<typeof getShiftSummary>, mode: 'X' | 'Z' = 'X') => {
     try {
       const rows = [
         { nameAr: 'رصيد الدرج الافتتاحي', qty: 1, unitPriceMinor: shift.openingCashMinor, totalMinor: shift.openingCashMinor },
@@ -66,23 +70,34 @@ export function ShiftsPage() {
         { nameAr: 'تحصيل تأمين نقداً', qty: 1, unitPriceMinor: summary.cashInsuranceReceiptsMinor, totalMinor: summary.cashInsuranceReceiptsMinor },
         { nameAr: 'صرف تأمين نقداً', qty: 1, unitPriceMinor: -summary.cashInsurancePaymentsMinor, totalMinor: -summary.cashInsurancePaymentsMinor },
       ]
+      /* تقرير Z: مستند الإقفال النهائي — المعدود والفرق وسطر تسوية الفرق إن وُجد.
+         يُطبع من نفس المصدر (summarizeShift) فلا يختلف رقمان بين الشاشة والورق. */
+      const variance = summary.varianceMinor ?? 0
+      const zRows = mode === 'Z' ? [
+        ...rows,
+        { nameAr: 'المتوقع في الدرج', qty: 1, unitPriceMinor: summary.expectedCashMinor, totalMinor: summary.expectedCashMinor },
+        { nameAr: 'المعدود فعلياً', qty: 1, unitPriceMinor: shift.countedCashMinor ?? 0, totalMinor: shift.countedCashMinor ?? 0 },
+        { nameAr: variance === 0 ? 'الفرق (مضبوط)' : variance < 0 ? 'عجز في الدرج' : 'زيادة في الدرج', qty: 1, unitPriceMinor: variance, totalMinor: variance },
+      ] : rows
       const settings = resolveDocumentPrintSettings(shift).receipt
       const model = buildSimpleDocModel({
-        docTitle: 'تقرير X — معاينة وردية',
-        invoiceNumber: `X-${shift.id}`,
-        refCode: `X-${shift.id}`,
+        docTitle: mode === 'Z' ? 'تقرير Z — إقفال وردية' : 'تقرير X — معاينة وردية',
+        invoiceNumber: `${mode}-${shift.id}`,
+        refCode: `${mode}-${shift.id}`,
         dateIso: todayLocalIso(),
         partyLabel: shift.openedBy,
-        paymentLabel: 'معاينة بلا إقفال',
-        rows,
-        totalMinor: summary.expectedCashMinor,
+        paymentLabel: mode === 'Z' ? 'إقفال نهائي' : 'معاينة بلا إقفال',
+        rows: zRows,
+        totalMinor: mode === 'Z' ? (shift.countedCashMinor ?? summary.expectedCashMinor) : summary.expectedCashMinor,
         paidMinor: 0,
         operatorName: appUsers.find((u) => u.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك',
         settings,
-        extraFooter: 'تقرير X لا يقفل الوردية ولا يُنشئ قيداً — المتوقع في الدرج أعلاه.',
+        extraFooter: mode === 'Z'
+          ? `تقرير Z — إقفال الوردية #${shift.id}${shift.closeApprovedBy ? ` باعتماد ${shift.closeApprovedBy}` : ''}. الفرق ${formatMinor(variance, cur, false)}${shift.varianceSettledMode ? ' — سُوّي بقيد مستقل' : variance === 0 ? '' : ' — لم تُسوَّ بعد'}.`
+          : 'تقرير X لا يقفل الوردية ولا يُنشئ قيداً — المتوقع في الدرج أعلاه.',
       })
       printModelWithTemplate(model, cur, settings, 'thermal')
-      toast.show(`أُرسل تقرير X للوردية #${shift.id} للطباعة 🖨️`)
+      toast.show(`أُرسل تقرير ${mode} للوردية #${shift.id} للطباعة 🖨️`)
     } catch (e) {
       toast.show(e instanceof Error ? e.message : 'تعذّرت طباعة تقرير X', 'error')
     }
@@ -94,10 +109,15 @@ export function ShiftsPage() {
   const doOpen = () => {
     try {
       const activeName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
-      const s = openShift(activeName, toMinor(openingCash || '0', cur.decimals))
-      toast.show(`فُتحت الوردية #${s.id} — كل فاتورة من الآن تُحسب عليها ✓`)
+      const s = openShift(activeName, toMinor(openingCash || '0', cur.decimals), {
+        userId: currentUserId,
+        employeeId: shiftEmployeeId || undefined,
+      })
+      const linked = s.openedByEmployeeId ? ' — مربوطة بموظف مسجَّل' : ''
+      toast.show(`فُتحت الوردية #${s.id}${linked} — كل فاتورة من الآن تُحسب عليها ✓`)
       setOpenModal(false)
       setOpeningCash('')
+      setShiftEmployeeId(0)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -108,10 +128,16 @@ export function ShiftsPage() {
       const projectedVariance = counted - openSummary.expectedCashMinor
       const approvalNote = projectedVariance === 0 ? null : (projectedVariance < 0 ? `اعتماد عجز ${fmt(-projectedVariance)}` : `اعتماد زيادة ${fmt(projectedVariance)}`)
       const closerName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
-      const s = closeShift(counted, projectedVariance === 0 ? null : (approvedBy ?? closerName), approvalNote)
+      const s = closeShift(
+        counted,
+        projectedVariance === 0 ? null : (approvedBy ?? closerName),
+        approvalNote,
+        settleOnClose && projectedVariance !== 0 ? { mode: 'expense' } : null,
+      )
       const sum = getShiftSummary(s.id)
       const v = sum.varianceMinor ?? 0
-      toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`, v < 0 ? 'error' : 'success')
+      const settledNote = s.varianceSettledMode ? ' — سُوّي الفرق بقيده في نفس الإقفال' : ''
+      toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : `${v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`}${settledNote}`, v < 0 ? 'error' : 'success')
       setCloseModal(false)
       setCountedCash('')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -209,7 +235,7 @@ export function ShiftsPage() {
                   <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">#{s.id} · {s.openedBy}</div>
-                      <div className="text-[11px] text-slate-400">{sum.invoiceCount} فاتورة · {sum.returnCount} مرتجع{ s.closeApprovedBy ? ` · اعتماد: ${s.closeApprovedBy}` : ''}</div>
+                      <div className="text-[11px] text-slate-400">{sum.invoiceCount} فاتورة · {sum.returnCount} مرتجع{ s.closeApprovedBy ? ` · اعتماد: ${s.closeApprovedBy}` : ''}{s.openedByEmployeeId ? ` · موظف #${s.openedByEmployeeId}` : ' · بلا ربط موظف'}</div>
                     </td>
                     <td className="px-4 py-3 text-[12px] text-slate-500">
                       {s.openedAt.slice(5, 16).replace('T', ' ')} ← {s.closedAt?.slice(5, 16).replace('T', ' ')}
@@ -229,10 +255,18 @@ export function ShiftsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-left">
+                      <button
+                        title="تقرير Z — مستند إقفال الوردية (المعدود والفرق)"
+                        onClick={() => printXReport(s, sum, 'Z')}
+                        data-z-report={s.id}
+                        className="text-[11px] px-2.5 py-1 mb-1 rounded-lg bg-slate-500/10 text-slate-600 font-bold hover:bg-slate-500/20 transition-colors flex items-center gap-1"
+                      >
+                        🖨️ تقرير Z
+                      </button>
                       {v !== 0 && !s.varianceSettledMode && (
                         <button
                           title="تسوية الفرق: مصروف/إيراد أو سلفة على الموظف"
-                          onClick={() => { setSettleShift(s); setSettleMode('expense'); setSettleEmployeeId(0) }}
+                          onClick={() => { setSettleShift(s); setSettleMode('expense'); setSettleEmployeeId((s as Shift).openedByEmployeeId ?? 0) }}
                           className="text-[11px] px-2.5 py-1 rounded-lg bg-brand-500/10 text-brand-600 font-bold hover:bg-brand-500/20 transition-colors flex items-center gap-1"
                         >
                           <Scale size={11} /> تسوية
@@ -257,6 +291,16 @@ export function ShiftsPage() {
         <div className="space-y-4">
           <Field label={`رصيد الدرج الافتتاحي (${cur.symbol})`} hint="عدّ النقدية الموجودة في الدرج الآن قبل البدء">
             <input value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} placeholder="0" className={inputCls} autoFocus dir="ltr" />
+          </Field>
+          <Field label="الموظف المسؤول عن الدرج (اختياري)" hint="ربط الوردية بموظف مسجَّل يجعل تحميل العجز سلفةً عليه ممكناً بثقة، ويظهر اسمه على تقريري X وZ.">
+            <PartyQuickPicker
+              parties={employees.filter((employee) => employee.active).map((employee) => ({ ...employee, nameAr: employee.jobTitle ? `${employee.nameAr} — ${employee.jobTitle}` : employee.nameAr }))}
+              value={shiftEmployeeId}
+              onChange={setShiftEmployeeId}
+              cashLabel="بلا ربط بموظف"
+              label="بحث الموظف"
+              showCash
+            />
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpenModal(false)}>إلغاء</Btn>
@@ -315,9 +359,16 @@ export function ShiftsPage() {
               <div className="text-[11px] text-slate-400 mt-1">افتتاحي {fmt(open?.openingCashMinor ?? 0)} + كاش {fmt(openSummary.cashSalesMinor)} − مرتجعات {fmt(openSummary.cashRefundsMinor)} + تحصيل تأمين {fmt(openSummary.cashInsuranceReceiptsMinor)} − صرف تأمين {fmt(openSummary.cashInsurancePaymentsMinor)}</div>
             </div>
           )}
-          <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="إذا ظهر عجز أو زيادة فلن تُقفل الوردية إلا باعتماد مشرف/مالك، ثم تُسوّى كإجراء مستقل.">
+          <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="إذا ظهر عجز أو زيادة فلن تُقفل الوردية إلا باعتماد مشرف/مالك. القيد يُنشأ مع الإقفال إن أبقيت الخيار أدناه.">
             <input value={countedCash} onChange={(e) => setCountedCash(e.target.value)} placeholder="0" className={inputCls} autoFocus dir="ltr" />
           </Field>
+          <label className="flex items-start gap-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3 cursor-pointer">
+            <input type="checkbox" checked={settleOnClose} onChange={(e) => setSettleOnClose(e.target.checked)} className="mt-1" data-settle-on-close />
+            <span className="text-[12px] leading-5 text-slate-600 dark:text-slate-300">
+              <b>سوِّ الفرق في نفس الإقفال</b> — يُنشأ قيد المصروف/الإيراد فوراً مع الإقفال بدل ترك فرق معلّق.
+              <span className="block text-[11px] text-slate-400">بدونه يبقى الفرق ظاهراً في سجل الورديات حتى تُسوّيه يدوياً (مصروف أو سلفة على موظف).</span>
+            </span>
+          </label>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseModal(false)}>إلغاء</Btn>
             <Btn onClick={doClose} shortcut="F9">🔒 إقفال الوردية</Btn>

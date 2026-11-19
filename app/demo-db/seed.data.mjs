@@ -209,7 +209,14 @@ export const DEMO_ACTIVITIES = [
     ],
     purchases: [
       { ref: 'p1', doc_date: '2026-09-05', supplier_ref: 's1', warehouse_ref: 'wh-main', supplier_doc: 'INV-4411', paid_minor: 250000, treasury_ref: 'bank-qnb',
-        lines: [{ item_ref: 'augm', qty: 20, unit_price_minor: 9500 }, { item_ref: 'panad', qty: 50, unit_price_minor: 2600 }] },
+        lines: [
+          { item_ref: 'augm', qty: 20, unit_price_minor: 9500, expiry_date: '2027-06-30' },
+          { item_ref: 'panad', qty: 50, unit_price_minor: 2600, expiry_date: '2027-09-30' },
+        ] },
+      /* فاتورة البروفين: بدونه كان البيع «i1» يسقط لأن مخزن البيع بلا أي دفعة صلاحية
+         لهذا الصنف — سقوط صامت كان يفتح الصيدلية بفاتورة واحدة بدل فاتورتين. */
+      { ref: 'p3', doc_date: '2026-09-08', supplier_ref: 's1', warehouse_ref: 'wh-main', supplier_doc: 'INV-4418', paid_minor: 0,
+        lines: [{ item_ref: 'brufen', qty: 24, unit_price_minor: 3100, expiry_date: '2027-07-31' }] },
       /* دفعة مسكن قاربت الانتهاء — تظهر في تنبيهات الصلاحية (تنتهي خلال 30 يوماً) */
       { ref: 'p2', doc_date: '2026-09-15', supplier_ref: 's2', warehouse_ref: 'wh-cold', supplier_doc: 'INV-4430', paid_minor: 39000, treasury_ref: 'cash-main',
         notes: 'دفعة قصيرة الصلاحية — للتنبيه',
@@ -232,8 +239,13 @@ export const DEMO_ACTIVITIES = [
     ],
     /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
     sales_returns: [
+      /* كل سطر يحمل الدفعة التي جاء منها صراحةً: المرتجع لا يختار FEFO بنفسه،
+         وبدون المرجع تُحجب العملية للمراجعة بدل أن تُخمَّن لها دفعة. */
       { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-21', refund: 'credit', reason: 'حساسية من الدواء — استرجاع',
-        lines: [{ item_ref: 'augm', qty: 1, condition: 'resellable' }, { item_ref: 'brufen', qty: 2, condition: 'resellable' }] },
+        lines: [
+          { item_ref: 'augm', qty: 1, condition: 'resellable', batch_purchase_ref: 'p1' },
+          { item_ref: 'brufen', qty: 2, condition: 'resellable', batch_purchase_ref: 'p3' },
+        ] },
     ],
     purchase_returns: [
       { ref: 'pr1', purchase_ref: 'p1', doc_date: '2026-09-22', refund: 'cash', treasury_ref: 'bank-qnb', reason: 'قرب انتهاء الصلاحية',
@@ -282,11 +294,13 @@ export const DEMO_ACTIVITIES = [
       { ref: 'raw', name_ar: 'خامات المطبخ' },
     ],
     items: [
-      item('kofta', 'كفتة مشوية — وجبة', 'RS-KFT', 'meals', 6500, 12000, 0, { is_service: 0, base_unit: 'وجبة', stock_qty: 0 }),
-      item('firakh', 'نصف فرخة مشوية', 'RS-FRK', 'meals', 7800, 14500, 0, { base_unit: 'وجبة' }),
-      item('mahshi', 'محشي مشكل', 'RS-MHS', 'meals', 4200, 9000, 0, { base_unit: 'وجبة' }),
+      /* أطباق بتحضير مسبق (بري‑باتش): لها رصيد افتتاحي مخزني حقيقي — كانت صفراً
+         فيسقط كل بيع لها، ويأتي مردود ذلك في تقرير المخزون لا في رسالة للمالك. */
+      item('kofta', 'كفتة مشوية — وجبة', 'RS-KFT', 'meals', 6500, 12000, 40, { is_service: 0, base_unit: 'وجبة' }),
+      item('firakh', 'نصف فرخة مشوية', 'RS-FRK', 'meals', 7800, 14500, 30, { base_unit: 'وجبة' }),
+      item('mahshi', 'محشي مشكل', 'RS-MHS', 'meals', 4200, 9000, 25, { base_unit: 'وجبة' }),
       item('cola', 'مشروب غازي 330 مل', 'RS-COLA', 'drinks', 900, 2000, 240, { track_expiry: 1 }),
-      item('juice', 'عصير طازج', 'RS-JUC', 'drinks', 1500, 3500, 0, { base_unit: 'كوب' }),
+      item('juice', 'عصير طازج', 'RS-JUC', 'drinks', 1500, 3500, 40, { base_unit: 'كوب' }),
       item('rice-raw', 'أرز مصري خام', 'RW-RICE', 'raw', 2400, 0, 180, { base_unit: 'كجم', sold_by_weight: 1, min_qty: 40 }),
       item('meat', 'لحم بتلو', 'RW-MEAT', 'raw', 33000, 0, 42, { base_unit: 'كجم', sold_by_weight: 1, track_expiry: 1, min_qty: 15 }),
       item('chicken', 'دجاج طازج', 'RW-CHK', 'raw', 11000, 0, 60, { base_unit: 'كجم', sold_by_weight: 1, track_expiry: 1 }),
@@ -329,8 +343,12 @@ export const DEMO_ACTIVITIES = [
         ] },
     ],
     sales: [
+      /* البوفيه من مخزن المطبخ (أطباق)، والمشروبات تُباع من مخزن البار الذي استلم
+         التوريد — بيع «الكولا» من المطبخ كان يسقط لعدم وجود دفعة صلاحية هناك. */
       { ref: 'i1', doc_date: '2026-09-19', customer_ref: 'c1', warehouse_ref: 'wh-kitchen', payment: 'credit', paid_minor: 0, notes: 'بوفيه اجتماع',
-        lines: [{ item_ref: 'kofta', qty: 15, unit_price_minor: 12000 }, { item_ref: 'cola', qty: 15, unit_price_minor: 2000 }] },
+        lines: [{ item_ref: 'kofta', qty: 15, unit_price_minor: 12000 }] },
+      { ref: 'i3', doc_date: '2026-09-19', customer_ref: '', warehouse_ref: 'wh-bar', payment: 'cash', paid_minor: 30000, treasury_ref: 'cash-main', notes: 'مشروبات البوفيه — بيع منفصل من البار',
+        lines: [{ item_ref: 'cola', qty: 15, unit_price_minor: 2000 }] },
       { ref: 'i2', doc_date: '2026-09-21', customer_ref: '', warehouse_ref: 'wh-kitchen', payment: 'cash', paid_minor: 27000, treasury_ref: 'cash-main',
         lines: [{ item_ref: 'firakh', qty: 1, unit_price_minor: 14500 }, { item_ref: 'mahshi', qty: 1, unit_price_minor: 9000 }, { item_ref: 'juice', qty: 1, unit_price_minor: 3500 }] },
     ],
@@ -400,6 +418,9 @@ export const DEMO_ACTIVITIES = [
       { ref: 'c1', name_ar: 'محل الأناقة (جملة)', phone: '0502311111', credit_limit_minor: 2500000 },
       { ref: 'c2', name_ar: 'نهى عبد الرحمن', phone: '01033334444', credit_limit_minor: 100000, notes: 'تقسيط 3 شهور' },
       { ref: 'c3', name_ar: 'زبون معرض', phone: '' },
+      /* عميل عرض المدارس: عرض السعر لا يُنشأ إلا لعميل مسجَّل، وكان العرض «q1»
+         يسقط لهذا السبب وحده فيُفتح النشاط بلا عروض أسعار. */
+      { ref: 'c4', name_ar: 'مدرسة النور الخاصة', phone: '0502333444', credit_limit_minor: 5000000, notes: 'تعاقد زي مدرسي سنوي' },
     ],
     suppliers: [
       { ref: 's1', name_ar: 'مصنع الغزل — المحلة', phone: '0502322111' },
@@ -420,7 +441,7 @@ export const DEMO_ACTIVITIES = [
     ],
     quotations: [
       /* عرض سعر أزياء موحدة لمدرسة — بنود حرة بضريبة 14٪ وسعر تنافسي */
-      { ref: 'q1', kind: 'quotation', client_name: 'مدرسة النور الخاصة', client_ref: '', title_ar: 'توريد زي موحد للعام الدراسي', valid_until: '2026-10-31', status: 'submitted', win_probability: 65, notes: 'التسليم على دفعتين',
+      { ref: 'q1', kind: 'quotation', client_name: 'مدرسة النور الخاصة', client_ref: 'c4', title_ar: 'توريد زي موحد للعام الدراسي', valid_until: '2026-10-31', status: 'submitted', win_probability: 65, notes: 'التسليم على دفعتين',
         lines: [
           { name_ar: 'تيشيرت قطنية', description_ar: 'تيشيرت قطن 100٪ مطرز شعار المدرسة', unit_ar: 'قطعة', qty: 400, unit_price_minor: 22000, est_cost_minor: 16000, vat_percent: 14 },
           { name_ar: 'بنطلون رياضي', description_ar: 'بنطلون تريكو بجيوب جانبية', unit_ar: 'قطعة', qty: 400, unit_price_minor: 28000, est_cost_minor: 21000, vat_percent: 14 },

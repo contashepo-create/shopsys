@@ -132,7 +132,8 @@ r.section('📋 جرد: صافي المستند = صافي حركة المخزو
 const currentQty = st().items.find((row) => row.id === item2.id).stockQty
 const stocktake = st().postStocktake([{ itemId: item2.id, nameAr: item2.nameAr, expectedQty: currentQty, countedQty: Math.round((currentQty - 0.4) * 1000) / 1000, unitCostMinor: st().items.find((row) => row.id === item2.id).costMinor }], 'فحص')
 const stocktakeEntry = acc(entryOf(st, 'adjustment', stocktake.id))
-eq('عجز الجرد المعلن = مدين الهالك', stocktakeEntry.debit('5111'), stocktake.result.shortageValueMinor)
+/* F3: عجز الجرد بلا سبب مبرَّر يُقيَّد فقداً على 5120 (الهالك 5111 للمبرَّر فقط) */
+eq('عجز الجرد المعلن = مدين الفقد 5120', stocktakeEntry.debit('5120'), stocktake.result.shortageValueMinor)
 eq('دائن المخزون = صافي المستند', stocktakeEntry.credit('1103'), stocktake.result.shortageValueMinor - stocktake.result.surplusValueMinor)
 
 r.section('🔁 تحويل بين المخازن: لا حركة دفترية ولا تغيّر في قيمة المخزون')

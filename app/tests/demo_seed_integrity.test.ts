@@ -63,11 +63,42 @@ describe('بذور العرض: البقالة (النشاط المشحون) كا
   })
 })
 
-describe('بذور العرض: بقية الأنشطة — لا ثابت مكسور ولو بيع بالسالب', () => {
-  it('المطعم: بيع أطباق بلا رصيد لا يفصل 1103 عن قيمة الأصناف (كان الفرق 13,500)', async () => {
+describe('بذور العرض: كل الأنشطة — لا وثيقة ساقطة', () => {
+  /* الفجوات الثلاث القديمة (صيدلية · مطعم · ملابس) أُغلقت من البذرة نفسها، فصار
+     المسموح صفراً في كل نشاط. أي سقوط جديد يُفشل هذا الاختبار قبل أن يصل المالك. */
+  for (const activity of Object.keys(payloads)) {
+    it(`${activity}: تُحمَّل كل وثائقها (skipped = [])`, async () => {
+      const result = await loadDemoActivity(activity)
+      expect(result.skipped, `${activity}: ${result.skipped.join(' · ')}`).toEqual([])
+    })
+  }
+
+  it('الصيدلية: فاتورتان ومرتجع بيع (كانت فاتورة واحدة والمرتجع يسقط تبعاً)', async () => {
+    const result = await loadDemoActivity('pharmacy')
+    expect(result.sales).toBe(2)
+    expect(result.saleReturns).toBe(1)
+    expect(balance('1103')).toBe(itemsValue())
+  })
+
+  it('المطعم: ثلاث فواتير (المشروبات من مخزن البار) ومرتجع بيع، والأطباق برصيد حقيقي', async () => {
+    const result = await loadDemoActivity('restaurant')
+    expect(result.sales).toBe(3)
+    expect(result.saleReturns).toBe(1)
+    expect(balance('1103')).toBe(itemsValue())
+    /* الأطباق لم تعد تُباع برصيد صفري: لا صنف سالب في النشاط */
+    expect(S().items.filter((it) => it.stockQty < 0)).toEqual([])
+  })
+
+  it('الملابس: عرض السعر يُنشأ لعميل مسجَّل (كان يسقط لغياب العميل)', async () => {
+    await loadDemoActivity('clothing')
+    const quotes = S().quotations ?? []
+    expect(quotes.length).toBeGreaterThan(0)
+    expect(quotes.every((quote) => quote.clientId != null)).toBe(true)
+  })
+
+  it('المطعم: صنف برصيد سالب — لو حدث — يحمل قيمة سالبة صريحة لا صفراً (حارس D18)', async () => {
     await loadDemoActivity('restaurant')
     expect(balance('1103')).toBe(itemsValue())
-    /* الأطباق التي بيعت بالسالب تحمل قيمة سالبة صريحة بدل الصفر */
     const negative = S().items.filter((it) => it.stockQty < 0)
     for (const item of negative) expect(item.stockValueMinor).toBe(Math.round(item.stockQty * item.costMinor))
   })

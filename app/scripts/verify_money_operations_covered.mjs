@@ -84,7 +84,19 @@ const guarded = (op) => segments.get(op)?.includes('throw new') ?? false
 const delegatesToGuarded = (op) => [...(callsOf.get(op) ?? [])].some((callee) => guarded(callee))
 const unguarded = [...posting].filter((op) => !guarded(op) && !delegatesToGuarded(op)).sort()
 assert.deepEqual(unguarded, [], `عمليات ترحّل قيوداً بلا حارس ولا تفويض محروس: ${unguarded.join('، ')}`)
-const missingSource = [...directPosting].filter((op) => !(segments.get(op) ?? '').includes('sourceType')).sort()
+/** بواني القيود المشتركة على مستوى الملف (دوال `function X(...)` تحتوي sourceType):
+ *  العملية التي تفوّض بناء القيد إليها تسمّي مصدرها **عبر الباني** لا بنصّها، وهو
+ *  التفويض المقصود (إقفال الوردية والتسوية يشتركان في باني واحد بدل منطقين يتفرقان).
+ *  لا تسامح: الباني نفسه يجب أن يحمل sourceType وإلا بقيت العملية مخالفة. */
+const sharedBuilders = new Set(
+  [...repoSource.matchAll(/^function (\w+)\([\s\S]*?\n\}/gm)]
+    .filter((match) => match[0].includes('sourceType'))
+    .map((match) => match[1]),
+)
+const namesSourceViaBuilder = (op) => [...sharedBuilders].some((builder) => (segments.get(op) ?? '').includes(`${builder}(`))
+const missingSource = [...directPosting]
+  .filter((op) => !(segments.get(op) ?? '').includes('sourceType') && !namesSourceViaBuilder(op))
+  .sort()
 assert.deepEqual(missingSource, [], `عمليات تبني قيداً بلا sourceType: ${missingSource.join('، ')}`)
 R.ok(`مصفوفة الحراس: ${posting.size} عملية ترحّل — محروسة مباشرة أو بتفويض إلى عملية محروسة · ${directPosting.size} تبني القيد وتسمّي مصدره`)
 

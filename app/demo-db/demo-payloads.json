@@ -1588,7 +1588,7 @@
       "item_ref": "augm",
       "qty": 20,
       "unit_price_minor": 9500,
-      "expiry_date": ""
+      "expiry_date": "2027-06-30"
      },
      {
       "id": 8,
@@ -1597,12 +1597,12 @@
       "item_ref": "panad",
       "qty": 50,
       "unit_price_minor": 2600,
-      "expiry_date": ""
+      "expiry_date": "2027-09-30"
      }
     ]
    },
    {
-    "id": 6,
+    "id": 7,
     "activity": "pharmacy",
     "ref": "p2",
     "doc_date": "2026-09-15",
@@ -1614,13 +1614,36 @@
     "notes": "دفعة قصيرة الصلاحية — للتنبيه",
     "lines": [
      {
-      "id": 9,
+      "id": 10,
       "activity": "pharmacy",
       "purchase_ref": "p2",
       "item_ref": "panad",
       "qty": 30,
       "unit_price_minor": 2600,
       "expiry_date": "2026-10-15"
+     }
+    ]
+   },
+   {
+    "id": 6,
+    "activity": "pharmacy",
+    "ref": "p3",
+    "doc_date": "2026-09-08",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "INV-4418",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "",
+    "lines": [
+     {
+      "id": 9,
+      "activity": "pharmacy",
+      "purchase_ref": "p3",
+      "item_ref": "brufen",
+      "qty": 24,
+      "unit_price_minor": 3100,
+      "expiry_date": "2027-07-31"
      }
     ]
    }
@@ -1643,7 +1666,7 @@
       "item_ref": "augm",
       "qty": 1,
       "condition": "resellable",
-      "batch_purchase_ref": ""
+      "batch_purchase_ref": "p1"
      },
      {
       "id": 4,
@@ -1652,7 +1675,7 @@
       "item_ref": "brufen",
       "qty": 2,
       "condition": "resellable",
-      "batch_purchase_ref": ""
+      "batch_purchase_ref": "p3"
      }
     ]
    }
@@ -1861,7 +1884,7 @@
     "extra_units": "",
     "cost_minor": 6500,
     "price_minor": 12000,
-    "stock_qty": 0,
+    "stock_qty": 40,
     "min_qty": 0,
     "is_service": 0,
     "track_expiry": 0,
@@ -1883,7 +1906,7 @@
     "extra_units": "",
     "cost_minor": 7800,
     "price_minor": 14500,
-    "stock_qty": 0,
+    "stock_qty": 30,
     "min_qty": 0,
     "is_service": 0,
     "track_expiry": 0,
@@ -1905,7 +1928,7 @@
     "extra_units": "",
     "cost_minor": 4200,
     "price_minor": 9000,
-    "stock_qty": 0,
+    "stock_qty": 25,
     "min_qty": 0,
     "is_service": 0,
     "track_expiry": 0,
@@ -1949,7 +1972,7 @@
     "extra_units": "",
     "cost_minor": 1500,
     "price_minor": 3500,
-    "stock_qty": 0,
+    "stock_qty": 40,
     "min_qty": 0,
     "is_service": 0,
     "track_expiry": 0,
@@ -2307,20 +2330,11 @@
       "qty": 15,
       "unit_price_minor": 12000,
       "discount_percent": 0
-     },
-     {
-      "id": 11,
-      "activity": "restaurant",
-      "sale_ref": "i1",
-      "item_ref": "cola",
-      "qty": 15,
-      "unit_price_minor": 2000,
-      "discount_percent": 0
      }
     ]
    },
    {
-    "id": 7,
+    "id": 8,
     "activity": "restaurant",
     "ref": "i2",
     "doc_date": "2026-09-21",
@@ -2359,11 +2373,34 @@
       "discount_percent": 0
      }
     ]
+   },
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "i3",
+    "doc_date": "2026-09-19",
+    "customer_ref": "",
+    "warehouse_ref": "wh-bar",
+    "payment": "cash",
+    "paid_minor": 30000,
+    "treasury_ref": "cash-main",
+    "notes": "مشروبات البوفيه — بيع منفصل من البار",
+    "lines": [
+     {
+      "id": 11,
+      "activity": "restaurant",
+      "sale_ref": "i3",
+      "item_ref": "cola",
+      "qty": 15,
+      "unit_price_minor": 2000,
+      "discount_percent": 0
+     }
+    ]
    }
   ],
   "purchases": [
    {
-    "id": 7,
+    "id": 8,
     "activity": "restaurant",
     "ref": "p1",
     "doc_date": "2026-09-12",
@@ -2375,7 +2412,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 10,
+      "id": 11,
       "activity": "restaurant",
       "purchase_ref": "p1",
       "item_ref": "meat",
@@ -2386,7 +2423,7 @@
     ]
    },
    {
-    "id": 8,
+    "id": 9,
     "activity": "restaurant",
     "ref": "p2",
     "doc_date": "2026-09-14",
@@ -2398,7 +2435,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 11,
+      "id": 12,
       "activity": "restaurant",
       "purchase_ref": "p2",
       "item_ref": "cola",
@@ -2851,6 +2888,15 @@
     "phone": "",
     "credit_limit_minor": 0,
     "notes": ""
+   },
+   {
+    "id": 14,
+    "activity": "clothing",
+    "ref": "c4",
+    "name_ar": "مدرسة النور الخاصة",
+    "phone": "0502333444",
+    "credit_limit_minor": 5000000,
+    "notes": "تعاقد زي مدرسي سنوي"
    }
   ],
   "suppliers": [
@@ -2975,7 +3021,7 @@
     "ref": "q1",
     "kind": "quotation",
     "client_name": "مدرسة النور الخاصة",
-    "client_ref": "",
+    "client_ref": "c4",
     "title_ar": "توريد زي موحد للعام الدراسي",
     "valid_until": "2026-10-31",
     "status": "submitted",
@@ -3067,7 +3113,7 @@
   "contractingDocs": [],
   "sales": [
    {
-    "id": 8,
+    "id": 9,
     "activity": "clothing",
     "ref": "i1",
     "doc_date": "2026-09-16",
@@ -3099,7 +3145,7 @@
     ]
    },
    {
-    "id": 9,
+    "id": 10,
     "activity": "clothing",
     "ref": "i2",
     "doc_date": "2026-09-23",
@@ -3124,7 +3170,7 @@
   ],
   "purchases": [
    {
-    "id": 9,
+    "id": 10,
     "activity": "clothing",
     "ref": "p1",
     "doc_date": "2026-09-03",
@@ -3136,7 +3182,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 12,
+      "id": 13,
       "activity": "clothing",
       "purchase_ref": "p1",
       "item_ref": "shirt",
@@ -3145,7 +3191,7 @@
       "expiry_date": ""
      },
      {
-      "id": 13,
+      "id": 14,
       "activity": "clothing",
       "purchase_ref": "p1",
       "item_ref": "jeans",
@@ -3561,7 +3607,7 @@
   ],
   "customers": [
    {
-    "id": 14,
+    "id": 15,
     "activity": "feed_trade",
     "ref": "c1",
     "name_ar": "مزرعة النور للدواجن",
@@ -3570,7 +3616,7 @@
     "notes": "توريد أسبوعي بالشيكارة"
    },
    {
-    "id": 15,
+    "id": 16,
     "activity": "feed_trade",
     "ref": "c2",
     "name_ar": "مزرعة البركة الحلابة",
@@ -3579,7 +3625,7 @@
     "notes": ""
    },
    {
-    "id": 16,
+    "id": 17,
     "activity": "feed_trade",
     "ref": "c3",
     "name_ar": "حسن الجرف (تجزئة)",
@@ -3745,7 +3791,7 @@
   "contractingDocs": [],
   "sales": [
    {
-    "id": 10,
+    "id": 11,
     "activity": "feed_trade",
     "ref": "i1",
     "doc_date": "2026-09-18",
@@ -3768,7 +3814,7 @@
     ]
    },
    {
-    "id": 11,
+    "id": 12,
     "activity": "feed_trade",
     "ref": "i2",
     "doc_date": "2026-09-22",
@@ -3793,7 +3839,7 @@
   ],
   "purchases": [
    {
-    "id": 10,
+    "id": 11,
     "activity": "feed_trade",
     "ref": "p1",
     "doc_date": "2026-09-08",
@@ -3805,7 +3851,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 14,
+      "id": 15,
       "activity": "feed_trade",
       "purchase_ref": "p1",
       "item_ref": "broiler5",
@@ -3816,7 +3862,7 @@
     ]
    },
    {
-    "id": 11,
+    "id": 12,
     "activity": "feed_trade",
     "ref": "p2",
     "doc_date": "2026-09-16",
@@ -3828,7 +3874,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 15,
+      "id": 16,
       "activity": "feed_trade",
       "purchase_ref": "p2",
       "item_ref": "corn",
@@ -3837,7 +3883,7 @@
       "expiry_date": ""
      },
      {
-      "id": 16,
+      "id": 17,
       "activity": "feed_trade",
       "purchase_ref": "p2",
       "item_ref": "wheatbran",
@@ -4238,7 +4284,7 @@
   ],
   "customers": [
    {
-    "id": 17,
+    "id": 18,
     "activity": "contracting",
     "ref": "c1",
     "name_ar": "جامعة الدلتا الخاصة",
@@ -4247,7 +4293,7 @@
     "notes": "مشروع مبنى إداري — دفعات مستخلصات (حد يغطي قيمة العقد والضريبة)"
    },
    {
-    "id": 18,
+    "id": 19,
     "activity": "contracting",
     "ref": "c2",
     "name_ar": "شركة الإسكان الاجتماعي",
@@ -4256,7 +4302,7 @@
     "notes": ""
    },
    {
-    "id": 19,
+    "id": 20,
     "activity": "contracting",
     "ref": "c3",
     "name_ar": "م. خالد الشاذلي — فيلا خاصة",
@@ -4907,7 +4953,7 @@
   ],
   "sales": [
    {
-    "id": 12,
+    "id": 13,
     "activity": "contracting",
     "ref": "i1",
     "doc_date": "2026-09-20",
@@ -4930,7 +4976,7 @@
     ]
    },
    {
-    "id": 13,
+    "id": 14,
     "activity": "contracting",
     "ref": "i2",
     "doc_date": "2026-09-23",
@@ -4955,7 +5001,7 @@
   ],
   "purchases": [
    {
-    "id": 12,
+    "id": 13,
     "activity": "contracting",
     "ref": "p1",
     "doc_date": "2026-09-06",
@@ -4967,7 +5013,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 17,
+      "id": 18,
       "activity": "contracting",
       "purchase_ref": "p1",
       "item_ref": "cement",
@@ -4978,7 +5024,7 @@
     ]
    },
    {
-    "id": 13,
+    "id": 14,
     "activity": "contracting",
     "ref": "p2",
     "doc_date": "2026-09-14",
@@ -4990,7 +5036,7 @@
     "notes": "قسط حديد أول — الباقي مع المستخلص الثاني",
     "lines": [
      {
-      "id": 18,
+      "id": 19,
       "activity": "contracting",
       "purchase_ref": "p2",
       "item_ref": "steel",
@@ -5391,7 +5437,7 @@
   ],
   "customers": [
    {
-    "id": 20,
+    "id": 21,
     "activity": "equipment_rental",
     "ref": "c1",
     "name_ar": "شركة الريان للمقاولات",
@@ -5400,7 +5446,7 @@
     "notes": "عقد إيجار شهري بمعدات ثابتة — الباقي مع المستخلصات"
    },
    {
-    "id": 21,
+    "id": 22,
     "activity": "equipment_rental",
     "ref": "c2",
     "name_ar": "مقاول الطرق — شركة النيل",
@@ -5409,7 +5455,7 @@
     "notes": ""
    },
    {
-    "id": 22,
+    "id": 23,
     "activity": "equipment_rental",
     "ref": "c3",
     "name_ar": "الاتحاد للصرف الصحي",
@@ -5800,7 +5846,7 @@
   "contractingDocs": [],
   "sales": [
    {
-    "id": 14,
+    "id": 15,
     "activity": "equipment_rental",
     "ref": "i1",
     "doc_date": "2026-09-19",
@@ -5832,7 +5878,7 @@
     ]
    },
    {
-    "id": 15,
+    "id": 16,
     "activity": "equipment_rental",
     "ref": "i2",
     "doc_date": "2026-09-22",
@@ -5857,7 +5903,7 @@
   ],
   "purchases": [
    {
-    "id": 14,
+    "id": 15,
     "activity": "equipment_rental",
     "ref": "p1",
     "doc_date": "2026-09-09",
@@ -5869,7 +5915,7 @@
     "notes": "",
     "lines": [
      {
-      "id": 19,
+      "id": 20,
       "activity": "equipment_rental",
       "purchase_ref": "p1",
       "item_ref": "dieselfilter",
@@ -5878,7 +5924,7 @@
       "expiry_date": ""
      },
      {
-      "id": 20,
+      "id": 21,
       "activity": "equipment_rental",
       "purchase_ref": "p1",
       "item_ref": "trackshoe",

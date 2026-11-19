@@ -97,7 +97,7 @@ for (const activityId of ACTIVITIES) {
   // 4) جرد بعجز 2 (متوقع 15 معدود 13)
   const stk = st().postStocktake([{ itemId: item.id, nameAr: item.nameAr, expectedQty: 15, countedQty: 13, unitCostMinor: 11000 }], 'جرد النشاط')
   const stkEntry = st().journal.find((e) => e.id === stk.journalEntryId)
-  assert.ok(stkEntry.lines.some((l) => l.accountCode === '5111' && l.debit === 22000), `${activityId}: قيد عجز`) // AUDIT-001
+  assert.ok(stkEntry.lines.some((l) => l.accountCode === '5120' && l.debit === 22000), `${activityId}: قيد عجز`) // AUDIT-001 + F3
   assert.equal(st().items.find((i) => i.id === item.id).stockQty, 13)
   check1103('بعد الجرد')
 

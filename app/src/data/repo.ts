@@ -35,7 +35,7 @@ import {
 import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, purchaseExpenseTaxParts, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
-import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
+import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult, type ShortageReason } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
 import { validateProcessing, validateProcessingOutputExpiry, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
@@ -1413,6 +1413,8 @@ export interface Stocktake {
   countedItems: number // عدد الأصناف المشمولة بالجرد
   journalEntryId: number | null // null لو الجرد مطابق تماماً (لا قيد)
   notes: string
+  /** سبب العجز (F3): مبرَّر ⇒ 5111 هالك، غير مبرَّر ⇒ 5120 فقد. غيابه = قديم/فقد. */
+  shortageReason?: ShortageReason
   /** مخزن الفرع الذي عُدّ فعلياً؛ null/undefined = جرد على مستوى الشركة (سجل قديم). */
   warehouseId?: number | null
 }
@@ -2413,7 +2415,11 @@ interface DataState {
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
    * ويولّد قيد تسوية متوازناً (عجز = مصروف، زيادة = تخفيض مصروف)
    */
-  postStocktake: (counts: CountInput[], notes: string) => Stocktake
+  /**
+   * ترحيل جرد فعلي. `shortageReason` يحدد حساب العجز: مبرَّر (تلف/انتهاء صلاحية)
+   * ⇒ 5111 هالك، غير مبرَّر (فقد/سرقة/خطأ) ⇒ 5120 فقد وعجز — فلا يختلط السؤالان.
+   */
+  postStocktake: (counts: CountInput[], notes: string, shortageReason?: ShortageReason) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
   postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string; date?: string }) => WastageDoc
   /** صرف داخلي (استهلاك مخزون للتشغيل): يخصم الرصيد + FEFO + قيد مصروف/1103 بالمتوسط المرجح */
@@ -2559,10 +2565,18 @@ interface DataState {
   /** عكس سند قبض/صرف مع تحديث أثره في كشف الطرف وتخصيصاته */
   reverseVoucher: (voucherId: number, reason: string) => Voucher
   /** فتح وردية كاشير برصيد درج افتتاحي — لا ورديتين مفتوحتين معاً */
-  openShift: (openedBy: string, openingCashMinor: number) => Shift
+  /**
+   * فتح وردية. الهوية تُربط بسجل: مستخدم النظام من الجلسة، والموظف الذي يطابق الاسم
+   * **تطابقاً وحيداً** فقط — الاسم النصي وحده لا يكفي لتحميل عجز أو سلفة على شخص (F6).
+   */
+  openShift: (openedBy: string, openingCashMinor: number, identity?: { userId?: number | null; employeeId?: number | null }) => Shift
   getShiftSummary: (shiftId: number) => ShiftSummary
-  /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
-  closeShift: (countedCashMinor: number, closeApprovedBy?: string | null, closeApprovalNote?: string | null) => Shift
+  /**
+   * إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص.
+   * `settle` يُسوّي الفرق **في نفس الإقفال** (قيد واحد ذري): من يغلق الدرج فعلياً
+   * هو من يعرف السبب، وطلب تسوية لاحقة كان يترك فرقاً معلقاً بين الإقفال والتسوية.
+   */
+  closeShift: (countedCashMinor: number, closeApprovedBy?: string | null, closeApprovalNote?: string | null, settle?: { mode: 'expense' | 'advance'; employeeId?: number | null } | null) => Shift
   /** تسوية عجز/زيادة وردية مقفلة (طلب المالك): مصروف/إيراد أو سلفة على الموظف تُخصم من رواتبه */
   settleShiftVariance: (args: { shiftId: number; mode: 'expense' | 'advance'; employeeId?: number | null }) => Shift
   /**
@@ -4710,6 +4724,48 @@ function insuredShiftStamp(state: DataState, treasury: string): NonNullable<Jour
 }
 
 /** الملخص الوحيد للإقفال والتسوية والعرض، مع مطابقة حركات التأمين بالقيد والمطالبة. */
+/**
+ * تسوية فرق الوردية: تُبنى القيود والسلفة والطلب في **صورة واحدة** يعيدها المستدعي
+ * ليُنشرها مع بقية التغييرات في `set` واحد — الإقفال والتسوية يحدثان معاً أو لا يحدثان.
+ */
+function buildShiftVarianceSettlement(
+  state: DataState, shift: Shift, variance: number, mode: 'expense' | 'advance', employeeId?: number | null,
+): { entry: JournalEntry; advance?: EmployeeAdvance; shiftPatch: Partial<Shift> } {
+  const now = localIsoTimestamp()
+  const label = `وردية #${shift.id}`
+  if (mode === 'advance') {
+    if (variance > 0) throw new Error('السلفة تكون عن عجز فقط — الزيادة تُسوى كإيراد')
+    const emp = state.employees.find((e) => e.id === employeeId)
+    if (!emp) throw new Error('اختر الموظف الذي يتحمل العجز')
+    const advId = nextId(state.employeeAdvances)
+    const entryId = nextId(state.journal)
+    const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
+    const entry: JournalEntry = {
+      id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+      description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
+      sourceType: 'payment_voucher', sourceId: advId, sourceCollection: 'employeeAdvances',
+      lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
+      createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+    }
+    const advance: EmployeeAdvance = {
+      id: advId, advanceNumber, employeeId: emp.id, date: now,
+      amountMinor: Math.abs(variance), recoveredMinor: 0,
+      source: 'cash', custodyFileId: null, treasury: '1101',
+      notes: `عجز ${label} — يُخصم من الرواتب`, journalEntryId: entryId,
+    }
+    return { entry, advance, shiftPatch: { varianceSettledMode: 'advance', varianceEntryId: entryId, varianceAdvanceId: advId } }
+  }
+  const entryId = nextId(state.journal)
+  const entry: JournalEntry = {
+    id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+    description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
+    sourceType: 'adjustment', sourceId: shift.id, sourceCollection: 'shifts',
+    lines: buildVarianceExpenseEntry(variance, '1101', label),
+    createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+  }
+  return { entry, shiftPatch: { varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null } }
+}
+
 function shiftSummaryForState(raw: DataState, shiftId: number): ShiftSummary {
   const scoped = getBranchScopedDataState(raw)
   const shifts = raw.shifts.filter(row => row.id === shiftId)
@@ -10554,7 +10610,7 @@ export const useRawDataStore = create<DataState>()(
         return ret
       },
 
-      postStocktake: (counts, notes) => {
+      postStocktake: (counts, notes, shortageReason = 'unaccounted') => {
         const state = get()
         if (!counts.length) throw new Error('لا أصناف في الجرد')
         // حراسة §80: صنف غير مسجل يولّد قيد تسوية (5111/4110) بلا أثر مخزوني فعلي
@@ -10623,7 +10679,7 @@ export const useRawDataStore = create<DataState>()(
         let journal = state.journal
         if (exactResult.variances.length > 0) {
           // قيد تسوية واحد متوازن للعجز والزيادة معاً — بقيمة السحب/الإضافة الفعلية
-          const entryLines = buildAdjustmentEntry(exactResult)
+          const entryLines = buildAdjustmentEntry(exactResult, shortageReason)
           entryId = nextId(state.journal)
           const entry: JournalEntry = {
             id: entryId,
@@ -10643,6 +10699,7 @@ export const useRawDataStore = create<DataState>()(
 
         const st: Stocktake = {
           id: stocktakeId,
+          shortageReason,
           stocktakeNumber,
           date: now,
           result: exactResult,
@@ -12082,16 +12139,33 @@ export const useRawDataStore = create<DataState>()(
         return updatedVoucher
       },
 
-      openShift: (openedBy, openingCashMinor) => {
+      openShift: (openedBy, openingCashMinor, identity) => {
         const state = get()
         // AUDIT-010: اسم فاتح الوردية نص فقط (استدعاء خاطئ بكائن كان يُحفظ كما هو)
         if (typeof openedBy !== 'string') throw new Error('اسم فاتح الوردية مطلوب')
         const errors = validateOpenShift(openingCashMinor, getBranchScopedDataState(state).shifts)
         if (errors.length) throw new Error(errors.join('، '))
+        /* F6: ربط الهوية — مستخدم الجلسة إن وُجد، والموظف بتطابق اسم وحيد فقط.
+           اسم مكرر أو غير موجود ⇒ يبقى الربط null بلا تخمين (لا نحمّل عجزاً لشخص خطأ). */
+        const scoped = getBranchScopedDataState(state)
+        const explicitUser = identity?.userId
+        const resolvedUserId = explicitUser !== undefined
+          ? explicitUser
+          : (state.currentUserId != null && scoped.appUsers.some((user) => user.id === state.currentUserId) ? state.currentUserId : null)
+        if (resolvedUserId != null && !scoped.appUsers.some((user) => user.id === resolvedUserId)) throw new Error('مستخدم فاتح الوردية غير موجود في هذا الفرع')
+        let resolvedEmployeeId = identity?.employeeId ?? null
+        if (identity?.employeeId != null) {
+          if (!state.employees.some((emp) => emp.id === identity.employeeId && emp.active)) throw new Error('الموظف المرتبط بالوردية غير موجود أو موقوف')
+        } else if (identity?.employeeId === undefined) {
+          const matches = state.employees.filter((emp) => emp.active && emp.nameAr.trim() === openedBy.trim())
+          resolvedEmployeeId = matches.length === 1 ? matches[0].id : null
+        }
         const shift: Shift = {
           id: nextId(state.shifts),
           openedAt: new Date().toISOString(),
           openedBy,
+          openedByUserId: resolvedUserId,
+          openedByEmployeeId: resolvedEmployeeId,
           openingCashMinor,
           closedAt: null,
           countedCashMinor: null,
@@ -12103,15 +12177,29 @@ export const useRawDataStore = create<DataState>()(
 
       getShiftSummary: (shiftId) => shiftSummaryForState(get(), shiftId),
 
-      closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null) => {
+      closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null, settle = null) => {
         const state = get()
         const open = currentOpenShift(getBranchScopedDataState(state).shifts)
         if (!open) throw new Error('لا وردية مفتوحة')
         // AUDIT-010: المعدود عدد صحيح بالقرش — لا undefined ولا كسر
         if (!Number.isInteger(countedCashMinor)) throw new Error('النقدية المعدودة مطلوبة بالقرش الصحيح')
         if (countedCashMinor < 0) throw new Error('النقدية المعدودة لا تكون سالبة')
-        shiftSummaryForState(state, open.id)
+        const summary = shiftSummaryForState(state, open.id)
+        /* الفرق المتوقع يُحسب من المعدود الآن: `varianceMinor` في الملخص يبقى null
+           حتى تُقفل الوردية، فالاعتماد عليه هنا كان يجعل خيار التسوية صامتاً. */
+        const variance = countedCashMinor - summary.expectedCashMinor
         const closed: Shift = { ...open, closedAt: new Date().toISOString(), countedCashMinor, status: 'closed', closeApprovedBy, closeApprovalNote }
+        if (settle && variance !== 0) {
+          if (!closeApprovedBy) throw new Error('تسوية الفرق تحتاج اعتماد مشرف/مالك مسجَّلاً على الإقفال')
+          const plan = buildShiftVarianceSettlement(state, closed, variance, settle.mode, settle.employeeId)
+          const settled: Shift = { ...closed, ...plan.shiftPatch }
+          set({
+            shifts: state.shifts.map((s) => (s.id === open.id ? settled : s)),
+            journal: [...state.journal, plan.entry],
+            ...(plan.advance ? { employeeAdvances: [...state.employeeAdvances, plan.advance] } : {}),
+          })
+          return settled
+        }
         set({ shifts: state.shifts.map((s) => (s.id === open.id ? closed : s)) })
         return closed
       },
@@ -12125,53 +12213,15 @@ export const useRawDataStore = create<DataState>()(
         // نفس مصدر الملخص الذي يظهر ويُتحقق عند الإقفال.
         const variance = shiftSummaryForState(state, shift.id).varianceMinor
         if (variance === null || variance === 0) throw new Error('لا فرق في هذه الوردية للتسوية')
-        const now = localIsoTimestamp()
-        const label = `وردية #${shift.id}`
-
-        if (args.mode === 'advance') {
-          // سلفة على الموظف تُخصم من رواتبه (تظهر في مسير الرواتب تلقائياً)
-          if (variance > 0) throw new Error('السلفة تكون عن عجز فقط — الزيادة تُسوى كإيراد')
-          const emp = state.employees.find((e) => e.id === args.employeeId)
-          if (!emp) throw new Error('اختر الموظف الذي يتحمل العجز')
-          const advId = nextId(state.employeeAdvances)
-          const entryId = nextId(state.journal)
-          const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
-          const entry: JournalEntry = {
-            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-            description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
-            sourceType: 'payment_voucher', sourceId: advId, sourceCollection: 'employeeAdvances',
-            lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
-            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
-          }
-          const advance: EmployeeAdvance = {
-            id: advId, advanceNumber, employeeId: emp.id, date: now,
-            amountMinor: Math.abs(variance), recoveredMinor: 0,
-            source: 'cash', custodyFileId: null, treasury: '1101',
-            notes: `عجز ${label} — يُخصم من الرواتب`, journalEntryId: entryId,
-          }
-          const updated: Shift = { ...shift, varianceSettledMode: 'advance', varianceEntryId: entryId, varianceAdvanceId: advId }
-          set({
-            employeeAdvances: [...state.employeeAdvances, advance],
-            journal: [...state.journal, entry],
-            shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)),
-          })
-          return updated
-        }
-
-        // مصروف (عجز) أو إيراد آخر (زيادة)
-        const entryId = nextId(state.journal)
-        const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
-          sourceType: 'adjustment', sourceId: shift.id, sourceCollection: 'shifts',
-          lines: buildVarianceExpenseEntry(variance, '1101', label),
-          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
-        }
-        const updated: Shift = { ...shift, varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null }
-        set({ journal: [...state.journal, entry], shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)) })
-        return updated
+        const plan = buildShiftVarianceSettlement(state, shift, variance, args.mode, args.employeeId)
+        const settled: Shift = { ...shift, ...plan.shiftPatch }
+        set({
+          journal: [...state.journal, plan.entry],
+          shifts: state.shifts.map((s) => (s.id === shift.id ? settled : s)),
+          ...(plan.advance ? { employeeAdvances: [...state.employeeAdvances, plan.advance] } : {}),
+        })
+        return settled
       },
-
       attachSaleTaxQr: (saleId, payload) => set((state) => ({
         sales: state.sales.map((sale) => (sale.id === saleId && !sale.taxQrPayload ? { ...sale, taxQrPayload: payload } : sale)),
       })),

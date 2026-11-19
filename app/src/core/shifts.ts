@@ -11,6 +11,9 @@ export interface Shift {
   id: number
   openedAt: string // ISO datetime
   openedBy: string
+  /** F6: هوية فاتح الوردية — مستخدم نظام و/أو موظف مسجَّل. الاسم أعلاه للعرض فقط. */
+  openedByUserId?: number | null
+  openedByEmployeeId?: number | null
   openingCashMinor: Minor // رصيد الدرج الافتتاحي
   closedAt: string | null
   countedCashMinor: Minor | null // النقدية المعدودة عند الإقفال

@@ -131,10 +131,10 @@ console.log('③ الجرد وتسوية المخزون')
     { itemId: sugar.id, nameAr: 'سكر الجرد', expectedQty: 4, countedQty: 6, unitCostMinor: 5000 },
   ], 'جرد شهري مركب')
   ok('الفوارق: عجز 3 أرز وزيادة 2 سكر', st.result.variances.length === 2 && st.result.shortageValueMinor === 33000 && st.result.surplusValueMinor === 10000)
-  /* القيد: 5111 مدين 33 / 4110 دائن 10 / 1103 دائن 23 صافي */
+  /* القيد (F3): 5120 مدين 33 (فقد غير مبرَّر) / 4110 دائن 10 / 1103 دائن 23 صافي */
   const entry = S().journal.find((e) => e.id === st.journalEntryId)
-  ok('قيد مركب: عجز 5111/1103 وزيادة 1103/4110 متوازن',
-    (entry.lines.find((l) => l.accountCode === '5111')?.debit ?? 0) === 33000 &&
+  ok('قيد مركب: عجز 5120/1103 وزيادة 1103/4110 متوازن',
+    (entry.lines.find((l) => l.accountCode === '5120')?.debit ?? 0) === 33000 &&
     (entry.lines.find((l) => l.accountCode === '4110')?.credit ?? 0) === 10000 &&
     Math.abs(bal('1103') - inv0) === 23000 &&
     entry.lines.reduce((a, l) => a + l.debit - l.credit, 0) === 0)

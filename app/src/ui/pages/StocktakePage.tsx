@@ -30,6 +30,8 @@ export function StocktakePage() {
   const [counted, setCounted] = useState<Record<number, string>>({}) // itemId -> معدود
   const [scan, setScan] = useState('')
   const [notes, setNotes] = useState('')
+  /* F3: سبب العجز يحدد الحساب — مبرَّر (تلف/انتهاء) ⇒ 5111، غير مبرَّر ⇒ 5120 */
+  const [shortageReason, setShortageReason] = useState<'unaccounted' | 'expired' | 'damaged'>('unaccounted')
   const [viewing, setViewing] = useState<Stocktake | null>(null)
   const scanRef = useRef<HTMLInputElement>(null)
 
@@ -115,7 +117,7 @@ export function StocktakePage() {
     if (!liveCounts.length) { toast.show('لم تعدّ أي صنف بعد', 'error'); return }
     approval.request(() => {
     try {
-      const st = postStocktake(liveCounts, notes.trim())
+      const st = postStocktake(liveCounts, notes.trim(), shortageReason)
       toast.show(
         st.journalEntryId
           ? `رُحّل الجرد ${st.stocktakeNumber} — ضُبط المخزون وتولد قيد التسوية ✓`
@@ -205,6 +207,30 @@ export function StocktakePage() {
           </div>
 
           <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="ملاحظات الجرد (اختياري): جرد نهاية الشهر…" className={inputCls} />
+          {/* سبب العجز: يفصل الهالك المبرَّر (5111) عن الفقد غير المبرَّر (5120) */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+            <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300">سبب العجز إن وُجد نقص</div>
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['unaccounted', 'فقد/غير مبرَّر', 'يُقيَّد على 5120 فقد وعجز جرد'],
+                ['expired', 'منتهي الصلاحية', 'يُقيَّد على 5111 هالك وتوالف'],
+                ['damaged', 'تالف', 'يُقيَّد على 5111 هالك وتوالف'],
+              ] as const).map(([value, label, hint]) => (
+                <button
+                  key={value}
+                  onClick={() => setShortageReason(value)}
+                  data-shortage-reason={value}
+                  className={`text-right px-3 py-2 rounded-xl border-2 transition-all ${shortageReason === value ? 'border-brand-500/60 bg-brand-500/10' : 'border-slate-200 dark:border-slate-700'}`}
+                >
+                  <div className="font-bold text-[12px] text-slate-700 dark:text-slate-200">{label}</div>
+                  <div className="text-[10px] text-slate-400">{hint}</div>
+                </button>
+              ))}
+            </div>
+            <div className="text-[11px] text-slate-400">
+              {liveDiffs.some((c) => c.countedQty < c.expectedQty) ? 'يوجد نقص في هذا الجرد — السبب أعلاه هو ما سيُقيَّد.' : 'لا نقص في هذا الجرد — السبب لا يؤثر على القيد.'}
+            </div>
+          </div>
         </div>
       )}
 

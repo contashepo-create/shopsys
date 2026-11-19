@@ -26,6 +26,7 @@ export const ACCOUNT_MODULE_MAP: Record<string, BusinessModule[]> = {
   '1103': ['inventory'],
   '5101': ['inventory'],
   '5111': ['inventory'],
+  '5120': ['inventory'],
   '5114': ['inventory'],
   // مبيعات الكاشير والفواتير — أنشطة البيع فقط (معرض السيارات يقيد بيعه على 4101 أيضاً)
   '4101': ['pos', 'cars', 'jewelry'],

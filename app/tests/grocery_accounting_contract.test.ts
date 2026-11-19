@@ -295,7 +295,7 @@ describe('البقالة — الهالك والجرد', () => {
     expect(itemOf(item.id).stockValueMinor).toBe(9 * itemOf(item.id).costMinor)
   })
 
-  it('الجرد: العجز مصروف 5111 والزيادة إيراد 4110 — والقيدان متوازنان', () => {
+  it('الجرد: عجز «فقد/غير مبرَّر» على 5120 والزيادة إيراد 4110 — والقيدان متوازنان (F3)', () => {
     const short = addItem({ nameAr: 'سكر', costMinor: 500, priceMinor: 700, stockQty: 10 })
     const over = addItem({ nameAr: 'شاي', costMinor: 900, priceMinor: 1200, stockQty: 5 })
     const doc = S().postStocktake([
@@ -304,11 +304,25 @@ describe('البقالة — الهالك والجرد', () => {
     ], 'جرد أسبوعي')
     const id = (doc as never as { journalEntryId: number }).journalEntryId
     expect(balanced(id)).toBe(true)
-    expect(amount(id, '5111').debit).toBe(1000)
+    /* F3: العجز بلا سبب مبرَّر يُقيَّد فقداً (5120) لا هالكاً (5111) */
+    expect(amount(id, '5120').debit).toBe(1000)
+    expect(amount(id, '5111').debit).toBe(0)
     expect(amount(id, '4110').credit).toBe(1800)
     expect(amount(id, '1103').credit - amount(id, '1103').debit).toBe(-800)
     expect(itemOf(short.id).stockQty).toBe(8)
     expect(itemOf(over.id).stockQty).toBe(7)
+    expect(doc.shortageReason).toBe('unaccounted')
+  })
+
+  it('الجرد: عجز «منتهي الصلاحية» يُقيَّد هالكاً على 5111 لا فقداً (F3)', () => {
+    const expired = addItem({ nameAr: 'جبن', costMinor: 400, priceMinor: 600, stockQty: 6 })
+    const doc = S().postStocktake([
+      { itemId: expired.id, nameAr: 'جبن', expectedQty: 6, countedQty: 4, unitCostMinor: 400 },
+    ], 'إتلاف منتهي', 'expired')
+    const id = (doc as never as { journalEntryId: number }).journalEntryId
+    expect(amount(id, '5111').debit).toBe(800)
+    expect(amount(id, '5120').debit).toBe(0)
+    expect(doc.shortageReason).toBe('expired')
   })
 })
 
