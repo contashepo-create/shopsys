@@ -11,21 +11,26 @@
  *          [--write] لإعادة توليد الوثيقة فقط.
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { LAYERS, FINAL_GATES, DOCUMENT_FAMILIES, LEGACY_SNAPSHOT, DOC_PATH, LAYER_COUNT_WORD } from './methodology_manifest.mjs'
 import { reporter } from './auditKit.mjs'
 
 const r = reporter('المنهجية')
-const scriptDir = new URL('.', import.meta.url).pathname
-const root = scriptDir.replace(/scripts\/$/, '')
-const read = (path) => readFileSync(`${root}${path}`, 'utf8')
+/* مسارات النظام لا مسارات URL: `new URL(...).pathname` على ويندوز يعيد "/C:/…"
+   فيفشل readFileSync — والبوابة تُشغَّل على مشغّل ويندوز في مسار الإصدار، فتفشل
+   هناك وتنجح على لينكس. (صارت بوابة الإصدار تفشل صامتةً لهذا السبب.) */
+const scriptDir = fileURLToPath(new URL('.', import.meta.url)) // ينتهي بفاصل المسار
+const root = resolve(scriptDir, '..')
+const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 // ── ① الطبقات: موجودة، مُوسَمة، وتُشغَّل وتنجح ───────────────────────────────
 const results = []
 for (const layer of LAYERS) {
   const counts = []
   for (const script of layer.scripts) {
-    const path = `${scriptDir}${script}`
+    const path = join(scriptDir, script)
     if (!existsSync(path)) throw new Error(`الطبقة ${layer.numeral}: السكربت «${script}» غير موجود — المنهجية منقوصة`)
     const source = readFileSync(path, 'utf8')
     if (!source.includes(layer.numeral)) throw new Error(`الطبقة ${layer.numeral}: السكربت «${script}» لا يحمل وسم طبقته (${layer.numeral})`)
@@ -49,7 +54,7 @@ for (const layer of LAYERS) {
 
 // ── ② الرَتشِت: لا سكربت فحص جديد بلا تصنيف ─────────────────────────────────
 const classified = new Set(LAYERS.flatMap((layer) => layer.scripts))
-const legacyPath = `${root}${LEGACY_SNAPSHOT}`
+const legacyPath = resolve(root, LEGACY_SNAPSHOT)
 const legacy = existsSync(legacyPath)
   ? readFileSync(legacyPath, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
   : []
@@ -63,7 +68,7 @@ if (unclassified.length) {
 r.ok(`تصنيف البوابات: ${allGates.length} سكربتاً — ${classified.size} في المنهجية و${legacySet.size} قديمة موثّقة، بلا شاذّ`)
 
 // ── ③ عائلات المستندات: كل عائلة يمارسها فعل مستند حقيقي ─────────────────────
-const familySources = LAYERS.flatMap((layer) => layer.scripts).map((script) => readFileSync(`${scriptDir}${script}`, 'utf8'))
+const familySources = LAYERS.flatMap((layer) => layer.scripts).map((script) => readFileSync(join(scriptDir, script), 'utf8'))
 const layerText = familySources.join('\n')
 const uncovered = DOCUMENT_FAMILIES.filter((family) => !family.markers.some((marker) => layerText.includes(`${marker}(`)))
 if (uncovered.length) throw new Error(`عائلات مستندات بلا ممارسة في أي طبقة: ${uncovered.map((f) => f.name).join(' · ')}`)
@@ -120,9 +125,9 @@ ${FINAL_GATES.map((gate) => `| ${gate.name} | \`${gate.command}\` | ${gate.note}
 الست فعلياً داخل البوابة نفسها، فلا يمكن أن تُعلن المنهجية وتكون معطّلة.
 `
 
-const current = existsSync(`${root}${DOC_PATH}`) ? readFileSync(`${root}${DOC_PATH}`, 'utf8') : ''
+const current = existsSync(resolve(root, DOC_PATH)) ? readFileSync(resolve(root, DOC_PATH), 'utf8') : ''
 if (process.argv.includes('--write')) {
-  writeFileSync(`${root}${DOC_PATH}`, doc)
+  writeFileSync(resolve(root, DOC_PATH), doc)
   console.log('✍️  كُتبت الوثيقة')
 } else if (current !== doc) {
   throw new Error(`الوثيقة ${DOC_PATH} لا تطابق تعريف المنهجية — شغّل البوابة بـ--write`)
