@@ -37,6 +37,7 @@ import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
 import { LEGAL_VERSION } from './core/legal.ts'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
+import { PageErrorBoundary } from './ui/AppErrorBoundary.tsx'
 import { FinancialDataReviewBoundary } from './ui/components/FinancialDataReviewBoundary.tsx'
 
 import { startHostSession, stopHostSession, useLanStatusStore } from './data/lan/hostSession.ts'
@@ -315,11 +316,13 @@ function RouteTreeForPath({ path }: { path?: string }) {
   const here = useLocation()
   return (
     <div className="h-full min-h-0" data-route-tree={path ?? 'current'}>
-      <FinancialDataReviewBoundary resetKey={path ?? `${here.pathname}${here.search}`}>
-        <Suspense fallback={routeFallback}>
-          <Routes location={location}>{APP_ROUTES}</Routes>
-        </Suspense>
-      </FinancialDataReviewBoundary>
+      <PageErrorBoundary>
+        <FinancialDataReviewBoundary resetKey={path ?? `${here.pathname}${here.search}`}>
+          <Suspense fallback={routeFallback}>
+            <Routes location={location}>{APP_ROUTES}</Routes>
+          </Suspense>
+        </FinancialDataReviewBoundary>
+      </PageErrorBoundary>
     </div>
   )
 }
