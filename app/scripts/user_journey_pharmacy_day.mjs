@@ -132,4 +132,19 @@ console.log('\n═══ 7) مرتجع علبة والميزان الختامي 
   ok(`مرتجع الوحدة الكبرى يعيد بالقرص، ${st().journal.length} قيداً متزنة، الميزان ${tb.totalDebitMinor}`)
 }
 
+// ═══ بوابة الثوابت المشتركة (توزان/مرجع المصدر/1103 = قيمة المخزون/الدفعات) ═══
+{
+  const { assertJourneyInvariants } = await import(pathToFileURL(join(root, 'scripts/journey_invariants.mjs')).href)
+  const { useRawDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+  const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+  const raw = useRawDataStore.getState()
+  const setup = useAppStore.getState().setup
+  const stats = assertJourneyInvariants(raw, {
+    label: 'pharmacy_day',
+    allowNegativeStock: setup.allowNegativeStock === true,
+    allowNegativeTreasury: setup.allowNegativeTreasury !== false,
+  })
+  console.log(`  ✓ الثوابت: ${stats.entries} قيداً متزنة · 1103 = قيمة المخزون ${stats.stockValue}`)
+}
+
 console.log(`\n✅ رحلة الصيدلية الكاملة: ${pass} محطات — كلها خضراء\n`)

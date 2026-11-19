@@ -39,7 +39,9 @@ const purchase = read('ui/pages/AdvancedPurchaseInvoicePage.tsx')
 {
   assert.ok(/export function parseSmartEntry\(raw: string\): SmartEntry/.test(pickers), 'محلّل الإدخال الذكي مفقود')
   assert.ok(/const smart = useMemo\(\(\) => parseSmartEntry\(query\)/.test(pickers), 'لوحة البحث لا تستعمل الإدخال الذكي')
-  assert.ok(/const pickSmart = \(id: number\) => onPick\(id,/.test(pickers), 'الاختيار لا يمرّر الكمية والسعر والخصم')
+  // الاختيار قد يبدأ بفرع «ملصق الميزان» (كمية كسرية) ثم يمرّر الإدخال الذكي كما هو
+  assert.ok(/const pickSmart = \(id: number\) => \{[\s\S]{0,600}?onPick\(id, smart\.qty \|\| smart\.price \|\| smart\.discount \? smart : undefined\)/.test(pickers),
+    'الاختيار لا يمرّر الكمية والسعر والخصم')
   for (const [name, src] of [['المبيعات', sales], ['المشتريات', purchase]])
     assert.ok(/addItem=\(id:number,smart\?:\{qty\?:number;price\?:number;discount\?:number\}\)/.test(src),
       `صفحة ${name} لا تطبّق الإدخال الذكي`)

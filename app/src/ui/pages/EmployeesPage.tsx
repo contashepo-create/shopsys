@@ -96,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
      والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
   const [tab, setTab] = useState(initialTab)
   useEffect(() => { setTab(initialTab) }, [initialTab])
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, getStaffCommissionsDue, roleOverrides, customRoles, cancelPayrollSlip } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -316,6 +316,19 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       else toast.show((error as Error).message, 'error')
     } finally { paySlipPending.current = false; setPaySlipSaving(false) }
   }
+  /* إلغاء قسيمة لم تُصرف: كان المسار موجوداً ومحروساً في النواة بلا أي زر، فتبقى
+     القسيمة الخاطئة معلّقة على 2104 إلى الأبد. الإلغاء يقيد عكس استحقاقها بسطرها. */
+  const [cancelSlipFor, setCancelSlipFor] = useState<PayrollSlip | null>(null)
+  const [cancelSlipReason, setCancelSlipReason] = useState('')
+  const cancelSlip = () => {
+    if (!cancelSlipFor) return
+    try {
+      cancelPayrollSlip(cancelSlipFor.id, cancelSlipReason)
+      toast.show(`أُلغيت القسيمة ${cancelSlipFor.slipNumber} بقيد عكسي متوازن ✓`)
+      setCancelSlipFor(null); setCancelSlipReason('')
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+
   const [waiverId, setWaiverId] = useState<number | null>(null)
   const [waiverDate, setWaiverDate] = useState(() => todayLocalIso())
   const [waiverReason, setWaiverReason] = useState('')
@@ -1413,6 +1426,23 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               )}
             </Modal>
 
+            {/* إلغاء قسيمة لم تُصرف — نافذة مستقلة: النواة ترفض المصروفة والجزئية والملغاة */}
+            <Modal open={cancelSlipFor != null} onClose={() => { setCancelSlipFor(null); setCancelSlipReason('') }} title={`إلغاء قسيمة راتب — ${cancelSlipFor?.employeeName ?? ''}`} subtitle={`القسيمة ${cancelSlipFor?.slipNumber ?? ''} · ${cancelSlipFor ? monthLabelAr(cancelSlipFor.month) : ''} — لا يُلغى مستند صُرف أو صُرف جزئياً`}>
+              {cancelSlipFor && (
+                <fieldset><div className="space-y-3" data-cancel-slip-modal>
+                  <div className="text-[12px] font-bold text-slate-500">القسيمة {cancelSlipFor.slipNumber} — {cancelSlipFor.employeeName} · الصافي {fmt(cancelSlipFor.netMinor)}</div>
+                  <Field label="سبب الإلغاء *">
+                    <input className={inputCls} value={cancelSlipReason} onChange={(event) => setCancelSlipReason(event.target.value)} placeholder="مثال: استحقاق مكرر أو موظف غير مستحق" aria-label="سبب إلغاء القسيمة" />
+                  </Field>
+                  <DocOutcome>الأثر: قيد عكسي يجعل «رواتب مستحقة 2104» مديناً بسطر القسيمة و«مصروف الرواتب 5102» دائناً بمثله، ويُعيد ما استُقطع لسلفة (1107) ويُعيد الجزاءات «قائمة» كما قبل المسير — ولا تُلغى قسيمة مصروفة أو بها صرف جزئي.</DocOutcome>
+                  <div className="flex justify-end gap-2">
+                    <Btn variant="ghost" onClick={() => { setCancelSlipFor(null); setCancelSlipReason('') }}>رجوع</Btn>
+                    <Btn onClick={cancelSlip} disabled={!cancelSlipReason.trim()} className="!bg-rose-600 hover:!bg-rose-500 !text-white font-black" data-cancel-slip-post>إلغاء القسيمة</Btn>
+                  </div>
+                </div></fieldset>
+              )}
+            </Modal>
+
             {/* جسر الحضور ⑤: تحذير صريح قبل ترحيل مسير شهرٍ بلا سجلات حضور — لا خصم صامت ولا ترحيل أعمى */}
             <Modal open={slipNoAttendance != null} onClose={() => setSlipNoAttendance(null)} title={`ترحيل مسير ${slipMonth} بلا بيانات حضور؟`}>
               <div className="space-y-3" data-slip-attendance-warning>
@@ -1455,6 +1485,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
                         <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(todayLocalIso()); setPaySlipAmount(slipRemainingMinor(slip)); paySlipBasis.current = paySlipFingerprint() }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
+                      )}
+                      {slip.status === 'accrued' && slipPaidMinor(slip) === 0 && (
+                        <Btn variant="ghost" onClick={() => { setCancelSlipFor(slip); setCancelSlipReason('') }} data-cancel-slip={slip.slipNumber} title="إلغاء القسيمة بقيد عكسي — للمستحقة التي لم تُصرف">إلغاء</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>

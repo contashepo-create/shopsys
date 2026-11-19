@@ -70,7 +70,7 @@ st().addItem(item('بصلاحية', 'E-1', 20_000, { trackExpiry: true }))
 st().addItem(item('بسيريال', 'S-1', 500_000, { trackSerial: true }))
 const [normal, expiry, serialItem] = st().items
 // شراء بكل الأنواع
-st().postPurchase({ supplierId: sup.id, date: '2026-03-01', lines: [{ itemId: normal.id, qty: 100, unitPriceMinor: 6_000 }, { itemId: expiry.id, qty: 50, unitPriceMinor: 12_000, expiryDate: relDays(270) }, { itemId: serialItem.id, qty: 3, unitPriceMinor: 350_000, serialsRaw: 'SN-A,SN-B,SN-C' }], expenses: [{ nameAr: 'شحن', amountMinor: 30_000, paidFrom: 'cash' }], paidMinor: 2_000_000, notes: '' })
+st().postPurchase({ supplierId: sup.id, date: '2026-03-01', lines: [{ itemId: normal.id, qty: 100, unitPriceMinor: 6_000 }, { itemId: expiry.id, qty: 50, unitPriceMinor: 12_000, expiryDate: relDays(270) }, { itemId: serialItem.id, qty: 3, unitPriceMinor: 350_000, serialsRaw: 'SN-A,SN-B,SN-C' }], expenses: [{ nameAr: 'شحن', amountMinor: 30_000, method: 'qty', paidBy: 'treasury', payAccount: '1101', costTreatment: 'inventory' }], paidMinor: 2_000_000, notes: '' })
 st().postPurchase({ supplierId: sup.id, date: '2026-03-02', lines: [{ itemId: expiry.id, qty: 30, unitPriceMinor: 13_000, expiryDate: relDays(365) }], expenses: [], paidMinor: 0, notes: '' })
 // بيع نقدي وآجل وبسيريال
 st().postSale({ lines: [cline(normal, 10, 10_000), cline(expiry, 5, 20_000)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: true, treasury: '1101' })

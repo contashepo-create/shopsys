@@ -19,7 +19,7 @@ import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 export function JewelryPage() {
   const {
     items, gramPrices, jewelryProfiles, scrapLots, scrapSales, goldTradeIns, customers,
-    setGramPrices, setJewelryProfile, buyScrap, sellScrap, postGoldTradeIn,
+    setGramPrices, setJewelryProfile, removeJewelryProfile, buyScrap, sellScrap, postGoldTradeIn,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
@@ -134,6 +134,13 @@ export function JewelryPage() {
     return m
   }, [scrapLots])
 
+  const removeProfile = (itemId: number, nameAr: string) => {
+    // إزالة الوصف تعيد الصنف لسعر يدوي عادي — السعر المشتق الحالي يبقى كما هو على الصنف
+    if (!window.confirm(`إزالة الوصف الذهبي عن «${nameAr}»؟ سيتوقف اشتقاق سعره من سعر الجرام ويصبح سعره يدوياً كأي صنف.`)) return
+    try { removeJewelryProfile(itemId); toast.show(`أُزيل وصف «${nameAr}» — صار سعره يدوياً ✓`) }
+    catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   const profiled = jewelryProfiles
     .map((p) => ({ p, item: items.find((it) => it.id === p.itemId) }))
     .filter((x) => x.item)
@@ -223,7 +230,7 @@ export function JewelryPage() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-yellow-500/10 text-yellow-700 dark:text-yellow-300">
-              <tr>{['الصنف', 'العيار', 'الوزن', 'قيمة الذهب (معفاة)', 'المصنعية', 'ض.ق.م المصنعية', 'السعر الحالي'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+              <tr>{['الصنف', 'العيار', 'الوزن', 'قيمة الذهب (معفاة)', 'المصنعية', 'ض.ق.م المصنعية', 'السعر الحالي', ''].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
             </thead>
             <tbody>
               {profiled.map(({ p, item }) => {
@@ -241,6 +248,10 @@ export function JewelryPage() {
                     <td className="px-3 py-2.5 tabular-nums">{fmt(bd.workmanshipMinor)}</td>
                     <td className="px-3 py-2.5 tabular-nums text-amber-600">{setup.vatPercent > 0 ? fmt(workVat) : '—'}</td>
                     <td className="px-3 py-2.5 font-black text-yellow-600 tabular-nums">{fmt(item!.priceMinor)}</td>
+                    <td className="px-3 py-2.5 text-left">
+                      <button type="button" className="text-[14px] text-rose-500 hover:text-rose-600" title="إزالة الوصف الذهبي" data-remove-jewelry-profile={p.itemId}
+                        onClick={(event) => { event.stopPropagation(); removeProfile(p.itemId, item!.nameAr) }}>✕</button>
+                    </td>
                   </tr>
                 )
               })}

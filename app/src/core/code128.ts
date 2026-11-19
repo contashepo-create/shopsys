@@ -45,18 +45,25 @@ export function encode128(text: string): number[] {
   return vals
 }
 
-/** SVG جاهز للطباعة — height بالبكسل، moduleWidth عرض الوحدة */
+/**
+ * SVG جاهز للطباعة — height بالبكسل، moduleWidth عرض الوحدة.
+ * هامش هدوء (quiet zone) 10 وحدات يميناً ويساراً: بدونه يلتصق أول شريط بحافة
+ * الملصق فيقرأ القارئ رقماً ناقصاً أو لا يقرأ إطلاقاً — وهو أكثر سبب فشل
+ * لصيق في ملصقات الأرفف الحرارية الضيقة.
+ */
 export function barcodeSvg(text: string, height = 40, moduleWidth = 2): string {
   const vals = encode128(text)
-  let x = 0
+  const quiet = 10 * moduleWidth
+  let x = quiet
   const rects: string[] = []
   for (const v of vals) {
     const pat = PATTERNS[v]
     for (let i = 0; i < pat.length; i++) {
       const w = Number(pat[i]) * moduleWidth
-      if (i % 2 === 0) rects.push(`<rect x="${x}" y="0" width="${w}" height="${height}" fill="#000"/>`)
+      if (i % 2 === 0) rects.push(`<rect x="${Math.round(x * 1000) / 1000}" y="0" width="${w}" height="${height}" fill="#000"/>`)
       x += w
     }
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${x}" height="${height}" viewBox="0 0 ${x} ${height}" shape-rendering="crispEdges">${rects.join('')}</svg>`
+  const total = Math.round((x + quiet) * 1000) / 1000
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${total}" height="${height}" viewBox="0 0 ${total} ${height}" shape-rendering="crispEdges">${rects.join('')}</svg>`
 }

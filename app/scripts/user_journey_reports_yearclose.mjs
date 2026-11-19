@@ -178,4 +178,21 @@ console.log('\n═══ 6) إقفال 2025: تصفير 4xxx/5xxx إلى 3102 + 
   ok(`إقفال 2025 رحّل ${netProfitMinor} إلى 3102، المزدوج والمعكوس مرفوضان، و2026 تبدأ نظيفة`)
 }
 
+// ═══ بوابة الثوابت المشتركة (توزان/مرجع المصدر/1103 = قيمة المخزون/الدفعات) ═══
+{
+  const { assertJourneyInvariants } = await import(pathToFileURL(join(root, 'scripts/journey_invariants.mjs')).href)
+  const { useRawDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+  const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+  const raw = useRawDataStore.getState()
+  const setup = useAppStore.getState().setup
+  const stats = assertJourneyInvariants(raw, {
+    label: 'reports_yearclose',
+    allowNegativeStock: setup.allowNegativeStock === true,
+    allowNegativeTreasury: setup.allowNegativeTreasury !== false,
+    // رحلة محاسبية صناعية: قيود يدوية على 1103 بلا أصناف (لا دفتر مخزون فرعي ليطابَق)
+    skipStockLedger: true,
+  })
+  console.log(`  ✓ الثوابت: ${stats.entries} قيداً متزنة · 1103 = قيمة المخزون ${stats.stockValue}`)
+}
+
 console.log(`\n✅ رحلة التقارير وإقفال السنة: ${pass} محطات — كلها خضراء\n`)

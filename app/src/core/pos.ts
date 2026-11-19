@@ -17,6 +17,18 @@ export interface CartLine {
   unitPriceMinor: Minor // سعر بيع الوحدة
   unitCostMinor: Minor // تكلفة الوحدة (متوسط مرجح) لقيد COGS
   discountPercent: number // خصم السطر
+  /**
+   * إجمالي السطر الثابت عند الطباعة (ملصق ميزان يحمل **السعر** لا الوزن):
+   * العميل يدفع ما على الملصق حرفياً حتى لو اشتُقّ الوزن بتقريب ثلاث خانات
+   * (0.333 كجم × 3000 = 999 بينما الملصق 1000). يتقدّم على (سعر × كمية).
+   */
+  lineTotalOverrideMinor?: Minor
+  /**
+   * التكلفة الفعلية المسحوبة لهذا السطر من قيمة المخزون وقت الترحيل (بالقرش).
+   * تُثبَّت في المستند كي يعيد `computeTotals` إنتاج cogsMinor بلا انحراف،
+   * ويأخذ مرتجع السطر نصيبه النسبي منها.
+   */
+  costTotalMinor?: Minor
   soldByWeight: boolean
   /** لقطة نوع الصنف لحظة البيع؛ تُثبتها طبقة الترحيل لا المتصل. */
   isServiceAtSale?: boolean
@@ -57,6 +69,11 @@ export interface CartLine {
    * النفيس نفسه. undefined/0 = كل السعر خاضع كالمعتاد (أي صنف غير ذهبي).
    */
   vatExemptPerUnitMinor?: Minor
+  /**
+   * سعر الوحدة عدّله الكاشير يدوياً (خصم مباشر/اتفاق سعر): يمنع إعادة التسعير
+   * التلقائي عند تغيير العميل/قائمة الأسعار من محو تعديله بصمت.
+   */
+  priceManual?: boolean
 }
 
 /**
@@ -119,6 +136,14 @@ export function exceedsCreditLimit(balanceMinor: Minor, newCreditMinor: Minor, l
 
 export type PaymentMethod = 'cash' | 'credit'
 
+/**
+ * أنواع الدفع الفعلية التي تصل المحرك من الشاشات والبذور. `card` (بطاقة) و`terminal`
+ * (ماكينة مربوطة بحساب تسوية) قبض فوري بـ`paidMinor` صريح — لا آجل. تُعلَن هنا صراحةً
+ * لأن التحقق عند الترحيل يرفض كل ما هو خارجها، وكانت تُمرَّر سابقاً بقسرٍ بلا تحقق
+ * فتُطبع «آجل» على فاتورة مدفوعة بالبطاقة.
+ */
+export type PaymentMode = PaymentMethod | 'card' | 'terminal'
+
 export interface CartTotals {
   grossMinor: Minor // قبل الخصم
   discountMinor: Minor // إجمالي الخصومات (سطور + فاتورة)
@@ -130,8 +155,21 @@ export interface CartTotals {
 }
 
 /** إجمالي سطر بعد خصمه */
+/**
+ * إعادة تسعير السلة عند تغيير العميل/قائمة الأسعار:
+ * كل سطر يُسعَّر بسعر القائمة الجديدة **إلا** السطر الذي عدّل الكاشير سعره
+ * يدوياً (اتفاق سعر/خصم مباشر) فيبقى كما هو. الشاشة كانت تعيد تسعير كل
+ * السطور فتمحو تعديل الكاشير بصمت (تدقيق البقالة 2026-11-17).
+ */
+export function repriceCartForPriceList(
+  cart: readonly CartLine[],
+  priceFor: (itemId: number) => Minor,
+): CartLine[] {
+  return cart.map((line) => (line.priceManual ? line : { ...line, unitPriceMinor: priceFor(line.itemId) }))
+}
+
 export function lineTotal(line: CartLine, roundingVersion?: 2): Minor {
-  const gross = mulQty(line.unitPriceMinor, line.qty)
+  const gross = line.lineTotalOverrideMinor ?? mulQty(line.unitPriceMinor, line.qty)
   const discount = roundingVersion === 2 ? exactNonNegativePercent(gross, line.discountPercent) : percentOf(gross, line.discountPercent)
   return gross - discount
 }
@@ -154,20 +192,28 @@ export function computeTotals(
   let gross = 0
   let lineDiscounts = 0
   const cogsByCostBasis = new Map<string, { unitCostMinor: Minor; qty: number }>()
+  let fixedCostTotal = 0
   for (const l of lines) {
     if (l.qty <= 0) throw new RangeError(`كمية غير صالحة للصنف ${l.nameAr}`)
     if (!Number.isFinite(l.discountPercent) || l.discountPercent < 0 || l.discountPercent > 100) throw new RangeError('خصم سطر خارج النطاق')
-    const g = mulQty(l.unitPriceMinor, l.qty)
+    const g = l.lineTotalOverrideMinor ?? mulQty(l.unitPriceMinor, l.qty)
     gross = roundingVersion === 2 ? addMinor(gross, g) : gross + g
     lineDiscounts = roundingVersion === 2 ? addMinor(lineDiscounts, percentage(g, l.discountPercent)) : lineDiscounts + percentage(g, l.discountPercent)
     // Consolidate same-item/same-unit cost before rounding so duplicate fractional
     // lines cannot each round a half-minor upward and overstate COGS.
+    if (l.costTotalMinor != null) {
+      if (!Number.isSafeInteger(l.costTotalMinor) || l.costTotalMinor < 0) throw new RangeError('تكلفة سطر غير صالحة')
+      fixedCostTotal = roundingVersion === 2 ? addMinor(fixedCostTotal, l.costTotalMinor) : fixedCostTotal + l.costTotalMinor
+      continue
+    }
     const costBasisKey = `${l.itemId}:${l.unitFactor ?? 1}:${l.unitCostMinor}`
     const costBasis = cogsByCostBasis.get(costBasisKey)
     if (costBasis) costBasis.qty += l.qty
     else cogsByCostBasis.set(costBasisKey, { unitCostMinor: l.unitCostMinor, qty: l.qty })
   }
-  const cogs = [...cogsByCostBasis.values()].reduce((sum, basis) => roundingVersion === 2 ? addMinor(sum, mulQty(basis.unitCostMinor, basis.qty)) : sum + mulQty(basis.unitCostMinor, basis.qty), 0)
+  /* تكلفة السطر المثبَّتة (costTotalMinor) هي المسحوب فعلياً من قيمة المخزون وقت الترحيل،
+     فتُقدَّم على (كمية × متوسط مقرب) وتُبقي 5101 = 1103 ويُعاد إنتاج الإجمالي من المستند. */
+  const cogs = fixedCostTotal + [...cogsByCostBasis.values()].reduce((sum, basis) => roundingVersion === 2 ? addMinor(sum, mulQty(basis.unitCostMinor, basis.qty)) : sum + mulQty(basis.unitCostMinor, basis.qty), 0)
   if (!Number.isFinite(invoiceDiscountPercent) || invoiceDiscountPercent < 0 || invoiceDiscountPercent > 100) throw new RangeError('خصم فاتورة خارج النطاق')
   const afterLineDiscounts = gross - lineDiscounts
   const invoiceDiscount = percentage(afterLineDiscounts, invoiceDiscountPercent)
@@ -185,7 +231,7 @@ export function computeTotals(
     let baseSum = 0
     let netCheck = 0, allocatedDiscount = 0, processedBase = 0
     for (const l of lines) {
-      const g = mulQty(l.unitPriceMinor, l.qty)
+      const g = l.lineTotalOverrideMinor ?? mulQty(l.unitPriceMinor, l.qty)
       const lineNetBeforeInvDisc = g - percentage(g, l.discountPercent)
       // نصيب السطر من خصم الفاتورة (نسبي على صافي السطور)
       const nextProcessedBase = processedBase + lineNetBeforeInvDisc
@@ -249,14 +295,51 @@ export function checkStock(
   const shortages: { itemId: number; nameAr: string; available: number; requested: number }[] = []
   const requested = new Map<number, { nameAr: string; qty: number }>()
   for (const l of lines) {
+    // الكمية تُجمع بالوحدة **الأساسية** (qty × معامل الوحدة): كرتونة = 6 قطع
+    // كانت تُجمع بالوحدة المختارة فيقول الفحص «متاح» لصنف لا يكفي رصيده بالقطعة.
     const cur = requested.get(l.itemId)
-    requested.set(l.itemId, { nameAr: l.nameAr, qty: (cur?.qty ?? 0) + l.qty })
+    requested.set(l.itemId, { nameAr: l.nameAr, qty: (cur?.qty ?? 0) + baseQty(l) })
   }
   for (const [itemId, r] of requested) {
     const available = stockOf(itemId)
     if (r.qty > available) shortages.push({ itemId, nameAr: r.nameAr, available, requested: r.qty })
   }
   return shortages
+}
+
+/**
+ * هل تجاوزت الكمية المطلوبة رصيد الصنف؟ يُستدعى عند الإضافة لتنبيه الكاشير
+ * مبكراً (المنع النهائي عند الترحيل). يُراعي ما في السلة أصلاً ووحدة البيع،
+ * ويتجاهل الأصناف الخدمية وإعداد «السماح بالسالب».
+ */
+export function stockShortage(args: {
+  stockQty: number
+  inCartQty: number
+  addQty: number
+  allowNegative: boolean
+  isService?: boolean
+}): { needed: number; available: number } | null {
+  if (args.allowNegative || args.isService) return null
+  const needed = Math.round((args.inCartQty + args.addQty) * 1000) / 1000
+  const available = Math.max(0, args.stockQty)
+  if (Math.round(needed * 1000) <= Math.round(available * 1000)) return null
+  return { needed, available }
+}
+
+/**
+ * هل يصلح إسناد وزن الميزان الحيّ لهذا السطر؟
+ * سطر بوحدة أكبر (كرتونة/علبة) كميته «عدد وحدات» وسعره سعر الوحدة: إسناد كيلوجرامات
+ * إليه يستبدل 6 علب بـ0.750 ويحوّل سعر الكرتونة إلى ثمن وزن. null = يصلح.
+ */
+export function scaleWeightTargetError(
+  line: { soldByWeight: boolean; unitFactor?: number; unitLabel?: string } | null | undefined,
+): string | null {
+  if (!line) return 'اختر سطراً أولاً'
+  if (!line.soldByWeight) return 'هذا السطر ليس صنفاً مسجلاً «بالوزن» — لا يمكن إسناد وزن إليه'
+  if (line.unitFactor != null && line.unitFactor !== 1) {
+    return `سطر «${line.unitLabel ?? 'وحدة أكبر'}» بالعدد لا بالوزن — حوّله للوحدة الأساسية أولاً`
+  }
+  return null
 }
 
 /**

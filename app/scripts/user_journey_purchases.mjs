@@ -235,4 +235,19 @@ console.log('\n— م8) التأثير على كل الأقسام —')
   ok(`قيمة المخزون الدفترية (1103=${bookInv}) ≈ مجموع كمية×متوسط (${calcInv}) — فرق تقريب مقبول`)
 }
 
+// ═══ بوابة الثوابت المشتركة (توزان/مرجع المصدر/1103 = قيمة المخزون/الدفعات) ═══
+{
+  const { assertJourneyInvariants } = await import(pathToFileURL(join(root, 'scripts/journey_invariants.mjs')).href)
+  const { useRawDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+  const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+  const raw = useRawDataStore.getState()
+  const setup = useAppStore.getState().setup
+  const stats = assertJourneyInvariants(raw, {
+    label: 'purchases',
+    allowNegativeStock: setup.allowNegativeStock === true,
+    allowNegativeTreasury: setup.allowNegativeTreasury !== false,
+  })
+  console.log(`  ✓ الثوابت: ${stats.entries} قيداً متزنة · 1103 = قيمة المخزون ${stats.stockValue}`)
+}
+
 console.log(`\n✅ رحلة مشتريات المستخدم اكتملت: ${pass} تحققاً عبر 8 محاور وأنشطة متعددة`)

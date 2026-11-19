@@ -14,11 +14,13 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
-  validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants, GRADE_LABELS,
+  validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants, GRADE_LABELS, MAX_TARE_GRAMS,
+  normalizeBarcode, barcodeCheckWarning,
   type ItemDraft, type Item, type Category,
 } from '../../core/items.ts'
 import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activities.ts'
 import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
+import { nextInternalBarcode } from '../../core/barcode.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -37,7 +39,7 @@ import { todayLocalIso } from '../../core/time.ts'
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, productionOrders, processingOrders, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, productionOrders, processingOrders, stocktakes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -81,8 +83,8 @@ export function ItemsPage() {
   }, [categories])
 
   const warehouseStock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
-    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders],
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes)),
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes],
   )
   const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
 
@@ -885,7 +887,7 @@ export function ItemsPage() {
               </div>
               {/* أمر التعديل: تفصيل الرصيد بكل مخزن داخل معاينة الصنف */}
               {warehouses.length > 1 && (() => {
-                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
+                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes))
                 return (
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                     <div className="px-4 py-2 text-[11.5px] font-black text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">🏬 الرصيد بكل مخزن</div>
@@ -1028,8 +1030,8 @@ function ItemForm({
   onSave: () => void
   onCancel: () => void
 }) {
-  const { categories } = useDataStore()
-  const { setup } = useAppStore()
+  const { categories, items: allItems } = useDataStore()
+  const { setup, scaleRules } = useAppStore()
   const [barcodeInput, setBarcodeInput] = useState('')
   const [colorInput, setColorInput] = useState('')
   const [sizeInput, setSizeInput] = useState('')
@@ -1187,6 +1189,17 @@ function ItemForm({
         <Field label="حد أدنى لسعر البيع" hint="لا بيع تحته إلا باعتماد مدير — حماية من البيع بخسارة (اتركه 0 لتعطيله)">
           {moneyInput(draft.minSalePriceMinor ?? 0, (m) => p({ minSalePriceMinor: m }))}
         </Field>
+        {draft.soldByWeight && (
+          <Field label="وزن الوعاء / التغليف (جرام)" hint="يُطرح من وزن الميزان قبل التسعير — 0 = الميزان نفسه معايَر (Tare)">
+            <input
+              type="number" inputMode="numeric" step={1} min={0} max={MAX_TARE_GRAMS}
+              value={draft.tareGrams ?? ''}
+              onChange={(e) => p({ tareGrams: Math.max(0, Math.min(MAX_TARE_GRAMS, Math.floor(Number(e.target.value) || 0))) })}
+              className={inputCls}
+              placeholder="0"
+            />
+          </Field>
+        )}
         {!draft.isService && (
           <Field label="حد إعادة الطلب" hint="عند وصول الرصيد إليه يظهر تنبيه نواقص">
             <input
@@ -1206,13 +1219,38 @@ function ItemForm({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && barcodeInput.trim()) {
               e.preventDefault()
-              p({ barcodes: [...draft.barcodes, barcodeInput.trim()] })
+              // تطبيع فوري: أرقام عربية/فارسية ← لاتينية وحذف الفراغات الطرفية،
+              // وإلا حُفظ باركود لا يُمسح أبداً ولا يُكتشف تكراره.
+              const code = normalizeBarcode(barcodeInput)
+              if (!code) { setBarcodeInput(''); return }
+              // التحذير معروض أسفل الخانة (خانة تحقق خاطئة أو وزن غير قياسي شائع
+              // عند بعض الموردين) — لا نمنع الحفظ لكن لا نُسجّل بصمت.
+              if (!draft.barcodes.includes(code)) p({ barcodes: [...draft.barcodes, code] })
               setBarcodeInput('')
             }
           }}
           placeholder="امسح أو اكتب ثم Enter"
           className={inputCls}
         />
+        {/* صنف بتعبئة داخلية بلا باركود مصنع: توليد EAN-13 داخلي (بادئة 2)
+            وخانة تحقق صحيحة — أفضل من ترك الباركود فارغاً فيُطبع الملصق بالـSKU */}
+        <button
+          type="button"
+          onClick={() => {
+            const taken = allItems.flatMap((it) => [
+              ...it.barcodes,
+              ...(it.extraUnits ?? []).map((u) => u.barcode).filter((b): b is string => Boolean(b)),
+            ])
+            const code = nextInternalBarcode(taken, '200', scaleRules)
+            if (!draft.barcodes.includes(code)) p({ barcodes: [...draft.barcodes, code] })
+          }}
+          className="mt-1.5 inline-flex items-center gap-1 text-[10.5px] font-bold text-brand-600 hover:underline dark:text-brand-400"
+        >
+          <Barcode size={11} /> توليد باركود داخلي بديل (بلا باركود مصنع)
+        </button>
+        {barcodeInput.trim() && barcodeCheckWarning(barcodeInput) && (
+          <p className="mt-1 text-[10.5px] font-bold text-amber-600 dark:text-amber-400">{barcodeCheckWarning(barcodeInput)}</p>
+        )}
         {draft.barcodes.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
             {draft.barcodes.map((b, i) => (
@@ -1238,7 +1276,11 @@ function ItemForm({
           {mainProps.map(({ key, label, on }) => (
             <button
               key={key}
-              onClick={() => p({ [key]: !on } as Partial<ItemDraft>)}
+              onClick={() => p({
+                [key]: !on,
+                // إيقاف «يُباع بالوزن» يُصفّر وزن الوعاء (لا معنى لوعاء بلا وزن)
+                ...(key === 'soldByWeight' && on ? { tareGrams: 0 } : {}),
+              } as Partial<ItemDraft>)}
               className={`px-3.5 py-2 rounded-xl text-[12px] font-bold border-2 transition-all duration-200 hover:scale-105 ${
                 on
                   ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300'
@@ -1382,7 +1424,11 @@ function ItemForm({
                 {extraProps.map(({ key, label, on }) => (
                   <button
                     key={key}
-                    onClick={() => p({ [key]: !on } as Partial<ItemDraft>)}
+                    onClick={() => p({
+                [key]: !on,
+                // إيقاف «يُباع بالوزن» يُصفّر وزن الوعاء (لا معنى لوعاء بلا وزن)
+                ...(key === 'soldByWeight' && on ? { tareGrams: 0 } : {}),
+              } as Partial<ItemDraft>)}
                     className={`px-3.5 py-2 rounded-xl text-[12px] font-bold border-2 transition-all duration-200 hover:scale-105 ${
                       on ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'
                     }`}
@@ -1483,10 +1529,12 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
   const add = () => {
     if (!valid) return
     const priceNum = Number(unitPrice)
+    // تطبيع باركود الوحدة أيضاً — أرقام عربية كانت تُحفظ ولا تُمسح
+    const code = normalizeBarcode(unitBarcode)
     p({ extraUnits: [...draft.extraUnits, {
       nameAr: name.trim(), factor: f,
       ...(priceNum > 0 ? { priceMinor: toMinor(unitPrice, unitCur.decimals) } : {}),
-      ...(unitBarcode.trim() ? { barcode: unitBarcode.trim() } : {}),
+      ...(code ? { barcode: code } : {}),
     }] })
     setName('')
     setFactor('')
@@ -1528,6 +1576,9 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">باركود الـ{name.trim() || 'وحدة الأكبر'} (اختياري)</div>
           <input value={unitBarcode} onChange={(e) => setUnitBarcode(e.target.value)} placeholder="امسح باركود العلبة/الشريط…" className={inputCls} dir="ltr" />
+          {unitBarcode.trim() && barcodeCheckWarning(unitBarcode) && (
+            <p className="mt-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">{barcodeCheckWarning(unitBarcode)}</p>
+          )}
         </div>
       </div>
       {/* معاينة حية تشرح المعادلة قبل الإضافة */}

@@ -115,7 +115,7 @@ const [oil, rice] = st().items
 st().postPurchase({
   supplierId: sup1.id, date: '2026-09-01',
   lines: [{ itemId: oil.id, qty: 100, unitPriceMinor: 6000 }, { itemId: rice.id, qty: 200, unitPriceMinor: 3000 }],
-  expenses: [{ nameAr: 'نقل', amountMinor: 3000, method: 'value', paidBy: 'us' }],
+  expenses: [{ nameAr: 'نقل', amountMinor: 3000, method: 'value', paidBy: 'supplier', costTreatment: 'inventory' }],
   paidMinor: 500_000, notes: 'توريد أسبوعي',
 })
 core('S1 شراء بمصاريف')

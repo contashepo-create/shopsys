@@ -221,14 +221,28 @@ export function checkInvariants(caseOrState, opts = {}) {
   // وتجهيزاتها على نفس الحساب (سجل `cars` هو دفترها المساعد)، والسيارة المباعة
   // تخرج منه بتكلفتها الكاملة. تجاهُل ذلك كان يجعل كل معرض سيارات «مخالفاً» زوراً.
   const items = state.items ?? []
-  const valuedItems = items.reduce((s, it) => s + Math.round((it.stockQty || 0) * (it.costMinor || 0)), 0)
+  // القيمة الدقيقة للصنف هي stockValueMinor (متوسط مرجح بلا تقريب)؛
+  // qty×costMinor تقريب عرضي ينحرف عن الدفتر بكسور الأقراص — لا يُستخدم للتقييم عند توفره.
+  // كمية سالبة (وضع السالب المسموح) ليست أصلاً على الرف: `reconcileStockValue` يصفّر
+  // قيمة الصنف عمداً، لكن الدفتر يحمل قيمة سالبة لـ1103 بقيمة التكلفة ⇒ تُقيَّم الكمية
+  // السالبة بكمية×تكلفة (بإشارتها) وإلا ظهر عجز وهمي 4,000 قرش عند أول بيع بالسالب.
+  const itemValue = (it) => {
+    const qty = it.stockQty || 0
+    if (qty < 0) return Math.round(qty * (it.costMinor || 0))
+    return Number.isFinite(it.stockValueMinor) ? it.stockValueMinor : Math.round(qty * (it.costMinor || 0))
+  }
+  const valuedItems = items.reduce((s, it) => s + itemValue(it), 0)
   const carsInStock = (state.cars ?? []).filter((car) => car.status !== 'sold')
   const valuedCars = carsInStock.reduce((s, car) => s + (car.purchaseCostMinor || 0) + (car.prepCostMinor || 0), 0)
-  const valued = valuedItems + valuedCars
+  // كسر الذهب دفتر مساعد ثالث على 1103 (الصاغة): المتبقي × سعر الجرام وقت الشراء.
+  const valuedScrap = (state.scrapLots ?? []).reduce((s, lot) => s + Math.round((lot.remainingGrams || 0) * (lot.pricePerGramMinor || 0)), 0)
+  const valued = valuedItems + valuedCars + valuedScrap
   const book = balanceOf(journal, '1103')
-  const tolerance = Math.max(items.length + carsInStock.length, 1)
-  if (Math.abs(book - (valued - inventoryOffsetMinor)) > tolerance) {
-    errors.push(`ث5 المخزون: دفتر 1103 = ${book} بينما التقييم = ${valued} (أصناف ${valuedItems} + سيارات ${valuedCars}، إزاحة افتتاحية ${inventoryOffsetMinor})`)
+  /* صفر تسامح: بعد إغلاق انحراف تقريب الوزن (withdrawStockValue) صار الثابت
+     دقيقاً بالقرش. أي فرق — ولو قرشاً — يعني مساراً لا يزامن القيمة مع الدفتر. */
+  const tolerance = 0
+  if (book !== valued - inventoryOffsetMinor) {
+    errors.push(`ث5 المخزون: دفتر 1103 = ${book} بينما التقييم = ${valued} (أصناف ${valuedItems} + سيارات ${valuedCars} + كسر ${valuedScrap}، إزاحة افتتاحية ${inventoryOffsetMinor})`)
   }
 
   // ——— ث6: معادلة الميزانية ———

@@ -14,13 +14,16 @@ type MaterialRow = { id: string; itemId: number; code: string; query: string; qt
 type Tab = 'materials' | 'expenses'
 
 export function RecipesPage() {
-  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, recipes, customAccounts, addCustomAccount, addRecipe, postProduction } = useDataStore()
+  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes, recipes, customAccounts, addCustomAccount, addRecipe, updateRecipe, toggleRecipe, removeRecipe, getRecipeUnitCost, postProduction } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const activeItems = useMemo(() => items.filter((item) => item.isActive), [items])
-  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
+  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, stocktakes])
   const [creating, setCreating] = useState(false)
+  /** التركيبة قيد التعديل — تحميل تركيبة موجودة يحوّل «حفظ كتركيبة» إلى «حفظ التعديل»
+      بدل إنشاء نسخة مكررة يفشل عليها التحقق (وصفة واحدة لكل صنف). */
+  const [editingRecipeId, setEditingRecipeId] = useState<number | null>(null)
   const [productId, setProductId] = useState(0)
   const [ingredientWarehouseId, setIngredientWarehouseId] = useState<number>(() => setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0)
   const [outputWarehouseId, setOutputWarehouseId] = useState<number>(() => setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0)
@@ -123,20 +126,42 @@ export function RecipesPage() {
     const outputItem = items.find((item) => item.id === recipe.productItemId)
     setProductId(recipe.productItemId); setOutputQty(String(recipe.yieldQty)); setOutputUnitFactor(1)
     setMaterials(recipe.ingredients.map((ingredient) => { const item = items.find((candidate) => candidate.id === ingredient.itemId); return { id: crypto.randomUUID(), itemId: ingredient.itemId, code: item?.sku || item?.barcodes?.[0] || String(item?.id ?? ''), query: itemToken(ingredient.itemId), qty: String(ingredient.qty), unitFactor: 1, unitName: item?.baseUnit ?? '', warehouseId: ingredientWarehouseId || null } }))
-    setNotes(recipe.notes); setTab('materials'); toast.show(`تم تحميل تركيبة ${outputItem?.nameAr ?? ''} — عدّل الكميات ثم رحّل`)
+    setNotes(recipe.notes); setTab('materials'); setEditingRecipeId(recipe.id); setCreating(true)
+    toast.show(`تم تحميل تركيبة ${outputItem?.nameAr ?? ''} — عدّل الكميات ثم احفظ التعديل أو رحّل`)
   }
   const saveAsRecipe = () => {
     try {
       const ingredients = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
-      addRecipe({ productItemId: productId, mode: 'prepped', yieldQty: output, ingredients, overheadMinor: 0, isActive: true, notes })
-      toast.show('حُفظت التركيبة للاستخدام المتكرر ✓')
+      const existing = editingRecipeId != null ? recipes.find((row) => row.id === editingRecipeId) : undefined
+      if (existing) {
+        // نحافظ على وضع التركيبة وتفعيلها كما هما — التعديل يخص المكونات والناتج فقط
+        updateRecipe(existing.id, { productItemId: productId, mode: existing.mode, yieldQty: output, ingredients, overheadMinor: existing.overheadMinor ?? 0, isActive: existing.isActive, notes })
+        toast.show('حُدِّثت التركيبة المحفوظة ✓')
+      } else {
+        addRecipe({ productItemId: productId, mode: 'prepped', yieldQty: output, ingredients, overheadMinor: 0, isActive: true, notes })
+        toast.show('حُفظت التركيبة للاستخدام المتكرر ✓')
+      }
+      setEditingRecipeId(null)
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+  const unitCostOf = (recipeId: number) => { try { return getRecipeUnitCost(recipeId) } catch { return null } }
+  const doToggleRecipe = (recipeId: number, nameAr: string) => {
+    try { toggleRecipe(recipeId); toast.show(`حُدِّث تفعيل تركيبة ${nameAr} ✓`) } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+  const doRemoveRecipe = (recipeId: number, nameAr: string) => {
+    // الحذف محروس في المستودع: تُرفض التركيبة التي لها أوامر إنتاج مرحّلة ويُقترح التعطيل
+    if (!window.confirm(`حذف تركيبة «${nameAr}» نهائياً؟ إن كانت مستخدمة في أوامر إنتاج مرحّلة سيُرفض الحذف وعليك تعطيلها بدلاً من ذلك.`)) return
+    try {
+      removeRecipe(recipeId)
+      if (editingRecipeId === recipeId) setEditingRecipeId(null)
+      toast.show(`حُذفت تركيبة ${nameAr} ✓`)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
   const exportOrders = () => {
     const headers=['الأمر','التاريخ','المنتج','مخزن صرف الخامات','مخزن استلام الناتج','رقم التشغيلة','تاريخ الصلاحية','الكمية','تكلفة الخامات','المصروفات','الإجمالي'];const values=productionOrders.map(order=>[order.orderNumber,order.date.slice(0,10),items.find(item=>item.id===order.productItemId)?.nameAr??'',warehouses.find(warehouse=>warehouse.id===(order.ingredientWarehouseId??order.warehouseId))?.nameAr??'',warehouses.find(warehouse=>warehouse.id===(order.outputWarehouseId??order.warehouseId))?.nameAr??'',order.outputLotNumber??order.orderNumber,order.outputExpiryDate??'',order.producedQty,fmt(order.ingredientsCostMinor),fmt(order.overheadMinor),fmt(order.totalCostMinor)]);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(row=>row.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=url;anchor.download='production-orders.csv';anchor.click();URL.revokeObjectURL(url)
   }
   const reset = () => {
-    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setOutputExpiryDate(''); setOutputLotNumber(''); setMaterials([{ id: crypto.randomUUID(), itemId: 0, code: '', query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setVarianceReasonCode(''); setProductionDate(todayLocalIso()); setTab('materials')
+    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setOutputExpiryDate(''); setOutputLotNumber(''); setMaterials([{ id: crypto.randomUUID(), itemId: 0, code: '', query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setVarianceReasonCode(''); setProductionDate(todayLocalIso()); setTab('materials'); setEditingRecipeId(null)
   }
   const submit = () => {
     try {
@@ -153,6 +178,51 @@ export function RecipesPage() {
 
   if (!creating) return <div className="space-y-4" dir="rtl">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-xl font-black">سجل التصنيع</h1><p className="text-xs text-slate-500">راجع التشغيلات السابقة أو ابدأ عملية تصنيع جديدة</p></div><div className="flex gap-2"><Btn variant="ghost" onClick={exportOrders}><FileSpreadsheet size={15}/> تصدير Excel</Btn><Btn onClick={() => setCreating(true)}><Plus size={16}/> عملية تصنيع جديدة</Btn></div></div>
+    {/* التركيبات المحفوظة — التحرير والتعطيل والحذف وتكلفة الوحدة.
+        كانت الشاشة تحفظ التركيبة وتحذفها من الشيفرة فقط: لا شاشة تُصحّح مكوناتها
+        أو تعطّلها، فتبقى التركيبة الخاطئة تُحمَّل في أوامر الإنتاج إلى الأبد. */}
+    {recipes.length > 0 && (
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-card-dark p-3" data-recipes-panel>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <b className="text-sm">التركيبات المحفوظة ({recipes.length})</b>
+          <span className="text-[11px] text-slate-500">تكلفة الوحدة تُحسب من تكلفة الخامات الحالية — التعطيل يمنع استخدامها في أوامر جديدة ولا يمسّ المرحّل</span>
+        </div>
+        <div className="max-h-64 overflow-auto">
+          <table className="w-full text-[12px]" data-recipes-table>
+            <thead className="text-[11px] font-black text-slate-500">
+              <tr><th className="p-1 text-right">الناتج</th><th className="p-1">الوضع</th><th className="p-1">الناتج/تشغيلة</th><th className="p-1">تكلفة الوحدة</th><th className="p-1">الحالة</th><th className="p-1">إجراء</th></tr>
+            </thead>
+            <tbody>
+              {recipes.map((recipe) => {
+                const outputItem = items.find((item) => item.id === recipe.productItemId)
+                const unitCost = unitCostOf(recipe.id)
+                return (
+                  <tr key={recipe.id} className={editingRecipeId === recipe.id ? 'bg-amber-500/10' : ''} data-recipe-row={recipe.id}>
+                    <td className="p-1 text-right font-bold">{outputItem?.nameAr ?? `صنف #${recipe.productItemId}`}</td>
+                    <td className="p-1 text-center">{recipe.mode === 'prepped' ? 'إنتاج مسبق' : 'تحضير عند الطلب'}</td>
+                    <td className="p-1 text-center font-mono">{recipe.yieldQty} {outputItem?.baseUnit ?? ''}</td>
+                    <td className="p-1 text-center font-mono" data-recipe-unit-cost={recipe.id}>{unitCost == null ? '—' : fmt(unitCost)}</td>
+                    <td className="p-1 text-center">
+                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-black ${recipe.isActive ? 'bg-emerald-500/15 text-emerald-700' : 'bg-slate-400/20 text-slate-500'}`}>{recipe.isActive ? 'نشطة' : 'معطلة'}</span>
+                    </td>
+                    <td className="p-1 text-center whitespace-nowrap">
+                      <button type="button" className="mx-1 text-[11.5px] font-bold text-amber-600 hover:underline" onClick={() => loadRecipe(recipe.id)} data-recipe-edit={recipe.id}>تحميل للتعديل</button>
+                      <button type="button" className="mx-1 text-[11.5px] font-bold text-slate-600 hover:underline dark:text-slate-300" onClick={() => doToggleRecipe(recipe.id, outputItem?.nameAr ?? `#${recipe.id}`)} data-recipe-toggle={recipe.id}>{recipe.isActive ? 'تعطيل' : 'تفعيل'}</button>
+                      <button type="button" className="mx-1 text-[11.5px] font-bold text-rose-600 hover:underline" onClick={() => doRemoveRecipe(recipe.id, outputItem?.nameAr ?? `#${recipe.id}`)} data-recipe-remove={recipe.id}>حذف</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {editingRecipeId != null && (
+          <p className="mt-2 rounded-xl bg-amber-500/10 p-2 text-[11.5px] font-bold text-amber-700 dark:text-amber-300" data-recipe-editing>
+            أنت تعدّل تركيبة محفوظة — عدّل الخامات أو الكمية ثم «حفظ تعديل التركيبة»، أو اضغط «تركيبة جديدة» لإنشاء واحدة مستقلة.
+          </p>
+        )}
+      </section>
+    )}
     {productionOrders.length === 0 ? <div className="rounded-2xl border bg-white dark:bg-card-dark p-16 text-center"><Factory className="mx-auto mb-3 text-slate-300" size={42}/><b>لا توجد عمليات تصنيع بعد</b><p className="text-xs text-slate-500 mt-1">ابدأ أول عملية لتحويل الخامات إلى منتج تام</p></div> : <div className="rounded-2xl border bg-white dark:bg-card-dark overflow-auto"><table className="w-full min-w-[900px] text-sm"><thead className="bg-slate-500/10"><tr><th className="p-3 text-right">الأمر</th><th>التاريخ</th><th>المنتج</th><th>صرف الخامات</th><th>استلام الناتج</th><th>التشغيلة</th><th>الصلاحية</th><th>الكمية</th><th>التكلفة</th></tr></thead><tbody>{[...productionOrders].reverse().map((order) => <tr key={order.id} className="border-t"><td className="p-3 font-bold">{order.orderNumber}</td><td>{order.date.slice(0,10)}</td><td><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === order.productItemId)?.sku || items.find((item) => item.id === order.productItemId)?.barcodes?.[0] || order.productItemId}</span>{items.find((item) => item.id === order.productItemId)?.nameAr}</td><td>{warehouses.find((warehouse) => warehouse.id === (order.ingredientWarehouseId ?? order.warehouseId))?.nameAr ?? '—'}</td><td>{warehouses.find((warehouse) => warehouse.id === (order.outputWarehouseId ?? order.warehouseId))?.nameAr ?? '—'}</td><td>{order.outputLotNumber ?? order.orderNumber}</td><td>{order.outputExpiryDate ?? '—'}</td><td>{order.producedQty}</td><td>{fmt(order.totalCostMinor)}</td></tr>)}</tbody></table></div>}
   </div>
 
@@ -167,7 +237,7 @@ export function RecipesPage() {
         <Field label="الكمية المطلوب تصنيعها *"><input className={inputCls} inputMode="decimal" value={outputQty} onChange={(event) => setOutputQty(event.target.value)} placeholder="مثال: 3" /></Field>
         <Field label="وحدة الناتج"><QuickSelect className={inputCls} value={outputUnitFactor} onChange={(e)=>setOutputUnitFactor(Number(e.target.value))} disabled={!product}><option value={1}>{product?.baseUnit??'الوحدة الأساسية'}</option>{product?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr} × {unit.factor}</option>)}</QuickSelect></Field>
       </div>
-      <div className="mt-3 grid md:grid-cols-[180px_180px_1fr_auto] gap-2 form-row"><Field label="تاريخ التصنيع"><input type="date" className={inputCls} value={productionDate} onChange={(e)=>setProductionDate(e.target.value)}/></Field><Field label="رقم تشغيلة الناتج" hint="يُولد من رقم الأمر إذا تُرك فارغاً"><input className={inputCls} value={outputLotNumber} onChange={(e)=>setOutputLotNumber(e.target.value)} placeholder="مثال LOT-2026-001"/></Field><Field label="تحميل تركيبة محفوظة"><QuickSelect className={inputCls} value="" onChange={(e)=>{loadRecipe(Number(e.target.value));e.target.value=''}}><option value="">اختر تركيبة سابقة…</option>{recipes.filter(recipe=>recipe.mode==='prepped'&&recipe.isActive).map(recipe=><option key={recipe.id} value={recipe.id}>{items.find(item=>item.id===recipe.productItemId)?.sku || items.find(item=>item.id===recipe.productItemId)?.barcodes?.[0] || recipe.productItemId} — {items.find(item=>item.id===recipe.productItemId)?.nameAr} — ناتج {recipe.yieldQty}</option>)}</QuickSelect></Field><Btn variant="ghost" onClick={saveAsRecipe} disabled={!productId||output<=0||!materials.some(row=>row.itemId)}>حفظ كتركيبة</Btn></div>
+      <div className="mt-3 grid md:grid-cols-[180px_180px_1fr_auto] gap-2 form-row"><Field label="تاريخ التصنيع"><input type="date" className={inputCls} value={productionDate} onChange={(e)=>setProductionDate(e.target.value)}/></Field><Field label="رقم تشغيلة الناتج" hint="يُولد من رقم الأمر إذا تُرك فارغاً"><input className={inputCls} value={outputLotNumber} onChange={(e)=>setOutputLotNumber(e.target.value)} placeholder="مثال LOT-2026-001"/></Field><Field label="تحميل تركيبة محفوظة"><QuickSelect className={inputCls} value="" onChange={(e)=>{loadRecipe(Number(e.target.value));e.target.value=''}}><option value="">اختر تركيبة سابقة…</option>{recipes.filter(recipe=>recipe.mode==='prepped'&&recipe.isActive).map(recipe=><option key={recipe.id} value={recipe.id}>{items.find(item=>item.id===recipe.productItemId)?.sku || items.find(item=>item.id===recipe.productItemId)?.barcodes?.[0] || recipe.productItemId} — {items.find(item=>item.id===recipe.productItemId)?.nameAr} — ناتج {recipe.yieldQty}</option>)}</QuickSelect></Field><Btn variant="ghost" onClick={saveAsRecipe} disabled={!productId||output<=0||!materials.some(row=>row.itemId)} data-save-recipe>{editingRecipeId != null ? 'حفظ تعديل التركيبة' : 'حفظ كتركيبة'}</Btn>{editingRecipeId != null && <Btn variant="ghost" onClick={() => { setEditingRecipeId(null); toast.show('أُلغي التعديل — الحفظ التالي سيُنشئ تركيبة جديدة') }} data-cancel-recipe-edit>تركيبة جديدة</Btn>}</div>
     </header>
 
     <div className="h-px bg-gradient-to-l from-transparent via-amber-500/60 to-transparent" />

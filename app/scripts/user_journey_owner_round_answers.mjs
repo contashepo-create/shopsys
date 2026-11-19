@@ -175,4 +175,14 @@ console.log('\n═══ ⑤ ميزان المراجعة متزن بعد كل ا
   ok(`${st().journal.length} قيداً كل واحد متوازن — ميزان المراجعة متزن: ${tb.totalDebitMinor / 100} = ${tb.totalCreditMinor / 100} جنيه (${tb.rows.length} حساباً)`)
 }
 
+// ═══ بوابة الثوابت العشرة (نفس فاحص auditKit المعتمد) ═══
+{
+  const { assertJourneyInvariants } = await import('./journey_invariants.mjs')
+  const { useRawDataStore } = await import('../src/data/repo.ts')
+  const { useAppStore } = await import('../src/stores/app.store.ts')
+  const setup = useAppStore.getState().setup
+  const stats = assertJourneyInvariants(useRawDataStore.getState(), { label: 'owner_round_answers', allowNegativeStock: setup.allowNegativeStock === true, allowNegativeTreasury: setup.allowNegativeTreasury !== false })
+  console.log(`  ✓ الثوابت: ${stats.entries} قيداً · مدين ${stats.totalDebit}`)
+}
+
 console.log(`\n✅ جولة المالك — الإجابات المحاسبية بالبرهان الحي: ${pass} فحوص ناجحة`)

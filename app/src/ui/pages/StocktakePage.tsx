@@ -1,6 +1,7 @@
 /**
  * الجرد بالباركود (المرحلة 3):
- * ابدأ جلسة ← امسح باركود كل قطعة (كل مسحة +1) أو اكتب المعدود يدوياً ←
+ * ابدأ جلسة ← امسح باركود كل قطعة (كل مسحة +1، وملصق الميزان يضيف وزنه)
+ * أو اكتب المعدود يدوياً ←
  * النظام يقارن بالدفتري ويعرض الفوارق مُقيَّمة بالتكلفة ← رحّل فيتولد
  * قيد تسوية واحد متوازن ويُضبط المخزون على المعدود.
  */
@@ -10,6 +11,8 @@ import { useDataStore, type Stocktake } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, normalizeDigits } from '../../core/money.ts'
+import { normalizeBarcode } from '../../core/items.ts'
+import { parseScaleBarcodeUniversal, matchScaleItem, itemTareGrams, netWeightKg } from '../../core/barcode.ts'
 import type { CountInput } from '../../core/stocktake.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -18,7 +21,7 @@ import { localDateTimeLabel } from '../../core/time.ts'
 
 export function StocktakePage() {
   const { items, stocktakes, journal, postStocktake } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, scaleRules } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -41,18 +44,50 @@ export function StocktakePage() {
     setTimeout(() => scanRef.current?.focus(), 50)
   }
 
-  /** مسح باركود أثناء الجرد: كل مسحة تزيد المعدود 1 */
+  /**
+   * مسح باركود أثناء الجرد: المسحة العادية +1، وملصق الميزان يضيف وزنه
+   * (وإلا احتُسبت 0.750 كجم «قطعة واحدة» فخرجت التسوية بفارق وهمي 0.25).
+   * الترتيب: باركود الصنف الحرفي أولاً ثم الميزان — نفس قاعدة الكاشير.
+   */
   const onScan = () => {
-    const q = normalizeDigits(scan.trim())
+    // تطبيع الأرقام والفراغات — نفس علاج الكاشير (تخطيط لوحة مفاتيح عربية)
+    const q = normalizeBarcode(scan)
     if (!q) return
-    const it = active.find((x) => x.barcodes.includes(q) || x.sku === q || x.nameAr === q)
+    const exact = active.find((x) => x.barcodes.some((b) => normalizeBarcode(b) === q) || x.sku === q || x.nameAr === q)
+    // باركود وحدة أكبر (كرتونة = 12 قطعة): مسحته أثناء الجرد تضيف **معامله**
+    // لا قطعة واحدة — وإلا خرج الجرد بعجز وهمي 11 لكل كرتونة.
+    const unitHit = exact
+      ? undefined
+      : active
+          .map((it) => ({ it, unit: (it.extraUnits ?? []).find((u) => u.barcode && normalizeBarcode(u.barcode) === q) }))
+          .find((row) => row.unit)
+    const scale = exact || unitHit ? null : parseScaleBarcodeUniversal(q, scaleRules)
+    const weighed = scale && scale.weightKg != null
+      ? matchScaleItem(scale.itemCode, active, { requireWeighted: true })
+      : undefined
+    const it = exact ?? unitHit?.it ?? weighed
     if (!it) {
       toast.show(`لا صنف بالباركود «${q}»`, 'error')
       setScan('')
       return
     }
-    setCounted((c) => ({ ...c, [it.id]: String((Number(c[it.id]) || 0) + 1) }))
-    toast.show(`${it.nameAr} — المعدود ${(Number(counted[it.id]) || 0) + 1}`)
+    let qty = unitHit?.unit ? unitHit.unit.factor : 1
+    let label = qty === 1 ? '' : ` ${it.baseUnit}`
+    if (weighed && scale?.weightKg != null) {
+      // وزن الوعاء يُطرح من ملصق الميزان في الجرد أيضاً — الجرد يعدّ صافي البضاعة
+      const tare = itemTareGrams(it)
+      qty = tare > 0 ? netWeightKg(scale.weightKg, tare) : scale.weightKg
+      label = ' كجم'
+      if (qty <= 0) {
+        toast.show(`«${it.nameAr}»: الوزن ${scale.weightKg} كجم لا يغطي وزن الوعاء ${tare} جم`, 'error')
+        setScan('')
+        return
+      }
+    }
+    // العدّاد المعروض يُحسب من الحالة الجديدة لا القديمة (كان يسبق مسحة واحدة)
+    const nextQty = Math.round(((Number(counted[it.id]) || 0) + qty) * 1000) / 1000
+    setCounted((c) => ({ ...c, [it.id]: String(nextQty) }))
+    toast.show(`${it.nameAr} — المعدود ${nextQty}${label}`)
     setScan('')
   }
 

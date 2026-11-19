@@ -7,6 +7,9 @@ import { matchesSearch } from '../../core/search.ts'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { openItemPickerWindow, openEntityPickerWindow, type EntityPickerKind } from '../windows/windowStore.ts'
 import { SaleCustomerDetails, SaleItemDetails } from './SalePickerDetails.tsx'
+import { useAppStore } from '../../stores/app.store.ts'
+import { normalizeBarcode } from '../../core/items.ts'
+import { parseScaleBarcodeUniversal, matchScaleItem } from '../../core/barcode.ts'
 
 type QuickChoice = { value: string; content: ReactNode; label: string; searchText: string }
 
@@ -157,7 +160,7 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
   </div>
 }
 
-export type QuickItem = { id: number; nameAr: string; sku?: string; barcodes?: string[]; stockQty?: number; priceMinor?: number; costMinor?: number; baseUnit?: string; categoryId?: number | null; isService?: boolean }
+export type QuickItem = { id: number; nameAr: string; sku?: string; barcodes?: string[]; stockQty?: number; priceMinor?: number; costMinor?: number; baseUnit?: string; categoryId?: number | null; isService?: boolean; /** لتفكيك ملصق الميزان داخل المنتقي (وزن لا قطعة) */ soldByWeight?: boolean }
 /** بطاقة الصنف الغنية داخل نافذة الاختيار (دفعة المالك ⑩ي البند ⑦) */
 export type QuickItemMeta = { stock?: string; price?: string; cost?: string; unit?: string; category?: string; low?: boolean }
 
@@ -215,15 +218,35 @@ export function ItemSearchPanel({
   const searchInputRef = useRef<HTMLInputElement>(null)
   /* الإدخال الذكي: «أرز*3@65-5%» — نبحث بالمصطلح وحده ونحمل الباقي مع الاختيار */
   const smart = useMemo(() => parseSmartEntry(query), [query])
+  /* ملصق ميزان داخل منتقي الفواتير: بلا هذا يفشل البحث («لا صنف») رغم وجود الصنف.
+     نلتقط الوزن من الرقم ونحوّل الاختيار إلى كمية كسرية بدل «قطعة واحدة». */
+  const scaleRules = useAppStore((state) => state.scaleRules)
+  const scalePick = useMemo(() => {
+    const code = normalizeBarcode(smart.term)
+    if (!code) return null
+    const hit = parseScaleBarcodeUniversal(code, scaleRules)
+    if (!hit || hit.weightKg == null) return null
+    const pickable = items.map((it) => ({ ...it, sku: it.sku ?? '', barcodes: it.barcodes ?? [], soldByWeight: Boolean(it.soldByWeight) }))
+    const item = matchScaleItem(hit.itemCode, pickable, { requireWeighted: true })
+    return item ? { item, kg: hit.weightKg, itemCode: hit.itemCode } : null
+  }, [smart.term, scaleRules, items])
   const matches = useMemo(() => {
+    if (scalePick) return [scalePick.item]
     const q = smart.term
     let list = items
     if (catFilter) list = list.filter((item) => (item.categoryId ?? 0) === catFilter)
     if (availableOnly) list = list.filter((item) => item.isService || (item.stockQty ?? 0) > 0)
     if (!q) return list
     return list.filter((item) => matchesSearch([item.nameAr, item.sku, ...(item.barcodes ?? []), item.id], q))
-  }, [items, smart, catFilter, availableOnly])
-  const pickSmart = (id: number) => onPick(id, smart.qty || smart.price || smart.discount ? smart : undefined)
+  }, [items, smart, catFilter, availableOnly, scalePick])
+  const pickSmart = (id: number) => {
+    if (scalePick && scalePick.item.id === id) {
+      onPick(id, { term: scalePick.item.nameAr, qty: scalePick.kg })
+      setQuery('')
+      return
+    }
+    onPick(id, smart.qty || smart.price || smart.discount ? smart : undefined)
+  }
   useEffect(() => {
     if (!autoFocus) return
     const input = searchInputRef.current
@@ -256,6 +279,10 @@ export function ItemSearchPanel({
       <span className="ms-auto text-slate-400">{matches.length} صنف</span>
       {onCreate && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onCreate(query.trim())} className="rounded-lg border border-emerald-300 px-2 py-0.5 font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300" data-item-picker-create>+ صنف جديد</button>}
     </div>
+    {scalePick && <div data-scale-pick className="flex items-center gap-2 border-b border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-[11.5px] font-bold text-sky-700 dark:text-sky-300">
+      ⚖️ ملصق ميزان: {scalePick.item.nameAr} — <span dir="ltr" className="tabular-nums">{scalePick.kg.toFixed(3)} kg</span>
+      <span className="text-slate-500 dark:text-slate-400 font-normal">(Enter يضيفه بالوزن)</span>
+    </div>}
     {current && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-brand-500/5 px-3 py-2 dark:border-slate-700">
       <div className="min-w-0">
         <span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{current.sku || current.barcodes?.[0] || current.id}</span>

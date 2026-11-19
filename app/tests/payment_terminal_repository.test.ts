@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useDataStore } from '../src/data/repo.ts'
+import { useAppStore } from '../src/stores/app.store.ts'
 
 const original = useDataStore.getState()
 const terminal = { id: 'single-terminal', code: 'TERM-1000', nameAr: 'ماكينة الفرع الواحد', providerName: 'مزود', branchId: '', settlementAccountCode: '1101', terminalId: 'T-1000', status: 'active' as const }
@@ -28,6 +29,37 @@ describe('ماكينة الدفع في Repository', () => {
   it('لا يحول سند الصرف إلى refund ماكينة بلا مستند أصلي', () => {
     useDataStore.getState().addPaymentTerminal(terminal)
     expect(() => useDataStore.getState().postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5108', amountMinor: 1000, description: 'صرف', terminalPayment: { terminalId: terminal.id, providerReference: 'REF-VOUCHER-2' } })).toThrow(/مخصصة لسندات القبض/)
+  })
+
+  // انحدار مُثبت: كان Repository يمرّر سجل التسوية كاملاً (معرّفه وتاريخه) إلى
+  // مدقق يفحص كل قيمة كعدد صحيح، فيرمي «قيمة id في التسوية غير صالحة» دائماً؛
+  // لم تكشفه اختبارات الوحدة لأنها تنادي الدالة بكائن أرقام نظيف فقط.
+  it('يسوّي تحصيل البطاقة في قيد متزن ويحفظ الفرق', () => {
+    // حساب التسوية المعلّق ليس خزينة: يقفل بالتحصيل ثم يُدان بالإيداع، فيمرّ عبره صافي سالب
+    // مرحلي — الحارس يرصده فقط لأن الحسابين خزائن في هذا الاختبار، فنُفعّل السماح صراحةً.
+    useAppStore.setState((s) => ({ ...s, setup: { ...s.setup, allowNegativeTreasury: true } }))
+    useDataStore.setState({ treasuries: [
+      { code: '1101', nameAr: 'الخزينة', kind: 'cash', openingBalanceMinor: 0, isDefault: true },
+      { code: '1102', nameAr: 'البنك', kind: 'bank', openingBalanceMinor: 100000, isDefault: false },
+    ] as never })
+    const bankTerminal = { ...terminal, id: 'bank-terminal', code: 'TERM-1001', terminalId: 'T-1001', settlementAccountCode: '1102' }
+    useDataStore.getState().addPaymentTerminal(bankTerminal)
+    useDataStore.getState().recordPaymentTerminalTransaction({ ...transaction, terminalId: bankTerminal.id })
+    useDataStore.getState().recordPaymentTerminalSettlement({
+      id: 'single-settlement', terminalId: bankTerminal.id, transactionIds: [transaction.id],
+      settledAt: '2026-09-26T00:00:00.000Z', grossMinor: 1000, feeMinor: 10, feeTaxMinor: 2,
+      depositedMinor: 980, bankAccountCode: '1101', userId: 1,
+    } as never)
+    const settlement = useDataStore.getState().paymentTerminalSettlements[0]
+    expect(settlement).toMatchObject({ grossMinor: 1000, depositedMinor: 980, differenceMinor: -8 })
+    const entry = useDataStore.getState().journal.find((row) => row.id === settlement.journalEntryId)!
+    expect(entry).toBeTruthy()
+    expect(entry.lines.reduce((sum, line) => sum + line.debit, 0)).toBe(entry.lines.reduce((sum, line) => sum + line.credit, 0))
+    const net = (code: string) => entry.lines.filter((line) => line.accountCode === code).reduce((sum, line) => sum + line.debit - line.credit, 0)
+    expect(net('1101')).toBe(980)
+    expect(net('5113')).toBe(12)
+    expect(net('5112')).toBe(8)
+    expect(net('1102')).toBe(-1000)
   })
 
   it('يرفض ماكينة بلا فرع عند وجود فروع فعلية', () => {

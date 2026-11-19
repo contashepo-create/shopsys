@@ -58,6 +58,20 @@ export function validatePriceList(nameAr: string, defaultDiscountPercent: number
  * 2) خصم افتراضي للقائمة ← تجزئة × (1 − خصم٪)
  * 3) غير ذلك ← سعر التجزئة
  */
+/**
+ * نسبة الخصم المعروضة = (قطاعي − سعر القائمة) / قطاعي.
+ * التقريب العشري وحده كان يُظهر «0.0٪» لخصم حقيقي صغير (0.4 ريال على 1000)
+ * فيظن البائع أن لا خصم — نعرض خانتين عشريتين حين يُخفي التقريب الخصم.
+ */
+export function discountPercentFor(retailMinor: number, priceMinor: number): number {
+  if (!Number.isFinite(retailMinor) || retailMinor <= 0 || !Number.isFinite(priceMinor)) return 0
+  const percent = ((retailMinor - priceMinor) / retailMinor) * 100
+  if (percent <= 0) return 0
+  const oneDecimal = Math.round(percent * 10) / 10
+  if (oneDecimal > 0) return oneDecimal
+  return Math.round(percent * 100) / 100
+}
+
 export function resolvePrice(
   itemId: number,
   retailPriceMinor: Minor,
@@ -66,16 +80,29 @@ export function resolvePrice(
   entries: PriceListEntry[],
   categoryRules: PriceListCategoryRule[] = [],
   categoryId: number | null = null,
+  /**
+   * سلسلة فئات الصنف من الأخص إلى الأعم (اختياري): في البقالة شجرة الفئات
+   * عميقة (بقالة ← ألبان ← حليب)، فقاعدة «جملة» على «ألبان» يجب أن تسري على
+   * «حليب». تُمرَّر السلسلة كاملة لأن الدالة نقية ولا تقرأ شجرة الفئات.
+   */
+  categoryAncestors: readonly number[] = [],
 ): Minor {
   if (listId == null) return retailPriceMinor
   const list = lists.find((l) => l.id === listId && l.isActive)
   if (!list) return retailPriceMinor
   const entry = entries.find((e) => e.listId === listId && e.itemId === itemId)
   if (entry) return entry.priceMinor
-  /* ② خصم الفئة يسبق الخصم الافتراضي للقائمة (قرار المالك ⑩ي) */
-  const rule = categoryId == null ? undefined : categoryRules.find((row) => row.listId === listId && row.categoryId === categoryId)
-  if (rule && rule.discountPercent > 0) {
-    return Math.round(retailPriceMinor * (1 - rule.discountPercent / 100))
+  /* ② خصم الفئة يسبق الخصم الافتراضي للقائمة (قرار المالك ⑩ي) —
+     والأخص أولاً: فئة الصنف ثم آباؤها، فلا تُلغي قاعدة الجد قاعدة الأب. */
+  const chain = categoryId == null ? [] : [categoryId, ...categoryAncestors]
+  const seen = new Set<number>()
+  for (const id of chain) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const rule = categoryRules.find((row) => row.listId === listId && row.categoryId === id)
+    if (rule && rule.discountPercent > 0) {
+      return Math.round(retailPriceMinor * (1 - rule.discountPercent / 100))
+    }
   }
   if (list.defaultDiscountPercent > 0) {
     return Math.round(retailPriceMinor * (1 - list.defaultDiscountPercent / 100))
