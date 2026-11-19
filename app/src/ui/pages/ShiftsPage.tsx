@@ -12,7 +12,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { currentOpenShift, type Shift } from '../../core/shifts.ts'
+import { currentOpenShift, zReportRows, zReportSequence, type Shift } from '../../core/shifts.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { localDateTimeLabel, todayLocalIso } from '../../core/time.ts'
@@ -49,6 +49,8 @@ export function ShiftsPage() {
   const [settleMode, setSettleMode] = useState<'expense' | 'advance'>('expense')
   /* F5: تسوية الفرق في نفس الإقفال — يوفّر خطوة لاحقة ويترك المستند مكتملاً */
   const [settleOnClose, setSettleOnClose] = useState(true)
+  /* F2: طباعة تقرير Z فور الإقفال — الدرج لا يُسلَّم بلا ورق مطبوع */
+  const [printZOnClose, setPrintZOnClose] = useState(true)
   /* F6: ربط الوردية بموظف مسجَّل — بلا ربط لا يُحمَّل عجز على شخص بثقة */
   const [shiftEmployeeId, setShiftEmployeeId] = useState(0)
   const [settleEmployeeId, setSettleEmployeeId] = useState(0)
@@ -61,39 +63,37 @@ export function ShiftsPage() {
    */
   const printXReport = (shift: Shift, summary: ReturnType<typeof getShiftSummary>, mode: 'X' | 'Z' = 'X') => {
     try {
-      const rows = [
-        { nameAr: 'رصيد الدرج الافتتاحي', qty: 1, unitPriceMinor: shift.openingCashMinor, totalMinor: shift.openingCashMinor },
-        { nameAr: `محصل نقداً (${summary.invoiceCount} فاتورة)`, qty: 1, unitPriceMinor: summary.cashSalesMinor, totalMinor: summary.cashSalesMinor },
-        { nameAr: 'محصل على بنوك/محافظ', qty: 1, unitPriceMinor: summary.bankSalesMinor, totalMinor: summary.bankSalesMinor },
-        { nameAr: 'آجل غير محصل', qty: 1, unitPriceMinor: summary.creditSalesMinor, totalMinor: summary.creditSalesMinor },
-        { nameAr: `مرتجعات نقدية (${summary.returnCount})`, qty: 1, unitPriceMinor: -summary.cashRefundsMinor, totalMinor: -summary.cashRefundsMinor },
-        { nameAr: 'تحصيل تأمين نقداً', qty: 1, unitPriceMinor: summary.cashInsuranceReceiptsMinor, totalMinor: summary.cashInsuranceReceiptsMinor },
-        { nameAr: 'صرف تأمين نقداً', qty: 1, unitPriceMinor: -summary.cashInsurancePaymentsMinor, totalMinor: -summary.cashInsurancePaymentsMinor },
-      ]
-      /* تقرير Z: مستند الإقفال النهائي — المعدود والفرق وسطر تسوية الفرق إن وُجد.
-         يُطبع من نفس المصدر (summarizeShift) فلا يختلف رقمان بين الشاشة والورق. */
       const variance = summary.varianceMinor ?? 0
-      const zRows = mode === 'Z' ? [
-        ...rows,
-        { nameAr: 'المتوقع في الدرج', qty: 1, unitPriceMinor: summary.expectedCashMinor, totalMinor: summary.expectedCashMinor },
-        { nameAr: 'المعدود فعلياً', qty: 1, unitPriceMinor: shift.countedCashMinor ?? 0, totalMinor: shift.countedCashMinor ?? 0 },
-        { nameAr: variance === 0 ? 'الفرق (مضبوط)' : variance < 0 ? 'عجز في الدرج' : 'زيادة في الدرج', qty: 1, unitPriceMinor: variance, totalMinor: variance },
-      ] : rows
+      /* F2: صفوف Z من دالة واحدة (`zReportRows`) تغذّي الإيصال والاختبار — لا حساب مزدوج */
+      const zNumber = zReportSequence(shifts, shift.id)
+      const rows = mode === 'Z'
+        ? zReportRows(shift, summary).map((r) => ({ nameAr: r.nameAr, qty: 1, unitPriceMinor: r.valueMinor, totalMinor: r.valueMinor }))
+        : [
+          { nameAr: 'رصيد الدرج الافتتاحي', qty: 1, unitPriceMinor: shift.openingCashMinor, totalMinor: shift.openingCashMinor },
+          { nameAr: `محصل نقداً (${summary.invoiceCount} فاتورة)`, qty: 1, unitPriceMinor: summary.cashSalesMinor, totalMinor: summary.cashSalesMinor },
+          { nameAr: 'محصل على بنوك/محافظ', qty: 1, unitPriceMinor: summary.bankSalesMinor, totalMinor: summary.bankSalesMinor },
+          { nameAr: 'آجل غير محصل', qty: 1, unitPriceMinor: summary.creditSalesMinor, totalMinor: summary.creditSalesMinor },
+          { nameAr: `مرتجعات نقدية (${summary.returnCount})`, qty: 1, unitPriceMinor: -summary.cashRefundsMinor, totalMinor: -summary.cashRefundsMinor },
+          { nameAr: 'تحصيل تأمين نقداً', qty: 1, unitPriceMinor: summary.cashInsuranceReceiptsMinor, totalMinor: summary.cashInsuranceReceiptsMinor },
+          { nameAr: 'صرف تأمين نقداً', qty: 1, unitPriceMinor: -summary.cashInsurancePaymentsMinor, totalMinor: -summary.cashInsurancePaymentsMinor },
+        ]
       const settings = resolveDocumentPrintSettings(shift).receipt
       const model = buildSimpleDocModel({
         docTitle: mode === 'Z' ? 'تقرير Z — إقفال وردية' : 'تقرير X — معاينة وردية',
-        invoiceNumber: `${mode}-${shift.id}`,
-        refCode: `${mode}-${shift.id}`,
+        invoiceNumber: mode === 'Z' ? `Z-${String(zNumber).padStart(4, '0')}` : `X-${shift.id}`,
+        refCode: mode === 'Z' ? `Z-${String(zNumber).padStart(4, '0')}` : `X-${shift.id}`,
         dateIso: todayLocalIso(),
         partyLabel: shift.openedBy,
         paymentLabel: mode === 'Z' ? 'إقفال نهائي' : 'معاينة بلا إقفال',
-        rows: zRows,
+        rows,
         totalMinor: mode === 'Z' ? (shift.countedCashMinor ?? summary.expectedCashMinor) : summary.expectedCashMinor,
         paidMinor: 0,
         operatorName: appUsers.find((u) => u.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك',
         settings,
         extraFooter: mode === 'Z'
-          ? `تقرير Z — إقفال الوردية #${shift.id}${shift.closeApprovedBy ? ` باعتماد ${shift.closeApprovedBy}` : ''}. الفرق ${formatMinor(variance, cur, false)}${shift.varianceSettledMode ? ' — سُوّي بقيد مستقل' : variance === 0 ? '' : ' — لم تُسوَّ بعد'}.`
+          ? `تقرير Z رقم ${String(zNumber).padStart(4, '0')} — إقفال الوردية #${shift.id}${shift.closedAt ? ` في ${localDateTimeLabel(shift.closedAt)}` : ''}${shift.closeApprovedBy ? ` باعتماد ${shift.closeApprovedBy}` : ''}. الفرق ${formatMinor(variance, cur, false)}${
+            shift.varianceEntryId ? ` — سُوّي بقيد #${shift.varianceEntryId}` : variance === 0 ? ' — لا تسوية مطلوبة' : ' — لم تُسوَّ بعد، يلزم قيد تسوية'
+          }.`
           : 'تقرير X لا يقفل الوردية ولا يُنشئ قيداً — المتوقع في الدرج أعلاه.',
       })
       printModelWithTemplate(model, cur, settings, 'thermal')
@@ -140,6 +140,8 @@ export function ShiftsPage() {
       toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : `${v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`}${settledNote}`, v < 0 ? 'error' : 'success')
       setCloseModal(false)
       setCountedCash('')
+      /* F2: تقرير Z يخرج مع الإقفال نفسه — يُطبع من نفس أرقام الشاشة (summarizeShift) */
+      if (printZOnClose) printXReport(s, sum, 'Z')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -367,6 +369,13 @@ export function ShiftsPage() {
             <span className="text-[12px] leading-5 text-slate-600 dark:text-slate-300">
               <b>سوِّ الفرق في نفس الإقفال</b> — يُنشأ قيد المصروف/الإيراد فوراً مع الإقفال بدل ترك فرق معلّق.
               <span className="block text-[11px] text-slate-400">بدونه يبقى الفرق ظاهراً في سجل الورديات حتى تُسوّيه يدوياً (مصروف أو سلفة على موظف).</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3 cursor-pointer">
+            <input type="checkbox" checked={printZOnClose} onChange={(e) => setPrintZOnClose(e.target.checked)} className="mt-1" data-print-z-on-close />
+            <span className="text-[12px] leading-5 text-slate-600 dark:text-slate-300">
+              <b>اطبع تقرير Z مع الإقفال</b> — مستند الإقفال يتضمن المبيعات والخصومات والضريبة والمرتجعات والمتوقع والمعدود والفرق ورقم قيد التسوية.
+              <span className="block text-[11px] text-slate-400">يُطبع من نفس أرقام الشاشة فلا يختلف رقمان بين الورق والدفتر.</span>
             </span>
           </label>
           <div className="flex justify-end gap-2">

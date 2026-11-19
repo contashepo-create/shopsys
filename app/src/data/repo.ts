@@ -4790,8 +4790,9 @@ function shiftSummaryForState(raw: DataState, shiftId: number): ShiftSummary {
   if (shifts.length !== 1 || !scoped.shifts.some(row => row.id === shiftId)) throw new FinancialDataReviewError('الوردية', 'الوردية غير فريدة أو خارج الفرع')
   const shift = shifts[0]
   const kindOf = (code?: string) => scoped.treasuries.find(t => t.code === (code ?? '1101'))?.kind ?? 'cash'
-  const sales: ShiftDoc[] = scoped.sales.map(s => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury), projectBilling: s.projectBilling }))
-  const returns: ShiftDoc[] = scoped.saleReturns.map(r => ({ shiftId: r.shiftId, payment: 'cash', totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? scoped.sales.find(s => s.id === r.saleId)?.treasury), projectBilling: r.projectBilling }))
+  /* F2: حقول تقرير Z تُمرَّر من نفس المستند — لا استعلام ثانٍ يختلف عنه */
+  const sales: ShiftDoc[] = scoped.sales.map(s => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury), projectBilling: s.projectBilling, grossMinor: s.totals.grossMinor, discountMinor: s.totals.discountMinor, taxMinor: s.totals.taxMinor }))
+  const returns: ShiftDoc[] = scoped.saleReturns.map(r => ({ shiftId: r.shiftId, payment: 'cash', totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? scoped.sales.find(s => s.id === r.saleId)?.treasury), projectBilling: r.projectBilling, taxMinor: r.totals?.taxMinor }))
   const insuranceReceipts: ShiftDoc[] = [], insurancePayments: ShiftDoc[] = []
   const matched = new Set<number>()
   const fail = (): never => { throw new FinancialDataReviewError('حركة الوردية المؤمّنة', 'القيد أو المطالبة أو ربط الوردية غير مطابق') }

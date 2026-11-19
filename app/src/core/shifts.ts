@@ -39,6 +39,13 @@ export interface ShiftDoc {
   treasuryKind?: 'cash' | 'bank'
   /** فاتورة توثيق مستخلصات (النموذج أ): ليست بيع وردية — تُستثنى من التلخيص */
   projectBilling?: 'documentation' | 'extra'
+  /* ─── F2: حقول تقرير Z (اختيارية: سجلات قديمة قد لا تحملها) ─── */
+  /** إجمالي المستند قبل الخصم */
+  grossMinor?: Minor
+  /** الخصومات (سطور + فاتورة) */
+  discountMinor?: Minor
+  /** الضريبة المحصلة على المستند */
+  taxMinor?: Minor
 }
 
 export interface ShiftSummary {
@@ -56,6 +63,19 @@ export interface ShiftSummary {
   expectedCashMinor: Minor
   /** المعدود − المتوقع (null قبل العد): سالب = عجز، موجب = زيادة */
   varianceMinor: Minor | null
+  /* ─── F2: أرقام تقرير Z — تُحسب من نفس المستندات فلا تختلف عن الشاشة ─── */
+  /** إجمالي المبيعات قبل الخصم */
+  grossSalesMinor?: Minor
+  /** إجمالي الخصومات */
+  discountsMinor?: Minor
+  /** الضريبة المحصلة (ض.ق.م) داخل الوردية */
+  taxMinor?: Minor
+  /** صافي المبيعات بعد الخصم (يشمل الضريبة كما في الفاتورة) */
+  netSalesMinor?: Minor
+  /** إجمالي المرتجعات (نقدية + على البنك) */
+  returnsTotalMinor?: Minor
+  /** المرتجعات على البنك/المحافظ — لا تُخصم من الدرج */
+  bankRefundsMinor?: Minor
 }
 
 /** المحصل فعلاً من مستند (الدفع المجزأ) — التوافق الخلفي: cash=كامل، credit=صفر */
@@ -77,6 +97,13 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
     creditSales += s.totalMinor - paid // الجزء الآجل فقط — لا الفاتورة كلها
   }
   const cashRefunds = myReturns.filter((r) => r.payment === 'cash' && r.treasuryKind !== 'bank').reduce((a, r) => a + r.totalMinor, 0)
+  const bankRefunds = myReturns.filter((r) => r.treasuryKind === 'bank').reduce((a, r) => a + r.totalMinor, 0)
+  /* F2: أرقام تقرير Z من نفس المستندات — بلا استعلام ثانٍ يختلف عنه */
+  const grossSales = mySales.reduce((a, s) => a + (s.grossMinor ?? s.totalMinor), 0)
+  const discounts = mySales.reduce((a, s) => a + (s.discountMinor ?? 0), 0)
+  const tax = mySales.reduce((a, s) => a + (s.taxMinor ?? 0), 0) - myReturns.reduce((a, r) => a + (r.taxMinor ?? 0), 0)
+  const netSales = mySales.reduce((a, s) => a + s.totalMinor, 0)
+  const returnsTotal = myReturns.reduce((a, r) => a + r.totalMinor, 0)
   const movementTotal = (docs: ShiftDoc[], kind: 'cash' | 'bank') => docs.filter(d => d.shiftId === shift.id && (d.treasuryKind ?? 'cash') === kind).reduce((sum, d) => sum + d.totalMinor, 0)
   const cashInsuranceReceiptsMinor = movementTotal(insuranceReceipts, 'cash'), bankInsuranceReceiptsMinor = movementTotal(insuranceReceipts, 'bank')
   const cashInsurancePaymentsMinor = movementTotal(insurancePayments, 'cash'), bankInsurancePaymentsMinor = movementTotal(insurancePayments, 'bank')
@@ -91,7 +118,61 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
     cashInsuranceReceiptsMinor, bankInsuranceReceiptsMinor, cashInsurancePaymentsMinor, bankInsurancePaymentsMinor,
     expectedCashMinor: expected,
     varianceMinor: shift.countedCashMinor === null ? null : shift.countedCashMinor - expected,
+    grossSalesMinor: grossSales,
+    discountsMinor: discounts,
+    taxMinor: tax,
+    netSalesMinor: netSales,
+    returnsTotalMinor: returnsTotal,
+    bankRefundsMinor: bankRefunds,
   }
+}
+
+/**
+ * F2 — صفوف تقرير Z (الإقفال) بالترتيب المطبوع.
+ *
+ * لماذا دالة خالصة: تقرير الإقفال هو المستند الذي يُطابق عليه المحاسب الدرج
+ * بعد نهاية اليوم؛ إن حُسبت أرقامه في الشاشة مرة وفي الطباعة مرة أخرى، اختلف
+ * رقمان على نفس الوردية. فيُبنى من نفس `summarizeShift` ويُفحص بالاختبار.
+ *
+ * الصفوف أرقام فقط (لا صفوف عنوان) كي يخرج الإيصال الحراري نظيفاً؛ ورقم Z
+ * وحالة التسوية يُطبعان في حاشية المستند.
+ */
+export interface ShiftReportRow {
+  nameAr: string
+  /** القيمة بالقرش — سالبة للمرتجعات والخصومات */
+  valueMinor: Minor
+}
+
+export function zReportRows(
+  shift: Pick<Shift, 'openingCashMinor' | 'countedCashMinor'>,
+  summary: ShiftSummary,
+): ShiftReportRow[] {
+  const variance = summary.varianceMinor ?? 0
+  return [
+    { nameAr: `إجمالي المبيعات قبل الخصم (${summary.invoiceCount} فاتورة)`, valueMinor: summary.grossSalesMinor ?? 0 },
+    { nameAr: 'الخصومات', valueMinor: -(summary.discountsMinor ?? 0) },
+    { nameAr: 'صافي المبيعات', valueMinor: summary.netSalesMinor ?? 0 },
+    { nameAr: 'ض.ق.م المحصلة', valueMinor: summary.taxMinor ?? 0 },
+    { nameAr: `مرتجعات (${summary.returnCount}) — الإجمالي`, valueMinor: -(summary.returnsTotalMinor ?? 0) },
+    { nameAr: 'منها على البنك/المحافظ', valueMinor: -(summary.bankRefundsMinor ?? 0) },
+    { nameAr: 'محصل نقداً في الدرج', valueMinor: summary.cashSalesMinor },
+    { nameAr: 'محصل على بنوك/محافظ', valueMinor: summary.bankSalesMinor },
+    { nameAr: 'الآجل غير المحصل', valueMinor: summary.creditSalesMinor },
+    { nameAr: 'تحصيل تأمين نقداً', valueMinor: summary.cashInsuranceReceiptsMinor },
+    { nameAr: 'صرف تأمين نقداً', valueMinor: -summary.cashInsurancePaymentsMinor },
+    { nameAr: 'رصيد الدرج الافتتاحي', valueMinor: shift.openingCashMinor },
+    { nameAr: 'المتوقع في الدرج', valueMinor: summary.expectedCashMinor },
+    { nameAr: 'المعدود فعلياً', valueMinor: shift.countedCashMinor ?? 0 },
+    {
+      nameAr: variance === 0 ? 'الفرق (مضبوط)' : variance < 0 ? 'عجز في الدرج' : 'زيادة في الدرج',
+      valueMinor: variance,
+    },
+  ]
+}
+
+/** رقم Z المتسلسل = ترتيب الوردية بين الورديات المقفلة (Z-0001، Z-0002 …) */
+export function zReportSequence(shifts: readonly Pick<Shift, 'id' | 'status'>[], shiftId: number): number {
+  return shifts.filter((s) => s.status === 'closed' && s.id <= shiftId).length
 }
 
 /** التحقق قبل فتح وردية: لا ورديتين مفتوحتين معاً، ولا رصيد سالب */
