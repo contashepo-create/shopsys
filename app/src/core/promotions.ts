@@ -22,12 +22,32 @@ export interface PromotionComponent {
   qty: number
 }
 
+/**
+ * F9 — قاعدة كمّية لصنف واحد: «اشترِ N واحصل على M مجاناً» (2+1، 3+1…).
+ * تعبيرها النقدي: سعر N وحدات يُغطّي N+M وحدة — لا سطر بسعر صفر، فلا تنكسر
+ * حماية «سعر صفر» ولا أرضية السعر، والتكلفة والمخزون يمران بالمسار المعتاد.
+ */
+export interface QuantityRule {
+  itemId: number
+  /** عدد الوحدات المدفوعة في كل دورة */
+  buyQty: number
+  /** عدد الوحدات المجانية في كل دورة */
+  freeQty: number
+}
+
 export interface Promotion {
   id: number
   nameAr: string // «عرض رمضان»، «باقة الإفطار»
+  /** bundle (افتراضي) = باقة عدة أصناف بسعر موحد · quantity = «N + M مجاناً» */
+  kind?: 'bundle' | 'quantity'
   components: PromotionComponent[]
   /** سعر الباقة الواحدة (شامل كل مكوناتها) */
   bundlePriceMinor: Minor
+  /** قاعدة الكمية — تُستخدم حين kind = 'quantity' */
+  quantityRule?: QuantityRule | null
+  /** F4: اعتماد مسبق للبيع تحت التكلفة (loss leader) على مستوى العرض لا الفاتورة */
+  belowCostApprovedBy?: string | null
+  belowCostApprovedAt?: string | null
   /** فترة السريان — '' = مفتوح من هذا الطرف */
   startIso: string
   endIso: string
@@ -44,11 +64,53 @@ export function validatePromotion(
   items: readonly ItemForPromo[],
   hasVariants: (itemId: number) => boolean,
   editingId?: number,
+  /**
+   * F4: الإنشاء/التعديل يسمح بحفظ عرض خاسر **بانتظار اعتماد المالك** (لا يُباع قبل
+   * الاعتماد). بدونه كانت الحلقة مستحيلة: لا اعتماد بلا عرض، ولا عرض بلا اعتماد.
+   */
+  options: { allowPendingApproval?: boolean } = {},
 ): string[] {
   const errors: string[] = []
   const name = input.nameAr.trim()
   if (!name) errors.push('اسم العرض مطلوب')
   if (existing.some((p) => p.nameAr === name && p.id !== editingId)) errors.push('يوجد عرض بهذا الاسم')
+  if (input.startIso && input.endIso && input.endIso < input.startIso) errors.push('نهاية العرض قبل بدايته')
+
+  /* ① قاعدة كمّية «N + M مجاناً» (F9) */
+  if (input.kind === 'quantity') {
+    const rule = input.quantityRule
+    if (!rule) { errors.push('قاعدة الكمية مطلوبة — اختر الصنف وعدد الوحدات المدفوعة والمجانية'); return errors }
+    const it = items.find((x) => x.id === rule.itemId)
+    if (!it) { errors.push('صنف القاعدة غير موجود — أعد اختياره'); return errors }
+    if (!Number.isInteger(rule.buyQty) || rule.buyQty < 1) errors.push(`«${it.nameAr}»: عدد الوحدات المدفوعة عدد صحيح ≥ 1`)
+    if (!Number.isInteger(rule.freeQty) || rule.freeQty < 1) errors.push(`«${it.nameAr}»: عدد الوحدات المجانية عدد صحيح ≥ 1`)
+    if (rule.buyQty + rule.freeQty > 100) errors.push('دورة العرض أكبر من 100 وحدة — راجع الأرقام')
+    if (!it.isActive) errors.push(`«${it.nameAr}» معطل — فعّله أو استبدله`)
+    if (it.trackSerial) errors.push(`«${it.nameAr}» يتتبع السيريال — لا يدخل العروض`)
+    if (it.soldByWeight) errors.push(`«${it.nameAr}» يُباع بالوزن — العروض للسلع القياسية`)
+    if (hasVariants(rule.itemId)) errors.push(`«${it.nameAr}» موزع على تركيبات لون/مقاس — لا يدخل العروض`)
+    if (errors.length === 0) {
+      const bundle = promotionAsBundle({ ...input, kind: 'quantity' }, items)
+      const unitPrice = it.priceMinor
+      if (unitPrice <= 0) errors.push(`«${it.nameAr}» بلا سعر بيع — لا تُبنى قاعدة كمية على سعر صفر`)
+      const floor = it.minSalePriceMinor ?? 0
+      if (floor > 0 && bundle.bundlePriceMinor / (rule.buyQty + rule.freeQty) < floor - 0.5) {
+        errors.push(`قاعدة «${rule.buyQty}+${rule.freeQty}» تهبط بسعر الوحدة تحت حد «${it.nameAr}» الأدنى — عدّل الحد أو القاعدة`)
+      }
+      /* التكلفة تُقارن بتكلفة كل وحدات الدورة، لا بسعر الوحدة: «2+1» على سعر 10.00
+         وتكلفة 9.00 تبيع الوحدة فعلياً بـ 6.67 — أي تحت التكلفة بفارق كبير. */
+      const belowCost = bundle.bundlePriceMinor < it.costMinor * (rule.buyQty + rule.freeQty)
+      if (belowCost && !input.belowCostApprovedBy && !options.allowPendingApproval) {
+        errors.push(`قاعدة كمّية على «${it.nameAr}» بسعر لا يغطي تكلفة وحداتها — تحتاج اعتماداً على مستوى العرض (F4)`)
+      }
+      /* العرض الخاسر يجب أن يكون محدَّد النهاية كي لا يبقى اعتماد مفتوحاً للأبد */
+      if (belowCost && !input.belowCostApprovedBy && options.allowPendingApproval && !input.endIso) {
+        errors.push('عرض يبيع تحت التكلفة يحتاج نهاية سريان محددة — اعتماد بلا حد زمني مرفوض')
+      }
+    }
+    return errors
+  }
+
   if (!Number.isInteger(input.bundlePriceMinor) || input.bundlePriceMinor <= 0) errors.push('سعر الباقة يجب أن يكون أكبر من صفر')
   if (input.components.length === 0) errors.push('أضف مكوّناً واحداً على الأقل')
   const seen = new Set<number>()
@@ -68,7 +130,6 @@ export function validatePromotion(
   if (input.components.length === 1 && totalUnits < 2) {
     errors.push('عرض من صنف واحد بقطعة واحدة = سعر خاص — استخدم قوائم الأسعار لذلك')
   }
-  if (input.startIso && input.endIso && input.endIso < input.startIso) errors.push('نهاية العرض قبل بدايته')
   // أرضية السعر قرار إداري أعلى من العرض: لا يُنشأ عرض يكسر حد أي مكوّن
   if (errors.length === 0) {
     const lines = promotionCartLines(input, 1, items)
@@ -84,6 +145,71 @@ export function validatePromotion(
   return errors
 }
 
+
+/** هل العرض قاعدة كمّية سارية التعريف؟ (كل التحقق في validatePromotion) */
+export function isQuantityPromotion(p: Pick<Promotion, 'kind' | 'quantityRule'>): boolean {
+  return p.kind === 'quantity' && p.quantityRule != null
+}
+
+/**
+ * صورة العرض كباقة مكافئة: قاعدة «N + M مجاناً» = مكوّن واحد بكمية N+M وبسعر
+ * N × سعر الوحدة. هذا يحوّل كل التوزيع والتقريب والتكلفة إلى مسار الباقات نفسه،
+ * فلا يوجد مساران للحساب (ومساران يعنيان رقماً يختلف بين الكاشير والدفتر).
+ */
+export function promotionAsBundle(
+  p: Pick<Promotion, 'kind' | 'components' | 'bundlePriceMinor' | 'quantityRule'>,
+  items: readonly Pick<Item, 'id' | 'priceMinor'>[],
+): { components: PromotionComponent[]; bundlePriceMinor: Minor; perCycleRetailMinor: Minor } {
+  const rule = p.quantityRule
+  if (!isQuantityPromotion(p) || !rule) {
+    return { components: p.components, bundlePriceMinor: p.bundlePriceMinor, perCycleRetailMinor: 0 }
+  }
+  const unit = items.find((it) => it.id === rule.itemId)?.priceMinor ?? 0
+  const totalUnits = rule.buyQty + rule.freeQty
+  return {
+    components: [{ itemId: rule.itemId, qty: totalUnits }],
+    bundlePriceMinor: unit * rule.buyQty,
+    perCycleRetailMinor: unit * totalUnits,
+  }
+}
+
+/**
+ * هل سعر العرض لا يغطي تكلفة وحداته؟ (سؤال واحد يجيب عنه مكان واحد)
+ * يُستخدم في التحقق، وفي منع بيع عرض خاسر قبل اعتماده، وفي شارات الشاشات.
+ */
+export function promotionBelowCost(
+  p: Pick<Promotion, 'kind' | 'components' | 'bundlePriceMinor' | 'quantityRule'>,
+  items: readonly Pick<Item, 'id' | 'priceMinor' | 'costMinor'>[],
+): boolean {
+  const shape = promotionAsBundle(p, items)
+  let cost = 0
+  for (const c of shape.components) {
+    const it = items.find((x) => x.id === c.itemId)
+    if (!it) return false
+    cost += it.costMinor * c.qty
+  }
+  return cost > shape.bundlePriceMinor
+}
+
+/**
+ * F4 — اعتماد «البائع بخسارة» (loss leader) على مستوى العرض لا الفاتورة:
+ * عرض سارٍ ومعتمد مسبقاً باسم من اعتمده يُغطّي أصنافه فيُمرَّر بيعها تحت الحد/التكلفة
+ * بلا طلب اعتماد مدير عند كل فاتورة. أي صنف خارج عروض معتمدة يبقى محكوماً بالاعتماد
+ * الفوري كما كان — لا توسيع للحماية، بل نقل قرار تجاري معروف إلى مكانه الصحيح.
+ */
+export function lossLeaderApprovedItems(
+  promotions: readonly Pick<Promotion, 'kind' | 'components' | 'bundlePriceMinor' | 'quantityRule' | 'isActive' | 'startIso' | 'endIso' | 'belowCostApprovedBy'>[],
+  todayIso: string,
+): Set<number> {
+  const covered = new Set<number>()
+  for (const p of promotions) {
+    if (!p.belowCostApprovedBy) continue
+    if (!promotionActiveOn(p, todayIso)) continue
+    for (const c of promotionAsBundle(p, []).components) covered.add(c.itemId)
+  }
+  return covered
+}
+
 /** هل العرض سارٍ في هذا اليوم؟ (معطل = لا؛ '' من أي طرف = مفتوح) */
 export function promotionActiveOn(p: Pick<Promotion, 'isActive' | 'startIso' | 'endIso'>, todayIso: string): boolean {
   if (!p.isActive) return false
@@ -94,13 +220,20 @@ export function promotionActiveOn(p: Pick<Promotion, 'isActive' | 'startIso' | '
 }
 
 /** مجموع أسعار مكونات الباقة بأسعار التجزئة (لعرض الوفر للبائع) */
-export function promotionRetailMinor(p: Pick<Promotion, 'components'>, items: readonly Pick<Item, 'id' | 'priceMinor'>[]): Minor {
-  return p.components.reduce((s, c) => s + (items.find((it) => it.id === c.itemId)?.priceMinor ?? 0) * c.qty, 0)
+export function promotionRetailMinor(
+  p: Pick<Promotion, 'components' | 'kind' | 'quantityRule' | 'bundlePriceMinor'>,
+  items: readonly Pick<Item, 'id' | 'priceMinor'>[],
+): Minor {
+  const bundle = promotionAsBundle(p, items)
+  return bundle.components.reduce((s, c) => s + (items.find((it) => it.id === c.itemId)?.priceMinor ?? 0) * c.qty, 0)
 }
 
 /** وفر الباقة الواحدة = تجزئة − سعر الباقة (قد يكون صفراً أو سالباً لو سُعّرت خطأً) */
-export function promotionSavingsMinor(p: Pick<Promotion, 'components' | 'bundlePriceMinor'>, items: readonly Pick<Item, 'id' | 'priceMinor'>[]): Minor {
-  return promotionRetailMinor(p, items) - p.bundlePriceMinor
+export function promotionSavingsMinor(
+  p: Pick<Promotion, 'components' | 'kind' | 'quantityRule' | 'bundlePriceMinor'>,
+  items: readonly Pick<Item, 'id' | 'priceMinor'>[],
+): Minor {
+  return promotionRetailMinor(p, items) - promotionAsBundle(p, items).bundlePriceMinor
 }
 
 /**
@@ -112,17 +245,19 @@ export function promotionSavingsMinor(p: Pick<Promotion, 'components' | 'bundleP
  *    أعداد صحيحة والإجمالي مضبوط، فلا «فرق تقريب» يظهر في الفاتورة أبداً.
  */
 export function promotionCartLines(
-  p: Pick<Promotion, 'nameAr' | 'components' | 'bundlePriceMinor'>,
+  p: Pick<Promotion, 'nameAr' | 'components' | 'bundlePriceMinor' | 'kind' | 'quantityRule'>,
   count: number,
   items: readonly Pick<Item, 'id' | 'nameAr' | 'priceMinor' | 'costMinor' | 'vatOverride'>[],
 ): CartLine[] {
   if (!Number.isInteger(count) || count < 1) throw new RangeError('عدد الباقات عدد صحيح ≥ 1')
-  const comps = p.components.map((c) => {
+  /* القاعدة الكمية تُحوَّل إلى باقة مكافئة أولاً — مسار حساب واحد للعرضين */
+  const shape = promotionAsBundle(p, items)
+  const comps = shape.components.map((c) => {
     const it = items.find((x) => x.id === c.itemId)
     if (!it) throw new Error('مكوّن العرض غير موجود — راجع تعريف العرض')
     return { item: it, qty: c.qty * count, retail: it.priceMinor * c.qty * count }
   })
-  const total = p.bundlePriceMinor * count
+  const total = shape.bundlePriceMinor * count
   const retailSum = comps.reduce((s, c) => s + c.retail, 0)
   const totalQty = comps.reduce((s, c) => s + c.qty, 0)
   // حصص بطريقة الباقي الأكبر — الوزن: القيمة بالتجزئة، وعند انعدامها الكميات

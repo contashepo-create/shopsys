@@ -59,6 +59,12 @@ export interface SetupState {
   /** السماح بالبيع/الصرف برصيد مخزون سالب (الافتراضي: ممنوع) */
   allowNegativeStock: boolean
   /**
+   * F8 — تقريب الفئات النقدية بالقرش (0 = معطّل). القاهرة/مصر لا تتعامل عملياً
+   * بفئات أقل من 25 قرشاً؛ التقريب يخصّ النقد المستلم فقط، والفرق يُقيَّد في
+   * 5112 فروق تسويات نقدية. الافتراضي 0 كي لا يتغيّر سلوك السعودية (هللة).
+   */
+  cashRoundingStepMinor?: number
+  /**
    * إلزام تاريخ صلاحية لكل صنف متتبَّع عند استلام المشتريات (الافتراضي: false).
    * السبب: خام التمور/اللحوم يُشترى بلا تاريخ ويُفرز لاحقاً — فالإلزام المطلق يمنع
    * دورة عمل مشروعة، والبديل الافتراضي تنبيه + تقرير «دفعات بلا تاريخ».
@@ -528,6 +534,7 @@ const DEFAULT_SETUP_STATE: SetupState = {
   accountingMode: 'simple',
   allowNegativeTreasury: false,
   allowNegativeStock: false,
+  cashRoundingStepMinor: 0,
   requireOpenShiftForSales: true,
   defaultWarehouseId: null,
   phone: '', email: '', city: '', street: '',

@@ -18,6 +18,7 @@ import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, reconcileStockValue, withdrawStockValue, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { roundNonNegativeRatio } from '../core/money.ts'
+import { roundCashAmount } from '../core/cashRounding.ts'
 
 /** طرق الدفع المعلنة في `PaymentMethod` — مرجع التحقق الوحيد عند الترحيل. */
 const PAYMENT_METHODS: ReadonlySet<string> = new Set(['cash', 'credit', 'card', 'terminal'])
@@ -40,7 +41,7 @@ import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildP
 import { validateProcessing, validateProcessingOutputExpiry, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, validateCategoryRule, resolvePrice, type PriceList, type PriceListEntry, type PriceListCategoryRule } from '../core/priceLists.ts'
-import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
+import { validatePromotion, promotionCartLines, promotionActiveOn, lossLeaderApprovedItems, promotionBelowCost, type Promotion, type PromotionInput } from '../core/promotions.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, insuredPartialAmounts, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, validatePurchaseVariantBreakdown, applyPurchaseVariantBreakdown, type VariantStock, type VariantBreakdownLine } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
@@ -1572,6 +1573,10 @@ export interface SaleInvoice {
   customerId: number | null // null = عميل نقدي
   payment: PaymentMethod
   paidMinor?: number // المدفوع نقداً (الدفع المجزأ) — undefined للفواتير القديمة = حسب payment
+  /** F8: النقد المستلم فعلاً بعد تقريب الفئات (الفاتورة نفسها محصلة كاملةً). */
+  cashReceivedMinor?: number
+  /** F8: فرق التقريب المقيَّد في 5112 (موجب = ربح، سالب = خسارة). */
+  cashRoundingMinor?: number
   treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
   paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
   lines: CartLine[]
@@ -2297,6 +2302,12 @@ interface DataState {
     taxInclusive: boolean
     treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
     paidMinor?: number // الدفع المجزأ: المدفوع نقداً الآن والباقي آجل (طلب المالك)
+    /**
+     * F8: خطوة تقريب الفئات النقدية بالقرش (0 = معطّل). تُطبَّق على النقد المستلم
+     * في الفاتورة المحصلة كاملةً فقط؛ إجمالي الفاتورة الضريبية لا يتغيّر، والفرق
+     * يُقيَّد في 5112 فروق تسويات نقدية.
+     */
+    cashRoundingStepMinor?: number
     paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
     expiryOverrideBy?: string | null
     allowNegativeStock?: boolean
@@ -3218,6 +3229,13 @@ interface DataState {
   setCustomerPriceList: (customerId: number, listId: number | null) => void
   /* ─── العروض الترويجية/الباقات ─── */
   addPromotion: (input: PromotionInput) => Promotion
+  /**
+   * F4 — اعتماد «بيع بخسارة» على مستوى العرض/الفترة (لا لكل فاتورة).
+   * يُسجَّل اسم المعتمِد وتاريخه على العرض، ويُستهلك عند انتهاء فترة سريانه.
+   */
+  approvePromotionBelowCost: (promotionId: number, approvedBy: string) => Promotion
+  /** إلغاء الاعتماد المسبق — يعود الصنف لطلب اعتماد المدير عند كل فاتورة */
+  revokePromotionBelowCost: (promotionId: number) => Promotion
   updatePromotion: (id: number, input: PromotionInput) => void
   togglePromotion: (id: number) => void
   removePromotion: (id: number) => void
@@ -9347,8 +9365,12 @@ export const useRawDataStore = create<DataState>()(
         // مرفوض إلا بموافقة مدير موثقة — حماية من البيع بخسارة سهواً أو تلاعباً
         {
           const floorBad = priceFloorViolations(saleLines, state.items, args.invoiceDiscountPercent)
-          if (floorBad.length && !args.priceFloorOverrideBy) {
-            throw new PriceFloorError(floorBad)
+          /* F4: عرض معتمد مسبقاً (loss leader) يغطي أصنافه — لا اعتماد مدير لكل فاتورة */
+          const lossLeader = lossLeaderApprovedItems(state.promotions, todayLocalIso())
+          const coveredNames = new Set(state.items.filter((it) => lossLeader.has(it.id)).map((it) => it.nameAr))
+          const stillBad = floorBad.filter((name) => !coveredNames.has(name))
+          if (stillBad.length && !args.priceFloorOverrideBy) {
+            throw new PriceFloorError(stillBad)
           }
         }
         // 1) فحص المخزون في المخزن الفعلي لكل سطر (وعلى خامات الوصفة داخله).
@@ -9686,7 +9708,12 @@ export const useRawDataStore = create<DataState>()(
         }
         /* توثيق ⇒ بلا سطور قيد: يولد قيد «تذكاري» فارغ يربط المستند بدفتره
            (قرار 9: كل مستند مربوط بقيده) بلا أي أثر على الأرصدة */
-        const entryLines = isDocumentation ? [] : args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
+        /* F8: تقريب الفئات النقدية — يغيّر النقد المستلم فقط، وإجمالي الفاتورة الضريبية يبقى كما هو.
+           لا يُطبَّق على التحصيل المجزأ (توزيعات) ولا على الآجل: التقريب قرار نقدي بحت. */
+        const cashRounding = !isDocumentation && !args.paymentAllocations?.length && args.payment === 'cash' && paidM === totals.totalMinor
+          ? roundCashAmount(totals.totalMinor, args.cashRoundingStepMinor)
+          : null
+        const entryLines = isDocumentation ? [] : args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable, cashRounding?.diffMinor ? cashRounding.roundedMinor : null)
         const internalExpenses = args.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -9760,6 +9787,8 @@ export const useRawDataStore = create<DataState>()(
             ?? null,
           payment: isDocumentation ? 'credit' : args.payment,
           paidMinor: paidM,
+          /* F8: النقد المستلم بعد التقريب يُحفظ على المستند — والفاتورة تبقى محصلة كاملةً */
+          ...(cashRounding && cashRounding.diffMinor ? { cashReceivedMinor: cashRounding.roundedMinor, cashRoundingMinor: cashRounding.diffMinor } : {}),
           treasury: args.treasury ?? '1101',
           paymentAllocations: args.paymentAllocations,
           lines: costedLinesExact,
@@ -12354,7 +12383,12 @@ export const useRawDataStore = create<DataState>()(
           return { ...l, isServiceAtSale: false, unitCostMinor: cur && Number.isInteger(cur.costMinor) ? Math.round(cur.costMinor * (l.unitFactor ?? 1)) : l.unitCostMinor }
         })
         const floorBad = priceFloorViolations(costedLines, state.items, args.invoiceDiscountPercent)
-        if (floorBad.length && !args.priceFloorOverrideBy) throw new PriceFloorError(floorBad)
+        /* F4: عرض loss leader معتمد مسبقاً يغطي أصنافه — لا اعتماد لكل فاتورة */
+        const lossLeaderNames = new Set(state.items
+          .filter((it) => lossLeaderApprovedItems(state.promotions, todayLocalIso()).has(it.id))
+          .map((it) => it.nameAr))
+        const editStillBad = floorBad.filter((name) => !lossLeaderNames.has(name))
+        if (editStillBad.length && !args.priceFloorOverrideBy) throw new PriceFloorError(editStillBad)
         // ④ الإجماليات والقيد الجديد بنفس المعاملة الضريبية الأصلية
         // G1: المعاملة الضريبية المخزنة على الفاتورة أولاً (دقيقة مع الأصناف المعفاة المختلطة)
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
@@ -15393,7 +15427,11 @@ export const useRawDataStore = create<DataState>()(
           qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + baseQty(l))
         }
         const floorBad = priceFloorViolations(args.lines, state.items)
-        if (floorBad.length) throw new PriceFloorError(floorBad)
+        const exchangeCovered = new Set(state.items
+          .filter((it) => lossLeaderApprovedItems(state.promotions, todayLocalIso()).has(it.id))
+          .map((it) => it.nameAr))
+        const exchangeBad = floorBad.filter((name) => !exchangeCovered.has(name))
+        if (exchangeBad.length) throw new PriceFloorError(exchangeBad)
         for (const [itemId, qty] of qtyByItem) {
           const it = state.items.find((x) => x.id === itemId)
           if (!it) throw new Error('صنف غير موجود')
@@ -20203,17 +20241,40 @@ export const useRawDataStore = create<DataState>()(
       addPromotion: (input) => {
         const state = get()
         const scoped = getBranchScopedDataState(state)
-        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid))
+        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), undefined, { allowPendingApproval: true })
         if (errors.length) throw new Error(errors.join('، '))
         const promo: Promotion = { ...input, nameAr: input.nameAr.trim(), id: nextId(state.promotions) }
         set({ promotions: [...state.promotions, promo] })
         return promo
       },
+      approvePromotionBelowCost: (promotionId, approvedBy) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const promo = scoped.promotions.find((p) => p.id === promotionId)
+        if (!promo) throw new Error('العرض غير موجود في هذا الفرع')
+        const name = approvedBy.trim()
+        if (!name) throw new Error('اسم المعتمِد مطلوب — الاعتماد بلا شخص لا يُحتجّ به')
+        /* الاعتماد بلا فترة سريان مفتوح إلى الأبد: قيد زمني إلزامي */
+        if (!promo.endIso) throw new Error('حدد نهاية سريان للعرض قبل اعتماد البيع بخسارة — اعتماد مفتوح بلا حد زمني مرفوض')
+        if (!promo.isActive) throw new Error('العرض معطل — فعّله قبل الاعتماد')
+        const updated: Promotion = { ...promo, belowCostApprovedBy: name, belowCostApprovedAt: new Date().toISOString() }
+        set({ promotions: state.promotions.map((p) => (p.id === promotionId ? updated : p)) })
+        return updated
+      },
+      revokePromotionBelowCost: (promotionId) => {
+        const state = get()
+        const scoped = getBranchScopedDataState(state)
+        const promo = scoped.promotions.find((p) => p.id === promotionId)
+        if (!promo) throw new Error('العرض غير موجود في هذا الفرع')
+        const updated: Promotion = { ...promo, belowCostApprovedBy: null, belowCostApprovedAt: null }
+        set({ promotions: state.promotions.map((p) => (p.id === promotionId ? updated : p)) })
+        return updated
+      },
       updatePromotion: (id, input) => {
         const state = get()
         const scoped = getBranchScopedDataState(state)
         if (!scoped.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود في هذا الفرع')
-        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), id)
+        const errors = validatePromotion(input, scoped.promotions, scoped.items, (iid) => hasVariantStock(scoped.variantStocks, iid), id, { allowPendingApproval: true })
         if (errors.length) throw new Error(errors.join('، '))
         set({ promotions: state.promotions.map((p) => (p.id === id ? { ...p, ...input, nameAr: input.nameAr.trim() } : p)) })
       },
@@ -20234,6 +20295,10 @@ export const useRawDataStore = create<DataState>()(
         const promo = state.promotions.find((p) => p.id === promotionId)
         if (!promo) throw new Error('العرض غير موجود')
         if (!promotionActiveOn(promo, todayLocalIso())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
+        /* F4: العرض الخاسر لا يُباع قبل اعتماد المالك — الرسالة تقول أين يُعتمد */
+        if (promotionBelowCost(promo, state.items) && !promo.belowCostApprovedBy) {
+          throw new Error(`عرض «${promo.nameAr}» يبيع تحت التكلفة بلا اعتماد — يعتمده المالك من شاشة العروض أولاً`)
+        }
         return promotionCartLines(promo, count, state.items)
       },
 

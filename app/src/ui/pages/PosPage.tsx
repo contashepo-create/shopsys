@@ -13,6 +13,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { todayLocalIso } from '../../core/time.ts'
 import { formatMinor } from '../../core/money.ts'
+import { roundCashAmount } from '../../core/cashRounding.ts'
 import { computeTotals, lineTotal, repriceCartForPriceList, CreditLimitError, stockShortage, scaleWeightTargetError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem, weightFromPrintedPrice, itemTareGrams, netWeightKg } from '../../core/barcode.ts'
@@ -23,7 +24,7 @@ import { matchesSearch, searchRank } from '../../core/search.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey, resolveVariantBarcode } from '../../core/variants.ts'
-import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
+import { promotionActiveOn, promotionSavingsMinor, promotionRetailMinor } from '../../core/promotions.ts'
 import { ExpiredStockError, nearestExpiryByItem } from '../../core/batches.ts'
 import { jewelryBreakdown } from '../../core/jewelry.ts'
 import { emptyRxLine, validateRxLines, doseText, type RxLine } from '../../core/prescription.ts'
@@ -657,14 +658,27 @@ export function PosPage() {
    * كم يُرجع للعميل — أهم شاشة في بقالة نقدية.
    */
   const changeDueMinor = totals ? Math.max(0, cashTenderedMinor - totals.totalMinor) : 0
+  /**
+   * F8: معاينة تقريب الفئات — الكاشير يرى ما سيُحصَّل فعلاً قبل إتمام البيع.
+   * لا يغيّر الإجمالي المعروض ولا الضريبة؛ فرق التقريب يظهر صريحاً.
+   */
+  const cashRoundingPreview = useMemo(() => {
+    if (!totals || !(setup.cashRoundingStepMinor ?? 0)) return null
+    try {
+      const r = roundCashAmount(totals.totalMinor, setup.cashRoundingStepMinor)
+      return r.diffMinor === 0 ? null : r
+    } catch { return null }
+  }, [totals, setup.cashRoundingStepMinor])
   /** فئات نقدية سريعة (المبلغ المطلوب تقريباً لأقرب فئة) — تُملأ بالضغط */
   const quickCashMinor = useMemo(() => {
     if (!totals) return [] as number[]
     const unit = 10 ** cur.decimals
     const total = totals.totalMinor
     const steps = [5, 10, 50, 100].map((n) => Math.ceil(total / (n * unit)) * n * unit)
-    return [...new Set([total, ...steps])].filter((v) => v >= total).slice(0, 5)
-  }, [totals, cur.decimals])
+    /* F8: أول اقتراح هو المبلغ بعد تقريب الفئات — ما سيدفعه العميل نقداً */
+    const rounded = (setup.cashRoundingStepMinor ?? 0) ? roundCashAmount(total, setup.cashRoundingStepMinor).roundedMinor : total
+    return [...new Set([rounded, total, ...steps])].filter((v) => v >= Math.min(rounded, total)).slice(0, 5)
+  }, [totals, cur.decimals, setup.cashRoundingStepMinor])
 
   /** طباعة إيصال فاتورة (المرحلة 5) — مع الرمز الضريبي عند تفعيل إحدى ميزتي
       الفاتورة الإلكترونية (زاتكا السعودية أو التحقق المحلي المصري) */
@@ -811,6 +825,8 @@ export function PosPage() {
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         priceFloorOverrideBy: priceFloorOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
+        /* F8: تقريب الفئات النقدية من الإعدادات — 0 = بلا تقريب */
+        cashRoundingStepMinor: setup.cashRoundingStepMinor ?? 0,
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
         ...(selectedTerminal ? { terminalPayment: { terminalId: selectedTerminal.id, providerReference: terminalReference.trim(), ...(terminalCardLast4 ? { cardLast4: terminalCardLast4 } : {}) } } : {}),
         ...(commissionEmployeeId && commissionMinor > 0 ? { staffCommission: { employeeId: commissionEmployeeId, amountMinor: commissionMinor } } : {}),
@@ -1536,6 +1552,11 @@ export function PosPage() {
                     />
                   </div>
                   <div>
+                    {cashRoundingPreview && (
+                      <div data-cash-rounding-preview className="text-[11px] font-bold text-amber-700 dark:text-amber-400 mb-1.5">
+                        💵 تقريب الفئات: يُحصَّل {formatMinor(cashRoundingPreview.roundedMinor, cur)} بدل {formatMinor(totals.totalMinor, cur)} — فرق {cashRoundingPreview.diffMinor > 0 ? '+' : ''}{formatMinor(cashRoundingPreview.diffMinor, cur)} يُقيَّد في 5112
+                      </div>
+                    )}
                     <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">{changeDueMinor > 0 ? 'الباقي للعميل (يُردّ من الدرج)' : 'الباقي آجل على العميل'}</div>
                     <div data-testid="pos-change-due" className={`px-3.5 py-2.5 rounded-xl border-2 text-center font-black text-lg ${changeDueMinor > 0 ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : creditRemainder > 0 ? 'border-violet-500/40 bg-violet-500/5 text-violet-600 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-300'}`}>
                       {fmt(changeDueMinor > 0 ? changeDueMinor : creditRemainder)}
@@ -1850,11 +1871,13 @@ export function PosPage() {
                 <span className="flex-1">
                   <span className="font-black block">🎁 {p.nameAr}</span>
                   <span className="text-[10.5px] text-slate-400">
-                    {p.components.map((c) => `${c.qty} × ${items.find((it) => it.id === c.itemId)?.nameAr ?? '؟'}`).join(' + ')}
+                    {p.kind === 'quantity' && p.quantityRule
+                      ? `${p.quantityRule.buyQty} + ${p.quantityRule.freeQty} مجاناً × ${items.find((it) => it.id === p.quantityRule!.itemId)?.nameAr ?? '؟'}`
+                      : p.components.map((c) => `${c.qty} × ${items.find((it) => it.id === c.itemId)?.nameAr ?? '؟'}`).join(' + ')}
                   </span>
                 </span>
                 <span className="text-left">
-                  <b className="text-pink-600 block">{fmt(p.bundlePriceMinor)}</b>
+                  <b className="text-pink-600 block">{fmt(p.kind === 'quantity' ? promotionRetailMinor(p, items) - savings : p.bundlePriceMinor)}</b>
                   {savings > 0 && <span className="text-emerald-600 text-[10px] font-bold">وفر {fmt(savings)}</span>}
                 </span>
               </button>

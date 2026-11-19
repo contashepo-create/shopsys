@@ -6,6 +6,7 @@
  * (وثيقة التصميم — القرارات 6، 8، 9، 14)
  */
 import type { Minor } from './money.ts'
+import { CASH_ROUNDING_ACCOUNT } from './cashRounding.ts'
 import { addMinor, exactNonNegativePercent, mulQty, percentOf, roundNonNegativeRatio, splitExactInclusiveTax, splitInclusiveTax, addExclusiveTax } from './money.ts'
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
@@ -402,6 +403,11 @@ export function buildSaleEntry(
   treasury = '1101',
   paidMinorArg?: number,
   receivable?: SaleReceivableOptions,
+  /**
+   * F8: المبلغ النقدي المستلم فعلاً بعد تقريب الفئات (اختياري). إجمالي الفاتورة
+   * الضريبية لا يتغيّر؛ الفرق يُقيَّد في 5112 فروق تسويات نقدية ربحاً أو خسارة.
+   */
+  cashReceivedMinor?: number | null,
 ): JournalLine[] {
   // الدفع المجزأ (طلب المالك): جزء نقدي في الخزينة المختارة والباقي آجل على العميل —
   // كاش كامل (المدفوع = الإجمالي) أو آجل كامل (المدفوع = 0) حالتان خاصتان من نفس القاعدة
@@ -410,7 +416,18 @@ export function buildSaleEntry(
   if (paid > totals.totalMinor) throw new RangeError('المدفوع نقداً أكبر من إجمالي الفاتورة')
   const remainder = totals.totalMinor - paid
   const lines: JournalLine[] = []
-  if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: 'نقدية' })
+  /* F8: التقريب يخصّ النقد المستلم فقط — لا يمسّ إجمالي الفاتورة ولا الآجل */
+  const cashIn = cashReceivedMinor == null ? paid : cashReceivedMinor
+  if (cashReceivedMinor != null) {
+    if (!Number.isSafeInteger(cashIn) || cashIn < 0) throw new RangeError('المبلغ النقدي بعد التقريب غير صالح')
+    if (cashIn > 0 && paid !== totals.totalMinor) throw new RangeError('التقريب النقدي للفاتورة المحصلة كاملةً فقط')
+  }
+  if (cashIn > 0) lines.push({ accountCode: treasury, debit: cashIn, credit: 0, note: 'نقدية' })
+  if (cashReceivedMinor != null && cashIn !== paid) {
+    const diff = cashIn - paid
+    if (diff > 0) lines.push({ accountCode: CASH_ROUNDING_ACCOUNT, debit: 0, credit: diff, note: 'ربح تقريب نقدي' })
+    else lines.push({ accountCode: CASH_ROUNDING_ACCOUNT, debit: -diff, credit: 0, note: 'خسارة تقريب نقدي' })
+  }
   if (remainder > 0) lines.push({ accountCode: receivable?.receivableAccount ?? '1104', debit: remainder, credit: 0, note: receivable?.receivableNote ?? 'ذمم عملاء' })
   lines.push({ accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' })
   if (totals.taxMinor > 0) {

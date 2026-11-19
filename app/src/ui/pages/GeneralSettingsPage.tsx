@@ -213,6 +213,37 @@ export function GeneralSettingsPage() {
             )
           })}
         </div>
+
+        {/* F8: تقريب الفئات النقدية — يخصّ النقد المستلم فقط */}
+        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <h4 className="font-bold text-[13px] text-slate-700 dark:text-slate-200 mb-1">💵 تقريب الفئات النقدية</h4>
+          <p className="text-[11.5px] text-slate-400 mb-2">
+            يُطبَّق على النقد المستلم في الفاتورة المحصلة كاملةً فقط — إجمالي الفاتورة الضريبية لا يتغيّر،
+            والفرق يُقيَّد في <b>5112 فروق تسويات نقدية</b>. اتركه على «بلا تقريب» في السعودية (هللة).
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {([
+              [0, 'بلا تقريب'],
+              [5, '0.05'],
+              [10, '0.10'],
+              [25, '0.25 (ربع)'],
+              [50, '0.50'],
+              [100, '1.00'],
+            ] as const).map(([step, label]) => {
+              const active = (setup.cashRoundingStepMinor ?? 0) === step
+              return (
+                <button
+                  key={step}
+                  data-cash-rounding={step}
+                  onClick={() => { updateSetup({ cashRoundingStepMinor: step }); toast.show(step === 0 ? 'أُوقف التقريب النقدي' : `التقريب النقدي: ${label} ${cur.symbol} — الفرق يُقيَّد في 5112 ✓`) }}
+                  className={`px-3 py-2 rounded-xl border-2 text-[12px] font-bold transition-all ${active ? 'border-brand-500/60 bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-500'}`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       </section>
 
       {/* سياسة الورديات (مراجعة المالك — النمط العالمي Toast/Square) */}
