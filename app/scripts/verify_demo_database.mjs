@@ -143,7 +143,12 @@ R.ok(`نشاط المقاولات كامل الأقسام: ${contractingDocsCoun
 
 const bridge = read('src/dev/demoDatabase.ts')
 const panel = read('src/dev/DemoDataPanel.tsx')
-assert.ok(/if \(!import\.meta\.env\.DEV\)/.test(bridge) && /if \(!import\.meta\.env\.DEV\) return null/.test(panel),
+/* حارس البذور صار عبر `demoDevEnabled()` ليعمل أيضاً داخل سكربتات الفحص في Node،
+   بشرط أن يبقى **الإنتاج مقفلاً**: قراءة `import.meta.env.DEV === true` فقط، ومسار
+   العلم (`__shopsysDemoAudit`) لا يُفعَّل إلا حين لا يوجد env إطلاقاً (Node). */
+assert.ok(/const demoDevEnabled = /.test(bridge) && /env\.DEV === true/.test(bridge)
+  && /__shopsysDemoAudit/.test(bridge) && /if \(!demoDevEnabled\(\)\)/.test(bridge)
+  && /if \(!import\.meta\.env\.DEV\) return null/.test(panel),
   'لوحة البيانات التجريبية غير محروسة بوضع التطوير — ستظهر للعميل النهائي')
 assert.ok(/switchDemoActivity/.test(bridge) && /data-demo-load/.test(panel), 'لا خيار داخلي لاختيار النشاط والتنقل لغيره')
 assert.ok(/postSale\(/.test(bridge) && /postPurchase\(/.test(bridge) && /setOpeningBalance\(/.test(bridge),

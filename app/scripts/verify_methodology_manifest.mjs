@@ -12,7 +12,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { LAYERS, FINAL_GATES, DOCUMENT_FAMILIES, LEGACY_SNAPSHOT, DOC_PATH } from './methodology_manifest.mjs'
+import { LAYERS, FINAL_GATES, DOCUMENT_FAMILIES, LEGACY_SNAPSHOT, DOC_PATH, LAYER_COUNT_WORD } from './methodology_manifest.mjs'
 import { reporter } from './auditKit.mjs'
 
 const r = reporter('المنهجية')
@@ -70,7 +70,7 @@ if (uncovered.length) throw new Error(`عائلات مستندات بلا مما
 r.ok(`عائلات المستندات المُمارَسة: ${DOCUMENT_FAMILIES.length}/${DOCUMENT_FAMILIES.length} (كل عائلة لها فعل مستند داخل طبقة)`)
 
 // ── ④ الوثيقة مطابقة للتعريف ────────────────────────────────────────────────
-const doc = `# منهجية الفحص والاختبار — ست طبقات
+const doc = `# منهجية الفحص والاختبار — ${LAYER_COUNT_WORD[LAYERS.length] ?? `${LAYERS.length} طبقات`}
 
 > وثيقة **مولَّدة آلياً** من \`app/scripts/methodology_manifest.mjs\` وتتحقق منها البوابة
 > \`verify_methodology_manifest.mjs\`. أي تعديل يدوي هنا يُكتشف ويُفشل البوابة.
@@ -104,7 +104,8 @@ ${DOCUMENT_FAMILIES.map((family) => `| ${family.name} | \`${family.markers[0]}\`
 2. الطبقات ②–④ (ثوانٍ): تُفحص بعد كل تعديل على \`repo.ts\` أو \`core\`.
 3. الطبقة ⑤ (ثوانٍ): قبل كل تسليم.
 4. الطبقة ⑥ (ثانية): بعد أي تعديل على التقارير.
-5. الحكم النهائي أدناه.
+5. الطبقة ⑦ (ثانيتان): بعد أي تعديل على البذور أو على محرك الترحيل.
+7. الحكم النهائي أدناه.
 
 ## الحكم النهائي
 

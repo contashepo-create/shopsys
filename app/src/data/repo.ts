@@ -9751,7 +9751,14 @@ export const useRawDataStore = create<DataState>()(
             // القيمة المحمولة تُحدَّث من نفس السحب الذي خرج به القيد — لا إعادة حساب لاحقة
             return withExactStockValue({ ...it, stockQty: withdrawal.remainingQty, stockValueMinor: withdrawal.remainingValueMinor })
           }
-          return { ...it, stockQty: Math.round(((it.stockQty ?? 0) - need) * 1000) / 1000 }
+          /* بيع بأذن رصيد سالب (allowNegativeStock): القيد يخصم تكلفة الكمية كلها من 1103،
+             فيجب أن تحمل البطاقة قيمة سالبة بالمقابل بدل الصفر — وإلا انحرف
+             «1103 = مجموع قيم الأصناف» بمقدار تكلفة البضاعة غير الموجودة (قيس 13,500). */
+          const nextQty = Math.round(((it.stockQty ?? 0) - need) * 1000) / 1000
+          if (nextQty < 0) {
+            return withExactStockValue({ ...it, stockQty: nextQty, stockValueMinor: Math.round(nextQty * (it.costMinor ?? 0)) })
+          }
+          return { ...it, stockQty: nextQty }
         })
         // markSold يتحقق (موجود/متاح/يخص الصنف/غير مكرر) ويرمي خطأ عربياً قبل أي كتابة
         const updatedSerials = assignments.length ? markSold(state.serials, assignments, saleId, now) : state.serials

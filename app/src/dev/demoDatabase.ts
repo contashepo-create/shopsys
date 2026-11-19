@@ -81,8 +81,19 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+/**
+ * بوابة وضع التطوير: Vite يوفّر `import.meta.env.DEV`، أما سكربتات الفحص في Node فلا
+ * تملك `import.meta.env` إطلاقاً. هذا الحارس يجعل الملف قابلاً للاستيراد هناك بلا كسر
+ * حماية الإنتاج: في الإنتاج `DEV` معرّف بقيمة false فلا يعمل شيء حتى لو حُقن أي علم.
+ */
+const demoDevEnabled = (): boolean => {
+  const env = (import.meta as { env?: { DEV?: boolean } }).env
+  if (env) return env.DEV === true
+  return (globalThis as { __shopsysDemoAudit?: boolean }).__shopsysDemoAudit === true
+}
+
 export async function fetchDemoActivities(): Promise<{ path: string; activities: DemoActivitySummary[] }> {
-  if (!import.meta.env.DEV) return { path: '', activities: [] }
+  if (!demoDevEnabled()) return { path: '', activities: [] }
   return api('/__demo/activities')
 }
 
@@ -93,7 +104,7 @@ export const DEMO_PENDING_KEY = 'shopsys-demo-pending'
  * الصفحة، ويُستكمل التحميل تلقائياً بعد الإقلاع — فلا تختلط بيانات نشاطين.
  */
 export function switchDemoActivity(activityId: string): void {
-  if (!import.meta.env.DEV) return
+  if (!demoDevEnabled()) return
   localStorage.setItem(DEMO_PENDING_KEY, activityId)
   localStorage.setItem(DEMO_WIPE_KEY, '1') // المسح الفعلي يتم في demoBoot قبل ترطيب المتاجر
   localStorage.removeItem('shopsys-data')
@@ -105,8 +116,10 @@ export function switchDemoActivity(activityId: string): void {
 export interface ContractingDemoCounts { demoProjects: number; demoBoqItems: number; changeOrders: number; bonds: number; dailyWorkers: number; dailyWorkRecords: number; materialIssues: number; manualCosts: number; clientAdvances: number; projectVouchers: number; clientCollections: number; linkedPurchases: number; extraExtracts: number; projectTasks: number; approvalFlows: number; approvalRequests: number }
 
 export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number; costCenters: number; contracting: ContractingDemoCounts; saleReturns: number; purchaseReturns: number; vouchers: number }> {
-  if (!import.meta.env.DEV) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
+  if (!demoDevEnabled()) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
   const skipped: string[] = []
+  /** نجاحات جديرة بالعرض (تحويل عرض إلى مشروع) — ليست تخطياً ولا تُعرض كخطأ */
+  const createdProjects: string[] = []
   const payload = await api<DemoPayload>(`/__demo/data?activity=${encodeURIComponent(activityId)}`)
   const app = useAppStore.getState()
   const template = ACTIVITY_TEMPLATES.find((activity) => activity.id === activityId) ?? ACTIVITY_TEMPLATES[0]
@@ -122,6 +135,11 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     contact: { phone: str(payload.activity.phone), email: '', city: str(payload.activity.city), street: '' },
   })
 
+  /* البذور تحاكي دورة كاملة قبل أول تحصيل (مقدمات وسلف وتسويات)، فتُفعَّل هنا
+     سياسة «السماح بالرصيد السالب في الخزائن» لهذا الحساب التجريبي فقط — بدونه تسقط
+     مستندات المقاولات بصمت (قيست: عقد باطن واحد). */
+  const setupNow = useAppStore.getState().setup
+  useAppStore.setState({ setup: { ...setupNow, allowNegativeTreasury: true } })
   const data = () => useDataStore.getState()
   data().seed(template.features)
 
@@ -294,7 +312,32 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       } as never)
       saleIdByRef.set(str(sale.ref), postedSale.id)
       salesPosted += 1
-    } catch (error) { skipped.push(`بيع ${str(sale.ref)}: ${(error as Error).message}`) }
+    } catch (error) {
+      /* فاتورة بذرة تمسّ دفعة منتهية الصلاحية: لا تُسقَط، بل تُرحَّل باعتماد مدير موثّق
+         على الفاتورة (القرار 8) — تظهر باسم المعتمد في المستند وسجل التدقيق، ويبقى
+         العرض التجريبي كاملاً بثلاث فواتير بدل فاتورتين. */
+      const message = String((error as Error).message ?? '')
+      if (!/منتهية الصلاحية/.test(message)) { skipped.push(`بيع ${str(sale.ref)}: ${message}`); continue }
+      try {
+        const postedSale = data().postSale({
+          lines: lines as never,
+          customerId: customerId.get(str(sale.customer_ref)) ?? null,
+          payment: (payment === 'credit' ? 'credit' : payment === 'card' ? 'card' : 'cash') as never,
+          invoiceDiscountPercent: 0,
+          taxPercent: 0,
+          taxInclusive: false,
+          treasury: treasuryCode.get(str(sale.treasury_ref)) as never,
+          paidMinor,
+          warehouseId: warehouseId.get(str(sale.warehouse_ref)) ?? null,
+          documentDate: str(sale.doc_date),
+          notes: str(sale.notes),
+          allowNegativeStock: true,
+          expiryOverrideBy: 'المدير العام (اعتماد بذرة تجريبية)',
+        } as never)
+        saleIdByRef.set(str(sale.ref), postedSale.id)
+        salesPosted += 1
+      } catch (retryError) { skipped.push(`بيع ${str(sale.ref)}: ${(retryError as Error).message}`) }
+    }
   }
 
   /* 7.5) §100 بذور أعمق: مرتجعات بيع وشراء وسندات قبض وصرف — كلها بالإجراءات
@@ -483,7 +526,8 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
           data().setQuotationStatus(created.id, 'won')
           const project = data().convertQuotationToProject(created.id, 5)
           quotationProjectId.set(str(quotation.ref), project.id)
-          skipped.push(`مشروع ${project.code} أُنشئ من ${created.quoteNumber} ✓`)
+          /* نجاح لا تخطٍّ: كان يُدفع في قائمة «skipped» فيظهر للمالك كأنه وثيقة ساقطة */
+          createdProjects.push(`${project.code} ← ${created.quoteNumber}`)
         } catch (error) { skipped.push(`تحويل ${created.quoteNumber} لمشروع: ${(error as Error).message}`) }
       }
       quotationsAdded += 1
@@ -845,7 +889,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
 
 /** يحفظ البيانات الرئيسية الحالية من المتجر إلى ملف قاعدة البيانات (تعديل حقيقي). */
 export async function saveDemoActivity(activityId: string): Promise<void> {
-  if (!import.meta.env.DEV) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
+  if (!demoDevEnabled()) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
   const data = useDataStore.getState()
   const app = useAppStore.getState()
   const categoryRef = new Map(data.categories.map((category) => [category.id, `cat-${category.id}`]))
@@ -922,6 +966,6 @@ export async function saveDemoActivity(activityId: string): Promise<void> {
 
 /** يعيد بناء القاعدة من ملف البذور (تراجع عن كل التعديلات). */
 export async function resetDemoDatabase(): Promise<void> {
-  if (!import.meta.env.DEV) return
+  if (!demoDevEnabled()) return
   await api('/__demo/reset', { method: 'POST' })
 }

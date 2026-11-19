@@ -124,7 +124,10 @@ export const DEMO_ACTIVITIES = [
     sales: [
       { ref: 'i1', doc_date: '2026-09-15', customer_ref: 'c1', warehouse_ref: 'wh-main', payment: 'credit', paid_minor: 100000, notes: 'طلب أسبوعي',
         lines: [{ item_ref: 'oil1', qty: 12, unit_price_minor: 6000 }, { item_ref: 'rice', qty: 4, unit_price_minor: 15500, discount_percent: 5 }] },
-      { ref: 'i2', doc_date: '2026-09-18', customer_ref: '', warehouse_ref: 'wh-shelf', payment: 'cash', paid_minor: 16000, treasury_ref: 'cash-main',
+      /* بيع الرفوف: كان على «مخزن العرض (الرفوف)» بلا أي تحويل بضاعة إليه، فيسقط
+         المستند عند التحميل (لا دفعات صلاحية في ذلك المخزن). البذرة تنقله إلى المخزن
+         الذي استلم الشراء فعلاً؛ والزبادي المنتهي يُرحَّل باعتماد مدير موثّق. */
+      { ref: 'i2', doc_date: '2026-09-18', customer_ref: '', warehouse_ref: 'wh-main', payment: 'cash', paid_minor: 16000, treasury_ref: 'cash-main',
         lines: [{ item_ref: 'sugar', qty: 2, unit_price_minor: 3600 }, { item_ref: 'tea', qty: 1, unit_price_minor: 7000 }, { item_ref: 'yogurt', qty: 2, unit_price_minor: 900 }] },
       { ref: 'i3', doc_date: '2026-09-22', customer_ref: 'c4', warehouse_ref: 'wh-main', payment: 'card', paid_minor: 53000, treasury_ref: 'bank-cib',
         lines: [{ item_ref: 'cheese', qty: 2, unit_price_minor: 26500 }] },
