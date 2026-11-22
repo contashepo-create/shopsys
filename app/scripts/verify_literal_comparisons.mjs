@@ -10,6 +10,7 @@
  *
  * تشغيل: node scripts/verify_literal_comparisons.mjs
  */
+import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,6 +74,21 @@ for (const value of ['string', 'checkbox', 'radio', 'option']) legal.add(value)
    (no-cors) وفشل نقل حقيقي — انظر core/support.ts:probeSupportConnectivity. */
 for (const value of ['basic', 'cors', 'default', 'error', 'opaque', 'opaqueredirect']) legal.add(value)
 
+// تُوحَّد فواصل المسار حتى تعمل الاستثناءات المحددة على Windows وLinux معاً.
+function isLetterDomComparison(file, field, value, line) {
+  const path = file.replaceAll('\\', '/')
+  return (path.endsWith('/src/core/letterBackgrounds.ts') && field === 'type' && value === 'image/png' && line.includes('file.type')) ||
+    (path.endsWith('/src/ui/pages/LettersPage.tsx') && field === 'status' && value === 'loading' && line.includes('document.fonts?.status'))
+}
+// اختبر الفاصلين مع حالات سلبية؛ لا يتحول الاستثناء إلى سماح عام لقيم الحالة.
+for (const prefix of ['/checkout', 'C:\\checkout']) {
+  const sep = prefix.startsWith('C:') ? '\\' : '/'
+  assert.ok(isLetterDomComparison(`${prefix}${sep}src${sep}core${sep}letterBackgrounds.ts`, 'type', 'image/png', "file.type === 'image/png'"))
+  assert.ok(isLetterDomComparison(`${prefix}${sep}src${sep}ui${sep}pages${sep}LettersPage.tsx`, 'status', 'loading', "document.fonts?.status === 'loading'"))
+  assert.equal(isLetterDomComparison(`${prefix}${sep}src${sep}ui${sep}pages${sep}Other.tsx`, 'status', 'loading', "document.fonts?.status === 'loading'"), false)
+  assert.equal(isLetterDomComparison(`${prefix}${sep}src${sep}ui${sep}pages${sep}LettersPage.tsx`, 'status', 'loading', "slip.status === 'loading'"), false)
+}
+
 // ── 2) مسح كل المقارنات ──
 const compareRe = /\.(\w+)\s*[!=]==\s*'([^']+)'/g
 const reverseCompareRe = /'([^']+)'\s*[!=]==\s*\w+\.(\w+)/g
@@ -84,8 +100,7 @@ for (const f of files) {
   const check = (field, value, idx) => {
     if (!WATCHED_FIELDS.includes(field)) return
     // استثناء محدد لواجهات DOM لا لقيم حقول النشاط: MIME الصورة وحالة تحميل الخطوط.
-    if (f.endsWith('/src/core/letterBackgrounds.ts') && field === 'type' && value === 'image/png' && lines[idx].includes('file.type')) return
-    if (f.endsWith('/src/ui/pages/LettersPage.tsx') && field === 'status' && value === 'loading' && lines[idx].includes('document.fonts?.status')) return
+    if (isLetterDomComparison(f, field, value, lines[idx])) return
     comparisons++
     if (!legal.has(value)) violations.push(`${f.replace(root + '/', '')}:${idx + 1} — .${field} === '${value}' (قيمة غير معلنة في أي union)`)
   }
