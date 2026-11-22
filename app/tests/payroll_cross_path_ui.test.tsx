@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { EmployeesPage } from '../src/ui/pages/EmployeesPage.tsx'
 import { useRawDataStore } from '../src/data/repo.ts'
@@ -41,7 +41,7 @@ describe('تنبيه مساري الرواتب داخل الفرع الظاهر'
     open(); fireEvent.click(screen.getByText('مسير مجمّع للجميع (قديم)'))
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement
     expect(dialog.textContent).not.toContain('أحمد'); expect(dialog.textContent).toContain('سعاد')
-    fireEvent.click(screen.getByRole('button', { name: /إلغاء/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /إلغاء/ }))
     act(() => { S().cancelPayrollSlip(slip.id, 'تصحيح') })
     fireEvent.click(screen.getByText('مسير مجمّع للجميع (قديم)'))
     expect((document.querySelector('[role="dialog"]') as HTMLElement).textContent).toContain('أحمد')
@@ -54,7 +54,7 @@ describe('تنبيه مساري الرواتب داخل الفرع الظاهر'
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement
     expect(dialog.textContent).not.toContain('أحمد'); expect(dialog.textContent).toContain('سعاد')
     expect(dialog.textContent).toContain('استخدم قسيمة بديلة')
-    fireEvent.click(screen.getByRole('button', { name: /إلغاء/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /إلغاء/ }))
     fireEvent.click(screen.getByRole('button', { name: /استحقاق قسائم/ }))
     expect(document.querySelector('[data-slip-duplicate="1"]')).toBeNull()
   })
